@@ -14,6 +14,9 @@
 #include "JSFetchHeaders.h"
 #include "JSDOMExceptionHandling.h"
 #include <bun-uws/src/App.h>
+#ifndef _WIN32
+#include <bun-uws/src/Http3Response.h>
+#endif
 #include "ZigGeneratedClasses.h"
 #include "ScriptExecutionContext.h"
 #include "AsyncContextFrame.h"
@@ -1020,12 +1023,77 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
     return obj;
 }
 
-extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0, bool is_ssl, void* arg2)
+#if defined(LIBUS_USE_QUIC)
+static void writeFetchHeadersToH3Response(WebCore::FetchHeaders& headers, uWS::Http3Response* res)
 {
-    if (is_ssl) {
+    auto& internalHeaders = headers.internalHeaders();
+    auto* data = res->getHttpResponseData();
+
+    auto writeOne = [&](const WTF::StringView& name, const WTF::StringView& value) {
+        WTF::CString nameStr, valueStr;
+        std::string_view nameView, valueView;
+        if (name.is8Bit()) {
+            const auto s = name.span8();
+            nameView = std::string_view(reinterpret_cast<const char*>(s.data()), s.size());
+        } else {
+            nameStr = name.utf8();
+            nameView = std::string_view(nameStr.data(), nameStr.length());
+        }
+        if (value.is8Bit()) {
+            const auto s = value.span8();
+            valueView = std::string_view(reinterpret_cast<const char*>(s.data()), s.size());
+        } else {
+            valueStr = value.utf8();
+            valueView = std::string_view(valueStr.data(), valueStr.length());
+        }
+        res->writeHeader(nameView, valueView);
+    };
+
+    for (auto& value : internalHeaders.getSetCookieHeaders()) {
+        if (value.is8Bit()) {
+            const auto s = value.span8();
+            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(reinterpret_cast<const char*>(s.data()), s.size()));
+        } else {
+            WTF::CString v = value.utf8();
+            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(v.data(), v.length()));
+        }
+    }
+
+    for (const auto& header : internalHeaders.commonHeaders()) {
+        if (header.key == WebCore::HTTPHeaderName::ContentLength) {
+            if (!(data->state & uWS::Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+                data->state |= uWS::Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+                res->writeMark();
+            }
+        }
+        if (header.key == WebCore::HTTPHeaderName::Date) {
+            data->state |= uWS::Http3ResponseData::HTTP_WROTE_DATE_HEADER;
+        }
+        // HTTP/3 has no Transfer-Encoding; if a user header reaches here it
+        // was already stripped by doWriteHeaders().
+        writeOne(WebCore::httpHeaderNameString(header.key), header.value);
+    }
+
+    for (auto& header : internalHeaders.uncommonHeaders()) {
+        writeOne(header.key, header.value);
+    }
+}
+#endif
+
+extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0, int kind, void* arg2)
+{
+    switch (kind) {
+    case 1:
         writeFetchHeadersToUWSResponse<true>(*arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
-    } else {
+        break;
+#if defined(LIBUS_USE_QUIC)
+    case 2:
+        writeFetchHeadersToH3Response(*arg0, reinterpret_cast<uWS::Http3Response*>(arg2));
+        break;
+#endif
+    default:
         writeFetchHeadersToUWSResponse<false>(*arg0, reinterpret_cast<uWS::HttpResponse<false>*>(arg2));
+        break;
     }
 }
 

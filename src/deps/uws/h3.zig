@@ -292,6 +292,27 @@ pub const App = opaque {
     pub fn any(this: *App, p: []const u8, comptime UD: type, ud: UD, comptime h: fn (UD, *Request, *Response) void) void {
         route(.any, this, p, UD, ud, h);
     }
+    pub fn method(
+        this: *App,
+        m: bun.http.Method,
+        p: []const u8,
+        comptime UD: type,
+        ud: UD,
+        comptime h: fn (UD, *Request, *Response) void,
+    ) void {
+        switch (m) {
+            .GET => this.get(p, UD, ud, h),
+            .POST => this.post(p, UD, ud, h),
+            .PUT => this.put(p, UD, ud, h),
+            .DELETE => this.delete(p, UD, ud, h),
+            .PATCH => this.patch(p, UD, ud, h),
+            .OPTIONS => this.options(p, UD, ud, h),
+            .HEAD => this.head(p, UD, ud, h),
+            .CONNECT => route(.connect, this, p, UD, ud, h),
+            .TRACE => route(.trace, this, p, UD, ud, h),
+            else => {},
+        }
+    }
 
     pub fn listenWithConfig(
         this: *App,

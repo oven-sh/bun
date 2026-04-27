@@ -18,13 +18,23 @@ pub const AdditionalOnAbortCallback = struct {
     }
 };
 
-pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comptime ThisServer: type) type {
+pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comptime ThisServer: type, comptime http3: bool) type {
     return struct {
         const RequestContext = @This();
 
-        const App = uws.NewApp(ssl_enabled);
+        const App = if (http3) struct {
+            pub const Response = uws.H3.Response;
+        } else uws.NewApp(ssl_enabled);
+        /// uWS request type for this transport. The H3 wrapper mirrors
+        /// uws.Request's surface so callers stay duck-typed.
+        pub const Req = if (http3) uws.H3.Request else uws.Request;
+        pub const Resp = App.Response;
+        pub const is_h3 = http3;
+        /// 0=TCP, 1=SSL, 2=H3 — passed through to C++ header/cookie writers
+        /// that need to recover the concrete uWS response type from *anyopaque.
+        const resp_kind: i32 = if (http3) 2 else if (ssl_enabled) 1 else 0;
         pub threadlocal var pool: ?*RequestContext.RequestContextStackAllocator = null;
-        pub const ResponseStream = jsc.WebCore.HTTPServerWritable(ssl_enabled);
+        pub const ResponseStream = jsc.WebCore.HTTPServerWritable(ssl_enabled, http3);
 
         // This pre-allocates up to 2,048 RequestContext structs.
         // It costs about 655,632 bytes.
@@ -35,7 +45,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         /// thread-local default heap allocator
         /// this prevents an extra pthread_getspecific() call which shows up in profiling
         allocator: std.mem.Allocator,
-        req: ?*uws.Request,
+        req: ?*Req,
         request_weakref: Request.WeakRef = .empty,
         signal: ?*jsc.WebCore.AbortSignal = null,
         method: HTTP.Method,
@@ -287,7 +297,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (this.server) |server| {
                 this.server = null;
-                server.request_pool_allocator.put(this);
+                if (comptime http3) server.h3_request_pool_allocator.put(this) else server.request_pool_allocator.put(this);
                 server.onRequestComplete();
             }
         }
@@ -568,7 +578,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             return this.sendWritableBytesForCompleteResponseBuffer(this.response_buf_owned.items, write_offset, resp);
         }
 
-        pub fn create(this: *RequestContext, server: *ThisServer, req: *uws.Request, resp: *App.Response, should_deinit_context: ?*bool, method: ?bun.http.Method) void {
+        inline fn anyResponse(r: *App.Response) uws.AnyResponse {
+            return if (comptime http3) .{ .H3 = r } else if (comptime ssl_enabled) .{ .SSL = r } else .{ .TCP = r };
+        }
+
+        pub fn create(this: *RequestContext, server: *ThisServer, req: *Req, resp: *App.Response, should_deinit_context: ?*bool, method: ?bun.http.Method) void {
             this.* = .{
                 .allocator = server.allocator,
                 .resp = resp,
@@ -607,6 +621,17 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         pub fn onAbort(this: *RequestContext, resp: *App.Response) void {
             ctxLog("onAbort", .{});
             assert(this.resp == resp);
+            // An HTTP/3 stream is destroyed once both sides FIN, so this also
+            // fires after a successful end(). HTTP/1 sockets persist for
+            // keep-alive, so the equivalent never happens there. Drop the
+            // pointer; everything else cleans up via the resolve/reject path.
+            if (comptime http3) {
+                if (resp.hasResponded()) {
+                    this.resp = null;
+                    this.flags.has_abort_handler = false;
+                    return;
+                }
+            }
             assert(!this.flags.aborted);
             assert(this.server != null);
             // mark request as aborted
@@ -761,7 +786,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             const this: *RequestContext = @ptrCast(@alignCast(ctx));
             // Route through the real onAbort so flags.aborted, request.signal,
             // and additional_on_abort fire exactly as they did pre-consolidation.
-            this.onAbort(if (comptime ssl_enabled) resp.SSL else resp.TCP);
+            this.onAbort(if (comptime http3) resp.H3 else if (comptime ssl_enabled) resp.SSL else resp.TCP);
         }
 
         fn onFileStreamError(ctx: *anyopaque, resp: uws.AnyResponse, _: bun.sys.Error) void {
@@ -958,7 +983,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             FileResponseStream.start(.{
                 .fd = fd,
                 .auto_close = auto_close,
-                .resp = if (comptime ssl_enabled) .{ .SSL = resp } else .{ .TCP = resp },
+                .resp = anyResponse(resp),
                 .vm = this.server.?.vm,
                 .file_type = file_type,
                 .pollable = pollable,
@@ -1080,10 +1105,24 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return;
             }
 
-            if (!assignment_result.isEmptyOrUndefinedOrNull()) {
-                assignment_result.ensureStillAlive();
+            // A fully-synchronous ReadableStream can drain through writeBytes
+            // and reach endFromJS() inside assignToStream(). If tryEnd() then
+            // hits transport backpressure (common on QUIC right after the
+            // HEADERS frame), the sink parks a pending_flush promise and
+            // registers onWritable, but assignToStream() itself returns
+            // undefined. Surface that promise here so the request waits for
+            // the drain instead of falling through to the cancel path below.
+            var effective_result = assignment_result;
+            if (effective_result.isEmptyOrUndefinedOrNull()) {
+                if (response_stream.sink.pending_flush) |flush| {
+                    effective_result = flush.toJS();
+                }
+            }
+
+            if (!effective_result.isEmptyOrUndefinedOrNull()) {
+                effective_result.ensureStillAlive();
                 // it returns a Promise when it goes through ReadableStreamDefaultReader
-                if (assignment_result.asAnyPromise()) |promise| {
+                if (effective_result.asAnyPromise()) |promise| {
                     streamLog("returned a promise", .{});
                     this.drainMicrotasks();
 
@@ -1106,7 +1145,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                             };
                             this.ref();
                             const cell = NativePromiseContext.create(globalThis, this);
-                            assignment_result.thenWithValue(
+                            effective_result.thenWithValue(
                                 globalThis,
                                 cell,
                                 onResolveStream,
@@ -1144,7 +1183,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     response_stream.detach(globalThis);
                     this.sink = null;
                     response_stream.sink.destroy();
-                    return this.handleReject(assignment_result);
+                    return this.handleReject(effective_result);
                 }
             }
 
@@ -1191,9 +1230,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             return @intFromPtr(this.upgrade_context) == std.math.maxInt(usize);
         }
 
-        fn toAsyncWithoutAbortHandler(ctx: *RequestContext, req: *uws.Request, request_object: *Request) void {
-            request_object.request_context.setRequest(req);
+        fn toAsyncWithoutAbortHandler(ctx: *RequestContext, req: *Req, request_object: *Request) void {
             assert(ctx.server != null);
+
+            // For HTTP/3, prepareJsRequestContextFor() already eagerly
+            // populated url+headers (the lazy getRequest() path is H1-only),
+            // so the guards below short-circuit and `req` is never read.
+            if (comptime !http3) request_object.request_context.setRequest(req);
 
             request_object.ensureURL() catch {
                 request_object.url = bun.String.empty;
@@ -1201,7 +1244,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             // we have to clone the request headers here since they will soon belong to a different request
             if (!request_object.hasFetchHeaders()) {
-                request_object.setFetchHeaders(.createFromUWS(req));
+                if (comptime !http3) request_object.setFetchHeaders(.createFromUWS(req));
             }
 
             // This object dies after the stack frame is popped
@@ -1211,7 +1254,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         pub fn toAsync(
             ctx: *RequestContext,
-            req: *uws.Request,
+            req: *Req,
             request_object: *Request,
         ) void {
             ctxLog("toAsync", .{});
@@ -2157,7 +2200,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (this.cookies) |cookies| {
                 this.cookies = null;
                 defer cookies.deref();
-                cookies.write(this.server.?.globalThis, ssl_enabled, @ptrCast(this.resp.?)) catch return; // TODO: properly propagate exception upwards
+                cookies.write(this.server.?.globalThis, resp_kind, @ptrCast(this.resp.?)) catch return; // TODO: properly propagate exception upwards
             }
 
             if (needs_content_type and
@@ -2221,11 +2264,20 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             assert(!this.flags.has_written_status);
             this.flags.has_written_status = true;
 
-            writeStatus(ssl_enabled, this.resp, status);
+            const resp = this.resp orelse return;
+            if (HTTPStatusText.get(status)) |text| {
+                resp.writeStatus(text);
+            } else {
+                var buf: [48]u8 = undefined;
+                resp.writeStatus(std.fmt.bufPrint(&buf, "{d} HM", .{status}) catch unreachable);
+            }
         }
 
         fn doWriteHeaders(this: *RequestContext, headers: *WebCore.FetchHeaders) void {
-            writeHeaders(headers, ssl_enabled, this.resp);
+            ctxLog("writeHeaders", .{});
+            headers.fastRemove(.ContentLength);
+            headers.fastRemove(.TransferEncoding);
+            if (this.resp) |resp| headers.toUWSResponse(resp_kind, resp);
         }
 
         pub fn renderBytes(this: *RequestContext) void {
@@ -2450,7 +2502,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         }
 
         comptime {
-            const export_prefix = "Bun__HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ (if (ThisServer.ssl_enabled) "TLS" else "");
+            const export_prefix = "Bun__HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ (if (http3) "H3" else if (ThisServer.ssl_enabled) "TLS" else "");
             if (bun.Environment.export_cpp_apis) {
                 @export(&jsc.toJSHostFn(onResolve), .{ .name = export_prefix ++ "__onResolve" });
                 @export(&jsc.toJSHostFn(onReject), .{ .name = export_prefix ++ "__onReject" });
@@ -2547,19 +2599,6 @@ fn getContentType(headers: ?*WebCore.FetchHeaders, blob: *const WebCore.Blob.Any
 
 const welcome_page_html_gz = @embedFile("../welcome-page.html.gz");
 
-fn writeHeaders(
-    headers: *WebCore.FetchHeaders,
-    comptime ssl: bool,
-    resp_ptr: ?*uws.NewApp(ssl).Response,
-) void {
-    ctxLog("writeHeaders", .{});
-    headers.fastRemove(.ContentLength);
-    headers.fastRemove(.TransferEncoding);
-    if (resp_ptr) |resp| {
-        headers.toUWSResponse(ssl, resp);
-    }
-}
-
 const ctxLog = Output.scoped(.RequestContext, .visible);
 const string = []const u8;
 
@@ -2579,7 +2618,7 @@ const Api = bun.schema.api;
 
 const FileResponseStream = bun.api.server.FileResponseStream;
 const RangeRequest = bun.api.server.RangeRequest;
-const writeStatus = bun.api.server.writeStatus;
+const HTTPStatusText = bun.api.server.HTTPStatusText;
 
 const HTTP = bun.http;
 const MimeType = bun.http.MimeType;

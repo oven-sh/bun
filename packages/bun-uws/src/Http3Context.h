@@ -54,7 +54,11 @@ struct Http3Context {
         us_quic_socket_context_on_stream_close(ctx, [](us_quic_stream_t *s) {
             Http3Response *res = (Http3Response *) s;
             Http3ResponseData *rd = res->getHttpResponseData();
-            if (rd->onAborted && (rd->state & Http3ResponseData::HTTP_RESPONSE_PENDING)) {
+            /* Fire onAborted for both real aborts and post-completion stream
+             * teardown. The handler distinguishes via hasResponded(); for the
+             * completed case it just drops its pointer so it doesn't outlive
+             * this destructor. */
+            if (rd->onAborted) {
                 rd->onAborted(res, rd->userData);
             }
             rd->~Http3ResponseData();

@@ -31,6 +31,14 @@ struct Http3ResponseData {
     };
 
     void *userData = nullptr;
+    /* onWritable is owned by the body writer (HTTPServerWritable sink),
+     * which is a different object than the RequestContext that owns
+     * onAborted/onTimeout/onData. uWS HttpResponseData<SSL> shares one
+     * userData and gets away with it because tryEnd() over a corked TCP
+     * socket never reports backpressure for in-memory bodies; QUIC does
+     * (lsquic needs a process_conns() between HEADERS and DATA), so the
+     * sink and the request context are armed concurrently. */
+    void *writableUserData = nullptr;
     void *socketData = nullptr;
     OnWritableCallback onWritable = nullptr;
     OnAbortedCallback onAborted = nullptr;
@@ -53,6 +61,7 @@ struct Http3ResponseData {
 
     void reset() {
         userData = nullptr;
+        writableUserData = nullptr;
         onWritable = nullptr;
         onAborted = nullptr;
         inStream = nullptr;

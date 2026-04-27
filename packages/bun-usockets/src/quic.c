@@ -103,35 +103,65 @@ static void us_quic_rearm(us_quic_socket_context_t *ctx) {
 
 /* ───── packets out ───── */
 
+static inline socklen_t sa_len(const struct sockaddr *sa) {
+    return sa->sa_family == AF_INET6 ? sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);
+}
+
+static int us_quic_send_one(int fd, const struct lsquic_out_spec *spec) {
+    struct msghdr msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.msg_name = (void *) spec->dest_sa;
+    msg.msg_namelen = sa_len(spec->dest_sa);
+    msg.msg_iov = spec->iov;
+    msg.msg_iovlen = spec->iovlen;
+    ssize_t r;
+    do { r = sendmsg(fd, &msg, 0); } while (r < 0 && errno == EINTR);
+    return r < 0 ? -1 : 1;
+}
+
+/* lsquic hands back packets in batches; on Linux push them through one
+ * sendmmsg() so a 32-packet flight is a single syscall. macOS's sendmsg_x
+ * can't carry per-datagram addresses (which QUIC needs), so it falls back to
+ * the per-packet path along with everything else non-Linux. The recv side
+ * already goes through bsd_recvmmsg in loop.c. */
 static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *specs, unsigned n) {
     (void) out_ctx;
     unsigned sent = 0;
+
+#if defined(__linux__)
+    enum { BATCH = 64 };
+    struct mmsghdr mm[BATCH];
+    while (sent < n) {
+        us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
+        int fd = us_poll_fd((struct us_poll_t *) ls->udp);
+        unsigned k = 0;
+        while (k < BATCH && sent + k < n && specs[sent + k].peer_ctx == (void *) ls) {
+            const struct lsquic_out_spec *sp = &specs[sent + k];
+            memset(&mm[k], 0, sizeof(mm[k]));
+            mm[k].msg_hdr.msg_name = (void *) sp->dest_sa;
+            mm[k].msg_hdr.msg_namelen = sa_len(sp->dest_sa);
+            mm[k].msg_hdr.msg_iov = sp->iov;
+            mm[k].msg_hdr.msg_iovlen = sp->iovlen;
+            k++;
+        }
+        int r;
+        do { r = sendmmsg(fd, mm, k, 0); } while (r < 0 && errno == EINTR);
+        if (r < 0) break;
+        sent += (unsigned) r;
+        if ((unsigned) r < k) break;
+    }
+#else
     for (; sent < n; sent++) {
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
-        struct msghdr msg;
-        memset(&msg, 0, sizeof(msg));
-        msg.msg_name = (void *) specs[sent].dest_sa;
-        msg.msg_namelen = specs[sent].dest_sa->sa_family == AF_INET6
-            ? sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);
-        msg.msg_iov = specs[sent].iov;
-        msg.msg_iovlen = specs[sent].iovlen;
-        int fd = us_poll_fd((struct us_poll_t *) ls->udp);
-        ssize_t r;
-        do { r = sendmsg(fd, &msg, 0); } while (r < 0 && errno == EINTR);
-        if (r < 0) {
-            if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                /* lsquic treats non-EAGAIN as fatal for the conn unless we
-                 * report it as a partial send; surface as backpressure. */
-                errno = EAGAIN;
-            }
-            break;
-        }
+        if (us_quic_send_one(us_poll_fd((struct us_poll_t *) ls->udp), &specs[sent]) < 0) break;
     }
+#endif
+
     if (sent < n) {
+        if (errno != EAGAIN && errno != EWOULDBLOCK) errno = EAGAIN;
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
         us_poll_change((struct us_poll_t *) ls->udp, ls->ctx->loop,
             LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
-        return (int) sent;
     }
     return (int) sent;
 }

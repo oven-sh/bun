@@ -81,7 +81,9 @@ struct Http3Request {
 
     void setParameters(std::pair<int, std::string_view *> p) { params = p; }
     std::string_view getParameter(unsigned short index) {
-        return index < params.first ? params.second[index] : std::string_view{};
+        /* HttpRouter::getParameters() returns {paramsTop, params} where
+         * paramsTop is the INDEX of the last param (-1 when empty). */
+        return (int) index > params.first ? std::string_view{} : params.second[index];
     }
 
 private:
@@ -95,7 +97,7 @@ private:
 
     us_quic_stream_t *stream;
     std::string_view method, url, fullUrl, query, authority;
-    std::pair<int, std::string_view *> params{0, nullptr};
+    std::pair<int, std::string_view *> params{-1, nullptr};
     char methodLower[16];
     bool yield = false;
 };

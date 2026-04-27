@@ -100,6 +100,9 @@
 
 #include <string_view>
 #include <bun-uws/src/App.h>
+#ifndef _WIN32
+#include <bun-uws/src/Http3Request.h>
+#endif
 #include <bun-usockets/src/internal/internal.h>
 #include "IDLTypes.h"
 #include "JSDOMBinding.h"
@@ -2006,6 +2009,38 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
     }
     headers->setInternalHeaders(WTF::move(map));
     return headers;
+}
+WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
+{
+#if defined(LIBUS_USE_QUIC)
+    auto* req = reinterpret_cast<uWS::Http3Request*>(arg1);
+
+    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement();
+
+    HTTPHeaderMap map = HTTPHeaderMap();
+    req->forEachHeader([&](std::string_view name, std::string_view val) {
+        StringView nameView = StringView(std::span { reinterpret_cast<const Latin1Character*>(name.data()), name.length() });
+        std::span<Latin1Character> data;
+        auto value = String::createUninitialized(val.length(), data);
+        if (val.length() > 0)
+            memcpy(data.data(), val.data(), val.length());
+
+        HTTPHeaderName hn;
+        if (WebCore::findHTTPHeaderName(nameView, hn)) {
+            map.add(hn, WTF::move(value));
+        } else {
+            map.setUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
+        }
+    });
+    headers->setInternalHeaders(WTF::move(map));
+    return headers;
+#else
+    UNUSED_PARAM(arg1);
+    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement();
+    return headers;
+#endif
 }
 void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0)
 {

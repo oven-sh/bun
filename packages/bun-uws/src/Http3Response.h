@@ -149,9 +149,12 @@ struct Http3Response {
 
     Http3Response *onWritable(void *userData, Http3ResponseData::OnWritableCallback h) {
         Http3ResponseData *d = getHttpResponseData();
-        d->userData = userData; d->onWritable = h; return this;
+        d->writableUserData = userData; d->onWritable = h; return this;
     }
-    Http3Response *clearOnWritable() { getHttpResponseData()->onWritable = nullptr; return this; }
+    Http3Response *clearOnWritable() {
+        Http3ResponseData *d = getHttpResponseData();
+        d->onWritable = nullptr; d->writableUserData = nullptr; return this;
+    }
     Http3Response *onAborted(void *userData, Http3ResponseData::OnAbortedCallback h) {
         Http3ResponseData *d = getHttpResponseData();
         d->userData = userData; d->onAborted = h; return this;
@@ -159,16 +162,22 @@ struct Http3Response {
     Http3Response *clearOnAborted() { getHttpResponseData()->onAborted = nullptr; return this; }
     Http3Response *onTimeout(void *userData, Http3ResponseData::OnTimeoutCallback h) {
         Http3ResponseData *d = getHttpResponseData();
-        d->userData = userData; d->onTimeout = h; return this;
+        d->onTimeout = h;
+        if (h) d->userData = userData;
+        return this;
     }
     Http3Response *clearOnTimeout() { getHttpResponseData()->onTimeout = nullptr; return this; }
     void onData(void *userData, Http3ResponseData::OnDataCallback h) {
         Http3ResponseData *d = getHttpResponseData();
-        d->userData = userData; d->inStream = h;
+        d->inStream = h;
+        if (h) d->userData = userData;
     }
     Http3Response *clearOnWritableAndAborted() {
+        /* Unlike HttpResponse<SSL>, leave onAborted armed — the QUIC stream is
+         * freed after FIN and on_stream_close needs it to notify the holder.
+         * Name kept for parity with the H1 C wrapper. */
         Http3ResponseData *d = getHttpResponseData();
-        d->onWritable = nullptr; d->onAborted = nullptr; return this;
+        d->onWritable = nullptr; return this;
     }
 
     /* Called from Http3Context's on_stream_writable. */
@@ -188,7 +197,7 @@ struct Http3Response {
             return true;
         }
         if (d->onWritable) {
-            return d->onWritable(this, d->offset, d->userData);
+            return d->onWritable(this, d->offset, d->writableUserData);
         }
         return true;
     }
@@ -277,7 +286,10 @@ private:
 
     void markDone(Http3ResponseData *d) {
         d->onWritable = nullptr;
-        d->onAborted = nullptr;
+        /* Leave onAborted armed: unlike an HTTP/1 socket, the QUIC stream
+         * is freed once both sides FIN, so on_stream_close fires it for
+         * completed responses too — that's how the holder learns the
+         * pointer is about to die. */
         d->state |= Http3ResponseData::HTTP_END_CALLED;
         d->state &= ~Http3ResponseData::HTTP_RESPONSE_PENDING;
         if (d->state & Http3ResponseData::HTTP_CONNECTION_CLOSE) {

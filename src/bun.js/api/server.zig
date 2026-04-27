@@ -529,7 +529,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub const debug_mode = development_kind == .debug;
 
         const ThisServer = @This();
-        pub const RequestContext = NewRequestContext(ssl_enabled, debug_mode, @This());
+        pub const RequestContext = NewRequestContext(ssl_enabled, debug_mode, @This(), false);
+        const has_h3 = ssl_enabled and !bun.Environment.isWindows;
+        pub const H3RequestContext = if (has_h3) NewRequestContext(ssl_enabled, debug_mode, @This(), true) else void;
 
         pub const App = uws.NewApp(ssl_enabled);
         app: ?*App = null,
@@ -544,6 +546,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         config: ServerConfig = ServerConfig{},
         pending_requests: usize = 0,
         request_pool_allocator: *RequestContext.RequestContextStackAllocator = undefined,
+        h3_request_pool_allocator: if (has_h3) *H3RequestContext.RequestContextStackAllocator else void = if (has_h3) undefined else {},
         all_closed_promise: jsc.JSPromise.Strong = .{},
 
         listen_callback: jsc.AnyTask = undefined,
@@ -831,7 +834,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             if (nodeHttpResponse.raw_response) |raw_response| {
                                 // we must write the status first so that 200 OK isn't written
                                 raw_response.writeStatus("101 Switching Protocols");
-                                fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, raw_response.socket());
+                                fetch_headers_to_use.toUWSResponse(comptime if (ssl_enabled) 1 else 0, raw_response.socket());
                             }
                         }
 
@@ -988,11 +991,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 resp.writeStatus("101 Switching Protocols");
 
                 if (fetch_headers_to_use) |headers| {
-                    headers.toUWSResponse(comptime ssl_enabled, resp);
+                    headers.toUWSResponse(comptime if (ssl_enabled) 1 else 0, resp);
                 }
 
                 if (cookies_to_write) |cookies| {
-                    try cookies.write(globalThis, ssl_enabled, @ptrCast(resp));
+                    try cookies.write(globalThis, comptime if (ssl_enabled) 1 else 0, @ptrCast(resp));
                 }
             }
 
@@ -1710,6 +1713,17 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             server.request_pool_allocator = RequestContext.pool.?;
 
+            if (comptime has_h3) {
+                if (H3RequestContext.pool == null) {
+                    H3RequestContext.pool = bun.create(
+                        server.allocator,
+                        H3RequestContext.RequestContextStackAllocator,
+                        H3RequestContext.RequestContextStackAllocator.init(bun.typedAllocator(H3RequestContext)),
+                    );
+                }
+                server.h3_request_pool_allocator = H3RequestContext.pool.?;
+            }
+
             if (comptime ssl_enabled) {
                 analytics.Features.https_server += 1;
             } else {
@@ -1843,21 +1857,20 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         pub fn onH3Request(this: *ThisServer, req: *uws.H3.Request, resp: *uws.H3.Response) void {
+            if (comptime !has_h3) unreachable;
+            if (this.config.onRequest == .zero) return onH3404(this, req, resp);
+            this.onRequestFor(H3RequestContext, req, resp);
+        }
+
+        pub fn onH3UserRouteRequest(user_route: *UserRoute, req: *uws.H3.Request, resp: *uws.H3.Response) void {
+            if (comptime !has_h3) unreachable;
+            onUserRouteRequestFor(H3RequestContext, user_route, req, resp);
+        }
+
+        pub fn onH3404(_: *ThisServer, _: *uws.H3.Request, resp: *uws.H3.Response) void {
             if (comptime bun.Environment.isWindows) unreachable;
-            if (this.config.onRequest == .zero) {
-                resp.writeStatus("404 Not Found");
-                resp.end("", false);
-                return;
-            }
-            H3Handler.onRequest(
-                this.globalThis,
-                this.vm,
-                this.base_url_string_for_joining,
-                this.config.onRequest,
-                this.jsValueAssertAlive(),
-                req,
-                resp,
-            );
+            resp.writeStatus("404 Not Found");
+            resp.end("", false);
         }
 
         pub fn ref(this: *ThisServer) void {
@@ -2077,7 +2090,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         var did_send_idletimeout_warning_once = false;
-        fn onTimeoutForIdleWarn(_: *anyopaque, _: *App.Response) void {
+        fn onTimeoutForIdleWarn(_: *anyopaque, _: ?*anyopaque) void {
             if (debug_mode and !did_send_idletimeout_warning_once) {
                 if (!bun.cli.Command.get().debug.silent) {
                     did_send_idletimeout_warning_once = true;
@@ -2098,22 +2111,31 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         pub fn onUserRouteRequest(user_route: *UserRoute, req: *uws.Request, resp: *App.Response) void {
+            onUserRouteRequestFor(RequestContext, user_route, req, resp);
+        }
+
+        fn onUserRouteRequestFor(comptime Ctx: type, user_route: *UserRoute, req: *Ctx.Req, resp: *Ctx.Resp) void {
             const server = user_route.server;
             const index = user_route.id;
 
             var should_deinit_context = false;
-            var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, .no, switch (user_route.route.method) {
+            var prepared = server.prepareJsRequestContextFor(Ctx, req, resp, &should_deinit_context, .no, switch (user_route.route.method) {
                 .any => null,
                 .specific => |m| m,
             }) orelse return;
 
             const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
-            const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRoute, .{ server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
+            const callRoute = if (Ctx.is_h3) Bun__ServerRouteList__callRouteH3 else Bun__ServerRouteList__callRoute;
+            const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), callRoute, .{ server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
 
-            server.handleRequest(&should_deinit_context, prepared, req, response_value);
+            server.handleRequestFor(Ctx, &should_deinit_context, prepared, req, response_value);
         }
 
         fn handleRequest(this: *ThisServer, should_deinit_context: *bool, prepared: PreparedRequest, req: *uws.Request, response_value: jsc.JSValue) void {
+            this.handleRequestFor(RequestContext, should_deinit_context, prepared, req, response_value);
+        }
+
+        fn handleRequestFor(this: *ThisServer, comptime Ctx: type, should_deinit_context: *bool, prepared: PreparedRequestFor(Ctx), req: *Ctx.Req, response_value: jsc.JSValue) void {
             const ctx = prepared.ctx;
 
             defer {
@@ -2143,8 +2165,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         pub fn onRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
+            this.onRequestFor(RequestContext, req, resp);
+        }
+
+        fn onRequestFor(this: *ThisServer, comptime Ctx: type, req: *Ctx.Req, resp: *Ctx.Resp) void {
             var should_deinit_context = false;
-            const prepared = this.prepareJsRequestContext(req, resp, &should_deinit_context, .yes, null) orelse return;
+            const prepared = this.prepareJsRequestContextFor(Ctx, req, resp, &should_deinit_context, .yes, null) orelse return;
 
             bun.assert(this.config.onRequest != .zero);
 
@@ -2156,7 +2182,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             ) catch |err|
                 this.globalThis.takeException(err);
 
-            this.handleRequest(&should_deinit_context, prepared, req, response_value);
+            this.handleRequestFor(Ctx, &should_deinit_context, prepared, req, response_value);
         }
 
         pub fn onSavedRequest(
@@ -2217,41 +2243,60 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
         }
 
-        pub const PreparedRequest = struct {
-            js_request: JSValue,
-            request_object: *Request,
-            ctx: *RequestContext,
+        pub const PreparedRequest = PreparedRequestFor(RequestContext);
 
-            /// This is used by DevServer for deferring calling the JS handler
-            /// to until the bundle is actually ready.
-            pub fn save(
-                prepared: PreparedRequest,
-                global: *jsc.JSGlobalObject,
-                req: *uws.Request,
-                resp: *App.Response,
-            ) SavedRequest {
-                // By saving a request, all information from `req` must be
-                // copied since the provided uws.Request will be re-used for
-                // future requests (stack allocated).
-                prepared.ctx.toAsync(req, prepared.request_object);
+        fn PreparedRequestFor(comptime Ctx: type) type {
+            return struct {
+                js_request: JSValue,
+                request_object: *Request,
+                ctx: *Ctx,
 
-                return .{
-                    .js_request = .create(prepared.js_request, global),
-                    .request = prepared.request_object,
-                    .ctx = AnyRequestContext.init(prepared.ctx),
-                    .response = uws.AnyResponse.init(resp),
-                };
-            }
-        };
+                /// This is used by DevServer for deferring calling the JS handler
+                /// to until the bundle is actually ready.
+                pub fn save(
+                    prepared: @This(),
+                    global: *jsc.JSGlobalObject,
+                    req: *Ctx.Req,
+                    resp: *Ctx.Resp,
+                ) SavedRequest {
+                    if (comptime Ctx.is_h3) @compileError("PreparedRequest.save is HTTP/1-only");
+                    // By saving a request, all information from `req` must be
+                    // copied since the provided uws.Request will be re-used for
+                    // future requests (stack allocated).
+                    prepared.ctx.toAsync(req, prepared.request_object);
+
+                    return .{
+                        .js_request = .create(prepared.js_request, global),
+                        .request = prepared.request_object,
+                        .ctx = AnyRequestContext.init(prepared.ctx),
+                        .response = uws.AnyResponse.init(resp),
+                    };
+                }
+            };
+        }
+
+        const CreateJsRequest = enum { yes, no, bake };
 
         pub fn prepareJsRequestContext(
             this: *ThisServer,
             req: *uws.Request,
             resp: *App.Response,
             should_deinit_context: ?*bool,
-            create_js_request: enum { yes, no, bake },
+            create_js_request: CreateJsRequest,
             method: ?bun.http.Method,
         ) ?PreparedRequest {
+            return this.prepareJsRequestContextFor(RequestContext, req, resp, should_deinit_context, create_js_request, method);
+        }
+
+        fn prepareJsRequestContextFor(
+            this: *ThisServer,
+            comptime Ctx: type,
+            req: *Ctx.Req,
+            resp: *Ctx.Resp,
+            should_deinit_context: ?*bool,
+            create_js_request: CreateJsRequest,
+            method: ?bun.http.Method,
+        ) ?PreparedRequestFor(Ctx) {
             jsc.markBinding(@src());
 
             // We need to register the handler immediately since uSockets will not buffer.
@@ -2298,12 +2343,17 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // this happens - but limit it to only warn once.
             if (shouldAddTimeoutHandlerForWarning(this)) {
                 // We need to pass it a pointer, any pointer should do.
-                resp.onTimeout(*anyopaque, onTimeoutForIdleWarn, &did_send_idletimeout_warning_once);
+                resp.onTimeout(*anyopaque, struct {
+                    fn warn(p: *anyopaque, _: *Ctx.Resp) void {
+                        onTimeoutForIdleWarn(p, null);
+                    }
+                }.warn, &did_send_idletimeout_warning_once);
             }
 
-            const ctx = bun.handleOom(this.request_pool_allocator.tryGet());
+            const pool_allocator = if (comptime Ctx.is_h3) this.h3_request_pool_allocator else this.request_pool_allocator;
+            const ctx = bun.handleOom(pool_allocator.tryGet());
             ctx.create(this, req, resp, should_deinit_context, method);
-            this.vm.jsc_vm.reportExtraMemory(@sizeOf(RequestContext));
+            this.vm.jsc_vm.reportExtraMemory(@sizeOf(Ctx));
             const body = this.vm.initRequestBodyValue(.{ .Null = {} }) catch unreachable;
 
             ctx.request_body = body;
@@ -2319,6 +2369,26 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 body.ref(),
             ));
             ctx.request_weakref = .initRef(request_object);
+
+            // The lazy `getRequest()` path that backs Request.url / .headers
+            // is `*uws.Request`-typed; for HTTP/3 we populate both eagerly so
+            // the rest of the pipeline never needs to know which transport
+            // delivered the bytes.
+            if (comptime Ctx.is_h3) {
+                request_object.setFetchHeaders(.createFromH3(req));
+                const path = req.url();
+                if (path.len > 0 and path[0] == '/') {
+                    if (req.header("host")) |host| {
+                        const fmt = bun.fmt.HostFormatter{ .is_https = true, .host = host };
+                        request_object.url = bun.String.createFormat("https://{f}{s}", .{ fmt, path }) catch bun.outOfMemory();
+                    } else {
+                        request_object.url = bun.String.cloneUTF8(path);
+                    }
+                } else {
+                    request_object.url = bun.String.cloneUTF8(path);
+                }
+                ctx.req = null;
+            }
 
             if (comptime debug_mode) {
                 ctx.flags.is_web_browser_navigation = brk: {
@@ -2343,14 +2413,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         .Locked = .{
                             .task = ctx,
                             .global = this.globalThis,
-                            .onStartBuffering = RequestContext.onStartBufferingCallback,
-                            .onStartStreaming = RequestContext.onStartStreamingRequestBodyCallback,
-                            .onReadableStreamAvailable = RequestContext.onRequestBodyReadableStreamAvailable,
+                            .onStartBuffering = Ctx.onStartBufferingCallback,
+                            .onStartStreaming = Ctx.onStartStreamingRequestBodyCallback,
+                            .onReadableStreamAvailable = Ctx.onRequestBodyReadableStreamAvailable,
                         },
                     };
                     ctx.flags.is_waiting_for_request_body = true;
 
-                    resp.onData(*RequestContext, RequestContext.onBufferedBodyChunk, ctx);
+                    resp.onData(*Ctx, Ctx.onBufferedBodyChunk, ctx);
                 }
             }
 
@@ -2600,6 +2670,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 switch (user_route.route.method) {
                     .any => {
                         app.any(user_route.route.path, *UserRoute, user_route, onUserRouteRequest);
+                        if (comptime ssl_enabled and !bun.Environment.isWindows) {
+                            if (this.h3_app) |h3_app| h3_app.any(user_route.route.path, *UserRoute, user_route, onH3UserRouteRequest);
+                        }
                         if (is_star_path) {
                             star_methods_covered_by_user = .initFull();
                         }
@@ -2618,6 +2691,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     },
                     .specific => |method_val| { // method_val is HTTP.Method here
                         app.method(method_val, user_route.route.path, *UserRoute, user_route, onUserRouteRequest);
+                        if (comptime ssl_enabled and !bun.Environment.isWindows) {
+                            if (this.h3_app) |h3_app| h3_app.method(method_val, user_route.route.path, *UserRoute, user_route, onH3UserRouteRequest);
+                        }
                         if (is_star_path) {
                             star_methods_covered_by_user.insert(method_val);
                         }
@@ -2642,6 +2718,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             for (this.config.negative_routes.items) |route_path| {
                 app.head(route_path, *ThisServer, this, onRequest);
                 app.any(route_path, *ThisServer, this, onRequest);
+                if (comptime ssl_enabled and !bun.Environment.isWindows) {
+                    if (this.h3_app) |h3_app| h3_app.any(route_path, *ThisServer, this, onH3Request);
+                }
             }
 
             // --- 5. Register static routes & Track "/*" Coverage ---
@@ -2753,6 +2832,19 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
+            // H3 fallback: same precedence as H1 (user routes already mirrored
+            // above), node:http isn't supported over H3 so it falls through to
+            // fetch().
+            if (comptime ssl_enabled and !bun.Environment.isWindows) {
+                if (this.h3_app) |h3_app| {
+                    if (this.config.onRequest != .zero) {
+                        h3_app.any("/*", *ThisServer, this, onH3Request);
+                    } else {
+                        h3_app.any("/*", *ThisServer, this, onH3404);
+                    }
+                }
+            }
+
             if (should_add_chrome_devtools_json_route) {
                 app.get(chrome_devtools_route, *ThisServer, this, onChromeDevToolsJSONRequest);
             }
@@ -2800,6 +2892,18 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 };
 
                 this.app = app;
+
+                if (comptime !bun.Environment.isWindows) {
+                    if (this.config.h3) {
+                        this.h3_app = uws.H3.App.create(ssl_options) orelse {
+                            if (!globalThis.hasException()) {
+                                globalThis.throw("Failed to create HTTP/3 server", .{}) catch {};
+                            }
+                            this.deinit();
+                            return .zero;
+                        };
+                    }
+                }
 
                 route_list_value = this.setRoutes();
 
@@ -2903,17 +3007,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     }
 
                     if (comptime ssl_enabled and !bun.Environment.isWindows) {
-                        if (this.config.h3) {
-                            const ssl_config = this.config.ssl_config.?;
-                            const h3_app = uws.H3.App.create(ssl_config.asUSockets()) orelse {
-                                if (!globalThis.hasException()) {
-                                    globalThis.throw("Failed to create HTTP/3 server", .{}) catch {};
-                                }
-                                this.deinit();
-                                return .zero;
-                            };
-                            this.h3_app = h3_app;
-                            h3_app.any("/*", *ThisServer, this, onH3Request);
+                        if (this.h3_app) |h3_app| {
                             // Same UDP port as the TCP listener so Alt-Svc works.
                             const h3_port: u16 = if (this.listener) |ls| @intCast(ls.getLocalPort()) else tcp.port;
                             h3_app.listenWithConfig(*ThisServer, this, onH3Listen, .{ .port = h3_port, .host = host });
@@ -2978,7 +3072,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
 pub const AnyRequestContext = @import("./server/AnyRequestContext.zig");
 pub const NewRequestContext = @import("./server/RequestContext.zig").NewRequestContext;
-const H3Handler = if (bun.Environment.isWindows) struct {} else @import("./server/H3Handler.zig");
 
 pub const SavedRequest = struct {
     js_request: jsc.Strong.Optional,
@@ -3483,6 +3576,16 @@ extern "c" fn Bun__ServerRouteList__callRoute(
     routeListObject: jsc.JSValue,
     requestObject: *jsc.JSValue,
     req: *uws.Request,
+) jsc.JSValue;
+
+extern "c" fn Bun__ServerRouteList__callRouteH3(
+    globalObject: *jsc.JSGlobalObject,
+    index: u32,
+    requestPtr: *Request,
+    serverObject: jsc.JSValue,
+    routeListObject: jsc.JSValue,
+    requestObject: *jsc.JSValue,
+    req: *anyopaque,
 ) jsc.JSValue;
 
 extern "c" fn Bun__ServerRouteList__create(

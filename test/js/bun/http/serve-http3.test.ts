@@ -78,6 +78,10 @@ const server = serve({
   tls: ${JSON.stringify(tls)},
   h3: true,
   h1: process.env.H3_ONLY !== "1",
+  routes: {
+    "/api/:id": req => new Response("id=" + req.params.id, { headers: { "x-route": "api" } }),
+    "/route-only": { POST: () => new Response("posted") },
+  },
   async fetch(req) {
     const url = new URL(req.url);
     if (url.pathname === "/hello") {
@@ -109,6 +113,23 @@ const server = serve({
       await new Promise(r => setTimeout(r, 50));
       return new Response("late");
     }
+    if (url.pathname === "/stream") {
+      return new Response(
+        new ReadableStream({
+          async start(ctrl) {
+            for (const c of ["one ", "two ", "three"]) {
+              ctrl.enqueue(new TextEncoder().encode(c));
+              await new Promise(r => setTimeout(r, 5));
+            }
+            ctrl.close();
+          },
+        }),
+        { headers: { "content-type": "text/plain" } },
+      );
+    }
+    if (url.pathname === "/file") {
+      return new Response(Bun.file(process.env.BIG_FILE));
+    }
     return new Response("not found: " + url.pathname, { status: 404 });
   },
 });
@@ -117,12 +138,18 @@ console.error("PORT=" + server.port);
 process.stdin.on("data", () => {}); // keep alive
 `;
 
-async function withServer(fn: (port: number) => Promise<void>, env: Record<string, string> = {}): Promise<void> {
-  using dir = tempDir("serve-http3", { "server.mjs": fixture });
+async function withServer(
+  fn: (port: number, dir: string) => Promise<void>,
+  env: Record<string, string> = {},
+): Promise<void> {
+  using dir = tempDir("serve-http3", {
+    "server.mjs": fixture,
+    "big.bin": Buffer.alloc(200 * 1024, "FILEfile"),
+  });
   const proc = Bun.spawn({
     cmd: [bunExe(), "server.mjs"],
     cwd: String(dir),
-    env: { ...bunEnv, ...env },
+    env: { ...bunEnv, ...env, BIG_FILE: join(String(dir), "big.bin") },
     stdout: "inherit",
     stderr: "pipe",
     stdin: "pipe",
@@ -148,7 +175,7 @@ async function withServer(fn: (port: number) => Promise<void>, env: Record<strin
   })();
   expect(port).toBeGreaterThan(0);
   try {
-    await fn(port);
+    await fn(port, String(dir));
   } finally {
     proc.stdin?.end();
     proc.kill();
@@ -262,6 +289,44 @@ describe("Bun.serve HTTP/3", () => {
       const { stdout, exitCode } = await curl3(port, "/nope", ["-D", "-"]);
       expect(stdout).toContain("HTTP/3 404");
       expect(stdout).toContain("not found: /nope");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  itH3("routes: handler with :params", async () => {
+    await withServer(async port => {
+      const { stdout, exitCode } = await curl3(port, "/api/abc%20123", ["-D", "-"]);
+      expect(stdout).toContain("HTTP/3 200");
+      expect(stdout).toContain("x-route: api");
+      expect(stdout).toContain("id=abc 123");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  itH3("routes: per-method handler", async () => {
+    await withServer(async port => {
+      const post = await curl3(port, "/route-only", ["-X", "POST"]);
+      expect(post.stdout).toBe("posted");
+      // GET falls through to fetch() since the route is POST-only
+      const get = await curl3(port, "/route-only");
+      expect(get.stdout).toContain("not found: /route-only");
+    });
+  });
+
+  itH3("ReadableStream response body", async () => {
+    await withServer(async port => {
+      const { stdout, exitCode } = await curl3(port, "/stream");
+      expect(stdout).toBe("one two three");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  itH3("Bun.file response body", async () => {
+    await withServer(async port => {
+      const { raw, exitCode } = await curl3(port, "/file");
+      expect(raw.length).toBe(200 * 1024);
+      expect(new TextDecoder().decode(raw.subarray(0, 8))).toBe("FILEfile");
+      expect(new TextDecoder().decode(raw.subarray(-8))).toBe("FILEfile");
       expect(exitCode).toBe(0);
     });
   });

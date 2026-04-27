@@ -1,6 +1,9 @@
 #include "CookieMap.h"
 #include "JSCookieMap.h"
 #include <bun-uws/src/App.h>
+#ifndef _WIN32
+#include <bun-uws/src/Http3Response.h>
+#endif
 #include "helpers.h"
 #include <wtf/text/ParsingUtilities.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -10,8 +13,8 @@
 #include <wtf/HashSet.h>
 namespace WebCore {
 
-template<bool isSSL>
-void CookieMap__writeFetchHeadersToUWSResponse(CookieMap* cookie_map, JSC::JSGlobalObject* global_this, uWS::HttpResponse<isSSL>* res)
+template<typename Res>
+static void CookieMap__writeFetchHeadersToUWSResponse(CookieMap* cookie_map, JSC::JSGlobalObject* global_this, Res* res)
 {
     auto& vm = JSC::getVM(global_this);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -22,12 +25,20 @@ void CookieMap__writeFetchHeadersToUWSResponse(CookieMap* cookie_map, JSC::JSGlo
         res->writeHeader("Set-Cookie", utf8.data());
     }
 }
-extern "C" void CookieMap__write(CookieMap* cookie_map, JSC::JSGlobalObject* global_this, bool ssl_enabled, void* arg2)
+extern "C" void CookieMap__write(CookieMap* cookie_map, JSC::JSGlobalObject* global_this, int kind, void* arg2)
 {
-    if (ssl_enabled) {
-        CookieMap__writeFetchHeadersToUWSResponse<true>(cookie_map, global_this, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
-    } else {
-        CookieMap__writeFetchHeadersToUWSResponse<false>(cookie_map, global_this, reinterpret_cast<uWS::HttpResponse<false>*>(arg2));
+    switch (kind) {
+    case 1:
+        CookieMap__writeFetchHeadersToUWSResponse(cookie_map, global_this, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
+        break;
+#if defined(LIBUS_USE_QUIC)
+    case 2:
+        CookieMap__writeFetchHeadersToUWSResponse(cookie_map, global_this, reinterpret_cast<uWS::Http3Response*>(arg2));
+        break;
+#endif
+    default:
+        CookieMap__writeFetchHeadersToUWSResponse(cookie_map, global_this, reinterpret_cast<uWS::HttpResponse<false>*>(arg2));
+        break;
     }
 }
 

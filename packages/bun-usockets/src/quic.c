@@ -10,7 +10,6 @@
 #include <assert.h>
 #include <errno.h>
 #include <pthread.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -457,6 +456,8 @@ static const struct lsquic_hset_if us_quic_hset_if = {
     .hsi_flags = 0,
 };
 
+#ifdef BUN_DEBUG
+#include <stdio.h>
 static int us_quic_log_buf(void *ctx, const char *buf, size_t len) {
     (void) ctx;
     fwrite(buf, 1, len, stderr);
@@ -464,13 +465,16 @@ static int us_quic_log_buf(void *ctx, const char *buf, size_t len) {
     return 0;
 }
 static const struct lsquic_logger_if us_quic_logger = { us_quic_log_buf };
+#endif
 
 static void us_quic_global_init_once(void) {
     lsquic_global_init(LSQUIC_GLOBAL_SERVER);
+#ifdef BUN_DEBUG
     if (getenv("BUN_DEBUG_lsquic")) {
         lsquic_logger_init(&us_quic_logger, NULL, LLTS_HHMMSSUS);
         lsquic_set_log_level("debug");
     }
+#endif
 }
 
 static void us_quic_prepare_ssl_ctx(SSL_CTX *ssl) {

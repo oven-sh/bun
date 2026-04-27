@@ -158,12 +158,49 @@ if (isDockerEnabled()) {
       const table2 = "t_" + randomUUIDv7("hex").replaceAll("-", "");
       await sql.unsafe(`CREATE TEMPORARY TABLE ${table2} (v numeric NOT NULL)`);
       await sql.unsafe(`INSERT INTO ${table2} VALUES (0)`);
-      const zeroNoScale = await sql.unsafe(`SELECT v FROM ${table2} LIMIT $1`, [1]);
-      expect(zeroNoScale[0].v).toBe("0");
+      expect((await sql.unsafe(`SELECT v FROM ${table2}`))[0].v).toBe("0");
+      expect((await sql.unsafe(`SELECT v FROM ${table2} LIMIT $1`, [1]))[0].v).toBe("0");
+
+      // numeric(p, 0) — explicit zero scale, same result on both paths.
+      const table3 = "t_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql.unsafe(`CREATE TEMPORARY TABLE ${table3} (v numeric(10, 0) NOT NULL)`);
+      await sql.unsafe(`INSERT INTO ${table3} VALUES (0)`);
+      expect((await sql.unsafe(`SELECT v FROM ${table3}`))[0].v).toBe("0");
+      expect((await sql.unsafe(`SELECT v FROM ${table3} LIMIT $1`, [1]))[0].v).toBe("0");
 
       // Negative zero-adjacent values still format correctly on the prepared path.
       const negRows = await sql.unsafe(`SELECT CAST($1 AS numeric(10,2)) AS v`, ["-0.50"]);
       expect(negRows[0].v).toBe("-0.50");
+    });
+
+    test("numeric renders small fractional values on prepared/binary path", async () => {
+      // Regression: the fractional-digits loop in the binary-numeric decoder
+      // conflated postgres' digit-index (+1) and dscale-position (+4) counters,
+      // under-padding leading zeros for values whose first base-10000 digit
+      // group sits at weight <= -3 — i.e. anything smaller than ~1e-8. So
+      // e.g. 0.000000001234 came back as "0.000012340000" on the binary path.
+      await using sql = postgres(options);
+
+      const cases: Array<[string, string]> = [
+        ["0.1", "0.1"],
+        ["0.01", "0.01"],
+        ["0.001", "0.001"],
+        ["0.0001", "0.0001"],
+        ["0.00001", "0.00001"],
+        ["0.000001", "0.000001"],
+        ["0.0000001", "0.0000001"],
+        ["0.00000001", "0.00000001"],
+        ["0.000000001", "0.000000001"],
+        ["0.0000000001", "0.0000000001"],
+        ["0.000000001234", "0.000000001234"],
+        ["0.000000000000000001234", "0.000000000000000001234"],
+        ["-0.00000001234", "-0.00000001234"],
+      ];
+
+      for (const [input, expected] of cases) {
+        const r = await sql.unsafe(`SELECT CAST($1 AS numeric) AS v`, [input]);
+        expect(r[0].v).toBe(expected);
+      }
     });
 
     describe("Array helpers", () => {

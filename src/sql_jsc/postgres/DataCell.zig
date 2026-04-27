@@ -812,10 +812,14 @@ fn parseBinaryNumeric(input: []const u8, result: *std.array_list.Managed(u8)) !P
     }
     // Output all digits before the decimal point
 
-    var scale_start: i32 = 0;
+    // scale_start is the base-10000 digit index of the first fractional
+    // position — i.e. `weight + 1`. For weight >= 0 this points at the first
+    // digit the fractional loop should consume from the reader; for
+    // weight < 0 it is negative and the loop emits |scale_start| zero groups
+    // of leading fractional padding before reading any digits.
+    const scale_start: i32 = @as(i32, weight) + 1;
     if (weight < 0) {
         try result.append('0');
-        scale_start = @as(i32, @intCast(weight)) + 1;
     } else {
         var idx: usize = 0;
         var first_non_zero = false;
@@ -842,12 +846,19 @@ fn parseBinaryNumeric(input: []const u8, result: *std.array_list.Managed(u8)) !P
     // We initially put out a multiple of 4 digits, then truncate if needed.
     if (dscale > 0) {
         try result.append('.');
-        // negative scale means we need to add zeros before the decimal point
-        // greater than ndigits means we need to add zeros after the decimal point
-        var idx: isize = scale_start;
+        // Mirror postgres' get_str_from_var: `d` walks the base-10000 digit
+        // array (starting at `weight + 1`, stepping by 1), while `i` walks
+        // dscale positions (stepping by DEC_DIGITS = 4). Conflating the two
+        // under-pads fractional values whose first digit group sits at
+        // `weight <= -3` — e.g. 0.000000001234 (weight=-3).
+        var d: isize = scale_start;
+        var i: isize = 0;
         const end: usize = result.items.len + @as(usize, @intCast(dscale));
-        while (idx < dscale) : (idx += 4) {
-            if (idx >= 0 and idx < dscale) {
+        while (i < dscale) : ({
+            d += 1;
+            i += 4;
+        }) {
+            if (d >= 0 and d < ndigits) {
                 const digit = reader.readInt(u16, .big) catch 0;
                 log("dscale digit: {d}", .{digit});
                 var digit_str: [4]u8 = undefined;

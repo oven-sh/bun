@@ -783,9 +783,10 @@ const c = struct {
 const log = bun.Output.scoped(.h3_client, .hidden);
 
 const std = @import("std");
+
 const bun = @import("bun");
-const jsc = bun.jsc;
-const uws = bun.uws;
-const strings = bun.strings;
-const picohttp = bun.picohttp;
 const HTTPClient = bun.http;
+const jsc = bun.jsc;
+const picohttp = bun.picohttp;
+const strings = bun.strings;
+const uws = bun.uws;

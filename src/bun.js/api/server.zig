@@ -1593,7 +1593,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
             var listener = this.listener orelse {
                 if (comptime has_h3) {
-                    if (this.h3_app != null) this.unref();
+                    if (this.h3_app != null) {
+                        this.unref();
+                        this.notifyInspectorServerStopped();
+                        if (abrupt) this.flags.terminated = true;
+                    }
                 }
                 return;
             };

@@ -13,6 +13,8 @@
  */
 import { which } from "bun";
 import { tls } from "harness";
+import os from "node:os";
+import path from "node:path";
 
 let resolved: string | null | undefined;
 
@@ -55,7 +57,7 @@ export async function fetchH3(input: string | URL, init: Init = {}): Promise<Res
 
   // curl writes headers to a temp file so the body stream stays clean for
   // binary payloads; --raw stops curl from re-chunking what it receives.
-  const headerFile = `/tmp/.fh3-${process.pid}-${Math.random().toString(36).slice(2)}`;
+  const headerFile = path.join(os.tmpdir(), `.fh3-${process.pid}-${Math.random().toString(36).slice(2)}`);
 
   const args: string[] = [
     "-sk",

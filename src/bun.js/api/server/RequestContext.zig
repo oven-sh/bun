@@ -2388,14 +2388,15 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         resp.endWithoutBody(comptime !http3);
                     }
 
-                    var old = body.value;
-                    body.value.toError(error.RequestBodyTooLarge, globalThis) catch {};
-                    if (old == .Locked) {
-                        var loop = vm.eventLoop();
-                        loop.enter();
-                        defer loop.exit();
-                        old.resolve(&body.value, globalThis, null) catch {};
-                    }
+                    var loop = vm.eventLoop();
+                    loop.enter();
+                    defer loop.exit();
+                    // toErrorInstance handles .Locked itself (rejects the
+                    // promise, deinits the readable, calls onReceiveValue),
+                    // so don't re-resolve a stale copy afterwards.
+                    body.value.toErrorInstance(.{
+                        .Message = bun.String.static("Request body exceeded maxRequestBodySize"),
+                    }, globalThis) catch {};
                     return;
                 }
 

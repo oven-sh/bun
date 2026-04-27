@@ -75,8 +75,14 @@ struct Http3Request {
         unsigned int n = us_quic_stream_header_count(stream);
         for (unsigned int i = 0; i < n; i++) {
             const us_quic_header_t *h = us_quic_stream_header(stream, i);
-            if (h->name_len && h->name[0] == ':') continue;
-            fn(std::string_view{h->name, h->name_len}, std::string_view{h->value, h->value_len});
+            std::string_view name{h->name, h->name_len};
+            if (!name.empty() && name[0] == ':') continue;
+            /* RFC 9114 §4.3.1: a request MAY include both :authority and a
+             * literal Host. :authority is synthesized as host below; drop
+             * the literal so req.headers.get('host') matches req.url and
+             * isn't comma-joined. */
+            if (!authority.empty() && name == "host") continue;
+            fn(name, std::string_view{h->value, h->value_len});
         }
         if (!authority.empty()) fn(std::string_view{"host"}, authority);
     }

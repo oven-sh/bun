@@ -97,15 +97,13 @@ struct us_quic_stream_s {
  *
  * lsquic_engine_process_conns is the only call that turns queued stream
  * writes into UDP packets and runs the protocol state machine. It is driven
- * from three places, none of them per-write:
+ * from two places, neither per-write:
  *
- *   1. us_internal_loop_post (loop.c) — once per epoll iteration, after all
- *      readable/writable polls have been dispatched. Covers the reactive
- *      path: packets arrived, JS handler ran, response was written.
- *   2. drainMicrotasks (event_loop.zig) — after JS microtasks, so an async
- *      handler that resolves and calls resp.end() has its bytes packetized
- *      before the loop blocks in epoll again.
- *   3. lsquic's time-driven state (RTO retransmit, delayed ACK, idle
+ *   1. us_internal_loop_pre / us_internal_loop_post (loop.c) — pre flushes
+ *      writes JS made before the I/O wait (timers, immediates, resolved
+ *      promises); post runs once after all polls are dispatched, covering
+ *      the reactive path (packets arrived → handler ran → response written).
+ *   2. lsquic's time-driven state (RTO retransmit, delayed ACK, idle
  *      timeout): the min earliest_adv_tick across engines is written to
  *      loop->data.quic_next_tick_us; Bun's getTimeout() folds it into the
  *      epoll_pwait2 timeout. No timerfd, no scheduling syscall.
@@ -135,9 +133,6 @@ void us_quic_loop_process(struct us_loop_t *loop) {
     loop->data.quic_next_tick_us = have_tick ? (min_diff < 0 ? 0 : min_diff) : -1;
 }
 
-/* on_data still processes its own context immediately so a recv burst that
- * fills lsquic's incoming queue gets drained before more packets arrive;
- * loop_post then handles the rearm. */
 static void us_quic_process(us_quic_socket_context_t *ctx) {
     if (ctx->processing || !ctx->engine) return;
     ctx->processing = 1;
@@ -814,7 +809,8 @@ const struct us_quic_header_t *us_quic_stream_header(us_quic_stream_t *s, unsign
     return s->hset && i < s->hset->count ? &s->hset->headers[i] : NULL;
 }
 
-void *us_quic_socket_ext(us_quic_socket_t *s) { return s + 1; }
+/* No per-conn ext is allocated (Http3Context only needs per-stream ext). */
+void *us_quic_socket_ext(us_quic_socket_t *s) { (void) s; return NULL; }
 us_quic_socket_context_t *us_quic_socket_context(us_quic_socket_t *s) { return s->ctx; }
 
 void us_quic_socket_remote_address(us_quic_socket_t *s, char *buf, int *len, int *port, int *is_ipv6) {

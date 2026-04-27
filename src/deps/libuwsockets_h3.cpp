@@ -111,6 +111,12 @@ void uws_h3_res_end_stream(uws_h3_res_t* res, bool close_connection)
     r->sendTerminatingChunk(close_connection);
 }
 
+void uws_h3_res_force_close(uws_h3_res_t* res)
+{
+    ((Http3Response*)res)->clearOnWritableAndAborted();
+    us_quic_stream_close((us_quic_stream_t*)res);
+}
+
 bool uws_h3_res_try_end(uws_h3_res_t* res, const char* bytes, size_t len, size_t total_len, bool close)
 {
     return ((Http3Response*)res)->tryEnd(sv(bytes, len), total_len, close).first;

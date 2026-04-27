@@ -2759,7 +2759,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 app.head(route_path, *ThisServer, this, onRequest);
                 app.any(route_path, *ThisServer, this, onRequest);
                 if (comptime ssl_enabled and !bun.Environment.isWindows) {
-                    if (this.h3_app) |h3_app| h3_app.any(route_path, *ThisServer, this, onH3Request);
+                    if (this.h3_app) |h3_app| {
+                        h3_app.head(route_path, *ThisServer, this, onH3Request);
+                        h3_app.any(route_path, *ThisServer, this, onH3Request);
+                    }
                 }
             }
 

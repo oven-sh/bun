@@ -157,7 +157,7 @@ pub const Response = opaque {
         return addr;
     }
     pub fn forceClose(this: *Response) void {
-        c.uws_h3_res_end_stream(this, true);
+        c.uws_h3_res_force_close(this);
     }
 
     pub fn onWritable(
@@ -380,6 +380,7 @@ const c = struct {
     extern fn uws_h3_res_state(*Response) State;
     extern fn uws_h3_res_end(*Response, [*c]const u8, usize, bool) void;
     extern fn uws_h3_res_end_stream(*Response, bool) void;
+    extern fn uws_h3_res_force_close(*Response) void;
     extern fn uws_h3_res_try_end(*Response, [*c]const u8, usize, usize, bool) bool;
     extern fn uws_h3_res_end_without_body(*Response, bool) void;
     extern fn uws_h3_res_pause(*Response) void;

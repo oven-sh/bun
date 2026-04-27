@@ -40,6 +40,10 @@ struct WebTransportSessionData {
      * could splice a dead stream's bytes onto a fresh one. */
     struct InflightStream { unsigned long long id; std::string buf; };
     std::vector<InflightStream> inflight;
+    /* Sum of inflight[].buf.length(); per-stream is capped at maxPayloadLength
+     * but without an aggregate the client could open N streams each at the
+     * cap-minus-one. */
+    size_t inflightBytes = 0;
     bool isShuttingDown = false;
     /* Incoming WT_CLOSE_SESSION capsule reassembly on the CONNECT stream. */
     std::string capsuleBuf;

@@ -152,7 +152,11 @@ struct Http3Response {
      * as `this`) or nullptr if the stream was already responded to. */
     struct WebTransportSession *upgradeWebTransport(void *userData) {
         Http3ResponseData *d = getHttpResponseData();
-        if (d->state & Http3ResponseData::HTTP_WRITE_CALLED) return nullptr;
+        /* endWithoutBody()/the zero-body internalEnd() path complete the
+         * response without ever setting HTTP_WRITE_CALLED, so gate on
+         * HTTP_RESPONSE_PENDING — the bit markDone() always clears. */
+        if (!(d->state & Http3ResponseData::HTTP_RESPONSE_PENDING)
+            || (d->state & Http3ResponseData::HTTP_WRITE_CALLED)) return nullptr;
         writeStatus("200 OK");
         writeHeader("sec-webtransport-http3-draft", "draft02");
         sendBufferedHeaders(d, false);

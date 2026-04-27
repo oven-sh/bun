@@ -75,15 +75,22 @@ struct Http3Context {
             std::string *buf = nullptr;
             for (auto &i : d->inflight) if (i.id == sid) { buf = &i.buf; break; }
             if (!buf) { d->inflight.push_back({sid, {}}); buf = &d->inflight.back().buf; }
-            if (buf->length() + len > cd->wt.maxPayloadLength) {
+            /* maxPayloadLength caps each stream; maxBackpressure caps the
+             * session aggregate so opening many streams just under the
+             * per-stream cap can't sidestep the budget. */
+            if (buf->length() + len > cd->wt.maxPayloadLength
+                || d->inflightBytes + len > cd->wt.maxBackpressure) {
                 us_quic_stream_close(s);
+                d->inflightBytes -= buf->length();
                 for (auto it = d->inflight.begin(); it != d->inflight.end(); ++it)
                     if (it->id == sid) { d->inflight.erase(it); break; }
                 return;
             }
             buf->append(data, len);
+            d->inflightBytes += len;
             if (fin) {
                 std::string msg = std::move(*buf);
+                d->inflightBytes -= msg.length();
                 for (auto it = d->inflight.begin(); it != d->inflight.end(); ++it)
                     if (it->id == sid) { d->inflight.erase(it); break; }
                 if (cd->wt.messageHandler)
@@ -98,7 +105,7 @@ struct Http3Context {
             if (!d) return;
             unsigned long long sid = us_quic_stream_id(s);
             for (auto it = d->inflight.begin(); it != d->inflight.end(); ++it)
-                if (it->id == sid) { d->inflight.erase(it); break; }
+                if (it->id == sid) { d->inflightBytes -= it->buf.length(); d->inflight.erase(it); break; }
         });
 
         us_quic_socket_context_on_datagram(ctx, [](us_quic_stream_t *session, const char *data, unsigned len) {

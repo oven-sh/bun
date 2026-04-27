@@ -32,5 +32,79 @@ else
   echo "cfg already has release-tier (or cfg not at $CFG)"
 fi
 
+# 3. Bring tailscale back via a *userspace* tailscaled — no root needed.
+# The system-daemon plist was removed during the failed brew migration and
+# /Library/LaunchDaemons is root-only, so we run tailscaled with
+# --tun=userspace-networking from a user LaunchAgent instead. That's enough
+# for tailscale-ssh (it's tailscaled's own SSH server, not OS sshd). Once
+# we're back in via tailscale-ssh as root, we'll reinstall the system daemon
+# properly and remove this LaunchAgent.
+#
+# Only act on the box that's actually missing the system daemon — siblings
+# have a working /Library/LaunchDaemons plist and a live `tailscale status`.
+if [ ! -f /Library/LaunchDaemons/com.tailscale.tailscaled.plist ] \
+   && ! /usr/local/bin/tailscale status >/dev/null 2>&1; then
+
+  echo "--- system tailscaled missing; bootstrapping userspace daemon"
+
+  KEY="$(buildkite-agent secret get TAILSCALE_AUTH_KEY_TMP 2>/dev/null || true)"
+  if [ -z "$KEY" ]; then
+    echo "WARN: TAILSCALE_AUTH_KEY_TMP secret not set — skipping tailscale bring-up"
+  else
+    TS_HOME="$HOME/.tailscale-userspace"
+    SOCK="$TS_HOME/tailscaled.sock"
+    mkdir -p "$TS_HOME" "$HOME/Library/LaunchAgents"
+
+    # User LaunchAgent so it survives the daily reboot until we replace it
+    # with the real system daemon. RunAtLoad+KeepAlive = start at login and
+    # restart on crash.
+    cat > "$HOME/Library/LaunchAgents/com.tailscale.userspace.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.tailscale.userspace</string>
+  <key>ProgramArguments</key><array>
+    <string>/usr/local/bin/tailscaled</string>
+    <string>--tun=userspace-networking</string>
+    <string>--statedir=$TS_HOME</string>
+    <string>--socket=$SOCK</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>$TS_HOME/tailscaled.log</string>
+  <key>StandardErrorPath</key><string>$TS_HOME/tailscaled.log</string>
+</dict></plist>
+PLIST
+
+    # Start now. bootstrap is idempotent-ish; ignore "already loaded" noise.
+    launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.tailscale.userspace.plist" 2>&1 || true
+    launchctl kickstart -k "gui/$(id -u)/com.tailscale.userspace" 2>&1 || true
+
+    # Give tailscaled a moment to open its socket.
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      [ -S "$SOCK" ] && break
+      sleep 1
+    done
+
+    if [ -S "$SOCK" ]; then
+      # Register as a fresh node; we'll merge/clean up in the admin console.
+      # Hostname suffix makes it obvious this is the temporary userspace node.
+      /usr/local/bin/tailscale --socket="$SOCK" up \
+        --auth-key="$KEY" \
+        --ssh \
+        --hostname="darwin-test-x64-1-userspace" \
+        --advertise-tags=tag:server \
+        --accept-risk=all 2>&1
+      echo "--- tailscale userspace status:"
+      /usr/local/bin/tailscale --socket="$SOCK" status 2>&1 | head -3
+    else
+      echo "ERROR: tailscaled socket never appeared"
+      tail -n 40 "$TS_HOME/tailscaled.log" 2>/dev/null || true
+    fi
+  fi
+else
+  echo "system tailscaled present or already up — skipping userspace bring-up"
+fi
+
 echo "--- done; agent will pick up cfg on next restart"
 exit 0

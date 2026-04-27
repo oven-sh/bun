@@ -11,8 +11,19 @@ const keyPath = join(dir, "key.pem");
 spawnSync(
   "openssl",
   [
-    "req", "-x509", "-nodes", "-newkey", "rsa:2048", "-days", "365",
-    "-subj", "/CN=localhost", "-keyout", keyPath, "-out", certPath,
+    "req",
+    "-x509",
+    "-nodes",
+    "-newkey",
+    "rsa:2048",
+    "-days",
+    "365",
+    "-subj",
+    "/CN=localhost",
+    "-keyout",
+    keyPath,
+    "-out",
+    certPath,
   ],
   { stdio: "ignore" },
 );

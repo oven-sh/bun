@@ -92,9 +92,11 @@ pub const BunSpawn = struct {
 
     pub const Attr = struct {
         detached: bool = false,
+        new_process_group: bool = false,
         pty_slave_fd: i32 = -1,
         flags: u16 = 0,
         reset_signals: bool = false,
+        linux_pdeathsig: i32 = 0,
 
         pub fn init() !Attr {
             return Attr{};
@@ -108,7 +110,13 @@ pub const BunSpawn = struct {
 
         pub fn set(self: *Attr, flags: u16) !void {
             self.flags = flags;
-            self.detached = (flags & bun.c.POSIX_SPAWN_SETSID) != 0;
+            // FreeBSD's <spawn.h> has no POSIX_SPAWN_SETSID; bun-spawn.cpp
+            // calls setsid() in the child for `detached`, which process.zig
+            // sets directly on this struct BEFORE calling set(). Preserve
+            // that value when the flag bit isn't available.
+            if (comptime @hasDecl(bun.c, "POSIX_SPAWN_SETSID")) {
+                self.detached = (flags & bun.c.POSIX_SPAWN_SETSID) != 0;
+            }
         }
 
         pub fn resetSignals(self: *Attr) !void {
@@ -268,8 +276,10 @@ pub const PosixSpawn = struct {
     const BunSpawnRequest = extern struct {
         chdir_buf: ?[*:0]u8 = null,
         detached: bool = false,
+        new_process_group: bool = false,
         actions: ActionsList = .{},
         pty_slave_fd: i32 = -1,
+        linux_pdeathsig: i32 = 0,
 
         const ActionsList = extern struct {
             ptr: ?[*]const BunSpawn.Action = null,
@@ -331,7 +341,7 @@ pub const PosixSpawn = struct {
         //   setsid() + ioctl(TIOCSCTTY) before exec, which system posix_spawn can't do.
         //   For non-PTY spawns on macOS, we use system posix_spawn which is safer
         //   (Apple's posix_spawn uses a kernel fast-path that avoids fork() entirely).
-        const use_bun_spawn = Environment.isLinux or (Environment.isMac and pty_slave_fd >= 0);
+        const use_bun_spawn = Environment.isLinux or Environment.isFreeBSD or (Environment.isMac and pty_slave_fd >= 0);
 
         if (use_bun_spawn) {
             return BunSpawnRequest.spawn(
@@ -346,7 +356,9 @@ pub const PosixSpawn = struct {
                     },
                     .chdir_buf = if (actions) |a| a.chdir_buf else null,
                     .detached = detached,
+                    .new_process_group = if (attr) |a| a.new_process_group else false,
                     .pty_slave_fd = pty_slave_fd,
+                    .linux_pdeathsig = if (attr) |a| a.linux_pdeathsig else 0,
                 },
                 argv,
                 envp,
@@ -374,8 +386,13 @@ pub const PosixSpawn = struct {
 
             // Pass through all flags from the BunSpawn.Attr
             if (attr) |a| {
-                if (a.flags != 0) {
-                    posix_attr.set(a.flags) catch {};
+                var flags = a.flags;
+                if (a.new_process_group) {
+                    flags |= bun.c.POSIX_SPAWN_SETPGROUP;
+                    // pgroup defaults to 0 in a freshly-init'd attr, i.e. child's own pid.
+                }
+                if (flags != 0) {
+                    posix_attr.set(flags) catch {};
                 }
                 if (a.reset_signals) {
                     posix_attr.resetSignals() catch {};
@@ -500,11 +517,11 @@ pub const PosixSpawn = struct {
     }
 
     /// Same as waitpid, but also returns resource usage information.
-    pub fn wait4(pid: pid_t, flags: u32, usage: ?*std.posix.rusage) Maybe(WaitPidResult) {
+    pub fn wait4(pid: pid_t, flags: u32, usage: ?*process.Rusage) Maybe(WaitPidResult) {
         const PidStatus = c_int;
         var status: PidStatus = 0;
         while (true) {
-            const rc = system.wait4(pid, &status, @as(c_int, @intCast(flags)), usage);
+            const rc = system.wait4(pid, &status, @as(c_int, @intCast(flags)), @ptrCast(usage));
             switch (errno(rc)) {
                 .SUCCESS => return Maybe(WaitPidResult){
                     .result = .{

@@ -4261,13 +4261,30 @@ declare module "bun" {
         };
   };
 
+  type WebSocketOptionsCompression = {
+    /**
+     * Whether to offer the `permessage-deflate` extension in the WebSocket
+     * upgrade request. Pass `false` to suppress the `Sec-WebSocket-Extensions`
+     * header entirely — matching the `ws` package's `perMessageDeflate: false`
+     * option.
+     *
+     * Defaults to `true` (the upgrade request advertises
+     * `permessage-deflate; client_max_window_bits`). Any falsy value
+     * (`false`, `null`, `0`, `""`, explicit `undefined`) disables the offer.
+     *
+     * @default true
+     */
+    perMessageDeflate?: boolean;
+  };
+
   /**
    * Constructor options for the `Bun.WebSocket` client
    */
   type WebSocketOptions = WebSocketOptionsProtocolsOrProtocol &
     WebSocketOptionsTLS &
     WebSocketOptionsHeaders &
-    WebSocketOptionsProxy;
+    WebSocketOptionsProxy &
+    WebSocketOptionsCompression;
 
   interface WebSocketEventMap {
     close: CloseEvent;
@@ -7161,8 +7178,13 @@ declare module "bun" {
 
     /**
      * Access extra file descriptors passed to the `stdio` option in the options object.
+     *
+     * Entries beyond index 2 are `number` for `"pipe"` slots and, on POSIX, for slots
+     * where a raw file descriptor was supplied (the same fd is returned; it remains
+     * owned by the caller and is never closed by the subprocess). Other slots —
+     * including raw fds on Windows — are `null`.
      */
-    readonly stdio: [null, null, null, ...number[]];
+    readonly stdio: [null, null, null, ...(number | null)[]];
 
     /**
      * This returns the same value as {@link Subprocess.stdout}

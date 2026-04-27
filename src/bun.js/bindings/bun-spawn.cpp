@@ -1,6 +1,6 @@
 #include "root.h"
 
-#if OS(LINUX) || OS(DARWIN)
+#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 
 #include <fcntl.h>
 #include <cstring>
@@ -15,6 +15,7 @@
 
 #if OS(LINUX)
 #include <sys/syscall.h>
+#include <sys/prctl.h>
 #endif
 
 extern char** environ;
@@ -32,7 +33,7 @@ static inline int getMaxFd(int start, int end)
 {
 #if OS(LINUX)
     int maxfd = static_cast<int>(sysconf(_SC_OPEN_MAX));
-#elif OS(DARWIN)
+#elif OS(DARWIN) || OS(FREEBSD)
     int maxfd = getdtablesize();
 #else
     int maxfd = 1024;
@@ -97,8 +98,10 @@ typedef struct bun_spawn_file_action_list_t {
 typedef struct bun_spawn_request_t {
     const char* chdir;
     bool detached;
+    bool new_process_group; // setpgid(0, 0) so kill(-pid, sig) reaches descendants
     bun_spawn_file_action_list_t actions;
     int pty_slave_fd; // -1 if not using PTY, otherwise the slave fd to set as controlling terminal
+    int linux_pdeathsig; // 0 = unset; otherwise signal delivered to child when parent thread dies
 } bun_spawn_request_t;
 
 // Raw exit syscall that doesn't go through libc.
@@ -123,7 +126,7 @@ extern "C" ssize_t posix_spawn_bun(
     sigset_t blockall, oldmask;
     int res = 0, cs = 0;
 
-#if OS(DARWIN)
+#if OS(DARWIN) || OS(FREEBSD)
     // On macOS, we use fork() which requires a self-pipe trick to detect exec failures.
     // Create a pipe for child-to-parent error communication.
     // The write end has O_CLOEXEC so it's automatically closed on successful exec.
@@ -138,7 +141,9 @@ extern "C" ssize_t posix_spawn_bun(
 
     sigfillset(&blockall);
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
+#if !OS(ANDROID)
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
+#endif
 
 #if OS(LINUX)
     // On Linux, use vfork() for performance. The parent is suspended until
@@ -155,7 +160,7 @@ extern "C" ssize_t posix_spawn_bun(
     pid_t child = fork();
 #endif
 
-#if OS(DARWIN)
+#if OS(DARWIN) || OS(FREEBSD)
     const auto childFailed = [&]() -> ssize_t {
         int err = errno;
         // Write errno to pipe so parent can read it
@@ -193,7 +198,18 @@ extern "C" ssize_t posix_spawn_bun(
         // Make "detached" work, or set up PTY as controlling terminal
         if (request->detached || request->pty_slave_fd >= 0) {
             setsid();
+        } else if (request->new_process_group) {
+            setpgid(0, 0);
         }
+
+#if OS(LINUX)
+        // PR_SET_PDEATHSIG persists across exec, so any executable inherits it.
+        // Under vfork the parent is suspended, so there is no race between
+        // vfork returning and this prctl taking effect.
+        if (request->linux_pdeathsig != 0) {
+            prctl(PR_SET_PDEATHSIG, request->linux_pdeathsig, 0, 0, 0);
+        }
+#endif
 
         // Set PTY slave as controlling terminal for proper job control.
         // TIOCSCTTY may fail if the terminal is already the controlling terminal
@@ -294,14 +310,14 @@ extern "C" ssize_t posix_spawn_bun(
     };
 
     if (child == 0) {
-#if OS(DARWIN)
+#if OS(DARWIN) || OS(FREEBSD)
         // Close read end in child
         close(errpipe[0]);
 #endif
         return startChild();
     }
 
-#if OS(DARWIN)
+#if OS(DARWIN) || OS(FREEBSD)
     // macOS fork() path: use self-pipe trick to detect exec failure
     // Parent: close write end
     close(errpipe[1]);
@@ -366,7 +382,11 @@ extern "C" ssize_t posix_spawn_bun(
 #endif
 
     sigprocmask(SIG_SETMASK, &oldmask, 0);
+#if !OS(ANDROID)
     pthread_setcancelstate(cs, 0);
+#else
+    (void)cs;
+#endif
 
     return res;
 }

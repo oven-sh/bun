@@ -3,12 +3,24 @@
 #include "JSBunRequest.h"
 #include "JavaScriptCore/SlotVisitorMacros.h"
 #include "ErrorCode.h"
+#include "WebCoreJSBuiltins.h"
 
 namespace Bun {
 
+JSC::JSFunction* BakeAdditionsToGlobalObject::wrapComponent(JSGlobalObject* globalObject)
+{
+    auto* function = m_wrapComponent.get();
+    if (!function) {
+        auto& vm = globalObject->vm();
+        function = JSC::JSFunction::create(vm, globalObject, WebCore::bakeSSRResponseWrapComponentCodeGenerator(vm), globalObject);
+        m_wrapComponent.set(vm, globalObject, function);
+    }
+    return function;
+}
+
 void createDevServerFrameworkRequestArgsStructure(JSC::LazyClassStructure::Initializer& init)
 {
-    auto structure = JSC::Structure::create(init.vm, init.global, init.global->objectPrototype(), JSC::TypeInfo(JSC::ObjectType, 0), JSFinalObject::info(), NonArray, 5);
+    auto structure = JSC::Structure::create(init.vm, init.global, init.global->objectPrototype(), JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray, 5);
 
     PropertyOffset offset = 0;
     structure = structure->addPropertyTransition(init.vm, structure, JSC::Identifier::fromString(init.vm, "routerTypeMain"_s), 0, offset);
@@ -26,7 +38,7 @@ extern "C" SYSV_ABI EncodedJSValue Bake__createDevServerFrameworkRequestArgsObje
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto& vm = globalObject->vm();
 
-    auto* zig = jsCast<Zig::GlobalObject*>(globalObject);
+    auto* zig = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     auto* object = JSFinalObject::create(vm, zig->bakeAdditions().m_DevServerFrameworkRequestArgsClassStructure.get(zig));
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
 
@@ -104,7 +116,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBakeGetBundleNewRouteJSFunction, (JSC::JSGlob
         return JSValue::encode(jsUndefined());
     }
 
-    JSBunRequest* request = jsDynamicCast<JSBunRequest*>(requestValue);
+    JSBunRequest* request = dynamicDowncast<JSBunRequest>(requestValue);
     if (!request) {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "request must be a JSBunRequest"_s);
         return JSValue::encode(jsUndefined());

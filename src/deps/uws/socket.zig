@@ -1140,7 +1140,7 @@ pub const InternalSocket = union(enum) {
                 .connected, .connecting, .detached, .pipe => false,
             },
             .pipe => switch (other) {
-                .pipe => if (Environment.isWindows) other.pipe == other.pipe else false,
+                .pipe => if (Environment.isWindows) this.pipe == other.pipe else false,
                 .connected, .connecting, .detached, .upgradedDuplex => false,
             },
         };

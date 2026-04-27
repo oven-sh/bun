@@ -22,6 +22,7 @@
 #include <string.h>
 #ifndef _WIN32
 #include <arpa/inet.h>
+#include <netinet/in.h>
 #endif
 #define CONCURRENT_CONNECTIONS 4
 
@@ -199,6 +200,10 @@ void us_internal_socket_context_link_socket(int ssl, struct us_socket_context_t 
 
 struct us_loop_t *us_socket_context_loop(int ssl, struct us_socket_context_t *context) {
     return context->loop;
+}
+
+struct us_socket_context_t *us_socket_context_next(struct us_socket_context_t *context) {
+    return context->next;
 }
 
 /* Not shared with SSL */

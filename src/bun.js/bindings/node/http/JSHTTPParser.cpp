@@ -24,7 +24,7 @@ void JSHTTPParser::finishCreation(VM& vm)
 template<typename Visitor>
 void JSHTTPParser::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSHTTPParser* thisObject = jsCast<JSHTTPParser*>(cell);
+    JSHTTPParser* thisObject = uncheckedDowncast<JSHTTPParser>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_impl.m_connectionsList);

@@ -130,7 +130,7 @@ static inline EncodedJSValue constructJSURLPattern1(JSGlobalObject* lexicalGloba
 {
     auto& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSURLPatternDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSURLPatternDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
     RefPtr context = castedThis->scriptExecutionContext();
     if (!context) [[unlikely]]
@@ -160,7 +160,7 @@ static inline EncodedJSValue constructJSURLPattern2(JSGlobalObject* lexicalGloba
 {
     auto& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSURLPatternDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSURLPatternDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
     RefPtr context = castedThis->scriptExecutionContext();
     if (!context) [[unlikely]]
@@ -276,7 +276,7 @@ JSObject* JSURLPattern::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSURLPattern::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSURLPatternDOMConstructor, DOMConstructorID::URLPattern>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSURLPatternDOMConstructor, DOMConstructorID::URLPattern>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSURLPattern::destroy(JSC::JSCell* cell)
@@ -289,7 +289,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsURLPatternConstructor, (JSGlobalObject * lexicalGloba
 {
     SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSURLPatternPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSURLPatternPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSURLPattern::getConstructor(vm, prototype->globalObject()));
@@ -419,7 +419,7 @@ static inline JSC::EncodedJSValue jsURLPatternPrototypeFunction_testBody(JSC::JS
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    RefPtr context = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject)->scriptExecutionContext();
+    RefPtr context = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext();
     if (!context) [[unlikely]]
         return JSValue::encode(jsUndefined());
     EnsureStillAliveScope argument0 = callFrame->argument(0);
@@ -443,7 +443,7 @@ static inline JSC::EncodedJSValue jsURLPatternPrototypeFunction_execBody(JSC::JS
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    RefPtr context = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject)->scriptExecutionContext();
+    RefPtr context = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext();
     if (!context) [[unlikely]]
         return JSValue::encode(jsUndefined());
     EnsureStillAliveScope argument0 = callFrame->argument(0);
@@ -467,7 +467,7 @@ JSC::GCClient::IsoSubspace* JSURLPattern::subspaceForImpl(JSC::VM& vm)
 
 void JSURLPattern::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSURLPattern*>(cell);
+    auto* thisObject = uncheckedDowncast<JSURLPattern>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (RefPtr context = thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, context->url().string()));
@@ -537,7 +537,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 URLPattern* JSURLPattern::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSURLPattern*>(value))
+    if (auto* wrapper = dynamicDowncast<JSURLPattern>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

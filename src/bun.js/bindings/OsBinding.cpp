@@ -108,3 +108,20 @@ extern "C" uint64_t Bun__Os__getFreeMemory(void)
     return uv_get_available_memory();
 }
 #endif
+
+#if OS(FREEBSD)
+#include <sys/types.h>
+#include <sys/sysctl.h>
+#include <unistd.h>
+
+// Matches libuv's uv_get_free_memory for FreeBSD: free pages × pagesize.
+extern "C" uint64_t Bun__Os__getFreeMemory(void)
+{
+    int free_pages = 0;
+    size_t len = sizeof(free_pages);
+    if (sysctlbyname("vm.stats.vm.v_free_count", &free_pages, &len, nullptr, 0) != 0) {
+        return 0;
+    }
+    return static_cast<uint64_t>(free_pages) * sysconf(_SC_PAGESIZE);
+}
+#endif

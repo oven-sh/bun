@@ -396,8 +396,9 @@ pub const Run = struct {
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
             if (promise.status() == .rejected) {
-                const handled = vm.uncaughtException(vm.global, promise.result(), true);
-                promise.setHandled(vm.global.vm());
+                const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
+                promise.setHandled();
+                vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 
                 if (vm.hot_reload != .none or handled) {
                     vm.addMainToWatcherIfNeeded();
@@ -420,7 +421,7 @@ pub const Run = struct {
                 }
             }
 
-            _ = promise.result();
+            _ = promise.result(vm.global.vm());
 
             if (vm.log.msgs.items.len > 0) {
                 dumpBuildError(vm);
@@ -458,6 +459,15 @@ pub const Run = struct {
             _ = vm.arena.gc();
             _ = vm.global.vm().runGC(false);
             vm.tick();
+        }
+
+        // Initial synchronous evaluation of the entrypoint is done (TLA may
+        // still be pending and will resolve in the loop below); the embedded
+        // source pages are off the hot path now. No-op unless this is a
+        // compiled standalone binary, and skip under --watch/--hot since those
+        // re-read source on every reload.
+        if (!this.vm.isWatcherEnabled()) {
+            bun.StandaloneModuleGraph.hintSourcePagesDontNeed();
         }
 
         {

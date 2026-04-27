@@ -678,7 +678,7 @@ pub const Archive = opaque {
         return archive_read_data(archive, buf.ptr, buf.len);
     }
     extern fn archive_read_data_into_fd(*Archive, fd: c_int) Result;
-    fn writeZerosToFile(file: bun.sys.File, count: usize) Result {
+    pub fn writeZerosToFile(file: bun.sys.File, count: usize) Result {
         // Use undefined + memset instead of comptime zero-init to reduce binary size
         var zero_buf: [16 * 1024]u8 = undefined;
         @memset(&zero_buf, 0);

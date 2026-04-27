@@ -269,13 +269,15 @@ pub const GenerateHeader = struct {
             fn run() void {
                 if (comptime Environment.isMac) {
                     platform_ = forMac();
-                } else if (comptime Environment.isPosix) {
+                } else if (comptime Environment.isLinux) {
                     platform_ = forLinux();
 
                     const release = bun.sliceTo(&linux_os_name.release, 0);
                     const sliced_string = Semver.SlicedString.init(release, release);
                     const result = Semver.Version.parse(sliced_string);
                     linux_kernel_version = result.version.min();
+                } else if (comptime Environment.isFreeBSD) {
+                    platform_ = forFreeBSD();
                 } else if (Environment.isWindows) {
                     platform_ = Platform{
                         .os = analytics.OperatingSystem.windows,
@@ -344,12 +346,28 @@ pub const GenerateHeader = struct {
             // Confusingly, the "release" tends to contain the kernel version much more frequently than the "version" field.
             const release = bun.sliceTo(&linux_os_name.release, 0);
 
+            if (comptime Environment.isAndroid) {
+                return analytics.Platform{ .os = analytics.OperatingSystem.android, .version = release, .arch = platform_arch };
+            }
+
             // Linux DESKTOP-P4LCIEM 5.10.16.3-microsoft-standard-WSL2 #1 SMP Fri Apr 2 22:23:49 UTC 2021 x86_64 x86_64 x86_64 GNU/Linux
             if (std.mem.indexOf(u8, release, "microsoft") != null) {
                 return analytics.Platform{ .os = analytics.OperatingSystem.wsl, .version = release, .arch = platform_arch };
             }
 
             return analytics.Platform{ .os = analytics.OperatingSystem.linux, .version = release, .arch = platform_arch };
+        }
+
+        // Zig std's `std.c.utsname` has no FreeBSD branch; use translate-c's.
+        var freebsd_os_name: if (Environment.isFreeBSD) bun.c.struct_utsname else void = undefined;
+        fn forFreeBSD() analytics.Platform {
+            freebsd_os_name = std.mem.zeroes(@TypeOf(freebsd_os_name));
+            _ = bun.c.uname(&freebsd_os_name);
+            return analytics.Platform{
+                .os = analytics.OperatingSystem.freebsd,
+                .version = bun.sliceTo(&freebsd_os_name.release, 0),
+                .arch = platform_arch,
+            };
         }
     };
 };

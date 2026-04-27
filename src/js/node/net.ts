@@ -2250,7 +2250,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
         port = 0;
       }
 
-      const isLinux = process.platform === "linux";
+      const isLinux = process.platform === "linux" || process.platform === "android";
 
       if (!Number.isSafeInteger(port) || port < 0) {
         if (path) {

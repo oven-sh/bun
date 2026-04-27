@@ -319,7 +319,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
 
     templ += `
 
-    ${isFirst ? "" : "else"} if (WebCore::${controller}* ${name}Controller = JSC::jsDynamicCast<WebCore::${controller}*>(callFrame->thisValue())) {
+    ${isFirst ? "" : "else"} if (WebCore::${controller}* ${name}Controller = dynamicDowncast<WebCore::${controller}>(callFrame->thisValue())) {
         if (${name}Controller->wrapped() == nullptr) {
             scope.throwException(globalObject, JSC::createTypeError(globalObject, "Cannot start stream with closed controller"_s));
             return JSC::JSValue::encode(JSC::jsUndefined());
@@ -379,7 +379,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
 
 JSC_DEFINE_HOST_FUNCTION(${name}__ref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
-    auto* sink = jsDynamicCast<WebCore::${className}*>(callFrame->thisValue());
+    auto* sink = dynamicDowncast<WebCore::${className}>(callFrame->thisValue());
     if (sink) [[likely]] {
         sink->ref();
     }
@@ -390,7 +390,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__ref, (JSC::JSGlobalObject * lexicalGlobalObjec
 
 JSC_DEFINE_HOST_FUNCTION(${name}__unref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
-    auto* sink = jsDynamicCast<WebCore::${className}*>(callFrame->thisValue());
+    auto* sink = dynamicDowncast<WebCore::${className}>(callFrame->thisValue());
     if (sink) [[likely]] {
         sink->unref();
     }
@@ -406,7 +406,7 @@ JSC_DEFINE_CUSTOM_GETTER(function${name}__getter, (JSC::JSGlobalObject * lexical
 }
 
 size_t ${className}::estimatedSize(JSCell* cell, JSC::VM& vm) {
-    return Base::estimatedSize(cell, vm) + ${className}::memoryCost(jsCast<${className}*>(cell)->wrapped());
+    return Base::estimatedSize(cell, vm) + ${className}::memoryCost(uncheckedDowncast<${className}>(cell)->wrapped());
 }
 
 size_t ${className}::memoryCost(void* sinkPtr) {
@@ -424,7 +424,7 @@ size_t ${controller}::memoryCost(void* sinkPtr) {
 }
 
 size_t ${controller}::estimatedSize(JSCell* cell, JSC::VM& vm) {
-    return Base::estimatedSize(cell, vm) + ${controller}::memoryCost(jsCast<${controller}*>(cell)->wrapped());
+    return Base::estimatedSize(cell, vm) + ${controller}::memoryCost(uncheckedDowncast<${controller}>(cell)->wrapped());
 }
 
 JSC_DECLARE_HOST_FUNCTION(${controller}__close);
@@ -434,7 +434,7 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    WebCore::${controller}* controller = JSC::jsDynamicCast<WebCore::${controller}*>(callFrame->thisValue());
+    WebCore::${controller}* controller = dynamicDowncast<WebCore::${controller}>(callFrame->thisValue());
     if (!controller) {
         scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${controller}"_s));
         return JSC::JSValue::encode(JSC::jsUndefined());
@@ -457,7 +457,7 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGloba
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    WebCore::${controller}* controller = JSC::jsDynamicCast<WebCore::${controller}*>(callFrame->thisValue());
+    WebCore::${controller}* controller = dynamicDowncast<WebCore::${controller}>(callFrame->thisValue());
     if (!controller) {
         scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${controller}"_s));
         return {};
@@ -482,7 +482,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__getFd, (JSC::JSGlobalObject * lexicalGlobalObj
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    WebCore::${className}* sink = JSC::jsDynamicCast<WebCore::${className}*>(callFrame->thisValue());
+    WebCore::${className}* sink = dynamicDowncast<WebCore::${className}>(callFrame->thisValue());
     if (!sink) {
         scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${name}"_s));
         return JSC::JSValue::encode(JSC::jsUndefined());
@@ -503,7 +503,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    WebCore::${className}* sink = JSC::jsDynamicCast<WebCore::${className}*>(callFrame->thisValue());
+    WebCore::${className}* sink = dynamicDowncast<WebCore::${className}>(callFrame->thisValue());
     if (!sink) {
         scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${name}"_s));
         return JSC::JSValue::encode(JSC::jsUndefined());
@@ -745,9 +745,9 @@ void ${controller}::finishCreation(VM& vm)
 extern "C" void ${name}__setDestroyCallback(EncodedJSValue encodedValue, uintptr_t callback)
 {
     JSValue value = JSValue::decode(encodedValue);
-    if (auto* sink = JSC::jsDynamicCast<WebCore::${className}*>(value)) {
+    if (auto* sink = dynamicDowncast<WebCore::${className}>(value)) {
         sink->m_onDestroy = callback;
-    } else if (auto* controller = JSC::jsDynamicCast<WebCore::${controller}*>(value)) {
+    } else if (auto* controller = dynamicDowncast<WebCore::${controller}>(value)) {
         controller->m_onDestroy = callback;
     }
 }
@@ -755,7 +755,7 @@ extern "C" void ${name}__setDestroyCallback(EncodedJSValue encodedValue, uintptr
 void ${className}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     Base::analyzeHeap(cell, analyzer);    
-    auto* thisObject = jsCast<${className}*>(cell);
+    auto* thisObject = uncheckedDowncast<${className}>(cell);
     if (void* wrapped = thisObject->wrapped()) {
         analyzer.setWrappedObjectForCell(cell, wrapped);
         // if (thisObject->scriptExecutionContext())
@@ -767,7 +767,7 @@ void ${className}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 void ${controller}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     Base::analyzeHeap(cell, analyzer);
-    auto* thisObject = jsCast<${controller}*>(cell);
+    auto* thisObject = uncheckedDowncast<${controller}>(cell);
     if (void* wrapped = thisObject->wrapped()) {
         analyzer.setWrappedObjectForCell(cell, wrapped);
         // if (thisObject->scriptExecutionContext())
@@ -797,7 +797,7 @@ void ${controller}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 template<typename Visitor>
 void ${controller}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    ${controller}* thisObject = jsCast<${controller}*>(cell);
+    ${controller}* thisObject = uncheckedDowncast<${controller}>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     
@@ -815,7 +815,7 @@ DEFINE_VISIT_CHILDREN(${controller});
 template<typename Visitor>
 void ${className}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    ${className}* thisObject = jsCast<${className}*>(cell);
+    ${className}* thisObject = uncheckedDowncast<${className}>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     void* ptr = thisObject->m_sinkPtr;
@@ -929,10 +929,10 @@ extern "C" JSC::EncodedJSValue ${name}__createObject(JSC::JSGlobalObject* arg0, 
 
 extern "C" void* ${name}__fromJS(JSC::EncodedJSValue value)
 {
-    if (auto* sink = JSC::jsDynamicCast<WebCore::JS${name}*>(JSC::JSValue::decode(value)))
+    if (auto* sink = dynamicDowncast<WebCore::JS${name}>(JSC::JSValue::decode(value)))
         return sink->wrapped();
 
-    if (auto* controller = JSC::jsDynamicCast<WebCore::${controller}*>(JSC::JSValue::decode(value)))
+    if (auto* controller = dynamicDowncast<WebCore::${controller}>(JSC::JSValue::decode(value)))
         return controller->wrapped();
 
     return (void*)1;
@@ -940,13 +940,13 @@ extern "C" void* ${name}__fromJS(JSC::EncodedJSValue value)
 
 extern "C" void ${name}__detachPtr(JSC::EncodedJSValue JSValue0)
 {
-    if (auto* sink = JSC::jsDynamicCast<WebCore::JS${name}*>(JSC::JSValue::decode(JSValue0))) {
+    if (auto* sink = dynamicDowncast<WebCore::JS${name}>(JSC::JSValue::decode(JSValue0))) {
         sink->detach();
         return;
     }
         
 
-    if (auto* controller = JSC::jsDynamicCast<WebCore::${controller}*>(JSC::JSValue::decode(JSValue0))) {
+    if (auto* controller = dynamicDowncast<WebCore::${controller}>(JSC::JSValue::decode(JSValue0))) {
         controller->detach();
         return;
     }
@@ -965,7 +965,7 @@ extern "C" JSC::EncodedJSValue ${name}__assignToStream(JSC::JSGlobalObject* arg0
 
 extern "C" void ${name}__onReady(JSC::EncodedJSValue controllerValue, JSC::EncodedJSValue amt, JSC::EncodedJSValue offset)
 {
-    WebCore::${controller}* controller = JSC::jsCast<WebCore::${controller}*>(JSC::JSValue::decode(controllerValue).getObject());
+    WebCore::${controller}* controller = uncheckedDowncast<WebCore::${controller}>(JSC::JSValue::decode(controllerValue).getObject());
 
     JSC::JSValue function = controller->m_onPull.get();
     if (!function)
@@ -988,7 +988,7 @@ extern "C" void ${name}__onStart(JSC::EncodedJSValue controllerValue)
 
 extern "C" void ${name}__onClose(JSC::EncodedJSValue controllerValue, JSC::EncodedJSValue reason)
 {
-    WebCore::${controller}* controller = JSC::jsCast<WebCore::${controller}*>(JSC::JSValue::decode(controllerValue).getObject());
+    WebCore::${controller}* controller = uncheckedDowncast<WebCore::${controller}>(JSC::JSValue::decode(controllerValue).getObject());
 
     JSC::JSValue function = controller->m_onClose.get();
     if (!function)

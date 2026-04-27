@@ -55,7 +55,7 @@ void GlobalInternals::finishCreation(VM& vm)
 template<typename Visitor>
 void GlobalInternals::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    GlobalInternals* thisObject = jsCast<GlobalInternals*>(cell);
+    GlobalInternals* thisObject = uncheckedDowncast<GlobalInternals>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 

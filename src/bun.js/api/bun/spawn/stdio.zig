@@ -93,6 +93,7 @@ pub const Stdio = union(enum) {
         if (comptime !Environment.isLinux) {
             return false;
         }
+        if (!bun.sys.canUseMemfd()) return false;
         const label = switch (index) {
             0 => "spawn_stdio_stdin",
             1 => "spawn_stdio_stdout",

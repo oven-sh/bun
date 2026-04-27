@@ -6,6 +6,10 @@ id: i32 = -1,
 interval: u31 = 0,
 this_value: jsc.JSRef = .empty(),
 flags: Flags = .{},
+/// `bun test --isolate` generation this timer was created in. If it no
+/// longer matches `vm.test_isolation_generation` at fire time, the timer
+/// is dropped without invoking its callback.
+generation: u32 = 0,
 
 /// Used by:
 /// - setTimeout
@@ -72,6 +76,7 @@ extern "c" fn Bun__JSTimeout__call(globalObject: *jsc.JSGlobalObject, timer: JSV
 /// returns true if an exception was thrown
 pub fn runImmediateTask(this: *TimerObjectInternals, vm: *VirtualMachine) bool {
     if (this.flags.has_cleared_timer or
+        this.generation != vm.test_isolation_generation or
         // unref'd setImmediate callbacks should only run if there are things keeping the event
         // loop alive other than setImmediates
         (!this.flags.is_keeping_event_loop_alive and !vm.isEventLoopAliveExcludingImmediates()))
@@ -125,7 +130,7 @@ pub fn fire(this: *TimerObjectInternals, _: *const timespec, vm: *jsc.VirtualMac
     const id = this.id;
     const kind = this.flags.kind.big();
     const async_id: ID = .{ .id = id, .kind = kind };
-    const has_been_cleared = this.eventLoopTimer().state == .CANCELLED or this.flags.has_cleared_timer or vm.scriptExecutionStatus() != .running;
+    const has_been_cleared = this.eventLoopTimer().state == .CANCELLED or this.flags.has_cleared_timer or vm.scriptExecutionStatus() != .running or this.generation != vm.test_isolation_generation;
 
     this.eventLoopTimer().state = .FIRED;
 
@@ -293,6 +298,7 @@ pub fn init(
         .id = id,
         .flags = .{ .kind = kind, .epoch = vm.timer.epoch },
         .interval = interval,
+        .generation = vm.test_isolation_generation,
     };
 
     if (kind == .setImmediate) {

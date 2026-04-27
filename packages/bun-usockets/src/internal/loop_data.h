@@ -23,7 +23,7 @@
 #if defined(__APPLE__)
 #include <os/lock.h>
 typedef os_unfair_lock zig_mutex_t;
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__FreeBSD__)
 typedef uint32_t zig_mutex_t;
 #elif defined(_WIN32)
 // SRWLOCK
@@ -57,6 +57,11 @@ struct us_internal_loop_data_t {
     /* We do not care if this flips or not, it doesn't matter */
     size_t iteration_nr;
     void* jsc_vm;
+    /* Reentrancy depth of us_loop_run_bun_tick. When >1, we are inside a
+     * nested tick (e.g. waitForPromise from a poll callback). Freeing closed
+     * sockets must be deferred to the outermost tick so the outer dispatch
+     * doesn't read a freed poll. */
+    int tick_depth;
 };
 
 #endif // LOOP_DATA_H

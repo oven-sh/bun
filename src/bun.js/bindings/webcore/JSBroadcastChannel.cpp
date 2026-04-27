@@ -108,7 +108,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBroadcastChannelDOMCon
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSBroadcastChannelDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSBroadcastChannelDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
@@ -264,14 +264,14 @@ JSObject* JSBroadcastChannel::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSBroadcastChannel::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSBroadcastChannelDOMConstructor, DOMConstructorID::BroadcastChannel>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSBroadcastChannelDOMConstructor, DOMConstructorID::BroadcastChannel>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsBroadcastChannelConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSBroadcastChannelPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSBroadcastChannelPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSBroadcastChannel::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -356,7 +356,7 @@ static inline JSC::EncodedJSValue jsBroadcastChannelPrototypeFunction_postMessag
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto message = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTF::move(message)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(message)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototypeFunction_postMessage, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -423,7 +423,7 @@ JSC::GCClient::IsoSubspace* JSBroadcastChannel::subspaceForImpl(JSC::VM& vm)
 
 void JSBroadcastChannel::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSBroadcastChannel*>(cell);
+    auto* thisObject = uncheckedDowncast<JSBroadcastChannel>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -432,7 +432,7 @@ void JSBroadcastChannel::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 
 bool JSBroadcastChannelOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
-    auto* jsBroadcastChannel = jsCast<JSBroadcastChannel*>(handle.slot()->asCell());
+    auto* jsBroadcastChannel = uncheckedDowncast<JSBroadcastChannel>(handle.slot()->asCell());
     auto& wrapped = jsBroadcastChannel->wrapped();
     if (!wrapped.isContextStopped() && wrapped.hasPendingActivity()) {
         if (reason) [[unlikely]]
@@ -493,7 +493,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 BroadcastChannel* JSBroadcastChannel::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSBroadcastChannel*>(value))
+    if (auto* wrapper = dynamicDowncast<JSBroadcastChannel>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

@@ -38,7 +38,7 @@ static JSC_DEFINE_CUSTOM_GETTER(getterS3File_bucket, (JSC::JSGlobalObject * glob
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = jsDynamicCast<JSS3File*>(JSValue::decode(thisValue));
+    auto* thisObject = dynamicDowncast<JSS3File>(JSValue::decode(thisValue));
     if (!thisObject) {
         Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_THIS, "Expected a S3File instance"_s);
         return {};
@@ -165,7 +165,7 @@ Structure* createJSS3FileStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObjec
 
 JSC_DEFINE_HOST_FUNCTION(functionS3File_presign, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
-    auto* thisObject = jsDynamicCast<JSS3File*>(callframe->thisValue());
+    auto* thisObject = dynamicDowncast<JSS3File>(callframe->thisValue());
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!thisObject) {
@@ -178,7 +178,7 @@ JSC_DEFINE_HOST_FUNCTION(functionS3File_presign, (JSGlobalObject * globalObject,
 
 JSC_DEFINE_HOST_FUNCTION(functionS3File_stat, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
-    auto* thisObject = jsDynamicCast<JSS3File*>(callframe->thisValue());
+    auto* thisObject = dynamicDowncast<JSS3File>(callframe->thisValue());
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!thisObject) {

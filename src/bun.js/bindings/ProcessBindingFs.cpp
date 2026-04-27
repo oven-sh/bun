@@ -212,3 +212,5 @@ void ProcessBindingFs::finishCreation(JSC::VM& vm)
 }
 
 } // namespace Bun
+
+#undef PROCESS_BINDING_NOT_IMPLEMENTED

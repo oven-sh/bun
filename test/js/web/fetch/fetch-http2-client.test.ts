@@ -563,6 +563,53 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     }
   });
 
+  test("await fetch() resolves on headers, before a content-length body is fully received", async () => {
+    let unblock!: () => void;
+    const gate = new Promise<void>(r => (unblock = r));
+    const server = makeH2Server();
+    server.on("stream", async stream => {
+      stream.respond({ ":status": 200, "content-length": "262144" });
+      stream.write(Buffer.alloc(64 * 1024));
+      // Hold the rest until JS proves it has the Response and a first chunk.
+      await gate;
+      stream.end(Buffer.alloc(192 * 1024));
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = spawnFetch(`
+        const r = await fetch("https://localhost:${port}", { tls: { rejectUnauthorized: false } });
+        const reader = r.body.getReader();
+        let n = 0;
+        const { value } = await reader.read();
+        n += value.byteLength;
+        // Signal the server (via stderr so the test can unblock the rest).
+        process.stderr.write("first-chunk\\n");
+        while (true) {
+          const { value, done } = await reader.read();
+          if (value) n += value.byteLength;
+          if (done) break;
+        }
+        console.log(r.status, r.headers.get("content-length"), n);
+      `);
+      // Wait for the subprocess to prove it received the Response + first chunk
+      // BEFORE the server has written the full body.
+      let stderr = "";
+      for await (const chunk of proc.stderr) {
+        stderr += Buffer.from(chunk).toString();
+        if (stderr.includes("first-chunk")) break;
+      }
+      unblock();
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout.trim()).toBe("200 262144 262144");
+      expect(exitCode).toBe(0);
+    } finally {
+      unblock();
+      server.close();
+    }
+  });
+
   test("response body larger than initial window triggers WINDOW_UPDATE", async () => {
     const big = Buffer.alloc(20 * 1024 * 1024, 0x61);
     await withH2Server(

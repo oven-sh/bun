@@ -567,6 +567,20 @@ pub const ClientSession = struct {
         this.socket.setTimeoutMinutes(if (want) 5 else 0);
     }
 
+    /// HTTP-thread wake-up from `scheduleResponseBodyDrain`: JS just enabled
+    /// `response_body_streaming`, so flush any body bytes that arrived between
+    /// metadata delivery and `getReader()`.
+    pub fn drainResponseBodyByHttpId(this: *ClientSession, async_http_id: u32) void {
+        this.ref();
+        defer this.deref();
+        for (this.streams.values()) |stream| {
+            const client = stream.client orelse continue;
+            if (client.async_http_id != async_http_id) continue;
+            client.drainResponseBody(true, this.socket);
+            return;
+        }
+    }
+
     /// HTTP-thread wake-up from `scheduleRequestWrite`: new body bytes (or
     /// end-of-body) are available in the ThreadSafeStreamBuffer.
     pub fn streamBodyByHttpId(this: *ClientSession, async_http_id: u32, ended: bool) void {
@@ -901,6 +915,13 @@ pub const ClientSession = struct {
                 return this.finishStream(client);
             }
             client.cloneMetadata();
+            // Mirror the h1 path (http.zig handleOnDataHeaders): deliver headers
+            // to JS now so `await fetch()` resolves and `getReader()` can enable
+            // response_body_streaming. Without this, a content-length response
+            // buffers the entire body before the Response promise settles.
+            if (client.signals.get(.header_progress)) {
+                client.progressUpdate(true, this.ctx, this.socket);
+            }
         }
 
         if (client.state.response_stage != .body) return false;

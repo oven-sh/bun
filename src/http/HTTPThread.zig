@@ -491,6 +491,9 @@ fn drainQueuedHTTPResponseBodyDrains(this: *@This()) void {
                         if (tagged.get(HTTPClient)) |client| {
                             client.drainResponseBody(comptime is_tls, socket);
                         }
+                        if (tagged.get(bun.http.H2.ClientSession)) |session| {
+                            session.drainResponseBodyByHttpId(drain.async_http_id);
+                        }
                     },
                 }
             }

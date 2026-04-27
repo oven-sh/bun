@@ -1,7 +1,7 @@
-//! HTTP/2 wire-format types shared by the fetch HTTP client and the
-//! node:http2 JS bindings. These are pure packed structs with no JSC or
-//! socket dependencies so both call sites can use the same encode/decode
-//! logic.
+//! HTTP/2 wire-format types for the fetch() HTTP/2 client. Kept free of JSC
+//! and socket dependencies so the node:http2 JS bindings (which currently
+//! carry their own copies in src/bun.js/api/bun/h2_frame_parser.zig) can later
+//! share them.
 
 pub const client_preface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
@@ -104,17 +104,6 @@ pub const UInt31WithReserved = packed struct(u32) {
         const value: u32 = u32FromBytes(src);
         return .{ .uint31 = @truncate(value & 0x7fffffff), .reserved = value & 0x80000000 != 0 };
     }
-
-    pub inline fn write(this: UInt31WithReserved, comptime Writer: type, writer: Writer) bool {
-        var value: u32 = this.uint31;
-        if (this.reserved) {
-            value |= 0x80000000;
-        }
-
-        value = @byteSwap(value);
-
-        return (writer.write(std.mem.asBytes(&value)) catch 0) != 0;
-    }
 };
 
 pub const StreamPriority = packed struct(u40) {
@@ -122,12 +111,6 @@ pub const StreamPriority = packed struct(u40) {
     weight: u8 = 0,
 
     pub const byteSize: usize = 5;
-    pub inline fn write(this: *StreamPriority, comptime Writer: type, writer: Writer) bool {
-        var swap = this.*;
-        std.mem.byteSwapAllFields(StreamPriority, &swap);
-
-        return (writer.write(std.mem.asBytes(&swap)[0..StreamPriority.byteSize]) catch 0) != 0;
-    }
 
     pub inline fn from(dst: *StreamPriority, src: []const u8) void {
         @memcpy(@as(*[StreamPriority.byteSize]u8, @ptrCast(dst)), src);
@@ -142,12 +125,6 @@ pub const FrameHeader = packed struct(u72) {
     streamIdentifier: u32 = 0,
 
     pub const byteSize: usize = 9;
-    pub inline fn write(this: *FrameHeader, comptime Writer: type, writer: Writer) bool {
-        var swap = this.*;
-        std.mem.byteSwapAllFields(FrameHeader, &swap);
-
-        return (writer.write(std.mem.asBytes(&swap)[0..FrameHeader.byteSize]) catch 0) != 0;
-    }
 
     pub inline fn from(dst: *FrameHeader, src: []const u8, offset: usize, comptime end: bool) void {
         @memcpy(@as(*[FrameHeader.byteSize]u8, @ptrCast(dst))[offset .. src.len + offset], src);

@@ -40,78 +40,41 @@ fi
 # we're back in via tailscale-ssh as root, we'll reinstall the system daemon
 # properly and remove this LaunchAgent.
 #
-# Diagnostics — figure out why the system daemon isn't reachable even
-# though the plist exists.
-echo "--- tailscale diagnostics"
-ls -l /Library/LaunchDaemons/com.tailscale.tailscaled.plist /usr/local/bin/tailscaled 2>&1
-launchctl print system/com.tailscale.tailscaled 2>&1 | grep -E "state|pid|last exit" || true
-pgrep -fl tailscaled || echo "(no tailscaled process)"
-/usr/local/bin/tailscale status 2>&1 | head -5 || true
-ls -la /Library/Tailscale/ 2>&1 || true
-
 # Only act on the broken box (public IP match). Siblings are fine.
 PUBIP="$(curl -s --max-time 3 ifconfig.me || true)"
 if [ "$PUBIP" = "207.254.60.44" ]; then
 
-  echo "--- this is x64-1; bootstrapping userspace daemon"
+  echo "--- this is x64-1; re-authenticating system tailscaled"
 
+  # Clean up the abandoned userspace LaunchAgent attempt from the previous
+  # revision (it failed to bootstrap from a non-GUI session anyway).
+  rm -f "$HOME/Library/LaunchAgents/com.tailscale.userspace.plist"
+  rm -rf "$HOME/.tailscale-userspace"
+
+  # The system daemon IS running (see diagnostics) but the node was removed
+  # server-side, so it's connected-to-nothing with stale local state. Re-auth
+  # it with a fresh key. `tailscale up` talks to the running tailscaled over
+  # its local socket; the operator is the install user, so administrator can
+  # do this without sudo.
   KEY="$(buildkite-agent secret get TAILSCALE_AUTH_KEY_TMP 2>/dev/null || true)"
   if [ -z "$KEY" ]; then
-    echo "WARN: TAILSCALE_AUTH_KEY_TMP secret not set — skipping tailscale bring-up"
+    echo "WARN: TAILSCALE_AUTH_KEY_TMP secret not set — skipping re-auth"
   else
-    TS_HOME="$HOME/.tailscale-userspace"
-    SOCK="$TS_HOME/tailscaled.sock"
-    mkdir -p "$TS_HOME" "$HOME/Library/LaunchAgents"
-
-    # User LaunchAgent so it survives the daily reboot until we replace it
-    # with the real system daemon. RunAtLoad+KeepAlive = start at login and
-    # restart on crash.
-    cat > "$HOME/Library/LaunchAgents/com.tailscale.userspace.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>com.tailscale.userspace</string>
-  <key>ProgramArguments</key><array>
-    <string>/usr/local/bin/tailscaled</string>
-    <string>--tun=userspace-networking</string>
-    <string>--statedir=$TS_HOME</string>
-    <string>--socket=$SOCK</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>$TS_HOME/tailscaled.log</string>
-  <key>StandardErrorPath</key><string>$TS_HOME/tailscaled.log</string>
-</dict></plist>
-PLIST
-
-    # Start now. bootstrap is idempotent-ish; ignore "already loaded" noise.
-    launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.tailscale.userspace.plist" 2>&1 || true
-    launchctl kickstart -k "gui/$(id -u)/com.tailscale.userspace" 2>&1 || true
-
-    # Give tailscaled a moment to open its socket.
-    for _ in 1 2 3 4 5 6 7 8 9 10; do
-      [ -S "$SOCK" ] && break
-      sleep 1
-    done
-
-    if [ -S "$SOCK" ]; then
-      # Register as a fresh node; we'll merge/clean up in the admin console.
-      # Hostname suffix makes it obvious this is the temporary userspace node.
-      /usr/local/bin/tailscale --socket="$SOCK" up \
-        --auth-key="$KEY" \
-        --ssh \
-        --hostname="darwin-test-x64-1-userspace" \
-        --advertise-tags=tag:server \
-        --accept-risk=all 2>&1
-      echo "--- tailscale userspace status:"
-      /usr/local/bin/tailscale --socket="$SOCK" status 2>&1 | head -3
-    else
-      echo "ERROR: tailscaled socket never appeared"
-      tail -n 40 "$TS_HOME/tailscaled.log" 2>/dev/null || true
-    fi
+    /usr/local/bin/tailscale up \
+      --auth-key="$KEY" \
+      --force-reauth \
+      --ssh \
+      --hostname="darwin-test-x64-1" \
+      --advertise-tags=tag:server \
+      --accept-risk=all 2>&1
+    rc=$?
+    echo "tailscale up exit=$rc"
+    # Don't print `tailscale status` — it leaks tailnet device names/IPs to
+    # the public build log. Self-IP only is enough to confirm.
+    /usr/local/bin/tailscale ip -4 2>&1 || true
   fi
 else
-  echo "not x64-1 ($PUBIP) — skipping userspace bring-up"
+  echo "not x64-1 ($PUBIP) — skipping re-auth"
 fi
 
 echo "--- done; agent will pick up cfg on next restart"

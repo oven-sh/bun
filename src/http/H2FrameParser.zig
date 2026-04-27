@@ -167,6 +167,10 @@ pub const SettingsPayloadUnit = packed struct(u48) {
             std.mem.byteSwapAllFields(SettingsPayloadUnit, dst);
         }
     }
+    pub inline fn encode(dst: *[byteSize]u8, setting: SettingsType, value: u32) void {
+        std.mem.writeInt(u16, dst[0..2], @intFromEnum(setting), .big);
+        std.mem.writeInt(u32, dst[2..6], value, .big);
+    }
 };
 
 const std = @import("std");

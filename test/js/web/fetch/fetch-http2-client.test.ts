@@ -150,6 +150,97 @@ describe("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () 
     );
   });
 
+  test("keep-alive: sequential requests reuse one h2 session", async () => {
+    let sessions = 0;
+    const seen: number[] = [];
+    const server = http2.createSecureServer({ ...tls, allowHTTP1: false });
+    server.on("session", () => sessions++);
+    server.on("stream", (stream, headers) => {
+      seen.push(stream.id);
+      stream.respond({ ":status": 200, "content-type": "text/plain" });
+      stream.end(`req=${headers[":path"]}`);
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = spawnFetch(`
+        const url = "https://localhost:${port}";
+        const opts = { tls: { rejectUnauthorized: false } };
+        for (let i = 0; i < 4; i++) {
+          const r = await fetch(url + "/" + i, opts);
+          console.log(await r.text());
+        }
+      `);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim().split("\n")).toEqual(["req=/0", "req=/1", "req=/2", "req=/3"]);
+      expect(exitCode).toBe(0);
+      expect(sessions).toBe(1);
+      // stream ids must be fresh odd numbers on the reused session
+      expect(seen).toEqual([1, 3, 5, 7]);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("GOAWAY after a request: next request reconnects", async () => {
+    let sessions = 0;
+    const server = http2.createSecureServer({ ...tls, allowHTTP1: false });
+    server.on("session", () => sessions++);
+    server.on("stream", (stream, headers) => {
+      const session = stream.session!;
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+      if (headers[":path"] === "/first") {
+        session.goaway(http2.constants.NGHTTP2_NO_ERROR, stream.id);
+      }
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = spawnFetch(`
+        const url = "https://localhost:${port}";
+        const opts = { tls: { rejectUnauthorized: false } };
+        const a = await (await fetch(url + "/first", opts)).text();
+        await Bun.sleep(50);
+        const b = await (await fetch(url + "/second", opts)).text();
+        console.log(a + "," + b);
+      `);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("ok,ok");
+      expect(exitCode).toBe(0);
+      expect(sessions).toBe(2);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("response body larger than initial window triggers WINDOW_UPDATE", async () => {
+    const big = Buffer.alloc(20 * 1024 * 1024, 0x61);
+    await withH2Server(
+      (_req, res) => {
+        res.writeHead(200);
+        res.end(big);
+      },
+      async url => {
+        await using proc = spawnFetch(`
+          const res = await fetch(${JSON.stringify(url)}, { tls: { rejectUnauthorized: false } });
+          const buf = new Uint8Array(await res.arrayBuffer());
+          let ok = buf.length === ${big.length};
+          for (let i = 0; ok && i < buf.length; i += 4096) ok = buf[i] === 0x61;
+          console.log(ok ? "ok" : "bad:" + buf.length);
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout.trim()).toBe("ok");
+        expect(exitCode).toBe(0);
+      },
+    );
+  }, 30_000);
+
   test("flag off: ALPN does not offer h2", async () => {
     let sawH2 = false;
     const server = http2.createSecureServer({ ...tls, allowHTTP1: true }, (req, res) => {

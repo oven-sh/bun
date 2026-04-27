@@ -206,7 +206,7 @@ pub fn onOpen(
 /// experimental feature flag and restricted to request shapes the HTTP/2
 /// path currently handles end-to-end (buffered `.bytes` bodies, no proxy,
 /// no Upgrade). Anything else stays on the HTTP/1.1 path.
-fn canOfferH2(client: *const HTTPClient) bool {
+pub fn canOfferH2(client: *const HTTPClient) bool {
     if (!bun.feature_flag.BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT.get()) return false;
     if (client.http_proxy != null) return false;
     if (client.flags.is_preconnect_only) return false;
@@ -253,15 +253,20 @@ pub fn firstCall(
 
 fn startH2(client: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     log("ALPN negotiated h2 {s}", .{client.url.href});
-    // The HTTP/2 path doesn't yet share connections through the keep-alive
-    // pool because the pool stores bare sockets without HPACK state. Disable
-    // pooling so the socket is closed when this request finishes.
-    client.flags.disable_keepalive = true;
-    // Don't fall back to HTTP/1.1 retry; the server already accepted h2.
-    client.allow_retry = false;
+    client.adoptH2(is_ssl, socket, H2.ClientSession.create());
+}
 
-    if (client.h2 == null) client.h2 = H2.ClientSession.create();
-    const session = client.h2.?;
+/// Attach a (fresh or pooled) HTTP/2 session to this request, allocate a new
+/// stream id on it, and queue the request frames.
+pub fn adoptH2(client: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, session: *H2.ClientSession) void {
+    client.flags.protocol = .http2;
+    client.h2 = session;
+    session.beginStream();
+
+    if (client.signals.get(.aborted)) {
+        client.closeAndAbort(is_ssl, socket);
+        return;
+    }
 
     client.setTimeout(socket, 5);
     const request = client.buildRequest(client.state.original_request_body.len());
@@ -277,8 +282,21 @@ fn startH2(client: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is
 
     _ = session.flush(is_ssl, socket) catch |err| {
         client.closeAndFail(err, is_ssl, socket);
-        return;
     };
+}
+
+/// A reused h2 session refused this stream (GOAWAY/RST before headers).
+/// Tear down the connection and replay the request from scratch.
+pub fn retryH2(client: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    client.allow_retry = false;
+    if (client.h2) |session| {
+        client.h2 = null;
+        session.deinit();
+    }
+    client.flags.protocol = .http1_1;
+    NewHTTPContext(is_ssl).terminateSocket(socket);
+    client.state.response_message_buffer.deinit();
+    client.start(client.state.original_request_body, client.state.body_out_str.?);
 }
 pub fn onClose(
     client: *HTTPClient,
@@ -298,7 +316,14 @@ pub fn onClose(
             client.h2 = null;
             session.deinit();
         }
+        client.flags.protocol = .http1_1;
         if (client.state.stage != .done and client.state.stage != .fail) {
+            if (client.allow_retry) {
+                client.allow_retry = false;
+                client.state.response_message_buffer.deinit();
+                client.start(client.state.original_request_body, client.state.body_out_str.?);
+                return;
+            }
             client.fail(error.ConnectionClosed);
         }
         return;
@@ -1043,6 +1068,7 @@ pub fn doRedirect(
             "",
             0,
             0,
+            null,
         );
     } else {
         NewHTTPContext(is_ssl).closeSocket(socket);
@@ -1195,6 +1221,7 @@ pub fn onPreconnect(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCon
         "",
         0,
         0,
+        null,
     );
 
     this.state.reset(this.allocator);
@@ -2082,11 +2109,15 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
         else
             true;
 
-        if (this.isKeepAlivePossible() and !socket.isClosedOrHasError() and tunnel_poolable) {
+        const h2_poolable = if (this.h2) |s| s.canPool() else true;
+
+        if (this.isKeepAlivePossible() and !socket.isClosedOrHasError() and tunnel_poolable and h2_poolable) {
             log("release socket", .{});
             const tunnel = this.proxy_tunnel;
             this.proxy_tunnel = null;
             if (tunnel) |t| t.detachOwner(this);
+            const h2_session = this.h2;
+            this.h2 = null;
             // target_hostname = url.hostname (the CONNECT TCP target at
             // writeProxyConnect line 346). The SNI override (hostname) is
             // hashed into proxyAuthHash separately — both must match, but
@@ -2101,6 +2132,7 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
                 if (tunnel != null) this.url.hostname else "",
                 if (tunnel != null) this.url.getPortAuto() else 0,
                 if (tunnel != null) this.proxyAuthHash() else 0,
+                h2_session,
             );
         } else {
             if (this.proxy_tunnel) |tunnel| {

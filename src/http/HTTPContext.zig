@@ -26,6 +26,9 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             /// established with different credentials are not cross-shared.
             /// 0 = no proxy auth.
             proxy_auth_hash: u64 = 0,
+            /// HTTP/2 connection state (HPACK tables, server SETTINGS) when
+            /// this socket negotiated "h2". Owned by the pool while parked.
+            h2_session: ?*H2.ClientSession = null,
         };
 
         pub fn markTaggedSocketAsDead(socket: HTTPSocket, tagged: ActiveSocket) void {
@@ -140,6 +143,8 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         bun.default_allocator.free(pooled.target_hostname);
                         pooled.target_hostname = "";
                     }
+                    if (pooled.h2_session) |s| s.deinit();
+                    pooled.h2_session = null;
                     pooled.http_socket.close(.failure);
                 }
             }
@@ -244,6 +249,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             target_hostname: []const u8,
             target_port: u16,
             proxy_auth_hash: u64,
+            h2_session: ?*H2.ClientSession,
         ) void {
             // log("releaseSocket(0x{f})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
 
@@ -285,6 +291,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     else
                         "";
                     pending.target_port = target_port;
+                    pending.h2_session = h2_session;
 
                     log("Keep-Alive release {s}:{d} tunnel={} target={s}:{d}", .{
                         hostname,
@@ -301,6 +308,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 t.shutdown();
                 t.detachAndDeref();
             }
+            if (h2_session) |s| s.deinit();
             closeSocket(socket);
         }
 
@@ -415,6 +423,8 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     bun.default_allocator.free(pooled.target_hostname);
                     pooled.target_hostname = "";
                 }
+                if (pooled.h2_session) |s| s.deinit();
+                pooled.h2_session = null;
                 assert(pooled.owner.pending_sockets.put(pooled));
             }
 
@@ -441,6 +451,12 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     if (pooled.proxy_tunnel != null) {
                         log("Data on idle pooled tunnel — evicting", .{});
                         terminateSocket(socket);
+                        return;
+                    }
+
+                    if (pooled.h2_session) |session| {
+                        session.onIdleData(comptime ssl, buf, socket);
+                        if (!session.canPool()) terminateSocket(socket);
                         return;
                     }
 
@@ -525,6 +541,8 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             /// Non-null if the socket carries an established CONNECT tunnel.
             /// Ownership (one strong ref) is transferred to the caller.
             tunnel: ?*ProxyTunnel,
+            /// Non-null if the socket negotiated "h2"; ownership transferred.
+            h2_session: ?*H2.ClientSession,
         };
 
         fn existingSocket(
@@ -537,6 +555,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             target_hostname: []const u8,
             target_port: u16,
             proxy_auth_hash: u64,
+            want_h2: bool,
         ) ?ExistingSocket {
             if (hostname.len > MAX_KEEPALIVE_HOSTNAME)
                 return null;
@@ -555,6 +574,12 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 }
 
                 if (socket.did_have_handshaking_error_while_reject_unauthorized_is_false and reject_unauthorized) {
+                    continue;
+                }
+
+                // An h2 socket can only serve a request that will speak h2;
+                // an h1 socket can only serve a request that will speak h1.
+                if (want_h2 != (socket.h2_session != null)) {
                     continue;
                 }
 
@@ -606,9 +631,11 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         bun.default_allocator.free(socket.target_hostname);
                         socket.target_hostname = "";
                     }
+                    const h2_session = socket.h2_session;
+                    socket.h2_session = null;
                     assert(this.pending_sockets.put(socket));
                     log("+ Keep-Alive reuse {s}:{d}{s}", .{ hostname, port, if (tunnel != null) " (with tunnel)" else "" });
-                    return .{ .socket = http_socket, .tunnel = tunnel };
+                    return .{ .socket = http_socket, .tunnel = tunnel, .h2_session = h2_session };
                 }
             }
 
@@ -653,12 +680,18 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     target_hostname,
                     target_port,
                     proxy_auth_hash,
+                    if (comptime ssl) client.canOfferH2() else false,
                 )) |found| {
                     const sock = found.socket;
                     if (sock.ext(**anyopaque)) |ctx| {
                         ctx.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
                     }
                     client.allow_retry = true;
+                    if (found.h2_session) |session| {
+                        client.registerAbortTracker(comptime ssl, sock);
+                        client.adoptH2(comptime ssl, sock, session);
+                        return sock;
+                    }
                     if (found.tunnel) |tunnel| {
                         // Reattach the pooled tunnel BEFORE onOpen so the
                         // request/response stage is already .proxy_headers.
@@ -707,6 +740,7 @@ const ProxyTunnel = @import("./ProxyTunnel.zig");
 const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
 
 const bun = @import("bun");
+const H2 = bun.http.H2;
 const Environment = bun.Environment;
 const FeatureFlags = bun.FeatureFlags;
 const assert = bun.assert;

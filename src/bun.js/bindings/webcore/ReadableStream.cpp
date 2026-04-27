@@ -114,10 +114,11 @@ static inline std::optional<JSC::JSValue> invokeReadableStreamFunction(JSC::JSGl
     JSC::VM& vm = lexicalGlobalObject.vm();
     JSC::JSLockHolder lock(vm);
 
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto function = lexicalGlobalObject.get(&lexicalGlobalObject, identifier);
+    RETURN_IF_EXCEPTION(scope, {});
     ASSERT(function.isCallable());
 
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto callData = JSC::getCallData(function);
     auto result = call(&lexicalGlobalObject, function, callData, thisValue, arguments);
     EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());

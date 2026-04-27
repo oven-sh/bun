@@ -42,6 +42,7 @@ beforeAll(async () => {
     s.on("close", () => sessions.delete(s));
     s.on("error", () => {});
   });
+  server.on("stream", s => s.on("error", () => {}));
   // The abort scenario tears connections down mid-handshake; the server
   // surfaces those as ECONNRESET. They're expected, not test failures.
   server.on("error", () => {});
@@ -59,9 +60,13 @@ afterAll(() => {
 });
 
 async function runFixture(scenario: string) {
+  // BATCH is kept low: at 20 concurrent streams the macOS runner wedges with
+  // a handful of streams stuck mid-response (server-side node:http2 under
+  // load, not the client path being measured). The leak assertion only needs
+  // many sequential request lifetimes, not high parallelism.
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--smol", join(import.meta.dir, "fetch-http2-leak-fixture.ts")],
-    env: { ...bunEnv, SERVER: url, SCENARIO: scenario, COUNT: "200", BATCH: "20" },
+    env: { ...bunEnv, SERVER: url, SCENARIO: scenario, COUNT: "200", BATCH: "8" },
     stdout: "pipe",
     stderr: "pipe",
   });

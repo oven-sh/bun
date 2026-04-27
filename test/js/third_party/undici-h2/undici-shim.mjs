@@ -70,11 +70,6 @@ export function getGlobalDispatcher() {
   return globalDispatcher;
 }
 
-// CI sees a deterministic 90s hang on the first test that doesn't reproduce
-// off-CI; until that's root-caused, log each fetch boundary so the BuildKite
-// log shows whether the hang is connect, headers, body, or cleanup.
-const trace = process.env.CI ? (m, ...a) => console.error(`[undici-h2 ${m}]`, ...a) : () => {};
-
 export function fetch(input, init = {}) {
   const { dispatcher, ...rest } = init;
   void dispatcher;
@@ -85,17 +80,7 @@ export function fetch(input, init = {}) {
     rest.protocol = "http2";
     rest.tls = { rejectUnauthorized: false, ...(rest.tls || {}) };
   }
-  trace("fetch start", rest.method ?? "GET", url);
-  return globalThis.fetch(input, rest).then(
-    r => {
-      trace("fetch resolved", r.status, url);
-      return r;
-    },
-    e => {
-      trace("fetch rejected", e?.code ?? e?.name, url);
-      throw e;
-    },
-  );
+  return globalThis.fetch(input, rest);
 }
 
 export const Response = globalThis.Response;
@@ -110,11 +95,15 @@ export const pem = {
 };
 
 // Stand-in for undici's test/utils/node-http.js helper.
+//
+// We don't await server.close()'s callback: the test process's own pooled h2
+// ClientSession holds the connection open, and Http2SecureServer.close() waits
+// for net.Server's _connections to drain — under ASAN that handoff is slow
+// enough to exceed the 90s test timeout. Closing the listener and moving on is
+// sufficient; the lingering loopback socket dies with the test process.
 export function closeClientAndServerAsPromise(client, server) {
   return async () => {
-    trace("server close start");
     await client.close();
-    await new Promise(resolve => server.close(resolve));
-    trace("server close done");
+    server.close();
   };
 }

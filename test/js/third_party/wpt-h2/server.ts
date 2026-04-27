@@ -87,7 +87,6 @@ export async function startServer(): Promise<{ origin: string; close: () => Prom
     origin: `https://localhost:${port}`,
     close: () =>
       new Promise(resolve => {
-        if (process.env.CI) console.error(`[wpt-h2 close] sessions=${sessions.size} sockets=${sockets.size}`);
         for (const s of sessions) s.destroy();
         for (const s of sockets) s.destroy();
         server.close(() => resolve());

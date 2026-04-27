@@ -114,10 +114,11 @@ static inline std::optional<JSC::JSValue> invokeReadableStreamFunction(JSC::JSGl
     JSC::VM& vm = lexicalGlobalObject.vm();
     JSC::JSLockHolder lock(vm);
 
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto function = lexicalGlobalObject.get(&lexicalGlobalObject, identifier);
+    RETURN_IF_EXCEPTION(scope, {});
     ASSERT(function.isCallable());
 
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto callData = JSC::getCallData(function);
     auto result = call(&lexicalGlobalObject, function, callData, thisValue, arguments);
     EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
@@ -332,6 +333,28 @@ extern "C" void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStrea
 
     WebCore::Exception exception { Bun::AbortError };
     WebCore::ReadableStream::cancel(*globalObject, readableStream, exception);
+}
+
+// Like ReadableStream__cancel but forwards an arbitrary JS reason verbatim to
+// the stream's cancel algorithm instead of synthesizing a DOMException. Used
+// by fetch() to honor AbortSignal.reason when cancelling a request body.
+extern "C" void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue encodedReason)
+{
+    auto* readableStream = dynamicDowncast<WebCore::JSReadableStream>(JSC::JSValue::decode(possibleReadableStream));
+    if (!readableStream) [[unlikely]]
+        return;
+
+    auto& vm = globalObject->vm();
+    auto* clientData = static_cast<JSVMClientData*>(vm.clientData);
+    auto& privateName = clientData->builtinFunctions().readableStreamInternalsBuiltins().readableStreamCancelPrivateName();
+
+    JSC::JSLockHolder lock(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    MarkedArgumentBuffer arguments;
+    arguments.append(readableStream);
+    arguments.append(JSC::JSValue::decode(encodedReason));
+    ASSERT(!arguments.hasOverflowed());
+    invokeReadableStreamFunction(*globalObject, privateName, JSC::jsUndefined(), arguments);
 }
 
 extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)

@@ -853,7 +853,11 @@ export function assignStreamIntoResumableSink(stream, sink) {
       }
     }
 
-    function cancelStream(reason: Error | null) {
+    // Native ResumableSink invokes this as (undefined, reason) — see
+    // ResumableSink.cancel in ResumableSink.zig. The first slot is unused
+    // here (we close over `stream`), but the parameter is required so the
+    // abort reason lands in the right argument.
+    function cancelStream(_, reason: Error | null) {
       if (closed) return;
       let wasClosed = closed;
       closed = true;

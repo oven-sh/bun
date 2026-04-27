@@ -8,6 +8,11 @@ pub var http_thread: HTTPThread = undefined;
 //TODO: this needs to be freed when Worker Threads are implemented
 pub var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, uws.AnySocket).init(bun.default_allocator);
 pub var async_http_id_monotonic: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+
+/// Set once at startup from `--experimental-http2-fetch` (before the HTTP
+/// thread spawns) and then only read on that thread, so no atomics needed.
+pub var experimental_http2_client_from_cli: bool = false;
+
 const MAX_REDIRECT_URL_LENGTH = 128 * 1024;
 
 pub var max_http_header_size: usize = 16 * 1024;
@@ -195,11 +200,32 @@ pub fn onOpen(
 
             defer if (hostname_needs_free) bun.default_allocator.free(hostname);
 
-            ssl_ptr.configureHTTPClient(hostname);
+            ssl_ptr.configureHTTPClientWithALPN(hostname, client.alpnOffer());
         }
     } else {
         client.firstCall(is_ssl, socket);
     }
+}
+
+/// Whether to advertise "h2" in the TLS ALPN list. Restricted to request
+/// shapes the HTTP/2 path currently handles end-to-end (no proxy/Upgrade,
+/// no sendfile). Enabled by `--experimental-http2-fetch`, the
+/// `BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT` env var, or
+/// `protocol: "http2"` on the fetch options.
+pub fn canOfferH2(client: *const HTTPClient) bool {
+    if (client.flags.force_http1) return false;
+    if (client.http_proxy != null) return false;
+    if (client.flags.is_preconnect_only) return false;
+    if (client.unix_socket_path.length() > 0) return false;
+    if (client.state.original_request_body == .sendfile) return false;
+    return client.flags.force_http2 or
+        experimental_http2_client_from_cli or
+        bun.feature_flag.BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT.get();
+}
+
+pub fn alpnOffer(client: *const HTTPClient) BoringSSL.SSL.AlpnOffer {
+    if (!client.canOfferH2()) return .h1;
+    return if (client.flags.force_http2) .h2_only else .h1_or_h2;
 }
 
 pub fn firstCall(
@@ -214,11 +240,74 @@ pub fn firstCall(
         }
     }
 
+    if (comptime is_ssl) {
+        const ssl_ptr: *BoringSSL.SSL = @ptrCast(socket.getNativeHandle());
+        var proto: [*c]const u8 = null;
+        var proto_len: c_uint = 0;
+        BoringSSL.SSL_get0_alpn_selected(ssl_ptr, &proto, &proto_len);
+        if (proto != null and proto_len == 2 and proto[0] == 'h' and proto[1] == '2') {
+            log("ALPN negotiated h2 {s}", .{client.url.href});
+            const ctx = client.getSslCtx(true);
+            const session = H2.ClientSession.create(ctx, socket, client);
+            NewHTTPContext(true).tagAsH2(socket, session);
+            client.resolvePendingH2(.{ .h2 = session });
+            session.attach(client);
+            return;
+        }
+        client.flags.protocol = .http1_1;
+        client.resolvePendingH2(.h1);
+        if (client.flags.force_http2) {
+            client.closeAndFail(error.HTTP2Unsupported, true, socket);
+            return;
+        }
+    }
+
     switch (client.state.request_stage) {
         .opened, .pending => {
             client.onWritable(true, comptime is_ssl, socket);
         },
         else => {},
+    }
+}
+
+/// Re-enter the connect path for a request that was coalesced onto an h2
+/// session but couldn't be attached (cap reached, or ALPN chose h1).
+pub fn retryAfterH2Coalesce(this: *HTTPClient) void {
+    this.start_(true);
+}
+
+/// REFUSED_STREAM or graceful GOAWAY past our id: the server promises it
+/// did not process the request, so re-dispatch from the top. Only reached
+/// for `.bytes` bodies (replayable).
+pub const max_h2_retries: u8 = 5;
+pub fn retryFromH2(this: *HTTPClient) void {
+    bun.debugAssert(this.h2 == null);
+    this.unregisterAbortTracker();
+    this.flags.protocol = .http1_1;
+    this.h2_retries += 1;
+    const body = this.state.original_request_body;
+    const body_out = this.state.body_out_str.?;
+    this.state.original_request_body = .{ .bytes = "" };
+    this.state.reset(this.allocator);
+    this.start(body, body_out);
+}
+
+/// Called by the HTTP/2 session for stream-level termination (RST_STREAM,
+/// GOAWAY, abort, decode error). The socket stays up for sibling streams, so
+/// only the request fails.
+pub fn failFromH2(this: *HTTPClient, err: anyerror) void {
+    bun.debugAssert(this.h2 == null);
+    this.unregisterAbortTracker();
+    if (this.state.stage != .done and this.state.stage != .fail) {
+        this.state.request_stage = .fail;
+        this.state.response_stage = .fail;
+        this.state.fail = err;
+        this.state.stage = .fail;
+        if (this.flags.defer_fail_until_connecting_is_complete) return;
+        const callback = this.result_callback;
+        const result = this.toResult();
+        this.state.reset(this.allocator);
+        callback.run(@fieldParentPtr("client", this), result);
     }
 }
 pub fn onClose(
@@ -473,6 +562,12 @@ const HTTPUpgradeState = enum(u2) {
     pending = 1,
     upgraded = 2,
 };
+
+pub const Protocol = enum(u1) {
+    http1_1 = 0,
+    http2 = 1,
+};
+
 pub const Flags = packed struct(u16) {
     disable_timeout: bool = false,
     disable_keepalive: bool = false,
@@ -486,7 +581,13 @@ pub const Flags = packed struct(u16) {
     is_streaming_request_body: bool = false,
     defer_fail_until_connecting_is_complete: bool = false,
     upgrade_state: HTTPUpgradeState = .none,
-    _padding: u3 = 0,
+    protocol: Protocol = .http1_1,
+    /// Set by `fetch(url, { protocol: "http2" })`: ALPN advertises only h2
+    /// and the request fails if the server selects anything else.
+    force_http2: bool = false,
+    /// Set by `fetch(url, { protocol: "http1.1" })`: opt out of h2 even when
+    /// the experimental env flag would otherwise advertise it.
+    force_http1: bool = false,
 };
 
 // TODO: reduce the size of this struct
@@ -500,6 +601,10 @@ allocator: std.mem.Allocator,
 verbose: HTTPVerboseLevel = .none,
 remaining_redirect_count: i8 = default_redirect_count,
 allow_retry: bool = false,
+/// Transparent re-dispatch count for REFUSED_STREAM / graceful-GOAWAY,
+/// where the server promises the request was not processed. Capped by
+/// `max_h2_retries`.
+h2_retries: u8 = 0,
 redirect_type: FetchRedirect = FetchRedirect.follow,
 redirect: []u8 = &.{},
 progress_node: ?*Progress.Node = null,
@@ -522,6 +627,13 @@ http_proxy: ?URL = null,
 proxy_headers: ?Headers = null,
 proxy_authorization: ?[]u8 = null,
 proxy_tunnel: ?*ProxyTunnel = null,
+/// Set when this request is bound to a stream on an HTTP/2 session.
+/// Owned by the session; cleared by the session when the stream completes.
+h2: ?*H2.Stream = null,
+/// Set while this request is the leader of a fresh TLS connect that other
+/// h2-capable requests have coalesced onto. Resolved (and freed) once ALPN
+/// is known or the connect fails.
+pending_h2: ?*H2.PendingConnect = null,
 signals: Signals = .{},
 async_http_id: u32 = 0,
 hostname: ?[]u8 = null,
@@ -544,6 +656,9 @@ pub fn deinit(this: *HTTPClient) void {
         this.proxy_tunnel = null;
         tunnel.detachAndDeref();
     }
+    // The session detaches `h2` before any terminal callback, so this should
+    // be null by the time the result callback's deinit path runs.
+    bun.debugAssert(this.h2 == null);
     // Release our strong ref on the interned SSLConfig
     if (this.tls_props) |*tls| tls.deinit();
     this.tls_props = null;
@@ -915,10 +1030,12 @@ pub fn doRedirect(
 ) void {
     log("doRedirect", .{});
     if (this.state.original_request_body == .stream) {
-        // we cannot follow redirect from a stream right now
-        // NOTE: we can use .tee(), reset the readable stream and cancel/wait pending write requests before redirecting. node.js just errors here so we just closeAndFail too.
-        this.closeAndFail(error.UnexpectedRedirect, is_ssl, socket);
-        return;
+        // handleResponseMetadata already rejected every non-303 status with a
+        // stream body (RequestBodyNotReusable). Reaching here means the
+        // redirect downgraded to GET with a null body; drop the streaming
+        // flag so the follow-up request goes out without Transfer-Encoding,
+        // and let state.reset() release the ThreadSafeStreamBuffer ref.
+        this.flags.is_streaming_request_body = false;
     }
 
     this.unix_socket_path.deinit();
@@ -942,13 +1059,20 @@ pub fn doRedirect(
     // store it under the WRONG target hostname — a follow-up request to the
     // redirect destination could then reuse a TLS session negotiated with the
     // original host. Close the tunnel on redirect; only pool the raw socket.
-    if (this.proxy_tunnel) |tunnel| {
+    if (this.flags.protocol == .http2) {
+        // The session owns the socket; the stream was detached by the caller
+        // and the session will pool or close once its other streams drain.
+    } else if (this.proxy_tunnel) |tunnel| {
         log("close the tunnel in redirect", .{});
         this.proxy_tunnel = null;
         tunnel.shutdown();
         tunnel.detachAndDeref();
         NewHTTPContext(is_ssl).closeSocket(socket);
-    } else if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
+    } else if (this.state.request_stage == .done and this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
+        // request_stage == .done: a 303 to a streaming POST can arrive before
+        // the chunked upload's terminating 0\r\n\r\n is written. Pooling that
+        // socket would let the next request's bytes land inside what the
+        // server is still parsing as the previous chunked body.
         log("Keep-Alive release in redirect", .{});
         assert(this.connected_url.hostname.len > 0);
         ctx.releaseSocket(
@@ -961,6 +1085,7 @@ pub fn doRedirect(
             "",
             0,
             0,
+            null,
         );
     } else {
         NewHTTPContext(is_ssl).closeSocket(socket);
@@ -981,6 +1106,7 @@ pub fn doRedirect(
         this.proxy_tunnel = null;
         tunnel.detachAndDeref();
     }
+    this.flags.protocol = .http1_1;
 
     return this.start(.{ .bytes = request_body }, body_out_str);
 }
@@ -1034,10 +1160,24 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
         return;
     }
 
-    var socket = http_thread.connect(this, is_ssl) catch |err| {
+    // protocol: "http2" is documented as HTTPS-only (h2c is out of scope).
+    // Every consumer of force_http2 is gated on `comptime is_ssl`, so without
+    // this an http:// request would silently fall through to HTTP/1.1.
+    if (comptime !is_ssl) {
+        if (this.flags.force_http2) {
+            this.fail(error.HTTP2Unsupported);
+            return;
+        }
+    }
+
+    var socket = (http_thread.connect(this, is_ssl) catch |err| {
         bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
         this.fail(err);
+        return;
+    }) orelse {
+        // Coalesced onto an in-flight h2 connect; the leader will attach us
+        // (or re-dispatch) once ALPN resolves.
         return;
     };
 
@@ -1074,7 +1214,7 @@ pub const HTTPResponseMetadata = struct {
     }
 };
 
-fn printRequest(request: picohttp.Request, url: string, ignore_insecure: bool, body: []const u8, curl: bool) void {
+pub fn printRequest(request: picohttp.Request, url: string, ignore_insecure: bool, body: []const u8, curl: bool) void {
     @branchHint(.cold);
     var request_ = request;
     request_.path = url;
@@ -1108,6 +1248,7 @@ pub fn onPreconnect(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCon
         "",
         0,
         0,
+        null,
     );
 
     this.state.reset(this.allocator);
@@ -1843,8 +1984,59 @@ fn completeConnectingProcess(this: *HTTPClient) void {
     }
 }
 
+const PendingH2Resolution = union(enum) {
+    /// ALPN selected h2; waiters attach onto this session.
+    h2: *H2.ClientSession,
+    /// Handshake completed and ALPN selected http/1.1. Waiters can be pinned
+    /// to h1 (and force_http2 waiters failed) since the server has spoken.
+    h1,
+    /// Leader's connect/handshake failed or was aborted before ALPN. Nothing
+    /// has been learned about the server's protocol support, so waiters must
+    /// retry without protocol pinning.
+    leader_failed,
+};
+
+/// The leader of a coalesced cold connect has learned the ALPN outcome (or
+/// failed). Dispatch every waiter accordingly.
+fn resolvePendingH2(this: *HTTPClient, resolution: PendingH2Resolution) void {
+    const pc = this.pending_h2 orelse return;
+    this.pending_h2 = null;
+    pc.unregisterFrom(this.getSslCtx(true));
+    defer pc.deinit();
+
+    for (pc.waiters.items) |waiter| {
+        if (waiter.signals.get(.aborted)) {
+            waiter.fail(error.Aborted);
+            continue;
+        }
+        switch (resolution) {
+            .h2 => |s| s.enqueue(waiter),
+            .h1 => {
+                // ALPN selected http/1.1 on the leader's handshake; a
+                // force_http2 waiter would just open a fresh TLS connection
+                // and fail the same way, so fail it here instead of burning
+                // another handshake.
+                if (waiter.flags.force_http2) {
+                    waiter.fail(error.HTTP2Unsupported);
+                    continue;
+                }
+                // Pin to h1 so this `start_` doesn't register a fresh
+                // PendingConnect that the rest of this loop would re-coalesce
+                // onto (which would serialise N cold fetches into N
+                // sequential handshakes). The origin already chose h1 once.
+                waiter.flags.force_http1 = true;
+                waiter.start_(true);
+            },
+            // The first waiter becomes the new leader; the rest re-coalesce
+            // onto it via the normal PendingConnect path.
+            .leader_failed => waiter.start_(true),
+        }
+    }
+}
+
 fn fail(this: *HTTPClient, err: anyerror) void {
     this.unregisterAbortTracker();
+    this.resolvePendingH2(.leader_failed);
 
     if (this.proxy_tunnel) |tunnel| {
         this.proxy_tunnel = null;
@@ -1870,7 +2062,7 @@ fn fail(this: *HTTPClient, err: anyerror) void {
 }
 
 // We have to clone metadata immediately after use
-fn cloneMetadata(this: *HTTPClient) void {
+pub fn cloneMetadata(this: *HTTPClient) void {
     assert(this.state.pending_response != null);
     if (this.state.pending_response) |response| {
         if (this.state.cloned_metadata != null) {
@@ -1973,7 +2165,11 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
         else
             true;
 
-        if (this.isKeepAlivePossible() and !socket.isClosedOrHasError() and tunnel_poolable) {
+        if (this.flags.protocol == .http2) {
+            // The HTTP/2 session owns the socket; it decides whether to pool
+            // or close once all of its streams have drained.
+            this.unregisterAbortTracker();
+        } else if (this.isKeepAlivePossible() and !socket.isClosedOrHasError() and tunnel_poolable) {
             log("release socket", .{});
             const tunnel = this.proxy_tunnel;
             this.proxy_tunnel = null;
@@ -1992,6 +2188,7 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
                 if (tunnel != null) this.url.hostname else "",
                 if (tunnel != null) this.url.getPortAuto() else 0,
                 if (tunnel != null) this.proxyAuthHash() else 0,
+                null,
             );
         } else {
             if (this.proxy_tunnel) |tunnel| {
@@ -2043,6 +2240,9 @@ pub const HTTPClientResult = struct {
     has_more: bool = false,
     redirected: bool = false,
     can_stream: bool = false,
+    /// Set once ALPN selected h2 so the JS side writes raw bytes into the
+    /// streaming-body buffer instead of chunked-encoding them.
+    is_http2: bool = false,
 
     fail: ?anyerror = null,
 
@@ -2140,6 +2340,7 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
             .body_size = body_size,
             .certificate_info = null,
             .can_stream = (this.state.request_stage == .body or this.state.request_stage == .proxy_body) and this.flags.is_streaming_request_body,
+            .is_http2 = this.flags.protocol == .http2,
         };
     }
     return HTTPClientResult{
@@ -2153,6 +2354,7 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
         .certificate_info = certificate_info,
         // we can stream the request_body at this stage
         .can_stream = (this.state.request_stage == .body or this.state.request_stage == .proxy_body) and this.flags.is_streaming_request_body,
+        .is_http2 = this.flags.protocol == .http2,
     };
 }
 
@@ -2411,7 +2613,7 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
     unreachable;
 }
 
-const ShouldContinue = enum {
+pub const ShouldContinue = enum {
     continue_streaming,
     finished,
 };
@@ -2562,6 +2764,15 @@ pub fn handleResponseMetadata(
         if (this.redirect_type == FetchRedirect.follow and location.len > 0 and this.remaining_redirect_count > 0) {
             switch (status_code) {
                 302, 301, 307, 308, 303 => {
+                    // https://fetch.spec.whatwg.org/#http-redirect-fetch step 11:
+                    // "If internalResponse's status is not 303, request's body
+                    // is non-null, and request's body's source is null, then
+                    // return a network error." A ReadableStream body has no
+                    // source to replay from, so only 303 (which drops the body
+                    // and switches to GET) may be followed.
+                    if (status_code != 303 and this.state.original_request_body == .stream) {
+                        return error.RequestBodyNotReusable;
+                    }
                     var is_same_origin = true;
 
                     {
@@ -2834,6 +3045,8 @@ pub const InitError = @import("./http/InitError.zig").InitError;
 pub const HTTPRequestBody = @import("./http/HTTPRequestBody.zig").HTTPRequestBody;
 pub const SendFile = @import("./http/SendFile.zig");
 pub const HeaderValueIterator = @import("./http/HeaderValueIterator.zig");
+pub const H2 = @import("./http/H2Client.zig");
+pub const H2Wire = @import("./http/H2FrameParser.zig");
 
 const string = []const u8;
 

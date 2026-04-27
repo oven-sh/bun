@@ -143,6 +143,16 @@ pub fn cancel(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
     this.done(globalThis);
 }
 
+/// Cancel the stream and forward `reason` verbatim to the underlying source's
+/// cancel algorithm (the spec's ReadableStreamCancel). Unlike `cancel()`,
+/// this does not synthesize a DOMException — fetch() uses it to surface
+/// `AbortSignal.reason` to the request body's cancel callback.
+pub fn cancelWithReason(this: *const ReadableStream, globalThis: *JSGlobalObject, reason: jsc.JSValue) void {
+    jsc.markBinding(@src());
+    ReadableStream__cancelWithReason(this.value, globalThis, reason);
+    this.done(globalThis);
+}
+
 pub fn abort(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
     jsc.markBinding(@src());
     // for now we are just calling cancel should be fine
@@ -210,6 +220,7 @@ extern fn ReadableStream__isLocked(possibleReadableStream: JSValue, globalObject
 extern fn ReadableStream__empty(*JSGlobalObject) jsc.JSValue;
 extern fn ReadableStream__used(*JSGlobalObject) jsc.JSValue;
 extern fn ReadableStream__cancel(stream: JSValue, *JSGlobalObject) void;
+extern fn ReadableStream__cancelWithReason(stream: JSValue, *JSGlobalObject, reason: JSValue) void;
 extern fn ReadableStream__abort(stream: JSValue, *JSGlobalObject) void;
 extern fn ReadableStream__detach(stream: JSValue, *JSGlobalObject) void;
 extern fn ReadableStream__fromBlob(

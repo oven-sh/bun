@@ -1,4 +1,4 @@
-# Version: 18
+# Version: 19
 # A script that installs the dependencies needed to build and test Bun on Windows.
 # Supports both x64 and ARM64 using Scoop for package management.
 # Used by Azure [build images] pipeline.
@@ -484,6 +484,29 @@ function Install-Visual-Studio {
   }
 }
 
+function Install-CurlH3 {
+  # Installs a static curl built with nghttp3/ngtcp2 as `curl-h3.exe` so the
+  # HTTP/3 server tests (test/js/bun/http/serve-http3.test.ts, fetch-h3.ts)
+  # can run in CI. The bundled C:\Windows\System32\curl.exe has no HTTP/3.
+  # Tests discover this via $env:CURL_HTTP3, then `curl-h3` in PATH.
+  if (Which curl-h3) {
+    return
+  }
+  $version = "8.19.0" # https://github.com/stunnel/static-curl/releases
+  $archName = if ($script:IsARM64) { "aarch64" } else { "x86_64" }
+  Write-Output "Installing curl-h3 $version ($archName)..."
+  $tar = Download-File "https://github.com/stunnel/static-curl/releases/download/$version/curl-windows-$archName-$version.tar.xz" -Name "curl-h3.tar.xz"
+  $extractDir = "$env:TEMP\curl-h3-extract"
+  New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+  & tar -xf $tar -C $extractDir
+  Copy-Item "$extractDir\curl.exe" "C:\Windows\System32\curl-h3.exe" -Force
+  Copy-Item "$extractDir\curl-ca-bundle.crt" "C:\Windows\System32\curl-ca-bundle.crt" -Force
+  Remove-Item $tar -ErrorAction SilentlyContinue
+  Remove-Item $extractDir -Recurse -ErrorAction SilentlyContinue
+  Set-Env CURL_HTTP3 "C:\Windows\System32\curl-h3.exe"
+  & curl-h3 --version | Select-Object -First 1 | Write-Output
+}
+
 function Install-PdbAddr2line {
   cargo install --examples "pdb-addr2line@0.11.2"
   # Also copy to System32 so it's always on PATH (like bun.exe)
@@ -680,6 +703,7 @@ if (-not $script:IsARM64) {
 Install-Pwsh
 Install-OpenSSH
 Install-Bun
+Install-CurlH3
 Install-Ccache
 Install-Rust
 Install-Visual-Studio

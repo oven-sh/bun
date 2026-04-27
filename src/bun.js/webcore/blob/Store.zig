@@ -541,7 +541,11 @@ pub const Bytes = struct {
     pub fn deinit(this: *Bytes) void {
         bun.default_allocator.free(this.stored_name.slice());
         if (this.ptr) |ptr| {
-            this.allocator.free(ptr[0..this.cap]);
+            // Use rawFree to skip std.mem.Allocator.free's @memset(undefined).
+            // For memfd-backed stores the mapping may no longer be fully backed
+            // (the fd can be truncated by user code), so touching every byte
+            // before munmap can SIGBUS. It is also wasted work for large blobs.
+            this.allocator.rawFree(ptr[0..this.cap], .@"1", @returnAddress());
         }
         this.ptr = null;
         this.len = 0;

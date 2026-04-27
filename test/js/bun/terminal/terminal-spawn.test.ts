@@ -437,5 +437,4 @@ describe("Bun.Terminal subprocess integration", () => {
     expect(terminal.localFlags & ECHO).not.toBe(0);
     expect(exitCode).toBe(0);
   });
-
 });

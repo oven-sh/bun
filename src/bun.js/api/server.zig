@@ -1644,6 +1644,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             {
                 if (this.config.websocket) |*ws| {
                     ws.handler.app = null;
+                    ws.handler.h3_app = null;
                 }
                 this.unref();
 
@@ -1711,6 +1712,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             } else if (!this.flags.terminated) {
                 if (this.config.websocket) |*ws| {
                     ws.handler.app = null;
+                    ws.handler.h3_app = null;
                 }
                 this.flags.terminated = true;
                 this.app.?.close();
@@ -2627,10 +2629,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 const user_route: *UserRoute = @ptrCast(@alignCast(this));
                 const server = user_route.server;
                 var should_deinit_context = false;
-                var prepared = server.prepareJsRequestContextFor(H3RequestContext, req, resp, &should_deinit_context, .no, switch (user_route.route.method) {
-                    .any => null,
-                    .specific => |m| m,
-                }) orelse return;
+                var prepared = server.prepareJsRequestContextFor(H3RequestContext, req, resp, &should_deinit_context, .no, null) orelse return;
                 prepared.ctx.upgrade_context = upgrade_ctx;
                 const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
                 const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRouteH3, .{ server.globalThis, user_route.id, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);

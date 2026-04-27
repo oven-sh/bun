@@ -112,6 +112,7 @@ struct Http3Context {
             Http3ContextData *cd = (Http3ContextData *) us_quic_socket_context_ext(us_quic_stream_context(session));
             WebTransportSessionData *d = ((Http3ResponseData *) us_quic_stream_ext(session))->wt;
             if (!d || d->isShuttingDown || !cd->wt.messageHandler) return;
+            if (len > cd->wt.maxPayloadLength) return;
             cd->wt.messageHandler((WebTransportSession *) session, std::string_view{data, len}, BINARY);
         });
 
@@ -202,6 +203,20 @@ struct Http3Context {
             const unsigned char *start = p;
             uint64_t type, clen;
             if (!readVarint(p, end, type) || !readVarint(p, end, clen)) { p = start; break; }
+            if (clen > cd->wt.maxPayloadLength) {
+                /* RFC 9297 §3.3: reset on a Capsule Length we won't buffer.
+                 * Do this on the advertised length so a header-only attack
+                 * (huge clen, never send the body) can't sit out the idle
+                 * timeout. */
+                d->isShuttingDown = true;
+                if (d->subscriber) {
+                    cd->wt.topicTree->freeSubscriber(d->subscriber);
+                    d->subscriber = nullptr;
+                }
+                if (cd->wt.closeHandler) cd->wt.closeHandler(ws, 1009, {});
+                us_quic_stream_close((us_quic_stream_t *) ws);
+                return;
+            }
             if ((uint64_t)(end - p) < clen) { p = start; break; }
             if (type == 0x2843 /* WT_CLOSE_SESSION */) {
                 int code = 0; std::string_view msg;

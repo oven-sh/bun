@@ -98,7 +98,7 @@ static int b64idx(char c) {
     return -1;
 }
 
-static size_t b64dec(const char *in, unsigned char *out) {
+static size_t b64dec(const char *in, unsigned char *out, size_t cap) {
     size_t o = 0;
     int q[4], n = 0;
     for (; *in; in++) {
@@ -106,14 +106,15 @@ static size_t b64dec(const char *in, unsigned char *out) {
         if (v < 0) continue;
         q[n++] = v;
         if (n == 4) {
+            if (o + 3 > cap) return o;
             out[o++] = (q[0] << 2) | (q[1] >> 4);
             out[o++] = (q[1] << 4) | (q[2] >> 2);
             out[o++] = (q[2] << 6) | q[3];
             n = 0;
         }
     }
-    if (n >= 2) out[o++] = (q[0] << 2) | (q[1] >> 4);
-    if (n >= 3) out[o++] = (q[1] << 4) | (q[2] >> 2);
+    if (n >= 2 && o < cap) out[o++] = (q[0] << 2) | (q[1] >> 4);
+    if (n >= 3 && o < cap) out[o++] = (q[1] << 4) | (q[2] >> 2);
     return o;
 }
 
@@ -280,12 +281,16 @@ static void parse_capsules(void) {
         p += n;
         if ((uint64_t)(end - p) < clen) { p = start; break; }
         if (type == 0x2843) {
-            int code = 0; char b64[2048] = "";
+            int code = 0; size_t mlen = 0;
             if (clen >= 4) {
                 code = (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
-                b64enc(p + 4, clen - 4, b64);
+                mlen = (size_t)(clen - 4);
             }
+            char *b64 = malloc((mlen + 2) / 3 * 4 + 1);
+            if (!b64) die("oom");
+            b64enc(p + 4, mlen, b64);
             printf("close %d %s\n", code, b64);
+            free(b64);
             g_done = 1;
         }
         p += clen;
@@ -368,7 +373,7 @@ static void handle_cmd(char *line) {
     if (sp) *sp++ = 0;
     if (strcmp(line, "dgram") == 0 && sp && g_open) {
         unsigned char payload[1400], prefix[8];
-        size_t dlen = b64dec(sp, payload);
+        size_t dlen = b64dec(sp, payload, sizeof(payload));
         unsigned plen = vint_write(prefix, g_session_id / 4);
         struct buf *b = buf_new(prefix, plen, payload, dlen);
         if (g_dg_tail) g_dg_tail->next = b; else g_dg_head = b;
@@ -376,7 +381,7 @@ static void handle_cmd(char *line) {
         lsquic_conn_want_datagram_write(g_conn, 1);
     } else if (strcmp(line, "stream") == 0 && sp && g_open) {
         unsigned char payload[8192], prefix[16];
-        size_t dlen = b64dec(sp, payload);
+        size_t dlen = b64dec(sp, payload, sizeof(payload));
         prefix[0] = 0x40; prefix[1] = 0x41; /* 2-byte varint for the type */
         unsigned slen = vint_write(prefix + 2, g_session_id);
         g_stream_pending = buf_new(prefix, 2 + slen, payload, dlen);
@@ -385,13 +390,13 @@ static void handle_cmd(char *line) {
         /* Raw bytes on the CONNECT stream (no FIN). lsquic wraps them in a
          * DATA frame; the server's capsule parser sees them as body. */
         unsigned char payload[16384];
-        size_t dlen = b64dec(sp, payload);
+        size_t dlen = b64dec(sp, payload, sizeof(payload));
         lsquic_stream_write(g_connect, (char *) payload, dlen);
         lsquic_stream_flush(g_connect);
     } else if (strcmp(line, "close") == 0) {
         int code = 0; const char *b64 = "";
         if (sp) { code = atoi(sp); char *sp2 = strchr(sp, ' '); if (sp2) b64 = sp2 + 1; }
-        unsigned char msg[1024]; size_t mlen = b64dec(b64, msg);
+        unsigned char msg[1024]; size_t mlen = b64dec(b64, msg, sizeof(msg));
         unsigned char *p = g_close;
         *p++ = 0x80; *p++ = 0x00; *p++ = 0x28; *p++ = 0x43;
         uint64_t blen = (code || mlen) ? 4 + mlen : 0;

@@ -17,7 +17,6 @@
   "EXCEPTION_ASSERT(!scope.exception())": 0,
   "JSValue.false": 0,
   "JSValue.true": 0,
-  "TODO: properly propagate exception upwards": 114,
   "alloc.ptr !=": 0,
   "alloc.ptr ==": 0,
   "allocator.ptr !=": 1,

@@ -2629,31 +2629,10 @@ pub fn printErrorlikeObject(
         }
     }
 
-    if (value.isAggregateError(this.global)) {
-        const AggregateErrorIterator = struct {
-            writer: Writer,
-            current_exception_list: ?*ExceptionList = null,
-            formatter: *ConsoleObject.Formatter,
-
-            pub fn iteratorWithColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.c) void {
-                iterator(vm, globalObject, nextValue, ctx.?, true);
-            }
-            pub fn iteratorWithOutColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.c) void {
-                iterator(vm, globalObject, nextValue, ctx.?, false);
-            }
-            fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
-                const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));
-                VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, this_.formatter, Writer, this_.writer, color, allow_side_effects);
-            }
-        };
-        var iter = AggregateErrorIterator{ .writer = writer, .current_exception_list = exception_list, .formatter = formatter };
-        if (comptime allow_ansi_color) {
-            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor) catch return; // TODO: properly propagate exception upwards
-        } else {
-            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor) catch return; // TODO: properly propagate exception upwards
-        }
-        return;
-    }
+    // AggregateError is handled by printErrorInstance, which prints the
+    // wrapper (name / message / stack) and then fans out the non-enumerable
+    // `errors` array via the errors_to_append queue — see the cause block
+    // there for the same pattern.
 
     was_internal = this.printErrorFromMaybePrivateData(
         value,
@@ -3544,6 +3523,27 @@ fn printErrorInstance(
 
         if (!is_first_property) {
             try writer.writeAll("\n");
+        }
+
+        // `AggregateError.errors` is a non-enumerable own property, so the
+        // property iterator above skips it. Walk it manually and queue each
+        // entry (of any type — Promise.any can reject with non-Error values)
+        // so the wrapper gets printed first and the children follow, matching
+        // Node's `[errors]: [...]` format. Queue errors BEFORE cause so the
+        // drain loop emits them in Node's order (wrapper → errors → cause).
+        if (error_instance.isAggregateError(this.global)) {
+            const AggregateErrorsIterator = struct {
+                errors_to_append: *std.array_list.Managed(JSValue),
+
+                pub fn visit(_: *VM, _: *JSGlobalObject, ctx: ?*anyopaque, next_value: JSValue) callconv(.c) void {
+                    const self: *@This() = @ptrCast(@alignCast(ctx.?));
+                    next_value.protect();
+                    bun.handleOom(self.errors_to_append.append(next_value));
+                }
+            };
+            var errors_iter = AggregateErrorsIterator{ .errors_to_append = &errors_to_append };
+            const errors_array = error_instance.getErrorsProperty(this.global);
+            try errors_array.forEach(this.global, &errors_iter, AggregateErrorsIterator.visit);
         }
 
         // "cause" is not enumerable, so the above loop won't see it.

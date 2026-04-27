@@ -956,6 +956,46 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     });
   });
 
+  // Each QUIC connection counts as a virtual poll (loop->num_polls); after
+  // server.stop() drains, the last conn close releases the UDP fd and the
+  // loop has no polls left — the process exits without process.exit().
+  itH3("h3-only server exits naturally after stop() drains", async () => {
+    using dir = tempDir("serve-http3-exit", {
+      "server.mjs": `
+        const server = Bun.serve({
+          port: 0, tls: ${JSON.stringify(tls)}, h3: true, h1: false,
+          fetch: () => new Response("ok"),
+        });
+        console.error("PORT=" + server.port);
+        process.stdin.once("data", () => server.stop());
+      `,
+    });
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "server.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdin: "pipe",
+    });
+    let buf = "";
+    const r = proc.stderr.getReader();
+    while (!buf.includes("PORT=")) {
+      const { value, done } = await r.read();
+      if (done) break;
+      buf += new TextDecoder().decode(value);
+    }
+    r.releaseLock();
+    const port = Number(buf.match(/PORT=(\d+)/)![1]);
+    const ok = await curl3(port, "/");
+    expect(ok.stdout).toBe("ok");
+    proc.stdin!.write("stop\n");
+    proc.stdin!.end();
+    // No process.exit() in the script — exiting proves the QUIC poll refs
+    // were released. Timeout would mean the UDP fd is still holding the loop.
+    const exitCode = await proc.exited;
+    expect(exitCode).toBe(0);
+  });
+
   // C: req.signal fires when the client resets the H3 stream mid-request.
   itH3("req.signal aborts on client RST", async () => {
     const script = `

@@ -45,6 +45,7 @@ struct us_quic_socket_context_s {
     unsigned int sni_count, sni_cap;
     int processing;
     int closing;
+    unsigned int conn_count;
     struct us_quic_socket_context_s *next; /* loop->data.quic_head list */
     unsigned int stream_ext_size;
     /* Listen sockets stay reachable as lsquic peer_ctx after the UDP fd
@@ -386,6 +387,11 @@ static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn)
     if (!qs) return NULL;
     qs->conn = conn;
     qs->ctx = ctx;
+    /* QUIC connections share one UDP fd, so they aren't real polls. Count
+     * each as a virtual poll so the loop stays alive while conns are open —
+     * the same invariant H1 gets from each TCP socket being a us_poll_t. */
+    ctx->loop->num_polls++;
+    ctx->conn_count++;
     if (ctx->on_open) ctx->on_open(qs);
     return (lsquic_conn_ctx_t *) qs;
 }
@@ -393,9 +399,17 @@ static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn)
 static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
     us_quic_socket_t *qs = (us_quic_socket_t *) lsquic_conn_get_ctx(conn);
     if (!qs) return;
-    if (qs->ctx->on_close) qs->ctx->on_close(qs);
+    us_quic_socket_context_t *ctx = qs->ctx;
+    if (ctx->on_close) ctx->on_close(qs);
     lsquic_conn_set_ctx(conn, NULL);
     free(qs);
+    ctx->loop->num_polls--;
+    ctx->conn_count--;
+    /* During graceful drain the UDP fd is the only thing left holding the
+     * loop; release it when the last conn closes so the process can exit. */
+    if (ctx->closing && ctx->conn_count == 0) {
+        while (ctx->listeners) us_udp_socket_close(ctx->listeners->udp);
+    }
 }
 
 static lsquic_stream_ctx_t *us_quic_on_new_stream(void *if_ctx, lsquic_stream_t *stream) {
@@ -599,6 +613,10 @@ void us_quic_socket_context_shutdown(us_quic_socket_context_t *ctx) {
     lsquic_engine_cooldown(ctx->engine);
     lsquic_engine_send_unsent_packets(ctx->engine);
     us_quic_process(ctx);
+    /* Nothing to drain — release the UDP fd now so the loop can exit. */
+    if (ctx->conn_count == 0) {
+        while (ctx->listeners) us_udp_socket_close(ctx->listeners->udp);
+    }
 }
 
 void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {

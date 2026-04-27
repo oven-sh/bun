@@ -665,13 +665,15 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             }
 
             if (events & LIBUS_SOCKET_WRITABLE && !error && !u->closed) {
+                /* Clear WRITABLE before on_drain so a callback that re-arms it
+                 * (e.g. QUIC packets_out hitting EAGAIN) keeps the re-arm. We
+                 * still default to one-shot drain semantics for callers that
+                 * don't touch the poll mask. */
+                us_poll_change(&u->p, u->loop, us_poll_events(&u->p) & LIBUS_SOCKET_READABLE);
                 u->on_drain(u);
                 if (u->closed) {
                     break;
                 }
-                // We only poll for writable after a read has failed, and only send one drain notification.
-                // Otherwise we would receive a writable event on every tick of the event loop.
-                us_poll_change(&u->p, u->loop, us_poll_events(&u->p) & LIBUS_SOCKET_READABLE);
             }
 
 #if defined(__linux__)

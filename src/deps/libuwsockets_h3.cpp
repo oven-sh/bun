@@ -13,7 +13,10 @@
 #include <bun-uws/src/Http3Response.h>
 #include <bun-uws/src/Http3Request.h>
 #include <string_view>
+#include <string.h>
 // clang-format on
+
+extern "C" const char *ares_inet_ntop(int af, const char *src, char *dst, size_t size);
 
 using uWS::H3App;
 using uWS::Http3Request;
@@ -176,14 +179,24 @@ void uws_h3_res_uncork(uws_h3_res_t *) {}
 bool uws_h3_res_is_corked(uws_h3_res_t *) { return false; }
 
 uint64_t uws_h3_res_get_remote_address_info(uws_h3_res_t *res, const char **dest, int *port, bool *is_ipv6) {
-  static thread_local char buf[16];
+  /* Mirror uws_res_get_remote_address_info: stringify with inet_ntop so the
+   * Zig side gets a text slice, not raw in_addr bytes. */
+  static thread_local char b[64];
   int len = 0, ipv6 = 0;
   us_quic_socket_t *qs = us_quic_stream_socket((us_quic_stream_t *) res);
-  if (!qs) { *dest = buf; *port = 0; *is_ipv6 = false; return 0; }
-  us_quic_socket_remote_address(qs, buf, &len, port, &ipv6);
-  *dest = buf;
-  *is_ipv6 = ipv6 != 0;
-  return (uint64_t) len;
+  if (!qs) { *dest = b; *port = 0; *is_ipv6 = false; return 0; }
+  us_quic_socket_remote_address(qs, b, &len, port, &ipv6);
+  if (len == 0) { *dest = b; *is_ipv6 = false; return 0; }
+  if (len == 4) {
+    ares_inet_ntop(AF_INET, b, &b[4], 64 - 4);
+    *dest = &b[4];
+    *is_ipv6 = false;
+  } else {
+    ares_inet_ntop(AF_INET6, b, &b[16], 64 - 16);
+    *dest = &b[16];
+    *is_ipv6 = true;
+  }
+  return (uint64_t) strlen(*dest);
 }
 
 /* ───── request ───── */

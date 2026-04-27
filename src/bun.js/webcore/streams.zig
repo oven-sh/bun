@@ -702,7 +702,7 @@ pub const Signal = struct {
 
 pub fn HTTPServerWritable(comptime ssl: bool, comptime http3: bool) type {
     return struct {
-        const UWSResponse = if (http3) uws.H3.Response else uws.NewApp(ssl).Response;
+        const UWSResponse = if (http3 and !bun.Environment.isWindows) uws.H3.Response else uws.NewApp(ssl).Response;
         res: ?*UWSResponse,
         buffer: bun.ByteList,
         pooled_buffer: ?*WebCore.ByteListPool.Node = null,
@@ -1331,7 +1331,7 @@ pub const HTTPResponseSink = HTTPServerWritable(false, false);
 // On Windows there is no QUIC build; alias to the SSL sink so the generated
 // JSSink symbols still resolve. The type is never reachable there because
 // `h3: true` is rejected at config time.
-pub const H3ResponseSink = if (bun.Environment.isWindows) HTTPSResponseSink else HTTPServerWritable(true, true);
+pub const H3ResponseSink = HTTPServerWritable(true, true);
 pub const NetworkSink = struct {
     pub const new = bun.TrivialNew(@This());
     pub const deinit = bun.TrivialDeinit(@This());

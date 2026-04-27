@@ -1042,6 +1042,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             httplog("onReload", .{});
 
             this.app.?.clearRoutes();
+            if (comptime has_h3) if (this.h3_app) |h3a| h3a.clearRoutes();
 
             // only reload those two, but ignore if they're not specified.
             if (this.config.onRequest != new_config.onRequest and (new_config.onRequest != .zero and !new_config.onRequest.isUndefined())) {
@@ -1127,6 +1128,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
             this.config = try this.config.cloneForReloadingStaticRoutes();
             this.app.?.clearRoutes();
+            if (comptime has_h3) if (this.h3_app) |h3a| h3a.clearRoutes();
             const route_list_value = this.setRoutes();
             if (route_list_value != .zero) {
                 if (this.js_value.tryGet()) |server_js_value| {
@@ -2405,7 +2407,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             if (request_body_length) |req_len| {
                 ctx.request_body_content_len = req_len;
                 ctx.flags.is_transfer_encoding = req.header("transfer-encoding") != null;
-                if (req_len > 0 or ctx.flags.is_transfer_encoding) {
+                // HTTP/3 (RFC 9114 §4.2.2): Content-Length is optional and
+                // Transfer-Encoding is forbidden; the body is terminated by
+                // the QUIC stream FIN, so always arm onData for body methods.
+                if (req_len > 0 or ctx.flags.is_transfer_encoding or comptime Ctx.is_h3) {
                     // we defer pre-allocating the body until we receive the first chunk
                     // that way if the client is lying about how big the body is or the client aborts
                     // we don't waste memory

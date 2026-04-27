@@ -2447,7 +2447,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 ctxLog("onStartBuffering", .{});
                 // TODO: check if is someone calling onStartBuffering other than onStartBufferingCallback
                 // if is not, this should be removed and only keep protect + setAbortHandler
-                if (this.flags.is_transfer_encoding == false and this.request_body_content_len == 0) {
+                // HTTP/3 (RFC 9114): Content-Length is optional; the body is
+                // delimited by stream FIN, so the H1 "no CL + no TE ⇒ empty"
+                // shortcut would drop it.
+                if (!http3 and this.flags.is_transfer_encoding == false and this.request_body_content_len == 0) {
                     // no content-length or 0 content-length
                     // no transfer-encoding
                     if (this.request_body != null) {

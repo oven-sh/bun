@@ -41,6 +41,9 @@ struct us_quic_socket_context_s {
     int processing;
     int closing;
     unsigned int stream_ext_size;
+    /* Listen sockets stay reachable as lsquic peer_ctx after the UDP fd
+     * closes; defer freeing until the engine itself is torn down. */
+    struct us_quic_listen_socket_s *closed_listeners;
 
     void (*on_open)(us_quic_socket_t *);
     void (*on_close)(us_quic_socket_t *);
@@ -58,6 +61,7 @@ struct us_quic_listen_socket_s {
     struct us_udp_socket_t *udp;
     us_quic_socket_context_t *ctx;
     struct sockaddr_storage local;
+    struct us_quic_listen_socket_s *next_closed;
 };
 
 struct us_quic_socket_s {
@@ -133,6 +137,7 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
     struct mmsghdr mm[BATCH];
     while (sent < n) {
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
+        if (!ls->udp) { errno = EBADF; break; }
         int fd = us_poll_fd((struct us_poll_t *) ls->udp);
         unsigned k = 0;
         while (k < BATCH && sent + k < n && specs[sent + k].peer_ctx == (void *) ls) {
@@ -153,6 +158,7 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
 #else
     for (; sent < n; sent++) {
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
+        if (!ls->udp) { errno = EBADF; break; }
         if (us_quic_send_one(us_poll_fd((struct us_poll_t *) ls->udp), &specs[sent]) < 0) break;
     }
 #endif
@@ -160,8 +166,10 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
     if (sent < n) {
         if (errno != EAGAIN && errno != EWOULDBLOCK) errno = EAGAIN;
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
-        us_poll_change((struct us_poll_t *) ls->udp, ls->ctx->loop,
-            LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+        if (ls->udp) {
+            us_poll_change((struct us_poll_t *) ls->udp, ls->ctx->loop,
+                LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+        }
     }
     return (int) sent;
 }
@@ -192,7 +200,13 @@ static void us_quic_udp_on_drain(struct us_udp_socket_t *u) {
 
 static void us_quic_udp_on_close(struct us_udp_socket_t *u) {
     us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) us_udp_socket_user(u);
-    free(ls);
+    us_quic_socket_context_t *ctx = ls->ctx;
+    /* lsquic still holds `ls` as peer_ctx for every connection accepted on
+     * this socket; freeing now would UAF in packets_out / get_ssl_ctx on the
+     * next timer tick. Mark the fd gone and defer the free to context_free. */
+    ls->udp = NULL;
+    ls->next_closed = ctx->closed_listeners;
+    ctx->closed_listeners = ls;
 }
 
 /* ───── SSL ───── */
@@ -479,6 +493,11 @@ void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {
     if (ctx->timer) { us_timer_close(ctx->timer, 1); ctx->timer = NULL; }
     if (ctx->engine) { lsquic_engine_destroy(ctx->engine); ctx->engine = NULL; }
     if (ctx->ssl_ctx) { SSL_CTX_free(ctx->ssl_ctx); ctx->ssl_ctx = NULL; }
+    for (us_quic_listen_socket_t *ls = ctx->closed_listeners; ls; ) {
+        us_quic_listen_socket_t *next = ls->next_closed;
+        free(ls);
+        ls = next;
+    }
     free(ctx);
 }
 
@@ -510,7 +529,14 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(
 }
 
 void us_quic_listen_socket_close(us_quic_listen_socket_t *ls) {
-    if (ls && ls->udp) us_udp_socket_close(ls->udp);
+    if (!ls || !ls->udp) return;
+    /* Ask lsquic to send CONNECTION_CLOSE on every live connection before the
+     * fd disappears; otherwise clients sit out their idle timeout. */
+    if (ls->ctx->engine) {
+        lsquic_engine_cooldown(ls->ctx->engine);
+        lsquic_engine_send_unsent_packets(ls->ctx->engine);
+    }
+    us_udp_socket_close(ls->udp);
 }
 
 int us_quic_listen_socket_port(us_quic_listen_socket_t *ls) {
@@ -632,8 +658,12 @@ void us_quic_socket_remote_address(us_quic_socket_t *s, char *buf, int *len, int
     if (lsquic_conn_get_sockaddr(s->conn, &local, &peer) != 0) return;
     if (peer->sa_family == AF_INET6) {
         const struct sockaddr_in6 *a = (const struct sockaddr_in6 *) peer;
-        *is_ipv6 = 1; *port = ntohs(a->sin6_port);
-        *len = 16; memcpy(buf, &a->sin6_addr, 16);
+        *port = ntohs(a->sin6_port);
+        if (IN6_IS_ADDR_V4MAPPED(&a->sin6_addr)) {
+            *len = 4; memcpy(buf, (const char *) &a->sin6_addr + 12, 4);
+        } else {
+            *is_ipv6 = 1; *len = 16; memcpy(buf, &a->sin6_addr, 16);
+        }
     } else {
         const struct sockaddr_in *a = (const struct sockaddr_in *) peer;
         *port = ntohs(a->sin_port);

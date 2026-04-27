@@ -190,6 +190,12 @@ const server = serve({
     if (url.pathname === "/file") {
       return new Response(Bun.file(process.env.BIG_FILE));
     }
+    if (url.pathname === "/huge-file") {
+      return new Response(Bun.file(process.env.HUGE_FILE));
+    }
+    if (url.pathname === "/remote") {
+      return Response.json(server.requestIP(req));
+    }
     return new Response("not found: " + url.pathname, { status: 404 });
   },
 });
@@ -205,11 +211,12 @@ async function withServer(
   using dir = tempDir("serve-http3", {
     "server.mjs": fixture,
     "big.bin": Buffer.alloc(200 * 1024, "FILEfile"),
+    "huge.bin": Buffer.alloc(2 * 1024 * 1024, "0123456789abcdef"),
   });
   const proc = Bun.spawn({
     cmd: [bunExe(), "server.mjs"],
     cwd: String(dir),
-    env: { ...bunEnv, ...env, BIG_FILE: join(String(dir), "big.bin") },
+    env: { ...bunEnv, ...env, BIG_FILE: join(String(dir), "big.bin"), HUGE_FILE: join(String(dir), "huge.bin") },
     stdout: "inherit",
     stderr: "pipe",
     stdin: "pipe",
@@ -729,6 +736,167 @@ describe("Bun.serve HTTP/3 adversarial", () => {
       const onDisk = await Bun.file(join(dir, "big.bin")).bytes();
       expect(md5(raw)).toBe(md5(onDisk));
       expect(exitCode).toBe(0);
+    });
+  });
+
+  // bughunt #4: canSendfile() must not pick the sendfile() path for H3 — it
+  // has no socket fd. A 2 MB file is over the 1 MiB sendfile threshold.
+  itH3("Bun.file >=1 MiB takes the reader path, not sendfile", async () => {
+    await withServer(async port => {
+      const { raw, exitCode } = await curl3(port, "/huge-file");
+      expect(raw.length).toBe(2 * 1024 * 1024);
+      expect(md5(raw)).toBe(md5(Buffer.alloc(2 * 1024 * 1024, "0123456789abcdef")));
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // bughunt #5: getRemoteSocketInfo must return a slice with a valid length.
+  itH3("server.requestIP(req) returns the peer address", async () => {
+    await withServer(async port => {
+      const { stdout, exitCode } = await curl3(port, "/remote");
+      const ip = JSON.parse(stdout);
+      expect(ip.address).toBe("127.0.0.1");
+      expect(ip.family).toBe("IPv4");
+      expect(typeof ip.port).toBe("number");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // bughunt #6: H3 bodies are FIN-terminated; Content-Length is optional.
+  // `curl -T -` streams from stdin without setting Content-Length.
+  itH3("POST body without Content-Length still reaches the handler", async () => {
+    await withServer(async port => {
+      const body = Buffer.alloc(40_000, "noCL");
+      const { raw, stdout, exitCode } = await curl3(
+        port,
+        "/echo-bytes",
+        ["-D", "-", "-X", "POST", "-H", "content-type: application/octet-stream", "-T", "-"],
+        { stdin: body },
+      );
+      expect(stdout).toContain("HTTP/3 200");
+      expect(stdout).toContain(`x-len: ${body.length}`);
+      const split = raw.indexOf(13, raw.indexOf(13, raw.indexOf(13) + 2) + 2); // crude header skip
+      // Body integrity is the assertion — find the body by length from the end.
+      const got = raw.slice(raw.length - body.length);
+      expect(md5(got)).toBe(md5(body));
+      expect(exitCode).toBe(0);
+    });
+  });
+});
+
+/** Spawn a one-off H3 server from a custom script body and hand back its
+ * port + a way to send it stdin commands ("reload" / "stop"). */
+async function withCustomServer(
+  script: string,
+  fn: (port: number, send: (cmd: string) => void, proc: ReturnType<typeof Bun.spawn>) => Promise<void>,
+) {
+  using dir = tempDir("serve-http3-custom", { "server.mjs": script });
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "server.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "inherit",
+    stderr: "pipe",
+    stdin: "pipe",
+  });
+  let port = 0;
+  let buf = "";
+  for await (const chunk of proc.stderr) {
+    buf += new TextDecoder().decode(chunk);
+    const m = buf.match(/PORT=(\d+)/);
+    if (m) {
+      port = Number(m[1]);
+      break;
+    }
+    if (buf.length > 8192) break;
+  }
+  (async () => {
+    for await (const _ of proc.stderr) {
+    }
+  })();
+  expect(port).toBeGreaterThan(0);
+  const send = (cmd: string) => proc.stdin!.write(cmd + "\n");
+  try {
+    await fn(port, send, proc);
+  } finally {
+    proc.stdin?.end();
+    proc.kill();
+    await proc.exited;
+  }
+}
+
+describe("Bun.serve HTTP/3 lifecycle", () => {
+  // bughunt #2: server.reload() must clear the H3 router so removed routes
+  // fall through to the fetch handler instead of dereferencing freed pointers.
+  itH3("server.reload() clears stale H3 routes", async () => {
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      let server = Bun.serve({
+        port: 0, tls, h3: true,
+        routes: { "/old": new Response("old-route") },
+        fetch: () => new Response("fallback", { status: 404 }),
+      });
+      console.error("PORT=" + server.port);
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", line => {
+        if (line.includes("reload")) {
+          server.reload({
+            routes: { "/new": new Response("new-route") },
+            fetch: () => new Response("fallback", { status: 404 }),
+          });
+          console.error("RELOADED");
+        }
+      });
+    `;
+    await withCustomServer(script, async (port, send, proc) => {
+      const before = await curl3(port, "/old");
+      expect(before.stdout).toBe("old-route");
+      send("reload");
+      // wait for the reload acknowledgment so we don't race the router swap
+      let ack = "";
+      for await (const chunk of proc.stderr) {
+        ack += new TextDecoder().decode(chunk);
+        if (ack.includes("RELOADED")) break;
+      }
+      const oldAfter = await curl3(port, "/old", ["-D", "-"]);
+      expect(oldAfter.stdout).toContain("HTTP/3 404");
+      expect(oldAfter.stdout).toContain("fallback");
+      const newAfter = await curl3(port, "/new");
+      expect(newAfter.stdout).toBe("new-route");
+    });
+  });
+
+  // bughunt #3: server.stop() must not leave the lsquic engine pointing at a
+  // freed listen-socket. The follow-up GET should cleanly fail to connect,
+  // and the process must still be alive to exit 0 on its own.
+  itH3("server.stop() with live H3 connections does not UAF", async () => {
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      const server = Bun.serve({
+        port: 0, tls, h3: true,
+        fetch: () => new Response("alive"),
+      });
+      console.error("PORT=" + server.port);
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", async line => {
+        if (line.includes("stop")) {
+          server.stop(true);
+          // give the timer one tick to prove it doesn't deref freed peer_ctx
+          await Bun.sleep(50);
+          console.error("STOPPED");
+          process.exit(0);
+        }
+      });
+    `;
+    await withCustomServer(script, async (port, send, proc) => {
+      const ok = await curl3(port, "/");
+      expect(ok.stdout).toBe("alive");
+      send("stop");
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+      // port should now be dead — connect must fail, not hang
+      const dead = await curl3(port, "/", ["--connect-timeout", "2"]);
+      expect(dead.exitCode).not.toBe(0);
     });
   });
 });

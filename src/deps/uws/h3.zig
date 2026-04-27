@@ -148,8 +148,11 @@ pub const Response = opaque {
     }
     pub fn getRemoteSocketInfo(this: *Response) ?SocketAddress {
         var addr: SocketAddress = .{ .ip = undefined, .port = undefined, .is_ipv6 = undefined };
-        const len = c.uws_h3_res_get_remote_address_info(this, @ptrCast(&addr.ip), &addr.port, &addr.is_ipv6);
-        return if (len == 0) null else addr;
+        var ip_ptr: [*]const u8 = undefined;
+        const len = c.uws_h3_res_get_remote_address_info(this, &ip_ptr, &addr.port, &addr.is_ipv6);
+        if (len == 0) return null;
+        addr.ip = ip_ptr[0..len];
+        return addr;
     }
     pub fn forceClose(this: *Response) void {
         c.uws_h3_res_end_stream(this, true);

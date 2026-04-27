@@ -824,11 +824,10 @@ const log = bun.Output.scoped(.HTTPContext, .hidden);
 const HTTPCertError = @import("./HTTPCertError.zig");
 const HTTPThread = @import("./HTTPThread.zig");
 const ProxyTunnel = @import("./ProxyTunnel.zig");
+const std = @import("std");
 const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
 
-const std = @import("std");
 const bun = @import("bun");
-const H2 = bun.http.H2;
 const Environment = bun.Environment;
 const FeatureFlags = bun.FeatureFlags;
 const assert = bun.assert;
@@ -838,4 +837,5 @@ const BoringSSL = bun.BoringSSL.c;
 const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
 
 const HTTPClient = bun.http;
+const H2 = bun.http.H2;
 const InitError = HTTPClient.InitError;

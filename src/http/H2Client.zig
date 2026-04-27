@@ -1207,14 +1207,14 @@ pub const PendingConnect = struct {
 
 const log = bun.Output.scoped(.h2_client, .hidden);
 
+const lshpack = @import("../bun.js/api/bun/lshpack.zig");
 const std = @import("std");
+const wire = @import("./H2FrameParser.zig");
+
 const bun = @import("bun");
-const strings = bun.strings;
 const picohttp = bun.picohttp;
+const strings = bun.strings;
+const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
 
 const HTTPClient = bun.http;
 const NewHTTPContext = HTTPClient.NewHTTPContext;
-const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
-
-const wire = @import("./H2FrameParser.zig");
-const lshpack = @import("../bun.js/api/bun/lshpack.zig");

@@ -9,10 +9,10 @@
 //   fetch/api/redirect/redirect-upload.h2.any.js
 
 import { afterAll } from "bun:test";
-import { wptTest } from "./testharness-shim";
-import { startServer } from "./server";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { startServer } from "./server";
+import { wptTest } from "./testharness-shim";
 
 const { origin, close } = await startServer();
 afterAll(close);

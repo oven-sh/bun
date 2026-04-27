@@ -281,7 +281,7 @@ void uws_h3_req_for_each_header(uws_h3_req_t* req,
 {
     ((Http3Request*)req)->forEachHeader([cb, user_data](std::string_view name, std::string_view value) {
         cb(name.empty() ? "" : name.data(), name.length(),
-           value.empty() ? "" : value.data(), value.length(), user_data);
+            value.empty() ? "" : value.data(), value.length(), user_data);
     });
 }
 
@@ -289,7 +289,7 @@ size_t uws_h3_req_get_query(uws_h3_req_t* req, const char* key, size_t key_len, 
 {
     return ffi_sv(key ? ((Http3Request*)req)->getQuery(sv(key, key_len))
                       : ((Http3Request*)req)->getQuery(),
-                  dest);
+        dest);
 }
 
 size_t uws_h3_req_get_parameter(uws_h3_req_t* req, unsigned short index, const char** dest)

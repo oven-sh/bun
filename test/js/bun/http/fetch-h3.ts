@@ -12,6 +12,7 @@
  * skip the H3 iteration on machines without a capable curl.
  */
 import { which } from "bun";
+import { tls } from "harness";
 
 let resolved: string | null | undefined;
 
@@ -153,8 +154,6 @@ export function httpProtocols(): Array<{
     { protocol: "http/1.1", fetch: (u, i) => fetch(u, i as RequestInit), serve: {} },
   ];
   if (hasFetchH3()) {
-    // Import lazily to avoid pulling harness into non-H3 callers.
-    const { tls } = require("harness");
     rows.push({ protocol: "http/3", fetch: fetchH3, serve: { tls, h3: true } });
   }
   return rows;

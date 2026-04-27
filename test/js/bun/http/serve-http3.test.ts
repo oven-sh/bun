@@ -775,8 +775,6 @@ describe("Bun.serve HTTP/3 adversarial", () => {
       );
       expect(stdout).toContain("HTTP/3 200");
       expect(stdout).toContain(`x-len: ${body.length}`);
-      const split = raw.indexOf(13, raw.indexOf(13, raw.indexOf(13) + 2) + 2); // crude header skip
-      // Body integrity is the assertion — find the body by length from the end.
       const got = raw.slice(raw.length - body.length);
       expect(md5(got)).toBe(md5(body));
       expect(exitCode).toBe(0);

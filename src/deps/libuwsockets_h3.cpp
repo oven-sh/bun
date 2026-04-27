@@ -113,10 +113,7 @@ void uws_h3_res_end_stream(uws_h3_res_t* res, bool close_connection)
 
 bool uws_h3_res_try_end(uws_h3_res_t* res, const char* bytes, size_t len, size_t total_len, bool close)
 {
-    Http3Response* r = (Http3Response*)res;
-    /* `r` may be freed inside tryEnd (markDone → kick → process_conns →
-     * on_close); markDone already nulls onWritable, so no post-call cleanup. */
-    return r->tryEnd(sv(bytes, len), total_len, close).first;
+    return ((Http3Response*)res)->tryEnd(sv(bytes, len), total_len, close).first;
 }
 
 void uws_h3_res_end_without_body(uws_h3_res_t* res, bool close_connection)

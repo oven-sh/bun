@@ -46,6 +46,11 @@ struct us_quic_socket_context_s {
     int processing;
     int closing;
     unsigned int conn_count;
+    /* Stream bytes written since the last process_conns. Once this exceeds
+     * roughly one full sendmmsg(64) batch, flush immediately instead of
+     * waiting for loop_post — keeps large bodies streaming while small
+     * responses still batch. */
+    unsigned int pending_write_bytes;
     struct us_quic_socket_context_s *next; /* loop->data.quic_head list */
     unsigned int stream_ext_size;
     /* Listen sockets stay reachable as lsquic peer_ctx after the UDP fd
@@ -118,6 +123,7 @@ void us_quic_loop_process(struct us_loop_t *loop) {
     for (us_quic_socket_context_t *ctx = loop->data.quic_head; ctx; ctx = ctx->next) {
         if (ctx->processing || !ctx->engine) continue;
         ctx->processing = 1;
+        ctx->pending_write_bytes = 0;
         lsquic_engine_process_conns(ctx->engine);
         ctx->processing = 0;
         int diff;
@@ -228,7 +234,9 @@ static void us_quic_udp_on_data(struct us_udp_socket_t *u, void *recvbuf, int np
         lsquic_engine_packet_in(ctx->engine, (unsigned char *) payload, (size_t) len,
             (struct sockaddr *) &ls->local, peer, ls, 0);
     }
-    us_quic_process(ctx);
+    /* Don't process here — let loop_post run a single process_conns after
+     * every poll has been dispatched so all of this iteration's writes go
+     * out in one sendmmsg batch instead of one per recvmmsg burst. */
 }
 
 static void us_quic_udp_on_drain(struct us_udp_socket_t *u) {
@@ -550,6 +558,12 @@ us_quic_socket_context_t *us_create_quic_socket_context(
      * a single request can't run hsi_prepare to OOM. */
     ctx->settings.es_max_header_list_size = 16 * 1024;
     ctx->settings.es_init_max_streams_bidi = 100;
+    /* Static-table-only response encoding: skips the per-header dynamic
+     * table search (lsqpack_enc_encode + XXH32 + header_out_dynamic_entry
+     * were ~8% of a hello-world profile). Clients still get correct
+     * responses; the wire is a few bytes larger per uncommon header. */
+    ctx->settings.es_qpack_enc_max_size = 0;
+    ctx->settings.es_qpack_enc_max_blocked = 0;
     if (idle_timeout_s) ctx->settings.es_idle_timeout = idle_timeout_s > 600 ? 600 : idle_timeout_s;
 
     struct lsquic_engine_api api;
@@ -702,11 +716,19 @@ DEF_CB(on_stream_writable, void (*cb)(us_quic_stream_t *))
 DEF_CB(on_stream_close, void (*cb)(us_quic_stream_t *))
 #undef DEF_CB
 
+#define US_QUIC_FLUSH_THRESHOLD (64u * 1024u)
+
 int us_quic_stream_write(us_quic_stream_t *s, const char *data, unsigned int len) {
     if (!s->stream) return -1;
     ssize_t w = lsquic_stream_write(s->stream, data, len);
     if (w >= 0 && (unsigned int) w < len) lsquic_stream_wantwrite(s->stream, 1);
-    if (w >= 0) lsquic_stream_flush(s->stream);
+    if (w > 0) {
+        us_quic_socket_context_t *ctx = s->ctx;
+        ctx->pending_write_bytes += (unsigned int) w;
+        if (!ctx->processing && ctx->pending_write_bytes > US_QUIC_FLUSH_THRESHOLD) {
+            us_quic_loop_process(ctx->loop);
+        }
+    }
     return (int) w;
 }
 

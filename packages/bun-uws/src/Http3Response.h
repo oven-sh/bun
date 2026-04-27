@@ -5,6 +5,7 @@
 #include "Http3ResponseData.h"
 #include "HttpResponseData.h"
 
+#include <charconv>
 #include <optional>
 #include <string_view>
 
@@ -37,8 +38,8 @@ struct Http3Response {
 
     Http3Response *writeHeader(std::string_view key, uint64_t value) {
         char buf[24];
-        int n = snprintf(buf, sizeof(buf), "%llu", (unsigned long long) value);
-        return writeHeader(key, std::string_view{buf, (size_t) n});
+        auto r = std::to_chars(buf, buf + sizeof(buf), value);
+        return writeHeader(key, std::string_view{buf, (size_t)(r.ptr - buf)});
     }
 
     void writeMark() {
@@ -96,9 +97,8 @@ struct Http3Response {
         return {ok, ok || hasResponded()};
     }
 
-    void endWithoutBody(std::optional<size_t> reportedContentLength = std::nullopt, bool closeConnection = false) {
+    void endWithoutBody(std::optional<size_t> reportedContentLength = std::nullopt, bool /*closeConnection*/ = false) {
         Http3ResponseData *d = getHttpResponseData();
-        if (closeConnection) d->state |= Http3ResponseData::HTTP_CONNECTION_CLOSE;
         if (reportedContentLength.has_value() &&
             !(d->state & Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
             writeHeader("content-length", (uint64_t) *reportedContentLength);
@@ -112,9 +112,8 @@ struct Http3Response {
         markDone(d);
     }
 
-    bool sendTerminatingChunk(bool closeConnection = false) {
+    bool sendTerminatingChunk(bool /*closeConnection*/ = false) {
         Http3ResponseData *d = getHttpResponseData();
-        if (closeConnection) d->state |= Http3ResponseData::HTTP_CONNECTION_CLOSE;
         flushHeaders();
         if (d->backpressure.length() != 0) {
             d->endAfterDrain = true;
@@ -210,33 +209,37 @@ private:
         /* RFC 9114 §4.2: field names MUST be lowercase. Callers hand us
          * canonical-cased names (Content-Type), so fold here once where the
          * protocol invariant lives. */
-        unsigned no = (unsigned) d->headerBuf.size();
-        for (char c : name) d->headerBuf.push_back((c >= 'A' && c <= 'Z') ? (char)(c | 0x20) : c);
-        unsigned vo = (unsigned) d->headerBuf.size();
-        d->headerBuf.append(value);
-        d->headerNames.push_back({no, (unsigned) name.size()});
-        d->headerValues.push_back({vo, (unsigned) value.size()});
+        size_t no = d->headerBuf.size();
+        d->headerBuf.resize(no + name.size() + value.size());
+        char *p = d->headerBuf.data() + no;
+        for (size_t i = 0; i < name.size(); i++) {
+            char c = name[i];
+            p[i] = (char)(c | ((unsigned char)(c - 'A') < 26 ? 0x20 : 0));
+        }
+        memcpy(p + name.size(), value.data(), value.size());
+        d->headerNames.push_back({(unsigned) no, (unsigned) name.size()});
+        d->headerValues.push_back({(unsigned)(no + name.size()), (unsigned) value.size()});
     }
 
     void sendBufferedHeaders(Http3ResponseData *d, bool endStream) {
         size_t n = d->headerNames.size();
-        std::vector<us_quic_header_t> hs(n);
+        us_quic_header_t stackHs[16];
+        us_quic_header_t *hs = n <= 16 ? stackHs : (us_quic_header_t *) alloca(n * sizeof(us_quic_header_t));
         for (size_t i = 0; i < n; i++) {
             hs[i].name = d->headerBuf.data() + d->headerNames[i].first;
             hs[i].name_len = d->headerNames[i].second;
             hs[i].value = d->headerBuf.data() + d->headerValues[i].first;
             hs[i].value_len = d->headerValues[i].second;
         }
-        us_quic_stream_send_headers((us_quic_stream_t *) this, hs.data(), (unsigned) n, endStream);
+        us_quic_stream_send_headers((us_quic_stream_t *) this, hs, (unsigned) n, endStream);
         d->headerBuf.clear();
         d->headerNames.clear();
         d->headerValues.clear();
     }
 
     bool internalEnd(std::string_view data, uint64_t totalSize, bool optional,
-                     bool /*allowContentLength*/, bool closeConnection) {
+                     bool /*allowContentLength*/, bool /*closeConnection*/) {
         Http3ResponseData *d = getHttpResponseData();
-        if (closeConnection) d->state |= Http3ResponseData::HTTP_CONNECTION_CLOSE;
         d->totalSize = totalSize;
 
         if (!(d->state & Http3ResponseData::HTTP_WRITE_CALLED)) {
@@ -294,10 +297,11 @@ private:
          * pointer is about to die. */
         d->state |= Http3ResponseData::HTTP_END_CALLED;
         d->state &= ~Http3ResponseData::HTTP_RESPONSE_PENDING;
-        if (d->state & Http3ResponseData::HTTP_CONNECTION_CLOSE) {
-            us_quic_socket_t *qs = us_quic_stream_socket((us_quic_stream_t *) this);
-            if (qs) us_quic_socket_close(qs);
-        }
+        /* H1's closeConnection means "Connection: close + FIN the socket".
+         * H3 has no per-response equivalent (RFC 9114 §4.1); the bit is set
+         * by AnyResponse callers that are correct for H1, so honoring it
+         * here would CONNECTION_CLOSE every sibling stream on the conn. The
+         * stream FIN above is the H3 termination — leave the conn alone. */
     }
 };
 

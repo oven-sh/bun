@@ -309,6 +309,12 @@ void us_internal_loop_pre(struct us_loop_t *loop) {
     us_internal_handle_dns_results(loop);
     us_internal_handle_low_priority_sockets(loop);
     loop->data.pre_cb(loop);
+#ifdef LIBUS_USE_QUIC
+    /* Flush stream writes that JS tasks made before this tick (timers,
+     * immediates, promise resolutions outside on_read) so they go out
+     * before epoll blocks. loop_post handles what this iteration receives. */
+    if (loop->data.quic_head) us_quic_loop_process(loop);
+#endif
 }
 
 void us_internal_loop_post(struct us_loop_t *loop) {

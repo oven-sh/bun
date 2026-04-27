@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/timerfd.h>
 #include <sys/uio.h>
@@ -181,6 +182,10 @@ static uint64_t now_ns(void) {
 
 static void on_sigint(int sig) {
     (void)sig;
+    if (g_stop) {
+        if (g_isatty) write(STDERR_FILENO, "\x1b[?7h\x1b[?25h", 12);
+        _exit(130);
+    }
     g_stop = 1;
 }
 
@@ -683,12 +688,27 @@ static void *worker_main(void *arg) {
 
 static const char *spinner_frames[] = {"⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"};
 
+static int g_cols = 72;
+
+static int term_cols(void) {
+    struct winsize ws;
+    if (ioctl(STDERR_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 20)
+        g_cols = ws.ws_col > 120 ? 120 : ws.ws_col;
+    return g_cols;
+}
+
 static void draw_bar(FILE *f, double frac, int width) {
     if (frac < 0) frac = 0;
     if (frac > 1) frac = 1;
     int filled = (int)(frac * width);
     for (int i = 0; i < width; i++) fprintf(f, "%s%s", i < filled ? CYN : GRY, i < filled ? "━" : "─");
     fputs(RST, f);
+}
+
+static void hr(FILE *f, int w) {
+    fputs(GRY, f);
+    for (int i = 0; i < w; i++) fputs("─", f);
+    fprintf(f, "%s\n", RST);
 }
 
 struct snapshot {
@@ -716,43 +736,52 @@ static int g_live_lines;
 
 static void render_live(const struct config *cfg, struct worker *ws, int nw,
                         const struct snapshot *cur, const struct snapshot *prev,
-                        double dt, double elapsed, int spin) {
+                        double dt, double elapsed, double run_for, int spin) {
     if (!g_isatty || cfg->quiet) return;
     FILE *f = stderr;
-    if (g_live_lines) fprintf(f, "\x1b[%dA", g_live_lines);
+
+    int cols = term_cols();
+    int barw = cols - 30; if (barw < 8) barw = 8; if (barw > 50) barw = 50;
+    int wbar = cols - 22; if (wbar < 6) wbar = 6; if (wbar > 40) wbar = 40;
+
+    // Rewind and erase the previous frame in one shot — robust to wrapped lines.
+    if (g_live_lines) fprintf(f, "\r\x1b[%dA\x1b[J", g_live_lines);
 
     double rps = dt > 0 ? (double)(cur->done - prev->done) / dt : 0;
     double rxps = dt > 0 ? (double)(cur->rx - prev->rx) / dt : 0;
     double txps = dt > 0 ? (double)(cur->tx - prev->tx) / dt : 0;
-    char b_rx[32], b_tx[32], b_rps[32];
+    char b_rx[32], b_tx[32], b_rps[32], b_total[32];
     human_bytes(rxps, b_rx, sizeof(b_rx));
     human_bytes(txps, b_tx, sizeof(b_tx));
     human_count(rps, b_rps, sizeof(b_rps));
+    human_count((double)cur->done, b_total, sizeof(b_total));
 
     static double peak_rps;
     if (rps > peak_rps) peak_rps = rps;
-
     char b_peak[32]; human_count(peak_rps, b_peak, sizeof(b_peak));
-    fprintf(f, "\x1b[2K  %s%s%s  %s%s%12s%s %sreq/s%s    %speak %s%s\n",
+
+    fprintf(f, "  %s%s┃%s %sh3blast%s  %s %s%s:%s%s%s\n",
+            BLD, CYN, RST, BLD, RST, cfg->method, DIM, cfg->host, cfg->port, cfg->path, RST);
+    fprintf(f, "  %s%s┃%s %dt · %dc · %dm\n\n",
+            BLD, CYN, RST, cfg->threads, cfg->connections, cfg->streams);
+
+    fprintf(f, "  %s%s%s  %s%s%12s%s %sreq/s%s   %speak %s%s\n",
             CYN, spinner_frames[spin % 10], RST,
-            BLD, GRN, b_rps, RST, DIM, RST,
-            DIM, b_peak, RST);
+            BLD, GRN, b_rps, RST, DIM, RST, DIM, b_peak, RST);
 
-    fprintf(f, "\x1b[2K     %s↓%s %-10s %s↑%s %-10s %sconns%s %" PRIu64 "   %stotal%s %s\n",
+    fprintf(f, "     %s↓%s %-10s %s↑%s %-10s %sconns%s %-3" PRIu64 " %stotal%s %s\n",
             CYN, RST, b_rx, MAG, RST, b_tx,
-            DIM, RST, cur->conns,
-            DIM, RST, ({ static char t[32]; human_count((double)cur->done, t, sizeof(t)); t; }));
+            DIM, RST, cur->conns, DIM, RST, b_total);
 
-    fprintf(f, "\x1b[2K     ");
-    if (cfg->duration_s > 0) {
-        draw_bar(f, elapsed / cfg->duration_s, 34);
-        fprintf(f, "  %s%.1fs / %.0fs%s\n", DIM, elapsed, cfg->duration_s, RST);
+    fputs("     ", f);
+    if (run_for > 0) {
+        draw_bar(f, elapsed / run_for, barw);
+        fprintf(f, "  %s%.1fs/%.0fs%s%s\n", DIM, elapsed, run_for, g_warm ? "" : " warmup", RST);
     } else {
-        fprintf(f, "%s%.1fs elapsed%s\n", DIM, elapsed, RST);
+        fprintf(f, "%s%.1fs%s\n", DIM, elapsed, RST);
     }
 
-    fprintf(f, "\x1b[2K     %s2xx%s %-9" PRIu64 " %s4xx%s %-7" PRIu64 " %s5xx%s %-7" PRIu64
-            " %serr%s %-7" PRIu64 "\n",
+    fprintf(f, "     %s2xx%s %-9" PRIu64 " %s4xx%s %-7" PRIu64 " %s5xx%s %-7" PRIu64 " %serr%s %" PRIu64 "\n",
             GRN, RST, cur->s2, YLW, RST, cur->s4,
             RED, RST, cur->s5, RED, RST, cur->err);
 
@@ -769,20 +798,14 @@ static void render_live(const struct config *cfg, struct worker *ws, int nw,
         }
         for (int i = 0; i < show_workers; i++) {
             char r[32]; human_count(wrps[i], r, sizeof(r));
-            fprintf(f, "\x1b[2K     %sw%-2d%s ", DIM, i, RST);
-            draw_bar(f, wrps[i] / max_rps, 22);
+            fprintf(f, "     %sw%-2d%s ", DIM, i, RST);
+            draw_bar(f, wrps[i] / max_rps, wbar);
             fprintf(f, " %s%7s/s%s\n", DIM, r, RST);
         }
     }
 
-    g_live_lines = 4 + show_workers;
+    g_live_lines = 7 + show_workers;
     fflush(f);
-}
-
-static void hr(FILE *f, int w) {
-    fputs(GRY, f);
-    for (int i = 0; i < w; i++) fputs("─", f);
-    fprintf(f, "%s\n", RST);
 }
 
 static void render_final(const struct config *cfg, struct worker *ws, int nw,
@@ -824,35 +847,37 @@ static void render_final(const struct config *cfg, struct worker *ws, int nw,
         return;
     }
 
+    int cols = g_isatty ? term_cols() : 72;
+    int hrw = cols - 4; if (hrw > 60) hrw = 60; if (hrw < 20) hrw = 20;
+    int barmax = hrw - 22; if (barmax < 6) barmax = 6;
+
     char b_rx[32], b_tx[32], b_rxps[32], b_total[32];
     fmt_thousands(s->done, b_total, sizeof(b_total));
     human_bytes((double)s->rx, b_rx, sizeof(b_rx));
     human_bytes((double)s->tx, b_tx, sizeof(b_tx));
     human_bytes(elapsed > 0 ? (double)s->rx / elapsed : 0, b_rxps, sizeof(b_rxps));
 
-    if (g_isatty) fprintf(f, "\n");
-    fprintf(f, "  %s%s┃%s %sh3blast%s  %s%s %s%s%s:%s%s\n",
+    fprintf(f, "  %s%s┃%s %sh3blast%s  %s %s%s:%s%s%s\n",
             BLD, CYN, RST, BLD, RST,
-            cfg->method, DIM, RST, cfg->host, DIM, RST, cfg->port);
-    fprintf(f, "  %s%s┃%s %s%s%s\n", BLD, CYN, RST, DIM, cfg->path, RST);
-    fprintf(f, "  %s%s┃%s %d thread%s · %d connection%s · %d stream%s · %.1fs\n\n",
+            cfg->method, DIM, cfg->host, cfg->port, cfg->path, RST);
+    fprintf(f, "  %s%s┃%s %d thread%s · %d connection%s · %d stream%s\n\n",
             BLD, CYN, RST,
             cfg->threads, cfg->threads == 1 ? "" : "s",
             cfg->connections, cfg->connections == 1 ? "" : "s",
-            cfg->streams, cfg->streams == 1 ? "" : "s", elapsed);
+            cfg->streams, cfg->streams == 1 ? "" : "s");
 
     char rps_full[32];
     fmt_thousands((uint64_t)rps, rps_full, sizeof(rps_full));
     fprintf(f, "  ");
-    hr(f, 50);
+    hr(f, hrw);
     fprintf(f, "    %s%s%s%s %sreq/s%s\n", BLD, GRN, rps_full, RST, DIM, RST);
     fprintf(f, "  ");
-    hr(f, 50);
+    hr(f, hrw);
     fprintf(f, "\n  %s%-10s%s %s in %.2fs\n", DIM, "requests", RST, b_total, elapsed);
-    fprintf(f, "  %s%-10s%s ↓ %s (%s/s)   ↑ %s\n\n", DIM, "transfer", RST, b_rx, b_rxps, b_tx);
+    fprintf(f, "  %s%-10s%s ↓ %s (%s/s)  ↑ %s\n\n", DIM, "transfer", RST, b_rx, b_rxps, b_tx);
 
     fprintf(f, "  %sLatency%s\n  ", BLD, RST);
-    hr(f, 50);
+    hr(f, hrw);
     struct { const char *label; double pct; } rows[] = {
         {"min", 0}, {"p50", 50}, {"p75", 75}, {"p90", 90},
         {"p99", 99}, {"p99.9", 99.9}, {"max", 100},
@@ -866,8 +891,8 @@ static void render_final(const struct config *cfg, struct worker *ws, int nw,
         else if (rows[i].pct == 100) v = hdr_max(agg);
         else v = hdr_value_at_percentile(agg, rows[i].pct);
         char lat[32]; human_latency((double)v, lat, sizeof(lat));
-        int barw = maxv > 0 ? (int)((double)v / (double)maxv * 30.0) : 0;
-        fprintf(f, "  %s%-7s%s %s%-10s%s ", DIM, rows[i].label, RST, BLD, lat, RST);
+        int barw = maxv > 0 ? (int)((double)v / (double)maxv * barmax) : 0;
+        fprintf(f, "  %s%-7s%s %s%-9s%s ", DIM, rows[i].label, RST, BLD, lat, RST);
         fputs(CYN, f);
         for (int j = 0; j < barw; j++) fputs("▇", f);
         fprintf(f, "%s\n", RST);
@@ -875,10 +900,10 @@ static void render_final(const struct config *cfg, struct worker *ws, int nw,
     char mean[32], stdd[32];
     human_latency(s->done ? hdr_mean(agg) : 0, mean, sizeof(mean));
     human_latency(s->done ? hdr_stddev(agg) : 0, stdd, sizeof(stdd));
-    fprintf(f, "  %s%-7s%s %-10s %s± %s%s\n", DIM, "mean", RST, mean, DIM, stdd, RST);
+    fprintf(f, "  %s%-7s%s %-9s %s± %s%s\n", DIM, "mean", RST, mean, DIM, stdd, RST);
 
     fprintf(f, "\n  %sStatus%s\n  ", BLD, RST);
-    hr(f, 50);
+    hr(f, hrw);
     struct { const char *l; const char *c; uint64_t n; } st[] = {
         {"2xx", GRN, s->s2}, {"3xx", BLU, s->s3},
         {"4xx", YLW, s->s4}, {"5xx", RED, s->s5},
@@ -888,7 +913,7 @@ static void render_final(const struct config *cfg, struct worker *ws, int nw,
     for (size_t i = 0; i < sizeof(st)/sizeof(st[0]); i++) {
         if (st[i].n == 0 && i > 0) continue;
         double pct = total ? 100.0 * (double)st[i].n / (double)total : 0;
-        int barw = (int)(pct / 100.0 * 30.0);
+        int barw = (int)(pct / 100.0 * barmax);
         fprintf(f, "  %s%-7s%s %-10" PRIu64 " %s%5.1f%%%s  %s",
                 DIM, st[i].l, RST, st[i].n, DIM, pct, RST, st[i].c);
         for (int j = 0; j < barw; j++) fputs("▇", f);
@@ -1073,15 +1098,7 @@ int main(int argc, char **argv) {
         conns_left -= ws[i].n_conns;
     }
 
-    if (g_isatty && !cfg.quiet) {
-        fprintf(stderr, "\n  %s%s┃%s %sh3blast%s → %s%s%s:%s%s   "
-                "%s%d%s thr · %s%d%s conn · %s%d%s stream\n\n",
-                CYN, BLD, RST, BLD, RST,
-                BLD, cfg.host, DIM, cfg.port, RST,
-                BLD, cfg.threads, RST, BLD, cfg.connections, RST,
-                BLD, cfg.streams, RST);
-    }
-
+    if (g_isatty && !cfg.quiet) fputs("\n\x1b[?7l\x1b[?25l", stderr);
     if (cfg.warmup_s <= 0) g_warm = 1;
 
     for (int i = 0; i < nw; i++)
@@ -1116,13 +1133,12 @@ int main(int argc, char **argv) {
 
     for (int i = 0; i < nw; i++) pthread_join(ws[i].thread, NULL);
 
-    if (g_isatty && !cfg.quiet && g_live_lines) {
-        fprintf(stderr, "\x1b[%dA", g_live_lines);
-        for (int i = 0; i < g_live_lines; i++) fprintf(stderr, "\x1b[2K\n");
-        fprintf(stderr, "\x1b[%dA", g_live_lines);
+    if (g_isatty && !cfg.quiet) {
+        if (g_live_lines) fprintf(stderr, "\r\x1b[%dA\x1b[J", g_live_lines);
+        fputs("\x1b[?7h\x1b[?25h", stderr);
     }
 
-    double elapsed = (double)(now_ns() - start) / 1e9;
+    double elapsed = (double)(now_ns() - stats_start) / 1e9;
     collect(ws, nw, &cur);
 
     for (int i = 0; i < nw; i++)

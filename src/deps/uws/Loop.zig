@@ -94,13 +94,6 @@ pub const PosixLoop = extern struct {
         return c.uws_get_loop();
     }
 
-    /// Drive every QUIC engine on this loop and re-arm the per-loop
-    /// fallthrough timer. Cheap no-op when there is no h3 server.
-    pub fn processQuic(this: *Loop) void {
-        if (this.internal_loop_data.quic_head == null) return;
-        c.us_quic_loop_process(this);
-    }
-
     pub fn create(comptime Handler: anytype) *Loop {
         return c.us_create_loop(
             null,
@@ -309,7 +302,6 @@ const c = struct {
         post_cb: ?*const fn (*Loop) callconv(.c) void,
         ext_size: c_uint,
     ) ?*Loop;
-    pub extern fn us_quic_loop_process(loop: *Loop) void;
     pub extern fn us_loop_free(loop: ?*Loop) void;
     pub extern fn us_loop_ext(loop: ?*Loop) ?*anyopaque;
     pub extern fn us_loop_run(loop: ?*Loop) void;

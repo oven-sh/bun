@@ -87,7 +87,12 @@ pub const ClientSession = struct {
     /// Stream id whose CONTINUATION sequence is in progress; 0 = none.
     expecting_continuation: u31 = 0,
 
+    /// Cold-start coalesced requests parked until the server's first SETTINGS
+    /// frame arrives so the real MAX_CONCURRENT_STREAMS cap can be honoured.
+    pending_attach: std.ArrayListUnmanaged(*HTTPClient) = .{},
+
     preface_sent: bool = false,
+    settings_received: bool = false,
     goaway_received: bool = false,
     goaway_last_stream_id: u31 = 0,
     fatal_error: ?anyerror = null,
@@ -126,6 +131,7 @@ pub const ClientSession = struct {
         var it = this.streams.iterator();
         while (it.next()) |e| e.value_ptr.*.deinit();
         this.streams.deinit(bun.default_allocator);
+        this.pending_attach.deinit(bun.default_allocator);
         bun.default_allocator.free(this.hostname);
         if (this.ssl_config) |*s| s.deinit();
         bun.destroy(this);
@@ -140,6 +146,36 @@ pub const ClientSession = struct {
 
     pub fn matches(this: *const ClientSession, hostname: []const u8, port: u16, ssl_config: ?*SSLConfig) bool {
         return this.port == port and SSLConfig.rawPtr(this.ssl_config) == ssl_config and strings.eqlLong(this.hostname, hostname, true);
+    }
+
+    pub fn adopt(this: *ClientSession, client: *HTTPClient) void {
+        client.registerAbortTracker(true, this.socket);
+        this.attach(client);
+    }
+
+    /// Park a coalesced request until the server's SETTINGS arrive. Abort
+    /// is routed via the session socket so `abortByHttpId` can find it.
+    pub fn enqueue(this: *ClientSession, client: *HTTPClient) void {
+        client.registerAbortTracker(true, this.socket);
+        bun.handleOom(this.pending_attach.append(bun.default_allocator, client));
+    }
+
+    fn drainPending(this: *ClientSession) void {
+        if (!this.settings_received or this.pending_attach.items.len == 0) return;
+        var waiters = this.pending_attach;
+        this.pending_attach = .{};
+        defer waiters.deinit(bun.default_allocator);
+        for (waiters.items) |client| {
+            if (this.fatal_error) |err| {
+                client.failFromH2(err);
+            } else if (client.signals.get(.aborted)) {
+                client.failFromH2(error.Aborted);
+            } else if (this.hasHeadroom()) {
+                this.attach(client);
+            } else {
+                client.retryAfterH2Coalesce();
+            }
+        }
     }
 
     /// True when the connection can be parked in the keep-alive pool: no
@@ -392,6 +428,8 @@ pub const ClientSession = struct {
     /// remain. Structured "parse all → deliver all" because delivering may
     /// free the client.
     pub fn onData(this: *ClientSession, incoming: []const u8) void {
+        this.ref();
+        defer this.deref();
         bun.handleOom(this.read_buffer.appendSlice(bun.default_allocator, incoming));
         this.parseFrames();
         this.replenishWindow();
@@ -402,6 +440,8 @@ pub const ClientSession = struct {
         }) {}
 
         if (this.fatal_error) |err| return this.failAll(err);
+
+        this.drainPending();
 
         // Deliver per-stream. Iterate by index because delivery may remove
         // entries (swapRemove keeps earlier indices stable; revisiting the
@@ -444,6 +484,8 @@ pub const ClientSession = struct {
         this.ref();
         defer this.deref();
         this.ctx.unregisterH2(this);
+        for (this.pending_attach.items) |client| client.failFromH2(err);
+        this.pending_attach.clearRetainingCapacity();
         var it = this.streams.iterator();
         while (it.next()) |e| {
             const stream = e.value_ptr.*;
@@ -468,6 +510,13 @@ pub const ClientSession = struct {
     /// Called from the HTTP thread's shutdown queue when a fetch on this
     /// session is aborted. RST_STREAMs that one request; siblings continue.
     pub fn abortByHttpId(this: *ClientSession, async_http_id: u32) void {
+        for (this.pending_attach.items, 0..) |client, i| {
+            if (client.async_http_id == async_http_id) {
+                _ = this.pending_attach.swapRemove(i);
+                client.failFromH2(error.Aborted);
+                return;
+            }
+        }
         var it = this.streams.iterator();
         while (it.next()) |e| {
             const stream = e.value_ptr.*;
@@ -497,7 +546,7 @@ pub const ClientSession = struct {
     }
 
     fn maybeRelease(this: *ClientSession) void {
-        if (this.streams.count() > 0) return;
+        if (this.streams.count() > 0 or this.pending_attach.items.len > 0) return;
         this.ctx.unregisterH2(this);
         if (this.canPool() and !this.socket.isClosedOrHasError()) {
             this.ctx.releaseSocket(
@@ -629,6 +678,7 @@ pub const ClientSession = struct {
                     }
                 }
                 this.writeFrame(.HTTP_FRAME_SETTINGS, @intFromEnum(wire.SettingsFlags.ACK), 0, &.{});
+                this.settings_received = true;
             },
             .HTTP_FRAME_WINDOW_UPDATE => {},
             .HTTP_FRAME_PING => {
@@ -795,6 +845,38 @@ pub const ClientSession = struct {
         }
 
         return should_continue;
+    }
+};
+
+/// Placeholder registered while a fresh TLS connect is in flight so that
+/// concurrent h2-capable requests to the same origin coalesce onto its
+/// eventual session instead of each opening a separate socket.
+pub const PendingConnect = struct {
+    pub const new = bun.TrivialNew(@This());
+
+    hostname: []const u8,
+    port: u16,
+    ssl_config: ?*SSLConfig,
+    waiters: std.ArrayListUnmanaged(*HTTPClient) = .{},
+
+    pub fn matches(this: *const PendingConnect, hostname: []const u8, port: u16, ssl_config: ?*SSLConfig) bool {
+        return this.port == port and this.ssl_config == ssl_config and strings.eqlLong(this.hostname, hostname, true);
+    }
+
+    pub fn unregisterFrom(this: *PendingConnect, ctx: *NewHTTPContext(true)) void {
+        const list = &ctx.pending_h2_connects;
+        for (list.items, 0..) |p, i| {
+            if (p == this) {
+                _ = list.swapRemove(i);
+                return;
+            }
+        }
+    }
+
+    pub fn deinit(this: *PendingConnect) void {
+        bun.default_allocator.free(this.hostname);
+        this.waiters.deinit(bun.default_allocator);
+        bun.destroy(this);
     }
 };
 

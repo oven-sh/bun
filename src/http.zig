@@ -237,10 +237,12 @@ pub fn firstCall(
             const ctx = client.getSslCtx(true);
             const session = H2.ClientSession.create(ctx, socket, client);
             NewHTTPContext(true).tagAsH2(socket, session);
+            client.resolvePendingH2(session);
             session.attach(client);
             return;
         }
         client.flags.protocol = .http1_1;
+        client.resolvePendingH2(null);
     }
 
     switch (client.state.request_stage) {
@@ -254,6 +256,12 @@ pub fn firstCall(
 /// Called by the HTTP/2 session for stream-level termination (RST_STREAM,
 /// GOAWAY, abort, decode error). The socket stays up for sibling streams, so
 /// only the request fails.
+/// Re-enter the connect path for a request that was coalesced onto an h2
+/// session but couldn't be attached (cap reached, or ALPN chose h1).
+pub fn retryAfterH2Coalesce(this: *HTTPClient) void {
+    this.start_(true);
+}
+
 pub fn failFromH2(this: *HTTPClient, err: anyerror) void {
     bun.debugAssert(this.h2 == null);
     this.unregisterAbortTracker();
@@ -263,6 +271,7 @@ pub fn failFromH2(this: *HTTPClient, err: anyerror) void {
         this.state.response_stage = .fail;
         this.state.fail = err;
         this.state.stage = .fail;
+        if (this.flags.defer_fail_until_connecting_is_complete) return;
         const callback = this.result_callback;
         const result = this.toResult();
         this.state.reset(this.allocator);
@@ -580,6 +589,10 @@ proxy_tunnel: ?*ProxyTunnel = null,
 /// Set when this request is bound to a stream on an HTTP/2 session.
 /// Owned by the session; cleared by the session when the stream completes.
 h2: ?*H2.Stream = null,
+/// Set while this request is the leader of a fresh TLS connect that other
+/// h2-capable requests have coalesced onto. Resolved (and freed) once ALPN
+/// is known or the connect fails.
+pending_h2: ?*H2.PendingConnect = null,
 signals: Signals = .{},
 async_http_id: u32 = 0,
 hostname: ?[]u8 = null,
@@ -1100,10 +1113,14 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
         return;
     }
 
-    var socket = http_thread.connect(this, is_ssl) catch |err| {
+    var socket = (http_thread.connect(this, is_ssl) catch |err| {
         bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
         this.fail(err);
+        return;
+    }) orelse {
+        // Coalesced onto an in-flight h2 connect; the leader will attach us
+        // (or re-dispatch) once ALPN resolves.
         return;
     };
 
@@ -1910,8 +1927,31 @@ fn completeConnectingProcess(this: *HTTPClient) void {
     }
 }
 
+/// The leader of a coalesced cold connect has learned the ALPN outcome (or
+/// failed). Dispatch every waiter: attach to `session` when there is room,
+/// otherwise re-enter `start_` so each opens its own connection.
+fn resolvePendingH2(this: *HTTPClient, session: ?*H2.ClientSession) void {
+    const pc = this.pending_h2 orelse return;
+    this.pending_h2 = null;
+    pc.unregisterFrom(this.getSslCtx(true));
+    defer pc.deinit();
+
+    for (pc.waiters.items) |waiter| {
+        if (waiter.signals.get(.aborted)) {
+            waiter.fail(error.Aborted);
+            continue;
+        }
+        if (session) |s| {
+            s.enqueue(waiter);
+            continue;
+        }
+        waiter.start_(true);
+    }
+}
+
 fn fail(this: *HTTPClient, err: anyerror) void {
     this.unregisterAbortTracker();
+    this.resolvePendingH2(null);
 
     if (this.proxy_tunnel) |tunnel| {
         this.proxy_tunnel = null;

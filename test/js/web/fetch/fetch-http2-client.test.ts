@@ -191,6 +191,37 @@ describe("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () 
     }
   });
 
+  test("cold-start: parallel requests coalesce onto one TLS connect", async () => {
+    let sessions = 0;
+    const server = http2.createSecureServer({ ...tls, allowHTTP1: false });
+    server.on("session", () => sessions++);
+    server.on("stream", (stream, headers) => {
+      stream.respond({ ":status": 200 });
+      stream.end(String(headers[":path"]));
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = spawnFetch(`
+        const url = "https://localhost:${port}";
+        const opts = { tls: { rejectUnauthorized: false } };
+        // No warmup: all 12 race the same fresh handshake.
+        const results = await Promise.all(
+          Array.from({ length: 12 }, (_, i) => fetch(url + "/" + i, opts).then(r => r.text()))
+        );
+        console.log(results.sort().join(","));
+      `);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("/0,/1,/10,/11,/2,/3,/4,/5,/6,/7,/8,/9");
+      expect(exitCode).toBe(0);
+      expect(sessions).toBe(1);
+    } finally {
+      server.close();
+    }
+  });
+
   test("abort sends RST_STREAM; siblings on the session survive", async () => {
     let sessions = 0;
     const { promise: slowClosed, resolve: resolveSlowClosed } = Promise.withResolvers<number>();

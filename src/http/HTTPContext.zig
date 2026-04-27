@@ -84,6 +84,11 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
         /// HTTP/2 sessions with at least one active stream, available for
         /// concurrent attachment if `hasHeadroom()`.
         active_h2_sessions: std.ArrayListUnmanaged(*H2.ClientSession) = .{},
+        /// HTTPClients whose fresh TLS connect is in flight and whose request
+        /// is h2-capable. Subsequent h2-capable requests to the same origin
+        /// coalesce onto the first one's session once ALPN resolves rather
+        /// than each opening its own socket.
+        pending_h2_connects: std.ArrayListUnmanaged(*H2.PendingConnect) = .{},
 
         const Context = @This();
         pub const HTTPSocket = uws.NewSocketHandler(ssl);
@@ -180,6 +185,8 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             }
 
             this.active_h2_sessions.deinit(bun.default_allocator);
+            for (this.pending_h2_connects.items) |pc| pc.deinit();
+            this.pending_h2_connects.deinit(bun.default_allocator);
 
             // Use deferred free pattern (via nextTick) to avoid freeing the uSockets
             // context while close callbacks may still reference it.
@@ -690,7 +697,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             return null;
         }
 
-        pub fn connectSocket(this: *@This(), client: *HTTPClient, socket_path: []const u8) !HTTPSocket {
+        pub fn connectSocket(this: *@This(), client: *HTTPClient, socket_path: []const u8) !?HTTPSocket {
             client.connected_url = if (client.http_proxy) |proxy| proxy else client.url;
             const socket = try HTTPSocket.connectUnixAnon(
                 socket_path,
@@ -702,7 +709,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             return socket;
         }
 
-        pub fn connect(this: *@This(), client: *HTTPClient, hostname_: []const u8, port: u16) !HTTPSocket {
+        pub fn connect(this: *@This(), client: *HTTPClient, hostname_: []const u8, port: u16) !?HTTPSocket {
             const hostname = if (FeatureFlags.hardcode_localhost_to_127_0_0_1 and strings.eqlComptime(hostname_, "localhost"))
                 "127.0.0.1"
             else
@@ -715,9 +722,14 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 if (client.canOfferH2()) {
                     for (this.active_h2_sessions.items) |session| {
                         if (session.hasHeadroom() and session.matches(hostname, port, SSLConfig.rawPtr(client.tls_props))) {
-                            client.registerAbortTracker(true, session.socket);
-                            session.attach(client);
-                            return session.socket;
+                            session.adopt(client);
+                            return null;
+                        }
+                    }
+                    for (this.pending_h2_connects.items) |pc| {
+                        if (pc.matches(hostname, port, SSLConfig.rawPtr(client.tls_props))) {
+                            bun.handleOom(pc.waiters.append(bun.default_allocator, client));
+                            return null;
                         }
                     }
                 }
@@ -752,10 +764,9 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                             session.socket = sock;
                             tagAsH2(sock, session);
                             this.registerH2(session);
-                            client.registerAbortTracker(true, sock);
-                            session.attach(client);
+                            session.adopt(client);
                         } else unreachable;
-                        return sock;
+                        return null;
                     }
                     if (found.tunnel) |tunnel| {
                         // Reattach the pooled tunnel BEFORE onOpen so the
@@ -784,6 +795,17 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 false,
             );
             client.allow_retry = false;
+            if (comptime ssl) {
+                if (client.canOfferH2()) {
+                    const pc = H2.PendingConnect.new(.{
+                        .hostname = bun.handleOom(bun.default_allocator.dupe(u8, hostname)),
+                        .port = port,
+                        .ssl_config = SSLConfig.rawPtr(client.tls_props),
+                    });
+                    bun.handleOom(this.pending_h2_connects.append(bun.default_allocator, pc));
+                    client.pending_h2 = pc;
+                }
+            }
             return socket;
         }
     };

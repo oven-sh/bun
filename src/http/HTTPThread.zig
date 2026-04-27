@@ -243,7 +243,7 @@ pub fn onStart(opts: InitOpts) void {
     bun.http.http_thread.processEvents();
 }
 
-pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewHTTPContext(is_ssl).HTTPSocket {
+pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !?NewHTTPContext(is_ssl).HTTPSocket {
     if (client.unix_socket_path.length() > 0) {
         return try this.context(is_ssl).connectSocket(client, client.unix_socket_path.slice());
     }

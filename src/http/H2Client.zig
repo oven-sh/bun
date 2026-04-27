@@ -1369,17 +1369,14 @@ pub const ClientSession = struct {
         client.state.pending_response = response;
 
         const should_continue = try client.handleResponseMetadata(&response);
+        // handleResponseMetadata may mutate *response (e.g. the 304 rewrite for
+        // force_last_modified); cloneMetadata reads pending_response, so re-sync.
+        client.state.pending_response = response;
         // h2 framing delimits the body; chunked transfer-encoding and the
         // HTTP/1.1 "no Content-Length ⇒ no keep-alive" rule don't apply.
         client.state.transfer_encoding = .identity;
         if (client.state.response_stage == .body_chunk) client.state.response_stage = .body;
         client.state.flags.allow_keepalive = true;
-
-        if (client.state.content_encoding_i < response.headers.list.len and !client.state.flags.did_set_content_encoding) {
-            client.state.flags.did_set_content_encoding = true;
-            client.state.content_encoding_i = std.math.maxInt(@TypeOf(client.state.content_encoding_i));
-            client.state.pending_response = response;
-        }
 
         return if (should_continue == .finished) .finished else .has_body;
     }

@@ -1774,8 +1774,12 @@ private:
                 }
 
                 if (arrayBuffer->isResizableOrGrowableShared()) {
-                    write(ResizableArrayBufferTag);
                     uint64_t byteLength = arrayBuffer->byteLength();
+                    if (!m_buffer.tryReserveCapacity(static_cast<uint64_t>(m_buffer.size()) + sizeof(uint8_t) + sizeof(uint64_t) * 2 + byteLength)) [[unlikely]] {
+                        code = SerializationReturnCode::DataCloneError;
+                        return true;
+                    }
+                    write(ResizableArrayBufferTag);
                     write(byteLength);
                     uint64_t maxByteLength = arrayBuffer->maxByteLength().value_or(0);
                     write(maxByteLength);
@@ -1783,8 +1787,12 @@ private:
                     return true;
                 }
 
-                write(ArrayBufferTag);
                 uint64_t byteLength = arrayBuffer->byteLength();
+                if (!m_buffer.tryReserveCapacity(static_cast<uint64_t>(m_buffer.size()) + sizeof(uint8_t) + sizeof(uint64_t) + byteLength)) [[unlikely]] {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
+                write(ArrayBufferTag);
                 write(byteLength);
                 write(static_cast<const uint8_t*>(arrayBuffer->data()), byteLength);
                 return true;

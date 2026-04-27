@@ -233,14 +233,14 @@ pub fn firstCall(
         var proto_len: c_uint = 0;
         BoringSSL.SSL_get0_alpn_selected(ssl_ptr, &proto, &proto_len);
         if (proto != null and proto_len == 2 and proto[0] == 'h' and proto[1] == '2') {
-            client.flags.protocol = .http2;
-        } else {
-            client.flags.protocol = .http1_1;
+            log("ALPN negotiated h2 {s}", .{client.url.href});
+            const ctx = client.getSslCtx(true);
+            const session = H2.ClientSession.create(ctx, socket, client);
+            NewHTTPContext(true).tagAsH2(socket, session);
+            session.attach(client);
+            return;
         }
-    }
-
-    if (client.flags.protocol == .http2) {
-        return client.startH2(is_ssl, socket);
+        client.flags.protocol = .http1_1;
     }
 
     switch (client.state.request_stage) {
@@ -251,52 +251,23 @@ pub fn firstCall(
     }
 }
 
-fn startH2(client: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
-    log("ALPN negotiated h2 {s}", .{client.url.href});
-    client.adoptH2(is_ssl, socket, H2.ClientSession.create());
-}
-
-/// Attach a (fresh or pooled) HTTP/2 session to this request, allocate a new
-/// stream id on it, and queue the request frames.
-pub fn adoptH2(client: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, session: *H2.ClientSession) void {
-    client.flags.protocol = .http2;
-    client.h2 = session;
-    session.beginStream();
-
-    if (client.signals.get(.aborted)) {
-        client.closeAndAbort(is_ssl, socket);
-        return;
+/// Called by the HTTP/2 session for stream-level termination (RST_STREAM,
+/// GOAWAY, abort, decode error). The socket stays up for sibling streams, so
+/// only the request fails.
+pub fn failFromH2(this: *HTTPClient, err: anyerror) void {
+    bun.debugAssert(this.h2 == null);
+    this.unregisterAbortTracker();
+    this.flags.protocol = .http1_1;
+    if (this.state.stage != .done and this.state.stage != .fail) {
+        this.state.request_stage = .fail;
+        this.state.response_stage = .fail;
+        this.state.fail = err;
+        this.state.stage = .fail;
+        const callback = this.result_callback;
+        const result = this.toResult();
+        this.state.reset(this.allocator);
+        callback.run(@fieldParentPtr("client", this), result);
     }
-
-    client.setTimeout(socket, 5);
-    const request = client.buildRequest(client.state.original_request_body.len());
-    session.writeRequest(client, request) catch |err| {
-        client.closeAndFail(err, is_ssl, socket);
-        return;
-    };
-    if (client.verbose != .none) {
-        printRequest(request, client.url.href, !client.flags.reject_unauthorized, client.state.request_body, client.verbose == .curl);
-    }
-    client.state.request_stage = .done;
-    client.state.response_stage = .headers;
-
-    _ = session.flush(is_ssl, socket) catch |err| {
-        client.closeAndFail(err, is_ssl, socket);
-    };
-}
-
-/// A reused h2 session refused this stream (GOAWAY/RST before headers).
-/// Tear down the connection and replay the request from scratch.
-pub fn retryH2(client: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
-    client.allow_retry = false;
-    if (client.h2) |session| {
-        client.h2 = null;
-        session.deinit();
-    }
-    client.flags.protocol = .http1_1;
-    NewHTTPContext(is_ssl).terminateSocket(socket);
-    client.state.response_message_buffer.deinit();
-    client.start(client.state.original_request_body, client.state.body_out_str.?);
 }
 pub fn onClose(
     client: *HTTPClient,
@@ -309,23 +280,6 @@ pub fn onClose(
 
     if (client.signals.get(.aborted)) {
         client.fail(error.Aborted);
-        return;
-    }
-    if (client.flags.protocol == .http2) {
-        if (client.h2) |session| {
-            client.h2 = null;
-            session.deinit();
-        }
-        client.flags.protocol = .http1_1;
-        if (client.state.stage != .done and client.state.stage != .fail) {
-            if (client.allow_retry) {
-                client.allow_retry = false;
-                client.state.response_message_buffer.deinit();
-                client.start(client.state.original_request_body, client.state.body_out_str.?);
-                return;
-            }
-            client.fail(error.ConnectionClosed);
-        }
         return;
     }
     if (client.proxy_tunnel) |tunnel| {
@@ -623,8 +577,9 @@ http_proxy: ?URL = null,
 proxy_headers: ?Headers = null,
 proxy_authorization: ?[]u8 = null,
 proxy_tunnel: ?*ProxyTunnel = null,
-/// Allocated on ALPN selecting "h2"; null on the HTTP/1.1 path.
-h2: ?*H2.ClientSession = null,
+/// Set when this request is bound to a stream on an HTTP/2 session.
+/// Owned by the session; cleared by the session when the stream completes.
+h2: ?*H2.Stream = null,
 signals: Signals = .{},
 async_http_id: u32 = 0,
 hostname: ?[]u8 = null,
@@ -647,9 +602,10 @@ pub fn deinit(this: *HTTPClient) void {
         this.proxy_tunnel = null;
         tunnel.detachAndDeref();
     }
-    if (this.h2) |session| {
-        this.h2 = null;
-        session.deinit();
+    if (this.h2) |stream| {
+        // Normally cleared by the session before the terminal callback;
+        // reaching here means the client is being torn down mid-flight.
+        stream.session.detachWithFailure(stream, error.Aborted);
     }
     // Release our strong ref on the interned SSLConfig
     if (this.tls_props) |*tls| tls.deinit();
@@ -1049,7 +1005,10 @@ pub fn doRedirect(
     // store it under the WRONG target hostname — a follow-up request to the
     // redirect destination could then reuse a TLS session negotiated with the
     // original host. Close the tunnel on redirect; only pool the raw socket.
-    if (this.proxy_tunnel) |tunnel| {
+    if (this.flags.protocol == .http2) {
+        // The session owns the socket; the stream was detached by the caller
+        // and the session will pool or close once its other streams drain.
+    } else if (this.proxy_tunnel) |tunnel| {
         log("close the tunnel in redirect", .{});
         this.proxy_tunnel = null;
         tunnel.shutdown();
@@ -1088,10 +1047,6 @@ pub fn doRedirect(
     if (this.proxy_tunnel) |tunnel| {
         this.proxy_tunnel = null;
         tunnel.detachAndDeref();
-    }
-    if (this.h2) |session| {
-        this.h2 = null;
-        session.deinit();
     }
     this.flags.protocol = .http1_1;
 
@@ -1187,7 +1142,7 @@ pub const HTTPResponseMetadata = struct {
     }
 };
 
-fn printRequest(request: picohttp.Request, url: string, ignore_insecure: bool, body: []const u8, curl: bool) void {
+pub fn printRequest(request: picohttp.Request, url: string, ignore_insecure: bool, body: []const u8, curl: bool) void {
     @branchHint(.cold);
     var request_ = request;
     request_.path = url;
@@ -1469,16 +1424,6 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             this.onPreconnect(is_ssl, socket);
             return;
         }
-    }
-
-    if (this.flags.protocol == .http2) {
-        if (this.h2) |session| {
-            this.setTimeout(socket, 5);
-            _ = session.flush(is_ssl, socket) catch |err| {
-                this.closeAndFail(err, is_ssl, socket);
-            };
-        }
-        return;
     }
 
     if (this.proxy_tunnel) |proxy| {
@@ -1901,14 +1846,6 @@ pub fn onData(
         return;
     }
 
-    if (this.flags.protocol == .http2) {
-        if (this.h2) |session| {
-            this.setTimeout(socket, 5);
-            session.onData(this, is_ssl, incoming_data, ctx, socket);
-        }
-        return;
-    }
-
     if (this.proxy_tunnel) |proxy| {
         // if we have a tunnel we dont care about the other stages, we will just tunnel the data
         this.setTimeout(socket, 5);
@@ -1978,10 +1915,6 @@ fn completeConnectingProcess(this: *HTTPClient) void {
 fn fail(this: *HTTPClient, err: anyerror) void {
     this.unregisterAbortTracker();
 
-    if (this.h2) |session| {
-        this.h2 = null;
-        session.deinit();
-    }
     if (this.proxy_tunnel) |tunnel| {
         this.proxy_tunnel = null;
         tunnel.shutdown();
@@ -2109,15 +2042,15 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
         else
             true;
 
-        const h2_poolable = if (this.h2) |s| s.canPool() else true;
-
-        if (this.isKeepAlivePossible() and !socket.isClosedOrHasError() and tunnel_poolable and h2_poolable) {
+        if (this.flags.protocol == .http2) {
+            // The HTTP/2 session owns the socket; it decides whether to pool
+            // or close once all of its streams have drained.
+            this.unregisterAbortTracker();
+        } else if (this.isKeepAlivePossible() and !socket.isClosedOrHasError() and tunnel_poolable) {
             log("release socket", .{});
             const tunnel = this.proxy_tunnel;
             this.proxy_tunnel = null;
             if (tunnel) |t| t.detachOwner(this);
-            const h2_session = this.h2;
-            this.h2 = null;
             // target_hostname = url.hostname (the CONNECT TCP target at
             // writeProxyConnect line 346). The SNI override (hostname) is
             // hashed into proxyAuthHash separately — both must match, but
@@ -2132,7 +2065,7 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
                 if (tunnel != null) this.url.hostname else "",
                 if (tunnel != null) this.url.getPortAuto() else 0,
                 if (tunnel != null) this.proxyAuthHash() else 0,
-                h2_session,
+                null,
             );
         } else {
             if (this.proxy_tunnel) |tunnel| {
@@ -2140,10 +2073,6 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
                 this.proxy_tunnel = null;
                 tunnel.shutdown();
                 tunnel.detachAndDeref();
-            }
-            if (this.h2) |session| {
-                this.h2 = null;
-                session.deinit();
             }
             NewHTTPContext(is_ssl).closeSocket(socket);
         }

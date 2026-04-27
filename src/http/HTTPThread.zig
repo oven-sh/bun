@@ -388,6 +388,10 @@ fn drainQueuedShutdowns(this: *@This()) void {
                             client.closeAndAbort(comptime is_tls, socket);
                             continue;
                         }
+                        if (tagged.get(bun.http.H2.ClientSession)) |session| {
+                            session.abortByHttpId(http.async_http_id);
+                            continue;
+                        }
                         socket.close(.failure);
                     },
                 }

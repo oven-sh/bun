@@ -1,106 +1,144 @@
 //! HTTP/2 path for Bun's fetch HTTP client.
 //!
-//! A `ClientSession` owns the connection-scoped state — HPACK tables,
-//! outbound write buffer, inbound frame buffer, and the server's SETTINGS —
-//! and survives across requests via the keep-alive pool. Each request runs on
-//! a `Stream` carved out of the session with a fresh odd stream id; the
-//! response side parses frames back into the existing `picohttp.Response` /
-//! `handleResponseBody` machinery so redirects, decompression and the result
-//! callback are shared with the HTTP/1.1 path.
+//! `ClientSession` owns the TLS socket once ALPN selects "h2" and is the
+//! `ActiveSocket` variant the HTTPContext handlers dispatch to. It holds the
+//! connection-scoped state — HPACK tables, write/read buffers, server
+//! SETTINGS — and a map of active `Stream`s, each bound to one `HTTPClient`.
+//! Response frames are parsed into per-stream buffers and then handed to the
+//! same `picohttp.Response` / `handleResponseBody` machinery the HTTP/1.1
+//! path uses, so redirects, decompression and the result callback are shared.
 
-/// We advertise this as SETTINGS_INITIAL_WINDOW_SIZE and replenish it via
-/// WINDOW_UPDATE once half has been consumed.
+/// Advertised as SETTINGS_INITIAL_WINDOW_SIZE; replenished via WINDOW_UPDATE
+/// once half has been consumed.
 pub const local_initial_window_size: u31 = 1 << 24;
 
 pub const Stream = struct {
+    pub const new = bun.TrivialNew(@This());
+
     id: u31,
+    session: *ClientSession,
+    client: ?*HTTPClient,
 
-    /// Concatenated header-block fragment from HEADERS + any CONTINUATION
-    /// frames, decoded once END_HEADERS arrives.
+    /// HEADERS + CONTINUATION fragments, decoded once END_HEADERS arrives.
     header_block: std.ArrayListUnmanaged(u8) = .{},
-
-    /// DATA payload accumulated across one onData() pass; handed to
-    /// `handleResponseBody` once after all frames in the current read have
-    /// been parsed so the client callback runs at most once per socket read.
+    /// DATA payload accumulated across one onData() pass.
     body_buffer: std.ArrayListUnmanaged(u8) = .{},
 
     end_stream_received: bool = false,
     headers_ready: bool = false,
-    expecting_continuation: bool = false,
     headers_end_stream: bool = false,
     fatal_error: ?anyerror = null,
-
     /// DATA bytes consumed since the last WINDOW_UPDATE for this stream.
     unacked_bytes: u32 = 0,
 
-    fn deinit(this: *Stream) void {
+    pub fn deinit(this: *Stream) void {
         this.header_block.deinit(bun.default_allocator);
         this.body_buffer.deinit(bun.default_allocator);
+        bun.destroy(this);
+    }
+
+    pub fn rst(this: *Stream, code: wire.ErrorCode) void {
+        var value: u32 = @byteSwap(@intFromEnum(code));
+        this.session.writeFrame(.HTTP_FRAME_RST_STREAM, 0, this.id, std.mem.asBytes(&value));
     }
 };
 
 pub const ClientSession = struct {
     pub const new = bun.TrivialNew(@This());
 
-    hpack: *lshpack.HPACK,
+    pub const Socket = NewHTTPContext(true).HTTPSocket;
 
-    /// Bytes queued for the socket. Whole frames are written here and
+    hpack: *lshpack.HPACK,
+    socket: Socket,
+    ctx: *NewHTTPContext(true),
+
+    /// Pool key. Owned copy so the session can outlive the originating client.
+    hostname: []const u8,
+    port: u16,
+    ssl_config: ?SSLConfig.SharedPtr,
+    did_have_handshaking_error: bool,
+
+    /// Queued bytes for the socket; whole frames are written here and
     /// `flush()` drains as much as the socket accepts.
     write_buffer: bun.io.StreamBuffer = .{},
 
-    /// Accumulates incoming bytes until a full 9-byte frame header + declared
-    /// payload length is available, so frame handlers always see complete
-    /// frames regardless of how the kernel chunked the reads.
+    /// Inbound bytes until a full 9-byte header + declared payload is
+    /// available, so frame handlers always see complete frames.
     read_buffer: std.ArrayListUnmanaged(u8) = .{},
 
-    /// Backing storage for decoded header name/value strings. lshpack returns
-    /// thread-local slices that are clobbered on the next decode call, so we
-    /// copy them here and point `shared_response_headers_buf` entries into
-    /// this buffer until `cloneMetadata` makes its own copy.
+    /// Backing storage for decoded header strings. lshpack returns
+    /// thread-local slices clobbered on the next decode call, so we copy
+    /// here and point `shared_response_headers_buf` into this buffer until
+    /// `cloneMetadata` makes its own copy.
     decoded_header_bytes: std.ArrayListUnmanaged(u8) = .{},
 
-    stream: Stream = .{ .id = 1 },
+    streams: std.AutoArrayHashMapUnmanaged(u31, *Stream) = .{},
     next_stream_id: u31 = 1,
+    /// Stream id whose CONTINUATION sequence is in progress; 0 = none.
+    expecting_continuation: u31 = 0,
+
     preface_sent: bool = false,
     goaway_received: bool = false,
+    goaway_last_stream_id: u31 = 0,
     fatal_error: ?anyerror = null,
 
     remote_max_frame_size: u24 = wire.DEFAULT_MAX_FRAME_SIZE,
-    remote_max_concurrent_streams: u32 = std.math.maxInt(u32),
+    remote_max_concurrent_streams: u32 = 100,
 
     /// DATA bytes consumed since the last connection-level WINDOW_UPDATE.
     conn_unacked_bytes: u32 = 0,
 
-    pub fn create() *ClientSession {
-        return ClientSession.new(.{
+    /// Index in the context's active-session list while reachable for
+    /// concurrent attachment; maxInt when not listed.
+    registry_index: u32 = std.math.maxInt(u32),
+
+    pub fn create(ctx: *NewHTTPContext(true), socket: Socket, client: *const HTTPClient) *ClientSession {
+        const this = ClientSession.new(.{
             .hpack = lshpack.HPACK.init(4096),
+            .socket = socket,
+            .ctx = ctx,
+            .hostname = bun.handleOom(bun.default_allocator.dupe(u8, client.connected_url.hostname)),
+            .port = client.connected_url.getPortAuto(),
+            .ssl_config = if (client.tls_props) |p| p.clone() else null,
+            .did_have_handshaking_error = client.flags.did_have_handshaking_error,
         });
+        ctx.registerH2(this);
+        return this;
     }
 
     pub fn deinit(this: *ClientSession) void {
+        this.ctx.unregisterH2(this);
         this.hpack.deinit();
         this.write_buffer.deinit();
         this.read_buffer.deinit(bun.default_allocator);
         this.decoded_header_bytes.deinit(bun.default_allocator);
-        this.stream.deinit();
+        var it = this.streams.iterator();
+        while (it.next()) |e| e.value_ptr.*.deinit();
+        this.streams.deinit(bun.default_allocator);
+        bun.default_allocator.free(this.hostname);
+        if (this.ssl_config) |*s| s.deinit();
         bun.destroy(this);
     }
 
-    /// Allocate a fresh stream id for the next request on this connection.
-    /// Connection-scoped state (HPACK, settings, read/write buffers) is
-    /// preserved; per-stream parse state is reset.
-    pub fn beginStream(this: *ClientSession) void {
-        this.stream.deinit();
-        this.stream = .{ .id = this.next_stream_id };
-        this.next_stream_id +|= 2;
-    }
-
-    /// True when the connection can be returned to the keep-alive pool: no
-    /// GOAWAY, no protocol error, no leftover bytes that would confuse the
-    /// next request, and stream-id space not exhausted.
-    pub fn canPool(this: *const ClientSession) bool {
+    pub fn hasHeadroom(this: *const ClientSession) bool {
         return !this.goaway_received and
             this.fatal_error == null and
+            this.streams.count() < this.remote_max_concurrent_streams and
+            this.next_stream_id < wire.MAX_STREAM_ID;
+    }
+
+    pub fn matches(this: *const ClientSession, hostname: []const u8, port: u16, ssl_config: ?*SSLConfig) bool {
+        return this.port == port and SSLConfig.rawPtr(this.ssl_config) == ssl_config and strings.eqlLong(this.hostname, hostname, true);
+    }
+
+    /// True when the connection can be parked in the keep-alive pool: no
+    /// active streams, no GOAWAY/error, and no leftover bytes that would
+    /// confuse the next request.
+    pub fn canPool(this: *const ClientSession) bool {
+        return this.streams.count() == 0 and
+            !this.goaway_received and
+            this.fatal_error == null and
+            this.expecting_continuation == 0 and
             this.read_buffer.items.len == 0 and
             this.write_buffer.isEmpty() and
             this.next_stream_id < wire.MAX_STREAM_ID;
@@ -123,8 +161,6 @@ pub const ClientSession = struct {
     }
 
     fn isConnectionSpecific(name: []const u8) bool {
-        // RFC 9113 §8.2.2: connection-specific headers MUST NOT appear in an
-        // HTTP/2 field block. `Host` is mapped to :authority.
         return strings.eqlCaseInsensitiveASCIIICheckLength(name, "connection") or
             strings.eqlCaseInsensitiveASCIIICheckLength(name, "host") or
             strings.eqlCaseInsensitiveASCIIICheckLength(name, "keep-alive") or
@@ -155,11 +191,51 @@ pub const ClientSession = struct {
         this.preface_sent = true;
     }
 
-    /// Serialise the request as HEADERS frame(s) + DATA frame(s) into the
-    /// outbound buffer. The connection preface goes out once per session.
-    pub fn writeRequest(this: *ClientSession, client: *HTTPClient, request: picohttp.Request) !void {
+    /// Allocate a stream for `client`, serialise its request as HEADERS +
+    /// DATA, and flush.
+    pub fn attach(this: *ClientSession, client: *HTTPClient) void {
+        bun.debugAssert(this.hasHeadroom());
+
+        const stream = Stream.new(.{ .id = this.next_stream_id, .session = this, .client = client });
+        this.next_stream_id +|= 2;
+        bun.handleOom(this.streams.put(bun.default_allocator, stream.id, stream));
+        client.h2 = stream;
+        client.flags.protocol = .http2;
+        client.allow_retry = false;
+
         if (!this.preface_sent) this.writePreface();
 
+        client.setTimeout(this.socket, 5);
+        const request = client.buildRequest(client.state.original_request_body.len());
+        this.writeRequest(client, stream, request) catch |err| {
+            this.detachWithFailure(stream, err);
+            return;
+        };
+        if (client.verbose != .none) {
+            HTTPClient.printRequest(request, client.url.href, !client.flags.reject_unauthorized, client.state.request_body, client.verbose == .curl);
+        }
+        client.state.request_stage = .done;
+        client.state.response_stage = .headers;
+
+        _ = this.flush() catch |err| {
+            this.failAll(err);
+        };
+    }
+
+    /// Remove `stream` from the session, RST it, and fail its client. The
+    /// session and socket stay up for siblings.
+    pub fn detachWithFailure(this: *ClientSession, stream: *Stream, err: anyerror) void {
+        stream.rst(.CANCEL);
+        _ = this.flush() catch {};
+        const client = stream.client;
+        stream.client = null;
+        if (client) |c| c.h2 = null;
+        _ = this.streams.swapRemove(stream.id);
+        stream.deinit();
+        if (client) |c| c.failFromH2(err);
+    }
+
+    fn writeRequest(this: *ClientSession, client: *HTTPClient, stream: *Stream, request: picohttp.Request) !void {
         var encoded: std.ArrayListUnmanaged(u8) = .{};
         defer encoded.deinit(bun.default_allocator);
 
@@ -184,7 +260,6 @@ pub const ClientSession = struct {
                 strings.eqlCaseInsensitiveASCIIICheckLength(header.name, "authorization") or
                 strings.eqlCaseInsensitiveASCIIICheckLength(header.name, "cookie") or
                 strings.eqlCaseInsensitiveASCIIICheckLength(header.name, "set-cookie");
-            // RFC 9113 §8.2.1: field names MUST be lowercase.
             const lowered = if (header.name.len <= lower_buf.len) brk: {
                 for (header.name, 0..) |c, i| lower_buf[i] = std.ascii.toLower(c);
                 break :brk lower_buf[0..header.name.len];
@@ -195,11 +270,11 @@ pub const ClientSession = struct {
         const body = client.state.request_body;
         const has_body = client.state.original_request_body == .bytes and body.len > 0;
 
-        this.writeHeaderBlock(encoded.items, !has_body);
-        if (has_body) this.writeData(body, true);
+        this.writeHeaderBlock(stream.id, encoded.items, !has_body);
+        if (has_body) this.writeData(stream.id, body, true);
     }
 
-    fn writeHeaderBlock(this: *ClientSession, block: []const u8, end_stream: bool) void {
+    fn writeHeaderBlock(this: *ClientSession, stream_id: u31, block: []const u8, end_stream: bool) void {
         const max: usize = this.remote_max_frame_size;
         var remaining = block;
         var first = true;
@@ -210,13 +285,13 @@ pub const ClientSession = struct {
             var flags: u8 = 0;
             if (last) flags |= @intFromEnum(wire.HeadersFrameFlags.END_HEADERS);
             if (first and end_stream) flags |= @intFromEnum(wire.HeadersFrameFlags.END_STREAM);
-            this.writeFrame(if (first) .HTTP_FRAME_HEADERS else .HTTP_FRAME_CONTINUATION, flags, this.stream.id, chunk);
+            this.writeFrame(if (first) .HTTP_FRAME_HEADERS else .HTTP_FRAME_CONTINUATION, flags, stream_id, chunk);
             first = false;
             if (last) break;
         }
     }
 
-    fn writeData(this: *ClientSession, body: []const u8, end_stream: bool) void {
+    fn writeData(this: *ClientSession, stream_id: u31, body: []const u8, end_stream: bool) void {
         const max: usize = this.remote_max_frame_size;
         var remaining = body;
         while (true) {
@@ -224,7 +299,7 @@ pub const ClientSession = struct {
             remaining = remaining[chunk.len..];
             const last = remaining.len == 0;
             const flags: u8 = if (last and end_stream) @intFromEnum(wire.DataFrameFlags.END_STREAM) else 0;
-            this.writeFrame(.HTTP_FRAME_DATA, flags, this.stream.id, chunk);
+            this.writeFrame(.HTTP_FRAME_DATA, flags, stream_id, chunk);
             if (last) break;
         }
     }
@@ -241,70 +316,29 @@ pub const ClientSession = struct {
         return payload[1 .. payload.len - pad];
     }
 
-    fn decodeAndDiscard(this: *ClientSession) void {
-        var offset: usize = 0;
-        while (offset < this.stream.header_block.items.len) {
-            const result = this.hpack.decode(this.stream.header_block.items[offset..]) catch break;
-            offset += result.next;
-        }
-        this.stream.header_block.clearRetainingCapacity();
-    }
-
-    /// Credit consumed DATA bytes back to the peer once half the advertised
-    /// window has been used, on both the connection and the active stream.
     fn replenishWindow(this: *ClientSession) void {
         const threshold = local_initial_window_size / 2;
         if (this.conn_unacked_bytes >= threshold) {
             this.writeWindowUpdate(0, @intCast(this.conn_unacked_bytes));
             this.conn_unacked_bytes = 0;
         }
-        if (this.stream.unacked_bytes >= threshold and !this.stream.end_stream_received) {
-            this.writeWindowUpdate(this.stream.id, @intCast(this.stream.unacked_bytes));
-            this.stream.unacked_bytes = 0;
-        }
-    }
-
-    /// Process frames that arrive while the session is parked in the
-    /// keep-alive pool with no request attached. Answers PING/SETTINGS,
-    /// records GOAWAY (so `canPool()` flips false), and discards anything
-    /// addressed to a now-closed stream.
-    pub fn onIdleData(this: *ClientSession, comptime is_ssl: bool, incoming: []const u8, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
-        bun.handleOom(this.read_buffer.appendSlice(bun.default_allocator, incoming));
-        var consumed: usize = 0;
-        while (true) {
-            const buf = this.read_buffer.items[consumed..];
-            if (buf.len < wire.FrameHeader.byteSize) break;
-            var header: wire.FrameHeader = .{ .flags = 0 };
-            wire.FrameHeader.from(&header, buf[0..wire.FrameHeader.byteSize], 0, true);
-            header.streamIdentifier = wire.UInt31WithReserved.from(header.streamIdentifier).uint31;
-            const frame_len = wire.FrameHeader.byteSize + @as(usize, header.length);
-            if (buf.len < frame_len) break;
-            this.dispatchFrame(header, buf[wire.FrameHeader.byteSize..frame_len]);
-            consumed += frame_len;
-        }
-        if (consumed > 0) {
-            const tail_len = this.read_buffer.items.len - consumed;
-            if (tail_len > 0) {
-                std.mem.copyForwards(u8, this.read_buffer.items[0..tail_len], this.read_buffer.items[consumed..]);
+        var it = this.streams.iterator();
+        while (it.next()) |e| {
+            const s = e.value_ptr.*;
+            if (s.unacked_bytes >= threshold and !s.end_stream_received) {
+                this.writeWindowUpdate(s.id, @intCast(s.unacked_bytes));
+                s.unacked_bytes = 0;
             }
-            this.read_buffer.items.len = tail_len;
         }
-        this.stream.body_buffer.clearRetainingCapacity();
-        this.stream.header_block.clearRetainingCapacity();
-        _ = this.flush(is_ssl, socket) catch {
-            this.fatal_error = error.WriteFailed;
-        };
     }
 
-    /// Drain the outbound buffer to the socket. Returns true when bytes
-    /// remain (backpressure) so the caller knows to wait for onWritable.
-    pub fn flush(this: *ClientSession, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) !bool {
+    pub fn flush(this: *ClientSession) !bool {
         const pending = this.write_buffer.slice();
         if (pending.len == 0) return false;
         var remaining = pending;
         var total: usize = 0;
         while (remaining.len > 0) {
-            const wrote = socket.write(remaining);
+            const wrote = this.socket.write(remaining);
             if (wrote < 0) return error.WriteFailed;
             const n: usize = @intCast(wrote);
             total += n;
@@ -319,32 +353,16 @@ pub const ClientSession = struct {
         return true;
     }
 
-    /// Parse every complete frame in `incoming` into session-local state, then
-    /// hand the accumulated headers/body to the HTTPClient. Structured as
-    /// "parse all, then deliver once" because `progressUpdate` may free the
-    /// client (and this session) synchronously when the request finishes.
-    pub fn onData(
-        this: *ClientSession,
-        client: *HTTPClient,
-        comptime is_ssl: bool,
-        incoming: []const u8,
-        ctx: *NewHTTPContext(is_ssl),
-        socket: NewHTTPContext(is_ssl).HTTPSocket,
-    ) void {
-        bun.handleOom(this.read_buffer.appendSlice(bun.default_allocator, incoming));
-
+    fn parseFrames(this: *ClientSession) void {
         var consumed: usize = 0;
         while (true) {
             const buf = this.read_buffer.items[consumed..];
             if (buf.len < wire.FrameHeader.byteSize) break;
-
             var header: wire.FrameHeader = .{ .flags = 0 };
             wire.FrameHeader.from(&header, buf[0..wire.FrameHeader.byteSize], 0, true);
             header.streamIdentifier = wire.UInt31WithReserved.from(header.streamIdentifier).uint31;
-
             const frame_len = wire.FrameHeader.byteSize + @as(usize, header.length);
             if (buf.len < frame_len) break;
-
             this.dispatchFrame(header, buf[wire.FrameHeader.byteSize..frame_len]);
             consumed += frame_len;
             if (this.fatal_error != null) break;
@@ -356,69 +374,230 @@ pub const ClientSession = struct {
             }
             this.read_buffer.items.len = tail_len;
         }
+    }
 
+    /// Socket onData entry point. Parse frames into per-stream state, deliver
+    /// each ready stream to its client, then pool or close if no streams
+    /// remain. Structured "parse all → deliver all" because delivering may
+    /// free the client.
+    pub fn onData(this: *ClientSession, incoming: []const u8) void {
+        bun.handleOom(this.read_buffer.appendSlice(bun.default_allocator, incoming));
+        this.parseFrames();
         this.replenishWindow();
-        _ = this.flush(is_ssl, socket) catch |err| {
-            return client.closeAndFail(err, is_ssl, socket);
-        };
 
-        const stream = &this.stream;
+        if (this.flush() catch blk: {
+            this.fatal_error = error.WriteFailed;
+            break :blk false;
+        }) {}
 
-        if (this.fatal_error) |err| return client.closeAndFail(err, is_ssl, socket);
-        if (stream.fatal_error) |err| {
-            if (client.allow_retry) return client.retryH2(is_ssl, socket);
-            return client.closeAndFail(err, is_ssl, socket);
+        if (this.fatal_error) |err| return this.failAll(err);
+
+        // Deliver per-stream. Iterate by index because delivery may remove
+        // entries (swapRemove keeps earlier indices stable; revisiting the
+        // current index after a removal is intentional).
+        var i: usize = 0;
+        while (i < this.streams.count()) {
+            const stream = this.streams.values()[i];
+            if (this.deliverStream(stream)) {
+                _ = this.streams.swapRemove(stream.id);
+                stream.deinit();
+            } else {
+                i += 1;
+            }
         }
+
+        this.maybeRelease();
+    }
+
+    /// Socket onWritable entry point.
+    pub fn onWritable(this: *ClientSession) void {
+        _ = this.flush() catch |err| return this.failAll(err);
+        this.reapAborted();
+        this.maybeRelease();
+    }
+
+    /// Called while the socket is parked in the pool with no clients; answers
+    /// PING/SETTINGS, records GOAWAY, discards anything stream-addressed.
+    pub fn onIdleData(this: *ClientSession, incoming: []const u8) void {
+        bun.handleOom(this.read_buffer.appendSlice(bun.default_allocator, incoming));
+        this.parseFrames();
+        this.replenishWindow();
+        _ = this.flush() catch {
+            this.fatal_error = error.WriteFailed;
+        };
+    }
+
+    /// Socket onClose / onTimeout entry point. The socket is already gone, so
+    /// streams just fail and the session is destroyed.
+    pub fn onClose(this: *ClientSession, err: anyerror) void {
+        this.ctx.unregisterH2(this);
+        var it = this.streams.iterator();
+        while (it.next()) |e| {
+            const stream = e.value_ptr.*;
+            const client = stream.client;
+            stream.client = null;
+            if (client) |c| c.h2 = null;
+            stream.deinit();
+            if (client) |c| c.failFromH2(err);
+        }
+        this.streams.clearRetainingCapacity();
+        this.deinit();
+    }
+
+    fn failAll(this: *ClientSession, err: anyerror) void {
+        this.fatal_error = this.fatal_error orelse err;
+        const sock = this.socket;
+        this.onClose(err);
+        NewHTTPContext(true).terminateSocket(sock);
+    }
+
+    /// Called from the HTTP thread's shutdown queue when a fetch on this
+    /// session is aborted. RST_STREAMs that one request; siblings continue.
+    pub fn abortByHttpId(this: *ClientSession, async_http_id: u32) void {
+        var it = this.streams.iterator();
+        while (it.next()) |e| {
+            const stream = e.value_ptr.*;
+            const client = stream.client orelse continue;
+            if (client.async_http_id == async_http_id) {
+                this.detachWithFailure(stream, error.Aborted);
+                break;
+            }
+        }
+        this.maybeRelease();
+    }
+
+    fn reapAborted(this: *ClientSession) void {
+        var i: usize = 0;
+        while (i < this.streams.count()) {
+            const stream = this.streams.values()[i];
+            const client = stream.client orelse {
+                i += 1;
+                continue;
+            };
+            if (client.signals.get(.aborted)) {
+                this.detachWithFailure(stream, error.Aborted);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    fn maybeRelease(this: *ClientSession) void {
+        if (this.streams.count() > 0) return;
+        this.ctx.unregisterH2(this);
+        if (this.canPool() and !this.socket.isClosedOrHasError()) {
+            this.ctx.releaseSocket(
+                this.socket,
+                this.did_have_handshaking_error,
+                this.hostname,
+                this.port,
+                this.ssl_config,
+                null,
+                "",
+                0,
+                0,
+                this,
+            );
+        } else {
+            const sock = this.socket;
+            this.deinit();
+            NewHTTPContext(true).closeSocket(sock);
+        }
+    }
+
+    /// Deliver any ready headers/body/error on `stream` to its client.
+    /// Returns true when the stream is finished and should be removed.
+    /// After a true return, neither `stream.client` nor the client's memory
+    /// may be touched.
+    fn deliverStream(this: *ClientSession, stream: *Stream) bool {
+        const client = stream.client orelse return true;
+
+        if (client.signals.get(.aborted)) {
+            stream.rst(.CANCEL);
+            _ = this.flush() catch {};
+            stream.client = null;
+            client.h2 = null;
+            client.failFromH2(error.Aborted);
+            return true;
+        }
+
+        if (stream.fatal_error) |err| {
+            stream.client = null;
+            client.h2 = null;
+            client.failFromH2(err);
+            return true;
+        }
+
+        client.setTimeout(this.socket, 5);
 
         if (stream.headers_ready) {
             stream.headers_ready = false;
             if (client.state.response_stage == .body) {
-                // Trailer block: decode to keep HPACK state coherent but
-                // don't replace the already-delivered response metadata.
-                this.decodeAndDiscard();
+                this.decodeAndDiscard(stream);
             } else {
-                const should_continue = this.deliverHeaders(client) catch |err| {
-                    return client.closeAndFail(err, is_ssl, socket);
+                const should_continue = this.decodeHeaders(stream, client) catch |err| {
+                    stream.client = null;
+                    client.h2 = null;
+                    client.failFromH2(err);
+                    return true;
                 };
                 if (should_continue == .finished or (stream.end_stream_received and stream.body_buffer.items.len == 0)) {
+                    stream.client = null;
+                    client.h2 = null;
                     if (client.state.flags.is_redirect_pending) {
-                        return client.doRedirect(is_ssl, ctx, socket);
+                        client.doRedirect(true, this.ctx, this.socket);
+                        return true;
                     }
                     client.cloneMetadata();
                     client.state.flags.received_last_chunk = true;
                     client.state.content_length = 0;
-                    return client.progressUpdate(is_ssl, ctx, socket);
+                    client.progressUpdate(true, this.ctx, this.socket);
+                    return true;
                 }
                 client.cloneMetadata();
             }
         }
 
-        if (client.state.response_stage != .body) return;
+        if (client.state.response_stage != .body) return false;
 
         if (stream.body_buffer.items.len > 0) {
-            if (stream.end_stream_received) client.state.flags.received_last_chunk = true;
+            const terminal = stream.end_stream_received;
+            if (terminal) {
+                client.state.flags.received_last_chunk = true;
+                stream.client = null;
+                client.h2 = null;
+            }
             const report = client.handleResponseBody(stream.body_buffer.items, false) catch |err| {
-                return client.closeAndFail(err, is_ssl, socket);
+                stream.body_buffer.clearRetainingCapacity();
+                if (!terminal) {
+                    stream.client = null;
+                    client.h2 = null;
+                }
+                client.failFromH2(err);
+                return true;
             };
             stream.body_buffer.clearRetainingCapacity();
-            if (report or stream.end_stream_received) {
-                return client.progressUpdate(is_ssl, ctx, socket);
+            if (terminal or report) {
+                client.progressUpdate(true, this.ctx, this.socket);
             }
-            return;
+            return terminal;
         }
 
         if (stream.end_stream_received) {
+            stream.client = null;
+            client.h2 = null;
             client.state.flags.received_last_chunk = true;
-            return client.progressUpdate(is_ssl, ctx, socket);
+            client.progressUpdate(true, this.ctx, this.socket);
+            return true;
         }
+
+        return false;
     }
 
     fn dispatchFrame(this: *ClientSession, header: wire.FrameHeader, payload: []const u8) void {
         log("frame type={d} len={d} flags={d} stream={d}", .{ header.type, header.length, header.flags, header.streamIdentifier });
 
-        const stream = &this.stream;
-
-        if (stream.expecting_continuation and header.type != @intFromEnum(wire.FrameType.HTTP_FRAME_CONTINUATION)) {
+        if (this.expecting_continuation != 0 and header.type != @intFromEnum(wire.FrameType.HTTP_FRAME_CONTINUATION)) {
             this.fatal_error = error.HTTP2ProtocolError;
             return;
         }
@@ -445,7 +624,7 @@ pub const ClientSession = struct {
                 }
             },
             .HTTP_FRAME_HEADERS => {
-                if (header.streamIdentifier != stream.id) return;
+                const stream = this.streams.get(@intCast(header.streamIdentifier)) orelse return;
                 var fragment = payload;
                 if (header.flags & @intFromEnum(wire.HeadersFrameFlags.PADDED) != 0) {
                     fragment = stripPadding(fragment) orelse {
@@ -467,26 +646,28 @@ pub const ClientSession = struct {
                     stream.end_stream_received = stream.end_stream_received or stream.headers_end_stream;
                     stream.headers_ready = true;
                 } else {
-                    stream.expecting_continuation = true;
+                    this.expecting_continuation = stream.id;
                 }
             },
             .HTTP_FRAME_CONTINUATION => {
-                if (!stream.expecting_continuation or header.streamIdentifier != stream.id) {
+                if (this.expecting_continuation == 0 or header.streamIdentifier != this.expecting_continuation) {
                     this.fatal_error = error.HTTP2ProtocolError;
                     return;
                 }
+                const stream = this.streams.get(this.expecting_continuation) orelse {
+                    this.fatal_error = error.HTTP2ProtocolError;
+                    return;
+                };
                 bun.handleOom(stream.header_block.appendSlice(bun.default_allocator, payload));
                 if (header.flags & @intFromEnum(wire.HeadersFrameFlags.END_HEADERS) != 0) {
-                    stream.expecting_continuation = false;
+                    this.expecting_continuation = 0;
                     stream.end_stream_received = stream.end_stream_received or stream.headers_end_stream;
                     stream.headers_ready = true;
                 }
             },
             .HTTP_FRAME_DATA => {
-                // Padding counts against flow control even when the payload is
-                // for a stale stream, so credit the connection window first.
                 this.conn_unacked_bytes +|= header.length;
-                if (header.streamIdentifier != stream.id) return;
+                const stream = this.streams.get(@intCast(header.streamIdentifier)) orelse return;
                 stream.unacked_bytes +|= header.length;
                 var fragment = payload;
                 if (header.flags & @intFromEnum(wire.DataFrameFlags.PADDED) != 0) {
@@ -503,7 +684,7 @@ pub const ClientSession = struct {
                 }
             },
             .HTTP_FRAME_RST_STREAM => {
-                if (header.streamIdentifier != stream.id) return;
+                const stream = this.streams.get(@intCast(header.streamIdentifier)) orelse return;
                 const code: u32 = if (payload.len >= 4) wire.u32FromBytes(payload[0..4]) else 0;
                 if (code == @intFromEnum(wire.ErrorCode.NO_ERROR)) {
                     stream.end_stream_received = true;
@@ -513,37 +694,44 @@ pub const ClientSession = struct {
             },
             .HTTP_FRAME_GOAWAY => {
                 this.goaway_received = true;
-                const last_id: u32 = if (payload.len >= 4) wire.UInt31WithReserved.fromBytes(payload[0..4]).uint31 else 0;
+                this.goaway_last_stream_id = if (payload.len >= 4) wire.UInt31WithReserved.fromBytes(payload[0..4]).uint31 else 0;
                 const code: u32 = if (payload.len >= 8) wire.u32FromBytes(payload[4..8]) else 0;
-                if (code != @intFromEnum(wire.ErrorCode.NO_ERROR) or stream.id > last_id) {
-                    stream.fatal_error = error.HTTP2GoAway;
+                var it = this.streams.iterator();
+                while (it.next()) |e| {
+                    const s = e.value_ptr.*;
+                    if (code != @intFromEnum(wire.ErrorCode.NO_ERROR) or s.id > this.goaway_last_stream_id) {
+                        s.fatal_error = error.HTTP2GoAway;
+                    }
                 }
             },
-            .HTTP_FRAME_PUSH_PROMISE => {
-                // We sent SETTINGS_ENABLE_PUSH=0; receiving one is a protocol error.
-                this.fatal_error = error.HTTP2ProtocolError;
-            },
+            .HTTP_FRAME_PUSH_PROMISE => this.fatal_error = error.HTTP2ProtocolError,
             else => {},
         }
     }
 
-    /// HPACK-decode the accumulated header block into `state.pending_response`
+    fn decodeAndDiscard(this: *ClientSession, stream: *Stream) void {
+        var offset: usize = 0;
+        while (offset < stream.header_block.items.len) {
+            const result = this.hpack.decode(stream.header_block.items[offset..]) catch break;
+            offset += result.next;
+        }
+        stream.header_block.clearRetainingCapacity();
+    }
+
+    /// HPACK-decode `stream`'s header block into `state.pending_response`
     /// (reusing the shared HTTP/1.1 header buffer) and run
-    /// `handleResponseMetadata` so redirects, content-encoding and
-    /// content-length follow the same logic as the HTTP/1.1 path.
-    fn deliverHeaders(this: *ClientSession, client: *HTTPClient) !HTTPClient.ShouldContinue {
+    /// `handleResponseMetadata`.
+    fn decodeHeaders(this: *ClientSession, stream: *Stream, client: *HTTPClient) !HTTPClient.ShouldContinue {
         this.decoded_header_bytes.clearRetainingCapacity();
 
         var status_code: u32 = 0;
         const headers_buf = &HTTPClient.shared_response_headers_buf;
-        // Record byte offsets while appending; resolve to slices once the
-        // backing buffer has stopped growing so reallocs can't invalidate them.
         var bounds: [headers_buf.len][3]u32 = undefined;
         var header_count: usize = 0;
 
         var offset: usize = 0;
-        while (offset < this.stream.header_block.items.len) {
-            const result = this.hpack.decode(this.stream.header_block.items[offset..]) catch {
+        while (offset < stream.header_block.items.len) {
+            const result = this.hpack.decode(stream.header_block.items[offset..]) catch {
                 return error.HTTP2CompressionError;
             };
             offset += result.next;
@@ -564,7 +752,7 @@ pub const ClientSession = struct {
             bounds[header_count] = .{ name_start, value_start, value_end };
             header_count += 1;
         }
-        this.stream.header_block.clearRetainingCapacity();
+        stream.header_block.clearRetainingCapacity();
 
         const bytes = this.decoded_header_bytes.items;
         for (bounds[0..header_count], 0..) |b, i| {
@@ -581,8 +769,8 @@ pub const ClientSession = struct {
         client.state.pending_response = response;
 
         const should_continue = try client.handleResponseMetadata(&response);
-        // h2 framing delimits the body, so neither chunked transfer-encoding
-        // nor the HTTP/1.1 "no Content-Length ⇒ no keep-alive" rule apply.
+        // h2 framing delimits the body; chunked transfer-encoding and the
+        // HTTP/1.1 "no Content-Length ⇒ no keep-alive" rule don't apply.
         client.state.transfer_encoding = .identity;
         if (client.state.response_stage == .body_chunk) client.state.response_stage = .body;
         client.state.flags.allow_keepalive = true;
@@ -606,6 +794,7 @@ const picohttp = bun.picohttp;
 
 const HTTPClient = bun.http;
 const NewHTTPContext = HTTPClient.NewHTTPContext;
+const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
 
 const wire = @import("./H2FrameParser.zig");
 const lshpack = @import("../bun.js/api/bun/lshpack.zig");

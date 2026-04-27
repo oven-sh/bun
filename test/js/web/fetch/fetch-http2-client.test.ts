@@ -150,6 +150,135 @@ describe("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () 
     );
   });
 
+  test("concurrent requests multiplex on one h2 session", async () => {
+    let sessions = 0;
+    let maxOpen = 0;
+    let open = 0;
+    const server = http2.createSecureServer({ ...tls, allowHTTP1: false });
+    server.on("session", () => sessions++);
+    server.on("stream", (stream, headers) => {
+      open++;
+      maxOpen = Math.max(maxOpen, open);
+      stream.on("close", () => open--);
+      // Hold each stream briefly so all 8 are open at once.
+      setTimeout(() => {
+        stream.respond({ ":status": 200 });
+        stream.end(String(headers[":path"]));
+      }, 100);
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = spawnFetch(`
+        const url = "https://localhost:${port}";
+        const opts = { tls: { rejectUnauthorized: false } };
+        // Warmup so the session exists before the concurrent burst.
+        await fetch(url + "/warmup", opts).then(r => r.text());
+        const results = await Promise.all(
+          Array.from({ length: 8 }, (_, i) => fetch(url + "/" + i, opts).then(r => r.text()))
+        );
+        console.log(results.join(","));
+      `);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("/0,/1,/2,/3,/4,/5,/6,/7");
+      expect(exitCode).toBe(0);
+      expect(sessions).toBe(1);
+      expect(maxOpen).toBe(8);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("abort sends RST_STREAM; siblings on the session survive", async () => {
+    let sessions = 0;
+    const { promise: slowClosed, resolve: resolveSlowClosed } = Promise.withResolvers<number>();
+    const server = http2.createSecureServer({ ...tls, allowHTTP1: false });
+    server.on("session", () => sessions++);
+    server.on("stream", (stream, headers) => {
+      if (headers[":path"] === "/slow") {
+        stream.on("close", () => resolveSlowClosed(stream.rstCode));
+        // never respond; client will abort
+      } else {
+        stream.respond({ ":status": 200 });
+        stream.end("survivor");
+      }
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = spawnFetch(`
+        const url = "https://localhost:${port}";
+        const opts = { tls: { rejectUnauthorized: false } };
+        // Warmup so /slow, /fast, /after share one session.
+        await fetch(url + "/warmup", opts).then(r => r.text());
+        const ac = new AbortController();
+        const slow = fetch(url + "/slow", { ...opts, signal: ac.signal }).catch(e => "aborted:" + e.name);
+        const fast = fetch(url + "/fast", opts).then(r => r.text());
+        await fast;
+        ac.abort();
+        await slow;
+        const after = await fetch(url + "/after", opts).then(r => r.text());
+        console.log([await slow, await fast, after].join(","));
+      `);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("aborted:AbortError,survivor,survivor");
+      expect(exitCode).toBe(0);
+      // Aborting one stream must not tear down the connection: all four
+      // requests rode one session, and /slow's stream closed (RST_STREAM)
+      // while /fast and /after on the same session completed.
+      expect(sessions).toBe(1);
+      await slowClosed;
+    } finally {
+      server.close();
+    }
+  });
+
+  test("server SETTINGS_MAX_CONCURRENT_STREAMS=1 is honoured per session", async () => {
+    const perSessionMax: number[] = [];
+    const server = http2.createSecureServer({ ...tls, allowHTTP1: false, settings: { maxConcurrentStreams: 1 } });
+    server.on("session", s => {
+      const idx = perSessionMax.push(0) - 1;
+      let open = 0;
+      s.on("stream", stream => {
+        open++;
+        perSessionMax[idx] = Math.max(perSessionMax[idx], open);
+        stream.on("close", () => open--);
+        setTimeout(() => {
+          stream.respond({ ":status": 200 });
+          stream.end("x");
+        }, 30);
+      });
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = spawnFetch(`
+        const url = "https://localhost:${port}";
+        const opts = { tls: { rejectUnauthorized: false } };
+        // First request alone so the server's SETTINGS arrives before the
+        // burst, then fire 4 concurrently against the cap.
+        await fetch(url, opts).then(r => r.text());
+        await Promise.all(Array.from({ length: 4 }, () => fetch(url, opts).then(r => r.text())));
+        console.log("ok");
+      `);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("ok");
+      expect(exitCode).toBe(0);
+      // The cap is per-connection: no session may ever see >1 open stream.
+      // Excess concurrent requests fan out to additional connections.
+      for (const max of perSessionMax) expect(max).toBe(1);
+      expect(perSessionMax.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      server.close();
+    }
+  });
+
   test("keep-alive: sequential requests reuse one h2 session", async () => {
     let sessions = 0;
     const seen: number[] = [];

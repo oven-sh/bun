@@ -1144,6 +1144,13 @@ int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
   return 1;
 }
 
+/* Server-side verify callback: returns preverify_ok as-is so OpenSSL rejects
+   invalid certificates during the handshake. The verification error is still
+   stored and can be retrieved via SSL_get_verify_result(). */
+int us_verify_callback_server_reject(int preverify_ok, X509_STORE_CTX *ctx) {
+  return preverify_ok;
+}
+
 SSL_CTX *create_ssl_context_from_bun_options(
     struct us_bun_socket_context_options_t options,
     enum create_bun_socket_error_t *err) {
@@ -1242,7 +1249,7 @@ SSL_CTX *create_ssl_context_from_bun_options(
     if (options.reject_unauthorized) {
       SSL_CTX_set_verify(ssl_context,
                          SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
-                         us_verify_callback);
+                         options.is_server ? us_verify_callback_server_reject : us_verify_callback);
     } else {
       SSL_CTX_set_verify(ssl_context, SSL_VERIFY_PEER, us_verify_callback);
     }
@@ -1268,7 +1275,7 @@ SSL_CTX *create_ssl_context_from_bun_options(
       if (options.reject_unauthorized) {
         SSL_CTX_set_verify(ssl_context,
                            SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
-                           us_verify_callback);
+                           options.is_server ? us_verify_callback_server_reject : us_verify_callback);
       } else {
         SSL_CTX_set_verify(ssl_context, SSL_VERIFY_PEER, us_verify_callback);
       }
@@ -1280,7 +1287,7 @@ SSL_CTX *create_ssl_context_from_bun_options(
       if (options.reject_unauthorized) {
         SSL_CTX_set_verify(ssl_context,
                            SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
-                           us_verify_callback);
+                           options.is_server ? us_verify_callback_server_reject : us_verify_callback);
       } else {
         SSL_CTX_set_verify(ssl_context, SSL_VERIFY_PEER, us_verify_callback);
       }

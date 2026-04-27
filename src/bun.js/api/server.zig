@@ -2740,7 +2740,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             if (ssl_enabled) {
                 bun.BoringSSL.load();
                 const ssl_config = this.config.ssl_config orelse @panic("Assertion failure: ssl_config");
-                const ssl_options = ssl_config.asUSockets();
+                var ssl_options = ssl_config.asUSockets();
+                ssl_options.is_server = 1;
 
                 app = App.create(ssl_options) orelse {
                     if (!globalThis.hasException()) {
@@ -2793,7 +2794,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     for (sni.slice()) |*sni_ssl_config| {
                         const sni_servername: [:0]const u8 = std.mem.span(sni_ssl_config.server_name.?);
                         if (sni_servername.len > 0) {
-                            app.addServerNameWithOptions(sni_servername, sni_ssl_config.asUSockets()) catch {
+                            var sni_opts = sni_ssl_config.asUSockets();
+                            sni_opts.is_server = 1;
+                            app.addServerNameWithOptions(sni_servername, sni_opts) catch {
                                 if (!globalThis.hasException()) {
                                     if (!throwSSLErrorIfNecessary(globalThis)) {
                                         globalThis.throw("Failed to add serverName: {s}", .{sni_servername}) catch {};

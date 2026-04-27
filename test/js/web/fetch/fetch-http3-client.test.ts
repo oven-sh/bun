@@ -280,7 +280,7 @@ describe("fetch protocol: http3", () => {
     const ac = new AbortController();
     const p = fetch(`${base}/slow`, { ...h3, signal: ac.signal });
     ac.abort();
-    expect(p).rejects.toThrow();
+    await expect(p).rejects.toThrow();
   });
 
   test("connection failure rejects", async () => {

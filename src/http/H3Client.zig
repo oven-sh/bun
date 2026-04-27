@@ -541,8 +541,11 @@ pub const PendingConnect = struct {
             session.deref();
             bun.destroy(this);
         }
-        if (session.closed) {
+        if (session.closed or session.pending.items.len == 0) {
+            // Every waiter was aborted while DNS was in flight; don't open a
+            // connection nobody will use.
             c.us_quic_pending_connect_cancel(this.pc);
+            if (!session.closed) failSession(session, error.Aborted);
             return;
         }
         const qs = c.us_quic_pending_connect_resolved(this.pc) orelse {

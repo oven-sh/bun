@@ -69,6 +69,8 @@ struct us_quic_socket_context_s {
      * tracks live ones so context_free can close any the caller never did. */
     struct us_quic_listen_socket_s *listeners;
     struct us_quic_listen_socket_s *closed_listeners;
+    /* Client only: shared UDP endpoint for all outbound conns on this loop. */
+    struct us_quic_listen_socket_s *client_udp;
 
     void (*on_open)(us_quic_socket_t *);
     void (*on_hsk_done)(us_quic_socket_t *, int);
@@ -93,9 +95,6 @@ struct us_quic_listen_socket_s {
 struct us_quic_socket_s {
     lsquic_conn_t *conn;
     us_quic_socket_context_t *ctx;
-    /* Client only: the per-connection UDP endpoint to close when this conn
-     * closes. NULL for server (the listen socket outlives every conn). */
-    us_quic_listen_socket_t *client_udp;
     /* Client only: per-connection cert policy. `hostname` is owned by this
      * struct (strdup of the SNI passed to connect) so the verify callback
      * can match it against the leaf cert's SAN/CN. */
@@ -322,13 +321,10 @@ static void us_quic_udp_on_close(struct us_udp_socket_t *u) {
      * next timer tick. Mark the fd gone, unlink from the live list, and defer
      * the free to context_free. */
     ls->udp = NULL;
+    if (ctx->client_udp == ls) ctx->client_udp = NULL;
     for (us_quic_listen_socket_t **pp = &ctx->listeners; *pp; pp = &(*pp)->next) {
         if (*pp == ls) { *pp = ls->next; break; }
     }
-    /* Client UDP endpoints are 1:1 with conns and only closed from
-     * on_conn_closed, after lsquic has dropped every peer_ctx ref. Free
-     * inline so a long-running client doesn't accumulate them. */
-    if (ctx->is_client) { free(ls); return; }
     ls->next = ctx->closed_listeners;
     ctx->closed_listeners = ls;
 }
@@ -490,16 +486,12 @@ static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
     us_quic_socket_context_t *ctx = qs->ctx;
     if (ctx->on_close) ctx->on_close(qs);
     lsquic_conn_set_ctx(conn, NULL);
-    us_quic_listen_socket_t *client_udp = qs->client_udp;
     free(qs->hostname);
     free(qs);
 #ifndef LIBUS_USE_LIBUV
     ctx->loop->num_polls--;
 #endif
     ctx->conn_count--;
-    /* Client conns own their UDP endpoint 1:1; release it now so the loop can
-     * exit. on_close moves it onto closed_listeners for context_free to reap. */
-    if (client_udp && client_udp->udp) us_udp_socket_close(client_udp->udp);
     /* During graceful drain the UDP fd is the only thing left holding the
      * loop; release it when the last conn closes so the process can exit. */
     if (ctx->closing && ctx->conn_count == 0) {
@@ -999,6 +991,7 @@ static enum ssl_verify_result_t us_quic_client_verify(SSL *ssl, uint8_t *out_ale
     if (!vctx) return ssl_verify_invalid;
     int ok = 0;
     if (X509_STORE_CTX_init(vctx, store, leaf, chain) == 1) {
+        X509_STORE_CTX_set_default(vctx, "ssl_server");
         ok = X509_verify_cert(vctx) == 1;
     }
     X509_STORE_CTX_free(vctx);
@@ -1078,23 +1071,44 @@ static int us_quic_resolve(const char *host, int port, struct sockaddr_storage *
     return -1;
 }
 
-static us_quic_socket_t *us_quic_connect_addr(us_quic_socket_context_t *ctx,
-    const struct sockaddr *peer, const char *sni, int reject_unauthorized)
-{
+/* One UDP endpoint for all client connections on this loop. lsquic
+ * demultiplexes incoming datagrams by connection ID, so a single ephemeral
+ * port can serve every outbound conn — fewer fds, and packets_out's sendmmsg
+ * batches across origins. Dual-stack `::` reaches v4 peers via mapped
+ * addresses; if the host has no v6 stack we fall back to a v4-only socket
+ * and refuse v6 connects. The endpoint lives for the context's lifetime
+ * (closed in context_free via the `listeners` list). */
+static us_quic_listen_socket_t *us_quic_client_endpoint(us_quic_socket_context_t *ctx) {
+    if (ctx->client_udp) return ctx->client_udp;
     us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) calloc(1, sizeof(*ls));
     if (!ls) return NULL;
     ls->ctx = ctx;
-
     int err = 0;
-    const char *bind_host = (peer->sa_family == AF_INET6) ? "::" : "0.0.0.0";
     ls->udp = us_create_udp_socket(ctx->loop,
         us_quic_udp_on_data, us_quic_udp_on_drain, us_quic_udp_on_close, NULL,
-        bind_host, 0, 0, &err, ls);
+        "::", 0, 0, &err, ls);
+    if (!ls->udp) {
+        err = 0;
+        ls->udp = us_create_udp_socket(ctx->loop,
+            us_quic_udp_on_data, us_quic_udp_on_drain, us_quic_udp_on_close, NULL,
+            "0.0.0.0", 0, 0, &err, ls);
+    }
     if (!ls->udp) { free(ls); return NULL; }
-
     socklen_t sl = sizeof(ls->local);
     getsockname(us_poll_fd((struct us_poll_t *) ls->udp), (struct sockaddr *) &ls->local, &sl);
-    /* The bound family must match the peer's for lsquic's path comparison. */
+    ls->next = ctx->listeners;
+    ctx->listeners = ls;
+    ctx->client_udp = ls;
+    return ls;
+}
+
+static us_quic_socket_t *us_quic_connect_addr(us_quic_socket_context_t *ctx,
+    const struct sockaddr *peer, const char *sni, int reject_unauthorized)
+{
+    us_quic_listen_socket_t *ls = us_quic_client_endpoint(ctx);
+    if (!ls) return NULL;
+
+    /* lsquic's path comparison needs sa_local and peer to be the same family. */
     struct sockaddr_storage mapped;
     if (ls->local.ss_family == AF_INET6 && peer->sa_family == AF_INET) {
         struct sockaddr_in6 *m = (struct sockaddr_in6 *) &mapped;
@@ -1106,21 +1120,16 @@ static us_quic_socket_t *us_quic_connect_addr(us_quic_socket_context_t *ctx,
         m->sin6_addr.s6_addr[11] = 0xff;
         memcpy(&m->sin6_addr.s6_addr[12], &p4->sin_addr, 4);
         peer = (const struct sockaddr *) m;
+    } else if (ls->local.ss_family != peer->sa_family) {
+        return NULL;
     }
-
-    ls->next = ctx->listeners;
-    ctx->listeners = ls;
 
     lsquic_conn_t *conn = lsquic_engine_connect(ctx->engine, N_LSQVER,
         (struct sockaddr *) &ls->local, peer, ls, NULL,
         sni, 0, NULL, 0, NULL, 0);
-    if (!conn) {
-        us_udp_socket_close(ls->udp);
-        return NULL;
-    }
+    if (!conn) return NULL;
     us_quic_socket_t *qs = (us_quic_socket_t *) lsquic_conn_get_ctx(conn);
     if (qs) {
-        qs->client_udp = ls;
         qs->reject_unauthorized = reject_unauthorized;
         qs->hostname = sni ? strdup(sni) : NULL;
     }

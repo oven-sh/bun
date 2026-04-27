@@ -105,18 +105,16 @@ struct us_quic_stream_s {
  *   2. drainMicrotasks (event_loop.zig) — after JS microtasks, so an async
  *      handler that resolves and calls resp.end() has its bytes packetized
  *      before the loop blocks in epoll again.
- *   3. A single lazy fallthrough timer per loop, re-armed to the minimum
- *      earliest_adv_tick across engines. lsquic needs this for time-driven
- *      state (RTO retransmit, delayed ACK, idle timeout) when nothing else
- *      would wake the loop. The callback just re-enters this function.
+ *   3. lsquic's time-driven state (RTO retransmit, delayed ACK, idle
+ *      timeout): the min earliest_adv_tick across engines is written to
+ *      loop->data.quic_next_tick_us; Bun's getTimeout() folds it into the
+ *      epoll_pwait2 timeout. No timerfd, no scheduling syscall.
  *
  * There is no per-write kick. Http3Response writes call lsquic_stream_write
  * and return; the bytes go out at the next driver tick. Because process_conns
  * never runs from inside an Http3Response method, on_close cannot fire and
  * free the stream while a method is still touching it.
  */
-
-static void us_quic_loop_timer_cb(struct us_timer_t *t);
 
 void us_quic_loop_process(struct us_loop_t *loop) {
     int min_diff = 0, have_tick = 0;
@@ -132,14 +130,9 @@ void us_quic_loop_process(struct us_loop_t *loop) {
             have_tick = 1;
         }
     }
-    if (have_tick && loop->data.quic_timer) {
-        int ms = min_diff <= 0 ? 1 : (min_diff / 1000) + 1;
-        us_timer_set(loop->data.quic_timer, us_quic_loop_timer_cb, ms, 0);
-    }
-}
-
-static void us_quic_loop_timer_cb(struct us_timer_t *t) {
-    us_quic_loop_process(*(struct us_loop_t **) us_timer_ext(t));
+    /* Relative µs from now (≤0 means "tick due"). getTimeout() in
+     * Timer.zig folds this into the epoll_pwait2 timeout — no timerfd. */
+    loop->data.quic_next_tick_us = have_tick ? (min_diff < 0 ? 0 : min_diff) : -1;
 }
 
 /* on_data still processes its own context immediately so a recv burst that
@@ -590,12 +583,6 @@ us_quic_socket_context_t *us_create_quic_socket_context(
         return NULL;
     }
 
-    /* Lazy per-loop fallthrough timer (see us_quic_loop_process). */
-    if (!loop->data.quic_timer) {
-        loop->data.quic_timer = us_create_timer(loop, 1, sizeof(struct us_loop_t *));
-        if (loop->data.quic_timer)
-            *(struct us_loop_t **) us_timer_ext(loop->data.quic_timer) = loop;
-    }
     ctx->next = loop->data.quic_head;
     loop->data.quic_head = ctx;
 
@@ -644,10 +631,7 @@ void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {
     for (us_quic_socket_context_t **pp = &loop->data.quic_head; *pp; pp = &(*pp)->next) {
         if (*pp == ctx) { *pp = ctx->next; break; }
     }
-    if (!loop->data.quic_head && loop->data.quic_timer) {
-        us_timer_close(loop->data.quic_timer, 1);
-        loop->data.quic_timer = NULL;
-    }
+    if (!loop->data.quic_head) loop->data.quic_next_tick_us = -1;
     /* Close any UDP fds the caller never closed (graceful drain leaves them
      * open); on_close moves each into closed_listeners for the loop below. */
     while (ctx->listeners) us_udp_socket_close(ctx->listeners->udp);

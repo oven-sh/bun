@@ -45,7 +45,13 @@ struct us_internal_loop_data_t {
      * loop for lsquic's time-driven state (RTO, ACK delay) — its callback
      * just calls us_quic_loop_process. */
     struct us_quic_socket_context_s *quic_head;
-    struct us_timer_t *quic_timer;
+    /* µs until lsquic next wants process_conns (min earliest_adv_tick
+     * across engines), or -1 for "no deadline". Written by
+     * us_quic_loop_process from loop_post; read by Bun's getTimeout() to
+     * bound the epoll_pwait2 timeout. No timerfd, no scheduling syscall —
+     * the gap between loop_post and getTimeout is sub-µs so storing the
+     * relative diff is precise enough. */
+    long long quic_next_tick_us;
     struct us_socket_context_t *iterator;
     struct us_socket_context_t *closed_context_head;
     char *recv_buf;

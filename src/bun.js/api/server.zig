@@ -837,7 +837,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             if (nodeHttpResponse.raw_response) |raw_response| {
                                 // we must write the status first so that 200 OK isn't written
                                 raw_response.writeStatus("101 Switching Protocols");
-                                fetch_headers_to_use.toUWSResponse(comptime if (ssl_enabled) 1 else 0, raw_response.socket());
+                                fetch_headers_to_use.toUWSResponse(uws.ResponseKind.from(ssl_enabled, false), raw_response.socket());
                             }
                         }
 
@@ -994,11 +994,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 resp.writeStatus("101 Switching Protocols");
 
                 if (fetch_headers_to_use) |headers| {
-                    headers.toUWSResponse(comptime if (ssl_enabled) 1 else 0, resp);
+                    headers.toUWSResponse(uws.ResponseKind.from(ssl_enabled, false), resp);
                 }
 
                 if (cookies_to_write) |cookies| {
-                    try cookies.write(globalThis, comptime if (ssl_enabled) 1 else 0, @ptrCast(resp));
+                    try cookies.write(globalThis, uws.ResponseKind.from(ssl_enabled, false), @ptrCast(resp));
                 }
             }
 

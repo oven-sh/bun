@@ -20,7 +20,7 @@ pub const FetchHeaders = opaque {
     extern fn WebCore__FetchHeaders__put_(arg0: *FetchHeaders, arg1: [*c]const ZigString, arg2: [*c]const ZigString, arg3: *JSGlobalObject) void;
     extern fn WebCore__FetchHeaders__remove(arg0: *FetchHeaders, arg1: [*c]const ZigString, arg2: *JSGlobalObject) void;
     extern fn WebCore__FetchHeaders__toJS(arg0: *FetchHeaders, arg1: *JSGlobalObject) JSValue;
-    extern fn WebCore__FetchHeaders__toUWSResponse(arg0: *FetchHeaders, kind: i32, arg2: ?*anyopaque) void;
+    extern fn WebCore__FetchHeaders__toUWSResponse(arg0: *FetchHeaders, kind: bun.uws.ResponseKind, arg2: ?*anyopaque) void;
     extern fn WebCore__FetchHeaders__createFromH3(arg0: *anyopaque) *FetchHeaders;
 
     pub fn createValue(
@@ -113,10 +113,9 @@ pub const FetchHeaders = opaque {
         );
     }
 
-    /// kind: 0=TCP, 1=SSL, 2=H3.
     pub fn toUWSResponse(
         headers: *FetchHeaders,
-        kind: i32,
+        kind: bun.uws.ResponseKind,
         uws_response: *anyopaque,
     ) void {
         return WebCore__FetchHeaders__toUWSResponse(

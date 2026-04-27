@@ -1080,22 +1080,21 @@ static void writeFetchHeadersToH3Response(WebCore::FetchHeaders& headers, uWS::H
 }
 #endif
 
-extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0, int kind, void* arg2)
+extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0, UWSResponseKind kind, void* arg2)
 {
     switch (kind) {
-    case 0:
+    case UWSResponseKind::TCP:
         writeFetchHeadersToUWSResponse<false>(*arg0, reinterpret_cast<uWS::HttpResponse<false>*>(arg2));
         break;
-    case 1:
+    case UWSResponseKind::SSL:
         writeFetchHeadersToUWSResponse<true>(*arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
         break;
+    case UWSResponseKind::H3:
 #if defined(LIBUS_USE_QUIC)
-    case 2:
         writeFetchHeadersToH3Response(*arg0, reinterpret_cast<uWS::Http3Response*>(arg2));
-        break;
-#endif
-    default:
+#else
         ASSERT_NOT_REACHED();
+#endif
         break;
     }
 }

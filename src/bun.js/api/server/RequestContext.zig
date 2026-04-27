@@ -30,9 +30,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         pub const Req = if (http3) uws.H3.Request else uws.Request;
         pub const Resp = App.Response;
         pub const is_h3 = http3;
-        /// 0=TCP, 1=SSL, 2=H3 — passed through to C++ header/cookie writers
-        /// that need to recover the concrete uWS response type from *anyopaque.
-        const resp_kind: i32 = if (http3) 2 else if (ssl_enabled) 1 else 0;
+        const resp_kind = uws.ResponseKind.from(ssl_enabled, http3);
         pub threadlocal var pool: ?*RequestContext.RequestContextStackAllocator = null;
         pub const ResponseStream = jsc.WebCore.HTTPServerWritable(ssl_enabled, http3);
 

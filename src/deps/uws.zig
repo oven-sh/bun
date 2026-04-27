@@ -30,6 +30,18 @@ pub const udp = @import("./uws/udp.zig");
 pub const BodyReaderMixin = @import("./uws/BodyReaderMixin.zig").BodyReaderMixin;
 pub const H3 = if (Environment.isWindows) struct {} else @import("./uws/h3.zig");
 
+/// Recovers the concrete uWS response type from `*anyopaque` across the
+/// Zig→C++ boundary. Mirrors `UWSResponseKind` in headers-handwritten.h.
+pub const ResponseKind = enum(i32) {
+    tcp = 0,
+    ssl = 1,
+    h3 = 2,
+
+    pub fn from(comptime ssl: bool, comptime http3: bool) ResponseKind {
+        return if (http3) .h3 else if (ssl) .ssl else .tcp;
+    }
+};
+
 pub const LIBUS_TIMEOUT_GRANULARITY = @as(i32, 4);
 pub const LIBUS_RECV_BUFFER_PADDING = @as(i32, 32);
 pub const LIBUS_EXT_ALIGNMENT = @as(i32, 16);

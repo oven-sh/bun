@@ -25,22 +25,21 @@ static void CookieMap__writeFetchHeadersToUWSResponse(CookieMap* cookie_map, JSC
         res->writeHeader("Set-Cookie", utf8.data());
     }
 }
-extern "C" void CookieMap__write(CookieMap* cookie_map, JSC::JSGlobalObject* global_this, int kind, void* arg2)
+extern "C" void CookieMap__write(CookieMap* cookie_map, JSC::JSGlobalObject* global_this, UWSResponseKind kind, void* arg2)
 {
     switch (kind) {
-    case 0:
+    case UWSResponseKind::TCP:
         CookieMap__writeFetchHeadersToUWSResponse(cookie_map, global_this, reinterpret_cast<uWS::HttpResponse<false>*>(arg2));
         break;
-    case 1:
+    case UWSResponseKind::SSL:
         CookieMap__writeFetchHeadersToUWSResponse(cookie_map, global_this, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
         break;
+    case UWSResponseKind::H3:
 #if defined(LIBUS_USE_QUIC)
-    case 2:
         CookieMap__writeFetchHeadersToUWSResponse(cookie_map, global_this, reinterpret_cast<uWS::Http3Response*>(arg2));
-        break;
-#endif
-    default:
+#else
         ASSERT_NOT_REACHED();
+#endif
         break;
     }
 }

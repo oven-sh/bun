@@ -5,10 +5,9 @@ import { bunEnv, bunExe, tempDir, tls } from "harness";
 import { join } from "path";
 
 // HTTP/3 needs a curl that was built with nghttp3/ngtcp2. CI provisions one
-// as `curl-h3`; locally fall back to whichever `curl` reports HTTP3 in
-// --version. Everything is skipped otherwise so the suite stays green on
-// stock macOS/Windows curl.
-let curlH3: string | null = null;
+// as `curl-h3` (scripts/bootstrap.{sh,ps1}); locally point CURL_HTTP3 at one
+// or `brew install curl` (Homebrew curl has HTTP3).
+let curlH3: string;
 
 beforeAll(async () => {
   for (const candidate of [process.env.CURL_HTTP3, "curl-h3", "curl"]) {
@@ -20,19 +19,11 @@ beforeAll(async () => {
     await proc.exited;
     if (/\bHTTP3\b/.test(out)) {
       curlH3 = bin;
-      break;
-    }
-  }
-});
-
-const itH3: typeof test = ((name: string, fn: any) =>
-  test(name, async () => {
-    if (!curlH3) {
-      console.warn("skipping (no HTTP/3-capable curl in PATH; set CURL_HTTP3=/path/to/curl)");
       return;
     }
-    return fn();
-  })) as any;
+  }
+  throw new Error("no HTTP/3-capable curl found (checked $CURL_HTTP3, curl-h3, curl); set CURL_HTTP3=/path/to/curl");
+});
 
 /** Spawn `curl --http3-only` against the given port+path. */
 async function curl3(
@@ -43,7 +34,7 @@ async function curl3(
 ): Promise<{ stdout: string; stderr: string; exitCode: number; raw: Uint8Array }> {
   const proc = Bun.spawn({
     cmd: [
-      curlH3!,
+      curlH3,
       "-sk",
       "--http3-only",
       "--connect-timeout",
@@ -250,7 +241,7 @@ async function withServer(
 }
 
 describe("Bun.serve HTTP/3", () => {
-  itH3("basic GET", async () => {
+  test("basic GET", async () => {
     await withServer(async port => {
       const { stdout, exitCode, stderr } = await curl3(port, "/hello", ["-D", "-"]);
       expect(stderr).toBe("");
@@ -261,7 +252,7 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
-  itH3("POST echoes body, status, request headers", async () => {
+  test("POST echoes body, status, request headers", async () => {
     await withServer(async port => {
       const body = "the quick brown fox jumps over the lazy dog";
       const { stdout, exitCode } = await curl3(port, "/echo", [
@@ -283,7 +274,7 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
-  itH3("204 with no body", async () => {
+  test("204 with no body", async () => {
     await withServer(async port => {
       const { stdout, exitCode } = await curl3(port, "/status", ["-D", "-"]);
       expect(stdout).toContain("HTTP/3 204");
@@ -291,7 +282,7 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
-  itH3("query string is preserved", async () => {
+  test("query string is preserved", async () => {
     await withServer(async port => {
       const { stdout, exitCode } = await curl3(port, "/query?q=hello%20world&x=1");
       expect(stdout).toBe("hello world");
@@ -299,7 +290,7 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
-  itH3("large response body crosses multiple QUIC packets", async () => {
+  test("large response body crosses multiple QUIC packets", async () => {
     await withServer(async port => {
       const { raw, exitCode } = await curl3(port, "/big");
       expect(raw.length).toBe(512 * 1024);
@@ -310,7 +301,7 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
-  itH3("concurrent requests across separate connections", async () => {
+  test("concurrent requests across separate connections", async () => {
     await withServer(async port => {
       const results = await Promise.all(Array.from({ length: 8 }, (_, i) => curl3(port, `/query?q=r${i}`)));
       for (let i = 0; i < results.length; i++) {
@@ -320,7 +311,7 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
-  itH3("client abort mid-response does not crash the server", async () => {
+  test("client abort mid-response does not crash the server", async () => {
     await withServer(async port => {
       // First request: tiny timeout forces curl to abort during /slow
       const aborted = await curl3(port, "/slow", ["--max-time", "0.01"]);
@@ -332,14 +323,14 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
-  itH3("h1: false rejects HTTP/1.1 but accepts HTTP/3", async () => {
+  test("h1: false rejects HTTP/1.1 but accepts HTTP/3", async () => {
     await withServer(
       async port => {
         const h3 = await curl3(port, "/hello");
         expect(h3.stdout).toContain("hello over h3");
         // TCP listener should not be bound at all
         const proc = Bun.spawn({
-          cmd: [curlH3!, "-sk", "--http1.1", "--connect-timeout", "2", `https://127.0.0.1:${port}/hello`],
+          cmd: [curlH3, "-sk", "--http1.1", "--connect-timeout", "2", `https://127.0.0.1:${port}/hello`],
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -352,7 +343,7 @@ describe("Bun.serve HTTP/3", () => {
 
   // With h1:false the TCP listen socket is never created, so server.url /
   // server.address / server.stop() must consult the QUIC listener.
-  itH3("h1: false — url/address/stop see the QUIC listener", async () => {
+  test("h1: false — url/address/stop see the QUIC listener", async () => {
     const script = `
       const tls = ${JSON.stringify(tls)};
       const server = Bun.serve({
@@ -387,7 +378,7 @@ describe("Bun.serve HTTP/3", () => {
   // RFC 9114 §4.2.2: Content-Length is optional on H3. The up-front 413
   // check only sees CL, so without it the per-chunk cap in
   // onBufferedBodyChunk is what enforces maxRequestBodySize.
-  itH3("maxRequestBodySize is enforced for H3 bodies without Content-Length", async () => {
+  test("maxRequestBodySize is enforced for H3 bodies without Content-Length", async () => {
     const script = `
       const tls = ${JSON.stringify(tls)};
       const server = Bun.serve({
@@ -425,7 +416,7 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
-  itH3("unknown route returns 404", async () => {
+  test("unknown route returns 404", async () => {
     await withServer(async port => {
       const { stdout, exitCode } = await curl3(port, "/nope", ["-D", "-"]);
       expect(stdout).toContain("HTTP/3 404");
@@ -434,7 +425,7 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
-  itH3("routes: handler with :params", async () => {
+  test("routes: handler with :params", async () => {
     await withServer(async port => {
       const { stdout, exitCode } = await curl3(port, "/api/abc%20123", ["-D", "-"]);
       expect(stdout).toContain("HTTP/3 200");
@@ -444,7 +435,7 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
-  itH3("routes: per-method handler", async () => {
+  test("routes: per-method handler", async () => {
     await withServer(async port => {
       const post = await curl3(port, "/route-only", ["-X", "POST"]);
       expect(post.stdout).toBe("posted");
@@ -456,7 +447,7 @@ describe("Bun.serve HTTP/3", () => {
 
   // A method-specific "/*" must not suppress the fetch() fallback for the
   // other methods on the H3 router (it doesn't on H1).
-  itH3("routes: method-specific '/*' falls through to fetch() on other methods", async () => {
+  test("routes: method-specific '/*' falls through to fetch() on other methods", async () => {
     const script = `
       const tls = ${JSON.stringify(tls)};
       const server = Bun.serve({
@@ -477,7 +468,7 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
-  itH3("ReadableStream response body", async () => {
+  test("ReadableStream response body", async () => {
     await withServer(async port => {
       const { stdout, exitCode } = await curl3(port, "/stream");
       expect(stdout).toBe("one two three");
@@ -485,7 +476,7 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
-  itH3("Bun.file response body", async () => {
+  test("Bun.file response body", async () => {
     await withServer(async port => {
       const { raw, exitCode } = await curl3(port, "/file");
       expect(raw.length).toBe(200 * 1024);
@@ -507,7 +498,7 @@ describe("Bun.serve HTTP/3", () => {
     expect(exitCode).not.toBe(0);
   });
 
-  itH3("static route (Response value) is mirrored onto H3", async () => {
+  test("static route (Response value) is mirrored onto H3", async () => {
     await withServer(async port => {
       const { stdout, exitCode } = await curl3(port, "/static", ["-D", "-"]);
       expect(stdout).toContain("HTTP/3 200");
@@ -520,7 +511,7 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
-  itH3("file route (Bun.file value) streams over H3", async () => {
+  test("file route (Bun.file value) streams over H3", async () => {
     await withServer(async port => {
       const { raw, exitCode } = await curl3(port, "/file-route");
       expect(raw.length).toBe(200 * 1024);
@@ -552,7 +543,7 @@ describe("Bun.serve HTTP/3", () => {
 describe("Bun.serve HTTP/3 adversarial", () => {
   const md5 = (b: Uint8Array | ArrayBuffer) => createHash("md5").update(Buffer.from(b)).digest("hex");
 
-  itH3("64 concurrent streams on one connection", async () => {
+  test("64 concurrent streams on one connection", async () => {
     // h2o uses 1000; 64 stays inside lsquic's default initial-max-streams
     // and the debug-build 5s budget while still being 4× the existing
     // 16-concurrent coverage.
@@ -561,7 +552,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
       const url = `https://127.0.0.1:${port}/hello`;
       const proc = Bun.spawn({
         cmd: [
-          curlH3!,
+          curlH3,
           "-sk",
           "--http3-only",
           "--connect-timeout",
@@ -586,7 +577,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
     });
   });
 
-  itH3("large request headers (7k value + 50×100B) reach handler", async () => {
+  test("large request headers (7k value + 50×100B) reach handler", async () => {
     await withServer(async port => {
       const big = Buffer.alloc(7000, "H").toString();
       const small = Buffer.alloc(100, "v").toString();
@@ -602,7 +593,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
     });
   });
 
-  itH3("8 MB POST body echoes byte-exact", async () => {
+  test("8 MB POST body echoes byte-exact", async () => {
     await withServer(async port => {
       // Patterned (not crypto-random) so the test is deterministic but still
       // crosses many QUIC packets and stresses the recvmmsg/sendmmsg paths.
@@ -620,7 +611,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
     });
   });
 
-  itH3("slow client read (--limit-rate) drains streamed response", async () => {
+  test("slow client read (--limit-rate) drains streamed response", async () => {
     await withServer(async port => {
       // Body is tiny ("one two three") so 1 KB/s is fine; the point is the
       // server sees backpressure from the QUIC flow-control window and the
@@ -631,11 +622,11 @@ describe("Bun.serve HTTP/3 adversarial", () => {
     });
   });
 
-  itH3("204 then 200 on the same connection", async () => {
+  test("204 then 200 on the same connection", async () => {
     await withServer(async port => {
       const proc = Bun.spawn({
         cmd: [
-          curlH3!,
+          curlH3,
           "-sk",
           "--http3-only",
           "-D",
@@ -655,7 +646,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
     });
   });
 
-  itH3("HEAD on /big returns content-length and no body", async () => {
+  test("HEAD on /big returns content-length and no body", async () => {
     await withServer(async port => {
       const { stdout, raw, exitCode } = await curl3(port, "/big", ["-I"]);
       expect(stdout).toContain("HTTP/3 200");
@@ -668,7 +659,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
     });
   });
 
-  itH3("lying content-length doesn't take down the listener", async () => {
+  test("lying content-length doesn't take down the listener", async () => {
     await withServer(async port => {
       // RFC 9114 §4.1.2: a request whose payload doesn't match content-length
       // is malformed. lsquic/nghttp3 may RESET_STREAM here — we don't care
@@ -682,7 +673,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
     });
   });
 
-  itH3("client RST mid-/big does not break the listener", async () => {
+  test("client RST mid-/big does not break the listener", async () => {
     await withServer(async port => {
       // --limit-rate keeps curl reading at 10 KB/s so the 512 KB body is
       // guaranteed to be mid-drain when --max-time fires; pure --max-time
@@ -744,16 +735,16 @@ describe("Bun.serve HTTP/3 adversarial", () => {
   // window. Separate curl process per stream = separate QUIC connection,
   // so this checks per-connection state isolation too. Aliasing bugs
   // reproduce at any N≥2; 8 fits the debug-build 5s default.
-  itH3("per-stream body isolation: 8 concurrent 96KB transformed echoes", async () => {
+  test("per-stream body isolation: 8 concurrent 96KB transformed echoes", async () => {
     await withServer(port => isolationRound(port, 8, 96 * 1024));
   });
 
   // 3 × 300KB — forces Http3Response backpressure → onWritable → drain.
-  itH3("per-stream body isolation: 3 concurrent 300KB transformed echoes", async () => {
+  test("per-stream body isolation: 3 concurrent 300KB transformed echoes", async () => {
     await withServer(port => isolationRound(port, 3, 300 * 1024));
   });
 
-  itH3("Response(subprocess.stdout) streams over H3", async () => {
+  test("Response(subprocess.stdout) streams over H3", async () => {
     await withServer(async port => {
       const { raw, exitCode } = await curl3(port, "/spawn");
       expect(raw.length).toBe(40 * 1001);
@@ -765,7 +756,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
     });
   });
 
-  itH3("Response(req.body) passthrough echoes byte-exact", async () => {
+  test("Response(req.body) passthrough echoes byte-exact", async () => {
     await withServer(async port => {
       const body = new Uint8Array(randomBytes(80 * 1024));
       const { raw, stdout, exitCode } = await curl3(
@@ -784,7 +775,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
     });
   });
 
-  itH3("req.{url,method,headers,params} survive micro/macrotask awaits", async () => {
+  test("req.{url,method,headers,params} survive micro/macrotask awaits", async () => {
     // uws.H3.Request lives on the on_stream_headers stack frame; the JS
     // Request must have copied everything before the first await returns.
     await withServer(async port => {
@@ -824,7 +815,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
     });
   });
 
-  itH3("Response(Bun.file().stream()) goes through H3ResponseSink", async () => {
+  test("Response(Bun.file().stream()) goes through H3ResponseSink", async () => {
     await withServer(async (port, dir) => {
       const { raw, exitCode } = await curl3(port, "/file-stream");
       expect(raw.length).toBe(200 * 1024);
@@ -836,7 +827,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
 
   // bughunt #4: canSendfile() must not pick the sendfile() path for H3 — it
   // has no socket fd. A 2 MB file is over the 1 MiB sendfile threshold.
-  itH3("Bun.file >=1 MiB takes the reader path, not sendfile", async () => {
+  test("Bun.file >=1 MiB takes the reader path, not sendfile", async () => {
     await withServer(async port => {
       const { raw, exitCode } = await curl3(port, "/huge-file");
       expect(raw.length).toBe(2 * 1024 * 1024);
@@ -846,7 +837,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
   });
 
   // bughunt #5: getRemoteSocketInfo must return a slice with a valid length.
-  itH3("server.requestIP(req) returns the peer address", async () => {
+  test("server.requestIP(req) returns the peer address", async () => {
     await withServer(async port => {
       const { stdout, exitCode } = await curl3(port, "/remote");
       const ip = JSON.parse(stdout);
@@ -859,7 +850,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
 
   // bughunt #6: H3 bodies are FIN-terminated; Content-Length is optional.
   // `curl -T -` streams from stdin without setting Content-Length.
-  itH3("POST body without Content-Length still reaches the handler", async () => {
+  test("POST body without Content-Length still reaches the handler", async () => {
     await withServer(async port => {
       const body = Buffer.alloc(40_000, "noCL");
       const { raw, stdout, exitCode } = await curl3(
@@ -936,7 +927,7 @@ async function withCustomServer(
 describe("Bun.serve HTTP/3 lifecycle", () => {
   // bughunt #2: server.reload() must clear the H3 router so removed routes
   // fall through to the fetch handler instead of dereferencing freed pointers.
-  itH3("server.reload() clears stale H3 routes", async () => {
+  test("server.reload() clears stale H3 routes", async () => {
     const script = `
       const tls = ${JSON.stringify(tls)};
       let server = Bun.serve({
@@ -972,7 +963,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
   // bughunt #3: server.stop() must not leave the lsquic engine pointing at a
   // freed listen-socket. The follow-up GET should cleanly fail to connect,
   // and the process must still be alive to exit 0 on its own.
-  itH3("server.stop() with live H3 connections does not UAF", async () => {
+  test("server.stop() with live H3 connections does not UAF", async () => {
     const script = `
       const tls = ${JSON.stringify(tls)};
       const server = Bun.serve({
@@ -1006,7 +997,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
   // finish before the engine tears down. lsquic_engine_cooldown drops mini
   // (still-handshaking) conns immediately, so we wait until the server has
   // actually entered every handler before stopping — no arbitrary sleep.
-  itH3("graceful stop: in-flight H3 requests complete after server.stop()", async () => {
+  test("graceful stop: in-flight H3 requests complete after server.stop()", async () => {
     const script = `
       const tls = ${JSON.stringify(tls)};
       let stopping = false, inflight = 0;
@@ -1060,7 +1051,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
   // Each QUIC connection counts as a virtual poll (loop->num_polls); after
   // server.stop() drains, the last conn close releases the UDP fd and the
   // loop has no polls left — the process exits without process.exit().
-  itH3("h3-only server exits naturally after stop() drains", async () => {
+  test("h3-only server exits naturally after stop() drains", async () => {
     using dir = tempDir("serve-http3-exit", {
       "server.mjs": `
         const server = Bun.serve({
@@ -1098,7 +1089,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
   });
 
   // C: req.signal fires when the client resets the H3 stream mid-request.
-  itH3("req.signal aborts on client RST", async () => {
+  test("req.signal aborts on client RST", async () => {
     const script = `
       const tls = ${JSON.stringify(tls)};
       let aborted = 0;
@@ -1137,7 +1128,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
 
 describe("Bun.serve HTTP/3 production", () => {
   // E: H1 responses advertise the H3 endpoint so browsers can discover it.
-  itH3("Alt-Svc emitted on HTTP/1.1 responses when h3 is enabled", async () => {
+  test("Alt-Svc emitted on HTTP/1.1 responses when h3 is enabled", async () => {
     await withServer(async port => {
       // The fetch()/static-route/file-route response paths each write
       // headers from a different place; all three must advertise h3.
@@ -1157,7 +1148,7 @@ describe("Bun.serve HTTP/3 production", () => {
 
   // I: server.upgrade() returns false over H3 instead of crashing, and the
   // handler can still send a normal response.
-  itH3("server.upgrade(req) over H3 returns false cleanly", async () => {
+  test("server.upgrade(req) over H3 returns false cleanly", async () => {
     const script = `
       const tls = ${JSON.stringify(tls)};
       const server = Bun.serve({

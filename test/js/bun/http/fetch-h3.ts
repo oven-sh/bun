@@ -8,8 +8,8 @@
  * by swapping the function reference.
  *
  * Discovery: `CURL_HTTP3` env, then `curl-h3`, then plain `curl` if it
- * advertises `HTTP3` in `--version`. `hasFetchH3()` lets describe.each gates
- * skip the H3 iteration on machines without a capable curl.
+ * advertises `HTTP3` in `--version`. CI provisions `curl-h3` via
+ * scripts/bootstrap.{sh,ps1}; locally `brew install curl` works.
  */
 import { which } from "bun";
 import { tls } from "harness";
@@ -28,10 +28,6 @@ function findCurlH3(): string | null {
     if (/\bHTTP3\b/.test(proc.stdout.toString())) return (resolved = bin);
   }
   return (resolved = null);
-}
-
-export function hasFetchH3(): boolean {
-  return findCurlH3() !== null;
 }
 
 type Init = {
@@ -154,11 +150,8 @@ export function httpProtocols(): Array<{
   /** Serve options to spread into Bun.serve() for this protocol. */
   serve: { tls?: object; h3?: boolean };
 }> {
-  const rows: ReturnType<typeof httpProtocols> = [
+  return [
     { protocol: "http/1.1", fetch: (u, i) => fetch(u, i as RequestInit), serve: {} },
+    { protocol: "http/3", fetch: fetchH3, serve: { tls, h3: true } },
   ];
-  if (hasFetchH3()) {
-    rows.push({ protocol: "http/3", fetch: fetchH3, serve: { tls, h3: true } });
-  }
-  return rows;
 }

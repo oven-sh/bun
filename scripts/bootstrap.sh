@@ -967,21 +967,28 @@ curl_h3_version() {
 # run in CI. Kept separate from the system `curl` so nothing else changes
 # behavior. Tests discover it via $CURL_HTTP3, then `curl-h3` in PATH.
 install_curl_h3() {
-	if [ "$os" != "linux" ]; then
-		return
-	fi
-
 	case "$arch" in
 	x64) curl_h3_arch="x86_64" ;;
 	aarch64) curl_h3_arch="aarch64" ;;
 	*) return ;;
 	esac
-	case "$abi" in
-	musl) curl_h3_libc="musl" ;;
-	*) curl_h3_libc="glibc" ;;
+	case "$os" in
+	linux)
+		case "$abi" in
+		musl) curl_h3_asset="curl-linux-$curl_h3_arch-musl" ;;
+		*) curl_h3_asset="curl-linux-$curl_h3_arch-glibc" ;;
+		esac
+		;;
+	darwin)
+		case "$arch" in
+		aarch64) curl_h3_asset="curl-macos-arm64" ;;
+		*) curl_h3_asset="curl-macos-x86_64" ;;
+		esac
+		;;
+	*) return ;;
 	esac
 
-	curl_h3_url="https://github.com/stunnel/static-curl/releases/download/$(curl_h3_version)/curl-linux-$curl_h3_arch-$curl_h3_libc-$(curl_h3_version).tar.xz"
+	curl_h3_url="https://github.com/stunnel/static-curl/releases/download/$(curl_h3_version)/$curl_h3_asset-$(curl_h3_version).tar.xz"
 	curl_h3_tar="$(download_file "$curl_h3_url")"
 	curl_h3_dir="$(dirname "$curl_h3_tar")"
 	execute tar -xJf "$curl_h3_tar" -C "$curl_h3_dir" curl

@@ -1,8 +1,6 @@
 /**
  * Protocol-agnostic Bun.serve coverage. Each block is written once and run
- * for every entry in `httpProtocols()` — currently HTTP/1.1 (native fetch)
- * and HTTP/3 (curl --http3-only via fetchH3). The H3 row only appears when
- * an H3-capable curl is on PATH, so the file passes everywhere.
+ * over HTTP/1.1 (native fetch) and HTTP/3 (curl --http3-only via fetchH3).
  *
  * Shape borrowed from h2o's t/40http3/test.pl: hello-world, large file
  * round-trip with checksum, POST echoes at several sizes, headers, status.
@@ -10,7 +8,7 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "crypto";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
-import { fetchH3, hasFetchH3 } from "./fetch-h3";
+import { fetchH3 } from "./fetch-h3";
 
 type Proto = "http/1.1" | "http/3";
 
@@ -19,18 +17,15 @@ const cases: Array<{
   fetch: (url: string | URL, init?: any) => Promise<Response>;
   scheme: "https" | "http";
   serve: { tls?: typeof tls; h3?: boolean };
-}> = [{ protocol: "http/1.1", fetch, scheme: "http", serve: {} }];
-
-if (hasFetchH3()) {
-  cases.push({ protocol: "http/3", fetch: fetchH3, scheme: "https", serve: { tls, h3: true } });
-} else {
-  console.warn("[serve-protocols] no HTTP/3-capable curl; H3 cases will be skipped");
-}
+}> = [
+  { protocol: "http/1.1", fetch, scheme: "http", serve: {} },
+  { protocol: "http/3", fetch: fetchH3, scheme: "https", serve: { tls, h3: true } },
+];
 
 const md5 = (b: ArrayBuffer | Uint8Array) => createHash("md5").update(Buffer.from(b)).digest("hex");
 
 /** Each test spawns its own server so failures don't cascade and concurrency
- * is safe; the H3 row only runs when an HTTP/3-capable curl is available. */
+ * is safe. */
 function fixtureFor(serve: object) {
   return `
     const server = Bun.serve({

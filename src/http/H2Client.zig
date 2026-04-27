@@ -713,13 +713,14 @@ pub const ClientSession = struct {
             if (client.state.response_stage == .body) {
                 this.decodeAndDiscard(stream);
             } else {
-                const should_continue = this.decodeHeaders(stream, client) catch |err| {
+                const result = this.decodeHeaders(stream, client) catch |err| {
                     stream.client = null;
                     client.h2 = null;
                     client.failFromH2(err);
                     return true;
                 };
-                if (should_continue == .finished or (stream.end_stream_received and stream.body_buffer.items.len == 0)) {
+                if (result == .informational) return false;
+                if (result == .finished or (stream.end_stream_received and stream.body_buffer.items.len == 0)) {
                     stream.client = null;
                     client.h2 = null;
                     if (client.state.flags.is_redirect_pending) {
@@ -831,6 +832,10 @@ pub const ClientSession = struct {
             },
             .HTTP_FRAME_HEADERS => {
                 const stream = this.streams.get(@intCast(header.streamIdentifier)) orelse return;
+                // TODO: if a 1xx HEADERS and the final HEADERS (or final +
+                // trailers) arrive in the same onData pass, the first block
+                // is overwritten before decode and HPACK dynamic-table state
+                // can desync. Decode eagerly here instead of in deliverStream.
                 stream.seen_headers = true;
                 var fragment = payload;
                 if (header.flags & @intFromEnum(wire.HeadersFrameFlags.PADDED) != 0) {
@@ -938,7 +943,9 @@ pub const ClientSession = struct {
     /// HPACK-decode `stream`'s header block into `state.pending_response`
     /// (reusing the shared HTTP/1.1 header buffer) and run
     /// `handleResponseMetadata`.
-    fn decodeHeaders(this: *ClientSession, stream: *Stream, client: *HTTPClient) !HTTPClient.ShouldContinue {
+    const HeaderResult = enum { informational, has_body, finished };
+
+    fn decodeHeaders(this: *ClientSession, stream: *Stream, client: *HTTPClient) !HeaderResult {
         this.decoded_header_bytes.clearRetainingCapacity();
 
         var status_code: u32 = 0;
@@ -972,6 +979,7 @@ pub const ClientSession = struct {
         stream.header_block.clearRetainingCapacity();
 
         if (status_code == 0) return error.HTTP2ProtocolError;
+        if (status_code >= 100 and status_code < 200) return .informational;
 
         const bytes = this.decoded_header_bytes.items;
         for (bounds[0..header_count], 0..) |b, i| {
@@ -1000,7 +1008,7 @@ pub const ClientSession = struct {
             client.state.pending_response = response;
         }
 
-        return should_continue;
+        return if (should_continue == .finished) .finished else .has_body;
     }
 };
 

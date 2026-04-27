@@ -42,8 +42,11 @@ const u32be = (n: number) => {
   return b;
 };
 
-// HPACK static-table indices we need: :status 200 = 8, 204 = 9, 404 = 13.
-const hpackStatus = (code: 200 | 204 | 404) => Buffer.from([0x80 | { 200: 8, 204: 9, 404: 13 }[code]]);
+// HPACK static-table indices we need.
+const hpackStatus = (code: 100 | 200 | 204 | 404) =>
+  code === 100
+    ? Buffer.concat([Buffer.from([0x10, 7]), Buffer.from(":status"), Buffer.from([3]), Buffer.from("100")])
+    : Buffer.from([0x80 | { 200: 8, 204: 9, 404: 13 }[code]]);
 // Literal field never-indexed, new name (4-bit prefix 0001 0000): len(name) name len(value) value.
 const hpackLit = (name: string, value: string) =>
   Buffer.concat([Buffer.from([0x10, name.length]), Buffer.from(name), Buffer.from([value.length]), Buffer.from(value)]);
@@ -824,6 +827,29 @@ describe("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () 
           const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           expect(stderr).toBe("");
           expect(stdout.trim()).toBe("200 padded-body");
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
+
+    test("1xx informational HEADERS are skipped, final response delivered", async () => {
+      await withRawH2Server(
+        (conn, id) => {
+          conn.headers(id, hpackStatus(100));
+          // separate write so 100 and 200 arrive in distinct onData passes
+          setTimeout(() => {
+            conn.headers(id, Buffer.concat([hpackStatus(200), hpackLit("x-after", "100")]));
+            conn.data(id, "final", true);
+          }, 10);
+        },
+        async url => {
+          await using proc = spawnFetch(`
+            const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
+            console.log(r.status, r.headers.get("x-after"), await r.text());
+          `);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(stdout.trim()).toBe("200 100 final");
           expect(exitCode).toBe(0);
         },
       );

@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 // Regression test: Bun used to call shutdown(SHUT_WR) on the parent's read end
 // of a SOCK_STREAM socketpair used for subprocess stdout. This sent a FIN to
@@ -122,5 +124,86 @@ test("subprocess stdin pipe stays readable for child after idle delay", async ()
   ]);
 
   expect(stdout).toBe("hello via stdin\n");
+  expect(exitCode).toBe(0);
+});
+
+test("subprocess stdin pipe stays readable while consuming a streamed local fetch", async () => {
+  using dir = tempDir("stdin-fetch-stream", {
+    "tiny.txt": "X",
+  });
+
+  const fileURL = pathToFileURL(join(String(dir), "tiny.txt")).href;
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const fileURL = ${JSON.stringify(fileURL)};
+        const decoder = new TextDecoder();
+        const stdinReader = Bun.stdin.stream().getReader();
+        const firstRead = stdinReader.read();
+
+        const response = await fetch(fileURL);
+        const fileReader = response.body?.getReader();
+        if (!fileReader) {
+          process.exit(2);
+        }
+
+        while (true) {
+          const { done } = await fileReader.read();
+          if (done) break;
+        }
+
+        console.log("FETCH_DONE");
+
+        const first = await firstRead;
+        const firstValue = first.value ? decoder.decode(first.value) : null;
+        console.log("FIRST:" + JSON.stringify({ done: first.done, value: firstValue }));
+
+        const second = await stdinReader.read();
+        const secondValue = second.value ? decoder.decode(second.value) : null;
+        console.log("SECOND:" + JSON.stringify({ done: second.done, value: secondValue }));
+
+        process.exit(!first.done && firstValue === "ONE" && !second.done && secondValue === "TWO" ? 0 : 1);
+      `,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  const stdoutReader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  let sentFirst = false;
+  let sentSecond = false;
+
+  while (true) {
+    const { done, value } = await stdoutReader.read();
+    if (done) break;
+
+    output += decoder.decode(value, { stream: true });
+
+    if (!sentFirst && output.includes("FETCH_DONE\n")) {
+      sentFirst = true;
+      proc.stdin.write("ONE");
+    }
+
+    if (!sentSecond && output.includes("FIRST:")) {
+      sentSecond = true;
+      proc.stdin.write("TWO");
+      proc.stdin.end();
+    }
+  }
+
+  output += decoder.decode();
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(output).toContain('FIRST:{"done":false,"value":"ONE"}');
+  expect(output).toContain('SECOND:{"done":false,"value":"TWO"}');
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

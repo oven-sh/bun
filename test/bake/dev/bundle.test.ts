@@ -814,3 +814,55 @@ devTest("barrel optimization: two import statements from the same barrel (#28886
     await c.expectMessage("got: ALPHA BETA");
   },
 });
+
+// Regression: #29781 — same root cause as #28886, but with the duplicate
+// imports nested in a transitive dependency. This is the shape
+// `@apollo/client/cache/inmemory/policies.js` takes: the entry imports
+// from a consumer module, which itself has two `import { ... } from
+// '<barrel>'` statements. Seeding of `requested_exports[barrel]` happens
+// via scheduleBarrelDeferredImports reading the consumer's named_imports,
+// so the stale-index path is exercised one link deeper than #28886's
+// fixture covers.
+devTest("barrel optimization: nested consumer with two imports from the same barrel (#29781)", {
+  // Same darwin flake as the #28886 test above; fix is platform-agnostic.
+  skip: ["darwin"],
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { run } from 'consumer-lib';
+      console.log('result: ' + run());
+    `,
+    "node_modules/consumer-lib/package.json": JSON.stringify({
+      name: "consumer-lib",
+      version: "1.0.0",
+      main: "./index.js",
+    }),
+    "node_modules/consumer-lib/index.js": `
+      import { One } from 'barrel-lib';
+      import { Two, Three } from 'barrel-lib';
+      export function run() {
+        return [One(), Two(), Three()].join(',');
+      }
+    `,
+    "node_modules/barrel-lib/package.json": JSON.stringify({
+      name: "barrel-lib",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/barrel-lib/index.js": `
+      export { One } from './one.js';
+      export { Two } from './two.js';
+      export { Three } from './three.js';
+      export { Four } from './four.js';
+    `,
+    "node_modules/barrel-lib/one.js": `export function One() { return 'one'; }`,
+    "node_modules/barrel-lib/two.js": `export function Two() { return 'two'; }`,
+    "node_modules/barrel-lib/three.js": `export function Three() { return 'three'; }`,
+    "node_modules/barrel-lib/four.js": `export function Four() { return 'four'; }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("result: one,two,three");
+  },
+});

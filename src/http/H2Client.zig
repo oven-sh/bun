@@ -49,6 +49,10 @@ pub const Stream = struct {
     awaiting_continue: bool = false,
     /// Set once the END_STREAM flag has been written on the request side.
     request_body_done: bool = false,
+    /// Set once an RST_STREAM has been written *or* received, so the
+    /// centralised cleanup in onData doesn't emit a redundant one (and never
+    /// answers an inbound RST with another, per RFC 9113 §5.4.2).
+    rst_done: bool = false,
     fatal_error: ?anyerror = null,
     /// DATA bytes consumed since the last WINDOW_UPDATE for this stream.
     unacked_bytes: u32 = 0,
@@ -69,6 +73,8 @@ pub const Stream = struct {
     }
 
     pub fn rst(this: *Stream, code: wire.ErrorCode) void {
+        if (this.rst_done) return;
+        this.rst_done = true;
         var value: u32 = @byteSwap(@intFromEnum(code));
         this.session.writeFrame(.HTTP_FRAME_RST_STREAM, 0, this.id, std.mem.asBytes(&value));
     }
@@ -541,8 +547,6 @@ pub const ClientSession = struct {
         }
     }
 
-    /// HTTP-thread wake-up from `scheduleRequestWrite`: new body bytes (or
-    /// end-of-body) are available in the ThreadSafeStreamBuffer.
     /// Re-arm the shared socket's idle timer based on the aggregate of every
     /// attached client. With multiplexed streams the per-request
     /// `disable_timeout` flag can't drive the socket directly (last writer
@@ -564,6 +568,8 @@ pub const ClientSession = struct {
         this.socket.setTimeoutMinutes(if (want) 5 else 0);
     }
 
+    /// HTTP-thread wake-up from `scheduleRequestWrite`: new body bytes (or
+    /// end-of-body) are available in the ThreadSafeStreamBuffer.
     pub fn streamBodyByHttpId(this: *ClientSession, async_http_id: u32, ended: bool) void {
         this.ref();
         defer this.deref();
@@ -687,9 +693,18 @@ pub const ClientSession = struct {
         // so `streams` isn't mutated under this iteration.
         this.delivering = true;
         var i: usize = 0;
+        var rst_any = false;
         while (i < this.streams.count()) {
             const stream = this.streams.values()[i];
             if (this.deliverStream(stream)) {
+                // Any detach that leaves the request body unfinished must tell
+                // the server, otherwise the half-open stream sits against its
+                // MAX_CONCURRENT_STREAMS budget until idle-timeout. rst() is
+                // idempotent so paths that already RST'd are no-ops here.
+                if (!stream.request_body_done) {
+                    stream.rst(.CANCEL);
+                    rst_any = true;
+                }
                 _ = this.streams.swapRemove(stream.id);
                 stream.deinit();
             } else {
@@ -697,6 +712,7 @@ pub const ClientSession = struct {
             }
         }
         this.delivering = false;
+        if (rst_any) _ = this.flush() catch {};
         this.rearmTimeout();
 
         // Retries/redirects that re-dispatched onto this session during the
@@ -1203,6 +1219,7 @@ pub const ClientSession = struct {
                     return;
                 }
                 const stream = this.streams.get(stream_id) orelse return;
+                stream.rst_done = true;
                 const code: u32 = wire.u32FromBytes(payload[0..4]);
                 stream.fatal_error = switch (code) {
                     @intFromEnum(wire.ErrorCode.NO_ERROR) => blk: {

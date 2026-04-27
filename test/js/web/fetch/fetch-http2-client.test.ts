@@ -1250,6 +1250,40 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       );
     });
 
+    test("303 redirect on a streaming-body POST RSTs the half-open upload stream", async () => {
+      // The redirect detaches stream 1 before END_STREAM is ever written for
+      // the request body. Without an RST_STREAM(CANCEL) the server is left
+      // holding it half-open against MAX_CONCURRENT_STREAMS.
+      await withRawH2Server(
+        (conn, id) => {
+          if (id === 1) {
+            conn.headers(
+              id,
+              Buffer.concat([hpackLit(":status", "303"), hpackLit("location", "/target")]),
+              { endStream: true },
+            );
+          } else {
+            conn.headers(id, hpackStatus(200), { endStream: true });
+          }
+        },
+        async (url, state) => {
+          await using proc = spawnFetch(`
+            const body = new ReadableStream({
+              async start(ctrl) { ctrl.enqueue(new Uint8Array([1,2,3])); await new Promise(r => setTimeout(r, 60_000)); },
+            });
+            const r = await fetch("${url}/upload", { method: "POST", body, duplex: "half", tls: { rejectUnauthorized: false } });
+            console.log(r.status, r.url.endsWith("/target"));
+            process.exit(0);
+          `);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(stdout.trim()).toBe("200 true");
+          expect(state.rst).toEqual([{ id: 1, code: 8 }]);
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
+
     test("client RSTs the stream when it abandons on a local error", async () => {
       // handleResponseBody throws on invalid gzip; the catch path must send
       // RST_STREAM(CANCEL) so the server doesn't keep the stream open

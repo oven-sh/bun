@@ -1017,7 +1017,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
           if (url.pathname === "/slow") {
             inflight++;
             while (!stopping) await Bun.sleep(5);
-            await Bun.sleep(20);
+            await Bun.sleep(50);
             return new Response("late");
           }
           if (url.pathname === "/inflight") return new Response(String(inflight));
@@ -1043,8 +1043,12 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       send("stop");
       const results = await Promise.all(inflight);
       for (const r of results) {
-        expect(r.stdout).toBe("late");
-        expect(r.exitCode).toBe(0);
+        // Surface curl's diagnostics if the in-flight stream was reset.
+        expect({ stdout: r.stdout, exitCode: r.exitCode, stderr: r.stderr.trim() }).toEqual({
+          stdout: "late",
+          exitCode: 0,
+          stderr: "",
+        });
       }
       // New connection during drain is rejected (engine cooling down).
       const fresh = await curl3(port, "/", ["--connect-timeout", "2", "--max-time", "3"]);

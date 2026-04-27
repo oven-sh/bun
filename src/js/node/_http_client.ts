@@ -419,7 +419,10 @@ function ClientRequest(input, options, cb) {
       // calls `req.end()` at all (flushHeaders + write only). The
       // generator keeps running until the hijacked socket's
       // `_final`/`_destroy` signals via `kEndUpgradeBody`.
-      if (!hasUpgradeHeaders(this)) {
+      //
+      // Read the cached `isUpgrade` (populated by `send()` → `startFetch`
+      // a few lines above) instead of re-running `hasUpgradeHeaders()`.
+      if (!isUpgrade) {
         resolveNextChunk?.(true);
       }
     }
@@ -502,6 +505,13 @@ function ClientRequest(input, options, cb) {
   };
 
   let fetching = false;
+  // Precomputed once by the first `startFetch()` call so `this.end`, `go()`,
+  // and the `.then` leak-fix guard all share the same answer to "did the
+  // request carry `Connection: Upgrade` + `Upgrade: <proto>`?" — instead of
+  // each re-running `hasUpgradeHeaders()` (two `getHeader()` calls + regex).
+  // `this.end` reads this after `send()` returns, by which point startFetch
+  // has run synchronously and the flag is populated.
+  let isUpgrade = false;
 
   const startFetch = (customBody?) => {
     if (fetching) {
@@ -509,6 +519,7 @@ function ClientRequest(input, options, cb) {
     }
 
     fetching = true;
+    isUpgrade = hasUpgradeHeaders(this);
 
     const method = this[kMethod];
 
@@ -559,11 +570,13 @@ function ClientRequest(input, options, cb) {
         keepalive,
       };
       let keepOpen = false;
-      // Upgrade requests need a long-lived streaming body so the upload
-      // half of the hijacked connection stays open for post-101 writes.
-      // This covers the dockerode pattern (POST + req.write()) and the
-      // WebSocket/CDP pattern (GET + req.end() before the 101).
-      const isUpgrade = hasUpgradeHeaders(this);
+      // `isUpgrade` (closure var, set above in `startFetch`) tells us
+      // whether the request carried `Connection: Upgrade` + `Upgrade:
+      // <proto>`. Upgrade requests need a long-lived streaming body so
+      // the upload half of the hijacked connection stays open for
+      // post-101 writes — covers the dockerode pattern (POST +
+      // req.write()) and the WebSocket/CDP pattern (GET + req.end()
+      // before the 101).
 
       // For upgrade requests always funnel the body through the generator
       // so the write side stays live; any pre-assembled body is already in
@@ -663,10 +676,10 @@ function ClientRequest(input, options, cb) {
         // upload half of the connection is deliberately left open for the
         // hijacked protocol.
         //
-        // Named `is101` rather than `isUpgrade` to avoid shadowing the outer
-        // `const isUpgrade = hasUpgradeHeaders(this)` in `go()` (which asks
-        // whether the *request* carried `Upgrade:` headers — a different
-        // question, and the two can diverge when the server rejects).
+        // Named `is101` rather than `isUpgrade` to avoid shadowing the
+        // outer closure `isUpgrade` (set by `startFetch` from the request
+        // headers — a different question; the two diverge when the
+        // server rejects).
         const is101 = response.status === 101;
 
         // Server rejected the upgrade (e.g. 400 Bad Request, 404, auth

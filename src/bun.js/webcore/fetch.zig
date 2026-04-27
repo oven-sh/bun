@@ -541,10 +541,6 @@ fn fetchImpl(
                         break :extract_protocol;
                     }
                 }
-                if (globalThis.hasException()) {
-                    is_error = true;
-                    return .zero;
-                }
             }
         }
     }

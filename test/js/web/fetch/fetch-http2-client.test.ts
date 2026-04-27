@@ -63,9 +63,9 @@ type RawConn = {
 
 async function withRawH2Server(
   onStream: (conn: RawConn, streamId: number, connIndex: number) => void,
-  fn: (url: string, state: { connections: number }) => Promise<void>,
+  fn: (url: string, state: { connections: number; rst: Array<{ id: number; code: number }> }) => Promise<void>,
 ) {
-  const state = { connections: 0 };
+  const state = { connections: 0, rst: [] as Array<{ id: number; code: number }> };
   const server = nodetls.createServer({ ...tls, ALPNProtocols: ["h2"] }, socket => {
     const connIndex = state.connections++;
     const conn: RawConn = {
@@ -98,7 +98,7 @@ async function withRawH2Server(
         buf = buf.subarray(9 + len);
         if (type === 4 && !(flags & 1)) socket.write(frame(4, 1, 0)); // ack their SETTINGS
         if (type === 1) onStream(conn, id, connIndex); // HEADERS opens a stream
-        void payload;
+        if (type === 3) state.rst.push({ id, code: payload.readUInt32BE(0) });
       }
     });
     socket.on("error", () => {});
@@ -1246,6 +1246,29 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
           const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           expect(stdout.trim()).toBe("rejected HTTP2ProtocolError");
           expect(exitCode).toBe(0);
+        },
+      );
+    });
+
+    test("client RSTs the stream when it abandons on a local error", async () => {
+      // handleResponseBody throws on invalid gzip; the catch path must send
+      // RST_STREAM(CANCEL) so the server doesn't keep the stream open
+      // counting against MAX_CONCURRENT_STREAMS.
+      await withRawH2Server(
+        (conn, id) => {
+          conn.headers(id, Buffer.concat([hpackStatus(200), hpackLit("content-encoding", "gzip")]));
+          conn.data(id, Buffer.from("not gzip"));
+        },
+        async (url, state) => {
+          await using proc = spawnFetch(`
+            try { await (await fetch("${url}", { tls: { rejectUnauthorized: false } })).arrayBuffer(); console.log("ok"); }
+            catch (e) { console.log("rejected", e.code ?? e.message); }
+          `);
+          const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stdout).toContain("rejected");
+          expect(exitCode).toBe(0);
+          // 0x8 = CANCEL
+          expect(state.rst).toEqual([{ id: 1, code: 8 }]);
         },
       );
     });

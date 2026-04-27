@@ -337,7 +337,7 @@ pub const ClientSession = struct {
 
         if (!this.preface_sent) this.writePreface();
 
-        client.setTimeout(this.socket, 5);
+        this.rearmTimeout();
         const request = client.buildRequest(client.state.original_request_body.len());
         this.writeRequest(client, stream, request) catch |err| {
             // encodeHeader pushes into the HPACK encoder's dynamic table per
@@ -543,6 +543,27 @@ pub const ClientSession = struct {
 
     /// HTTP-thread wake-up from `scheduleRequestWrite`: new body bytes (or
     /// end-of-body) are available in the ThreadSafeStreamBuffer.
+    /// Re-arm the shared socket's idle timer based on the aggregate of every
+    /// attached client. With multiplexed streams the per-request
+    /// `disable_timeout` flag can't drive the socket directly (last writer
+    /// would win and a `{timeout:false}` long-poll could be killed by a
+    /// sibling re-arming, or strip the safety net from one that wants it),
+    /// so the session disarms only when *every* attached client opted out.
+    fn rearmTimeout(this: *ClientSession) void {
+        const want = blk: {
+            for (this.streams.values()) |s| {
+                const c = s.client orelse continue;
+                if (!c.flags.disable_timeout) break :blk true;
+            }
+            for (this.pending_attach.items) |c| {
+                if (!c.flags.disable_timeout) break :blk true;
+            }
+            break :blk false;
+        };
+        this.socket.timeout(0);
+        this.socket.setTimeoutMinutes(if (want) 5 else 0);
+    }
+
     pub fn streamBodyByHttpId(this: *ClientSession, async_http_id: u32, ended: bool) void {
         this.ref();
         defer this.deref();
@@ -551,7 +572,7 @@ pub const ClientSession = struct {
             if (client.async_http_id != async_http_id) continue;
             if (client.state.original_request_body != .stream) return;
             client.state.original_request_body.stream.ended = ended;
-            client.setTimeout(this.socket, 5);
+            this.rearmTimeout();
             this.drainSendBody(stream);
             _ = this.flush() catch |err| this.failAll(err);
             return;
@@ -676,6 +697,7 @@ pub const ClientSession = struct {
             }
         }
         this.delivering = false;
+        this.rearmTimeout();
 
         // Retries/redirects that re-dispatched onto this session during the
         // loop are parked in pending_attach; attach them now that iteration
@@ -830,11 +852,11 @@ pub const ClientSession = struct {
             return true;
         }
 
-        client.setTimeout(this.socket, 5);
-
         if (stream.headers_ready) {
             stream.headers_ready = false;
             const result = this.applyHeaders(stream, client) catch |err| {
+                stream.rst(.CANCEL);
+                _ = this.flush() catch {};
                 stream.client = null;
                 client.h2 = null;
                 client.failFromH2(err);
@@ -870,6 +892,8 @@ pub const ClientSession = struct {
             }
             const report = client.handleResponseBody(stream.body_buffer.items, false) catch |err| {
                 stream.body_buffer.clearRetainingCapacity();
+                stream.rst(.CANCEL);
+                _ = this.flush() catch {};
                 if (!terminal) {
                     stream.client = null;
                     client.h2 = null;

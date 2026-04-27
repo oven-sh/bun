@@ -1426,16 +1426,19 @@ pub const internal = struct {
 
     /// Register `pc` to be notified when `request` resolves. Mirrors
     /// us_getaddrinfo_set but for the QUIC client's connect path, which has
-    /// no us_connecting_socket_t to hang the callback on.
+    /// no us_connecting_socket_t to hang the callback on. The .quic notify
+    /// path frees the addrinfo request inline (via Bun__addrinfo_freeRequest),
+    /// which re-acquires global_cache.lock — so drop it before notifying.
     pub fn registerQuic(request: *Request, pc: *bun.http.H3.PendingConnect) void {
         global_cache.lock.lock();
-        defer global_cache.lock.unlock();
         const owner: DNSRequestOwner = .{ .quic = pc };
         if (request.result != null) {
+            global_cache.lock.unlock();
             owner.notify(request);
             return;
         }
         bun.handleOom(request.notify.append(bun.default_allocator, owner));
+        global_cache.lock.unlock();
     }
 
     const ResultEntry = extern struct {

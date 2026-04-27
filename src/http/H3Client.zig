@@ -559,8 +559,8 @@ pub const PendingConnect = struct {
 
     /// DNS worker may call from off the HTTP thread; mirror
     /// us_internal_dns_callback_threadsafe: push onto a mutex-protected list
-    /// and wake the loop. `drainResolved` runs from the persistent
-    /// pre-handler installed by `ClientContext.getOrCreate`.
+    /// and wake the loop. `drainResolved` runs from `HTTPThread.drainEvents`
+    /// on the next loop iteration after the wakeup.
     pub fn onDNSResolvedThreadsafe(this: *PendingConnect, _: *bun.dns.internal.Request) void {
         resolved_mutex.lock();
         this.next = resolved_head;

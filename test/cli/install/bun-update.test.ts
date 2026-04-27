@@ -542,3 +542,80 @@ it("hoisted install removes stale workspace-local node_modules that shadow the h
   // from the backend workspace finds the hoisted one instead of the shadow.
   expect(await exists(join(package_dir, "packages", "backend", "node_modules", "baz"))).toBe(false);
 });
+
+// Guard against over-eager pruning: a workspace-local copy that the lockfile
+// legitimately places there (because it couldn't hoist due to a root conflict)
+// must survive a subsequent install.
+it("hoisted install preserves non-hoistable workspace-local packages", async () => {
+  const registry = {
+    "0.0.3": {},
+    "0.0.5": {},
+    latest: "0.0.5",
+  };
+  setHandler(dummyRegistry([], registry));
+
+  // Root pins baz@0.0.3; workspace pins baz@0.0.5 → the workspace copy can't
+  // hoist and must live at `packages/backend/node_modules/baz`.
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: ["packages/backend"],
+      dependencies: { baz: "0.0.3" },
+    }),
+  );
+
+  await mkdir(join(package_dir, "packages", "backend"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "backend", "package.json"),
+    JSON.stringify({
+      name: "@repro/backend",
+      dependencies: { baz: "0.0.5" },
+    }),
+  );
+
+  // Initial install lays everything out.
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--linker=hoisted"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(await new Response(stderr).text()).not.toContain("error:");
+    expect(await exited).toBe(0);
+  }
+
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
+    name: "baz",
+    version: "0.0.3",
+  });
+  expect(
+    await file(join(package_dir, "packages", "backend", "node_modules", "baz", "package.json")).json(),
+  ).toMatchObject({
+    name: "baz",
+    version: "0.0.5",
+  });
+
+  // Second install must not wipe the legitimate workspace-local copy.
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--linker=hoisted"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(await new Response(stderr).text()).not.toContain("error:");
+    expect(await exited).toBe(0);
+  }
+
+  expect(
+    await file(join(package_dir, "packages", "backend", "node_modules", "baz", "package.json")).json(),
+  ).toMatchObject({
+    name: "baz",
+    version: "0.0.5",
+  });
+});

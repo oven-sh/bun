@@ -88,11 +88,12 @@ pub fn installHoistedPackages(
     // module resolution. The installer only visits trees that still have
     // dependencies, so stale entries are otherwise never deleted.
     //
-    // We don't gate this on `new_node_modules`: even when the root `node_modules`
-    // didn't exist before this install, individual workspace `node_modules`
-    // directories may already be populated from a previous package-local install.
+    // We build the expected set from `original_trees` (pre-filter) on purpose:
+    // with `--filter`, the filtered tree omits excluded workspaces entirely,
+    // but their node_modules still belong to them and must not be touched
+    // based on what the _current_ install would re-create.
     if (this.lockfile.workspace_paths.count() > 0) {
-        pruneStaleWorkspaceNodeModules(this) catch {};
+        pruneStaleWorkspaceNodeModules(this, original_trees.items, original_tree_dep_ids.items) catch {};
     }
 
     var summary = PackageInstall.Summary{};
@@ -382,108 +383,109 @@ pub fn installHoistedPackages(
 /// (plus one level into `@scope/` directories). Transitive `node_modules`
 /// nested inside surviving packages are handled by the normal install
 /// verify/uninstall path.
-fn pruneStaleWorkspaceNodeModules(this: *PackageManager) !void {
+///
+/// `trees` and `tree_dep_ids` are the **unfiltered** tree buffers captured
+/// before `Lockfile.filter()` runs. Using the unfiltered layout matters: with
+/// `bun install --filter <subset>`, the filtered tree omits excluded
+/// workspaces, but those workspaces' node_modules still belong to them and we
+/// must only remove entries that are genuinely not placed anywhere by the
+/// lockfile — not everything the current install happens to skip.
+fn pruneStaleWorkspaceNodeModules(
+    this: *PackageManager,
+    trees: []const Lockfile.Tree,
+    tree_dep_ids: []const install.DependencyID,
+) !void {
+    if (trees.len == 0) return;
+
     const lockfile = this.lockfile;
     const string_buf = lockfile.buffers.string_bytes.items;
     const deps = lockfile.buffers.dependencies.items;
-    const trees = lockfile.buffers.trees.items;
+    const resolutions = lockfile.buffers.resolutions.items;
+    const pkg_resolutions = lockfile.packages.items(.resolution);
 
-    if (trees.len == 0) return;
-
-    // Map of workspace-relative `node_modules` path (posix separators) to the
-    // set of dependency folder names the tree currently places there. The
-    // keys are small strings owned by a scratch arena so they stay alive
-    // through the walk.
     var arena = std.heap.ArenaAllocator.init(this.allocator);
     defer arena.deinit();
     const scratch = arena.allocator();
 
-    var expected_by_path = bun.StringArrayHashMap(bun.StringHashMap(void)).init(scratch);
+    // Build a lookup from workspace package id → filesystem-relative path of
+    // the workspace. We need this because a tree whose `dependency_id` points
+    // to a workspace dep represents that workspace's `node_modules`, but the
+    // tree's iterator path uses the dependency's **package name**
+    // (`node_modules/@repro/backend/node_modules`) whereas on disk the
+    // workspace lives at its filesystem path (`packages/backend/node_modules`).
+    var workspace_fs_path_by_pkg_id = std.AutoHashMap(PackageID, []const u8).init(scratch);
+    {
+        const workspace_hashes = lockfile.workspace_paths.keys();
+        const workspace_paths = lockfile.workspace_paths.values();
+        for (workspace_hashes, workspace_paths) |name_hash, ws_path| {
+            const pkg_id = lockfile.getWorkspacePackageID(name_hash);
+            if (pkg_id == 0) continue; // getWorkspacePackageID returns 0 when not found.
+            const fs_path = ws_path.slice(string_buf);
+            if (fs_path.len == 0) continue;
+            try workspace_fs_path_by_pkg_id.put(pkg_id, fs_path);
+        }
+    }
 
-    // Set of workspace package IDs that survived the lockfile filter. After
-    // `filter()`, the root tree's dependency list only contains workspaces
-    // that are in scope for this install (e.g. not excluded by `--filter`).
-    // We only prune workspaces that are in scope — touching node_modules of
-    // an out-of-scope workspace would be user-visible damage.
-    var in_scope_workspaces = std.AutoHashMap(PackageID, void).init(scratch);
+    if (workspace_fs_path_by_pkg_id.count() == 0) return;
 
-    // Compute the `node_modules` path for every tree and collect the folder
-    // names of its direct dependencies. `relativePathAndDepth` assumes the
-    // first `"node_modules".len` bytes of the buffer are already written with
-    // that literal (the iterator primes it in `init`).
-    var path_buf: bun.PathBuffer = undefined;
-    @memcpy(path_buf[0.."node_modules".len], "node_modules");
-    var depth_buf: Lockfile.Tree.DepthBuf = undefined;
-    const resolutions = lockfile.buffers.resolutions.items;
-    const pkg_resolutions = lockfile.packages.items(.resolution);
+    // Map of workspace filesystem-relative `node_modules` path (posix
+    // separators) to the set of folder names the tree places directly in that
+    // directory. Only workspace-scope trees are indexed — transitive nested
+    // trees aren't workspace node_modules we need to prune.
+    var expected_by_ws_path = bun.StringArrayHashMap(bun.StringHashMap(void)).init(scratch);
+
     for (trees) |tree| {
-        const rel_path, _ = Lockfile.Tree.relativePathAndDepth(
-            lockfile,
-            tree.id,
-            &path_buf,
-            &depth_buf,
-            .node_modules,
-        );
+        // Only trees whose `dependency_id` resolves to a workspace package
+        // correspond to a workspace's `node_modules` directory.
+        if (tree.dependency_id == install.invalid_dependency_id) continue;
+        if (tree.dependency_id == Lockfile.Tree.root_dep_id) continue;
+        if (tree.dependency_id >= deps.len) continue;
+        if (tree.dependency_id >= resolutions.len) continue;
 
-        const key = try scratch.dupe(u8, rel_path);
+        const pkg_id = resolutions[tree.dependency_id];
+        if (pkg_id >= pkg_resolutions.len) continue;
+        if (pkg_resolutions[pkg_id].tag != .workspace) continue;
+
+        const ws_fs_path = workspace_fs_path_by_pkg_id.get(pkg_id) orelse continue;
+
+        // `<ws_fs_path>/node_modules` — the on-disk directory for this tree.
+        const key = try std.fmt.allocPrint(scratch, "{s}/node_modules", .{ws_fs_path});
         if (comptime Environment.isWindows) {
             bun.path.dangerouslyConvertPathToPosixInPlace(u8, key);
         }
 
-        const gop = try expected_by_path.getOrPut(key);
+        const gop = try expected_by_ws_path.getOrPut(key);
         if (!gop.found_existing) {
             gop.value_ptr.* = bun.StringHashMap(void).init(scratch);
         }
 
-        const tree_deps = tree.dependencies.get(lockfile.buffers.hoisted_dependencies.items);
+        const tree_deps = tree.dependencies.get(tree_dep_ids);
         for (tree_deps) |dep_id| {
             if (dep_id >= deps.len) continue;
             const dep_name = deps[dep_id].name.slice(string_buf);
             if (dep_name.len == 0) continue;
             try gop.value_ptr.put(try scratch.dupe(u8, dep_name), {});
-
-            // For the root tree, every workspace dep listed here is in scope.
-            if (tree.id == 0 and dep_id < resolutions.len) {
-                const pkg_id = resolutions[dep_id];
-                if (pkg_id < pkg_resolutions.len and pkg_resolutions[pkg_id].tag == .workspace) {
-                    try in_scope_workspaces.put(pkg_id, {});
-                }
-            }
         }
     }
 
-    // Prune each in-scope workspace's node_modules against the expected set.
-    const workspace_hashes = lockfile.workspace_paths.keys();
+    // For each workspace, walk its node_modules and drop any entry that the
+    // tree layout doesn't place there. A workspace with no tree entry in the
+    // lockfile (no deps anywhere in the layout) still gets walked — empty
+    // expected set means every non-dotfile entry is stale, which matches the
+    // reported bug: a leftover workspace-local package after everything
+    // hoisted out.
     const workspace_paths = lockfile.workspace_paths.values();
-    for (workspace_hashes, workspace_paths) |name_hash, workspace_path_str| {
-        const workspace_path = workspace_path_str.slice(string_buf);
-        if (workspace_path.len == 0) continue;
+    for (workspace_paths) |ws_path_str| {
+        const ws_path = ws_path_str.slice(string_buf);
+        if (ws_path.len == 0) continue;
 
-        // Skip workspaces not included in this install (e.g. filtered out by
-        // `--filter`) — their node_modules belong to a different install and
-        // we must leave them alone.
-        const ws_pkg_id = lockfile.getWorkspacePackageID(name_hash);
-        if (ws_pkg_id == 0) continue; // Defensive: 0 is the root, not a child workspace.
-        if (!in_scope_workspaces.contains(ws_pkg_id)) continue;
-
-        // Build `<workspace_path>/node_modules` with posix separators, matching
-        // the tree's relative path format (the tree iterator uses posix on
-        // posix platforms; we normalize on Windows above).
         var key_buf: bun.PathBuffer = undefined;
-        const key_len = blk: {
-            @memcpy(key_buf[0..workspace_path.len], workspace_path);
-            var len: usize = workspace_path.len;
-            // workspace_path should be a relative path without a trailing slash,
-            // but be defensive.
-            if (len > 0 and key_buf[len - 1] == '/') len -= 1;
-            const suffix = "/node_modules";
-            @memcpy(key_buf[len..][0..suffix.len], suffix);
-            len += suffix.len;
-            break :blk len;
-        };
-        const key = key_buf[0..key_len];
+        const key = try std.fmt.bufPrint(&key_buf, "{s}/node_modules", .{
+            // Tolerate a stray trailing slash.
+            if (ws_path[ws_path.len - 1] == '/') ws_path[0 .. ws_path.len - 1] else ws_path,
+        });
 
-        const expected: ?*const bun.StringHashMap(void) = if (expected_by_path.getPtr(key)) |p| p else null;
+        const expected: ?*const bun.StringHashMap(void) = if (expected_by_ws_path.getPtr(key)) |p| p else null;
 
         pruneNodeModulesAt(key, expected) catch continue;
     }

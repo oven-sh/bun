@@ -39,7 +39,6 @@ pub const Stream = struct {
     status_code: u32 = 0,
 
     end_stream_received: bool = false,
-    seen_headers: bool = false,
     /// Set once a non-1xx HEADERS block has been decoded and is awaiting
     /// delivery. Subsequent HEADERS are trailers and decoded-then-dropped.
     headers_ready: bool = false,
@@ -1137,7 +1136,6 @@ pub const ClientSession = struct {
                     return;
                 }
                 const stream = maybe_stream.?;
-                stream.seen_headers = true;
                 if (header.flags & @intFromEnum(wire.HeadersFrameFlags.PADDED) != 0) {
                     fragment = stripPadding(fragment) orelse {
                         this.fatal_error = error.HTTP2ProtocolError;

@@ -32,11 +32,18 @@ struct us_quic_hset {
     unsigned int count, hcap;
 };
 
+struct us_quic_sni {
+    char *name;
+    SSL_CTX *ctx;
+};
+
 struct us_quic_socket_context_s {
     struct us_loop_t *loop;
     lsquic_engine_t *engine;
     struct lsquic_engine_settings settings;
     SSL_CTX *ssl_ctx;
+    struct us_quic_sni *sni;
+    unsigned int sni_count, sni_cap;
     struct us_timer_t *timer;
     int processing;
     int closing;
@@ -211,6 +218,23 @@ static void us_quic_udp_on_close(struct us_udp_socket_t *u) {
 
 /* ───── SSL ───── */
 
+/* Exact match, then `*.tail` wildcards (matches "a.tail" but not "tail"). */
+static SSL_CTX *us_quic_match_sni(us_quic_socket_context_t *ctx, const char *sni) {
+    if (!sni) return ctx->ssl_ctx;
+    size_t sl = strlen(sni);
+    for (unsigned i = 0; i < ctx->sni_count; i++) {
+        if (strcmp(ctx->sni[i].name, sni) == 0) return ctx->sni[i].ctx;
+    }
+    for (unsigned i = 0; i < ctx->sni_count; i++) {
+        const char *n = ctx->sni[i].name;
+        if (n[0] == '*' && n[1] == '.') {
+            size_t tl = strlen(n + 1);
+            if (sl > tl && memcmp(sni + sl - tl, n + 1, tl) == 0) return ctx->sni[i].ctx;
+        }
+    }
+    return ctx->ssl_ctx;
+}
+
 static SSL_CTX *us_quic_get_ssl_ctx(void *peer_ctx, const struct sockaddr *local) {
     (void) local;
     us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) peer_ctx;
@@ -218,9 +242,9 @@ static SSL_CTX *us_quic_get_ssl_ctx(void *peer_ctx, const struct sockaddr *local
 }
 
 static SSL_CTX *us_quic_lookup_cert(void *cert_ctx, const struct sockaddr *local, const char *sni) {
-    (void) local; (void) sni;
+    (void) local;
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *) cert_ctx;
-    return ctx->ssl_ctx;
+    return us_quic_match_sni(ctx, sni);
 }
 
 static int us_quic_alpn_select(SSL *ssl, const unsigned char **out, unsigned char *outlen,
@@ -320,6 +344,10 @@ static void us_quic_hsi_discard(void *hset_p) {
 
 static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn) {
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *) if_ctx;
+    if (ctx->closing) {
+        lsquic_conn_close(conn);
+        return NULL;
+    }
     us_quic_socket_t *qs = (us_quic_socket_t *) calloc(1, sizeof(us_quic_socket_t));
     if (!qs) return NULL;
     qs->conn = conn;
@@ -429,9 +457,16 @@ static int us_quic_log_buf(void *ctx, const char *buf, size_t len) {
 }
 static const struct lsquic_logger_if us_quic_logger = { us_quic_log_buf };
 
+static void us_quic_prepare_ssl_ctx(SSL_CTX *ssl) {
+    SSL_CTX_set_min_proto_version(ssl, TLS1_3_VERSION);
+    SSL_CTX_set_max_proto_version(ssl, TLS1_3_VERSION);
+    SSL_CTX_set_alpn_select_cb(ssl, us_quic_alpn_select, NULL);
+    SSL_CTX_set_early_data_enabled(ssl, 0);
+}
+
 us_quic_socket_context_t *us_create_quic_socket_context(
     struct us_loop_t *loop, struct us_bun_socket_context_options_t options,
-    unsigned int ext_size)
+    unsigned int ext_size, unsigned int idle_timeout_s)
 {
     static int once;
     if (!once) {
@@ -446,10 +481,7 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     enum create_bun_socket_error_t ssl_err = 0;
     SSL_CTX *ssl = create_ssl_context_from_bun_options(options, &ssl_err);
     if (!ssl) return NULL;
-    SSL_CTX_set_min_proto_version(ssl, TLS1_3_VERSION);
-    SSL_CTX_set_max_proto_version(ssl, TLS1_3_VERSION);
-    SSL_CTX_set_alpn_select_cb(ssl, us_quic_alpn_select, NULL);
-    SSL_CTX_set_early_data_enabled(ssl, 0);
+    us_quic_prepare_ssl_ctx(ssl);
 
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *)
         calloc(1, sizeof(us_quic_socket_context_t) + ext_size);
@@ -460,6 +492,12 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     lsquic_engine_init_settings(&ctx->settings, LSENG_HTTP_SERVER);
     ctx->settings.es_versions = LSQUIC_DF_VERSIONS & LSQUIC_IETF_VERSIONS;
     ctx->settings.es_ecn = 0;
+    /* QPACK can expand small dynamic-table refs into large header lists; cap
+     * the post-decode size at the same order as uWS H1's MAX_FALLBACK_SIZE so
+     * a single request can't run hsi_prepare to OOM. */
+    ctx->settings.es_max_header_list_size = 16 * 1024;
+    ctx->settings.es_init_max_streams_bidi = 100;
+    if (idle_timeout_s) ctx->settings.es_idle_timeout = idle_timeout_s > 600 ? 600 : idle_timeout_s;
 
     struct lsquic_engine_api api;
     memset(&api, 0, sizeof(api));
@@ -487,12 +525,46 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     return ctx;
 }
 
+int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
+    const char *hostname, struct us_bun_socket_context_options_t options)
+{
+    enum create_bun_socket_error_t ssl_err = 0;
+    SSL_CTX *ssl = create_ssl_context_from_bun_options(options, &ssl_err);
+    if (!ssl) return -1;
+    us_quic_prepare_ssl_ctx(ssl);
+    if (ctx->sni_count == ctx->sni_cap) {
+        unsigned ncap = ctx->sni_cap ? ctx->sni_cap * 2 : 4;
+        struct us_quic_sni *n = (struct us_quic_sni *) realloc(ctx->sni, ncap * sizeof(*n));
+        if (!n) { SSL_CTX_free(ssl); return -1; }
+        ctx->sni = n; ctx->sni_cap = ncap;
+    }
+    ctx->sni[ctx->sni_count].name = strdup(hostname);
+    ctx->sni[ctx->sni_count].ctx = ssl;
+    ctx->sni_count++;
+    return 0;
+}
+
+void us_quic_socket_context_shutdown(us_quic_socket_context_t *ctx) {
+    if (!ctx || ctx->closing || !ctx->engine) return;
+    ctx->closing = 1;
+    /* GOAWAY every conn and flush; the timer keeps ticking so in-flight
+     * streams drain. New conns are rejected in on_new_conn while closing. */
+    lsquic_engine_cooldown(ctx->engine);
+    lsquic_engine_send_unsent_packets(ctx->engine);
+    us_quic_process(ctx);
+}
+
 void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {
     if (!ctx) return;
     ctx->closing = 1;
     if (ctx->timer) { us_timer_close(ctx->timer, 1); ctx->timer = NULL; }
     if (ctx->engine) { lsquic_engine_destroy(ctx->engine); ctx->engine = NULL; }
     if (ctx->ssl_ctx) { SSL_CTX_free(ctx->ssl_ctx); ctx->ssl_ctx = NULL; }
+    for (unsigned i = 0; i < ctx->sni_count; i++) {
+        free(ctx->sni[i].name);
+        SSL_CTX_free(ctx->sni[i].ctx);
+    }
+    free(ctx->sni);
     for (us_quic_listen_socket_t *ls = ctx->closed_listeners; ls; ) {
         us_quic_listen_socket_t *next = ls->next_closed;
         free(ls);
@@ -568,6 +640,17 @@ void us_quic_stream_want_read(us_quic_stream_t *s, int want) {
 
 void us_quic_stream_want_write(us_quic_stream_t *s, int want) {
     if (s->stream) lsquic_stream_wantwrite(s->stream, want);
+}
+
+int us_quic_stream_send_informational(us_quic_stream_t *s, const char *status3) {
+    if (!s->stream) return -1;
+    char buf[10];
+    memcpy(buf, ":status", 7);
+    memcpy(buf + 7, status3, 3);
+    struct lsxpack_header xh;
+    lsxpack_header_set_offset2(&xh, buf, 0, 7, 7, 3);
+    lsquic_http_headers_t lh = { .count = 1, .headers = &xh };
+    return lsquic_stream_send_headers(s->stream, &lh, 0);
 }
 
 int us_quic_stream_send_headers(us_quic_stream_t *s,

@@ -100,7 +100,9 @@ pub const Response = opaque {
     pub fn markWroteContentLengthHeader(this: *Response) void {
         c.uws_h3_res_mark_wrote_content_length_header(this);
     }
-    pub fn writeContinue(_: *Response) void {}
+    pub fn writeContinue(this: *Response) void {
+        c.uws_h3_res_write_continue(this);
+    }
     pub fn flushHeaders(this: *Response, immediate: bool) void {
         c.uws_h3_res_flush_headers(this, immediate);
     }
@@ -237,8 +239,11 @@ pub const Response = opaque {
 };
 
 pub const App = opaque {
-    pub fn create(opts: uws.SocketContext.BunSocketContextOptions) ?*App {
-        return c.uws_h3_create_app(opts);
+    pub fn create(opts: uws.SocketContext.BunSocketContextOptions, idle_timeout_s: u32) ?*App {
+        return c.uws_h3_create_app(opts, idle_timeout_s);
+    }
+    pub fn addServerNameWithOptions(this: *App, hostname: [:0]const u8, opts: uws.SocketContext.BunSocketContextOptions) !void {
+        if (!c.uws_h3_app_add_server_name(this, hostname.ptr, opts)) return error.FailedToAddServerName;
     }
     pub fn destroy(this: *App) void {
         c.uws_h3_app_destroy(this);
@@ -352,10 +357,12 @@ const c = struct {
     const ListenHandler = ?*const fn (?*ListenSocket, ?*anyopaque) callconv(.c) void;
     const HeaderCb = *const fn ([*]const u8, usize, [*]const u8, usize, ?*anyopaque) callconv(.c) void;
 
-    extern fn uws_h3_create_app(uws.SocketContext.BunSocketContextOptions) ?*App;
+    extern fn uws_h3_create_app(uws.SocketContext.BunSocketContextOptions, u32) ?*App;
     extern fn uws_h3_app_destroy(*App) void;
     extern fn uws_h3_app_close(*App) void;
     extern fn uws_h3_app_clear_routes(*App) void;
+    extern fn uws_h3_app_add_server_name(*App, [*:0]const u8, uws.SocketContext.BunSocketContextOptions) bool;
+    extern fn uws_h3_res_write_continue(*Response) void;
     extern fn uws_h3_app_get(*App, [*]const u8, usize, Handler, ?*anyopaque) void;
     extern fn uws_h3_app_post(*App, [*]const u8, usize, Handler, ?*anyopaque) void;
     extern fn uws_h3_app_put(*App, [*]const u8, usize, Handler, ?*anyopaque) void;

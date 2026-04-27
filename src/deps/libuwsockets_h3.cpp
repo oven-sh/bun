@@ -36,11 +36,11 @@ typedef void (*uws_h3_listen_handler)(us_quic_listen_socket_t *, void *);
 
 /* ───── app ───── */
 
-uws_h3_app_t *uws_h3_create_app(struct us_bun_socket_context_options_t options) {
+uws_h3_app_t *uws_h3_create_app(struct us_bun_socket_context_options_t options, unsigned int idle_timeout_s) {
   uWS::SocketContextOptions sco;
   static_assert(sizeof(sco) == sizeof(options));
   memcpy(&sco, &options, sizeof(sco));
-  return (uws_h3_app_t *) H3App::create(sco);
+  return (uws_h3_app_t *) H3App::create(sco, idle_timeout_s);
 }
 
 void uws_h3_app_destroy(uws_h3_app_t *app) { delete (H3App *) app; }
@@ -48,6 +48,13 @@ bool uws_h3_constructor_failed(uws_h3_app_t *app) { return !app || ((H3App *) ap
 void uws_h3_app_close(uws_h3_app_t *app) { ((H3App *) app)->close(); }
 void uws_h3_app_clear_routes(uws_h3_app_t *app) { ((H3App *) app)->clearRoutes(); }
 void *uws_h3_get_native_handle(uws_h3_app_t *app) { return ((H3App *) app)->getNativeHandle(); }
+
+bool uws_h3_app_add_server_name(uws_h3_app_t *app, const char *hostname,
+                                struct us_bun_socket_context_options_t options) {
+  uWS::SocketContextOptions sco;
+  memcpy(&sco, &options, sizeof(sco));
+  return ((H3App *) app)->addServerNameWithOptions(hostname, sco);
+}
 
 #define H3_ROUTE(name, method)                                                                          \
   void uws_h3_app_##name(uws_h3_app_t *app, const char *pattern, size_t pattern_len,                    \
@@ -111,7 +118,7 @@ void uws_h3_res_end_without_body(uws_h3_res_t *res, bool close_connection) {
 
 void uws_h3_res_pause(uws_h3_res_t *res) { ((Http3Response *) res)->pause(); }
 void uws_h3_res_resume(uws_h3_res_t *res) { ((Http3Response *) res)->resume(); }
-void uws_h3_res_write_continue(uws_h3_res_t *) {}
+void uws_h3_res_write_continue(uws_h3_res_t *res) { ((Http3Response *) res)->writeContinue(); }
 
 void uws_h3_res_write_status(uws_h3_res_t *res, const char *status, size_t length) {
   ((Http3Response *) res)->writeStatus(sv(status, length));

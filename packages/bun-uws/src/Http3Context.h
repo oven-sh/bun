@@ -12,9 +12,9 @@ namespace uWS {
 
 struct Http3Context {
 
-    static Http3Context *create(Loop *loop, us_bun_socket_context_options_t options) {
+    static Http3Context *create(Loop *loop, us_bun_socket_context_options_t options, unsigned idleTimeoutSecs = 0) {
         us_quic_socket_context_t *ctx = us_create_quic_socket_context(
-            (us_loop_t *) loop, options, sizeof(Http3ContextData));
+            (us_loop_t *) loop, options, sizeof(Http3ContextData), idleTimeoutSecs);
         if (!ctx) return nullptr;
         new (us_quic_socket_context_ext(ctx)) Http3ContextData();
 
@@ -29,6 +29,7 @@ struct Http3Context {
             rd->reset();
 
             Http3Request req(s);
+            if (req.getHeader("expect") == "100-continue") res->writeContinue();
             cd->router.getUserData() = {res, &req};
             if (!cd->router.route(req.getMethod(), req.getUrl())) {
                 res->writeStatus("404 Not Found")->end();
@@ -93,6 +94,12 @@ struct Http3Context {
     us_quic_listen_socket_t *listen(const char *host, int port) {
         return us_quic_socket_context_listen((us_quic_socket_context_t *) this,
             host, port, sizeof(Http3ResponseData));
+    }
+
+    void shutdown() { us_quic_socket_context_shutdown((us_quic_socket_context_t *) this); }
+
+    bool addServerName(const char *hostname, us_bun_socket_context_options_t options) {
+        return us_quic_socket_context_add_server_name((us_quic_socket_context_t *) this, hostname, options) == 0;
     }
 };
 

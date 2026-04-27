@@ -899,4 +899,137 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       expect(dead.exitCode).not.toBe(0);
     });
   });
+
+  // B: server.stop() (graceful) sends GOAWAY and lets in-flight H3 requests
+  // finish before the engine tears down. lsquic_engine_cooldown drops mini
+  // (still-handshaking) conns immediately, so we wait until the server has
+  // actually entered every handler before stopping — no arbitrary sleep.
+  itH3("graceful stop: in-flight H3 requests complete after server.stop()", async () => {
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      let stopping = false, inflight = 0;
+      const server = Bun.serve({
+        port: 0, tls, h3: true, idleTimeout: 30,
+        async fetch(req) {
+          const url = new URL(req.url);
+          if (url.pathname === "/slow") {
+            inflight++;
+            while (!stopping) await Bun.sleep(5);
+            await Bun.sleep(20);
+            return new Response("late");
+          }
+          if (url.pathname === "/inflight") return new Response(String(inflight));
+          return new Response("ok");
+        },
+      });
+      console.error("PORT=" + server.port);
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", line => {
+        if (line.includes("stop")) { stopping = true; server.stop(); }
+        if (line.includes("exit")) process.exit(0);
+      });
+    `;
+    await withCustomServer(script, async (port, send) => {
+      const N = 4;
+      const inflight = Array.from({ length: N }, () => curl3(port, "/slow"));
+      // Poll until the server has entered all N handlers (handshakes promoted),
+      // then it's safe to cooldown — drop_all_mini_conns won't bite.
+      while (true) {
+        const r = await curl3(port, "/inflight");
+        if (Number(r.stdout) >= N) break;
+      }
+      send("stop");
+      const results = await Promise.all(inflight);
+      for (const r of results) {
+        expect(r.stdout).toBe("late");
+        expect(r.exitCode).toBe(0);
+      }
+      // New connection during drain is rejected (engine cooling down).
+      const fresh = await curl3(port, "/", ["--connect-timeout", "2", "--max-time", "3"]);
+      expect(fresh.exitCode).not.toBe(0);
+      send("exit");
+    });
+  });
+
+  // C: req.signal fires when the client resets the H3 stream mid-request.
+  itH3("req.signal aborts on client RST", async () => {
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      let aborted = 0;
+      const server = Bun.serve({
+        port: 0, tls, h3: true,
+        async fetch(req) {
+          const url = new URL(req.url);
+          if (url.pathname === "/hang") {
+            req.signal.addEventListener("abort", () => { aborted++; });
+            await new Promise(r => req.signal.addEventListener("abort", r));
+            return new Response("never");
+          }
+          if (url.pathname === "/aborted") return new Response(String(aborted));
+          return new Response("ok");
+        },
+      });
+      console.error("PORT=" + server.port);
+      process.stdin.on("data", () => {});
+    `;
+    await withCustomServer(script, async port => {
+      // --max-time 1 makes curl give up while the handler is awaiting the
+      // abort; lsquic delivers STOP_SENDING/RESET → onAbort.
+      const r = await curl3(port, "/hang", ["--max-time", "1"]);
+      expect(r.exitCode).not.toBe(0);
+      // The signal fires from on_stream_close, which runs on the next
+      // process_conns tick after the RST lands.
+      let count = "0";
+      for (let i = 0; i < 30 && count === "0"; i++) {
+        count = (await curl3(port, "/aborted")).stdout;
+        if (count === "0") await Bun.sleep(50);
+      }
+      expect(Number(count)).toBeGreaterThan(0);
+    });
+  });
+});
+
+describe("Bun.serve HTTP/3 production", () => {
+  // E: H1 responses advertise the H3 endpoint so browsers can discover it.
+  itH3("Alt-Svc emitted on HTTP/1.1 responses when h3 is enabled", async () => {
+    await withServer(async port => {
+      const res = await fetch(`https://127.0.0.1:${port}/hello`, { tls: { rejectUnauthorized: false } });
+      expect(res.status).toBe(200);
+      const alt = res.headers.get("alt-svc") ?? "";
+      expect(alt).toContain('h3=":');
+      expect(alt).toContain(String(port));
+    });
+  });
+
+  // RFC 9114 §4.2 forbids Transfer-Encoding; the server rejects it with 400
+  // (server.zig prepareJsRequestContextFor). Not testable via curl —
+  // nghttp3 strips the header client-side, as it must — so the check is
+  // defense-in-depth against raw QUIC clients.
+
+  // I: server.upgrade() returns false over H3 instead of crashing, and the
+  // handler can still send a normal response.
+  itH3("server.upgrade(req) over H3 returns false cleanly", async () => {
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      const server = Bun.serve({
+        port: 0, tls, h3: true,
+        websocket: { message() {} },
+        fetch(req, srv) {
+          const ok = srv.upgrade(req);
+          return new Response("upgrade=" + ok);
+        },
+      });
+      console.error("PORT=" + server.port);
+      process.stdin.on("data", () => {});
+    `;
+    await withCustomServer(script, async port => {
+      const r = await curl3(port, "/");
+      expect(r.stdout).toBe("upgrade=false");
+      expect(r.exitCode).toBe(0);
+    });
+  });
+
+  // Bun.serve doesn't auto-send 100-continue for any transport (no Expect:
+  // handling in prepareJsRequestContext); us_quic_stream_send_informational
+  // exists for when that lands but is currently unreferenced.
 });

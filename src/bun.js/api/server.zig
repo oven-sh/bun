@@ -538,6 +538,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         listener: ?*App.ListenSocket = null,
         h3_app: if (bun.Environment.isWindows) void else ?*uws.H3.App = if (bun.Environment.isWindows) {} else null,
         h3_listener: if (bun.Environment.isWindows) void else ?*uws.H3.ListenSocket = if (bun.Environment.isWindows) {} else null,
+        /// Cached `h3=":<port>"; ma=86400` value for Alt-Svc on H1 responses;
+        /// formatted once in onH3Listen so renderMetadata doesn't reformat.
+        h3_alt_svc: if (has_h3) [:0]const u8 else void = if (has_h3) "" else {},
         js_value: jsc.JSRef = jsc.JSRef.empty(),
         /// Potentially null before listen() is called, and once .destroy() is called.
         vm: *jsc.VirtualMachine,
@@ -1556,7 +1559,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             if (comptime !bun.Environment.isWindows) {
                 if (this.h3_listener) |h3l| {
                     this.h3_listener = null;
-                    h3l.close();
+                    // Graceful: GOAWAY + drain via the still-open UDP socket;
+                    // the engine rejects new conns and the timer keeps in-flight
+                    // streams progressing until deinit. Abrupt: close the fd now.
+                    if (!abrupt) {
+                        if (this.h3_app) |h3a| h3a.close();
+                    } else {
+                        h3l.close();
+                    }
                 }
             }
             var listener = this.listener orelse {
@@ -1663,6 +1673,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     h3a.destroy();
                 }
             }
+            if (comptime has_h3) if (this.h3_alt_svc.len > 0)
+                bun.default_allocator.free(this.h3_alt_svc);
             if (this.app) |app| {
                 this.app = null;
                 app.destroy();
@@ -1853,9 +1865,22 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 this.vm.addListeningSocketForWatchMode(socket.?.socket().fd());
         }
 
+        pub fn h3AltSvc(this: *ThisServer) ?[]const u8 {
+            if (comptime !has_h3) return null;
+            return if (this.h3_alt_svc.len > 0) this.h3_alt_svc else null;
+        }
+
         pub fn onH3Listen(this: *ThisServer, socket: ?*uws.H3.ListenSocket) void {
-            if (comptime bun.Environment.isWindows) unreachable;
+            if (comptime !has_h3) unreachable;
             this.h3_listener = socket;
+            if (socket) |s| {
+                this.h3_alt_svc = std.fmt.allocPrintSentinel(
+                    bun.default_allocator,
+                    "h3=\":{d}\"; ma=86400",
+                    .{s.getLocalPort()},
+                    0,
+                ) catch "";
+            }
         }
 
         pub fn onH3Request(this: *ThisServer, req: *uws.H3.Request, resp: *uws.H3.Response) void {
@@ -2305,6 +2330,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             //
             // We first validate the self-reported request body length so that
             // we avoid needing to worry as much about what memory to free.
+            // RFC 9114 §4.2: an HTTP/3 message containing a transfer-encoding
+            // header field is malformed.
+            if (comptime Ctx.is_h3) if (req.header("transfer-encoding") != null) {
+                resp.writeStatus("400 Bad Request");
+                resp.endWithoutBody(true);
+                return null;
+            };
+
             const request_body_length: ?usize = request_body_length: {
                 if ((HTTP.Method.which(req.method()) orelse HTTP.Method.OPTIONS).hasRequestBody()) {
                     const len: usize = brk: {
@@ -2765,6 +2798,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         },
                         .html => |html_bundle_route| {
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *HTMLBundle.Route, html_bundle_route.data, entry.path, entry.method);
+                            if (comptime has_h3) if (this.h3_app) |h3_app|
+                                ServerConfig.applyStaticRouteH3(h3_app, *HTMLBundle.Route, html_bundle_route.data, entry.path, entry.method);
                             if (dev_server) |dev| {
                                 bun.handleOom(dev.html_router.put(dev.allocator(), entry.path, html_bundle_route.data));
                             }
@@ -2904,7 +2939,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                 if (comptime !bun.Environment.isWindows) {
                     if (this.config.h3) {
-                        this.h3_app = uws.H3.App.create(ssl_options) orelse {
+                        this.h3_app = uws.H3.App.create(ssl_options, this.config.idleTimeout) orelse {
                             if (!globalThis.hasException()) {
                                 globalThis.throw("Failed to create HTTP/3 server", .{}) catch {};
                             }
@@ -2951,6 +2986,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     for (sni.slice()) |*sni_ssl_config| {
                         const sni_servername: [:0]const u8 = std.mem.span(sni_ssl_config.server_name.?);
                         if (sni_servername.len > 0) {
+                            if (comptime has_h3) if (this.h3_app) |h3a|
+                                h3a.addServerNameWithOptions(sni_servername, sni_ssl_config.asUSockets()) catch {};
                             app.addServerNameWithOptions(sni_servername, sni_ssl_config.asUSockets()) catch {
                                 if (!globalThis.hasException()) {
                                     if (!throwSSLErrorIfNecessary(globalThis)) {
@@ -3033,6 +3070,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 },
 
                 .unix => |unix| {
+                    if (comptime has_h3) if (this.h3_app) |h3a| {
+                        // QUIC over AF_UNIX is non-standard and Alt-Svc can't
+                        // advertise it. Drop the H3 listener rather than wire
+                        // an exotic transport nobody can reach.
+                        bun.Output.warn("h3: true with a unix socket — HTTP/3 listener skipped", .{});
+                        h3a.destroy();
+                        this.h3_app = null;
+                    };
                     app.listenOnUnixSocket(
                         *ThisServer,
                         this,

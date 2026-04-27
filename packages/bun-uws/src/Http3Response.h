@@ -50,7 +50,12 @@ struct Http3Response {
         writeHeader("date", std::string_view{ld->date, 29});
     }
 
-    Http3Response *writeContinue() { return this; }
+    /* RFC 9114 §4.1: a 1xx response is its own HEADERS frame with no body and
+     * doesn't consume the final-response slot. */
+    Http3Response *writeContinue() {
+        us_quic_stream_send_informational((us_quic_stream_t *) this, "100");
+        return this;
+    }
 
     void flushHeaders(bool /*immediately*/ = false) {
         Http3ResponseData *d = getHttpResponseData();

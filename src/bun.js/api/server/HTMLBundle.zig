@@ -128,14 +128,14 @@ pub const Route = struct {
     };
 
     pub fn onRequest(this: *Route, req: uws.AnyRequest, resp: HTTPResponse) void {
-        this.onAnyRequest(req.h1, resp, false);
+        this.onAnyRequest(req, resp, false);
     }
 
     pub fn onHEADRequest(this: *Route, req: uws.AnyRequest, resp: HTTPResponse) void {
-        this.onAnyRequest(req.h1, resp, true);
+        this.onAnyRequest(req, resp, true);
     }
 
-    fn onAnyRequest(this: *Route, req: *uws.Request, resp: HTTPResponse, is_head: bool) void {
+    fn onAnyRequest(this: *Route, req: uws.AnyRequest, resp: HTTPResponse, is_head: bool) void {
         this.ref();
         defer this.deref();
         const server: AnyServer = this.server orelse {
@@ -145,7 +145,13 @@ pub const Route = struct {
 
         if (server.config().isDevelopment()) {
             if (server.devServer()) |dev| {
-                bun.handleOom(dev.respondForHTMLBundle(this, req, resp));
+                // DevServer's HMR path is *uws.Request-typed; H3 isn't routed
+                // there (no h3_app on plain-HTTP debug servers in practice),
+                // but stay defensive.
+                switch (req) {
+                    .h1 => |h1| bun.handleOom(dev.respondForHTMLBundle(this, h1, resp)),
+                    .h3 => resp.endWithoutBody(true),
+                }
                 return;
             }
 
@@ -198,9 +204,9 @@ pub const Route = struct {
                 if (bun.Environment.enable_logs)
                     debug("onRequest: {s} - html", .{req.url()});
                 if (is_head) {
-                    html.onHEADRequest(.{ .h1 = req }, resp);
+                    html.onHEADRequest(req, resp);
                 } else {
-                    html.onRequest(.{ .h1 = req }, resp);
+                    html.onRequest(req, resp);
                 }
             },
         }

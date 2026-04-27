@@ -2211,6 +2211,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 resp.writeHeader("content-type", content_type.value);
             }
 
+            // Advertise the QUIC endpoint on H1/H2 responses so browsers can
+            // discover it (RFC 7838). Multiple Alt-Svc fields are valid, so a
+            // user-supplied one composes rather than conflicts.
+            if (comptime !http3 and @hasDecl(ThisServer, "h3AltSvc")) {
+                if (this.server.?.h3AltSvc()) |alt| resp.writeHeader("alt-svc", alt);
+            }
+
             // automatically include the filename when:
             // 1. Bun.file("foo")
             // 2. The content-disposition header is not present

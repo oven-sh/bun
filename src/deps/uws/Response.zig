@@ -653,7 +653,10 @@ pub const AnyResponse = union(enum) {
         ctx: ?*uws.SocketContext,
     ) *Socket {
         return switch (this) {
-            .H3 => bun.Output.panic("WebSocket upgrade over HTTP/3 is not supported", .{}),
+            // server.upgrade() returns false before reaching here for H3
+            // (request_context.get(RequestContext) is null — the H3 ctx is a
+            // different type and upgrade_context is never set).
+            .H3 => unreachable,
             inline else => |resp| resp.upgrade(Data, data, sec_web_socket_key, sec_web_socket_protocol, sec_web_socket_extensions, ctx),
         };
     }

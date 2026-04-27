@@ -12,10 +12,10 @@ namespace uWS {
 struct H3App {
     Http3Context *http3Context;
 
-    static H3App *create(SocketContextOptions options) {
+    static H3App *create(SocketContextOptions options, unsigned idleTimeoutSecs = 0) {
         us_bun_socket_context_options_t raw;
         memcpy(&raw, &options, sizeof(raw));
-        Http3Context *ctx = Http3Context::create(Loop::get(), raw);
+        Http3Context *ctx = Http3Context::create(Loop::get(), raw, idleTimeoutSecs);
         if (!ctx) return nullptr;
         return new H3App{ctx};
     }
@@ -60,7 +60,13 @@ struct H3App {
     void clearRoutes() {
         http3Context->getContextData()->router = decltype(http3Context->getContextData()->router){};
     }
-    void close() { /* engine teardown happens in destructor */ }
+    /* GOAWAY + drain. The engine itself is torn down in the destructor. */
+    void close() { http3Context->shutdown(); }
+    bool addServerNameWithOptions(const char *hostname, SocketContextOptions options) {
+        us_bun_socket_context_options_t raw;
+        memcpy(&raw, &options, sizeof(raw));
+        return http3Context->addServerName(hostname, raw);
+    }
     void *getNativeHandle() { return http3Context; }
 };
 

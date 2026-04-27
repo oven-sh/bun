@@ -53,11 +53,20 @@ test("fetch TLS ClientHello does not include ECH GREASE extension", async () => 
 
   await using server = net.createServer(socket => {
     const chunks: Buffer[] = [];
+    let captured = false;
     socket.on("data", chunk => {
+      if (captured) return;
       chunks.push(chunk);
-      // The ClientHello arrives in the first record; capture it and close
-      // so fetch rejects quickly instead of hanging on TLS.
-      resolveHello(Buffer.concat(chunks));
+      // Accumulate until we have a full TLSPlaintext record (type + version +
+      // length header = 5 bytes, then `length` bytes of payload). TCP chunks
+      // can split the ClientHello; resolving on the first chunk would be racy.
+      const buf = Buffer.concat(chunks);
+      if (buf.length < 5) return;
+      const recordLen = buf.readUInt16BE(3);
+      if (buf.length < 5 + recordLen) return;
+      captured = true;
+      resolveHello(buf.subarray(0, 5 + recordLen));
+      // Close the socket so fetch rejects quickly instead of hanging on TLS.
       socket.destroy();
     });
     socket.on("error", () => {});

@@ -2518,7 +2518,7 @@ pub const H2FrameParser = struct {
         return data.len;
     }
 
-    /// We need to be very carefull because this is not a stable ptr
+    /// Returned *Stream is heap-allocated and stable for the lifetime of this H2FrameParser.
     fn handleReceivedStreamID(this: *H2FrameParser, streamIdentifier: u32) ?*Stream {
         // connection stream
         if (streamIdentifier == 0) {

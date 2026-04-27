@@ -18,7 +18,7 @@ test("session.request() from a stream 'timeout' listener during forEachStream do
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "OK", exitCode: 0 });
-}, 30_000);
+});
 
 test("http2 client request() does not hold *Stream across user-controlled options getters", async () => {
   const script = /* js */ `
@@ -94,7 +94,7 @@ test("http2 client request() does not hold *Stream across user-controlled option
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "done", exitCode: 0 });
-}, 30_000);
+});
 
 test("http2 client write callback that opens new streams during flushQueue does not UAF", async () => {
   await using proc = Bun.spawn({
@@ -105,4 +105,4 @@ test("http2 client write callback that opens new streams during flushQueue does 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "ok", exitCode: 0 });
-}, 30_000);
+});

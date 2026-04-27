@@ -1925,8 +1925,6 @@ export function readableStreamFromAsyncIterator(target, fn) {
 }
 
 export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultController {
-  const closer = [false];
-
   function callClose(controller: ReadableStreamDefaultController) {
     try {
       var source = controller.$underlyingSource;
@@ -2009,6 +2007,7 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
 
     autoAllocateChunkSize = 0;
     #closed = false;
+    #closer = [false];
 
     $data?: Uint8Array;
 
@@ -2103,22 +2102,22 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
         this.#controller = new WeakRef(controller);
       }
 
-      closer[0] = false;
+      this.#closer[0] = false;
 
       if (this.$data) {
         let drainResult = handle.drain();
         if (drainResult) {
-          this.$data = this.#onNativeReadableStreamResult(drainResult, this.$data, closer[0], controller);
+          this.$data = this.#onNativeReadableStreamResult(drainResult, this.$data, this.#closer[0], controller);
           return;
         }
       }
 
       const view = this.#getInternalBuffer(this.autoAllocateChunkSize);
-      const result = handle.pull(view, closer);
+      const result = handle.pull(view, this.#closer);
       if ($isPromise(result)) {
         return result.$then(
           result => {
-            this.$data = this.#onNativeReadableStreamResult(result, view, closer[0], controller);
+            this.$data = this.#onNativeReadableStreamResult(result, view, this.#closer[0], controller);
             if (this.#closed) {
               this.$data = undefined;
             }
@@ -2133,7 +2132,7 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
         );
       }
 
-      this.$data = this.#onNativeReadableStreamResult(result, view, closer[0], controller);
+      this.$data = this.#onNativeReadableStreamResult(result, view, this.#closer[0], controller);
       if (this.#closed) {
         this.$data = undefined;
       }

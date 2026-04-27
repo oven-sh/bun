@@ -613,6 +613,189 @@ devTest("barrel optimization: export star target not deferred (#27521)", {
   },
 });
 
+devTest("barrel optimization: import+export barrel with deferred sub-modules (#28235)", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    // The user code imports from consumer-lib which imports from barrel-lib.
+    // consumer-lib uses Provider (a component from a sub-module of barrel-lib)
+    // that the barrel optimizer defers because it's not requested by the user code.
+    "index.ts": `
+      import { render } from 'consumer-lib';
+      console.log('result: ' + render());
+    `,
+    // consumer-lib imports Provider and createClient from barrel-lib.
+    // This mirrors @refinedev/core importing QueryClientProvider from @tanstack/react-query.
+    // The key: consumer-lib imports Provider which comes from barrel-lib's own
+    // sub-module (./Provider.js), NOT from the export * chain.
+    "node_modules/consumer-lib/package.json": JSON.stringify({
+      name: "consumer-lib",
+      version: "1.0.0",
+      main: "./index.js",
+    }),
+    "node_modules/consumer-lib/index.js": `
+      import { Provider, createClient } from 'barrel-lib';
+      export function render() {
+        const client = createClient();
+        if (typeof Provider !== 'function') return 'FAIL:Provider=' + typeof Provider;
+        if (typeof client !== 'object') return 'FAIL:client=' + typeof client;
+        return 'PASS';
+      }
+    `,
+    // barrel-lib mirrors @tanstack/react-query: sideEffects:false, uses
+    // "import { X } from './sub.js'; export { X }" pattern (not "export from").
+    // Also has export * from a core lib (like query-core).
+    // Has many sub-modules to trigger barrel optimization thresholds.
+    "node_modules/barrel-lib/package.json": JSON.stringify({
+      name: "barrel-lib",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/barrel-lib/index.js": `
+      export * from 'core-lib';
+      export * from './types.js';
+      import { Provider } from './Provider.js';
+      import { useHookA } from './useHookA.js';
+      import { useHookB } from './useHookB.js';
+      import { useHookC } from './useHookC.js';
+      import { useHookD } from './useHookD.js';
+      import { useHookE } from './useHookE.js';
+      import { Boundary } from './Boundary.js';
+      import { ErrorReset } from './ErrorReset.js';
+      import { Fetching } from './Fetching.js';
+      import { Mutation } from './Mutation.js';
+      import { Restoring } from './Restoring.js';
+      export {
+        Provider, useHookA, useHookB, useHookC, useHookD, useHookE,
+        Boundary, ErrorReset, Fetching, Mutation, Restoring
+      };
+    `,
+    "node_modules/barrel-lib/types.js": `export const TypeA = "a";`,
+    "node_modules/barrel-lib/Provider.js": `export function Provider(props) { return props.children; }`,
+    "node_modules/barrel-lib/useHookA.js": `export function useHookA() { return null; }`,
+    "node_modules/barrel-lib/useHookB.js": `export function useHookB() { return null; }`,
+    "node_modules/barrel-lib/useHookC.js": `export function useHookC() { return null; }`,
+    "node_modules/barrel-lib/useHookD.js": `export function useHookD() { return null; }`,
+    "node_modules/barrel-lib/useHookE.js": `export function useHookE() { return null; }`,
+    "node_modules/barrel-lib/Boundary.js": `export function Boundary() { return null; }`,
+    "node_modules/barrel-lib/ErrorReset.js": `export function ErrorReset() { return null; }`,
+    "node_modules/barrel-lib/Fetching.js": `export function Fetching() { return null; }`,
+    "node_modules/barrel-lib/Mutation.js": `export function Mutation() { return null; }`,
+    "node_modules/barrel-lib/Restoring.js": `export function Restoring() { return null; }`,
+    // core-lib provides createClient via export *. Since it's an export star
+    // target, it should not be deferred (fixed in #27524).
+    "node_modules/core-lib/package.json": JSON.stringify({
+      name: "core-lib",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/core-lib/index.js": `
+      export { createClient } from './client.js';
+      export { Other } from './other.js';
+    `,
+    "node_modules/core-lib/client.js": `
+      export function createClient() { return { ready: true }; }
+    `,
+    "node_modules/core-lib/other.js": `export const Other = "OTHER";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("result: PASS");
+  },
+});
+
+devTest("barrel optimization: multiple import statements from same barrel dedup'd (#28235)", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    // User code imports from consumer-lib which has multiple import statements
+    // from the same barrel package. ConvertESMExportsForHmr deduplicates these
+    // into one surviving record; the dead records retain unresolved paths.
+    // Without the fix, only exports from the first import statement are seeded
+    // into requested_exports — all others are deferred and become undefined.
+    "index.ts": `
+      import { render } from 'consumer-lib';
+      console.log('result: ' + render());
+    `,
+    // consumer-lib mirrors @refinedev/core: multiple separate import statements
+    // from the same barrel package. Each import statement creates a separate
+    // import record. ConvertESMExportsForHmr merges them, but named_imports
+    // entries still point to the original (now dead) records.
+    "node_modules/consumer-lib/package.json": JSON.stringify({
+      name: "consumer-lib",
+      version: "1.0.0",
+      main: "./index.js",
+    }),
+    "node_modules/consumer-lib/index.js": `
+      import { useHookA } from 'barrel-lib';
+      import { Provider } from 'barrel-lib';
+      import { useHookB } from 'barrel-lib';
+      export function render() {
+        if (typeof useHookA !== 'function') return 'FAIL:useHookA=' + typeof useHookA;
+        if (typeof Provider !== 'function') return 'FAIL:Provider=' + typeof Provider;
+        if (typeof useHookB !== 'function') return 'FAIL:useHookB=' + typeof useHookB;
+        return 'PASS';
+      }
+    `,
+    // barrel-lib mirrors @tanstack/react-query: sideEffects:false, many sub-modules.
+    "node_modules/barrel-lib/package.json": JSON.stringify({
+      name: "barrel-lib",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/barrel-lib/index.js": `
+      export * from 'core-lib';
+      export * from './types.js';
+      import { Provider } from './Provider.js';
+      import { useHookA } from './useHookA.js';
+      import { useHookB } from './useHookB.js';
+      import { useHookC } from './useHookC.js';
+      import { useHookD } from './useHookD.js';
+      import { useHookE } from './useHookE.js';
+      import { Boundary } from './Boundary.js';
+      import { ErrorReset } from './ErrorReset.js';
+      import { Fetching } from './Fetching.js';
+      import { Mutation } from './Mutation.js';
+      import { Restoring } from './Restoring.js';
+      export {
+        Provider, useHookA, useHookB, useHookC, useHookD, useHookE,
+        Boundary, ErrorReset, Fetching, Mutation, Restoring
+      };
+    `,
+    "node_modules/barrel-lib/types.js": `export const TypeA = "a";`,
+    "node_modules/barrel-lib/Provider.js": `export function Provider(props) { return props.children; }`,
+    "node_modules/barrel-lib/useHookA.js": `export function useHookA() { return null; }`,
+    "node_modules/barrel-lib/useHookB.js": `export function useHookB() { return null; }`,
+    "node_modules/barrel-lib/useHookC.js": `export function useHookC() { return null; }`,
+    "node_modules/barrel-lib/useHookD.js": `export function useHookD() { return null; }`,
+    "node_modules/barrel-lib/useHookE.js": `export function useHookE() { return null; }`,
+    "node_modules/barrel-lib/Boundary.js": `export function Boundary() { return null; }`,
+    "node_modules/barrel-lib/ErrorReset.js": `export function ErrorReset() { return null; }`,
+    "node_modules/barrel-lib/Fetching.js": `export function Fetching() { return null; }`,
+    "node_modules/barrel-lib/Mutation.js": `export function Mutation() { return null; }`,
+    "node_modules/barrel-lib/Restoring.js": `export function Restoring() { return null; }`,
+    "node_modules/core-lib/package.json": JSON.stringify({
+      name: "core-lib",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/core-lib/index.js": `
+      export { createClient } from './client.js';
+      export { Other } from './other.js';
+    `,
+    "node_modules/core-lib/client.js": `
+      export function createClient() { return { ready: true }; }
+    `,
+    "node_modules/core-lib/other.js": `export const Other = "OTHER";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("result: PASS");
+  },
+});
+
 devTest("barrel optimization: two export-from blocks pointing to the same source", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

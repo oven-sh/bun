@@ -315,6 +315,7 @@ pub const FetchHeaders = opaque {
         PingTo,
         Pragma,
         ProxyAuthorization,
+        ProxyConnection,
         Purpose,
         Range,
         Referer,

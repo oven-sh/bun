@@ -1170,6 +1170,7 @@ static int parse_args(int argc, char **argv, struct config *cfg) {
     }
     if (cfg->n_targets == 0) { usage(argv[0]); die("missing <url>"); }
     if (cfg->threads < 1) cfg->threads = 1;
+    if (cfg->threads > 256) cfg->threads = 256;
     if (cfg->connections < cfg->threads) cfg->connections = cfg->threads;
     if (cfg->streams < 1) cfg->streams = 1;
     return 0;

@@ -1359,7 +1359,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             const globalThis = server.globalThis;
             if (response.getFetchHeaders()) |headers| {
                 // first respect the headers
-                if (headers.fastGet(.TransferEncoding)) |transfer_encoding| {
+                if (comptime !http3) if (headers.fastGet(.TransferEncoding)) |transfer_encoding| {
                     const transfer_encoding_str = transfer_encoding.toSlice(server.allocator);
                     defer transfer_encoding_str.deinit();
                     this.renderMetadata();
@@ -1367,7 +1367,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     this.endWithoutBody(this.shouldCloseConnection());
 
                     return;
-                }
+                };
                 if (headers.fastGet(.ContentLength)) |content_length| {
                     const content_length_str = content_length.toSlice(server.allocator);
                     defer content_length_str.deinit();
@@ -2286,6 +2286,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 // RFC 9114 §4.2: connection-specific fields are malformed.
                 headers.fastRemove(.Connection);
                 headers.fastRemove(.KeepAlive);
+                headers.fastRemove(.ProxyConnection);
                 headers.fastRemove(.Upgrade);
             }
             if (this.resp) |resp| headers.toUWSResponse(resp_kind, resp);

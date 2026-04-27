@@ -32,6 +32,13 @@ struct Http3Request {
                 query = q == std::string_view::npos ? std::string_view{} : value.substr(q);
             } else if (name == ":authority") {
                 authority = value;
+            } else if (authority.empty() && name.size() == 4 && equalsIgnoreCase(name, "host")) {
+                /* RFC 9114 §4.3.1: a request must contain :authority OR a
+                 * Host field. Promote the literal Host so getHeader("host"),
+                 * req.url, and the forEachHeader synthesis all agree. QPACK
+                 * delivers pseudo-headers first, so :authority (if any)
+                 * always wins. */
+                authority = value;
             }
         }
     }

@@ -343,6 +343,18 @@ describe.concurrent("socket", () => {
     expect([fileURLToPath(new URL("./kqueue-filter-coalesce-fixture.ts", import.meta.url))]).toRun();
   });
 
+  it("reload() should preserve active_connections (no UAF / counter underflow)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), fileURLToPath(new URL("./socket-reload-fixture.ts", import.meta.url))],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "OK\n", exitCode: 0 });
+    void stderr;
+  }, 30_000);
+
   it("it should not crash when getting a ReferenceError on client socket open", async () => {
     using server = Bun.serve({
       port: 0,

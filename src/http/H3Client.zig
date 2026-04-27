@@ -540,7 +540,7 @@ pub const PendingConnect = struct {
         return this.loop_ptr;
     }
 
-    pub fn onDNSResolved(this: *PendingConnect, _: *bun.dns.internal.Request) void {
+    pub fn onDNSResolved(this: *PendingConnect) void {
         const session = this.session;
         defer {
             session.deref();
@@ -566,7 +566,7 @@ pub const PendingConnect = struct {
     /// us_internal_dns_callback_threadsafe: push onto a mutex-protected list
     /// and wake the loop. `drainResolved` runs from `HTTPThread.drainEvents`
     /// on the next loop iteration after the wakeup.
-    pub fn onDNSResolvedThreadsafe(this: *PendingConnect, _: *bun.dns.internal.Request) void {
+    pub fn onDNSResolvedThreadsafe(this: *PendingConnect) void {
         resolved_mutex.lock();
         this.next = resolved_head;
         resolved_head = this;
@@ -584,7 +584,7 @@ pub const PendingConnect = struct {
         resolved_mutex.unlock();
         while (head) |pc| {
             const next = pc.next;
-            pc.onDNSResolved(undefined);
+            pc.onDNSResolved();
             head = next;
         }
     }

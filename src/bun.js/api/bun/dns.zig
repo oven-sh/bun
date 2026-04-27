@@ -1403,7 +1403,7 @@ pub const internal = struct {
             switch (this) {
                 .socket => |socket| us_internal_dns_callback_threadsafe(socket, req),
                 .prefetch => freeaddrinfo(req, 0),
-                .quic => |pc| pc.onDNSResolvedThreadsafe(req),
+                .quic => |pc| pc.onDNSResolvedThreadsafe(),
             }
         }
 
@@ -1411,7 +1411,7 @@ pub const internal = struct {
             switch (this) {
                 .prefetch => freeaddrinfo(req, 0),
                 .socket => us_internal_dns_callback(this.socket, req),
-                .quic => |pc| pc.onDNSResolved(req),
+                .quic => |pc| pc.onDNSResolved(),
             }
         }
 

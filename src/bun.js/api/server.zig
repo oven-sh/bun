@@ -2750,9 +2750,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     switch (entry.route) {
                         .static => |static_route| {
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *StaticRoute, static_route, entry.path, entry.method);
+                            if (comptime has_h3) if (this.h3_app) |h3_app|
+                                ServerConfig.applyStaticRouteH3(h3_app, *StaticRoute, static_route, entry.path, entry.method);
                         },
                         .file => |file_route| {
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *FileRoute, file_route, entry.path, entry.method);
+                            if (comptime has_h3) if (this.h3_app) |h3_app|
+                                ServerConfig.applyStaticRouteH3(h3_app, *FileRoute, file_route, entry.path, entry.method);
                         },
                         .html => |html_bundle_route| {
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *HTMLBundle.Route, html_bundle_route.data, entry.path, entry.method);

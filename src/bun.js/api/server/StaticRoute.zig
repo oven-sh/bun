@@ -180,7 +180,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
 }
 
 // HEAD requests have no body.
-pub fn onHEADRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void {
+pub fn onHEADRequest(this: *StaticRoute, req: uws.AnyRequest, resp: AnyResponse) void {
     // Check If-None-Match for HEAD requests with 200 status
     if (this.status_code == 200) {
         if (this.render304NotModifiedIfNoneMatch(req, resp)) {
@@ -210,7 +210,7 @@ fn renderMetadataAndEnd(this: *StaticRoute, resp: AnyResponse) void {
     resp.endWithoutBody(resp.shouldCloseConnection());
 }
 
-pub fn onRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void {
+pub fn onRequest(this: *StaticRoute, req: uws.AnyRequest, resp: AnyResponse) void {
     const method = bun.http.Method.find(req.method()) orelse .GET;
     if (method == .GET) {
         this.onGET(req, resp);
@@ -223,7 +223,7 @@ pub fn onRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void 
     }
 }
 
-pub fn onGET(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void {
+pub fn onGET(this: *StaticRoute, req: uws.AnyRequest, resp: AnyResponse) void {
     // Check If-None-Match for GET requests with 200 status
     if (this.status_code == 200) {
         if (this.render304NotModifiedIfNoneMatch(req, resp)) {
@@ -366,7 +366,7 @@ pub fn onWithMethod(this: *StaticRoute, method: bun.http.Method, resp: AnyRespon
     }
 }
 
-fn render304NotModifiedIfNoneMatch(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) bool {
+fn render304NotModifiedIfNoneMatch(this: *StaticRoute, req: uws.AnyRequest, resp: AnyResponse) bool {
     const if_none_match = req.header("if-none-match") orelse return false;
     const etag = this.headers.get("etag") orelse return false;
     if (if_none_match.len == 0 or etag.len == 0) {

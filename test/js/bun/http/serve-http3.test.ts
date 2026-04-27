@@ -81,6 +81,10 @@ const server = serve({
   routes: {
     "/api/:id": req => new Response("id=" + req.params.id, { headers: { "x-route": "api" } }),
     "/route-only": { POST: () => new Response("posted") },
+    "/static": new Response("from-static-route", {
+      headers: { "content-type": "text/plain", etag: '"v1"' },
+    }),
+    "/file-route": Bun.file(process.env.BIG_FILE),
   },
   async fetch(req) {
     const url = new URL(req.url);
@@ -342,6 +346,32 @@ describe("Bun.serve HTTP/3", () => {
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("HTTP/3 requires");
     expect(exitCode).not.toBe(0);
+  });
+
+  itH3("static route (Response value) is mirrored onto H3", async () => {
+    await withServer(async port => {
+      const { stdout, exitCode } = await curl3(port, "/static", ["-D", "-"]);
+      expect(stdout).toContain("HTTP/3 200");
+      expect(stdout).toContain("from-static-route");
+      expect(stdout.toLowerCase()).toContain('etag: "v1"');
+      // If-None-Match -> 304 over H3
+      const second = await curl3(port, "/static", ["-D", "-", "-H", 'if-none-match: "v1"']);
+      expect(second.stdout).toContain("HTTP/3 304");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  itH3("file route (Bun.file value) streams over H3", async () => {
+    await withServer(async port => {
+      const { raw, exitCode } = await curl3(port, "/file-route");
+      expect(raw.length).toBe(200 * 1024);
+      expect(Buffer.from(raw.subarray(0, 8)).toString()).toBe("FILEfile");
+      // Range request over H3 hits the same FileResponseStream path
+      const ranged = await curl3(port, "/file-route", ["-D", "-", "-H", "range: bytes=4-11"]);
+      expect(ranged.stdout).toContain("HTTP/3 206");
+      expect(ranged.stdout.split("\r\n\r\n")[1]).toBe("file" + "FILE");
+      expect(exitCode).toBe(0);
+    });
   });
 
   test("validation: h1:false without h3 throws", async () => {

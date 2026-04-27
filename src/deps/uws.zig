@@ -13,6 +13,7 @@ pub const WindowsNamedPipe = @import("./uws/WindowsNamedPipe.zig");
 pub const PosixLoop = @import("./uws/Loop.zig").PosixLoop;
 pub const WindowsLoop = @import("./uws/Loop.zig").WindowsLoop;
 pub const Request = @import("./uws/Request.zig").Request;
+pub const AnyRequest = @import("./uws/Request.zig").AnyRequest;
 pub const AnyResponse = @import("./uws/Response.zig").AnyResponse;
 pub const NewApp = @import("./uws/App.zig").NewApp;
 pub const uws_res = @import("./uws/Response.zig").uws_res;

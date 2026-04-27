@@ -218,14 +218,14 @@ pub fn applyStaticRoute(server: AnyServer, comptime ssl: bool, app: *uws.NewApp(
     entry.server = server;
     const handler_wrap = struct {
         pub fn handler(route: T, req: *uws.Request, resp: *uws.NewApp(ssl).Response) void {
-            route.onRequest(req, switch (comptime ssl) {
+            route.onRequest(.{ .h1 = req }, switch (comptime ssl) {
                 true => .{ .SSL = resp },
                 false => .{ .TCP = resp },
             });
         }
 
         pub fn HEAD(route: T, req: *uws.Request, resp: *uws.NewApp(ssl).Response) void {
-            route.onHEADRequest(req, switch (comptime ssl) {
+            route.onHEADRequest(.{ .h1 = req }, switch (comptime ssl) {
                 true => .{ .SSL = resp },
                 false => .{ .TCP = resp },
             });
@@ -241,6 +241,26 @@ pub fn applyStaticRoute(server: AnyServer, comptime ssl: bool, app: *uws.NewApp(
             while (iter.next()) |method_| {
                 app.method(method_, path, T, entry, handler_wrap.handler);
             }
+        },
+    }
+}
+
+pub fn applyStaticRouteH3(app: *uws.H3.App, comptime T: type, entry: T, path: []const u8, method: HTTP.Method.Optional) void {
+    if (comptime bun.Environment.isWindows) unreachable;
+    const handler_wrap = struct {
+        pub fn handler(route: T, req: *uws.H3.Request, resp: *uws.H3.Response) void {
+            route.onRequest(.{ .h3 = req }, .{ .H3 = resp });
+        }
+        pub fn HEAD(route: T, req: *uws.H3.Request, resp: *uws.H3.Response) void {
+            route.onHEADRequest(.{ .h3 = req }, .{ .H3 = resp });
+        }
+    };
+    app.head(path, T, entry, handler_wrap.HEAD);
+    switch (method) {
+        .any => app.any(path, T, entry, handler_wrap.handler),
+        .method => |*m| {
+            var iter = m.iterator();
+            while (iter.next()) |method_| app.method(method_, path, T, entry, handler_wrap.handler);
         },
     }
 }

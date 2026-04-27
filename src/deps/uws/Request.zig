@@ -1,3 +1,37 @@
+/// Transport-agnostic request handle. Static/file routes (and RangeRequest)
+/// take this so the same handler body serves HTTP/1.1 and HTTP/3 without
+/// `anytype` — `inline else` keeps dispatch monomorphic.
+pub const AnyRequest = union(enum) {
+    h1: *Request,
+    h3: if (bun.Environment.isWindows) noreturn else *uws.H3.Request,
+
+    pub fn header(this: AnyRequest, name: []const u8) ?[]const u8 {
+        return switch (this) {
+            inline else => |r| r.header(name),
+        };
+    }
+    pub fn method(this: AnyRequest) []const u8 {
+        return switch (this) {
+            inline else => |r| r.method(),
+        };
+    }
+    pub fn url(this: AnyRequest) []const u8 {
+        return switch (this) {
+            inline else => |r| r.url(),
+        };
+    }
+    pub fn setYield(this: AnyRequest, y: bool) void {
+        switch (this) {
+            inline else => |r| r.setYield(y),
+        }
+    }
+    pub fn dateForHeader(this: AnyRequest, name: []const u8) bun.JSError!?u64 {
+        return switch (this) {
+            inline else => |r| r.dateForHeader(name),
+        };
+    }
+};
+
 /// uWS::Request C++ -> Zig bindings.
 pub const Request = opaque {
     pub fn isAncient(req: *Request) bool {
@@ -58,4 +92,5 @@ const c = struct {
 };
 
 const bun = @import("bun");
+const uws = bun.uws;
 const std = @import("std");

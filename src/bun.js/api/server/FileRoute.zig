@@ -143,17 +143,17 @@ fn writeStatusCode(_: *FileRoute, status: u16, resp: AnyResponse) void {
     }
 }
 
-pub fn onHEADRequest(this: *FileRoute, req: *uws.Request, resp: AnyResponse) void {
+pub fn onHEADRequest(this: *FileRoute, req: uws.AnyRequest, resp: AnyResponse) void {
     bun.debugAssert(this.server != null);
 
     this.on(req, resp, .HEAD);
 }
 
-pub fn onRequest(this: *FileRoute, req: *uws.Request, resp: AnyResponse) void {
+pub fn onRequest(this: *FileRoute, req: uws.AnyRequest, resp: AnyResponse) void {
     this.on(req, resp, bun.http.Method.find(req.method()) orelse .GET);
 }
 
-pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.http.Method) void {
+pub fn on(this: *FileRoute, req: uws.AnyRequest, resp: AnyResponse, method: bun.http.Method) void {
     bun.debugAssert(this.server != null);
     this.ref();
     if (this.server) |server| {

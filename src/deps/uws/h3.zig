@@ -34,6 +34,14 @@ pub const Request = opaque {
         const n = c.uws_h3_req_get_header(this, name.ptr, name.len, &p);
         return if (n == 0) null else p[0..n];
     }
+    pub fn dateForHeader(this: *Request, name: []const u8) bun.JSError!?u64 {
+        const value = this.header(name) orelse return null;
+        var s = bun.String.init(value);
+        defer s.deref();
+        const ms = try s.parseDate(bun.jsc.VirtualMachine.get().global);
+        if (!std.math.isNan(ms) and std.math.isFinite(ms)) return @intFromFloat(ms);
+        return null;
+    }
     pub fn query(this: *Request, name: []const u8) []const u8 {
         var p: [*]const u8 = undefined;
         return p[0..c.uws_h3_req_get_query(this, name.ptr, name.len, &p)];

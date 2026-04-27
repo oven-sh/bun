@@ -127,12 +127,12 @@ pub const Route = struct {
         }
     };
 
-    pub fn onRequest(this: *Route, req: *uws.Request, resp: HTTPResponse) void {
-        this.onAnyRequest(req, resp, false);
+    pub fn onRequest(this: *Route, req: uws.AnyRequest, resp: HTTPResponse) void {
+        this.onAnyRequest(req.h1, resp, false);
     }
 
-    pub fn onHEADRequest(this: *Route, req: *uws.Request, resp: HTTPResponse) void {
-        this.onAnyRequest(req, resp, true);
+    pub fn onHEADRequest(this: *Route, req: uws.AnyRequest, resp: HTTPResponse) void {
+        this.onAnyRequest(req.h1, resp, true);
     }
 
     fn onAnyRequest(this: *Route, req: *uws.Request, resp: HTTPResponse, is_head: bool) void {
@@ -198,9 +198,9 @@ pub const Route = struct {
                 if (bun.Environment.enable_logs)
                     debug("onRequest: {s} - html", .{req.url()});
                 if (is_head) {
-                    html.onHEADRequest(req, resp);
+                    html.onHEADRequest(.{ .h1 = req }, resp);
                 } else {
-                    html.onRequest(req, resp);
+                    html.onRequest(.{ .h1 = req }, resp);
                 }
             },
         }

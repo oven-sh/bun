@@ -195,7 +195,8 @@ static uint64_t now_ns(void) {
 static void on_sigint(int sig) {
     (void)sig;
     if (g_intr) {
-        if (g_isatty) write(STDERR_FILENO, "\x1b[?7h\x1b[?25h", 12);
+        static const char restore[] = "\x1b[?7h\x1b[?25h";
+        if (g_isatty) write(STDERR_FILENO, restore, sizeof(restore) - 1);
         _exit(130);
     }
     g_intr = 1;

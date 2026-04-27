@@ -380,6 +380,29 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
+  // A method-specific "/*" must not suppress the fetch() fallback for the
+  // other methods on the H3 router (it doesn't on H1).
+  itH3("routes: method-specific '/*' falls through to fetch() on other methods", async () => {
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      const server = Bun.serve({
+        port: 0, tls, h3: true,
+        routes: { "/*": { GET: () => new Response("from-route") } },
+        fetch: req => new Response("from-fetch:" + req.method),
+      });
+      console.error("PORT=" + server.port);
+      process.stdin.on("data", () => {});
+    `;
+    await withCustomServer(script, async port => {
+      const get = await curl3(port, "/anything");
+      expect(get.stdout).toBe("from-route");
+      const post = await curl3(port, "/anything", ["-X", "POST"]);
+      expect(post.stdout).toBe("from-fetch:POST");
+      const put = await curl3(port, "/anything", ["-X", "PUT", "-d", "x"]);
+      expect(put.stdout).toBe("from-fetch:PUT");
+    });
+  });
+
   itH3("ReadableStream response body", async () => {
     await withServer(async port => {
       const { stdout, exitCode } = await curl3(port, "/stream");

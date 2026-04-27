@@ -2829,6 +2829,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 app.get("/bun:info", *ThisServer, this, onBunInfoRequest);
             }
 
+            // Snapshot "/*" coverage from user/static routes before DevServer
+            // (which is H1-only and not mirrored to the H3 router) marks it
+            // as full.
+            const h3_star_covered = star_methods_covered_by_user;
+            _ = &h3_star_covered;
+
             // --- 8. Handle DevServer routes & Track "/*" Coverage ---
             var has_dev_server_for_star_path = false;
             if (dev_server) |dev| {
@@ -2881,17 +2887,32 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
-            // H3 fallback. HttpRouter::add replaces same-pattern entries, so
-            // skip when a user/static "/*" route was already mirrored — the
-            // fallback would otherwise overwrite it.
+            // H3 fallback — same three-way as H1 above, but driven by
+            // user/static "/*" coverage only (DevServer routes are not mirrored
+            // to H3). h3_app.any("/*") would overwrite a user .any "/*"
+            // mirrored at line 2714, so skip when coverage is already full;
+            // for method-specific "/*" routes fill the complement per method.
             if (comptime ssl_enabled and !bun.Environment.isWindows) {
-                if (this.h3_app) |h3_app| if (!has_any_user_route_for_star_path and !has_static_route_for_star_path) {
-                    if (this.config.onRequest != .zero) {
+                if (this.h3_app) |h3_app| {
+                    if (h3_star_covered.eql(bun.http.Method.Set.initFull())) {
+                        // user/static "/*" already covers every method
+                    } else if (has_any_user_route_for_star_path or has_static_route_for_star_path) {
+                        var uncovered = h3_star_covered;
+                        uncovered.toggleAll();
+                        var iter = uncovered.iterator();
+                        while (iter.next()) |m| {
+                            if (this.config.onRequest != .zero) {
+                                h3_app.method(m, "/*", *ThisServer, this, onH3Request);
+                            } else {
+                                h3_app.method(m, "/*", *ThisServer, this, onH3404);
+                            }
+                        }
+                    } else if (this.config.onRequest != .zero) {
                         h3_app.any("/*", *ThisServer, this, onH3Request);
                     } else {
                         h3_app.any("/*", *ThisServer, this, onH3404);
                     }
-                };
+                }
             }
 
             if (should_add_chrome_devtools_json_route) {

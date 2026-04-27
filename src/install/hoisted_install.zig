@@ -388,6 +388,8 @@ fn pruneStaleWorkspaceNodeModules(this: *PackageManager) !void {
     const deps = lockfile.buffers.dependencies.items;
     const trees = lockfile.buffers.trees.items;
 
+    if (trees.len == 0) return;
+
     // Map of workspace-relative `node_modules` path (posix separators) to the
     // set of dependency folder names the tree currently places there. The
     // keys are small strings owned by a scratch arena so they stay alive
@@ -398,6 +400,13 @@ fn pruneStaleWorkspaceNodeModules(this: *PackageManager) !void {
 
     var expected_by_path = bun.StringArrayHashMap(bun.StringHashMap(void)).init(scratch);
 
+    // Set of workspace package IDs that survived the lockfile filter. After
+    // `filter()`, the root tree's dependency list only contains workspaces
+    // that are in scope for this install (e.g. not excluded by `--filter`).
+    // We only prune workspaces that are in scope — touching node_modules of
+    // an out-of-scope workspace would be user-visible damage.
+    var in_scope_workspaces = std.AutoHashMap(PackageID, void).init(scratch);
+
     // Compute the `node_modules` path for every tree and collect the folder
     // names of its direct dependencies. `relativePathAndDepth` assumes the
     // first `"node_modules".len` bytes of the buffer are already written with
@@ -405,6 +414,8 @@ fn pruneStaleWorkspaceNodeModules(this: *PackageManager) !void {
     var path_buf: bun.PathBuffer = undefined;
     @memcpy(path_buf[0.."node_modules".len], "node_modules");
     var depth_buf: Lockfile.Tree.DepthBuf = undefined;
+    const resolutions = lockfile.buffers.resolutions.items;
+    const pkg_resolutions = lockfile.packages.items(.resolution);
     for (trees) |tree| {
         const rel_path, _ = Lockfile.Tree.relativePathAndDepth(
             lockfile,
@@ -430,13 +441,30 @@ fn pruneStaleWorkspaceNodeModules(this: *PackageManager) !void {
             const dep_name = deps[dep_id].name.slice(string_buf);
             if (dep_name.len == 0) continue;
             try gop.value_ptr.put(try scratch.dupe(u8, dep_name), {});
+
+            // For the root tree, every workspace dep listed here is in scope.
+            if (tree.id == 0 and dep_id < resolutions.len) {
+                const pkg_id = resolutions[dep_id];
+                if (pkg_id < pkg_resolutions.len and pkg_resolutions[pkg_id].tag == .workspace) {
+                    try in_scope_workspaces.put(pkg_id, {});
+                }
+            }
         }
     }
 
-    // Prune each workspace's node_modules against the expected set.
-    for (lockfile.workspace_paths.values()) |workspace_path_str| {
+    // Prune each in-scope workspace's node_modules against the expected set.
+    const workspace_hashes = lockfile.workspace_paths.keys();
+    const workspace_paths = lockfile.workspace_paths.values();
+    for (workspace_hashes, workspace_paths) |name_hash, workspace_path_str| {
         const workspace_path = workspace_path_str.slice(string_buf);
         if (workspace_path.len == 0) continue;
+
+        // Skip workspaces not included in this install (e.g. filtered out by
+        // `--filter`) — their node_modules belong to a different install and
+        // we must leave them alone.
+        const ws_pkg_id = lockfile.getWorkspacePackageID(name_hash);
+        if (ws_pkg_id == 0) continue; // Defensive: 0 is the root, not a child workspace.
+        if (!in_scope_workspaces.contains(ws_pkg_id)) continue;
 
         // Build `<workspace_path>/node_modules` with posix separators, matching
         // the tree's relative path format (the tree iterator uses posix on

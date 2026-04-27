@@ -32,6 +32,7 @@ pub const JSType = enum(c_uint) {
     kJSTypeString,
     kJSTypeObject,
     kJSTypeSymbol,
+    kJSTypeBigInt,
 };
 pub const kJSTypeUndefined = @intFromEnum(JSType.kJSTypeUndefined);
 pub const kJSTypeNull = @intFromEnum(JSType.kJSTypeNull);
@@ -40,6 +41,7 @@ pub const kJSTypeNumber = @intFromEnum(JSType.kJSTypeNumber);
 pub const kJSTypeString = @intFromEnum(JSType.kJSTypeString);
 pub const kJSTypeObject = @intFromEnum(JSType.kJSTypeObject);
 pub const kJSTypeSymbol = @intFromEnum(JSType.kJSTypeSymbol);
+pub const kJSTypeBigInt = @intFromEnum(JSType.kJSTypeBigInt);
 /// From JSValueRef.h:81
 pub const JSTypedArrayType = enum(c_uint) {
     kJSTypedArrayTypeInt8Array,

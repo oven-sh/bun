@@ -89,7 +89,8 @@ void uws_h3_app_listen_with_config(uws_h3_app_t* app, const char* host, uint16_t
 }
 
 int uws_h3_listen_socket_port(us_quic_listen_socket_t* ls) { return us_quic_listen_socket_port(ls); }
-int uws_h3_listen_socket_local_address(us_quic_listen_socket_t* ls, char* buf, int len) {
+int uws_h3_listen_socket_local_address(us_quic_listen_socket_t* ls, char* buf, int len)
+{
     return us_quic_listen_socket_local_address(ls, buf, len);
 }
 void uws_h3_listen_socket_close(us_quic_listen_socket_t* ls) { us_quic_listen_socket_close(ls); }

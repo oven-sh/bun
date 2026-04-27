@@ -199,6 +199,7 @@ fn fetchImpl(
     var is_error = false;
     var upgraded_connection = false;
     var force_http2 = false;
+    var force_http1 = false;
     var allocator = bun.default_allocator;
 
     if (arguments.len == 0) {
@@ -531,7 +532,9 @@ fn fetchImpl(
                         defer str.deref();
                         if (str.eqlComptime("http2") or str.eqlComptime("h2")) {
                             force_http2 = true;
-                        } else if (!str.eqlComptime("http1.1") and !str.eqlComptime("h1")) {
+                        } else if (str.eqlComptime("http1.1") or str.eqlComptime("h1")) {
+                            force_http1 = true;
+                        } else {
                             is_error = true;
                             return globalThis.throwInvalidArguments("fetch: 'protocol' must be \"http2\", \"h2\", \"http1.1\", or \"h1\"", .{});
                         }
@@ -1440,6 +1443,7 @@ fn fetchImpl(
             .hostname = hostname,
             .upgraded_connection = upgraded_connection,
             .force_http2 = force_http2,
+            .force_http1 = force_http1,
             .check_server_identity = if (check_server_identity.isEmptyOrUndefinedOrNull()) .empty else .create(check_server_identity, globalThis),
             .unix_socket_path = unix_socket_path,
         },

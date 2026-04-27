@@ -207,6 +207,7 @@ pub fn onOpen(
 /// no sendfile). Either the experimental env-var or `protocol: "http2"` on
 /// the fetch options enables it.
 pub fn canOfferH2(client: *const HTTPClient) bool {
+    if (client.flags.force_http1) return false;
     if (client.http_proxy != null) return false;
     if (client.flags.is_preconnect_only) return false;
     if (client.unix_socket_path.length() > 0) return false;
@@ -577,7 +578,9 @@ pub const Flags = packed struct(u16) {
     /// Set by `fetch(url, { protocol: "http2" })`: ALPN advertises only h2
     /// and the request fails if the server selects anything else.
     force_http2: bool = false,
-    _padding: u1 = 0,
+    /// Set by `fetch(url, { protocol: "http1.1" })`: opt out of h2 even when
+    /// the experimental env flag would otherwise advertise it.
+    force_http1: bool = false,
 };
 
 // TODO: reduce the size of this struct

@@ -1197,6 +1197,27 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     }
   });
 
+  test('protocol: "http1.1" overrides the env flag and pins ALPN to http/1.1', async () => {
+    // Server is h2-only: the unpinned fetch (env flag on) negotiates h2, while
+    // the pinned fetch advertises only http/1.1 and is rejected at ALPN —
+    // proving the pin actually reached the ClientHello.
+    await withH2Server(
+      (req, res) => res.end(req.httpVersion),
+      async url => {
+        await using proc = spawnFetch(`
+          const tls = { rejectUnauthorized: false };
+          const a = await fetch("${url}", { tls }).then(r => r.text());
+          const b = await fetch("${url}", { protocol: "http1.1", tls }).then(r => r.text(), e => "rejected");
+          console.log(a, b);
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout.trim()).toBe("2.0 rejected");
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
   test('protocol: "http2" on a plain http:// URL fails with HTTP2Unsupported', async () => {
     // h2c is out of scope; without an explicit check the request would
     // silently complete over HTTP/1.1.

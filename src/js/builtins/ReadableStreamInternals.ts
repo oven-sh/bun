@@ -1925,8 +1925,6 @@ export function readableStreamFromAsyncIterator(target, fn) {
 }
 
 export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultController {
-  const closer = [false];
-
   function callClose(controller: ReadableStreamDefaultController) {
     try {
       var source = controller.$underlyingSource;
@@ -2009,6 +2007,16 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
 
     autoAllocateChunkSize = 0;
     #closed = false;
+
+    // EOF signal array passed to `handle.pull(view, closer)`. Native code
+    // writes `closer[0] = true` synchronously on EOF and the pull callback
+    // reads it back (including after awaiting a pending pull promise).
+    // MUST be per-instance: if this were a factory-scope constant it would
+    // be shared across every NativeReadableStreamSource backed by the same
+    // prototype (e.g. stdin + a fetch() response body, or two concurrent
+    // fetch() bodies), and one instance's EOF could incorrectly close
+    // another. See #29787.
+    #closer: [boolean] = [false];
 
     $data?: Uint8Array;
 
@@ -2103,6 +2111,7 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
         this.#controller = new WeakRef(controller);
       }
 
+      const closer = this.#closer;
       closer[0] = false;
 
       if (this.$data) {

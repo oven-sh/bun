@@ -615,6 +615,13 @@ pub const ClientSession = struct {
             var header: wire.FrameHeader = .{ .flags = 0 };
             wire.FrameHeader.from(&header, buf[0..wire.FrameHeader.byteSize], 0, true);
             header.streamIdentifier = wire.UInt31WithReserved.from(header.streamIdentifier).uint31;
+            // RFC 9113 §4.2: a frame larger than the local SETTINGS_MAX_FRAME_SIZE
+            // (we never advertise above the 16384 default) is a connection
+            // FRAME_SIZE_ERROR. Bounding here also caps `read_buffer` growth.
+            if (header.length > wire.DEFAULT_MAX_FRAME_SIZE) {
+                this.fatal_error = error.HTTP2FrameSizeError;
+                break;
+            }
             const frame_len = wire.FrameHeader.byteSize + @as(usize, header.length);
             if (buf.len < frame_len) break;
             this.dispatchFrame(header, buf[wire.FrameHeader.byteSize..frame_len]);
@@ -922,7 +929,21 @@ pub const ClientSession = struct {
 
         switch (@as(wire.FrameType, @enumFromInt(header.type))) {
             .HTTP_FRAME_SETTINGS => {
-                if (header.flags & @intFromEnum(wire.SettingsFlags.ACK) != 0) return;
+                // RFC 9113 §6.5: stream id != 0 is PROTOCOL_ERROR; ACK with a
+                // payload, or a non-ACK whose length isn't a multiple of 6, is
+                // FRAME_SIZE_ERROR.
+                if (header.streamIdentifier != 0) {
+                    this.fatal_error = error.HTTP2ProtocolError;
+                    return;
+                }
+                if (header.flags & @intFromEnum(wire.SettingsFlags.ACK) != 0) {
+                    if (header.length != 0) this.fatal_error = error.HTTP2FrameSizeError;
+                    return;
+                }
+                if (header.length % wire.SettingsPayloadUnit.byteSize != 0) {
+                    this.fatal_error = error.HTTP2FrameSizeError;
+                    return;
+                }
                 var i: usize = 0;
                 while (i + wire.SettingsPayloadUnit.byteSize <= payload.len) : (i += wire.SettingsPayloadUnit.byteSize) {
                     var unit: wire.SettingsPayloadUnit = undefined;
@@ -975,7 +996,10 @@ pub const ClientSession = struct {
                 this.settings_received = true;
             },
             .HTTP_FRAME_WINDOW_UPDATE => {
-                if (payload.len < 4) return;
+                if (header.length != 4) {
+                    this.fatal_error = error.HTTP2FrameSizeError;
+                    return;
+                }
                 const inc: i32 = @intCast(wire.UInt31WithReserved.fromBytes(payload[0..4]).uint31);
                 if (header.streamIdentifier == 0) {
                     // RFC 9113 §6.9: zero increment on stream 0 is a
@@ -1142,8 +1166,20 @@ pub const ClientSession = struct {
                 }
             },
             .HTTP_FRAME_RST_STREAM => {
-                const stream = this.streams.get(@intCast(header.streamIdentifier)) orelse return;
-                const code: u32 = if (payload.len >= 4) wire.u32FromBytes(payload[0..4]) else 0;
+                if (header.length != 4) {
+                    this.fatal_error = error.HTTP2FrameSizeError;
+                    return;
+                }
+                const stream_id: u31 = @intCast(header.streamIdentifier);
+                // RFC 9113 §6.4: stream 0, or an idle stream (one we never
+                // opened — even ids included since push is disabled), is a
+                // connection PROTOCOL_ERROR.
+                if (stream_id == 0 or stream_id & 1 == 0 or stream_id >= this.next_stream_id) {
+                    this.fatal_error = error.HTTP2ProtocolError;
+                    return;
+                }
+                const stream = this.streams.get(stream_id) orelse return;
+                const code: u32 = wire.u32FromBytes(payload[0..4]);
                 stream.fatal_error = switch (code) {
                     @intFromEnum(wire.ErrorCode.NO_ERROR) => blk: {
                         stream.end_stream_received = true;
@@ -1157,9 +1193,17 @@ pub const ClientSession = struct {
                 };
             },
             .HTTP_FRAME_GOAWAY => {
+                if (header.streamIdentifier != 0) {
+                    this.fatal_error = error.HTTP2ProtocolError;
+                    return;
+                }
+                if (header.length < 8) {
+                    this.fatal_error = error.HTTP2FrameSizeError;
+                    return;
+                }
                 this.goaway_received = true;
-                this.goaway_last_stream_id = if (payload.len >= 4) wire.UInt31WithReserved.fromBytes(payload[0..4]).uint31 else 0;
-                const code: u32 = if (payload.len >= 8) wire.u32FromBytes(payload[4..8]) else 0;
+                this.goaway_last_stream_id = wire.UInt31WithReserved.fromBytes(payload[0..4]).uint31;
+                const code: u32 = wire.u32FromBytes(payload[4..8]);
                 const graceful = code == @intFromEnum(wire.ErrorCode.NO_ERROR);
                 var it = this.streams.iterator();
                 while (it.next()) |e| {

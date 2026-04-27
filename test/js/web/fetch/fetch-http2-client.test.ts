@@ -1152,6 +1152,66 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       );
     });
 
+    test("frame larger than the local SETTINGS_MAX_FRAME_SIZE is a connection FRAME_SIZE_ERROR", async () => {
+      // RFC 9113 §4.2. We never advertise above the 16384 default, so a peer
+      // declaring a 16385-byte payload is a connection error and must not be
+      // buffered (the unbounded path would let a peer balloon read_buffer to
+      // ~16 MiB).
+      await withRawH2Server(
+        (conn, id) => {
+          void id;
+          conn.socket.write(frame(0, 0, 1, Buffer.alloc(16385)));
+        },
+        async url => {
+          await using proc = spawnFetch(`
+            try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
+            catch (e) { console.log("rejected", e.code); }
+          `);
+          const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stdout.trim()).toBe("rejected HTTP2FrameSizeError");
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
+
+    test("SETTINGS frame on a non-zero stream id is a connection PROTOCOL_ERROR", async () => {
+      // RFC 9113 §6.5.
+      await withRawH2Server(
+        (conn, id) => {
+          conn.socket.write(frame(4, 0, 1));
+          conn.headers(id, hpackStatus(200), { endStream: true });
+        },
+        async url => {
+          await using proc = spawnFetch(`
+            try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
+            catch (e) { console.log("rejected", e.code); }
+          `);
+          const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stdout.trim()).toBe("rejected HTTP2ProtocolError");
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
+
+    test("RST_STREAM on an idle stream is a connection PROTOCOL_ERROR", async () => {
+      // RFC 9113 §6.4.
+      await withRawH2Server(
+        (conn, id) => {
+          conn.rst(id + 2, 0);
+          conn.headers(id, hpackStatus(200), { endStream: true });
+        },
+        async url => {
+          await using proc = spawnFetch(`
+            try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
+            catch (e) { console.log("rejected", e.code); }
+          `);
+          const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stdout.trim()).toBe("rejected HTTP2ProtocolError");
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
+
     test("PING with length != 8 is a connection FRAME_SIZE_ERROR", async () => {
       // RFC 9113 §6.7.
       await withRawH2Server(

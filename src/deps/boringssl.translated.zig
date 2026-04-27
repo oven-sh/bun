@@ -19058,12 +19058,18 @@ pub const SSL = opaque {
     }
 
     pub fn configureHTTPClient(ssl: *SSL, hostname: [:0]const u8) void {
+        configureHTTPClientWithALPN(ssl, hostname, false);
+    }
+
+    pub fn configureHTTPClientWithALPN(ssl: *SSL, hostname: [:0]const u8, offer_h2: bool) void {
         if (hostname.len > 0) ssl.setHostname(hostname);
         _ = SSL_clear_options(ssl, SSL_OP_LEGACY_SERVER_CONNECT);
         _ = SSL_set_options(ssl, SSL_OP_LEGACY_SERVER_CONNECT);
 
-        const alpns = &[_]u8{ 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
-        bun.assert(SSL_set_alpn_protos(ssl, alpns, alpns.len) == 0);
+        const alpn_h1 = &[_]u8{ 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
+        const alpn_h2_h1 = &[_]u8{ 2, 'h', '2', 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
+        const alpns: []const u8 = if (offer_h2) alpn_h2_h1 else alpn_h1;
+        bun.assert(SSL_set_alpn_protos(ssl, alpns.ptr, alpns.len) == 0);
 
         SSL_enable_signed_cert_timestamps(ssl);
         SSL_enable_ocsp_stapling(ssl);

@@ -26,7 +26,7 @@ const max_request_headers = 256;
 var shared_request_headers_buf: [max_request_headers]picohttp.Header = undefined;
 
 // this doesn't need to be stack memory because it is immediately cloned after use
-var shared_response_headers_buf: [256]picohttp.Header = undefined;
+pub var shared_response_headers_buf: [256]picohttp.Header = undefined;
 
 pub const end_of_chunked_http1_1_encoding_response_body = "0\r\n\r\n";
 
@@ -195,11 +195,24 @@ pub fn onOpen(
 
             defer if (hostname_needs_free) bun.default_allocator.free(hostname);
 
-            ssl_ptr.configureHTTPClient(hostname);
+            ssl_ptr.configureHTTPClientWithALPN(hostname, client.canOfferH2());
         }
     } else {
         client.firstCall(is_ssl, socket);
     }
+}
+
+/// Whether to advertise "h2" in the TLS ALPN list. Gated behind the
+/// experimental feature flag and restricted to request shapes the HTTP/2
+/// path currently handles end-to-end (buffered `.bytes` bodies, no proxy,
+/// no Upgrade). Anything else stays on the HTTP/1.1 path.
+fn canOfferH2(client: *const HTTPClient) bool {
+    if (!bun.feature_flag.BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT.get()) return false;
+    if (client.http_proxy != null) return false;
+    if (client.flags.is_preconnect_only) return false;
+    if (client.unix_socket_path.length() > 0) return false;
+    if (client.state.original_request_body != .bytes) return false;
+    return true;
 }
 
 pub fn firstCall(
@@ -214,12 +227,58 @@ pub fn firstCall(
         }
     }
 
+    if (comptime is_ssl) {
+        const ssl_ptr: *BoringSSL.SSL = @ptrCast(socket.getNativeHandle());
+        var proto: [*c]const u8 = null;
+        var proto_len: c_uint = 0;
+        BoringSSL.SSL_get0_alpn_selected(ssl_ptr, &proto, &proto_len);
+        if (proto != null and proto_len == 2 and proto[0] == 'h' and proto[1] == '2') {
+            client.flags.protocol = .http2;
+        } else {
+            client.flags.protocol = .http1_1;
+        }
+    }
+
+    if (client.flags.protocol == .http2) {
+        return client.startH2(is_ssl, socket);
+    }
+
     switch (client.state.request_stage) {
         .opened, .pending => {
             client.onWritable(true, comptime is_ssl, socket);
         },
         else => {},
     }
+}
+
+fn startH2(client: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    log("ALPN negotiated h2 {s}", .{client.url.href});
+    // The HTTP/2 path doesn't yet share connections through the keep-alive
+    // pool because the pool stores bare sockets without HPACK state. Disable
+    // pooling so the socket is closed when this request finishes.
+    client.flags.disable_keepalive = true;
+    // Don't fall back to HTTP/1.1 retry; the server already accepted h2.
+    client.allow_retry = false;
+
+    if (client.h2 == null) client.h2 = H2.ClientSession.create();
+    const session = client.h2.?;
+
+    client.setTimeout(socket, 5);
+    const request = client.buildRequest(client.state.original_request_body.len());
+    session.writeRequest(client, request) catch |err| {
+        client.closeAndFail(err, is_ssl, socket);
+        return;
+    };
+    if (client.verbose != .none) {
+        printRequest(request, client.url.href, !client.flags.reject_unauthorized, client.state.request_body, client.verbose == .curl);
+    }
+    client.state.request_stage = .done;
+    client.state.response_stage = .headers;
+
+    _ = session.flush(is_ssl, socket) catch |err| {
+        client.closeAndFail(err, is_ssl, socket);
+        return;
+    };
 }
 pub fn onClose(
     client: *HTTPClient,
@@ -232,6 +291,16 @@ pub fn onClose(
 
     if (client.signals.get(.aborted)) {
         client.fail(error.Aborted);
+        return;
+    }
+    if (client.flags.protocol == .http2) {
+        if (client.h2) |session| {
+            client.h2 = null;
+            session.deinit();
+        }
+        if (client.state.stage != .done and client.state.stage != .fail) {
+            client.fail(error.ConnectionClosed);
+        }
         return;
     }
     if (client.proxy_tunnel) |tunnel| {
@@ -473,6 +542,12 @@ const HTTPUpgradeState = enum(u2) {
     pending = 1,
     upgraded = 2,
 };
+
+pub const Protocol = enum(u1) {
+    http1_1 = 0,
+    http2 = 1,
+};
+
 pub const Flags = packed struct(u16) {
     disable_timeout: bool = false,
     disable_keepalive: bool = false,
@@ -486,7 +561,8 @@ pub const Flags = packed struct(u16) {
     is_streaming_request_body: bool = false,
     defer_fail_until_connecting_is_complete: bool = false,
     upgrade_state: HTTPUpgradeState = .none,
-    _padding: u3 = 0,
+    protocol: Protocol = .http1_1,
+    _padding: u2 = 0,
 };
 
 // TODO: reduce the size of this struct
@@ -522,6 +598,8 @@ http_proxy: ?URL = null,
 proxy_headers: ?Headers = null,
 proxy_authorization: ?[]u8 = null,
 proxy_tunnel: ?*ProxyTunnel = null,
+/// Allocated on ALPN selecting "h2"; null on the HTTP/1.1 path.
+h2: ?*H2.ClientSession = null,
 signals: Signals = .{},
 async_http_id: u32 = 0,
 hostname: ?[]u8 = null,
@@ -543,6 +621,10 @@ pub fn deinit(this: *HTTPClient) void {
     if (this.proxy_tunnel) |tunnel| {
         this.proxy_tunnel = null;
         tunnel.detachAndDeref();
+    }
+    if (this.h2) |session| {
+        this.h2 = null;
+        session.deinit();
     }
     // Release our strong ref on the interned SSLConfig
     if (this.tls_props) |*tls| tls.deinit();
@@ -981,6 +1063,11 @@ pub fn doRedirect(
         this.proxy_tunnel = null;
         tunnel.detachAndDeref();
     }
+    if (this.h2) |session| {
+        this.h2 = null;
+        session.deinit();
+    }
+    this.flags.protocol = .http1_1;
 
     return this.start(.{ .bytes = request_body }, body_out_str);
 }
@@ -1355,6 +1442,16 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             this.onPreconnect(is_ssl, socket);
             return;
         }
+    }
+
+    if (this.flags.protocol == .http2) {
+        if (this.h2) |session| {
+            this.setTimeout(socket, 5);
+            _ = session.flush(is_ssl, socket) catch |err| {
+                this.closeAndFail(err, is_ssl, socket);
+            };
+        }
+        return;
     }
 
     if (this.proxy_tunnel) |proxy| {
@@ -1777,6 +1874,14 @@ pub fn onData(
         return;
     }
 
+    if (this.flags.protocol == .http2) {
+        if (this.h2) |session| {
+            this.setTimeout(socket, 5);
+            session.onData(this, is_ssl, incoming_data, ctx, socket);
+        }
+        return;
+    }
+
     if (this.proxy_tunnel) |proxy| {
         // if we have a tunnel we dont care about the other stages, we will just tunnel the data
         this.setTimeout(socket, 5);
@@ -1846,6 +1951,10 @@ fn completeConnectingProcess(this: *HTTPClient) void {
 fn fail(this: *HTTPClient, err: anyerror) void {
     this.unregisterAbortTracker();
 
+    if (this.h2) |session| {
+        this.h2 = null;
+        session.deinit();
+    }
     if (this.proxy_tunnel) |tunnel| {
         this.proxy_tunnel = null;
         tunnel.shutdown();
@@ -1870,7 +1979,7 @@ fn fail(this: *HTTPClient, err: anyerror) void {
 }
 
 // We have to clone metadata immediately after use
-fn cloneMetadata(this: *HTTPClient) void {
+pub fn cloneMetadata(this: *HTTPClient) void {
     assert(this.state.pending_response != null);
     if (this.state.pending_response) |response| {
         if (this.state.cloned_metadata != null) {
@@ -1999,6 +2108,10 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
                 this.proxy_tunnel = null;
                 tunnel.shutdown();
                 tunnel.detachAndDeref();
+            }
+            if (this.h2) |session| {
+                this.h2 = null;
+                session.deinit();
             }
             NewHTTPContext(is_ssl).closeSocket(socket);
         }
@@ -2411,7 +2524,7 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
     unreachable;
 }
 
-const ShouldContinue = enum {
+pub const ShouldContinue = enum {
     continue_streaming,
     finished,
 };
@@ -2834,6 +2947,8 @@ pub const InitError = @import("./http/InitError.zig").InitError;
 pub const HTTPRequestBody = @import("./http/HTTPRequestBody.zig").HTTPRequestBody;
 pub const SendFile = @import("./http/SendFile.zig");
 pub const HeaderValueIterator = @import("./http/HeaderValueIterator.zig");
+pub const H2 = @import("./http/H2Client.zig");
+pub const H2Wire = @import("./http/H2FrameParser.zig");
 
 const string = []const u8;
 

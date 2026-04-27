@@ -528,6 +528,12 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     }
 
     ctx->timer = us_create_timer(loop, 1, sizeof(us_quic_socket_context_t *));
+    if (!ctx->timer) {
+        lsquic_engine_destroy(ctx->engine);
+        SSL_CTX_free(ssl);
+        free(ctx);
+        return NULL;
+    }
     *(us_quic_socket_context_t **) us_timer_ext(ctx->timer) = ctx;
 
     return ctx;
@@ -546,7 +552,9 @@ int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
         if (!n) { SSL_CTX_free(ssl); return -1; }
         ctx->sni = n; ctx->sni_cap = ncap;
     }
-    ctx->sni[ctx->sni_count].name = strdup(hostname);
+    char *name = strdup(hostname);
+    if (!name) { SSL_CTX_free(ssl); return -1; }
+    ctx->sni[ctx->sni_count].name = name;
     ctx->sni[ctx->sni_count].ctx = ssl;
     ctx->sni_count++;
     return 0;

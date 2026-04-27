@@ -2876,17 +2876,17 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
-            // H3 fallback: same precedence as H1 (user routes already mirrored
-            // above), node:http isn't supported over H3 so it falls through to
-            // fetch().
+            // H3 fallback. HttpRouter::add replaces same-pattern entries, so
+            // skip when a user/static "/*" route was already mirrored — the
+            // fallback would otherwise overwrite it.
             if (comptime ssl_enabled and !bun.Environment.isWindows) {
-                if (this.h3_app) |h3_app| {
+                if (this.h3_app) |h3_app| if (!has_any_user_route_for_star_path and !has_static_route_for_star_path) {
                     if (this.config.onRequest != .zero) {
                         h3_app.any("/*", *ThisServer, this, onH3Request);
                     } else {
                         h3_app.any("/*", *ThisServer, this, onH3404);
                     }
-                }
+                };
             }
 
             if (should_add_chrome_devtools_json_route) {
@@ -2987,7 +2987,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         const sni_servername: [:0]const u8 = std.mem.span(sni_ssl_config.server_name.?);
                         if (sni_servername.len > 0) {
                             if (comptime has_h3) if (this.h3_app) |h3a|
-                                h3a.addServerNameWithOptions(sni_servername, sni_ssl_config.asUSockets()) catch {};
+                                h3a.addServerNameWithOptions(sni_servername, sni_ssl_config.asUSockets()) catch {
+                                    if (!globalThis.hasException()) {
+                                        globalThis.throw("Failed to add serverName \"{s}\" for HTTP/3", .{sni_servername}) catch {};
+                                    }
+                                    this.deinit();
+                                    return .zero;
+                                };
                             app.addServerNameWithOptions(sni_servername, sni_ssl_config.asUSockets()) catch {
                                 if (!globalThis.hasException()) {
                                     if (!throwSSLErrorIfNecessary(globalThis)) {

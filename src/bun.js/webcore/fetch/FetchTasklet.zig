@@ -1241,6 +1241,7 @@ pub const FetchTasklet = struct {
     /// set Content-Length without setting Transfer-Encoding.
     fn skipChunkedFraming(this: *const FetchTasklet) bool {
         return this.upgraded_connection or
+            this.result.is_http2 or
             (this.request_headers.get("content-length") != null and this.request_headers.get("transfer-encoding") == null);
     }
 

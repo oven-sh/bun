@@ -211,7 +211,7 @@ pub fn canOfferH2(client: *const HTTPClient) bool {
     if (client.http_proxy != null) return false;
     if (client.flags.is_preconnect_only) return false;
     if (client.unix_socket_path.length() > 0) return false;
-    if (client.state.original_request_body != .bytes) return false;
+    if (client.state.original_request_body == .sendfile) return false;
     return true;
 }
 
@@ -2155,6 +2155,9 @@ pub const HTTPClientResult = struct {
     has_more: bool = false,
     redirected: bool = false,
     can_stream: bool = false,
+    /// Set once ALPN selected h2 so the JS side writes raw bytes into the
+    /// streaming-body buffer instead of chunked-encoding them.
+    is_http2: bool = false,
 
     fail: ?anyerror = null,
 
@@ -2252,6 +2255,7 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
             .body_size = body_size,
             .certificate_info = null,
             .can_stream = (this.state.request_stage == .body or this.state.request_stage == .proxy_body) and this.flags.is_streaming_request_body,
+            .is_http2 = this.flags.protocol == .http2,
         };
     }
     return HTTPClientResult{
@@ -2265,6 +2269,7 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
         .certificate_info = certificate_info,
         // we can stream the request_body at this stage
         .can_stream = (this.state.request_stage == .body or this.state.request_stage == .proxy_body) and this.flags.is_streaming_request_body,
+        .is_http2 = this.flags.protocol == .http2,
     };
 }
 

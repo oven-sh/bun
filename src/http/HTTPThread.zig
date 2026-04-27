@@ -441,6 +441,9 @@ fn drainQueuedWrites(this: *@This()) void {
                                 client.flushStream(is_tls, socket);
                             }
                         }
+                        if (tagged.get(bun.http.H2.ClientSession)) |session| {
+                            session.streamBodyByHttpId(write.async_http_id, ended);
+                        }
                     },
                 }
             }

@@ -191,6 +191,84 @@ describe("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () 
     }
   });
 
+  test("POST with ReadableStream body streams as raw DATA frames", async () => {
+    let received = "";
+    await withH2Server(
+      (req, res) => {
+        req.setEncoding("utf8");
+        req.on("data", c => (received += c));
+        req.on("end", () => {
+          res.writeHead(200, { "x-len": String(received.length) });
+          res.end(received);
+        });
+      },
+      async url => {
+        await using proc = spawnFetch(`
+          const chunks = ["alpha-", "bravo-", "charlie-", "delta-", "echo"];
+          const body = new ReadableStream({
+            async pull(ctrl) {
+              for (const c of chunks) {
+                ctrl.enqueue(new TextEncoder().encode(c));
+                await new Promise(r => setTimeout(r, 5));
+              }
+              ctrl.close();
+            },
+          });
+          const res = await fetch("${url}/stream", {
+            method: "POST",
+            body,
+            duplex: "half",
+            tls: { rejectUnauthorized: false },
+          });
+          console.log(res.status, res.headers.get("x-len"), await res.text());
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout.trim()).toBe("200 30 alpha-bravo-charlie-delta-echo");
+        expect(exitCode).toBe(0);
+        // No chunked-encoding artifacts leaked into the framed body.
+        expect(received).toBe("alpha-bravo-charlie-delta-echo");
+      },
+    );
+  });
+
+  test("POST with ReadableStream body larger than initial send window", async () => {
+    await withH2Server(
+      (req, res) => {
+        let total = 0;
+        req.on("data", c => (total += c.length));
+        req.on("end", () => {
+          res.writeHead(200);
+          res.end(String(total));
+        });
+      },
+      async url => {
+        await using proc = spawnFetch(`
+          // 256 KiB > 64 KiB default INITIAL_WINDOW_SIZE: requires the
+          // client to honour the server's WINDOW_UPDATE before continuing.
+          const buf = new Uint8Array(256 * 1024).fill(0x61);
+          const body = new ReadableStream({
+            start(ctrl) {
+              for (let i = 0; i < 4; i++) ctrl.enqueue(buf.subarray(i * 65536, (i + 1) * 65536));
+              ctrl.close();
+            },
+          });
+          const res = await fetch("${url}/big", {
+            method: "POST",
+            body,
+            duplex: "half",
+            tls: { rejectUnauthorized: false },
+          });
+          console.log(res.status, await res.text());
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout.trim()).toBe("200 262144");
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
   test("cold-start: parallel requests coalesce onto one TLS connect", async () => {
     let sessions = 0;
     const server = http2.createSecureServer({ ...tls, allowHTTP1: false });

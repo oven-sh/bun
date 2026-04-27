@@ -27,9 +27,17 @@ pub const Stream = struct {
     end_stream_received: bool = false,
     headers_ready: bool = false,
     headers_end_stream: bool = false,
+    /// Set once the END_STREAM flag has been written on the request side.
+    request_body_done: bool = false,
     fatal_error: ?anyerror = null,
     /// DATA bytes consumed since the last WINDOW_UPDATE for this stream.
     unacked_bytes: u32 = 0,
+    /// Per-stream send window (server's INITIAL_WINDOW_SIZE plus any
+    /// WINDOW_UPDATEs minus DATA bytes already framed).
+    send_window: i32,
+    /// Unsent suffix of a `.bytes` request body, parked while the send
+    /// window is exhausted. Borrows from `client.state.request_body`.
+    pending_body: []const u8 = "",
 
     pub fn deinit(this: *Stream) void {
         this.header_block.deinit(bun.default_allocator);
@@ -99,6 +107,10 @@ pub const ClientSession = struct {
 
     remote_max_frame_size: u24 = wire.DEFAULT_MAX_FRAME_SIZE,
     remote_max_concurrent_streams: u32 = 100,
+    remote_initial_window_size: u32 = wire.DEFAULT_WINDOW_SIZE,
+    /// Connection-level send window. Starts at the spec default regardless of
+    /// SETTINGS; only WINDOW_UPDATE on stream 0 grows it.
+    conn_send_window: i32 = wire.DEFAULT_WINDOW_SIZE,
 
     /// DATA bytes consumed since the last connection-level WINDOW_UPDATE.
     conn_unacked_bytes: u32 = 0,
@@ -243,7 +255,12 @@ pub const ClientSession = struct {
     pub fn attach(this: *ClientSession, client: *HTTPClient) void {
         bun.debugAssert(this.hasHeadroom());
 
-        const stream = Stream.new(.{ .id = this.next_stream_id, .session = this, .client = client });
+        const stream = Stream.new(.{
+            .id = this.next_stream_id,
+            .session = this,
+            .client = client,
+            .send_window = @intCast(@min(this.remote_initial_window_size, @as(u32, wire.MAX_WINDOW_SIZE))),
+        });
         this.next_stream_id +|= 2;
         bun.handleOom(this.streams.put(bun.default_allocator, stream.id, stream));
         client.h2 = stream;
@@ -261,12 +278,17 @@ pub const ClientSession = struct {
         if (client.verbose != .none) {
             HTTPClient.printRequest(request, client.url.href, !client.flags.reject_unauthorized, client.state.request_body, client.verbose == .curl);
         }
-        client.state.request_stage = .done;
+        client.state.request_stage = if (stream.request_body_done) .done else .body;
         client.state.response_stage = .headers;
 
         _ = this.flush() catch |err| {
             this.failAll(err);
+            return;
         };
+
+        if (client.flags.is_streaming_request_body) {
+            client.progressUpdate(true, this.ctx, this.socket);
+        }
     }
 
     /// Remove `stream` from the session, RST it, and fail its client. The
@@ -315,10 +337,16 @@ pub const ClientSession = struct {
         }
 
         const body = client.state.request_body;
-        const has_body = client.state.original_request_body == .bytes and body.len > 0;
+        const has_inline_body = client.state.original_request_body == .bytes and body.len > 0;
+        const is_streaming = client.state.original_request_body == .stream;
 
-        this.writeHeaderBlock(stream.id, encoded.items, !has_body);
-        if (has_body) this.writeData(stream.id, body, true);
+        this.writeHeaderBlock(stream.id, encoded.items, !has_inline_body and !is_streaming);
+        if (has_inline_body) {
+            stream.pending_body = body;
+            this.drainSendBody(stream);
+        } else if (!is_streaming) {
+            stream.request_body_done = true;
+        }
     }
 
     fn writeHeaderBlock(this: *ClientSession, stream_id: u31, block: []const u8, end_stream: bool) void {
@@ -338,16 +366,90 @@ pub const ClientSession = struct {
         }
     }
 
-    fn writeData(this: *ClientSession, stream_id: u31, body: []const u8, end_stream: bool) void {
-        const max: usize = this.remote_max_frame_size;
-        var remaining = body;
+    /// Frame `data` into DATA frames respecting `remote_max_frame_size` and
+    /// both flow-control windows. Returns bytes consumed; END_STREAM is set
+    /// on the final frame only when `end_stream` and all of `data` fit.
+    fn writeDataWindowed(this: *ClientSession, stream: *Stream, data: []const u8, end_stream: bool) usize {
+        var remaining = data;
+        var consumed: usize = 0;
         while (true) {
-            const chunk = remaining[0..@min(remaining.len, max)];
-            remaining = remaining[chunk.len..];
-            const last = remaining.len == 0;
+            const window: usize = @intCast(@max(0, @min(stream.send_window, this.conn_send_window)));
+            if (remaining.len > 0 and window == 0) break;
+            const chunk_len = @min(remaining.len, @as(usize, this.remote_max_frame_size), window);
+            const last = chunk_len == remaining.len;
             const flags: u8 = if (last and end_stream) @intFromEnum(wire.DataFrameFlags.END_STREAM) else 0;
-            this.writeFrame(.HTTP_FRAME_DATA, flags, stream_id, chunk);
+            this.writeFrame(.HTTP_FRAME_DATA, flags, stream.id, remaining[0..chunk_len]);
+            stream.send_window -= @intCast(chunk_len);
+            this.conn_send_window -= @intCast(chunk_len);
+            consumed += chunk_len;
+            remaining = remaining[chunk_len..];
             if (last) break;
+        }
+        return consumed;
+    }
+
+    /// Push as much of `stream`'s request body as the send windows allow.
+    /// Buffers into `write_buffer`; caller flushes.
+    fn drainSendBody(this: *ClientSession, stream: *Stream) void {
+        if (stream.request_body_done) return;
+        const client = stream.client orelse return;
+        switch (client.state.original_request_body) {
+            .bytes => {
+                const sent = this.writeDataWindowed(stream, stream.pending_body, true);
+                stream.pending_body = stream.pending_body[sent..];
+                if (stream.pending_body.len == 0) {
+                    stream.request_body_done = true;
+                    client.state.request_stage = .done;
+                }
+            },
+            .stream => |*body| {
+                const sb = body.buffer orelse return;
+                const buffer = sb.acquire();
+                const data = buffer.slice();
+                if (data.len == 0 and !body.ended) {
+                    sb.release();
+                    return;
+                }
+                const sent = this.writeDataWindowed(stream, data, body.ended);
+                buffer.cursor += sent;
+                const drained = buffer.isEmpty();
+                if (drained) buffer.reset();
+                if (drained and body.ended) {
+                    stream.request_body_done = true;
+                    client.state.request_stage = .done;
+                } else if (drained and data.len > 0) {
+                    sb.reportDrain();
+                }
+                sb.release();
+                if (stream.request_body_done) body.detach();
+            },
+            .sendfile => unreachable,
+        }
+    }
+
+    fn drainSendBodies(this: *ClientSession) void {
+        if (this.conn_send_window <= 0) return;
+        for (this.streams.values()) |stream| {
+            if (!stream.request_body_done and stream.send_window > 0) {
+                this.drainSendBody(stream);
+            }
+        }
+    }
+
+    /// HTTP-thread wake-up from `scheduleRequestWrite`: new body bytes (or
+    /// end-of-body) are available in the ThreadSafeStreamBuffer.
+    pub fn streamBodyByHttpId(this: *ClientSession, async_http_id: u32, ended: bool) void {
+        this.ref();
+        defer this.deref();
+        for (this.streams.values()) |stream| {
+            const client = stream.client orelse continue;
+            if (client.async_http_id != async_http_id) continue;
+            if (client.state.original_request_body != .stream) return;
+            client.state.original_request_body.stream.ended = ended;
+            client.setTimeout(this.socket, 5);
+            this.drainSendBody(stream);
+            _ = this.flush() catch |err| this.failAll(err);
+            return;
         }
     }
 
@@ -442,6 +544,8 @@ pub const ClientSession = struct {
         if (this.fatal_error) |err| return this.failAll(err);
 
         this.drainPending();
+        this.drainSendBodies();
+        _ = this.flush() catch |err| return this.failAll(err);
 
         // Deliver per-stream. Iterate by index because delivery may remove
         // entries (swapRemove keeps earlier indices stable; revisiting the
@@ -462,6 +566,10 @@ pub const ClientSession = struct {
 
     /// Socket onWritable entry point.
     pub fn onWritable(this: *ClientSession) void {
+        this.ref();
+        defer this.deref();
+        _ = this.flush() catch |err| return this.failAll(err);
+        this.drainSendBodies();
         _ = this.flush() catch |err| return this.failAll(err);
         this.reapAborted();
         this.maybeRelease();
@@ -674,13 +782,29 @@ pub const ClientSession = struct {
                     switch (@as(wire.SettingsType, @enumFromInt(unit.type))) {
                         .SETTINGS_MAX_FRAME_SIZE => this.remote_max_frame_size = @truncate(@min(unit.value, wire.MAX_FRAME_SIZE)),
                         .SETTINGS_MAX_CONCURRENT_STREAMS => this.remote_max_concurrent_streams = unit.value,
+                        .SETTINGS_INITIAL_WINDOW_SIZE => {
+                            const next = @min(unit.value, @as(u32, wire.MAX_WINDOW_SIZE));
+                            const delta = @as(i64, next) - @as(i64, this.remote_initial_window_size);
+                            this.remote_initial_window_size = next;
+                            for (this.streams.values()) |s| {
+                                s.send_window = @intCast(std.math.clamp(@as(i64, s.send_window) + delta, std.math.minInt(i32), std.math.maxInt(i32)));
+                            }
+                        },
                         else => {},
                     }
                 }
                 this.writeFrame(.HTTP_FRAME_SETTINGS, @intFromEnum(wire.SettingsFlags.ACK), 0, &.{});
                 this.settings_received = true;
             },
-            .HTTP_FRAME_WINDOW_UPDATE => {},
+            .HTTP_FRAME_WINDOW_UPDATE => {
+                if (payload.len < 4) return;
+                const inc: i32 = @intCast(wire.UInt31WithReserved.fromBytes(payload[0..4]).uint31);
+                if (header.streamIdentifier == 0) {
+                    this.conn_send_window +|= inc;
+                } else if (this.streams.get(@truncate(header.streamIdentifier & 0x7fffffff))) |stream| {
+                    stream.send_window +|= inc;
+                }
+            },
             .HTTP_FRAME_PING => {
                 if (header.flags & @intFromEnum(wire.PingFrameFlags.ACK) == 0) {
                     this.writeFrame(.HTTP_FRAME_PING, @intFromEnum(wire.PingFrameFlags.ACK), 0, payload[0..@min(payload.len, 8)]);

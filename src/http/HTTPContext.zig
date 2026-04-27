@@ -627,7 +627,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             target_hostname: []const u8,
             target_port: u16,
             proxy_auth_hash: u64,
-            want_h2: bool,
+            want_h2: BoringSSL.SSL.AlpnOffer,
         ) ?ExistingSocket {
             if (hostname.len > MAX_KEEPALIVE_HOSTNAME)
                 return null;
@@ -649,10 +649,11 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     continue;
                 }
 
-                // A request that can't speak h2 must not pick an h2 socket.
-                // An h2-capable request may pick either; ALPN on the pooled
-                // socket already decided which protocol it speaks.
-                if (socket.h2_session != null and !want_h2) {
+                // ALPN on the pooled socket has already decided which protocol
+                // it speaks; only match callers compatible with that choice.
+                if (socket.h2_session != null) {
+                    if (want_h2 == .h1) continue;
+                } else if (want_h2 == .h2_only) {
                     continue;
                 }
 
@@ -770,7 +771,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     target_hostname,
                     target_port,
                     proxy_auth_hash,
-                    if (comptime ssl) client.canOfferH2() else false,
+                    if (comptime ssl) client.alpnOffer() else .h1,
                 )) |found| {
                     const sock = found.socket;
                     if (sock.ext(**anyopaque)) |ctx| {

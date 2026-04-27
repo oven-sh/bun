@@ -563,53 +563,6 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     }
   });
 
-  test("await fetch() resolves on headers, before a content-length body is fully received", async () => {
-    let heldStream: http2.ServerHttp2Stream | undefined;
-    const server = makeH2Server();
-    server.on("stream", stream => {
-      stream.on("error", () => {});
-      stream.respond({ ":status": 200, "content-length": "262144" });
-      stream.write(Buffer.alloc(64 * 1024));
-      // The remaining 192 KiB is written from the test body once the
-      // subprocess proves it already has the Response and a first read.
-      heldStream = stream;
-    });
-    server.listen(0);
-    await once(server, "listening");
-    const { port } = server.address() as import("node:net").AddressInfo;
-    try {
-      await using proc = spawnFetch(`
-        const r = await fetch("https://localhost:${port}", { tls: { rejectUnauthorized: false } });
-        const reader = r.body.getReader();
-        let n = 0;
-        const { value } = await reader.read();
-        n += value.byteLength;
-        // Signal the server (via stderr so the test can unblock the rest).
-        process.stderr.write("first-chunk\\n");
-        while (true) {
-          const { value, done } = await reader.read();
-          if (value) n += value.byteLength;
-          if (done) break;
-        }
-        console.log(r.status, r.headers.get("content-length"), n);
-      `);
-      // Wait for the subprocess to prove it received the Response + first chunk
-      // BEFORE the server has written the full body.
-      let stderr = "";
-      for await (const chunk of proc.stderr) {
-        stderr += Buffer.from(chunk).toString();
-        if (stderr.includes("first-chunk")) break;
-      }
-      heldStream!.end(Buffer.alloc(192 * 1024));
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout.trim()).toBe("200 262144 262144");
-      expect(exitCode).toBe(0);
-    } finally {
-      heldStream?.destroy();
-      server.close();
-    }
-  });
-
   test("response body larger than initial window triggers WINDOW_UPDATE", async () => {
     const big = Buffer.alloc(20 * 1024 * 1024, 0x61);
     await withH2Server(
@@ -1778,4 +1731,54 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     expect(stdout.trim()).toBe("AbortError before=1 after=2");
     expect(exitCode).toBe(0);
   });
+});
+
+// Serial: this test reads the subprocess's stderr stream mid-flight to gate
+// the server-side body write, which interferes with sibling tests' TLS
+// handshakes under describe.concurrent on aarch64/musl.
+test("await fetch() over HTTP/2 resolves on headers, before a content-length body is fully received", async () => {
+  let heldStream: http2.ServerHttp2Stream | undefined;
+  const server = makeH2Server();
+  server.on("stream", stream => {
+    stream.on("error", () => {});
+    stream.respond({ ":status": 200, "content-length": "262144" });
+    stream.write(Buffer.alloc(64 * 1024));
+    // The remaining 192 KiB is written from the test body once the
+    // subprocess proves it already has the Response and a first read.
+    heldStream = stream;
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const { port } = server.address() as import("node:net").AddressInfo;
+  try {
+    await using proc = spawnFetch(`
+      const r = await fetch("https://localhost:${port}", { tls: { rejectUnauthorized: false } });
+      const reader = r.body.getReader();
+      let n = 0;
+      const { value } = await reader.read();
+      n += value.byteLength;
+      // Signal the server (via stderr so the test can unblock the rest).
+      process.stderr.write("first-chunk\\n");
+      while (true) {
+        const { value, done } = await reader.read();
+        if (value) n += value.byteLength;
+        if (done) break;
+      }
+      console.log(r.status, r.headers.get("content-length"), n);
+    `);
+    // Wait for the subprocess to prove it received the Response + first chunk
+    // BEFORE the server has written the full body.
+    let stderr = "";
+    for await (const chunk of proc.stderr) {
+      stderr += Buffer.from(chunk).toString();
+      if (stderr.includes("first-chunk")) break;
+    }
+    heldStream!.end(Buffer.alloc(192 * 1024));
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("200 262144 262144");
+    expect(exitCode).toBe(0);
+  } finally {
+    heldStream?.destroy();
+    server.close();
+  }
 });

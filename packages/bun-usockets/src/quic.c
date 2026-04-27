@@ -564,6 +564,10 @@ us_quic_socket_context_t *us_create_quic_socket_context(
      * responses; the wire is a few bytes larger per uncommon header. */
     ctx->settings.es_qpack_enc_max_size = 0;
     ctx->settings.es_qpack_enc_max_blocked = 0;
+    /* We never set per-stream priority; with this off, lsquic skips the RFC
+     * 9218 scheduler and the patched determine_bpt short-circuits the O(N)
+     * stream-hash walk on every write. */
+    ctx->settings.es_ext_http_prio = 0;
     if (idle_timeout_s) ctx->settings.es_idle_timeout = idle_timeout_s > 600 ? 600 : idle_timeout_s;
 
     struct lsquic_engine_api api;
@@ -793,10 +797,7 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
 }
 
 void us_quic_stream_shutdown(us_quic_stream_t *s) {
-    if (s->stream) {
-        lsquic_stream_flush(s->stream);
-        lsquic_stream_shutdown(s->stream, 1);
-    }
+    if (s->stream) lsquic_stream_shutdown(s->stream, 1);
 }
 
 void us_quic_stream_shutdown_read(us_quic_stream_t *s) {

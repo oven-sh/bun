@@ -115,7 +115,11 @@ export const lsquic: Dependency = {
     commit: LSQUIC_COMMIT,
   }),
 
-  patches: ["patches/lsquic/versions-to-string.patch", "patches/lsquic/allow-no-sni.patch"],
+  patches: [
+    "patches/lsquic/versions-to-string.patch",
+    "patches/lsquic/allow-no-sni.patch",
+    "patches/lsquic/skip-priority-walk.patch",
+  ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],
 

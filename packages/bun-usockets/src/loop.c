@@ -20,6 +20,7 @@
 #include "quic.h"
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #ifndef WIN32
 #include <sys/ioctl.h>
 #endif
@@ -618,25 +619,31 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 #if defined(__linux__)
             /* On Linux with IP_RECVERR, EPOLLERR fires when an ICMP error
              * (port unreachable, host unreachable, TTL exceeded, ...) is
-             * queued on the socket. The kernel may or may not also set
-             * EPOLLIN. Calling recvmmsg on such a socket returns -1 with
-             * the ICMP errno (ECONNREFUSED, EHOSTUNREACH, ENETUNREACH,
-             * EMSGSIZE, ...), which we surface via on_recv_error. The
-             * socket stays open. On other platforms (kqueue's EV_ERROR,
-             * Windows) an error event is a fatal socket condition, not a
-             * drainable error queue — preserve the pre-existing
-             * close-on-error behavior. */
+             * queued on the socket's error queue. For an *unconnected* UDP
+             * socket regular recvmmsg does NOT dequeue these — only
+             * recvmsg(MSG_ERRQUEUE) does — so EPOLLERR stays level-triggered
+             * until we drain it explicitly. Do that here, surfacing each
+             * errno via on_recv_error; the socket stays open. On other
+             * platforms (kqueue EV_ERROR, Windows) an error event is fatal —
+             * preserve close-on-error there. */
             int recv_error_surfaced = 0;
-            /* recv_would_block_only means: we drained the error queue and
-             * the only remaining outcome was EAGAIN, so the residual
-             * EPOLLERR is stale — don't treat it as fatal. */
             int recv_would_block_only = 0;
-            int recv_drain_for_error = error;
-#else
-            int recv_drain_for_error = 0;
+            if (error) {
+                struct msghdr eh; char ectrl[512]; char ebuf[1];
+                struct iovec eiov = { ebuf, sizeof(ebuf) };
+                while (!u->closed) {
+                    memset(&eh, 0, sizeof(eh));
+                    eh.msg_iov = &eiov; eh.msg_iovlen = 1;
+                    eh.msg_control = ectrl; eh.msg_controllen = sizeof(ectrl);
+                    if (recvmsg(us_poll_fd(p), &eh, MSG_ERRQUEUE) < 0) break;
+                    recv_error_surfaced = 1;
+                    if (u->on_recv_error) u->on_recv_error(u, errno ? errno : ECONNREFUSED);
+                }
+            }
 #endif
 
-            if ((events & LIBUS_SOCKET_READABLE) || recv_drain_for_error) {
+            if ((events & LIBUS_SOCKET_READABLE) && !u->closed) {
+
                 do {
                     struct udp_recvbuf recvbuf;
                     bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
@@ -674,11 +681,13 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 } while (!u->closed);
             }
 
-            if (events & LIBUS_SOCKET_WRITABLE && !error && !u->closed) {
+            if (events & LIBUS_SOCKET_WRITABLE && !u->closed) {
                 /* Clear WRITABLE before on_drain so a callback that re-arms it
                  * (e.g. QUIC packets_out hitting EAGAIN) keeps the re-arm. We
                  * still default to one-shot drain semantics for callers that
-                 * don't touch the poll mask. */
+                 * don't touch the poll mask. Not gated on !error: a queued
+                 * ICMP error must not leave WRITABLE armed (level-triggered
+                 * EPOLLOUT + EPOLLERR would spin the loop). */
                 us_poll_change(&u->p, u->loop, us_poll_events(&u->p) & LIBUS_SOCKET_READABLE);
                 u->on_drain(u);
                 if (u->closed) {

@@ -2126,26 +2126,11 @@ static napi_value test_napi_create_tsfn_async_context_frame(const Napi::Callback
 // and would not actually exercise the RETURN_IF_EXCEPTION code path.
 static napi_value test_issue_22259(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
+  napi_status status;
 
-  // Create a VM-level exception by running a script that throws.
-  // This sets vm.m_exception, which RETURN_IF_EXCEPTION checks.
-  napi_value throw_script;
-  napi_status status = napi_create_string_utf8(env, "throw new Error('vm-level')", NAPI_AUTO_LENGTH, &throw_script);
-  if (status != napi_ok) {
-    printf("napi_create_string_utf8 failed: %d\n", status);
-    return nullptr;
-  }
-
-  napi_value throw_result;
-  status = napi_run_script(env, throw_script, &throw_result);
-  // napi_run_script should return napi_pending_exception since the script threw
-  if (status != napi_pending_exception) {
-    printf("napi_run_script unexpected status: %d (expected %d)\n", status, napi_pending_exception);
-    return nullptr;
-  }
-
-  // Now with a VM-level exception pending, napi_create_error must still succeed.
-  // Before the fix, RETURN_IF_EXCEPTION would return napi_pending_exception here.
+  // Prepare string values before triggering a VM-level exception,
+  // so this test doesn't depend on napi_create_string_utf8 behavior
+  // while an exception is pending.
   napi_value error_msg;
   status = napi_create_string_utf8(env, "test error", NAPI_AUTO_LENGTH, &error_msg);
   if (status != napi_ok) {
@@ -2160,6 +2145,25 @@ static napi_value test_issue_22259(const Napi::CallbackInfo &info) {
     return nullptr;
   }
 
+  // Create a VM-level exception by running a script that throws.
+  // This sets vm.m_exception, which RETURN_IF_EXCEPTION checks.
+  napi_value throw_script;
+  status = napi_create_string_utf8(env, "throw new Error('vm-level')", NAPI_AUTO_LENGTH, &throw_script);
+  if (status != napi_ok) {
+    printf("napi_create_string_utf8 (throw_script) failed: %d\n", status);
+    return nullptr;
+  }
+
+  napi_value throw_result;
+  status = napi_run_script(env, throw_script, &throw_result);
+  // napi_run_script should return napi_pending_exception since the script threw
+  if (status != napi_pending_exception) {
+    printf("napi_run_script unexpected status: %d (expected %d)\n", status, napi_pending_exception);
+    return nullptr;
+  }
+
+  // Now with a VM-level exception pending, napi_create_error must still succeed.
+  // Before the fix, RETURN_IF_EXCEPTION would return napi_pending_exception here.
   napi_value error_val;
   status = napi_create_error(env, error_code, error_msg, &error_val);
   if (status != napi_ok) {
@@ -2227,7 +2231,7 @@ static napi_value test_issue_22259(const Napi::CallbackInfo &info) {
 
   puts("napi_create_error produced valid error objects");
 
-  return nullptr;
+  return ok(env);
 }
 
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {

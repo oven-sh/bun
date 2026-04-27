@@ -755,21 +755,32 @@ pub const ClientSession = struct {
                 return true;
             };
             stream.body_buffer.clearRetainingCapacity();
-            if (terminal or report) {
-                client.progressUpdate(true, this.ctx, this.socket);
-            }
-            return terminal;
+            if (terminal) return this.finishStream(client);
+            if (report) client.progressUpdate(true, this.ctx, this.socket);
+            return false;
         }
 
         if (stream.end_stream_received) {
             stream.client = null;
             client.h2 = null;
             client.state.flags.received_last_chunk = true;
-            client.progressUpdate(true, this.ctx, this.socket);
-            return true;
+            return this.finishStream(client);
         }
 
         return false;
+    }
+
+    /// Terminal delivery: enforce the announced Content-Length (RFC 9113
+    /// §8.1.1 — mismatch is malformed) and hand off to progressUpdate.
+    fn finishStream(this: *ClientSession, client: *HTTPClient) bool {
+        if (client.state.content_length) |cl| {
+            if (client.state.total_body_received != cl) {
+                client.failFromH2(error.HTTP2ContentLengthMismatch);
+                return true;
+            }
+        }
+        client.progressUpdate(true, this.ctx, this.socket);
+        return true;
     }
 
     fn dispatchFrame(this: *ClientSession, header: wire.FrameHeader, payload: []const u8) void {

@@ -829,6 +829,27 @@ describe("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () 
       );
     });
 
+    test("Content-Length / DATA mismatch rejects", async () => {
+      await withRawH2Server(
+        (conn, id) => {
+          conn.headers(id, Buffer.concat([hpackStatus(200), hpackLit("content-length", "42")]));
+          conn.data(id, "short", true);
+        },
+        async url => {
+          await using proc = spawnFetch(`
+            try {
+              const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
+              await r.text();
+              console.log("ok");
+            } catch (e) { console.log("rejected", String(e).includes("ContentLength")); }
+          `);
+          const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stdout.trim()).toBe("rejected true");
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
+
     test("response missing :status pseudo-header rejects cleanly", async () => {
       await withRawH2Server(
         (conn, id) => {

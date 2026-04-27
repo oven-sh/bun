@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { access, mkdir, readFile, rm, writeFile } from "fs/promises";
+import { access, exists, mkdir, readFile, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, toBeValidBin, toHaveBins } from "harness";
 import { join } from "path";
 import {
@@ -481,4 +481,64 @@ it("should support --recursive flag", async () => {
 
   // Should recognize the flag (either process workspaces or show error about missing lockfile)
   expect(out + err).toMatch(/bun update|missing lockfile|nothing to update/);
+});
+
+// https://github.com/oven-sh/bun/issues/29793
+it("hoisted install removes stale workspace-local node_modules that shadow the hoisted version", async () => {
+  const registry = {
+    "0.0.3": {},
+    "0.0.5": {},
+    latest: "0.0.5",
+  };
+  setHandler(dummyRegistry([], registry));
+
+  // Root workspace — declares the workspace, no deps.
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: ["packages/backend"],
+    }),
+  );
+
+  // Backend workspace depends on baz.
+  await mkdir(join(package_dir, "packages", "backend"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "backend", "package.json"),
+    JSON.stringify({
+      name: "@repro/backend",
+      dependencies: { baz: "^0.0.3" },
+    }),
+  );
+
+  // Pre-existing stale workspace-local package, simulating what an earlier
+  // package-local install (or manual edit) can leave behind.
+  await mkdir(join(package_dir, "packages", "backend", "node_modules", "baz"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "backend", "node_modules", "baz", "package.json"),
+    JSON.stringify({ name: "baz", version: "0.0.0-stale" }),
+  );
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "update", "--latest", "baz", "--linker=hoisted"],
+    cwd: join(package_dir, "packages", "backend"),
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
+
+  // baz should be hoisted to root node_modules at the updated version …
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
+    name: "baz",
+    version: "0.0.5",
+  });
+
+  // … and the stale workspace-local copy must be gone so module resolution
+  // from the backend workspace finds the hoisted one instead of the shadow.
+  expect(await exists(join(package_dir, "packages", "backend", "node_modules", "baz"))).toBe(false);
 });

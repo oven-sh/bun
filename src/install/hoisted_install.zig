@@ -81,6 +81,20 @@ pub fn installHoistedPackages(
         skip_delete = false;
     }
 
+    // Remove stale packages from workspace `node_modules` directories.
+    // A previous install (especially a package-local one) may have placed packages
+    // inside `packages/<workspace>/node_modules` that the current hoisted layout
+    // no longer expects. Those directories would shadow hoisted copies during
+    // module resolution. The installer only visits trees that still have
+    // dependencies, so stale entries are otherwise never deleted.
+    //
+    // We don't gate this on `new_node_modules`: even when the root `node_modules`
+    // didn't exist before this install, individual workspace `node_modules`
+    // directories may already be populated from a previous package-local install.
+    if (this.lockfile.workspace_paths.count() > 0) {
+        pruneStaleWorkspaceNodeModules(this) catch {};
+    }
+
     var summary = PackageInstall.Summary{};
 
     {
@@ -352,6 +366,187 @@ pub fn installHoistedPackages(
     }
 
     return summary;
+}
+
+/// Walks each workspace's `node_modules/` directory on disk and deletes any
+/// package folder the current hoisted tree does not list as belonging there.
+///
+/// Motivates: a previous package-local install (or a manual edit) may have left
+/// `packages/<workspace>/node_modules/<pkg>` behind. When the current install
+/// hoists `<pkg>` to the root, the leftover workspace-local copy shadows the
+/// hoisted one during module resolution. The tree iterator only visits
+/// `node_modules` directories that still contain entries, so those stale
+/// folders are otherwise never seen, let alone removed.
+///
+/// Only operates on top-level entries of each workspace's `node_modules/`
+/// (plus one level into `@scope/` directories). Transitive `node_modules`
+/// nested inside surviving packages are handled by the normal install
+/// verify/uninstall path.
+fn pruneStaleWorkspaceNodeModules(this: *PackageManager) !void {
+    const lockfile = this.lockfile;
+    const string_buf = lockfile.buffers.string_bytes.items;
+    const deps = lockfile.buffers.dependencies.items;
+    const trees = lockfile.buffers.trees.items;
+
+    // Map of workspace-relative `node_modules` path (posix separators) to the
+    // set of dependency folder names the tree currently places there. The
+    // keys are small strings owned by a scratch arena so they stay alive
+    // through the walk.
+    var arena = std.heap.ArenaAllocator.init(this.allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+
+    var expected_by_path = bun.StringArrayHashMap(bun.StringHashMap(void)).init(scratch);
+
+    // Compute the `node_modules` path for every tree and collect the folder
+    // names of its direct dependencies. `relativePathAndDepth` assumes the
+    // first `"node_modules".len` bytes of the buffer are already written with
+    // that literal (the iterator primes it in `init`).
+    var path_buf: bun.PathBuffer = undefined;
+    @memcpy(path_buf[0.."node_modules".len], "node_modules");
+    var depth_buf: Lockfile.Tree.DepthBuf = undefined;
+    for (trees) |tree| {
+        const rel_path, _ = Lockfile.Tree.relativePathAndDepth(
+            lockfile,
+            tree.id,
+            &path_buf,
+            &depth_buf,
+            .node_modules,
+        );
+
+        const key = try scratch.dupe(u8, rel_path);
+        if (comptime Environment.isWindows) {
+            bun.path.dangerouslyConvertPathToPosixInPlace(u8, key);
+        }
+
+        const gop = try expected_by_path.getOrPut(key);
+        if (!gop.found_existing) {
+            gop.value_ptr.* = bun.StringHashMap(void).init(scratch);
+        }
+
+        const tree_deps = tree.dependencies.get(lockfile.buffers.hoisted_dependencies.items);
+        for (tree_deps) |dep_id| {
+            if (dep_id >= deps.len) continue;
+            const dep_name = deps[dep_id].name.slice(string_buf);
+            if (dep_name.len == 0) continue;
+            try gop.value_ptr.put(try scratch.dupe(u8, dep_name), {});
+        }
+    }
+
+    // Prune each workspace's node_modules against the expected set.
+    for (lockfile.workspace_paths.values()) |workspace_path_str| {
+        const workspace_path = workspace_path_str.slice(string_buf);
+        if (workspace_path.len == 0) continue;
+
+        // Build `<workspace_path>/node_modules` with posix separators, matching
+        // the tree's relative path format (the tree iterator uses posix on
+        // posix platforms; we normalize on Windows above).
+        var key_buf: bun.PathBuffer = undefined;
+        const key_len = blk: {
+            @memcpy(key_buf[0..workspace_path.len], workspace_path);
+            var len: usize = workspace_path.len;
+            // workspace_path should be a relative path without a trailing slash,
+            // but be defensive.
+            if (len > 0 and key_buf[len - 1] == '/') len -= 1;
+            const suffix = "/node_modules";
+            @memcpy(key_buf[len..][0..suffix.len], suffix);
+            len += suffix.len;
+            break :blk len;
+        };
+        const key = key_buf[0..key_len];
+
+        const expected: ?*const bun.StringHashMap(void) = if (expected_by_path.getPtr(key)) |p| p else null;
+
+        pruneNodeModulesAt(key, expected) catch continue;
+    }
+}
+
+/// Opens `<cwd>/<rel_path>` and removes each top-level directory entry whose
+/// name is not present in `expected`. Also descends one level into `@scope/`
+/// directories so scoped packages are handled. Missing directories are
+/// ignored — nothing to prune.
+fn pruneNodeModulesAt(
+    rel_path: []const u8,
+    expected: ?*const bun.StringHashMap(void),
+) !void {
+    const cwd = bun.FD.cwd();
+
+    var dir = switch (bun.openDirForIteration(cwd, rel_path)) {
+        .result => |fd| fd,
+        .err => return,
+    };
+    defer dir.close();
+
+    var iter = bun.DirIterator.iterate(dir, .u8);
+    while (iter.next().unwrap() catch return) |entry| {
+        const name = entry.name.slice();
+        if (name.len == 0) continue;
+        // Skip hidden / metadata entries (`.bin`, `.cache`, `.modules.yaml`, etc.)
+        if (name[0] == '.') continue;
+
+        if (name[0] == '@') {
+            // Scoped package directory. Recurse one level to look at `@scope/<pkg>`
+            // entries; the expected set stores them as `@scope/pkg`.
+            pruneScopedNodeModules(dir, name, expected) catch continue;
+            continue;
+        }
+
+        if (expected) |exp| {
+            if (exp.contains(name)) continue;
+        }
+
+        // Not expected — delete.
+        dir.stdDir().deleteTree(name) catch {};
+    }
+}
+
+fn pruneScopedNodeModules(
+    parent_dir: bun.FD,
+    scope: []const u8,
+    expected: ?*const bun.StringHashMap(void),
+) !void {
+    var scope_dir = switch (bun.openDirForIteration(parent_dir, scope)) {
+        .result => |fd| fd,
+        .err => return,
+    };
+    defer scope_dir.close();
+
+    var has_remaining: bool = false;
+    var iter = bun.DirIterator.iterate(scope_dir, .u8);
+    while (iter.next().unwrap() catch return) |entry| {
+        const name = entry.name.slice();
+        if (name.len == 0) continue;
+        if (name[0] == '.') {
+            has_remaining = true;
+            continue;
+        }
+
+        var full_name_buf: bun.PathBuffer = undefined;
+        @memcpy(full_name_buf[0..scope.len], scope);
+        full_name_buf[scope.len] = '/';
+        @memcpy(full_name_buf[scope.len + 1 ..][0..name.len], name);
+        const full_name = full_name_buf[0 .. scope.len + 1 + name.len];
+
+        if (expected) |exp| {
+            if (exp.contains(full_name)) {
+                has_remaining = true;
+                continue;
+            }
+        }
+
+        scope_dir.stdDir().deleteTree(name) catch {
+            has_remaining = true;
+        };
+    }
+
+    // If the scope directory ended up empty, remove it so it doesn't linger.
+    if (!has_remaining) {
+        var scope_z_buf: bun.PathBuffer = undefined;
+        @memcpy(scope_z_buf[0..scope.len], scope);
+        scope_z_buf[scope.len] = 0;
+        const scope_z = scope_z_buf[0..scope.len :0];
+        _ = bun.sys.rmdirat(parent_dir, scope_z);
+    }
 }
 
 const std = @import("std");

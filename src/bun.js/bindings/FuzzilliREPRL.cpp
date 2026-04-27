@@ -33,6 +33,25 @@ static void fuzzilliSignalHandler(int sig)
     raise(sig);
 }
 
+// Install our flush handler only if no handler (e.g. ASAN's) is already
+// present. Overwriting ASAN's SIGSEGV/SIGILL/SIGFPE handler and re-raising
+// with SIG_DFL loses the sanitizer report entirely, collapsing every such
+// crash into an opaque "TERMSIG: 11" with empty stderr. When ASAN owns the
+// signal it prints its report and then abort()s, and our SIGABRT handler
+// flushes any remaining stdio buffers.
+static void installSignalHandlerIfDefault(int sig)
+{
+    struct sigaction prev;
+    if (sigaction(sig, nullptr, &prev) != 0)
+        return;
+    bool hasHandler = (prev.sa_flags & SA_SIGINFO)
+        ? prev.sa_sigaction != nullptr
+        : (prev.sa_handler != SIG_DFL && prev.sa_handler != SIG_IGN);
+    if (hasHandler)
+        return;
+    signal(sig, fuzzilliSignalHandler);
+}
+
 // Implementation of the global fuzzilli() function for Bun
 // This function is used by Fuzzilli to:
 // 1. Test crash detection with fuzzilli('FUZZILLI_CRASH', type)
@@ -259,12 +278,12 @@ void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject* globalObject)
 {
     JSC::VM& vm = globalObject->vm();
 
-    // Install signal handlers to ensure output is flushed before crashes
-    // This is important for ASAN output to be captured
-    signal(SIGABRT, fuzzilliSignalHandler);
-    signal(SIGSEGV, fuzzilliSignalHandler);
-    signal(SIGILL, fuzzilliSignalHandler);
-    signal(SIGFPE, fuzzilliSignalHandler);
+    // Install signal handlers to ensure output is flushed before crashes.
+    // Skip signals already claimed by ASAN/UBSAN so their reports survive.
+    installSignalHandlerIfDefault(SIGABRT);
+    installSignalHandlerIfDefault(SIGSEGV);
+    installSignalHandlerIfDefault(SIGILL);
+    installSignalHandlerIfDefault(SIGFPE);
 
     globalObject->putDirectNativeFunction(
         vm,

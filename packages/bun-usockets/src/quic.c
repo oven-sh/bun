@@ -1115,7 +1115,7 @@ int us_quic_stream_send_datagram(us_quic_stream_t *session,
      * dropped there, so reject up front. 1200 is the QUIC default initial
      * max_udp_payload_size minus headers — conservative but predictable. */
     if (total > 1200) return -1;
-    if (max_queued && session->wt_dgram_bytes + total > max_queued) return -1;
+    if (max_queued && session->wt_dgram_bytes + total > max_queued) return -2;
     struct us_quic_dgram *d = (struct us_quic_dgram *) malloc(sizeof(*d) + total);
     if (!d) return -1;
     d->next = NULL;

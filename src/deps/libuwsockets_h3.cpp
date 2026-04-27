@@ -419,7 +419,7 @@ void uws_h3_wt_iterate_topics(uws_websocket_t* ws,
     void (*cb)(const char*, size_t, void*), void* user_data)
 {
     ((WebTransportSession*)ws)->iterateTopics([cb, user_data](std::string_view t) {
-        cb(t.data(), t.length(), user_data);
+        cb(t.empty() ? "" : t.data(), t.length(), user_data);
     });
 }
 

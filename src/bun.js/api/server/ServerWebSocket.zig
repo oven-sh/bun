@@ -380,6 +380,14 @@ pub fn constructor(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSE
     return globalObject.throw("Cannot construct ServerWebSocket", .{});
 }
 
+/// Release the Strong ref taken by init() when an upgrade is aborted before
+/// onOpen ever fires (so onClose's normal downgrade path is unreachable).
+/// GC then collects the JS wrapper and finalize() frees the native struct.
+pub fn abandonAfterFailedUpgrade(this: *ServerWebSocket) void {
+    this.#flags.closed = true;
+    if (this.#this_value.isNotEmpty()) this.#this_value.downgrade();
+}
+
 pub fn finalize(this: *ServerWebSocket) void {
     log("finalize", .{});
     this.#this_value.finalize();

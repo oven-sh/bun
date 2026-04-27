@@ -103,10 +103,10 @@ struct WebTransportSession {
         int r = us_quic_stream_send_datagram((us_quic_stream_t *) this,
                 message.data(), (unsigned) message.length(), cd->maxBackpressure);
         if (r < 0) {
-            /* Only the maxBackpressure cap (or a dead session) reaches here;
-             * MTU was filtered above, so closeOnBackpressureLimit is the
-             * caller's intended signal. */
-            if (cd->closeOnBackpressureLimit) end(1009, "Backpressure limit");
+            /* -2 is the only "queue would exceed maxBackpressure" return; -1
+             * means the session is gone (or OOM). closeOnBackpressureLimit
+             * should never tear the session down for the latter. */
+            if (r == -2 && cd->closeOnBackpressureLimit) end(1009, "Backpressure limit");
             return DROPPED;
         }
         /* r is the queued bytes *before* this send. Datagrams always queue

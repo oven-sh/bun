@@ -128,8 +128,9 @@ unsigned long long us_quic_stream_id(us_quic_stream_t *s);
 void us_quic_stream_set_webtransport_session(us_quic_stream_t *s);
 /* Queue a QUIC DATAGRAM with the session's Quarter Stream ID prefix. The
  * payload is copied; total (prefix + len) must fit in one frame, i.e. ~1200
- * bytes after QUIC packet overhead. Returns -1 if the session is closed, the
- * queue is full (max_queued reached), or len exceeds MTU; otherwise returns
+ * bytes after QUIC packet overhead. Returns -1 if the session is closed or
+ * len exceeds MTU; -2 if the per-session queue would exceed max_queued
+ * (the only case that should trigger closeOnBackpressureLimit); otherwise
  * the per-session queued byte count *before* this enqueue (0 ⇒ first in
  * queue, caller may report SUCCESS rather than BACKPRESSURE). */
 int us_quic_stream_send_datagram(us_quic_stream_t *session,

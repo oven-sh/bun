@@ -1119,7 +1119,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             resp.clearTimeout();
             upgrader.deref();
 
-            if (resp.upgradeWebTransport(ws) == null) return .false;
+            if (resp.upgradeWebTransport(ws) == null) {
+                // The C++ gate (HTTP_RESPONSE_PENDING / HTTP_WRITE_CALLED) can
+                // trip if user headers already ended the response. init() took
+                // a Strong ref on the JS wrapper; downgrade it so GC can run
+                // finalize() — otherwise both the native struct and the JS
+                // value leak forever.
+                ws.abandonAfterFailedUpgrade();
+                return .false;
+            }
             return .true;
         }
 

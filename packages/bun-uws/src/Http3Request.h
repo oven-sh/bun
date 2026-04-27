@@ -53,7 +53,8 @@ struct Http3Request {
     std::string_view getMethod() {
         size_t n = method.size() < sizeof(methodLower) ? method.size() : sizeof(methodLower);
         for (size_t i = 0; i < n; i++) {
-            methodLower[i] = (char) (method[i] | 0x20);
+            char c = method[i];
+            methodLower[i] = (char) (c | ((unsigned char) (c - 'A') < 26 ? 0x20 : 0));
         }
         return {methodLower, n};
     }
@@ -106,7 +107,7 @@ private:
     us_quic_stream_t *stream;
     std::string_view method, url, fullUrl, query, authority;
     std::pair<int, std::string_view *> params{-1, nullptr};
-    char methodLower[16];
+    char methodLower[32];
     bool yield = false;
 };
 

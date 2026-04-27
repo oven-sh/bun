@@ -49,7 +49,7 @@ const server = Bun.serve({
   tls: { cert, key, rejectUnauthorized: false },
   routes: { "/hi": new Response("hello!") },
   fetch(req) {
-    if (i++ === TOTAL - 1) setTimeout(() => process.exit(0));
+    if (i++ === TOTAL - 1) setTimeout(() => server.stop().then(() => process.exit(0)));
     return new Response("Hello, World!" + i);
   },
 });

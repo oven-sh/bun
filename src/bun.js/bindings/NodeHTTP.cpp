@@ -1072,6 +1072,10 @@ static void writeFetchHeadersToH3Response(WebCore::FetchHeaders& headers, uWS::H
     }
 
     for (auto& header : internalHeaders.uncommonHeaders()) {
+        // RFC 9114 §4.2: connection-specific. Connection/Keep-Alive/Upgrade
+        // are common headers stripped by doWriteHeaders; Proxy-Connection is
+        // not in HTTPHeaderNames so it lands here.
+        if (equalLettersIgnoringASCIICase(header.key, "proxy-connection"_s)) continue;
         writeOne(header.key, header.value);
     }
 }

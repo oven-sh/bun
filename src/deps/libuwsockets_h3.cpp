@@ -252,25 +252,27 @@ bool uws_h3_req_is_ancient(uws_h3_req_t*) { return false; }
 bool uws_h3_req_get_yield(uws_h3_req_t* req) { return ((Http3Request*)req)->getYield(); }
 void uws_h3_req_set_yield(uws_h3_req_t* req, bool y) { ((Http3Request*)req)->setYield(y); }
 
+/* Zig declares these as [*]const u8 (non-null many-pointer); a default-
+ * constructed string_view has data() == nullptr, so normalise empties. */
+static inline size_t ffi_sv(std::string_view v, const char** dest)
+{
+    *dest = v.empty() ? "" : v.data();
+    return v.length();
+}
+
 size_t uws_h3_req_get_url(uws_h3_req_t* req, const char** dest)
 {
-    std::string_view u = ((Http3Request*)req)->getFullUrl();
-    *dest = u.data();
-    return u.length();
+    return ffi_sv(((Http3Request*)req)->getFullUrl(), dest);
 }
 
 size_t uws_h3_req_get_method(uws_h3_req_t* req, const char** dest)
 {
-    std::string_view m = ((Http3Request*)req)->getMethod();
-    *dest = m.data();
-    return m.length();
+    return ffi_sv(((Http3Request*)req)->getMethod(), dest);
 }
 
 size_t uws_h3_req_get_header(uws_h3_req_t* req, const char* lower, size_t lower_len, const char** dest)
 {
-    std::string_view v = ((Http3Request*)req)->getHeader(sv(lower, lower_len));
-    *dest = v.data();
-    return v.length();
+    return ffi_sv(((Http3Request*)req)->getHeader(sv(lower, lower_len)), dest);
 }
 
 void uws_h3_req_for_each_header(uws_h3_req_t* req,
@@ -278,23 +280,21 @@ void uws_h3_req_for_each_header(uws_h3_req_t* req,
     void* user_data)
 {
     ((Http3Request*)req)->forEachHeader([cb, user_data](std::string_view name, std::string_view value) {
-        cb(name.data(), name.length(), value.data(), value.length(), user_data);
+        cb(name.empty() ? "" : name.data(), name.length(),
+           value.empty() ? "" : value.data(), value.length(), user_data);
     });
 }
 
 size_t uws_h3_req_get_query(uws_h3_req_t* req, const char* key, size_t key_len, const char** dest)
 {
-    std::string_view v = key ? ((Http3Request*)req)->getQuery(sv(key, key_len))
-                             : ((Http3Request*)req)->getQuery();
-    *dest = v.data();
-    return v.length();
+    return ffi_sv(key ? ((Http3Request*)req)->getQuery(sv(key, key_len))
+                      : ((Http3Request*)req)->getQuery(),
+                  dest);
 }
 
 size_t uws_h3_req_get_parameter(uws_h3_req_t* req, unsigned short index, const char** dest)
 {
-    std::string_view v = ((Http3Request*)req)->getParameter(index);
-    *dest = v.data();
-    return v.length();
+    return ffi_sv(((Http3Request*)req)->getParameter(index), dest);
 }
 
 } // extern "C"

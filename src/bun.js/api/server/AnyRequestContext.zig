@@ -117,8 +117,11 @@ pub fn getRequest(self: AnyRequestContext) ?*uws.Request {
 pub fn onAbort(self: AnyRequestContext, response: uws.AnyResponse) void {
     self.dispatch(void, {}, struct {
         fn f(comptime T: type, ctx: anytype, r: uws.AnyResponse) void {
+            // The AnyResponse arm and T.Resp are created together; assert
+            // they agree so a mismatch traps in safe builds instead of being
+            // silently @ptrCast.
             ctx.onAbort(switch (r) {
-                inline else => |p| @as(*T.Resp, @ptrCast(p)),
+                inline else => |p| if (comptime @TypeOf(p) == *T.Resp) p else unreachable,
             });
         }
     }.f, .{response});

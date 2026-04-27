@@ -19068,7 +19068,14 @@ pub const SSL = opaque {
         SSL_enable_signed_cert_timestamps(ssl);
         SSL_enable_ocsp_stapling(ssl);
 
-        SSL_set_enable_ech_grease(ssl, 1);
+        // ECH GREASE (RFC 9460/9180 draft, extension type 0xfe0d) adds ~200-300
+        // bytes of random-looking payload to the ClientHello. Some servers and
+        // middleboxes drop or hang connections that carry this extension (they
+        // treat an unknown large extension with a reserved type as hostile and
+        // silently stop responding — see issue #29780 for one such server).
+        // curl, Node's undici, and Bun's own node:tls all omit it, so our fetch
+        // is the outlier. Leave it off to match their interop profile; we can
+        // re-enable when ECH is finalized and widely deployed.
     }
 
     pub fn handshake(this: *SSL) Error!void {

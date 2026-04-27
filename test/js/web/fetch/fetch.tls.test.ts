@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, tmpdirSync } from "harness";
+import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
 
@@ -456,5 +457,88 @@ describe.concurrent("fetch-tls", () => {
       expect(stderr).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
       expect(stderr).toContain("ignoring extra certs");
     }
+  });
+
+  // Parses the TLS ClientHello out of a raw TCP byte stream and returns the
+  // set of extension type IDs it advertises. Returns null if no ClientHello
+  // was received. See RFC 8446 §4.1.2 for the message format.
+  function parseClientHelloExtensions(bytes: Buffer): number[] | null {
+    // TLSPlaintext: type(1) legacy_version(2) length(2) = 5 bytes
+    if (bytes.length < 5 || bytes[0] !== 0x16) return null; // 0x16 = handshake
+    const recordLen = bytes.readUInt16BE(3);
+    if (bytes.length < 5 + recordLen) return null;
+    // Handshake: msg_type(1) length(3) = 4 bytes, then ClientHello
+    let p = 5;
+    if (bytes[p] !== 0x01) return null; // 0x01 = client_hello
+    p += 4;
+    p += 2; // legacy_version
+    p += 32; // random
+    const sessionIdLen = bytes[p];
+    p += 1 + sessionIdLen;
+    const cipherSuitesLen = bytes.readUInt16BE(p);
+    p += 2 + cipherSuitesLen;
+    const compressionLen = bytes[p];
+    p += 1 + compressionLen;
+    if (p + 2 > bytes.length) return [];
+    const extensionsLen = bytes.readUInt16BE(p);
+    p += 2;
+    const extensionsEnd = p + extensionsLen;
+    const types: number[] = [];
+    while (p + 4 <= extensionsEnd) {
+      const extType = bytes.readUInt16BE(p);
+      const extLen = bytes.readUInt16BE(p + 2);
+      types.push(extType);
+      p += 4 + extLen;
+    }
+    return types;
+  }
+
+  // Regression test for https://github.com/oven-sh/bun/issues/29780
+  //
+  // Bun's fetch HTTP client used to enable ECH GREASE (extension type 0xfe0d,
+  // RFC 9460/9180 draft) on every TLS ClientHello. That extension carries
+  // 200-300 bytes of random payload that some servers/middleboxes treat as
+  // hostile: they complete the TCP + TLS handshake and then silently hold
+  // the connection open without responding to the HTTP request. curl, Node's
+  // undici, and Bun's own node:tls all omit ECH GREASE, so our fetch was the
+  // odd one out.
+  //
+  // This verifies the ClientHello no longer advertises 0xfe0d.
+  it("fetch TLS ClientHello does not include ECH GREASE extension (#29780)", async () => {
+    const { promise: helloPromise, resolve: resolveHello } =
+      Promise.withResolvers<Buffer>();
+
+    await using server = net.createServer(socket => {
+      const chunks: Buffer[] = [];
+      socket.on("data", chunk => {
+        chunks.push(chunk);
+        // The ClientHello arrives in the first record; capture it and close
+        // so fetch rejects quickly instead of hanging on TLS.
+        resolveHello(Buffer.concat(chunks));
+        socket.destroy();
+      });
+      socket.on("error", () => {});
+    });
+
+    const { promise: listening, resolve: onListen } =
+      Promise.withResolvers<void>();
+    server.listen(0, "127.0.0.1", () => onListen());
+    await listening;
+    const port = (server.address() as net.AddressInfo).port;
+
+    // fetch will fail (the server just drops the connection) — we only care
+    // about the ClientHello bytes it sent.
+    await fetch(`https://127.0.0.1:${port}/`, {
+      tls: { rejectUnauthorized: false },
+    }).catch(() => {});
+
+    const hello = await helloPromise;
+    const extensions = parseClientHelloExtensions(hello);
+    expect(extensions).not.toBeNull();
+    // 0xfe0d = encrypted_client_hello (ECH). Must be absent.
+    expect(extensions).not.toContain(0xfe0d);
+    // Sanity: the ClientHello is well-formed (ALPN = 16, SNI = 0 should be
+    // present) so we know the parser actually walked the extensions list.
+    expect(extensions).toContain(16); // application_layer_protocol_negotiation
   });
 });

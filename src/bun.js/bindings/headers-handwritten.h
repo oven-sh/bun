@@ -46,6 +46,13 @@ enum class BunStringTag : uint8_t {
     StaticZigString = 3,
     Empty = 4,
 };
+
+/// Mirrors `bun.uws.ResponseKind` in src/deps/uws.zig.
+enum class UWSResponseKind : int32_t {
+    TCP = 0,
+    SSL = 1,
+    H3 = 2,
+};
 #endif
 
 typedef struct BunString {

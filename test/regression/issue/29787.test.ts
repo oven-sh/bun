@@ -144,9 +144,7 @@ test("stdin stream stays open while concurrent fetch(file://) bodies finish (#29
   )[];
 
   // No internal errors from the stdin reader.
-  const err = events.find(e => e.kind === "err") as
-    | { kind: "err"; message: string }
-    | undefined;
+  const err = events.find(e => e.kind === "err") as { kind: "err"; message: string } | undefined;
   expect(err).toBeUndefined();
 
   // Every byte the parent wrote was delivered to the child. With the bug

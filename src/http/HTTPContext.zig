@@ -119,6 +119,24 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             bun.handleOom(this.active_h2_sessions.append(bun.default_allocator, session));
         }
 
+        /// Called from drainQueuedShutdowns when the abort-tracker lookup
+        /// misses: a request parked in `PendingConnect.waiters` (coalesced
+        /// onto a leader's in-flight TLS connect) never registered a socket,
+        /// so it can only be found by scanning here.
+        pub fn abortPendingH2Waiter(this: *@This(), async_http_id: u32) bool {
+            if (comptime !ssl) return false;
+            for (this.pending_h2_connects.items) |pc| {
+                for (pc.waiters.items, 0..) |waiter, i| {
+                    if (waiter.async_http_id == async_http_id) {
+                        _ = pc.waiters.swapRemove(i);
+                        waiter.failFromH2(error.Aborted);
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
         pub fn unregisterH2(this: *@This(), session: *H2.ClientSession) void {
             if (comptime !ssl) return;
             const idx = session.registry_index;

@@ -1146,6 +1146,16 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
         return;
     }
 
+    // protocol: "http2" is documented as HTTPS-only (h2c is out of scope).
+    // Every consumer of force_http2 is gated on `comptime is_ssl`, so without
+    // this an http:// request would silently fall through to HTTP/1.1.
+    if (comptime !is_ssl) {
+        if (this.flags.force_http2) {
+            this.fail(error.HTTP2Unsupported);
+            return;
+        }
+    }
+
     var socket = (http_thread.connect(this, is_ssl) catch |err| {
         bun.handleErrorReturnTrace(err, @errorReturnTrace());
 

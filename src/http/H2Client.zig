@@ -811,9 +811,12 @@ pub const ClientSession = struct {
                 }
                 client.cloneMetadata();
                 client.state.flags.received_last_chunk = true;
-                client.state.content_length = 0;
-                client.progressUpdate(true, this.ctx, this.socket);
-                return true;
+                // .finished = HEAD/204/304: no body is expected regardless of
+                // any Content-Length header, so clear it. Otherwise leave the
+                // parsed value so finishStream() enforces §8.1.1 against the
+                // (zero) bytes actually received.
+                if (result == .finished) client.state.content_length = 0;
+                return this.finishStream(client);
             }
             client.cloneMetadata();
         }

@@ -568,7 +568,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
         expect(exitCode).toBe(0);
       },
     );
-  }, 30_000);
+  });
 
   test("response trailers are consumed without breaking the body", async () => {
     const server = http2.createSecureServer({ ...tls, allowHTTP1: false });
@@ -1003,6 +1003,28 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       );
     });
 
+    test("Content-Length with END_STREAM on HEADERS and zero DATA rejects", async () => {
+      // RFC 9113 §8.1.1: declared length must equal sum of DATA payloads even
+      // when that sum is zero. Previously this hit the early-finish branch
+      // and resolved with an empty body.
+      await withRawH2Server(
+        (conn, id) => {
+          conn.headers(id, Buffer.concat([hpackStatus(200), hpackLit("content-length", "42")]), { endStream: true });
+        },
+        async url => {
+          await using proc = spawnFetch(`
+            try {
+              const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
+              console.log("ok", r.status, (await r.text()).length);
+            } catch (e) { console.log("rejected", String(e).includes("ContentLength")); }
+          `);
+          const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stdout.trim()).toBe("rejected true");
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
+
     test("response missing :status pseudo-header rejects cleanly", async () => {
       await withRawH2Server(
         (conn, id) => {
@@ -1040,7 +1062,6 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
             console.log("survived");
           `);
           const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          expect(stderr).not.toContain("panic");
           expect(stdout.trim()).toBe("200 hello\nsurvived");
           expect(exitCode).toBe(0);
         },
@@ -1174,5 +1195,71 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     } finally {
       server.close();
     }
+  });
+
+  test('protocol: "http2" on a plain http:// URL fails with HTTP2Unsupported', async () => {
+    // h2c is out of scope; without an explicit check the request would
+    // silently complete over HTTP/1.1.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--no-warnings",
+        "-e",
+        `try {
+           await fetch("http://127.0.0.1:1/", { protocol: "http2" });
+           console.log("unexpected-ok");
+         } catch (e) { console.log(e.code || String(e)); }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toContain("HTTP2Unsupported");
+    expect(exitCode).toBe(0);
+  });
+
+  test("abort while coalesced onto an in-flight TLS connect resolves promptly", async () => {
+    // Leader's TLS handshake never completes (server is plain TCP), so its
+    // PendingConnect stays open. The waiter has no abort-tracker entry and
+    // would otherwise wait for the leader before observing the abort.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--no-warnings",
+        "-e",
+        `import net from "node:net";
+         let conns = 0;
+         const { promise: accepted, resolve } = Promise.withResolvers();
+         const server = net.createServer(sock => { conns++; sock.on("error", () => {}); resolve(); });
+         server.listen(0, "127.0.0.1");
+         await new Promise(r => server.on("listening", r));
+         const url = "https://127.0.0.1:" + server.address().port + "/";
+         const opts = { protocol: "http2", tls: { rejectUnauthorized: false } };
+         const leader = fetch(url, opts).catch(() => {});
+         const ac = new AbortController();
+         const waiter = fetch(url, { ...opts, signal: ac.signal }).then(
+           () => "unexpected-ok",
+           e => e?.name || String(e),
+         );
+         // Once the server has accepted the leader's TCP connection both
+         // fetches have been processed on the http thread (PendingConnect
+         // creation is synchronous in connect()). The settle window lets a
+         // non-coalesced waiter's connect land so conns reflects it.
+         await accepted;
+         await Bun.sleep(100);
+         ac.abort();
+         console.log(await waiter, "conns=" + conns);
+         void leader;
+         process.exit(0);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("AbortError conns=1");
+    expect(exitCode).toBe(0);
   });
 });

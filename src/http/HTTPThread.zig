@@ -360,6 +360,14 @@ fn evictOldestSslContext() void {
     entry.config_ref.deinit();
 }
 
+fn abortPendingH2Waiter(this: *@This(), async_http_id: u32) bool {
+    if (this.https_context.abortPendingH2Waiter(async_http_id)) return true;
+    for (custom_ssl_context_map.values()) |entry| {
+        if (entry.ctx.abortPendingH2Waiter(async_http_id)) return true;
+    }
+    return false;
+}
+
 fn drainQueuedShutdowns(this: *@This()) void {
     while (true) {
         // socket.close() can potentially be slow
@@ -396,11 +404,16 @@ fn drainQueuedShutdowns(this: *@This()) void {
                     },
                 }
             } else {
-                // No socket for this id: the request either hasn't started
-                // yet (still in `queued_tasks`/`deferred_tasks`) or has
-                // already completed. Flag it so `drainEvents` knows to scan
-                // the queue for aborted-but-unstarted tasks even when
-                // `active >= max` would otherwise short-circuit.
+                // No socket for this id. It may be a request coalesced onto a
+                // leader's in-flight h2 TLS connect (parked in `pc.waiters`
+                // with no abort-tracker entry); scan those first so the abort
+                // doesn't wait for the leader's connect to resolve.
+                if (this.abortPendingH2Waiter(http.async_http_id)) continue;
+                // Otherwise the request either hasn't started yet (still in
+                // `queued_tasks`/`deferred_tasks`) or has already completed.
+                // Flag it so `drainEvents` knows to scan the queue for
+                // aborted-but-unstarted tasks even when `active >= max`
+                // would otherwise short-circuit.
                 this.has_pending_queued_abort = true;
             }
         }

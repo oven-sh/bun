@@ -990,6 +990,9 @@ pub fn fromJS(
         } else if (!args.h1) {
             return global.throwInvalidArguments("Cannot disable h1 without enabling h3", .{});
         }
+        if (!args.h1 and args.address == .unix) {
+            return global.throwInvalidArguments("Cannot disable h1 with a unix socket — HTTP/3 over AF_UNIX is not supported", .{});
+        }
     } else {
         return global.throwInvalidArguments("Bun.serve expects an object", .{});
     }

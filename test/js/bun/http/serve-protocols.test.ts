@@ -93,8 +93,11 @@ async function withServer(serve: object, fn: (origin: string) => Promise<void>) 
   });
   let port = 0;
   let buf = "";
-  for await (const chunk of proc.stderr) {
-    buf += new TextDecoder().decode(chunk);
+  const stderr = proc.stderr.getReader();
+  while (true) {
+    const { value, done } = await stderr.read();
+    if (done) break;
+    buf += new TextDecoder().decode(value);
     const m = buf.match(/PORT=(\d+)/);
     if (m) {
       port = Number(m[1]);
@@ -102,6 +105,7 @@ async function withServer(serve: object, fn: (origin: string) => Promise<void>) 
     }
     if (buf.length > 4096) break;
   }
+  stderr.releaseLock();
   expect(port).toBeGreaterThan(0);
   // drain remaining stderr so the pipe doesn't backpressure the child
   (async () => {

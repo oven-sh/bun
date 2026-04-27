@@ -164,8 +164,6 @@ struct worker {
     _Atomic uint64_t bytes_rx;       // HTTP body bytes
     _Atomic uint64_t bytes_rx_wire;  // UDP payload bytes (incl. headers, QUIC framing)
     _Atomic uint64_t bytes_tx;
-    _Atomic uint64_t udp_rx;
-    _Atomic uint64_t udp_tx;
     _Atomic uint64_t conns_open;
     _Atomic uint64_t handshake_fail;
 };
@@ -564,7 +562,6 @@ static void worker_recv(struct worker *w) {
         }
         int n = recvmmsg(w->fd, msgs, RECV_BATCH, 0, NULL);
         if (n <= 0) break;
-        atomic_fetch_add_explicit(&w->udp_rx, (uint64_t)n, memory_order_relaxed);
         uint64_t wire = 0;
         for (int i = 0; i < n; i++) wire += msgs[i].msg_len;
         atomic_fetch_add_explicit(&w->bytes_rx_wire, wire, memory_order_relaxed);

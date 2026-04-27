@@ -4,10 +4,7 @@
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/Structure.h>
 #include <bun-uws/src/App.h>
-#include "quic.h"
-#ifdef LIBUS_USE_QUIC
 #include <bun-uws/src/Http3Request.h>
-#endif
 #include "ZigGeneratedClasses.h"
 #include "AsyncContextFrame.h"
 #include "ServerRouteList.h"
@@ -282,7 +279,6 @@ extern "C" JSC::EncodedJSValue Bun__ServerRouteList__callRoute(
     return JSValue::encode(routeList->callRoute(globalObject, index, requestPtr, serverObject, requestObject, req));
 }
 
-#ifdef LIBUS_USE_QUIC
 extern "C" JSC::EncodedJSValue Bun__ServerRouteList__callRouteH3(
     Zig::GlobalObject* globalObject,
     uint32_t index,
@@ -296,7 +292,6 @@ extern "C" JSC::EncodedJSValue Bun__ServerRouteList__callRouteH3(
     ServerRouteList* routeList = uncheckedDowncast<ServerRouteList>(routeListValue);
     return JSValue::encode(routeList->callRoute(globalObject, index, requestPtr, serverObject, requestObject, req));
 }
-#endif
 
 extern "C" JSC::EncodedJSValue Bun__ServerRouteList__create(Zig::GlobalObject* globalObject, EncodedJSValue* callbacks, ZigString* paths, size_t pathsLength)
 {

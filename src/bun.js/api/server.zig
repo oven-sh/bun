@@ -1895,7 +1895,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         pub fn onH3404(_: *ThisServer, _: *uws.H3.Request, resp: *uws.H3.Response) void {
-            if (comptime bun.Environment.isWindows) unreachable;
+            if (comptime !has_h3) unreachable;
             resp.writeStatus("404 Not Found");
             resp.end("", false);
         }

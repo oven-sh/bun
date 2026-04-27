@@ -1328,9 +1328,6 @@ pub fn HTTPServerWritable(comptime ssl: bool, comptime http3: bool) type {
 }
 pub const HTTPSResponseSink = HTTPServerWritable(true, false);
 pub const HTTPResponseSink = HTTPServerWritable(false, false);
-// On Windows there is no QUIC build; alias to the SSL sink so the generated
-// JSSink symbols still resolve. The type is never reachable there because
-// `h3: true` is rejected at config time.
 pub const H3ResponseSink = HTTPServerWritable(true, true);
 pub const NetworkSink = struct {
     pub const new = bun.TrivialNew(@This());

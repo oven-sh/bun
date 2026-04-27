@@ -3703,7 +3703,6 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__CronJob__onPromiseResolve;
     } else if (handler == Bun__CronJob__onPromiseReject) {
         return GlobalObject::PromiseFunctions::Bun__CronJob__onPromiseReject;
-#ifndef _WIN32
     } else if (handler == Bun__HTTPRequestContextH3__onReject) {
         return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextH3__onReject;
     } else if (handler == Bun__HTTPRequestContextH3__onRejectStream) {
@@ -3720,7 +3719,6 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onResolve;
     } else if (handler == Bun__HTTPRequestContextDebugH3__onResolveStream) {
         return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onResolveStream;
-#endif
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

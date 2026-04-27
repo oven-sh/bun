@@ -100,9 +100,7 @@
 
 #include <string_view>
 #include <bun-uws/src/App.h>
-#ifndef _WIN32
 #include <bun-uws/src/Http3Request.h>
-#endif
 #include <bun-usockets/src/internal/internal.h>
 #include "IDLTypes.h"
 #include "JSDOMBinding.h"
@@ -2012,7 +2010,6 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
 }
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
 {
-#if defined(LIBUS_USE_QUIC)
     auto* req = reinterpret_cast<uWS::Http3Request*>(arg1);
 
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
@@ -2035,12 +2032,6 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
     });
     headers->setInternalHeaders(WTF::move(map));
     return headers;
-#else
-    UNUSED_PARAM(arg1);
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
-    headers->relaxAdoptionRequirement();
-    return headers;
-#endif
 }
 void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0)
 {

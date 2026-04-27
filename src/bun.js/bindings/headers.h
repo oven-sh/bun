@@ -732,7 +732,6 @@ BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onResolveStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPRequest__onResolve);
 BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPRequest__onReject);
 
-#ifndef _WIN32
 BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextH3__onResolve);
 BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextH3__onReject);
 BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextH3__onResolveStream);
@@ -741,7 +740,6 @@ BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugH3__onResolve);
 BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugH3__onReject);
 BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugH3__onResolveStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugH3__onRejectStream);
-#endif
 
 BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onResolveStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onRejectStream);

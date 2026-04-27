@@ -133,9 +133,37 @@ if (isDockerEnabled()) {
         const [{ x }] = await sql`select CAST(${value} as NUMERIC(30,20)) as x`;
         expect(x).toBe(value);
       }
-      // zero specifically
+      // zero specifically — a numeric with an explicit scale must preserve
+      // trailing zeros even for the value 0 (regression: #29772).
       const [{ x }] = await sql`select CAST(${"0.00000000000000000000"} as NUMERIC(30,20)) as x`;
-      expect(x).toBe("0");
+      expect(x).toBe("0.00000000000000000000");
+    });
+
+    test("numeric zero preserves scale on prepared/binary path (#29772)", async () => {
+      await using sql = postgres(options);
+      const table = "t_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql.unsafe(`CREATE TEMPORARY TABLE ${table} (v numeric(10, 4) NOT NULL)`);
+      await sql.unsafe(`INSERT INTO ${table} VALUES (0), (1), (1.5), (10)`);
+
+      // Unprepared (text protocol) path — always correct server-side.
+      const unprepared = await sql.unsafe(`SELECT v FROM ${table} ORDER BY v`);
+      expect(unprepared.map((r: any) => r.v)).toEqual(["0.0000", "1.0000", "1.5000", "10.0000"]);
+
+      // Prepared (binary protocol) path — must match.
+      const prepared = await sql.unsafe(`SELECT v FROM ${table} ORDER BY v LIMIT $1`, [10]);
+      expect(prepared.map((r: any) => r.v)).toEqual(["0.0000", "1.0000", "1.5000", "10.0000"]);
+
+      // numeric with no typmod (dscale = 0) — zero has no trailing fractional
+      // digits and should remain "0" on both paths.
+      const table2 = "t_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql.unsafe(`CREATE TEMPORARY TABLE ${table2} (v numeric NOT NULL)`);
+      await sql.unsafe(`INSERT INTO ${table2} VALUES (0)`);
+      const zeroNoScale = await sql.unsafe(`SELECT v FROM ${table2} LIMIT $1`, [1]);
+      expect(zeroNoScale[0].v).toBe("0");
+
+      // Negative zero-adjacent values still format correctly on the prepared path.
+      const negRows = await sql.unsafe(`SELECT CAST($1 AS numeric(10,2)) AS v`, ["-0.50"]);
+      expect(negRows[0].v).toBe("-0.50");
     });
 
     describe("Array helpers", () => {

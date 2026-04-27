@@ -787,7 +787,17 @@ fn parseBinaryNumeric(input: []const u8, result: *std.array_list.Managed(u8)) !P
     }
 
     if (ndigits == 0) {
-        return PGNummericString{ .static = "0" };
+        // When there are no digit groups, the value is zero. Respect dscale so
+        // that e.g. numeric(10, 4) zero still renders as "0.0000" on the
+        // binary (prepared) path, matching the text (unprepared) path and
+        // libpq/node-postgres.
+        if (dscale <= 0) {
+            return PGNummericString{ .static = "0" };
+        }
+        try result.append('0');
+        try result.append('.');
+        try result.appendNTimes('0', @intCast(dscale));
+        return PGNummericString{ .dynamic = result.items };
     }
 
     // Add negative sign if needed

@@ -90,7 +90,11 @@ struct Http3Response {
 
     std::pair<bool, bool> tryEnd(std::string_view data, uint64_t totalSize = 0, bool closeConnection = false) {
         bool ok = internalEnd(data, totalSize, true, true, closeConnection);
-        return {ok, hasResponded()};
+        /* When ok==true, internalEnd → markDone → us_quic_stream_kick can run
+         * lsquic_engine_process_conns synchronously, which may call on_close
+         * and free `this`. hasResponded() is definitionally true in that case
+         * (markDone cleared HTTP_RESPONSE_PENDING), so short-circuit. */
+        return {ok, ok || hasResponded()};
     }
 
     void endWithoutBody(std::optional<size_t> reportedContentLength = std::nullopt, bool closeConnection = false) {

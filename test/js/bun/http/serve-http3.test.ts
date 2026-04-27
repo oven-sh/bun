@@ -2,6 +2,7 @@ import { describe, expect, test, beforeAll } from "bun:test";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
 import { join } from "path";
 import { which } from "bun";
+import { createHash, randomBytes } from "crypto";
 
 // HTTP/3 needs a curl that was built with nghttp3/ngtcp2. CI provisions one
 // as `curl-h3`; locally fall back to whichever `curl` reports HTTP3 in
@@ -81,6 +82,11 @@ const server = serve({
   routes: {
     "/api/:id": req => new Response("id=" + req.params.id, { headers: { "x-route": "api" } }),
     "/route-only": { POST: () => new Response("posted") },
+    "/lifetime/:id": async req => {
+      const before = req.params.id;
+      await Bun.sleep(0);
+      return new Response(before + "|" + req.params.id);
+    },
     "/static": new Response("from-static-route", {
       headers: { "content-type": "text/plain", etag: '"v1"' },
     }),
@@ -103,6 +109,56 @@ const server = serve({
           "x-len": String(body.length),
         },
       });
+    }
+    if (url.pathname === "/echo-bytes") {
+      const body = await req.arrayBuffer();
+      return new Response(body, {
+        status: 200,
+        headers: { "x-len": String(body.byteLength) },
+      });
+    }
+    if (url.pathname === "/transform") {
+      const body = new Uint8Array(await req.arrayBuffer());
+      for (let i = 0; i < body.length; i++) body[i] = (body[i] + 1) & 0xff;
+      return new Response(body, { headers: { "x-len": String(body.length) } });
+    }
+    if (url.pathname === "/lifetime") {
+      const mode = url.searchParams.get("d");
+      const beforeUrl = req.url;
+      const beforeMethod = req.method;
+      const beforeHdr = req.headers.get("x-probe");
+      if (mode === "micro") await Promise.resolve();
+      else if (mode === "macro") await Bun.sleep(0);
+      else if (mode === "double") { await Promise.resolve(); await Bun.sleep(0); }
+      const afterUrl = req.url;
+      const afterMethod = req.method;
+      const afterHdr = req.headers.get("x-probe");
+      const all = {};
+      for (const [k, v] of req.headers) all[k] = v;
+      const body = await req.text();
+      return Response.json({
+        ok: beforeUrl === afterUrl && beforeMethod === afterMethod && beforeHdr === afterHdr,
+        url: afterUrl, method: afterMethod, probe: afterHdr,
+        headerCount: Object.keys(all).length, bodyLen: body.length,
+      });
+    }
+    if (url.pathname === "/spawn") {
+      const p = Bun.spawn({
+        cmd: [process.execPath, "-e", "for(let i=0;i<40;i++)process.stdout.write('x'.repeat(1000)+String.fromCharCode(10))"],
+        stdout: "pipe",
+      });
+      return new Response(p.stdout, { headers: { "content-type": "text/plain" } });
+    }
+    if (url.pathname === "/passthrough") {
+      return new Response(req.body, { status: 200, headers: { "x-passthrough": "1" } });
+    }
+    if (url.pathname === "/file-stream") {
+      return new Response(Bun.file(process.env.BIG_FILE).stream());
+    }
+    if (url.pathname === "/headers") {
+      const out = {};
+      for (const [k, v] of req.headers) out[k] = v;
+      return Response.json(out);
     }
     if (url.pathname === "/big") {
       return new Response(big, { headers: { "content-type": "application/octet-stream" } });
@@ -385,5 +441,294 @@ describe("Bun.serve HTTP/3", () => {
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(stderr.toLowerCase()).toContain("h1");
     expect(exitCode).not.toBe(0);
+  });
+});
+
+// Cases ported from h2o t/40http3 and aioquic interop. Each test gets its own
+// server (withServer) so they can run concurrently; everything goes through
+// raw curl --http3-only so multi-URL/--parallel reuse a single QUIC connection.
+describe("Bun.serve HTTP/3 adversarial", () => {
+  const md5 = (b: Uint8Array | ArrayBuffer) => createHash("md5").update(Buffer.from(b)).digest("hex");
+
+  itH3("64 concurrent streams on one connection", async () => {
+    // h2o uses 1000; 64 stays inside lsquic's default initial-max-streams
+    // and the debug-build 5s budget while still being 4× the existing
+    // 16-concurrent coverage.
+    await withServer(async port => {
+      const N = 64;
+      const url = `https://127.0.0.1:${port}/hello`;
+      const proc = Bun.spawn({
+        cmd: [
+          curlH3!,
+          "-sk",
+          "--http3-only",
+          "--connect-timeout",
+          "10",
+          "--max-time",
+          "20",
+          "--parallel",
+          "--parallel-max",
+          String(N),
+          ...Array.from({ length: N }, () => url),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const matches = stdout.match(/hello over h3/g) ?? [];
+      expect(matches.length).toBe(N);
+      expect(stdout.length).toBe("hello over h3".length * N);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  itH3("large request headers (7k value + 50×100B) reach handler", async () => {
+    await withServer(async port => {
+      const big = Buffer.alloc(7000, "H").toString();
+      const small = Buffer.alloc(100, "v").toString();
+      const args = ["-D", "-", "-H", `x-huge: ${big}`];
+      for (let i = 0; i < 50; i++) args.push("-H", `x-h${i}: ${small}`);
+      const { stdout, exitCode } = await curl3(port, "/headers", args);
+      expect(stdout).toContain("HTTP/3 200");
+      const body = stdout.slice(stdout.indexOf("\r\n\r\n") + 4);
+      const seen = JSON.parse(body) as Record<string, string>;
+      expect(seen["x-huge"]?.length).toBe(7000);
+      for (let i = 0; i < 50; i++) expect(seen[`x-h${i}`]).toBe(small);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  itH3("8 MB POST body echoes byte-exact", async () => {
+    await withServer(async port => {
+      // Patterned (not crypto-random) so the test is deterministic but still
+      // crosses many QUIC packets and stresses the recvmmsg/sendmmsg paths.
+      const payload = Buffer.alloc(8 * 1024 * 1024);
+      for (let i = 0; i < payload.length; i++) payload[i] = (i * 131) & 0xff;
+      const { raw, exitCode } = await curl3(
+        port,
+        "/echo-bytes",
+        ["--data-binary", "@-", "-H", "content-type: application/octet-stream"],
+        { stdin: payload },
+      );
+      expect(raw.length).toBe(payload.length);
+      expect(md5(raw)).toBe(md5(payload));
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  itH3("slow client read (--limit-rate) drains streamed response", async () => {
+    await withServer(async port => {
+      // Body is tiny ("one two three") so 1 KB/s is fine; the point is the
+      // server sees backpressure from the QUIC flow-control window and the
+      // H3ResponseSink onWritable path completes instead of hanging.
+      const { stdout, exitCode } = await curl3(port, "/stream", ["--limit-rate", "1k"]);
+      expect(stdout).toBe("one two three");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  itH3("204 then 200 on the same connection", async () => {
+    await withServer(async port => {
+      const proc = Bun.spawn({
+        cmd: [
+          curlH3!,
+          "-sk",
+          "--http3-only",
+          "-D",
+          "-",
+          `https://127.0.0.1:${port}/status`,
+          `https://127.0.0.1:${port}/hello`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toContain("HTTP/3 204");
+      expect(stdout).toContain("HTTP/3 200");
+      expect(stdout).toContain("hello over h3");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  itH3("HEAD on /big returns content-length and no body", async () => {
+    await withServer(async port => {
+      const { stdout, raw, exitCode } = await curl3(port, "/big", ["-I"]);
+      expect(stdout).toContain("HTTP/3 200");
+      expect(stdout.toLowerCase()).toMatch(/content-length:\s*524288/);
+      // -I writes only the header block to stdout; no body bytes follow.
+      const headerEnd = stdout.indexOf("\r\n\r\n");
+      expect(headerEnd).toBeGreaterThan(0);
+      expect(raw.length - (headerEnd + 4)).toBeLessThanOrEqual(0);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  itH3("lying content-length doesn't take down the listener", async () => {
+    await withServer(async port => {
+      // RFC 9114 §4.1.2: a request whose payload doesn't match content-length
+      // is malformed. lsquic/nghttp3 may RESET_STREAM here — we don't care
+      // about the exact response, only that the process keeps serving.
+      await curl3(port, "/echo", ["-X", "POST", "-H", "content-length: 5", "--data-binary", "@-"], {
+        stdin: Buffer.alloc(100, "x"),
+      });
+      const { stdout, exitCode } = await curl3(port, "/hello");
+      expect(stdout).toBe("hello over h3");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  itH3("client RST mid-/big does not break the listener", async () => {
+    await withServer(async port => {
+      // --limit-rate keeps curl reading at 10 KB/s so the 512 KB body is
+      // guaranteed to be mid-drain when --max-time fires; pure --max-time
+      // races the handshake (too short) or completes (too long). 2s leaves
+      // handshake headroom under full-suite load while staying far below
+      // the 51s a complete drain would need.
+      const aborted = await curl3(port, "/big", ["--limit-rate", "10k", "--max-time", "2"]);
+      expect(aborted.exitCode).not.toBe(0);
+      expect(aborted.raw.length).toBeLessThan(512 * 1024);
+      const { stdout, exitCode } = await curl3(port, "/hello");
+      expect(stdout).toBe("hello over h3");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // The big one: every concurrent stream gets back exactly its own bytes,
+  // transformed. Catches shared-buffer reuse in quic.c read_buf, response
+  // backpressure aliasing in Http3ResponseData, and partial-write offset
+  // bugs in H3ResponseSink. Bodies are crypto-random so any cross-stream
+  // leak shows up as an md5 mismatch, not just an offset shift.
+  const isolationRound = async (port: number, count: number, size: number) => {
+    const transform = (input: Uint8Array) => {
+      const out = Buffer.allocUnsafe(input.length);
+      for (let i = 0; i < input.length; i++) out[i] = (input[i] + 1) & 0xff;
+      return out;
+    };
+    const firstDiff = (a: Uint8Array, b: Uint8Array) => {
+      const n = Math.min(a.length, b.length);
+      for (let i = 0; i < n; i++) if (a[i] !== b[i]) return i;
+      return a.length === b.length ? -1 : n;
+    };
+    const bodies = Array.from({ length: count }, () => new Uint8Array(randomBytes(size)));
+    const expected = bodies.map(transform);
+    const results = await Promise.all(
+      bodies.map(b =>
+        curl3(port, "/transform", ["--data-binary", "@-", "-H", "content-type: application/octet-stream"], {
+          stdin: b,
+        }),
+      ),
+    );
+    for (let i = 0; i < count; i++) {
+      const { raw, exitCode } = results[i];
+      expect(exitCode).toBe(0);
+      expect(raw.length).toBe(size);
+      const want = md5(expected[i]);
+      const got = md5(raw);
+      if (got !== want) {
+        const at = firstDiff(raw, expected[i]);
+        throw new Error(
+          `stream ${i}/${count} (${size}B): first divergence at byte ${at}; ` +
+            `expected ${expected[i][at]}, got ${raw[at]} (input byte was ${bodies[i][at]})`,
+        );
+      }
+      expect(got).toBe(want);
+    }
+  };
+
+  // 8 × 96KB — past the 16KB quic.c read_buf and the 64KB lsquic stream
+  // window. Separate curl process per stream = separate QUIC connection,
+  // so this checks per-connection state isolation too. Aliasing bugs
+  // reproduce at any N≥2; 8 fits the debug-build 5s default.
+  itH3("per-stream body isolation: 8 concurrent 96KB transformed echoes", async () => {
+    await withServer(port => isolationRound(port, 8, 96 * 1024));
+  });
+
+  // 3 × 300KB — forces Http3Response backpressure → onWritable → drain.
+  itH3("per-stream body isolation: 3 concurrent 300KB transformed echoes", async () => {
+    await withServer(port => isolationRound(port, 3, 300 * 1024));
+  });
+
+  itH3("Response(subprocess.stdout) streams over H3", async () => {
+    await withServer(async port => {
+      const { raw, exitCode } = await curl3(port, "/spawn");
+      expect(raw.length).toBe(40 * 1001);
+      const text = Buffer.from(raw).toString();
+      const lines = text.split("\n").filter(Boolean);
+      expect(lines.length).toBe(40);
+      expect(lines.every(l => l === Buffer.alloc(1000, "x").toString())).toBe(true);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  itH3("Response(req.body) passthrough echoes byte-exact", async () => {
+    await withServer(async port => {
+      const body = new Uint8Array(randomBytes(80 * 1024));
+      const { raw, stdout, exitCode } = await curl3(
+        port,
+        "/passthrough",
+        ["-D", "-", "--data-binary", "@-", "-H", "content-type: application/octet-stream"],
+        { stdin: body },
+      );
+      expect(stdout).toContain("HTTP/3 200");
+      expect(stdout.toLowerCase()).toContain("x-passthrough: 1");
+      const headerEnd = Buffer.from(raw).indexOf("\r\n\r\n");
+      const payload = raw.subarray(headerEnd + 4);
+      expect(payload.length).toBe(body.length);
+      expect(md5(payload)).toBe(md5(body));
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  itH3("req.{url,method,headers,params} survive micro/macrotask awaits", async () => {
+    // uws.H3.Request lives on the on_stream_headers stack frame; the JS
+    // Request must have copied everything before the first await returns.
+    await withServer(async port => {
+      const modes = ["none", "micro", "macro", "double"];
+      const results = await Promise.all(
+        modes.map(mode =>
+          curl3(port, `/lifetime?d=${mode}`, ["-X", "POST", "-H", `x-probe: alive-${mode}`, "--data-binary", "@-"], {
+            stdin: `payload-${mode}`,
+          }),
+        ),
+      );
+      for (let i = 0; i < modes.length; i++) {
+        const mode = modes[i];
+        const body = `payload-${mode}`;
+        const { stdout, exitCode } = results[i];
+        const out = JSON.parse(stdout) as {
+          ok: boolean;
+          url: string;
+          method: string;
+          probe: string;
+          headerCount: number;
+          bodyLen: number;
+        };
+        if (!out.ok || out.probe !== `alive-${mode}`)
+          throw new Error(`mode=${mode}: before/after mismatch ${JSON.stringify(out)}`);
+        expect(out.ok).toBe(true);
+        expect(out.url.endsWith(`/lifetime?d=${mode}`)).toBe(true);
+        expect(out.method).toBe("POST");
+        expect(out.probe).toBe(`alive-${mode}`);
+        expect(out.headerCount).toBeGreaterThan(0);
+        expect(out.bodyLen).toBe(body.length);
+        expect(exitCode).toBe(0);
+      }
+      const { stdout, exitCode } = await curl3(port, "/lifetime/abc123");
+      expect(stdout).toBe("abc123|abc123");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  itH3("Response(Bun.file().stream()) goes through H3ResponseSink", async () => {
+    await withServer(async (port, dir) => {
+      const { raw, exitCode } = await curl3(port, "/file-stream");
+      expect(raw.length).toBe(200 * 1024);
+      const onDisk = await Bun.file(join(dir, "big.bin")).bytes();
+      expect(md5(raw)).toBe(md5(onDisk));
+      expect(exitCode).toBe(0);
+    });
   });
 });

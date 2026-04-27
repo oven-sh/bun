@@ -11,7 +11,7 @@ globals, a `node:http2` server emulating the wptserve endpoints they hit, and a
 | `USE_SYSTEM_BUN=1` | 3 | 4 | 17 | 24 |
 
 The three system-Bun passes are the protocol-agnostic feature-detect cases
-(data: URLs, `Request` header inspection); the eleven that flip from fail to
+(data: URLs, `Request` header inspection); the seventeen that flip from fail to
 pass are the actual h2 path coverage.
 
 ## Passing on this branch

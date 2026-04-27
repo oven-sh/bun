@@ -41,6 +41,11 @@ struct us_quic_header_t {
     unsigned int value_len;
 };
 
+/* Process-wide lsquic init. Must be called once before the first
+ * us_create_quic_socket_context; the C++ layer (uws_h3_create_app) does this
+ * via a thread-safe static local so quic.c stays free of pthread/call_once. */
+void us_quic_global_init(void);
+
 us_quic_socket_context_t *us_create_quic_socket_context(
     struct us_loop_t *loop, struct us_bun_socket_context_options_t options,
     unsigned int ext_size, unsigned int idle_timeout_s);

@@ -7,9 +7,7 @@
 #include "lsxpack_header.h"
 #include <openssl/ssl.h>
 
-#include <assert.h>
 #include <errno.h>
-#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -467,7 +465,9 @@ static int us_quic_log_buf(void *ctx, const char *buf, size_t len) {
 static const struct lsquic_logger_if us_quic_logger = { us_quic_log_buf };
 #endif
 
-static void us_quic_global_init_once(void) {
+/* Called once via a thread-safe static local in uws_h3_create_app
+ * (libuwsockets_h3.cpp), so quic.c stays free of pthread/call_once. */
+void us_quic_global_init(void) {
     lsquic_global_init(LSQUIC_GLOBAL_SERVER);
 #ifdef BUN_DEBUG
     if (getenv("BUN_DEBUG_lsquic")) {
@@ -488,9 +488,6 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     struct us_loop_t *loop, struct us_bun_socket_context_options_t options,
     unsigned int ext_size, unsigned int idle_timeout_s)
 {
-    static pthread_once_t once = PTHREAD_ONCE_INIT;
-    pthread_once(&once, us_quic_global_init_once);
-
     enum create_bun_socket_error_t ssl_err = 0;
     SSL_CTX *ssl = create_ssl_context_from_bun_options(options, &ssl_err);
     if (!ssl) return NULL;

@@ -119,6 +119,13 @@ struct Http3Context {
             Http3Response *res = (Http3Response *) s;
             Http3ResponseData *rd = res->getHttpResponseData();
             if (rd->wt) {
+                /* WebTransportSession::end() may have stashed a partial
+                 * WT_CLOSE_SESSION capsule in backpressure; flush + FIN via
+                 * the same path the HTTP body uses. */
+                if (rd->backpressure.length() || rd->endAfterDrain) {
+                    if (!res->drain()) us_quic_stream_want_write(s, 1);
+                    return;
+                }
                 Http3ContextData *cd = (Http3ContextData *) us_quic_socket_context_ext(us_quic_stream_context(s));
                 if (cd->wt.drainHandler && !rd->wt->isShuttingDown)
                     cd->wt.drainHandler((WebTransportSession *) s);

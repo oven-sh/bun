@@ -130,8 +130,13 @@ static unsigned vint_read(const unsigned char *p, const unsigned char *end, uint
 static unsigned vint_write(unsigned char *p, uint64_t v) {
     if (v < 64) { p[0] = (unsigned char) v; return 1; }
     if (v < 16384) { p[0] = 0x40 | (v >> 8); p[1] = (unsigned char) v; return 2; }
-    p[0] = 0x80 | (v >> 24); p[1] = v >> 16; p[2] = v >> 8; p[3] = (unsigned char) v;
-    return 4;
+    if (v < 1073741824) {
+        p[0] = 0x80 | (v >> 24); p[1] = v >> 16; p[2] = v >> 8; p[3] = (unsigned char) v;
+        return 4;
+    }
+    p[0] = (unsigned char)(0xc0 | (v >> 56));
+    for (int i = 1; i < 8; i++) p[i] = (unsigned char)(v >> (8 * (7 - i)));
+    return 8;
 }
 
 static struct buf *buf_new(const unsigned char *prefix, size_t plen,

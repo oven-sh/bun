@@ -88,13 +88,24 @@ struct WebTransportSession {
      * there is no per-frame opcode on the wire (RFC 9297 §2.1). DROPPED is
      * returned when the message is too large for one frame or the per-session
      * queue exceeds maxBackpressure. */
+    /* Conservative QUIC DATAGRAM payload cap: RFC 9000's default
+     * max_udp_payload_size minus short-header + AEAD + DATAGRAM-type
+     * overhead. us_quic_stream_send_datagram rejects above this; pre-check
+     * here so an oversize message reports DROPPED without being mistaken for
+     * backpressure (and thus never trips closeOnBackpressureLimit). */
+    static constexpr unsigned MAX_DATAGRAM_PAYLOAD = 1192;
+
     SendStatus send(std::string_view message, OpCode = BINARY, bool = false, bool = true) {
         WebTransportSessionData *d = getSessionData();
         if (!d || d->isShuttingDown) return DROPPED;
+        if (message.length() > MAX_DATAGRAM_PAYLOAD) return DROPPED;
         WebTransportContextData *cd = getContextData();
         int r = us_quic_stream_send_datagram((us_quic_stream_t *) this,
                 message.data(), (unsigned) message.length(), cd->maxBackpressure);
         if (r < 0) {
+            /* Only the maxBackpressure cap (or a dead session) reaches here;
+             * MTU was filtered above, so closeOnBackpressureLimit is the
+             * caller's intended signal. */
             if (cd->closeOnBackpressureLimit) end(1009, "Backpressure limit");
             return DROPPED;
         }
@@ -132,9 +143,21 @@ struct WebTransportSession {
             *p++ = (unsigned char)(c >> 8);  *p++ = (unsigned char) c;
             memcpy(p, message.data(), message.length()); p += message.length();
         }
-        us_quic_stream_write((us_quic_stream_t *) this, (const char *) capsule,
-            (unsigned)(p - capsule));
-        us_quic_stream_shutdown((us_quic_stream_t *) this);
+        unsigned total = (unsigned)(p - capsule);
+        int w = us_quic_stream_write((us_quic_stream_t *) this, (const char *) capsule, total);
+        if (w < 0) w = 0;
+        if ((unsigned) w < total) {
+            /* lsquic_stream_write may accept fewer bytes under flow control.
+             * Reuse the Http3ResponseData backpressure path so the WT
+             * on_stream_writable handler (which now calls drain()) flushes
+             * the tail and FINs once empty. */
+            Http3ResponseData *rd = getResponseData();
+            rd->backpressure.append((const char *) capsule + w, total - (unsigned) w);
+            rd->endAfterDrain = true;
+            us_quic_stream_want_write((us_quic_stream_t *) this, 1);
+        } else {
+            us_quic_stream_shutdown((us_quic_stream_t *) this);
+        }
 
         WebTransportContextData *cd = getContextData();
         if (d->subscriber) {

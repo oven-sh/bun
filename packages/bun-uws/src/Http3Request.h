@@ -81,7 +81,7 @@ struct Http3Request {
              * literal Host. :authority is synthesized as host below; drop
              * the literal so req.headers.get('host') matches req.url and
              * isn't comma-joined. */
-            if (!authority.empty() && name == "host") continue;
+            if (!authority.empty() && name.size() == 4 && equalsIgnoreCase(name, "host")) continue;
             fn(name, std::string_view{h->value, h->value_len});
         }
         if (!authority.empty()) fn(std::string_view{"host"}, authority);

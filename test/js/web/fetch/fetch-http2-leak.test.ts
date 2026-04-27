@@ -3,6 +3,7 @@ import { bunEnv, bunExe, tls } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import { join } from "node:path";
+import zlib from "node:zlib";
 
 let server: http2.Http2SecureServer;
 let url: string;
@@ -10,11 +11,22 @@ const sessions = new Set<http2.ServerHttp2Session>();
 
 beforeAll(async () => {
   const body = Buffer.alloc(64 * 1024, "x");
+  const gzBody = zlib.gzipSync(body);
   server = http2.createSecureServer({ ...tls, allowHTTP1: false }, (req, res) => {
     if (req.url === "/__destroy_sessions") {
       for (const s of sessions) s.destroy();
       sessions.clear();
       // The session carrying this request was just destroyed; no response.
+      return;
+    }
+    if (req.url === "/redirect") {
+      res.writeHead(307, { location: "/" });
+      res.end();
+      return;
+    }
+    if (req.url === "/gzip") {
+      res.writeHead(200, { "content-encoding": "gzip" });
+      res.end(gzBody);
       return;
     }
     if (req.method === "POST") {
@@ -46,7 +58,7 @@ afterAll(() => {
   server.close();
 });
 
-async function runFixture(scenario: "get" | "post" | "abort") {
+async function runFixture(scenario: string) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--smol", join(import.meta.dir, "fetch-http2-leak-fixture.ts")],
     env: { ...bunEnv, SERVER: url, SCENARIO: scenario, COUNT: "200", BATCH: "20" },
@@ -62,3 +74,7 @@ async function runFixture(scenario: "get" | "post" | "abort") {
 test("h2 ClientSession/Stream do not leak across batched GETs", () => runFixture("get"));
 test("h2 ClientSession/Stream do not leak across batched POSTs", () => runFixture("post"));
 test("h2 ClientSession/Stream do not leak across aborted requests", () => runFixture("abort"));
+test("h2 ClientSession/Stream do not leak across streamed-response reads", () => runFixture("stream-response"));
+test("h2 ClientSession/Stream do not leak across streamed-request uploads", () => runFixture("stream-request"));
+test("h2 ClientSession/Stream do not leak across same-origin redirects", () => runFixture("redirect"));
+test("h2 ClientSession/Stream do not leak across gzip-encoded responses", () => runFixture("gzip"));

@@ -33,6 +33,42 @@ async function one(i: number): Promise<number> {
     } catch {}
     return 0;
   }
+  if (SCENARIO === "stream-response") {
+    const r = await fetch(SERVER, h2);
+    const reader = r.body!.getReader();
+    let n = 0;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (value) n += value.byteLength;
+      // Cancel half the reads partway through to exercise the
+      // reader.cancel() → RST_STREAM cleanup path.
+      if (i & 1 && n > 16 * 1024) {
+        await reader.cancel();
+        break;
+      }
+      if (done) break;
+    }
+    return n;
+  }
+  if (SCENARIO === "stream-request") {
+    const chunk = Buffer.alloc(256, i & 0xff);
+    const body = new ReadableStream<Uint8Array>({
+      start(ctrl) {
+        for (let k = 0; k < 4; k++) ctrl.enqueue(chunk);
+        ctrl.close();
+      },
+    });
+    const r = await fetch(SERVER, { ...h2, method: "POST", body, duplex: "half" });
+    return (await r.arrayBuffer()).byteLength;
+  }
+  if (SCENARIO === "redirect") {
+    const r = await fetch(SERVER + "/redirect", h2);
+    return (await r.arrayBuffer()).byteLength;
+  }
+  if (SCENARIO === "gzip") {
+    const r = await fetch(SERVER + "/gzip", h2);
+    return (await r.arrayBuffer()).byteLength;
+  }
   // "get"
   const r = await fetch(SERVER, h2);
   return (await r.arrayBuffer()).byteLength;

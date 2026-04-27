@@ -161,7 +161,8 @@ struct worker {
     _Atomic uint64_t req_5xx;
     _Atomic uint64_t req_other;
     _Atomic uint64_t req_err;
-    _Atomic uint64_t bytes_rx;
+    _Atomic uint64_t bytes_rx;       // HTTP body bytes
+    _Atomic uint64_t bytes_rx_wire;  // UDP payload bytes (incl. headers, QUIC framing)
     _Atomic uint64_t bytes_tx;
     _Atomic uint64_t udp_rx;
     _Atomic uint64_t udp_tx;
@@ -563,6 +564,9 @@ static void worker_recv(struct worker *w) {
         int n = recvmmsg(w->fd, msgs, RECV_BATCH, 0, NULL);
         if (n <= 0) break;
         atomic_fetch_add_explicit(&w->udp_rx, (uint64_t)n, memory_order_relaxed);
+        uint64_t wire = 0;
+        for (int i = 0; i < n; i++) wire += msgs[i].msg_len;
+        atomic_fetch_add_explicit(&w->bytes_rx_wire, wire, memory_order_relaxed);
         for (int i = 0; i < n; i++) {
             lsquic_engine_packet_in(w->engine, bufs[i], msgs[i].msg_len,
                 (struct sockaddr *)&w->local_sa, (struct sockaddr *)&peers[i], w, 0);
@@ -748,7 +752,7 @@ static void boxed_header(FILE *f, int w, const char *left, const char *right) {
 }
 
 struct snapshot {
-    uint64_t done, err, s2, s3, s4, s5, so, rx, tx, conns, hsk_fail;
+    uint64_t done, err, s2, s3, s4, s5, so, rx, rx_wire, tx, conns, hsk_fail;
 };
 
 struct result {
@@ -769,6 +773,7 @@ static void collect(struct worker *ws, int n, struct snapshot *o) {
         o->s5 += atomic_load_explicit(&ws[i].req_5xx, memory_order_relaxed);
         o->so += atomic_load_explicit(&ws[i].req_other, memory_order_relaxed);
         o->rx += atomic_load_explicit(&ws[i].bytes_rx, memory_order_relaxed);
+        o->rx_wire += atomic_load_explicit(&ws[i].bytes_rx_wire, memory_order_relaxed);
         o->tx += atomic_load_explicit(&ws[i].bytes_tx, memory_order_relaxed);
         o->conns += atomic_load_explicit(&ws[i].conns_open, memory_order_relaxed);
         o->hsk_fail += atomic_load_explicit(&ws[i].handshake_fail, memory_order_relaxed);
@@ -800,12 +805,12 @@ static void render_live(const struct config *cfg, int active, const struct resul
 
     for (int t = 0; t < active; t++) {
         const struct result *r = &done[t];
-        char b_rps[32], b_avg[32];
+        char b_rps[32], b_bpr[32];
         human_count(r->elapsed > 0 ? (double)r->snap.done / r->elapsed : 0, b_rps, sizeof(b_rps));
-        human_bytes(r->snap.done ? (double)r->snap.rx / (double)r->snap.done : 0, b_avg, sizeof(b_avg));
-        fprintf(f, "  %s✓%s  %s%-12s%s %s%10s%s %sreq/s%s  %sbody%s %s/req\n",
+        human_bytes(r->snap.done ? (double)r->snap.rx_wire / (double)r->snap.done : 0, b_bpr, sizeof(b_bpr));
+        fprintf(f, "  %s✓%s  %s%-12s%s %s%10s%s %sreq/s%s  %s%s/req%s\n",
                 GRN, RST, BLD, cfg->targets[t].label, RST,
-                GRN, b_rps, RST, DIM, RST, DIM, RST, b_avg);
+                GRN, b_rps, RST, DIM, RST, DIM, b_bpr, RST);
         fprintf(f, "     %s%s %s:%s%s%s\n\n",
                 DIM, cfg->method, cfg->targets[t].host, cfg->targets[t].port, cfg->targets[t].path, RST);
         lines += 3;
@@ -813,18 +818,18 @@ static void render_live(const struct config *cfg, int active, const struct resul
 
     static double peak_rps[MAX_TARGETS];
     double rps = dt > 0 ? (double)(cur->done - prev->done) / dt : 0;
-    double rxps = dt > 0 ? (double)(cur->rx - prev->rx) / dt : 0;
+    double rxps = dt > 0 ? (double)(cur->rx_wire - prev->rx_wire) / dt : 0;
     double txps = dt > 0 ? (double)(cur->tx - prev->tx) / dt : 0;
-    double avgb = cur->done ? (double)cur->rx / (double)cur->done : 0;
+    double bpr = cur->done ? (double)cur->rx_wire / (double)cur->done : 0;
     if (rps > peak_rps[active]) peak_rps[active] = rps;
 
-    char b_rx[32], b_tx[32], b_rps[32], b_total[32], b_peak[32], b_avg[32];
+    char b_rx[32], b_tx[32], b_rps[32], b_total[32], b_peak[32], b_bpr[32];
     human_bytes(rxps, b_rx, sizeof(b_rx));
     human_bytes(txps, b_tx, sizeof(b_tx));
     human_count(rps, b_rps, sizeof(b_rps));
     human_count((double)cur->done, b_total, sizeof(b_total));
     human_count(peak_rps[active], b_peak, sizeof(b_peak));
-    human_bytes(avgb, b_avg, sizeof(b_avg));
+    human_bytes(bpr, b_bpr, sizeof(b_bpr));
 
     fprintf(f, "  %s%s%s  %s%-12s%s %s%s%10s%s %sreq/s%s   %speak %s%s",
             CYN, spinner_frames[spin % 10], RST,
@@ -834,9 +839,9 @@ static void render_live(const struct config *cfg, int active, const struct resul
     fputc('\n', f);
     fprintf(f, "     %s%s %s:%s%s%s\n",
             DIM, cfg->method, tgt->host, tgt->port, tgt->path, RST);
-    fprintf(f, "     %s↓%s %-10s %s↑%s %-10s %sbody%s %s/req  %sconns%s %-3" PRIu64 " %stotal%s %s\n",
+    fprintf(f, "     %s↓%s %-10s %s↑%s %-10s %s%s/req%s  %sconns%s %-3" PRIu64 " %stotal%s %s\n",
             CYN, RST, b_rx, MAG, RST, b_tx,
-            DIM, RST, b_avg,
+            DIM, b_bpr, RST,
             DIM, RST, cur->conns, DIM, RST, b_total);
     fprintf(f, "     %s2xx%s %-9" PRIu64 " %s4xx%s %-7" PRIu64 " %s5xx%s %-7" PRIu64 " %serr%s %" PRIu64 "\n",
             GRN, RST, cur->s2, YLW, RST, cur->s4,
@@ -886,24 +891,13 @@ static void render_final(const struct config *cfg, const struct result *results)
     if (cfg->json) { fputc('[', f); }
     else {
         char rcfg[96];
-        snprintf(rcfg, sizeof(rcfg), "%dt · %dc · %dm · %.0fs%s",
-                 cfg->threads, cfg->connections, cfg->streams,
-                 cfg->duration_s, nt > 1 ? " each" : "");
+        int n = snprintf(rcfg, sizeof(rcfg), "%dt · %dc · %dm",
+                         cfg->threads, cfg->connections, cfg->streams);
+        if (cfg->duration_s > 0)
+            snprintf(rcfg + n, sizeof(rcfg) - (size_t)n, " · %.0fs%s",
+                     cfg->duration_s, nt > 1 ? " each" : "");
         boxed_header(f, hrw, "h3blast · HTTP/3", rcfg);
     }
-
-    int n_ran = 0;
-    double max_rps = 0;
-    for (int t = 0; t < nt; t++) {
-        if (!results[t].ran) break;
-        n_ran++;
-        double r = results[t].elapsed > 0 ? (double)results[t].snap.done / results[t].elapsed : 0;
-        if (r > max_rps) max_rps = r;
-    }
-
-    static const char *tcolors[] = {0,0,0,0,0,0,0,0};
-    tcolors[0]=CYN; tcolors[1]=MAG; tcolors[2]=YLW; tcolors[3]=BLU;
-    tcolors[4]=GRN; tcolors[5]=RED; tcolors[6]=CYN; tcolors[7]=MAG;
 
     for (int t = 0; t < nt; t++) {
         if (!results[t].ran) break;
@@ -913,14 +907,16 @@ static void render_final(const struct config *cfg, const struct result *results)
         double elapsed = results[t].elapsed;
 
         double rps = elapsed > 0 ? (double)s->done / elapsed : 0;
+        double rxps = elapsed > 0 ? (double)s->rx_wire / elapsed : 0;
+        double bpr = s->done ? (double)s->rx_wire / (double)s->done : 0;
         double avgb = s->done ? (double)s->rx / (double)s->done : 0;
 
         if (cfg->json) {
             fprintf(f, "%s{\"label\":\"%s\",\"url\":\"https://%s%s\",\"method\":\"%s\","
                    "\"threads\":%d,\"connections\":%d,\"streams\":%d,"
                    "\"duration_s\":%.3f,\"requests\":%" PRIu64 ",\"errors\":%" PRIu64 ","
-                   "\"req_per_sec\":%.2f,\"bytes_rx\":%" PRIu64 ",\"bytes_tx\":%" PRIu64 ","
-                   "\"avg_body_bytes\":%.2f,\"throughput_bps\":%.2f,"
+                   "\"req_per_sec\":%.2f,\"bytes_rx\":%" PRIu64 ",\"bytes_rx_wire\":%" PRIu64
+                   ",\"bytes_tx\":%" PRIu64 ",\"avg_body_bytes\":%.2f,\"throughput_bps\":%.2f,"
                    "\"status\":{\"2xx\":%" PRIu64 ",\"3xx\":%" PRIu64 ",\"4xx\":%" PRIu64
                    ",\"5xx\":%" PRIu64 ",\"other\":%" PRIu64 "},"
                    "\"latency_us\":{\"min\":%" PRId64 ",\"mean\":%.2f,\"stdev\":%.2f,"
@@ -929,8 +925,7 @@ static void render_final(const struct config *cfg, const struct result *results)
                    t ? "," : "",
                    tgt->label, tgt->authority, tgt->path, cfg->method,
                    cfg->threads, cfg->connections, cfg->streams,
-                   elapsed, s->done, s->err, rps, s->rx, s->tx, avgb,
-                   elapsed > 0 ? (double)s->rx / elapsed : 0,
+                   elapsed, s->done, s->err, rps, s->rx, s->rx_wire, s->tx, avgb, rxps,
                    s->s2, s->s3, s->s4, s->s5, s->so,
                    s->done ? hdr_min(agg) : 0,
                    s->done ? hdr_mean(agg) : 0.0,
@@ -944,36 +939,22 @@ static void render_final(const struct config *cfg, const struct result *results)
             continue;
         }
 
-        char b_avg[32], rps_full[32], p99[32];
+        char rps_full[32], b_rxps[32], b_bpr[32], p99[32];
         fmt_thousands((uint64_t)rps, rps_full, sizeof(rps_full));
-        human_bytes(avgb, b_avg, sizeof(b_avg));
+        human_bytes(rxps, b_rxps, sizeof(b_rxps));
+        human_bytes(bpr, b_bpr, sizeof(b_bpr));
         human_latency(s->done ? (double)hdr_value_at_percentile(agg, 99.0) : 0, p99, sizeof(p99));
 
-        bool best = (rps >= max_rps);
-        const char *clr = tcolors[t];
         char rhs[64];
         snprintf(rhs, sizeof(rhs), "%s req/s", rps_full);
         int pad = hrw - vislen(tgt->label) - vislen(rhs);
         if (pad < 1) pad = 1;
-        fprintf(f, "  %s%s%s%*s%s%s%s%s req/s%s\n",
+        fprintf(f, "  %s%s%s%*s%s%s%s%s %sreq/s%s\n",
                 BLD, tgt->label, RST, pad, "",
-                BLD, best ? GRN : "", rps_full, RST, RST);
+                BLD, GRN, rps_full, RST, DIM, RST);
 
-        int barw = max_rps > 0 ? (int)(rps / max_rps * (double)hrw + 0.5) : 0;
-        if (barw < 1 && rps > 0) barw = 1;
-        fprintf(f, "  %s", clr);
-        for (int j = 0; j < barw; j++) fputs("█", f);
-        fputs(RST, f);
-        if (n_ran > 1 && !best && rps > 0) {
-            char mult[24];
-            snprintf(mult, sizeof(mult), "%.2fx", max_rps / rps);
-            int room = hrw - barw, ml = vislen(mult);
-            if (room > ml) fprintf(f, "%*s%s%s%s", room - ml, "", DIM, mult, RST);
-        }
-        fputc('\n', f);
-
-        char detail[256];
-        snprintf(detail, sizeof(detail), "%s/req · p99 %s", b_avg, p99);
+        char detail[128];
+        snprintf(detail, sizeof(detail), "%s/s · %s/req · p99 %s", b_rxps, b_bpr, p99);
         char url[400];
         snprintf(url, sizeof(url), "%s %s:%s%s", cfg->method, tgt->host, tgt->port, tgt->path);
         int dpad = hrw - vislen(url) - vislen(detail);
@@ -995,14 +976,14 @@ static void render_final(const struct config *cfg, const struct result *results)
         }
 
         if (cfg->verbose) {
-            char b_rx[32], b_tx[32], b_rxps[32], b_total[32], p50[32];
+            char b_rx[32], b_tx[32], b_body[32], b_total[32], p50[32];
             fmt_thousands(s->done, b_total, sizeof(b_total));
-            human_bytes((double)s->rx, b_rx, sizeof(b_rx));
+            human_bytes((double)s->rx_wire, b_rx, sizeof(b_rx));
             human_bytes((double)s->tx, b_tx, sizeof(b_tx));
-            human_bytes(elapsed > 0 ? (double)s->rx / elapsed : 0, b_rxps, sizeof(b_rxps));
+            human_bytes(avgb, b_body, sizeof(b_body));
             human_latency(s->done ? (double)hdr_value_at_percentile(agg, 50.0) : 0, p50, sizeof(p50));
             fprintf(f, "  %s%-10s%s %s in %.2fs\n", DIM, "requests", RST, b_total, elapsed);
-            fprintf(f, "  %s%-10s%s ↓ %s (%s/s)  ↑ %s\n", DIM, "transfer", RST, b_rx, b_rxps, b_tx);
+            fprintf(f, "  %s%-10s%s ↓ %s  ↑ %s  body %s/req\n", DIM, "transfer", RST, b_rx, b_tx, b_body);
             fprintf(f, "  %s%-10s%s p50 %s  p99 %s\n", DIM, "latency", RST, p50, p99);
             fprintf(f, "\n  %sLatency%s\n  ", BLD, RST);
             hr(f, hrw);

@@ -711,19 +711,14 @@ DEF_CB(on_stream_writable, void (*cb)(us_quic_stream_t *))
 DEF_CB(on_stream_close, void (*cb)(us_quic_stream_t *))
 #undef DEF_CB
 
-#define US_QUIC_FLUSH_THRESHOLD (64u * 1024u)
-
 int us_quic_stream_write(us_quic_stream_t *s, const char *data, unsigned int len) {
     if (!s->stream) return -1;
     ssize_t w = lsquic_stream_write(s->stream, data, len);
     if (w >= 0 && (unsigned int) w < len) lsquic_stream_wantwrite(s->stream, 1);
-    if (w > 0) {
-        us_quic_socket_context_t *ctx = s->ctx;
-        ctx->pending_write_bytes += (unsigned int) w;
-        if (!ctx->processing && ctx->pending_write_bytes > US_QUIC_FLUSH_THRESHOLD) {
-            us_quic_loop_process(ctx->loop);
-        }
-    }
+    /* pending_write_bytes is the gate for drainQuicIfNecessary / loop_pre.
+     * Don't call us_quic_loop_process here — process_conns inside an
+     * Http3Response method could free this stream via on_close. */
+    if (w > 0) s->ctx->pending_write_bytes += (unsigned int) w;
     return (int) w;
 }
 

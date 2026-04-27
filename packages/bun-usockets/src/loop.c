@@ -24,6 +24,9 @@
 #ifndef WIN32
 #include <sys/ioctl.h>
 #endif
+#ifdef __linux__
+#include <linux/errqueue.h>
+#endif
 
 #if __has_include("wtf/Platform.h")
 #include "wtf/Platform.h"
@@ -637,7 +640,19 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     eh.msg_control = ectrl; eh.msg_controllen = sizeof(ectrl);
                     if (recvmsg(us_poll_fd(p), &eh, MSG_ERRQUEUE) < 0) break;
                     recv_error_surfaced = 1;
-                    if (u->on_recv_error) u->on_recv_error(u, errno ? errno : ECONNREFUSED);
+                    if (u->on_recv_error) {
+                        /* The queued ICMP error is in sock_extended_err,
+                         * not errno. */
+                        int ee = 0;
+                        for (struct cmsghdr *cm = CMSG_FIRSTHDR(&eh); cm; cm = CMSG_NXTHDR(&eh, cm)) {
+                            if ((cm->cmsg_level == IPPROTO_IP   && cm->cmsg_type == IP_RECVERR) ||
+                                (cm->cmsg_level == IPPROTO_IPV6 && cm->cmsg_type == IPV6_RECVERR)) {
+                                ee = ((struct sock_extended_err *) CMSG_DATA(cm))->ee_errno;
+                                break;
+                            }
+                        }
+                        u->on_recv_error(u, ee ? ee : ECONNREFUSED);
+                    }
                 }
             }
 #endif

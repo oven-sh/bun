@@ -12,6 +12,12 @@
 /// once half has been consumed.
 pub const local_initial_window_size: u31 = 1 << 24;
 
+/// Live-object counters for the leak test in fetch-http2-leak.test.ts.
+/// Incremented at allocation, decremented in deinit. Read from the JS thread
+/// via TestingAPIs.liveCounts so they must be atomic.
+pub var live_sessions = std.atomic.Value(i32).init(0);
+pub var live_streams = std.atomic.Value(i32).init(0);
+
 pub const Stream = struct {
     pub const new = bun.TrivialNew(@This());
 
@@ -54,6 +60,7 @@ pub const Stream = struct {
     pending_body: []const u8 = "",
 
     pub fn deinit(this: *Stream) void {
+        _ = live_streams.fetchSub(1, .monotonic);
         this.header_block.deinit(bun.default_allocator);
         this.body_buffer.deinit(bun.default_allocator);
         this.decoded_bytes.deinit(bun.default_allocator);
@@ -155,11 +162,13 @@ pub const ClientSession = struct {
             .ssl_config = if (client.tls_props) |p| p.clone() else null,
             .did_have_handshaking_error = client.flags.did_have_handshaking_error,
         });
+        _ = live_sessions.fetchAdd(1, .monotonic);
         ctx.registerH2(this);
         return this;
     }
 
     fn deinit(this: *ClientSession) void {
+        _ = live_sessions.fetchSub(1, .monotonic);
         bun.debugAssert(this.registry_index == std.math.maxInt(u32));
         this.hpack.deinit();
         this.write_buffer.deinit();
@@ -296,6 +305,7 @@ pub const ClientSession = struct {
             .client = client,
             .send_window = @intCast(@min(this.remote_initial_window_size, @as(u32, wire.MAX_WINDOW_SIZE))),
         });
+        _ = live_streams.fetchAdd(1, .monotonic);
         this.next_stream_id +|= 2;
         bun.handleOom(this.streams.put(bun.default_allocator, stream.id, stream));
         client.h2 = stream;
@@ -1205,6 +1215,15 @@ pub const PendingConnect = struct {
     }
 };
 
+pub const TestingAPIs = struct {
+    pub fn liveCounts(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const obj = jsc.JSValue.createEmptyObject(globalThis, 2);
+        obj.put(globalThis, jsc.ZigString.static("sessions"), .jsNumber(live_sessions.load(.monotonic)));
+        obj.put(globalThis, jsc.ZigString.static("streams"), .jsNumber(live_streams.load(.monotonic)));
+        return obj;
+    }
+};
+
 const log = bun.Output.scoped(.h2_client, .hidden);
 
 const lshpack = @import("../bun.js/api/bun/lshpack.zig");
@@ -1212,6 +1231,7 @@ const std = @import("std");
 const wire = @import("./H2FrameParser.zig");
 
 const bun = @import("bun");
+const jsc = bun.jsc;
 const picohttp = bun.picohttp;
 const strings = bun.strings;
 const SSLConfig = bun.api.server.ServerConfig.SSLConfig;

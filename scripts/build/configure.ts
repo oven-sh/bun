@@ -33,6 +33,11 @@ export function resolveToolchain(): Toolchain {
   const cmake = findSystemTool("cmake", { required: true, hint: "Install cmake (>= 3.24)" });
   if (cmake === undefined) throw new BuildError("unreachable: findSystemTool required=true returned undefined");
 
+  // cargo — required for lolhtml. Not found → build will fail at that dep
+  // with a clear "install rust" hint. We don't hard-fail here because
+  // someone might be testing a subset that doesn't need lolhtml.
+  const rust = findCargo(host.os);
+
   // Windows: MSVC link.exe path (to prevent Git Bash's /usr/bin/link
   // shadowing). Only needed when cargo builds with the msvc target.
   const msvcLinker = host.os === "windows" ? findMsvcLinker(host.arch) : undefined;
@@ -40,12 +45,6 @@ export function resolveToolchain(): Toolchain {
   // esbuild/zig paths are relative to REPO ROOT, not process.cwd() — when
   // ninja's generator rule invokes reconfigure, cwd is the build dir.
   const repoRoot = findRepoRoot();
-
-  // cargo — required for lolhtml. Not found → build will fail at that dep
-  // with a clear "install rust" hint. We don't hard-fail here because
-  // someone might be testing a subset that doesn't need lolhtml. repoRoot
-  // is read for the rust-toolchain.toml channel lookup.
-  const rust = findCargo(host.os, repoRoot);
 
   // esbuild — comes from the root bun install. Path is deterministic.
   // If not present, the first codegen build will fail with a clear error
@@ -77,7 +76,6 @@ export function resolveToolchain(): Toolchain {
     cargo: rust?.cargo,
     cargoHome: rust?.cargoHome,
     rustupHome: rust?.rustupHome,
-    rustToolchain: rust?.rustToolchain,
     msvcLinker,
   };
 }
@@ -115,17 +113,7 @@ function configureInputs(cwd: string): string[] {
     .map(f => resolve(buildDir, f));
   const deps = globSync("deps/*.ts", { cwd: buildDir }).map(f => resolve(buildDir, f));
 
-  // rust-toolchain.toml: findCargo() parses the `channel` field at configure
-  // time and bakes it into the `dep_cargo` env (RUSTUP_TOOLCHAIN). Without
-  // tracking this file, a channel bump wouldn't trigger reconfigure and
-  // cargo would silently use the stale toolchain.
-  return [
-    ...scripts,
-    ...deps,
-    resolve(cwd, "scripts", "glob-sources.ts"),
-    resolve(cwd, "package.json"),
-    resolve(cwd, "rust-toolchain.toml"),
-  ].sort();
+  return [...scripts, ...deps, resolve(cwd, "scripts", "glob-sources.ts"), resolve(cwd, "package.json")].sort();
 }
 
 /**

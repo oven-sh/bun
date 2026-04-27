@@ -8,16 +8,16 @@
 
 import { resolve } from "node:path";
 import type { Dependency } from "../source.ts";
-import { NODEJS_ABI_VERSION, NODEJS_VERSION } from "./versions.ts";
 
 /**
  * Node.js compat version — reported via process.version, used for headers
  * download URL, and passed to zig as -Dreported_nodejs_version.
  * Override via `--nodejs-version=X.Y.Z` to test a bump.
- *
- * Defined in deps/versions.ts (leaf module). See the note there.
  */
-export { NODEJS_ABI_VERSION, NODEJS_VERSION };
+export const NODEJS_VERSION = "24.3.0";
+
+/** Node.js NODE_MODULE_VERSION — for native addon ABI compat. */
+export const NODEJS_ABI_VERSION = "137";
 
 export const nodejsHeaders: Dependency = {
   name: "nodejs",

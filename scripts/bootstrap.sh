@@ -988,6 +988,11 @@ install_curl_h3() {
 	*) return ;;
 	esac
 
+	case "$pm" in
+	apt) install_packages xz-utils ;;
+	apk | dnf | yum | zypper) install_packages xz ;;
+	esac
+
 	curl_h3_url="https://github.com/stunnel/static-curl/releases/download/$(curl_h3_version)/$curl_h3_asset-$(curl_h3_version).tar.xz"
 	curl_h3_tar="$(download_file "$curl_h3_url")"
 	curl_h3_dir="$(dirname "$curl_h3_tar")"

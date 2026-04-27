@@ -195,24 +195,28 @@ pub fn onOpen(
 
             defer if (hostname_needs_free) bun.default_allocator.free(hostname);
 
-            ssl_ptr.configureHTTPClientWithALPN(hostname, client.canOfferH2());
+            ssl_ptr.configureHTTPClientWithALPN(hostname, client.alpnOffer());
         }
     } else {
         client.firstCall(is_ssl, socket);
     }
 }
 
-/// Whether to advertise "h2" in the TLS ALPN list. Gated behind the
-/// experimental feature flag and restricted to request shapes the HTTP/2
-/// path currently handles end-to-end (buffered `.bytes` bodies, no proxy,
-/// no Upgrade). Anything else stays on the HTTP/1.1 path.
+/// Whether to advertise "h2" in the TLS ALPN list. Restricted to request
+/// shapes the HTTP/2 path currently handles end-to-end (no proxy/Upgrade,
+/// no sendfile). Either the experimental env-var or `protocol: "http2"` on
+/// the fetch options enables it.
 pub fn canOfferH2(client: *const HTTPClient) bool {
-    if (!bun.feature_flag.BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT.get()) return false;
     if (client.http_proxy != null) return false;
     if (client.flags.is_preconnect_only) return false;
     if (client.unix_socket_path.length() > 0) return false;
     if (client.state.original_request_body == .sendfile) return false;
-    return true;
+    return client.flags.force_http2 or bun.feature_flag.BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT.get();
+}
+
+pub fn alpnOffer(client: *const HTTPClient) BoringSSL.SSL.AlpnOffer {
+    if (!client.canOfferH2()) return .h1;
+    return if (client.flags.force_http2) .h2_only else .h1_or_h2;
 }
 
 pub fn firstCall(
@@ -243,6 +247,10 @@ pub fn firstCall(
         }
         client.flags.protocol = .http1_1;
         client.resolvePendingH2(null);
+        if (client.flags.force_http2) {
+            client.closeAndFail(error.HTTP2Unsupported, true, socket);
+            return;
+        }
     }
 
     switch (client.state.request_stage) {
@@ -550,7 +558,10 @@ pub const Flags = packed struct(u16) {
     defer_fail_until_connecting_is_complete: bool = false,
     upgrade_state: HTTPUpgradeState = .none,
     protocol: Protocol = .http1_1,
-    _padding: u2 = 0,
+    /// Set by `fetch(url, { protocol: "http2" })`: ALPN advertises only h2
+    /// and the request fails if the server selects anything else.
+    force_http2: bool = false,
+    _padding: u1 = 0,
 };
 
 // TODO: reduce the size of this struct

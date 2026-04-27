@@ -1166,6 +1166,7 @@ pub const FetchTasklet = struct {
         // enable streaming the write side
         const isStream = fetch_tasklet.request_body == .ReadableStream;
         fetch_tasklet.http.?.client.flags.is_streaming_request_body = isStream;
+        fetch_tasklet.http.?.client.flags.force_http2 = fetch_options.force_http2;
         fetch_tasklet.is_waiting_request_stream_start = isStream;
         if (isStream) {
             const buffer = http.ThreadSafeStreamBuffer.new(.{});
@@ -1344,6 +1345,7 @@ pub const FetchTasklet = struct {
         unix_socket_path: ZigString.Slice,
         ssl_config: ?SSLConfig.SharedPtr = null,
         upgraded_connection: bool = false,
+        force_http2: bool = false,
     };
 
     pub fn queue(

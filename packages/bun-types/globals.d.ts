@@ -1989,6 +1989,18 @@ interface BunFetchRequestInit extends RequestInit {
   unix?: string;
 
   /**
+   * Force the underlying HTTP version. `"http2"` advertises only `h2` in
+   * the TLS ALPN list and the request fails with `HTTP2Unsupported` if the
+   * server doesn't select it. `"http1.1"` (the default) keeps the existing
+   * behaviour.
+   *
+   * Requires `https`. This is a custom property that is not part of the
+   * Fetch API specification.
+   * @experimental
+   */
+  protocol?: "http2" | "http1.1" | "h2" | "h1";
+
+  /**
    * Control automatic decompression of the response body.
    * When set to `false`, the response body will not be automatically decompressed,
    * and the `Content-Encoding` header will be preserved. This can improve performance

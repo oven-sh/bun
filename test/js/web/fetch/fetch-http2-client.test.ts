@@ -507,4 +507,61 @@ describe("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () 
       server.close();
     }
   });
+
+  test("protocol:'http2' forces h2 without the env flag", async () => {
+    await withH2Server(
+      (req, res) => {
+        res.writeHead(200);
+        res.end(req.httpVersion);
+      },
+      async url => {
+        // No BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT in env.
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "--no-warnings",
+            "-e",
+            `const r = await fetch("${url}", { protocol: "http2", tls: { rejectUnauthorized: false } });
+             console.log(r.status, await r.text());`,
+          ],
+          env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout.trim()).toBe("200 2.0");
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
+  test("protocol:'http2' against an h1-only server fails with HTTP2Unsupported", async () => {
+    const https = await import("node:https");
+    const server = https.createServer({ ...tls }, (_req, res) => res.end("h1"));
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--no-warnings",
+          "-e",
+          `try {
+             await fetch("https://localhost:${port}", { protocol: "http2", tls: { rejectUnauthorized: false } });
+             console.log("unexpected-ok");
+           } catch (e) { console.log(e.code || String(e)); }`,
+        ],
+        env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toContain("HTTP2Unsupported");
+      expect(exitCode).toBe(0);
+    } finally {
+      server.close();
+    }
+  });
 });

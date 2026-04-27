@@ -114,6 +114,16 @@ export function readableStreamPipeTo(stream, sink) {
 export function acquireReadableStreamDefaultReader(stream) {
   var start = $getByIdDirectPrivate(stream, "start");
   if (start) {
+    // Clear the one-shot lazy start BEFORE invoking — every other call
+    // site (getReader, readableStreamTee) does this. Previously this
+    // function left the slot live, which was harmless as long as no
+    // code path after `acquireReadableStreamDefaultReader` ever called
+    // the callback a second time. With BYOB readers now also routing
+    // through the lazy start (see getReader), a sequence like
+    // `pipeTo().catch(...); getReader({ mode: "byob" })` would run the
+    // lazy native start twice, calling `handle.start()` twice and
+    // throwing "ReadableStream already has a controller".
+    $putByIdDirectPrivate(stream, "start", undefined);
     start.$call(stream);
   }
 
@@ -1670,6 +1680,45 @@ export function readableStreamClose(stream) {
       for (var request = requests.shift(); request; request = requests.shift())
         $fulfillPromise(request, { value: undefined, done: true });
     }
+  } else if ($isReadableStreamBYOBReader(reader)) {
+    // Any BYOB reads still pending at close time must be resolved — otherwise
+    // `reader.read(buf)` on a natively-closed byte stream would hang forever
+    // waiting for a fulfillment that never arrives. Per spec, each pending
+    // read into request pairs with a pendingPullInto descriptor; the result
+    // is a typed array of the user-supplied view type sized by the bytes
+    // already filled into the descriptor (zero-length for the common EOF
+    // case), with `done: true`.
+    const readIntoRequests = $getByIdDirectPrivate(reader, "readIntoRequests");
+    if (readIntoRequests?.isNotEmpty()) {
+      $putByIdDirectPrivate(reader, "readIntoRequests", $createFIFO());
+
+      // `readableStreamController` is initialized to `null` (to distinguish
+      // from `undefined`), so the guard must be loose inequality.
+      const controller = $getByIdDirectPrivate(stream, "readableStreamController");
+      const pendingPullIntos = controller != null ? $getByIdDirectPrivate(controller, "pendingPullIntos") : undefined;
+
+      for (var request = readIntoRequests.shift(); request; request = readIntoRequests.shift()) {
+        const descriptor = pendingPullIntos?.shift();
+        if (descriptor) {
+          // Size by `Math.floor(bytesFilled / elementSize)` so partially-
+          // filled descriptors at EOF still return the buffered bytes. See
+          // `ReadableByteStreamControllerConvertPullIntoDescriptor` step 8.
+          const filledView = new descriptor.ctor(
+            descriptor.buffer,
+            descriptor.byteOffset,
+            Math.floor(descriptor.bytesFilled / descriptor.elementSize),
+          );
+          $fulfillPromise(request, { value: filledView, done: true });
+        } else {
+          // `pendingPullIntos` is kept 1:1 with `readIntoRequests` by the
+          // byte stream controller, so this branch is unreachable in
+          // practice. The spec still requires `value` to be a typed array
+          // (never `undefined`) when `done: true`, so fall back to an empty
+          // Uint8Array for defense in depth.
+          $fulfillPromise(request, { value: new Uint8Array(0), done: true });
+        }
+      }
+    }
   }
 
   $getByIdDirectPrivate($getByIdDirectPrivate(stream, "reader"), "closedPromiseCapability").resolve.$call();
@@ -1766,7 +1815,19 @@ export function readableStreamReaderGenericRelease(reader) {
 
   var stream = $getByIdDirectPrivate(reader, "ownerReadableStream");
   if (stream.$bunNativePtr) {
-    $getByIdDirectPrivate($getByIdDirectPrivate(stream, "readableStreamController"), "underlyingSource").$resume(false);
+    const controller = $getByIdDirectPrivate(stream, "readableStreamController");
+    // Byte streams store the source under `underlyingByteSource`; default
+    // streams use `underlyingSource`. Native-backed streams are now byte
+    // streams, but user-constructed default streams can still reach here.
+    const source =
+      $getByIdDirectPrivate(controller, "underlyingByteSource") ??
+      $getByIdDirectPrivate(controller, "underlyingSource");
+    // Double optional chain: `source` can be the plain `{ start, pull }`
+    // object returned by the small-file path in `lazyLoadStream`, which has
+    // no `$resume` method. The `stream.$bunNativePtr` guard above normally
+    // skips this block for such streams, but defense-in-depth avoids a
+    // `TypeError` if that invariant ever changes.
+    source?.$resume?.(false);
   }
   $putByIdDirectPrivate(stream, "reader", undefined);
   $putByIdDirectPrivate(reader, "ownerReadableStream", undefined);
@@ -1925,12 +1986,16 @@ export function readableStreamFromAsyncIterator(target, fn) {
 }
 
 export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultController {
-  const closer = [false];
-
-  function callClose(controller: ReadableStreamDefaultController) {
+  function callClose(controller: ReadableStreamDefaultController | ReadableByteStreamController) {
     try {
-      var source = controller.$underlyingSource;
-      const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
+      // Byte streams store the source under `underlyingByteSource`; default
+      // streams use `underlyingSource`. Without the fallback the cleanup
+      // below silently no-ops on native byte streams, leaking the native
+      // handle ($stream) and our internal pull buffer ($data) until GC.
+      var source =
+        $getByIdDirectPrivate(controller, "underlyingByteSource") ??
+        $getByIdDirectPrivate(controller, "underlyingSource");
+      var stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
       if (!stream) {
         return;
       }
@@ -1938,7 +2003,15 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       if ($getByIdDirectPrivate(stream, "state") !== $streamReadable) return;
       controller.close();
     } catch (e) {
-      globalThis.reportError(e);
+      // `ReadableByteStreamController.close()` throws when a pending BYOB
+      // pull-into descriptor has `bytesFilled > 0` with an empty queue
+      // (e.g. Uint16Array reader over a 1-byte trailing chunk). That path
+      // already errored the stream and rejected the pending read via
+      // `readableByteStreamControllerError`, so don't surface it as a
+      // second unhandled error event.
+      if (stream === undefined || $getByIdDirectPrivate(stream, "state") !== $streamErrored) {
+        globalThis.reportError(e);
+      }
     } finally {
       if (source?.$stream) {
         source.$stream = undefined;
@@ -1950,24 +2023,25 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
     }
   }
 
-  // This was a type: "bytes" until Bun v1.1.44, but pendingPullIntos was not really
-  // compatible with how we send data to the stream, and "mode: 'byob'" wasn't
-  // supported so changing it isn't an observable change.
+  // Only the BYOB path marks the instance with `type: "bytes"` (see
+  // `lazyLoadStream` above). The default-reader path stays on the standard
+  // `ReadableStreamDefaultController`, which is what preserves correct
+  // cancellation / GC behavior for ordinary fetch/req.body consumers. When
+  // BYOB is selected, `#chunkSize` (private) replaces the old public
+  // `autoAllocateChunkSize` field so that the `ReadableByteStreamController`
+  // never creates auto-allocated pending pull descriptors from it — that
+  // was the reason native streams were reverted from bytes to default back
+  // in Bun v1.1.44.
   //
   // When we receive chunks of data from native code, we sometimes read more
   // than what the input buffer provided. When that happens, we return a typed
   // array instead of the number of bytes read.
-  //
-  // When that happens, the ReadableByteStreamController creates (byteLength / autoAllocateChunkSize) pending pull into descriptors.
-  // So if that number is something like 16 * 1024, and we actually read 2 MB, you're going to create 128 pending pull into descriptors.
-  //
-  // And those pendingPullIntos were often never actually drained.
   class NativeReadableStreamSource {
     constructor(handle, autoAllocateChunkSize, drainValue) {
       $putByIdDirectPrivate(this, "stream", handle);
       this.pull = this.#pull.bind(this);
       this.cancel = this.#cancel.bind(this);
-      this.autoAllocateChunkSize = autoAllocateChunkSize;
+      this.#chunkSize = autoAllocateChunkSize;
 
       if (drainValue !== undefined) {
         this.start = controller => {
@@ -1981,6 +2055,10 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       handle.onDrain = this.#onDrain.bind(this);
     }
 
+    // `type` is set to "bytes" on the instance only when a BYOB reader is
+    // requested (via lazyLoadStream). Without it, the default controller is
+    // used — preserving legacy cancellation/GC semantics for default readers.
+
     #onDrain(chunk) {
       var controller = this.#controller?.deref?.();
       if (controller) {
@@ -1991,14 +2069,17 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
     #hasResized = false;
 
     #adjustHighWaterMark(result) {
-      const autoAllocateChunkSize = this.autoAllocateChunkSize;
-      if (result >= autoAllocateChunkSize && !this.#hasResized) {
+      const chunkSize = this.#chunkSize;
+      if (result >= chunkSize && !this.#hasResized) {
         this.#hasResized = true;
-        this.autoAllocateChunkSize = Math.min(autoAllocateChunkSize * 2, 1024 * 1024 * 2);
+        this.#chunkSize = Math.min(chunkSize * 2, 1024 * 1024 * 2);
       }
     }
 
-    #controller?: WeakRef<ReadableStreamDefaultController>;
+    // Can be either kind of controller: default for plain native readers,
+    // byte for BYOB-initiated native streams. Only `.enqueue`, `.close` and
+    // `.error` are called on the deref'd value, which both types expose.
+    #controller?: WeakRef<ReadableStreamDefaultController | ReadableByteStreamController>;
 
     // eslint-disable-next-line no-unused-vars
     pull;
@@ -2007,8 +2088,20 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
     // eslint-disable-next-line no-unused-vars
     start;
 
-    autoAllocateChunkSize = 0;
+    // Internal chunk size used when allocating our pull buffer. Kept in a
+    // private field (NOT as `autoAllocateChunkSize`) so that the byte stream
+    // controller does not create auto-allocated pending pull descriptors from
+    // it — see class comment above.
+    #chunkSize = 0;
     #closed = false;
+
+    // EOF signal array passed to `handle.pull(view, closer)`. Native code
+    // writes `closer[0] = true` on EOF and the async pull callback reads it
+    // back. MUST be per-instance: if this were a factory-scope constant it
+    // would be shared across every NativeReadableStreamSource backed by the
+    // same prototype (every fetch response body in the process), and
+    // concurrent fetches could clobber each other's EOF signal.
+    #closer: [boolean] = [false];
 
     $data?: Uint8Array;
 
@@ -2016,15 +2109,27 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
     $stream: ReadableStream;
 
     #onClose() {
+      // Intentionally no direct callClose enqueue here. The historical
+      // ordering (clearing #controller BEFORE deref) silently left the
+      // `if (controller)` branch unreachable, so the close signal was
+      // actually delivered the next time `#pull` runs and hits its
+      // `if (!handle || this.#closed)` guard at the top. Reinstating the
+      // direct enqueue introduced a FIFO race with in-flight async pulls
+      // on aarch64 — the callClose microtask would run before the pull
+      // success callback, closing the controller, then the pull callback
+      // would call `controller.enqueue(...)` on the closed controller and
+      // throw an unhandled rejection, causing fetch.upgrade to hang
+      // waiting for a close-frame that was silently dropped.
+      //
+      // BYOB consumers are unaffected: they drain via #pull just like
+      // default readers, and the next pull's top-level `#closed` guard
+      // still triggers a callClose.
       this.#closed = true;
       var controller = this.#controller?.deref?.();
       this.#controller = undefined;
       this.$data = undefined;
 
       $putByIdDirectPrivate(this, "stream", undefined);
-      if (controller) {
-        $enqueueJob(callClose, controller);
-      }
     }
 
     #getInternalBuffer(chunkSize) {
@@ -2103,6 +2208,7 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
         this.#controller = new WeakRef(controller);
       }
 
+      const closer = this.#closer;
       closer[0] = false;
 
       if (this.$data) {
@@ -2113,11 +2219,24 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
         }
       }
 
-      const view = this.#getInternalBuffer(this.autoAllocateChunkSize);
+      const view = this.#getInternalBuffer(this.#chunkSize);
       const result = handle.pull(view, closer);
       if ($isPromise(result)) {
         return result.$then(
           result => {
+            // If `reader.cancel()` closed the stream while this pull was
+            // in flight, `controller.enqueue` (invoked from
+            // `#onNativeReadableStreamResult`) would fire an internal
+            // assertion in debug/ASAN and push to an orphaned queue in
+            // release. `#cancel` doesn't set `this.#closed`, so we can't
+            // rely on the `#closed` guard below — check the actual stream
+            // state instead. Mirrors the guard already on the rejection
+            // branch.
+            const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
+            if (!stream || $getByIdDirectPrivate(stream, "state") !== $streamReadable) {
+              this.$data = undefined;
+              return;
+            }
             this.$data = this.#onNativeReadableStreamResult(result, view, closer[0], controller);
             if (this.#closed) {
               this.$data = undefined;
@@ -2127,7 +2246,21 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
             this.$data = undefined;
             this.#closed = true;
             this.#controller = undefined;
-            controller.error(err);
+            // Only propagate the error to the controller if the stream is
+            // still readable. `ReadableByteStreamController.error()` throws
+            // `ERR_INVALID_STATE_TypeError` when the stream state is not
+            // `$streamReadable` — which is reachable via `reader.cancel()`
+            // racing an in-flight pull: `readableStreamCancel` closes the
+            // stream first, then propagates the cancel to the native
+            // handle, whose pull Promise rejects on a now-closed stream.
+            // Default controllers have their own graceful early-return, so
+            // this guard is a no-op for the non-BYOB path.
+            const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
+            if (stream && $getByIdDirectPrivate(stream, "state") === $streamReadable) {
+              try {
+                controller.error(err);
+              } catch {}
+            }
             this.#onClose();
           },
         );
@@ -2158,8 +2291,8 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
   return NativeReadableStreamSource;
 }
 
-export function lazyLoadStream(stream, autoAllocateChunkSize) {
-  $debug("lazyLoadStream", stream, autoAllocateChunkSize);
+export function lazyLoadStream(stream, autoAllocateChunkSize, byob) {
+  $debug("lazyLoadStream", stream, autoAllocateChunkSize, byob);
   var handle = stream.$bunNativePtr;
   if (handle === -1) return;
   var Prototype = $lazyStreamPrototypeMap.$get($getPrototypeOf(handle));
@@ -2187,7 +2320,7 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
   // empty file, no need for native back-and-forth on this
   if (chunkSize === 0) {
     if ((drainValue?.byteLength ?? 0) > 0) {
-      return {
+      const source: { type?: "bytes"; start(c: any): void; pull(c: any): void } = {
         start(controller) {
           controller.enqueue(drainValue);
           controller.close();
@@ -2196,9 +2329,11 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
           controller.close();
         },
       };
+      if (byob) source.type = "bytes";
+      return source;
     }
 
-    return {
+    const source: { type?: "bytes"; start(c: any): void; pull(c: any): void } = {
       start(controller) {
         controller.close();
       },
@@ -2206,9 +2341,17 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
         controller.close();
       },
     };
+    if (byob) source.type = "bytes";
+    return source;
   }
 
-  return new Prototype(handle, Math.max(chunkSize, autoAllocateChunkSize), drainValue);
+  const instance = new Prototype(handle, Math.max(chunkSize, autoAllocateChunkSize), drainValue);
+  // Only mark as a byte stream when BYOB was explicitly requested.
+  // Unconditionally making native streams byte streams caused memory leaks
+  // on the default-reader path (see serve-body-leak.test.ts
+  // "should not leak memory when streaming the body incompletely").
+  if (byob) instance.type = "bytes";
+  return instance;
 }
 
 export function readableStreamIntoArray(stream) {

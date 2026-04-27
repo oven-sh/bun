@@ -259,9 +259,11 @@ test("numeric weight = -1 with two digit groups renders correctly (e.g. 0.05678)
 });
 
 test("numeric negative value with small fractional magnitude renders correctly", async () => {
-  // -0.00000001234 : ndigits=1, weight=-2, dscale=11, digits=[1234], sign=0x4000
-  // weight=-2 is the "accidentally correct" range; this also guards against
-  // sign handling regressions when combined with the split-counter fix.
+  // -0.00001234 : ndigits=1, weight=-2, dscale=11, digits=[1234], sign=0x4000
+  // Value is 1234 × 10000^(-2) = 1.234 × 10^-5; dscale=11 pads trailing
+  // zeros to yield "-0.00001234000". weight=-2 is the "accidentally
+  // correct" range, so this guards against sign-handling regressions from
+  // the split-counter fix.
   const v = numericBinary(1, -2, 0x4000, 11, [1234]);
   expect(await runQuery([v])).toEqual(["-0.00001234000"]);
 });

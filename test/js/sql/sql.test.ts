@@ -173,34 +173,29 @@ if (isDockerEnabled()) {
       expect(negRows[0].v).toBe("-0.50");
     });
 
-    test("numeric renders small fractional values on prepared/binary path", async () => {
-      // Regression: the fractional-digits loop in the binary-numeric decoder
-      // conflated postgres' digit-index (+1) and dscale-position (+4) counters,
-      // under-padding leading zeros for values whose first base-10000 digit
-      // group sits at weight <= -3 — i.e. anything smaller than ~1e-8. So
-      // e.g. 0.000000001234 came back as "0.000012340000" on the binary path.
+    // Regression: the fractional-digits loop in the binary-numeric decoder
+    // conflated postgres' digit-index (+1) and dscale-position (+4) counters,
+    // under-padding leading zeros for values whose first base-10000 digit
+    // group sits at weight <= -3 — i.e. anything smaller than ~1e-8. So
+    // e.g. 0.000000001234 came back as "0.000012340000" on the binary path.
+    test.each([
+      ["0.1"],
+      ["0.01"],
+      ["0.001"],
+      ["0.0001"],
+      ["0.00001"],
+      ["0.000001"],
+      ["0.0000001"],
+      ["0.00000001"],
+      ["0.000000001"],
+      ["0.0000000001"],
+      ["0.000000001234"],
+      ["0.000000000000000001234"],
+      ["-0.00000001234"],
+    ] as const)("numeric renders %s on prepared/binary path", async value => {
       await using sql = postgres(options);
-
-      const cases: Array<[string, string]> = [
-        ["0.1", "0.1"],
-        ["0.01", "0.01"],
-        ["0.001", "0.001"],
-        ["0.0001", "0.0001"],
-        ["0.00001", "0.00001"],
-        ["0.000001", "0.000001"],
-        ["0.0000001", "0.0000001"],
-        ["0.00000001", "0.00000001"],
-        ["0.000000001", "0.000000001"],
-        ["0.0000000001", "0.0000000001"],
-        ["0.000000001234", "0.000000001234"],
-        ["0.000000000000000001234", "0.000000000000000001234"],
-        ["-0.00000001234", "-0.00000001234"],
-      ];
-
-      for (const [input, expected] of cases) {
-        const r = await sql.unsafe(`SELECT CAST($1 AS numeric) AS v`, [input]);
-        expect(r[0].v).toBe(expected);
-      }
+      const r = await sql.unsafe(`SELECT CAST($1 AS numeric) AS v`, [value]);
+      expect(r[0].v).toBe(value);
     });
 
     describe("Array helpers", () => {

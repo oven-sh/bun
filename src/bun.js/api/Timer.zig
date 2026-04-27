@@ -361,15 +361,26 @@ pub const All = struct {
             },
         };
         var warning_type_string = bun.String.createAtomIfPossible(@tagName(warning_type));
-        // Ignore errors from transferToJS since this is just a warning and shouldn't interrupt execution
-        const warning_js = warning_string.transferToJS(globalThis) catch return;
-        const warning_type_js = warning_type_string.transferToJS(globalThis) catch return;
+        // Emitting a warning should never interrupt execution, but the emit path calls
+        // into user-observable JS (process.nextTick, getters, etc.) which can throw.
+        // Swallowing error.JSError alone leaves the exception pending on the VM and
+        // trips assertExceptionPresenceMatches in the host-call wrapper, so clear it.
+        const warning_js = warning_string.transferToJS(globalThis) catch {
+            _ = globalThis.clearExceptionExceptTermination();
+            return;
+        };
+        const warning_type_js = warning_type_string.transferToJS(globalThis) catch {
+            _ = globalThis.clearExceptionExceptTermination();
+            return;
+        };
         globalThis.emitWarning(
             warning_js,
             warning_type_js,
             .js_undefined,
             .js_undefined,
-        ) catch {};
+        ) catch {
+            _ = globalThis.clearExceptionExceptTermination();
+        };
     }
 
     const CountdownOverflowBehavior = enum(u8) {

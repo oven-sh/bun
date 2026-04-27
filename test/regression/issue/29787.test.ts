@@ -16,14 +16,22 @@
 //      controller — closing stdin even though the pipe has more data and
 //      is not at EOF.
 //
-// This test spawns a child that reads `Bun.stdin.stream()`. The child
-// first issues many concurrent `fetch(file://...)` calls (each of which
-// sync-completes with EOF, flipping the shared `closer[0] = true`). The
-// child then signals the parent via stderr; the parent replies by
-// writing bytes down stdin. With the bug present, stdin's queued pending
-// pull reads the stale `true` when it resolves and closes itself — only
-// the first byte reaches `data` before a spurious `done` arrives, even
-// though the parent is still writing and never ended stdin.
+// The test spawns a child that reads `Bun.stdin.stream()` concurrently
+// with 100 `fetch(file://...)` bodies — each body sync-completes with EOF,
+// flipping the (pre-fix) shared closer flag to true. Synchronization is
+// via stderr ACK/handshake, no wall-clock sleeps: the child signals
+// "READY" when fetches are done and writes one byte back on stderr for
+// each stdin chunk it receives. The parent writes bytes one-by-one,
+// waiting for each ack before sending the next, then closes stdin.
+//
+// With the bug, stdin's queued pending pull reads the stale closer=true
+// when the first parent write wakes it, and closes itself — the child's
+// reader pushes `done` and exits, so only one data event is recorded
+// and the second ack never arrives.
+//
+// With the fix, each instance owns its own closer array so all five
+// bytes round-trip and the final `done` comes from the parent's real
+// `stdin.end()`.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { pathToFileURL } from "node:url";
@@ -41,22 +49,24 @@ test("stdin stream stays open while concurrent fetch(file://) bodies finish (#29
     const events = [];
     const reader = Bun.stdin.stream().getReader();
 
-    // Background drain of stdin — we'll check this record at the end.
-    (async () => {
+    // reader.read() in the IIFE below runs synchronously up to its first
+    // await, so the native stdin pull reaches its pending state before
+    // this line returns — no sleep needed to set up the race window.
+    const readerLoop = (async () => {
       try {
         while (true) {
           const { value, done } = await reader.read();
           if (done) { events.push({ kind: "done" }); break; }
           events.push({ kind: "data", bytes: value.byteLength });
+          // Ack so the parent knows this chunk landed before it sends
+          // the next byte. Without acks, the parent has no way to know
+          // when the closer-flag race has resolved for this round.
+          process.stderr.write("A");
         }
       } catch (err) {
         events.push({ kind: "err", message: err.message });
       }
     })();
-
-    // Let stdin's first pull reach the pending-promise state before we
-    // trip the closer flag with concurrent file reads.
-    await Bun.sleep(50);
 
     // Concurrent fetch(file://) bodies share the same
     // NativeReadableStreamSource class as stdin. Each body sync-completes
@@ -74,16 +84,15 @@ test("stdin stream stays open while concurrent fetch(file://) bodies finish (#29
     }
     await Promise.all(fetches);
 
-    // Signal the parent that the closer flag is now in its racy state.
-    // The parent will respond by writing bytes to stdin; with the bug,
-    // stdin's pending pull resolves and reads the stale closer=true,
-    // closing itself.
+    // Closer flag is now in its racy state. Tell the parent to start
+    // writing; each byte will either reach the reader (fix) or trip the
+    // spurious close (bug).
     process.stderr.write("READY\\n");
 
-    // Give the parent time to write all bytes and for any spurious close
-    // to surface.
-    await Bun.sleep(1500);
-
+    // Exit only when the reader has actually terminated — real EOF from
+    // parent's stdin.end() (fix path) or spurious close from reading a
+    // stale closer[0] = true (bug path).
+    await readerLoop;
     process.stdout.write(JSON.stringify(events));
     process.exit(0);
   `;
@@ -96,34 +105,38 @@ test("stdin stream stays open while concurrent fetch(file://) bodies finish (#29
     stderr: "pipe",
   });
 
-  // Wait for the child's "READY" signal on stderr before writing to stdin.
   const stderrReader = proc.stderr.getReader();
   const decoder = new TextDecoder();
   let stderrBuf = "";
-  while (!stderrBuf.includes("READY")) {
-    const { value, done } = await stderrReader.read();
-    if (done) break;
-    stderrBuf += decoder.decode(value);
+  let childExited = false;
+  proc.exited.then(() => {
+    childExited = true;
+  });
+
+  // Pull stderr until `token` is in the buffer, OR the child has
+  // exited. The caller checks `stderrBuf.includes(token)` afterwards.
+  async function waitForStderrToken(token: string): Promise<void> {
+    while (!stderrBuf.includes(token) && !childExited) {
+      const { value, done } = await stderrReader.read();
+      if (done) return;
+      stderrBuf += decoder.decode(value);
+    }
   }
 
-  // Now write bytes one at a time with small gaps. Each byte forces a
-  // fresh pending-pull cycle on the child's stdin; with the bug, the
-  // first pending pull resolves to close-the-stream because of the
-  // stale closer flag left by the earlier fetches, and the remaining
-  // bytes never reach the child.
+  // Handshake before the first write.
+  await waitForStderrToken("READY\n");
+
+  // Write one byte, wait for exactly (i+1) acks, repeat. With the bug,
+  // the first ack never arrives after the first byte because the reader
+  // loop resolved with `done` — the child exits, `childExited` flips,
+  // the wait short-circuits, and `dataBytes` comes out < totalWrites.
   for (let i = 0; i < totalWrites; i++) {
-    await Bun.sleep(40);
     proc.stdin.write(Buffer.from([0x41 + i]));
+    await waitForStderrToken("READY\n" + "A".repeat(i + 1));
+    if (childExited) break;
   }
 
-  // Give the child its tail sleep to flush events and exit.
-  await Bun.sleep(700);
   proc.stdin.end();
-
-  // Release the stderr reader lock so `proc.stderr` can be drained elsewhere
-  // (or, more relevantly, so the `await using` cleanup doesn't trip on a
-  // still-locked stream). We don't care about stderr contents past READY —
-  // ASAN builds emit a warning there and that's fine.
   stderrReader.releaseLock();
 
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);

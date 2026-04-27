@@ -806,8 +806,14 @@ describe("mock()", () => {
     const returnsObject = jest.fn(() => ({ x: 1 }));
     expect(Reflect.construct(returnsObject, [])).toEqual({ x: 1 });
 
-    const spied = spyOn({ foo: 42 }, "foo");
-    expect(typeof Reflect.construct(spied, [])).toBe("object");
+    class Base {}
+    expect(Reflect.construct(empty, [], Base)).toBeInstanceOf(Base);
+
+    if (isBun) {
+      // Jest doesn't allow spying on non-function properties
+      const spied = spyOn({ foo: 42 }, "foo");
+      expect(typeof Reflect.construct(spied, [])).toBe("object");
+    }
   });
 });
 

@@ -994,7 +994,12 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstruct, (JSGlobalObject * lexicalGloba
     if (result.isObject()) [[likely]]
         return encodedResult;
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::constructEmptyObject(lexicalGlobalObject)));
+    JSObject* newTarget = asObject(callframe->newTarget());
+    JSGlobalObject* functionGlobalObject = getFunctionRealm(lexicalGlobalObject, newTarget);
+    RETURN_IF_EXCEPTION(scope, {});
+    Structure* structure = InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, functionGlobalObject->objectStructureForObjectConstructor());
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::constructEmptyObject(vm, structure)));
 }
 
 void JSMockFunctionPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)

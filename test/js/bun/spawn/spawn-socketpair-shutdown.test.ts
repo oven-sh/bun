@@ -201,9 +201,16 @@ test("subprocess stdin pipe stays readable while consuming a streamed local fetc
   output += decoder.decode();
 
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split(/\r?\n/)
+    .filter(line => {
+      const trimmed = line.trim();
+      return trimmed && !trimmed.startsWith("WARNING: ASAN interferes");
+    })
+    .join("\n");
 
   expect(output).toContain('FIRST:{"done":false,"value":"ONE"}');
   expect(output).toContain('SECOND:{"done":false,"value":"TWO"}');
-  expect(stderr).toBe("");
+  expect(filteredStderr).toBe("");
   expect(exitCode).toBe(0);
 });

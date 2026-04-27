@@ -110,6 +110,8 @@ us_quic_socket_context_t *us_quic_stream_context(us_quic_stream_t *s);
  * timer to the soonest earliest_adv_tick. Called from us_internal_loop_post
  * and from drainMicrotasks; cheap when quic_head is NULL. */
 void us_quic_loop_process(struct us_loop_t *loop);
+/* Flush only if a stream wrote since the last process_conns. */
+void us_quic_loop_flush_if_pending(struct us_loop_t *loop);
 
 /* Incoming headers — valid from on_stream_headers until on_stream_close. */
 unsigned int us_quic_stream_header_count(us_quic_stream_t *s);

@@ -5,24 +5,20 @@ to stress `Bun.serve({ h3: true })` without going through curl or a Node QUIC
 shim — same lsquic, same BoringSSL, same packet path as the server side.
 
 ```
-  ┃ h3blast  GET 127.0.0.1:3000
-  ┃ /
-  ┃ 4 threads · 8 connections · 64 streams · 10.0s
+  ┌──────────────────────────────────────────────────────────────┐
+  │ h3blast · HTTP/3                    4t · 8c · 64m · 10s each │
+  └──────────────────────────────────────────────────────────────┘
 
-  ──────────────────────────────────────────────────
-    148,402 req/s
-  ──────────────────────────────────────────────────
+  bun                                                148,402 req/s
+  ████████████████████████████████████████████████████████████████
+  GET 127.0.0.1:3000/                     13.00 B/req · p99 2.65ms
 
-  requests   1,484,021 in 10.00s
-  transfer   ↓ 18.39 MB (1.84 MB/s)   ↑ 37.98 MB
-
-  Latency
-  ──────────────────────────────────────────────────
-  min     593µs
-  p50     2.65ms   ▇▇▇▇▇▇▇▇
-  p99     5.33ms   ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇
-  max     8.97ms   ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇
+  node                                                72,104 req/s
+  ███████████████████████████████                            2.06x
+  GET 127.0.0.1:3001/                     13.00 B/req · p99 5.33ms
 ```
+
+Pass `-v` for the full latency-percentile and status-code charts.
 
 ## Design
 
@@ -55,8 +51,18 @@ make                   # → ./h3blast
 ```sh
 ./h3blast -t 4 -c 8 -m 64 -d 30 https://127.0.0.1:3000/
 ./h3blast -X POST -H 'content-type: application/json' -b '{"a":1}' https://host/api
-./h3blast --json -d 5 https://host/ | jq .req_per_sec
+./h3blast --json -d 5 https://host/ | jq '.[0].req_per_sec'
+
+# compare two servers side-by-side — each positional is [label=]url
+./h3blast -c 4 -m 32 -d 10 bun=https://127.0.0.1:3443/ node=https://127.0.0.1:3444/
 ```
+
+When multiple URLs are given they are benchmarked **sequentially** (same
+`-t`/`-c`/`-m`/`-d` each) so they don't compete for client CPU. The live TUI
+shows finished targets above the active one; the final report has one labelled
+block per target with average response-body size. The full latency-percentile
+and status-code charts are only printed with `-v/--verbose`; the default report
+shows just `body B/req` and `p50/p99`.
 
 | flag                       | meaning                                       |
 | -------------------------- | --------------------------------------------- |
@@ -69,7 +75,8 @@ make                   # → ./h3blast
 | `-H 'k: v'`                | extra request header (repeatable)             |
 | `-b STR` / `--body-file P` | request body                                  |
 | `--warmup SEC`             | ignore stats from the first SEC seconds       |
-| `--json`                   | machine-readable single-line summary          |
+| `--json`                   | machine-readable summary (array of targets)   |
+| `-v, --verbose`            | full latency/status charts in final report    |
 | `--no-color`, `-q`         | disable color / live UI                       |
 | `H3BLAST_DEBUG=debug`      | turn on lsquic's internal logger              |
 

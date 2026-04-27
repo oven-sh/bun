@@ -141,6 +141,10 @@ pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *jsc.JSGlobalOb
     this.deferred_tasks.run();
     this.virtual_machine.is_inside_deferred_task_queue = false;
 
+    if (comptime !Environment.isWindows) {
+        if (this.virtual_machine.event_loop_handle) |loop| loop.drainQuicIfNecessary();
+    }
+
     if (comptime bun.Environment.isDebug) {
         this.debug.drain_microtasks_count_outside_tick_queue += @as(usize, @intFromBool(!this.debug.is_inside_tick_queue));
     }

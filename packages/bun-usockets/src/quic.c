@@ -133,6 +133,18 @@ void us_quic_loop_process(struct us_loop_t *loop) {
     loop->data.quic_next_tick_us = have_tick ? (min_diff < 0 ? 0 : min_diff) : -1;
 }
 
+/* Called after the deferred-task queue drains. Only does work when a
+ * stream wrote since the last process_conns; the common case is one
+ * pointer walk and return. */
+void us_quic_loop_flush_if_pending(struct us_loop_t *loop) {
+    for (us_quic_socket_context_t *ctx = loop->data.quic_head; ctx; ctx = ctx->next) {
+        if (ctx->pending_write_bytes && !ctx->processing) {
+            us_quic_loop_process(loop);
+            return;
+        }
+    }
+}
+
 static void us_quic_process(us_quic_socket_context_t *ctx) {
     if (ctx->processing || !ctx->engine) return;
     ctx->processing = 1;
@@ -772,6 +784,9 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
     if (buf != stackbuf) free(buf);
     if (xh != stackh) free(xh);
     if (end_stream && r == 0) lsquic_stream_shutdown(s->stream, 1);
+    /* Mark the context dirty so drainQuicIfNecessary picks up header-only
+     * responses (204/304) that never call us_quic_stream_write. */
+    if (r == 0) s->ctx->pending_write_bytes += (unsigned int) total + 1;
     return r;
 }
 
@@ -837,5 +852,6 @@ void us_quic_socket_close(us_quic_socket_t *s) { if (s->conn) lsquic_conn_close(
 #else /* !LIBUS_USE_QUIC */
 
 void us_quic_loop_process(struct us_loop_t *loop) { (void) loop; }
+void us_quic_loop_flush_if_pending(struct us_loop_t *loop) { (void) loop; }
 
 #endif /* LIBUS_USE_QUIC */

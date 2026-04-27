@@ -39,6 +39,7 @@
 #define H3B_VERSION "0.1.0"
 
 #define MAX_HEADERS 32
+#define MAX_TARGETS 8
 #define RECV_BATCH 64
 #define RECV_PKT_SZ 1500
 #define SEND_BATCH 1024
@@ -69,11 +70,19 @@ struct kv {
     const char *value;
 };
 
-struct config {
+struct target {
     char host[256];
     char port[16];
     char path[2048];
     char authority[300];
+    char label[64];
+    struct sockaddr_storage peer_sa;
+    socklen_t peer_sa_len;
+};
+
+struct config {
+    struct target targets[MAX_TARGETS];
+    int n_targets;
     const char *method;
     int threads;
     int connections;
@@ -88,6 +97,7 @@ struct config {
     bool quiet;
     bool json;
     bool no_color;
+    bool verbose;
     double warmup_s;
     int sndbuf;
     int rcvbuf;
@@ -115,8 +125,10 @@ struct stream_ctx {
 
 struct worker {
     int id;
+    int target_idx;
     pthread_t thread;
     const struct config *cfg;
+    const struct target *tgt;
 
     int fd;
     int epfd;
@@ -158,9 +170,8 @@ struct worker {
 };
 
 static volatile sig_atomic_t g_stop;
+static volatile sig_atomic_t g_intr;   // SIGINT/SIGTERM — abort remaining targets
 static volatile sig_atomic_t g_warm;   // set once warmup window has passed
-static struct sockaddr_storage g_peer_sa;
-static socklen_t g_peer_sa_len;
 
 // ───────────────────────── util ─────────────────────────
 
@@ -182,10 +193,11 @@ static uint64_t now_ns(void) {
 
 static void on_sigint(int sig) {
     (void)sig;
-    if (g_stop) {
+    if (g_intr) {
         if (g_isatty) write(STDERR_FILENO, "\x1b[?7h\x1b[?25h", 12);
         _exit(130);
     }
+    g_intr = 1;
     g_stop = 1;
 }
 
@@ -479,6 +491,7 @@ static struct ssl_ctx_st *get_ssl_ctx(void *peer_ctx, const struct sockaddr *unu
 
 static void worker_build_headers(struct worker *w) {
     const struct config *cfg = w->cfg;
+    const struct target *tgt = w->tgt;
     char *p = w->hdr_buf;
     int n = 0;
 
@@ -493,8 +506,8 @@ static void worker_build_headers(struct worker *w) {
 
     PUSH(":method", cfg->method);
     PUSH(":scheme", "https");
-    PUSH(":path", cfg->path);
-    PUSH(":authority", cfg->authority);
+    PUSH(":path", tgt->path);
+    PUSH(":authority", tgt->authority);
     PUSH("user-agent", "h3blast/" H3B_VERSION);
     for (int i = 0; i < cfg->n_extra_headers; i++)
         PUSH(cfg->extra_headers[i].name, cfg->extra_headers[i].value);
@@ -510,21 +523,22 @@ static void worker_build_headers(struct worker *w) {
 }
 
 static int worker_socket(struct worker *w) {
-    int fd = socket(g_peer_sa.ss_family, SOCK_DGRAM | SOCK_NONBLOCK, 0);
+    const struct target *tgt = w->tgt;
+    int fd = socket(tgt->peer_sa.ss_family, SOCK_DGRAM | SOCK_NONBLOCK, 0);
     if (fd < 0) return -1;
 
     if (w->cfg->sndbuf) setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &w->cfg->sndbuf, sizeof(int));
     if (w->cfg->rcvbuf) setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &w->cfg->rcvbuf, sizeof(int));
 
     struct sockaddr_storage local = {0};
-    local.ss_family = g_peer_sa.ss_family;
+    local.ss_family = tgt->peer_sa.ss_family;
     socklen_t llen = (local.ss_family == AF_INET) ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
     if (bind(fd, (struct sockaddr *)&local, llen) < 0) { close(fd); return -1; }
     getsockname(fd, (struct sockaddr *)&w->local_sa, &llen);
 
     w->fd = fd;
-    memcpy(&w->peer_sa, &g_peer_sa, sizeof(g_peer_sa));
-    w->peer_sa_len = g_peer_sa_len;
+    memcpy(&w->peer_sa, &tgt->peer_sa, sizeof(tgt->peer_sa));
+    w->peer_sa_len = tgt->peer_sa_len;
     return 0;
 }
 
@@ -623,7 +637,7 @@ static void *worker_main(void *arg) {
         lsquic_conn_t *c = lsquic_engine_connect(w->engine, N_LSQVER,
             (struct sockaddr *)&w->local_sa, (struct sockaddr *)&w->peer_sa,
             w, (lsquic_conn_ctx_t *)&w->conns[i],
-            cfg->host, 0, NULL, 0, NULL, 0);
+            w->tgt->host, 0, NULL, 0, NULL, 0);
         if (!c) {
             snprintf(w->errbuf, sizeof(w->errbuf), "lsquic_engine_connect failed");
             return NULL;
@@ -711,34 +725,66 @@ static void hr(FILE *f, int w) {
     fprintf(f, "%s\n", RST);
 }
 
+static int vislen(const char *s) {
+    // Display columns: count UTF-8 lead bytes, treat the few box-drawing /
+    // symbol codepoints we emit (·, ×, µ, ↓, …) as width 1.
+    int n = 0;
+    for (; *s; s++) if ((*s & 0xc0) != 0x80) n++;
+    return n;
+}
+
+static void boxed_header(FILE *f, int w, const char *left, const char *right) {
+    int lw = vislen(left), rw = vislen(right);
+    int pad = w - 4 - lw - rw;
+    if (pad < 1) pad = 1;
+    fprintf(f, "  %s┌", GRY);
+    for (int i = 0; i < w - 2; i++) fputs("─", f);
+    fprintf(f, "┐%s\n", RST);
+    fprintf(f, "  %s│%s %s%s%s%*s%s%s%s %s│%s\n",
+            GRY, RST, BLD, left, RST, pad, "", DIM, right, RST, GRY, RST);
+    fprintf(f, "  %s└", GRY);
+    for (int i = 0; i < w - 2; i++) fputs("─", f);
+    fprintf(f, "┘%s\n\n", RST);
+}
+
 struct snapshot {
     uint64_t done, err, s2, s3, s4, s5, so, rx, tx, conns, hsk_fail;
 };
 
-static void collect(struct worker *ws, int n, struct snapshot *out) {
-    memset(out, 0, sizeof(*out));
+struct result {
+    struct snapshot snap;
+    struct hdr_histogram *hist;
+    double elapsed;
+    bool ran;
+};
+
+static void collect(struct worker *ws, int n, struct snapshot *o) {
+    memset(o, 0, sizeof(*o));
     for (int i = 0; i < n; i++) {
-        out->done += atomic_load_explicit(&ws[i].req_done, memory_order_relaxed);
-        out->err += atomic_load_explicit(&ws[i].req_err, memory_order_relaxed);
-        out->s2 += atomic_load_explicit(&ws[i].req_2xx, memory_order_relaxed);
-        out->s3 += atomic_load_explicit(&ws[i].req_3xx, memory_order_relaxed);
-        out->s4 += atomic_load_explicit(&ws[i].req_4xx, memory_order_relaxed);
-        out->s5 += atomic_load_explicit(&ws[i].req_5xx, memory_order_relaxed);
-        out->so += atomic_load_explicit(&ws[i].req_other, memory_order_relaxed);
-        out->rx += atomic_load_explicit(&ws[i].bytes_rx, memory_order_relaxed);
-        out->tx += atomic_load_explicit(&ws[i].bytes_tx, memory_order_relaxed);
-        out->conns += atomic_load_explicit(&ws[i].conns_open, memory_order_relaxed);
-        out->hsk_fail += atomic_load_explicit(&ws[i].handshake_fail, memory_order_relaxed);
+        o->done += atomic_load_explicit(&ws[i].req_done, memory_order_relaxed);
+        o->err += atomic_load_explicit(&ws[i].req_err, memory_order_relaxed);
+        o->s2 += atomic_load_explicit(&ws[i].req_2xx, memory_order_relaxed);
+        o->s3 += atomic_load_explicit(&ws[i].req_3xx, memory_order_relaxed);
+        o->s4 += atomic_load_explicit(&ws[i].req_4xx, memory_order_relaxed);
+        o->s5 += atomic_load_explicit(&ws[i].req_5xx, memory_order_relaxed);
+        o->so += atomic_load_explicit(&ws[i].req_other, memory_order_relaxed);
+        o->rx += atomic_load_explicit(&ws[i].bytes_rx, memory_order_relaxed);
+        o->tx += atomic_load_explicit(&ws[i].bytes_tx, memory_order_relaxed);
+        o->conns += atomic_load_explicit(&ws[i].conns_open, memory_order_relaxed);
+        o->hsk_fail += atomic_load_explicit(&ws[i].handshake_fail, memory_order_relaxed);
     }
 }
 
 static int g_live_lines;
 
-static void render_live(const struct config *cfg, struct worker *ws, int nw,
+static void render_live(const struct config *cfg, int active, const struct result *done,
+                        struct worker *ws, int nw,
                         const struct snapshot *cur, const struct snapshot *prev,
                         double dt, double elapsed, double run_for, int spin) {
     if (!g_isatty || cfg->quiet) return;
     FILE *f = stderr;
+    int nt = cfg->n_targets;
+    const struct target *tgt = &cfg->targets[active];
 
     int cols = term_cols();
     int barw = cols - 30; if (barw < 8) barw = 8; if (barw > 50) barw = 50;
@@ -747,31 +793,54 @@ static void render_live(const struct config *cfg, struct worker *ws, int nw,
     // Rewind and erase the previous frame in one shot — robust to wrapped lines.
     if (g_live_lines) fprintf(f, "\r\x1b[%dA\x1b[J", g_live_lines);
 
+    fprintf(f, "  %s%s┃%s %sh3blast%s  %dt · %dc · %dm\n\n",
+            BLD, CYN, RST, BLD, RST,
+            cfg->threads, cfg->connections, cfg->streams);
+    int lines = 2;
+
+    for (int t = 0; t < active; t++) {
+        const struct result *r = &done[t];
+        char b_rps[32], b_avg[32];
+        human_count(r->elapsed > 0 ? (double)r->snap.done / r->elapsed : 0, b_rps, sizeof(b_rps));
+        human_bytes(r->snap.done ? (double)r->snap.rx / (double)r->snap.done : 0, b_avg, sizeof(b_avg));
+        fprintf(f, "  %s✓%s  %s%-12s%s %s%10s%s %sreq/s%s  %sbody%s %s/req\n",
+                GRN, RST, BLD, cfg->targets[t].label, RST,
+                GRN, b_rps, RST, DIM, RST, DIM, RST, b_avg);
+        fprintf(f, "     %s%s %s:%s%s%s\n\n",
+                DIM, cfg->method, cfg->targets[t].host, cfg->targets[t].port, cfg->targets[t].path, RST);
+        lines += 3;
+    }
+
+    static double peak_rps[MAX_TARGETS];
     double rps = dt > 0 ? (double)(cur->done - prev->done) / dt : 0;
     double rxps = dt > 0 ? (double)(cur->rx - prev->rx) / dt : 0;
     double txps = dt > 0 ? (double)(cur->tx - prev->tx) / dt : 0;
-    char b_rx[32], b_tx[32], b_rps[32], b_total[32];
+    double avgb = cur->done ? (double)cur->rx / (double)cur->done : 0;
+    if (rps > peak_rps[active]) peak_rps[active] = rps;
+
+    char b_rx[32], b_tx[32], b_rps[32], b_total[32], b_peak[32], b_avg[32];
     human_bytes(rxps, b_rx, sizeof(b_rx));
     human_bytes(txps, b_tx, sizeof(b_tx));
     human_count(rps, b_rps, sizeof(b_rps));
     human_count((double)cur->done, b_total, sizeof(b_total));
+    human_count(peak_rps[active], b_peak, sizeof(b_peak));
+    human_bytes(avgb, b_avg, sizeof(b_avg));
 
-    static double peak_rps;
-    if (rps > peak_rps) peak_rps = rps;
-    char b_peak[32]; human_count(peak_rps, b_peak, sizeof(b_peak));
-
-    fprintf(f, "  %s%s┃%s %sh3blast%s  %s %s%s:%s%s%s\n",
-            BLD, CYN, RST, BLD, RST, cfg->method, DIM, cfg->host, cfg->port, cfg->path, RST);
-    fprintf(f, "  %s%s┃%s %dt · %dc · %dm\n\n",
-            BLD, CYN, RST, cfg->threads, cfg->connections, cfg->streams);
-
-    fprintf(f, "  %s%s%s  %s%s%12s%s %sreq/s%s   %speak %s%s\n",
+    fprintf(f, "  %s%s%s  %s%-12s%s %s%s%10s%s %sreq/s%s   %speak %s%s",
             CYN, spinner_frames[spin % 10], RST,
+            BLD, tgt->label, RST,
             BLD, GRN, b_rps, RST, DIM, RST, DIM, b_peak, RST);
-
-    fprintf(f, "     %s↓%s %-10s %s↑%s %-10s %sconns%s %-3" PRIu64 " %stotal%s %s\n",
+    if (nt > 1) fprintf(f, "   %s[%d/%d]%s", DIM, active + 1, nt, RST);
+    fputc('\n', f);
+    fprintf(f, "     %s%s %s:%s%s%s\n",
+            DIM, cfg->method, tgt->host, tgt->port, tgt->path, RST);
+    fprintf(f, "     %s↓%s %-10s %s↑%s %-10s %sbody%s %s/req  %sconns%s %-3" PRIu64 " %stotal%s %s\n",
             CYN, RST, b_rx, MAG, RST, b_tx,
+            DIM, RST, b_avg,
             DIM, RST, cur->conns, DIM, RST, b_total);
+    fprintf(f, "     %s2xx%s %-9" PRIu64 " %s4xx%s %-7" PRIu64 " %s5xx%s %-7" PRIu64 " %serr%s %" PRIu64 "\n",
+            GRN, RST, cur->s2, YLW, RST, cur->s4,
+            RED, RST, cur->s5, RED, RST, cur->err);
 
     fputs("     ", f);
     if (run_for > 0) {
@@ -780,19 +849,16 @@ static void render_live(const struct config *cfg, struct worker *ws, int nw,
     } else {
         fprintf(f, "%s%.1fs%s\n", DIM, elapsed, RST);
     }
+    lines += 5;
 
-    fprintf(f, "     %s2xx%s %-9" PRIu64 " %s4xx%s %-7" PRIu64 " %s5xx%s %-7" PRIu64 " %serr%s %" PRIu64 "\n",
-            GRN, RST, cur->s2, YLW, RST, cur->s4,
-            RED, RST, cur->s5, RED, RST, cur->err);
-
-    int show_workers = nw > 1 ? (nw < 12 ? nw : 12) : 0;
+    int show_workers = (cfg->verbose && nw > 1) ? (nw < 12 ? nw : 12) : 0;
     if (show_workers) {
         double max_rps = 1;
         static double last_done[256];
         double wrps[256];
         for (int i = 0; i < nw; i++) {
             double d = (double)atomic_load_explicit(&ws[i].req_done, memory_order_relaxed);
-            wrps[i] = dt > 0 ? (d - last_done[i]) / dt : 0;
+            wrps[i] = (dt > 0 && d >= last_done[i]) ? (d - last_done[i]) / dt : 0;
             last_done[i] = d;
             if (wrps[i] > max_rps) max_rps = wrps[i];
         }
@@ -802,135 +868,199 @@ static void render_live(const struct config *cfg, struct worker *ws, int nw,
             draw_bar(f, wrps[i] / max_rps, wbar);
             fprintf(f, " %s%7s/s%s\n", DIM, r, RST);
         }
+        lines += show_workers;
     }
 
-    g_live_lines = 7 + show_workers;
+    g_live_lines = lines;
     fflush(f);
 }
 
-static void render_final(const struct config *cfg, struct worker *ws, int nw,
-                         const struct snapshot *s, double elapsed) {
+static void render_final(const struct config *cfg, const struct result *results) {
     FILE *f = stdout;
-    struct hdr_histogram *agg;
-    hdr_init(1, 60 * 1000 * 1000, 3, &agg);
-    for (int i = 0; i < nw; i++)
-        if (ws[i].hist) hdr_add(agg, ws[i].hist);
-
-    double rps = elapsed > 0 ? (double)s->done / elapsed : 0;
-
-    if (cfg->json) {
-        printf("{\"url\":\"https://%s%s\",\"method\":\"%s\","
-               "\"threads\":%d,\"connections\":%d,\"streams\":%d,"
-               "\"duration_s\":%.3f,\"requests\":%" PRIu64 ",\"errors\":%" PRIu64 ","
-               "\"req_per_sec\":%.2f,\"bytes_rx\":%" PRIu64 ",\"bytes_tx\":%" PRIu64 ","
-               "\"throughput_bps\":%.2f,"
-               "\"status\":{\"2xx\":%" PRIu64 ",\"3xx\":%" PRIu64 ",\"4xx\":%" PRIu64
-               ",\"5xx\":%" PRIu64 ",\"other\":%" PRIu64 "},"
-               "\"latency_us\":{\"min\":%" PRId64 ",\"mean\":%.2f,\"stdev\":%.2f,"
-               "\"p50\":%" PRId64 ",\"p75\":%" PRId64 ",\"p90\":%" PRId64
-               ",\"p99\":%" PRId64 ",\"p999\":%" PRId64 ",\"max\":%" PRId64 "}}\n",
-               cfg->authority, cfg->path, cfg->method,
-               cfg->threads, cfg->connections, cfg->streams,
-               elapsed, s->done, s->err, rps, s->rx, s->tx,
-               elapsed > 0 ? (double)s->rx / elapsed : 0,
-               s->s2, s->s3, s->s4, s->s5, s->so,
-               s->done ? hdr_min(agg) : 0,
-               s->done ? hdr_mean(agg) : 0.0,
-               s->done ? hdr_stddev(agg) : 0.0,
-               hdr_value_at_percentile(agg, 50.0),
-               hdr_value_at_percentile(agg, 75.0),
-               hdr_value_at_percentile(agg, 90.0),
-               hdr_value_at_percentile(agg, 99.0),
-               hdr_value_at_percentile(agg, 99.9),
-               hdr_max(agg));
-        hdr_close(agg);
-        return;
-    }
+    int nt = cfg->n_targets;
 
     int cols = g_isatty ? term_cols() : 72;
-    int hrw = cols - 4; if (hrw > 60) hrw = 60; if (hrw < 20) hrw = 20;
+    int hrw = cols - 4; if (hrw > 64) hrw = 64; if (hrw < 30) hrw = 30;
     int barmax = hrw - 22; if (barmax < 6) barmax = 6;
 
-    char b_rx[32], b_tx[32], b_rxps[32], b_total[32];
-    fmt_thousands(s->done, b_total, sizeof(b_total));
-    human_bytes((double)s->rx, b_rx, sizeof(b_rx));
-    human_bytes((double)s->tx, b_tx, sizeof(b_tx));
-    human_bytes(elapsed > 0 ? (double)s->rx / elapsed : 0, b_rxps, sizeof(b_rxps));
-
-    fprintf(f, "  %s%s┃%s %sh3blast%s  %s %s%s:%s%s%s\n",
-            BLD, CYN, RST, BLD, RST,
-            cfg->method, DIM, cfg->host, cfg->port, cfg->path, RST);
-    fprintf(f, "  %s%s┃%s %d thread%s · %d connection%s · %d stream%s\n\n",
-            BLD, CYN, RST,
-            cfg->threads, cfg->threads == 1 ? "" : "s",
-            cfg->connections, cfg->connections == 1 ? "" : "s",
-            cfg->streams, cfg->streams == 1 ? "" : "s");
-
-    char rps_full[32];
-    fmt_thousands((uint64_t)rps, rps_full, sizeof(rps_full));
-    fprintf(f, "  ");
-    hr(f, hrw);
-    fprintf(f, "    %s%s%s%s %sreq/s%s\n", BLD, GRN, rps_full, RST, DIM, RST);
-    fprintf(f, "  ");
-    hr(f, hrw);
-    fprintf(f, "\n  %s%-10s%s %s in %.2fs\n", DIM, "requests", RST, b_total, elapsed);
-    fprintf(f, "  %s%-10s%s ↓ %s (%s/s)  ↑ %s\n\n", DIM, "transfer", RST, b_rx, b_rxps, b_tx);
-
-    fprintf(f, "  %sLatency%s\n  ", BLD, RST);
-    hr(f, hrw);
-    struct { const char *label; double pct; } rows[] = {
-        {"min", 0}, {"p50", 50}, {"p75", 75}, {"p90", 90},
-        {"p99", 99}, {"p99.9", 99.9}, {"max", 100},
-    };
-    int64_t maxv = hdr_max(agg);
-    if (s->done == 0) maxv = 0;
-    for (size_t i = 0; i < sizeof(rows)/sizeof(rows[0]); i++) {
-        int64_t v = 0;
-        if (s->done == 0) { /* leave at 0 */ }
-        else if (rows[i].pct == 0) v = hdr_min(agg);
-        else if (rows[i].pct == 100) v = hdr_max(agg);
-        else v = hdr_value_at_percentile(agg, rows[i].pct);
-        char lat[32]; human_latency((double)v, lat, sizeof(lat));
-        int barw = maxv > 0 ? (int)((double)v / (double)maxv * barmax) : 0;
-        fprintf(f, "  %s%-7s%s %s%-9s%s ", DIM, rows[i].label, RST, BLD, lat, RST);
-        fputs(CYN, f);
-        for (int j = 0; j < barw; j++) fputs("▇", f);
-        fprintf(f, "%s\n", RST);
+    if (cfg->json) { fputc('[', f); }
+    else {
+        char rcfg[96];
+        snprintf(rcfg, sizeof(rcfg), "%dt · %dc · %dm · %.0fs%s",
+                 cfg->threads, cfg->connections, cfg->streams,
+                 cfg->duration_s, nt > 1 ? " each" : "");
+        boxed_header(f, hrw, "h3blast · HTTP/3", rcfg);
     }
-    char mean[32], stdd[32];
-    human_latency(s->done ? hdr_mean(agg) : 0, mean, sizeof(mean));
-    human_latency(s->done ? hdr_stddev(agg) : 0, stdd, sizeof(stdd));
-    fprintf(f, "  %s%-7s%s %-9s %s± %s%s\n", DIM, "mean", RST, mean, DIM, stdd, RST);
 
-    fprintf(f, "\n  %sStatus%s\n  ", BLD, RST);
-    hr(f, hrw);
-    struct { const char *l; const char *c; uint64_t n; } st[] = {
-        {"2xx", GRN, s->s2}, {"3xx", BLU, s->s3},
-        {"4xx", YLW, s->s4}, {"5xx", RED, s->s5},
-        {"other", GRY, s->so}, {"errors", RED, s->err},
-    };
-    uint64_t total = s->done + s->err;
-    for (size_t i = 0; i < sizeof(st)/sizeof(st[0]); i++) {
-        if (st[i].n == 0 && i > 0) continue;
-        double pct = total ? 100.0 * (double)st[i].n / (double)total : 0;
-        int barw = (int)(pct / 100.0 * barmax);
-        fprintf(f, "  %s%-7s%s %-10" PRIu64 " %s%5.1f%%%s  %s",
-                DIM, st[i].l, RST, st[i].n, DIM, pct, RST, st[i].c);
-        for (int j = 0; j < barw; j++) fputs("▇", f);
-        fprintf(f, "%s\n", RST);
+    int n_ran = 0;
+    double max_rps = 0;
+    for (int t = 0; t < nt; t++) {
+        if (!results[t].ran) break;
+        n_ran++;
+        double r = results[t].elapsed > 0 ? (double)results[t].snap.done / results[t].elapsed : 0;
+        if (r > max_rps) max_rps = r;
     }
-    if (s->hsk_fail)
-        fprintf(f, "  %s%-7s%s %" PRIu64 "\n", RED, "hsk-fail", RST, s->hsk_fail);
 
-    fprintf(f, "\n");
-    hdr_close(agg);
+    static const char *tcolors[] = {0,0,0,0,0,0,0,0};
+    tcolors[0]=CYN; tcolors[1]=MAG; tcolors[2]=YLW; tcolors[3]=BLU;
+    tcolors[4]=GRN; tcolors[5]=RED; tcolors[6]=CYN; tcolors[7]=MAG;
+
+    for (int t = 0; t < nt; t++) {
+        if (!results[t].ran) break;
+        const struct target *tgt = &cfg->targets[t];
+        const struct snapshot *s = &results[t].snap;
+        struct hdr_histogram *agg = results[t].hist;
+        double elapsed = results[t].elapsed;
+
+        double rps = elapsed > 0 ? (double)s->done / elapsed : 0;
+        double avgb = s->done ? (double)s->rx / (double)s->done : 0;
+
+        if (cfg->json) {
+            fprintf(f, "%s{\"label\":\"%s\",\"url\":\"https://%s%s\",\"method\":\"%s\","
+                   "\"threads\":%d,\"connections\":%d,\"streams\":%d,"
+                   "\"duration_s\":%.3f,\"requests\":%" PRIu64 ",\"errors\":%" PRIu64 ","
+                   "\"req_per_sec\":%.2f,\"bytes_rx\":%" PRIu64 ",\"bytes_tx\":%" PRIu64 ","
+                   "\"avg_body_bytes\":%.2f,\"throughput_bps\":%.2f,"
+                   "\"status\":{\"2xx\":%" PRIu64 ",\"3xx\":%" PRIu64 ",\"4xx\":%" PRIu64
+                   ",\"5xx\":%" PRIu64 ",\"other\":%" PRIu64 "},"
+                   "\"latency_us\":{\"min\":%" PRId64 ",\"mean\":%.2f,\"stdev\":%.2f,"
+                   "\"p50\":%" PRId64 ",\"p75\":%" PRId64 ",\"p90\":%" PRId64
+                   ",\"p99\":%" PRId64 ",\"p999\":%" PRId64 ",\"max\":%" PRId64 "}}",
+                   t ? "," : "",
+                   tgt->label, tgt->authority, tgt->path, cfg->method,
+                   cfg->threads, cfg->connections, cfg->streams,
+                   elapsed, s->done, s->err, rps, s->rx, s->tx, avgb,
+                   elapsed > 0 ? (double)s->rx / elapsed : 0,
+                   s->s2, s->s3, s->s4, s->s5, s->so,
+                   s->done ? hdr_min(agg) : 0,
+                   s->done ? hdr_mean(agg) : 0.0,
+                   s->done ? hdr_stddev(agg) : 0.0,
+                   hdr_value_at_percentile(agg, 50.0),
+                   hdr_value_at_percentile(agg, 75.0),
+                   hdr_value_at_percentile(agg, 90.0),
+                   hdr_value_at_percentile(agg, 99.0),
+                   hdr_value_at_percentile(agg, 99.9),
+                   hdr_max(agg));
+            continue;
+        }
+
+        char b_avg[32], rps_full[32], p99[32];
+        fmt_thousands((uint64_t)rps, rps_full, sizeof(rps_full));
+        human_bytes(avgb, b_avg, sizeof(b_avg));
+        human_latency(s->done ? (double)hdr_value_at_percentile(agg, 99.0) : 0, p99, sizeof(p99));
+
+        bool best = (rps >= max_rps);
+        const char *clr = tcolors[t];
+        char rhs[64];
+        snprintf(rhs, sizeof(rhs), "%s req/s", rps_full);
+        int pad = hrw - vislen(tgt->label) - vislen(rhs);
+        if (pad < 1) pad = 1;
+        fprintf(f, "  %s%s%s%*s%s%s%s%s req/s%s\n",
+                BLD, tgt->label, RST, pad, "",
+                BLD, best ? GRN : "", rps_full, RST, RST);
+
+        int barw = max_rps > 0 ? (int)(rps / max_rps * (double)hrw + 0.5) : 0;
+        if (barw < 1 && rps > 0) barw = 1;
+        fprintf(f, "  %s", clr);
+        for (int j = 0; j < barw; j++) fputs("█", f);
+        fputs(RST, f);
+        if (n_ran > 1 && !best && rps > 0) {
+            char mult[24];
+            snprintf(mult, sizeof(mult), "%.2fx", max_rps / rps);
+            int room = hrw - barw, ml = vislen(mult);
+            if (room > ml) fprintf(f, "%*s%s%s%s", room - ml, "", DIM, mult, RST);
+        }
+        fputc('\n', f);
+
+        char detail[256];
+        snprintf(detail, sizeof(detail), "%s/req · p99 %s", b_avg, p99);
+        char url[400];
+        snprintf(url, sizeof(url), "%s %s:%s%s", cfg->method, tgt->host, tgt->port, tgt->path);
+        int dpad = hrw - vislen(url) - vislen(detail);
+        if (dpad < 2) {
+            int room = hrw - vislen(detail) - 3;
+            if (room > 8 && vislen(url) > room) { url[room - 1] = 0; strcat(url, "…"); }
+            dpad = hrw - vislen(url) - vislen(detail);
+            if (dpad < 1) dpad = 1;
+        }
+        fprintf(f, "  %s%s%*s%s%s\n", DIM, url, dpad, "", detail, RST);
+
+        uint64_t bad = s->s3 + s->s4 + s->s5 + s->so + s->err;
+        if (bad || s->hsk_fail) {
+            fprintf(f, "  %s2xx%s %" PRIu64 "  %s4xx%s %" PRIu64
+                    "  %s5xx%s %" PRIu64 "  %serr%s %" PRIu64,
+                    GRN, RST, s->s2, YLW, RST, s->s4, RED, RST, s->s5, RED, RST, s->err);
+            if (s->hsk_fail) fprintf(f, "  %shsk-fail%s %" PRIu64, RED, RST, s->hsk_fail);
+            fputc('\n', f);
+        }
+
+        if (cfg->verbose) {
+            char b_rx[32], b_tx[32], b_rxps[32], b_total[32], p50[32];
+            fmt_thousands(s->done, b_total, sizeof(b_total));
+            human_bytes((double)s->rx, b_rx, sizeof(b_rx));
+            human_bytes((double)s->tx, b_tx, sizeof(b_tx));
+            human_bytes(elapsed > 0 ? (double)s->rx / elapsed : 0, b_rxps, sizeof(b_rxps));
+            human_latency(s->done ? (double)hdr_value_at_percentile(agg, 50.0) : 0, p50, sizeof(p50));
+            fprintf(f, "  %s%-10s%s %s in %.2fs\n", DIM, "requests", RST, b_total, elapsed);
+            fprintf(f, "  %s%-10s%s ↓ %s (%s/s)  ↑ %s\n", DIM, "transfer", RST, b_rx, b_rxps, b_tx);
+            fprintf(f, "  %s%-10s%s p50 %s  p99 %s\n", DIM, "latency", RST, p50, p99);
+            fprintf(f, "\n  %sLatency%s\n  ", BLD, RST);
+            hr(f, hrw);
+            struct { const char *label; double pct; } rows[] = {
+                {"min", 0}, {"p50", 50}, {"p75", 75}, {"p90", 90},
+                {"p99", 99}, {"p99.9", 99.9}, {"max", 100},
+            };
+            int64_t maxv = s->done ? hdr_max(agg) : 0;
+            for (size_t i = 0; i < sizeof(rows)/sizeof(rows[0]); i++) {
+                int64_t v = 0;
+                if (s->done == 0) { /* leave at 0 */ }
+                else if (rows[i].pct == 0) v = hdr_min(agg);
+                else if (rows[i].pct == 100) v = hdr_max(agg);
+                else v = hdr_value_at_percentile(agg, rows[i].pct);
+                char lat[32]; human_latency((double)v, lat, sizeof(lat));
+                int barw = maxv > 0 ? (int)((double)v / (double)maxv * barmax) : 0;
+                fprintf(f, "  %s%-7s%s %s%-9s%s ", DIM, rows[i].label, RST, BLD, lat, RST);
+                fputs(CYN, f);
+                for (int j = 0; j < barw; j++) fputs("▇", f);
+                fprintf(f, "%s\n", RST);
+            }
+            char mean[32], stdd[32];
+            human_latency(s->done ? hdr_mean(agg) : 0, mean, sizeof(mean));
+            human_latency(s->done ? hdr_stddev(agg) : 0, stdd, sizeof(stdd));
+            fprintf(f, "  %s%-7s%s %-9s %s± %s%s\n", DIM, "mean", RST, mean, DIM, stdd, RST);
+
+            fprintf(f, "\n  %sStatus%s\n  ", BLD, RST);
+            hr(f, hrw);
+            struct { const char *l; const char *c; uint64_t n; } st[] = {
+                {"2xx", GRN, s->s2}, {"3xx", BLU, s->s3},
+                {"4xx", YLW, s->s4}, {"5xx", RED, s->s5},
+                {"other", GRY, s->so}, {"errors", RED, s->err},
+            };
+            uint64_t total = s->done + s->err;
+            for (size_t i = 0; i < sizeof(st)/sizeof(st[0]); i++) {
+                if (st[i].n == 0 && i > 0) continue;
+                double pct = total ? 100.0 * (double)st[i].n / (double)total : 0;
+                int barw = (int)(pct / 100.0 * barmax);
+                fprintf(f, "  %s%-7s%s %-10" PRIu64 " %s%5.1f%%%s  %s",
+                        DIM, st[i].l, RST, st[i].n, DIM, pct, RST, st[i].c);
+                for (int j = 0; j < barw; j++) fputs("▇", f);
+                fprintf(f, "%s\n", RST);
+            }
+            if (s->hsk_fail)
+                fprintf(f, "  %s%-7s%s %" PRIu64 "\n", RED, "hsk-fail", RST, s->hsk_fail);
+        }
+
+        fputc('\n', f);
+    }
+
+    if (cfg->json) fputs("]\n", f);
 }
 
 // ───────────────────────── CLI ─────────────────────────
 
 static void usage(const char *argv0) {
     fprintf(stderr, "\n  %sh3blast%s %s — HTTP/3 load generator (lsquic %s)\n\n"
-                    "  %s%s%s [options] <url>\n\n",
+                    "  %s%s%s [options] [label=]<url> [[label=]<url> ...]\n\n",
             BLD, RST, H3B_VERSION, LSQUIC_VERSION_STR, BLD, argv0, RST);
 #define OPT(s, d) fprintf(stderr, "  %s%-24s%s %s\n", CYN, s, RST, d)
     OPT("-t, --threads N",     "worker threads               (default 1)");
@@ -947,6 +1077,7 @@ static void usage(const char *argv0) {
     OPT("    --rcvbuf BYTES",  "SO_RCVBUF");
     OPT("    --json",          "machine-readable summary, no live UI");
     OPT("    --no-color",      "disable ANSI colors");
+    OPT("-v, --verbose",       "show full latency/status charts");
     OPT("-q, --quiet",         "no live UI");
     OPT("    --version",       "print version and exit");
     OPT("-h, --help",          "show this help");
@@ -955,7 +1086,7 @@ static void usage(const char *argv0) {
             DIM, RST);
 }
 
-static bool parse_url(const char *url, struct config *cfg) {
+static bool parse_url(const char *url, struct target *tgt) {
     const char *p = url;
     if (strncmp(p, "https://", 8) == 0) p += 8;
     else if (strncmp(p, "http://", 7) == 0) p += 7;
@@ -972,27 +1103,44 @@ static bool parse_url(const char *url, struct config *cfg) {
         host_end = p;
     }
     size_t hl = (size_t)(host_end - host_start);
-    if (hl >= sizeof(cfg->host)) return false;
-    memcpy(cfg->host, host_start, hl); cfg->host[hl] = 0;
+    if (hl >= sizeof(tgt->host)) return false;
+    memcpy(tgt->host, host_start, hl); tgt->host[hl] = 0;
 
     if (*p == ':') {
         p++;
         const char *ps = p;
         while (*p && *p != '/') p++;
         size_t pl = (size_t)(p - ps);
-        if (pl >= sizeof(cfg->port)) return false;
-        memcpy(cfg->port, ps, pl); cfg->port[pl] = 0;
+        if (pl >= sizeof(tgt->port)) return false;
+        memcpy(tgt->port, ps, pl); tgt->port[pl] = 0;
     } else {
-        strcpy(cfg->port, "443");
+        strcpy(tgt->port, "443");
     }
 
-    if (*p == 0) strcpy(cfg->path, "/");
-    else snprintf(cfg->path, sizeof(cfg->path), "%s", p);
+    if (*p == 0) strcpy(tgt->path, "/");
+    else snprintf(tgt->path, sizeof(tgt->path), "%s", p);
 
-    if (strcmp(cfg->port, "443") == 0)
-        snprintf(cfg->authority, sizeof(cfg->authority), "%s", cfg->host);
+    if (strcmp(tgt->port, "443") == 0)
+        snprintf(tgt->authority, sizeof(tgt->authority), "%s", tgt->host);
     else
-        snprintf(cfg->authority, sizeof(cfg->authority), "%s:%s", cfg->host, cfg->port);
+        snprintf(tgt->authority, sizeof(tgt->authority), "%s:%s", tgt->host, tgt->port);
+    return true;
+}
+
+// Positional args are `[label=]url`. The `=` must come before the scheme's
+// `://` (so query strings with `=` aren't mistaken for labels).
+static bool parse_target(const char *arg, struct target *tgt) {
+    const char *eq = strchr(arg, '=');
+    const char *scheme = strstr(arg, "://");
+    if (eq && (!scheme || eq < scheme)) {
+        size_t ll = (size_t)(eq - arg);
+        if (ll >= sizeof(tgt->label)) ll = sizeof(tgt->label) - 1;
+        memcpy(tgt->label, arg, ll); tgt->label[ll] = 0;
+        arg = eq + 1;
+    }
+    if (!parse_url(arg, tgt)) return false;
+    if (tgt->label[0] == 0)
+        snprintf(tgt->label, sizeof(tgt->label), "%s", tgt->authority);
     return true;
 }
 
@@ -1004,7 +1152,6 @@ static int parse_args(int argc, char **argv, struct config *cfg) {
     cfg->duration_s = 10.0;
     cfg->insecure = true;
 
-    const char *url = NULL;
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         #define NEXT() ({ if (++i >= argc) die("missing value for %s", a); argv[i]; })
@@ -1035,6 +1182,7 @@ static int parse_args(int argc, char **argv, struct config *cfg) {
             cfg->extra_headers[cfg->n_extra_headers++] = (struct kv){h, colon};
         }
         else if (!strcmp(a, "--json")) { cfg->json = true; cfg->quiet = true; }
+        else if (!strcmp(a, "-v") || !strcmp(a, "--verbose")) cfg->verbose = true;
         else if (!strcmp(a, "--no-color") || !strcmp(a, "--plain")) cfg->no_color = true;
         else if (!strcmp(a, "--warmup")) cfg->warmup_s = atof(NEXT());
         else if (!strcmp(a, "-k") || !strcmp(a, "--insecure")) cfg->insecure = true;
@@ -1044,11 +1192,15 @@ static int parse_args(int argc, char **argv, struct config *cfg) {
         else if (!strcmp(a, "-q") || !strcmp(a, "--quiet")) cfg->quiet = true;
         else if (!strcmp(a, "-h") || !strcmp(a, "--help")) { usage(argv[0]); exit(0); }
         else if (a[0] == '-') die("unknown option: %s", a);
-        else url = a;
+        else {
+            if (cfg->n_targets >= MAX_TARGETS) die("too many targets (max %d)", MAX_TARGETS);
+            if (!parse_target(a, &cfg->targets[cfg->n_targets]))
+                die("could not parse url: %s", a);
+            cfg->n_targets++;
+        }
         #undef NEXT
     }
-    if (!url) { usage(argv[0]); die("missing <url>"); }
-    if (!parse_url(url, cfg)) die("could not parse url: %s", url);
+    if (cfg->n_targets == 0) { usage(argv[0]); die("missing <url>"); }
     if (cfg->threads < 1) cfg->threads = 1;
     if (cfg->connections < cfg->threads) cfg->connections = cfg->threads;
     if (cfg->streams < 1) cfg->streams = 1;
@@ -1061,19 +1213,21 @@ int main(int argc, char **argv) {
     g_isatty = isatty(STDERR_FILENO) && isatty(STDOUT_FILENO);
     if (g_isatty && !getenv("NO_COLOR")) enable_color();
 
-    struct config cfg = {0};
+    static struct config cfg;
     parse_args(argc, argv, &cfg);
     if (cfg.no_color || cfg.json) { RST=DIM=BLD=RED=GRN=YLW=BLU=MAG=CYN=GRY=""; }
     if (cfg.json || cfg.quiet) g_isatty = 0;
 
-    // resolve
-    struct addrinfo hints = {0}, *res;
-    hints.ai_socktype = SOCK_DGRAM;
-    int rc = getaddrinfo(cfg.host, cfg.port, &hints, &res);
-    if (rc != 0) die("getaddrinfo(%s:%s): %s", cfg.host, cfg.port, gai_strerror(rc));
-    memcpy(&g_peer_sa, res->ai_addr, res->ai_addrlen);
-    g_peer_sa_len = res->ai_addrlen;
-    freeaddrinfo(res);
+    for (int t = 0; t < cfg.n_targets; t++) {
+        struct target *tgt = &cfg.targets[t];
+        struct addrinfo hints = {0}, *res;
+        hints.ai_socktype = SOCK_DGRAM;
+        int rc = getaddrinfo(tgt->host, tgt->port, &hints, &res);
+        if (rc != 0) die("getaddrinfo(%s:%s): %s", tgt->host, tgt->port, gai_strerror(rc));
+        memcpy(&tgt->peer_sa, res->ai_addr, res->ai_addrlen);
+        tgt->peer_sa_len = res->ai_addrlen;
+        freeaddrinfo(res);
+    }
 
     if (lsquic_global_init(LSQUIC_GLOBAL_CLIENT) != 0)
         die("lsquic_global_init failed");
@@ -1088,64 +1242,81 @@ int main(int argc, char **argv) {
     signal(SIGTERM, on_sigint);
     signal(SIGPIPE, SIG_IGN);
 
+    int nt = cfg.n_targets;
     int nw = cfg.threads;
     struct worker *ws = calloc((size_t)nw, sizeof(struct worker));
-    int conns_left = cfg.connections;
-    for (int i = 0; i < nw; i++) {
-        ws[i].id = i;
-        ws[i].cfg = &cfg;
-        ws[i].n_conns = conns_left / (nw - i);
-        conns_left -= ws[i].n_conns;
-    }
+    struct result results[MAX_TARGETS] = {0};
+    double run_for = cfg.duration_s + cfg.warmup_s;
+    int spin = 0;
 
     if (g_isatty && !cfg.quiet) fputs("\n\x1b[?7l\x1b[?25l", stderr);
-    if (cfg.warmup_s <= 0) g_warm = 1;
 
-    for (int i = 0; i < nw; i++)
-        pthread_create(&ws[i].thread, NULL, worker_main, &ws[i]);
-
-    uint64_t start = now_ns();
-    uint64_t stats_start = start;
-    struct snapshot prev = {0}, cur;
-    uint64_t last = start;
-    int spin = 0;
-    double run_for = cfg.duration_s + cfg.warmup_s;
-
-    for (;;) {
-        usleep(100 * 1000);
-        uint64_t t = now_ns();
-        double elapsed = (double)(t - start) / 1e9;
-        double dt = (double)(t - last) / 1e9;
-        last = t;
-        if (!g_warm && elapsed >= cfg.warmup_s) {
-            g_warm = 1;
-            stats_start = t;
+    for (int t = 0; t < nt && !g_intr; t++) {
+        memset(ws, 0, (size_t)nw * sizeof(struct worker));
+        int conns_left = cfg.connections;
+        for (int i = 0; i < nw; i++) {
+            ws[i].id = i;
+            ws[i].target_idx = t;
+            ws[i].cfg = &cfg;
+            ws[i].tgt = &cfg.targets[t];
+            ws[i].n_conns = conns_left / (nw - i);
+            conns_left -= ws[i].n_conns;
         }
-        collect(ws, nw, &cur);
-        render_live(&cfg, ws, nw, &cur, &prev, dt, elapsed, run_for, spin++);
-        prev = cur;
 
-        if (g_stop) break;
-        if (cfg.duration_s > 0 && elapsed >= run_for) { g_stop = 1; break; }
-        if (cfg.max_requests && cur.done >= cfg.max_requests) { g_stop = 1; break; }
-        if (cur.hsk_fail >= (uint64_t)cfg.connections && cur.done == 0 && elapsed > 1) { g_stop = 1; break; }
+        g_stop = 0;
+        g_warm = (cfg.warmup_s <= 0) ? 1 : 0;
+
+        for (int i = 0; i < nw; i++)
+            pthread_create(&ws[i].thread, NULL, worker_main, &ws[i]);
+
+        uint64_t start = now_ns();
+        uint64_t stats_start = start;
+        uint64_t last = start;
+        struct snapshot prev = {0}, cur;
+
+        for (;;) {
+            usleep(100 * 1000);
+            uint64_t now = now_ns();
+            double elapsed = (double)(now - start) / 1e9;
+            double dt = (double)(now - last) / 1e9;
+            last = now;
+            if (!g_warm && elapsed >= cfg.warmup_s) {
+                g_warm = 1;
+                stats_start = now;
+            }
+            collect(ws, nw, &cur);
+            render_live(&cfg, t, results, ws, nw, &cur, &prev, dt, elapsed, run_for, spin++);
+            prev = cur;
+
+            if (g_stop) break;
+            if (cfg.duration_s > 0 && elapsed >= run_for) { g_stop = 1; break; }
+            if (cfg.max_requests && cur.done >= cfg.max_requests) { g_stop = 1; break; }
+            if (cur.hsk_fail >= (uint64_t)cfg.connections && cur.done == 0 && elapsed > 1) { g_stop = 1; break; }
+        }
+
+        for (int i = 0; i < nw; i++) pthread_join(ws[i].thread, NULL);
+
+        struct result *r = &results[t];
+        r->ran = true;
+        r->elapsed = (double)(now_ns() - stats_start) / 1e9;
+        collect(ws, nw, &r->snap);
+        hdr_init(1, 60 * 1000 * 1000, 3, &r->hist);
+        for (int i = 0; i < nw; i++) {
+            if (ws[i].hist) { hdr_add(r->hist, ws[i].hist); hdr_close(ws[i].hist); }
+            if (ws[i].errbuf[0])
+                fprintf(stderr, "  %s%s w%d%s %s\n", RED, cfg.targets[t].label, i, RST, ws[i].errbuf);
+        }
     }
-
-    for (int i = 0; i < nw; i++) pthread_join(ws[i].thread, NULL);
 
     if (g_isatty && !cfg.quiet) {
         if (g_live_lines) fprintf(stderr, "\r\x1b[%dA\x1b[J", g_live_lines);
         fputs("\x1b[?7h\x1b[?25h", stderr);
     }
 
-    double elapsed = (double)(now_ns() - stats_start) / 1e9;
-    collect(ws, nw, &cur);
-
-    for (int i = 0; i < nw; i++)
-        if (ws[i].errbuf[0]) fprintf(stderr, "  %sw%d%s %s\n", RED, i, RST, ws[i].errbuf);
-
-    render_final(&cfg, ws, nw, &cur, elapsed);
+    render_final(&cfg, results);
 
     lsquic_global_cleanup();
-    return (cur.done == 0) ? 1 : 0;
+    uint64_t done = 0;
+    for (int t = 0; t < nt; t++) done += results[t].snap.done;
+    return (done == 0) ? 1 : 0;
 }

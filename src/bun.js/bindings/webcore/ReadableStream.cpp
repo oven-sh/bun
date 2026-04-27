@@ -348,6 +348,7 @@ extern "C" void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleRea
     auto& privateName = clientData->builtinFunctions().readableStreamInternalsBuiltins().readableStreamCancelPrivateName();
 
     JSC::JSLockHolder lock(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     MarkedArgumentBuffer arguments;
     arguments.append(readableStream);
     arguments.append(JSC::JSValue::decode(encodedReason));

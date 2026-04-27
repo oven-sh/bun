@@ -624,9 +624,9 @@ pub const ClientSession = struct {
 
         // Deliver per-stream. Iterate by index because delivery may remove
         // entries (swapRemove keeps earlier indices stable; revisiting the
-        // current index after a removal is intentional). `delivering` blocks
-        // hasHeadroom() so retryFromH2/doRedirect re-dispatch can't adopt
-        // back onto this session while we're iterating it.
+        // current index after a removal is intentional). `delivering` makes
+        // adopt() park retryFromH2/doRedirect re-dispatches in pending_attach
+        // so `streams` isn't mutated under this iteration.
         this.delivering = true;
         var i: usize = 0;
         while (i < this.streams.count()) {

@@ -54,12 +54,11 @@ async function runFixture(scenario: "get" | "post" | "abort") {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // Surface the fixture's JSON line on failure.
-  expect(stderr).not.toContain("leaked");
+  expect(stderr).toBe("");
   expect(stdout).toContain("--pass--");
   expect(exitCode).toBe(0);
 }
 
-test("h2 ClientSession/Stream do not leak across batched GETs", () => runFixture("get"), 60_000);
-test("h2 ClientSession/Stream do not leak across batched POSTs", () => runFixture("post"), 60_000);
-test("h2 ClientSession/Stream do not leak across aborted requests", () => runFixture("abort"), 60_000);
+test("h2 ClientSession/Stream do not leak across batched GETs", () => runFixture("get"));
+test("h2 ClientSession/Stream do not leak across batched POSTs", () => runFixture("post"));
+test("h2 ClientSession/Stream do not leak across aborted requests", () => runFixture("abort"));

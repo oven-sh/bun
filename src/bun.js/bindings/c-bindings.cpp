@@ -354,6 +354,11 @@ size_t lshpack_wrapper_decode(lshpack_wrapper* self,
     return s - src;
 }
 
+void lshpack_wrapper_enc_set_max_capacity(lshpack_wrapper* self, unsigned max_capacity)
+{
+    lshpack_enc_set_max_capacity(&self->enc, max_capacity);
+}
+
 void lshpack_wrapper_deinit(lshpack_wrapper* self)
 {
     lshpack_dec_cleanup(&self->dec);

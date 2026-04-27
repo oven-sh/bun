@@ -140,6 +140,11 @@ pub const ClientSession = struct {
     remote_max_frame_size: u24 = wire.DEFAULT_MAX_FRAME_SIZE,
     remote_max_concurrent_streams: u32 = 100,
     remote_initial_window_size: u32 = wire.DEFAULT_WINDOW_SIZE,
+    /// SETTINGS_HEADER_TABLE_SIZE received from the peer that hasn't yet been
+    /// acknowledged with a Dynamic Table Size Update (RFC 7541 §6.3) at the
+    /// start of a header block. lshpack's encoder doesn't emit that opcode
+    /// itself, so writeRequest must prepend it before the first encode call.
+    pending_hpack_enc_capacity: ?u32 = null,
     /// Connection-level send window. Starts at the spec default regardless of
     /// SETTINGS; only WINDOW_UPDATE on stream 0 grows it.
     conn_send_window: i32 = wire.DEFAULT_WINDOW_SIZE,
@@ -274,6 +279,22 @@ pub const ClientSession = struct {
             strings.eqlCaseInsensitiveASCIIICheckLength(name, "upgrade");
     }
 
+    /// RFC 7541 §6.3 Dynamic Table Size Update: `001` prefix, 5-bit-prefix
+    /// integer. Must be the first opcode in a header block. Caller guarantees
+    /// at least 6 bytes of capacity (max for a u32).
+    fn encodeHpackTableSizeUpdate(encoded: *std.ArrayListUnmanaged(u8), value: u32) void {
+        if (value < 31) {
+            encoded.appendAssumeCapacity(0x20 | @as(u8, @intCast(value)));
+            return;
+        }
+        encoded.appendAssumeCapacity(0x20 | 31);
+        var rest = value - 31;
+        while (rest >= 128) : (rest >>= 7) {
+            encoded.appendAssumeCapacity(@as(u8, @truncate(rest)) | 0x80);
+        }
+        encoded.appendAssumeCapacity(@as(u8, @truncate(rest)));
+    }
+
     fn encodeHeader(this: *ClientSession, encoded: *std.ArrayListUnmanaged(u8), name: []const u8, value: []const u8, never_index: bool) !void {
         const required = encoded.items.len + name.len + value.len + 32;
         try encoded.ensureTotalCapacity(bun.default_allocator, required);
@@ -364,6 +385,13 @@ pub const ClientSession = struct {
     fn writeRequest(this: *ClientSession, client: *HTTPClient, stream: *Stream, request: picohttp.Request) !void {
         var encoded: std.ArrayListUnmanaged(u8) = .{};
         defer encoded.deinit(bun.default_allocator);
+
+        if (this.pending_hpack_enc_capacity) |cap| {
+            this.pending_hpack_enc_capacity = null;
+            this.hpack.setEncoderMaxCapacity(cap);
+            try encoded.ensureUnusedCapacity(bun.default_allocator, 8);
+            encodeHpackTableSizeUpdate(&encoded, cap);
+        }
 
         var lower_buf: [256]u8 = undefined;
         var lower_heap: std.ArrayListUnmanaged(u8) = .{};
@@ -913,6 +941,14 @@ pub const ClientSession = struct {
                             this.remote_max_frame_size = @truncate(unit.value);
                         },
                         .SETTINGS_MAX_CONCURRENT_STREAMS => this.remote_max_concurrent_streams = unit.value,
+                        .SETTINGS_HEADER_TABLE_SIZE => {
+                            // RFC 9113 §4.3.1 / RFC 7541 §4.2: encoder MUST
+                            // acknowledge a reduced limit with a Dynamic Table
+                            // Size Update at the start of the next header
+                            // block. Track the minimum seen so a reduce-then-
+                            // raise between two blocks still signals the dip.
+                            this.pending_hpack_enc_capacity = @min(this.pending_hpack_enc_capacity orelse unit.value, unit.value);
+                        },
                         .SETTINGS_INITIAL_WINDOW_SIZE => {
                             // RFC 9113 §6.5.2 / §6.9.2: values above 2^31-1, or
                             // a delta that pushes any open stream's window past
@@ -973,8 +1009,18 @@ pub const ClientSession = struct {
                 }
             },
             .HTTP_FRAME_PING => {
+                // RFC 9113 §6.7: length != 8 is a connection FRAME_SIZE_ERROR;
+                // a non-zero stream identifier is a connection PROTOCOL_ERROR.
+                if (header.length != 8) {
+                    this.fatal_error = error.HTTP2FrameSizeError;
+                    return;
+                }
+                if (header.streamIdentifier != 0) {
+                    this.fatal_error = error.HTTP2ProtocolError;
+                    return;
+                }
                 if (header.flags & @intFromEnum(wire.PingFrameFlags.ACK) == 0) {
-                    this.writeFrame(.HTTP_FRAME_PING, @intFromEnum(wire.PingFrameFlags.ACK), 0, payload[0..@min(payload.len, 8)]);
+                    this.writeFrame(.HTTP_FRAME_PING, @intFromEnum(wire.PingFrameFlags.ACK), 0, payload[0..8]);
                 }
             },
             .HTTP_FRAME_HEADERS => {

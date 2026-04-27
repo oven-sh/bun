@@ -242,12 +242,12 @@ pub fn firstCall(
             const ctx = client.getSslCtx(true);
             const session = H2.ClientSession.create(ctx, socket, client);
             NewHTTPContext(true).tagAsH2(socket, session);
-            client.resolvePendingH2(session);
+            client.resolvePendingH2(.{ .h2 = session });
             session.attach(client);
             return;
         }
         client.flags.protocol = .http1_1;
-        client.resolvePendingH2(null);
+        client.resolvePendingH2(.h1);
         if (client.flags.force_http2) {
             client.closeAndFail(error.HTTP2Unsupported, true, socket);
             return;
@@ -1973,10 +1973,21 @@ fn completeConnectingProcess(this: *HTTPClient) void {
     }
 }
 
+const PendingH2Resolution = union(enum) {
+    /// ALPN selected h2; waiters attach onto this session.
+    h2: *H2.ClientSession,
+    /// Handshake completed and ALPN selected http/1.1. Waiters can be pinned
+    /// to h1 (and force_http2 waiters failed) since the server has spoken.
+    h1,
+    /// Leader's connect/handshake failed or was aborted before ALPN. Nothing
+    /// has been learned about the server's protocol support, so waiters must
+    /// retry without protocol pinning.
+    leader_failed,
+};
+
 /// The leader of a coalesced cold connect has learned the ALPN outcome (or
-/// failed). Dispatch every waiter: attach to `session` when there is room,
-/// otherwise re-enter `start_` so each opens its own connection.
-fn resolvePendingH2(this: *HTTPClient, session: ?*H2.ClientSession) void {
+/// failed). Dispatch every waiter accordingly.
+fn resolvePendingH2(this: *HTTPClient, resolution: PendingH2Resolution) void {
     const pc = this.pending_h2 orelse return;
     this.pending_h2 = null;
     pc.unregisterFrom(this.getSslCtx(true));
@@ -1987,29 +1998,34 @@ fn resolvePendingH2(this: *HTTPClient, session: ?*H2.ClientSession) void {
             waiter.fail(error.Aborted);
             continue;
         }
-        if (session) |s| {
-            s.enqueue(waiter);
-            continue;
+        switch (resolution) {
+            .h2 => |s| s.enqueue(waiter),
+            .h1 => {
+                // ALPN selected http/1.1 on the leader's handshake; a
+                // force_http2 waiter would just open a fresh TLS connection
+                // and fail the same way, so fail it here instead of burning
+                // another handshake.
+                if (waiter.flags.force_http2) {
+                    waiter.fail(error.HTTP2Unsupported);
+                    continue;
+                }
+                // Pin to h1 so this `start_` doesn't register a fresh
+                // PendingConnect that the rest of this loop would re-coalesce
+                // onto (which would serialise N cold fetches into N
+                // sequential handshakes). The origin already chose h1 once.
+                waiter.flags.force_http1 = true;
+                waiter.start_(true);
+            },
+            // The first waiter becomes the new leader; the rest re-coalesce
+            // onto it via the normal PendingConnect path.
+            .leader_failed => waiter.start_(true),
         }
-        // ALPN selected http/1.1 on the leader's handshake; a force_http2
-        // waiter would just open a fresh TLS connection and fail the same
-        // way, so fail it here instead of burning another handshake.
-        if (waiter.flags.force_http2) {
-            waiter.fail(error.HTTP2Unsupported);
-            continue;
-        }
-        // Pin this waiter to h1 so its `start_` doesn't register a fresh
-        // PendingConnect that the rest of this loop would re-coalesce onto
-        // (which would serialise N cold fetches into N sequential
-        // handshakes). The origin already chose h1 once.
-        waiter.flags.force_http1 = true;
-        waiter.start_(true);
     }
 }
 
 fn fail(this: *HTTPClient, err: anyerror) void {
     this.unregisterAbortTracker();
-    this.resolvePendingH2(null);
+    this.resolvePendingH2(.leader_failed);
 
     if (this.proxy_tunnel) |tunnel| {
         this.proxy_tunnel = null;

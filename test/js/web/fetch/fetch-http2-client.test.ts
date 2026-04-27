@@ -1152,6 +1152,44 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       );
     });
 
+    test("PING with length != 8 is a connection FRAME_SIZE_ERROR", async () => {
+      // RFC 9113 §6.7.
+      await withRawH2Server(
+        (conn, id) => {
+          conn.socket.write(frame(6, 0, 0, Buffer.alloc(4)));
+          conn.headers(id, hpackStatus(200), { endStream: true });
+        },
+        async url => {
+          await using proc = spawnFetch(`
+            try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
+            catch (e) { console.log("rejected", e.code); }
+          `);
+          const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stdout.trim()).toBe("rejected HTTP2FrameSizeError");
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
+
+    test("PING on a non-zero stream id is a connection PROTOCOL_ERROR", async () => {
+      // RFC 9113 §6.7.
+      await withRawH2Server(
+        (conn, id) => {
+          conn.socket.write(frame(6, 0, 1, Buffer.alloc(8)));
+          conn.headers(id, hpackStatus(200), { endStream: true });
+        },
+        async url => {
+          await using proc = spawnFetch(`
+            try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
+            catch (e) { console.log("rejected", e.code); }
+          `);
+          const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stdout.trim()).toBe("rejected HTTP2ProtocolError");
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
+
     test("RST_STREAM(NO_ERROR) before final HEADERS fails the request instead of hanging", async () => {
       await withRawH2Server(
         (conn, id) => {
@@ -1173,12 +1211,12 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
   });
 
   test("flag off: ALPN does not offer h2", async () => {
-    let sawH2 = false;
-    const server = http2.createSecureServer({ ...tls, allowHTTP1: true }, (req, res) => {
-      sawH2 = req.httpVersion === "2.0";
-      res.writeHead(200);
-      res.end("ok");
+    let alpn: string | false | null = null;
+    const server = nodetls.createServer({ ...tls, ALPNProtocols: ["h2", "http/1.1"] }, sock => {
+      alpn = sock.alpnProtocol;
+      sock.end("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok");
     });
+    server.on("tlsClientError", () => {});
     server.listen(0);
     await once(server, "listening");
     const { port } = server.address() as import("node:net").AddressInfo;
@@ -1188,14 +1226,19 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
           bunExe(),
           "--no-warnings",
           "-e",
-          `await fetch("https://localhost:${port}", { tls: { rejectUnauthorized: false } }).then(r => r.text());`,
+          `console.log(await fetch("https://localhost:${port}", { tls: { rejectUnauthorized: false } }).then(r => r.text()));`,
         ],
         env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
         stdout: "pipe",
         stderr: "pipe",
       });
-      await proc.exited;
-      expect(sawH2).toBe(false);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("ok");
+      // The server prefers h2; if the client had offered it, ALPN would have
+      // selected it and the HTTP/1.1 response above would have failed parse.
+      expect(alpn).toBe("http/1.1");
+      expect(exitCode).toBe(0);
     } finally {
       server.close();
     }
@@ -1378,6 +1421,87 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("AbortError conns=1");
+    expect(exitCode).toBe(0);
+  });
+
+  test("SETTINGS_HEADER_TABLE_SIZE=0: encoder emits a Dynamic Table Size Update so request 2+ decodes", async () => {
+    // RFC 9113 §4.3.1 / RFC 7541 §6.3: a server that shrinks the encoder's
+    // dynamic table expects the next header block to begin with a 0x20-prefix
+    // size-update opcode. nghttp2 (which backs node:http2) enforces this and
+    // closes the connection with COMPRESSION_ERROR if the opcode is missing,
+    // so requests after the first hang/fail without the fix.
+    const server = http2.createSecureServer({ ...tls, settings: { headerTableSize: 0 } }, (_req, res) => {
+      res.writeHead(200);
+      res.end("ok");
+    });
+    server.on("sessionError", () => {});
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = spawnFetch(`
+        const url = "https://localhost:${port}";
+        const tls = { rejectUnauthorized: false };
+        for (let i = 0; i < 3; i++) {
+          const res = await fetch(url, { tls });
+          console.log(i, res.status, await res.text());
+        }
+      `);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("0 200 ok\n1 200 ok\n2 200 ok");
+      expect(exitCode).toBe(0);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("leader abort does not fail a coalesced force_http2 waiter with HTTP2Unsupported", async () => {
+    // Regression for resolvePendingH2 conflating "ALPN chose h1" with
+    // "leader failed pre-handshake". Server never speaks TLS, so the leader
+    // sits in handshake; the waiter coalesces onto its PendingConnect. When
+    // the leader is aborted, the waiter must retry as the new leader (a
+    // second TCP connect) rather than be told the server lacks h2.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--no-warnings",
+        "-e",
+        `import net from "node:net";
+         let conns = 0;
+         const { promise: accepted, resolve } = Promise.withResolvers();
+         const server = net.createServer(sock => { conns++; sock.on("error", () => {}); resolve(); });
+         server.listen(0, "127.0.0.1");
+         await new Promise(r => server.on("listening", r));
+         const url = "https://127.0.0.1:" + server.address().port + "/";
+         const opts = { protocol: "http2", tls: { rejectUnauthorized: false } };
+         const leaderAc = new AbortController();
+         const leader = fetch(url, { ...opts, signal: leaderAc.signal }).catch(e => e?.name || String(e));
+         const waiterAc = new AbortController();
+         const waiter = fetch(url, { ...opts, signal: waiterAc.signal }).then(
+           () => "unexpected-ok",
+           e => (typeof e?.code === "string" ? e.code : e?.name) || String(e),
+         );
+         await accepted;
+         await Bun.sleep(100);
+         const before = conns;
+         leaderAc.abort();
+         await leader;
+         await Bun.sleep(100);
+         const after = conns;
+         waiterAc.abort();
+         console.log(await waiter, "before=" + before, "after=" + after);
+         process.exit(0);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // before=1 proves the waiter coalesced; after=2 proves it retried as
+    // the new leader instead of being failed with HTTP2Unsupported.
+    expect(stdout.trim()).toBe("AbortError before=1 after=2");
     expect(exitCode).toBe(0);
   });
 });

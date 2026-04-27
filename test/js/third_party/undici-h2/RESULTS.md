@@ -9,7 +9,7 @@ rewritten; test bodies are byte-identical to upstream.
 - `Client`/`Agent`/`Pool` → no-op stubs with `.close()`/`.destroy()`
 - `pem.generate()` → returns harness `tls` cert/key
 - `closeClientAndServerAsPromise` → inline replacement for `test/utils/node-http`
-- `test` → wraps `node:test` to no-op `t.plan()` (Bun's `node:test` shim throws `ERR_NOT_IMPLEMENTED` for it; undici only uses it as an assertion-count hint, the `t.assert.*` calls do the actual work)
+- `test` → wraps `node:test` so `t.plan(n)` is enforced via an assertion-counting Proxy (Bun's `node:test` shim throws `ERR_NOT_IMPLEMENTED` for `t.plan`)
 
 ## Run
 

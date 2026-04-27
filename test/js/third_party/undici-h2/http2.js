@@ -6,7 +6,7 @@ const { createReadStream, readFileSync } = require('node:fs')
 const { once } = require('node:events')
 const { Readable } = require('node:stream')
 
-// Vendored: undici-shim provides node:test wrapper (no-op t.plan), pem
+// Vendored: undici-shim provides node:test wrapper (t.plan enforced), pem
 // (harness TLS certs), Client/fetch/Headers stubs, and the
 // closeClientAndServerAsPromise helper. Test bodies below are unmodified
 // from undici test/fetch/http2.js.

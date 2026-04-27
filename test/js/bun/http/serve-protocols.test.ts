@@ -8,9 +8,9 @@
  * round-trip with checksum, POST echoes at several sizes, headers, status.
  */
 import { describe, expect, test } from "bun:test";
+import { createHash } from "crypto";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
 import { fetchH3, hasFetchH3 } from "./fetch-h3";
-import { createHash } from "crypto";
 
 type Proto = "http/1.1" | "http/3";
 

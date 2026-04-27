@@ -91,6 +91,7 @@ const c = struct {
     pub extern fn uws_req_get_parameter(res: *Request, index: c_ushort, dest: *[*]const u8) usize;
 };
 
+const std = @import("std");
+
 const bun = @import("bun");
 const uws = bun.uws;
-const std = @import("std");

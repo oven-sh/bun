@@ -1,8 +1,8 @@
-import { describe, expect, test, beforeAll } from "bun:test";
+import { which } from "bun";
+import { beforeAll, describe, expect, test } from "bun:test";
+import { createHash, randomBytes } from "crypto";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
 import { join } from "path";
-import { which } from "bun";
-import { createHash, randomBytes } from "crypto";
 
 // HTTP/3 needs a curl that was built with nghttp3/ngtcp2. CI provisions one
 // as `curl-h3`; locally fall back to whichever `curl` reports HTTP3 in

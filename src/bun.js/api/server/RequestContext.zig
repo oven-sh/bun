@@ -2627,8 +2627,8 @@ const uws = bun.uws;
 const Api = bun.schema.api;
 
 const FileResponseStream = bun.api.server.FileResponseStream;
-const RangeRequest = bun.api.server.RangeRequest;
 const HTTPStatusText = bun.api.server.HTTPStatusText;
+const RangeRequest = bun.api.server.RangeRequest;
 
 const HTTP = bun.http;
 const MimeType = bun.http.MimeType;

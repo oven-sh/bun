@@ -417,9 +417,11 @@ const c = struct {
     extern fn uws_h3_req_for_each_header(*Request, HeaderCb, ?*anyopaque) void;
 };
 
-const std = @import("std");
 const bun = @import("bun");
-const uws = bun.uws;
+const std = @import("std");
+
 const State = @import("./Response.zig").State;
 const WriteResult = @import("./Response.zig").WriteResult;
+
+const uws = bun.uws;
 const SocketAddress = uws.SocketAddress;

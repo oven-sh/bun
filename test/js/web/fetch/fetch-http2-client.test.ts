@@ -1092,6 +1092,66 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       );
     });
 
+    test("SETTINGS_INITIAL_WINDOW_SIZE above 2^31-1 is a connection FLOW_CONTROL_ERROR", async () => {
+      // RFC 9113 §6.5.2.
+      await withRawH2Server(
+        (conn, id) => {
+          // setting type 4 (INITIAL_WINDOW_SIZE), value 0x80000000
+          conn.socket.write(frame(4, 0, 0, Buffer.concat([Buffer.from([0, 4]), u32be(0x80000000)])));
+          conn.headers(id, hpackStatus(200), { endStream: true });
+        },
+        async url => {
+          await using proc = spawnFetch(`
+            try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
+            catch (e) { console.log("rejected", e.code); }
+          `);
+          const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stdout.trim()).toBe("rejected HTTP2FlowControlError");
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
+
+    test("WINDOW_UPDATE with zero increment on stream 0 is a connection PROTOCOL_ERROR", async () => {
+      // RFC 9113 §6.9.
+      await withRawH2Server(
+        (conn, id) => {
+          conn.socket.write(frame(8, 0, 0, u32be(0)));
+          conn.headers(id, hpackStatus(200), { endStream: true });
+        },
+        async url => {
+          await using proc = spawnFetch(`
+            try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
+            catch (e) { console.log("rejected", e.code); }
+          `);
+          const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stdout.trim()).toBe("rejected HTTP2ProtocolError");
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
+
+    test("HEADERS on a stream id we never opened is a connection PROTOCOL_ERROR", async () => {
+      // RFC 9113 §5.1: receiving a frame on an idle stream (id >= our next
+      // odd id) or an even (server-initiated) id while push is disabled is a
+      // connection error, not a discardable orphan.
+      await withRawH2Server(
+        (conn, id) => {
+          conn.headers(2, hpackStatus(200), { endStream: true });
+          conn.headers(id, hpackStatus(200), { endStream: true });
+        },
+        async url => {
+          await using proc = spawnFetch(`
+            try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
+            catch (e) { console.log("rejected", e.code); }
+          `);
+          const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stdout.trim()).toBe("rejected HTTP2ProtocolError");
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
+
     test("RST_STREAM(NO_ERROR) before final HEADERS fails the request instead of hanging", async () => {
       await withRawH2Server(
         (conn, id) => {

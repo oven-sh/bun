@@ -197,11 +197,13 @@ pub const ClientSession = struct {
 
     pub fn adopt(this: *ClientSession, client: *HTTPClient) void {
         client.registerAbortTracker(true, this.socket);
-        if (this.delivering) {
-            // Re-dispatch (retryFromH2/doRedirect) reached us from inside our
-            // own onData deliver loop. Park until the loop finishes so
-            // attach() doesn't mutate `streams` under iteration or trigger
-            // failAll while a stream is mid-delivery.
+        // Park instead of attaching when (a) we're inside onData's deliver
+        // loop — attach() mustn't mutate `streams` under iteration — or (b)
+        // the server's first SETTINGS hasn't arrived yet, so the real
+        // MAX_CONCURRENT_STREAMS isn't known and a non-replayable body
+        // shouldn't risk a REFUSED_STREAM. The leader bypasses adopt() and
+        // attaches directly so the preface still goes out.
+        if (this.delivering or !this.settings_received) {
             bun.handleOom(this.pending_attach.append(bun.default_allocator, client));
             return;
         }
@@ -912,11 +914,22 @@ pub const ClientSession = struct {
                         },
                         .SETTINGS_MAX_CONCURRENT_STREAMS => this.remote_max_concurrent_streams = unit.value,
                         .SETTINGS_INITIAL_WINDOW_SIZE => {
-                            const next = @min(unit.value, @as(u32, wire.MAX_WINDOW_SIZE));
-                            const delta = @as(i64, next) - @as(i64, this.remote_initial_window_size);
-                            this.remote_initial_window_size = next;
+                            // RFC 9113 §6.5.2 / §6.9.2: values above 2^31-1, or
+                            // a delta that pushes any open stream's window past
+                            // that, are a connection FLOW_CONTROL_ERROR.
+                            if (unit.value > wire.MAX_WINDOW_SIZE) {
+                                this.fatal_error = error.HTTP2FlowControlError;
+                                return;
+                            }
+                            const delta = @as(i64, unit.value) - @as(i64, this.remote_initial_window_size);
+                            this.remote_initial_window_size = unit.value;
                             for (this.streams.values()) |s| {
-                                s.send_window = @intCast(std.math.clamp(@as(i64, s.send_window) + delta, std.math.minInt(i32), std.math.maxInt(i32)));
+                                const next = @as(i64, s.send_window) + delta;
+                                if (next > wire.MAX_WINDOW_SIZE) {
+                                    this.fatal_error = error.HTTP2FlowControlError;
+                                    return;
+                                }
+                                s.send_window = @intCast(next);
                             }
                         },
                         else => {},
@@ -929,9 +942,34 @@ pub const ClientSession = struct {
                 if (payload.len < 4) return;
                 const inc: i32 = @intCast(wire.UInt31WithReserved.fromBytes(payload[0..4]).uint31);
                 if (header.streamIdentifier == 0) {
-                    this.conn_send_window +|= inc;
+                    // RFC 9113 §6.9: zero increment on stream 0 is a
+                    // connection PROTOCOL_ERROR; §6.9.1: overflow past
+                    // 2^31-1 is a connection FLOW_CONTROL_ERROR.
+                    if (inc == 0) {
+                        this.fatal_error = error.HTTP2ProtocolError;
+                        return;
+                    }
+                    const next = @as(i64, this.conn_send_window) + inc;
+                    if (next > wire.MAX_WINDOW_SIZE) {
+                        this.fatal_error = error.HTTP2FlowControlError;
+                        return;
+                    }
+                    this.conn_send_window = @intCast(next);
                 } else if (this.streams.get(@truncate(header.streamIdentifier & 0x7fffffff))) |stream| {
-                    stream.send_window +|= inc;
+                    // §6.9/§6.9.1: zero increment / overflow on a stream are
+                    // stream-level errors; RST_STREAM and fail just that one.
+                    if (inc == 0) {
+                        stream.rst(.PROTOCOL_ERROR);
+                        stream.fatal_error = error.HTTP2ProtocolError;
+                        return;
+                    }
+                    const next = @as(i64, stream.send_window) + inc;
+                    if (next > wire.MAX_WINDOW_SIZE) {
+                        stream.rst(.FLOW_CONTROL_ERROR);
+                        stream.fatal_error = error.HTTP2FlowControlError;
+                        return;
+                    }
+                    stream.send_window = @intCast(next);
                 }
             },
             .HTTP_FRAME_PING => {
@@ -944,6 +982,15 @@ pub const ClientSession = struct {
                 const stream_id: u31 = @intCast(header.streamIdentifier);
                 const maybe_stream = this.streams.get(stream_id);
                 if (maybe_stream == null) {
+                    // RFC 9113 §5.1/§5.1.1: HEADERS on a stream we never
+                    // opened (idle: id >= next_stream_id, or even: server-
+                    // initiated while push is disabled) is a connection
+                    // PROTOCOL_ERROR. Only odd ids we already used can be a
+                    // legitimate "RST crossed an in-flight HEADERS" orphan.
+                    if (stream_id == 0 or stream_id & 1 == 0 or stream_id >= this.next_stream_id) {
+                        this.fatal_error = error.HTTP2ProtocolError;
+                        return;
+                    }
                     // Stream we no longer track (RST_STREAM crossed an
                     // in-flight HEADERS). The block must still be HPACK-
                     // decoded so the connection-level dynamic table stays in
@@ -1019,7 +1066,16 @@ pub const ClientSession = struct {
             },
             .HTTP_FRAME_DATA => {
                 this.conn_unacked_bytes +|= header.length;
-                const stream = this.streams.get(@intCast(header.streamIdentifier)) orelse return;
+                const stream_id: u31 = @intCast(header.streamIdentifier);
+                const stream = this.streams.get(stream_id) orelse {
+                    // §6.1/§5.1: DATA on stream 0, an idle stream, or a
+                    // server-initiated stream is a connection PROTOCOL_ERROR.
+                    // DATA on a stream we already closed/reset is ignored.
+                    if (stream_id == 0 or stream_id & 1 == 0 or stream_id >= this.next_stream_id) {
+                        this.fatal_error = error.HTTP2ProtocolError;
+                    }
+                    return;
+                };
                 if (!stream.seen_headers) {
                     stream.fatal_error = error.HTTP2ProtocolError;
                     return;

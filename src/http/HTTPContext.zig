@@ -589,10 +589,11 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 // TCP fin must be closed, but we must keep the original tagged
                 // pointer so that their onClose callback is called.
                 //
-                // Three possible states:
+                // Four possible states:
                 // 1. HTTP Keep-Alive socket: it must be removed from the pool
                 // 2. HTTP Client socket: it might need to be retried
-                // 3. Dead socket: it is already marked as dead
+                // 3. HTTP/2 session: fail every stream on it
+                // 4. Dead socket: it is already marked as dead
                 const tagged = getTagged(ptr);
                 markTaggedSocketAsDead(socket, tagged);
                 socket.close(.failure);

@@ -27,7 +27,9 @@ struct Http3Request {
                 fullUrl = value;
                 size_t q = value.find('?');
                 url = q == std::string_view::npos ? value : value.substr(0, q);
-                query = q == std::string_view::npos ? std::string_view{} : value.substr(q + 1);
+                /* Keep the leading '?' — getDecodedQueryValue expects it and
+                 * unconditionally drops the first byte. */
+                query = q == std::string_view::npos ? std::string_view{} : value.substr(q);
             } else if (name == ":authority") {
                 authority = value;
             }

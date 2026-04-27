@@ -28,6 +28,9 @@ static void CookieMap__writeFetchHeadersToUWSResponse(CookieMap* cookie_map, JSC
 extern "C" void CookieMap__write(CookieMap* cookie_map, JSC::JSGlobalObject* global_this, int kind, void* arg2)
 {
     switch (kind) {
+    case 0:
+        CookieMap__writeFetchHeadersToUWSResponse(cookie_map, global_this, reinterpret_cast<uWS::HttpResponse<false>*>(arg2));
+        break;
     case 1:
         CookieMap__writeFetchHeadersToUWSResponse(cookie_map, global_this, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
         break;
@@ -37,7 +40,7 @@ extern "C" void CookieMap__write(CookieMap* cookie_map, JSC::JSGlobalObject* glo
         break;
 #endif
     default:
-        CookieMap__writeFetchHeadersToUWSResponse(cookie_map, global_this, reinterpret_cast<uWS::HttpResponse<false>*>(arg2));
+        ASSERT_NOT_REACHED();
         break;
     }
 }

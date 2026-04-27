@@ -1424,7 +1424,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 },
                 .Locked => {
                     this.renderMetadata();
-                    resp.writeHeader("transfer-encoding", "chunked");
+                    if (comptime !http3) resp.writeHeader("transfer-encoding", "chunked");
                     this.endWithoutBody(this.shouldCloseConnection());
                 },
                 .Used, .Null, .Empty, .Error => {
@@ -2284,6 +2284,12 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             ctxLog("writeHeaders", .{});
             headers.fastRemove(.ContentLength);
             headers.fastRemove(.TransferEncoding);
+            if (comptime http3) {
+                // RFC 9114 §4.2: connection-specific fields are malformed.
+                headers.fastRemove(.Connection);
+                headers.fastRemove(.KeepAlive);
+                headers.fastRemove(.Upgrade);
+            }
             if (this.resp) |resp| headers.toUWSResponse(resp_kind, resp);
         }
 

@@ -36,7 +36,7 @@ struct Http3Response {
     }
 
     Http3Response *writeHeader(std::string_view key, uint64_t value) {
-        char buf[20];
+        char buf[24];
         int n = snprintf(buf, sizeof(buf), "%llu", (unsigned long long) value);
         return writeHeader(key, std::string_view{buf, (size_t) n});
     }

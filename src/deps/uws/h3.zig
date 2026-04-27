@@ -39,7 +39,7 @@ pub const Request = opaque {
         var s = bun.String.init(value);
         defer s.deref();
         const ms = try s.parseDate(bun.jsc.VirtualMachine.get().global);
-        if (!std.math.isNan(ms) and std.math.isFinite(ms)) return @intFromFloat(ms);
+        if (!std.math.isNan(ms) and std.math.isFinite(ms) and ms >= 0) return @intFromFloat(ms);
         return null;
     }
     pub fn query(this: *Request, name: []const u8) []const u8 {

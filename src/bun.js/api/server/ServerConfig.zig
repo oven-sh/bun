@@ -245,8 +245,9 @@ pub fn applyStaticRoute(server: AnyServer, comptime ssl: bool, app: *uws.NewApp(
     }
 }
 
-pub fn applyStaticRouteH3(app: *uws.H3.App, comptime T: type, entry: T, path: []const u8, method: HTTP.Method.Optional) void {
+pub fn applyStaticRouteH3(server: AnyServer, app: *uws.H3.App, comptime T: type, entry: T, path: []const u8, method: HTTP.Method.Optional) void {
     if (comptime bun.Environment.isWindows) unreachable;
+    entry.server = server;
     const handler_wrap = struct {
         pub fn handler(route: T, req: *uws.H3.Request, resp: *uws.H3.Response) void {
             route.onRequest(.{ .h3 = req }, .{ .H3 = resp });

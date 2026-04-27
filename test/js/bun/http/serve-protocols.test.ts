@@ -29,8 +29,8 @@ if (hasFetchH3()) {
 
 const md5 = (b: ArrayBuffer | Uint8Array) => createHash("md5").update(Buffer.from(b)).digest("hex");
 
-/** One server fixture per protocol; reused across that protocol's tests so
- * QUIC handshake cost isn't paid per-assertion. */
+/** Each test spawns its own server so failures don't cascade and concurrency
+ * is safe; the H3 row only runs when an HTTP/3-capable curl is available. */
 function fixtureFor(serve: object) {
   return `
     const server = Bun.serve({

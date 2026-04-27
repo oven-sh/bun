@@ -150,7 +150,10 @@ pub const Route = struct {
                 // but stay defensive.
                 switch (req) {
                     .h1 => |h1| bun.handleOom(dev.respondForHTMLBundle(this, h1, resp)),
-                    .h3 => resp.endWithoutBody(true),
+                    .h3 => {
+                        resp.writeStatus("503 Service Unavailable");
+                        resp.end("DevServer HMR is HTTP/1.1 only", true);
+                    },
                 }
                 return;
             }

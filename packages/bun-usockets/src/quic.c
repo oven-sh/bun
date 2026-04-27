@@ -9,6 +9,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -49,7 +50,9 @@ struct us_quic_socket_context_s {
     int closing;
     unsigned int stream_ext_size;
     /* Listen sockets stay reachable as lsquic peer_ctx after the UDP fd
-     * closes; defer freeing until the engine itself is torn down. */
+     * closes; defer freeing until the engine itself is torn down. `listeners`
+     * tracks live ones so context_free can close any the caller never did. */
+    struct us_quic_listen_socket_s *listeners;
     struct us_quic_listen_socket_s *closed_listeners;
 
     void (*on_open)(us_quic_socket_t *);
@@ -68,7 +71,7 @@ struct us_quic_listen_socket_s {
     struct us_udp_socket_t *udp;
     us_quic_socket_context_t *ctx;
     struct sockaddr_storage local;
-    struct us_quic_listen_socket_s *next_closed;
+    struct us_quic_listen_socket_s *next; /* live list, then reused for closed list */
 };
 
 struct us_quic_socket_s {
@@ -210,9 +213,13 @@ static void us_quic_udp_on_close(struct us_udp_socket_t *u) {
     us_quic_socket_context_t *ctx = ls->ctx;
     /* lsquic still holds `ls` as peer_ctx for every connection accepted on
      * this socket; freeing now would UAF in packets_out / get_ssl_ctx on the
-     * next timer tick. Mark the fd gone and defer the free to context_free. */
+     * next timer tick. Mark the fd gone, unlink from the live list, and defer
+     * the free to context_free. */
     ls->udp = NULL;
-    ls->next_closed = ctx->closed_listeners;
+    for (us_quic_listen_socket_t **pp = &ctx->listeners; *pp; pp = &(*pp)->next) {
+        if (*pp == ls) { *pp = ls->next; break; }
+    }
+    ls->next = ctx->closed_listeners;
     ctx->closed_listeners = ls;
 }
 
@@ -457,6 +464,14 @@ static int us_quic_log_buf(void *ctx, const char *buf, size_t len) {
 }
 static const struct lsquic_logger_if us_quic_logger = { us_quic_log_buf };
 
+static void us_quic_global_init_once(void) {
+    lsquic_global_init(LSQUIC_GLOBAL_SERVER);
+    if (getenv("BUN_DEBUG_lsquic")) {
+        lsquic_logger_init(&us_quic_logger, NULL, LLTS_HHMMSSUS);
+        lsquic_set_log_level("debug");
+    }
+}
+
 static void us_quic_prepare_ssl_ctx(SSL_CTX *ssl) {
     SSL_CTX_set_min_proto_version(ssl, TLS1_3_VERSION);
     SSL_CTX_set_max_proto_version(ssl, TLS1_3_VERSION);
@@ -468,15 +483,8 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     struct us_loop_t *loop, struct us_bun_socket_context_options_t options,
     unsigned int ext_size, unsigned int idle_timeout_s)
 {
-    static int once;
-    if (!once) {
-        once = 1;
-        lsquic_global_init(LSQUIC_GLOBAL_SERVER);
-        if (getenv("BUN_DEBUG_lsquic")) {
-            lsquic_logger_init(&us_quic_logger, NULL, LLTS_HHMMSSUS);
-            lsquic_set_log_level("debug");
-        }
-    }
+    static pthread_once_t once = PTHREAD_ONCE_INIT;
+    pthread_once(&once, us_quic_global_init_once);
 
     enum create_bun_socket_error_t ssl_err = 0;
     SSL_CTX *ssl = create_ssl_context_from_bun_options(options, &ssl_err);
@@ -557,6 +565,9 @@ void us_quic_socket_context_shutdown(us_quic_socket_context_t *ctx) {
 void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {
     if (!ctx) return;
     ctx->closing = 1;
+    /* Close any UDP fds the caller never closed (graceful drain leaves them
+     * open); on_close moves each into closed_listeners for the loop below. */
+    while (ctx->listeners) us_udp_socket_close(ctx->listeners->udp);
     if (ctx->timer) { us_timer_close(ctx->timer, 1); ctx->timer = NULL; }
     if (ctx->engine) { lsquic_engine_destroy(ctx->engine); ctx->engine = NULL; }
     if (ctx->ssl_ctx) { SSL_CTX_free(ctx->ssl_ctx); ctx->ssl_ctx = NULL; }
@@ -566,7 +577,7 @@ void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {
     }
     free(ctx->sni);
     for (us_quic_listen_socket_t *ls = ctx->closed_listeners; ls; ) {
-        us_quic_listen_socket_t *next = ls->next_closed;
+        us_quic_listen_socket_t *next = ls->next;
         free(ls);
         ls = next;
     }
@@ -596,6 +607,8 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(
     socklen_t sl = sizeof(ls->local);
     getsockname(us_poll_fd((struct us_poll_t *) ls->udp), (struct sockaddr *) &ls->local, &sl);
 
+    ls->next = ctx->listeners;
+    ctx->listeners = ls;
     us_quic_rearm(ctx);
     return ls;
 }

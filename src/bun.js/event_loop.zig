@@ -141,8 +141,8 @@ pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *jsc.JSGlobalOb
     this.deferred_tasks.run();
     this.virtual_machine.is_inside_deferred_task_queue = false;
 
-    if (comptime !Environment.isWindows) {
-        if (this.virtual_machine.event_loop_handle) |loop| loop.drainQuicIfNecessary();
+    if (this.virtual_machine.event_loop_handle != null) {
+        this.virtual_machine.uwsLoop().drainQuicIfNecessary();
     }
 
     if (comptime bun.Environment.isDebug) {

@@ -759,8 +759,6 @@ declare module "bun" {
 
       /**
        * Also listen for HTTP/3 (QUIC) on the same port. Requires {@link tls}.
-       *
-       * Not supported on Windows.
        * @default false
        */
       h3?: boolean;

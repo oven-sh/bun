@@ -530,14 +530,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         const ThisServer = @This();
         pub const RequestContext = NewRequestContext(ssl_enabled, debug_mode, @This(), false);
-        const has_h3 = ssl_enabled and !bun.Environment.isWindows;
+        const has_h3 = ssl_enabled;
         pub const H3RequestContext = if (has_h3) NewRequestContext(ssl_enabled, debug_mode, @This(), true) else void;
 
         pub const App = uws.NewApp(ssl_enabled);
         app: ?*App = null,
         listener: ?*App.ListenSocket = null,
-        h3_app: if (bun.Environment.isWindows) void else ?*uws.H3.App = if (bun.Environment.isWindows) {} else null,
-        h3_listener: if (bun.Environment.isWindows) void else ?*uws.H3.ListenSocket = if (bun.Environment.isWindows) {} else null,
+        h3_app: if (has_h3) ?*uws.H3.App else void = if (has_h3) null else {},
+        h3_listener: if (has_h3) ?*uws.H3.ListenSocket else void = if (has_h3) null else {},
         /// Cached `h3=":<port>"; ma=86400` value for Alt-Svc on H1 responses;
         /// formatted once in onH3Listen so renderMetadata doesn't reformat.
         h3_alt_svc: if (has_h3) [:0]const u8 else void = if (has_h3) "" else {},
@@ -1327,7 +1327,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             if (this.listener) |listener| return jsc.JSValue.jsNumber(listener.getLocalPort());
-            if (comptime !bun.Environment.isWindows) {
+            if (comptime has_h3) {
                 if (this.h3_listener) |h3l| return jsc.JSValue.jsNumber(h3l.getLocalPort());
             }
             return jsc.JSValue.jsNumber(this.config.address.tcp.port);
@@ -1556,7 +1556,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         pub fn stopListening(this: *ThisServer, abrupt: bool) void {
             httplog("stopListening", .{});
-            if (comptime !bun.Environment.isWindows) {
+            if (comptime has_h3) {
                 if (this.h3_listener) |h3l| {
                     this.h3_listener = null;
                     // Graceful: GOAWAY + drain via the still-open UDP socket;
@@ -1570,7 +1570,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
             var listener = this.listener orelse {
-                if (comptime !bun.Environment.isWindows) {
+                if (comptime has_h3) {
                     if (this.h3_app != null) this.unref();
                 }
                 return;
@@ -1667,7 +1667,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.config.deinit();
 
             this.on_clienterror.deinit();
-            if (comptime !bun.Environment.isWindows) {
+            if (comptime has_h3) {
                 if (this.h3_app) |h3a| {
                     this.h3_app = null;
                     h3a.destroy();
@@ -2710,7 +2710,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 switch (user_route.route.method) {
                     .any => {
                         app.any(user_route.route.path, *UserRoute, user_route, onUserRouteRequest);
-                        if (comptime ssl_enabled and !bun.Environment.isWindows) {
+                        if (comptime has_h3) {
                             if (this.h3_app) |h3_app| h3_app.any(user_route.route.path, *UserRoute, user_route, onH3UserRouteRequest);
                         }
                         if (is_star_path) {
@@ -2731,7 +2731,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     },
                     .specific => |method_val| { // method_val is HTTP.Method here
                         app.method(method_val, user_route.route.path, *UserRoute, user_route, onUserRouteRequest);
-                        if (comptime ssl_enabled and !bun.Environment.isWindows) {
+                        if (comptime has_h3) {
                             if (this.h3_app) |h3_app| h3_app.method(method_val, user_route.route.path, *UserRoute, user_route, onH3UserRouteRequest);
                         }
                         if (is_star_path) {
@@ -2758,7 +2758,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             for (this.config.negative_routes.items) |route_path| {
                 app.head(route_path, *ThisServer, this, onRequest);
                 app.any(route_path, *ThisServer, this, onRequest);
-                if (comptime ssl_enabled and !bun.Environment.isWindows) {
+                if (comptime has_h3) {
                     if (this.h3_app) |h3_app| {
                         h3_app.head(route_path, *ThisServer, this, onH3Request);
                         h3_app.any(route_path, *ThisServer, this, onH3Request);
@@ -2892,7 +2892,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // to H3). h3_app.any("/*") would overwrite a user .any "/*"
             // mirrored at line 2714, so skip when coverage is already full;
             // for method-specific "/*" routes fill the complement per method.
-            if (comptime ssl_enabled and !bun.Environment.isWindows) {
+            if (comptime has_h3) {
                 if (this.h3_app) |h3_app| {
                     if (h3_star_covered.eql(bun.http.Method.Set.initFull())) {
                         // user/static "/*" already covers every method
@@ -2963,7 +2963,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                 this.app = app;
 
-                if (comptime !bun.Environment.isWindows) {
+                if (comptime has_h3) {
                     if (this.config.h3) {
                         this.h3_app = uws.H3.App.create(ssl_options, this.config.idleTimeout) orelse {
                             if (!globalThis.hasException()) {
@@ -3084,7 +3084,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         });
                     }
 
-                    if (comptime ssl_enabled and !bun.Environment.isWindows) {
+                    if (comptime has_h3) {
                         if (this.h3_app) |h3_app| {
                             // Same UDP port as the TCP listener so Alt-Svc works.
                             const h3_port: u16 = if (this.listener) |ls| @intCast(ls.getLocalPort()) else tcp.port;

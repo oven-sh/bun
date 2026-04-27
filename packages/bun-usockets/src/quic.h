@@ -11,11 +11,7 @@
 #ifndef US_QUIC_H
 #define US_QUIC_H
 
-#if !defined(_WIN32)
 #define LIBUS_USE_QUIC 1
-#endif
-
-#ifdef LIBUS_USE_QUIC
 
 #include "libusockets.h"
 
@@ -127,5 +123,4 @@ void us_quic_socket_close(us_quic_socket_t *s);
 }
 #endif
 
-#endif /* LIBUS_USE_QUIC */
 #endif /* US_QUIC_H */

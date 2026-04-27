@@ -3,12 +3,7 @@
 
 const AnyRequestContext = @This();
 
-pub const Pointer = bun.TaggedPointerUnion(if (bun.Environment.isWindows) .{
-    HTTPServer.RequestContext,
-    HTTPSServer.RequestContext,
-    DebugHTTPServer.RequestContext,
-    DebugHTTPSServer.RequestContext,
-} else .{
+pub const Pointer = bun.TaggedPointerUnion(.{
     HTTPServer.RequestContext,
     HTTPSServer.RequestContext,
     DebugHTTPServer.RequestContext,

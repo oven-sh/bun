@@ -7,8 +7,6 @@
 #include "_libusockets.h"
 #include "quic.h"
 
-#ifdef LIBUS_USE_QUIC
-
 #include <bun-uws/src/Http3App.h>
 #include <bun-uws/src/Http3Response.h>
 #include <bun-uws/src/Http3Request.h>
@@ -296,5 +294,3 @@ size_t uws_h3_req_get_parameter(uws_h3_req_t* req, unsigned short index, const c
 }
 
 } // extern "C"
-
-#endif // LIBUS_USE_QUIC

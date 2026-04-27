@@ -28,7 +28,7 @@ pub const State = @import("./uws/Response.zig").State;
 pub const Loop = @import("./uws/Loop.zig").Loop;
 pub const udp = @import("./uws/udp.zig");
 pub const BodyReaderMixin = @import("./uws/BodyReaderMixin.zig").BodyReaderMixin;
-pub const H3 = if (Environment.isWindows) struct {} else @import("./uws/h3.zig");
+pub const H3 = @import("./uws/h3.zig");
 
 /// Recovers the concrete uWS response type from `*anyopaque` across the
 /// Zig→C++ boundary. Mirrors `UWSResponseKind` in headers-handwritten.h.

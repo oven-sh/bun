@@ -7,6 +7,7 @@ pub const InternalLoopData = extern struct {
     head: ?*SocketContext,
     quic_head: ?*anyopaque,
     quic_next_tick_us: i64,
+    quic_timer: ?*Timer,
     iterator: ?*SocketContext,
     closed_context_head: ?*SocketContext,
     recv_buf: [*]u8,

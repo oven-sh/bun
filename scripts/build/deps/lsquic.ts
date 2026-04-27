@@ -106,9 +106,6 @@ export const lsquic: Dependency = {
   name: "lsquic",
   versionMacro: "LSQUIC",
 
-  // QUIC server is POSIX-only for now (sendmsg/recvmsg + IP_PKTINFO).
-  enabled: cfg => !cfg.windows,
-
   source: () => ({
     kind: "github-archive",
     repo: "litespeedtech/lsquic",
@@ -140,12 +137,14 @@ export const lsquic: Dependency = {
         lshpackSrc,
         lshpackSrc + "/deps/xxhash",
         lsqpackSrc,
+        ...(cfg.windows ? ["wincompat", lsqpackSrc + "/wincompat"] : []),
         zlibBuild,
         zlibSrc,
         ...(needCompatQueue ? [lshpackSrc + "/compat/queue"] : []),
       ],
       defines: {
         HAVE_BORINGSSL: 1,
+        ...(cfg.windows ? { WIN32: 1, WIN32_LEAN_AND_MEAN: 1 } : {}),
         XXH_HEADER_NAME: "xxhash.h",
         LSQPACK_ENC_LOGGER_HEADER: "lsquic_qpack_enc_logger.h",
         LSQPACK_DEC_LOGGER_HEADER: "lsquic_qpack_dec_logger.h",
@@ -161,8 +160,8 @@ export const lsquic: Dependency = {
     return spec;
   },
 
-  provides: () => ({
+  provides: cfg => ({
     libs: [],
-    includes: ["include"],
+    includes: cfg.windows ? ["include", "wincompat"] : ["include"],
   }),
 };

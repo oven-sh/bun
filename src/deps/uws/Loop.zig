@@ -238,6 +238,11 @@ pub const WindowsLoop = extern struct {
         c.us_loop_pump(this);
     }
 
+    pub fn drainQuicIfNecessary(this: *WindowsLoop) void {
+        if (this.internal_loop_data.quic_head == null) return;
+        c.us_quic_loop_flush_if_pending(this);
+    }
+
     pub fn create(comptime Handler: anytype) *WindowsLoop {
         return c.us_create_loop(
             null,

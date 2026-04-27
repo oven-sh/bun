@@ -3,7 +3,7 @@
 /// `anytype` — `inline else` keeps dispatch monomorphic.
 pub const AnyRequest = union(enum) {
     h1: *Request,
-    h3: if (bun.Environment.isWindows) noreturn else *uws.H3.Request,
+    h3: *uws.H3.Request,
 
     pub fn header(this: AnyRequest, name: []const u8) ?[]const u8 {
         return switch (this) {

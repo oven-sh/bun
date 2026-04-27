@@ -52,6 +52,11 @@ struct us_internal_loop_data_t {
      * the gap between loop_post and getTimeout is sub-µs so storing the
      * relative diff is precise enough. */
     long long quic_next_tick_us;
+    /* libuv only: a fallthrough us_timer_t armed to quic_next_tick_us so the
+     * uv loop wakes for lsquic's time-driven state. POSIX folds the deadline
+     * into the epoll_pwait2 timeout via getTimeout() instead, so this stays
+     * NULL there. */
+    struct us_timer_t *quic_timer;
     struct us_socket_context_t *iterator;
     struct us_socket_context_t *closed_context_head;
     char *recv_buf;

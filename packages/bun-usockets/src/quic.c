@@ -1,8 +1,10 @@
 #include "quic.h"
 
-#ifdef LIBUS_USE_QUIC
-
 #include "internal/internal.h"
+#if defined(_WIN32) && !defined(WIN32)
+/* lsquic.h gates on WIN32 (not _WIN32) to pick <vc_compat.h> over <sys/uio.h>. */
+#define WIN32 1
+#endif
 #include "lsquic.h"
 #include "lsxpack_header.h"
 #include <openssl/ssl.h>
@@ -10,9 +12,11 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
+#endif
 
 extern SSL_CTX *create_ssl_context_from_bun_options(
     struct us_bun_socket_context_options_t options,
@@ -114,6 +118,12 @@ struct us_quic_stream_s {
  * free the stream while a method is still touching it.
  */
 
+#ifdef LIBUS_USE_LIBUV
+static void us_quic_on_timer(struct us_timer_t *t) {
+    us_quic_loop_process(us_timer_loop(t));
+}
+#endif
+
 void us_quic_loop_process(struct us_loop_t *loop) {
     int min_diff = 0, have_tick = 0;
     for (us_quic_socket_context_t *ctx = loop->data.quic_head; ctx; ctx = ctx->next) {
@@ -128,9 +138,19 @@ void us_quic_loop_process(struct us_loop_t *loop) {
             have_tick = 1;
         }
     }
-    /* Relative µs from now (≤0 means "tick due"). getTimeout() in
-     * Timer.zig folds this into the epoll_pwait2 timeout — no timerfd. */
+    /* Relative µs from now (≤0 means "tick due"). On epoll/kqueue,
+     * getTimeout() in Timer.zig folds this into the epoll_pwait2 timeout —
+     * no timerfd. On libuv there's no equivalent hook into the poll
+     * timeout, so arm a fallthrough uv_timer instead. */
     loop->data.quic_next_tick_us = have_tick ? (min_diff < 0 ? 0 : min_diff) : -1;
+#ifdef LIBUS_USE_LIBUV
+    if (have_tick) {
+        if (!loop->data.quic_timer)
+            loop->data.quic_timer = us_create_timer(loop, 1, 0);
+        int ms = min_diff <= 0 ? 1 : (min_diff + 999) / 1000;
+        us_timer_set(loop->data.quic_timer, us_quic_on_timer, ms, 0);
+    }
+#endif
 }
 
 /* Called after the deferred-task queue drains. Only does work when a
@@ -158,7 +178,35 @@ static inline socklen_t sa_len(const struct sockaddr *sa) {
     return sa->sa_family == AF_INET6 ? sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);
 }
 
-static int us_quic_send_one(int fd, const struct lsquic_out_spec *spec) {
+static int us_quic_send_one(LIBUS_SOCKET_DESCRIPTOR fd, const struct lsquic_out_spec *spec) {
+#ifdef _WIN32
+    /* Winsock has no sendmsg; sendto takes one buffer. iovlen is 1 for every
+     * post-handshake packet; coalesced Initial+Handshake during the
+     * handshake can be 2-3 iovecs but a QUIC datagram never exceeds one MTU,
+     * so flatten into a small stack buffer. */
+    const char *buf;
+    int len;
+    char flat[2048];
+    if (spec->iovlen == 1) {
+        buf = (const char *) spec->iov[0].iov_base;
+        len = (int) spec->iov[0].iov_len;
+    } else {
+        size_t off = 0;
+        for (size_t i = 0; i < spec->iovlen; i++) {
+            if (off + spec->iov[i].iov_len > sizeof(flat)) { errno = EMSGSIZE; return -1; }
+            memcpy(flat + off, spec->iov[i].iov_base, spec->iov[i].iov_len);
+            off += spec->iov[i].iov_len;
+        }
+        buf = flat;
+        len = (int) off;
+    }
+    int r = sendto(fd, buf, len, 0, spec->dest_sa, sa_len(spec->dest_sa));
+    if (r < 0) {
+        errno = (WSAGetLastError() == WSAEWOULDBLOCK) ? EAGAIN : EIO;
+        return -1;
+    }
+    return 1;
+#else
     struct msghdr msg;
     memset(&msg, 0, sizeof(msg));
     msg.msg_name = (void *) spec->dest_sa;
@@ -168,6 +216,7 @@ static int us_quic_send_one(int fd, const struct lsquic_out_spec *spec) {
     ssize_t r;
     do { r = sendmsg(fd, &msg, 0); } while (r < 0 && errno == EINTR);
     return r < 0 ? -1 : 1;
+#endif
 }
 
 /* lsquic hands back packets in batches; on Linux push them through one
@@ -402,8 +451,13 @@ static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn)
     qs->ctx = ctx;
     /* QUIC connections share one UDP fd, so they aren't real polls. Count
      * each as a virtual poll so the loop stays alive while conns are open —
-     * the same invariant H1 gets from each TCP socket being a us_poll_t. */
+     * the same invariant H1 gets from each TCP socket being a us_poll_t.
+     * libuv loop liveness is per-handle (uv_ref) rather than per-poll-count;
+     * the listen socket's uv_poll_t already keeps the loop alive until
+     * conn_count drops to 0 and we close it. */
+#ifndef LIBUS_USE_LIBUV
     ctx->loop->num_polls++;
+#endif
     ctx->conn_count++;
     if (ctx->on_open) ctx->on_open(qs);
     return (lsquic_conn_ctx_t *) qs;
@@ -416,7 +470,9 @@ static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
     if (ctx->on_close) ctx->on_close(qs);
     lsquic_conn_set_ctx(conn, NULL);
     free(qs);
+#ifndef LIBUS_USE_LIBUV
     ctx->loop->num_polls--;
+#endif
     ctx->conn_count--;
     /* During graceful drain the UDP fd is the only thing left holding the
      * loop; release it when the last conn closes so the process can exit. */
@@ -848,10 +904,3 @@ void us_quic_socket_remote_address(us_quic_socket_t *s, char *buf, int *len, int
 }
 
 void us_quic_socket_close(us_quic_socket_t *s) { if (s->conn) lsquic_conn_close(s->conn); }
-
-#else /* !LIBUS_USE_QUIC */
-
-void us_quic_loop_process(struct us_loop_t *loop) { (void) loop; }
-void us_quic_loop_flush_if_pending(struct us_loop_t *loop) { (void) loop; }
-
-#endif /* LIBUS_USE_QUIC */

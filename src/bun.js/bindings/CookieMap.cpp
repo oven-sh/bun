@@ -1,9 +1,7 @@
 #include "CookieMap.h"
 #include "JSCookieMap.h"
 #include <bun-uws/src/App.h>
-#ifndef _WIN32
 #include <bun-uws/src/Http3Response.h>
-#endif
 #include "helpers.h"
 #include <wtf/text/ParsingUtilities.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -35,11 +33,7 @@ extern "C" void CookieMap__write(CookieMap* cookie_map, JSC::JSGlobalObject* glo
         CookieMap__writeFetchHeadersToUWSResponse(cookie_map, global_this, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
         break;
     case UWSResponseKind::H3:
-#if defined(LIBUS_USE_QUIC)
         CookieMap__writeFetchHeadersToUWSResponse(cookie_map, global_this, reinterpret_cast<uWS::Http3Response*>(arg2));
-#else
-        ASSERT_NOT_REACHED();
-#endif
         break;
     }
 }

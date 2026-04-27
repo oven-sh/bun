@@ -14,9 +14,7 @@
 #include "JSFetchHeaders.h"
 #include "JSDOMExceptionHandling.h"
 #include <bun-uws/src/App.h>
-#ifndef _WIN32
 #include <bun-uws/src/Http3Response.h>
-#endif
 #include "ZigGeneratedClasses.h"
 #include "ScriptExecutionContext.h"
 #include "AsyncContextFrame.h"
@@ -1023,7 +1021,6 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
     return obj;
 }
 
-#if defined(LIBUS_USE_QUIC)
 static void writeFetchHeadersToH3Response(WebCore::FetchHeaders& headers, uWS::Http3Response* res)
 {
     auto& internalHeaders = headers.internalHeaders();
@@ -1078,7 +1075,6 @@ static void writeFetchHeadersToH3Response(WebCore::FetchHeaders& headers, uWS::H
         writeOne(header.key, header.value);
     }
 }
-#endif
 
 extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0, UWSResponseKind kind, void* arg2)
 {
@@ -1090,11 +1086,7 @@ extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0
         writeFetchHeadersToUWSResponse<true>(*arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
         break;
     case UWSResponseKind::H3:
-#if defined(LIBUS_USE_QUIC)
         writeFetchHeadersToH3Response(*arg0, reinterpret_cast<uWS::Http3Response*>(arg2));
-#else
-        ASSERT_NOT_REACHED();
-#endif
         break;
     }
 }

@@ -702,7 +702,7 @@ pub const Signal = struct {
 
 pub fn HTTPServerWritable(comptime ssl: bool, comptime http3: bool) type {
     return struct {
-        const UWSResponse = if (http3 and !bun.Environment.isWindows) uws.H3.Response else uws.NewApp(ssl).Response;
+        const UWSResponse = if (http3) uws.H3.Response else uws.NewApp(ssl).Response;
         res: ?*UWSResponse,
         buffer: bun.ByteList,
         pooled_buffer: ?*WebCore.ByteListPool.Node = null,

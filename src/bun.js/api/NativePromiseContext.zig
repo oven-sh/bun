@@ -38,12 +38,10 @@ pub const Tag = enum(u8) {
             server.HTTPSServer.RequestContext => .HTTPSServerRequestContext,
             server.DebugHTTPServer.RequestContext => .DebugHTTPServerRequestContext,
             server.DebugHTTPSServer.RequestContext => .DebugHTTPSServerRequestContext,
+            server.HTTPSServer.H3RequestContext => .HTTPSServerH3RequestContext,
+            server.DebugHTTPSServer.H3RequestContext => .DebugHTTPSServerH3RequestContext,
             bun.webcore.Body.ValueBufferer => .BodyValueBufferer,
-            else => if (!bun.Environment.isWindows) switch (T) {
-                server.HTTPSServer.H3RequestContext => .HTTPSServerH3RequestContext,
-                server.DebugHTTPSServer.H3RequestContext => .DebugHTTPSServerH3RequestContext,
-                else => @compileError("NativePromiseContext.Tag: unsupported type " ++ @typeName(T)),
-            } else @compileError("NativePromiseContext.Tag: unsupported type " ++ @typeName(T)),
+            else => @compileError("NativePromiseContext.Tag: unsupported type " ++ @typeName(T)),
         };
     }
 };
@@ -152,8 +150,8 @@ pub const DeferredDerefTask = struct {
                 const bufferer: *bun.webcore.Body.ValueBufferer = @ptrCast(@alignCast(ctx));
                 @as(*HTMLRewriter.BufferOutputSink, @ptrCast(@alignCast(bufferer.ctx))).deref();
             },
-            .HTTPSServerH3RequestContext => if (comptime bun.Environment.isWindows) unreachable else @as(*server.HTTPSServer.H3RequestContext, @ptrCast(@alignCast(ctx))).deref(),
-            .DebugHTTPSServerH3RequestContext => if (comptime bun.Environment.isWindows) unreachable else @as(*server.DebugHTTPSServer.H3RequestContext, @ptrCast(@alignCast(ctx))).deref(),
+            .HTTPSServerH3RequestContext => @as(*server.HTTPSServer.H3RequestContext, @ptrCast(@alignCast(ctx))).deref(),
+            .DebugHTTPSServerH3RequestContext => @as(*server.DebugHTTPSServer.H3RequestContext, @ptrCast(@alignCast(ctx))).deref(),
         }
     }
 };

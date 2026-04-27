@@ -564,15 +564,15 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
   });
 
   test("await fetch() resolves on headers, before a content-length body is fully received", async () => {
-    let unblock!: () => void;
-    const gate = new Promise<void>(r => (unblock = r));
+    let heldStream: http2.ServerHttp2Stream | undefined;
     const server = makeH2Server();
-    server.on("stream", async stream => {
+    server.on("stream", stream => {
+      stream.on("error", () => {});
       stream.respond({ ":status": 200, "content-length": "262144" });
       stream.write(Buffer.alloc(64 * 1024));
-      // Hold the rest until JS proves it has the Response and a first chunk.
-      await gate;
-      stream.end(Buffer.alloc(192 * 1024));
+      // The remaining 192 KiB is written from the test body once the
+      // subprocess proves it already has the Response and a first read.
+      heldStream = stream;
     });
     server.listen(0);
     await once(server, "listening");
@@ -600,12 +600,12 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
         stderr += Buffer.from(chunk).toString();
         if (stderr.includes("first-chunk")) break;
       }
-      unblock();
+      heldStream!.end(Buffer.alloc(192 * 1024));
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       expect(stdout.trim()).toBe("200 262144 262144");
       expect(exitCode).toBe(0);
     } finally {
-      unblock();
+      heldStream?.destroy();
       server.close();
     }
   });

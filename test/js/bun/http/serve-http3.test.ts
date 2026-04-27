@@ -311,7 +311,7 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
-  itH3("concurrent requests on one connection", async () => {
+  itH3("concurrent requests across separate connections", async () => {
     await withServer(async port => {
       const results = await Promise.all(Array.from({ length: 8 }, (_, i) => curl3(port, `/query?q=r${i}`)));
       for (let i = 0; i < results.length; i++) {
@@ -807,7 +807,8 @@ async function withCustomServer(
   // Avoids the two-consumers race where a background drain steals the line a
   // test is waiting for.
   let buf = "";
-  const waiters: Array<{ re: RegExp; resolve: (m: RegExpMatchArray) => void }> = [];
+  let eof = false;
+  const waiters: Array<{ re: RegExp; resolve: (m: RegExpMatchArray) => void; reject: (e: Error) => void }> = [];
   const drain = (async () => {
     for await (const chunk of proc.stderr) {
       buf += new TextDecoder().decode(chunk);
@@ -816,12 +817,15 @@ async function withCustomServer(
         if (m) waiters.splice(i, 1)[0].resolve(m);
       }
     }
+    eof = true;
+    for (const w of waiters.splice(0)) w.reject(new Error(`server exited without matching ${w.re}; stderr:\n${buf}`));
   })();
   const waitForStderr = (re: RegExp) =>
-    new Promise<RegExpMatchArray>(resolve => {
+    new Promise<RegExpMatchArray>((resolve, reject) => {
       const m = buf.match(re);
       if (m) return resolve(m);
-      waiters.push({ re, resolve });
+      if (eof) return reject(new Error(`server already exited without matching ${re}; stderr:\n${buf}`));
+      waiters.push({ re, resolve, reject });
     });
   const port = Number((await waitForStderr(/PORT=(\d+)/))[1]);
   expect(port).toBeGreaterThan(0);

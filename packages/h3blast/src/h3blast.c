@@ -45,15 +45,12 @@
 // ───────────────────────── ANSI helpers ─────────────────────────
 
 static int g_isatty;
-static int g_color;
-
 // Colors are %s arguments everywhere so we can blank them at runtime.
 static const char *RST = "", *DIM = "", *BLD = "";
 static const char *RED = "", *GRN = "", *YLW = "";
 static const char *BLU = "", *MAG = "", *CYN = "", *GRY = "";
 
 static void enable_color(void) {
-    g_color = 1;
     RST = "\x1b[0m"; DIM = "\x1b[2m"; BLD = "\x1b[1m";
     RED = "\x1b[31m"; GRN = "\x1b[32m"; YLW = "\x1b[33m";
     BLU = "\x1b[34m"; MAG = "\x1b[35m"; CYN = "\x1b[36m"; GRY = "\x1b[90m";
@@ -91,7 +88,6 @@ struct config {
     bool json;
     bool no_color;
     double warmup_s;
-    uint64_t timeout_us;
     int sndbuf;
     int rcvbuf;
 };
@@ -161,6 +157,7 @@ struct worker {
 };
 
 static volatile sig_atomic_t g_stop;
+static volatile sig_atomic_t g_warm;   // set once warmup window has passed
 static struct sockaddr_storage g_peer_sa;
 static socklen_t g_peer_sa_len;
 
@@ -169,7 +166,7 @@ static socklen_t g_peer_sa_len;
 static void die(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    fprintf(stderr, "%serror%s ", g_isatty ? RED BLD : "", g_isatty ? RST : "");
+    fprintf(stderr, "%s%serror%s ", RED, BLD, RST);
     vfprintf(stderr, fmt, ap);
     fputc('\n', stderr);
     va_end(ap);
@@ -397,6 +394,7 @@ static void on_write(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
 static void record_done(struct stream_ctx *sc, bool ok) {
     if (sc->counted) return;
     sc->counted = true;
+    if (!g_warm) return;
     struct worker *w = sc->c->w;
     uint64_t lat_us = (now_ns() - sc->start_ns) / 1000;
     if (ok) {
@@ -689,9 +687,8 @@ static void draw_bar(FILE *f, double frac, int width) {
     if (frac < 0) frac = 0;
     if (frac > 1) frac = 1;
     int filled = (int)(frac * width);
-    fprintf(f, CYN);
-    for (int i = 0; i < width; i++) fputs(i < filled ? "━" : GRY "━" CYN, f);
-    fprintf(f, RST);
+    for (int i = 0; i < width; i++) fprintf(f, "%s%s", i < filled ? CYN : GRY, i < filled ? "━" : "─");
+    fputs(RST, f);
 }
 
 struct snapshot {
@@ -735,10 +732,11 @@ static void render_live(const struct config *cfg, struct worker *ws, int nw,
     static double peak_rps;
     if (rps > peak_rps) peak_rps = rps;
 
-    fprintf(f, "\x1b[2K  %s%s%s  %s%12s%s %sreq/s%s    %speak %s%s\n",
+    char b_peak[32]; human_count(peak_rps, b_peak, sizeof(b_peak));
+    fprintf(f, "\x1b[2K  %s%s%s  %s%s%12s%s %sreq/s%s    %speak %s%s\n",
             CYN, spinner_frames[spin % 10], RST,
-            BLD GRN, b_rps, RST, DIM, RST,
-            DIM, ({ static char p[32]; human_count(peak_rps, p, sizeof(p)); p; }), RST);
+            BLD, GRN, b_rps, RST, DIM, RST,
+            DIM, b_peak, RST);
 
     fprintf(f, "\x1b[2K     %s↓%s %-10s %s↑%s %-10s %sconns%s %" PRIu64 "   %stotal%s %s\n",
             CYN, RST, b_rx, MAG, RST, b_tx,
@@ -784,7 +782,7 @@ static void render_live(const struct config *cfg, struct worker *ws, int nw,
 static void hr(FILE *f, int w) {
     fputs(GRY, f);
     for (int i = 0; i < w; i++) fputs("─", f);
-    fputs(RST "\n", f);
+    fprintf(f, "%s\n", RST);
 }
 
 static void render_final(const struct config *cfg, struct worker *ws, int nw,
@@ -796,9 +794,38 @@ static void render_final(const struct config *cfg, struct worker *ws, int nw,
         if (ws[i].hist) hdr_add(agg, ws[i].hist);
 
     double rps = elapsed > 0 ? (double)s->done / elapsed : 0;
-    char b_rps[32], b_rx[32], b_tx[32], b_rxps[32], b_total[32];
-    human_count(rps, b_rps, sizeof(b_rps));
-    human_count((double)s->done, b_total, sizeof(b_total));
+
+    if (cfg->json) {
+        printf("{\"url\":\"https://%s%s\",\"method\":\"%s\","
+               "\"threads\":%d,\"connections\":%d,\"streams\":%d,"
+               "\"duration_s\":%.3f,\"requests\":%" PRIu64 ",\"errors\":%" PRIu64 ","
+               "\"req_per_sec\":%.2f,\"bytes_rx\":%" PRIu64 ",\"bytes_tx\":%" PRIu64 ","
+               "\"throughput_bps\":%.2f,"
+               "\"status\":{\"2xx\":%" PRIu64 ",\"3xx\":%" PRIu64 ",\"4xx\":%" PRIu64
+               ",\"5xx\":%" PRIu64 ",\"other\":%" PRIu64 "},"
+               "\"latency_us\":{\"min\":%" PRId64 ",\"mean\":%.2f,\"stdev\":%.2f,"
+               "\"p50\":%" PRId64 ",\"p75\":%" PRId64 ",\"p90\":%" PRId64
+               ",\"p99\":%" PRId64 ",\"p999\":%" PRId64 ",\"max\":%" PRId64 "}}\n",
+               cfg->authority, cfg->path, cfg->method,
+               cfg->threads, cfg->connections, cfg->streams,
+               elapsed, s->done, s->err, rps, s->rx, s->tx,
+               elapsed > 0 ? (double)s->rx / elapsed : 0,
+               s->s2, s->s3, s->s4, s->s5, s->so,
+               s->done ? hdr_min(agg) : 0,
+               s->done ? hdr_mean(agg) : 0.0,
+               s->done ? hdr_stddev(agg) : 0.0,
+               hdr_value_at_percentile(agg, 50.0),
+               hdr_value_at_percentile(agg, 75.0),
+               hdr_value_at_percentile(agg, 90.0),
+               hdr_value_at_percentile(agg, 99.0),
+               hdr_value_at_percentile(agg, 99.9),
+               hdr_max(agg));
+        hdr_close(agg);
+        return;
+    }
+
+    char b_rx[32], b_tx[32], b_rxps[32], b_total[32];
+    fmt_thousands(s->done, b_total, sizeof(b_total));
     human_bytes((double)s->rx, b_rx, sizeof(b_rx));
     human_bytes((double)s->tx, b_tx, sizeof(b_tx));
     human_bytes(elapsed > 0 ? (double)s->rx / elapsed : 0, b_rxps, sizeof(b_rxps));
@@ -818,7 +845,7 @@ static void render_final(const struct config *cfg, struct worker *ws, int nw,
     fmt_thousands((uint64_t)rps, rps_full, sizeof(rps_full));
     fprintf(f, "  ");
     hr(f, 50);
-    fprintf(f, "    %s%s%s %sreq/s%s\n", BLD GRN, rps_full, RST, DIM, RST);
+    fprintf(f, "    %s%s%s%s %sreq/s%s\n", BLD, GRN, rps_full, RST, DIM, RST);
     fprintf(f, "  ");
     hr(f, 50);
     fprintf(f, "\n  %s%-10s%s %s in %.2fs\n", DIM, "requests", RST, b_total, elapsed);
@@ -843,7 +870,7 @@ static void render_final(const struct config *cfg, struct worker *ws, int nw,
         fprintf(f, "  %s%-7s%s %s%-10s%s ", DIM, rows[i].label, RST, BLD, lat, RST);
         fputs(CYN, f);
         for (int j = 0; j < barw; j++) fputs("▇", f);
-        fputs(RST "\n", f);
+        fprintf(f, "%s\n", RST);
     }
     char mean[32], stdd[32];
     human_latency(s->done ? hdr_mean(agg) : 0, mean, sizeof(mean));
@@ -865,7 +892,7 @@ static void render_final(const struct config *cfg, struct worker *ws, int nw,
         fprintf(f, "  %s%-7s%s %-10" PRIu64 " %s%5.1f%%%s  %s",
                 DIM, st[i].l, RST, st[i].n, DIM, pct, RST, st[i].c);
         for (int j = 0; j < barw; j++) fputs("▇", f);
-        fputs(RST "\n", f);
+        fprintf(f, "%s\n", RST);
     }
     if (s->hsk_fail)
         fprintf(f, "  %s%-7s%s %" PRIu64 "\n", RED, "hsk-fail", RST, s->hsk_fail);
@@ -877,32 +904,30 @@ static void render_final(const struct config *cfg, struct worker *ws, int nw,
 // ───────────────────────── CLI ─────────────────────────
 
 static void usage(const char *argv0) {
-    fprintf(stderr,
-        "%sh3blast%s %s — HTTP/3 load generator (lsquic)\n\n"
-        "  %s%s%s [options] <url>\n\n"
-        "  %s-t, --threads%s N       worker threads (default: 1)\n"
-        "  %s-c, --connections%s N   QUIC connections total (default: 1)\n"
-        "  %s-m, --streams%s N       concurrent streams per connection (default: 1)\n"
-        "  %s-d, --duration%s SEC    run for SEC seconds (default: 10)\n"
-        "  %s-n, --requests%s N      stop after N requests (overrides -d)\n"
-        "  %s-X, --method%s M        HTTP method (default: GET)\n"
-        "  %s-H, --header%s 'k: v'   add request header (repeatable)\n"
-        "  %s-b, --body%s STR        request body\n"
-        "      %s--body-file%s PATH  request body from file\n"
-        "      %s--timeout%s SEC     per-request timeout\n"
-        "      %s--warmup%s SEC      discard stats from first SEC seconds\n"
-        "      %s--sndbuf%s BYTES    SO_SNDBUF\n"
-        "      %s--rcvbuf%s BYTES    SO_RCVBUF\n"
-        "      %s--json%s            machine-readable output\n"
-        "      %s--no-color%s        disable ANSI colors\n"
-        "  %s-q, --quiet%s           no live UI\n"
-        "      %s--version%s         print version\n"
-        "  %s-h, --help%s            show this help\n",
-        BLD, RST, H3B_VERSION, BLD, argv0, RST,
-        CYN, RST, CYN, RST, CYN, RST, CYN, RST, CYN, RST,
-        CYN, RST, CYN, RST, CYN, RST, CYN, RST, CYN, RST,
-        CYN, RST, CYN, RST, CYN, RST, CYN, RST, CYN, RST,
-        CYN, RST, CYN, RST);
+    fprintf(stderr, "\n  %sh3blast%s %s — HTTP/3 load generator (lsquic %s)\n\n"
+                    "  %s%s%s [options] <url>\n\n",
+            BLD, RST, H3B_VERSION, LSQUIC_VERSION_STR, BLD, argv0, RST);
+#define OPT(s, d) fprintf(stderr, "  %s%-24s%s %s\n", CYN, s, RST, d)
+    OPT("-t, --threads N",     "worker threads               (default 1)");
+    OPT("-c, --connections N", "QUIC connections, total      (default 1)");
+    OPT("-m, --streams N",     "concurrent streams per conn  (default 1)");
+    OPT("-d, --duration SEC",  "run for SEC seconds          (default 10)");
+    OPT("-n, --requests N",    "stop after N total requests");
+    OPT("-X, --method M",      "HTTP method                  (default GET)");
+    OPT("-H, --header 'k: v'", "add request header (repeatable)");
+    OPT("-b, --body STR",      "request body");
+    OPT("    --body-file PATH","request body from file");
+    OPT("    --warmup SEC",    "discard stats from first SEC seconds");
+    OPT("    --sndbuf BYTES",  "SO_SNDBUF");
+    OPT("    --rcvbuf BYTES",  "SO_RCVBUF");
+    OPT("    --json",          "machine-readable summary, no live UI");
+    OPT("    --no-color",      "disable ANSI colors");
+    OPT("-q, --quiet",         "no live UI");
+    OPT("    --version",       "print version and exit");
+    OPT("-h, --help",          "show this help");
+#undef OPT
+    fprintf(stderr, "\n  %sH3BLAST_DEBUG=<level>%s    lsquic log level (debug, info, …)\n\n",
+            DIM, RST);
 }
 
 static bool parse_url(const char *url, struct config *cfg) {
@@ -987,7 +1012,6 @@ static int parse_args(int argc, char **argv, struct config *cfg) {
         else if (!strcmp(a, "--json")) { cfg->json = true; cfg->quiet = true; }
         else if (!strcmp(a, "--no-color") || !strcmp(a, "--plain")) cfg->no_color = true;
         else if (!strcmp(a, "--warmup")) cfg->warmup_s = atof(NEXT());
-        else if (!strcmp(a, "--timeout")) cfg->timeout_us = (uint64_t)(atof(NEXT()) * 1e6);
         else if (!strcmp(a, "-k") || !strcmp(a, "--insecure")) cfg->insecure = true;
         else if (!strcmp(a, "--version")) { printf("h3blast %s (lsquic %s)\n", H3B_VERSION, LSQUIC_VERSION_STR); exit(0); }
         else if (!strcmp(a, "--sndbuf")) cfg->sndbuf = atoi(NEXT());
@@ -1009,10 +1033,13 @@ static int parse_args(int argc, char **argv, struct config *cfg) {
 // ───────────────────────── main ─────────────────────────
 
 int main(int argc, char **argv) {
-    g_isatty = isatty(STDERR_FILENO);
+    g_isatty = isatty(STDERR_FILENO) && isatty(STDOUT_FILENO);
+    if (g_isatty && !getenv("NO_COLOR")) enable_color();
 
     struct config cfg = {0};
     parse_args(argc, argv, &cfg);
+    if (cfg.no_color || cfg.json) { RST=DIM=BLD=RED=GRN=YLW=BLU=MAG=CYN=GRY=""; }
+    if (cfg.json || cfg.quiet) g_isatty = 0;
 
     // resolve
     struct addrinfo hints = {0}, *res;
@@ -1047,21 +1074,25 @@ int main(int argc, char **argv) {
     }
 
     if (g_isatty && !cfg.quiet) {
-        fprintf(stderr, "\n  %s┃%s %sh3blast%s → %s%s%s:%s%s%s%s   "
+        fprintf(stderr, "\n  %s%s┃%s %sh3blast%s → %s%s%s:%s%s   "
                 "%s%d%s thr · %s%d%s conn · %s%d%s stream\n\n",
-                CYN BLD, RST, BLD, RST,
-                BLD, cfg.host, DIM, RST, cfg.port, DIM, RST,
+                CYN, BLD, RST, BLD, RST,
+                BLD, cfg.host, DIM, cfg.port, RST,
                 BLD, cfg.threads, RST, BLD, cfg.connections, RST,
                 BLD, cfg.streams, RST);
     }
+
+    if (cfg.warmup_s <= 0) g_warm = 1;
 
     for (int i = 0; i < nw; i++)
         pthread_create(&ws[i].thread, NULL, worker_main, &ws[i]);
 
     uint64_t start = now_ns();
+    uint64_t stats_start = start;
     struct snapshot prev = {0}, cur;
     uint64_t last = start;
     int spin = 0;
+    double run_for = cfg.duration_s + cfg.warmup_s;
 
     for (;;) {
         usleep(100 * 1000);
@@ -1069,14 +1100,18 @@ int main(int argc, char **argv) {
         double elapsed = (double)(t - start) / 1e9;
         double dt = (double)(t - last) / 1e9;
         last = t;
+        if (!g_warm && elapsed >= cfg.warmup_s) {
+            g_warm = 1;
+            stats_start = t;
+        }
         collect(ws, nw, &cur);
-        render_live(&cfg, ws, nw, &cur, &prev, dt, elapsed, spin++);
+        render_live(&cfg, ws, nw, &cur, &prev, dt, elapsed, run_for, spin++);
         prev = cur;
 
         if (g_stop) break;
-        if (cfg.duration_s > 0 && elapsed >= cfg.duration_s) { g_stop = 1; break; }
+        if (cfg.duration_s > 0 && elapsed >= run_for) { g_stop = 1; break; }
         if (cfg.max_requests && cur.done >= cfg.max_requests) { g_stop = 1; break; }
-        if (cur.hsk_fail >= (uint64_t)cfg.connections && cur.done == 0) { g_stop = 1; break; }
+        if (cur.hsk_fail >= (uint64_t)cfg.connections && cur.done == 0 && elapsed > 1) { g_stop = 1; break; }
     }
 
     for (int i = 0; i < nw; i++) pthread_join(ws[i].thread, NULL);

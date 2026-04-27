@@ -14,34 +14,29 @@ CFLAGS    := -std=c11 -O3 -g -Wall -Wextra -Wno-unused-parameter \
              -I$(VENDOR)/boringssl/include
 LDFLAGS   := -lstdc++ -lm -lpthread
 
-DEP_OBJS  := $(wildcard $(OBJ)/lsquic/src/liblsquic/*.o) \
-             $(wildcard $(OBJ)/lsquic/*.o) \
-             $(wildcard $(OBJ)/lshpack/*.o) \
-             $(wildcard $(OBJ)/lshpack/deps/xxhash/*.o) \
-             $(wildcard $(OBJ)/boringssl/*.o) \
-             $(wildcard $(OBJ)/boringssl/**/*.o) \
-             $(wildcard $(OBJ)/hdrhistogram/src/*.o) \
-             $(wildcard $(OBJ)/zlib/*.o) \
-             $(wildcard $(OBJ)/zlib/**/*.o)
-
-# Wildcards above are not recursive in POSIX make; collect with find instead.
-DEP_OBJS  := $(shell find $(OBJ)/lsquic $(OBJ)/lsqpack $(OBJ)/lshpack \
-                          $(OBJ)/boringssl $(OBJ)/hdrhistogram $(OBJ)/zlib \
-                          -name '*.o' 2>/dev/null)
+DEPS      := lsquic lsqpack lshpack boringssl hdrhistogram zlib
+DEP_DIRS  := $(addprefix $(OBJ)/,$(DEPS))
+LIBDEPS   := build/libdeps.a
 
 BIN := h3blast
 
 all: $(BIN)
 
-$(BIN): src/h3blast.c
-	@if [ -z "$(DEP_OBJS)" ]; then \
+$(LIBDEPS):
+	@if [ ! -d "$(OBJ)/lsquic" ]; then \
 		echo "error: no dep objects found under $(OBJ)"; \
 		echo "       run 'bun run build:$(PROFILE)' in the repo root first"; \
 		exit 1; \
 	fi
-	$(CC) $(CFLAGS) -o $@ $< $(DEP_OBJS) $(LDFLAGS)
+	@mkdir -p build
+	@echo "  AR    $@"
+	@find $(DEP_DIRS) -name '*.o' | xargs ar rcs $@
+
+$(BIN): src/h3blast.c $(LIBDEPS)
+	@echo "  CC    $@"
+	@$(CC) $(CFLAGS) -o $@ $< $(LIBDEPS) $(LDFLAGS)
 
 clean:
-	rm -f $(BIN)
+	rm -f $(BIN) $(LIBDEPS)
 
 .PHONY: all clean

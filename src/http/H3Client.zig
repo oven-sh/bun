@@ -693,6 +693,10 @@ fn onStreamHeaders(s: *c.us_quic_stream_t) callconv(.c) void {
         bun.handleOom(bounds.append(bun.default_allocator, .{ ns, vs, @intCast(stream.decoded_bytes.items.len) }));
     }
     if (status == 0) {
+        // A second HEADERS block after the final response is trailers
+        // (RFC 9114 §4.1) and carries no :status; ignore it rather than
+        // treating the stream as malformed.
+        if (stream.status_code != 0) return;
         stream.session.fail(stream, error.HTTP3ProtocolError);
         return;
     }

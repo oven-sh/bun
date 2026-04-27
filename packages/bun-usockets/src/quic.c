@@ -997,10 +997,13 @@ static enum ssl_verify_result_t us_quic_client_verify(SSL *ssl, uint8_t *out_ale
     X509_STORE_CTX_free(vctx);
     if (!ok) return ssl_verify_invalid;
     if (qs->hostname && qs->hostname[0]) {
-        if (X509_check_host(leaf, qs->hostname, strlen(qs->hostname),
-                X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS, NULL) != 1) {
-            return ssl_verify_invalid;
-        }
+        unsigned char addr[16];
+        int matched = (inet_pton(AF_INET, qs->hostname, addr) == 1 ||
+                       inet_pton(AF_INET6, qs->hostname, addr) == 1)
+            ? X509_check_ip_asc(leaf, qs->hostname, 0)
+            : X509_check_host(leaf, qs->hostname, strlen(qs->hostname),
+                  X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS, NULL);
+        if (matched != 1) return ssl_verify_invalid;
     }
     return ssl_verify_ok;
 }
@@ -1131,7 +1134,13 @@ static us_quic_socket_t *us_quic_connect_addr(us_quic_socket_context_t *ctx,
     us_quic_socket_t *qs = (us_quic_socket_t *) lsquic_conn_get_ctx(conn);
     if (qs) {
         qs->reject_unauthorized = reject_unauthorized;
-        qs->hostname = sni ? strdup(sni) : NULL;
+        if (sni) {
+            qs->hostname = strdup(sni);
+            if (!qs->hostname) {
+                lsquic_conn_close(conn);
+                return NULL;
+            }
+        }
     }
     /* Kick the engine so the Initial flight goes out before the loop blocks. */
     ctx->pending_write_bytes++;
@@ -1143,6 +1152,26 @@ static us_quic_socket_t *us_quic_connect_addr(us_quic_socket_context_t *ctx,
  * connect synchronously (return 1 with *out_qs set). Uncached hostnames
  * return 0 and stash a pending-connect record; the caller must register a
  * DNS callback that invokes us_quic_pending_connect_resolved(). -1 on error. */
+/* Walk the resolved address list and connect to the first entry the shared
+ * client endpoint can reach (skips AAAA when the socket fell back to v4-only,
+ * keeps trying when lsquic_engine_connect rejects an address). */
+static us_quic_socket_t *us_quic_connect_result(us_quic_socket_context_t *ctx,
+    struct addrinfo_result *res, int port, const char *sni, int reject_unauthorized)
+{
+    for (struct addrinfo *ai = &res->entries->info; ai; ai = ai->ai_next) {
+        struct sockaddr_storage peer;
+        memcpy(&peer, ai->ai_addr, ai->ai_addrlen);
+        if (peer.ss_family == AF_INET)
+            ((struct sockaddr_in *) &peer)->sin_port = htons((unsigned short) port);
+        else
+            ((struct sockaddr_in6 *) &peer)->sin6_port = htons((unsigned short) port);
+        us_quic_socket_t *qs = us_quic_connect_addr(ctx, (struct sockaddr *) &peer,
+            sni, reject_unauthorized);
+        if (qs) return qs;
+    }
+    return NULL;
+}
+
 struct us_quic_pending_connect_s {
     us_quic_socket_context_t *ctx;
     char *sni;
@@ -1176,13 +1205,7 @@ int us_quic_socket_context_connect(
             Bun__addrinfo_freeRequest(ai_req, 1);
             return -1;
         }
-        memcpy(&peer_ss, res->entries->info.ai_addr, res->entries->info.ai_addrlen);
-        if (peer_ss.ss_family == AF_INET)
-            ((struct sockaddr_in *) &peer_ss)->sin_port = htons((unsigned short) port);
-        else
-            ((struct sockaddr_in6 *) &peer_ss)->sin6_port = htons((unsigned short) port);
-        *out_qs = us_quic_connect_addr(ctx, (struct sockaddr *) &peer_ss, sni,
-            reject_unauthorized);
+        *out_qs = us_quic_connect_result(ctx, res, port, sni, reject_unauthorized);
         Bun__addrinfo_freeRequest(ai_req, *out_qs == NULL);
         return *out_qs ? 1 : -1;
     }
@@ -1191,6 +1214,11 @@ int us_quic_socket_context_connect(
     if (!pc) { Bun__addrinfo_freeRequest(ai_req, 1); return -1; }
     pc->ctx = ctx;
     pc->sni = sni ? strdup(sni) : NULL;
+    if (sni && !pc->sni) {
+        Bun__addrinfo_freeRequest(ai_req, 1);
+        free(pc);
+        return -1;
+    }
     pc->port = port;
     pc->reject_unauthorized = reject_unauthorized;
     pc->ai_req = ai_req;
@@ -1212,13 +1240,7 @@ us_quic_socket_t *us_quic_pending_connect_resolved(
     us_quic_socket_t *qs = NULL;
     struct addrinfo_result *res = Bun__addrinfo_getRequestResult(pc->ai_req);
     if (!res->error && res->entries) {
-        struct sockaddr_storage peer_ss;
-        memcpy(&peer_ss, res->entries->info.ai_addr, res->entries->info.ai_addrlen);
-        if (peer_ss.ss_family == AF_INET)
-            ((struct sockaddr_in *) &peer_ss)->sin_port = htons((unsigned short) pc->port);
-        else
-            ((struct sockaddr_in6 *) &peer_ss)->sin6_port = htons((unsigned short) pc->port);
-        qs = us_quic_connect_addr(pc->ctx, (struct sockaddr *) &peer_ss, pc->sni,
+        qs = us_quic_connect_result(pc->ctx, res, pc->port, pc->sni,
             pc->reject_unauthorized);
     }
     Bun__addrinfo_freeRequest(pc->ai_req, qs == NULL);

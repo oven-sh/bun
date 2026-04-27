@@ -62,6 +62,12 @@ pub fn LowerDecorators(
             return ref;
         }
 
+        /// Generate a counted name: count=1 → base, count=2 → base2, count=3 → base3, …
+        fn countedName(p: *P, comptime base: []const u8, count: u32) []const u8 {
+            if (count <= 1) return base;
+            return std.fmt.allocPrint(p.allocator, base ++ "{d}", .{count}) catch unreachable;
+        }
+
         /// Single var declaration statement.
         fn varDecl(p: *P, ref: Ref, value: ?Expr, l: logger.Loc) Stmt {
             const decls = bun.handleOom(p.allocator.alloc(G.Decl, 1));
@@ -585,27 +591,31 @@ pub fn LowerDecorators(
             const class_decorators = class.ts_decorators;
             class.ts_decorators = .{};
 
-            const init_ref = newSym(p, .other, "_init");
+            // Use persistent counters to ensure unique variable names across
+            // multiple decorated classes in the same scope (fixes #28010).
+            p.decorator_class_count += 1;
+            const class_n = p.decorator_class_count;
+
+            const init_ref = newSym(p, .other, countedName(p, "_init", class_n));
             if (is_expr) {
                 expr_var_decls.append(.{ .binding = p.b(B.Identifier{ .ref = init_ref }, loc) }) catch unreachable;
             }
 
             var base_ref: ?Ref = null;
             if (class.extends != null) {
-                base_ref = newSym(p, .other, "_base");
+                base_ref = newSym(p, .other, countedName(p, "_base", class_n));
                 if (is_expr) {
                     expr_var_decls.append(.{ .binding = p.b(B.Identifier{ .ref = base_ref.? }, loc) }) catch unreachable;
                 }
             }
 
             // ── Phase 2: Pre-evaluate decorators/keys ────────
-            var dec_counter: usize = 0;
             var class_dec_ref: ?Ref = null;
             var class_dec_stmt: Stmt = Stmt.empty();
             var class_dec_assign_expr: ?Expr = null;
             if (class_decorators.len > 0) {
-                dec_counter += 1;
-                class_dec_ref = newSym(p, .other, "_dec");
+                p.decorator_dec_count += 1;
+                class_dec_ref = newSym(p, .other, countedName(p, "_dec", p.decorator_dec_count));
                 const arr = p.newExpr(E.Array{ .items = class_decorators }, loc);
                 if (is_expr) {
                     expr_var_decls.append(.{ .binding = p.b(B.Identifier{ .ref = class_dec_ref.? }, loc) }) catch unreachable;
@@ -618,16 +628,12 @@ pub fn LowerDecorators(
             var prop_dec_refs = std.AutoHashMapUnmanaged(usize, Ref){};
             var computed_key_refs = std.AutoHashMapUnmanaged(usize, Ref){};
             var pre_eval_stmts = ListManaged(Stmt).init(p.allocator);
-            var computed_key_counter: usize = 0;
 
             for (class.properties, 0..) |*prop, prop_idx| {
                 if (prop.kind == .class_static_block) continue;
                 if (prop.ts_decorators.len > 0) {
-                    dec_counter += 1;
-                    const dec_name = if (dec_counter == 1)
-                        "_dec"
-                    else
-                        std.fmt.allocPrint(p.allocator, "_dec{d}", .{dec_counter}) catch unreachable;
+                    p.decorator_dec_count += 1;
+                    const dec_name = countedName(p, "_dec", p.decorator_dec_count);
                     const dec_ref = newSym(p, .other, dec_name);
                     prop_dec_refs.put(p.allocator, prop_idx, dec_ref) catch unreachable;
                     if (is_expr) {
@@ -636,11 +642,8 @@ pub fn LowerDecorators(
                     pre_eval_stmts.append(varDecl(p, dec_ref, p.newExpr(E.Array{ .items = prop.ts_decorators }, loc), loc)) catch unreachable;
                 }
                 if (prop.flags.contains(.is_computed) and prop.key != null and prop.ts_decorators.len > 0) {
-                    computed_key_counter += 1;
-                    const key_name = if (computed_key_counter == 1)
-                        "_computedKey"
-                    else
-                        std.fmt.allocPrint(p.allocator, "_computedKey{d}", .{computed_key_counter}) catch unreachable;
+                    p.decorator_computed_key_count += 1;
+                    const key_name = countedName(p, "_computedKey", p.decorator_computed_key_count);
                     const key_ref = newSym(p, .other, key_name);
                     computed_key_refs.put(p.allocator, prop_idx, key_ref) catch unreachable;
                     if (is_expr) {
@@ -718,7 +721,7 @@ pub fn LowerDecorators(
             var extracted_static_blocks = ListManaged(*G.ClassStaticBlock).init(p.allocator);
             var prefix_stmts = ListManaged(Stmt).init(p.allocator);
             var private_lowered_map = PrivateLoweredMap{};
-            var accessor_storage_counter: usize = 0;
+            // Note: accessor_storage_counter was moved to p.decorator_accessor_storage_count
             var emitted_private_adds = std.AutoHashMapUnmanaged(u32, void){};
             var static_private_add_blocks = ListManaged(Property).init(p.allocator);
 
@@ -821,8 +824,8 @@ pub fn LowerDecorators(
                         const accessor_name = brk: {
                             if (prop.key.?.data == .e_string)
                                 break :brk std.fmt.allocPrint(p.allocator, "_{s}", .{prop.key.?.data.e_string.data}) catch unreachable;
-                            const name = std.fmt.allocPrint(p.allocator, "_accessor_storage{d}", .{accessor_storage_counter}) catch unreachable;
-                            accessor_storage_counter += 1;
+                            p.decorator_accessor_storage_count += 1;
+                            const name = std.fmt.allocPrint(p.allocator, "_accessor_storage{d}", .{p.decorator_accessor_storage_count}) catch unreachable;
                             break :brk name;
                         };
                         const wm_ref = newSym(p, .other, accessor_name);
@@ -973,8 +976,8 @@ pub fn LowerDecorators(
                     const accessor_name = brk: {
                         if (key_expr.data == .e_string)
                             break :brk std.fmt.allocPrint(p.allocator, "_{s}", .{key_expr.data.e_string.data}) catch unreachable;
-                        const name = std.fmt.allocPrint(p.allocator, "_accessor_storage{d}", .{accessor_storage_counter}) catch unreachable;
-                        accessor_storage_counter += 1;
+                        p.decorator_accessor_storage_count += 1;
+                        const name = std.fmt.allocPrint(p.allocator, "_accessor_storage{d}", .{p.decorator_accessor_storage_count}) catch unreachable;
                         break :brk name;
                     };
                     const wm_ref = newSym(p, .other, accessor_name);

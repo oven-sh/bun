@@ -318,3 +318,43 @@ function createBlob(arr: number[]): Blob {
 
   return new Blob([view]);
 }
+
+describe("structuredClone with ArrayBuffer larger than serialization buffer capacity", () => {
+  // The serialization buffer is a WTF::Vector<uint8_t> capped at 2GiB. Cloning an
+  // ArrayBuffer at or above that size must throw DataCloneError instead of aborting.
+  // Run in a subprocess so the ~2GiB allocation does not bloat the test runner.
+  for (const [label, expr] of [
+    ["ArrayBuffer", "new ArrayBuffer(2 ** 31)"],
+    ["resizable ArrayBuffer", "new ArrayBuffer(2 ** 31, { maxByteLength: 2 ** 31 + 1 })"],
+    ["SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31)"],
+    ["growable SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31, { maxByteLength: 2 ** 31 + 1 })"],
+    ["Uint8Array", "new Uint8Array(2 ** 31)"],
+  ] as const) {
+    test.concurrent(label, async () => {
+      const script = `
+        let buf;
+        try {
+          buf = ${expr};
+        } catch {
+          console.log("SKIP");
+          process.exit(0);
+        }
+        try {
+          structuredClone(buf);
+          console.log("UNEXPECTED_SUCCESS");
+        } catch (e) {
+          console.log(e.name);
+        }
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(["DataCloneError", "SKIP"]).toContain(stdout.trim());
+      expect(exitCode).toBe(0);
+    });
+  }
+});

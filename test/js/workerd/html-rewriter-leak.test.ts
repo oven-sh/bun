@@ -77,7 +77,6 @@ test("HTMLRewriter does not leak element/document handler allocations", async ()
     .join("\n")
     .trim();
   expect(filteredStderr).toBe("");
-  expect(exitCode).toBe(0);
 
   const { haveMimallocStats, miDeltaMB, rssDeltaMB } = JSON.parse(stdout.trim());
 
@@ -89,4 +88,6 @@ test("HTMLRewriter does not leak element/document handler allocations", async ()
     // structs (plus overhead) when leaking; a few MB of arena churn when fixed.
     expect(rssDeltaMB).toBeLessThan(30);
   }
+
+  expect(exitCode).toBe(0);
 }, 120_000);

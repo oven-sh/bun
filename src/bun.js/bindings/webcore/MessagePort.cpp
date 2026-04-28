@@ -45,8 +45,6 @@
 #include <wtf/Lock.h>
 #include <wtf/Scope.h>
 
-extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
-
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MessagePort);
@@ -383,36 +381,40 @@ void MessagePort::contextDestroyed()
     // ActiveDOMObject::contextDestroyed();
 }
 
+void MessagePort::updateEventLoopRef()
+{
+    bool shouldRef = m_hasRef && m_messageEventCount > 0 && !m_isDetached;
+    if (shouldRef == m_isRefingEventLoop)
+        return;
+    auto* context = scriptExecutionContext();
+    if (!context) {
+        m_isRefingEventLoop = false;
+        return;
+    }
+    m_isRefingEventLoop = shouldRef;
+    if (shouldRef)
+        context->refEventLoop();
+    else
+        context->unrefEventLoop();
+}
+
 void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind)
 {
     if (eventType == eventNames().messageEvent) {
         auto& port = static_cast<MessagePort&>(self);
         switch (kind) {
         case Add:
-            if (port.m_messageEventCount == 0) {
-                auto* context = port.scriptExecutionContext();
-                if (context)
-                    context->refEventLoop();
-            }
             port.m_messageEventCount++;
             break;
         case Remove:
-            port.m_messageEventCount--;
-            if (port.m_messageEventCount == 0) {
-                auto* context = port.scriptExecutionContext();
-                if (context)
-                    context->unrefEventLoop();
-            }
+            if (port.m_messageEventCount > 0)
+                port.m_messageEventCount--;
             break;
         case Clear:
-            if (port.m_messageEventCount > 0) {
-                auto* context = port.scriptExecutionContext();
-                if (context)
-                    context->unrefEventLoop();
-            }
             port.m_messageEventCount = 0;
             break;
         }
+        port.updateEventLoopRef();
     }
 };
 
@@ -453,22 +455,16 @@ WebCoreOpaqueRoot root(MessagePort* port)
     return WebCoreOpaqueRoot { port };
 }
 
-void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
+void MessagePort::jsRef(JSGlobalObject*)
 {
-    if (!m_hasRef) {
-        m_hasRef = true;
-        ref();
-        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
-    }
+    m_hasRef = true;
+    updateEventLoopRef();
 }
 
-void MessagePort::jsUnref(JSGlobalObject* lexicalGlobalObject)
+void MessagePort::jsUnref(JSGlobalObject*)
 {
-    if (m_hasRef) {
-        m_hasRef = false;
-        deref();
-        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
-    }
+    m_hasRef = false;
+    updateEventLoopRef();
 }
 
 } // namespace WebCore

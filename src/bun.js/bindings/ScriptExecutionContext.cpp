@@ -134,12 +134,20 @@ ScriptExecutionContext::~ScriptExecutionContext()
         Locker locker { allScriptExecutionContextsMapLock };
         ASSERT_WITH_MESSAGE(!allScriptExecutionContextsMap().contains(m_identifier), "A ScriptExecutionContext subclass instance implementing postTask should have already removed itself from the map");
     }
-    m_inScriptExecutionContextDestructor = true;
 #endif // ASSERT_ENABLED
 
+    // Draining these handlers may drop the last reference to a MessagePort whose JS wrapper is
+    // already gone (e.g. when a worker is terminated while a port still has a pending
+    // processMessageWithMessagePortsSoon callback). Do this before setting
+    // m_inScriptExecutionContextDestructor so the observer can unregister itself without
+    // tripping the assertion below; takeAny() makes the subsequent loop safe regardless.
     auto postMessageCompletionHandlers = WTF::move(m_processMessageWithMessagePortsSoonHandlers);
     for (auto& completionHandler : postMessageCompletionHandlers)
         completionHandler();
+
+#if ASSERT_ENABLED
+    m_inScriptExecutionContextDestructor = true;
+#endif // ASSERT_ENABLED
 
     while (auto* destructionObserver = m_destructionObservers.takeAny())
         destructionObserver->contextDestroyed();

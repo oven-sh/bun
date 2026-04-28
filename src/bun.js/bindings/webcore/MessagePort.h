@@ -113,7 +113,7 @@ public:
 
     void jsRef(JSGlobalObject*);
     void jsUnref(JSGlobalObject*);
-    bool jsHasRef() { return m_hasRef; }
+    bool jsHasRef() { return m_isRefingEventLoop; }
 
 private:
     explicit MessagePort(ScriptExecutionContext&, const MessagePortIdentifier& local, const MessagePortIdentifier& remote);
@@ -139,9 +139,14 @@ private:
 
     mutable std::atomic<unsigned> m_refCount { 1 };
 
-    bool m_hasRef { false };
+    // Whether this port should keep the event loop alive when it has a 'message' listener.
+    // Toggled by ref()/unref() from JS.
+    bool m_hasRef { true };
+    // Whether this port is currently holding a ref on the event loop.
+    bool m_isRefingEventLoop { false };
 
     uint32_t m_messageEventCount { 0 };
+    void updateEventLoopRef();
     static void onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind);
 };
 

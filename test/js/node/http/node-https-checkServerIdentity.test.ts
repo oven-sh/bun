@@ -12,7 +12,7 @@
 // Previously any CN-only cert (no SAN) would hit this, because the
 // native checkX509ServerIdentity never fell back to the Subject CN.
 
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

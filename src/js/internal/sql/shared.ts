@@ -10,7 +10,6 @@ declare global {
 type ArrayType =
   | "BOOLEAN"
   | "BYTEA"
-  | "CHAR"
   | "NAME"
   | "TEXT"
   | "CHAR"
@@ -584,7 +583,8 @@ function parseOptions(
 
   // The rest of this function is logic specific to postgres/mysql/mariadb (they have the same options object)
 
-  let sslMode: SSLMode = sslModeFromConnectionDetails || SSLMode.disable;
+  // Default to prefer, as standard Postgres clients usually do
+  let sslMode: SSLMode = sslModeFromConnectionDetails || SSLMode.prefer;
 
   let url = _url;
 
@@ -636,6 +636,69 @@ function parseOptions(
     query = query.trim();
   }
 
+  // Handle explicit options.ssl overrides
+  if (options.ssl !== undefined) {
+    if (typeof options.ssl === "string") {
+      sslMode = normalizeSSLMode(options.ssl);
+    } else if (typeof options.ssl === "boolean") {
+      sslMode = options.ssl ? SSLMode.require : SSLMode.disable;
+    }
+  }
+
+  tls = options.tls;
+
+  // Support legacy behavior where ssl option is the tls config object
+  if (!tls && typeof options.ssl === "object" && options.ssl !== null) {
+    tls = options.ssl as Bun.TLSOptions;
+    // If passing a config object, imply SSL preference if currently disabled
+    if (sslMode === SSLMode.disable) {
+      sslMode = SSLMode.prefer;
+    }
+  }
+
+  // Handle tls: false interactions
+  // 1. If the user explicitly sets tls: false, we want to disable SSL.
+  // 2. However, if they ALSO explicitly set an ssl mode (like 'require'), we should not silently downgrade security.
+  // 3. If no ssl mode was set, it defaults to 'prefer', which we can safely downgrade to 'disable'.
+  if (options.tls === false) {
+    // Avoid silently downgrading an explicit sslmode.
+    if (sslMode !== SSLMode.prefer && sslMode !== SSLMode.disable) {
+      throw $ERR_INVALID_ARG_VALUE("tls", false, "conflicts with currently set ssl mode");
+    }
+    // Check if ssl option was explicitly passed as something other than disable
+    if (options.ssl && (options.ssl as any) !== "disable") {
+      throw $ERR_INVALID_ARG_VALUE("tls", false, "conflicts with currently set ssl mode");
+    }
+    sslMode = SSLMode.disable;
+    tls = false;
+  }
+
+  // If SSL is enabled but no TLS config is provided, default to system defaults (true)
+  if (sslMode !== SSLMode.disable && !tls) {
+    tls = true;
+  }
+
+  // Enforce rejectUnauthorized = true for verify modes.
+  // This ensures the SSL handshake actually performs verification so we can check the result in PostgresSQLConnection.zig.
+  // We do not strictly require tls.ca here, allowing usage of system CAs.
+  if (sslMode === SSLMode.verify_ca || sslMode === SSLMode.verify_full) {
+    if (typeof tls === "object" && tls !== null) {
+      (tls as Bun.TLSOptions).rejectUnauthorized = true;
+    }
+    // If tls is boolean (true), it defaults to rejectUnauthorized: true in the engine.
+  }
+
+  // Compatibility with postgres.js / libpq behavior:
+  // 'require' and 'prefer' modes do not verify the certificate chain by default.
+  // They only require that the connection IS encrypted.
+  if (sslMode === SSLMode.require || sslMode === SSLMode.prefer) {
+    if (tls === true) {
+      tls = { rejectUnauthorized: false };
+    } else if (typeof tls === "object" && tls !== null && (tls as Bun.TLSOptions).rejectUnauthorized === undefined) {
+      (tls as Bun.TLSOptions).rejectUnauthorized = false;
+    }
+  }
+
   switch (adapter) {
     case "postgres": {
       hostname ||= options.hostname || options.host || env.PG_HOST || env.PGHOST || "localhost";
@@ -648,6 +711,18 @@ function parseOptions(
     case "mariadb": {
       hostname ||= options.hostname || options.host || env.MARIADB_HOST || env.MARIADBHOST || "localhost";
       break;
+    }
+  }
+
+  // Inject serverName for SNI and Hostname verification if not already present
+  if (sslMode !== SSLMode.disable && !tls?.serverName && hostname) {
+    const isIp = require("node:net").isIP(hostname);
+    if (!isIp || sslMode === SSLMode.verify_full) {
+      if (typeof tls === "boolean") {
+        tls = { serverName: hostname };
+      } else if (tls) {
+        tls = { ...tls, serverName: hostname };
+      }
     }
   }
 
@@ -759,7 +834,6 @@ function parseOptions(
     }
   }
 
-  tls ||= options.tls || options.ssl;
   max = options.max;
 
   idleTimeout ??= options.idleTimeout;
@@ -836,18 +910,6 @@ function parseOptions(
     if (max > 2 ** 31 || max < 1 || max !== max) {
       throw $ERR_INVALID_ARG_VALUE("options.max", max, "must be a non-negative integer between 1 and 2^31");
     }
-  }
-
-  if (sslMode !== SSLMode.disable && !tls?.serverName) {
-    if (hostname) {
-      tls = { ...tls, serverName: hostname };
-    } else if (tls) {
-      tls = true;
-    }
-  }
-
-  if (tls && sslMode === SSLMode.disable) {
-    sslMode = SSLMode.prefer;
   }
 
   port = Number(port);

@@ -201,7 +201,9 @@ test("fetch(data:) with percent-encoding does not leak", async () => {
     async function hit() {
       await (await fetch(plain)).arrayBuffer();
       await (await fetch(b64)).arrayBuffer();
-      await fetch(bad).then(r => r.arrayBuffer(), () => {});
+      let rejected = false;
+      await fetch(bad).then(r => r.arrayBuffer(), () => { rejected = true; });
+      if (!rejected) throw new Error("invalid base64 data: URL unexpectedly succeeded");
     }
 
     for (let i = 0; i < 40; i++) await hit();

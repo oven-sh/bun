@@ -193,6 +193,24 @@ it("end does close when not backed by a file descriptor", async () => {
   await Bun.sleep(10); // For the file descriptor leak checker.
 });
 
+it("writer() with invalid path option does not crash", async () => {
+  const x = tmpdirSync();
+  const target = path.join(x, "invalid-path-opt.txt");
+  const writer = Bun.file(target).writer({ path: 123 } as any);
+  await writer.write("hello");
+  await writer.end();
+  expect(await Bun.file(target).text()).toBe("hello");
+});
+
+it("writer() with invalid fd option does not crash", async () => {
+  const x = tmpdirSync();
+  const target = path.join(x, "invalid-fd-opt.txt");
+  const writer = Bun.file(target).writer({ fd: "nope" } as any);
+  await writer.write("world");
+  await writer.end();
+  expect(await Bun.file(target).text()).toBe("world");
+});
+
 it("write result is not cumulative", async () => {
   using _ = fileDescriptorLeakChecker();
   const x = tmpdirSync();

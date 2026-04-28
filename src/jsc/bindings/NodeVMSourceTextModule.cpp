@@ -108,7 +108,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     RETURN_IF_EXCEPTION(scope, nullptr);
     NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(
         vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), WTF::move(identifier), contextValue,
-        WTF::move(sourceCode), moduleWrapper, initializeImportMeta);
+        WTF::move(sourceCode), moduleWrapper, initializeImportMeta, dynamicImportCallback);
     RETURN_IF_EXCEPTION(scope, nullptr);
     ptr->finishCreation(vm);
 
@@ -562,6 +562,7 @@ void NodeVMSourceTextModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(vmModule->m_cachedExecutable);
     visitor.append(vmModule->m_cachedBytecodeBuffer);
     visitor.append(vmModule->m_initializeImportMeta);
+    visitor.append(vmModule->m_dynamicImportCallback);
 }
 
 DEFINE_VISIT_CHILDREN(NodeVMSourceTextModule);

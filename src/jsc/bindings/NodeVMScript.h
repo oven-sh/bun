@@ -79,6 +79,11 @@ public:
     void cachedDataRejected(TriState value) { m_cachedDataRejected = value; }
     bool sourceMapURLParsed() const { return m_sourceMapURLParsed; }
     void sourceMapURLParsed(bool value) { m_sourceMapURLParsed = value; }
+    void setDynamicImportCallback(JSC::VM& vm, JSC::JSValue value)
+    {
+        if (value && value.isCell())
+            m_dynamicImportCallback.set(vm, this, value);
+    }
 
     DECLARE_VISIT_CHILDREN;
 
@@ -87,6 +92,9 @@ private:
     RefPtr<JSC::CachedBytecode> m_cachedBytecode;
     JSC::WriteBarrier<JSC::JSUint8Array> m_cachedBytecodeBuffer;
     JSC::WriteBarrier<JSC::ProgramExecutable> m_cachedExecutable;
+    // Keeps the importModuleDynamically callback alive; NodeVMScriptFetcher only
+    // holds a Weak reference to it to avoid an uncollectable Strong<> cycle.
+    JSC::WriteBarrier<JSC::Unknown> m_dynamicImportCallback;
     ScriptOptions m_options;
     bool m_cachedDataProduced = false;
     bool m_sourceMapURLParsed = false;

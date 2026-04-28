@@ -651,8 +651,10 @@ pub fn readableStream(
             if (self.readable_stream_ref.get(self.global)) |readable| {
                 if (readable.ptr == .Bytes) {
                     if (request_err) |err| {
+                        const err_value = err.toJS(self.global, self.path);
+                        err_value.protect();
                         try readable.ptr.Bytes.onData(
-                            .{ .err = .{ .JSValue = err.toJS(self.global, self.path) } },
+                            .{ .err = .{ .JSValue = err_value } },
                             bun.default_allocator,
                         );
                         return;

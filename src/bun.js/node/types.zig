@@ -1162,13 +1162,14 @@ pub const Dirent = struct {
     path: bun.String,
     // not publicly exposed
     kind: Kind,
+    name_as_buffer: bool = false,
 
     pub const Kind = std.fs.File.Kind;
 
     extern fn Bun__JSDirentObjectConstructor(*jsc.JSGlobalObject) jsc.JSValue;
     pub const getConstructor = Bun__JSDirentObjectConstructor;
 
-    extern fn Bun__Dirent__toJS(*jsc.JSGlobalObject, i32, *bun.String, *bun.String, cached_previous_path_jsvalue: ?*?*jsc.JSString) jsc.JSValue;
+    extern fn Bun__Dirent__toJS(*jsc.JSGlobalObject, i32, *bun.String, *bun.String, cached_previous_path_jsvalue: ?*?*jsc.JSString, bool) jsc.JSValue;
     pub fn toJS(this: *Dirent, globalObject: *jsc.JSGlobalObject, cached_previous_path_jsvalue: ?*?*jsc.JSString) bun.JSError!jsc.JSValue {
         return bun.jsc.fromJSHostCall(globalObject, @src(), Bun__Dirent__toJS, .{
             globalObject,
@@ -1186,6 +1187,7 @@ pub const Dirent = struct {
             &this.name,
             &this.path,
             cached_previous_path_jsvalue,
+            this.name_as_buffer,
         });
     }
 

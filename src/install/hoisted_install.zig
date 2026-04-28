@@ -448,11 +448,7 @@ fn pruneStaleWorkspaceNodeModules(
 
         const ws_fs_path = workspace_fs_path_by_pkg_id.get(pkg_id) orelse continue;
 
-        // `<ws_fs_path>/node_modules` — the on-disk directory for this tree.
-        const key = try std.fmt.allocPrint(scratch, "{s}/node_modules", .{ws_fs_path});
-        if (comptime Environment.isWindows) {
-            bun.path.dangerouslyConvertPathToPosixInPlace(u8, key);
-        }
+        const key = try workspaceNodeModulesKey(scratch, ws_fs_path);
 
         const gop = try expected_by_ws_path.getOrPut(key);
         if (!gop.found_existing) {
@@ -479,16 +475,33 @@ fn pruneStaleWorkspaceNodeModules(
         const ws_path = ws_path_str.slice(string_buf);
         if (ws_path.len == 0) continue;
 
-        var key_buf: bun.PathBuffer = undefined;
-        const key = try std.fmt.bufPrint(&key_buf, "{s}/node_modules", .{
-            // Tolerate a stray trailing slash.
-            if (ws_path[ws_path.len - 1] == '/') ws_path[0 .. ws_path.len - 1] else ws_path,
-        });
-
+        const key = try workspaceNodeModulesKey(scratch, ws_path);
         const expected: ?*const bun.StringHashMap(void) = if (expected_by_ws_path.getPtr(key)) |p| p else null;
 
         pruneNodeModulesAt(key, expected) catch continue;
     }
+}
+
+/// Builds the normalized `<ws_path>/node_modules` key used both to index the
+/// expected-set map and to look it up during the walk. Must be the single
+/// source of truth for that string so the two call sites cannot silently
+/// diverge — a mismatch would route pruning through the `expected == null`
+/// branch and `deleteTree` legitimate entries.
+fn workspaceNodeModulesKey(allocator: std.mem.Allocator, ws_path: []const u8) ![]u8 {
+    // Tolerate a stray trailing slash (either separator) from unusual lockfile
+    // sources, then append `/node_modules`.
+    var trimmed = ws_path;
+    if (trimmed.len > 0 and (trimmed[trimmed.len - 1] == '/' or trimmed[trimmed.len - 1] == '\\')) {
+        trimmed = trimmed[0 .. trimmed.len - 1];
+    }
+    const key = try std.fmt.allocPrint(allocator, "{s}/node_modules", .{trimmed});
+    // The on-disk walk uses the returned string as-is, so on Windows we
+    // normalize any backslash separators that snuck in to forward slashes — the
+    // kernel accepts either, but the hash lookup needs a canonical form.
+    if (comptime Environment.isWindows) {
+        bun.path.dangerouslyConvertPathToPosixInPlace(u8, key);
+    }
+    return key;
 }
 
 /// Opens `<cwd>/<rel_path>` and removes each top-level directory entry whose

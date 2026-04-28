@@ -26,6 +26,7 @@
 extern SSL_CTX *create_ssl_context_from_bun_options(
     struct us_bun_socket_context_options_t options,
     enum create_bun_socket_error_t *err);
+extern X509_STORE *us_get_default_ca_store(void);
 
 #define US_QUIC_READ_BUF (16 * 1024)
 
@@ -275,12 +276,25 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
 #endif
 
     if (sent < n) {
-        /* lsquic only treats EAGAIN/EWOULDBLOCK as backpressure; map any
-         * other transient send error (ENOBUFS, EMSGSIZE on a stray jumbo
-         * batch, EPERM from a firewall) to EAGAIN so the engine pauses and
-         * retries via on_drain → send_unsent_packets instead of dropping
-         * the connection. */
-        if (errno != EAGAIN && errno != EWOULDBLOCK) errno = EAGAIN;
+        /* lsquic treats EAGAIN/EWOULDBLOCK as backpressure (pause + retry on
+         * on_drain) and anything else as close_conn_on_send_error. Map only
+         * the genuinely transient cases to EAGAIN; let ENETUNREACH /
+         * EHOSTUNREACH / ECONNREFUSED through so an unreachable peer closes
+         * fast instead of retrying forever. */
+        switch (errno) {
+            case EAGAIN:
+#if EWOULDBLOCK != EAGAIN
+            case EWOULDBLOCK:
+#endif
+                break;
+            case ENOBUFS:
+            case EMSGSIZE:
+            case EPERM:
+                errno = EAGAIN;
+                break;
+            default:
+                return sent ? (int) sent : -1;
+        }
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
         if (ls->udp) {
             us_poll_change((struct us_poll_t *) ls->udp, ls->ctx->loop,
@@ -1016,7 +1030,10 @@ us_quic_socket_context_t *us_create_quic_client_context(
     if (!ssl) return NULL;
     SSL_CTX_set_min_proto_version(ssl, TLS1_3_VERSION);
     SSL_CTX_set_max_proto_version(ssl, TLS1_3_VERSION);
-    SSL_CTX_set_default_verify_paths(ssl);
+    /* Same root store the H1/H2 client uses (bundled Mozilla roots + platform
+     * CAs + NODE_EXTRA_CA_CERTS); set_default_verify_paths alone doesn't find
+     * the system store on macOS/Windows. */
+    SSL_CTX_set_cert_store(ssl, us_get_default_ca_store());
     SSL_CTX_set_custom_verify(ssl, SSL_VERIFY_PEER, us_quic_client_verify);
 
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *)
@@ -1152,9 +1169,11 @@ static us_quic_socket_t *us_quic_connect_addr(us_quic_socket_context_t *ctx,
  * connect synchronously (return 1 with *out_qs set). Uncached hostnames
  * return 0 and stash a pending-connect record; the caller must register a
  * DNS callback that invokes us_quic_pending_connect_resolved(). -1 on error. */
-/* Walk the resolved address list and connect to the first entry the shared
- * client endpoint can reach (skips AAAA when the socket fell back to v4-only,
- * keeps trying when lsquic_engine_connect rejects an address). */
+/* Walk the resolved address list and connect to the first reachable entry.
+ * lsquic_engine_connect succeeds even for addresses the kernel can't route
+ * (the ENETUNREACH only surfaces in packets_out later), so probe each entry
+ * with a throwaway UDP connect() — that does a route lookup and fails fast on
+ * v6 results when the host has no v6 route, letting us fall through to A. */
 static us_quic_socket_t *us_quic_connect_result(us_quic_socket_context_t *ctx,
     struct addrinfo_result *res, int port, const char *sni, int reject_unauthorized)
 {
@@ -1165,6 +1184,15 @@ static us_quic_socket_t *us_quic_connect_result(us_quic_socket_context_t *ctx,
             ((struct sockaddr_in *) &peer)->sin_port = htons((unsigned short) port);
         else
             ((struct sockaddr_in6 *) &peer)->sin6_port = htons((unsigned short) port);
+
+        int perr = 0;
+        LIBUS_SOCKET_DESCRIPTOR probe = bsd_create_socket(peer.ss_family, SOCK_DGRAM, 0, &perr);
+        if (probe != LIBUS_SOCKET_ERROR) {
+            int r = connect(probe, (struct sockaddr *) &peer, sa_len((struct sockaddr *) &peer));
+            bsd_close_socket(probe);
+            if (r != 0) continue;
+        }
+
         us_quic_socket_t *qs = us_quic_connect_addr(ctx, (struct sockaddr *) &peer,
             sni, reject_unauthorized);
         if (qs) return qs;

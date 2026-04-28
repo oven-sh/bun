@@ -148,7 +148,7 @@ pub const ClientSession = struct {
         const client = stream.client orelse return error.Aborted;
         const request = client.buildRequest(client.state.original_request_body.len());
         if (client.verbose != .none) {
-            HTTPClient.printRequest(request, client.url.href, !client.flags.reject_unauthorized, client.state.request_body, client.verbose == .curl);
+            HTTPClient.printRequest(.http3, request, client.url.href, !client.flags.reject_unauthorized, client.state.request_body, client.verbose == .curl);
         }
 
         var headers: std.ArrayListUnmanaged(c.us_quic_header_t) = .{};

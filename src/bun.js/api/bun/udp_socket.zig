@@ -609,12 +609,21 @@ pub const UDPSocket = struct {
             return globalThis.throwInvalidArgumentType("sendMany", "first argument", "array");
         }
 
+        // Cache the connection state before doing anything that can run user JS.
+        // Array index getters, `port.valueOf()`, and `address.toString()` can all
+        // call back into JS and connect/disconnect/close this socket. If we re-read
+        // `this.connect_info` on every iteration, a mid-loop flip changes how
+        // `slice_idx` is computed and which branch writes into `payloads`/`lens`/
+        // `addr_ptrs`, producing out-of-bounds writes (unconnected -> connected) or
+        // uninitialized slots (connected -> disconnected) in the arena buffers.
+        const connected = this.connect_info != null;
+
         const array_len = try arg.getLength(globalThis);
-        if (this.connect_info == null and array_len % 3 != 0) {
+        if (!connected and array_len % 3 != 0) {
             return globalThis.throwInvalidArguments("Expected 3 arguments for each packet", .{});
         }
 
-        const len = if (this.connect_info == null) array_len / 3 else array_len;
+        const len = if (connected) array_len else array_len / 3;
 
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
@@ -627,14 +636,14 @@ pub const UDPSocket = struct {
 
         var iter = try arg.arrayIterator(globalThis);
 
-        var i: u16 = 0;
+        var i: u32 = 0;
         var port: JSValue = .zero;
         while (try iter.next()) |val| : (i += 1) {
             if (i >= array_len) {
                 return globalThis.throwInvalidArguments("Mismatch between array length property and number of items", .{});
             }
-            const slice_idx = if (this.connect_info == null) i / 3 else i;
-            if (this.connect_info != null or i % 3 == 0) {
+            const slice_idx = if (connected) i else i / 3;
+            if (connected or i % 3 == 0) {
                 const slice = brk: {
                     if (val.asArrayBuffer(globalThis)) |arrayBuffer| {
                         break :brk arrayBuffer.slice();
@@ -647,7 +656,7 @@ pub const UDPSocket = struct {
                 payloads[slice_idx] = slice.ptr;
                 lens[slice_idx] = slice.len;
             }
-            if (this.connect_info != null) {
+            if (connected) {
                 addr_ptrs[slice_idx] = null;
                 continue;
             }

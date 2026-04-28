@@ -779,6 +779,10 @@ function ClientRequest(input, options, cb) {
     validateInteger(mergedTlsOptions.secureOptions, "options.secureOptions");
     this._ensureTls().secureOptions = mergedTlsOptions.secureOptions;
   }
+  if (mergedTlsOptions.checkServerIdentity !== undefined) {
+    validateFunction(mergedTlsOptions.checkServerIdentity, "options.checkServerIdentity");
+    this._ensureTls().checkServerIdentity = mergedTlsOptions.checkServerIdentity;
+  }
   this[kPath] = options.path || "/";
   if (cb) {
     this.once("response", cb);

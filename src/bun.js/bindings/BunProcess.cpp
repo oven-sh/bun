@@ -108,6 +108,7 @@ typedef int mode_t;
 #if defined(__APPLE__)
 #include <mach/mach.h>
 #include <mach/mach_time.h>
+#include <spawn.h>
 #endif
 
 #if defined(__linux__) || defined(__FreeBSD__)
@@ -1726,11 +1727,44 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
         return {};
     }
 
+    int savedErrno;
+
+#if OS(DARWIN)
+    // macOS lacks SOCK_CLOEXEC/close_range, so use posix_spawn with the Apple
+    // extensions: POSIX_SPAWN_SETEXEC makes posix_spawn(2) behave like a more
+    // featureful execve(2) (replace the current image rather than fork), and
+    // POSIX_SPAWN_CLOEXEC_DEFAULT atomically closes every descriptor that
+    // isn't explicitly inherited via file actions. This mirrors
+    // reloadProcess() in src/bun.zig.
+    posix_spawnattr_t attrs;
+    posix_spawn_file_actions_t actions;
+    posix_spawnattr_init(&attrs);
+    posix_spawn_file_actions_init(&actions);
+
+    sigset_t emptyMask;
+    sigemptyset(&emptyMask);
+    sigset_t fullMask;
+    sigfillset(&fullMask);
+    posix_spawnattr_setsigmask(&attrs, &emptyMask);
+    posix_spawnattr_setsigdefault(&attrs, &fullMask);
+    posix_spawnattr_setflags(&attrs,
+        POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETEXEC | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK);
+
+    posix_spawn_file_actions_addinherit_np(&actions, 0);
+    posix_spawn_file_actions_addinherit_np(&actions, 1);
+    posix_spawn_file_actions_addinherit_np(&actions, 2);
+
+    pid_t pid;
+    savedErrno = posix_spawn(&pid, execPathUtf8.data(), &actions, &attrs, argv.begin(), envp.begin());
+    // With POSIX_SPAWN_SETEXEC a successful call never returns; reaching
+    // here means it failed and the return value is the errno.
+    posix_spawn_file_actions_destroy(&actions);
+    posix_spawnattr_destroy(&attrs);
+#else
     // Ensure all other file descriptors are close-on-exec so they don't leak
-    // into the replacement process. Most descriptors Bun opens already have
-    // CLOEXEC set (via O_CLOEXEC / SOCK_CLOEXEC), but some platforms (notably
-    // macOS, which lacks SOCK_CLOEXEC) create sockets without it. Failure here
-    // is best-effort.
+    // into the replacement process. Bun opens descriptors with
+    // O_CLOEXEC/SOCK_CLOEXEC where available, so the loop is a best-effort
+    // fallback for kernels without close_range(2).
 #if OS(LINUX) || OS(FREEBSD)
     if (bun_close_range(3, ~0U, /* CLOSE_RANGE_CLOEXEC */ (1U << 2)) != 0)
 #endif
@@ -1750,11 +1784,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
     pthread_sigmask(SIG_SETMASK, &emptyMask, nullptr);
 
     ::execve(execPathUtf8.data(), argv.begin(), envp.begin());
+    savedErrno = errno;
+#endif
 
     // If we get here, execve failed. Match Node's behavior: print the error
     // and abort the process (the original image is no longer in a usable
     // state to return to JavaScript).
-    int savedErrno = errno;
     const char* errName = Bun__errnoName(savedErrno);
 
     fprintf(stderr, "process.execve failed with error code %s\n", errName ? errName : "UNKNOWN");

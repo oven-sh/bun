@@ -276,25 +276,15 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
 #endif
 
     if (sent < n) {
-        /* lsquic treats EAGAIN/EWOULDBLOCK as backpressure (pause + retry on
-         * on_drain) and anything else as close_conn_on_send_error. Map only
-         * the genuinely transient cases to EAGAIN; let ENETUNREACH /
-         * EHOSTUNREACH / ECONNREFUSED through so an unreachable peer closes
-         * fast instead of retrying forever. */
-        switch (errno) {
-            case EAGAIN:
-#if EWOULDBLOCK != EAGAIN
-            case EWOULDBLOCK:
-#endif
-                break;
-            case ENOBUFS:
-            case EMSGSIZE:
-            case EPERM:
-                errno = EAGAIN;
-                break;
-            default:
-                return sent ? (int) sent : -1;
-        }
+        /* lsquic only treats EAGAIN/EWOULDBLOCK as backpressure; map any
+         * other send error to EAGAIN so the engine pauses and retries via
+         * on_drain → send_unsent_packets. We can't pass ENETUNREACH /
+         * ECONNREFUSED through to close_conn_on_send_error: on a shared
+         * unconnected UDP socket Linux reports a pending ICMP error on the
+         * next send to *any* destination, so the error isn't attributable to
+         * specs[sent]'s peer. Unreachable addresses are handled at connect
+         * time by the UDP-connect route probe instead. */
+        if (errno != EAGAIN && errno != EWOULDBLOCK) errno = EAGAIN;
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
         if (ls->udp) {
             us_poll_change((struct us_poll_t *) ls->udp, ls->ctx->loop,

@@ -622,7 +622,7 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     return ERR_INVALID_ARG_TYPE(scope, globalObject, arg_name, expected_type, val_actual_value);
 }
 
-WTF::String ERR_OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue val_arg_name, JSValue val_range, JSValue val_input)
+WTF::String ERR_OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue val_arg_name, JSValue val_range, JSValue val_input, JSValue val_replace_default)
 {
     auto* arg_name_str = val_arg_name.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -635,9 +635,14 @@ WTF::String ERR_OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* global
     RETURN_IF_EXCEPTION(scope, {});
 
     WTF::StringBuilder builder;
-    builder.append("The value of \""_s);
-    builder.append(arg_name);
-    builder.append("\" is out of range. It must be "_s);
+    if (val_replace_default.toBoolean(globalObject)) {
+        builder.append(arg_name);
+        builder.append(" It must be "_s);
+    } else {
+        builder.append("The value of \""_s);
+        builder.append(arg_name);
+        builder.append("\" is out of range. It must be "_s);
+    }
     builder.append(range);
     builder.append(". Received "_s);
     JSValueToStringSafe(globalObject, builder, val_input);
@@ -1947,7 +1952,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         auto arg0 = callFrame->argument(1);
         auto arg1 = callFrame->argument(2);
         auto arg2 = callFrame->argument(3);
-        return JSC::JSValue::encode(createError(globalObject, error, Message::ERR_OUT_OF_RANGE(scope, globalObject, arg0, arg1, arg2)));
+        auto arg3 = callFrame->argument(4);
+        return JSC::JSValue::encode(createError(globalObject, error, Message::ERR_OUT_OF_RANGE(scope, globalObject, arg0, arg1, arg2, arg3)));
     }
 
     case Bun::ErrorCode::ERR_INVALID_STATE:

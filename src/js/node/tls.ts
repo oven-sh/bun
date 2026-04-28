@@ -5,7 +5,14 @@ const Duplex = require("internal/streams/duplex");
 const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
 const { throwOnInvalidTLSArray } = require("internal/tls");
-const { validateString } = require("internal/validators");
+const {
+  validateString,
+  validateFunction,
+  validateNumber,
+  validateObject,
+  validateBuffer,
+  validateInt32,
+} = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
@@ -419,21 +426,36 @@ function newNativeSecureContext(options) {
   return NativeSecureContext.intern(options);
 }
 
+function toV(which, v, def) {
+  if (v == null) v = def;
+  if (v === "TLSv1") return 1;
+  if (v === "TLSv1.1") return 2;
+  if (v === "TLSv1.2") return 3;
+  if (v === "TLSv1.3") return 4;
+  throw $ERR_TLS_INVALID_PROTOCOL_VERSION(v, which);
+}
+
 var InternalSecureContext = class SecureContext {
   context;
   servername;
 
   constructor(options) {
     if (options) {
+      const { minVersion, maxVersion } = options;
+      toV("minimum", minVersion, DEFAULT_MIN_VERSION);
+      toV("maximum", maxVersion, DEFAULT_MAX_VERSION);
+
+      const { ciphers } = options;
+      if (ciphers !== undefined && ciphers !== null) validateString(ciphers, "options.ciphers");
+
       if (options.cert) throwOnInvalidTLSArray("options.cert", options.cert);
       if (options.key) throwOnInvalidTLSArray("options.key", options.key);
       if (options.ca) throwOnInvalidTLSArray("options.ca", options.ca);
-      if (options.passphrase != null && typeof options.passphrase !== "string")
-        throw new TypeError("passphrase argument must be an string");
+      if (options.passphrase != null) validateString(options.passphrase, "options.passphrase");
       if (options.servername != null && typeof options.servername !== "string")
-        throw new TypeError("servername argument must be an string");
+        throw $ERR_INVALID_ARG_TYPE("options.servername", "string", options.servername);
       if (options.secureOptions != null && typeof options.secureOptions !== "number")
-        throw new TypeError("secureOptions argument must be an number");
+        throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", options.secureOptions);
       if (!$isUndefinedOrNull(options.privateKeyIdentifier)) {
         if ($isUndefinedOrNull(options.privateKeyEngine))
           throw $ERR_INVALID_ARG_VALUE("options.privateKeyEngine", options.privateKeyEngine);
@@ -449,6 +471,27 @@ var InternalSecureContext = class SecureContext {
             ["string", "null", "undefined"],
             options.privateKeyIdentifier,
           );
+      }
+
+      const { ecdhCurve } = options;
+      if (ecdhCurve !== undefined && ecdhCurve !== null) validateString(ecdhCurve, "options.ecdhCurve");
+
+      const { clientCertEngine } = options;
+      if (clientCertEngine !== undefined && clientCertEngine !== null && typeof clientCertEngine !== "string") {
+        throw $ERR_INVALID_ARG_TYPE("options.clientCertEngine", ["string", "null", "undefined"], clientCertEngine);
+      }
+
+      const { ticketKeys } = options;
+      if (ticketKeys !== undefined && ticketKeys !== null) {
+        validateBuffer(ticketKeys, "options.ticketKeys");
+        if (ticketKeys.byteLength !== 48) {
+          throw $ERR_INVALID_ARG_VALUE("options.ticketKeys", ticketKeys.byteLength, "must be exactly 48 bytes");
+        }
+      }
+
+      const { sessionTimeout } = options;
+      if (sessionTimeout !== undefined && sessionTimeout !== null) {
+        validateInt32(sessionTimeout, "options.sessionTimeout", 0);
       }
     }
     // The native handle (SSL_CTX wrapper) is what's memoised — not this JS
@@ -509,6 +552,14 @@ function TLSSocket(socket?, options?) {
   options = isNetSocketOrDuplex ? { ...options, allowHalfOpen: false } : options || socket || {};
 
   NetSocket.$call(this, options);
+
+  if (options.isServer) {
+    this.isServer = true;
+    if (options.SNICallback) {
+      validateFunction(options.SNICallback, "options.SNICallback");
+      this._SNICallback = options.SNICallback;
+    }
+  }
 
   this.ciphers = options.ciphers;
   if (this.ciphers) {
@@ -575,6 +626,11 @@ TLSSocket.prototype.isSessionReused = function isSessionReused() {
 };
 
 TLSSocket.prototype.renegotiate = function renegotiate(options, callback) {
+  validateObject(options, "options");
+  if (callback !== undefined) {
+    validateFunction(callback, "callback");
+  }
+
   if (this[krenegotiationDisabled]) {
     // if renegotiation is disabled should emit error event in nextTick for nodejs compatibility
     const error = $ERR_TLS_RENEGOTIATION_DISABLED();
@@ -637,6 +693,7 @@ TLSSocket.prototype.enableTrace = function enableTrace() {
 };
 
 TLSSocket.prototype.setServername = function setServername(name) {
+  validateString(name, "name");
   if (this.isServer) {
     throw $ERR_TLS_SNI_FROM_SERVER();
   }
@@ -712,6 +769,15 @@ function Server(options, secureConnectionListener): void {
     return new Server(options, secureConnectionListener);
   }
 
+  if (typeof options === "function") {
+    secureConnectionListener = options;
+    options = {};
+  } else if (options == null || typeof options === "object") {
+    options ??= {};
+  } else {
+    throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+  }
+
   NetServer.$apply(this, [options, secureConnectionListener]);
 
   this.key = undefined;
@@ -744,10 +810,17 @@ function Server(options, secureConnectionListener): void {
   };
 
   this.setSecureContext = function (options) {
+    validateObject(options, "options");
     if (options instanceof InternalSecureContext) {
       options = options.context;
     }
     if (options) {
+      // Run the full set of secure-context option type checks. This matches
+      // node, where Server#setSecureContext builds this._sharedCreds via
+      // tls.createSecureContext(), so invalid ciphers/ecdhCurve/ticketKeys/etc.
+      // throw synchronously from createServer().
+      createSecureContext(options);
+
       const { ALPNProtocols } = options;
 
       if (ALPNProtocols) {
@@ -813,14 +886,6 @@ function Server(options, secureConnectionListener): void {
     }
   };
 
-  Server.prototype.getTicketKeys = function () {
-    throw Error("Not implented in Bun yet");
-  };
-
-  Server.prototype.setTicketKeys = function () {
-    throw Error("Not implented in Bun yet");
-  };
-
   this[buntls] = function (port, host, isClient) {
     return [
       {
@@ -843,8 +908,32 @@ function Server(options, secureConnectionListener): void {
   };
 
   this.setSecureContext(options);
+
+  const handshakeTimeout = options.handshakeTimeout || 120 * 1000;
+  validateNumber(handshakeTimeout, "options.handshakeTimeout");
+
+  if (options.SNICallback) {
+    validateFunction(options.SNICallback, "options.SNICallback");
+  }
+  if (options.pskCallback) {
+    validateFunction(options.pskCallback, "options.pskCallback");
+  }
+  if (options.pskIdentityHint) {
+    validateString(options.pskIdentityHint, "options.pskIdentityHint");
+  }
 }
 $toClass(Server, "Server", NetServer);
+
+Server.prototype.getTicketKeys = function getTicketKeys() {
+  throw Error("Not implented in Bun yet");
+};
+
+Server.prototype.setTicketKeys = function setTicketKeys(keys) {
+  validateBuffer(keys);
+  if (keys.byteLength !== 48) {
+    throw new TypeError("Session ticket keys must be a 48-byte buffer");
+  }
+};
 
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
@@ -877,8 +966,16 @@ function normalizeConnectArgs(listArgs) {
 // tls.connect(port[, host][, options][, callback])
 function connect(...args) {
   let normal = normalizeConnectArgs(args);
-  const options = normal[0];
+  let options = normal[0];
+  options = normal[0] = {
+    checkServerIdentity,
+    minDHSize: 1024,
+    ...options,
+  };
   const { ALPNProtocols, servername } = options as { ALPNProtocols?: unknown; servername?: unknown };
+
+  validateFunction(options.checkServerIdentity, "options.checkServerIdentity");
+  validateNumber(options.minDHSize, "options.minDHSize", 1);
 
   if (servername && net.isIP(servername)) {
     throw $ERR_INVALID_ARG_VALUE(
@@ -909,8 +1006,11 @@ function convertProtocols(protocols) {
       (p, c, i) => {
         const len = Buffer.byteLength(c);
         if (len > 255) {
-          throw new RangeError(
-            `The byte length of the protocol at index ${i} exceeds the maximum length. It must be <= 255. Received ${len}`,
+          throw $ERR_OUT_OF_RANGE(
+            `The byte length of the protocol at index ${i} exceeds the maximum length.`,
+            "<= 255",
+            len,
+            true,
           );
         }
         lens[i] = len;
@@ -934,15 +1034,13 @@ function convertALPNProtocols(protocols, out) {
   // If protocols is Array - translate it into buffer
   if (Array.isArray(protocols)) {
     out.ALPNProtocols = convertProtocols(protocols);
-  } else if (isTypedArray(protocols)) {
-    // Copy new buffer not to be modified by user.
-    out.ALPNProtocols = Buffer.from(protocols);
-  } else if (isArrayBufferView(protocols)) {
+  } else if (isTypedArray(protocols) || isArrayBufferView(protocols)) {
+    // Copy new buffer not to be modified by user. Use the raw bytes of the
+    // view rather than Buffer.from(typedArray), which copies element-wise and
+    // truncates multi-byte elements.
     out.ALPNProtocols = Buffer.from(
       protocols.buffer.slice(protocols.byteOffset, protocols.byteOffset + protocols.byteLength),
     );
-  } else if (Buffer.isBuffer(protocols)) {
-    out.ALPNProtocols = protocols;
   }
 }
 

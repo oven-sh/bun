@@ -669,7 +669,7 @@ declare function $ERR_TLS_INVALID_PROTOCOL_VERSION(a: string, b: string): TypeEr
 declare function $ERR_TLS_PROTOCOL_VERSION_CONFLICT(a: string, b: string): TypeError;
 declare function $ERR_INVALID_IP_ADDRESS(ip: any): TypeError;
 declare function $ERR_INVALID_ADDRESS_FAMILY(addressType, host, port): RangeError;
-declare function $ERR_OUT_OF_RANGE(name: string, reason: string, value): RangeError;
+declare function $ERR_OUT_OF_RANGE(name: string, reason: string, value, replaceDefaultBoolean?: boolean): RangeError;
 declare function $ERR_BUFFER_TOO_LARGE(len: number): RangeError;
 declare function $ERR_BROTLI_INVALID_PARAM(p: number): RangeError;
 declare function $ERR_TLS_CERT_ALTNAME_INVALID(reason: string, host: string, cert): Error;

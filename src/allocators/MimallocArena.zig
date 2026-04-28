@@ -158,8 +158,16 @@ pub fn deinit(self: *Self) void {
     self.* = undefined;
 }
 
+/// Heap tag for MimallocArena heaps — must be non-zero to avoid colliding
+/// with the default backing-heap tag (0). Without this, `_mi_heap_by_tag`
+/// in mimalloc's segment reclaim path can route abandoned pages from dead
+/// threads' backing heaps into a MimallocArena heap. When that arena is
+/// later destroyed via `mi_heap_destroy`, the reclaimed pages (which may
+/// still contain live blocks) are freed, corrupting the heap.
+const arena_heap_tag: c_int = 1;
+
 pub fn init() Self {
-    const mimalloc_heap = mimalloc.mi_heap_new() orelse bun.outOfMemory();
+    const mimalloc_heap = mimalloc.mi_heap_new_ex(arena_heap_tag, true, null) orelse bun.outOfMemory();
     if (comptime !safety_checks) return .{ .#heap = mimalloc_heap };
     const heap: Owned(*DebugHeap) = .new(.{
         .inner = mimalloc_heap,

@@ -30,14 +30,18 @@ async function spawnTree(dieWithParent: string | undefined) {
     stderr: "ignore",
   });
 
+  // A single reader.read() can return a partial chunk; buffer until we see
+  // the newline that terminates the "pid ppid" line.
   const reader = sh.stdout.getReader();
-  const { value } = await reader.read();
+  const decoder = new TextDecoder();
+  let line = "";
+  while (!line.includes("\n")) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    line += decoder.decode(value, { stream: true });
+  }
   reader.releaseLock();
-  const [bunPid, bunPpid] = new TextDecoder()
-    .decode(value)
-    .trim()
-    .split(" ")
-    .map(Number);
+  const [bunPid, bunPpid] = line.trim().split(" ").map(Number);
   expect(bunPid).toBeGreaterThan(0);
   expect(bunPpid).toBe(sh.pid);
 
@@ -53,16 +57,31 @@ function isAlive(pid: number): boolean {
   }
 }
 
+/**
+ * Poll `isAlive(pid)` until it returns false or `timeoutMs` elapses.
+ * Returns true if the process died within the window, false if it was still
+ * alive when the window expired. Used both ways: "must die" asserts true,
+ * "must survive" asserts false.
+ */
+async function waitUntilDead(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isAlive(pid)) return true;
+    await sleep(25);
+  }
+  return !isAlive(pid);
+}
+
 test.skipIf(!isPosix)(
   "without BUN_DIE_WITH_PARENT, bun is orphaned when its parent is SIGKILLed",
   async () => {
     const { sh, bunPid } = await spawnTree(undefined);
     process.kill(sh.pid!, "SIGKILL");
     await sh.exited;
-    await sleep(1000);
-    const orphaned = isAlive(bunPid);
-    if (orphaned) process.kill(bunPid, "SIGKILL");
-    expect(orphaned).toBe(true);
+    // bun must NOT die: poll for death and expect the poll to time out.
+    const died = await waitUntilDead(bunPid, 1000);
+    if (isAlive(bunPid)) process.kill(bunPid, "SIGKILL");
+    expect(died).toBe(false);
   },
 );
 
@@ -72,12 +91,13 @@ test.skipIf(!isPosix)(
     const { sh, bunPid } = await spawnTree("1");
     process.kill(sh.pid!, "SIGKILL");
     await sh.exited;
-    // kqueue NOTE_EXIT fires effectively immediately; allow scheduling slop.
-    await sleep(1000);
-    const alive = isAlive(bunPid);
-    if (alive) process.kill(bunPid, "SIGKILL");
-    expect(alive).toBe(false);
+    // kqueue NOTE_EXIT / PDEATHSIG fire effectively immediately; poll until
+    // bun is gone rather than sleeping a fixed interval.
+    const died = await waitUntilDead(bunPid, 10000);
+    if (isAlive(bunPid)) process.kill(bunPid, "SIGKILL");
+    expect(died).toBe(true);
   },
+  30000,
 );
 
 test.skipIf(!isPosix)(
@@ -86,10 +106,9 @@ test.skipIf(!isPosix)(
     const { sh, bunPid } = await spawnTree("0");
     process.kill(sh.pid!, "SIGKILL");
     await sh.exited;
-    await sleep(1000);
-    const alive = isAlive(bunPid);
-    if (alive) process.kill(bunPid, "SIGKILL");
-    expect(alive).toBe(true);
+    const died = await waitUntilDead(bunPid, 1000);
+    if (isAlive(bunPid)) process.kill(bunPid, "SIGKILL");
+    expect(died).toBe(false);
   },
 );
 
@@ -97,11 +116,13 @@ test.skipIf(!isPosix)(
   "BUN_DIE_WITH_PARENT=1 does not fire while the parent is alive",
   async () => {
     const { sh, bunPid } = await spawnTree("1");
-    await sleep(1000);
-    expect(isAlive(bunPid)).toBe(true);
+    // Parent is alive; bun must stay alive. Poll for premature death.
+    const diedEarly = await waitUntilDead(bunPid, 1000);
+    expect(diedEarly).toBe(false);
     process.kill(sh.pid!, "SIGKILL");
     await sh.exited;
-    await sleep(1000);
+    await waitUntilDead(bunPid, 10000);
     if (isAlive(bunPid)) process.kill(bunPid, "SIGKILL");
   },
+  30000,
 );

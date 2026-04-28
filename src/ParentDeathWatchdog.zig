@@ -24,8 +24,7 @@ const exit_code: u8 = 128 + 1;
 pub fn install() void {
     if (comptime !Environment.isPosix) return;
 
-    const raw = bun.getenvZ("BUN_DIE_WITH_PARENT") orelse return;
-    if (raw.len == 0 or std.mem.eql(u8, raw, "0") or std.mem.eql(u8, raw, "false")) return;
+    if (!bun.env_var.BUN_DIE_WITH_PARENT.get()) return;
 
     const original_ppid = std.c.getppid();
     // Already orphaned (parent died before we got here, or launchd/init
@@ -41,10 +40,12 @@ pub fn install() void {
 
 fn installLinux(original_ppid: std.c.pid_t) void {
     if (comptime !Environment.isLinux) unreachable;
-    // PR_SET_PDEATHSIG: kernel sends SIGTERM when the *thread* that forked
+    // PR_SET_PDEATHSIG: kernel sends SIGKILL when the *thread* that forked
     // us exits. Persists across exec; cleared on fork (which is what we
-    // want — Bun's own children should not inherit it).
-    _ = std.posix.prctl(.SET_PDEATHSIG, .{std.posix.SIG.TERM}) catch return;
+    // want — Bun's own children should not inherit it). SIGKILL is
+    // uncatchable so user code can't swallow it, matching the macOS path
+    // which hard-_exit()s from the watchdog thread.
+    _ = std.posix.prctl(.SET_PDEATHSIG, .{std.posix.SIG.KILL}) catch return;
     // Race: parent may have died between getppid() above and prctl() taking
     // effect. If so we've already been reparented and the kernel will never
     // deliver the signal — exit now.

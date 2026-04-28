@@ -241,6 +241,74 @@ devTest("circular css imports handle hot reload", {
     await client.style(".b").color.expect.toBe("#00f");
   },
 });
+devTest("asset index stays valid after another css root is freed", {
+  // Two independent CSS roots each get an entry in `DevServer.Assets`.
+  // When the first one is freed (via a syntax error), its slot is removed
+  // with `swapRemoveAt`, which moves the second entry into the first slot.
+  // The second CSS file's `path_map` entry must be patched to the new slot
+  // so the next edit does not read past the end of the asset array.
+  files: {
+    "first.html": emptyHtmlFile({
+      styles: ["first.css"],
+      body: `<div class="first">hello</div>`,
+    }),
+    "second.html": emptyHtmlFile({
+      styles: ["second.css"],
+      body: `<div class="second">hello</div>`,
+    }),
+    "first.css": `
+      .first { color: red; }
+    `,
+    "second.css": `
+      .second { color: blue; }
+    `,
+  },
+  async test(dev) {
+    // Bundle /first before /second so that `first.css` is registered at
+    // a lower asset index than `second.css`.
+    {
+      await using c1 = await dev.client("/first");
+      await c1.style(".first").color.expect.toBe("red");
+    }
+    await using c2 = await dev.client("/second");
+    await c2.style(".second").color.expect.toBe("#00f");
+
+    // Failing `first.css` frees its asset slot via `unrefByPath`, which
+    // swap-removes it and moves the data for `second.css` into its slot.
+    await dev.write(
+      "first.css",
+      `
+        .first { color: red; }}
+      `,
+      { errors: null },
+    );
+
+    // Editing `second.css` now goes through `replacePath`, which looks up
+    // its `path_map` entry. Previously this index was stale (pointed at
+    // `files.len`), causing an out-of-bounds read into `refs`/`files`.
+    await dev.write(
+      "second.css",
+      `
+        .second { color: green; }
+      `,
+      { errors: null },
+    );
+    await c2.style(".second").color.expect.toBe("green");
+
+    // Fix the first file and ensure both pages still work afterwards.
+    await dev.write(
+      "first.css",
+      `
+        .first { color: yellow; }
+      `,
+    );
+    await c2.style(".second").color.expect.toBe("green");
+    {
+      await using c1 = await dev.client("/first");
+      await c1.style(".first").color.expect.toBe("#ff0");
+    }
+  },
+});
 devTest("multiple stylesheets importing same dependency", {
   files: {
     "first.html": emptyHtmlFile({

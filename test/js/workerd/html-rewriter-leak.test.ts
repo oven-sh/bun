@@ -8,11 +8,14 @@ import { bunEnv, bunExe } from "harness";
 //
 // Measuring the leak:
 //  - The handler structs live in mimalloc (bun.default_allocator), so in debug
-//    builds (where mimalloc stats are compiled in) we can read the live-heap
-//    counter directly from `heapStats().mimalloc.malloc_normal.current`. This is
-//    exact and unaffected by ASAN quarantine / page retention.
+//    builds (where mimalloc stats are compiled in) we read the live-heap counter
+//    from `heapStats().mimalloc.malloc_normal.current`. This is exact and
+//    unaffected by ASAN quarantine / page retention.
 //  - In release builds mimalloc stats are compiled out (all zeros), so we fall
-//    back to RSS, which is stable there since there is no ASAN.
+//    back to RSS. RSS carries allocator-arena retention noise (notably on
+//    Windows), so the release path uses a much bigger warmup + workload to make
+//    the actual leak dominate that noise. Release is fast enough that 20k
+//    iterations still finish in well under a second.
 test("HTMLRewriter does not leak element/document handler allocations", async () => {
   const code = /* js */ `
       const { heapStats } = require("bun:jsc");
@@ -25,15 +28,23 @@ test("HTMLRewriter does not leak element/document handler allocations", async ()
         for (let i = 0; i < 32; i++) rw.onDocument(docNoop);
       }
 
-      // Warm up so allocator arenas / JIT / JSC structures stabilize.
-      for (let i = 0; i < 500; i++) once();
+      // Probe whether mimalloc stats are being collected (debug builds only).
+      once();
+      Bun.gc(true);
+      const haveMimallocStats = heapStats().mimalloc.malloc_normal.total > 0;
+
+      // In release (no mimalloc stats) use a much larger workload so the
+      // handler leak dwarfs RSS noise from allocator arena retention.
+      const warmup = haveMimallocStats ? 500 : 4000;
+      const iterations = haveMimallocStats ? 4000 : 16000;
+
+      for (let i = 0; i < warmup; i++) once();
       Bun.gc(true);
 
-      const haveMimallocStats = heapStats().mimalloc.malloc_normal.total > 0;
       const beforeMi = heapStats().mimalloc.malloc_normal.current;
       const beforeRss = process.memoryUsage.rss();
 
-      for (let i = 0; i < 4000; i++) once();
+      for (let i = 0; i < iterations; i++) once();
       Bun.gc(true);
 
       const afterMi = heapStats().mimalloc.malloc_normal.current;
@@ -60,7 +71,12 @@ test("HTMLRewriter does not leak element/document handler allocations", async ()
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr.replaceAll(/^WARNING:.*\n/gm, "")).toBe("");
+  const filteredStderr = stderr
+    .split("\n")
+    .filter(line => !line.startsWith("WARNING: ASAN interferes"))
+    .join("\n")
+    .trim();
+  expect(filteredStderr).toBe("");
   expect(exitCode).toBe(0);
 
   const { haveMimallocStats, miDeltaMB, rssDeltaMB } = JSON.parse(stdout.trim());
@@ -69,8 +85,8 @@ test("HTMLRewriter does not leak element/document handler allocations", async ()
     // 4000 * 64 handlers * ~48 bytes each => ~12-20 MB when leaking; ~0 MB when fixed.
     expect(miDeltaMB).toBeLessThan(4);
   } else {
-    // Release builds: no ASAN, RSS tracks the real leak closely.
-    // Without the fix this is ~30-50 MB; with the fix it is a few MB at most.
-    expect(rssDeltaMB).toBeLessThan(20);
+    // Release: 16000 * 64 handlers * ~48 bytes each => ~49 MB of leaked handler
+    // structs (plus overhead) when leaking; a few MB of arena churn when fixed.
+    expect(rssDeltaMB).toBeLessThan(30);
   }
 }, 120_000);

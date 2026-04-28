@@ -43,4 +43,4 @@ test("passing Bun.file() as tls cert/key does not leak file contents", async () 
   // Without the fix this grows ~50MB; with the fix it should stay close to 0.
   expect(result.growthMB).toBeLessThan(15);
   expect(exitCode).toBe(0);
-}, 60_000);
+});

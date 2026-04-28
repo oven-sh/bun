@@ -1868,7 +1868,6 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
     }
 
     for (auto& name : names) {
-        auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         // Use getOwnPropertySlot so we don't invoke user getters (which can
         // have side effects) just to walk the exports.
         JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::GetOwnProperty);

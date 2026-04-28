@@ -113,16 +113,13 @@ pub const ClientSession = struct {
         }
     }
 
-    fn detach(this: *ClientSession, stream: *Stream) void {
+    pub fn detach(this: *ClientSession, stream: *Stream) void {
         if (stream.client) |cl| cl.h3 = null;
         stream.client = null;
         if (stream.qstream) |qs| qs.ext(Stream).* = null;
         stream.qstream = null;
-        for (this.pending.items, 0..) |s, i| {
-            if (s == stream) {
-                _ = this.pending.orderedRemove(i);
-                break;
-            }
+        if (std.mem.indexOfScalar(*Stream, this.pending.items, stream)) |i| {
+            _ = this.pending.orderedRemove(i);
         }
         stream.deinit();
         this.deref();
@@ -437,55 +434,27 @@ pub const ClientContext = struct {
         bun.handleOom(this.sessions.append(bun.default_allocator, session));
         session.enqueue(client);
 
-        var qsocket: ?*quic.Socket = null;
-        var pending: ?*quic.PendingConnect = null;
-        const rc = this.qctx.connect(
-            host_z.ptr,
-            @intCast(port),
-            host_z.ptr,
-            @intFromBool(reject),
-            &qsocket,
-            &pending,
-            session,
-        );
-        switch (rc) {
-            1 => {
-                session.qsocket = qsocket.?;
-                qsocket.?.ext(ClientSession).* = session;
+        switch (this.qctx.connect(host_z.ptr, port, host_z.ptr, reject, session)) {
+            .socket => |qs| {
+                session.qsocket = qs;
+                qs.ext(ClientSession).* = session;
                 log("connect {s}:{d} (sync)", .{ hostname, port });
             },
-            0 => {
+            .pending => |pending| {
                 log("connect {s}:{d} (dns pending)", .{ hostname, port });
-                const pc = PendingConnect.new(.{
-                    .session = session,
-                    .pc = pending.?,
-                    .loop_ptr = this.qctx.loop(),
-                });
-                session.ref();
-                bun.dns.internal.registerQuic(
-                    @ptrCast(@alignCast(pending.?.addrinfo())),
-                    pc,
-                );
+                PendingConnect.register(session, pending, this.qctx.loop());
             },
-            else => {
+            .err => {
                 log("connect {s}:{d} failed", .{ hostname, port });
                 this.unregister(session);
-                session.closed = true;
-                while (session.pending.items.len > 0) {
-                    const stream = session.pending.items[0];
-                    const cl = stream.client;
-                    session.detach(stream);
-                    if (cl) |cl_| cl_.failFromH2(error.ConnectionRefused);
-                }
-                _ = live_sessions.fetchSub(1, .monotonic);
-                session.deref();
+                PendingConnect.failSession(session, error.ConnectionRefused);
                 return false;
             },
         }
         return true;
     }
 
-    fn unregister(this: *ClientContext, session: *ClientSession) void {
+    pub fn unregister(this: *ClientContext, session: *ClientSession) void {
         const i = session.registry_index;
         if (i >= this.sessions.items.len or this.sessions.items[i] != session) return;
         _ = this.sessions.swapRemove(i);
@@ -507,85 +476,7 @@ pub const ClientContext = struct {
     }
 };
 
-/// DNS-pending QUIC connect. Created when `us_quic_socket_context_connect`
-/// returns 0 (cache miss); the global DNS cache notifies us via
-/// `onDNSResolved[Threadsafe]`, at which point we hand the resolved address
-/// to lsquic and bind the resulting `us_quic_socket_t` to the waiting
-/// session.
-pub const PendingConnect = struct {
-    pub const new = bun.TrivialNew(@This());
-
-    session: *ClientSession,
-    pc: *quic.PendingConnect,
-    loop_ptr: *uws.Loop,
-    next: ?*PendingConnect = null,
-
-    pub fn loop(this: *PendingConnect) *uws.Loop {
-        return this.loop_ptr;
-    }
-
-    pub fn onDNSResolved(this: *PendingConnect) void {
-        const session = this.session;
-        defer {
-            session.deref();
-            bun.destroy(this);
-        }
-        if (session.closed or session.pending.items.len == 0) {
-            // Every waiter was aborted while DNS was in flight; don't open a
-            // connection nobody will use.
-            this.pc.cancel();
-            if (!session.closed) failSession(session, error.Aborted);
-            return;
-        }
-        const qs = this.pc.resolved() orelse {
-            failSession(session, error.DNSResolutionFailed);
-            return;
-        };
-        session.qsocket = qs;
-        qs.ext(ClientSession).* = session;
-        log("dns resolved {s}:{d}", .{ session.hostname, session.port });
-    }
-
-    /// DNS worker may call from off the HTTP thread; mirror
-    /// us_internal_dns_callback_threadsafe: push onto a mutex-protected list
-    /// and wake the loop. `drainResolved` runs from `HTTPThread.drainEvents`
-    /// on the next loop iteration after the wakeup.
-    pub fn onDNSResolvedThreadsafe(this: *PendingConnect) void {
-        resolved_mutex.lock();
-        this.next = resolved_head;
-        resolved_head = this;
-        resolved_mutex.unlock();
-        this.loop_ptr.wakeup();
-    }
-
-    var resolved_mutex: bun.Mutex = .{};
-    var resolved_head: ?*PendingConnect = null;
-
-    pub fn drainResolved() void {
-        resolved_mutex.lock();
-        var head = resolved_head;
-        resolved_head = null;
-        resolved_mutex.unlock();
-        while (head) |pc| {
-            const next = pc.next;
-            pc.onDNSResolved();
-            head = next;
-        }
-    }
-
-    fn failSession(session: *ClientSession, err: anyerror) void {
-        session.closed = true;
-        if (ClientContext.instance) |ctx| ctx.unregister(session);
-        while (session.pending.items.len > 0) {
-            const stream = session.pending.items[0];
-            const cl = stream.client;
-            session.detach(stream);
-            if (cl) |cl_| cl_.failFromH2(err);
-        }
-        _ = live_sessions.fetchSub(1, .monotonic);
-        session.deref();
-    }
-};
+pub const PendingConnect = @import("./h3/PendingConnect.zig");
 
 // ───── lsquic → Zig callbacks ─────
 

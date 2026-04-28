@@ -10,7 +10,25 @@ pub const Context = opaque {
     pub const loop = us_quic_socket_context_loop;
 
     extern fn us_quic_socket_context_connect(ctx: *Context, host: [*:0]const u8, port: c_int, sni: [*:0]const u8, reject_unauthorized: c_int, out_qs: *?*Socket, out_pending: *?*PendingConnect, user: *anyopaque) c_int;
-    pub const connect = us_quic_socket_context_connect;
+
+    pub const ConnectResult = union(enum) {
+        /// IP literal or DNS-cache hit: handshake already in flight.
+        socket: *Socket,
+        /// DNS cache miss: caller must register a `Bun__addrinfo` callback on
+        /// `pending.addrinfo()` and call `pending.resolved()` when it fires.
+        pending: *PendingConnect,
+        err,
+    };
+
+    pub fn connect(ctx: *Context, host: [*:0]const u8, port: u16, sni: [*:0]const u8, reject_unauthorized: bool, user: *anyopaque) ConnectResult {
+        var qs: ?*Socket = null;
+        var pc: ?*PendingConnect = null;
+        return switch (us_quic_socket_context_connect(ctx, host, port, sni, @intFromBool(reject_unauthorized), &qs, &pc, user)) {
+            1 => .{ .socket = qs.? },
+            0 => .{ .pending = pc.? },
+            else => .err,
+        };
+    }
 
     extern fn us_quic_socket_context_on_hsk_done(ctx: *Context, cb: *const fn (*Socket, c_int) callconv(.c) void) void;
     pub const onHskDone = us_quic_socket_context_on_hsk_done;

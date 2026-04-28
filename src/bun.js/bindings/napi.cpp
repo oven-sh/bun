@@ -2988,6 +2988,11 @@ extern "C" JSGlobalObject* NapiEnv__globalObject(napi_env env)
     return env->globalObject();
 }
 
+extern "C" bool NapiEnv__canRunFinalizer(napi_env env)
+{
+    return env && env->globalObject() && !env->isVMTerminating();
+}
+
 extern "C" bool NapiEnv__getAndClearPendingException(napi_env env, JSC::EncodedJSValue* exception)
 {
     if (std::optional<JSC::JSValue> pending = env->pendingException()) {

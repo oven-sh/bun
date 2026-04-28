@@ -1194,6 +1194,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 response_stream.sink.onFirstWrite = null;
 
                 response_stream.sink.finalize();
+                this.sink = null;
+                response_stream.sink.destroy();
                 return;
             }
             var response_body_readable_stream_ref = this.response_body_readable_stream_ref;
@@ -1207,6 +1209,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 if (jsc.WebCore.ReadableStream.fromJS(stream.value, globalThis) catch null) |comparator| { // TODO: properly propagate exception upwards
                     if (std.meta.activeTag(comparator.ptr) == std.meta.activeTag(stream.ptr)) {
                         streamLog("is not locked", .{});
+                        response_stream.sink.onFirstWrite = null;
+                        response_stream.sink.ctx = null;
+                        response_stream.detach(globalThis);
+                        response_stream.sink.markDone();
+                        response_stream.sink.finalize();
+                        this.sink = null;
+                        response_stream.sink.destroy();
                         this.renderMissing();
                         return;
                     }
@@ -1219,6 +1228,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             response_stream.detach(globalThis);
             stream.cancel(globalThis);
             response_stream.sink.markDone();
+            response_stream.sink.finalize();
+            this.sink = null;
+            response_stream.sink.destroy();
             this.renderMissing();
         }
 

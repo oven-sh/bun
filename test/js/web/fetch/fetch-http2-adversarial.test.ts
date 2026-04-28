@@ -218,19 +218,19 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
     );
   });
 
-  // 4. Server never sends initial SETTINGS.
-  test("server that never sends SETTINGS does not hang the client forever", async () => {
-    await withAdversarialServer({ settingsPayload: null }, async url => {
+  // 4. Server never sends initial SETTINGS, then closes. The leader stream is
+  //    attached before SETTINGS arrive; verify the close propagates as a clean
+  //    error rather than parking the request.
+  test("server that closes without sending SETTINGS fails the request cleanly", async () => {
+    await withAdversarialServer({ settingsPayload: null, onPreface: socket => socket.end() }, async url => {
       await using proc = spawnFetch(`
           const r = await fetch(${JSON.stringify(url)}, {
             protocol: "http2", tls: { rejectUnauthorized: false },
-            signal: AbortSignal.timeout(3000),
-          }).then(r => r.status, e => e.name || e.code);
+          }).then(r => r.status, e => e.code || e.name);
           console.log(r);
         `);
       const { stdout, exitCode } = await collect(proc);
-      // AbortSignal.timeout should fire → TimeoutError (or some HTTP2 code).
-      expect(stdout.trim()).toMatch(/Timeout|Abort|HTTP2/i);
+      expect(stdout.trim()).toMatch(/Connection|ECONNRESET|HTTP2|SocketClosed/i);
       expect(exitCode).toBe(0);
     });
   });
@@ -245,18 +245,28 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
         },
       },
       async url => {
+        // The two server writes may coalesce into one TCP segment (DATA-after-
+        // END_STREAM rejected as a stream error before headers deliver) or
+        // arrive separately (response delivers, late DATA discarded). Either
+        // is correct; what must NOT happen is the extra bytes reaching the body.
         await using proc = spawnFetch(`
           const r = await fetch(${JSON.stringify(url)}, {
             protocol: "http2", tls: { rejectUnauthorized: false },
-          });
-          const body = await r.text().catch(e => "ERR:" + (e.code || e.name));
-          console.log(JSON.stringify({ status: r.status, body }));
+          }).then(
+            r => r.text().then(body => ({ status: r.status, body }), e => ({ status: r.status, body: "ERR:" + (e.code || e.name) })),
+            e => ({ err: e.code || e.name }),
+          );
+          console.log(JSON.stringify(r));
         `);
-        const { stdout, exitCode } = await collect(proc);
+        const { stdout, stderr, exitCode } = await collect(proc);
         const out = JSON.parse(stdout.trim());
-        expect(out.status).toBe(200);
-        expect(out.body).not.toContain("SHOULD-NOT-APPEAR");
-        expect(exitCode).toBe(0);
+        if (out.err) {
+          expect(out.err).toBe("HTTP2ProtocolError");
+        } else {
+          expect(out.status).toBe(200);
+          expect(out.body).not.toContain("SHOULD-NOT-APPEAR");
+        }
+        expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });
       },
     );
   });

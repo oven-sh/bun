@@ -1612,84 +1612,6 @@ fn getOrPutResolvedPackage(
     install_peer: bool,
     comptime successFn: SuccessFn,
 ) !?ResolvedPackageResult {
-    if (install_peer and behavior.isPeer()) {
-        if (this.lockfile.package_index.get(name_hash)) |index| {
-            const resolutions: []Resolution = this.lockfile.packages.items(.resolution);
-            switch (index) {
-                .id => |existing_id| {
-                    if (existing_id < resolutions.len) {
-                        const existing_resolution = resolutions[existing_id];
-                        if (resolutionSatisfiesDependency(this, existing_resolution, version)) {
-                            successFn(this, dependency_id, existing_id);
-                            return .{
-                                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                .package = this.lockfile.packages.get(existing_id),
-                            };
-                        }
-
-                        const res_tag = resolutions[existing_id].tag;
-                        const ver_tag = version.tag;
-                        if ((res_tag == .npm and ver_tag == .npm) or (res_tag == .git and ver_tag == .git) or (res_tag == .github and ver_tag == .github)) {
-                            const existing_package = this.lockfile.packages.get(existing_id);
-                            this.log.addWarningFmt(
-                                null,
-                                logger.Loc.Empty,
-                                this.allocator,
-                                "incorrect peer dependency \"{f}@{f}\"",
-                                .{
-                                    existing_package.name.fmt(this.lockfile.buffers.string_bytes.items),
-                                    existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items, .auto),
-                                },
-                            ) catch unreachable;
-                            successFn(this, dependency_id, existing_id);
-                            return .{
-                                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                .package = this.lockfile.packages.get(existing_id),
-                            };
-                        }
-                    }
-                },
-                .ids => |list| {
-                    for (list.items) |existing_id| {
-                        if (existing_id < resolutions.len) {
-                            const existing_resolution = resolutions[existing_id];
-                            if (resolutionSatisfiesDependency(this, existing_resolution, version)) {
-                                successFn(this, dependency_id, existing_id);
-                                return .{
-                                    .package = this.lockfile.packages.get(existing_id),
-                                };
-                            }
-                        }
-                    }
-
-                    if (list.items[0] < resolutions.len) {
-                        const res_tag = resolutions[list.items[0]].tag;
-                        const ver_tag = version.tag;
-                        if ((res_tag == .npm and ver_tag == .npm) or (res_tag == .git and ver_tag == .git) or (res_tag == .github and ver_tag == .github)) {
-                            const existing_package_id = list.items[0];
-                            const existing_package = this.lockfile.packages.get(existing_package_id);
-                            this.log.addWarningFmt(
-                                null,
-                                logger.Loc.Empty,
-                                this.allocator,
-                                "incorrect peer dependency \"{f}@{f}\"",
-                                .{
-                                    existing_package.name.fmt(this.lockfile.buffers.string_bytes.items),
-                                    existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items, .auto),
-                                },
-                            ) catch unreachable;
-                            successFn(this, dependency_id, list.items[0]);
-                            return .{
-                                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                .package = this.lockfile.packages.get(existing_package_id),
-                            };
-                        }
-                    }
-                },
-            }
-        }
-    }
-
     if (resolution < this.lockfile.packages.len) {
         return .{ .package = this.lockfile.packages.get(resolution) };
     }
@@ -1955,23 +1877,6 @@ fn getOrPutResolvedPackage(
 
         else => return null,
     }
-}
-
-fn resolutionSatisfiesDependency(this: *PackageManager, resolution: Resolution, dependency: Dependency.Version) bool {
-    const buf = this.lockfile.buffers.string_bytes.items;
-    if (resolution.tag == .npm and dependency.tag == .npm) {
-        return dependency.value.npm.version.satisfies(resolution.value.npm.version, buf, buf);
-    }
-
-    if (resolution.tag == .git and dependency.tag == .git) {
-        return resolution.value.git.eql(&dependency.value.git, buf, buf);
-    }
-
-    if (resolution.tag == .github and dependency.tag == .github) {
-        return resolution.value.github.eql(&dependency.value.github, buf, buf);
-    }
-
-    return false;
 }
 
 const string = []const u8;

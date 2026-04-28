@@ -62,6 +62,12 @@ pub inline fn nowNs() u64 {
     return osMonotonicNs();
 }
 
+/// `nowNs()` in milliseconds. The constant divide lowers to a reciprocal
+/// multiply, so this is `nowNs()` + 2 instructions, not a `div`.
+pub inline fn nowMs() u64 {
+    return nowNs() / std.time.ns_per_ms;
+}
+
 const shift = 32;
 const Calibration = struct {
     start_counter: u64 = 0,

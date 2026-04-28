@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { gc, ServeOptions } from "bun";
+import { ServeOptions } from "bun";
 import { afterAll, describe, expect, it, test } from "bun:test";
 import { tls } from "harness";
 

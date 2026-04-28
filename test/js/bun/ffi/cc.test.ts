@@ -192,6 +192,37 @@ describe.skip("given a strlen(cstring) function", () => {
   });
 }); // </given a strlen(cstring) function>
 
+// Every successful cc() used to leak all of its option strings (source path,
+// include dirs, define key/values, flags, libraries) because CompileC.deinit()
+// was only called when an exception was pending. The fixture passes a 4 MiB
+// `define` value and measures RSS growth relative to a baseline run with a
+// tiny value so per-call overhead unrelated to the leaked strings (TinyCC
+// internals, ASAN quarantine, JIT) cancels out.
+//
+// Kept at the end of the file: the fixture subprocess briefly allocates a
+// few hundred MiB, which on slow machines can push adjacent tests with short
+// timeouts over the edge if it runs first.
+it.skipIf(isFFIUnavailable)("cc() does not leak option strings on success", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", path.join(__dirname, "cc-leak-fixture.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  let result;
+  try {
+    result = JSON.parse(stdout);
+  } catch {
+    throw new Error(`fixture did not produce JSON\nstdout: ${stdout}\nstderr: ${stderr}\nexit: ${exitCode}`);
+  }
+  const { baselineMB, bigMB, deltaMB } = result;
+  // Without the fix: ~120 MiB on release, ~87 MiB on debug+ASAN.
+  // With the fix: ≤ 0 MiB (second run reuses first run's high-water mark).
+  expect(deltaMB, `baseline ${baselineMB} MiB, big ${bigMB} MiB`).toBeLessThan(40);
+  expect(exitCode).toBe(0);
+}, 60_000);
+
 // =============================================================================
 
 function makeValidCase<Fns extends Record<string, FFIFunction>>(

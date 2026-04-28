@@ -505,10 +505,7 @@ pub const StatWatcher = struct {
 
         const buf = bun.path_buffer_pool.get();
         defer bun.path_buffer_pool.put(buf);
-        var slice = args.path.slice();
-        if (bun.strings.startsWith(slice, "file://")) {
-            slice = slice["file://".len..];
-        }
+        const slice = bun.strings.pathFromFileURL(args.path.slice());
 
         var parts = [_]string{slice};
         const file_path = Path.joinAbsStringBuf(

@@ -888,6 +888,26 @@ pub fn hasPrefixComptime(self: string, comptime alt: anytype) bool {
     return self.len >= alt.len and eqlComptimeCheckLenWithType(u8, self[0..alt.len], alt, false);
 }
 
+/// Inverse of `WTF::URL::fileURLWithFileSystemPath`: turns a `file://`-prefixed
+/// URL back into a filesystem path slice without allocating. On Windows, also
+/// strips the leading `/` that WebKit prepends before a drive letter
+/// (`file:///C:/foo` → `C:/foo`), because `fileURLWithFileSystemPath` always
+/// inserts that slash when the input path doesn't already start with one.
+///
+/// Returns the input unchanged if it isn't a `file://` URL. This is intentionally
+/// a byte-slice utility (no JSC round-trip) so it can be used in hot paths like
+/// module resolution where allocations would be wasteful.
+pub fn pathFromFileURL(source: []const u8) []const u8 {
+    if (!hasPrefixComptime(source, "file://")) return source;
+    const stripped = source["file://".len..];
+    if (comptime Environment.isWindows) {
+        if (stripped.len >= 3 and stripped[0] == '/' and stripped[2] == ':' and std.ascii.isAlphabetic(stripped[1])) {
+            return stripped[1..];
+        }
+    }
+    return stripped;
+}
+
 pub fn hasPrefixComptimeUTF16(self: []const u16, comptime alt: []const u8) bool {
     return self.len >= alt.len and eqlComptimeCheckLenWithType(u16, self[0..alt.len], comptime toUTF16Literal(alt), false);
 }

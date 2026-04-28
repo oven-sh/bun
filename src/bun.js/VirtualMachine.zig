@@ -1829,11 +1829,7 @@ pub fn resolve(
 }
 
 fn normalizeSource(source: []const u8) []const u8 {
-    if (strings.hasPrefixComptime(source, "file://")) {
-        return source["file://".len..];
-    }
-
-    return source;
+    return strings.pathFromFileURL(source);
 }
 
 pub fn resolveMaybeNeedsTrailingSlash(

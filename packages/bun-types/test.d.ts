@@ -48,6 +48,16 @@ declare module "bun:test" {
      */
     module(id: string, factory: () => any): void | Promise<void>;
     /**
+     * Auto-mock a module. Every function exported from `id` is replaced with a
+     * mock function that returns `undefined`, classes become mock constructors,
+     * and nested objects are recursively auto-mocked. Primitive exports and
+     * other builtin objects (arrays, dates, regexps, etc.) are preserved.
+     *
+     * The real module is loaded synchronously when this is called so we can
+     * introspect its exports — passing a factory bypasses that.
+     */
+    module(id: string): void | Promise<void>;
+    /**
      * Restore the previous value of mocks.
      */
     restore(): void;
@@ -93,6 +103,19 @@ declare module "bun:test" {
     function clearAllMocks(): void;
     function resetAllMocks(): void;
     function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
+    /**
+     * Register a module mock. With a factory, calls to `import`/`require`
+     * for `id` return the factory's return value. Without a factory, the
+     * real module is loaded and an auto-mock is synthesised — functions
+     * become `jest.fn()` stubs, classes become mock constructors, and
+     * nested objects are recursively auto-mocked.
+     */
+    function mock(id: string, factory?: () => any): void;
+    /**
+     * Return the mocked exports of a module. If `jest.mock(id)` hasn't been
+     * called yet, the module is loaded and auto-mocked on demand.
+     */
+    function requireMock<T = unknown>(id: string): T;
     function setSystemTime(now?: number | Date): void;
     function setTimeout(milliseconds: number): void;
     function useFakeTimers(options?: { now?: number | Date }): typeof vi;
@@ -180,6 +203,10 @@ declare module "bun:test" {
      * Mock a module
      */
     mock: typeof mock.module;
+    /**
+     * Return the mocked exports of a module.
+     */
+    requireMock: typeof jest.requireMock;
     /**
      * Restore all mocks to their original implementation
      */

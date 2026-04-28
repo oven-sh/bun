@@ -31,6 +31,7 @@
 
 #include "BunClientData.h"
 #include "JSCommonJSModule.h"
+#include "JSMockFunction.h"
 #include "isBuiltinModule.h"
 #include "AsyncContextFrame.h"
 #include "ImportMetaObject.h"
@@ -529,8 +530,11 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         return {};
     }
 
+    // If the second argument is missing, this is an auto-mock request
+    // (Jest's `jest.mock("foo")` form). Otherwise it must be a function.
     JSC::JSValue callbackValue = callframe->argument(1);
-    if (!callbackValue.isCell() || !callbackValue.isCallable()) {
+    bool isAutoMock = callframe->argumentCount() < 2 || callbackValue.isUndefined();
+    if (!isAutoMock && (!callbackValue.isCell() || !callbackValue.isCallable())) {
         scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "mock(module, fn) requires a function"_s));
         return {};
     }
@@ -590,9 +594,57 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     resolveSpecifier();
     RETURN_IF_EXCEPTION(scope, {});
 
-    JSC::JSObject* callback = callbackValue.getObject();
+    // For auto-mock, synchronously require the real module and generate a
+    // mock from its exports. This runs *before* we register our mock in the
+    // virtual-module map, so for a fresh mock the require() hits the real
+    // module and not us.
+    JSC::JSObject* callback = nullptr;
+    if (isAutoMock) {
+        JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
+        WTF::String fromPath;
+        if (sourceOrigin.url().isValid() && sourceOrigin.url().protocolIsFile()) {
+            fromPath = sourceOrigin.url().fileSystemPath();
+        }
+        if (fromPath.isEmpty()) {
+            // Fall back to a relative path so bare-name resolution starts at
+            // the current working directory.
+            fromPath = "."_s;
+        }
+
+        auto* boundRequire = Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, fromPath);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        JSC::JSValue realExports;
+        if (boundRequire) {
+            JSC::CallData callData = JSC::getCallData(boundRequire);
+            JSC::MarkedArgumentBuffer args;
+            args.append(specifierString);
+            NakedPtr<JSC::Exception> requireException = nullptr;
+            realExports = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, boundRequire, callData, JSC::jsUndefined(), args, requireException);
+            if (requireException) {
+                scope.throwException(globalObject, requireException->value());
+                return {};
+            }
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+
+        JSC::JSObject* mockObject = Bun::createAutoMockFromExports(globalObject, realExports);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!mockObject) [[unlikely]] {
+            return {};
+        }
+
+        callback = mockObject;
+    } else {
+        callback = callbackValue.getObject();
+    }
 
     JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), callback);
+    if (isAutoMock) {
+        // Pre-cache the result so `executeOnce` returns it directly instead
+        // of trying to call the mock object as a factory.
+        mock->hasCalledModuleMock = true;
+    }
 
     auto getJSValue = [&]() -> JSValue {
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -707,6 +759,138 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock);
 
     return JSValue::encode(jsUndefined());
+}
+
+// jest.requireMock(specifier) — return the mocked version of a module.
+// If a mock has already been registered with jest.mock(), return its cached
+// result. Otherwise synthesise an auto-mock from the real module's exports.
+BUN_DECLARE_HOST_FUNCTION(JSMock__jsRequireMock);
+extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsRequireMock, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!globalObject) [[unlikely]] {
+        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "Cannot run requireMock from a different global context"_s));
+        return {};
+    }
+
+    if (callframe->argumentCount() < 1) {
+        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "requireMock(module) requires a module name"_s));
+        return {};
+    }
+
+    if (!callframe->argument(0).isString()) {
+        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "requireMock(module) requires a module name string"_s));
+        return {};
+    }
+
+    JSC::JSString* specifierString = callframe->argument(0).toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    WTF::String specifier = specifierString->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (specifier.isEmpty()) {
+        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "requireMock(module) requires a module name"_s));
+        return {};
+    }
+
+    // Mirror JSMock__jsModuleMock's resolution so the same specifier strings
+    // hit the same virtual-module entries.
+    {
+        JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
+        if (!sourceOrigin.isNull()) {
+            const URL& url = sourceOrigin.url();
+            if (specifier.startsWith("file:"_s)) {
+                URL fileURL = URL(url, specifier);
+                if (fileURL.isValid()) {
+                    specifier = fileURL.fileSystemPath();
+                    specifierString = jsString(vm, specifier);
+                    globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
+                } else {
+                    scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "Invalid \"file:\" URL"_s));
+                    return {};
+                }
+            } else if (url.isValid() && url.protocolIsFile()) {
+                auto fromString = url.fileSystemPath();
+                BunString from = Bun::toString(fromString);
+                auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+                auto result = JSValue::decode(Bun__resolveSyncWithSource(globalObject, JSValue::encode(specifierString), &from, true, false));
+                if (topExceptionScope.exception()) {
+                    (void)topExceptionScope.tryClearException();
+                }
+                if (result && result.isString()) {
+                    auto* resolvedStr = result.toString(globalObject);
+                    if (resolvedStr->length() > 0) {
+                        specifierString = resolvedStr;
+                        specifier = specifierString->value(globalObject);
+                    }
+                } else if (specifier.startsWith("./"_s) || specifier.startsWith(".."_s)) {
+                    auto relativeURL = URL(url, specifier);
+                    if (relativeURL.isValid()) {
+                        globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
+                        if (relativeURL.protocolIsFile())
+                            specifier = relativeURL.fileSystemPath();
+                        else
+                            specifier = relativeURL.string();
+                        specifierString = jsString(vm, specifier);
+                    }
+                }
+            }
+        }
+    }
+
+    // If a mock has already been registered for this specifier, return the
+    // cached mock exports object.
+    if (globalObject->onLoadPlugins.hasVirtualModules()) {
+        auto& virtualModules = *globalObject->onLoadPlugins.virtualModules;
+        if (auto existing = virtualModules.get(specifier)) {
+            JSC::JSObject* entry = existing.get();
+            if (auto* moduleMock = dynamicDowncast<JSModuleMock>(entry)) {
+                JSObject* result = moduleMock->executeOnce(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (result) {
+                    return JSValue::encode(JSValue(result));
+                }
+            }
+            return JSValue::encode(JSValue(entry));
+        }
+    }
+
+    // No existing mock — synthesise one from the real module.
+    WTF::String fromPath;
+    JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
+    if (sourceOrigin.url().isValid() && sourceOrigin.url().protocolIsFile()) {
+        fromPath = sourceOrigin.url().fileSystemPath();
+    }
+    if (fromPath.isEmpty()) {
+        fromPath = "."_s;
+    }
+
+    auto* boundRequire = Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, fromPath);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSC::JSValue realExports;
+    if (boundRequire) {
+        JSC::CallData callData = JSC::getCallData(boundRequire);
+        JSC::MarkedArgumentBuffer args;
+        args.append(specifierString);
+        NakedPtr<JSC::Exception> requireException = nullptr;
+        realExports = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, boundRequire, callData, JSC::jsUndefined(), args, requireException);
+        if (requireException) {
+            scope.throwException(globalObject, requireException->value());
+            return {};
+        }
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    JSC::JSObject* mockObject = Bun::createAutoMockFromExports(globalObject, realExports);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!mockObject) [[unlikely]] {
+        return {};
+    }
+
+    return JSValue::encode(JSValue(mockObject));
 }
 
 template<typename Visitor>

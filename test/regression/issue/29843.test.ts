@@ -131,11 +131,7 @@ test.skipIf(!isLinux)("bun:ffi dlopen restores Bun's sigactions (#29843)", async
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(exitCode).toBe(0);
   expect(stderr).toBe("");
 
@@ -192,11 +188,10 @@ test.skipIf(!isPosix)("bun:ffi dlopen preserves process.on SIGUSR1 handler (#298
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
-  expect({ exitCode, tail: stdout.trim().split("\n").pop(), stderr: stderr.trim() })
-    .toEqual({ exitCode: 0, tail: "sigusr1-delivered", stderr: "" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ exitCode, tail: stdout.trim().split("\n").pop(), stderr: stderr.trim() }).toEqual({
+    exitCode: 0,
+    tail: "sigusr1-delivered",
+    stderr: "",
+  });
 });

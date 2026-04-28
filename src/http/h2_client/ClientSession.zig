@@ -358,7 +358,10 @@ pub fn consumeResponseBodyByHttpId(this: *ClientSession, async_http_id: u32, byt
     for (this.streams.values()) |stream| {
         const client = stream.client orelse continue;
         if (client.async_http_id != async_http_id) continue;
-        stream.consumed_bytes +|= bytes;
+        // `bytes` is decompressed; clamp the running total to wire bytes
+        // still outstanding so a compression surplus isn't banked to
+        // credit later DATA the reader hasn't touched.
+        stream.consumed_bytes = @min(stream.consumed_bytes +| bytes, stream.unacked_bytes);
         this.replenishWindow();
         if (this.write_buffer.isNotEmpty()) _ = this.flush() catch |err| this.failAll(err);
         return;

@@ -451,6 +451,26 @@ const fixture = [
         },
       },
     ),
+  () => {
+    const obj = {};
+    Object.setPrototypeOf(obj, new Proxy(URL.prototype, {}));
+    return obj;
+  },
+  () => {
+    const obj = {};
+    Object.setPrototypeOf(
+      obj,
+      new Proxy(
+        { yolo: 1 },
+        {
+          getPrototypeOf() {
+            throw new Error("nope");
+          },
+        },
+      ),
+    );
+    return obj;
+  },
 ];
 
 describe("crash testing", () => {

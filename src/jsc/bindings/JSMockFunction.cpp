@@ -1722,7 +1722,7 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
 
         // Include non-enumerable own properties so static methods on ES2015
         // classes (which default to non-enumerable) get mocked too.
-        JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
         object->methodTable()->getOwnPropertyNames(object, lexicalGlobalObject, names, DontEnumPropertiesMode::Include);
         if (scope.exception()) [[unlikely]] {
             (void)scope.tryClearException();
@@ -1780,7 +1780,7 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
                 JSObject* mockProto = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype());
                 RETURN_IF_EXCEPTION(scope, {});
 
-                JSC::PropertyNameArrayBuilder protoNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+                JSC::PropertyNameArrayBuilder protoNames(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
                 originalProtoObj->methodTable()->getOwnPropertyNames(originalProtoObj, lexicalGlobalObject, protoNames, DontEnumPropertiesMode::Include);
                 if (scope.exception()) [[unlikely]] {
                     (void)scope.tryClearException();
@@ -1849,7 +1849,7 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
 
     visited.set(object, JSC::Strong<JSC::JSObject> { vm, mockObject });
 
-    JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     object->methodTable()->getOwnPropertyNames(object, lexicalGlobalObject, names, DontEnumPropertiesMode::Exclude);
     if (scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();

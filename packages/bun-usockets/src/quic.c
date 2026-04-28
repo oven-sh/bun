@@ -983,6 +983,20 @@ void us_quic_stream_close(us_quic_stream_t *s) {
     if (s->stream) lsquic_stream_close(s->stream);
 }
 
+/* From lsquic_stream.h (not in the public header). */
+void lsquic_stream_maybe_reset(struct lsquic_stream *, uint64_t error_code, int);
+
+/* Abort the send half with RESET_STREAM(H3_REQUEST_CANCELLED) instead of
+ * FIN. lsquic_stream_close/shutdown queue FIN after the buffered tail,
+ * which is a protocol error if a content-length was advertised and the
+ * client is abandoning the upload short — the server's lsquic will
+ * CONNECTION_CLOSE on the mismatch (RFC 9114 §4.1.2). RESET_STREAM is
+ * the wire-level "I'm cancelling this send" and lets the server treat it
+ * as a stream-level cancellation rather than a malformed message. */
+void us_quic_stream_reset(us_quic_stream_t *s) {
+    if (s->stream) lsquic_stream_maybe_reset(s->stream, 0x10C, 1);
+}
+
 int us_quic_stream_has_unacked(us_quic_stream_t *s) {
     return s->stream ? lsquic_stream_has_unacked_data(s->stream) : 0;
 }

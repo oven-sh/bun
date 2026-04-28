@@ -116,7 +116,15 @@ pub const ClientSession = struct {
     pub fn detach(this: *ClientSession, stream: *Stream) void {
         if (stream.client) |cl| cl.h3 = null;
         stream.client = null;
-        if (stream.qstream) |qs| qs.ext(Stream).* = null;
+        if (stream.qstream) |qs| {
+            qs.ext(Stream).* = null;
+            // The success path can reach here while the request body is still
+            // being written (server responded early). FIN would be a
+            // content-length violation; RESET_STREAM(H3_REQUEST_CANCELLED)
+            // is the correct "I'm abandoning this send half" so lsquic reaps
+            // the stream instead of leaking it on the pooled session.
+            if (!stream.request_body_done) qs.reset();
+        }
         stream.qstream = null;
         if (std.mem.indexOfScalar(*Stream, this.pending.items, stream)) |i| {
             _ = this.pending.orderedRemove(i);
@@ -507,9 +515,9 @@ fn onConnClose(qs: *quic.Socket) callconv(.c) void {
     const session = qs.ext(ClientSession).* orelse return;
     session.closed = true;
     session.qsocket = null;
-    var buf: [256]u8 = undefined;
+    var buf: [256]u8 = [_]u8{0} ** 256;
     const st = qs.status(&buf);
-    log("conn_close status={d} {s}", .{ st, std.mem.sliceTo(&buf, 0) });
+    log("conn_close status={d} '{s}'", .{ st, std.mem.sliceTo(&buf, 0) });
     if (ClientContext.instance) |ctx| ctx.unregister(session);
     // Fail anything still waiting on a stream. Streams that already have a
     // qstream get their own onStreamClose.

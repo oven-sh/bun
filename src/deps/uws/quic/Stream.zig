@@ -11,6 +11,9 @@ pub const Stream = opaque {
     extern fn us_quic_stream_close(s: *Stream) void;
     pub const close = us_quic_stream_close;
 
+    extern fn us_quic_stream_reset(s: *Stream) void;
+    pub const reset = us_quic_stream_reset;
+
     extern fn us_quic_stream_header_count(s: *Stream) c_uint;
     pub const headerCount = us_quic_stream_header_count;
 

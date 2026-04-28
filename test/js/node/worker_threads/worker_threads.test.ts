@@ -521,15 +521,17 @@ describe("postMessageToThread", () => {
       `,
       { eval: true },
     );
+    const onWorkerMessage = (value, source) => resolve({ value, source });
+    const { promise, resolve } = Promise.withResolvers();
     try {
       await once(worker, "message");
-      const { promise, resolve } = Promise.withResolvers();
-      process.once("workerMessage", (value, source) => resolve({ value, source }));
+      process.on("workerMessage", onWorkerMessage);
       await wt.postMessageToThread(worker.threadId, "hello");
       const { value, source } = await promise;
       expect(value).toEqual({ echo: "hello", from: worker.threadId });
       expect(source).toBe(worker.threadId);
     } finally {
+      process.removeListener("workerMessage", onWorkerMessage);
       worker.postMessage("done");
       await worker.terminate();
     }

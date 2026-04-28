@@ -78,6 +78,7 @@
 #include <grp.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/resource.h>
 #else
 #include <uv.h>
 #include <io.h>
@@ -1760,6 +1761,14 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
     fprintf(stderr, "SystemError [process.execve]: execve %s: %s\n", strerror(savedErrno), execPathUtf8.data());
     fprintf(stderr, "    at execve (node:internal/process/per_thread:0:0)\n");
     fflush(stderr);
+
+    // Disable core dumps before aborting. Node also calls abort() here, but
+    // Bun's CI treats any core file produced during a test run (including
+    // from an intentionally-aborting child process) as a failure. The error
+    // has already been written to stderr, so a core dump adds no diagnostic
+    // value.
+    struct rlimit noCore = { 0, 0 };
+    setrlimit(RLIMIT_CORE, &noCore);
     abort();
 #endif
 }

@@ -896,9 +896,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     test("DATA after only a 1xx HEADERS is a stream PROTOCOL_ERROR (RFC 9113 §8.1)", async () => {
       await withRawH2Server(
         (conn, id) => {
-          conn.socket.write(
-            Buffer.concat([frame(1, 4, id, hpackStatus(100)), frame(0, 1, id, Buffer.from("body"))]),
-          );
+          conn.socket.write(Buffer.concat([frame(1, 4, id, hpackStatus(100)), frame(0, 1, id, Buffer.from("body"))]));
         },
         async url => {
           await using proc = spawnFetch(`
@@ -1313,11 +1311,9 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       await withRawH2Server(
         (conn, id) => {
           if (id === 1) {
-            conn.headers(
-              id,
-              Buffer.concat([hpackLit(":status", "303"), hpackLit("location", "/target")]),
-              { endStream: true },
-            );
+            conn.headers(id, Buffer.concat([hpackLit(":status", "303"), hpackLit("location", "/target")]), {
+              endStream: true,
+            });
           } else {
             conn.headers(id, hpackStatus(200), { endStream: true });
           }
@@ -1760,6 +1756,34 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     // the new leader instead of being failed with HTTP2Unsupported.
     expect(stdout.trim()).toBe("AbortError before=1 after=2");
     expect(exitCode).toBe(0);
+  });
+
+  // Cloudflare sends its SETTINGS frame as TLS 1.3 0.5-RTT data, so the
+  // client's first SSL_read that returns app data is also the call that
+  // completes the handshake. ssl_on_data must fire on_handshake there or the
+  // socket never gets re-tagged for h2 and the frame bytes hit the HTTP/1.1
+  // parser as Malformed_HTTP_Response. Neither node:tls nor Bun.listen exposes
+  // the 0.5-RTT write window, so this hits a real Cloudflare-fronted origin —
+  // tolerate network blips by only failing on the specific regression code.
+  test("GET https://registry.npmjs.org over protocol: http2", async () => {
+    await using proc = spawnFetch(`
+      try {
+        const r = await fetch("https://registry.npmjs.org", { protocol: "http2" });
+        console.log("status", r.status);
+      } catch (e) { console.log("error", e?.code ?? e?.name ?? String(e)); }
+    `);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const out = stdout.trim();
+    // The bug under test surfaces as Malformed_HTTP_Response — DNS/connect
+    // failures or 5xx are environmental, not regressions.
+    expect(out).not.toContain("Malformed_HTTP_Response");
+    if (!out.startsWith("status")) {
+      console.warn(`skipping live h2 assertion: ${out}`);
+      return;
+    }
+    expect(out).toBe("status 200");
   });
 });
 

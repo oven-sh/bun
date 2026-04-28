@@ -11,10 +11,9 @@
 //! share an epoch with `bun.getRoughTickCount()`. For pure A→B deltas where the
 //! epoch doesn't matter, `readCounter()` is the cheapest possible read.
 //!
-//! Calibration is **never** a busy-spin: it's one register read (arm64), one
-//! sysctl (x64 Darwin/FreeBSD), or a couple of CPUID leaves (x64 Linux/Win).
-//! If frequency can't be resolved that cheaply, `nowNs()` falls back to the
-//! OS high-res clock per call (vDSO/QPC, ~20 ns) — still sub-µs resolution.
+//! On x64 Linux/Windows where the TSC frequency isn't exposed by CPUID 0x15,
+//! `nowNs()` reads the OS high-res clock per call (vDSO/QPC, ~20 ns) instead —
+//! still sub-µs resolution.
 //!
 //! See WebKit r312153 (UnbarrieredMonotonicTime) for the original design and
 //! drift/monotonicity measurements on Darwin/arm64.

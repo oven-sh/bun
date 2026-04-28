@@ -685,5 +685,25 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("B/A\n");
       expect(exitCode).toBe(0);
     });
+
+    test("auto-accessor with string key that is not a valid identifier", async () => {
+      // The generated WeakMap binding name is derived from the property
+      // key. When the key is a string literal like "foo-bar", naively
+      // embedding it would produce `var _foo-bar = new WeakMap` which is
+      // a syntax error. Confirm the fallback (`_accessor_storage<N>`)
+      // kicks in so the class still runs.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class A {
+          accessor "foo-bar" = "hi";
+        }
+        const a = new A();
+        console.log(a["foo-bar"]);
+        a["foo-bar"] = "bye";
+        console.log(a["foo-bar"]);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("hi\nbye\n");
+      expect(exitCode).toBe(0);
+    });
   });
 });

@@ -825,7 +825,11 @@ pub fn LowerDecorators(
                         const storage_id = p.accessor_storage_counter;
                         p.accessor_storage_counter += 1;
                         const accessor_name = brk: {
-                            if (prop.key.?.data == .e_string)
+                            // `accessor "foo"` → `_foo0`, but only when the key is
+                            // a valid identifier; `accessor "foo-bar"` would produce
+                            // `_foo-bar0` (unparseable), so fall back to the synthetic
+                            // name instead.
+                            if (prop.key.?.data == .e_string and prop.key.?.data.e_string.isIdentifier(p.allocator))
                                 break :brk std.fmt.allocPrint(p.allocator, "_{s}{d}", .{ prop.key.?.data.e_string.data, storage_id }) catch unreachable;
                             break :brk std.fmt.allocPrint(p.allocator, "_accessor_storage{d}", .{storage_id}) catch unreachable;
                         };
@@ -977,7 +981,9 @@ pub fn LowerDecorators(
                     const storage_id = p.accessor_storage_counter;
                     p.accessor_storage_counter += 1;
                     const accessor_name = brk: {
-                        if (key_expr.data == .e_string)
+                        // See the note on the undecorated path: reject keys that
+                        // aren't valid identifiers so we don't emit `_foo-bar0`.
+                        if (key_expr.data == .e_string and key_expr.data.e_string.isIdentifier(p.allocator))
                             break :brk std.fmt.allocPrint(p.allocator, "_{s}{d}", .{ key_expr.data.e_string.data, storage_id }) catch unreachable;
                         break :brk std.fmt.allocPrint(p.allocator, "_accessor_storage{d}", .{storage_id}) catch unreachable;
                     };

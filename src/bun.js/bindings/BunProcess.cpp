@@ -76,6 +76,8 @@
 #include <sys/types.h>
 #include <pwd.h>
 #include <grp.h>
+#include <fcntl.h>
+#include <signal.h>
 #else
 #include <uv.h>
 #include <io.h>
@@ -1583,6 +1585,169 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, 
     _exit(134);
 #endif
     abort();
+}
+
+#if !OS(WINDOWS)
+#if OS(LINUX) || OS(FREEBSD)
+extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags);
+#endif
+
+static int persistStandardStream(int fd)
+{
+    int flags = fcntl(fd, F_GETFD, 0);
+    if (flags < 0) return flags;
+    flags &= ~FD_CLOEXEC;
+    return fcntl(fd, F_SETFD, flags);
+}
+#endif
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    static std::once_flag experimentalWarningFlag;
+    std::call_once(experimentalWarningFlag, [&] {
+        Process::emitWarning(globalObject,
+            jsString(vm, String("process.execve is an experimental feature and might change at any time"_s)),
+            jsString(vm, String("ExperimentalWarning"_s)), jsUndefined(), jsUndefined());
+    });
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (!Bun__isMainThreadVM()) {
+        scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_WORKER_UNSUPPORTED_OPERATION,
+            "Calling process.execve is not supported in workers"_s));
+        return {};
+    }
+
+#if OS(WINDOWS)
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_FEATURE_UNAVAILABLE_ON_PLATFORM,
+        "The feature process.execve is unavailable on the current platform, which is being used to run Node.js"_s));
+    return {};
+#else
+    JSValue execPathValue = callFrame->argument(0);
+    JSValue argsValue = callFrame->argument(1);
+    JSValue envValue = callFrame->argument(2);
+
+    Bun::V::validateString(scope, globalObject, execPathValue, "execPath"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    Bun::V::validateArray(scope, globalObject, argsValue, "args"_s, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
+
+    WTF::String execPath = execPathValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSObject* argsObject = argsValue.getObject();
+    unsigned argsLength = static_cast<unsigned>(toLength(globalObject, argsObject));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    Vector<CString> argvStorage;
+    Vector<char*> argv;
+    argvStorage.reserveInitialCapacity(argsLength);
+    argv.reserveInitialCapacity(argsLength + 1);
+
+    for (unsigned i = 0; i < argsLength; i++) {
+        JSValue item = argsObject->getIndex(globalObject, i);
+        RETURN_IF_EXCEPTION(scope, {});
+        bool invalid = !item.isString();
+        WTF::String str;
+        if (!invalid) {
+            str = item.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            invalid = str.contains(static_cast<char16_t>(0));
+        }
+        if (invalid) {
+            return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, makeString("args["_s, i, "]"_s),
+                item, "must be a string without null bytes"_s);
+        }
+        argvStorage.append(str.utf8());
+        argv.append(const_cast<char*>(argvStorage.last().data()));
+    }
+    argv.append(nullptr);
+
+    Vector<CString> envStorage;
+    Vector<char*> envp;
+    if (!envValue.isUndefined()) {
+        Bun::V::validateObject(scope, globalObject, envValue, "env"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        JSObject* envObject = envValue.getObject();
+        JSC::PropertyNameArrayBuilder envNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        envObject->methodTable()->getOwnPropertyNames(envObject, globalObject, envNames, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        envStorage.reserveInitialCapacity(envNames.size());
+        envp.reserveInitialCapacity(envNames.size() + 1);
+
+        for (unsigned i = 0; i < envNames.size(); i++) {
+            JSValue value = envObject->get(globalObject, envNames[i]);
+            RETURN_IF_EXCEPTION(scope, {});
+            const WTF::String& keyStr = envNames[i].string();
+            bool invalid = !value.isString();
+            WTF::String valueStr;
+            if (!invalid) {
+                valueStr = value.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                invalid = keyStr.contains(static_cast<char16_t>(0)) || valueStr.contains(static_cast<char16_t>(0));
+            }
+            if (invalid) {
+                return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "env"_s,
+                    envValue, "must be an object with string keys and values without null bytes"_s);
+            }
+            envStorage.append(makeString(keyStr, '=', valueStr).utf8());
+            envp.append(const_cast<char*>(envStorage.last().data()));
+        }
+    }
+    envp.append(nullptr);
+
+    CString execPathUtf8 = execPath.utf8();
+
+    // Set stdin, stdout and stderr to be non-close-on-exec so that the new
+    // process will inherit them.
+    if (persistStandardStream(0) < 0 || persistStandardStream(1) < 0 || persistStandardStream(2) < 0) {
+        throwSystemError(scope, globalObject, "fcntl"_s, errno);
+        return {};
+    }
+
+    // Ensure all other file descriptors are close-on-exec so they don't leak
+    // into the replacement process. Most descriptors Bun opens already have
+    // CLOEXEC set (via O_CLOEXEC / SOCK_CLOEXEC), but some platforms (notably
+    // macOS, which lacks SOCK_CLOEXEC) create sockets without it. Failure here
+    // is best-effort.
+#if OS(LINUX) || OS(FREEBSD)
+    if (bun_close_range(3, ~0U, /* CLOSE_RANGE_CLOEXEC */ (1U << 2)) != 0)
+#endif
+    {
+        int maxfd = static_cast<int>(sysconf(_SC_OPEN_MAX));
+        if (maxfd < 0 || maxfd > 65536) maxfd = 65536;
+        for (int fd = 3; fd < maxfd; fd++) {
+            int flags = fcntl(fd, F_GETFD);
+            if (flags >= 0) fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+        }
+    }
+
+    // Reset the signal mask so the new process starts with defaults. execve(2)
+    // resets handlers for caught signals but preserves the blocked mask.
+    sigset_t emptyMask;
+    sigemptyset(&emptyMask);
+    pthread_sigmask(SIG_SETMASK, &emptyMask, nullptr);
+
+    ::execve(execPathUtf8.data(), argv.begin(), envp.begin());
+
+    // If we get here, execve failed. Match Node's behavior: print the error
+    // and abort the process (the original image is no longer in a usable
+    // state to return to JavaScript).
+    int savedErrno = errno;
+    const char* errName = Bun__errnoName(savedErrno);
+
+    fprintf(stderr, "process.execve failed with error code %s\n", errName ? errName : "UNKNOWN");
+    fprintf(stderr, "SystemError [process.execve]: execve %s: %s\n", strerror(savedErrno), execPathUtf8.data());
+    fprintf(stderr, "    at execve (node:internal/process/per_thread:0:0)\n");
+    fflush(stderr);
+    abort();
+#endif
 }
 
 static bool isJSValueEqualToASCIILiteral(JSC::JSGlobalObject* globalObject, JSC::JSValue value, const ASCIILiteral literal)
@@ -4045,6 +4210,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   env                              constructEnv                                        PropertyCallback
   execArgv                         processExecArgv                                     CustomAccessor
   execPath                         constructExecPath                                   PropertyCallback
+  execve                           Process_functionExecve                              Function 3
   exit                             Process_functionExit                                Function 1
   exitCode                         processExitCode                                     CustomAccessor|DontDelete
   features                         constructFeatures                                   PropertyCallback

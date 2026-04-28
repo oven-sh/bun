@@ -63,19 +63,19 @@ test.skipIf(!isDebug)("tsconfig 'extends' chain frees every intermediate TSConfi
   const output = stdout + stderr;
   const created = [...output.matchAll(/new\(TSConfigJSON\)/g)].length;
   const destroyed = [...output.matchAll(/destroy\(TSConfigJSON\)/g)].length;
-  const live = created - destroyed;
 
-  // The whole chain (leaf + chainDepth bases) must be parsed.
-  expect(created).toBe(chainDepth + 1);
-  // After the merge, only the single merged config (stored on the DirInfo
-  // in the global dir_cache) may remain live. Every intermediate config
-  // popped in the merge loop must have been destroyed.
-  // Before the fix this was `chainDepth + 1` (nothing freed).
-  expect({ created, destroyed, live }).toEqual({
-    created: chainDepth + 1,
-    destroyed: chainDepth,
-    live: 1,
-  });
+  // The whole chain (leaf + chainDepth bases) must be parsed. dirInfoUncached
+  // also walks every ancestor of the temp dir up to the filesystem root, so a
+  // stray tsconfig.json/jsconfig.json in e.g. the developer's home directory
+  // on Windows would add to `created` (and stay live in dir_cache) — don't
+  // assert exact equality. The property the fix guarantees is that every
+  // intermediate in the extends chain is destroyed; before the fix,
+  // `destroyed` was 0 regardless of chain depth.
+  expect(created).toBeGreaterThanOrEqual(chainDepth + 1);
+  expect(destroyed).toBeGreaterThanOrEqual(chainDepth);
+  // Only the merged config for d/ plus any ancestor configs outside the
+  // fixture may remain live. On a clean CI runner this is exactly 1.
+  expect(created - destroyed).toBeLessThan(chainDepth);
   expect(exitCode).toBe(0);
 });
 

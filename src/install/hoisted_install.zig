@@ -539,7 +539,7 @@ fn pruneNodeModulesAt(
         }
 
         // Not expected — delete.
-        dir.stdDir().deleteTree(name) catch {};
+        dir.deleteTree(name) catch {};
     }
 }
 
@@ -577,7 +577,7 @@ fn pruneScopedNodeModules(
             }
         }
 
-        scope_dir.stdDir().deleteTree(name) catch {
+        scope_dir.deleteTree(name) catch {
             has_remaining = true;
         };
     }

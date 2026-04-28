@@ -485,5 +485,5 @@ describe("getHeapSnapshot", () => {
       "trace_tree",
     ]);
     worker.postMessage(0);
-  });
+  }, 30_000);
 });

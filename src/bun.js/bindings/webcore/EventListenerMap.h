@@ -59,7 +59,7 @@ public:
     void clear();
 
     void replace(const AtomString& eventType, EventListener& oldListener, Ref<EventListener>&& newListener, const RegisteredEventListener::Options&);
-    bool add(const AtomString& eventType, Ref<EventListener>&&, const RegisteredEventListener::Options&);
+    RegisteredEventListener* add(const AtomString& eventType, Ref<EventListener>&&, const RegisteredEventListener::Options&);
     bool remove(const AtomString& eventType, EventListener&, bool useCapture);
     WEBCORE_EXPORT EventListenerVector* find(const AtomString& eventType);
     const EventListenerVector* find(const AtomString& eventType) const { return const_cast<EventListenerMap*>(this)->find(eventType); }

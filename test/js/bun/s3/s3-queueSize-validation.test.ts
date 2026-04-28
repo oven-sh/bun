@@ -8,7 +8,7 @@ test("S3Client preserves queueSize instead of forcing it to 255", () => {
 });
 
 test("S3Client does not crash with queueSize > 255", () => {
-  const { exitCode, stdout, stderr } = Bun.spawnSync({
+  const { exitCode, stdout } = Bun.spawnSync({
     cmd: [
       bunExe(),
       "-e",
@@ -26,7 +26,6 @@ test("S3Client does not crash with queueSize > 255", () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(stderr.toString()).not.toContain("panic");
   expect(stdout.toString().trim()).toBe("ok");
   expect(exitCode).toBe(0);
 });

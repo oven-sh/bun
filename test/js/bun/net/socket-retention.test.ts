@@ -259,7 +259,6 @@ test.skipIf(!isDebug)(
     expect({ created, destroyed }).toEqual({ created: 5, destroyed: 5 });
     expect(exitCode).toBe(0);
   },
-  60_000,
 );
 
 test("node:net reconnect after connectError does not accumulate wrappers", async () => {

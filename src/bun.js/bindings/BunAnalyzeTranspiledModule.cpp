@@ -73,7 +73,7 @@ extern "C" JSModuleRecord* JSC_JSModuleRecord__create(JSGlobalObject* globalObje
 {
     JSModuleRecord* result = JSModuleRecord::create(globalObject, vm, globalObject->moduleRecordStructure(), *moduleKey, sourceCode, declaredVariables, lexicalVariables, hasImportMeta ? ImportMetaFeature : 0);
     result->m_isTypeScript = isTypescript;
-    result->hasTLA(hasTLA);
+    result->setHasTLA(hasTLA);
     return result;
 }
 

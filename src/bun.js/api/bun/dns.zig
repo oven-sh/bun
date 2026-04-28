@@ -2545,10 +2545,23 @@ pub const Resolver = struct {
 
             var poll = poll_entry.value_ptr.*;
 
-            if (readable and !poll.flags.contains(.poll_readable))
+            // FilePoll is single-direction; c-ares can flip a TCP socket between
+            // writable (connecting) and readable (response). If the requested
+            // direction set differs from what's registered, drop the old
+            // registration first so we never hold both .poll_readable and
+            // .poll_writable on the same poll (unregister asserts on that).
+            const want_readable = readable;
+            const want_writable = writable and !readable;
+            const have_readable = poll.flags.contains(.poll_readable);
+            const have_writable = poll.flags.contains(.poll_writable);
+            if ((have_readable and !want_readable) or (have_writable and !want_writable)) {
+                _ = poll.unregister(vm.event_loop_handle.?, false);
+            }
+
+            if (want_readable and !poll.flags.contains(.poll_readable))
                 _ = poll.register(vm.event_loop_handle.?, .readable, false);
 
-            if (writable and !poll.flags.contains(.poll_writable))
+            if (want_writable and !poll.flags.contains(.poll_writable))
                 _ = poll.register(vm.event_loop_handle.?, .writable, false);
         }
     }

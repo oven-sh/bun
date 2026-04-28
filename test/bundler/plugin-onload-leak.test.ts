@@ -80,4 +80,5 @@ test("Bun.build onLoad plugin does not leak the Load struct per matched file", a
   expect(stderr).not.toContain("build failed");
   expect(stdout).toBe("");
   expect(exitCode).toBe(0);
-});
+  // 23 Bun.build() calls take ~15s under debug ASAN; default 5s is not enough.
+}, 60_000);

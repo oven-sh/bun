@@ -679,25 +679,29 @@ it(".ptr is not leaked", () => {
 });
 
 // TinyCC (and therefore JSCallback) is disabled on Windows ARM64.
-it.skipIf(isWindows && isArm64)("JSCallback does not leak memory after close()", async () => {
-  // Each JSCallback heap-allocates a Function struct and generates ~11KB of C
-  // source for TinyCC. Both must be freed when close() is called.
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--smol", path.join(import.meta.dir, "jscallback-leak-fixture.js")],
-    env: {
-      ...bunEnv,
-      // ASAN holds freed allocations in a quarantine which makes RSS look
-      // like it still grows even when memory is freed correctly.
-      ASAN_OPTIONS: "quarantine_size_mb=0:" + (bunEnv.ASAN_OPTIONS || "allow_user_segv_handler=1:disable_coredump=0"),
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout).toContain("growthMB");
-  expect(exitCode).toBe(0);
-}, 180_000);
+it.skipIf(isWindows && isArm64)(
+  "JSCallback does not leak memory after close()",
+  async () => {
+    // Each JSCallback heap-allocates a Function struct and generates ~11KB of C
+    // source for TinyCC. Both must be freed when close() is called.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", path.join(import.meta.dir, "jscallback-leak-fixture.js")],
+      env: {
+        ...bunEnv,
+        // ASAN holds freed allocations in a quarantine which makes RSS look
+        // like it still grows even when memory is freed correctly.
+        ASAN_OPTIONS: "quarantine_size_mb=0:" + (bunEnv.ASAN_OPTIONS || "allow_user_segv_handler=1:disable_coredump=0"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("growthMB");
+    expect(exitCode).toBe(0);
+  },
+  180_000,
+);
 
 const libPath =
   platform() === "darwin"

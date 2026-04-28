@@ -38,11 +38,13 @@ test.skipIf(!(isASAN || isDebug))(
     // The fixture throws from every 'stream' handler, so stderr is full of
     // "error: boom N" traces — that's expected. The process should exit with
     // code 1 (unhandled exception) rather than abort (ASAN trap / signal).
+    // stderr is checked first so the ASAN trace is the failure message when
+    // the bug is present.
     expect(stderr).not.toContain("AddressSanitizer");
     expect(stderr).not.toContain("use-after-poison");
+    expect(stdout).toBe("");
     expect(proc.signalCode).toBeNull();
     expect(exitCode).toBe(1);
-    expect(stdout).toBe("");
   },
   30_000,
 );

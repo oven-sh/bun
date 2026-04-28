@@ -730,7 +730,16 @@ fn hoistDependency(
             // Root dependencies are manually chosen by the user. Allow them
             // to hoist other peers even if they don't satisfy the version
             if (builder.lockfile.isWorkspaceRootDependency(dep_id)) {
-                // TODO: warning about peer dependency version mismatch
+                builder.log.addWarningFmt(
+                    null,
+                    logger.Loc.Empty,
+                    builder.allocator,
+                    "incorrect peer dependency \"{f}@{f}\"",
+                    .{
+                        builder.packageName(res_id),
+                        builder.packageVersion(res_id),
+                    },
+                ) catch {};
                 return .hoisted; // 1
             }
         }

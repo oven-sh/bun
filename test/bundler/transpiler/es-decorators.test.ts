@@ -615,4 +615,75 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  describe("auto-accessor in subclass", () => {
+    test("subclass can override auto-accessor of same name (issue #29837)", async () => {
+      // Each class's `accessor name = ...` desugars to its own private
+      // storage slot per TC39 Decorators proposal. Reusing one WeakMap
+      // for the base AND derived class causes super()'s __privateAdd
+      // to populate the map and the subclass's own __privateAdd to
+      // throw "Cannot add the same private member more than once".
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class A {
+          accessor name = "A";
+        }
+        class B extends A {
+          accessor name = "B";
+          logName() {
+            console.log(this.name);
+            console.log(super.name);
+          }
+        }
+        new B().logName();
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("B\nA\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("multiple auto-accessors with same name across classes", async () => {
+      // Exercises several same-named accessors to confirm each class
+      // gets its own WeakMap binding regardless of property order.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class X {
+          accessor a = 1;
+          accessor b = 2;
+        }
+        class Y extends X {
+          accessor a = 10;
+          accessor b = 20;
+          check() {
+            return [this.a, this.b, super.a, super.b];
+          }
+        }
+        console.log(JSON.stringify(new Y().check()));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("[10,20,1,2]\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated auto-accessor in subclass with same name", async () => {
+      // Same collision happens on the decorated path — verify the
+      // decorator runs once per class and the values stay distinct.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function tag(target, ctx) {
+          return target;
+        }
+        class A {
+          @tag accessor name = "A";
+        }
+        class B extends A {
+          @tag accessor name = "B";
+          both() {
+            return this.name + "/" + super.name;
+          }
+        }
+        console.log(new B().both());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("B/A\n");
+      expect(exitCode).toBe(0);
+    });
+  });
 });

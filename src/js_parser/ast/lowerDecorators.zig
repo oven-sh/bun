@@ -718,7 +718,6 @@ pub fn LowerDecorators(
             var extracted_static_blocks = ListManaged(*G.ClassStaticBlock).init(p.allocator);
             var prefix_stmts = ListManaged(Stmt).init(p.allocator);
             var private_lowered_map = PrivateLoweredMap{};
-            var accessor_storage_counter: usize = 0;
             var emitted_private_adds = std.AutoHashMapUnmanaged(u32, void){};
             var static_private_add_blocks = ListManaged(Property).init(p.allocator);
 
@@ -818,12 +817,17 @@ pub fn LowerDecorators(
                     }
                     // Undecorated auto-accessor → WeakMap + getter/setter
                     if (prop.kind == .auto_accessor) {
+                        // Bump the module-scoped counter once per accessor so
+                        // the generated WeakMap binding doesn't collide with
+                        // another `accessor <same-name>` elsewhere in the file
+                        // (most visibly, a subclass overriding a base-class
+                        // accessor — see note on `P.accessor_storage_counter`).
+                        const storage_id = p.accessor_storage_counter;
+                        p.accessor_storage_counter += 1;
                         const accessor_name = brk: {
                             if (prop.key.?.data == .e_string)
-                                break :brk std.fmt.allocPrint(p.allocator, "_{s}", .{prop.key.?.data.e_string.data}) catch unreachable;
-                            const name = std.fmt.allocPrint(p.allocator, "_accessor_storage{d}", .{accessor_storage_counter}) catch unreachable;
-                            accessor_storage_counter += 1;
-                            break :brk name;
+                                break :brk std.fmt.allocPrint(p.allocator, "_{s}{d}", .{ prop.key.?.data.e_string.data, storage_id }) catch unreachable;
+                            break :brk std.fmt.allocPrint(p.allocator, "_accessor_storage{d}", .{storage_id}) catch unreachable;
                         };
                         const wm_ref = newSym(p, .other, accessor_name);
                         prefix_stmts.append(varDecl(p, wm_ref, newWeakMapExpr(p, loc), loc)) catch unreachable;
@@ -970,12 +974,12 @@ pub fn LowerDecorators(
                     }
                 } else if (k == 4) {
                     // Decorated public auto-accessor → WeakMap
+                    const storage_id = p.accessor_storage_counter;
+                    p.accessor_storage_counter += 1;
                     const accessor_name = brk: {
                         if (key_expr.data == .e_string)
-                            break :brk std.fmt.allocPrint(p.allocator, "_{s}", .{key_expr.data.e_string.data}) catch unreachable;
-                        const name = std.fmt.allocPrint(p.allocator, "_accessor_storage{d}", .{accessor_storage_counter}) catch unreachable;
-                        accessor_storage_counter += 1;
-                        break :brk name;
+                            break :brk std.fmt.allocPrint(p.allocator, "_{s}{d}", .{ key_expr.data.e_string.data, storage_id }) catch unreachable;
+                        break :brk std.fmt.allocPrint(p.allocator, "_accessor_storage{d}", .{storage_id}) catch unreachable;
                     };
                     const wm_ref = newSym(p, .other, accessor_name);
                     private_extra_ref = wm_ref;

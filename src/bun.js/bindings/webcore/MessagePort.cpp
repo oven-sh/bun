@@ -383,7 +383,7 @@ void MessagePort::contextDestroyed()
 
 void MessagePort::updateEventLoopRef()
 {
-    bool shouldRef = m_hasRef && m_messageEventCount > 0 && !m_isDetached;
+    bool shouldRef = m_hasRef && (m_messageEventCount > 0 || m_wantsExplicitRef) && !m_isDetached;
     if (shouldRef == m_isRefingEventLoop)
         return;
     auto* context = scriptExecutionContext();
@@ -458,12 +458,14 @@ WebCoreOpaqueRoot root(MessagePort* port)
 void MessagePort::jsRef(JSGlobalObject*)
 {
     m_hasRef = true;
+    m_wantsExplicitRef = true;
     updateEventLoopRef();
 }
 
 void MessagePort::jsUnref(JSGlobalObject*)
 {
     m_hasRef = false;
+    m_wantsExplicitRef = false;
     updateEventLoopRef();
 }
 

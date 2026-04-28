@@ -139,9 +139,13 @@ private:
 
     mutable std::atomic<unsigned> m_refCount { 1 };
 
-    // Whether this port should keep the event loop alive when it has a 'message' listener.
-    // Toggled by ref()/unref() from JS.
+    // Whether this port should keep the event loop alive when it is active.
+    // Toggled by ref()/unref() from JS; unref() wins over everything else.
     bool m_hasRef { true };
+    // Whether jsRef() has been called (from .ref() or the onmessage setter). This is one of the
+    // ways a port becomes "active" for event-loop-ref purposes; the other is m_messageEventCount,
+    // which is only tracked for ports whose onDidChangeListener is wired (transferred ports).
+    bool m_wantsExplicitRef { false };
     // Whether this port is currently holding a ref on the event loop.
     bool m_isRefingEventLoop { false };
 

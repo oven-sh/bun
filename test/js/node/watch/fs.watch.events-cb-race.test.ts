@@ -19,14 +19,16 @@ import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
 // ASAN on an unpatched build this reliably reports heap-use-after-free.
 //
 // macOS-only: the FSEvents code path doesn't exist on other platforms.
-test.skipIf(!isMacOS)("FSEvents: closing watchers while events fire does not UAF", async () => {
-  using dir = tempDir("fsevents-events-cb-race", {
-    "a.txt": "x",
-    "b.txt": "x",
-    "c.txt": "x",
-  });
+test.skipIf(!isMacOS)(
+  "FSEvents: closing watchers while events fire does not UAF",
+  async () => {
+    using dir = tempDir("fsevents-events-cb-race", {
+      "a.txt": "x",
+      "b.txt": "x",
+      "c.txt": "x",
+    });
 
-  const script = /* js */ `
+    const script = /* js */ `
     const fs = require("fs");
     const path = require("path");
     const dir = process.argv[1];
@@ -83,16 +85,18 @@ test.skipIf(!isMacOS)("FSEvents: closing watchers while events fire does not UAF
     wd.unref();
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script, String(dir)],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script, String(dir)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).not.toContain("HUNG");
-  expect(stdout).toStartWith("OK");
-  expect(exitCode).toBe(0);
-}, 60000);
+    expect(stderr).not.toContain("HUNG");
+    expect(stdout).toStartWith("OK");
+    expect(exitCode).toBe(0);
+  },
+  60000,
+);

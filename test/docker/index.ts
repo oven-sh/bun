@@ -133,7 +133,21 @@ class DockerComposeHelper {
     // healthy, which with `interval: 1h` and an engine that doesn't honor the
     // 5s start_interval default means "hang until the test's beforeAll times
     // out with no error message". 60 covers cold mysql init on tmpfs.
-    const { exitCode, stderr } = await this.exec(["up", "-d", "--wait", "--wait-timeout", "60", service]);
+    let { exitCode, stderr } = await this.exec(["up", "-d", "--wait", "--wait-timeout", "60", service]);
+
+    // warmup-ci.ts is spawned fire-and-forget by runner.node.mjs and may still be
+    // running `compose up` for this same service when we get here. Two concurrent
+    // `compose up` invocations both see "no container" and both try to create it;
+    // the loser gets "Conflict. The container name ... is already in use". The same
+    // error also surfaces when a crashed prior run left an orphaned container whose
+    // compose labels no longer match. Force-removing the named container and
+    // retrying once recovers both cases.
+    if (exitCode !== 0 && /is already in use by container|Conflict\. The container name/i.test(stderr)) {
+      const containerName = `${this.projectName}-${service}-1`;
+      console.warn(`compose up ${service}: name conflict on ${containerName}; force-removing and retrying`);
+      await spawn({ cmd: ["docker", "rm", "-f", containerName], stdout: "ignore", stderr: "inherit" }).exited;
+      ({ exitCode, stderr } = await this.exec(["up", "-d", "--wait", "--wait-timeout", "60", service]));
+    }
 
     if (exitCode !== 0) {
       const ps = await this.exec(["ps", "-a", service]);

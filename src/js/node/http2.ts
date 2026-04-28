@@ -3577,15 +3577,17 @@ class ClientHttp2Session extends Http2Session {
     const socket = this[bunHTTP2Socket];
     if (!socket) return;
     this.#connected = true;
-    // check if h2 is supported only for TLSSocket
     if (socket instanceof TLSSocket) {
-      // client must check alpnProtocol
-      if (socket.alpnProtocol !== "h2") {
+      const alpnProtocol = socket.alpnProtocol;
+      // Only reject when ALPN was actually negotiated to something other than h2.
+      // undefined/null means the socket came via createConnection (e.g. http2-wrapper)
+      // where alpnProtocol is not propagated; Node.js does not validate in that case.
+      if (alpnProtocol === false || (typeof alpnProtocol === "string" && alpnProtocol !== "h2")) {
         socket.end();
-        const error = $ERR_HTTP2_ERROR("h2 is not supported");
-        this.emit("error", error);
+        this.emit("error", $ERR_HTTP2_ERROR("h2 is not supported"));
+        return;
       }
-      this.#alpnProtocol = "h2";
+      this.#alpnProtocol = alpnProtocol || "h2";
     } else {
       this.#alpnProtocol = "h2c";
     }

@@ -598,7 +598,7 @@ it("chrome: mouseDown right button fires contextmenu with modifiers", async () =
   expect(events).toEqual([{ btn: 2, btns: 2, shift: true, ctrl: true }]);
 });
 
-it("chrome: mouseDown validates — x/y must be finite in mouseMove", () => {
+it("chrome: mouseMove validates — x/y must be finite", () => {
   const view = new Bun.WebView({ backend: chrome, width: 100, height: 100 });
   expect(() => view.mouseMove(NaN, 0)).toThrow(/must be finite/);
   expect(() => view.mouseMove(Infinity, 0)).toThrow(/must be finite/);

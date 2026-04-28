@@ -583,15 +583,22 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncMouseMove, (JSGlobalObject * globalOb
         JSValue s = o->get(globalObject, Identifier::fromString(vm, "steps"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (s.isNumber()) {
-            int32_t si = s.toInt32(globalObject);
+            // Read as double so we can clamp BEFORE any int cast —
+            // toInt32 wraps at 2^31 (a user passing Number.MAX_SAFE_INTEGER
+            // would then get a negative, clamped-to-1 steps instead of
+            // the 1000 cap). NaN/Inf clamp naturally through the
+            // finite-guarded compare chain (NaN < 1 is false, NaN > 1000
+            // is false → steps stays at the default 1).
+            double sd = s.toNumber(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            // steps < 1 is meaningless (we still need at least one final
-            // event). Cap at 1000 — any higher is almost certainly a bug
-            // (tests that want smooth animation should use ~20). A 1000-
+            // Default 1. 1000 is the cap — any higher is almost certainly
+            // a bug (tests that want smooth animation use ~20). A 1000-
             // event burst is already ~30KB of CDP payload.
-            if (si < 1) si = 1;
-            if (si > 1000) si = 1000;
-            steps = static_cast<uint32_t>(si);
+            if (std::isfinite(sd)) {
+                if (sd < 1.0) sd = 1.0;
+                if (sd > 1000.0) sd = 1000.0;
+                steps = static_cast<uint32_t>(sd);
+            }
         }
         JSValue m = o->get(globalObject, Identifier::fromString(vm, "modifiers"_s));
         RETURN_IF_EXCEPTION(scope, {});

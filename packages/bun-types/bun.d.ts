@@ -8455,9 +8455,12 @@ declare module "bun" {
 
     interface MouseMoveOptions {
       /**
-       * Number of intermediate mousemove events to dispatch between the
-       * current position and `(x, y)`. Drag handlers that observe
-       * `pointermove` at rAF rate need at least a few; 5–20 is typical.
+       * Total number of `mousemove`/`pointermove` events dispatched from
+       * the current position to `(x, y)`, inclusive of the final event at
+       * the target. `1` = a single event at the target; larger values
+       * interpolate intermediate positions linearly. Drag handlers that
+       * observe `pointermove` at rAF rate want at least a handful;
+       * 5–20 is typical for smooth drags. Clamped to `[1, 1000]`.
        * @default 1
        */
       steps?: number;
@@ -8885,11 +8888,18 @@ declare module "bun" {
     /**
      * Move the pointer to the given viewport coordinates.
      *
-     * Dispatches `options.steps` intermediate `mousemove`/`pointermove`
-     * events between the current pointer position and `(x, y)`, then one
-     * final event at `(x, y)`. If a button is currently held (from a
-     * prior {@link mouseDown}), the events are `mousedrag` / `dragover`
-     * instead. The pointer position is tracked internally — call
+     * Dispatches `options.steps` `mousemove`/`pointermove` events from
+     * the current pointer position to `(x, y)`, including the final
+     * event at the target. If a button is currently held (from a prior
+     * {@link mouseDown}), the browser treats each event as part of a
+     * drag: on WebKit it fires as a native `mouseDragged` NSEvent; on
+     * Chrome it's still a `mousemove` but with a non-zero `buttons`
+     * field, so DOM drag handlers (listening for `pointermove` with
+     * `e.buttons !== 0`) see the intermediate positions. This is NOT
+     * the HTML5 Drag and Drop API — no `dragstart`/`dragover` events
+     * fire unless a `draggable` element initiates them page-side.
+     *
+     * The pointer position is tracked internally — call
      * {@link mouseMove} before {@link mouseDown}/{@link mouseUp} to
      * position the cursor.
      *

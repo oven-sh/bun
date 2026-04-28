@@ -8,8 +8,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "crypto";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
-import { fetchH3 } from "./fetch-h3";
-
 type Proto = "http/1.1" | "http/3";
 
 const cases: Array<{
@@ -19,7 +17,12 @@ const cases: Array<{
   serve: { tls?: typeof tls; h3?: boolean };
 }> = [
   { protocol: "http/1.1", fetch, scheme: "http", serve: {} },
-  { protocol: "http/3", fetch: fetchH3, scheme: "https", serve: { tls, h3: true } },
+  {
+    protocol: "http/3",
+    fetch: (url, init) => fetch(url, { ...init, protocol: "http3", tls: { rejectUnauthorized: false } } as any),
+    scheme: "https",
+    serve: { tls, h3: true },
+  },
 ];
 
 const md5 = (b: ArrayBuffer | Uint8Array) => createHash("md5").update(Buffer.from(b)).digest("hex");

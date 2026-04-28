@@ -1,5 +1,15 @@
 import { pathToFileURL } from "bun";
-import { bunEnv, bunExe, bunRun, bunRunAsScript, isFreeBSD, isMacOS, isWindows, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  bunRunAsScript,
+  isFreeBSD,
+  isMacOS,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
 

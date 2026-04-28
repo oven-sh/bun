@@ -785,9 +785,15 @@ fn applyHeaders(_: *ClientSession, stream: *Stream, client: *HTTPClient) !Header
     return if (should_continue == .finished) .finished else .has_body;
 }
 
+const Stream = @import("./Stream.zig");
+const dispatch = @import("./dispatch.zig");
+const encode = @import("./encode.zig");
 const lshpack = @import("../../bun.js/api/bun/lshpack.zig");
 const std = @import("std");
 const wire = @import("../H2FrameParser.zig");
+
+const H2 = @import("../H2Client.zig");
+const local_initial_window_size = H2.local_initial_window_size;
 
 const bun = @import("bun");
 const picohttp = bun.picohttp;
@@ -796,9 +802,3 @@ const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
 
 const HTTPClient = bun.http;
 const NewHTTPContext = HTTPClient.NewHTTPContext;
-
-const H2 = @import("../H2Client.zig");
-const Stream = @import("./Stream.zig");
-const dispatch = @import("./dispatch.zig");
-const encode = @import("./encode.zig");
-const local_initial_window_size = H2.local_initial_window_size;

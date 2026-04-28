@@ -558,14 +558,14 @@ pub fn errorCodeFor(err: anyerror) wire.ErrorCode {
 
 const log = bun.Output.scoped(.h2_client, .hidden);
 
+const ClientSession = @import("./ClientSession.zig");
+const Stream = @import("./Stream.zig");
 const std = @import("std");
 const wire = @import("../H2FrameParser.zig");
 
-const bun = @import("bun");
-const strings = bun.strings;
-
 const H2 = @import("../H2Client.zig");
-const ClientSession = @import("./ClientSession.zig");
-const Stream = @import("./Stream.zig");
 const local_max_header_list_size = H2.local_max_header_list_size;
 const write_buffer_control_limit = H2.write_buffer_control_limit;
+
+const bun = @import("bun");
+const strings = bun.strings;

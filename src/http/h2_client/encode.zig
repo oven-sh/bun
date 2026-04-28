@@ -240,18 +240,17 @@ pub fn encodeHpackTableSizeUpdate(encoded: *std.ArrayListUnmanaged(u8), value: u
     encoded.appendAssumeCapacity(@as(u8, @truncate(rest)));
 }
 
+const ClientSession = @import("./ClientSession.zig");
+const Stream = @import("./Stream.zig");
 const std = @import("std");
 const wire = @import("../H2FrameParser.zig");
 
-const bun = @import("bun");
-const picohttp = bun.picohttp;
-const strings = bun.strings;
-
-const HTTPClient = bun.http;
-
 const H2 = @import("../H2Client.zig");
-const ClientSession = @import("./ClientSession.zig");
-const Stream = @import("./Stream.zig");
 const local_initial_window_size = H2.local_initial_window_size;
 const local_max_header_list_size = H2.local_max_header_list_size;
 const write_buffer_high_water = H2.write_buffer_high_water;
+
+const bun = @import("bun");
+const HTTPClient = bun.http;
+const picohttp = bun.picohttp;
+const strings = bun.strings;

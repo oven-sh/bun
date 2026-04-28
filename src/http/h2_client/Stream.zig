@@ -66,12 +66,11 @@ pub fn rst(this: *@This(), code: wire.ErrorCode) void {
     this.session.writeFrame(.HTTP_FRAME_RST_STREAM, 0, this.id, std.mem.asBytes(&value));
 }
 
+const ClientSession = @import("./ClientSession.zig");
+const H2 = @import("../H2Client.zig");
 const std = @import("std");
 const wire = @import("../H2FrameParser.zig");
 
 const bun = @import("bun");
-const picohttp = bun.picohttp;
-
-const H2 = @import("../H2Client.zig");
-const ClientSession = @import("./ClientSession.zig");
 const HTTPClient = bun.http;
+const picohttp = bun.picohttp;

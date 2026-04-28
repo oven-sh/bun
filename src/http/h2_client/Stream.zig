@@ -36,13 +36,13 @@ headers_end_stream: bool = false,
 awaiting_continue: bool = false,
 fatal_error: ?anyerror = null,
 /// DATA bytes received since the last per-stream WINDOW_UPDATE. For
-/// buffering consumers (`response_body_streaming` false) this alone drives
-/// the credit; for streaming consumers it is the ceiling on what
+/// consumers without `body_consumption_tracked` set this alone drives the
+/// credit; for tracked consumers it is the ceiling on what
 /// `consumed_bytes` may release.
 unacked_bytes: u32 = 0,
 /// Bytes the JS `ReadableStream` reader has actually drained, reported via
 /// `scheduleResponseBodyConsumed`. Only consulted when
-/// `response_body_streaming` is true; `replenishWindow` credits
+/// `body_consumption_tracked` is true; `replenishWindow` credits
 /// `min(consumed_bytes, unacked_bytes)` so a stalled reader withholds the
 /// per-stream window and a compressed body can't over-credit.
 consumed_bytes: u32 = 0,

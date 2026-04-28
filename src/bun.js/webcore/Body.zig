@@ -1041,6 +1041,19 @@ pub const Value = union(Tag) {
             .globalThis = globalThis,
         });
 
+        if (locked.onStreamCancelled) |onCancelled| {
+            if (locked.task) |task| {
+                reader.cancel_handler = onCancelled;
+                reader.cancel_ctx = task;
+            }
+        }
+        if (locked.onStreamConsumed) |onConsumed| {
+            if (locked.task) |task| {
+                reader.drain_handler = onConsumed;
+                reader.drain_ctx = task;
+            }
+        }
+
         reader.context.setup();
 
         if (drain_result == .estimated_size) {

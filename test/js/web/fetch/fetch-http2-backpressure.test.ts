@@ -243,4 +243,43 @@ describe("fetch() over HTTP/2 — per-stream receive-window backpressure", () =>
       },
     );
   }, 30_000);
+
+  test("reader.cancel() falls back to receipt-based per-stream WINDOW_UPDATE", async () => {
+    // `ignoreRemainingResponseBody()` (reader.cancel / Response GC) flips
+    // `response_body_streaming` on so the HTTP thread stops buffering,
+    // then clears the ByteStream's drain_handler. If the consumption gate
+    // keyed off `response_body_streaming`, `consumed_bytes` would stay 0
+    // forever and the abandoned body would wedge the stream at the
+    // initial window. It keys off `body_consumption_tracked` instead,
+    // which `ignoreRemainingResponseBody` disarms — so the per-stream
+    // credit reverts to receipt-based and the body keeps draining.
+    let conn!: RawConn;
+    const { promise: opened, resolve: markOpened } = Promise.withResolvers<void>();
+    await withRawH2Server(
+      (c, id) => {
+        conn = c;
+        c.headers(id, hpackStatus200);
+        markOpened();
+      },
+      async (url, state) => {
+        await using proc = spawnFetch(`
+          const res = await fetch("${url}", { tls: { rejectUnauthorized: false } });
+          const reader = res.body.getReader();
+          await reader.cancel();
+          process.stdout.write("cancelled\\n");
+          await new Promise(() => {});
+        `);
+        const waitFor = lineReader(proc.stdout);
+        await waitFor("cancelled");
+        await opened;
+        await floodData(conn, 1);
+        const perStream = state.windowUpdates.filter(w => w.id === 1);
+        // Receipt-based: 12 MiB received crosses the 8 MiB threshold.
+        expect(perStream.length).toBeGreaterThanOrEqual(1);
+        conn.socket.destroy();
+        proc.kill();
+        await proc.exited;
+      },
+    );
+  }, 30_000);
 });

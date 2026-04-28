@@ -2,6 +2,15 @@ const Signals = @This();
 
 header_progress: ?*std.atomic.Value(bool) = null,
 response_body_streaming: ?*std.atomic.Value(bool) = null,
+/// Distinct from `response_body_streaming`: set only while a JS consumer
+/// is wired to report drained bytes via `scheduleResponseBodyConsumed`.
+/// `response_body_streaming` is also set by paths that never report
+/// consumption (S3 streaming download, abandoned bodies via
+/// `ignoreRemainingResponseBody`); gating flow-control on that would
+/// deadlock those streams. The h2 client uses this signal — not
+/// `response_body_streaming` — to decide whether per-stream WINDOW_UPDATE
+/// should be consumption-gated or receipt-based.
+body_consumption_tracked: ?*std.atomic.Value(bool) = null,
 aborted: ?*std.atomic.Value(bool) = null,
 cert_errors: ?*std.atomic.Value(bool) = null,
 upgraded: ?*std.atomic.Value(bool) = null,
@@ -12,6 +21,7 @@ pub fn isEmpty(this: *const Signals) bool {
 pub const Store = struct {
     header_progress: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     response_body_streaming: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    body_consumption_tracked: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     aborted: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     cert_errors: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     upgraded: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
@@ -19,6 +29,7 @@ pub const Store = struct {
         return .{
             .header_progress = &this.header_progress,
             .response_body_streaming = &this.response_body_streaming,
+            .body_consumption_tracked = &this.body_consumption_tracked,
             .aborted = &this.aborted,
             .cert_errors = &this.cert_errors,
             .upgraded = &this.upgraded,

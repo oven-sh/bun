@@ -402,14 +402,17 @@ fn replenishWindow(this: *ClientSession) void {
     while (it.next()) |e| {
         const s = e.value_ptr.*;
         if (s.remoteClosed()) continue;
-        // Streaming consumer (`res.body.getReader()`): credit only what JS
-        // has actually drained, clamped to wire bytes received so a
+        // `body_consumption_tracked` is set only while a JS consumer is
+        // reporting drained bytes via `scheduleResponseBodyConsumed`
+        // (fetch `res.body` with a `drain_handler` wired). It is *not*
+        // set for buffering consumers (`await res.text()`), S3 streaming
+        // downloads, or once the body is abandoned via
+        // `ignoreRemainingResponseBody` — those stay receipt-based so
+        // the transfer completes. When tracked, credit only what JS has
+        // actually drained, clamped to wire bytes received so a
         // decompressed body can't inflate the window past what was sent.
-        // Buffering consumers (`await res.text()` etc.) keep receipt-based
-        // crediting — the whole body is going into memory regardless, so
-        // withholding the window just slows the transfer.
-        const streaming = if (s.client) |c| c.signals.get(.response_body_streaming) else false;
-        const avail: u32 = if (streaming) @min(s.consumed_bytes, s.unacked_bytes) else s.unacked_bytes;
+        const tracked = if (s.client) |c| c.signals.get(.body_consumption_tracked) else false;
+        const avail: u32 = if (tracked) @min(s.consumed_bytes, s.unacked_bytes) else s.unacked_bytes;
         if (avail >= threshold) {
             this.writeWindowUpdate(s.id, @intCast(avail));
             s.unacked_bytes -= avail;

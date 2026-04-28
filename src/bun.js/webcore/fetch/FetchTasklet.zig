@@ -872,6 +872,12 @@ pub const FetchTasklet = struct {
 
         if (this.http) |http_| {
             http_.enableResponseBodyStreaming();
+            // Both Body.toReadableStream and Body.tee wire `drain_handler`
+            // on the ByteStream they construct after this returns, so
+            // `scheduleResponseBodyConsumed` will fire for every reader
+            // pull. Arm the signal so the HTTP/2 client gates per-stream
+            // WINDOW_UPDATE on those reports instead of on receipt.
+            this.signal_store.body_consumption_tracked.store(true, .release);
 
             // If the server sent the headers and the response body in two separate socket writes
             // and if the server doesn't close the connection by itself
@@ -1011,6 +1017,22 @@ pub const FetchTasklet = struct {
         // without a stream ref, response body or response instance alive it will just ignore the result
         if (this.http) |http_| {
             http_.enableResponseBodyStreaming();
+        }
+        // `drain_handler` is about to be cleared and incoming chunks will
+        // be dropped without ever reaching the ByteStream, so no more
+        // `scheduleResponseBodyConsumed` reports. Disarm the tracking
+        // signal so the HTTP/2 client falls back to receipt-based
+        // per-stream WINDOW_UPDATE and the abandoned body can drain
+        // instead of stalling the stream at the initial window. The
+        // sentinel consume message both wakes the HTTP thread (so
+        // `replenishWindow` re-runs — its only other trigger is inbound
+        // DATA, and a server that has exhausted the window sends none)
+        // and saturates `consumed_bytes` to `unacked_bytes` so the first
+        // re-run releases whatever is already outstanding regardless of
+        // which order the atomic store and the queue drain land in.
+        this.signal_store.body_consumption_tracked.store(false, .release);
+        if (this.http) |http_| {
+            bun.http.http_thread.scheduleResponseBodyConsumed(http_.async_http_id, std.math.maxInt(u32));
         }
         // we should not keep the process alive if we are ignoring the body
         const vm = this.javascript_vm;

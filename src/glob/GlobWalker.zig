@@ -354,6 +354,11 @@ pub fn GlobWalker_(
         /// descend into a directory symlink if the pattern segment naming it
         /// is a literal (no wildcards). Leaves pure-wildcard descent blocked.
         descend_literal_symlinks: bool = false,
+        /// Node `fs.glob` returns an empty match set when the cwd doesn't
+        /// exist, names a file rather than a directory, or traverses a
+        /// symlink cycle. `Bun.Glob` defaults to throwing — set this when
+        /// you want the Node-flavored silent-empty behavior instead.
+        swallow_missing_cwd: bool = false,
         error_on_broken_symlinks: bool = false,
         only_files: bool = true,
 
@@ -525,7 +530,20 @@ pub fn GlobWalker_(
                 @memcpy(path_buf[0..root_path.len], root_path[0..root_path.len]);
                 path_buf[root_path.len] = 0;
                 const cwd_fd = switch (try Accessor.open(path_buf[0..root_path.len :0])) {
-                    .err => |err| return .{ .err = this.walker.handleSysErrWithPath(err, @ptrCast(path_buf[0 .. root_path.len + 1])) },
+                    .err => |err| {
+                        // Missing / non-directory / cyclic cwd: Node's `fs.glob`
+                        // returns `[]` rather than throwing. Emit nothing and
+                        // wind the iterator straight to completion when the
+                        // caller opted in.
+                        if (this.walker.swallow_missing_cwd) {
+                            const errno = err.getErrno();
+                            if (errno == bun.sys.E.NOENT or errno == bun.sys.E.NOTDIR or errno == bun.sys.E.LOOP) {
+                                this.iter_state = .get_next;
+                                return .success;
+                            }
+                        }
+                        return .{ .err = this.walker.handleSysErrWithPath(err, @ptrCast(path_buf[0 .. root_path.len + 1])) };
+                    },
                     .result => |fd| fd,
                 };
 

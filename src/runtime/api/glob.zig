@@ -15,6 +15,7 @@ const ScanOpts = struct {
     only_files: bool,
     follow_symlinks: bool,
     descend_literal_symlinks: bool,
+    swallow_missing_cwd: bool,
     error_on_broken_symlinks: bool,
 
     fn parseCWD(globalThis: *JSGlobalObject, allocator: std.mem.Allocator, cwdVal: jsc.JSValue, absolute: bool, comptime fnName: string) bun.JSError![]const u8 {
@@ -71,6 +72,7 @@ const ScanOpts = struct {
             .absolute = false,
             .follow_symlinks = false,
             .descend_literal_symlinks = false,
+            .swallow_missing_cwd = false,
             .error_on_broken_symlinks = false,
             .only_files = true,
         };
@@ -106,6 +108,14 @@ const ScanOpts = struct {
         // `node:fs.glob` layer; not part of the public Bun.Glob API surface.
         if (try optsObj.getTruthy(globalThis, "descendLiteralSymlinks")) |descendVal| {
             out.descend_literal_symlinks = if (descendVal.isBoolean()) descendVal.asBoolean() else false;
+        }
+
+        // Node `fs.glob` compatibility: when the cwd is missing, a regular
+        // file, or a symlink cycle, Node returns `[]` instead of throwing.
+        // The public Bun.Glob default is to throw; this flag opts into the
+        // silent-empty behavior. Used by the `node:fs.glob` layer only.
+        if (try optsObj.getTruthy(globalThis, "swallowMissingCwd")) |swallowVal| {
+            out.swallow_missing_cwd = if (swallowVal.isBoolean()) swallowVal.asBoolean() else false;
         }
 
         if (try optsObj.getTruthy(globalThis, "absolute")) |absoluteVal| {
@@ -251,6 +261,7 @@ fn makeGlobWalker(
             else => {},
         }
         globWalker.descend_literal_symlinks = matchOpts.descend_literal_symlinks;
+        globWalker.swallow_missing_cwd = matchOpts.swallow_missing_cwd;
         return globWalker;
     }
 
@@ -269,6 +280,7 @@ fn makeGlobWalker(
         else => {},
     }
     globWalker.descend_literal_symlinks = matchOpts.descend_literal_symlinks;
+    globWalker.swallow_missing_cwd = matchOpts.swallow_missing_cwd;
     return globWalker;
 }
 

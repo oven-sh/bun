@@ -14,16 +14,6 @@ interface GlobOptions {
   withFileTypes?: boolean;
 }
 
-// When `fs.glob`'s cwd is missing, names a file, or traverses a symlink
-// cycle, Node returns an empty match set rather than throwing. `Bun.Glob`
-// throws. Catch only those three codes here and swallow them — anything
-// else (including errors from a user-provided `exclude` callback) must
-// propagate.
-function isMissingPath(err: unknown): boolean {
-  const code = (err as any)?.code;
-  return code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP";
-}
-
 async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGenerator<string> {
   const patterns = validatePattern(pattern);
   const globOptions = mapOptions(options || {});
@@ -33,25 +23,7 @@ async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGe
     : null;
 
   for (const pat of patterns) {
-    let iter: AsyncIterator<string>;
-    try {
-      iter = new Bun.Glob(pat).scan(globOptions)[Symbol.asyncIterator]();
-    } catch (err) {
-      if (isMissingPath(err)) continue;
-      throw err;
-    }
-    // Narrow the try/catch to the scanner — `exclude()` below throwing
-    // must propagate, it shouldn't be mistaken for a scanner ENOENT.
-    while (true) {
-      let step: IteratorResult<string>;
-      try {
-        step = await iter.next();
-      } catch (err) {
-        if (isMissingPath(err)) break;
-        throw err;
-      }
-      if (step.done) break;
-      const ent = step.value;
+    for await (const ent of new Bun.Glob(pat).scan(globOptions)) {
       if (typeof exclude === "function") {
         if (exclude(ent)) continue;
       } else if (excludeGlobs) {
@@ -74,17 +46,7 @@ function* globSync(pattern: string | string[], options?: GlobOptions): Generator
     : null;
 
   for (const pat of patterns) {
-    // `scanSync` walks eagerly, so any ENOENT/ENOTDIR/ELOOP from opening
-    // cwd lands here and is caught; the iteration loop below only sees
-    // user-thrown errors from `exclude`, which should propagate.
-    let iter: Iterable<string>;
-    try {
-      iter = new Bun.Glob(pat).scanSync(globOptions);
-    } catch (err) {
-      if (isMissingPath(err)) continue;
-      throw err;
-    }
-    for (const ent of iter) {
+    for (const ent of new Bun.Glob(pat).scanSync(globOptions)) {
       if (typeof exclude === "function") {
         if (exclude(ent)) continue;
       } else if (excludeGlobs) {
@@ -111,13 +73,18 @@ function validatePattern(pattern: string | string[]): string[] {
   return [isWindows ? pattern.replaceAll("/", sep) : pattern];
 }
 
-// `descendLiteralSymlinks` is an internal `Bun.Glob` scan option (see
-// `src/bun.js/api/glob.zig`) — not part of the public `GlobScanOptions`
-// type, only consumed by `node:fs.glob`. Widen the return type locally so
-// the object literal below typechecks without exposing the knob publicly.
+// `descendLiteralSymlinks` / `swallowMissingCwd` are internal `Bun.Glob`
+// scan options (see `src/bun.js/api/glob.zig`) that the `node:fs.glob`
+// layer uses to pick up Node-compatible semantics. They aren't part of
+// the public `GlobScanOptions` type; widen the return type locally so
+// the object literal below typechecks without exposing the knobs.
 function mapOptions(
   options: GlobOptions,
-): GlobScanOptions & { exclude: GlobOptions["exclude"]; descendLiteralSymlinks: boolean } {
+): GlobScanOptions & {
+  exclude: GlobOptions["exclude"];
+  descendLiteralSymlinks: boolean;
+  swallowMissingCwd: boolean;
+} {
   validateObject(options, "options");
 
   let exclude = options.exclude ?? no;
@@ -145,6 +112,10 @@ function mapOptions(
     // so e.g. `link/*.txt` with `link` a symlinked directory keeps working.
     followSymlinks: false,
     descendLiteralSymlinks: true,
+    // Node's `fs.glob` returns `[]` rather than throwing when the cwd is
+    // missing, is a regular file, or hits a symlink cycle — let the walker
+    // handle that natively.
+    swallowMissingCwd: true,
     // https://github.com/oven-sh/bun/issues/20507
     onlyFiles: false,
     exclude,

@@ -12,6 +12,9 @@ pub var async_http_id_monotonic: std.atomic.Value(u32) = std.atomic.Value(u32).i
 /// Set once at startup from `--experimental-http2-fetch` (before the HTTP
 /// thread spawns) and then only read on that thread, so no atomics needed.
 pub var experimental_http2_client_from_cli: bool = false;
+/// Set once at startup from `--experimental-http3-fetch`. Same threading
+/// rules as the http2 flag.
+pub var experimental_http3_client_from_cli: bool = false;
 
 const MAX_REDIRECT_URL_LENGTH = 128 * 1024;
 
@@ -226,6 +229,20 @@ pub fn canOfferH2(client: *const HTTPClient) bool {
 pub fn alpnOffer(client: *const HTTPClient) BoringSSL.SSL.AlpnOffer {
     if (!client.canOfferH2()) return .h1;
     return if (client.flags.force_http2) .h2_only else .h1_or_h2;
+}
+
+/// Whether the experimental Alt-Svc-driven HTTP/3 upgrade is enabled and this
+/// request shape is eligible for it (HTTPS, no proxy/unix-socket, no sendfile,
+/// not pinned to a specific protocol). When true, `start_()` consults
+/// `H3.AltSvc.lookup` before opening TCP.
+pub fn canTryH3AltSvc(client: *const HTTPClient) bool {
+    if (client.flags.force_http1 or client.flags.force_http2) return false;
+    if (client.http_proxy != null) return false;
+    if (client.flags.is_preconnect_only) return false;
+    if (client.unix_socket_path.length() > 0) return false;
+    if (client.state.original_request_body == .sendfile) return false;
+    return experimental_http3_client_from_cli or
+        bun.feature_flag.BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT.get();
 }
 
 pub fn firstCall(
@@ -1177,6 +1194,18 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
         if (this.flags.force_http2) {
             this.fail(error.HTTP2Unsupported);
             return;
+        }
+    }
+
+    if (comptime is_ssl) {
+        // Opportunistic Alt-Svc upgrade: a previous response from this origin
+        // advertised `h3`, and the experimental flag is on. This goes through
+        // the same engine as `protocol: "http3"` so retry/fallback semantics
+        // are shared.
+        if (!this.flags.force_http3 and this.canTryH3AltSvc()) {
+            if (H3.AltSvc.lookup(this.url.hostname, this.url.getPortAuto())) |_| {
+                this.flags.force_http3 = true;
+            }
         }
     }
 
@@ -2802,6 +2831,11 @@ pub fn handleResponseMetadata(
             },
             hashHeaderConst("Last-Modified") => {
                 pretend_304 = this.flags.force_last_modified and response.status_code > 199 and response.status_code < 300 and this.if_modified_since.len > 0 and strings.eql(this.if_modified_since, header.value);
+            },
+            hashHeaderConst("Alt-Svc") => {
+                if (this.isHTTPS() and this.canTryH3AltSvc()) {
+                    H3.AltSvc.record(this.url.hostname, this.url.getPortAuto(), header.value);
+                }
             },
 
             else => {},

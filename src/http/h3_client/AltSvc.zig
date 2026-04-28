@@ -82,8 +82,28 @@ const Record = struct {
 
 var cache: bun.StringHashMapUnmanaged(Record) = .{};
 
+/// Hard cap on cached origins. When reached, `record()` first sweeps expired
+/// entries and then refuses the new insert if still full — bounded memory for
+/// long-lived processes that hit many distinct origins.
+const max_entries = 256;
+
 fn key(buf: []u8, hostname: []const u8, port: u16) []const u8 {
-    return std.fmt.bufPrint(buf, "{s}:{d}", .{ hostname, port }) catch buf;
+    // Callers guard `hostname.len > 256` against a `256+8` buffer, and a u16
+    // port is at most 5 digits + ':' — bufPrint cannot overflow.
+    return std.fmt.bufPrint(buf, "{s}:{d}", .{ hostname, port }) catch unreachable;
+}
+
+fn sweepExpired(now: i64) void {
+    var it = cache.iterator();
+    while (it.next()) |kv| {
+        if (now >= kv.value_ptr.expires_at) {
+            const owned = kv.key_ptr.*;
+            cache.removeByPtr(kv.key_ptr);
+            bun.default_allocator.free(owned);
+            // Unmanaged hash-map iteration is not removal-safe; restart.
+            it = cache.iterator();
+        }
+    }
 }
 
 /// Remember (or refresh / clear) the h3 alternative for `origin_host:origin_port`
@@ -101,13 +121,18 @@ pub fn record(origin_host: []const u8, origin_port: u16, field_value: []const u8
         return;
     } orelse return;
 
+    const now = std.time.timestamp();
+    if (cache.count() >= max_entries and !cache.contains(k)) {
+        sweepExpired(now);
+        if (cache.count() >= max_entries) return;
+    }
     const gop = bun.handleOom(cache.getOrPut(bun.default_allocator, k));
     if (!gop.found_existing) {
         gop.key_ptr.* = bun.handleOom(bun.default_allocator.dupe(u8, k));
     }
     gop.value_ptr.* = .{
         .h3_port = entry.port,
-        .expires_at = std.time.timestamp() + @as(i64, entry.ma),
+        .expires_at = now + @as(i64, entry.ma),
     };
     log("alt-svc h3 {s} -> :{d} ma={d}", .{ k, entry.port, entry.ma });
 }

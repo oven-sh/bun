@@ -1,14 +1,16 @@
 // node:sqlite — native implementation of Node.js's `node:sqlite` module.
 //
-// This shares the bundled sqlite3 amalgamation with bun:sqlite
-// (JSSQLStatement.cpp) but exposes Node.js's DatabaseSync / StatementSync
-// API shape and error semantics.
+// This uses the bundled sqlite3 amalgamation (sqlite3_local.h / sqlite3.c)
+// on all platforms, matching Node.js which always bundles its own SQLite.
+// Unlike bun:sqlite, it does not participate in macOS's LAZY_LOAD_SQLITE
+// dlopen path — node:sqlite users expect Node's bundled-SQLite semantics
+// (and functions like sqlite3_changes64 that older system libraries lack).
 //
 // Reference: https://github.com/nodejs/node/blob/main/src/node_sqlite.cc
 #pragma once
 
 #include "root.h"
-#include "JSSQLStatement.h"
+#include "sqlite3_local.h"
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/InternalFunction.h>
 #include <wtf/HashMap.h>

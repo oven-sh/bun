@@ -996,6 +996,7 @@ pub fn transformSync(
     this.transpiler.setAllocator(allocator);
     this.transpiler.macro_context = null;
     var log = logger.Log.init(arena.backingAllocator());
+    defer log.deinit();
     log.level = this.config.log.level;
     this.transpiler.setLog(&log);
 

@@ -229,6 +229,7 @@ pub const ResolveMessage = struct {
         if (this.referrer) |referrer| {
             this.allocator.free(referrer.text);
         }
+        this.allocator.destroy(this);
     }
 };
 

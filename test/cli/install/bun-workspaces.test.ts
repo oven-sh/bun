@@ -731,7 +731,7 @@ describe("relative tarballs", async () => {
         });
       }
     }
-  }, 60_000);
+  });
 });
 
 test("$npm_package_config_ works in root", async () => {

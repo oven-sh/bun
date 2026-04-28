@@ -8,6 +8,8 @@
 //! `onDNSResolved` runs. The `quic.PendingConnect` C handle is consumed by
 //! exactly one of `resolved()` or `cancel()`.
 
+const PendingConnect = @This();
+
 session: *ClientSession,
 pc: *quic.PendingConnect,
 loop_ptr: *uws.Loop,
@@ -84,10 +86,10 @@ pub fn failSession(session: *ClientSession, err: anyerror) void {
 var resolved_mutex: bun.Mutex = .{};
 var resolved_head: ?*PendingConnect = null;
 
-const PendingConnect = @This();
-
 const bun = @import("bun");
-const uws = bun.uws;
-const quic = uws.quic;
+
 const H3 = bun.http.H3;
 const ClientSession = H3.ClientSession;
+
+const uws = bun.uws;
+const quic = uws.quic;

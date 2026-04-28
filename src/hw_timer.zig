@@ -28,8 +28,7 @@ pub inline fn readCounter() u64 {
     if (comptime Environment.isAarch64) {
         return asm volatile ("mrs %[ret], CNTVCT_EL0"
             : [ret] "=r" (-> u64),
-            :
-            : .{ .memory = true });
+        );
     }
     if (comptime Environment.isX64) {
         var hi: u32 = undefined;
@@ -95,8 +94,7 @@ fn readFrequency() u64 {
         // Architectural register; always populated.
         return asm volatile ("mrs %[ret], CNTFRQ_EL0"
             : [ret] "=r" (-> u64),
-            :
-            : .{ .memory = true });
+        );
     }
 
     if (comptime Environment.isX64) {

@@ -201,6 +201,18 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
 }
 
 /**
+ * Convert a Windows path to a POSIX path for MSYS/Git Bash tools.
+ *
+ * MSYS tar interprets "C:\..." or "C:/..." as a remote path (treating "C" as
+ * the host). Backslashes are replaced with forward slashes, then the drive
+ * letter prefix ("C:/") is converted to the MSYS mount point ("/c/").
+ * No-op on paths that are already POSIX (no drive letter).
+ */
+function msysPath(p: string): string {
+  return p.replace(/\\/g, "/").replace(/^([A-Za-z]):\//, (_, d) => `/${d.toLowerCase()}/`);
+}
+
+/**
  * Extract a .tar.gz archive with mtime normalization.
  *
  * `--strip-components=1` removes the top-level dir (github archives always
@@ -218,7 +230,7 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
  *   has `bun-webkit/` that the caller wants to keep for a rename step).
  */
 export async function extractTarGz(tarball: string, dest: string, stripComponents = 1): Promise<void> {
-  const args = ["-xzmf", tarball, "-C", dest];
+  const args = ["-xzmf", msysPath(tarball), "-C", msysPath(dest)];
   if (stripComponents > 0) args.push(`--strip-components=${stripComponents}`);
 
   const result = spawnSync(tarExe, args, {
@@ -233,7 +245,31 @@ export async function extractTarGz(tarball: string, dest: string, stripComponent
     });
   }
   if (result.status !== 0) {
-    throw new BuildError(`tar extraction failed (exit ${result.status}): ${result.stderr}`, { file: tarball });
+    // On Windows, creating symlinks requires Developer Mode or elevated privileges.
+    // Tarballs may include symlinks (e.g. zstd's test binaries) that fail to extract,
+    // but the source files the build needs are still present. Treat symlink-only
+    // failures as warnings rather than hard errors.
+    if (process.platform === "win32") {
+      const fatalLines = result.stderr
+        .split("\n")
+        .filter(
+          l =>
+            l.trim() &&
+            !l.includes("Cannot create symlink") &&
+            !l.includes("Exiting with failure status due to previous errors"),
+        );
+      if (fatalLines.length === 0) {
+        // Only symlink failures — source files were extracted, continue.
+        console.warn(
+          `warning: tar extraction of ${tarball} had symlink-only failures (symlinks require Developer Mode or elevated privileges on Windows); continuing anyway.\n` +
+            result.stderr.trimEnd(),
+        );
+      } else {
+        throw new BuildError(`tar extraction failed (exit ${result.status}): ${result.stderr}`, { file: tarball });
+      }
+    } else {
+      throw new BuildError(`tar extraction failed (exit ${result.status}): ${result.stderr}`, { file: tarball });
+    }
   }
 
   const entries = await readdir(dest);

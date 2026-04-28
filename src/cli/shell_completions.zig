@@ -19,7 +19,11 @@ pub const Shell = enum {
     }
 
     pub fn fromEnv(comptime Type: type, SHELL: Type) Shell {
-        const basename = std.fs.path.basename(SHELL);
+        // std.fs.path.basename only splits on '\' on Windows, so Unix-style
+        // paths like "/usr/bin/bash" (set by Git Bash) return the full string.
+        // Handle both separators and strip any ".exe" extension.
+        const after_sep = if (std.mem.lastIndexOfAny(u8, SHELL, "/\\")) |i| SHELL[i + 1 ..] else SHELL;
+        const basename = if (strings.hasSuffixComptime(after_sep, ".exe")) after_sep[0 .. after_sep.len - 4] else after_sep;
         if (strings.eqlComptime(basename, "bash")) {
             return .bash;
         } else if (strings.eqlComptime(basename, "zsh")) {

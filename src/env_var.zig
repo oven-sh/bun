@@ -124,7 +124,7 @@ pub const PATH = New(kind.string, "PATH", .{});
 pub const REPL_ID = New(kind.boolean, "REPL_ID", .{ .default = false });
 pub const RUNNER_DEBUG = New(kind.boolean, "RUNNER_DEBUG", .{ .default = false });
 pub const SDKROOT = PlatformSpecificNew(kind.string, "SDKROOT", null, .{});
-pub const SHELL = PlatformSpecificNew(kind.string, "SHELL", null, .{});
+pub const SHELL = PlatformSpecificNew(kind.string, "SHELL", "SHELL", .{});
 /// C:\Windows, for example.
 /// Note: Do not use this variable directly -- use os.zig's implementation instead.
 pub const SYSTEMROOT = PlatformSpecificNew(kind.string, null, "SYSTEMROOT", .{});

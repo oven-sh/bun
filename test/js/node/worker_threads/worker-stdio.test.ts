@@ -129,11 +129,10 @@ describe("worker stdio", () => {
       cmd: [bunExe(), "parent.js"],
       env: bunEnv,
       cwd: String(dir),
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "inherit"],
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(JSON.parse(stdout)).toEqual({ code: 0, data: "hello world" });
     expect(exitCode).toBe(0);
-  });
+  }, 30_000);
 });

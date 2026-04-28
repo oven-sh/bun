@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { DatabaseSync, StatementSync, constants } from "node:sqlite";
 import { isBuiltin } from "node:module";
 import path from "node:path";
+import { DatabaseSync, StatementSync, constants } from "node:sqlite";
 
 test("node:sqlite is a built-in module", () => {
   expect(isBuiltin("node:sqlite")).toBe(true);

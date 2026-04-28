@@ -6,12 +6,7 @@
 // core DatabaseSync / StatementSync API used by most applications works.
 
 const { Database: BunDatabase } = require("../bun/sqlite.ts");
-const {
-  validateObject,
-  validateBoolean,
-  validateString,
-  validateInt32,
-} = require("internal/validators");
+const { validateObject, validateBoolean, validateString, validateInt32 } = require("internal/validators");
 const { throwNotImplemented } = require("internal/shared");
 
 const ObjectKeys = Object.keys;
@@ -386,9 +381,7 @@ class DatabaseSync {
   enableLoadExtension(allow) {
     validateBoolean(allow, "allow");
     if (allow && !this.#allowExtension) {
-      throw ERR_INVALID_STATE(
-        "Cannot enable extension loading because it was disabled at database creation time",
-      );
+      throw ERR_INVALID_STATE("Cannot enable extension loading because it was disabled at database creation time");
     }
     return undefined;
   }

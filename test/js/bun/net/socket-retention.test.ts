@@ -238,8 +238,9 @@ test.skipIf(!isDebug)(
     }
 
     for (let i = 0; i < 5; i++) await round();
-    // Let the deferred .Close tasks drain.
-    for (let i = 0; i < 5; i++) { Bun.gc(true); await Bun.sleep(5); }
+    // Let the deferred .Close tasks drain — they are next-tick work, so a
+    // macrotask barrier is sufficient; no wall-clock wait needed.
+    for (let i = 0; i < 5; i++) { Bun.gc(true); await Bun.sleep(0); }
     server.stop(true);
   `;
 

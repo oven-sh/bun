@@ -164,17 +164,17 @@ fn onHandshake(this: *HTTPClient, handshake_success: bool, ssl_error: uws.us_bun
                     .ssl => |socket| {
                         if (!this.checkServerIdentity(true, socket, handshake_error, ssl_ptr, false)) {
                             log("ProxyTunnel onHandshake checkServerIdentity failed", .{});
-                            this.flags.did_have_handshaking_error = true;
-
-                            this.unregisterAbortTracker();
+                            // checkServerIdentity already called closeAndFail()
+                            // → fail() → result callback, which may have
+                            // destroyed the AsyncHTTP that embeds `this`. Do not
+                            // touch `this` after a `false` return.
                             return;
                         }
                     },
                     .tcp => |socket| {
                         if (!this.checkServerIdentity(false, socket, handshake_error, ssl_ptr, false)) {
                             log("ProxyTunnel onHandshake checkServerIdentity failed", .{});
-                            this.flags.did_have_handshaking_error = true;
-                            this.unregisterAbortTracker();
+                            // see .ssl arm — `this` may be freed here.
                             return;
                         }
                     },

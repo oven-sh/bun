@@ -1710,8 +1710,9 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
     }
 
     // Functions (including classes) become mock.fn() returning undefined.
-    // We still mock their own properties so that static methods such as
-    // `MyClass.someStatic()` are mocks too.
+    // We still walk their own properties so that static methods such as
+    // `MyClass.someStatic()` are mocks, and we walk `.prototype` so that
+    // `MyClass.prototype.method` is a mock too.
     if (value.isCallable()) {
         JSObject* mockFn = createAutoMockedFunction(lexicalGlobalObject, value);
         RETURN_IF_EXCEPTION(scope, {});
@@ -1729,7 +1730,8 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
         }
 
         for (auto& name : names) {
-            // Skip built-in function properties.
+            // Skip built-in function properties. `.prototype` is handled
+            // separately below so we can mock instance methods too.
             if (name == vm.propertyNames->length
                 || name == vm.propertyNames->name
                 || name == vm.propertyNames->prototype
@@ -1737,8 +1739,19 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
                 || name == vm.propertyNames->arguments) {
                 continue;
             }
-            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            JSValue propValue = object->get(lexicalGlobalObject, name);
+            // Detect accessor descriptors up-front so we don't invoke user
+            // getters (which can have side effects) just to walk exports.
+            JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+            bool hasOwn = object->methodTable()->getOwnPropertySlot(object, lexicalGlobalObject, name, slot);
+            if (scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+                continue;
+            }
+            if (!hasOwn || slot.isAccessor() || slot.isCustom()) {
+                continue;
+            }
+
+            JSValue propValue = slot.getValue(lexicalGlobalObject, name);
             if (scope.exception()) [[unlikely]] {
                 (void)scope.tryClearException();
                 continue;
@@ -1751,6 +1764,63 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
             mockFn->putDirect(vm, name, mockedProp, 0);
             if (scope.exception()) [[unlikely]] {
                 (void)scope.tryClearException();
+            }
+        }
+
+        // Walk the original `.prototype` own properties so
+        // `MyMockedClass.prototype.method` comes out as a mock function.
+        // (This is the function's own `prototype` data property — the
+        // [[Prototype]] chain is a separate concept we don't touch.)
+        if (auto originalProto = object->getDirect(vm, vm.propertyNames->prototype); originalProto && originalProto.isObject()) {
+            JSObject* originalProtoObj = originalProto.getObject();
+            // Don't mock Function.prototype or similar shared prototypes —
+            // only mock real class prototypes (distinct per class).
+            if (originalProtoObj != lexicalGlobalObject->functionPrototype()
+                && originalProtoObj != lexicalGlobalObject->objectPrototype()) {
+                JSObject* mockProto = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype());
+                RETURN_IF_EXCEPTION(scope, {});
+
+                JSC::PropertyNameArrayBuilder protoNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+                originalProtoObj->methodTable()->getOwnPropertyNames(originalProtoObj, lexicalGlobalObject, protoNames, DontEnumPropertiesMode::Include);
+                if (scope.exception()) [[unlikely]] {
+                    (void)scope.tryClearException();
+                } else {
+                    for (auto& name : protoNames) {
+                        // Skip the constructor back-pointer — leaving it
+                        // as the real function would defeat the mock, and
+                        // trying to mock it would recurse.
+                        if (name == vm.propertyNames->constructor) continue;
+
+                        JSC::PropertySlot slot(originalProtoObj, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+                        bool hasOwn = originalProtoObj->methodTable()->getOwnPropertySlot(originalProtoObj, lexicalGlobalObject, name, slot);
+                        if (scope.exception()) [[unlikely]] {
+                            (void)scope.tryClearException();
+                            continue;
+                        }
+                        if (!hasOwn || slot.isAccessor() || slot.isCustom()) {
+                            continue;
+                        }
+
+                        JSValue propValue = slot.getValue(lexicalGlobalObject, name);
+                        if (scope.exception()) [[unlikely]] {
+                            (void)scope.tryClearException();
+                            continue;
+                        }
+                        JSValue mockedProp = autoMockValue(lexicalGlobalObject, propValue, visited, depth + 1);
+                        if (scope.exception()) [[unlikely]] {
+                            (void)scope.tryClearException();
+                            continue;
+                        }
+                        mockProto->putDirect(vm, name, mockedProp, 0);
+                        if (scope.exception()) [[unlikely]] {
+                            (void)scope.tryClearException();
+                        }
+                    }
+                    mockFn->putDirect(vm, vm.propertyNames->prototype, mockProto, 0);
+                    if (scope.exception()) [[unlikely]] {
+                        (void)scope.tryClearException();
+                    }
+                }
             }
         }
 
@@ -1788,7 +1858,19 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
 
     for (auto& name : names) {
         auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        JSValue propValue = object->get(lexicalGlobalObject, name);
+        // Use getOwnPropertySlot so we don't invoke user getters (which can
+        // have side effects) just to walk the exports.
+        JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+        bool hasOwn = object->methodTable()->getOwnPropertySlot(object, lexicalGlobalObject, name, slot);
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            continue;
+        }
+        if (!hasOwn || slot.isAccessor() || slot.isCustom()) {
+            continue;
+        }
+
+        JSValue propValue = slot.getValue(lexicalGlobalObject, name);
         if (scope.exception()) [[unlikely]] {
             (void)scope.tryClearException();
             continue;

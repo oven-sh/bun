@@ -850,7 +850,25 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsRequireMock, (JSC::JSGlobalObject 
                 JSObject* result = moduleMock->executeOnce(globalObject);
                 RETURN_IF_EXCEPTION(scope, {});
                 if (result) {
-                    return JSValue::encode(JSValue(result));
+                    // Unwrap any synchronously-settled promise the factory
+                    // returned, matching JSMock__jsModuleMock's handling.
+                    JSValue resultValue = JSValue(result);
+                    while (auto* promise = dynamicDowncast<JSC::JSPromise>(resultValue)) {
+                        switch (promise->status()) {
+                        case JSC::JSPromise::Status::Rejected:
+                            scope.throwException(globalObject, promise->result());
+                            return {};
+                        case JSC::JSPromise::Status::Fulfilled:
+                            resultValue = promise->result();
+                            continue;
+                        case JSC::JSPromise::Status::Pending:
+                            // Can't block synchronously here; surface the
+                            // pending promise as-is so the caller can await.
+                            break;
+                        }
+                        break;
+                    }
+                    return JSValue::encode(resultValue);
                 }
             }
             return JSValue::encode(JSValue(entry));

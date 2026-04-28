@@ -59,11 +59,10 @@ test.skipIf(!isMacOS)(
     function churn() {
       if (i++ >= iterations) {
         stopped = true;
-        // Let any in-flight CF callbacks drain before declaring success.
-        setTimeout(() => {
+        setImmediate(() => {
           console.log("OK " + i + " " + writes);
           process.exit(0);
-        }, 100);
+        });
         return;
       }
       const ws = [];

@@ -1914,8 +1914,13 @@ pub const DuplexUpgradeContext = struct {
     fn onClose(this: *DuplexUpgradeContext) void {
         const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
 
-        if (this.tls) |tls| {
-            tls.onClose(socket, 0, null) catch {};
+        // Clear `tls` before forwarding so the deferred deinit() does not
+        // deref it a second time: TLSSocket.onClose already drops the ref
+        // taken in jsUpgradeDuplexToTLS.
+        const tls = this.tls;
+        this.tls = null;
+        if (tls) |t| {
+            t.onClose(socket, 0, null) catch {};
         }
 
         this.deinitInNextTick();
@@ -1947,7 +1952,7 @@ pub const DuplexUpgradeContext = struct {
                 }
             },
             .Close => {
-                this.upgrade.close();
+                this.deinit();
             },
         }
     }
@@ -1967,8 +1972,12 @@ pub const DuplexUpgradeContext = struct {
             this.tls = null;
             tls.deref();
         }
+        if (this.ssl_config) |*ssl_config| {
+            ssl_config.deinit();
+            this.ssl_config = null;
+        }
         this.upgrade.deinit();
-        this.destroy();
+        bun.destroy(this);
     }
 };
 

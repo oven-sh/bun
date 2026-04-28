@@ -6,7 +6,7 @@
 
 import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tls as tlsCert } from "harness";
 
 test("socket.data setter works inside connectError", async () => {
   // Before the JSRef migration, handleConnectError reset the cached raw
@@ -188,6 +188,74 @@ test.skipIf(isWindows)("upgradeTLS raw + tls wrappers are both collectable after
   const count = await gcUntilCountAtMost("TLSSocket", baseline + 2);
   expect(count).toBeLessThanOrEqual(baseline + 2);
 });
+
+// Debug-only: relies on `[alloc] new/destroy(T)` tracing in bun.new/destroy
+// which is compiled out in release builds.
+test.skipIf(!isDebug)("upgradeDuplexToTLS frees its DuplexUpgradeContext after close", async () => {
+  // tls.connect({socket: <Duplex>}) goes through jsUpgradeDuplexToTLS which
+  // heap-allocates a DuplexUpgradeContext. On close the context enqueues a
+  // .Close task that is supposed to deinit() and bun.destroy() it. Previously
+  // the task only called upgrade.close() — a no-op once UpgradedDuplex.onClose
+  // has already torn the wrapper down — so deinit() was dead code (it even
+  // referenced a nonexistent `this.destroy()`), and every duplex-upgraded
+  // TLS connection leaked one context allocation.
+  //
+  // The leaked struct holds no live JS roots by the time it leaks, so it is
+  // invisible to heapStats().objectTypeCounts. We instead use the debug
+  // allocator log to assert every new(DuplexUpgradeContext) is paired with a
+  // destroy(DuplexUpgradeContext).
+  const script = `
+    const tls = require("node:tls");
+    const net = require("node:net");
+    const { Duplex } = require("node:stream");
+    const { once } = require("node:events");
+
+    const server = Bun.serve({
+      port: 0,
+      tls: ${JSON.stringify(tlsCert)},
+      fetch() { return new Response("ok"); },
+    });
+
+    async function round() {
+      const raw = net.connect({ host: "127.0.0.1", port: server.port });
+      await once(raw, "connect");
+      // Wrap in a plain Duplex so net.ts takes the upgradeDuplexToTLS path
+      // rather than native socket.upgradeTLS.
+      const proxy = new Duplex({
+        write(chunk, enc, cb) { raw.write(chunk, enc, cb); },
+        final(cb) { raw.end(); cb(); },
+        read() {},
+      });
+      raw.on("data", c => proxy.push(c));
+      raw.on("close", () => proxy.push(null));
+      const sock = tls.connect({ socket: proxy, servername: "localhost", rejectUnauthorized: false });
+      await once(sock, "secureConnect");
+      sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+      await once(sock, "close");
+      raw.destroy();
+    }
+
+    for (let i = 0; i < 5; i++) await round();
+    // Let the deferred .Close tasks drain.
+    for (let i = 0; i < 5; i++) { Bun.gc(true); await Bun.sleep(5); }
+    server.stop(true);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: undefined, BUN_DEBUG_alloc: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Output.scoped() writes to stdout; merge both in case that ever changes.
+  const log = stdout + stderr;
+  const created = [...log.matchAll(/\[alloc\] new\(DuplexUpgradeContext\)/g)].length;
+  const destroyed = [...log.matchAll(/\[alloc\] destroy\(DuplexUpgradeContext\)/g)].length;
+  // Sanity: the upgrade path actually ran. Every context must be freed.
+  expect({ created, destroyed }).toEqual({ created: 5, destroyed: 5 });
+  expect(exitCode).toBe(0);
+}, 60_000);
 
 test("node:net reconnect after connectError does not accumulate wrappers", async () => {
   // node:net reuses the same native socket across reconnects. With JSRef,

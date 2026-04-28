@@ -161,6 +161,10 @@ pub fn adopt(this: *ClientSession, client: *HTTPClient) void {
         return;
     }
     this.attach(client);
+    // If attach() poisoned the encoder and left the session empty, release
+    // it now — adopt() callers (keep-alive resume, active-session match)
+    // have no tail maybeRelease of their own.
+    if (this.encoder_poisoned) this.maybeRelease();
 }
 
 /// Park a coalesced request until the server's SETTINGS arrive. Abort
@@ -260,7 +264,10 @@ pub fn attach(this: *ClientSession, client: *HTTPClient) void {
         for (this.pending_attach.items) |c| c.retryAfterH2Coalesce();
         this.pending_attach.clearRetainingCapacity();
         _ = this.flush() catch {};
-        this.maybeRelease();
+        // Do NOT maybeRelease() here: attach() runs from drainPending()
+        // inside onData (whose tail maybeRelease handles cleanup) and from
+        // adopt() (which calls maybeRelease itself when this leaves the
+        // session empty). Releasing twice would close+deref twice.
         return;
     };
     if (client.verbose != .none) {
@@ -589,6 +596,11 @@ fn reapAborted(this: *ClientSession) void {
 
 fn maybeRelease(this: *ClientSession) void {
     if (this.streams.count() > 0 or this.pending_attach.items.len > 0) return;
+    // Idempotent: a session is released exactly once. The registry index is
+    // the sentinel — `registerH2` re-arms it on keep-alive resume, and any
+    // path that has already unregistered (encoder-poison, abort) leaves it
+    // at maxInt so a second caller can't double-close+deref.
+    if (this.registry_index == std.math.maxInt(u32)) return;
     this.ctx.unregisterH2(this);
     if (this.canPool() and !this.socket.isClosedOrHasError()) {
         this.ctx.releaseSocket(

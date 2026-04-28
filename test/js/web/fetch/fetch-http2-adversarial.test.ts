@@ -98,23 +98,14 @@ function spawnFetch(script: string, extraEnv: Record<string, string> = {}) {
   });
 }
 
-async function collect(proc: ReturnType<typeof spawnFetch>, killAfterMs?: number) {
-  let killer: Timer | undefined;
-  let killed = false;
-  if (killAfterMs) {
-    killer = setTimeout(() => {
-      killed = true;
-      proc.kill("SIGKILL");
-    }, killAfterMs);
-  }
+async function collect(proc: ReturnType<typeof spawnFetch>) {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  if (killer) clearTimeout(killer);
-  return { stdout, stderr, exitCode, killed };
+  return { stdout, stderr, exitCode };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("fetch() HTTP/2 adversarial", () => {
+describe.concurrent("fetch() HTTP/2 adversarial", () => {
   // 1. CONTINUATION flood: server sends HEADERS without END_HEADERS, then many
   //    CONTINUATION frames. Client should bound memory and error.
   test("CONTINUATION flood is bounded", async () => {
@@ -158,8 +149,7 @@ describe("fetch() HTTP/2 adversarial", () => {
           clearInterval(t);
           console.log(JSON.stringify({ growth: peak - baseline, result: r.err ?? r.status }));
         `);
-        const { stdout, exitCode, killed } = await collect(proc, 30_000);
-        expect(killed).toBe(false);
+        const { stdout, exitCode } = await collect(proc);
         const out = JSON.parse(stdout.trim());
         // Connection should error well before the ~80 MB of CONTINUATION payload
         // accumulates. Allow generous slack for TLS/allocator overhead.
@@ -168,7 +158,7 @@ describe("fetch() HTTP/2 adversarial", () => {
         expect(exitCode).toBe(0);
       },
     );
-  }, 45_000);
+  });
 
   // 2. MAX_CONCURRENT_STREAMS=0: server allows zero streams.
   test("MAX_CONCURRENT_STREAMS=0 does not hang", async () => {
@@ -191,14 +181,13 @@ describe("fetch() HTTP/2 adversarial", () => {
           ]);
           console.log(JSON.stringify(results.map(r => r.status === "fulfilled" ? r.value : (r.reason.code || r.reason.name))));
         `);
-        const { stdout, stderr, exitCode, killed } = await collect(proc, 10_000);
+        const { stdout, stderr, exitCode } = await collect(proc);
         // The exact outcome (all succeed, some fail with HTTP2Unsupported,
         // or new connections are opened) is acceptable; HANG is not.
-        expect({ killed, stderr, stdout: stdout.trim() }).toMatchObject({ killed: false });
-        expect(exitCode).toBe(0);
+        expect({ stderr, stdout: stdout.trim(), exitCode }).toMatchObject({ exitCode: 0 });
       },
     );
-  }, 20_000);
+  });
 
   // 3. Stream-level WINDOW_UPDATE overflow: 3× 2^31-1 increments.
   test("repeated WINDOW_UPDATE(2^31-1) on a stream is a stream error, not a crash", async () => {
@@ -218,8 +207,7 @@ describe("fetch() HTTP/2 adversarial", () => {
           }).then(r => r.status, e => e.code || e.name);
           console.log(JSON.stringify(r));
         `);
-        const { stdout, exitCode, killed } = await collect(proc, 10_000);
-        expect(killed).toBe(false);
+        const { stdout, exitCode } = await collect(proc);
         expect(exitCode).toBe(0);
         // Either the request errors with a flow-control code, or the server
         // saw an RST_STREAM(FLOW_CONTROL_ERROR=3).
@@ -228,7 +216,7 @@ describe("fetch() HTTP/2 adversarial", () => {
         expect(fc || String(result).includes("FlowControl") || String(result).includes("HTTP2")).toBe(true);
       },
     );
-  }, 15_000);
+  });
 
   // 4. Server never sends initial SETTINGS.
   test("server that never sends SETTINGS does not hang the client forever", async () => {
@@ -240,13 +228,12 @@ describe("fetch() HTTP/2 adversarial", () => {
           }).then(r => r.status, e => e.name || e.code);
           console.log(r);
         `);
-      const { stdout, exitCode, killed } = await collect(proc, 10_000);
-      expect(killed).toBe(false);
+      const { stdout, exitCode } = await collect(proc);
       // AbortSignal.timeout should fire → TimeoutError (or some HTTP2 code).
       expect(stdout.trim()).toMatch(/Timeout|Abort|HTTP2/i);
       expect(exitCode).toBe(0);
     });
-  }, 15_000);
+  });
 
   // 5. DATA after END_STREAM on HEADERS.
   test("DATA after HEADERS(END_STREAM) is rejected/ignored without corruption", async () => {
@@ -265,15 +252,14 @@ describe("fetch() HTTP/2 adversarial", () => {
           const body = await r.text().catch(e => "ERR:" + (e.code || e.name));
           console.log(JSON.stringify({ status: r.status, body }));
         `);
-        const { stdout, exitCode, killed } = await collect(proc, 10_000);
-        expect(killed).toBe(false);
+        const { stdout, exitCode } = await collect(proc);
         const out = JSON.parse(stdout.trim());
         expect(out.status).toBe(200);
         expect(out.body).not.toContain("SHOULD-NOT-APPEAR");
         expect(exitCode).toBe(0);
       },
     );
-  }, 15_000);
+  });
 
   // 6. Tiny-DATA flood: 50 000 × 1-byte DATA frames.
   test("50k single-byte DATA frames are reassembled correctly", async () => {
@@ -311,16 +297,15 @@ describe("fetch() HTTP/2 adversarial", () => {
           });
           const body = await r.text();
           const t1 = performance.now();
-          console.log(JSON.stringify({ len: body.length, ok: body === "x".repeat(50000), ms: Math.round(t1 - t0) }));
+          console.log(JSON.stringify({ len: body.length, ok: body === Buffer.alloc(50000, "x").toString(), ms: Math.round(t1 - t0) }));
         `);
-        const { stdout, exitCode, killed } = await collect(proc, 30_000);
-        expect(killed).toBe(false);
+        const { stdout, exitCode } = await collect(proc);
         const out = JSON.parse(stdout.trim());
         expect(out).toMatchObject({ len: 50_000, ok: true });
         expect(exitCode).toBe(0);
       },
     );
-  }, 45_000);
+  });
 
   // 7. Unknown frame type with near-max payload.
   test("unknown frame type 0xFF with 16 KiB payload is ignored", async () => {
@@ -340,13 +325,12 @@ describe("fetch() HTTP/2 adversarial", () => {
           });
           console.log(r.status, await r.text());
         `);
-        const { stdout, exitCode, killed } = await collect(proc, 10_000);
-        expect(killed).toBe(false);
+        const { stdout, exitCode } = await collect(proc);
         expect(stdout.trim()).toBe("200 ok");
         expect(exitCode).toBe(0);
       },
     );
-  }, 15_000);
+  });
 
   // 8. Padded DATA with pad length ≥ payload length → PROTOCOL_ERROR.
   test("DATA with pad length ≥ payload length is a protocol error", async () => {
@@ -366,15 +350,14 @@ describe("fetch() HTTP/2 adversarial", () => {
                   e => "ERR:" + (e.code || e.name));
           console.log(r);
         `);
-        const { stdout, exitCode, killed } = await collect(proc, 10_000);
-        expect(killed).toBe(false);
+        const { stdout, exitCode } = await collect(proc);
         // Either fetch() or text() should surface the protocol error; the bad
         // padding must never produce a successful body.
         expect(stdout.trim()).toMatch(/ERR:.*(HTTP2|ProtocolError|ConnectionClosed)/);
         expect(exitCode).toBe(0);
       },
     );
-  }, 15_000);
+  });
 
   // ───────────────────────────────────────────────────────────────────────────
   // Regressions for the H2Client.zig hardening pass.
@@ -403,15 +386,14 @@ describe("fetch() HTTP/2 adversarial", () => {
       },
       async url => {
         await using proc = spawnFetch(fetchOnce(url));
-        const { stdout, exitCode, killed } = await collect(proc, 10_000);
-        expect(killed).toBe(false);
+        const { stdout, exitCode } = await collect(proc);
         const out = JSON.parse(stdout.trim());
         expect(out.body).not.toBe("helloEXTRA");
         expect(out.err).toBe("HTTP2ProtocolError");
         expect(exitCode).toBe(0);
       },
     );
-  }, 15_000);
+  });
 
   test("RST_STREAM(NO_ERROR) mid-body without Content-Length fails", async () => {
     await withAdversarialServer(
@@ -428,15 +410,14 @@ describe("fetch() HTTP/2 adversarial", () => {
       },
       async url => {
         await using proc = spawnFetch(fetchOnce(url));
-        const { stdout, exitCode, killed } = await collect(proc, 10_000);
-        expect(killed).toBe(false);
+        const { stdout, exitCode } = await collect(proc);
         const out = JSON.parse(stdout.trim());
         expect(out).not.toEqual({ status: 200, body: "partial" });
         expect(out.err).toBe("HTTP2StreamReset");
         expect(exitCode).toBe(0);
       },
     );
-  }, 15_000);
+  });
 
   test("trailers without END_STREAM are rejected", async () => {
     await withAdversarialServer(
@@ -454,15 +435,14 @@ describe("fetch() HTTP/2 adversarial", () => {
       },
       async url => {
         await using proc = spawnFetch(fetchOnce(url));
-        const { stdout, exitCode, killed } = await collect(proc, 10_000);
-        expect(killed).toBe(false);
+        const { stdout, exitCode } = await collect(proc);
         const out = JSON.parse(stdout.trim());
         expect(out.body).not.toBe("ab");
         expect(out.err).toBe("HTTP2ProtocolError");
         expect(exitCode).toBe(0);
       },
     );
-  }, 15_000);
+  });
 
   test("non-graceful GOAWAY does not discard completed stream", async () => {
     await withAdversarialServer(
@@ -479,13 +459,12 @@ describe("fetch() HTTP/2 adversarial", () => {
       },
       async url => {
         await using proc = spawnFetch(fetchOnce(url));
-        const { stdout, exitCode, killed } = await collect(proc, 10_000);
-        expect(killed).toBe(false);
+        const { stdout, exitCode } = await collect(proc);
         expect(JSON.parse(stdout.trim())).toEqual({ status: 200, body: "ok" });
         expect(exitCode).toBe(0);
       },
     );
-  }, 15_000);
+  });
 
   test("GOAWAY before SETTINGS fails fast", async () => {
     await withAdversarialServer(
@@ -495,11 +474,10 @@ describe("fetch() HTTP/2 adversarial", () => {
       },
       async url => {
         await using proc = spawnFetch(fetchOnce(url));
-        const { stdout, exitCode, killed } = await collect(proc, 5_000);
-        expect(killed).toBe(false);
+        const { stdout, exitCode } = await collect(proc);
         expect(JSON.parse(stdout.trim())).toEqual({ err: "HTTP2ProtocolError" });
         expect(exitCode).toBe(0);
       },
     );
-  }, 15_000);
+  });
 });

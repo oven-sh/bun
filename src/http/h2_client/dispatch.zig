@@ -431,6 +431,11 @@ pub fn decodeHeaderBlock(session: *ClientSession, stream: *Stream) void {
     const start_len = stream.decoded_bytes.items.len;
     var seen_regular = false;
     var seen_status = false;
+    // Stream-level malformations seen mid-decode. The loop MUST consume the
+    // whole block regardless — the dynamic table is connection-scoped, so
+    // bailing early would desync it for every sibling stream. The error is
+    // applied once decoding completes.
+    var malformed = false;
 
     var offset: usize = 0;
     while (offset < stream.header_block.items.len) {
@@ -451,20 +456,18 @@ pub fn decodeHeaderBlock(session: *ClientSession, stream: *Stream) void {
             if (stream.status_code != 0 or seen_regular or seen_status or
                 !strings.eqlComptime(result.name, ":status"))
             {
-                stream.rst(.PROTOCOL_ERROR);
-                stream.fatal_error = error.HTTP2ProtocolError;
-                return;
+                malformed = true;
+                continue;
             }
             seen_status = true;
             status = std.fmt.parseInt(u32, result.value, 10) catch 0;
             continue;
         }
         seen_regular = true;
-        if (stream.status_code != 0) continue;
+        if (stream.status_code != 0 or malformed) continue;
         if (isMalformedResponseField(result.name)) {
-            stream.rst(.PROTOCOL_ERROR);
-            stream.fatal_error = error.HTTP2ProtocolError;
-            return;
+            malformed = true;
+            continue;
         }
         // Cap decoded size independently of the wire size: HPACK indexed
         // refs can amplify a small block into huge name/value pairs.
@@ -477,6 +480,13 @@ pub fn decodeHeaderBlock(session: *ClientSession, stream: *Stream) void {
         const value_start: u32 = @intCast(stream.decoded_bytes.items.len);
         bun.handleOom(stream.decoded_bytes.appendSlice(bun.default_allocator, result.value));
         bun.handleOom(bounds.append(bun.default_allocator, .{ name_start, value_start, @intCast(stream.decoded_bytes.items.len) }));
+    }
+
+    if (malformed) {
+        stream.decoded_bytes.items.len = start_len;
+        stream.rst(.PROTOCOL_ERROR);
+        stream.fatal_error = error.HTTP2ProtocolError;
+        return;
     }
 
     // Trailers: status_code already set by an earlier HEADERS. RFC 9113
@@ -540,6 +550,7 @@ const forbidden_response_fields = bun.ComptimeStringMap(void, .{
     .{ "connection", {} },
     .{ "keep-alive", {} },
     .{ "proxy-connection", {} },
+    .{ "te", {} },
     .{ "transfer-encoding", {} },
     .{ "upgrade", {} },
 });

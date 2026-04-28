@@ -19080,8 +19080,6 @@ pub const SSL = opaque {
 
         SSL_enable_signed_cert_timestamps(ssl);
         SSL_enable_ocsp_stapling(ssl);
-
-        SSL_set_enable_ech_grease(ssl, 1);
     }
 
     pub fn handshake(this: *SSL) Error!void {

@@ -182,18 +182,65 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   return name;
 };
 
-function handleSocketAfterProxy(err, req) {
-  if (err.code === "ERR_PROXY_TUNNEL") {
-    if (err.proxyTunnelTimeout) {
-      req.emit("timeout"); // Propagate the timeout from the tunnel to the request.
-    } else {
-      req.emit("error", err);
-    }
+Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */, localAddress /* legacy */) {
+  // Legacy API: addRequest(req, host, port, localAddress)
+  if (typeof options === "string") {
+    options = {
+      __proto__: null,
+      host: options,
+      port,
+      localAddress,
+    };
   }
-}
 
-Agent.prototype.addRequest = function addRequest(_req, _options, _port /* legacy */, _localAddress /* legacy */) {
-  $debug("WARN: Agent.addRequest is a no-op");
+  options = { __proto__: null, ...options, ...this.options };
+  if (options.socketPath) options.path = options.socketPath;
+
+  normalizeServerName(options, req);
+
+  const name = this.getName(options);
+  this.sockets[name] ||= [];
+
+  const freeSockets = this.freeSockets[name];
+  let socket;
+  if (freeSockets) {
+    while (freeSockets.length && freeSockets[0].destroyed) {
+      freeSockets.shift();
+    }
+    socket = this.scheduling === "fifo" ? freeSockets.shift() : freeSockets.pop();
+    if (!freeSockets.length) delete this.freeSockets[name];
+  }
+
+  const freeLen = freeSockets ? freeSockets.length : 0;
+  const sockLen = freeLen + this.sockets[name].length;
+
+  if (socket) {
+    this.reuseSocket(socket, req);
+    setRequestSocket(this, req, socket);
+    this.sockets[name].push(socket);
+  } else if (sockLen < this.maxSockets && this.totalSocketCount < this.maxTotalSockets) {
+    $debug("call onSocket", sockLen, freeLen);
+    // Bun's ClientRequest uses an internal fetch-based transport, so the
+    // request's socket is a FakeSocket used only for Node.js API surface.
+    // Track it here so agent.sockets / agent.requests observe Node's
+    // bookkeeping, and so maxSockets throttling works.
+    socket = req.socket;
+    socket._httpMessage = req;
+    this.sockets[name].push(socket);
+    this.totalSocketCount++;
+    $debug("sockets", name, this.sockets[name].length, this.totalSocketCount);
+    installListeners(this, socket, options);
+    setRequestSocket(this, req, socket);
+  } else {
+    $debug("wait for socket");
+    // We are over limit so we'll add it to the queue.
+    this.requests[name] ||= [];
+
+    // Used to create sockets for pending requests from different origin
+    req[kRequestOptions] = options;
+
+    this.requests[name].push(req);
+  }
 };
 
 Agent.prototype.createSocket = function createSocket(req, options, cb) {
@@ -327,6 +374,7 @@ Agent.prototype.removeSocket = function removeSocket(s, options) {
   }
 
   let req;
+  let reqName = name;
   if (this.requests[name]?.length) {
     $debug("removeSocket, have a request, make a socket");
     req = this.requests[name][0];
@@ -338,21 +386,33 @@ Agent.prototype.removeSocket = function removeSocket(s, options) {
       $debug("removeSocket, have a request with different origin, make a socket");
       req = this.requests[prop][0];
       options = req[kRequestOptions];
+      reqName = prop;
       break;
     }
   }
 
   if (req && options) {
     req[kRequestOptions] = undefined;
-    this.createSocket(req, options, (err, socket) => {
-      if (err) {
-        handleSocketAfterProxy(err, req);
-        req.onSocket(null, err);
-        return;
+    // Remove the request from the queue now that it will be serviced.
+    const reqs = this.requests[reqName];
+    if (reqs) {
+      const idx = reqs.indexOf(req);
+      if (idx !== -1) {
+        reqs.splice(idx, 1);
+        if (reqs.length === 0) delete this.requests[reqName];
       }
-
-      socket.emit("free");
-    });
+    }
+    // Bun's ClientRequest uses an internal fetch-based transport, so the
+    // request's socket is a FakeSocket used only for Node.js API surface.
+    // Track it here instead of opening a real socket via createConnection().
+    const socket = req.socket;
+    socket._httpMessage = req;
+    this.sockets[reqName] ||= [];
+    this.sockets[reqName].push(socket);
+    this.totalSocketCount++;
+    $debug("sockets", reqName, this.sockets[reqName].length, this.totalSocketCount);
+    installListeners(this, socket, options);
+    setRequestSocket(this, req, socket);
   }
 };
 

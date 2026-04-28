@@ -605,7 +605,7 @@ pub const PendingConnect = struct {
 
 // ───── lsquic → Zig callbacks ─────
 
-fn sessionExt(qs: *c.us_quic_socket_t) **ClientSession {
+fn sessionExt(qs: *c.us_quic_socket_t) *?*ClientSession {
     return @ptrCast(@alignCast(c.us_quic_socket_ext(qs)));
 }
 
@@ -614,7 +614,7 @@ fn streamExt(s: *c.us_quic_stream_t) *?*Stream {
 }
 
 fn onHskDone(qs: *c.us_quic_socket_t, ok: c_int) callconv(.c) void {
-    const session = sessionExt(qs).*;
+    const session = sessionExt(qs).* orelse return;
     log("hsk_done ok={d} pending={d}", .{ ok, session.pending.items.len });
     if (ok == 0) {
         session.closed = true;
@@ -625,7 +625,7 @@ fn onHskDone(qs: *c.us_quic_socket_t, ok: c_int) callconv(.c) void {
 }
 
 fn onConnClose(qs: *c.us_quic_socket_t) callconv(.c) void {
-    const session = sessionExt(qs).*;
+    const session = sessionExt(qs).* orelse return;
     session.closed = true;
     session.qsocket = null;
     var buf: [256]u8 = undefined;
@@ -656,7 +656,10 @@ fn onStreamOpen(s: *c.us_quic_stream_t, is_client: c_int) callconv(.c) void {
     streamExt(s).* = null;
     if (is_client == 0) return;
     const qs = c.us_quic_stream_socket(s) orelse return;
-    const session = sessionExt(qs).*;
+    const session = sessionExt(qs).* orelse {
+        c.us_quic_stream_close(s);
+        return;
+    };
     // Bind the next pending request to this stream.
     const stream: *Stream = for (session.pending.items) |st| {
         if (st.qstream == null) break st;

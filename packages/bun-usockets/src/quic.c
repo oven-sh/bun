@@ -536,10 +536,16 @@ static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     us_quic_stream_t *s = (us_quic_stream_t *) h;
     us_quic_socket_context_t *ctx = s->ctx;
 
-    if (!s->headers_delivered) {
+    /* lsquic queues a fresh hset for every HEADERS block (1xx interims,
+     * the final response, trailers). lsquic_stream_get_hset returns the
+     * next undelivered one and lsquic_stream_read won't drain DATA past
+     * an unconsumed hset, so re-dispatch on_stream_headers each time
+     * instead of latching after the first. */
+    {
         struct us_quic_hset *hset = (struct us_quic_hset *) lsquic_stream_get_hset(stream);
         if (hset) {
             us_quic_hset_finalize(hset);
+            us_quic_hset_free(s->hset);
             s->hset = hset;
             s->headers_delivered = 1;
             if (ctx->on_stream_headers) ctx->on_stream_headers(s);
@@ -1159,9 +1165,11 @@ static us_quic_socket_t *us_quic_connect_addr(us_quic_socket_context_t *ctx,
             }
         }
     }
-    /* Kick the engine so the Initial flight goes out before the loop blocks. */
+    /* Don't us_quic_process here — the caller hasn't written its session
+     * pointer into the conn ext yet, and process_conns can fire on_hsk_done /
+     * on_conn_closed with that slot still NULL. pending_write_bytes++ ensures
+     * loop_pre sends the Initial flight on the very next tick. */
     ctx->pending_write_bytes++;
-    us_quic_process(ctx);
     return qs;
 }
 

@@ -1197,21 +1197,24 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
         }
     }
 
-    // Port to dial QUIC on. Defaults to the origin port for `protocol:"http3"`;
-    // an Alt-Svc hit overrides it with the advertised alt-authority port
-    // (RFC 7838 §3 — the alternative may listen on a different port; SNI and
-    // certificate validation still use the origin hostname).
-    var h3_port: u16 = this.url.getPortAuto();
-
     if (comptime is_ssl) {
         // Opportunistic Alt-Svc upgrade: a previous response from this origin
-        // advertised `h3`, and the experimental flag is on. This goes through
-        // the same engine as `protocol: "http3"` so retry/fallback semantics
-        // are shared.
+        // advertised `h3`, and the experimental flag is on. Don't touch
+        // `flags.force_http3` — that's the user's explicit `protocol:"http3"`
+        // choice and persists across redirects, whereas an Alt-Svc upgrade is
+        // per-origin and a cross-origin redirect must re-evaluate from h1.
+        // `doRedirectMultiplexed` resets `flags.protocol`, so the redirected
+        // request lands back here with `force_http3` still false and consults
+        // the cache for the new origin.
         if (!this.flags.force_http3 and this.canTryH3AltSvc()) {
-            if (H3.AltSvc.lookup(this.url.hostname, h3_port)) |alt_port| {
-                this.flags.force_http3 = true;
-                h3_port = alt_port;
+            if (H3.AltSvc.lookup(this.url.hostname, this.url.getPortAuto())) |alt_port| {
+                if (H3.ClientContext.getOrCreate(http_thread.loop.loop)) |ctx| {
+                    if (!ctx.connect(this, this.url.hostname, alt_port)) {
+                        this.fail(error.ConnectionRefused);
+                    }
+                    return;
+                }
+                // engine init failed: fall through to TCP
             }
         }
     }
@@ -1229,7 +1232,7 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
             this.fail(error.HTTP3Unsupported);
             return;
         };
-        if (!ctx.connect(this, this.url.hostname, h3_port)) {
+        if (!ctx.connect(this, this.url.hostname, this.url.getPortAuto())) {
             this.fail(error.ConnectionRefused);
         }
         return;

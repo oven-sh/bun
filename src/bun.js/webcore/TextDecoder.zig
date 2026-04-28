@@ -273,8 +273,14 @@ fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice
                 return globalThis.ERR(.ENCODING_INVALID_ENCODED_DATA, "The encoded data was not valid {s} data", .{@tagName(utf16_encoding)}).throw();
             }
 
-            var output = bun.String.borrowUTF16(decoded.items);
-            return output.toJS(globalThis);
+            if (decoded.items.len == 0) {
+                decoded.deinit(bun.default_allocator);
+                return ZigString.Empty.toJS(globalThis);
+            }
+
+            // Transfer ownership of the backing allocation to JSC; freed via
+            // free_global_string -> mi_free when the string is collected.
+            return ZigString.toExternalU16(decoded.items.ptr, decoded.items.len, globalThis);
         },
 
         // Handle all other encodings using WebKit's TextCodec

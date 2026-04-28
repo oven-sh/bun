@@ -793,24 +793,22 @@ test.skipIf(!isWindows)("retrying a failed fs.watch does not crash (windows)", a
 // `null`. PathWatcher.deinit()'s `if (this.resolved_path) |p| free(p)` was
 // therefore a no-op, and FSEventsWatcher.deinit() does not own the buffer
 // either. Every fs.watch(<directory>) on macOS leaked ~path-length bytes.
-test.skipIf(!isMacOS)(
-  "fs.watch(dir) on macOS does not leak the resolved FSEvents path",
-  async () => {
-    // Use long nested directory names so the resolved absolute path (and thus
-    // the per-watch leak) is large enough to show up in RSS within a reasonable
-    // number of iterations.
-    const seg = Buffer.alloc(200, "p").toString();
-    using dir = tempDir("fs-watch-fsevents-leak", {
-      [`${seg}/${seg}/${seg}/.keep`]: "x",
-    });
-    const watchDir = path.join(String(dir), seg, seg, seg);
+test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvents path", async () => {
+  // Use long nested directory names so the resolved absolute path (and thus
+  // the per-watch leak) is large enough to show up in RSS within a reasonable
+  // number of iterations.
+  const seg = Buffer.alloc(200, "p").toString();
+  using dir = tempDir("fs-watch-fsevents-leak", {
+    [`${seg}/${seg}/${seg}/.keep`]: "x",
+  });
+  const watchDir = path.join(String(dir), seg, seg, seg);
 
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "--smol",
-        "-e",
-        /* ts */ `
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "--smol",
+      "-e",
+      /* ts */ `
         const fs = require("fs");
         const dir = process.argv[1];
 
@@ -832,18 +830,16 @@ test.skipIf(!isMacOS)(
           throw new Error("fs.watch(dir) leaked " + growthMB.toFixed(2) + " MB");
         }
       `,
-        watchDir,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+      watchDir,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
-    expect(stdout).toContain("RSS growth:");
-    expect(exitCode).toBe(0);
-  },
-  60000,
-);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("RSS growth:");
+  expect(exitCode).toBe(0);
+});

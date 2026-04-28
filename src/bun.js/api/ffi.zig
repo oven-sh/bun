@@ -830,9 +830,18 @@ pub const FFI = struct {
         return js_object;
     }
 
+    fn parseJsNumberAsPtr(value: JSValue) ?usize {
+        if (!value.isNumber()) return null;
+        const n = value.asNumber();
+        if (!std.math.isFinite(n) or n <= 0 or n >= @as(f64, @floatFromInt(std.math.maxInt(usize))) or @trunc(n) != n) return null;
+        return @intFromFloat(n);
+    }
+
     pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) JSValue {
-        var function: *Function = @ptrFromInt(ctx.asPtrAddress());
+        const addr = parseJsNumberAsPtr(ctx) orelse return .js_undefined;
+        const function: *Function = @ptrFromInt(addr);
         function.deinit(globalThis);
+        bun.default_allocator.destroy(function);
         return .js_undefined;
     }
 
@@ -1390,10 +1399,8 @@ pub const FFI = struct {
         };
 
         if (try value.get(global, "ptr")) |ptr| {
-            if (ptr.isNumber()) {
-                const num = ptr.asPtrAddress();
-                if (num > 0)
-                    function.symbol_from_dynamic_library = @as(*anyopaque, @ptrFromInt(num));
+            if (parseJsNumberAsPtr(ptr)) |num| {
+                function.symbol_from_dynamic_library = @as(*anyopaque, @ptrFromInt(num));
             } else if (ptr.isHeapBigInt()) {
                 const num = ptr.toUInt64NoTruncate();
                 if (num > 0) {

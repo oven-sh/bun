@@ -231,18 +231,26 @@ pub fn alpnOffer(client: *const HTTPClient) BoringSSL.SSL.AlpnOffer {
     return if (client.flags.force_http2) .h2_only else .h1_or_h2;
 }
 
-/// Whether the experimental Alt-Svc-driven HTTP/3 upgrade is enabled and this
-/// request shape is eligible for it (HTTPS, no proxy/unix-socket, no sendfile,
-/// not pinned to a specific protocol). When true, `start_()` consults
-/// `H3.AltSvc.lookup` before opening TCP.
+/// Whether the experimental Alt-Svc-driven HTTP/3 upgrade is enabled at all
+/// (CLI flag or env var). Used on its own to gate `H3.AltSvc.record` — a
+/// response that arrived over a request shape h3 can't serve (proxy, sendfile,
+/// `force_http1`) still carries an authoritative Alt-Svc for the origin.
+pub fn h3AltSvcEnabled() bool {
+    return experimental_http3_client_from_cli or
+        bun.feature_flag.BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT.get();
+}
+
+/// Whether this request shape is eligible to *use* a cached Alt-Svc h3
+/// alternative (HTTPS, no proxy/unix-socket, no sendfile, not pinned to a
+/// specific protocol). When true, `start_()` consults `H3.AltSvc.lookup`
+/// before opening TCP.
 pub fn canTryH3AltSvc(client: *const HTTPClient) bool {
     if (client.flags.force_http1 or client.flags.force_http2) return false;
     if (client.http_proxy != null) return false;
     if (client.flags.is_preconnect_only) return false;
     if (client.unix_socket_path.length() > 0) return false;
     if (client.state.original_request_body == .sendfile) return false;
-    return experimental_http3_client_from_cli or
-        bun.feature_flag.BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT.get();
+    return h3AltSvcEnabled();
 }
 
 pub fn firstCall(
@@ -2843,7 +2851,10 @@ pub fn handleResponseMetadata(
                 pretend_304 = this.flags.force_last_modified and response.status_code > 199 and response.status_code < 300 and this.if_modified_since.len > 0 and strings.eql(this.if_modified_since, header.value);
             },
             hashHeaderConst("Alt-Svc") => {
-                if (this.isHTTPS() and this.canTryH3AltSvc()) {
+                // Record regardless of *this* request's shape — a future
+                // request to the same origin may be h3-eligible even if this
+                // one was pinned/proxied/sendfile.
+                if (this.isHTTPS() and this.unix_socket_path.length() == 0 and h3AltSvcEnabled()) {
                     H3.AltSvc.record(this.url.hostname, this.url.getPortAuto(), header.value);
                 }
             },

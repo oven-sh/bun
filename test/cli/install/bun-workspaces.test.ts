@@ -670,74 +670,68 @@ describe("relative tarballs", async () => {
   // microseconds while tarball extraction takes milliseconds, so this test
   // does not deterministically reproduce the UAF — it exercises the concurrent
   // path and verifies each workspace-relative tarball resolves correctly.
-  test(
-    "many concurrent local tarballs in workspaces",
-    async () => {
-      // Enough workspaces that `getWorkspacePkgIfWorkspaceDep` has a non-trivial
-      // `lockfile.packages` to iterate, and enough tarballs that several
-      // ThreadPool tasks are running while the main thread appends the packages
-      // from tarballs that have already finished.
-      const workspaceCount = 6;
-      const tarballsPerWorkspace = 2;
+  test("many concurrent local tarballs in workspaces", async () => {
+    // Enough workspaces that `getWorkspacePkgIfWorkspaceDep` has a non-trivial
+    // `lockfile.packages` to iterate, and enough tarballs that several
+    // ThreadPool tasks are running while the main thread appends the packages
+    // from tarballs that have already finished.
+    const workspaceCount = 6;
+    const tarballsPerWorkspace = 2;
 
-      const srcTarball = join(import.meta.dir, "bar-0.0.2.tgz");
-      const tarballBytes = await file(srcTarball).bytes();
+    const srcTarball = join(import.meta.dir, "bar-0.0.2.tgz");
+    const tarballBytes = await file(srcTarball).bytes();
 
-      const writes: Promise<unknown>[] = [
+    const writes: Promise<unknown>[] = [
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "root",
+          workspaces: ["pkgs/*"],
+        }),
+      ),
+    ];
+    for (let i = 0; i < workspaceCount; i++) {
+      const deps: Record<string, string> = {};
+      for (let j = 0; j < tarballsPerWorkspace; j++) {
+        // Each tarball has a unique path so each one gets its own
+        // `.local_tarball` ThreadPool task.
+        deps[`tarball-${i}-${j}`] = `./tarball-${i}-${j}.tgz`;
+        writes.push(write(join(packageDir, "pkgs", `pkg${i}`, `tarball-${i}-${j}.tgz`), tarballBytes));
+      }
+      writes.push(
         write(
-          join(packageDir, "package.json"),
+          join(packageDir, "pkgs", `pkg${i}`, "package.json"),
           JSON.stringify({
-            name: "root",
-            workspaces: ["pkgs/*"],
+            name: `pkg${i}`,
+            dependencies: deps,
           }),
         ),
-      ];
-      for (let i = 0; i < workspaceCount; i++) {
-        const deps: Record<string, string> = {};
-        for (let j = 0; j < tarballsPerWorkspace; j++) {
-          // Each tarball has a unique path so each one gets its own
-          // `.local_tarball` ThreadPool task.
-          deps[`tarball-${i}-${j}`] = `./tarball-${i}-${j}.tgz`;
-          writes.push(write(join(packageDir, "pkgs", `pkg${i}`, `tarball-${i}-${j}.tgz`), tarballBytes));
-        }
-        writes.push(
-          write(
-            join(packageDir, "pkgs", `pkg${i}`, "package.json"),
-            JSON.stringify({
-              name: `pkg${i}`,
-              dependencies: deps,
-            }),
-          ),
-        );
+      );
+    }
+    await Promise.all(writes);
+
+    const { stderr, exited } = Bun.spawn({
+      cmd: [bunExe(), "install", "--ignore-scripts"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+
+    // Verify the workspace-relative path was resolved correctly for every tarball.
+    for (let i = 0; i < workspaceCount; i++) {
+      for (let j = 0; j < tarballsPerWorkspace; j++) {
+        expect(await file(join(packageDir, "node_modules", `tarball-${i}-${j}`, "package.json")).json()).toMatchObject({
+          name: "bar",
+          version: "0.0.2",
+        });
       }
-      await Promise.all(writes);
-
-      const { stderr, exited } = Bun.spawn({
-        cmd: [bunExe(), "install", "--ignore-scripts"],
-        cwd: packageDir,
-        stdout: "ignore",
-        stderr: "pipe",
-        env,
-      });
-
-      const err = await stderr.text();
-      expect(err).not.toContain("error:");
-      expect(await exited).toBe(0);
-
-      // Verify the workspace-relative path was resolved correctly for every tarball.
-      for (let i = 0; i < workspaceCount; i++) {
-        for (let j = 0; j < tarballsPerWorkspace; j++) {
-          expect(
-            await file(join(packageDir, "node_modules", `tarball-${i}-${j}`, "package.json")).json(),
-          ).toMatchObject({
-            name: "bar",
-            version: "0.0.2",
-          });
-        }
-      }
-    },
-    60_000,
-  );
+    }
+  }, 60_000);
 });
 
 test("$npm_package_config_ works in root", async () => {

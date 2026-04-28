@@ -229,6 +229,8 @@ fn buildWorkerArgv(arena: std.mem.Allocator, ctx: Command.Context) ![:null]?[*:0
         try argv.append(arena, "--smol");
     if (ctx.runtime_options.experimental_http2_fetch)
         try argv.append(arena, "--experimental-http2-fetch");
+    if (ctx.runtime_options.experimental_http3_fetch)
+        try argv.append(arena, "--experimental-http3-fetch");
     if (ctx.args.allow_addons == false)
         try argv.append(arena, "--no-addons");
     if (ctx.debug.macros == .disable)

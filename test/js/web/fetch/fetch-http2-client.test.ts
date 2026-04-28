@@ -1,5 +1,5 @@
-import { test, expect, describe } from "bun:test";
-import { bunEnv, bunExe, tls } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, tls } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import https from "node:https";
@@ -158,7 +158,10 @@ function spawnFetch(script: string) {
   });
 }
 
-describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () => {
+// Under ASAN, 20 concurrent ASAN-instrumented subprocesses (~800MB+ each) OOM-kill
+// the 16GB CI runner. Serialise so the asan shard survives; everywhere else stays
+// concurrent (peak ≈8GB across ~23 debug procs).
+(isASAN ? describe : describe.concurrent)("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () => {
   test("GET: status, headers and body round-trip", async () => {
     await withH2Server(
       (req, res) => {

@@ -874,9 +874,9 @@ it.serial("instances should be finalized when GC'd", async () => {
 // and assert RSS stays bounded.
 describe("WebSocket tls option does not leak SSLConfig on error paths", () => {
   const fixture = /* js */ `
-    const iterations = 1000;
-    // 128 KiB duped per SSLConfig -> ~128 MiB per path if every iteration leaks.
-    const bigCA = Buffer.alloc(128 * 1024, "A").toString();
+    const iterations = 500;
+    // 256 KiB duped per SSLConfig -> ~128 MiB per path if every iteration leaks.
+    const bigCA = Buffer.alloc(256 * 1024, "A").toString();
     const tls = { ca: bigCA, rejectUnauthorized: false };
 
     function hit() {
@@ -904,7 +904,7 @@ describe("WebSocket tls option does not leak SSLConfig on error paths", () => {
     }
 
     // Warm up so one-off allocations (ICU, resolver caches, JIT) settle.
-    for (let i = 0; i < 200; i++) hit();
+    for (let i = 0; i < 100; i++) hit();
     Bun.gc(true);
     const baseline = process.memoryUsage.rss();
 
@@ -914,7 +914,7 @@ describe("WebSocket tls option does not leak SSLConfig on error paths", () => {
 
     const growthMiB = (after - baseline) / (1024 * 1024);
     console.log(JSON.stringify({ baseline, after, growthMiB }));
-    // 1000 iterations * 2 paths * 128 KiB would leak ~250 MiB. Allow generous
+    // 500 iterations * 2 paths * 256 KiB would leak ~250 MiB. Allow generous
     // headroom for allocator noise while still catching the regression.
     if (growthMiB > 64) {
       process.exitCode = 1;
@@ -939,5 +939,5 @@ describe("WebSocket tls option does not leak SSLConfig on error paths", () => {
     const { growthMiB } = JSON.parse(stdout.trim());
     expect(growthMiB).toBeLessThan(64);
     expect(exitCode).toBe(0);
-  }, 60_000);
+  });
 });

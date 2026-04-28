@@ -498,7 +498,10 @@ function Install-CurlH3 {
   $tar = Download-File "https://github.com/stunnel/static-curl/releases/download/$version/curl-windows-$archName-$version.tar.xz" -Name "curl-h3.tar.xz"
   $extractDir = "$env:TEMP\curl-h3-extract"
   New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
-  & tar -xf $tar -C $extractDir
+  # Server 2019's bundled bsdtar (3.3.2) has no liblzma, so `tar -xf foo.tar.xz`
+  # can't decode it (Win11's 3.5+ can). 7z is already installed via scoop.
+  & 7z x $tar "-o$extractDir" -y | Out-Null
+  & 7z x "$extractDir\curl-h3.tar" "-o$extractDir" -y | Out-Null
   Copy-Item "$extractDir\curl.exe" "C:\Windows\System32\curl-h3.exe" -Force
   Copy-Item "$extractDir\curl-ca-bundle.crt" "C:\Windows\System32\curl-ca-bundle.crt" -Force
   Remove-Item $tar -ErrorAction SilentlyContinue

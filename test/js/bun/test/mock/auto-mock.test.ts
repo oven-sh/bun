@@ -115,12 +115,27 @@ test("auto-mock preserves arrays and mocks static methods on classes", () => {
 test("auto-mock does not invoke getters on the real module", () => {
   // If the walker read an accessor property via `object.get(...)` it would
   // trigger the getter, which can have side effects. The walker skips
-  // accessors instead.
+  // accessors instead. We load the real module first so we can observe its
+  // real counter.
+  const real = require("./auto-mock-fixture-accessor");
+  const hitsBefore = real.getterHits();
+
   const mocked = jest.requireMock("./auto-mock-fixture-accessor") as any;
-  // The module records every time the getter runs; walking to auto-mock
-  // it must not bump that counter.
+
+  // Walking the fixture to build the mock must not have invoked either
+  // getter on the real module's `obj`.
+  expect(real.getterHits()).toBe(hitsBefore);
+
+  // Top-level mocks still get installed as expected.
   expect(mocked.getterHits.mock).toBeDefined();
-  // The accessor property isn't copied onto the mock (since we skipped it),
-  // but plain data properties are mocked normally.
   expect(mocked.plain.mock).toBeDefined();
+
+  // The accessor properties themselves were skipped (not copied onto the
+  // mock) — only plain data properties come through.
+  expect(mocked.obj.sneaky).toBeUndefined();
+  expect(mocked.obj.alsoSneaky).toBeUndefined();
+  expect(mocked.obj.data).toBe(123);
+
+  // And we still haven't invoked the real getters.
+  expect(real.getterHits()).toBe(hitsBefore);
 });

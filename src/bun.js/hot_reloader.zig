@@ -64,6 +64,54 @@ pub const ImportWatcher = union(enum) {
 pub const HotReloader = NewHotReloader(VirtualMachine, jsc.EventLoop, false);
 pub const WatchReloader = NewHotReloader(VirtualMachine, jsc.EventLoop, true);
 
+/// When non-null, `onFileUpdate` records the absolute path of every file
+/// it sees change before triggering a reload. Used by `bun test --changed
+/// --watch` so the restarted process can narrow its changed-file set to
+/// what the watcher actually observed (instead of re-querying git, which
+/// would re-run every test affected by any uncommitted change, not just
+/// the one that was just edited).
+///
+/// Set by `test_command.zig` on the main thread before the watcher thread
+/// starts; after that point only the watcher thread touches it. Its
+/// contents are written to `watch_changed_trigger_file` immediately
+/// before `reloadProcess`; the new process reads and deletes that file.
+pub var watch_changed_paths: ?*bun.StringSet = null;
+
+/// Absolute path of the temp file `flushChangedPathsForReload` writes
+/// the changed-path list into. The same path is exported via the
+/// `BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE` env var so the restarted
+/// process can find it. Set alongside `watch_changed_paths` by
+/// `test_command.zig`; the string must outlive the process.
+pub var watch_changed_trigger_file: ?[:0]const u8 = null;
+
+fn recordChangedPath(path: []const u8) void {
+    const set = watch_changed_paths orelse return;
+    if (path.len == 0) return;
+    bun.handleOom(set.insert(path));
+}
+
+/// Write the recorded changed paths to the trigger file so the next
+/// process (after exec()) can consume them. Best-effort: if the write
+/// fails, the new process falls back to querying git.
+fn flushChangedPathsForReload() void {
+    // `watch_changed_trigger_file` is never set on Windows (see
+    // `ChangedFilesFilter.initWatchTrigger`), so this body would be
+    // dead there anyway; guarding lets us use POSIX path types below.
+    if (Environment.isWindows) return;
+
+    const set = watch_changed_paths orelse return;
+    const dest = watch_changed_trigger_file orelse return;
+    if (set.count() == 0) return;
+
+    var buf = std.array_list.Managed(u8).init(bun.default_allocator);
+    defer buf.deinit();
+    for (set.keys()) |p| {
+        buf.appendSlice(p) catch return;
+        buf.append('\n') catch return;
+    }
+    _ = bun.sys.File.writeFile(bun.FD.cwd(), dest, buf.items);
+}
+
 extern fn BunDebugger__willHotReload() void;
 
 pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime reload_immediately: bool) type {
@@ -211,6 +259,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         if (this.reloader.ctx.rare_data) |rare|
                             rare.closeAllListenSocketsForWatchMode();
                     }
+                    flushChangedPathsForReload();
                     bun.reloadProcess(bun.default_allocator, clear_screen, false);
                     unreachable;
                 }
@@ -352,6 +401,8 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             defer current_task.enqueue();
 
             for (events) |event| {
+                // Stale udata: kevent.udata can outlive a swapRemove in flushEvictions.
+                if (event.index >= file_paths.len) continue;
                 const file_path = file_paths[event.index];
                 const update_count = counts[event.index] + 1;
                 counts[event.index] = update_count;
@@ -364,7 +415,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
                 switch (kind) {
                     .file => {
-                        if (event.op.delete or (event.op.rename and Environment.isMac)) {
+                        if (event.op.delete or (event.op.rename and Environment.isKqueue)) {
                             ctx.removeAtIndex(
                                 event.index,
                                 0,
@@ -377,7 +428,8 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             debug("File changed: {s}", .{fs.relativeTo(file_path)});
 
                         if (event.op.write or event.op.delete or event.op.rename) {
-                            if (comptime Environment.isMac) {
+                            recordChangedPath(file_path);
+                            if (comptime Environment.isKqueue) {
                                 if (event.op.rename) {
                                     // Special case for entrypoint: defer reload until we get
                                     // a directory write event confirming the file exists.
@@ -410,7 +462,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         var entries_option: ?*Fs.FileSystem.RealFS.EntriesOption = null;
 
                         const affected = brk: {
-                            if (comptime Environment.isMac) {
+                            if (comptime Environment.isKqueue) {
                                 if (rfs.entries.get(file_path)) |existing| {
                                     this.putTombstone(file_path, existing);
                                     entries_option = existing;
@@ -426,6 +478,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                     if (this.main.is_waiting_for_dir_change and this.main.dir_hash == current_hash) {
                                         if (bun.sys.faccessat(file_descriptors[event.index], std.fs.path.basename(this.main.file)) == .result) {
                                             this.main.is_waiting_for_dir_change = false;
+                                            recordChangedPath(this.main.file);
                                             current_task.append(this.main.hash);
                                         }
                                     }
@@ -457,7 +510,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             break :brk event.names(changed_files);
                         };
 
-                        if (affected.len > 0 and !Environment.isMac) {
+                        if (affected.len > 0 and !Environment.isKqueue) {
                             if (rfs.entries.get(file_path)) |existing| {
                                 this.putTombstone(file_path, existing);
                                 entries_option = existing;
@@ -472,7 +525,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             var last_file_hash: Watcher.HashType = std.math.maxInt(Watcher.HashType);
 
                             for (affected) |changed_name_| {
-                                const changed_name: []const u8 = if (comptime Environment.isMac)
+                                const changed_name: []const u8 = if (comptime Environment.isKqueue)
                                     changed_name_
                                 else
                                     bun.asByteSlice(changed_name_.?);
@@ -494,6 +547,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                                 if (hash == file_hash) {
                                                     if (file_descriptors[entry_id].isValid()) {
                                                         if (prev_entry_id != entry_id) {
+                                                            recordChangedPath(path_string.slice());
                                                             current_task.append(hashes[entry_id]);
                                                             if (this.verbose)
                                                                 debug("Removing file: {s}", .{path_string.slice()});

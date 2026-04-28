@@ -580,9 +580,6 @@ pub const Channel = opaque {
 
         libraryInit();
 
-        if (Error.get(ares_init(&channel))) |err| {
-            return err;
-        }
         const SockStateWrap = struct {
             pub fn onSockState(ctx: ?*anyopaque, socket: ares_socket_t, readable: c_int, writable: c_int) callconv(.c) void {
                 const container = bun.cast(*Container, ctx.?);
@@ -592,6 +589,12 @@ pub const Channel = opaque {
 
         var opts = bun.zero(Options);
 
+        // Android note: c-ares can't auto-discover servers (no /etc/resolv.conf,
+        // no JNI), so it falls back to 127.0.0.1 and queries time out. We do
+        // NOT set ARES_FLAG_NO_DFLT_SVR here — that makes init fail with
+        // ENOSERVER, which breaks dns.setServers() (it needs an initialized
+        // channel to call ares_set_servers_ports). Letting the 127.0.0.1
+        // default stand means setServers() works as the documented workaround.
         opts.flags = ARES_FLAG_NOCHECKRESP;
         opts.sock_state_cb = &SockStateWrap.onSockState;
         opts.sock_state_cb_data = @as(*anyopaque, @ptrCast(this));
@@ -1694,7 +1697,7 @@ pub const Error = enum(i32) {
                 .hostname = this.hostname orelse bun.String.empty,
             };
 
-            const instance = system_error.toErrorInstance(globalThis);
+            const instance = system_error.toErrorInstanceWithAsyncStack(globalThis, this.promise.get());
             instance.put(globalThis, "name", try bun.String.static("DNSException").toJS(globalThis));
 
             defer this.deinit();
@@ -1796,8 +1799,12 @@ pub const Error = enum(i32) {
         }
 
         if (comptime bun.Environment.isLinux) {
+            if (eai == .SOCKTYPE) return Error.ECONNREFUSED;
+        }
+        if (comptime bun.Environment.isGlibc) {
+            // glibc-only async getaddrinfo_a / IDN extensions; absent on
+            // musl and bionic.
             switch (eai) {
-                .SOCKTYPE => return Error.ECONNREFUSED,
                 .IDN_ENCODE => return Error.EBADSTR,
                 .ALLDONE => return Error.ENOTFOUND,
                 .INPROGRESS => return Error.ETIMEOUT,
@@ -1901,6 +1908,7 @@ pub const ARES_FLAG_STAYOPEN = @as(c_int, 1) << @as(c_int, 4);
 pub const ARES_FLAG_NOSEARCH = @as(c_int, 1) << @as(c_int, 5);
 pub const ARES_FLAG_NOALIASES = @as(c_int, 1) << @as(c_int, 6);
 pub const ARES_FLAG_NOCHECKRESP = @as(c_int, 1) << @as(c_int, 7);
+pub const ARES_FLAG_NO_DFLT_SVR = @as(c_int, 1) << @as(c_int, 9);
 pub const ARES_FLAG_EDNS = @as(c_int, 1) << @as(c_int, 8);
 pub const ARES_OPT_FLAGS = @as(c_int, 1) << @as(c_int, 0);
 pub const ARES_OPT_TIMEOUT = @as(c_int, 1) << @as(c_int, 1);

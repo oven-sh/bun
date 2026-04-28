@@ -598,6 +598,13 @@ pub const Resolver = struct {
         if (r.opts.packages == .external and isPackagePath(import_path)) {
             return true;
         }
+        return r.matchesUserExternalPattern(import_path);
+    }
+
+    /// True iff `import_path` matches a user-supplied `--external` wildcard
+    /// pattern. Does NOT consider `packages = external`; use
+    /// `isExternalPattern` for the combined check.
+    pub fn matchesUserExternalPattern(r: *ThisResolver, import_path: string) bool {
         for (r.opts.external.patterns) |pattern| {
             if (import_path.len >= pattern.prefix.len + pattern.suffix.len and (strings.startsWith(
                 import_path,
@@ -610,6 +617,25 @@ pub const Resolver = struct {
             }
         }
         return false;
+    }
+
+    /// Resolves `import_path` via the enclosing tsconfig's `paths`. Returns
+    /// the `MatchResult` iff a key matches AND the mapped target exists on
+    /// disk. Used to let path-aliased local files win over `packages=external`
+    /// without breaking catch-all `"*"` paths entries that only cover ambient
+    /// type stubs.
+    pub fn resolveViaTSConfigPaths(
+        r: *ThisResolver,
+        source_dir: string,
+        import_path: string,
+        kind: ast.ImportKind,
+    ) ?MatchResult {
+        if (source_dir.len == 0) return null;
+        if (!std.fs.path.isAbsolute(source_dir)) return null;
+        const dir_info = (r.dirInfoCached(source_dir) catch null) orelse return null;
+        const tsconfig = dir_info.enclosing_tsconfig_json orelse return null;
+        if (tsconfig.paths.count() == 0) return null;
+        return r.matchTSConfigPaths(tsconfig, import_path, kind);
     }
 
     pub fn flushDebugLogs(r: *ThisResolver, flush_mode: DebugLogs.FlushMode) !void {
@@ -694,6 +720,34 @@ pub const Resolver = struct {
                         .module_type = .cjs,
                         .primary_side_effects_data = .no_side_effects__pure_data,
                         .flags = .{ .is_external = true },
+                    },
+                };
+            }
+        }
+
+        // #29590: a tsconfig `paths` key can look bare (e.g. "@/*") and
+        // otherwise collide with `packages=external + isPackagePath`. Try
+        // the alias first, but only follow it when it actually resolves to
+        // a file on disk — a catch-all `"*": ["./types/*"]` for ambient
+        // .d.ts stubs must still let real bare imports stay external.
+        if (kind != .entry_point_build and kind != .entry_point_run and
+            r.opts.packages == .external and isPackagePath(import_path) and
+            !r.matchesUserExternalPattern(import_path))
+        {
+            if (r.resolveViaTSConfigPaths(source_dir, import_path, kind)) |res| {
+                if (r.debug_logs) |*debug| {
+                    debug.addNote("Resolved via tsconfig.json \"paths\" before applying packages=external");
+                    r.flushDebugLogs(.success) catch {};
+                }
+                return .{
+                    .success = Result{
+                        .import_kind = kind,
+                        .path_pair = res.path_pair,
+                        .diff_case = res.diff_case,
+                        .package_json = res.package_json,
+                        .dirname_fd = res.dirname_fd,
+                        .file_fd = res.file_fd,
+                        .jsx = r.opts.jsx,
                     },
                 };
             }
@@ -1904,7 +1958,7 @@ pub const Resolver = struct {
         dir_info = source_dir_info;
 
         // this is the magic!
-        if (global_cache.canUse(any_node_modules_folder) and r.usePackageManager() and esm_ != null) {
+        if (global_cache.canUse(any_node_modules_folder) and r.usePackageManager() and esm_ != null and strings.isNPMPackageName(esm_.?.name)) {
             const esm = esm_.?.withAutoVersion();
             load_module_from_cache: {
                 // If the source directory doesn't have a node_modules directory, we can
@@ -4231,7 +4285,6 @@ pub const Resolver = struct {
                         merged_config.emit_decorator_metadata = merged_config.emit_decorator_metadata or parent_config.emit_decorator_metadata;
                         if (parent_config.base_url.len > 0) {
                             merged_config.base_url = parent_config.base_url;
-                            merged_config.base_url_for_paths = parent_config.base_url_for_paths;
                         }
                         merged_config.jsx = parent_config.mergeJSX(merged_config.jsx);
                         merged_config.jsx_flags.setUnion(parent_config.jsx_flags);
@@ -4240,9 +4293,15 @@ pub const Resolver = struct {
                             merged_config.preserve_imports_not_used_as_values = value;
                         }
 
-                        var iter = parent_config.paths.iterator();
-                        while (iter.next()) |c| {
-                            merged_config.paths.put(c.key_ptr.*, c.value_ptr.*) catch unreachable;
+                        // TypeScript replaces paths across extends (child overrides parent
+                        // entirely), so when a more-specific config defines paths, replace
+                        // rather than merge. base_url_for_paths is set whenever the paths
+                        // key is present in the JSON (even if empty), so it discriminates
+                        // "not defined" from "defined as {}" — the latter clears inherited
+                        // paths per TypeScript semantics.
+                        if (parent_config.base_url_for_paths.len > 0) {
+                            merged_config.paths = parent_config.paths;
+                            merged_config.base_url_for_paths = parent_config.base_url_for_paths;
                         }
                         // todo deinit these parent configs somehow?
                     }
@@ -4384,7 +4443,7 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
 const FeatureFlags = bun.FeatureFlags;
-const FileDescriptorType = bun.FileDescriptor;
+const FileDescriptorType = bun.FD;
 const MutableString = bun.MutableString;
 const Mutex = bun.Mutex;
 const Output = bun.Output;

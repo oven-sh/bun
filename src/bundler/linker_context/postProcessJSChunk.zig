@@ -130,6 +130,27 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             }
         }
 
+        // 1c. Same idea for top-level await. The new JSC module loader decides
+        // sync vs async evaluation from JSModuleRecord::hasTLA(), which we set
+        // from this bit when constructing the record from cached module_info
+        // (BunAnalyzeTranspiledModule). Without it, a bytecode-compiled module
+        // that contains TLA gets evaluated on the sync path and the suspended
+        // generator is dropped — the entry promise resolves immediately and the
+        // process exits before the awaited value lands.
+        {
+            const tla_keywords = c.parse_graph.ast.items(.top_level_await_keyword);
+            const wraps = c.graph.meta.items(.flags);
+            for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
+                const idx = part_range.source_index.get();
+                if (idx >= tla_keywords.len) continue;
+                if (wraps[idx].wrap != .none) continue;
+                if (!tla_keywords[idx].isEmpty()) {
+                    mi.flags.has_tla = true;
+                    break;
+                }
+            }
+        }
+
         // 2. Collect truly-external imports from the original AST. Bundled imports
         // (where source_index is valid) are removed by convertStmtsForChunk and
         // re-created as cross-chunk imports — those are already captured by the

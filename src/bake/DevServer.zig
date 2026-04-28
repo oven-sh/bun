@@ -905,7 +905,7 @@ fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
             .mime_type = &.json,
         });
         defer response.deref();
-        response.onRequest(req, resp);
+        response.onRequest(.{ .h1 = req }, resp);
         return;
     }
 

@@ -5,9 +5,7 @@
 
 namespace v8 {
 
-namespace shim {
 class Isolate;
-}
 
 // Context is always a reinterpret pointer to Zig::GlobalObject, so that functions accepting a
 // Context can quickly access JSC data
@@ -22,12 +20,12 @@ public:
 
     const Zig::GlobalObject* globalObject() const
     {
-        return JSC::jsDynamicCast<const Zig::GlobalObject*>(localToCell());
+        return dynamicDowncast<const Zig::GlobalObject>(localToCell());
     }
 
     Zig::GlobalObject* globalObject()
     {
-        return JSC::jsDynamicCast<Zig::GlobalObject*>(localToCell());
+        return dynamicDowncast<Zig::GlobalObject>(localToCell());
     }
 
     HandleScope* currentHandleScope() const

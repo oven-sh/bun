@@ -191,14 +191,14 @@ JSObject* JSPerformanceResourceTiming::prototype(VM& vm, JSDOMGlobalObject& glob
 
 JSValue JSPerformanceResourceTiming::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSPerformanceResourceTimingDOMConstructor, DOMConstructorID::PerformanceResourceTiming>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSPerformanceResourceTimingDOMConstructor, DOMConstructorID::PerformanceResourceTiming>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsPerformanceResourceTimingConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSPerformanceResourceTimingPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSPerformanceResourceTimingPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSPerformanceResourceTiming::getConstructor(vm, prototype->globalObject()));
@@ -526,7 +526,7 @@ JSC::GCClient::IsoSubspace* JSPerformanceResourceTiming::subspaceForImpl(JSC::VM
 
 void JSPerformanceResourceTiming::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSPerformanceResourceTiming*>(cell);
+    auto* thisObject = uncheckedDowncast<JSPerformanceResourceTiming>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));

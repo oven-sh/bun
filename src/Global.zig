@@ -37,14 +37,19 @@ else if (Environment.is_canary)
 else
     std.fmt.comptimePrint(version_string ++ "+{s}", .{Environment.git_sha_short});
 
-pub const os_name = Environment.os.nameString();
+// Node-style platform string. Distinct from Environment.os.nameString() on
+// Android: the kernel-level OS enum stays .linux (so syscall switches keep
+// working), but user-facing strings — npm user-agent, process.platform —
+// must be "android" so native-addon postinstalls don't fetch glibc binaries.
+pub const os_name = if (Environment.isAndroid) "android" else Environment.os.nameString();
+pub const os_display = if (Environment.isAndroid) "Android" else Environment.os.displayString();
 
 // Bun v1.0.0 (Linux x64 baseline)
 // Bun v1.0.0-debug (Linux x64)
 // Bun v1.0.0-canary.0+44e09bb7f (Linux x64)
 pub const unhandled_error_bun_version_string = "Bun v" ++
     (if (Environment.is_canary) package_json_version_with_revision else package_json_version) ++
-    " (" ++ Environment.os.displayString() ++ " " ++ arch_name ++
+    " (" ++ os_display ++ " " ++ arch_name ++
     (if (Environment.baseline) " baseline)" else ")");
 
 pub const arch_name = if (Environment.isX64)
@@ -67,6 +72,8 @@ pub fn setThreadName(name: [:0]const u8) void {
         _ = std.posix.prctl(.SET_NAME, .{@intFromPtr(name.ptr)}) catch 0;
     } else if (Environment.isMac) {
         _ = std.c.pthread_setname_np(name);
+    } else if (Environment.isFreeBSD) {
+        std.c.pthread_set_name_np(std.c.pthread_self(), name);
     } else if (Environment.isWindows) {
         // TODO: use SetThreadDescription or NtSetInformationThread with 0x26 (ThreadNameInformation)
         // without causing exit code 0xC0000409 (stack buffer overrun) in child process
@@ -166,7 +173,7 @@ pub inline fn mimalloc_cleanup(force: bool) void {
         Mimalloc.mi_collect(force);
     }
 }
-// Versions are now handled by CMake-generated header (bun_dependency_versions.h)
+// Versions are now handled by build-generated header (bun_dependency_versions.h)
 
 // Enabling huge pages slows down bun by 8x or so
 // Keeping this code for:

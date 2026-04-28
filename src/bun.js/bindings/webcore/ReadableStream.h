@@ -69,11 +69,11 @@ public:
 struct JSReadableStreamWrapperConverter {
     static RefPtr<ReadableStream> toWrapped(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
-        auto* globalObject = JSC::jsDynamicCast<JSDOMGlobalObject*>(&lexicalGlobalObject);
+        auto* globalObject = dynamicDowncast<JSDOMGlobalObject>(&lexicalGlobalObject);
         if (!globalObject)
             return nullptr;
 
-        auto* readableStream = JSC::jsDynamicCast<JSReadableStream*>(value);
+        auto* readableStream = dynamicDowncast<JSReadableStream>(value);
         if (!readableStream)
             return nullptr;
 

@@ -8,15 +8,14 @@
  */
 
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 // @ts-ignore — utils.mjs has JSDoc types but no .d.ts
 import * as utils from "../utils.mjs";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
-import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { BuildError } from "./error.ts";
-import { ZIG_COMMIT } from "./zig.ts";
 
 /** True if running under any CI (env: CI, BUILDKITE, or GITHUB_ACTIONS). */
 export const isCI: boolean = utils.isCI;
@@ -172,7 +171,7 @@ export async function spawnWithAnnotations(
     // with the full buffered output so there's still a PR-visible signal.
     if (!annotated) {
       const content = utils.formatAnnotationToHtml({
-        filename: relative(process.cwd(), import.meta.path),
+        filename: relative(process.cwd(), fileURLToPath(import.meta.url)),
         title: "build failed",
         content: buffer,
         source: "build",
@@ -241,14 +240,22 @@ export function uploadArtifacts(cfg: Config, output: BunOutput): void {
   }
 
   // ─── Phase 1: upload dep libs (before we rm anything) ───
-  const depPaths: string[] = [];
-  for (const dep of output.deps) {
-    for (const lib of dep.libs) {
-      depPaths.push(relative(cfg.buildDir, lib));
+  // In Buildkite, ninja already uploaded these via the bk_upload edge in
+  // bun.ts (overlapped with the cxx compile). The stamp is the witness; if
+  // it's missing (agent unavailable mid-build, or running cpp-only outside
+  // a real BK job), fall back to uploading here so link-only still gets them.
+  if (existsSync(resolve(cfg.buildDir, ".dep-libs-uploaded"))) {
+    console.log("Dep libs already uploaded during build");
+  } else {
+    const depPaths: string[] = [];
+    for (const dep of output.deps) {
+      for (const lib of dep.libs) {
+        depPaths.push(relative(cfg.buildDir, lib));
+      }
     }
+    console.log(`Uploading ${depPaths.length} dep libs...`);
+    upload(depPaths, cfg.buildDir);
   }
-  console.log(`Uploading ${depPaths.length} dep libs...`);
-  upload(depPaths, cfg.buildDir);
 
   // ─── Phase 2: free disk, gzip (posix only), upload archive ───
   // CI agents are disk-constrained. Free what we no longer need: codegen/
@@ -291,7 +298,7 @@ function upload(paths: string[], cwd: string): void {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Link-only post-link: features.json + link-metadata.json + packaging + upload
+// Link-only post-link: features.json + packaging + upload
 //
 // The zip contract (matching cmake's BuildBun.cmake packaging — test steps
 // download these by exact name):
@@ -328,6 +335,7 @@ function upload(paths: string[], cwd: string): void {
 function computeBunTriplet(cfg: Config): string {
   let t = `bun-${cfg.os}-${cfg.arch}`;
   if (cfg.abi === "musl") t += "-musl";
+  if (cfg.abi === "android") t += "-android";
   if (cfg.baseline) t += "-baseline";
   return t;
 }
@@ -336,7 +344,7 @@ function computeBunTriplet(cfg: Config): string {
  * Post-link packaging and upload for link-only mode. Runs AFTER ninja
  * succeeds — at that point bun-profile (and stripped bun) exist.
  *
- * Generates features.json + link-metadata.json, packages into zips,
+ * Generates features.json, packages into zips,
  * uploads. Contract with test steps: see block comment above.
  */
 export function packageAndUpload(cfg: Config, output: BunOutput): void {
@@ -356,28 +364,18 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // Env vars match cmake's (BuildBun.cmake ~1462).
   // No setarch wrapper — cmake doesn't use one for features.mjs either
   // (only for the --revision smoke test).
-  console.log("Generating features.json...");
-  run([exe, resolve(cfg.cwd, "scripts", "features.mjs")], buildDir, {
-    BUN_GARBAGE_COLLECTOR_LEVEL: "1",
-    BUN_DEBUG_QUIET_LOGS: "1",
-    BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
-  });
-
-  // ─── link-metadata.json ───
-  // Version/webkit/zig info for debugging. Env vars match cmake
-  // (BuildBun.cmake ~1253). The script reads the ninja link command too.
-  console.log("Generating link-metadata.json...");
-  run(
-    [process.execPath, resolve(cfg.cwd, "scripts", "create-link-metadata.mjs"), buildDir, exeName + cfg.exeSuffix],
-    cfg.cwd,
-    {
-      BUN_VERSION: cfg.version,
-      WEBKIT_VERSION: WEBKIT_VERSION,
-      ZIG_COMMIT: ZIG_COMMIT,
-      // WEBKIT_DOWNLOAD_URL not available directly; we have the version.
-      // The script handles missing env vars (defaults to "").
-    },
-  );
+  // Cross-compiled binaries can't run on the build host — write a stub.
+  if (cfg.crossTarget !== undefined) {
+    console.log("Skipping features.json (cross-compiled binary cannot run on host)");
+    writeFileSync(resolve(buildDir, "features.json"), JSON.stringify({ crossTarget: cfg.crossTarget }));
+  } else {
+    console.log("Generating features.json...");
+    run([exe, resolve(cfg.cwd, "scripts", "features.mjs")], buildDir, {
+      BUN_GARBAGE_COLLECTOR_LEVEL: "1",
+      BUN_DEBUG_QUIET_LOGS: "1",
+      BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+    });
+  }
 
   const zipPaths: string[] = [];
 
@@ -404,13 +402,13 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // cmake: bunStripPath = string(REPLACE bun ${bunTriplet} bunStripPath bun) = bunTriplet.
   if (shouldStrip(cfg) && output.strippedExe !== undefined) {
     zipPaths.push(makeZip(cfg, bunTriplet, [basename(output.strippedExe)]));
+    const bytes = statSync(output.strippedExe).size;
+    run(["buildkite-agent", "meta-data", "set", `binary-size:${bunTriplet}`, String(bytes)], buildDir);
   }
 
   // ─── Upload ───
-  // link-metadata.json uploaded standalone (not in a zip — matches cmake's
-  // ARTIFACTS ${BUILD_PATH}/link-metadata.json).
-  console.log(`Uploading ${zipPaths.length} zips + metadata...`);
-  upload([...zipPaths, "link-metadata.json"], buildDir);
+  console.log(`Uploading ${zipPaths.length} zips...`);
+  upload(zipPaths, buildDir);
 }
 
 /**
@@ -468,7 +466,7 @@ function makeZip(cfg: Config, name: string, files: string[]): string {
  *
  * Call BEFORE ninja — the downloaded files are ninja's link inputs.
  */
-export function downloadArtifacts(cfg: Config): void {
+export async function downloadArtifacts(cfg: Config): Promise<void> {
   if (cfg.mode !== "link-only") return;
 
   const stepKey = process.env.BUILDKITE_STEP_KEY;
@@ -487,22 +485,30 @@ export function downloadArtifacts(cfg: Config): void {
   }
   const targetKey = m[1]!;
 
-  for (const suffix of ["cpp", "zig"]) {
+  // Both downloads at once (buildkite-agent already parallelizes within a
+  // step's artifact set; this overlaps the two STEPS). The .a.gz comes from
+  // build-cpp, so gunzip can start as soon as that one finishes — concurrent
+  // with the build-zig download still streaming.
+  const dl = (suffix: "cpp" | "zig") => {
     const step = `${targetKey}-build-${suffix}`;
     console.log(`Downloading artifacts from ${step}...`);
-    // '*' glob — download everything that step uploaded.
-    run(["buildkite-agent", "artifact", "download", "*", ".", "--step", step], cfg.buildDir);
-  }
+    return runAsync(["buildkite-agent", "artifact", "download", "*", ".", "--step", step], cfg.buildDir);
+  };
+  const cppDone = dl("cpp");
+  const zigDone = dl("zig");
 
-  // Gunzip any compressed archives (libbun-*.a.gz → libbun-*.a).
-  // -f: overwrite if already decompressed (idempotent re-run).
+  await cppDone;
   const gzFiles = existsSync(cfg.buildDir)
     ? readdirSync(cfg.buildDir).filter(f => f.endsWith(".gz") && statSync(resolve(cfg.buildDir, f)).isFile())
     : [];
-  for (const gz of gzFiles) {
-    console.log(`Decompressing ${gz}...`);
-    run(["gunzip", "-f", gz], cfg.buildDir);
-  }
+  const gunzipDone = Promise.all(
+    gzFiles.map(gz => {
+      console.log(`Decompressing ${gz}...`);
+      return runAsync(["gunzip", "-f", gz], cfg.buildDir);
+    }),
+  );
+
+  await Promise.all([zigDone, gunzipDone]);
 }
 
 /** Run a command synchronously, throw BuildError on non-zero exit. */
@@ -520,4 +526,16 @@ function run(argv: string[], cwd: string, env?: Record<string, string>): void {
       hint: `Command: ${argv.join(" ")}`,
     });
   }
+}
+
+/** Async variant of `run()` for overlapping independent steps. */
+function runAsync(argv: string[], cwd: string): Promise<void> {
+  return new Promise((res, rej) => {
+    const child = nodeSpawn(argv[0]!, argv.slice(1), { cwd, stdio: "inherit" });
+    child.on("error", (err: Error) => rej(new BuildError(`Failed to spawn ${argv[0]}`, { cause: err })));
+    child.on("close", (code: number | null) => {
+      if (code === 0) res();
+      else rej(new BuildError(`${argv[0]} exited with code ${code}`, { hint: `Command: ${argv.join(" ")}` }));
+    });
+  });
 }

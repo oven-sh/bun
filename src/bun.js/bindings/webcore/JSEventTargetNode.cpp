@@ -25,7 +25,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsGetEventListeners, (JSGlobalObject 
     }
 
     JSValue thisValue = callFrame->argument(0);
-    auto* thisObject = jsDynamicCast<JSEventTarget*>(thisValue);
+    auto* thisObject = dynamicDowncast<JSEventTarget>(thisValue);
     RETURN_IF_EXCEPTION(throwScope, {});
     auto eventType = callFrame->argument(1).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});

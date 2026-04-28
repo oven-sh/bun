@@ -130,3 +130,76 @@ test("--rerun-each should handle test failures correctly", async () => {
   expect(combined).toMatch(/2 pass/);
   expect(combined).toMatch(/1 fail/);
 });
+
+// https://github.com/oven-sh/bun/issues/23705
+test("--rerun-each resets the toMatchSnapshot() counter between reruns", async () => {
+  using dir = tempDir("test-rerun-each-snapshot", {
+    "snap.test.ts": `
+      import { test, expect } from "bun:test";
+      test("snap", () => {
+        expect("hello").toMatchSnapshot();
+      });
+    `,
+    "__snapshots__/snap.test.ts.snap":
+      "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n" + '\nexports[`snap 1`] = `"hello"`;\n',
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "snap.test.ts", "--rerun-each=3"],
+    env: { ...bunEnv, CI: "true" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const combined = stdout + stderr;
+
+  expect(combined).not.toContain("Snapshot creation is disabled");
+  expect(combined).toMatch(/3 pass/);
+  expect(combined).toMatch(/0 fail/);
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/23705 — same counter bug via { retry } / { repeats }
+test("toMatchSnapshot() counter is reset between per-test retry / repeats", async () => {
+  using dir = tempDir("test-retry-snapshot", {
+    "snap.test.ts": `
+      import { test, expect } from "bun:test";
+      let n = 0;
+      test("retried", () => {
+        expect("a").toMatchSnapshot();
+        if (++n < 3) throw new Error("retry me");
+      }, { retry: 3 });
+      test("repeated", () => {
+        expect("b").toMatchSnapshot();
+      }, { repeats: 2 });
+      test("after", () => {
+        expect("c").toMatchSnapshot();
+        expect("d").toMatchSnapshot();
+      });
+    `,
+    "__snapshots__/snap.test.ts.snap":
+      "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n" +
+      '\nexports[`retried 1`] = `"a"`;\n' +
+      '\nexports[`repeated 1`] = `"b"`;\n' +
+      '\nexports[`after 1`] = `"c"`;\n' +
+      '\nexports[`after 2`] = `"d"`;\n',
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "snap.test.ts"],
+    env: { ...bunEnv, CI: "true" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const combined = stdout + stderr;
+
+  expect(combined).not.toContain("Snapshot creation is disabled");
+  expect(combined).toMatch(/3 pass/);
+  expect(combined).toMatch(/0 fail/);
+  expect(exitCode).toBe(0);
+});

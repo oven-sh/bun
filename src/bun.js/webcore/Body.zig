@@ -286,6 +286,10 @@ pub const Value = union(Tag) {
         AbortReason: jsc.CommonAbortReason,
         SystemError: jsc.SystemError,
         Message: bun.String,
+        /// Surfaces as a JS `TypeError`. The fetch spec maps every "network
+        /// error" to TypeError, so use this for fetch-layer rejections that
+        /// callers feature-detect via `err instanceof TypeError`.
+        TypeError: bun.String,
         JSValue: jsc.Strong.Optional,
 
         pub fn toStreamError(this: *@This(), globalObject: *jsc.JSGlobalObject) streams.Result.StreamError {
@@ -304,10 +308,20 @@ pub const Value = union(Tag) {
                 .AbortReason => |reason| reason.toJS(globalObject),
                 .SystemError => |system_error| system_error.toErrorInstance(globalObject),
                 .Message => |message| message.toErrorInstance(globalObject),
+                .TypeError => |message| message.toTypeErrorInstance(globalObject),
                 // do a early return in this case we don't need to create a new Strong
                 .JSValue => |js_value| return js_value.get() orelse .js_undefined,
             };
             this.* = .{ .JSValue = .create(js_value, globalObject) };
+            return js_value;
+        }
+
+        /// Like `toJS` but populates the error's stack trace with async frames
+        /// from the given promise's await chain. Use when rejecting from a
+        /// fetch/body callback at the top of the event loop.
+        pub fn toJSWithAsyncStack(this: *@This(), globalObject: *jsc.JSGlobalObject, promise: *jsc.JSPromise) jsc.JSValue {
+            const js_value = this.toJS(globalObject);
+            js_value.attachAsyncStackFromPromise(globalObject, promise);
             return js_value;
         }
 
@@ -316,6 +330,7 @@ pub const Value = union(Tag) {
             switch (this.*) {
                 .SystemError => value.SystemError.ref(),
                 .Message => value.Message.ref(),
+                .TypeError => value.TypeError.ref(),
                 .JSValue => |js_ref| {
                     if (js_ref.get()) |js_value| {
                         return .{ .JSValue = .create(js_value, globalObject) };
@@ -331,6 +346,7 @@ pub const Value = union(Tag) {
             switch (this.*) {
                 .SystemError => |system_error| system_error.deref(),
                 .Message => |message| message.deref(),
+                .TypeError => |message| message.deref(),
                 .JSValue => this.JSValue.deinit(),
                 .AbortReason => {},
             }
@@ -461,9 +477,10 @@ pub const Value = union(Tag) {
                 blob.resolveSize();
                 const value = try jsc.WebCore.ReadableStream.fromBlobCopyRef(globalThis, &blob, blob.size);
 
+                const stream = (try jsc.WebCore.ReadableStream.fromJS(value, globalThis)).?;
                 this.* = .{
                     .Locked = .{
-                        .readable = jsc.WebCore.ReadableStream.Strong.init((try jsc.WebCore.ReadableStream.fromJS(value, globalThis)).?, globalThis),
+                        .readable = jsc.WebCore.ReadableStream.Strong.init(stream, globalThis),
                         .global = globalThis,
                     },
                 };
@@ -899,7 +916,7 @@ pub const Value = union(Tag) {
 
                 if (promise_value.asAnyPromise()) |promise| {
                     if (promise.status() == .pending) {
-                        try promise.reject(global, this.Error.toJS(global));
+                        try promise.rejectWithAsyncStack(global, this.Error.toJS(global));
                     }
                 }
             }
@@ -1567,15 +1584,15 @@ pub const ValueBufferer = struct {
     }
 
     pub fn onResolveStream(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        var args = callframe.arguments_old(2);
-        var sink: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
+        const args = callframe.arguments_old(2);
+        const sink = bun.api.NativePromiseContext.take(@This(), args.ptr[args.len - 1]) orelse return .js_undefined;
         sink.handleResolveStream(true);
         return .js_undefined;
     }
 
     pub fn onRejectStream(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const args = callframe.arguments_old(2);
-        var sink = args.ptr[args.len - 1].asPromisePtr(@This());
+        const sink = bun.api.NativePromiseContext.take(@This(), args.ptr[args.len - 1]) orelse return .js_undefined;
         const err = args.ptr[0];
         sink.handleRejectStream(err, true);
         return .js_undefined;
@@ -1647,12 +1664,13 @@ pub const ValueBufferer = struct {
             if (assignment_result.asAnyPromise()) |promise| {
                 switch (promise.status()) {
                     .Pending => {
-                        assignment_result.then(
+                        const cell = bun.api.NativePromiseContext.create(globalThis, sink);
+                        assignment_result.thenWithValue(
                             globalThis,
-                            sink,
+                            cell,
                             onResolveStream,
                             onRejectStream,
-                        );
+                        ) catch {};
                     },
                     .Fulfilled => {
                         defer stream.value.unprotect();

@@ -22,43 +22,40 @@ pub const Decompressor = union(enum) {
         if (this.* == .none) {
             switch (encoding) {
                 .gzip, .deflate => {
-                    this.* = .{
-                        .zlib = try Zlib.ZlibReaderArrayList.initWithOptionsAndListAllocator(
-                            buffer,
-                            &body_out_str.list,
-                            body_out_str.allocator,
-                            bun.http.default_allocator,
-                            .{
-                                // zlib.MAX_WBITS = 15
-                                // to (de-)compress deflate format, use wbits = -zlib.MAX_WBITS
-                                // to (de-)compress deflate format with headers we use wbits = 0 (we can detect the first byte using 120)
-                                // to (de-)compress gzip format, use wbits = zlib.MAX_WBITS | 16
-                                .windowBits = if (encoding == Encoding.gzip) Zlib.MAX_WBITS | 16 else (if (buffer.len > 1 and buffer[0] == 120) 0 else -Zlib.MAX_WBITS),
-                            },
-                        ),
-                    };
+                    const reader = try Zlib.ZlibReaderArrayList.initWithOptionsAndListAllocator(
+                        buffer,
+                        &body_out_str.list,
+                        body_out_str.allocator,
+                        bun.http.default_allocator,
+                        .{
+                            // zlib.MAX_WBITS = 15
+                            // to (de-)compress deflate format, use wbits = -zlib.MAX_WBITS
+                            // to (de-)compress deflate format with headers we use wbits = 0 (we can detect the first byte using 120)
+                            // to (de-)compress gzip format, use wbits = zlib.MAX_WBITS | 16
+                            .windowBits = if (encoding == Encoding.gzip) Zlib.MAX_WBITS | 16 else (if (buffer.len > 1 and buffer[0] == 120) 0 else -Zlib.MAX_WBITS),
+                        },
+                    );
+                    this.* = .{ .zlib = reader };
                     return;
                 },
                 .brotli => {
-                    this.* = .{
-                        .brotli = try Brotli.BrotliReaderArrayList.newWithOptions(
-                            buffer,
-                            &body_out_str.list,
-                            body_out_str.allocator,
-                            .{},
-                        ),
-                    };
+                    const reader = try Brotli.BrotliReaderArrayList.newWithOptions(
+                        buffer,
+                        &body_out_str.list,
+                        body_out_str.allocator,
+                        .{},
+                    );
+                    this.* = .{ .brotli = reader };
                     return;
                 },
                 .zstd => {
-                    this.* = .{
-                        .zstd = try zstd.ZstdReaderArrayList.initWithListAllocator(
-                            buffer,
-                            &body_out_str.list,
-                            body_out_str.allocator,
-                            bun.http.default_allocator,
-                        ),
-                    };
+                    const reader = try zstd.ZstdReaderArrayList.initWithListAllocator(
+                        buffer,
+                        &body_out_str.list,
+                        body_out_str.allocator,
+                        bun.http.default_allocator,
+                    );
+                    this.* = .{ .zstd = reader };
                     return;
                 },
                 else => @panic("Invalid encoding. This code should not be reachable"),

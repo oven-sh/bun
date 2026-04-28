@@ -455,7 +455,7 @@ const PromiseResult = union(enum) {
     fn fulfill(this: PromiseResult, globalThis: *jsc.JSGlobalObject, promise: *jsc.JSPromise) bun.JSTerminated!void {
         switch (this) {
             .resolve => |v| try promise.resolve(globalThis, v),
-            .reject => |v| try promise.reject(globalThis, v),
+            .reject => |v| try promise.rejectWithAsyncStack(globalThis, v),
         }
     }
 };

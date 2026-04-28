@@ -873,9 +873,10 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
         // intermediate EOF packets between param definitions and column definitions,
         // and after column definitions. We must consume these EOF packets and only
         // finalize the prepared statement after the trailing EOF is consumed.
-        // Per MySQL protocol spec, 0xFE is only an EOF when payload length < 9;
-        // otherwise it's a length-encoded integer prefix.
-        if (!this.#capabilities.CLIENT_DEPRECATE_EOF and header_length < 9 and @as(PacketType, @enumFromInt(first_byte)) == .EOF) {
+        // Disambiguation from a 0xFE length-prefixed row: any 0xFE packet below
+        // the 16 MB max-packet marker (0xFFFFFF) is an EOF. See handleResultSet
+        // for the full rationale.
+        if (!this.#capabilities.CLIENT_DEPRECATE_EOF and header_length < 0xFFFFFF and @as(PacketType, @enumFromInt(first_byte)) == .EOF) {
             var eof = EOFPacket{};
             try eof.decode(reader);
             this.checkIfPreparedStatementIsDone(statement);
@@ -924,6 +925,7 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
             // Read column definitions if any
             if (ok.num_columns > 0) {
                 statement.columns = try bun.default_allocator.alloc(ColumnDefinition41, ok.num_columns);
+                for (statement.columns) |*col| col.* = .{};
                 statement.columns_received = 0;
             }
 
@@ -1055,6 +1057,7 @@ fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: NewRe
                         bun.default_allocator.free(statement.columns);
                     }
                     statement.columns = try bun.default_allocator.alloc(ColumnDefinition41, header.field_count);
+                    for (statement.columns) |*col| col.* = .{};
                     statement.columns_received = 0;
                 }
                 statement.execution_flags.needs_duplicate_check = true;
@@ -1064,32 +1067,38 @@ fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: NewRe
                 try statement.columns[statement.columns_received].decode(reader);
                 statement.columns_received += 1;
             } else {
-                // Legacy protocol (CLIENT_DEPRECATE_EOF not negotiated): EOF packets
-                // delimit sections of the result set. We must handle the intermediate
-                // EOF (between column definitions and row data) and the final EOF
-                // (after all rows) differently.
-                // Per MySQL protocol spec, 0xFE is only an EOF when the payload
-                // length is < 9 bytes; otherwise it's a length-encoded integer.
-                if (packet_type == .EOF and header_length < 9 and !this.#capabilities.CLIENT_DEPRECATE_EOF) {
-                    if (!statement.execution_flags.columns_eof_received) {
-                        // Intermediate EOF between column definitions and row data - skip it
+                // A 0xFE-prefixed packet at this point is either the end-of-result
+                // terminator or a row whose first column is a length-encoded integer
+                // starting with 0xFE (values that don't fit in 3 bytes).
+                //
+                // Disambiguation per the MySQL protocol spec: a terminator packet's
+                // payload length is always below the 16 MB max-packet marker
+                // (0xFFFFFF); a 0xFE row prefix means the next 8 bytes are a u64
+                // length, pushing the row payload past that marker. We used to gate
+                // on `header_length < 9` here, but an OK terminator can carry a
+                // trailing human-readable `info` string (e.g. ManticoreSearch's
+                // `szMeta`) that pushes the payload past 9 bytes, causing the
+                // terminator to be misparsed as a row and the query to hang.
+                if (packet_type == .EOF and header_length < 0xFFFFFF) {
+                    if (!this.#capabilities.CLIENT_DEPRECATE_EOF) {
+                        // Legacy protocol: EOF packets delimit sections of the result set.
+                        // Handle the intermediate EOF (between column defs and rows) and
+                        // the final EOF (after all rows) differently.
+                        if (!statement.execution_flags.columns_eof_received) {
+                            // Intermediate EOF between column definitions and row data - skip it
+                            var eof = EOFPacket{};
+                            try eof.decode(reader);
+                            statement.execution_flags.columns_eof_received = true;
+                            return;
+                        }
+                        // Final EOF after all row data - terminates the result set
                         var eof = EOFPacket{};
                         try eof.decode(reader);
-                        statement.execution_flags.columns_eof_received = true;
+                        this.handleResultSetOK(request, statement, eof.status_flags, 0, 0);
                         return;
                     }
-                    // Final EOF after all row data - terminates the result set
-                    var eof = EOFPacket{};
-                    try eof.decode(reader);
-                    this.handleResultSetOK(request, statement, eof.status_flags, 0, 0);
-                    return;
-                }
 
-                // In CLIENT_DEPRECATE_EOF mode, the result set terminator is an
-                // OK packet with 0xFE header and payload < 9 bytes. 0xFE with
-                // payload >= 9 is a length-encoded integer (row data >= 16MB).
-                if (packet_type == .EOF and header_length < 9 and this.#capabilities.CLIENT_DEPRECATE_EOF) {
-                    // CLIENT_DEPRECATE_EOF mode: OK packet with 0xFE header
+                    // CLIENT_DEPRECATE_EOF mode: OK packet with 0xFE header.
                     try ok.decode(reader);
                     defer ok.deinit();
 

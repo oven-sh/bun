@@ -136,8 +136,7 @@ fn insert(
         &(std.posix.toPosixPath(dir_name_to_watch) catch |err| switch (err) {
             error.NameTooLong => return error.Ignore, // wouldn't be able to open, ignore
         }),
-        // O_EVTONLY is the flag to indicate that only watches will be used.
-        bun.O.DIRECTORY | bun.c.O_EVTONLY,
+        bun.O.DIRECTORY | Watcher.watch_open_flags,
         0,
     )) {
         .result => |fd| .{ fd, true },
@@ -238,7 +237,7 @@ fn appendDepAssumeCapacity(store: *DirectoryWatchStore, dep: Dep) Dep.Index {
 
 pub const Entry = struct {
     /// The directory handle the watch is placed on
-    dir: bun.FileDescriptor,
+    dir: bun.FD,
     dir_fd_owned: bool,
     /// Files which request this import index
     first_dep: Dep.Index,

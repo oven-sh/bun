@@ -14,7 +14,7 @@ version: bun.Semver.Version = .{
     .minor = @truncate(Environment.version.minor),
     .patch = @truncate(Environment.version.patch),
 },
-libc: Libc = if (!Environment.isMusl) .default else .musl,
+libc: Libc = if (Environment.isMusl) .musl else if (Environment.isAndroid) .android else .default,
 
 const Libc = enum {
     /// The default libc for the target
@@ -22,19 +22,20 @@ const Libc = enum {
     default,
     /// musl libc
     musl,
+    /// bionic (Android)
+    android,
 
     /// npm package name, `@oven-sh/bun-{os}-{arch}`
     pub fn npmName(this: Libc) []const u8 {
         return switch (this) {
             .default => "",
             .musl => "-musl",
+            .android => "-android",
         };
     }
 
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        if (self == .musl) {
-            try writer.writeAll("-musl");
-        }
+        try writer.writeAll(self.npmName());
     }
 };
 
@@ -298,6 +299,7 @@ pub fn isSupported(this: *const CompileTarget) bool {
 
         .mac => true,
         .linux => true,
+        .freebsd => true,
 
         .wasm => false,
     };
@@ -364,12 +366,16 @@ pub fn tryFrom(input_: []const u8) ParseError!CompileTarget {
             this.libc = .musl;
             found_libc = true;
             continue;
+        } else if (strings.eqlComptime(token, "android")) {
+            this.libc = .android;
+            found_libc = true;
+            continue;
         } else {
             return error.UnsupportedTarget;
         }
     }
 
-    if (!found_libc and this.libc == .musl and this.os != .linux) {
+    if (!found_libc and this.libc != .default and this.os != .linux) {
         // "bun-windows-x64" should not implicitly be "bun-windows-x64-musl"
         this.libc = .default;
     }
@@ -386,7 +392,7 @@ pub fn tryFrom(input_: []const u8) ParseError!CompileTarget {
         this.baseline = false;
     }
 
-    if (this.libc == .musl and this.os != .linux) {
+    if (this.libc != .default and this.os != .linux) {
         return error.InvalidTarget;
     }
 
@@ -411,6 +417,7 @@ pub fn from(input_: []const u8) CompileTarget {
                         !strings.eqlComptime(token, "modern") and
                         !strings.eqlComptime(token, "baseline") and
                         !strings.eqlComptime(token, "musl") and
+                        !strings.eqlComptime(token, "android") and
                         !(strings.hasPrefixComptime(token, "v1.") or strings.hasPrefixComptime(token, "v0.")))
                     {
                         unsupported_token = token;
@@ -436,6 +443,8 @@ pub fn from(input_: []const u8) CompileTarget {
                 const input = bun.strings.trim(input_, " \t\r");
                 if (strings.containsComptime(input, "musl") and !strings.containsComptime(input, "linux")) {
                     Output.errGeneric("invalid target, musl libc only exists on linux", .{});
+                } else if (strings.containsComptime(input, "android") and !strings.containsComptime(input, "linux")) {
+                    Output.errGeneric("invalid target, android only exists with linux (use bun-linux-arm64-android)", .{});
                 } else if (strings.containsComptime(input, "wasm")) {
                     Output.errGeneric("invalid target, WebAssembly is not supported. Sorry!", .{});
                 } else if (strings.containsComptime(input, "v")) {
@@ -462,19 +471,22 @@ pub fn defineValues(this: *const CompileTarget) []const []const u8 {
     // Use inline else to avoid extra allocations.
     switch (this.os) {
         inline else => |os| switch (this.arch) {
-            inline .arm64, .x64 => |arch| return struct {
-                pub const values = &.{
-                    "\"" ++ os.nameString() ++ "\"",
+            inline .arm64, .x64 => |arch| switch (this.libc) {
+                inline else => |libc| return struct {
+                    pub const values = &.{
+                        // process.platform: Node reports "android" on Android, not "linux".
+                        if (libc == .android) "\"android\"" else "\"" ++ os.nameString() ++ "\"",
 
-                    switch (arch) {
-                        .x64 => "\"x64\"",
-                        .arm64 => "\"arm64\"",
-                        .wasm => @compileError("TODO"),
-                    },
+                        switch (arch) {
+                            .x64 => "\"x64\"",
+                            .arm64 => "\"arm64\"",
+                            .wasm => @compileError("TODO"),
+                        },
 
-                    "\"" ++ Global.package_json_version ++ "\"",
-                };
-            }.values,
+                        "\"" ++ Global.package_json_version ++ "\"",
+                    };
+                }.values,
+            },
             else => @panic("TODO"),
         },
     }

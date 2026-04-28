@@ -39,7 +39,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSecretKeyObjectExport, (JSGlobalObject * globalObject
     VM& vm = globalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
-    JSSecretKeyObject* secretKeyObject = jsDynamicCast<JSSecretKeyObject*>(callFrame->thisValue());
+    JSSecretKeyObject* secretKeyObject = dynamicDowncast<JSSecretKeyObject>(callFrame->thisValue());
     if (!secretKeyObject) {
         throwThisTypeError(*globalObject, scope, "SecretKeyObject"_s, "export"_s);
         return {};
@@ -53,7 +53,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSecretKeyObjectExport, (JSGlobalObject * globalObject
 
 JSC_DEFINE_CUSTOM_GETTER(jsSecretKeyObjectSymmetricKeySize, (JSGlobalObject*, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
-    JSSecretKeyObject* secretKeyObject = jsDynamicCast<JSSecretKeyObject*>(JSValue::decode(thisValue));
+    JSSecretKeyObject* secretKeyObject = dynamicDowncast<JSSecretKeyObject>(JSValue::decode(thisValue));
     if (!secretKeyObject) {
         return JSValue::encode(jsUndefined());
     }
@@ -67,7 +67,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSecretKeyObjectSymmetricKeySize, (JSGlobalObject*, JS
 //     VM& vm = globalObject->vm();
 //     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
-//     JSSecretKeyObject* secretKeyObject = jsDynamicCast<JSSecretKeyObject*>(callFrame->thisValue());
+//     JSSecretKeyObject* secretKeyObject = dynamicDowncast<JSSecretKeyObject>(callFrame->thisValue());
 //     if (!secretKeyObject) {
 //         throwThisTypeError(*globalObject, scope, "SecretKeyObject"_s, "toCryptoKey"_s);
 //         return {};

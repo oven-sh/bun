@@ -112,6 +112,22 @@ pub fn copyFileWithState(in: InputType, out: InputType, copy_file_state: *CopyFi
         return CopyFileReturnType.success;
     }
 
+    if (comptime Environment.isFreeBSD) {
+        // FreeBSD 13+ has copy_file_range(2). Unlike Linux, we don't need
+        // kernel-version probing — our minimum is 14.0.
+        while (true) {
+            const rc = std.c.copy_file_range(in.native(), null, out.native(), null, math.maxInt(i32) - 1, 0);
+            bun.sys.syslog("copy_file_range({d}, {d}) = {d}", .{ in.native(), out.native(), rc });
+            switch (bun.sys.getErrno(rc)) {
+                .SUCCESS => if (rc == 0) return CopyFileReturnType.success,
+                // Cross-filesystem or unsupported fd type — fall back to r/w loop.
+                .XDEV, .INVAL, .OPNOTSUPP, .BADF => break,
+                .INTR => continue,
+                else => |e| return .{ .err = bun.sys.Error.fromCode(e, .copy_file_range) },
+            }
+        }
+    }
+
     if (comptime Environment.isWindows) {
         if (CopyFileReturnType.errnoSys(bun.windows.CopyFileW(in.ptr, out.ptr, 0), .copyfile)) |err| {
             return err;

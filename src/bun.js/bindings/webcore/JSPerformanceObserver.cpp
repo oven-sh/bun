@@ -160,7 +160,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceObserverDOMConst
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSPerformanceObserverDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSPerformanceObserverDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
@@ -246,7 +246,7 @@ JSObject* JSPerformanceObserver::prototype(VM& vm, JSDOMGlobalObject& globalObje
 
 JSValue JSPerformanceObserver::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSPerformanceObserverDOMConstructor, DOMConstructorID::PerformanceObserver>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSPerformanceObserverDOMConstructor, DOMConstructorID::PerformanceObserver>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSPerformanceObserver::destroy(JSC::JSCell* cell)
@@ -259,7 +259,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsPerformanceObserverConstructor, (JSGlobalObject * lex
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSPerformanceObserverPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSPerformanceObserverPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSPerformanceObserver::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -269,10 +269,10 @@ static inline JSValue jsPerformanceObserverConstructor_supportedEntryTypesGetter
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* context = jsCast<JSDOMGlobalObject*>(&lexicalGlobalObject)->scriptExecutionContext();
+    auto* context = uncheckedDowncast<JSDOMGlobalObject>(&lexicalGlobalObject)->scriptExecutionContext();
     if (!context) [[unlikely]]
         return jsUndefined();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLFrozenArray<IDLDOMString>>(lexicalGlobalObject, *jsCast<JSDOMGlobalObject*>(&lexicalGlobalObject), throwScope, PerformanceObserver::supportedEntryTypes(*context))));
+    RELEASE_AND_RETURN(throwScope, (toJS<IDLFrozenArray<IDLDOMString>>(lexicalGlobalObject, *uncheckedDowncast<JSDOMGlobalObject>(&lexicalGlobalObject), throwScope, PerformanceObserver::supportedEntryTypes(*context))));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsPerformanceObserverConstructor_supportedEntryTypes, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -341,10 +341,10 @@ JSC::GCClient::IsoSubspace* JSPerformanceObserver::subspaceForImpl(JSC::VM& vm)
 template<typename Visitor>
 void JSPerformanceObserver::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSPerformanceObserver*>(cell);
+    auto* thisObject = uncheckedDowncast<JSPerformanceObserver>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    thisObject->visitAdditionalChildren(visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSPerformanceObserver);
@@ -352,17 +352,17 @@ DEFINE_VISIT_CHILDREN(JSPerformanceObserver);
 template<typename Visitor>
 void JSPerformanceObserver::visitOutputConstraints(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSPerformanceObserver*>(cell);
+    auto* thisObject = uncheckedDowncast<JSPerformanceObserver>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitOutputConstraints(thisObject, visitor);
-    thisObject->visitAdditionalChildren(visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
 
 template void JSPerformanceObserver::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
 template void JSPerformanceObserver::visitOutputConstraints(JSCell*, SlotVisitor&);
 void JSPerformanceObserver::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSPerformanceObserver*>(cell);
+    auto* thisObject = uncheckedDowncast<JSPerformanceObserver>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -418,7 +418,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 PerformanceObserver* JSPerformanceObserver::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSPerformanceObserver*>(value))
+    if (auto* wrapper = dynamicDowncast<JSPerformanceObserver>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
-import { join } from "path";
 
 const exitCode0 = [
   " ",
@@ -150,7 +149,9 @@ const exitCode0 = [
   "`${`${class{static{``}}}`}`",
   "await import('bun');",
   "await import('bun:ffi');",
-  "await import(import.meta.path);",
+  // "await import(import.meta.path);" — the spec-compliant module loader treats
+  // a top-level await on its own module's load promise as an unsettleable TLA,
+  // so this snippet now blocks forever instead of completing synchronously.
   "/(?:)/",
   "/\\b\\B\\d\\D\\w\\W\\s\\S/",
   "/\\cA\\cZ\\ca\\cz/",
@@ -301,21 +302,20 @@ const exitCode0 = [
   "(()=>{let{a=b,b=1}={}})",
 ];
 
-describe("exit code 0", () => {
+describe.concurrent("exit code 0", () => {
   const fixturePath = tempDirWithFiles("fixture", {
     [`package.json`]: `{
       "name": "test",
 
     }`,
-    "fixture.js": "export default 1",
+    ...Object.fromEntries(exitCode0.map((source, i) => [`fixture-${i}.js`, source])),
   });
 
   for (let i = 0; i < exitCode0.length; i++) {
     const source = exitCode0[i];
 
     test(`file #${i}: ${JSON.stringify(source)}`, async () => {
-      await Bun.write(join(fixturePath, "fixture.js"), source);
-      await using proc = Bun.spawn([bunExe(), "./fixture.js"], {
+      await using proc = Bun.spawn([bunExe(), `./fixture-${i}.js`], {
         stdout: "inherit",
         env: bunEnv,
         cwd: fixturePath,

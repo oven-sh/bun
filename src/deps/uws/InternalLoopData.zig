@@ -5,6 +5,9 @@ pub const InternalLoopData = extern struct {
     sweep_timer_count: i32,
     wakeup_async: ?*us_internal_async,
     head: ?*SocketContext,
+    quic_head: ?*anyopaque,
+    quic_next_tick_us: i64,
+    quic_timer: ?*Timer,
     iterator: ?*SocketContext,
     closed_context_head: ?*SocketContext,
     recv_buf: [*]u8,
@@ -23,6 +26,7 @@ pub const InternalLoopData = extern struct {
     parent_tag: c_char,
     iteration_nr: usize,
     jsc_vm: ?*jsc.VM,
+    tick_depth: c_int,
 
     pub fn recvSlice(this: *InternalLoopData) []u8 {
         return this.recv_buf[0..LIBUS_RECV_BUFFER_LENGTH];

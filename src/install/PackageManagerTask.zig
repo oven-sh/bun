@@ -146,6 +146,13 @@ pub fn callback(task: *ThreadPool.Task) void {
             }
         },
         .extract => {
+            // Streaming extraction never reaches this callback: the
+            // HTTP thread drives `TarballStream.drain_task`, which
+            // fills in `this.data`/`this.status` and pushes to
+            // `resolve_tasks` directly from `TarballStream.finish()`.
+            // This path is the buffered fallback — feature flag off,
+            // non-2xx status, or the whole body arrived in a single
+            // chunk before streaming could commit.
             const buffer = &this.request.extract.network.response_buffer;
             defer buffer.deinit();
 
@@ -323,7 +330,7 @@ pub const Status = enum {
 pub const Data = union {
     package_manifest: Npm.PackageManifest,
     extract: ExtractData,
-    git_clone: bun.FileDescriptor,
+    git_clone: bun.FD,
     git_checkout: ExtractData,
 };
 
@@ -346,7 +353,7 @@ pub const Request = union {
         res: Resolution,
     },
     git_checkout: struct {
-        repo_dir: bun.FileDescriptor,
+        repo_dir: bun.FD,
         dependency_id: DependencyID,
         name: strings.StringOrTinyString,
         url: strings.StringOrTinyString,

@@ -357,7 +357,7 @@ void JSMIMEParams::finishCreation(VM& vm, JSMap* map)
 template<typename Visitor>
 void JSMIMEParams::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSMIMEParams* thisObject = jsCast<JSMIMEParams*>(cell);
+    JSMIMEParams* thisObject = uncheckedDowncast<JSMIMEParams>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_map);
@@ -393,7 +393,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncGet, (JSGlobalObject * globalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // 1. Get this value
-    auto* thisObject = jsDynamicCast<JSMIMEParams*>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<JSMIMEParams>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
         RETURN_IF_EXCEPTION(scope, {});
@@ -423,7 +423,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncHas, (JSGlobalObject * globalObjec
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = jsDynamicCast<JSMIMEParams*>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<JSMIMEParams>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
         RETURN_IF_EXCEPTION(scope, {});
@@ -445,7 +445,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncSet, (JSGlobalObject * globalObjec
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = jsDynamicCast<JSMIMEParams*>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<JSMIMEParams>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
         RETURN_IF_EXCEPTION(scope, {});
@@ -487,7 +487,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncDelete, (JSGlobalObject * globalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = jsDynamicCast<JSMIMEParams*>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<JSMIMEParams>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
         RETURN_IF_EXCEPTION(scope, {});
@@ -509,7 +509,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncToString, (JSGlobalObject * global
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = jsDynamicCast<JSMIMEParams*>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<JSMIMEParams>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
         RETURN_IF_EXCEPTION(scope, {});
@@ -521,7 +521,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncToString, (JSGlobalObject * global
 
     JSValue iteratorValue = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map, IterationKind::Entries);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    JSMapIterator* iterator = jsDynamicCast<JSMapIterator*>(iteratorValue);
+    JSMapIterator* iterator = dynamicDowncast<JSMapIterator>(iteratorValue);
     if (!iterator) { // Should not happen for JSMap.entries()
         scope.release();
         return Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "Internal error: Expected MapIterator"_s, "toString"_s, -1);
@@ -531,7 +531,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncToString, (JSGlobalObject * global
         JSValue nextValue;
         if (!iterator->next(globalObject, nextValue)) break;
 
-        JSArray* entry = jsDynamicCast<JSArray*>(nextValue);
+        JSArray* entry = dynamicDowncast<JSArray>(nextValue);
         if (!entry || entry->length() < 2) // Should not happen
             continue;
 
@@ -561,7 +561,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncEntries, (JSGlobalObject * globalO
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = jsDynamicCast<JSMIMEParams*>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<JSMIMEParams>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
         RETURN_IF_EXCEPTION(scope, {});
@@ -573,7 +573,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncKeys, (JSGlobalObject * globalObje
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = jsDynamicCast<JSMIMEParams*>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<JSMIMEParams>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
         RETURN_IF_EXCEPTION(scope, {});
@@ -585,7 +585,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncValues, (JSGlobalObject * globalOb
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = jsDynamicCast<JSMIMEParams*>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<JSMIMEParams>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
         RETURN_IF_EXCEPTION(scope, {});

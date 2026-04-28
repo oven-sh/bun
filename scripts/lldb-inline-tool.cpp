@@ -27,8 +27,8 @@
  * ------
  *   ./lldb-inline <executable> [args...]
  * 
- * The tool searches for // LOG: comments in all source files listed in
- * cmake/sources/ *.txt and sets breakpoints at those locations.
+ * The tool searches for // LOG: comments in all source files reported by
+ * scripts/glob-sources.ts and sets breakpoints at those locations.
  */
 
 #include <lldb/API/LLDB.h>
@@ -38,7 +38,6 @@
 #include <cstdlib>
 #include <regex>
 #include <unistd.h>
-#include <glob.h>
 #include <fstream>
 #include <chrono>
 #include <set>
@@ -109,22 +108,18 @@ bool logpointCallback(void *baton, SBProcess &process, SBThread &thread, SBBreak
 
 std::vector<std::string> getSourceFiles() {
     std::vector<std::string> files;
-    
-    // Read cmake source files
-    glob_t globbuf;
-    if (glob("cmake/sources/*.txt", 0, nullptr, &globbuf) == 0) {
-        for (size_t i = 0; i < globbuf.gl_pathc; i++) {
-            std::ifstream file(globbuf.gl_pathv[i]);
-            std::string line;
-            while (std::getline(file, line)) {
-                if (!line.empty() && line[0] != '#' && line.find("${") == std::string::npos) {
-                    files.push_back(line);
-                }
-            }
-        }
-        globfree(&globbuf);
+
+    FILE* pipe = popen("bun scripts/glob-sources.ts --all", "r");
+    if (!pipe) return files;
+
+    char buffer[4096];
+    while (fgets(buffer, sizeof(buffer), pipe)) {
+        std::string line(buffer);
+        while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
+        if (!line.empty()) files.push_back(line);
     }
-    
+    pclose(pipe);
+
     return files;
 }
 

@@ -478,7 +478,7 @@ To disable `.env` or `bunfig.toml` loading for deterministic execution:
 
 You can run a standalone executable as if it were the `bun` CLI itself by setting the `BUN_BE_BUN=1` environment variable. When this variable is set, the executable will ignore its bundled entrypoint and instead expose all the features of Bun's CLI.
 
-For example, consider an executable compiled from a simple script:
+For example, consider an executable compiled from this script:
 
 ```bash icon="terminal" terminal
 echo "console.log(\"you shouldn't see this\");" > such-bun.js

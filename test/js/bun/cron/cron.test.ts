@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
-import { existsSync, readFileSync, unlinkSync, watch, writeFileSync } from "node:fs";
-import { basename } from "node:path";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
 const crontabPath = Bun.which("crontab");
 const hasCrontab = !!crontabPath && isLinux;
@@ -1172,25 +1171,9 @@ describe.skipIf(!hasLaunchctl)("cron end-to-end (macOS)", () => {
         cmd: ["/bin/launchctl", "kickstart", `gui/${process.getuid!()}/bun.cron.test-mac-e2e`],
       });
 
-      // Wait for the marker file to appear
-      const { promise, resolve, reject } = Promise.withResolvers<void>();
-      const timer = setTimeout(() => {
-        watcher.close();
-        reject(new Error("Timed out"));
-      }, 10000);
-      const watcher = watch("/tmp", (_, f) => {
-        if (f === basename(markerPath)) {
-          watcher.close();
-          clearTimeout(timer);
-          resolve();
-        }
-      });
-      if (existsSync(markerPath)) {
-        watcher.close();
-        clearTimeout(timer);
-        resolve();
-      }
-      await promise;
+      // Wait for the marker file to appear. fs.watch("/tmp") on macOS is
+      // unreliable through the /tmp → /private/tmp symlink, so poll.
+      while (!existsSync(markerPath)) await Bun.sleep(10);
 
       const output = JSON.parse(readFileSync(markerPath, "utf8"));
       const after = Date.now();

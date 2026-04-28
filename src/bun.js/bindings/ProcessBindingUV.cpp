@@ -27,48 +27,39 @@
 #if !defined(EAGAIN)
 #define EAGAIN 35
 #endif
-#if !defined(EAI_ADDRFAMILY)
+// EAI_* are libuv's fixed UV__EAI_* values (uv/errno.h), NOT the host's
+// getaddrinfo codes. Unconditionally redefine — if <netdb.h> was included
+// earlier (directly or via a unified-build sibling) its values are wrong
+// here: e.g. glibc's EAI_NODATA is -5, so `err == -EAI_NODATA` would
+// match 5 instead of -3007.
+#undef EAI_ADDRFAMILY
 #define EAI_ADDRFAMILY 3000
-#endif
-#if !defined(EAI_AGAIN)
+#undef EAI_AGAIN
 #define EAI_AGAIN 3001
-#endif
-#if !defined(EAI_BADFLAGS)
+#undef EAI_BADFLAGS
 #define EAI_BADFLAGS 3002
-#endif
-#if !defined(EAI_BADHINTS)
+#undef EAI_BADHINTS
 #define EAI_BADHINTS 3013
-#endif
-#if !defined(EAI_CANCELED)
+#undef EAI_CANCELED
 #define EAI_CANCELED 3003
-#endif
-#if !defined(EAI_FAIL)
+#undef EAI_FAIL
 #define EAI_FAIL 3004
-#endif
-#if !defined(EAI_FAMILY)
+#undef EAI_FAMILY
 #define EAI_FAMILY 3005
-#endif
-#if !defined(EAI_MEMORY)
+#undef EAI_MEMORY
 #define EAI_MEMORY 3006
-#endif
-#if !defined(EAI_NODATA)
+#undef EAI_NODATA
 #define EAI_NODATA 3007
-#endif
-#if !defined(EAI_NONAME)
+#undef EAI_NONAME
 #define EAI_NONAME 3008
-#endif
-#if !defined(EAI_OVERFLOW)
+#undef EAI_OVERFLOW
 #define EAI_OVERFLOW 3009
-#endif
-#if !defined(EAI_PROTOCOL)
+#undef EAI_PROTOCOL
 #define EAI_PROTOCOL 3014
-#endif
-#if !defined(EAI_SERVICE)
+#undef EAI_SERVICE
 #define EAI_SERVICE 3010
-#endif
-#if !defined(EAI_SOCKTYPE)
+#undef EAI_SOCKTYPE
 #define EAI_SOCKTYPE 3011
-#endif
 #if !defined(EALREADY)
 #define EALREADY 37
 #endif

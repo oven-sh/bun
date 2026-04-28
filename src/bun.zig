@@ -243,15 +243,6 @@ pub const Global = @import("./Global.zig");
 pub const FD = @import("./fd.zig").FD;
 pub const MovableIfWindowsFd = @import("./fd.zig").MovableIfWindowsFd;
 
-/// Deprecated: Use `FD` instead.
-pub const FileDescriptor = FD;
-
-// When we are on a computer with an absurdly high number of max open file handles
-// such is often the case with macOS
-// As a useful optimization, we can store file descriptors and just keep them open...forever
-/// Deprecated: Rename to use `FD` instead.
-pub const StoredFileDescriptorType = FileDescriptor;
-
 /// Thin wrapper around iovec / libuv buffer
 /// This is used for readv/writev calls.
 pub const PlatformIOVec = if (Environment.isWindows)
@@ -552,7 +543,7 @@ pub fn ensureNonBlocking(fd: anytype) void {
 }
 
 const global_scope_log = sys.syslog;
-pub fn isReadable(fd: FileDescriptor) PollFlag {
+pub fn isReadable(fd: FD) PollFlag {
     if (comptime Environment.isWindows) {
         @panic("TODO on Windows");
     }
@@ -582,7 +573,7 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
 }
 
 pub const PollFlag = enum { ready, not_ready, hup };
-pub fn isWritable(fd: FileDescriptor) PollFlag {
+pub fn isWritable(fd: FD) PollFlag {
     if (comptime Environment.isWindows) {
         var polls = [_]std.os.windows.ws2_32.WSAPOLLFD{
             .{
@@ -713,7 +704,7 @@ pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
 
 // TODO: prefer .invalid decl literal over this
 // Please prefer `bun.FD.Optional.none` over this
-pub const invalid_fd: FileDescriptor = .invalid;
+pub const invalid_fd: FD = .invalid;
 
 pub const bun_js = @import("./bun.js.zig");
 /// Bindings to JavaScriptCore and other JavaScript primatives.
@@ -775,7 +766,7 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
     }
 }
 
-pub fn openDirNoRenamingOrDeletingWindows(dir: FileDescriptor, path_: [:0]const u8) !std.fs.Dir {
+pub fn openDirNoRenamingOrDeletingWindows(dir: FD, path_: [:0]const u8) !std.fs.Dir {
     if (comptime !Environment.isWindows) @compileError("use openDir!");
     const res = try sys.openDirAtWindowsA(dir, path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
     return res.stdDir();
@@ -1177,10 +1168,10 @@ pub fn getcwdAlloc(allocator: std.mem.Allocator) ![:0]u8 {
     return allocator.dupeZ(u8, temp_slice);
 }
 
-/// TODO: move to bun.sys and add a method onto FileDescriptor
+/// TODO: move to bun.sys and add a method onto FD
 /// Get the absolute path to a file descriptor.
 /// On Linux, when `/proc/self/fd` is not available, this function will attempt to use `fchdir` and `getcwd` to get the path instead.
-pub fn getFdPath(fd: FileDescriptor, buf: *bun.PathBuffer) ![]u8 {
+pub fn getFdPath(fd: FD, buf: *bun.PathBuffer) ![]u8 {
     if (comptime Environment.isWindows) {
         var wide_buf: WPathBuffer = undefined;
         const wide_slice = try windows.GetFinalPathNameByHandle(fd.native(), .{}, wide_buf[0..]);
@@ -1217,15 +1208,15 @@ pub fn getFdPath(fd: FileDescriptor, buf: *bun.PathBuffer) ![]u8 {
     };
 }
 
-/// TODO: move to bun.sys and add a method onto FileDescriptor
-pub fn getFdPathZ(fd: FileDescriptor, buf: *PathBuffer) ![:0]u8 {
+/// TODO: move to bun.sys and add a method onto FD
+pub fn getFdPathZ(fd: FD, buf: *PathBuffer) ![:0]u8 {
     const fd_path = try getFdPath(fd, buf);
     buf[fd_path.len] = 0;
     return buf[0..fd_path.len :0];
 }
 
-/// TODO: move to bun.sys and add a method onto FileDescriptor
-pub fn getFdPathW(fd: FileDescriptor, buf: *WPathBuffer) ![]u16 {
+/// TODO: move to bun.sys and add a method onto FD
+pub fn getFdPathW(fd: FD, buf: *WPathBuffer) ![]u16 {
     if (comptime Environment.isWindows) {
         return try windows.GetFinalPathNameByHandle(fd.native(), .{}, buf);
     }
@@ -1583,7 +1574,7 @@ pub fn reloadProcess(
             },
         }
     } else if (comptime Environment.isPosix) {
-        on_before_reload_process_linux();
+        if (comptime Environment.isLinux or Environment.isFreeBSD) on_before_reload_process_linux();
         const err = std.posix.execveZ(
             exec_path,
             newargv,
@@ -1920,9 +1911,9 @@ const WindowsStat = extern struct {
 
 pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.posix.Stat;
 pub const StatFS = switch (Environment.os) {
-    .mac => bun.c.struct_statfs,
-    .linux => bun.c.struct_statfs,
-    else => windows.libuv.uv_statfs_t,
+    .mac, .linux, .freebsd => bun.c.struct_statfs,
+    .windows => windows.libuv.uv_statfs_t,
+    .wasm => unreachable,
 };
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
@@ -2879,7 +2870,8 @@ pub fn runtimeEmbedFile(
                     \\
                     \\To improve iteration speed, some files are not embedded but
                     \\loaded at runtime, at the cost of making the binary non-portable.
-                    \\To fix this, pass -DCODEGEN_EMBED=ON to CMake
+                    \\To fix this, build with a release profile, or pass
+                    \\-Dcodegen_embed=true to zig build.
                 , .{ abs_path, e });
             };
         }
@@ -3131,6 +3123,8 @@ pub fn unsafeAssert(condition: bool) callconv(callconv_inline) void {
 
 pub const dns = @import("./dns.zig");
 
+pub const hw_timer = @import("./hw_timer.zig");
+
 pub fn getRoughTickCount(comptime mock_mode: timespec.MockMode) timespec {
     if (mock_mode == .allow_mocked_time) {
         if (bun.jsc.Jest.bun_test.FakeTimers.current_time.getTimespecNow()) |fake_time| {
@@ -3138,89 +3132,21 @@ pub fn getRoughTickCount(comptime mock_mode: timespec.MockMode) timespec {
         }
     }
 
-    if (comptime Environment.isMac) {
-        // https://opensource.apple.com/source/xnu/xnu-2782.30.5/libsyscall/wrappers/mach_approximate_time.c.auto.html
-        // https://opensource.apple.com/source/Libc/Libc-1158.1.2/gen/clock_gettime.c.auto.html
-        var spec = timespec{
-            .nsec = 0,
-            .sec = 0,
-        };
-        const clocky = struct {
-            pub var clock_id: std.c.CLOCK = .REALTIME;
-            pub fn get() void {
-                var res: timespec = undefined;
-                _ = std.c.clock_getres(.MONOTONIC_RAW_APPROX, @ptrCast(&res));
-                if (res.ms() <= 1) {
-                    clock_id = .MONOTONIC_RAW_APPROX;
-                } else {
-                    clock_id = .MONOTONIC_RAW;
-                }
-            }
-
-            pub var once = std.once(get);
-        };
-        clocky.once.call();
-
-        // We use this one because we can avoid reading the mach timebase info ourselves.
-        _ = std.c.clock_gettime(clocky.clock_id, @ptrCast(&spec));
-        return spec;
-    }
-
-    if (comptime Environment.isLinux) {
-        var spec = timespec{
-            .nsec = 0,
-            .sec = 0,
-        };
-        const clocky = struct {
-            pub var clock_id: std.os.linux.CLOCK = .REALTIME;
-            pub fn get() void {
-                var res: timespec = undefined;
-                std.posix.clock_getres(.MONOTONIC_COARSE, @ptrCast(&res)) catch {};
-                if (res.ms() <= 1) {
-                    clock_id = .MONOTONIC_COARSE;
-                } else {
-                    clock_id = .MONOTONIC_RAW;
-                }
-            }
-
-            pub var once = std.once(get);
-        };
-        clocky.once.call();
-        _ = std.os.linux.clock_gettime(clocky.clock_id, @ptrCast(&spec));
-        return spec;
-    }
-
-    if (comptime Environment.isWindows) {
-        const ms = getRoughTickCountMs(mock_mode);
-        return timespec{
-            .sec = @intCast(ms / 1000),
-            .nsec = @intCast((ms % 1000) * 1_000_000),
-        };
-    }
-
-    return 0;
+    const ns_value = hw_timer.nowNs();
+    return timespec{
+        .sec = @intCast(ns_value / std.time.ns_per_s),
+        .nsec = @intCast(ns_value % std.time.ns_per_s),
+    };
 }
 
-/// When you don't need a super accurate timestamp, this is a fast way to get one.
-///
-/// Requesting the current time frequently is somewhat expensive. So we can use a rough timestamp.
-///
-/// This timestamp doesn't easily correlate to a specific time. It's only useful relative to other calls.
+/// Monotonic milliseconds. Values are only meaningful relative to other calls.
 pub fn getRoughTickCountMs(comptime mock_mode: timespec.MockMode) u64 {
-    if (Environment.isWindows) {
-        if (mock_mode == .allow_mocked_time) {
-            if (bun.jsc.Jest.bun_test.FakeTimers.current_time.getTimespecNow()) |fake_time| {
-                return fake_time.ns() / std.time.ns_per_ms;
-            }
+    if (mock_mode == .allow_mocked_time) {
+        if (bun.jsc.Jest.bun_test.FakeTimers.current_time.getTimespecNow()) |fake_time| {
+            return fake_time.ns() / std.time.ns_per_ms;
         }
-        const GetTickCount64 = struct {
-            pub extern "kernel32" fn GetTickCount64() std.os.windows.ULONGLONG;
-        }.GetTickCount64;
-        return GetTickCount64();
     }
-
-    const spec = getRoughTickCount(mock_mode);
-    return spec.ns() / std.time.ns_per_ms;
+    return hw_timer.nowMs();
 }
 
 pub const MaybeMockedTimespec = struct {
@@ -3598,7 +3524,7 @@ pub fn getThreadCount() u16 {
             return null;
         }
         fn getThreadCountOnce() void {
-            cached_thread_count = @min(max_threads, @max(min_threads, getThreadCountFromUser() orelse std.Thread.getCpuCount() catch 0));
+            cached_thread_count = @min(max_threads, @max(min_threads, getThreadCountFromUser() orelse jsc.wtf.numberOfProcessorCores()));
         }
     };
     ThreadCount.cached_thread_count_once.call();

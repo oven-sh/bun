@@ -100,7 +100,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSAbortControllerDOMConstruct
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSAbortControllerDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSAbortControllerDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
     if (!context) [[unlikely]]
@@ -175,7 +175,7 @@ JSObject* JSAbortController::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSAbortController::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSAbortControllerDOMConstructor, DOMConstructorID::AbortController>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSAbortControllerDOMConstructor, DOMConstructorID::AbortController>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSAbortController::destroy(JSC::JSCell* cell)
@@ -188,7 +188,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsAbortControllerConstructor, (JSGlobalObject * lexical
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSAbortControllerPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSAbortControllerPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSAbortController::getConstructor(vm, prototype->globalObject()));
@@ -217,7 +217,7 @@ static inline JSC::EncodedJSValue jsAbortControllerPrototypeFunction_abortBody(J
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto reason = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.abort(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTF::move(reason)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.abort(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(reason)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsAbortControllerPrototypeFunction_abort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -238,17 +238,18 @@ JSC::GCClient::IsoSubspace* JSAbortController::subspaceForImpl(JSC::VM& vm)
 template<typename Visitor>
 void JSAbortController::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSAbortController*>(cell);
+    auto* thisObject = uncheckedDowncast<JSAbortController>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     addWebCoreOpaqueRoot(visitor, thisObject->wrapped().opaqueRoot());
+    thisObject->wrapped().signal().reason().visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSAbortController);
 
 void JSAbortController::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSAbortController*>(cell);
+    auto* thisObject = uncheckedDowncast<JSAbortController>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -318,7 +319,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 AbortController* JSAbortController::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSAbortController*>(value))
+    if (auto* wrapper = dynamicDowncast<JSAbortController>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

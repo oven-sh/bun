@@ -42,10 +42,13 @@ using namespace JSC;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MessageEvent);
 
-MessageEvent::MessageEvent() = default;
+MessageEvent::MessageEvent()
+    : Event(MessageEventInterfaceType)
+{
+}
 
 inline MessageEvent::MessageEvent(const AtomString& type, Init&& initializer, IsTrusted isTrusted)
-    : Event(type, initializer, isTrusted)
+    : Event(MessageEventInterfaceType, type, initializer, isTrusted)
     , m_data(JSValueTag {})
     , m_origin(initializer.origin)
     , m_lastEventId(initializer.lastEventId)
@@ -56,7 +59,7 @@ inline MessageEvent::MessageEvent(const AtomString& type, Init&& initializer, Is
 }
 
 inline MessageEvent::MessageEvent(const AtomString& type, DataType&& data, const String& origin, const String& lastEventId, RefPtr<MessagePort>&& source, Vector<RefPtr<MessagePort>>&& ports)
-    : Event(type, CanBubble::No, IsCancelable::No)
+    : Event(MessageEventInterfaceType, type, CanBubble::No, IsCancelable::No)
     , m_data(WTF::move(data))
     , m_origin(origin)
     , m_lastEventId(lastEventId)
@@ -108,7 +111,7 @@ auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScrip
 
     auto& eventType = didFail ? eventNames().messageerrorEvent : eventNames().messageEvent;
     auto event = adoptRef(*new MessageEvent(eventType, WTF::move(data), origin, lastEventId, WTF::move(source), WTF::move(ports)));
-    JSC::Strong<JSC::JSObject> strongWrapper(vm, JSC::jsCast<JSC::JSObject*>(toJS(&globalObject, JSC::jsCast<JSDOMGlobalObject*>(&globalObject), event.get())));
+    JSC::Strong<JSC::JSObject> strongWrapper(vm, uncheckedDowncast<JSC::JSObject>(toJS(&globalObject, uncheckedDowncast<JSDOMGlobalObject>(&globalObject), event.get())));
     // Since we've already deserialized the SerializedScriptValue, cache the result so we don't have to deserialize
     // again the next time JSMessageEvent::data() gets called by the main world.
     event->cachedData().set(vm, strongWrapper.get(), deserialized);
@@ -136,11 +139,6 @@ void MessageEvent::initMessageEvent(const AtomString& type, bool canBubble, bool
     m_source = WTF::move(source);
     m_ports = WTF::move(ports);
     m_cachedPorts.clear();
-}
-
-EventInterface MessageEvent::eventInterface() const
-{
-    return MessageEventInterfaceType;
 }
 
 size_t MessageEvent::memoryCost() const

@@ -215,7 +215,16 @@ describe.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
 function test(arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = createTest(arg0, arg1, arg2);
   const { test } = bunTest();
-  test(name, fn, options);
+  // Node's {only: true} is intentionally not routed to test.only() here:
+  // in Node it is a no-op unless --test-only is passed, whereas bun:test's
+  // test.only() unconditionally skips siblings.
+  if (options.todo) {
+    test.todo(name, fn, options);
+  } else if (options.skip) {
+    test.skip(name, fn, options);
+  } else {
+    test(name, fn, options);
+  }
 }
 
 test.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {
@@ -269,14 +278,14 @@ function parseTestOptions(arg0: unknown, arg1: unknown, arg2: unknown) {
     name = arg0.name || kDefaultName;
     fn = arg0 as TestFn;
     if (typeof arg1 === "object") {
-      options = arg1 as TestOptions;
+      options = (arg1 ?? kDefaultOptions) as TestOptions;
     } else {
       options = kDefaultOptions;
     }
   } else if (typeof arg0 === "string") {
     name = arg0;
     if (typeof arg1 === "object") {
-      options = arg1 as TestOptions;
+      options = (arg1 ?? kDefaultOptions) as TestOptions;
       if (typeof arg2 === "function") {
         fn = arg2 as TestFn;
       } else {

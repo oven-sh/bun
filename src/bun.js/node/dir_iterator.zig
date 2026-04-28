@@ -127,6 +127,52 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                 }
             }
         },
+        .freebsd => struct {
+            dir: FD,
+            buf: [8192]u8 align(@alignOf(posix.system.dirent)),
+            index: usize,
+            end_index: usize,
+
+            const Self = @This();
+            pub const Error = IteratorError;
+
+            pub fn next(self: *Self) Result {
+                start_over: while (true) {
+                    if (self.index >= self.end_index) {
+                        const rc = posix.system.getdents(self.dir.cast(), &self.buf, self.buf.len);
+                        if (Result.errnoSys(rc, .getdents64)) |err| {
+                            // FreeBSD reports ENOENT when iterating an unlinked
+                            // but still-open directory.
+                            if (err.getErrno() == .NOENT) return .{ .result = null };
+                            return err;
+                        }
+                        if (rc == 0) return .{ .result = null };
+                        self.index = 0;
+                        self.end_index = @as(usize, @intCast(rc));
+                    }
+                    const entry = @as(*align(1) posix.system.dirent, @ptrCast(&self.buf[self.index]));
+                    self.index += if (@hasDecl(posix.system.dirent, "reclen")) entry.reclen() else entry.reclen;
+
+                    const name = @as([*]u8, @ptrCast(&entry.name))[0..entry.namlen];
+                    if (strings.eqlComptime(name, ".") or strings.eqlComptime(name, "..") or entry.fileno == 0) {
+                        continue :start_over;
+                    }
+
+                    const entry_kind: Entry.Kind = switch (entry.type) {
+                        posix.DT.BLK => .block_device,
+                        posix.DT.CHR => .character_device,
+                        posix.DT.DIR => .directory,
+                        posix.DT.FIFO => .named_pipe,
+                        posix.DT.LNK => .sym_link,
+                        posix.DT.REG => .file,
+                        posix.DT.SOCK => .unix_domain_socket,
+                        posix.DT.WHT => .whiteout,
+                        else => .unknown,
+                    };
+                    return .{ .result = IteratorResult{ .name = PathString.init(name), .kind = entry_kind } };
+                }
+            }
+        },
         .linux => struct {
             dir: FD,
             // The if guard is solely there to prevent compile errors from missing `linux.dirent64`
@@ -201,6 +247,10 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             end_index: usize,
             first: bool,
             name_data: if (use_windows_ospath) [257]u16 else [513]u8,
+            /// Optional kernel-side wildcard filter passed to NtQueryDirectoryFile.
+            /// Evaluated by FsRtlIsNameInExpression (case-insensitive, supports `*` and `?`).
+            /// Only honored on the first call (RestartScan=TRUE); sticky for the handle lifetime.
+            name_filter: ?[]const u16 = null,
 
             const Self = @This();
 
@@ -214,11 +264,26 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                 while (true) {
                     const w = std.os.windows;
                     if (self.index >= self.end_index) {
-                        var io: w.IO_STATUS_BLOCK = undefined;
+                        // The I/O manager only fills the IO_STATUS_BLOCK on IRP
+                        // completion. When NtQueryDirectoryFile fails with an
+                        // NT_ERROR status (e.g. parameter validation), the block
+                        // is left untouched, so zero-initialize it rather than
+                        // reading uninitialized stack if the call fails.
+                        var io = mem.zeroes(w.IO_STATUS_BLOCK);
                         if (self.first) {
                             // > Any bytes inserted for alignment SHOULD be set to zero, and the receiver MUST ignore them
                             @memset(&self.buf, 0);
                         }
+
+                        var filter_us: w.UNICODE_STRING = undefined;
+                        const filter_ptr: ?*w.UNICODE_STRING = if (self.name_filter) |f| blk: {
+                            filter_us = .{
+                                .Length = @intCast(f.len * 2),
+                                .MaximumLength = @intCast(f.len * 2),
+                                .Buffer = @constCast(f.ptr),
+                            };
+                            break :blk &filter_us;
+                        } else null;
 
                         const rc = w.ntdll.NtQueryDirectoryFile(
                             self.dir.cast(),
@@ -230,17 +295,15 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                             self.buf.len,
                             .FileDirectoryInformation,
                             w.FALSE,
-                            null,
+                            filter_ptr,
                             if (self.first) @as(w.BOOLEAN, w.TRUE) else @as(w.BOOLEAN, w.FALSE),
                         );
 
                         self.first = false;
-                        if (io.Information == 0) {
-                            bun.sys.syslog("NtQueryDirectoryFile({f}) = 0", .{self.dir});
-                            return .{ .result = null };
-                        }
-                        self.index = 0;
-                        self.end_index = io.Information;
+
+                        // Check the return status before trusting io.Information;
+                        // the IO_STATUS_BLOCK is not written on NT_ERROR statuses.
+
                         // If the handle is not a directory, we'll get STATUS_INVALID_PARAMETER.
                         if (rc == .INVALID_PARAMETER) {
                             bun.sys.syslog("NtQueryDirectoryFile({f}) = {s}", .{ self.dir, @tagName(rc) });
@@ -252,9 +315,10 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                             };
                         }
 
-                        if (rc == .NO_MORE_FILES) {
+                        // NO_SUCH_FILE is returned on the first call when a FileName filter
+                        // matches nothing; NO_MORE_FILES on subsequent calls. Both mean "done".
+                        if (rc == .NO_MORE_FILES or rc == .NO_SUCH_FILE) {
                             bun.sys.syslog("NtQueryDirectoryFile({f}) = {s}", .{ self.dir, @tagName(rc) });
-                            self.end_index = self.index;
                             return .{ .result = null };
                         }
 
@@ -278,17 +342,38 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                             };
                         }
 
+                        if (io.Information == 0) {
+                            bun.sys.syslog("NtQueryDirectoryFile({f}) = 0", .{self.dir});
+                            return .{ .result = null };
+                        }
+                        self.index = 0;
+                        self.end_index = io.Information;
+
                         bun.sys.syslog("NtQueryDirectoryFile({f}) = {d}", .{ self.dir, self.end_index });
                     }
 
-                    const dir_info: FILE_DIRECTORY_INFORMATION_PTR = @ptrCast(@alignCast(&self.buf[self.index]));
+                    const entry_offset = self.index;
+                    const dir_info: FILE_DIRECTORY_INFORMATION_PTR = @ptrCast(@alignCast(&self.buf[entry_offset]));
                     if (dir_info.NextEntryOffset != 0) {
-                        self.index += dir_info.NextEntryOffset;
+                        self.index = entry_offset + dir_info.NextEntryOffset;
                     } else {
                         self.index = self.buf.len;
                     }
 
-                    const dir_info_name = @as([*]const u16, @ptrCast(&dir_info.FileName))[0 .. dir_info.FileNameLength / 2];
+                    // Some filesystem / filter drivers have been observed returning
+                    // FILE_DIRECTORY_INFORMATION entries with an out-of-range
+                    // FileNameLength (well beyond the 255-WCHAR NTFS component
+                    // limit). Clamp to what fits in name_data (destination) and to
+                    // what remains in buf (source) so a misbehaving driver cannot
+                    // walk us past the end of either buffer.
+                    const max_name_u16: usize = if (use_windows_ospath)
+                        self.name_data.len - 1
+                    else
+                        (self.name_data.len - 1) / 2;
+                    const name_byte_offset = entry_offset + @offsetOf(FILE_DIRECTORY_INFORMATION, "FileName");
+                    const buf_remaining_u16: usize = (self.buf.len -| name_byte_offset) / @sizeOf(u16);
+                    const name_len_u16: usize = @min(dir_info.FileNameLength / 2, max_name_u16, buf_remaining_u16);
+                    const dir_info_name = @as([*]const u16, @ptrCast(&dir_info.FileName))[0..name_len_u16];
 
                     if (mem.eql(u16, dir_info_name, &[_]u16{'.'}) or mem.eql(u16, dir_info_name, &[_]u16{ '.', '.' }))
                         continue;
@@ -307,10 +392,9 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                     };
 
                     if (use_windows_ospath) {
-                        const length = dir_info.FileNameLength / 2;
-                        @memcpy(self.name_data[0..length], @as([*]u16, @ptrCast(&dir_info.FileName))[0..length]);
-                        self.name_data[length] = 0;
-                        const name_utf16le = self.name_data[0..length :0];
+                        @memcpy(self.name_data[0..name_len_u16], dir_info_name);
+                        self.name_data[name_len_u16] = 0;
+                        const name_utf16le = self.name_data[0..name_len_u16 :0];
 
                         return .{
                             .result = IteratorResultW{
@@ -425,7 +509,7 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
                         .end_index = 0,
                         .buf = undefined,
                     },
-                    .linux => IteratorType{
+                    .linux, .freebsd => IteratorType{
                         .dir = dir,
                         .index = 0,
                         .end_index = 0,
@@ -448,6 +532,11 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
                     },
                 },
             };
+        }
+
+        pub fn setNameFilter(self: *Self, filter: ?[]const u16) void {
+            if (comptime !bun.Environment.isWindows) return;
+            self.iter.name_filter = filter;
         }
     };
 }

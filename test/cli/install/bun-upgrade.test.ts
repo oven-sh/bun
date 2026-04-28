@@ -13,10 +13,8 @@ beforeAll(() => {
 describe.concurrent(() => {
   it("two invalid arguments, should display error message and suggest command", async () => {
     const cwd = tmpdirSync();
-    const execPath = join(cwd, basename(bunExe()));
-    await copyFile(bunExe(), execPath);
     const { stderr } = spawn({
-      cmd: [execPath, "upgrade", "bun-types", "--dev"],
+      cmd: [bunExe(), "upgrade", "bun-types", "--dev"],
       cwd,
       stdout: null,
       stdin: "pipe",
@@ -31,10 +29,8 @@ describe.concurrent(() => {
 
   it("two invalid arguments flipped, should display error message and suggest command", async () => {
     const cwd = tmpdirSync();
-    const execPath = join(cwd, basename(bunExe()));
-    await copyFile(bunExe(), execPath);
     const { stderr } = spawn({
-      cmd: [execPath, "upgrade", "--dev", "bun-types"],
+      cmd: [bunExe(), "upgrade", "--dev", "bun-types"],
       cwd,
       stdout: null,
       stdin: "pipe",
@@ -49,10 +45,8 @@ describe.concurrent(() => {
 
   it("one invalid argument, should display error message and suggest command", async () => {
     const cwd = tmpdirSync();
-    const execPath = join(cwd, basename(bunExe()));
-    await copyFile(bunExe(), execPath);
     const { stderr } = spawn({
-      cmd: [execPath, "upgrade", "bun-types"],
+      cmd: [bunExe(), "upgrade", "bun-types"],
       cwd,
       stdout: null,
       stdin: "pipe",
@@ -67,10 +61,8 @@ describe.concurrent(() => {
 
   it("one valid argument, should succeed", async () => {
     const cwd = tmpdirSync();
-    const execPath = join(cwd, basename(bunExe()));
-    await copyFile(bunExe(), execPath);
     const { stderr } = spawn({
-      cmd: [execPath, "upgrade", "--help"],
+      cmd: [bunExe(), "upgrade", "--help"],
       cwd,
       stdout: null,
       stdin: "pipe",

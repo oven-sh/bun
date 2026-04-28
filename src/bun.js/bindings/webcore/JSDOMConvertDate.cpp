@@ -41,7 +41,7 @@ WallTime valueToDate(JSC::JSGlobalObject& lexicalGlobalObject, JSValue value)
 
     auto& vm = lexicalGlobalObject.vm();
     if (value.inherits<DateInstance>())
-        milliseconds = jsCast<DateInstance*>(value)->internalNumber();
+        milliseconds = uncheckedDowncast<DateInstance>(value)->internalNumber();
     else if (value.isNumber())
         milliseconds = value.asNumber();
     else if (value.isString())

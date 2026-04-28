@@ -94,6 +94,12 @@ export interface ToolSpec {
   hint?: string;
 }
 
+export interface FoundTool {
+  path: string;
+  /** Parsed X.Y.Z, if `spec.version` was set and the check ran. */
+  version?: string;
+}
+
 /**
  * Rejection log for a single tool search — used in error messages.
  */
@@ -103,19 +109,28 @@ interface Rejection {
 }
 
 /**
- * Find the bun executable to use for codegen. Prefers ~/.bun/bin/bun over
- * process.execPath — CI agents pin an old system bun (/usr/bin/bun), but
- * codegen scripts use newer `bun build` CLI flags. cmake did the same
- * (SetupBun.cmake: PATHS $ENV{HOME}/.bun/bin before system PATH).
+ * Find the bun executable for codegen (`bun install`, `bun build`, scripts
+ * using Bun APIs). Must be the actual bun binary — NOT process.execPath,
+ * since configure may run under node.
  *
- * Falls back to process.execPath (the bun running us) — always works for
- * local dev where system bun is recent enough.
+ * Search order: ~/.bun/bin (curl-install location), then PATH, then
+ * process.execPath only if it's actually bun. CI agents pin an old system
+ * bun but codegen scripts need newer CLI flags, so the user install goes
+ * first.
  */
 export function findBun(os: OS): string {
   const exe = os === "windows" ? "bun.exe" : "bun";
   const userBun = join(homedir(), ".bun", "bin", exe);
   if (isExecutable(userBun)) return userBun;
-  return process.execPath;
+
+  // Running under bun at a non-standard path — use that.
+  if (process.versions.bun !== undefined) return process.execPath;
+
+  return findTool({
+    names: ["bun"],
+    required: true,
+    hint: "Codegen requires bun (for `bun install`, `bun build`, and scripts using Bun APIs). Install: curl -fsSL https://bun.sh/install | bash",
+  })!.path;
 }
 
 /**
@@ -194,7 +209,7 @@ export function clangTargetArch(clang: string): Arch | undefined {
  * Find a tool. Searches provided paths first, then $PATH.
  * Returns the absolute path or undefined (if not required).
  */
-export function findTool(spec: ToolSpec): string | undefined {
+export function findTool(spec: ToolSpec): FoundTool | undefined {
   const exeSuffix = process.platform === "win32" ? ".exe" : "";
   const searchPaths = [...(spec.paths ?? []), ...(process.env.PATH ?? "").split(delimiter).filter(p => p.length > 0)];
   const versionArg = spec.versionArg ?? "--version";
@@ -216,8 +231,9 @@ export function findTool(spec: ToolSpec): string | undefined {
           rejections.push({ path: full, reason: `version ${v.version} does not satisfy ${spec.version}` });
           continue;
         }
+        return { path: full, version: v.version };
       }
-      return full;
+      return { path: full };
     }
   }
 
@@ -329,7 +345,7 @@ function findLlvmTool(
   paths: string[],
   os: OS,
   opts: { checkVersion: boolean; required: boolean },
-): string | undefined {
+): FoundTool | undefined {
   const spec: ToolSpec = {
     names: llvmNameVariants(baseName),
     paths,
@@ -356,7 +372,10 @@ function findLlvmTool(
 export function resolveLlvmToolchain(
   os: OS,
   arch: Arch,
-): Pick<Toolchain, "cc" | "cxx" | "ar" | "ranlib" | "ld" | "strip" | "dsymutil" | "ccache" | "rc" | "mt"> {
+): Pick<
+  Toolchain,
+  "cc" | "cxx" | "ar" | "ranlib" | "ld" | "strip" | "dsymutil" | "ccache" | "rc" | "mt" | "nasm" | "clangVersion"
+> {
   // Compute search paths ONCE. Contains a brew spawn on macOS (~100ms)
   // so calling it per-tool would burn ~600ms. Every tool below gets
   // the same paths; first-match-wins in findTool means whichever LLVM
@@ -367,14 +386,14 @@ export function resolveLlvmToolchain(
   // symlink) from the same install; a second version-check spawn would
   // just return the same answer. We still locate it separately so the
   // "not found" error names the right tool.
-  const cc = findLlvmTool(os === "windows" ? "clang-cl" : "clang", paths, os, {
+  const ccResult = findLlvmTool(os === "windows" ? "clang-cl" : "clang", paths, os, {
     checkVersion: true,
     required: true,
   });
   const cxx = findLlvmTool(os === "windows" ? "clang-cl" : "clang++", paths, os, {
     checkVersion: false,
     required: true,
-  });
+  })?.path;
 
   // ar: llvm-ar (or llvm-lib on Windows)
   // No version check — ar doesn't always print a parseable version,
@@ -382,7 +401,7 @@ export function resolveLlvmToolchain(
   const ar = findLlvmTool(os === "windows" ? "llvm-lib" : "llvm-ar", paths, os, {
     checkVersion: false,
     required: true,
-  });
+  })?.path;
 
   // ranlib: llvm-ranlib (unix only — Windows uses llvm-lib which doesn't need it)
   // Needed for nested cmake builds (CMAKE_RANLIB). llvm-ar's `s` flag does the
@@ -392,18 +411,16 @@ export function resolveLlvmToolchain(
     ranlib = findLlvmTool("llvm-ranlib", paths, os, {
       checkVersion: false,
       required: true,
-    });
+    })?.path;
   }
 
   // ld: ld.lld on Linux (passed as --ld-path=), lld-link on Windows.
   // On Darwin clang drives the system linker directly.
   let ld: string;
   if (os === "windows") {
-    const found = findLlvmTool("lld-link", paths, os, { checkVersion: false, required: true });
-    ld = found ?? ""; // unreachable (required=true throws), but keeps types happy
+    ld = findLlvmTool("lld-link", paths, os, { checkVersion: false, required: true })?.path ?? "";
   } else if (os === "linux") {
-    const found = findLlvmTool("ld.lld", paths, os, { checkVersion: true, required: true });
-    ld = found ?? "";
+    ld = findLlvmTool("ld.lld", paths, os, { checkVersion: true, required: true })?.path ?? "";
   } else {
     ld = ""; // darwin: unused
   }
@@ -411,21 +428,15 @@ export function resolveLlvmToolchain(
   // strip: GNU strip on Linux (more features), llvm-strip elsewhere
   let strip: string;
   if (os === "linux") {
-    const found = findTool({
-      names: ["strip"],
-      required: true,
-      hint: "Install binutils for your distro",
-    });
-    strip = found ?? "";
+    strip = findTool({ names: ["strip"], required: true, hint: "Install binutils for your distro" })?.path ?? "";
   } else {
-    const found = findLlvmTool("llvm-strip", paths, os, { checkVersion: false, required: true });
-    strip = found ?? "";
+    strip = findLlvmTool("llvm-strip", paths, os, { checkVersion: false, required: true })?.path ?? "";
   }
 
   // dsymutil: darwin only
   let dsymutil: string | undefined;
   if (os === "darwin") {
-    dsymutil = findLlvmTool("dsymutil", paths, os, { checkVersion: false, required: true });
+    dsymutil = findLlvmTool("dsymutil", paths, os, { checkVersion: false, required: true })?.path;
   }
 
   // rc/mt: windows only. Passed to nested cmake — when CMAKE_C_COMPILER
@@ -437,26 +448,53 @@ export function resolveLlvmToolchain(
   let rc: string | undefined;
   let mt: string | undefined;
   if (os === "windows") {
-    rc = findLlvmTool("llvm-rc", paths, os, { checkVersion: false, required: true });
-    mt = findLlvmTool("llvm-mt", paths, os, { checkVersion: false, required: false });
+    rc = findLlvmTool("llvm-rc", paths, os, { checkVersion: false, required: true })?.path;
+    mt = findLlvmTool("llvm-mt", paths, os, { checkVersion: false, required: false })?.path;
+  }
+
+  // nasm: windows-x64 only. BoringSSL's win-x64 assembly is NASM syntax
+  // (perlasm emits gas .S everywhere else, including win-aarch64). clang's
+  // integrated assembler can't read NASM, and OPENSSL_NO_ASM is a 5-10×
+  // crypto perf hit, so this is required when targeting win-x64.
+  let nasm: string | undefined;
+  if (os === "windows") {
+    nasm = findTool({
+      names: ["nasm"],
+      // boringssl's win-x64 .asm needs nasm; win-aarch64 uses gas .S.
+      // `arch` here is the HOST arch — the target isn't known yet inside
+      // resolveToolchain(). compile.ts:nasm() asserts at the use site
+      // with the same hint, so a missing nasm still fails clearly.
+      required: false,
+      hint: "Install from https://nasm.us or `winget install NASM.NASM`",
+    })?.path;
   }
 
   // ccache: optional. If found, used as compiler launcher.
-  const ccache = findTool({
-    names: ["ccache"],
-    required: false,
-  });
+  const ccache = findTool({ names: ["ccache"], required: false })?.path;
 
   // These are definitely defined at this point (required=true throws otherwise),
   // but TS can't see through that, so assert.
-  if (cc === undefined || cxx === undefined || ar === undefined) {
+  if (ccResult === undefined || cxx === undefined || ar === undefined) {
     throw new BuildError("unreachable: required tool undefined");
   }
   if (strip === "") {
     throw new BuildError("unreachable: strip undefined");
   }
 
-  return { cc, cxx, ar, ranlib, ld, strip, dsymutil, ccache, rc, mt };
+  return {
+    cc: ccResult.path,
+    clangVersion: ccResult.version,
+    cxx,
+    ar,
+    ranlib,
+    ld,
+    strip,
+    dsymutil,
+    ccache,
+    rc,
+    mt,
+    nasm,
+  };
 }
 
 /**
@@ -469,7 +507,7 @@ export function findSystemTool(name: string, opts?: { required?: boolean; hint?:
     required: opts?.required ?? false,
   };
   if (opts?.hint !== undefined) spec.hint = opts.hint;
-  return findTool(spec);
+  return findTool(spec)?.path;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -501,7 +539,7 @@ export function findCargo(hostOs: OS): CargoToolchain | undefined {
     names: ["cargo"],
     paths: [join(cargoHome, "bin")],
     required: false,
-  });
+  })?.path;
   if (cargo === undefined) return undefined;
 
   // Suppress unused warning for hostOs — kept in signature for future

@@ -19,7 +19,7 @@ nonblocking: bool = false,
 force_sync: bool = false,
 
 is_socket: bool = false,
-fd: bun.FileDescriptor = bun.invalid_fd,
+fd: bun.FD = bun.invalid_fd,
 
 auto_flusher: webcore.AutoFlusher = .{},
 run_pending_later: FlushPendingTask = .{},
@@ -270,7 +270,7 @@ pub fn createWithPipe(
 
 pub fn create(
     event_loop_: anytype,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
 ) *FileSink {
     const evtloop = switch (@TypeOf(event_loop_)) {
         jsc.EventLoopHandle => event_loop_,
@@ -292,7 +292,7 @@ pub fn setup(this: *FileSink, options: *const FileSink.Options) bun.sys.Maybe(vo
     }
 
     const result = bun.io.openForWriting(
-        bun.FileDescriptor.cwd(),
+        bun.FD.cwd(),
         options.input_path,
         options.flags(),
         options.mode,
@@ -497,7 +497,7 @@ pub fn protectJSWrapper(this: *FileSink, globalThis: *jsc.JSGlobalObject, js_wra
     this.js_sink_ref.set(globalThis, js_wrapper);
 }
 
-pub fn init(fd: bun.FileDescriptor, event_loop_handle: anytype) *FileSink {
+pub fn init(fd: bun.FD, event_loop_handle: anytype) *FileSink {
     var this = bun.new(FileSink, .{
         .ref_count = .init(),
         .writer = .{},

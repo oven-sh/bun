@@ -1,6 +1,6 @@
 import { serve, ServeOptions, Server } from "bun";
 import { afterAll, expect, it } from "bun:test";
-import { rmSync } from "fs";
+import { mkdirSync, rmSync } from "fs";
 import { isWindows, tmpdirSync } from "harness";
 import { request } from "http";
 import { join } from "path";
@@ -92,6 +92,37 @@ if (process.platform === "linux") {
     server.stop(true);
     try {
       rmSync(unix, {});
+    } catch (e) {}
+  });
+}
+
+if (process.platform === "linux" || process.platform === "darwin") {
+  it("can workaround socket path length limit when only the directory is long", async () => {
+    const base = tmpdirSync();
+    let dir = base;
+    while (dir.length + "/fetch-unix.sock".length < 130) {
+      dir = join(dir, Buffer.alloc(40, "a").toString());
+    }
+    mkdirSync(dir, { recursive: true });
+    const unix = join(dir, "fetch-unix.sock");
+    expect(unix.length).toBeGreaterThanOrEqual(108);
+
+    using server = Bun.serve({
+      unix,
+      fetch(req) {
+        return new Response(req.body);
+      },
+    });
+
+    for (let i = 0; i < 5; i++) {
+      const response = await fetch("http://localhost/hello", { method: "POST", body: String(i), unix });
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe(String(i));
+    }
+
+    server.stop(true);
+    try {
+      rmSync(base, { recursive: true, force: true });
     } catch (e) {}
   });
 }

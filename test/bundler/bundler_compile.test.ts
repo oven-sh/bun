@@ -5,11 +5,14 @@ import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
-// Default to the CLI backend so tests in this describe.concurrent block
-// actually interleave (the API backend uses process.chdir and is forced serial).
+// Default to the CLI backend. We intentionally use plain `describe` here
+// (not `describe.concurrent`): since the ELF-section inject path was added,
+// each `bun build --compile` on Linux reads + rewrites the full executable
+// (~500MB for profile builds). Running 20 of these concurrently exhausts CI
+// memory/IO and causes subprocess timeouts — see build #40193 failures.
 const itBundled = (id: string, opts: BundlerTestInput) => itBundledBase(id, { backend: "cli", ...opts });
 
-describe.concurrent("bundler", () => {
+describe("bundler", () => {
   itBundled("compile/HelloWorld", {
     compile: true,
     files: {

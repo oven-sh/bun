@@ -915,11 +915,12 @@ function expectBundled(
         }
       }
 
-      const buildProc = Bun.spawn({
+      await using buildProc = Bun.spawn({
         cmd,
         cwd: root,
         stdio: ["ignore", "pipe", "pipe"],
         env: bundlerEnv,
+        timeout: 60_000,
       });
       const [stdoutBytes, stderrBytes, exitCode] = await Promise.all([
         buildProc.stdout.bytes(),
@@ -929,6 +930,14 @@ function expectBundled(
       const stdout = Buffer.from(stdoutBytes);
       const stderr = Buffer.from(stderrBytes);
       const success = exitCode === 0;
+      if (buildProc.signalCode) {
+        throw new Error(
+          `[${id}] 'bun build' subprocess killed by ${buildProc.signalCode}\n` +
+            `cmd: ${cmd.join(" ")}\n` +
+            `STDOUT: ${stdout.toUnixString().slice(0, 2000)}\n` +
+            `STDERR: ${stderr.toUnixString().slice(0, 2000)}`,
+        );
+      }
 
       // Check for errors
       if (!success) {
@@ -1662,7 +1671,7 @@ for (const [key, blob] of build.outputs) {
           ...(run.args ?? []),
         ] as [string, ...string[]];
 
-        const runProc = Bun.spawn({
+        await using runProc = Bun.spawn({
           cmd: args,
           env: {
             ...bunEnv,
@@ -1670,6 +1679,7 @@ for (const [key, blob] of build.outputs) {
             FORCE_COLOR: "0",
             IS_TEST_RUNNER: "1",
           },
+          timeout: 60_000,
           stdio: ["ignore", "pipe", "pipe"],
           cwd: run.setCwd ? root : originalCwd,
         });
@@ -1683,8 +1693,14 @@ for (const [key, blob] of build.outputs) {
         const signalCode = runProc.signalCode ?? undefined;
         const success = exitCode === 0;
 
-        if (signalCode === "SIGTRAP") {
-          throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
+        if (signalCode) {
+          throw new Error(
+            prefix +
+              `Runtime failed with ${signalCode}\n` +
+              `cmd: ${args.join(" ")}\n` +
+              `STDOUT: ${stdout!.toUnixString().slice(0, 2000)}\n` +
+              `STDERR: ${stderr!.toUnixString().slice(0, 2000)}`,
+          );
         }
 
         if (run.error) {

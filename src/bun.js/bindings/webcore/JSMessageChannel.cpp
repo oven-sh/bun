@@ -93,7 +93,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMessageChannelDOMConst
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSMessageChannelDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSMessageChannelDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
     if (!context) [[unlikely]]
@@ -168,7 +168,7 @@ JSObject* JSMessageChannel::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSMessageChannel::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSMessageChannelDOMConstructor, DOMConstructorID::MessageChannel>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSMessageChannelDOMConstructor, DOMConstructorID::MessageChannel>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSMessageChannel::destroy(JSC::JSCell* cell)
@@ -181,7 +181,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMessageChannelConstructor, (JSGlobalObject * lexicalG
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSMessageChannelPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSMessageChannelPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSMessageChannel::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -226,10 +226,10 @@ JSC::GCClient::IsoSubspace* JSMessageChannel::subspaceForImpl(JSC::VM& vm)
 template<typename Visitor>
 void JSMessageChannel::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSMessageChannel*>(cell);
+    auto* thisObject = uncheckedDowncast<JSMessageChannel>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    thisObject->visitAdditionalChildren(visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSMessageChannel);
@@ -237,17 +237,17 @@ DEFINE_VISIT_CHILDREN(JSMessageChannel);
 template<typename Visitor>
 void JSMessageChannel::visitOutputConstraints(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSMessageChannel*>(cell);
+    auto* thisObject = uncheckedDowncast<JSMessageChannel>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitOutputConstraints(thisObject, visitor);
-    thisObject->visitAdditionalChildren(visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
 
 template void JSMessageChannel::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
 template void JSMessageChannel::visitOutputConstraints(JSCell*, SlotVisitor&);
 void JSMessageChannel::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSMessageChannel*>(cell);
+    auto* thisObject = uncheckedDowncast<JSMessageChannel>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -311,7 +311,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 MessageChannel* JSMessageChannel::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSMessageChannel*>(value))
+    if (auto* wrapper = dynamicDowncast<JSMessageChannel>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

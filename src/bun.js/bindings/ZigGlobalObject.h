@@ -564,6 +564,8 @@ public:
     V(private, LazyClassStructure, m_JSH3ResponseSinkClassStructure)                                         \
                                                                                                              \
     V(private, LazyClassStructure, m_JSStringDecoderClassStructure)                                          \
+    V(public, LazyClassStructure, m_JSDatabaseSyncClassStructure)                                            \
+    V(public, LazyClassStructure, m_JSStatementSyncClassStructure)                                           \
     V(private, LazyClassStructure, m_NapiClassStructure)                                                     \
     V(private, LazyClassStructure, m_callSiteStructure)                                                      \
     V(public, LazyClassStructure, m_JSBufferClassStructure)                                                  \

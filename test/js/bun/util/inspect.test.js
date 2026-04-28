@@ -789,7 +789,8 @@ describe("Proxy in prototype chain", () => {
     };
     Object.setPrototypeOf(obj, new Proxy(proto, {}));
     const out = Bun.inspect(obj);
-    expect(out).toContain("ok");
+    expect(out).toContain("ok: 1");
+    expect(out).toContain("ok2: 2");
   });
 
   it("does not crash when a Proxy prototype has a throwing getPrototypeOf trap", () => {

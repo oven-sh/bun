@@ -29,12 +29,16 @@ typedef struct us_quic_listen_socket_s us_quic_listen_socket_t;
 typedef struct us_quic_socket_s us_quic_socket_t;
 typedef struct us_quic_stream_s us_quic_stream_t;
 
-/* One name/value pair pointing into stream-owned storage. */
+/* One name/value pair pointing into stream-owned storage. `qpack_index` is
+ * an optional `enum lsqpack_tnv` hint (0..98) the caller may set on outgoing
+ * headers so the QPACK encoder can skip its name-hash lookup; -1 = no hint.
+ * Always -1 on incoming headers. */
 struct us_quic_header_t {
     const char *name;
     unsigned int name_len;
     const char *value;
     unsigned int value_len;
+    int qpack_index;
 };
 
 /* Process-wide lsquic init. Must be called once before the first

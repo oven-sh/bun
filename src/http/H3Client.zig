@@ -15,12 +15,15 @@ pub const Stream = struct {
 
     session: *ClientSession,
     client: ?*HTTPClient,
-    qstream: ?*QuicStream = null,
+    qstream: ?*quic.Stream = null,
 
+    /// Slices into the lsquic-owned hset buffer; valid only for the duration
+    /// of the `onStreamHeaders` callback that populated it. `cloneMetadata`
+    /// deep-copies synchronously inside that callback, so nothing reads these
+    /// after they go stale.
     decoded_headers: std.ArrayListUnmanaged(picohttp.Header) = .{},
-    decoded_bytes: std.ArrayListUnmanaged(u8) = .{},
     body_buffer: std.ArrayListUnmanaged(u8) = .{},
-    status_code: u32 = 0,
+    status_code: u16 = 0,
 
     pending_body: []const u8 = "",
     request_body_done: bool = false,
@@ -29,7 +32,6 @@ pub const Stream = struct {
 
     pub fn deinit(this: *Stream) void {
         this.decoded_headers.deinit(bun.default_allocator);
-        this.decoded_bytes.deinit(bun.default_allocator);
         this.body_buffer.deinit(bun.default_allocator);
         _ = live_streams.fetchSub(1, .monotonic);
         bun.destroy(this);
@@ -46,7 +48,7 @@ pub const Stream = struct {
 pub const ClientSession = struct {
     ref_count: RefCount = .init(),
     /// Null while DNS is in flight; set once `us_quic_connect_addr` returns.
-    qsocket: ?*QuicSocket,
+    qsocket: ?*quic.Socket,
     hostname: []const u8,
     port: u16,
     reject_unauthorized: bool,
@@ -114,7 +116,7 @@ pub const ClientSession = struct {
     fn detach(this: *ClientSession, stream: *Stream) void {
         if (stream.client) |cl| cl.h3 = null;
         stream.client = null;
-        if (stream.qstream) |qs| qs.ext().* = null;
+        if (stream.qstream) |qs| qs.ext(Stream).* = null;
         stream.qstream = null;
         for (this.pending.items, 0..) |s, i| {
             if (s == stream) {
@@ -144,56 +146,46 @@ pub const ClientSession = struct {
         return false;
     }
 
-    fn writeRequest(this: *ClientSession, stream: *Stream, qs: *QuicStream) !void {
+    fn writeRequest(this: *ClientSession, stream: *Stream, qs: *quic.Stream) !void {
         const client = stream.client orelse return error.Aborted;
         const request = client.buildRequest(client.state.original_request_body.len());
         if (client.verbose != .none) {
             HTTPClient.printRequest(.http3, request, client.url.href, !client.flags.reject_unauthorized, client.state.request_body, client.verbose == .curl);
         }
 
-        var headers: std.ArrayListUnmanaged(QuicHeader) = .{};
-        defer headers.deinit(bun.default_allocator);
-        var lower: std.ArrayListUnmanaged(u8) = .{};
-        defer lower.deinit(bun.default_allocator);
-        try headers.ensureTotalCapacity(bun.default_allocator, request.headers.len + 4);
+        var sfa = std.heap.stackFallback(2048, bun.default_allocator);
+        const alloc = sfa.get();
+        var headers: std.ArrayListUnmanaged(quic.Header) = .{};
+        defer headers.deinit(alloc);
+        try headers.ensureTotalCapacityPrecise(alloc, request.headers.len + 4);
 
-        const push = struct {
-            fn push(list: *std.ArrayListUnmanaged(QuicHeader), name: []const u8, value: []const u8) void {
-                list.appendAssumeCapacity(.{
-                    .name = name.ptr,
-                    .name_len = @intCast(name.len),
-                    .value = value.ptr,
-                    .value_len = @intCast(value.len),
-                });
-            }
-        }.push;
+        // Names not in the QPACK static table get lowercased into one
+        // pre-sized buffer so the pointers stay stable across the batch.
+        var name_bytes: usize = 0;
+        for (request.headers) |h| name_bytes += h.name.len;
+        const lower = try alloc.alloc(u8, name_bytes);
+        defer alloc.free(lower);
+        var lower_len: usize = 0;
 
-        push(&headers, ":method", request.method);
-        push(&headers, ":scheme", "https");
         var authority: []const u8 = client.url.host;
+        headers.items.len = 4;
         for (request.headers) |h| {
-            if (strings.eqlCaseInsensitiveASCIIICheckLength(h.name, "host")) {
-                authority = h.value;
-                break;
+            if (quic.Qpack.classify(h.name)) |class| switch (class) {
+                .forbidden => {},
+                .host => authority = h.value,
+                .indexed => |i| headers.appendAssumeCapacity(.init(i.name, h.value, i.index)),
+            } else {
+                const dst = lower[lower_len..][0..h.name.len];
+                _ = strings.copyLowercase(h.name, dst);
+                lower_len += h.name.len;
+                headers.appendAssumeCapacity(.init(dst, h.value, null));
             }
         }
         if (authority.len == 0) authority = this.hostname;
-        push(&headers, ":authority", authority);
-        push(&headers, ":path", if (request.path.len > 0) request.path else "/");
-
-        // RFC 9114 §4.2: field names MUST be lowercase. Stage them into one
-        // pre-sized buffer so the us_quic_header_t name pointers stay valid
-        // for the whole batch (no realloc between push calls).
-        var name_bytes: usize = 0;
-        for (request.headers) |h| name_bytes += h.name.len;
-        try lower.ensureTotalCapacityPrecise(bun.default_allocator, name_bytes);
-        for (request.headers) |h| {
-            if (isConnectionSpecific(h.name)) continue;
-            const off = lower.items.len;
-            for (h.name) |ch| lower.appendAssumeCapacity(std.ascii.toLower(ch));
-            try headers.ensureUnusedCapacity(bun.default_allocator, 1);
-            push(&headers, lower.items[off..], h.value);
-        }
+        headers.items[0] = .init(":method", request.method, .method_get);
+        headers.items[1] = .init(":scheme", "https", .scheme_https);
+        headers.items[2] = .init(":authority", authority, .authority);
+        headers.items[3] = .init(":path", if (request.path.len > 0) request.path else "/", .path);
 
         const body = client.state.request_body;
         const has_inline_body = client.state.original_request_body == .bytes and body.len > 0;
@@ -222,7 +214,7 @@ pub const ClientSession = struct {
         if (is_streaming) client.progressUpdateH3();
     }
 
-    fn drainSendBody(stream: *Stream, qs: *QuicStream) void {
+    fn drainSendBody(stream: *Stream, qs: *quic.Stream) void {
         if (stream.request_body_done) return;
         const client = stream.client orelse return;
 
@@ -379,28 +371,21 @@ pub const ClientSession = struct {
 
 const HeaderResult = enum { has_body, finished };
 
-fn isConnectionSpecific(name: []const u8) bool {
-    return strings.eqlCaseInsensitiveASCIIICheckLength(name, "connection") or
-        strings.eqlCaseInsensitiveASCIIICheckLength(name, "host") or
-        strings.eqlCaseInsensitiveASCIIICheckLength(name, "keep-alive") or
-        strings.eqlCaseInsensitiveASCIIICheckLength(name, "proxy-connection") or
-        strings.eqlCaseInsensitiveASCIIICheckLength(name, "transfer-encoding") or
-        strings.eqlCaseInsensitiveASCIIICheckLength(name, "upgrade");
-}
-
 /// Process-global lazily-initialised on the HTTP thread. Owns the lsquic
 /// client engine and the live-session registry. Never freed — the engine
 /// lives for the process, same as the HTTP thread itself.
 pub const ClientContext = struct {
-    qctx: *QuicContext,
+    qctx: *quic.Context,
     sessions: std.ArrayListUnmanaged(*ClientSession) = .{},
 
+    /// One instance per HTTP-thread loop. Stored as a process global only
+    /// because `bun.http.http_thread` is itself a process singleton — the
+    /// underlying lsquic engine is bound to the `loop` passed to
+    /// `quic.Context.createClient` (it lives on `loop->data.quic_head` and is
+    /// driven by that loop's pre/post hooks), so a second loop would get its
+    /// own engine; this var would just need to become per-loop storage.
     var instance: ?*ClientContext = null;
-    var init_once = std.once(globalInit);
-
-    fn globalInit() void {
-        us_quic_global_init();
-    }
+    var lsquic_init_once = bun.once(quic.globalInit);
 
     pub fn get() ?*ClientContext {
         return instance;
@@ -408,8 +393,8 @@ pub const ClientContext = struct {
 
     pub fn getOrCreate(loop: *uws.Loop) ?*ClientContext {
         if (instance) |i| return i;
-        init_once.call();
-        const qctx = QuicContext.create(
+        lsquic_init_once.call(.{});
+        const qctx = quic.Context.createClient(
             loop,
             0,
             @sizeOf(*ClientSession),
@@ -452,8 +437,8 @@ pub const ClientContext = struct {
         bun.handleOom(this.sessions.append(bun.default_allocator, session));
         session.enqueue(client);
 
-        var qsocket: ?*QuicSocket = null;
-        var pending: ?*QuicPendingConnect = null;
+        var qsocket: ?*quic.Socket = null;
+        var pending: ?*quic.PendingConnect = null;
         const rc = this.qctx.connect(
             host_z.ptr,
             @intCast(port),
@@ -466,7 +451,7 @@ pub const ClientContext = struct {
         switch (rc) {
             1 => {
                 session.qsocket = qsocket.?;
-                qsocket.?.ext().* = session;
+                qsocket.?.ext(ClientSession).* = session;
                 log("connect {s}:{d} (sync)", .{ hostname, port });
             },
             0 => {
@@ -531,7 +516,7 @@ pub const PendingConnect = struct {
     pub const new = bun.TrivialNew(@This());
 
     session: *ClientSession,
-    pc: *QuicPendingConnect,
+    pc: *quic.PendingConnect,
     loop_ptr: *uws.Loop,
     next: ?*PendingConnect = null,
 
@@ -557,7 +542,7 @@ pub const PendingConnect = struct {
             return;
         };
         session.qsocket = qs;
-        qs.ext().* = session;
+        qs.ext(ClientSession).* = session;
         log("dns resolved {s}:{d}", .{ session.hostname, session.port });
     }
 
@@ -604,8 +589,8 @@ pub const PendingConnect = struct {
 
 // ───── lsquic → Zig callbacks ─────
 
-fn onHskDone(qs: *QuicSocket, ok: c_int) callconv(.c) void {
-    const session = qs.ext().* orelse return;
+fn onHskDone(qs: *quic.Socket, ok: c_int) callconv(.c) void {
+    const session = qs.ext(ClientSession).* orelse return;
     log("hsk_done ok={d} pending={d}", .{ ok, session.pending.items.len });
     if (ok == 0) {
         session.closed = true;
@@ -615,12 +600,12 @@ fn onHskDone(qs: *QuicSocket, ok: c_int) callconv(.c) void {
     for (session.pending.items) |_| qs.makeStream();
 }
 
-fn onConnClose(qs: *QuicSocket) callconv(.c) void {
-    const session = qs.ext().* orelse return;
+fn onConnClose(qs: *quic.Socket) callconv(.c) void {
+    const session = qs.ext(ClientSession).* orelse return;
     session.closed = true;
     session.qsocket = null;
     var buf: [256]u8 = undefined;
-    const st = qs.status(&buf, buf.len);
+    const st = qs.status(&buf);
     log("conn_close status={d} {s}", .{ st, std.mem.sliceTo(&buf, 0) });
     if (ClientContext.instance) |ctx| ctx.unregister(session);
     // Fail anything still waiting on a stream. Streams that already have a
@@ -643,11 +628,11 @@ fn onConnClose(qs: *QuicSocket) callconv(.c) void {
     session.deref();
 }
 
-fn onStreamOpen(s: *QuicStream, is_client: c_int) callconv(.c) void {
-    s.ext().* = null;
+fn onStreamOpen(s: *quic.Stream, is_client: c_int) callconv(.c) void {
+    s.ext(Stream).* = null;
     if (is_client == 0) return;
     const qs = s.socket() orelse return;
-    const session = qs.ext().* orelse {
+    const session = qs.ext(ClientSession).* orelse {
         s.close();
         return;
     };
@@ -659,37 +644,32 @@ fn onStreamOpen(s: *QuicStream, is_client: c_int) callconv(.c) void {
         return;
     };
     stream.qstream = s;
-    s.ext().* = stream;
+    s.ext(Stream).* = stream;
     log("stream_open", .{});
     session.writeRequest(stream, s) catch |err| {
         session.fail(stream, err);
     };
 }
 
-fn onStreamHeaders(s: *QuicStream) callconv(.c) void {
-    const stream = s.ext().* orelse return;
+fn onStreamHeaders(s: *quic.Stream) callconv(.c) void {
+    const stream = s.ext(Stream).* orelse return;
     const n = s.headerCount();
-    var status: u32 = 0;
-    stream.decoded_bytes.clearRetainingCapacity();
+
     stream.decoded_headers.clearRetainingCapacity();
-    var bounds: std.ArrayListUnmanaged([3]u32) = .{};
-    defer bounds.deinit(bun.default_allocator);
+    bun.handleOom(stream.decoded_headers.ensureTotalCapacity(bun.default_allocator, n));
+    var status: u16 = 0;
     var i: c_uint = 0;
     while (i < n) : (i += 1) {
         const h = s.header(i) orelse continue;
         const name = h.name[0..h.name_len];
         const value = h.value[0..h.value_len];
-        if (name.len > 0 and name[0] == ':') {
+        if (strings.hasPrefixComptime(name, ":")) {
             if (strings.eqlComptime(name, ":status")) {
-                status = std.fmt.parseInt(u32, value, 10) catch 0;
+                status = std.fmt.parseInt(u16, value, 10) catch 0;
             }
             continue;
         }
-        const ns: u32 = @intCast(stream.decoded_bytes.items.len);
-        bun.handleOom(stream.decoded_bytes.appendSlice(bun.default_allocator, name));
-        const vs: u32 = @intCast(stream.decoded_bytes.items.len);
-        bun.handleOom(stream.decoded_bytes.appendSlice(bun.default_allocator, value));
-        bun.handleOom(bounds.append(bun.default_allocator, .{ ns, vs, @intCast(stream.decoded_bytes.items.len) }));
+        stream.decoded_headers.appendAssumeCapacity(.{ .name = name, .value = value });
     }
     if (status == 0) {
         // A second HEADERS block after the final response is trailers
@@ -701,30 +681,25 @@ fn onStreamHeaders(s: *QuicStream) callconv(.c) void {
     }
     if (status >= 100 and status < 200) return;
     stream.status_code = status;
-    const bytes = stream.decoded_bytes.items;
-    bun.handleOom(stream.decoded_headers.ensureTotalCapacityPrecise(bun.default_allocator, bounds.items.len));
-    for (bounds.items) |b| {
-        stream.decoded_headers.appendAssumeCapacity(.{ .name = bytes[b[0]..b[1]], .value = bytes[b[1]..b[2]] });
-    }
     stream.session.deliver(stream, false);
 }
 
-fn onStreamData(s: *QuicStream, data: [*]const u8, len: c_uint, fin: c_int) callconv(.c) void {
-    const stream = s.ext().* orelse return;
+fn onStreamData(s: *quic.Stream, data: [*]const u8, len: c_uint, fin: c_int) callconv(.c) void {
+    const stream = s.ext(Stream).* orelse return;
     if (len > 0) {
         bun.handleOom(stream.body_buffer.appendSlice(bun.default_allocator, data[0..len]));
     }
     stream.session.deliver(stream, fin != 0);
 }
 
-fn onStreamWritable(s: *QuicStream) callconv(.c) void {
-    const stream = s.ext().* orelse return;
+fn onStreamWritable(s: *quic.Stream) callconv(.c) void {
+    const stream = s.ext(Stream).* orelse return;
     ClientSession.drainSendBody(stream, s);
 }
 
-fn onStreamClose(s: *QuicStream) callconv(.c) void {
-    const stream = s.ext().* orelse return;
-    s.ext().* = null;
+fn onStreamClose(s: *quic.Stream) callconv(.c) void {
+    const stream = s.ext(Stream).* orelse return;
+    s.ext(Stream).* = null;
     stream.qstream = null;
     log("stream_close status={d} delivered={}", .{ stream.status_code, stream.headers_delivered });
     stream.session.deliver(stream, true);
@@ -742,101 +717,6 @@ pub const TestingAPIs = struct {
     }
 };
 
-// ───── usockets QUIC bindings ─────
-
-extern fn us_quic_global_init() callconv(.c) void;
-
-pub const QuicHeader = extern struct {
-    name: [*]const u8,
-    name_len: c_uint,
-    value: [*]const u8,
-    value_len: c_uint,
-};
-
-pub const QuicContext = opaque {
-    extern fn us_create_quic_client_context(loop: *uws.Loop, ext_size: c_uint, conn_ext: c_uint, stream_ext: c_uint) ?*QuicContext;
-    pub const create = us_create_quic_client_context;
-
-    extern fn us_quic_socket_context_loop(ctx: *QuicContext) *uws.Loop;
-    pub const loop = us_quic_socket_context_loop;
-
-    extern fn us_quic_socket_context_connect(ctx: *QuicContext, host: [*:0]const u8, port: c_int, sni: [*:0]const u8, reject_unauthorized: c_int, out_qs: *?*QuicSocket, out_pending: *?*QuicPendingConnect, user: *anyopaque) c_int;
-    pub const connect = us_quic_socket_context_connect;
-
-    extern fn us_quic_socket_context_on_hsk_done(ctx: *QuicContext, cb: *const fn (*QuicSocket, c_int) callconv(.c) void) void;
-    pub const onHskDone = us_quic_socket_context_on_hsk_done;
-    extern fn us_quic_socket_context_on_close(ctx: *QuicContext, cb: *const fn (*QuicSocket) callconv(.c) void) void;
-    pub const onClose = us_quic_socket_context_on_close;
-    extern fn us_quic_socket_context_on_stream_open(ctx: *QuicContext, cb: *const fn (*QuicStream, c_int) callconv(.c) void) void;
-    pub const onStreamOpen = us_quic_socket_context_on_stream_open;
-    extern fn us_quic_socket_context_on_stream_headers(ctx: *QuicContext, cb: *const fn (*QuicStream) callconv(.c) void) void;
-    pub const onStreamHeaders = us_quic_socket_context_on_stream_headers;
-    extern fn us_quic_socket_context_on_stream_data(ctx: *QuicContext, cb: *const fn (*QuicStream, [*]const u8, c_uint, c_int) callconv(.c) void) void;
-    pub const onStreamData = us_quic_socket_context_on_stream_data;
-    extern fn us_quic_socket_context_on_stream_writable(ctx: *QuicContext, cb: *const fn (*QuicStream) callconv(.c) void) void;
-    pub const onStreamWritable = us_quic_socket_context_on_stream_writable;
-    extern fn us_quic_socket_context_on_stream_close(ctx: *QuicContext, cb: *const fn (*QuicStream) callconv(.c) void) void;
-    pub const onStreamClose = us_quic_socket_context_on_stream_close;
-};
-
-pub const QuicSocket = opaque {
-    extern fn us_quic_socket_make_stream(s: *QuicSocket) void;
-    pub const makeStream = us_quic_socket_make_stream;
-    extern fn us_quic_socket_streams_avail(s: *QuicSocket) c_uint;
-    pub const streamsAvail = us_quic_socket_streams_avail;
-    extern fn us_quic_socket_status(s: *QuicSocket, buf: [*]u8, len: c_uint) c_int;
-    pub const status = us_quic_socket_status;
-    extern fn us_quic_socket_close(s: *QuicSocket) void;
-    pub const close = us_quic_socket_close;
-
-    extern fn us_quic_socket_ext(s: *QuicSocket) *anyopaque;
-    pub fn ext(s: *QuicSocket) *?*ClientSession {
-        return @ptrCast(@alignCast(us_quic_socket_ext(s)));
-    }
-};
-
-pub const QuicStream = opaque {
-    extern fn us_quic_stream_socket(s: *QuicStream) ?*QuicSocket;
-    pub const socket = us_quic_stream_socket;
-    extern fn us_quic_stream_shutdown(s: *QuicStream) void;
-    pub const shutdown = us_quic_stream_shutdown;
-    extern fn us_quic_stream_close(s: *QuicStream) void;
-    pub const close = us_quic_stream_close;
-    extern fn us_quic_stream_header_count(s: *QuicStream) c_uint;
-    pub const headerCount = us_quic_stream_header_count;
-    extern fn us_quic_stream_header(s: *QuicStream, i: c_uint) ?*const QuicHeader;
-    pub const header = us_quic_stream_header;
-
-    extern fn us_quic_stream_ext(s: *QuicStream) *anyopaque;
-    pub fn ext(s: *QuicStream) *?*Stream {
-        return @ptrCast(@alignCast(us_quic_stream_ext(s)));
-    }
-
-    extern fn us_quic_stream_write(s: *QuicStream, data: [*]const u8, len: c_uint) c_int;
-    pub fn write(s: *QuicStream, data: []const u8) c_int {
-        return us_quic_stream_write(s, data.ptr, @intCast(data.len));
-    }
-
-    extern fn us_quic_stream_want_write(s: *QuicStream, want: c_int) void;
-    pub fn wantWrite(s: *QuicStream, want: bool) void {
-        us_quic_stream_want_write(s, @intFromBool(want));
-    }
-
-    extern fn us_quic_stream_send_headers(s: *QuicStream, h: [*]const QuicHeader, n: c_uint, end_stream: c_int) c_int;
-    pub fn sendHeaders(s: *QuicStream, headers: []const QuicHeader, end_stream: bool) c_int {
-        return us_quic_stream_send_headers(s, headers.ptr, @intCast(headers.len), @intFromBool(end_stream));
-    }
-};
-
-pub const QuicPendingConnect = opaque {
-    extern fn us_quic_pending_connect_addrinfo(pc: *QuicPendingConnect) *anyopaque;
-    pub const addrinfo = us_quic_pending_connect_addrinfo;
-    extern fn us_quic_pending_connect_resolved(pc: *QuicPendingConnect) ?*QuicSocket;
-    pub const resolved = us_quic_pending_connect_resolved;
-    extern fn us_quic_pending_connect_cancel(pc: *QuicPendingConnect) void;
-    pub const cancel = us_quic_pending_connect_cancel;
-};
-
 const log = bun.Output.scoped(.h3_client, .hidden);
 
 const std = @import("std");
@@ -847,3 +727,4 @@ const jsc = bun.jsc;
 const picohttp = bun.picohttp;
 const strings = bun.strings;
 const uws = bun.uws;
+const quic = uws.quic;

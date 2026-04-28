@@ -434,6 +434,7 @@ static int us_quic_hsi_process(void *hset_p, struct lsxpack_header *hdr) {
     h->headers[h->count].name_len = hdr->name_len;
     h->headers[h->count].value = (const char *)(uintptr_t) hdr->val_offset;
     h->headers[h->count].value_len = hdr->val_len;
+    h->headers[h->count].qpack_index = -1;
     h->count++;
     h->len = (unsigned int) hdr->val_offset + hdr->val_len + hdr->dec_overhead;
     return 0;
@@ -890,6 +891,10 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
         memcpy(buf + off + h->name_len, h->value, h->value_len);
         lsxpack_header_set_offset2(&xh[i], buf, off, h->name_len,
             off + h->name_len, h->value_len);
+        if (h->qpack_index >= 0) {
+            xh[i].qpack_index = (uint8_t) h->qpack_index;
+            xh[i].flags = LSXPACK_QPACK_IDX;
+        }
         off += h->name_len + h->value_len;
     }
 

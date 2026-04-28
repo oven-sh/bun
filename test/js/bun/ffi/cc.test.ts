@@ -1,7 +1,7 @@
 import { cc, CString, ptr, type FFIFunction, type Library } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { promises as fs } from "fs";
-import { bunEnv, bunExe, isArm64, isASAN, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isArm64, isASAN, isWindows, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 // TinyCC (and all of bun:ffi) is disabled on Windows ARM64
@@ -205,11 +205,11 @@ describe.skip("given a strlen(cstring) function", () => {
 it.skipIf(isFFIUnavailable)(
   "cc() does not leak option strings on success",
   async () => {
-    const dir = tempDirWithFiles("bun-ffi-cc-leak", {
+    using dir = tempDir("bun-ffi-cc-leak", {
       "add.c": "int add(int a, int b) { return a + b; }\n",
     });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--smol", path.join(__dirname, "cc-leak-fixture.js"), path.join(dir, "add.c")],
+      cmd: [bunExe(), "--smol", path.join(__dirname, "cc-leak-fixture.js"), path.join(String(dir), "add.c")],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

@@ -928,11 +928,7 @@ describe("WebSocket tls option does not leak SSLConfig on error paths", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const { growthMiB } = JSON.parse(stdout.trim());
     expect(growthMiB).toBeLessThan(64);

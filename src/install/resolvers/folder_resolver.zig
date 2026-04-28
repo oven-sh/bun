@@ -155,6 +155,7 @@ pub const FolderResolution = union(Tag) {
         comptime ResolverType: type,
         resolver: *ResolverType,
     ) !Lockfile.Package {
+        _ = version;
         var body = Npm.Registry.BodyPool.get(manager.allocator);
         defer Npm.Registry.BodyPool.release(body);
 
@@ -224,7 +225,7 @@ pub const FolderResolution = union(Tag) {
 
         package.meta.setHasInstallScript(has_scripts);
 
-        if (manager.lockfile.getPackageID(package.name_hash, version, &package.resolution)) |existing_id| {
+        if (manager.lockfile.getPackageID(package.name_hash, &package.resolution)) |existing_id| {
             package.meta.id = existing_id;
             manager.lockfile.packages.set(existing_id, package);
             return manager.lockfile.packages.get(existing_id);

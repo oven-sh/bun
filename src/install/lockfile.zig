@@ -1373,17 +1373,10 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) void {
 pub fn getPackageID(
     this: *Lockfile,
     name_hash: u64,
-    // If non-null, attempt to use an existing package
-    // that satisfies this version range.
-    version: ?Dependency.Version,
     resolution: *const Resolution,
 ) ?PackageID {
     const entry = this.package_index.get(name_hash) orelse return null;
     const resolutions: []const Resolution = this.packages.items(.resolution);
-    const npm_version = if (version) |v| switch (v.tag) {
-        .npm => v.value.npm.version,
-        else => null,
-    } else null;
     const buf = this.buffers.string_bytes.items;
 
     switch (entry) {
@@ -1393,10 +1386,6 @@ pub fn getPackageID(
             if (resolutions[id].eql(resolution, buf, buf)) {
                 return id;
             }
-
-            if (resolutions[id].tag == .npm and npm_version != null) {
-                if (npm_version.?.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
-            }
         },
         .ids => |ids| {
             for (ids.items) |id| {
@@ -1404,10 +1393,6 @@ pub fn getPackageID(
 
                 if (resolutions[id].eql(resolution, buf, buf)) {
                     return id;
-                }
-
-                if (resolutions[id].tag == .npm and npm_version != null) {
-                    if (npm_version.?.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
                 }
             }
         },
@@ -1536,7 +1521,7 @@ pub fn appendPackage(this: *Lockfile, package_: Lockfile.Package) OOM!Lockfile.P
 pub fn appendPackageWithID(this: *Lockfile, package_: Lockfile.Package, id: PackageID) OOM!Lockfile.Package {
     defer {
         if (comptime Environment.allow_assert) {
-            assert(this.getPackageID(package_.name_hash, null, &package_.resolution) != null);
+            assert(this.getPackageID(package_.name_hash, &package_.resolution) != null);
         }
     }
     var package = package_;

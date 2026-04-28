@@ -52,6 +52,11 @@ pub const invalid_id: Id = std.math.maxInt(Id);
 pub const HoistDependencyResult = union(enum) {
     dependency_loop,
     hoisted,
+    /// Hoisted into an existing package whose version satisfies this dep's
+    /// range. The dep's own resolution (chosen by findBestVersion) is
+    /// rewritten to the existing package so the lockfile and isolated
+    /// linker see the collapsed result.
+    dedupe: PackageID,
     resolve: PackageID,
     resolve_replace: ResolveReplace,
     resolve_later,
@@ -582,6 +587,11 @@ pub fn processSubtree(
         switch (hoisted) {
             .dependency_loop, .hoisted => continue,
 
+            .dedupe => |res_id| {
+                builder.resolutions[dep_id] = res_id;
+                continue;
+            },
+
             .resolve => |res_id| {
                 bun.debugAssert(pkg_id == invalid_package_id);
                 bun.debugAssert(res_id != invalid_package_id);
@@ -727,7 +737,7 @@ fn hoistDependency(
             if (pkg_resolutions[package_id].tag == .npm and existing_res.tag == .npm and
                 dependency.version.value.npm.version.satisfies(existing_res.value.npm.version, builder.buf(), builder.buf()))
             {
-                return .hoisted; // 1
+                return .{ .dedupe = res_id }; // 1
             }
         }
 
@@ -747,7 +757,7 @@ fn hoistDependency(
                         },
                     ) catch {};
                 }
-                return .hoisted; // 1
+                return .{ .dedupe = res_id }; // 1
             }
         }
 

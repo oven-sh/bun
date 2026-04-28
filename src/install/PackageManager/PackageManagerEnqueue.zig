@@ -854,7 +854,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
             };
 
             // First: see if we already loaded the git package in-memory
-            if (this.lockfile.getPackageID(name_hash, null, &res)) |pkg_id| {
+            if (this.lockfile.getPackageID(name_hash, &res)) |pkg_id| {
                 successFn(this, id, pkg_id);
                 return;
             }
@@ -943,7 +943,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
             };
 
             // First: see if we already loaded the github package in-memory
-            if (this.lockfile.getPackageID(name_hash, null, &res)) |pkg_id| {
+            if (this.lockfile.getPackageID(name_hash, &res)) |pkg_id| {
                 successFn(this, id, pkg_id);
                 return;
             }
@@ -1129,7 +1129,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
             };
 
             // First: see if we already loaded the tarball package in-memory
-            if (this.lockfile.getPackageID(name_hash, null, &res)) |pkg_id| {
+            if (this.lockfile.getPackageID(name_hash, &res)) |pkg_id| {
                 successFn(this, id, pkg_id);
                 return;
             }
@@ -1486,17 +1486,12 @@ fn getOrPutResolvedPackageWithFindResult(
     install_peer: bool,
     comptime successFn: SuccessFn,
 ) !?ResolvedPackageResult {
-    const should_update = this.to_update and
-        // If updating, only update packages in the current workspace
-        this.lockfile.isRootDependency(this, dependency_id) and
-        // no need to do a look up if update requests are empty (`bun update` with no args)
-        (this.update_requests.len == 0 or
-            this.updating_packages.contains(dependency.name.slice(this.lockfile.buffers.string_bytes.items)));
+    _ = version;
+    _ = dependency;
 
     // Was this package already allocated? Let's reuse the existing one.
     if (this.lockfile.getPackageID(
         name_hash,
-        if (should_update) null else version,
         &.{
             .tag = .npm,
             .value = .{

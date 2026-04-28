@@ -56,6 +56,13 @@ private:
     // compiled JSFunction is responsible for keeping the callback alive via a
     // normal GC edge (WriteBarrier / property) so that the Weak handle remains
     // valid for as long as the owner is reachable.
+    //
+    // Note that nested closures share this fetcher via the SourceProvider but
+    // do not keep the owner alive, so a nested closure that outlives a dropped
+    // owner will observe a cleared m_dynamicImportCallback and import() will
+    // fail with ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING. Closing that gap without
+    // reintroducing the Strong<> cycle requires adding the fetcher as an opaque
+    // root from ScriptExecutable's visitChildren in WebKit.
     JSC::Weak<JSC::JSCell> m_dynamicImportCallback;
     JSC::Weak<JSC::JSCell> m_owner;
     bool m_isUsingDefaultLoader = false;

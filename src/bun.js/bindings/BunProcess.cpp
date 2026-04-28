@@ -1703,12 +1703,14 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
     // becoming stale across any intermediate Vector growth.
     Vector<char*> argv;
     argv.reserveInitialCapacity(argvStorage.size() + 1);
-    for (auto& s : argvStorage) argv.append(const_cast<char*>(s.data()));
+    for (auto& s : argvStorage)
+        argv.append(const_cast<char*>(s.data()));
     argv.append(nullptr);
 
     Vector<char*> envp;
     envp.reserveInitialCapacity(envStorage.size() + 1);
-    for (auto& s : envStorage) envp.append(const_cast<char*>(s.data()));
+    for (auto& s : envStorage)
+        envp.append(const_cast<char*>(s.data()));
     envp.append(nullptr);
 
     // Set stdin, stdout and stderr to be non-close-on-exec so that the new

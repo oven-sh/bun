@@ -223,6 +223,11 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
         this.group.deinit();
         handlers.vm.allocator.destroy(this);
     };
+    // If listen() fails below (EADDRINUSE/EACCES) or the `.fd` path throws, nothing else
+    // owns this yet. Without this errdefer the whole context — including the SSL_CTX and
+    // all loaded certs/keys — leaks on every failed attempt. On success it is moved into
+    // the `Listener` struct and no further error paths exist past that point.
+    errdefer socket_context.deinit(ssl_enabled);
 
     if (ssl) |ssl_cfg| {
         var create_err: uws.create_bun_socket_error_t = .none;

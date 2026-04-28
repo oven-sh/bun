@@ -1,6 +1,6 @@
 import { connect, listen, SocketHandler, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
-import { expectMaxObjectTypeCount, isWindows } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isWindows, tempDir, tls } from "harness";
 
 type Resolve = (value?: unknown) => void;
 type Reject = (reason?: any) => void;
@@ -74,6 +74,59 @@ it("should not allow invalid tls option", () => {
     }).toThrow("TLSOptions must be an object");
   });
 });
+
+it("should not leak SocketContext when listen() fails", async () => {
+  // Each failed Bun.listen() with TLS creates a uws SocketContext wrapping an SSL_CTX
+  // (certs + key loaded into BoringSSL). Before the fix, the context had no errdefer so
+  // an EADDRINUSE from listen() orphaned the whole thing on every attempt.
+  using dir = tempDir("listen-fail-leak", {
+    "fixture.ts": /* ts */ `
+      const tls = ${JSON.stringify(tls)};
+      const handlers = { open() {}, data() {}, close() {} };
+
+      // Occupy a port so subsequent listens fail with EADDRINUSE.
+      using server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: handlers });
+      const port = server.port;
+
+      async function attempt(n: number) {
+        for (let i = 0; i < n; i++) {
+          try {
+            Bun.listen({ hostname: "127.0.0.1", port, tls, socket: handlers });
+            throw new Error("expected EADDRINUSE");
+          } catch (e: any) {
+            if (e?.code !== "EADDRINUSE") throw e;
+          }
+          // SocketContext.deinit() frees via uws_loop_defer; yield periodically so the
+          // freed contexts don't pile up in the deferred queue and skew RSS.
+          if (i % 50 === 0) await new Promise(r => setImmediate(r));
+        }
+        for (let i = 0; i < 10; i++) await new Promise(r => setImmediate(r));
+        Bun.gc(true);
+      }
+
+      await attempt(500); // warmup
+      const before = process.memoryUsage.rss();
+      await attempt(5000);
+      const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+      console.log(JSON.stringify({ growthMB }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { growthMB } = JSON.parse(stdout.trim());
+  // 5000 leaked SSL_CTX + SocketContext is ~40-50 MB in ASAN debug, ~32 MB in release.
+  // With the fix, residual growth from error-object churn is ~10-12 MB.
+  expect(growthMB).toBeLessThan(25);
+  expect(exitCode).toBe(0);
+}, 60_000);
 
 it("should allow using false, null or undefined tls option", () => {
   [false, null, undefined].forEach(value => {

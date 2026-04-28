@@ -1353,6 +1353,9 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
           const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           expect(stdout).toContain("rejected");
           expect(exitCode).toBe(0);
+          // The RST_STREAM is in flight when the subprocess exits; await the
+          // server's data handler seeing it instead of racing the assertion.
+          for (let i = 0; i < 50 && state.rst.length === 0; i++) await Bun.sleep(10);
           // 0x8 = CANCEL
           expect(state.rst).toEqual([{ id: 1, code: 8 }]);
         },

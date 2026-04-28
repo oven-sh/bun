@@ -332,6 +332,10 @@ pub const FSWatcher = struct {
         encoding: jsc.Node.Encoding,
         verbose: bool,
 
+        pub fn deinit(this: *const Arguments) void {
+            this.path.deinit();
+        }
+
         pub fn fromJS(ctx: *jsc.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Arguments {
             const path = try PathLike.fromJS(ctx, arguments) orelse {
                 return ctx.throwInvalidArguments("filename must be a string or TypedArray", .{});

@@ -1197,14 +1197,21 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
         }
     }
 
+    // Port to dial QUIC on. Defaults to the origin port for `protocol:"http3"`;
+    // an Alt-Svc hit overrides it with the advertised alt-authority port
+    // (RFC 7838 §3 — the alternative may listen on a different port; SNI and
+    // certificate validation still use the origin hostname).
+    var h3_port: u16 = this.url.getPortAuto();
+
     if (comptime is_ssl) {
         // Opportunistic Alt-Svc upgrade: a previous response from this origin
         // advertised `h3`, and the experimental flag is on. This goes through
         // the same engine as `protocol: "http3"` so retry/fallback semantics
         // are shared.
         if (!this.flags.force_http3 and this.canTryH3AltSvc()) {
-            if (H3.AltSvc.lookup(this.url.hostname, this.url.getPortAuto())) |_| {
+            if (H3.AltSvc.lookup(this.url.hostname, h3_port)) |alt_port| {
                 this.flags.force_http3 = true;
+                h3_port = alt_port;
             }
         }
     }
@@ -1222,7 +1229,7 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
             this.fail(error.HTTP3Unsupported);
             return;
         };
-        if (!ctx.connect(this, this.url.hostname, this.url.getPortAuto())) {
+        if (!ctx.connect(this, this.url.hostname, h3_port)) {
             this.fail(error.ConnectionRefused);
         }
         return;

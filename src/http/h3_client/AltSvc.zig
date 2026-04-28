@@ -120,7 +120,7 @@ pub fn lookup(origin_host: []const u8, origin_port: u16) ?u16 {
     if (origin_host.len > 256) return null;
     const k = key(&buf, origin_host, origin_port);
     const rec = cache.get(k) orelse return null;
-    if (std.time.timestamp() > rec.expires_at) {
+    if (std.time.timestamp() >= rec.expires_at) {
         if (cache.fetchRemove(k)) |kv| bun.default_allocator.free(kv.key);
         return null;
     }

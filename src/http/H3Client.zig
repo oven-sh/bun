@@ -23,7 +23,7 @@ pub const AltSvc = @import("./h3_client/AltSvc.zig");
 
 /// Live-object counters for the leak test in fetch-http3-client.test.ts.
 /// Incremented at allocation, decremented in deinit. Read from the JS thread
-/// via TestingAPIs.liveCounts so they must be atomic.
+/// via TestingAPIs.quicLiveCounts so they must be atomic.
 pub var live_sessions = std.atomic.Value(u32).init(0);
 pub var live_streams = std.atomic.Value(u32).init(0);
 

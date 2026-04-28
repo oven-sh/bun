@@ -108,8 +108,8 @@ test("all worker_threads worker instance properties are present", async () => {
   expect(worker.ref).toBeFunction();
   expect(worker.unref).toBeFunction();
   expect(worker.stdin).toBeNull();
-  expect(worker.stdout).toBeNull();
-  expect(worker.stderr).toBeNull();
+  expect(worker.stdout).toBeInstanceOf(Readable);
+  expect(worker.stderr).toBeInstanceOf(Readable);
   expect(worker.performance).toBeDefined();
   expect(worker.terminate).toBeFunction();
   expect(worker.postMessage).toBeFunction();
@@ -485,5 +485,118 @@ describe("getHeapSnapshot", () => {
       "trace_tree",
     ]);
     worker.postMessage(0);
+  });
+});
+
+describe("worker stdio", () => {
+  test("stdout/stderr are Readable, stdin is null without options.stdin", async () => {
+    const w = new Worker(`require("worker_threads");`, { "eval": true, stdout: true, stderr: true });
+    expect(w.stdout).toBeInstanceOf(Readable);
+    expect(w.stderr).toBeInstanceOf(Readable);
+    expect(w.stdin).toBeNull();
+    await once(w, "exit");
+  });
+
+  test("stdin is Writable with options.stdin", async () => {
+    const w = new Worker(`require("worker_threads");`, { "eval": true, stdin: true, stdout: true, stderr: true });
+    expect(w.stdin).not.toBeNull();
+    expect(typeof w.stdin!.write).toBe("function");
+    w.stdin!.end();
+    await once(w, "exit");
+  });
+
+  test("process.stdout.write in worker flows to Worker#stdout", async () => {
+    const w = new Worker(
+      `require("worker_threads");
+       process.stdout.write("hello");
+       process.stdout.write(" ");
+       process.stdout.write("world");`,
+      { "eval": true, stdout: true, stderr: true },
+    );
+    let data = "";
+    w.stdout.setEncoding("utf8");
+    w.stdout.on("data", c => {
+      data += c;
+    });
+    const [code] = await once(w, "exit");
+    expect(code).toBe(0);
+    expect(data).toBe("hello world");
+  });
+
+  test("process.stderr.write in worker flows to Worker#stderr", async () => {
+    const w = new Worker(
+      `require("worker_threads");
+       process.stderr.write("err!");`,
+      { "eval": true, stdout: true, stderr: true },
+    );
+    let data = "";
+    w.stderr.setEncoding("utf8");
+    w.stderr.on("data", c => {
+      data += c;
+    });
+    const [code] = await once(w, "exit");
+    expect(code).toBe(0);
+    expect(data).toBe("err!");
+  });
+
+  test("writes from process.on('exit') are flushed", async () => {
+    // Run in a fresh subprocess: a pre-existing bug on main (the second
+    // sequential node:worker_threads Worker in one process doesn't fire its
+    // process.on('exit') handlers; release builds segfault) would otherwise
+    // make this flaky depending on which tests ran before it.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "worker-stdio-exit-flush-fixture.js"],
+      env: bunEnv,
+      cwd: __dirname,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("hello world\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("Worker#stdin pipes to process.stdin in worker", async () => {
+    const w = new Worker(
+      `require("worker_threads");
+       let buf = "";
+       process.stdin.setEncoding("utf8");
+       process.stdin.on("data", c => { buf += c; });
+       process.stdin.on("end", () => { process.stdout.write("ECHO:" + buf); });`,
+      { "eval": true, stdin: true, stdout: true, stderr: true },
+    );
+    let data = "";
+    w.stdout.setEncoding("utf8");
+    w.stdout.on("data", c => {
+      data += c;
+    });
+    w.stdin!.write("hello from parent");
+    w.stdin!.end();
+    const [code] = await once(w, "exit");
+    expect(code).toBe(0);
+    expect(data).toBe("ECHO:hello from parent");
+  });
+
+  test("process.stdin in worker ends immediately when stdin:false", async () => {
+    const w = new Worker(
+      `require("worker_threads");
+       process.stdin.on("data", () => {});
+       process.stdin.on("end", () => { process.stdout.write("ended"); });`,
+      { "eval": true, stdout: true, stderr: true },
+    );
+    let data = "";
+    w.stdout.setEncoding("utf8");
+    w.stdout.on("data", c => {
+      data += c;
+    });
+    const [code] = await once(w, "exit");
+    expect(code).toBe(0);
+    expect(data).toBe("ended");
+  });
+
+  test("worker with stdio streams exits cleanly when idle", async () => {
+    const w = new Worker(`require("worker_threads");`, { "eval": true, stdout: true, stderr: true });
+    const [code] = await once(w, "exit");
+    expect(code).toBe(0);
   });
 });

@@ -772,3 +772,52 @@ it("CustomEvent", () => {
     }"
   `);
 });
+
+describe("Proxy in prototype chain", () => {
+  it("does not crash when a Proxy prototype has a throwing getter", () => {
+    const obj = {};
+    const proto = {
+      get ok() {
+        return 1;
+      },
+      get bad() {
+        throw new Error("nope");
+      },
+      get ok2() {
+        return 2;
+      },
+    };
+    Object.setPrototypeOf(obj, new Proxy(proto, {}));
+    const out = Bun.inspect(obj);
+    expect(out).toContain("ok");
+  });
+
+  it("does not crash when a Proxy prototype has a throwing getPrototypeOf trap", () => {
+    class Foo {
+      bar() {}
+      baz() {}
+    }
+    const obj = new Foo();
+    const originalPrototype = Object.getPrototypeOf(obj);
+    const newPrototype = new Proxy(originalPrototype, {
+      getPrototypeOf() {
+        throw new Error("boom");
+      },
+    });
+    Object.setPrototypeOf(obj, newPrototype);
+    const out = Bun.inspect(obj);
+    expect(out).toContain("bar");
+    expect(out).toContain("baz");
+  });
+
+  it("does not crash when formatting an expect() object with a Proxy prototype", () => {
+    const received = expect({});
+    const originalPrototype = Object.getPrototypeOf(received);
+    Object.setPrototypeOf(received, new Proxy(originalPrototype, {}));
+    try {
+      expect(typeof Bun.inspect(received)).toBe("string");
+    } finally {
+      Object.setPrototypeOf(received, originalPrototype);
+    }
+  });
+});

@@ -944,6 +944,77 @@ extern "C" void Bun__unregisterSignalsForForwarding()
 #undef UNREGISTER_SIGNAL
 }
 
+// Protect Bun's signal handlers across a dlopen() call.
+//
+// Some shared libraries install their own signal handlers at load time —
+// notably Go `-buildmode=c-shared`, which registers handlers for SIGURG
+// (goroutine preemption), SIGPIPE, SIGCHLD, SIGHUP, SIGINT, SIGTERM,
+// SIGABRT, SIGSEGV, SIGILL, SIGBUS, SIGFPE, SIGTRAP, SIGQUIT etc. as part
+// of the Go runtime's init. This clobbers Bun's own handlers:
+//  - SIGPIPE = SIG_IGN (networking stack depends on this)
+//  - SEGV/ILL/BUS/FPE = crash_handler (backtrace/report)
+//  - handlers installed via process.on("SIGTERM", ...)
+//
+// Issue #29843: loading a Go c-shared library via bun:ffi dlopen() caused
+// Prisma's MariaDB adapter to hang the event loop, because Go had taken
+// over signals whose delivery Bun was still relying on.
+//
+// Strategy: snapshot sigactions for all signals before dlopen; after
+// dlopen, for each signal whose action the loaded library changed,
+// restore Bun's handler *unless* the previous action was SIG_DFL (in
+// which case the library is free to install whatever handler it needs —
+// e.g. Go's SIGURG handler for preemption, which Bun doesn't care about).
+static struct sigaction bun_dlopen_saved_actions[NSIG];
+static bool bun_dlopen_saved_valid[NSIG];
+
+extern "C" void Bun__saveSignalHandlersForDlopen()
+{
+    for (int sig = 1; sig < NSIG; sig++) {
+        // Skip signals that can't be intercepted — SIGKILL and SIGSTOP.
+        // sigaction returns EINVAL for those on some platforms; save a sentinel.
+        bun_dlopen_saved_valid[sig] = (sigaction(sig, nullptr, &bun_dlopen_saved_actions[sig]) == 0);
+    }
+}
+
+extern "C" void Bun__restoreSignalHandlersAfterDlopen()
+{
+    for (int sig = 1; sig < NSIG; sig++) {
+        if (!bun_dlopen_saved_valid[sig]) continue;
+
+        // If Bun had no handler installed (SIG_DFL), let the loaded library
+        // keep whatever it installed. This preserves e.g. Go's SIGURG handler
+        // so its goroutine scheduler keeps working.
+        void (*prev_handler)(int) = bun_dlopen_saved_actions[sig].sa_handler;
+        if ((bun_dlopen_saved_actions[sig].sa_flags & SA_SIGINFO) == 0 && prev_handler == SIG_DFL) {
+            continue;
+        }
+
+        struct sigaction current;
+        if (sigaction(sig, nullptr, &current) != 0) continue;
+
+        // Compare: did the loaded library change this signal's action?
+        // Cheap byte-wise comparison of the relevant fields.
+        bool changed = false;
+        if ((current.sa_flags & SA_SIGINFO) != (bun_dlopen_saved_actions[sig].sa_flags & SA_SIGINFO)) {
+            changed = true;
+        } else if (current.sa_flags & SA_SIGINFO) {
+            changed = (current.sa_sigaction != bun_dlopen_saved_actions[sig].sa_sigaction)
+                || (current.sa_flags != bun_dlopen_saved_actions[sig].sa_flags);
+        } else {
+            changed = (current.sa_handler != bun_dlopen_saved_actions[sig].sa_handler)
+                || (current.sa_flags != bun_dlopen_saved_actions[sig].sa_flags);
+        }
+
+        if (changed) {
+            // Best effort — ignore failures.
+            (void)sigaction(sig, &bun_dlopen_saved_actions[sig], nullptr);
+        }
+    }
+
+    memset(bun_dlopen_saved_actions, 0, sizeof(bun_dlopen_saved_actions));
+    memset(bun_dlopen_saved_valid, 0, sizeof(bun_dlopen_saved_valid));
+}
+
 #endif
 
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)

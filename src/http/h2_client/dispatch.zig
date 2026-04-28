@@ -119,7 +119,6 @@ pub fn dispatchFrame(session: *ClientSession, header: wire.FrameHeader, payload:
             }
             session.writeFrame(.HTTP_FRAME_SETTINGS, @intFromEnum(wire.SettingsFlags.ACK), 0, &.{});
             session.settings_received = true;
-            session.stream_progressed = true;
         },
         .HTTP_FRAME_WINDOW_UPDATE => {
             if (header.length != 4) {

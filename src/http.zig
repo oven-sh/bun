@@ -2934,6 +2934,10 @@ pub fn handleResponseMetadata(
                             const new_url = URL.parse(normalized_url_str);
                             is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin), true);
                             this.url = new_url;
+                            // The previous hop's URL buffer (which backed this.url until the
+                            // line above) is no longer referenced. Free it so multi-hop
+                            // redirect chains don't leak every intermediate URL.
+                            if (this.redirect.len > 0) bun.default_allocator.free(this.redirect);
                             this.redirect = normalized_url_str;
                         } else if (strings.hasPrefixComptime(location, "//")) {
                             var string_builder = bun.StringBuilder{};
@@ -2974,6 +2978,7 @@ pub fn handleResponseMetadata(
                             const new_url = URL.parse(normalized_url_str);
                             is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin), true);
                             this.url = new_url;
+                            if (this.redirect.len > 0) bun.default_allocator.free(this.redirect);
                             this.redirect = normalized_url_str;
                         } else {
                             const original_url = this.url;
@@ -2993,6 +2998,9 @@ pub fn handleResponseMetadata(
                             };
                             this.url = URL.parse(new_url);
                             is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(this.url.origin), strings.withoutTrailingSlash(original_url.origin), true);
+                            // original_url borrowed from the previous this.redirect buffer; the
+                            // same-origin check above is its last read, so it is now safe to free.
+                            if (this.redirect.len > 0) bun.default_allocator.free(this.redirect);
                             this.redirect = new_url;
                         }
                     }

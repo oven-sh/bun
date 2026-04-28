@@ -51,6 +51,20 @@ public:
     void visit(Visitor& visitor);
 };
 
+// Create a mock function equivalent to `mock.fn()` / `jest.fn()` with no
+// implementation. Used by auto-mock. Returns null on failure (OOM, etc.) —
+// the caller is responsible for checking for exceptions.
+JSC::JSObject* createAutoMockedFunction(JSC::JSGlobalObject* globalObject, JSC::JSValue originalValue);
+
+// Generate an auto-mock object from a module's real exports. For each own
+// enumerable property of `exports`:
+//   - function: replaced with a mock function that returns undefined (plus
+//     any of its own properties mocked recursively so static methods work)
+//   - plain object: recursively auto-mocked
+//   - primitives, arrays, other non-plain objects: preserved
+// Returns null on failure with an exception pending.
+JSC::JSObject* createAutoMockFromExports(JSC::JSGlobalObject* globalObject, JSC::JSValue exports);
+
 class MockWithImplementationCleanupData : public JSC::JSInternalFieldObjectImpl<4> {
 public:
     using Base = JSC::JSInternalFieldObjectImpl<4>;

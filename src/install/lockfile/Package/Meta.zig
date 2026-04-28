@@ -28,7 +28,17 @@ pub const Meta = extern struct {
         true,
     } = .false,
 
-    _padding_integrity: [2]u8 = .{0} ** 2,
+    /// Whether this package version is deprecated.
+    /// `.old` represents the value of this field in lockfiles written before
+    /// this field was added; treated as `.false` when reading but triggers
+    /// needsUpdate() to refresh the metadata.
+    is_deprecated: enum(u8) {
+        old = 0,
+        false,
+        true,
+    } = .false,
+
+    _padding_integrity: [1]u8 = .{0} ** 1,
 
     /// Does the `cpu` arch and `os` match the requirements listed in the package?
     /// This is completely unrelated to "devDependencies", "peerDependencies", "optionalDependencies" etc
@@ -44,8 +54,16 @@ pub const Meta = extern struct {
         this.has_install_script = if (has_script) .true else .false;
     }
 
+    pub fn isDeprecated(this: *const Meta) bool {
+        return this.is_deprecated == .true;
+    }
+
+    pub fn setIsDeprecated(this: *Meta, deprecated: bool) void {
+        this.is_deprecated = if (deprecated) .true else .false;
+    }
+
     pub fn needsUpdate(this: *const Meta) bool {
-        return this.has_install_script == .old;
+        return this.has_install_script == .old or this.is_deprecated == .old;
     }
 
     pub fn count(this: *const Meta, buf: []const u8, comptime StringBuilderType: type, builder: StringBuilderType) void {
@@ -65,6 +83,7 @@ pub const Meta = extern struct {
             .os = this.os,
             .origin = this.origin,
             .has_install_script = this.has_install_script,
+            .is_deprecated = this.is_deprecated,
         };
     }
 };

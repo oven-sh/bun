@@ -493,6 +493,7 @@ pub fn Package(comptime SemverIntType: type) type {
                 package.meta.os = package_version.os;
                 package.meta.integrity = package_version.integrity;
                 package.meta.setHasInstallScript(package_version.has_install_script);
+                package.meta.setIsDeprecated(!package_version.deprecated.isEmpty());
 
                 package.dependencies.off = @as(u32, @truncate(dependencies_list.items.len));
                 package.dependencies.len = total_dependencies_count;

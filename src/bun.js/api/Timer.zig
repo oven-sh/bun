@@ -255,6 +255,15 @@ pub const All = struct {
             }
         }
 
+        // lsquic's earliest_adv_tick (set by us_quic_loop_process from
+        // loop_post). Folded into the epoll timeout instead of arming a
+        // timerfd, so scheduling is free.
+        const quic_us: ?i64 = if (comptime Environment.isPosix) us: {
+            const loop = vm.event_loop_handle orelse break :us null;
+            if (loop.internal_loop_data.quic_head == null) break :us null;
+            break :us loop.internal_loop_data.quic_next_tick_us;
+        } else null;
+
         var maybe_now: ?timespec = null;
         while (this.timers.peek()) |min| {
             const now = maybe_now orelse now: {
@@ -277,12 +286,28 @@ pub const All = struct {
                 },
                 .lt => {
                     spec.* = min.next.duration(&now);
+                    if (quic_us) |us| if (us >= 0) clampToQuic(spec, us);
                     return true;
                 },
             }
         }
 
+        if (quic_us) |us| if (us >= 0) {
+            spec.* = .{
+                .sec = @intCast(@divTrunc(us, std.time.us_per_s)),
+                .nsec = @intCast(@mod(us, std.time.us_per_s) * std.time.ns_per_us),
+            };
+            return true;
+        };
         return false;
+    }
+
+    fn clampToQuic(spec: *timespec, us: i64) void {
+        const cur_us = @as(i64, spec.sec) * std.time.us_per_s + @divTrunc(spec.nsec, std.time.ns_per_us);
+        if (us < cur_us) spec.* = .{
+            .sec = @intCast(@divTrunc(us, std.time.us_per_s)),
+            .nsec = @intCast(@mod(us, std.time.us_per_s) * std.time.ns_per_us),
+        };
     }
 
     export fn Bun__internal_drainTimers(vm: *VirtualMachine) callconv(.c) void {
@@ -361,15 +386,26 @@ pub const All = struct {
             },
         };
         var warning_type_string = bun.String.createAtomIfPossible(@tagName(warning_type));
-        // Ignore errors from transferToJS since this is just a warning and shouldn't interrupt execution
-        const warning_js = warning_string.transferToJS(globalThis) catch return;
-        const warning_type_js = warning_type_string.transferToJS(globalThis) catch return;
+        // Emitting a warning should never interrupt execution, but the emit path calls
+        // into user-observable JS (process.nextTick, getters, etc.) which can throw.
+        // Swallowing error.JSError alone leaves the exception pending on the VM and
+        // trips assertExceptionPresenceMatches in the host-call wrapper, so clear it.
+        const warning_js = warning_string.transferToJS(globalThis) catch {
+            _ = globalThis.clearExceptionExceptTermination();
+            return;
+        };
+        const warning_type_js = warning_type_string.transferToJS(globalThis) catch {
+            _ = globalThis.clearExceptionExceptTermination();
+            return;
+        };
         globalThis.emitWarning(
             warning_js,
             warning_type_js,
             .js_undefined,
             .js_undefined,
-        ) catch {};
+        ) catch {
+            _ = globalThis.clearExceptionExceptTermination();
+        };
     }
 
     const CountdownOverflowBehavior = enum(u8) {

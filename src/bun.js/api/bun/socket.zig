@@ -14,8 +14,12 @@ fn JSSocketType(comptime ssl: bool) type {
     }
 }
 
-fn selectALPNCallback(_: ?*BoringSSL.SSL, out: [*c][*c]const u8, outlen: [*c]u8, in: [*c]const u8, inlen: c_uint, arg: ?*anyopaque) callconv(.c) c_int {
-    const this = bun.cast(*TLSSocket, arg);
+fn selectALPNCallback(ssl: ?*BoringSSL.SSL, out: [*c][*c]const u8, outlen: [*c]u8, in: [*c]const u8, inlen: c_uint, _: ?*anyopaque) callconv(.c) c_int {
+    // SSL_CTX_set_alpn_select_cb registers on the listener-level SSL_CTX, so its
+    // `arg` is shared across every accepted connection — using it for a
+    // per-connection *TLSSocket is a UAF when handshakes overlap. Read the
+    // socket back from the per-SSL ex_data slot set in onOpen instead.
+    const this = bun.cast(*TLSSocket, BoringSSL.SSL_get_ex_data(ssl, 0) orelse return BoringSSL.SSL_TLSEXT_ERR_NOACK);
     if (this.protos) |protos| {
         if (protos.len == 0) {
             return BoringSSL.SSL_TLSEXT_ERR_NOACK;
@@ -459,7 +463,10 @@ pub fn NewSocket(comptime ssl: bool) type {
                         }
                         if (this.protos) |protos| {
                             if (this.isServer()) {
-                                BoringSSL.SSL_CTX_set_alpn_select_cb(BoringSSL.SSL_get_SSL_CTX(ssl_ptr), selectALPNCallback, bun.cast(*anyopaque, this));
+                                // Per-connection: callback reads `this` from the SSL,
+                                // not the CTX-level arg (shared across the listener).
+                                _ = BoringSSL.SSL_set_ex_data(ssl_ptr, 0, this);
+                                BoringSSL.SSL_CTX_set_alpn_select_cb(BoringSSL.SSL_get_SSL_CTX(ssl_ptr), selectALPNCallback, null);
                             } else {
                                 _ = BoringSSL.SSL_set_alpn_protos(ssl_ptr, protos.ptr, @as(c_uint, @intCast(protos.len)));
                             }
@@ -1382,9 +1389,20 @@ pub fn NewSocket(comptime ssl: bool) type {
             };
 
             const this_handlers = this.getHandlers();
-            const handlers = try Handlers.fromJS(globalObject, socket_obj, this_handlers.mode == .server);
+            const prev_mode = this_handlers.mode;
+            const handlers = try Handlers.fromJS(globalObject, socket_obj, prev_mode == .server);
+            // Preserve runtime state across the struct assignment. `Handlers.fromJS` returns a
+            // fresh struct with `active_connections = 0` and `mode` limited to `.server`/`.client`,
+            // but this socket (and any in-flight callback scope) still holds references that were
+            // counted against the old value, and a duplex-upgraded server socket must keep
+            // `.duplex_server`. Losing the counter causes the next `markInactive` to either free
+            // the heap-allocated client `Handlers` while the socket still points at it, or
+            // underflow on the server path.
+            const active_connections = this_handlers.active_connections;
             this_handlers.deinit();
             this_handlers.* = handlers;
+            this_handlers.mode = prev_mode;
+            this_handlers.active_connections = active_connections;
 
             return .js_undefined;
         }

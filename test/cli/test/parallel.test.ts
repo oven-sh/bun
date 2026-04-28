@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tls } from "harness";
 
 test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID", async () => {
   // Sleep so worker 0 is busy when workers 1/2 come online and pick up the
@@ -776,6 +776,39 @@ test("--parallel --randomize without --seed is reproducible via the printed seed
   const second = await run([`--seed=${first.seed}`]);
   // Within-file ordering must match exactly when the printed seed is replayed.
   expect({ a: second.a, b: second.b }).toEqual({ a: first.a, b: first.b });
+});
+
+test("--parallel forwards --experimental-http2-fetch to workers", async () => {
+  // The worker's Bun.argv/execArgv are rewritten to look like `bun <file>`, so
+  // assert the *effect*: an h2-only server (allowHTTP1:false) replies 200 only
+  // when ALPN offered h2; without the flag the worker would see 403 "Missing
+  // ALPN Protocol".
+  const fixture = `import {test,expect} from "bun:test";
+    import {createSecureServer} from "node:http2";
+    import {once} from "node:events";
+    test("h2", async () => {
+      const {key, cert} = JSON.parse(process.env.H2_TLS);
+      const s = createSecureServer({key, cert, allowHTTP1:false}, (q,r)=>r.end(q.httpVersion));
+      s.listen(0); await once(s,"listening");
+      try {
+        const r = await fetch("https://localhost:"+s.address().port, {tls:{rejectUnauthorized:false}});
+        expect(r.status).toBe(200);
+        expect(await r.text()).toBe("2.0");
+      } finally { s.close(); }
+    });`;
+  using dir = tempDir("parallel-h2-flag", { "a.test.js": fixture, "b.test.js": fixture });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--experimental-http2-fetch"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", H2_TLS: JSON.stringify(tls) },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
 });
 
 test("--parallel forwards --conditions to workers", async () => {

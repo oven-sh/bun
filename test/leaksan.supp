@@ -31,7 +31,13 @@ leak:JSModuleLoader__import
 leak:dyld::ThreadLocalVariables
 leak:JSC__JSModuleLoader__loadAndEvaluateModule
 leak:uws_create_app
+leak:uws_h3_create_app
+leak:lsquic_global_init
+leak:us_create_quic_client_context
+leak:lsquic_engine_connect
+leak:lsquic_engine_packet_in
 leak:lshpack_wrapper_decode
+leak:lshpack_wrapper_encode
 leak:lshpack_wrapper_init
 leak:bun.js.ipc.onData2
 leak:bun.js.node.fs_events.InitLibrary

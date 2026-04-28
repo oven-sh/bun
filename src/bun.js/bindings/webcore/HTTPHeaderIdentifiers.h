@@ -63,6 +63,7 @@ namespace WebCore {
     macro("ping-to", PingTo)                                                               \
     macro("pragma", Pragma)                                                                \
     macro("proxy-authorization", ProxyAuthorization)                                       \
+    macro("proxy-connection", ProxyConnection)                                             \
     macro("purpose", Purpose)                                                              \
     macro("range", Range)                                                                  \
     macro("referer", Referer)                                                              \

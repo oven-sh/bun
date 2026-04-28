@@ -12,6 +12,7 @@ pub const fetch_type_error_names: JSTypeErrorEnum = brk: {
     errors.set(JSType.kJSTypeString, "String");
     errors.set(JSType.kJSTypeObject, "Object");
     errors.set(JSType.kJSTypeSymbol, "Symbol");
+    errors.set(JSType.kJSTypeBigInt, "BigInt");
     break :brk errors;
 };
 
@@ -23,6 +24,7 @@ pub const fetch_type_error_string_values = .{
     std.fmt.comptimePrint("fetch() expects a string, but received {s}", .{fetch_type_error_names.get(JSType.kJSTypeString)}),
     std.fmt.comptimePrint("fetch() expects a string, but received {s}", .{fetch_type_error_names.get(JSType.kJSTypeObject)}),
     std.fmt.comptimePrint("fetch() expects a string, but received {s}", .{fetch_type_error_names.get(JSType.kJSTypeSymbol)}),
+    std.fmt.comptimePrint("fetch() expects a string, but received {s}", .{fetch_type_error_names.get(JSType.kJSTypeBigInt)}),
 };
 
 pub const fetch_type_error_strings: JSTypeErrorEnum = brk: {
@@ -54,6 +56,10 @@ pub const fetch_type_error_strings: JSTypeErrorEnum = brk: {
     errors.set(
         JSType.kJSTypeSymbol,
         bun.asByteSlice(fetch_type_error_string_values[6]),
+    );
+    errors.set(
+        JSType.kJSTypeBigInt,
+        bun.asByteSlice(fetch_type_error_string_values[7]),
     );
     break :brk errors;
 };
@@ -192,6 +198,9 @@ fn fetchImpl(
     // used to clean up dynamically allocated memory on error (a poor man's errdefer)
     var is_error = false;
     var upgraded_connection = false;
+    var force_http2 = false;
+    var force_http3 = false;
+    var force_http1 = false;
     var allocator = bun.default_allocator;
 
     if (arguments.len == 0) {
@@ -508,6 +517,35 @@ fn fetchImpl(
     if (globalThis.hasException()) {
         is_error = true;
         return .zero;
+    }
+
+    // protocol: "http2" | "h2" | "http1.1" | "h1" | undefined.
+    extract_protocol: {
+        const objects_to_try = [_]JSValue{
+            options_object orelse .zero,
+            request_init_object orelse .zero,
+        };
+        inline for (0..2) |i| {
+            if (objects_to_try[i] != .zero) {
+                if (try objects_to_try[i].get(globalThis, "protocol")) |protocol_val| {
+                    if (protocol_val.isString()) {
+                        const str = try protocol_val.toBunString(globalThis);
+                        defer str.deref();
+                        if (str.eqlComptime("http2") or str.eqlComptime("h2")) {
+                            force_http2 = true;
+                        } else if (str.eqlComptime("http3") or str.eqlComptime("h3")) {
+                            force_http3 = true;
+                        } else if (str.eqlComptime("http1.1") or str.eqlComptime("h1")) {
+                            force_http1 = true;
+                        } else {
+                            is_error = true;
+                            return globalThis.throwInvalidArguments("fetch: 'protocol' must be \"http2\", \"h2\", \"http3\", \"h3\", \"http1.1\", or \"h1\"", .{});
+                        }
+                        break :extract_protocol;
+                    }
+                }
+            }
+        }
     }
 
     // timeout: false | number | undefined
@@ -1403,6 +1441,9 @@ fn fetchImpl(
             .ssl_config = ssl_config,
             .hostname = hostname,
             .upgraded_connection = upgraded_connection,
+            .force_http2 = force_http2,
+            .force_http3 = force_http3,
+            .force_http1 = force_http1,
             .check_server_identity = if (check_server_identity.isEmptyOrUndefinedOrNull()) .empty else .create(check_server_identity, globalThis),
             .unix_socket_path = unix_socket_path,
         },

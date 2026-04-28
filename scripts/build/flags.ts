@@ -750,6 +750,11 @@ export const linkerFlags: Flag[] = [
     desc: "18MB stack reserve (JSC uses deep recursion), no error limit",
   },
   {
+    flag: "/DEBUG:FULL",
+    when: c => c.windows && c.debug,
+    desc: "Emit PDB so the crash handler can symbolize stack traces",
+  },
+  {
     flag: [
       "/LTCG",
       "/OPT:REF",

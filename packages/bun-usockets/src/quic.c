@@ -592,9 +592,14 @@ static void us_quic_on_close(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
 }
 
 static void us_quic_on_reset(lsquic_stream_t *stream, lsquic_stream_ctx_t *h, int how) {
-    (void) how;
-    /* Reset triggers on_close shortly after; nothing extra to do here. */
-    if (h && stream) lsquic_stream_close(stream);
+    /* how=0 → peer sent RESET_STREAM (our read half is gone): nothing left
+     *         to deliver, close so on_stream_close fires.
+     * how=1 → peer sent STOP_SENDING (wants us to abort our write half):
+     *         lsquic already queues RESET_STREAM for our send side; the
+     *         read half stays open so the response/request that arrived
+     *         alongside STOP_SENDING is still delivered. Closing here
+     *         would drop it. */
+    if (h && stream && how == 0) lsquic_stream_close(stream);
 }
 
 /* ───── public API ───── */

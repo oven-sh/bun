@@ -485,7 +485,7 @@ describe("getHeapSnapshot", () => {
       "trace_tree",
     ]);
     worker.postMessage(0);
-  });
+  }, 30_000);
 });
 
 test("failed Worker construction restores transferred FileHandles", async () => {

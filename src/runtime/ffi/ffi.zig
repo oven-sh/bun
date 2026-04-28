@@ -66,7 +66,32 @@ pub const FFI = struct {
     closed: bool = false,
     shared_state: ?*TCC.State = null,
 
-    pub fn finalize(_: *FFI) callconv(.c) void {}
+    pub fn finalize(this: *FFI) callconv(.c) void {
+        this.deinit();
+        bun.destroy(this);
+    }
+
+    fn deinit(this: *FFI) void {
+        if (this.closed) {
+            return;
+        }
+        this.closed = true;
+
+        if (this.dylib) |*dylib| {
+            dylib.close();
+            this.dylib = null;
+        }
+
+        if (this.shared_state) |state| {
+            this.shared_state = null;
+            state.deinit();
+        }
+
+        for (this.functions.values()) |*val| {
+            val.deinit();
+        }
+        this.functions.deinit(bun.default_allocator);
+    }
 
     const CompileC = struct {
         source: Source = .{ .file = "" },
@@ -815,13 +840,11 @@ pub const FFI = struct {
             }
         }
 
-        // TODO: pub const new = bun.TrivialNew(FFI)
-        var lib = bun.handleOom(bun.default_allocator.create(FFI));
-        lib.* = .{
+        const lib = bun.new(FFI, .{
             .dylib = null,
             .shared_state = tcc_state,
             .functions = compile_c.symbols.map,
-        };
+        });
         tcc_state = null;
         compile_c.symbols = .{};
 
@@ -831,8 +854,9 @@ pub const FFI = struct {
     }
 
     pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) JSValue {
+        _ = globalThis;
         var function: *Function = @ptrFromInt(ctx.asPtrAddress());
-        function.deinit(globalThis);
+        function.deinit();
         return .js_undefined;
     }
 
@@ -866,12 +890,12 @@ pub const FFI = struct {
             .failed => |err| {
                 const message = ZigString.init(err.msg).toErrorInstance(globalThis);
 
-                func.deinit(globalThis);
+                func.deinit();
 
                 return message;
             },
             .pending => {
-                func.deinit(globalThis);
+                func.deinit();
                 return ZigString.init("Failed to compile, but not sure why. Please report this bug").toErrorInstance(globalThis);
             },
             .compiled => {
@@ -890,31 +914,11 @@ pub const FFI = struct {
 
     pub fn close(
         this: *FFI,
-        globalThis: *jsc.JSGlobalObject,
+        _: *jsc.JSGlobalObject,
         _: *jsc.CallFrame,
     ) bun.JSError!JSValue {
         jsc.markBinding(@src());
-        if (this.closed) {
-            return .js_undefined;
-        }
-        this.closed = true;
-        if (this.dylib) |*dylib| {
-            dylib.close();
-            this.dylib = null;
-        }
-
-        if (this.shared_state) |state| {
-            this.shared_state = null;
-            state.deinit();
-        }
-
-        const allocator = VirtualMachine.get().allocator;
-
-        for (this.functions.values()) |*val| {
-            val.deinit(globalThis);
-        }
-        this.functions.deinit(allocator);
-
+        this.deinit();
         return .js_undefined;
     }
 
@@ -1128,7 +1132,7 @@ pub const FFI = struct {
                     name,
                 });
                 for (symbols.values()) |*value| {
-                    value.deinit(global);
+                    value.deinit();
                 }
                 symbols.clearAndFree(bun.default_allocator);
                 dylib.close();
@@ -1137,7 +1141,7 @@ pub const FFI = struct {
             switch (function.step) {
                 .failed => |err| {
                     defer for (symbols.values()) |*other_function| {
-                        other_function.deinit(global);
+                        other_function.deinit();
                     };
 
                     const res = ZigString.init(err.msg).toErrorInstance(global);
@@ -1147,7 +1151,7 @@ pub const FFI = struct {
                 },
                 .pending => {
                     for (symbols.values()) |*other_function| {
-                        other_function.deinit(global);
+                        other_function.deinit();
                     }
                     symbols.clearAndFree(bun.default_allocator);
                     dylib.close();
@@ -1236,7 +1240,7 @@ pub const FFI = struct {
                     bun.asByteSlice(function_name),
                 });
                 for (symbols.values()) |*value| {
-                    value.deinit(global);
+                    value.deinit();
                 }
                 symbols.clearAndFree(allocator);
                 return ret;
@@ -1249,7 +1253,7 @@ pub const FFI = struct {
                     }
 
                     const res = ZigString.init(err.msg).toErrorInstance(global);
-                    function.deinit(global);
+                    function.deinit();
                     symbols.clearAndFree(allocator);
                     return res;
                 },
@@ -1460,7 +1464,7 @@ pub const FFI = struct {
 
         extern "c" fn FFICallbackFunctionWrapper_destroy(*anyopaque) void;
 
-        pub fn deinit(val: *Function, globalThis: *jsc.JSGlobalObject) void {
+        pub fn deinit(val: *Function) void {
             jsc.markBinding(@src());
 
             if (val.base_name) |base_name| {
@@ -1477,10 +1481,7 @@ pub const FFI = struct {
             }
 
             if (val.step == .compiled) {
-                if (val.step.compiled.js_function != .zero) {
-                    _ = globalThis;
-                    val.step.compiled.js_function = .zero;
-                }
+                val.step.compiled.js_function = .zero;
 
                 if (val.step.compiled.ffi_callback_function_wrapper) |wrapper| {
                     FFICallbackFunctionWrapper_destroy(wrapper);

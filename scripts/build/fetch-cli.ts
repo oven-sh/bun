@@ -25,7 +25,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { downloadWithRetry, extractTarGz, fetchPrebuilt } from "./download.ts";
+import { downloadWithRetry, extractTarGz, fetchPrebuilt, resolvePrestagedTarball } from "./download.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import { fetchZig } from "./zig.ts";
@@ -173,15 +173,24 @@ async function fetchDep(
 
   console.log(`fetching ${repo}@${commit.slice(0, 8)}`);
 
-  // ─── Download (with cache) ───
+  // ─── Locate tarball ───
+  // Default: cache at `${cache}/${name}-${urlHash}.tar.gz`, download if missing.
+  // $BUN_DEP_TARBALLS: consume a prestaged tarball instead (see
+  // resolvePrestagedTarball in download.ts). Keyed on commit, not urlHash,
+  // so consumers don't have to reimplement our URL scheme.
   const url = `https://github.com/${repo}/archive/${commit}.tar.gz`;
-  const urlHash = createHash("sha256").update(url).digest("hex").slice(0, 16);
-  const tarballPath = join(cache, `${name}-${urlHash}.tar.gz`);
+  const staged = resolvePrestagedTarball(name, commit, url);
 
-  await mkdir(cache, { recursive: true });
-
-  if (!existsSync(tarballPath)) {
-    await downloadWithRetry(url, tarballPath, name);
+  let tarballPath: string;
+  if (staged !== null) {
+    tarballPath = staged;
+  } else {
+    const urlHash = createHash("sha256").update(url).digest("hex").slice(0, 16);
+    tarballPath = join(cache, `${name}-${urlHash}.tar.gz`);
+    await mkdir(cache, { recursive: true });
+    if (!existsSync(tarballPath)) {
+      await downloadWithRetry(url, tarballPath, name);
+    }
   }
 
   // ─── Extract ───

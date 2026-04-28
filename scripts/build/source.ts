@@ -933,6 +933,22 @@ export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
 }
 
 /**
+ * Assert that a dep's filename-relevant ref (`commit` for github-archive,
+ * `identity` for prebuilt) is safe to interpolate into a tarball filename.
+ * Enforced at configure time regardless of BUN_DEP_TARBALLS — the invariant
+ * is about dep-definition validity, not tarball lookup. The default cache
+ * path uses a URL hash and isn't affected by this check; the guard matters
+ * once someone stages tarballs (see fetch-cli.ts / download.ts).
+ */
+function assertFilenameSafeRef(depName: string, field: "commit" | "identity", value: string): void {
+  assert(
+    /^[A-Za-z0-9._-]+$/.test(value),
+    `${depName}: ${field}='${value}' contains characters unsafe in a filename`,
+    { hint: "Use a value without slashes, spaces, or other path-unsafe characters" },
+  );
+}
+
+/**
  * Emit a ninja fetch rule. Returns absolute path to the .ref stamp.
  *
  * The .ref stamp contains the "source identity": hash(commit + patch contents).
@@ -947,6 +963,8 @@ function emitFetch(
   patches: string[],
   compiledSources: string[],
 ): string {
+  assertFilenameSafeRef(name, "commit", source.commit);
+
   const srcDir = depSourceDir(cfg, name);
   const refStamp = resolve(srcDir, ".ref");
   const patchPaths = patches.map(p => resolve(cfg.cwd, p));
@@ -1010,6 +1028,8 @@ function emitPrebuilt(
   source: Extract<Source, { kind: "prebuilt" }>,
   provides: Provides,
 ): ResolvedDep {
+  assertFilenameSafeRef(name, "identity", source.identity);
+
   // Dest dir: default to vendor/<name>/, but deps like WebKit override to
   // a shared cache location (WebKit's ~200MB, you don't want it per-buildDir).
   const destDir = source.destDir ?? depSourceDir(cfg, name);

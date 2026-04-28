@@ -580,8 +580,12 @@ restart:
 
         break;
       }
-    } else if (s->handshake_state == HANDSHAKE_RENEGOTIATION_PENDING) {
-      // renegotiation ended successfully call on_handshake
+    } else if (s->handshake_state != HANDSHAKE_COMPLETED) {
+      // SSL_read returned application data, so the handshake (initial or
+      // renegotiation) has finished inside SSL_read. Fire on_handshake before
+      // delivering data so the caller can inspect ALPN and re-tag the socket
+      // — otherwise a TLS 1.3 server that sends Finished + app data in one
+      // flight (e.g. an HTTP/2 SETTINGS frame) bypasses on_handshake entirely.
       us_internal_trigger_handshake_callback(s, 1);
       // the on_handshake callback runs user code which may close this socket
       // (us_internal_ssl_socket_close -> ssl_on_close frees s->ssl). if that

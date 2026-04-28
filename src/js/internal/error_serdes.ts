@@ -69,7 +69,11 @@ function TryGetAllProperties(object, target, rememberSet) {
     if (key === "cause") {
       descriptor.value = serializeError(descriptor.value, rememberSet);
       all[key] = descriptor;
-    } else if ("value" in descriptor && typeof descriptor.value !== "function" && typeof descriptor.value !== "symbol") {
+    } else if (
+      "value" in descriptor &&
+      typeof descriptor.value !== "function" &&
+      typeof descriptor.value !== "symbol"
+    ) {
       all[key] = descriptor;
     }
   });

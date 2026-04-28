@@ -1,0 +1,156 @@
+import { describe, expect, test } from "bun:test";
+import { once } from "node:events";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+
+describe("node:http Agent socket accounting", () => {
+  test("agent.sockets and agent.requests are populated and maxSockets is enforced", async () => {
+    const agent = new http.Agent({ maxSockets: 1 });
+
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, { "Content-Length": "12" });
+      res.end("hello world\n");
+    });
+    server.listen(0);
+    try {
+      await once(server, "listening");
+      const port = (server.address() as AddressInfo).port;
+      const name = agent.getName({ port });
+
+      const snapshots: Array<{ sockets: number | undefined; requests: number | undefined }> = [];
+      const done: Promise<void>[] = [];
+
+      for (let i = 0; i < 3; i++) {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        done.push(promise);
+        http
+          .get({ path: "/", headers: { connection: "keep-alive" }, port, agent }, res => {
+            snapshots.push({
+              sockets: agent.sockets[name]?.length,
+              requests: agent.requests[name]?.length,
+            });
+            res.on("end", resolve);
+            res.on("error", resolve);
+            res.resume();
+          })
+          .on("error", resolve);
+      }
+
+      // Synchronously after issuing all three: one in-flight, two queued.
+      expect(agent.sockets[name]).toBeDefined();
+      expect(agent.sockets[name]!.length).toBe(1);
+      expect(agent.requests[name]).toBeDefined();
+      expect(agent.requests[name]!.length).toBe(2);
+      expect(agent.totalSocketCount).toBe(1);
+
+      await Promise.all(done);
+
+      // Inside each 'response' callback the count was 1 and the queue drained
+      // one at a time. The third request sees the queue key deleted.
+      expect(snapshots).toEqual([
+        { sockets: 1, requests: 2 },
+        { sockets: 1, requests: 1 },
+        { sockets: 1, requests: undefined },
+      ]);
+
+      // Let the last release happen (nextTick after the final 'end').
+      await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+      expect(name in agent.sockets).toBe(false);
+      expect(name in agent.requests).toBe(false);
+      expect(agent.totalSocketCount).toBe(0);
+    } finally {
+      agent.destroy();
+      server.close();
+    }
+  });
+
+  test("agent.sockets caps at maxSockets and overflow queues into agent.requests", async () => {
+    const agent = new http.Agent({ maxSockets: 10 });
+
+    const server = http.createServer((req, res) => {
+      res.writeHead(200);
+      res.end("Hello World\n");
+    });
+    server.listen(0, "127.0.0.1");
+    try {
+      await once(server, "listening");
+      const port = (server.address() as AddressInfo).port;
+      const name = agent.getName({ host: "127.0.0.1", port });
+
+      const N = 20;
+      const samples: Array<{ sockets: number; queued: number }> = [];
+      const done: Promise<void>[] = [];
+
+      for (let i = 0; i < N; i++) {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        done.push(promise);
+        http
+          .get({ host: "127.0.0.1", port, agent }, res => {
+            res.on("end", resolve);
+            res.on("error", resolve);
+            res.resume();
+          })
+          .on("error", resolve);
+
+        samples.push({
+          sockets: agent.sockets[name]?.length ?? 0,
+          queued: agent.requests[name]?.length ?? 0,
+        });
+      }
+
+      // 1..10 then capped at 10; queued 0×10 then 1..10.
+      expect(samples).toEqual(
+        Array.from({ length: N }, (_, i) => ({
+          sockets: Math.min(i + 1, 10),
+          queued: Math.max(0, i + 1 - 10),
+        })),
+      );
+      const maxQueued = Math.max(...samples.map(s => s.queued));
+      expect(maxQueued).toBeLessThanOrEqual(10);
+
+      await Promise.all(done);
+    } finally {
+      agent.destroy();
+      server.close();
+    }
+  });
+
+  test("socket emits 'connect' after the request 'socket' event", async () => {
+    const agent = new http.Agent({ maxSockets: 1 });
+
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, { "Content-Length": "2", Connection: "close" });
+      res.end("ok");
+    });
+    server.listen(0);
+    try {
+      await once(server, "listening");
+      const port = (server.address() as AddressInfo).port;
+
+      let connectCount = 0;
+      const done: Promise<void>[] = [];
+      for (let i = 0; i < 3; i++) {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        done.push(promise);
+        const req = http.request({ port, agent, headers: { connection: "keep-alive" } }, res => {
+          res.on("end", resolve);
+          res.on("error", resolve);
+          res.resume();
+        });
+        req.on("error", resolve);
+        req.on("socket", s => {
+          s.on("connect", () => {
+            connectCount++;
+          });
+        });
+        req.end();
+      }
+
+      await Promise.all(done);
+      expect(connectCount).toBe(3);
+    } finally {
+      agent.destroy();
+      server.close();
+    }
+  });
+});

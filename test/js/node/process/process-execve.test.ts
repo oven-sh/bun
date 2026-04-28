@@ -47,8 +47,12 @@ describe("process.execve", () => {
         const { Worker, isMainThread, parentPort } = require("worker_threads");
         if (isMainThread) {
           const w = new Worker(__filename);
-          w.on("message", (m) => { console.log(m); process.exit(0); });
-          w.on("error", (e) => { console.error("WORKER_ERROR:" + e.message); process.exit(1); });
+          let result;
+          w.on("message", (m) => { result = m; });
+          w.on("error", (e) => { console.error("WORKER_ERROR:" + e.message); process.exitCode = 1; });
+          w.on("exit", () => {
+            console.log(result ?? "WORKER_EXITED_WITHOUT_MESSAGE");
+          });
         } else {
           try {
             process.execve(process.execPath, [process.execPath], {});

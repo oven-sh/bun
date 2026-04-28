@@ -1607,6 +1607,16 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // Reject workers before doing any other work. The experimental warning is
+    // queued on nextTick; scheduling it on a worker VM that is about to throw
+    // (and likely be torn down by the main thread's process.exit) is a race we
+    // don't need, and a worker call shouldn't consume the process-wide
+    // once_flag anyway.
+    if (!Bun__isMainThreadVM()) {
+        scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_WORKER_UNSUPPORTED_OPERATION, "Calling process.execve is not supported in workers"_s));
+        return {};
+    }
+
     static std::once_flag experimentalWarningFlag;
     std::call_once(experimentalWarningFlag, [&] {
         Process::emitWarning(globalObject,
@@ -1614,11 +1624,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
             jsString(vm, String("ExperimentalWarning"_s)), jsUndefined(), jsUndefined());
     });
     RETURN_IF_EXCEPTION(scope, {});
-
-    if (!Bun__isMainThreadVM()) {
-        scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_WORKER_UNSUPPORTED_OPERATION, "Calling process.execve is not supported in workers"_s));
-        return {};
-    }
 
 #if OS(WINDOWS)
     scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_FEATURE_UNAVAILABLE_ON_PLATFORM, "The feature process.execve is unavailable on the current platform, which is being used to run Node.js"_s));

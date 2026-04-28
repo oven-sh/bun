@@ -1,6 +1,6 @@
 import { gzipSync, type Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { tls } from "harness";
+import { bunEnv, bunExe, tempDir, tls } from "harness";
 
 // In-process server with `h1: false` so the build under test binds UDP only.
 // A fetch that silently fell back to HTTP/1.1 would get ECONNREFUSED, which
@@ -576,4 +576,75 @@ test("retries on a fresh session when a pooled session is stale (port reuse)", a
   } finally {
     void b.stop(true);
   }
+});
+
+// Subprocess so the experimental flag is process-scoped and the in-process
+// server above (h1: false) doesn't interfere — this server keeps h1 on so the
+// first fetch goes over TCP and reads Alt-Svc.
+describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
+  // The fixture starts a server with both h1+h3 listening on the same port,
+  // does two fetches with no `protocol:` hint, and prints the alt-svc header
+  // plus the live h3 session count after each. With the flag on, fetch #1
+  // goes over h1 (sessions=0) and records Alt-Svc; fetch #2 goes over QUIC
+  // (sessions=1).
+  const fixture = `
+    import { fetchH3Internals } from "bun:internal-for-testing";
+    const { liveCounts } = fetchH3Internals;
+    using server = Bun.serve({
+      port: 0,
+      tls: ${JSON.stringify(tls)},
+      h3: true,
+      fetch: () => new Response("ok"),
+    });
+    const url = "https://127.0.0.1:" + server.port + "/";
+    const opts = { tls: { rejectUnauthorized: false } };
+    {
+      const r = await fetch(url, opts);
+      await r.text();
+      console.log("first alt-svc=%s sessions=%d", r.headers.get("alt-svc") ?? "", liveCounts().sessions);
+    }
+    {
+      const r = await fetch(url, opts);
+      await r.text();
+      console.log("second status=%d sessions=%d", r.status, liveCounts().sessions);
+    }
+  `;
+
+  async function run(extra: { env?: Record<string, string>; args?: string[] }) {
+    using dir = tempDir("h3-altsvc", { "fixture.ts": fixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...(extra.args ?? []), "fixture.ts"],
+      env: { ...bunEnv, ...extra.env },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("env var: BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT=1", async () => {
+    const { stdout, stderr, exitCode } = await run({ env: { BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT: "1" } });
+    expect(stderr).toBe("");
+    expect(stdout).toMatch(/^first alt-svc=h3=":\d+"; ma=\d+ sessions=0\n/);
+    expect(stdout).toMatch(/second status=200 sessions=1\n$/);
+    expect(exitCode).toBe(0);
+  });
+
+  test("CLI flag: --experimental-http3-fetch", async () => {
+    const { stdout, stderr, exitCode } = await run({ args: ["--experimental-http3-fetch"] });
+    expect(stderr).toBe("");
+    expect(stdout).toMatch(/^first alt-svc=h3=":\d+"; ma=\d+ sessions=0\n/);
+    expect(stdout).toMatch(/second status=200 sessions=1\n$/);
+    expect(exitCode).toBe(0);
+  });
+
+  test("off by default: both fetches stay on h1", async () => {
+    const { stdout, stderr, exitCode } = await run({});
+    expect(stderr).toBe("");
+    // Alt-Svc header is still emitted by the server, but the client never
+    // records it and never opens a QUIC session.
+    expect(stdout).toMatch(/^first alt-svc=h3=":\d+"; ma=\d+ sessions=0\n/);
+    expect(stdout).toMatch(/second status=200 sessions=0\n$/);
+    expect(exitCode).toBe(0);
+  });
 });

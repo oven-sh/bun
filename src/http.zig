@@ -12,6 +12,9 @@ pub var async_http_id_monotonic: std.atomic.Value(u32) = std.atomic.Value(u32).i
 /// Set once at startup from `--experimental-http2-fetch` (before the HTTP
 /// thread spawns) and then only read on that thread, so no atomics needed.
 pub var experimental_http2_client_from_cli: bool = false;
+/// Set once at startup from `--experimental-http3-fetch`. Same threading
+/// rules as the http2 flag.
+pub var experimental_http3_client_from_cli: bool = false;
 
 const MAX_REDIRECT_URL_LENGTH = 128 * 1024;
 
@@ -226,6 +229,28 @@ pub fn canOfferH2(client: *const HTTPClient) bool {
 pub fn alpnOffer(client: *const HTTPClient) BoringSSL.SSL.AlpnOffer {
     if (!client.canOfferH2()) return .h1;
     return if (client.flags.force_http2) .h2_only else .h1_or_h2;
+}
+
+/// Whether the experimental Alt-Svc-driven HTTP/3 upgrade is enabled at all
+/// (CLI flag or env var). Used on its own to gate `H3.AltSvc.record` — a
+/// response that arrived over a request shape h3 can't serve (proxy, sendfile,
+/// `force_http1`) still carries an authoritative Alt-Svc for the origin.
+pub fn h3AltSvcEnabled() bool {
+    return experimental_http3_client_from_cli or
+        bun.feature_flag.BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT.get();
+}
+
+/// Whether this request shape is eligible to *use* a cached Alt-Svc h3
+/// alternative (HTTPS, no proxy/unix-socket, no sendfile, not pinned to a
+/// specific protocol). When true, `start_()` consults `H3.AltSvc.lookup`
+/// before opening TCP.
+pub fn canTryH3AltSvc(client: *const HTTPClient) bool {
+    if (client.flags.force_http1 or client.flags.force_http2) return false;
+    if (client.http_proxy != null) return false;
+    if (client.flags.is_preconnect_only) return false;
+    if (client.unix_socket_path.length() > 0) return false;
+    if (client.state.original_request_body == .sendfile) return false;
+    return h3AltSvcEnabled();
 }
 
 pub fn firstCall(
@@ -1177,6 +1202,28 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
         if (this.flags.force_http2) {
             this.fail(error.HTTP2Unsupported);
             return;
+        }
+    }
+
+    if (comptime is_ssl) {
+        // Opportunistic Alt-Svc upgrade: a previous response from this origin
+        // advertised `h3`, and the experimental flag is on. Don't touch
+        // `flags.force_http3` — that's the user's explicit `protocol:"http3"`
+        // choice and persists across redirects, whereas an Alt-Svc upgrade is
+        // per-origin and a cross-origin redirect must re-evaluate from h1.
+        // `doRedirectMultiplexed` resets `flags.protocol`, so the redirected
+        // request lands back here with `force_http3` still false and consults
+        // the cache for the new origin.
+        if (!this.flags.force_http3 and this.canTryH3AltSvc()) {
+            if (H3.AltSvc.lookup(this.url.hostname, this.url.getPortAuto())) |alt_port| {
+                if (H3.ClientContext.getOrCreate(http_thread.loop.loop)) |ctx| {
+                    if (!ctx.connect(this, this.url.hostname, alt_port)) {
+                        this.fail(error.ConnectionRefused);
+                    }
+                    return;
+                }
+                // engine init failed: fall through to TCP
+            }
         }
     }
 
@@ -2802,6 +2849,14 @@ pub fn handleResponseMetadata(
             },
             hashHeaderConst("Last-Modified") => {
                 pretend_304 = this.flags.force_last_modified and response.status_code > 199 and response.status_code < 300 and this.if_modified_since.len > 0 and strings.eql(this.if_modified_since, header.value);
+            },
+            hashHeaderConst("Alt-Svc") => {
+                // Record regardless of *this* request's shape — a future
+                // request to the same origin may be h3-eligible even if this
+                // one was pinned/proxied/sendfile.
+                if (this.isHTTPS() and this.unix_socket_path.length() == 0 and h3AltSvcEnabled()) {
+                    H3.AltSvc.record(this.url.hostname, this.url.getPortAuto(), header.value);
+                }
             },
 
             else => {},

@@ -450,6 +450,9 @@ pub const MatchedRoute = struct {
         if (this.query_string_map) |*map| {
             map.deinit();
         }
+        if (this.param_map) |*map| {
+            map.deinit();
+        }
         if (this.needs_deinit) {
             if (this.route.pathname.len > 0 and bun.mimalloc.mi_is_in_heap_region(this.route.pathname.ptr)) {
                 bun.mimalloc.mi_free(@constCast(this.route.pathname.ptr));

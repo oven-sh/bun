@@ -865,6 +865,34 @@ if (isDockerEnabled()) {
       expect((after - rss) / 1024 / 1024).toBeLessThan(200);
     });
 
+    test("array column result does not leak decoded cells", async () => {
+      // parseArray() allocates a heap SQLDataCell[] buffer plus a cloned
+      // WTF::StringImpl per element. The returned .array cell must carry
+      // free_value = 1 so SQLDataCell.deinit() recursively frees both the
+      // buffer and the child strings.
+      await using sql = postgres({ ...options, max: 1 });
+
+      // warm up: prepared statement cache, connection buffers, JIT
+      for (let i = 0; i < 32; i++) {
+        await sql`SELECT array_agg(repeat('x', 1024)) AS tags FROM generate_series(1, 64)`;
+      }
+      Bun.gc(true);
+      const rss = process.memoryUsage.rss();
+
+      for (let i = 0; i < 3000; i++) {
+        const rows = await sql`SELECT array_agg(repeat('x', 1024)) AS tags FROM generate_series(1, 64)`;
+        expect(rows[0].tags.length).toBe(64);
+      }
+
+      Bun.gc(true);
+      const after = process.memoryUsage.rss();
+      const deltaMB = (after - rss) / 1024 / 1024;
+      console.log({ after, rss, deltaMB });
+      // Without the fix each row leaks ~64KB of cloned strings plus the
+      // SQLDataCell[] buffer; 3000 rows leak well over 200MB.
+      expect(deltaMB).toBeLessThan(100);
+    });
+
     // Last one wins.
     test("Handles duplicate numeric column names", async () => {
       const result = await sql`select 1 as "1", 2 as "1", 3 as "1"`;

@@ -80,6 +80,9 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
     var stack_buffer: [16 * 1024]u8 = undefined;
 
     errdefer {
+        for (array.items) |*cell| {
+            cell.deinit();
+        }
         if (array.capacity > 0) array.deinit(bun.default_allocator);
     }
     var slice = bytes[1..];
@@ -245,7 +248,7 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
                             if (bun.strings.eqlComptime(element, "\\b")) {
                                 try array.append(bun.default_allocator, SQLDataCell{ .tag = .string, .value = .{ .string = bun.String.cloneUTF8("\x08").value.WTFStringImpl }, .free_value = 1 });
                             } else {
-                                try array.append(bun.default_allocator, SQLDataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.cloneUTF8(element).value.WTFStringImpl else null }, .free_value = 0 });
+                                try array.append(bun.default_allocator, SQLDataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.cloneUTF8(element).value.WTFStringImpl else null }, .free_value = 1 });
                             }
                         }
                         slice = trySlice(slice, current_idx);
@@ -453,7 +456,7 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
 
         return error.UnsupportedArrayFormat;
     }
-    return SQLDataCell{ .tag = .array, .value = .{ .array = .{ .ptr = array.items.ptr, .len = @truncate(array.items.len), .cap = @truncate(array.capacity) } } };
+    return SQLDataCell{ .tag = .array, .value = .{ .array = .{ .ptr = array.items.ptr, .len = @truncate(array.items.len), .cap = @truncate(array.capacity) } }, .free_value = 1 };
 }
 
 pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, globalObject: *jsc.JSGlobalObject) !SQLDataCell {

@@ -12,7 +12,7 @@ import { bunEnv, bunExe, isDebug } from "harness";
 // Non-ASCII path prefixes below force the `.encoded_slice` branch; the long
 // tail makes the per-call leak large enough to observe in RSS.
 
-const iterations = isDebug ? 10_000 : 40_000;
+const iterations = isDebug ? 15_000 : 40_000;
 const timeout = isDebug ? 180_000 : 60_000;
 
 async function run(code: string) {

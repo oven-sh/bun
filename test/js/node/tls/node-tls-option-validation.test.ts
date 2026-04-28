@@ -62,9 +62,7 @@ describe("tls.createServer option validation", () => {
   test("SNICallback must be a function", () => {
     for (const SNICallback of ["fhqwhgads", 42, {}, []]) {
       expect(() => tls.createServer({ SNICallback } as any)).toThrow(invalidArgType);
-      expect(() => new tls.TLSSocket(new net.Socket(), { isServer: true, SNICallback } as any)).toThrow(
-        invalidArgType,
-      );
+      expect(() => new tls.TLSSocket(new net.Socket(), { isServer: true, SNICallback } as any)).toThrow(invalidArgType);
     }
   });
 });
@@ -123,7 +121,8 @@ describe("tls.convertALPNProtocols", () => {
     expect(() => tls.convertALPNProtocols(["a".repeat(500)], out)).toThrow(
       expect.objectContaining({
         code: "ERR_OUT_OF_RANGE",
-        message: "The byte length of the protocol at index 0 exceeds the maximum length. It must be <= 255. Received 500",
+        message:
+          "The byte length of the protocol at index 0 exceeds the maximum length. It must be <= 255. Received 500",
       }),
     );
   });

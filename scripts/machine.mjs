@@ -1205,6 +1205,34 @@ async function buildWindowsImageWithPacker({ os, arch, release, command, ci, age
     throw new Error(`Failed to create gallery image definition: ${defResponse.status} ${await defResponse.text()}`);
   }
 
+  // Packer's azure-arm shared_image_gallery_destination always writes
+  // image_version 1.0.0 and 409s if it already exists, so a re-run of
+  // [publish images] would fail on every Windows variant that already
+  // succeeded. Match the AWS path's deregister-then-recreate.
+  const versionPath = `${galleryPath}/versions/1.0.0`;
+  const existing = await fetch(`https://management.azure.com${versionPath}?api-version=2024-03-03`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (existing.ok) {
+    console.log(`[packer] Deleting existing gallery image version 1.0.0 of ${imageDefName} before re-publish`);
+    const del = await fetch(`https://management.azure.com${versionPath}?api-version=2024-03-03`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (del.status === 202) {
+      const op = del.headers.get("Azure-AsyncOperation") ?? del.headers.get("Location");
+      for (let i = 0; op && i < 120; i++) {
+        await new Promise(r => setTimeout(r, 10_000));
+        const poll = await fetch(op, { headers: { Authorization: `Bearer ${token}` } });
+        const body = await poll.json().catch(() => ({}));
+        if (body.status === "Succeeded") break;
+        if (body.status === "Failed") throw new Error(`Delete of ${versionPath} failed: ${JSON.stringify(body)}`);
+      }
+    } else if (!del.ok && del.status !== 404) {
+      throw new Error(`Failed to delete existing gallery image version: ${del.status} ${await del.text()}`);
+    }
+  }
+
   // Install Packer if not available
   const packerBin = await ensurePacker();
 

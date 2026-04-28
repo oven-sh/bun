@@ -326,6 +326,13 @@ void WebViewHost::doNativeClick(float x, float y, uint8_t button, uint8_t modifi
     // handleMouseEvent → mouseEventQueue → XPC. WebContent synthesizes click
     // from the pair: pointerdown/mousedown/pointerup/mouseup/click all fire,
     // isTrusted:true, :active CSS applies.
+    //
+    // No buttons-bitmap stamping here: click() is down+up at the same
+    // spot and our callers (click(x,y), click(selector)) don't assert on
+    // event.buttons — only event.button / event.detail / event.modifiers.
+    // The low-level mouseDown/Up/Move primitives below DO set
+    // NSEvent::s_trackedButtonsMask because drag test suites observe
+    // event.buttons explicitly.
     switch (button) {
     case 1:
         m_webview.rightMouseDown(NSEvent::mouseEvent(NSEvent::RightMouseDown, x, wy, mods, ts, win, clickCount));
@@ -354,12 +361,16 @@ void WebViewHost::doNativeClick(float x, float y, uint8_t button, uint8_t modifi
 // after WebContent has dispatched every event's JS handlers.
 //
 // For mouseDown/mouseUp the button arg picks the NSEventType + the
-// right responder selector. buttonsMask is the state AFTER the press/
-// release — not used by NSEvent synthesis (AppKit doesn't encode a
-// buttons bitmap; it infers from the sequence), but threaded through
-// for parity with CDP and in case we expose a buttons field to page-
-// injected scripts later.
-bool WebViewHost::mouseDownIPC(float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount, uint8_t /*buttonsMask*/)
+// right responder selector. buttonsMask is the post-op bitmap for the
+// DOM event.buttons field — set into NSEvent::s_trackedButtonsMask
+// before dispatch. WebCore reads +[NSEvent pressedMouseButtons] (which
+// we swapped in ObjCRuntime::load to return s_trackedButtonsMask)
+// synchronously inside [WKWebView mouseDown:]; the value captured
+// becomes event.buttons on the DOM event. Per spec, mousedown reports
+// buttons WITH the pressing bit set, mouseup reports WITHOUT it; the
+// caller (JSWebView::mouseDown/Up) already computed that, we just
+// publish it.
+bool WebViewHost::mouseDownIPC(float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount, uint8_t buttonsMask)
 {
     using NSEvent = objc::NSEvent;
     if (m_inputPending) {
@@ -371,6 +382,7 @@ bool WebViewHost::mouseDownIPC(float x, float y, uint8_t button, uint8_t modifie
     double ts = objc::NSProcessInfo::systemUptime();
     long win = m_window.windowNumber();
 
+    NSEvent::s_trackedButtonsMask = buttonsMask;
     switch (button) {
     case 1:
         m_webview.rightMouseDown(NSEvent::mouseEvent(NSEvent::RightMouseDown, x, wy, mods, ts, win, clickCount));
@@ -387,7 +399,7 @@ bool WebViewHost::mouseDownIPC(float x, float y, uint8_t button, uint8_t modifie
     return true;
 }
 
-bool WebViewHost::mouseUpIPC(float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount, uint8_t /*buttonsMask*/)
+bool WebViewHost::mouseUpIPC(float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount, uint8_t buttonsMask)
 {
     using NSEvent = objc::NSEvent;
     if (m_inputPending) {
@@ -399,6 +411,7 @@ bool WebViewHost::mouseUpIPC(float x, float y, uint8_t button, uint8_t modifiers
     double ts = objc::NSProcessInfo::systemUptime();
     long win = m_window.windowNumber();
 
+    NSEvent::s_trackedButtonsMask = buttonsMask;
     switch (button) {
     case 1:
         m_webview.rightMouseUp(NSEvent::mouseEvent(NSEvent::RightMouseUp, x, wy, mods, ts, win, clickCount));
@@ -434,6 +447,13 @@ bool WebViewHost::mouseMoveIPC(float fromX, float fromY, float x, float y, uint3
     double ts = objc::NSProcessInfo::systemUptime();
     long win = m_window.windowNumber();
     double heightD = static_cast<double>(m_height);
+
+    // Publish the buttons state to +[NSEvent pressedMouseButtons] for
+    // this entire dispatch — every synthesized move event will see the
+    // same mask when WebCore's PlatformEventFactoryMac reads it. During
+    // a mouseMove the button state doesn't change, so one set is enough;
+    // the value stays stable for all (steps - 1) intermediates + final.
+    NSEvent::s_trackedButtonsMask = buttonsMask;
 
     // Pick the NSEventType once. No mixed move/drag within a single
     // mouseMove(); the button state is constant for the duration of the

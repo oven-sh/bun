@@ -391,6 +391,27 @@ struct NSEvent : Ref {
     static CGRect (*s_CGDisplayBounds)(uint32_t displayID);
     static void (*s_CFRelease)(void *);
 
+    // Holds the button-mask bitmap the DOM's event.buttons field should
+    // report. WebCore's PlatformEventFactoryMac.mm computes event.buttons
+    // by calling +[NSEvent pressedMouseButtons], which reads
+    // system-wide HID state. For synthetic events that state is always 0
+    // (no real button physically pressed), so mousedown/drag/contextmenu
+    // all get event.buttons=0 — wrong for spec-compliant JS drag
+    // handlers.
+    //
+    // WebAutomationSessionMac.mm:80 solves this by method-swizzling
+    // +[NSEvent pressedMouseButtons] to return its tracked state for the
+    // scope of each event dispatch. We take the same approach but make
+    // the swap permanent at host init — we never want the system HID
+    // answer here (the host is a headless subprocess; no real mouse
+    // would ever be over its window). Set by WebViewHost before each
+    // mouseDown/mouseUp/mouseMove dispatch.
+    //
+    // Bits use DOM MouseEvent.buttons order: bit 0=left, bit 1=right,
+    // bit 2=middle — the same layout [NSEvent pressedMouseButtons]
+    // returns natively.
+    static uint32_t s_trackedButtonsMask;
+
     // NSEventType — the ones we use.
     enum : unsigned long {
         LeftMouseDown = 1,

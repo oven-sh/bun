@@ -91,6 +91,7 @@ void (*NSEvent::s_CGEventSetLocation)(void*, CGPoint);
 uint32_t (*NSEvent::s_CGMainDisplayID)();
 CGRect (*NSEvent::s_CGDisplayBounds)(uint32_t);
 void (*NSEvent::s_CFRelease)(void*);
+uint32_t NSEvent::s_trackedButtonsMask = 0;
 
 SEL WKWebView::s_mouseDown;
 SEL WKWebView::s_mouseUp;
@@ -321,6 +322,9 @@ bool ObjCRuntime::load()
     Protocol* (*getProtocol)(const char*);
     void (*registerClassPair)(Class);
 
+    Method (*getClassMethod)(Class, SEL);
+    IMP (*methodSetImplementation)(Method, IMP);
+
     SYM(getClass, libobjc, "objc_getClass");
     SYM(sel, libobjc, "sel_registerName");
     SYM(allocateClassPair, libobjc, "objc_allocateClassPair");
@@ -328,6 +332,8 @@ bool ObjCRuntime::load()
     SYM(addProtocol, libobjc, "class_addProtocol");
     SYM(getProtocol, libobjc, "objc_getProtocol");
     SYM(registerClassPair, libobjc, "objc_registerClassPair");
+    SYM(getClassMethod, libobjc, "class_getClassMethod");
+    SYM(methodSetImplementation, libobjc, "method_setImplementation");
     SYM(NavigationDelegate::s_setAssoc, libobjc, "objc_setAssociatedObject");
     SYM(NavigationDelegate::s_getAssoc, libobjc, "objc_getAssociatedObject");
     SYM(m_autoreleasePoolPush, libobjc, "objc_autoreleasePoolPush");
@@ -438,6 +444,27 @@ bool ObjCRuntime::load()
         m_loadError = "missing CoreGraphics symbols"_s;
         return false;
     }
+
+    // Swap +[NSEvent pressedMouseButtons] to return NSEvent::s_trackedButtonsMask.
+    // Rationale: WebCore's PlatformEventFactoryMac.mm computes DOM
+    // event.buttons for every synthesized mouse event by calling
+    // +[NSEvent pressedMouseButtons]. That returns system-wide HID state
+    // (not derived from the NSEvent we pass), so synthetic mousedown /
+    // drag / contextmenu all got event.buttons=0 — failing the
+    // spec-compliant assertion that event.buttons reflects the button
+    // being pressed (= 1 for left mousedown, = 2 for right, = 4 for
+    // middle). This is the same workaround Safari's automation uses
+    // (WebAutomationSessionMac.mm:80, scope-limited with a swizzle);
+    // ours is permanent since the host process never handles real input.
+    //
+    // Non-fatal if it fails: event.buttons falls back to 0, drag tests
+    // that rely on it break, but the rest of the input API still works.
+    // Logged via m_loadError but we continue.
+    auto pressedMouseButtonsImpl = +[](id, SEL) -> unsigned long {
+        return NSEvent::s_trackedButtonsMask;
+    };
+    if (Method m = getClassMethod(NSEvent::cls, sel("pressedMouseButtons")))
+        methodSetImplementation(m, reinterpret_cast<IMP>(pressedMouseButtonsImpl));
 
     CLS(WKWebViewConfiguration::cls, "WKWebViewConfiguration");
     CLS(WKWebViewConfiguration::cls_WKWebsiteDataStore, "WKWebsiteDataStore");

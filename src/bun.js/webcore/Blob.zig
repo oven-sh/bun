@@ -1834,9 +1834,10 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
                             break :inner;
                         }
                         blob.content_type_was_set = true;
-
-                        if (globalThis.bunVM().mimeType(slice)) |mime| {
-                            blob.content_type = mime.value;
+                        // reset: dupe() shallow-copies the parent's content_type_allocated flag
+                        blob.content_type_allocated = false;
+                        if (globalThis.bunVM().mimeTypeInternedValue(slice)) |interned| {
+                            blob.content_type = interned;
                             break :inner;
                         }
                         const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
@@ -1935,8 +1936,10 @@ pub fn constructBunFile(
                             break :inner;
                         }
                         blob.content_type_was_set = true;
-                        if (vm.mimeType(str.slice())) |entry| {
-                            blob.content_type = entry.value;
+                        // reset: dupe() shallow-copies the parent's content_type_allocated flag
+                        blob.content_type_allocated = false;
+                        if (vm.mimeTypeInternedValue(slice)) |interned| {
+                            blob.content_type = interned;
                             break :inner;
                         }
                         const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
@@ -2329,11 +2332,12 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
                 if (strings.isAllASCII(slice)) {
                     if (this.content_type_allocated) {
                         bun.default_allocator.free(this.content_type);
+                        this.content_type_allocated = false;
                     }
                     this.content_type_was_set = true;
 
-                    if (globalThis.bunVM().mimeType(slice)) |mime| {
-                        this.content_type = mime.value;
+                    if (globalThis.bunVM().mimeTypeInternedValue(slice)) |interned| {
+                        this.content_type = interned;
                     } else {
                         const content_type_buf = bun.handleOom(bun.default_allocator.alloc(u8, slice.len));
                         this.content_type = strings.copyLowercase(slice, content_type_buf);
@@ -2672,11 +2676,12 @@ pub fn getWriter(
                     if (strings.isAllASCII(slice)) {
                         if (this.content_type_allocated) {
                             bun.default_allocator.free(this.content_type);
+                            this.content_type_allocated = false;
                         }
                         this.content_type_was_set = true;
 
-                        if (globalThis.bunVM().mimeType(slice)) |mime| {
-                            this.content_type = mime.value;
+                        if (globalThis.bunVM().mimeTypeInternedValue(slice)) |interned| {
+                            this.content_type = interned;
                         } else {
                             const content_type_buf = bun.handleOom(bun.default_allocator.alloc(u8, slice.len));
                             this.content_type = strings.copyLowercase(slice, content_type_buf);
@@ -2849,7 +2854,9 @@ pub fn getSliceFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, relativeStart:
         blob.content_type = content_type;
     }
     blob.content_type_allocated = content_type_was_allocated;
-    blob.content_type_was_set = this.content_type_was_set or content_type_was_allocated;
+    // Check `content_type.len` directly — the interned path points at a static
+    // slice and leaves `content_type_was_allocated` false even when a type was passed.
+    blob.content_type_was_set = this.content_type_was_set or content_type.len > 0;
 
     var blob_ = Blob.new(blob);
     return blob_.toJS(globalThis);
@@ -2932,8 +2939,8 @@ pub fn getSlice(
                     break :inner;
                 }
 
-                if (globalThis.bunVM().mimeType(slice)) |mime| {
-                    content_type = mime.value;
+                if (globalThis.bunVM().mimeTypeInternedValue(slice)) |interned| {
+                    content_type = interned;
                     break :inner;
                 }
 
@@ -3359,9 +3366,10 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
                                     break :inner;
                                 }
                                 blob.content_type_was_set = true;
-
-                                if (globalThis.bunVM().mimeType(slice)) |mime| {
-                                    blob.content_type = mime.value;
+                                // reset: dupe() shallow-copies the parent's content_type_allocated flag
+                                blob.content_type_allocated = false;
+                                if (globalThis.bunVM().mimeTypeInternedValue(slice)) |interned| {
+                                    blob.content_type = interned;
                                     break :inner;
                                 }
                                 const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
@@ -3526,8 +3534,10 @@ pub fn dupeWithContentType(this: *const Blob, include_content_type: bool) Blob {
     if (this.store != null) this.store.?.ref();
     var duped = this.*;
     duped.setNotHeapAllocated();
+    // NOTE: both branches below are dead — `setNotHeapAllocated` zeroes the ref
+    // count so `duped.isHeapAllocated()` is always false. If revived, swap
+    // `mimeType` → `mimeTypeInternedValue` to avoid re-introducing charset canonicalization.
     if (duped.content_type_allocated and duped.isHeapAllocated() and !include_content_type) {
-
         // for now, we just want to avoid a use-after-free here
         if (jsc.VirtualMachine.get().mimeType(duped.content_type)) |mime| {
             duped.content_type = mime.value;

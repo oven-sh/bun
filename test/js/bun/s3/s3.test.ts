@@ -171,7 +171,7 @@ describe.concurrent.skipIf(!r2Credentials.endpoint && !isCI)("Virtual Hosted-Sty
         })
         .slice(10);
       expect(Bun.inspect(file)).toBe(
-        'S3Ref ("bucket/filename.txt") {\n  type: "text/plain;charset=utf-8",\n  offset: 10,\n  endpoint: "bucket.test.r2.cloudflarestorage.com",\n  region: "auto",\n  accessKeyId: "[REDACTED]",\n  secretAccessKey: "[REDACTED]",\n  partSize: 5242880,\n  queueSize: 5,\n  retry: 3\n}',
+        'S3Ref ("bucket/filename.txt") {\n  type: "text/plain",\n  offset: 10,\n  endpoint: "bucket.test.r2.cloudflarestorage.com",\n  region: "auto",\n  accessKeyId: "[REDACTED]",\n  secretAccessKey: "[REDACTED]",\n  partSize: 5242880,\n  queueSize: 5,\n  retry: 3\n}',
       );
     }
   });

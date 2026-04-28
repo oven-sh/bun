@@ -355,6 +355,24 @@ pub fn mimeTypeFromString(this: *RareData, allocator: std.mem.Allocator, str: []
     return null;
 }
 
+/// Like `mimeTypeFromString`, but returns the raw interned slice with no
+/// charset substitution (e.g. `text/plain` is returned as-is, not as
+/// `text/plain;charset=utf-8`). Used for WHATWG File/Blob `type`, which
+/// must preserve the user-supplied value. Slice is static; safe to store.
+pub fn mimeTypeInternedValue(this: *RareData, allocator: std.mem.Allocator, str: []const u8) ?[]const u8 {
+    if (this.mime_types == null) {
+        this.mime_types = bun.http.MimeType.createHashTable(
+            allocator,
+        ) catch |err| bun.handleOom(err);
+    }
+
+    if (this.mime_types.?.get(str)) |entry| {
+        return entry.slice();
+    }
+
+    return null;
+}
+
 pub const HotMap = struct {
     _map: bun.StringArrayHashMap(Entry),
 

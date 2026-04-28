@@ -389,6 +389,18 @@ describe("fetch protocol: http3", () => {
     await expect(fetch(`${base}/hello`, { protocol: "http3" } as any)).rejects.toThrow();
   });
 
+  test("session retired on GOAWAY: rapid serve/stop cycles", async () => {
+    // Each stop(true) sends GOAWAY; the client must mark the pooled session
+    // unusable so the next fetch (new port → new session) isn't disrupted by
+    // the draining ones still on the shared UDP socket.
+    for (let i = 0; i < 30; i++) {
+      const s = Bun.serve({ port: 0, tls, h3: true, h1: false, routes: { "/n": () => new Response(String(i)) } });
+      const res = await fetch(`https://127.0.0.1:${s.port}/n`, h3);
+      expect(await res.text()).toBe(String(i));
+      s.stop(true);
+    }
+  });
+
   // ───── streaming uploads (pull-driven request bodies) ─────
 
   test("ReadableStream request body (pull)", async () => {

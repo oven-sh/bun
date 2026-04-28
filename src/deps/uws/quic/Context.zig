@@ -32,6 +32,8 @@ pub const Context = opaque {
 
     extern fn us_quic_socket_context_on_hsk_done(ctx: *Context, cb: *const fn (*Socket, c_int) callconv(.c) void) void;
     pub const onHskDone = us_quic_socket_context_on_hsk_done;
+    extern fn us_quic_socket_context_on_goaway(ctx: *Context, cb: *const fn (*Socket) callconv(.c) void) void;
+    pub const onGoaway = us_quic_socket_context_on_goaway;
     extern fn us_quic_socket_context_on_close(ctx: *Context, cb: *const fn (*Socket) callconv(.c) void) void;
     pub const onClose = us_quic_socket_context_on_close;
     extern fn us_quic_socket_context_on_stream_open(ctx: *Context, cb: *const fn (*Stream, c_int) callconv(.c) void) void;

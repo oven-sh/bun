@@ -75,6 +75,7 @@ struct us_quic_socket_context_s {
 
     void (*on_open)(us_quic_socket_t *);
     void (*on_hsk_done)(us_quic_socket_t *, int);
+    void (*on_goaway)(us_quic_socket_t *);
     void (*on_close)(us_quic_socket_t *);
     void (*on_stream_open)(us_quic_stream_t *, int);
     void (*on_stream_headers)(us_quic_stream_t *);
@@ -100,6 +101,7 @@ struct us_quic_socket_s {
      * struct (strdup of the SNI passed to connect) so the verify callback
      * can match it against the leaf cert's SAN/CN. */
     int reject_unauthorized;
+    int going_away;
     char *hostname;
     /* ext follows */
 };
@@ -265,7 +267,14 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
         do { r = sendmmsg(fd, mm, k, 0); } while (r < 0 && errno == EINTR);
         if (r < 0) break;
         sent += (unsigned) r;
-        if ((unsigned) r < k) break;
+        /* sendmmsg(2) BUGS: on a short return the error code is lost and the
+         * caller is expected to retry starting at the first failed message.
+         * udp(7): an unconnected socket surfaces async ICMP from an earlier
+         * datagram on the next send — on the shared client socket that means
+         * a packet to a live peer can fail mid-batch with an error that
+         * belongs to a prior dead peer. So loop instead of breaking; r >= 1
+         * here so `sent` advances and the retry's first message either
+         * consumes the stale error (returns -1, handled below) or succeeds. */
     }
 #else
     for (; sent < n; sent++) {
@@ -510,6 +519,13 @@ static void us_quic_on_hsk_done(lsquic_conn_t *conn, enum lsquic_hsk_status st) 
     qs->ctx->on_hsk_done(qs, st == LSQ_HSK_OK || st == LSQ_HSK_RESUMED_OK);
 }
 
+static void us_quic_on_goaway_received(lsquic_conn_t *conn) {
+    us_quic_socket_t *qs = (us_quic_socket_t *) lsquic_conn_get_ctx(conn);
+    if (!qs) return;
+    qs->going_away = 1;
+    if (qs->ctx->on_goaway) qs->ctx->on_goaway(qs);
+}
+
 static lsquic_stream_ctx_t *us_quic_on_new_stream(void *if_ctx, lsquic_stream_t *stream) {
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *) if_ctx;
     if (stream == NULL) return NULL; /* going-away */
@@ -587,6 +603,7 @@ static const struct lsquic_stream_if us_quic_stream_if = {
     .on_new_conn = us_quic_on_new_conn,
     .on_conn_closed = us_quic_on_conn_closed,
     .on_hsk_done = us_quic_on_hsk_done,
+    .on_goaway_received = us_quic_on_goaway_received,
     .on_new_stream = us_quic_on_new_stream,
     .on_read = us_quic_on_read,
     .on_write = us_quic_on_write,
@@ -816,6 +833,7 @@ int us_quic_listen_socket_local_address(us_quic_listen_socket_t *ls, char *buf, 
     void us_quic_socket_context_##name(us_quic_socket_context_t *ctx, sig) { ctx->name = cb; }
 DEF_CB(on_open, void (*cb)(us_quic_socket_t *))
 DEF_CB(on_hsk_done, void (*cb)(us_quic_socket_t *, int))
+DEF_CB(on_goaway, void (*cb)(us_quic_socket_t *))
 DEF_CB(on_close, void (*cb)(us_quic_socket_t *))
 DEF_CB(on_stream_open, void (*cb)(us_quic_stream_t *, int))
 DEF_CB(on_stream_headers, void (*cb)(us_quic_stream_t *))
@@ -1293,7 +1311,12 @@ void us_quic_socket_make_stream(us_quic_socket_t *s) {
 }
 
 unsigned us_quic_socket_streams_avail(us_quic_socket_t *s) {
-    return s->conn ? lsquic_conn_n_avail_streams(s->conn) : 0;
+    /* lsquic_conn_n_avail_streams doesn't check LSCONN_PEER_GOING_AWAY, so a
+     * conn that received GOAWAY still reports credit. Streams created past
+     * that point are reset by the server (RFC 9114 §5.2), so report 0 here so
+     * the caller opens a fresh connection instead. */
+    if (!s->conn || s->going_away) return 0;
+    return lsquic_conn_n_avail_streams(s->conn);
 }
 
 int us_quic_socket_status(us_quic_socket_t *s, char *buf, unsigned int len) {

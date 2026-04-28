@@ -111,6 +111,9 @@ void us_quic_socket_context_on_open(us_quic_socket_context_t *ctx,
  * handshake failed; on_close follows shortly. */
 void us_quic_socket_context_on_hsk_done(us_quic_socket_context_t *ctx,
     void (*on_hsk_done)(us_quic_socket_t *, int ok));
+/* Peer sent GOAWAY: no new streams will be accepted; in-flight ones drain. */
+void us_quic_socket_context_on_goaway(us_quic_socket_context_t *ctx,
+    void (*on_goaway)(us_quic_socket_t *));
 void us_quic_socket_context_on_close(us_quic_socket_context_t *ctx,
     void (*on_close)(us_quic_socket_t *));
 

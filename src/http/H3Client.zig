@@ -398,6 +398,7 @@ pub const ClientContext = struct {
             @sizeOf(*Stream),
         ) orelse return null;
         qctx.onHskDone(onHskDone);
+        qctx.onGoaway(onGoaway);
         qctx.onClose(onConnClose);
         qctx.onStreamOpen(onStreamOpen);
         qctx.onStreamHeaders(onStreamHeaders);
@@ -489,6 +490,17 @@ fn onHskDone(qs: *quic.Socket, ok: c_int) callconv(.c) void {
     }
     session.handshake_done = true;
     for (session.pending.items) |_| qs.makeStream();
+}
+
+/// Peer sent GOAWAY: this connection won't accept new streams (RFC 9114
+/// §5.2). Mark the session unusable now so the next `connect()` opens a fresh
+/// one instead of waiting for `onConnClose`, which only fires after lsquic's
+/// draining period. Stay in the registry so abort/body-chunk lookups still
+/// reach in-flight streams; `onConnClose` does the actual unregister/deref.
+fn onGoaway(qs: *quic.Socket) callconv(.c) void {
+    const session = qs.ext(ClientSession).* orelse return;
+    log("goaway {s}:{d}", .{ session.hostname, session.port });
+    session.closed = true;
 }
 
 fn onConnClose(qs: *quic.Socket) callconv(.c) void {

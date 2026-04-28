@@ -225,10 +225,11 @@ pub const ResolveMessage = struct {
     }
 
     pub fn finalize(this: *ResolveMessage) callconv(.c) void {
-        this.msg.deinit(bun.default_allocator);
+        this.msg.deinit(this.allocator);
         if (this.referrer) |referrer| {
             this.allocator.free(referrer.text);
         }
+        this.allocator.destroy(this);
     }
 };
 

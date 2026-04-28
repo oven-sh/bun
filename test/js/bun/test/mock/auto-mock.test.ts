@@ -50,21 +50,26 @@ test("mock.module without a factory auto-mocks exported functions", () => {
 });
 
 test("jest.mock matches mock.module (no factory, auto-mocks)", () => {
-  jest.mock("./auto-mock-fixture");
-  const mocked = require("./auto-mock-fixture");
+  // Use a dedicated fixture so this specifier is touched only by this test —
+  // if jest.mock's auto-mock path ever regresses into a no-op, the assertions
+  // below won't pass by accident on a mock left over from an earlier test.
+  jest.mock("./auto-mock-fixture-jest");
+  const mocked = require("./auto-mock-fixture-jest");
   expect(mocked.plainFunction.mock).toBeDefined();
+  expect(mocked.plainFunction()).toBeUndefined();
 });
 
 test("vi.mock matches mock.module (no factory, auto-mocks)", () => {
-  vi.mock("./auto-mock-fixture");
-  const mocked = require("./auto-mock-fixture");
+  vi.mock("./auto-mock-fixture-vi");
+  const mocked = require("./auto-mock-fixture-vi");
   expect(mocked.plainFunction.mock).toBeDefined();
+  expect(mocked.plainFunction()).toBeUndefined();
 });
 
 test("jest.requireMock returns the auto-mocked version of a module", () => {
-  jest.mock("./auto-mock-fixture");
+  jest.mock("./auto-mock-fixture-requiremock");
 
-  const mocked = jest.requireMock("./auto-mock-fixture") as any;
+  const mocked = jest.requireMock("./auto-mock-fixture-requiremock") as any;
   expect(mocked.plainFunction.mock).toBeDefined();
   expect(mocked.MyClass.mock).toBeDefined();
 
@@ -74,10 +79,10 @@ test("jest.requireMock returns the auto-mocked version of a module", () => {
 });
 
 test("vi.requireMock mirrors jest.requireMock", () => {
-  jest.mock("./auto-mock-fixture");
+  jest.mock("./auto-mock-fixture-virequiremock");
 
-  const viMocked = vi.requireMock("./auto-mock-fixture") as any;
-  const jestMocked = jest.requireMock("./auto-mock-fixture") as any;
+  const viMocked = vi.requireMock("./auto-mock-fixture-virequiremock") as any;
+  const jestMocked = jest.requireMock("./auto-mock-fixture-virequiremock") as any;
 
   // Both call into the same cached JSModuleMock, so the handles are identical.
   expect(viMocked).toBe(jestMocked);

@@ -44,9 +44,9 @@ struct H3App {
     H3_METHOD(any, "*")
 #undef H3_METHOD
 
-    H3App &&listen(const std::string &host, int port, int /*options*/,
+    H3App &&listen(const std::string &host, int port, int options,
                    MoveOnlyFunction<void(us_quic_listen_socket_t *)> &&cb) {
-        cb(http3Context->listen(host.empty() ? nullptr : host.c_str(), port));
+        cb(http3Context->listen(host.empty() ? nullptr : host.c_str(), port, options));
         return std::move(*this);
     }
     H3App &&listen(const std::string &host, int port,

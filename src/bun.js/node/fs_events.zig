@@ -335,6 +335,15 @@ pub const FSEventsLoop = struct {
         var loop = bun.cast(*FSEventsLoop, info);
         const event_flags = bun.cast([*]FSEventStreamEventFlags, eventFlags);
 
+        // Hold the mutex for the whole iteration. `unregisterWatcher` on the
+        // main thread nulls the entry under this same mutex and then the
+        // caller immediately frees the FSEventsWatcher (and its path buffer),
+        // so without this lock we can read `handle.path` / call `handle.emit`
+        // on freed memory. Holding the lock also prevents `registerWatcher`
+        // from reallocating the `watchers` buffer mid-iteration.
+        loop.mutex.lock();
+        defer loop.mutex.unlock();
+
         for (loop.watchers.slice()) |watcher| {
             if (watcher) |handle| {
                 const handle_path = handle.path;
@@ -518,6 +527,16 @@ pub const FSEventsLoop = struct {
                     break;
                 }
             }
+        }
+
+        // Rebuild the FSEventStream on the CF thread so it stops firing for
+        // the path we just removed. Without this the stream keeps delivering
+        // events for freed paths until another register happens to
+        // reschedule. `_events_cb` tolerates the interim (it sees `null` and
+        // skips) because both sides hold `this.mutex`.
+        if (!this.has_scheduled_watchers) {
+            this.has_scheduled_watchers = true;
+            this.enqueueTaskConcurrent(Task.New(FSEventsLoop, _schedule).init(this));
         }
     }
 

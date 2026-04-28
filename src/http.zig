@@ -12,6 +12,9 @@ pub var async_http_id_monotonic: std.atomic.Value(u32) = std.atomic.Value(u32).i
 /// Set once at startup from `--experimental-http2-fetch` (before the HTTP
 /// thread spawns) and then only read on that thread, so no atomics needed.
 pub var experimental_http2_client_from_cli: bool = false;
+/// Set once at startup from `--experimental-http3-fetch`. Same threading
+/// rules as the http2 flag.
+pub var experimental_http3_client_from_cli: bool = false;
 
 const MAX_REDIRECT_URL_LENGTH = 128 * 1024;
 
@@ -228,6 +231,28 @@ pub fn alpnOffer(client: *const HTTPClient) BoringSSL.SSL.AlpnOffer {
     return if (client.flags.force_http2) .h2_only else .h1_or_h2;
 }
 
+/// Whether the experimental Alt-Svc-driven HTTP/3 upgrade is enabled at all
+/// (CLI flag or env var). Used on its own to gate `H3.AltSvc.record` — a
+/// response that arrived over a request shape h3 can't serve (proxy, sendfile,
+/// `force_http1`) still carries an authoritative Alt-Svc for the origin.
+pub fn h3AltSvcEnabled() bool {
+    return experimental_http3_client_from_cli or
+        bun.feature_flag.BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT.get();
+}
+
+/// Whether this request shape is eligible to *use* a cached Alt-Svc h3
+/// alternative (HTTPS, no proxy/unix-socket, no sendfile, not pinned to a
+/// specific protocol). When true, `start_()` consults `H3.AltSvc.lookup`
+/// before opening TCP.
+pub fn canTryH3AltSvc(client: *const HTTPClient) bool {
+    if (client.flags.force_http1 or client.flags.force_http2) return false;
+    if (client.http_proxy != null) return false;
+    if (client.flags.is_preconnect_only) return false;
+    if (client.unix_socket_path.length() > 0) return false;
+    if (client.state.original_request_body == .sendfile) return false;
+    return h3AltSvcEnabled();
+}
+
 pub fn firstCall(
     client: *HTTPClient,
     comptime is_ssl: bool,
@@ -297,6 +322,7 @@ pub fn retryFromH2(this: *HTTPClient) void {
 /// only the request fails.
 pub fn failFromH2(this: *HTTPClient, err: anyerror) void {
     bun.debugAssert(this.h2 == null);
+    bun.debugAssert(this.h3 == null);
     this.unregisterAbortTracker();
     if (this.state.stage != .done and this.state.stage != .fail) {
         this.state.request_stage = .fail;
@@ -563,12 +589,13 @@ const HTTPUpgradeState = enum(u2) {
     upgraded = 2,
 };
 
-pub const Protocol = enum(u1) {
+pub const Protocol = enum(u2) {
     http1_1 = 0,
     http2 = 1,
+    http3 = 2,
 };
 
-pub const Flags = packed struct(u16) {
+pub const Flags = packed struct(u32) {
     disable_timeout: bool = false,
     disable_keepalive: bool = false,
     disable_decompression: bool = false,
@@ -588,6 +615,13 @@ pub const Flags = packed struct(u16) {
     /// Set by `fetch(url, { protocol: "http1.1" })`: opt out of h2 even when
     /// the experimental env flag would otherwise advertise it.
     force_http1: bool = false,
+    /// Set by `fetch(url, { protocol: "http3" })`: skip TCP entirely and open
+    /// a QUIC connection. HTTPS-only; no proxy/unix-socket support.
+    force_http3: bool = false,
+    /// Set after the first H3 retry so a stale-session/GOAWAY race retries
+    /// once on a fresh connection but never loops.
+    h3_retried: bool = false,
+    _: u13 = 0,
 };
 
 // TODO: reduce the size of this struct
@@ -630,6 +664,9 @@ proxy_tunnel: ?*ProxyTunnel = null,
 /// Set when this request is bound to a stream on an HTTP/2 session.
 /// Owned by the session; cleared by the session when the stream completes.
 h2: ?*H2.Stream = null,
+/// Set when this request is bound to an HTTP/3 stream. Owned by the H3
+/// session; cleared by the session when the stream completes.
+h3: ?*H3.Stream = null,
 /// Set while this request is the leader of a fresh TLS connect that other
 /// h2-capable requests have coalesced onto. Resolved (and freed) once ALPN
 /// is known or the connect fails.
@@ -1028,6 +1065,7 @@ pub fn doRedirect(
     ctx: *NewHTTPContext(is_ssl),
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
+    if (this.flags.protocol != .http1_1) return this.doRedirectMultiplexed();
     log("doRedirect", .{});
     if (this.state.original_request_body == .stream) {
         // handleResponseMetadata already rejected every non-303 status with a
@@ -1059,10 +1097,7 @@ pub fn doRedirect(
     // store it under the WRONG target hostname — a follow-up request to the
     // redirect destination could then reuse a TLS session negotiated with the
     // original host. Close the tunnel on redirect; only pool the raw socket.
-    if (this.flags.protocol == .http2) {
-        // The session owns the socket; the stream was detached by the caller
-        // and the session will pool or close once its other streams drain.
-    } else if (this.proxy_tunnel) |tunnel| {
+    if (this.proxy_tunnel) |tunnel| {
         log("close the tunnel in redirect", .{});
         this.proxy_tunnel = null;
         tunnel.shutdown();
@@ -1170,6 +1205,47 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
         }
     }
 
+    if (comptime is_ssl) {
+        // Opportunistic Alt-Svc upgrade: a previous response from this origin
+        // advertised `h3`, and the experimental flag is on. Don't touch
+        // `flags.force_http3` — that's the user's explicit `protocol:"http3"`
+        // choice and persists across redirects, whereas an Alt-Svc upgrade is
+        // per-origin and a cross-origin redirect must re-evaluate from h1.
+        // `doRedirectMultiplexed` resets `flags.protocol`, so the redirected
+        // request lands back here with `force_http3` still false and consults
+        // the cache for the new origin.
+        if (!this.flags.force_http3 and this.canTryH3AltSvc()) {
+            if (H3.AltSvc.lookup(this.url.hostname, this.url.getPortAuto())) |alt_port| {
+                if (H3.ClientContext.getOrCreate(http_thread.loop.loop)) |ctx| {
+                    if (!ctx.connect(this, this.url.hostname, alt_port)) {
+                        this.fail(error.ConnectionRefused);
+                    }
+                    return;
+                }
+                // engine init failed: fall through to TCP
+            }
+        }
+    }
+
+    if (this.flags.force_http3) {
+        if (comptime !is_ssl) {
+            this.fail(error.HTTP3Unsupported);
+            return;
+        }
+        if (this.http_proxy != null or this.unix_socket_path.length() > 0) {
+            this.fail(error.HTTP3Unsupported);
+            return;
+        }
+        const ctx = H3.ClientContext.getOrCreate(http_thread.loop.loop) orelse {
+            this.fail(error.HTTP3Unsupported);
+            return;
+        };
+        if (!ctx.connect(this, this.url.hostname, this.url.getPortAuto())) {
+            this.fail(error.ConnectionRefused);
+        }
+        return;
+    }
+
     var socket = (http_thread.connect(this, is_ssl) catch |err| {
         bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
@@ -1214,7 +1290,7 @@ pub const HTTPResponseMetadata = struct {
     }
 };
 
-pub fn printRequest(request: picohttp.Request, url: string, ignore_insecure: bool, body: []const u8, curl: bool) void {
+pub fn printRequest(protocol: Protocol, request: picohttp.Request, url: string, ignore_insecure: bool, body: []const u8, curl: bool) void {
     @branchHint(.cold);
     var request_ = request;
     request_.path = url;
@@ -1223,8 +1299,16 @@ pub fn printRequest(request: picohttp.Request, url: string, ignore_insecure: boo
         Output.prettyErrorln("{f}", .{request_.curl(ignore_insecure, body)});
     }
 
-    Output.prettyErrorln("{f}", .{request_});
-
+    const ver: []const u8 = switch (protocol) {
+        .http1_1 => "HTTP/1.1",
+        .http2 => "HTTP/2",
+        .http3 => "HTTP/3",
+    };
+    const prefix = if (Output.enable_ansi_colors_stderr) Output.prettyFmt("<r><d>[fetch]<r> ", true) else "";
+    Output.errorWriter().print("{s}> {s} {s} {s}\n", .{ prefix, ver, request_.method, request_.path }) catch {};
+    for (request_.headers) |header| {
+        Output.errorWriter().print("{s}> {f}\n", .{ prefix, header }) catch {};
+    }
     Output.flush();
 }
 
@@ -1344,7 +1428,7 @@ noinline fn sendInitialRequestPayload(this: *HTTPClient, comptime is_first_call:
     const has_sent_headers = this.state.request_sent_len >= headers_len;
 
     if (has_sent_headers and this.verbose != .none) {
-        printRequest(request, this.url.href, !this.flags.reject_unauthorized, this.state.request_body, this.verbose == .curl);
+        printRequest(.http1_1, request, this.url.href, !this.flags.reject_unauthorized, this.state.request_body, this.verbose == .curl);
     }
 
     if (has_sent_headers and this.state.request_body.len > 0) {
@@ -2135,6 +2219,7 @@ pub fn drainResponseBody(this: *HTTPClient, comptime is_ssl: bool, socket: NewHT
 }
 
 fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    if (this.flags.protocol != .http1_1) return this.sendProgressUpdateMultiplexed();
     const out_str = this.state.body_out_str.?;
     const body = out_str.*;
     const result = this.toResult();
@@ -2165,11 +2250,7 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
         else
             true;
 
-        if (this.flags.protocol == .http2) {
-            // The HTTP/2 session owns the socket; it decides whether to pool
-            // or close once all of its streams have drained.
-            this.unregisterAbortTracker();
-        } else if (this.isKeepAlivePossible() and !socket.isClosedOrHasError() and tunnel_poolable) {
+        if (this.isKeepAlivePossible() and !socket.isClosedOrHasError() and tunnel_poolable) {
             log("release socket", .{});
             const tunnel = this.proxy_tunnel;
             this.proxy_tunnel = null;
@@ -2220,6 +2301,76 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
             print_every_i = 0;
         }
     }
+}
+
+/// `sendProgressUpdateWithoutStageCheck` minus the per-request TCP socket
+/// release/close. Used by HTTP/2 and HTTP/3, whose session owns the
+/// transport, so there is no `ctx`/`socket` to hand back to the pool here.
+fn sendProgressUpdateMultiplexed(this: *HTTPClient) void {
+    bun.debugAssert(this.flags.protocol != .http1_1);
+    const out_str = this.state.body_out_str.?;
+    const body = out_str.*;
+    const result = this.toResult();
+    const is_done = !result.has_more;
+    log("progressUpdate {}", .{is_done});
+    const callback = this.result_callback;
+    if (is_done) {
+        this.unregisterAbortTracker();
+        this.state.reset(this.allocator);
+        this.state.response_stage = .done;
+        this.state.request_stage = .done;
+        this.state.stage = .done;
+        this.flags.proxy_tunneling = false;
+    }
+    result.body.?.* = body;
+    callback.run(@fieldParentPtr("client", this), result);
+}
+
+/// `doRedirect` minus the per-request socket release/close. The session
+/// detached the stream before calling this; `start()` re-enters the normal
+/// connect path for the redirect target.
+fn doRedirectMultiplexed(this: *HTTPClient) void {
+    bun.debugAssert(this.flags.protocol != .http1_1);
+    log("doRedirectMultiplexed", .{});
+    if (this.state.original_request_body == .stream) {
+        this.flags.is_streaming_request_body = false;
+    }
+    this.unix_socket_path.deinit();
+    this.unix_socket_path = jsc.ZigString.Slice.empty;
+    const request_body = if (this.state.flags.resend_request_body_on_redirect and this.state.original_request_body == .bytes)
+        this.state.original_request_body.bytes
+    else
+        "";
+    this.state.response_message_buffer.deinit();
+    const body_out_str = this.state.body_out_str.?;
+    this.remaining_redirect_count -|= 1;
+    this.flags.redirected = true;
+    assert(this.redirect_type == FetchRedirect.follow);
+    this.unregisterAbortTracker();
+    this.connected_url = URL{};
+    if (this.remaining_redirect_count == 0) {
+        this.fail(error.TooManyRedirects);
+        return;
+    }
+    this.state.reset(this.allocator);
+    this.flags.proxy_tunneling = false;
+    this.flags.protocol = .http1_1;
+    return this.start(.{ .bytes = request_body }, body_out_str);
+}
+
+pub fn progressUpdateH3(this: *HTTPClient) void {
+    bun.debugAssert(this.flags.protocol == .http3);
+    if (this.state.stage == .done or this.state.stage == .fail) return;
+    if (this.state.flags.is_redirect_pending and this.state.fail == null) {
+        if (this.state.isDone()) this.doRedirectMultiplexed();
+        return;
+    }
+    this.sendProgressUpdateMultiplexed();
+}
+
+pub fn doRedirectH3(this: *HTTPClient) void {
+    bun.debugAssert(this.flags.protocol == .http3);
+    this.doRedirectMultiplexed();
 }
 
 pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
@@ -2340,7 +2491,7 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
             .body_size = body_size,
             .certificate_info = null,
             .can_stream = (this.state.request_stage == .body or this.state.request_stage == .proxy_body) and this.flags.is_streaming_request_body,
-            .is_http2 = this.flags.protocol == .http2,
+            .is_http2 = this.flags.protocol != .http1_1,
         };
     }
     return HTTPClientResult{
@@ -2354,7 +2505,7 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
         .certificate_info = certificate_info,
         // we can stream the request_body at this stage
         .can_stream = (this.state.request_stage == .body or this.state.request_stage == .proxy_body) and this.flags.is_streaming_request_body,
-        .is_http2 = this.flags.protocol == .http2,
+        .is_http2 = this.flags.protocol != .http1_1,
     };
 }
 
@@ -2698,6 +2849,14 @@ pub fn handleResponseMetadata(
             },
             hashHeaderConst("Last-Modified") => {
                 pretend_304 = this.flags.force_last_modified and response.status_code > 199 and response.status_code < 300 and this.if_modified_since.len > 0 and strings.eql(this.if_modified_since, header.value);
+            },
+            hashHeaderConst("Alt-Svc") => {
+                // Record regardless of *this* request's shape — a future
+                // request to the same origin may be h3-eligible even if this
+                // one was pinned/proxied/sendfile.
+                if (this.isHTTPS() and this.unix_socket_path.length() == 0 and h3AltSvcEnabled()) {
+                    H3.AltSvc.record(this.url.hostname, this.url.getPortAuto(), header.value);
+                }
             },
 
             else => {},
@@ -3047,6 +3206,7 @@ pub const SendFile = @import("./http/SendFile.zig");
 pub const HeaderValueIterator = @import("./http/HeaderValueIterator.zig");
 pub const H2 = @import("./http/H2Client.zig");
 pub const H2Wire = @import("./http/H2FrameParser.zig");
+pub const H3 = @import("./http/H3Client.zig");
 
 const string = []const u8;
 

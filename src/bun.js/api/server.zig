@@ -781,6 +781,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 var sec_websocket_protocol = ZigString.Empty;
                 var sec_websocket_extensions = ZigString.Empty;
 
+                // Owned backing storage for the above when they come from options.headers.
+                // fastGet returns a ZigString that borrows from the header map entry's
+                // StringImpl, which fastRemove then frees — so we must copy the bytes
+                // before removing the entry.
+                var sec_websocket_protocol_owned = ZigString.Slice.empty;
+                defer sec_websocket_protocol_owned.deinit();
+                var sec_websocket_extensions_owned = ZigString.Slice.empty;
+                defer sec_websocket_extensions_owned.deinit();
+
                 if (optional) |opts| {
                     getter: {
                         if (opts.isEmptyOrUndefinedOrNull()) {
@@ -824,13 +833,17 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             }
 
                             if (fetch_headers_to_use.fastGet(.SecWebSocketProtocol)) |protocol| {
-                                sec_websocket_protocol = protocol;
+                                // Clone before fastRemove frees the backing StringImpl.
+                                sec_websocket_protocol_owned = bun.handleOom(protocol.toSliceClone(bun.default_allocator));
+                                sec_websocket_protocol = sec_websocket_protocol_owned.toZigString();
                                 // Remove from headers so it's not written twice (once here and once by upgrade())
                                 fetch_headers_to_use.fastRemove(.SecWebSocketProtocol);
                             }
 
-                            if (fetch_headers_to_use.fastGet(.SecWebSocketExtensions)) |protocol| {
-                                sec_websocket_extensions = protocol;
+                            if (fetch_headers_to_use.fastGet(.SecWebSocketExtensions)) |extensions| {
+                                // Clone before fastRemove frees the backing StringImpl.
+                                sec_websocket_extensions_owned = bun.handleOom(extensions.toSliceClone(bun.default_allocator));
+                                sec_websocket_extensions = sec_websocket_extensions_owned.toZigString();
                                 // Remove from headers so it's not written twice (once here and once by upgrade())
                                 fetch_headers_to_use.fastRemove(.SecWebSocketExtensions);
                             }
@@ -914,6 +927,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
+            // Owned backing storage for sec_websocket_protocol/extensions when they come
+            // from options.headers. fastGet returns a ZigString that borrows from the header
+            // map entry's StringImpl, which fastRemove then frees — so we must copy the
+            // bytes before removing the entry.
+            var sec_websocket_protocol_owned = ZigString.Slice.empty;
+            defer sec_websocket_protocol_owned.deinit();
+            var sec_websocket_extensions_owned = ZigString.Slice.empty;
+            defer sec_websocket_extensions_owned.deinit();
+
             var fetch_headers_to_use: ?*WebCore.FetchHeaders = null;
 
             if (optional) |opts| {
@@ -959,13 +981,17 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         }
 
                         if (fetch_headers_to_use.?.fastGet(.SecWebSocketProtocol)) |protocol| {
-                            sec_websocket_protocol = protocol;
+                            // Clone before fastRemove frees the backing StringImpl.
+                            sec_websocket_protocol_owned = bun.handleOom(protocol.toSliceClone(bun.default_allocator));
+                            sec_websocket_protocol = sec_websocket_protocol_owned.toZigString();
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use.?.fastRemove(.SecWebSocketProtocol);
                         }
 
-                        if (fetch_headers_to_use.?.fastGet(.SecWebSocketExtensions)) |protocol| {
-                            sec_websocket_extensions = protocol;
+                        if (fetch_headers_to_use.?.fastGet(.SecWebSocketExtensions)) |extensions| {
+                            // Clone before fastRemove frees the backing StringImpl.
+                            sec_websocket_extensions_owned = bun.handleOom(extensions.toSliceClone(bun.default_allocator));
+                            sec_websocket_extensions = sec_websocket_extensions_owned.toZigString();
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use.?.fastRemove(.SecWebSocketExtensions);
                         }
@@ -1195,7 +1221,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             if (first_arg.isString()) {
                 const url_zig_str = try arguments[0].toSlice(ctx, bun.default_allocator);
                 defer url_zig_str.deinit();
-                var temp_url_str = url_zig_str.slice();
+                const temp_url_str = url_zig_str.slice();
 
                 if (temp_url_str.len == 0) {
                     const fetch_error = jsc.WebCore.Fetch.fetch_error_blank_url;
@@ -1204,14 +1230,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                 var url = URL.parse(temp_url_str);
 
-                if (url.hostname.len == 0) {
-                    url = URL.parse(
-                        strings.append(this.allocator, this.base_url_string_for_joining, url.pathname) catch unreachable,
-                    );
-                } else {
-                    temp_url_str = this.allocator.dupe(u8, temp_url_str) catch unreachable;
-                    url = URL.parse(temp_url_str);
-                }
+                // Both branches produce a heap-owned buffer that `url.href` borrows.
+                // `bun.String.cloneUTF8(url.href)` below makes its own copy, so this
+                // buffer must be freed before we leave the block.
+                const owned_url_buf: []const u8 = if (url.hostname.len == 0)
+                    bun.handleOom(strings.append(this.allocator, this.base_url_string_for_joining, url.pathname))
+                else
+                    bun.handleOom(this.allocator.dupe(u8, temp_url_str));
+                defer this.allocator.free(owned_url_buf);
+                url = URL.parse(owned_url_buf);
 
                 if (arguments.len >= 2 and arguments[1].isObject()) {
                     var opts = arguments[1];
@@ -3114,7 +3141,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         if (this.h3_app) |h3_app| {
                             // Same UDP port as the TCP listener so Alt-Svc works.
                             const h3_port: u16 = if (this.listener) |ls| @intCast(ls.getLocalPort()) else tcp.port;
-                            h3_app.listenWithConfig(*ThisServer, this, onH3Listen, .{ .port = h3_port, .host = host });
+                            h3_app.listenWithConfig(*ThisServer, this, onH3Listen, .{
+                                .port = h3_port,
+                                .host = host,
+                                .options = this.config.getUsocketsOptions(),
+                            });
                             if (this.h3_listener == null) {
                                 if (!globalThis.hasException()) {
                                     globalThis.throw("Failed to listen on UDP port {d} for HTTP/3", .{h3_port}) catch {};

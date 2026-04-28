@@ -275,12 +275,20 @@ private:
 
     void markDone(Http3ResponseData *d) {
         d->onWritable = nullptr;
+        d->inStream = nullptr;
         /* Leave onAborted armed: unlike an HTTP/1 socket, the QUIC stream
          * is freed once both sides FIN, so on_stream_close fires it for
          * completed responses too — that's how the holder learns the
          * pointer is about to die. */
         d->state |= Http3ResponseData::HTTP_END_CALLED;
         d->state &= ~Http3ResponseData::HTTP_RESPONSE_PENDING;
+        /* The handler has committed a response; if it returned without
+         * consuming the request body, STOP_SENDING tells the client to
+         * abort its upload instead of pushing bytes the app will never
+         * read (RFC 9114 §4.1.1). lsquic only emits the frame when the
+         * client's FIN/RST hasn't already arrived, so this is a no-op for
+         * the fully-consumed case. */
+        us_quic_stream_shutdown_read((us_quic_stream_t *) this);
         /* H1's closeConnection means "Connection: close + FIN the socket".
          * H3 has no per-response equivalent (RFC 9114 §4.1); the bit is set
          * by AnyResponse callers that are correct for H1, so honoring it

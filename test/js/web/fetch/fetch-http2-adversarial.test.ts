@@ -106,8 +106,12 @@ async function collect(proc: ReturnType<typeof spawnFetch>) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe.concurrent("fetch() HTTP/2 adversarial", () => {
+  const h2 = { protocol: "http2" as const, tls: { rejectUnauthorized: false } };
+  const errcode = (e: any) => e.code || e.name;
+
   // 1. CONTINUATION flood: server sends HEADERS without END_HEADERS, then many
-  //    CONTINUATION frames. Client should bound memory and error.
+  //    CONTINUATION frames. Client should bound memory and error. Runs in a
+  //    subprocess so the RSS measurement is isolated from the test runner.
   test("CONTINUATION flood is bounded", async () => {
     await withAdversarialServer(
       {
@@ -172,19 +176,15 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
         },
       },
       async url => {
-        await using proc = spawnFetch(`
-          const opts = { protocol: "http2", tls: { rejectUnauthorized: false } };
-          const results = await Promise.allSettled([
-            fetch(${JSON.stringify(url)}, opts).then(r => r.status),
-            fetch(${JSON.stringify(url)}, opts).then(r => r.status),
-            fetch(${JSON.stringify(url)}, opts).then(r => r.status),
-          ]);
-          console.log(JSON.stringify(results.map(r => r.status === "fulfilled" ? r.value : (r.reason.code || r.reason.name))));
-        `);
-        const { stdout, stderr, exitCode } = await collect(proc);
-        // The exact outcome (all succeed, some fail with HTTP2Unsupported,
-        // or new connections are opened) is acceptable; HANG is not.
-        expect({ stderr, stdout: stdout.trim(), exitCode }).toMatchObject({ exitCode: 0 });
+        const results = await Promise.allSettled([
+          fetch(url, h2).then(r => r.status),
+          fetch(url, h2).then(r => r.status),
+          fetch(url, h2).then(r => r.status),
+        ]);
+        // The exact outcome (all succeed, some fail, or new connections are
+        // opened) is acceptable; the test is that allSettled resolves at all.
+        expect(results.length).toBe(3);
+        for (const r of results) expect(r.status).toMatch(/fulfilled|rejected/);
       },
     );
   });
@@ -201,19 +201,11 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
         },
       },
       async (url, state) => {
-        await using proc = spawnFetch(`
-          const r = await fetch(${JSON.stringify(url)}, {
-            protocol: "http2", tls: { rejectUnauthorized: false },
-          }).then(r => r.status, e => e.code || e.name);
-          console.log(JSON.stringify(r));
-        `);
-        const { stdout, exitCode } = await collect(proc);
-        expect(exitCode).toBe(0);
+        const result = await fetch(url, h2).then(r => r.status, errcode);
         // Either the request errors with a flow-control code, or the server
         // saw an RST_STREAM(FLOW_CONTROL_ERROR=3).
         const fc = state.rst.some(r => r.code === 3);
-        const result = JSON.parse(stdout.trim());
-        expect(fc || String(result).includes("FlowControl") || String(result).includes("HTTP2")).toBe(true);
+        expect(fc || /FlowControl|HTTP2/.test(String(result))).toBe(true);
       },
     );
   });
@@ -223,15 +215,8 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
   //    error rather than parking the request.
   test("server that closes without sending SETTINGS fails the request cleanly", async () => {
     await withAdversarialServer({ settingsPayload: null, onPreface: socket => socket.end() }, async url => {
-      await using proc = spawnFetch(`
-          const r = await fetch(${JSON.stringify(url)}, {
-            protocol: "http2", tls: { rejectUnauthorized: false },
-          }).then(r => r.status, e => e.code || e.name);
-          console.log(r);
-        `);
-      const { stdout, exitCode } = await collect(proc);
-      expect(stdout.trim()).toMatch(/Connection|ECONNRESET|HTTP2|SocketClosed/i);
-      expect(exitCode).toBe(0);
+      const code = await fetch(url, h2).then(r => r.status, errcode);
+      expect(String(code)).toMatch(/Connection|ECONNRESET|HTTP2|SocketClosed/i);
     });
   });
 
@@ -249,24 +234,16 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
         // END_STREAM rejected as a stream error before headers deliver) or
         // arrive separately (response delivers, late DATA discarded). Either
         // is correct; what must NOT happen is the extra bytes reaching the body.
-        await using proc = spawnFetch(`
-          const r = await fetch(${JSON.stringify(url)}, {
-            protocol: "http2", tls: { rejectUnauthorized: false },
-          }).then(
-            r => r.text().then(body => ({ status: r.status, body }), e => ({ status: r.status, body: "ERR:" + (e.code || e.name) })),
-            e => ({ err: e.code || e.name }),
-          );
-          console.log(JSON.stringify(r));
-        `);
-        const { stdout, stderr, exitCode } = await collect(proc);
-        const out = JSON.parse(stdout.trim());
-        if (out.err) {
+        const out = await fetch(url, h2).then(
+          r => r.text().then(body => ({ status: r.status, body })),
+          e => ({ err: errcode(e) }),
+        );
+        if ("err" in out) {
           expect(out.err).toBe("HTTP2ProtocolError");
         } else {
           expect(out.status).toBe(200);
           expect(out.body).not.toContain("SHOULD-NOT-APPEAR");
         }
-        expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });
       },
     );
   });
@@ -300,19 +277,9 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
         },
       },
       async url => {
-        await using proc = spawnFetch(`
-          const t0 = performance.now();
-          const r = await fetch(${JSON.stringify(url)}, {
-            protocol: "http2", tls: { rejectUnauthorized: false },
-          });
-          const body = await r.text();
-          const t1 = performance.now();
-          console.log(JSON.stringify({ len: body.length, ok: body === Buffer.alloc(50000, "x").toString(), ms: Math.round(t1 - t0) }));
-        `);
-        const { stdout, exitCode } = await collect(proc);
-        const out = JSON.parse(stdout.trim());
-        expect(out).toMatchObject({ len: 50_000, ok: true });
-        expect(exitCode).toBe(0);
+        const body = await fetch(url, h2).then(r => r.text());
+        expect(body.length).toBe(50_000);
+        expect(body).toBe(Buffer.alloc(50_000, "x").toString());
       },
     );
   });
@@ -329,15 +296,9 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
         },
       },
       async url => {
-        await using proc = spawnFetch(`
-          const r = await fetch(${JSON.stringify(url)}, {
-            protocol: "http2", tls: { rejectUnauthorized: false },
-          });
-          console.log(r.status, await r.text());
-        `);
-        const { stdout, exitCode } = await collect(proc);
-        expect(stdout.trim()).toBe("200 ok");
-        expect(exitCode).toBe(0);
+        const r = await fetch(url, h2);
+        expect(r.status).toBe(200);
+        expect(await r.text()).toBe("ok");
       },
     );
   });
@@ -353,18 +314,12 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
         },
       },
       async url => {
-        await using proc = spawnFetch(`
-          const r = await fetch(${JSON.stringify(url)}, {
-            protocol: "http2", tls: { rejectUnauthorized: false },
-          }).then(r => r.text().then(t => "OK:" + t, e => "ERR:" + (e.code || e.name)),
-                  e => "ERR:" + (e.code || e.name));
-          console.log(r);
-        `);
-        const { stdout, exitCode } = await collect(proc);
         // Either fetch() or text() should surface the protocol error; the bad
         // padding must never produce a successful body.
-        expect(stdout.trim()).toMatch(/ERR:.*(HTTP2|ProtocolError|ConnectionClosed)/);
-        expect(exitCode).toBe(0);
+        const result = await fetch(url, h2)
+          .then(r => r.text(), errcode)
+          .catch(errcode);
+        expect(String(result)).toMatch(/HTTP2|ProtocolError|ConnectionClosed/);
       },
     );
   });
@@ -372,13 +327,6 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
   // ───────────────────────────────────────────────────────────────────────────
   // Regressions for the H2Client.zig hardening pass.
   // ───────────────────────────────────────────────────────────────────────────
-
-  const fetchOnce = (url: string) => `
-    const r = await fetch(${JSON.stringify(url)}, { protocol: "http2", tls: { rejectUnauthorized: false } })
-      .then(r => r.text().then(t => ({ status: r.status, body: t })))
-      .catch(e => ({ err: e.code || e.name }));
-    console.log(JSON.stringify(r));
-  `;
 
   test("DATA after END_STREAM in same packet is rejected", async () => {
     await withAdversarialServer(
@@ -395,12 +343,12 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
         },
       },
       async url => {
-        await using proc = spawnFetch(fetchOnce(url));
-        const { stdout, exitCode } = await collect(proc);
-        const out = JSON.parse(stdout.trim());
-        expect(out.body).not.toBe("helloEXTRA");
-        expect(out.err).toBe("HTTP2ProtocolError");
-        expect(exitCode).toBe(0);
+        const out = await fetch(url, h2).then(
+          r => r.text().then(body => ({ status: r.status, body })),
+          e => ({ err: errcode(e) }),
+        );
+        expect("body" in out ? out.body : undefined).not.toBe("helloEXTRA");
+        expect("err" in out && out.err).toBe("HTTP2ProtocolError");
       },
     );
   });
@@ -419,12 +367,12 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
         },
       },
       async url => {
-        await using proc = spawnFetch(fetchOnce(url));
-        const { stdout, exitCode } = await collect(proc);
-        const out = JSON.parse(stdout.trim());
+        const out = await fetch(url, h2).then(
+          r => r.text().then(body => ({ status: r.status, body })),
+          e => ({ err: errcode(e) }),
+        );
         expect(out).not.toEqual({ status: 200, body: "partial" });
-        expect(out.err).toBe("HTTP2StreamReset");
-        expect(exitCode).toBe(0);
+        expect("err" in out && out.err).toBe("HTTP2StreamReset");
       },
     );
   });
@@ -444,12 +392,12 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
         },
       },
       async url => {
-        await using proc = spawnFetch(fetchOnce(url));
-        const { stdout, exitCode } = await collect(proc);
-        const out = JSON.parse(stdout.trim());
-        expect(out.body).not.toBe("ab");
-        expect(out.err).toBe("HTTP2ProtocolError");
-        expect(exitCode).toBe(0);
+        const out = await fetch(url, h2).then(
+          r => r.text().then(body => ({ status: r.status, body })),
+          e => ({ err: errcode(e) }),
+        );
+        expect("body" in out ? out.body : undefined).not.toBe("ab");
+        expect("err" in out && out.err).toBe("HTTP2ProtocolError");
       },
     );
   });
@@ -468,10 +416,9 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
         },
       },
       async url => {
-        await using proc = spawnFetch(fetchOnce(url));
-        const { stdout, exitCode } = await collect(proc);
-        expect(JSON.parse(stdout.trim())).toEqual({ status: 200, body: "ok" });
-        expect(exitCode).toBe(0);
+        const r = await fetch(url, h2);
+        expect(r.status).toBe(200);
+        expect(await r.text()).toBe("ok");
       },
     );
   });
@@ -483,10 +430,8 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
         onPreface: socket => socket.write(frame(7, 0, 0, Buffer.concat([u32be(0), u32be(0)]))),
       },
       async url => {
-        await using proc = spawnFetch(fetchOnce(url));
-        const { stdout, exitCode } = await collect(proc);
-        expect(JSON.parse(stdout.trim())).toEqual({ err: "HTTP2ProtocolError" });
-        expect(exitCode).toBe(0);
+        const code = await fetch(url, h2).then(r => r.status, errcode);
+        expect(code).toBe("HTTP2ProtocolError");
       },
     );
   });

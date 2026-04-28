@@ -577,7 +577,10 @@ class Worker extends EventEmitter {
       case STDIO_PAYLOAD: {
         const { stream, chunks } = message;
         const readable = stream === "stdout" ? this.#stdout : stream === "stderr" ? this.#stderr : null;
-        if (readable) {
+        // A message event can already be queued when the worker's close
+        // event runs #drainStdio() and ends the readables; don't push past
+        // EOF if it lands afterwards.
+        if (readable && !readable.readableEnded) {
           for (let i = 0; i < chunks.length; i++) {
             const { chunk, encoding } = chunks[i];
             readable.push(chunk, encoding);
@@ -606,6 +609,13 @@ class Worker extends EventEmitter {
     }
     if (!this.#stdout.readableEnded) this.#stdout.push(null);
     if (!this.#stderr.readableEnded) this.#stderr.push(null);
+    // Release any pending stdin write callback so a write issued just
+    // before the worker exited doesn't keep the parent's port reffed.
+    // Node.js likewise leaves worker.stdin writable after exit; subsequent
+    // writes go to a closed port and their callbacks simply never fire.
+    if (this.#stdin) this.#stdin[kStdioWantsMoreDataCallback]();
+    // close() removes the listener (no push-after-EOF from queued events)
+    // and jsUnref()s the port so it stops contributing to the event loop.
     this.#stdioPort.close();
   }
 

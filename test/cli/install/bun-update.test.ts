@@ -673,7 +673,9 @@ it("hoisted install with --filter preserves excluded workspace's non-hoistable p
     name: "baz",
     version: "0.0.3",
   });
-  expect(await file(join(package_dir, "packages", "excluded", "node_modules", "baz", "package.json")).json()).toMatchObject({
+  expect(
+    await file(join(package_dir, "packages", "excluded", "node_modules", "baz", "package.json")).json(),
+  ).toMatchObject({
     name: "baz",
     version: "0.0.5",
   });

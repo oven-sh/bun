@@ -782,22 +782,28 @@ struct us_loop_t *us_quic_socket_context_loop(us_quic_socket_context_t *ctx) { r
 static void us_quic_set_dontfrag(struct us_udp_socket_t *udp) {
     LIBUS_SOCKET_DESCRIPTOR fd = us_poll_fd((struct us_poll_t *) udp);
     int on;
+    /* Test _WIN32 first: ws2ipdef.h defines IP_MTU_DISCOVER/IP_PMTUDISC_PROBE
+     * so the Linux arm would otherwise be selected, but on Windows that option
+     * is per-destination and IP_DONTFRAGMENT is the documented DF toggle. */
+#if defined(_WIN32)
+    on = 1;
+    setsockopt(fd, IPPROTO_IP, IP_DONTFRAGMENT, (const char *) &on, sizeof(on));
+    setsockopt(fd, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *) &on, sizeof(on));
+#else
 #if defined(IP_MTU_DISCOVER)
     on = IP_PMTUDISC_PROBE;
     setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &on, sizeof(on));
 #elif defined(IP_DONTFRAG)
     on = 1;
     setsockopt(fd, IPPROTO_IP, IP_DONTFRAG, &on, sizeof(on));
-#elif defined(_WIN32)
-    on = 1;
-    setsockopt(fd, IPPROTO_IP, IP_DONTFRAGMENT, (const char *) &on, sizeof(on));
 #endif
 #if defined(IPV6_MTU_DISCOVER)
     on = IP_PMTUDISC_PROBE;
     setsockopt(fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &on, sizeof(on));
 #elif defined(IPV6_DONTFRAG)
     on = 1;
-    setsockopt(fd, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *) &on, sizeof(on));
+    setsockopt(fd, IPPROTO_IPV6, IPV6_DONTFRAG, &on, sizeof(on));
+#endif
 #endif
     (void) on;
 }
@@ -1239,7 +1245,22 @@ static us_quic_socket_t *us_quic_connect_result(us_quic_socket_context_t *ctx,
         int perr = 0;
         LIBUS_SOCKET_DESCRIPTOR probe = bsd_create_socket(peer.ss_family, SOCK_DGRAM, 0, &perr);
         if (probe != LIBUS_SOCKET_ERROR) {
+#ifdef _WIN32
+            /* Winsock's datagram connect() only records the default peer and
+             * returns 0 without a route lookup, so it can't reject an
+             * unroutable AAAA. SIO_ROUTING_INTERFACE_QUERY asks the stack
+             * which local interface would be used to reach `peer` and fails
+             * with WSAENETUNREACH/WSAEHOSTUNREACH when there is no route.
+             * (The addrinfo list is already RFC 6724-sorted by GetAddrInfoW,
+             * so the whole-list SIO_ADDRESS_LIST_SORT isn't needed — this is
+             * just the per-entry "skip if unroutable" filter.) */
+            SOCKADDR_STORAGE local; DWORD got = 0;
+            int r = WSAIoctl(probe, SIO_ROUTING_INTERFACE_QUERY,
+                (struct sockaddr *) &peer, sa_len((struct sockaddr *) &peer),
+                &local, sizeof(local), &got, NULL, NULL);
+#else
             int r = connect(probe, (struct sockaddr *) &peer, sa_len((struct sockaddr *) &peer));
+#endif
             bsd_close_socket(probe);
             if (r != 0) continue;
         }

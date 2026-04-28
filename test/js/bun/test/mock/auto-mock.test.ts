@@ -96,6 +96,14 @@ test("jest.requireMock generates an auto-mock for a module that was never jest.m
   const mocked = jest.requireMock("./auto-mock-fixture-ondemand") as any;
   expect(mocked.plainFunction.mock).toBeDefined();
   expect(mocked.plainFunction()).toBeUndefined();
+
+  // A second call must return the *same* mock object, otherwise any
+  // `.mockReturnValue(...)` / `.mockImplementation(...)` configured through
+  // the first handle would be invisible through later calls (matching
+  // Jest's `Runtime.requireMock` caching in `_mockRegistry`).
+  const mocked2 = jest.requireMock("./auto-mock-fixture-ondemand") as any;
+  expect(mocked2).toBe(mocked);
+  expect(mocked2.plainFunction).toBe(mocked.plainFunction);
 });
 
 test("mock.module still validates a non-callable second argument", () => {

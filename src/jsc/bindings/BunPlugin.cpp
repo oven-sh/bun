@@ -908,6 +908,14 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsRequireMock, (JSC::JSGlobalObject 
         return {};
     }
 
+    // Cache the synthesised mock so a second `jest.requireMock(specifier)` on
+    // the same module hands back the same mock instance — without this,
+    // configuring `.mockReturnValue()` on one handle wouldn't be visible via
+    // another call (Jest's own `Runtime.requireMock` caches in `_mockRegistry`).
+    JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), mockObject);
+    mock->hasCalledModuleMock = true;
+    globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock);
+
     return JSValue::encode(JSValue(mockObject));
 }
 

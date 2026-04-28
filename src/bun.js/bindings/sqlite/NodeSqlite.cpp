@@ -1,6 +1,12 @@
 // node:sqlite — native implementation of Node.js's `node:sqlite` module.
 // See header for overview.
 
+// Always use the bundled amalgamation for node:sqlite, regardless of
+// LAZY_LOAD_SQLITE — see the header comment for rationale. Include it
+// before NodeSqlite.h so the forward declarations there see the real
+// struct definitions.
+#include "sqlite3_local.h"
+
 #include "NodeSqlite.h"
 
 #include "ZigGlobalObject.h"
@@ -198,14 +204,13 @@ const ClassInfo JSDatabaseSync::s_info = { "DatabaseSync"_s, &Base::s_info, null
 const ClassInfo JSDatabaseSyncPrototype::s_info = { "DatabaseSync"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDatabaseSyncPrototype) };
 const ClassInfo JSDatabaseSyncConstructor::s_info = { "DatabaseSync"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDatabaseSyncConstructor) };
 
-JSDatabaseSync* JSDatabaseSync::create(VM& vm, Structure* structure, WTF::String&& location, DatabaseSyncOpenConfiguration&& config, bool openImmediately)
+JSDatabaseSync* JSDatabaseSync::create(VM& vm, Structure* structure, WTF::String&& location, DatabaseSyncOpenConfiguration&& config)
 {
     auto* ptr = new (NotNull, allocateCell<JSDatabaseSync>(vm)) JSDatabaseSync(vm, structure);
     ptr->finishCreation(vm);
     ptr->m_location = std::move(location);
     ptr->m_config = std::move(config);
     ptr->m_enableLoadExtension = ptr->m_config.allowExtension;
-    (void)openImmediately;
     return ptr;
 }
 
@@ -646,7 +651,7 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSDatabaseSyncConstructor::construct(JSG
     }
 
     auto* structure = zigGlobal->m_JSDatabaseSyncClassStructure.get(zigGlobal);
-    auto* db = JSDatabaseSync::create(vm, structure, std::move(location), std::move(config), openImmediately);
+    auto* db = JSDatabaseSync::create(vm, structure, std::move(location), std::move(config));
 
     if (openImmediately) {
         db->open(globalObject, scope);

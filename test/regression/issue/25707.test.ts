@@ -9,7 +9,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 test("require() of CJS file containing dynamic import of non-existent node: module does not fail at load time", async () => {
   using dir = tempDir("issue-25707", {
     // Simulates turbopack-generated chunks: a CJS module with a factory function
-    // containing import("node:sqlite") inside a try/catch that is never called
+    // containing import("node:quic") inside a try/catch that is never called
     // during require().
     "chunk.js": `
       module.exports = [
@@ -18,7 +18,7 @@ test("require() of CJS file containing dynamic import of non-existent node: modu
             if ("createSession" in e) {
               let c;
               try {
-                ({DatabaseSync: c} = await import("node:sqlite"))
+                ({QuicEndpoint: c} = await import("node:quic"))
               } catch(a) {
                 if (null !== a && "object" == typeof a && "code" in a && "ERR_UNKNOWN_BUILTIN_MODULE" !== a.code)
                   throw a;
@@ -30,7 +30,7 @@ test("require() of CJS file containing dynamic import of non-existent node: modu
       ];
     `,
     "main.js": `
-      // This require() should not fail even though chunk.js contains import("node:sqlite")
+      // This require() should not fail even though chunk.js contains import("node:quic")
       const factories = require("./chunk.js");
       console.log("loaded " + factories.length + " factories");
     `,
@@ -56,8 +56,8 @@ test("require() of CJS file with bare dynamic import of non-existent node: modul
   using dir = tempDir("issue-25707-bare", {
     "lib.js": `
       module.exports = async function() {
-        const { DatabaseSync } = await import("node:sqlite");
-        return DatabaseSync;
+        const { QuicEndpoint } = await import("node:quic");
+        return QuicEndpoint;
       };
     `,
     "main.js": `

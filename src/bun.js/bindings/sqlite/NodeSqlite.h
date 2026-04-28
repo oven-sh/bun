@@ -10,11 +10,20 @@
 #pragma once
 
 #include "root.h"
-#include "sqlite3_local.h"
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/InternalFunction.h>
 #include <wtf/HashMap.h>
 #include <wtf/text/StringHash.h>
+
+// Forward-declare the opaque SQLite handle types so this header does not
+// pull the (large) sqlite3 amalgamation header into every translation unit
+// that includes it — notably ZigGlobalObject.cpp and InternalModuleRegistry.cpp,
+// which on macOS also see the system sqlite3.h via JSSQLStatement.h.
+// NodeSqlite.cpp includes sqlite3_local.h directly for the full API.
+extern "C" {
+struct sqlite3;
+struct sqlite3_stmt;
+}
 
 namespace Bun {
 
@@ -47,7 +56,7 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static JSDatabaseSync* create(JSC::VM& vm, JSC::Structure* structure, WTF::String&& location, DatabaseSyncOpenConfiguration&& config, bool openImmediately);
+    static JSDatabaseSync* create(JSC::VM& vm, JSC::Structure* structure, WTF::String&& location, DatabaseSyncOpenConfiguration&& config);
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {

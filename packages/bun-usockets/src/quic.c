@@ -72,6 +72,10 @@ struct us_quic_socket_context_s {
     struct us_quic_listen_socket_s *closed_listeners;
     /* Client only: shared UDP endpoint for all outbound conns on this loop. */
     struct us_quic_listen_socket_s *client_udp;
+    /* Live conns, so listen_socket_close can lsquic_conn_close each one
+     * before the UDP fd disappears (otherwise abrupt stop just black-holes
+     * the peer until idle timeout). */
+    struct us_quic_socket_s *conns;
 
     void (*on_open)(us_quic_socket_t *);
     void (*on_hsk_done)(us_quic_socket_t *, int);
@@ -97,6 +101,7 @@ struct us_quic_listen_socket_s {
 struct us_quic_socket_s {
     lsquic_conn_t *conn;
     us_quic_socket_context_t *ctx;
+    struct us_quic_socket_s *next; /* ctx->conns list */
     /* Client only: per-connection cert policy. `hostname` is owned by this
      * struct (strdup of the SNI passed to connect) so the verify callback
      * can match it against the leaf cert's SAN/CN. */
@@ -490,6 +495,8 @@ static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn)
     ctx->loop->num_polls++;
 #endif
     ctx->conn_count++;
+    qs->next = ctx->conns;
+    ctx->conns = qs;
     if (ctx->on_open) ctx->on_open(qs);
     return (lsquic_conn_ctx_t *) qs;
 }
@@ -500,6 +507,9 @@ static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
     us_quic_socket_context_t *ctx = qs->ctx;
     if (ctx->on_close) ctx->on_close(qs);
     lsquic_conn_set_ctx(conn, NULL);
+    for (us_quic_socket_t **pp = &ctx->conns; *pp; pp = &(*pp)->next) {
+        if (*pp == qs) { *pp = qs->next; break; }
+    }
     free(qs->hostname);
     free(qs);
 #ifndef LIBUS_USE_LIBUV
@@ -814,7 +824,7 @@ static void us_quic_set_dontfrag(struct us_udp_socket_t *udp) {
 }
 
 us_quic_listen_socket_t *us_quic_socket_context_listen(
-    us_quic_socket_context_t *ctx, const char *host, int port,
+    us_quic_socket_context_t *ctx, const char *host, int port, int flags,
     unsigned int stream_ext_size)
 {
     ctx->stream_ext_size = stream_ext_size;
@@ -826,7 +836,7 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(
     int err = 0;
     ls->udp = us_create_udp_socket(ctx->loop,
         us_quic_udp_on_data, us_quic_udp_on_drain, us_quic_udp_on_close, NULL,
-        host, (unsigned short) port, 0, &err, ls);
+        host, (unsigned short) port, flags, &err, ls);
     if (!ls->udp) { free(ls); return NULL; }
     us_quic_set_dontfrag(ls->udp);
 
@@ -841,10 +851,15 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(
 
 void us_quic_listen_socket_close(us_quic_listen_socket_t *ls) {
     if (!ls || !ls->udp) return;
-    /* Ask lsquic to send CONNECTION_CLOSE on every live connection before the
-     * fd disappears; otherwise clients sit out their idle timeout. */
+    /* Send CONNECTION_CLOSE on every live conn before the fd disappears;
+     * cooldown alone only schedules GOAWAY, which leaves peers waiting on
+     * in-flight streams that this abrupt close will never serve. */
     if (ls->ctx->engine) {
+        for (us_quic_socket_t *qs = ls->ctx->conns; qs; qs = qs->next) {
+            if (qs->conn) lsquic_conn_close(qs->conn);
+        }
         lsquic_engine_cooldown(ls->ctx->engine);
+        us_quic_process(ls->ctx);
         lsquic_engine_send_unsent_packets(ls->ctx->engine);
     }
     us_udp_socket_close(ls->udp);

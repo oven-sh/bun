@@ -3114,7 +3114,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         if (this.h3_app) |h3_app| {
                             // Same UDP port as the TCP listener so Alt-Svc works.
                             const h3_port: u16 = if (this.listener) |ls| @intCast(ls.getLocalPort()) else tcp.port;
-                            h3_app.listenWithConfig(*ThisServer, this, onH3Listen, .{ .port = h3_port, .host = host });
+                            h3_app.listenWithConfig(*ThisServer, this, onH3Listen, .{
+                                .port = h3_port,
+                                .host = host,
+                                .options = this.config.getUsocketsOptions(),
+                            });
                             if (this.h3_listener == null) {
                                 if (!globalThis.hasException()) {
                                     globalThis.throw("Failed to listen on UDP port {d} for HTTP/3", .{h3_port}) catch {};

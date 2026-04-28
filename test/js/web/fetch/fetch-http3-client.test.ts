@@ -540,3 +540,40 @@ describe("fetch protocol: http3", () => {
     expect(totalB).toBe(32 * piece.length);
   });
 });
+
+// Stale-session retry: a request bound on session A when A's conn closes
+// (GOAWAY/CONNECTION_CLOSE) must transparently retry on a fresh session
+// instead of surfacing HTTP3StreamReset. reusePort lets B bind the same
+// port while A drains so the retry has somewhere to land.
+test("retries on a fresh session when a pooled session is stale (port reuse)", async () => {
+  let release: () => void = () => {};
+  const a = Bun.serve({
+    port: 0,
+    reusePort: true,
+    tls,
+    h3: true,
+    h1: false,
+    fetch: async req => {
+      if (new URL(req.url).pathname === "/hang") {
+        await new Promise<void>(r => (release = r));
+        return new Response("never");
+      }
+      return new Response("a");
+    },
+  });
+  const port = a.port;
+  expect(await fetch(`https://127.0.0.1:${port}/`, h3).then(r => r.text())).toBe("a");
+  const inflight = fetch(`https://127.0.0.1:${port}/hang`, h3);
+  await Bun.sleep(50);
+  const b = Bun.serve({ port, reusePort: true, tls, h3: true, h1: false, fetch: () => new Response("b") });
+  // Abrupt stop sends CONNECTION_CLOSE then closes the fd, so /hang's
+  // stream closes before any response — that's the retryOrFail trigger.
+  a.stop(true);
+  release();
+  try {
+    expect(await inflight.then(r => r.text())).toBe("b");
+    expect(await fetch(`https://127.0.0.1:${port}/`, h3).then(r => r.text())).toBe("b");
+  } finally {
+    void b.stop(true);
+  }
+});

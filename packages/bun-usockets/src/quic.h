@@ -63,7 +63,7 @@ void *us_quic_socket_context_ext(us_quic_socket_context_t *ctx);
 struct us_loop_t *us_quic_socket_context_loop(us_quic_socket_context_t *ctx);
 
 us_quic_listen_socket_t *us_quic_socket_context_listen(
-    us_quic_socket_context_t *ctx, const char *host, int port,
+    us_quic_socket_context_t *ctx, const char *host, int port, int flags,
     unsigned int stream_ext_size);
 
 void us_quic_listen_socket_close(us_quic_listen_socket_t *ls);

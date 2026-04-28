@@ -337,7 +337,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     return socket;
 }
 
-ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, void* sslConfig)
+ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, void* sslConfig, bool offerPerMessageDeflate)
 {
     if (url.isNull())
         return Exception { SyntaxError };
@@ -348,6 +348,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
 
     auto socket = adoptRef(*new WebSocket(context));
     socket->m_sslConfig = sslConfig; // Set BEFORE connect() so it's available during connection
+    socket->setOfferPerMessageDeflate(offerPerMessageDeflate);
 
     auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue());
     if (result.hasException())
@@ -356,7 +357,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     return socket;
 }
 
-ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, void* sslConfig)
+ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, void* sslConfig, bool offerPerMessageDeflate)
 {
     if (url.isNull())
         return Exception { SyntaxError };
@@ -368,6 +369,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     auto socket = adoptRef(*new WebSocket(context));
     socket->setRejectUnauthorized(rejectUnauthorized);
     socket->m_sslConfig = sslConfig; // Set BEFORE connect() so it's available during connection
+    socket->setOfferPerMessageDeflate(offerPerMessageDeflate);
 
     auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue());
     if (result.hasException())
@@ -714,7 +716,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
             proxyHeaderNames.begin(), proxyHeaderValues.begin(), proxyHeaderNames.size(),
             sslConfig, is_secure,
             targetAuthorization.isEmpty() ? nullptr : &targetAuth,
-            is_unix ? &unixSocketPath : nullptr);
+            is_unix ? &unixSocketPath : nullptr,
+            m_offerPerMessageDeflate);
     } else {
         us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<false>();
         RELEASE_ASSERT(ctx);
@@ -727,7 +730,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
             proxyHeaderNames.begin(), proxyHeaderValues.begin(), proxyHeaderNames.size(),
             sslConfig, is_secure,
             targetAuthorization.isEmpty() ? nullptr : &targetAuth,
-            is_unix ? &unixSocketPath : nullptr);
+            is_unix ? &unixSocketPath : nullptr,
+            m_offerPerMessageDeflate);
     }
 
     proxyHeaderValues.clear();

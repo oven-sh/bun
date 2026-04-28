@@ -90,6 +90,7 @@ enum class HTTPHeaderName : uint8_t {
     PingTo,
     Pragma,
     ProxyAuthorization,
+    ProxyConnection,
     Purpose,
     Range,
     Referer,
@@ -128,7 +129,7 @@ enum class HTTPHeaderName : uint8_t {
     XXSSProtection,
 };
 
-const unsigned numHTTPHeaderNames = 93;
+const unsigned numHTTPHeaderNames = 94;
 const size_t minHTTPHeaderNameLength = 2;
 const size_t maxHTTPHeaderNameLength = 40;
 
@@ -199,6 +200,7 @@ template<> struct EnumTraits<WebCore::HTTPHeaderName> {
         WebCore::HTTPHeaderName::PingTo,
         WebCore::HTTPHeaderName::Pragma,
         WebCore::HTTPHeaderName::ProxyAuthorization,
+        WebCore::HTTPHeaderName::ProxyConnection,
         WebCore::HTTPHeaderName::Purpose,
         WebCore::HTTPHeaderName::Range,
         WebCore::HTTPHeaderName::Referer,

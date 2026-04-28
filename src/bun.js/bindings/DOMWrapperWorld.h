@@ -50,10 +50,10 @@ inline bool isWorldCompatible(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSV
 
 inline DOMWrapperWorld& currentWorld(JSC::JSGlobalObject& lexicalGlobalObject)
 {
-    return JSC::jsCast<Zig::GlobalObject*>(&lexicalGlobalObject)->world();
+    return uncheckedDowncast<Zig::GlobalObject>(&lexicalGlobalObject)->world();
 }
 inline DOMWrapperWorld& worldForDOMObject(JSC::JSObject& object)
 {
-    return JSC::jsCast<Zig::GlobalObject*>(object.globalObject())->world();
+    return uncheckedDowncast<Zig::GlobalObject>(object.globalObject())->world();
 };
 }

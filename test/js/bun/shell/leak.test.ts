@@ -459,6 +459,15 @@ describe.concurrent("fd leak", () => {
         run();
         Bun.gc(true);
 
+        // The newer module loader can keep the last inner-loop batch reachable
+        // via a conservative stack root for one extra tick; give GC a brief
+        // retry window before asserting (mirrors expectMaxObjectTypeCount).
+        for (let k = 0; k < 50; k++) {
+          const c = heapStats().objectTypeCounts;
+          if ((c.ShellInterpreter ?? 0) <= 3 && (c.ParsedShellScript ?? 0) <= 3) break;
+          await Bun.sleep(20);
+          Bun.gc(true);
+        }
         const { ShellInterpreter, ParsedShellScript } = heapStats().objectTypeCounts;
         if (ShellInterpreter > 3 || ParsedShellScript > 3) {
           console.error("TOO many ParsedShellScript or ShellInterpreter objects", ParsedShellScript, ShellInterpreter);

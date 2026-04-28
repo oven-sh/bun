@@ -132,7 +132,15 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
     while (1) {
         ssize_t ret = recvfrom(fd, recvbuf->buf, LIBUS_RECV_BUFFER_LENGTH, flags, (struct sockaddr *)&recvbuf->addr, &addr_len);
         if (ret < 0) {
-            if (WSAGetLastError() == WSAEINTR) continue;
+            int err = WSAGetLastError();
+            if (err == WSAEINTR) continue;
+            /* Winsock surfaces ICMP "port/host unreachable" from a previous
+             * sendto as WSAECONNRESET (or WSAENETRESET for TTL-expired) on the
+             * next recv. That's per-destination, not per-socket, so treat it as
+             * "no packet" and retry — bubbling it up makes loop.c close the
+             * socket and tear down every conn that shares it (e.g. the QUIC
+             * client endpoint). Mirrors libuv's uv__udp_recv handling. */
+            if (err == WSAECONNRESET || err == WSAENETRESET) continue;
             return ret;
         }
         recvbuf->recvlen = ret;
@@ -254,10 +262,20 @@ int bsd_udp_packet_buffer_local_ip(struct udp_recvbuf *msgvec, int index, char *
     struct msghdr *mh = &((struct mmsghdr *) msgvec)[index].msg_hdr;
     for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(mh); cmsg != NULL; cmsg = CMSG_NXTHDR(mh, cmsg)) {
         // ipv6 or ipv4
-        if (cmsg->cmsg_level == IPPROTO_IP && cmsg->cmsg_type == IP_PKTINFO) {
-            struct in_pktinfo *pi = (struct in_pktinfo *) CMSG_DATA(cmsg);
-            memcpy(ip, &pi->ipi_addr, 4);
-            return 4;
+        if (cmsg->cmsg_level == IPPROTO_IP) {
+#if defined(IP_PKTINFO)
+            if (cmsg->cmsg_type == IP_PKTINFO) {
+                struct in_pktinfo *pi = (struct in_pktinfo *) CMSG_DATA(cmsg);
+                memcpy(ip, &pi->ipi_addr, 4);
+                return 4;
+            }
+#endif
+#if defined(IP_RECVDSTADDR)
+            if (cmsg->cmsg_type == IP_RECVDSTADDR) {
+                memcpy(ip, (struct in_addr *) CMSG_DATA(cmsg), 4);
+                return 4;
+            }
+#endif
         }
 
         if (cmsg->cmsg_level == IPPROTO_IPV6 && cmsg->cmsg_type == IPV6_PKTINFO) {
@@ -1350,7 +1368,11 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     int enabled = 1;
     if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &enabled, sizeof(enabled)) == -1) {
         if (errno == ENOPROTOOPT || errno == EINVAL) {
+#if defined(IP_PKTINFO)
             setsockopt(listenFd, IPPROTO_IP, IP_PKTINFO, &enabled, sizeof(enabled));
+#elif defined(IP_RECVDSTADDR)
+            setsockopt(listenFd, IPPROTO_IP, IP_RECVDSTADDR, &enabled, sizeof(enabled));
+#endif
         }
     }
 
@@ -1360,6 +1382,20 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
             setsockopt(listenFd, IPPROTO_IP, IP_RECVTOS, &enabled, sizeof(enabled));
         }
     }
+
+#if defined(_WIN32)
+    /* By default Winsock reports ICMP "port unreachable" from a previous
+     * sendto as WSAECONNRESET on the next recv. bsd_recvmmsg already swallows
+     * it, but disabling the report at the source means a queued ICMP can't
+     * race ahead of a real packet in WSARecvFrom either. */
+    {
+        DWORD off = 0, br;
+        WSAIoctl(listenFd, SIO_UDP_CONNRESET, &off, sizeof(off), NULL, 0, &br, NULL, NULL);
+#ifdef SIO_UDP_NETRESET
+        WSAIoctl(listenFd, SIO_UDP_NETRESET, &off, sizeof(off), NULL, 0, &br, NULL, NULL);
+#endif
+    }
+#endif
 
 #if defined(__linux__)
     /* Linux suppresses ICMP errors (port unreachable, host unreachable, TTL

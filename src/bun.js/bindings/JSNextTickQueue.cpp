@@ -1,7 +1,7 @@
 #include "root.h"
 
 #include "JavaScriptCore/JSCJSValueInlines.h"
-#include "JavaScriptCore/JSInternalPromise.h"
+#include "JavaScriptCore/JSPromise.h"
 #include "JavaScriptCore/LazyPropertyInlines.h"
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/GetterSetter.h>
@@ -55,7 +55,7 @@ void JSNextTickQueue::finishCreation(VM& vm)
 template<typename Visitor>
 void JSNextTickQueue::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSNextTickQueue*>(cell);
+    auto* thisObject = uncheckedDowncast<JSNextTickQueue>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 }

@@ -120,7 +120,9 @@ export const libarchive: Dependency = {
     sources: [...SOURCES, ...(cfg.windows ? SOURCES_WIN : [])].map(s => `libarchive/${s}.c`),
     // zlib's build dir holds the generated zlib.h (subst'd from .in) that
     // the gzip filter includes. Absolute path → emitDirect quotes it.
-    includes: ["libarchive", depBuildDir(cfg, "zlib")],
+    // android: archive.h does `#include <android_lf.h>` under __ANDROID__;
+    // that header lives under contrib/android/include.
+    includes: ["libarchive", depBuildDir(cfg, "zlib"), ...(cfg.abi === "android" ? ["contrib/android/include"] : [])],
     pic: true,
     defines: {
       HAVE_CONFIG_H: 1,
@@ -139,9 +141,9 @@ export const libarchive: Dependency = {
     headers: { "config.h": configH(cfg) },
   }),
 
-  provides: () => ({
+  provides: cfg => ({
     libs: [],
-    includes: ["libarchive"],
+    includes: cfg.abi === "android" ? ["libarchive", "contrib/android/include"] : ["libarchive"],
   }),
 };
 
@@ -226,6 +228,22 @@ const LINUX = def1([
   "MAJOR_IN_SYSMACROS", "ARCHIVE_XATTR_LINUX",
 ]);
 
+// FreeBSD: BSD-style stat (st_mtim, st_flags, st_birthtim), extattr_* xattr
+// API, chflags family. No <sys/xattr.h> — extattr lives in <sys/extattr.h>.
+// prettier-ignore
+const FREEBSD = def1([
+  "HAVE_ARC4RANDOM_BUF",
+  "HAVE_SYS_EXTATTR_H", "HAVE_SYS_MOUNT_H",
+  "HAVE_STATFS", "HAVE_FSTATFS",
+  "HAVE_LCHMOD", "HAVE_LCHFLAGS", "HAVE_CHFLAGS", "HAVE_FCHFLAGS",
+  "HAVE_EXTATTR_GET_FILE", "HAVE_EXTATTR_LIST_FILE", "HAVE_EXTATTR_SET_FD",
+  "HAVE_EXTATTR_SET_FILE", "HAVE_DECL_EXTATTR_NAMESPACE_USER",
+  "HAVE_STRUCT_STAT_ST_MTIM_TV_NSEC", "HAVE_STRUCT_STAT_ST_BIRTHTIM",
+  "HAVE_STRUCT_STAT_ST_FLAGS",
+  "HAVE_READPASSPHRASE", "HAVE_READPASSPHRASE_H",
+  "ARCHIVE_XATTR_FREEBSD",
+]);
+
 // prettier-ignore
 const DARWIN = def1([
   // arc4random_buf: BSD libc + glibc≥2.36 only. Bun's Linux CI targets
@@ -266,7 +284,7 @@ const WINDOWS = def1([
 function configH(cfg: Config): string {
   const longSize = cfg.windows ? 4 : 8;
   const wcharSize = cfg.windows ? 2 : 4;
-  const platform = cfg.windows ? WINDOWS : `${POSIX}\n${cfg.darwin ? DARWIN : LINUX}`;
+  const platform = cfg.windows ? WINDOWS : `${POSIX}\n${cfg.darwin ? DARWIN : cfg.freebsd ? FREEBSD : LINUX}`;
 
   // Feature-test macros must come before any system header. archive_platform.h
   // includes config.h first, so defining them here is early enough.

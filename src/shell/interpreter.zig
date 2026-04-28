@@ -680,7 +680,7 @@ pub const Interpreter = struct {
                 const static_str = if (comptime bun.Environment.isWindows) EnvStr.initSlice("USERPROFILE") else EnvStr.initSlice("HOME");
                 break :brk self.shell_env.get(static_str) orelse self.export_env.get(static_str);
             };
-            return env_var orelse EnvStr.initSlice("");
+            return env_var orelse EnvStr.initSlice(if (comptime bun.Environment.isAndroid) "/data/local/tmp" else "");
         }
 
         pub fn writeFailingErrorFmt(
@@ -2102,7 +2102,7 @@ pub fn FlagParser(comptime Opts: type) type {
 pub fn isPollable(fd: bun.FD, mode: bun.Mode) bool {
     return switch (bun.Environment.os) {
         .windows, .wasm => false,
-        .linux => posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.native()),
+        .linux, .freebsd => posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.native()),
         // macos DOES allow regular files to be pollable, but we don't want that because
         // our IOWriter code has a separate and better codepath for writing to files.
         .mac => if (posix.S.ISREG(mode)) false else posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.native()),
@@ -2112,7 +2112,7 @@ pub fn isPollable(fd: bun.FD, mode: bun.Mode) bool {
 pub fn isPollableFromMode(mode: bun.Mode) bool {
     return switch (bun.Environment.os) {
         .windows, .wasm => false,
-        .linux => posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode),
+        .linux, .freebsd => posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode),
         // macos DOES allow regular files to be pollable, but we don't want that because
         // our IOWriter code has a separate and better codepath for writing to files.
         .mac => if (posix.S.ISREG(mode)) false else posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode),

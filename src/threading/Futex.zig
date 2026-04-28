@@ -65,6 +65,8 @@ else if (builtin.os.tag.isDarwin())
     DarwinImpl
 else if (builtin.os.tag == .linux)
     LinuxImpl
+else if (builtin.os.tag == .freebsd)
+    FreebsdImpl
 else if (builtin.target.isWasm())
     WasmImpl
 else
@@ -251,6 +253,66 @@ const LinuxImpl = struct {
             .INVAL => {}, // invalid futex_wait() on ptr done elsewhere
             .FAULT => @panic("futex_wake() returned EFAULT unexpectedly"), // pointer became invalid while doing the wake
             else => @panic("Unexpected futex_wake() return code"),
+        }
+    }
+};
+
+// https://www.freebsd.org/cgi/man.cgi?query=_umtx_op&sektion=2&n=1
+const FreebsdImpl = struct {
+    fn wait(ptr: *const atomic.Value(u32), expect: u32, timeout: ?u64) error{Timeout}!void {
+        var tm_size: usize = 0;
+        var tm: c._umtx_time = undefined;
+        var tm_ptr: ?*const c._umtx_time = null;
+
+        if (timeout) |timeout_ns| {
+            tm_ptr = &tm;
+            tm_size = @sizeOf(@TypeOf(tm));
+
+            tm.flags = 0; // use relative time not UMTX_ABSTIME
+            tm.clockid = .MONOTONIC;
+            tm.timeout.sec = @as(@TypeOf(tm.timeout.sec), @intCast(timeout_ns / std.time.ns_per_s));
+            tm.timeout.nsec = @as(@TypeOf(tm.timeout.nsec), @intCast(timeout_ns % std.time.ns_per_s));
+        }
+
+        const rc = c._umtx_op(
+            @intFromPtr(&ptr.raw),
+            @intFromEnum(c.UMTX_OP.WAIT_UINT_PRIVATE),
+            @as(c_ulong, expect),
+            tm_size,
+            @intFromPtr(tm_ptr),
+        );
+
+        switch (std.posix.errno(rc)) {
+            .SUCCESS => {},
+            .FAULT => @panic("_umtx_op() WAIT returned EFAULT unexpectedly"),
+            .INVAL => {}, // possibly timeout overflow
+            .TIMEDOUT => {
+                assert(timeout != null);
+                return error.Timeout;
+            },
+            .INTR => {}, // spurious wake
+            else => @panic("Unexpected _umtx_op() WAIT return code"),
+        }
+    }
+
+    fn wake(ptr: *const atomic.Value(u32), max_waiters: u32) void {
+        // The kernel reads n_wake as `int`; passing maxInt(u32) truncates to
+        // -1 and umtxq_signal_queue's `++ret >= n_wake` returns after one
+        // wakeup. _umtx_op(2): "Specify INT_MAX to wake up all waiters."
+        const n: c_ulong = @min(max_waiters, std.math.maxInt(c_int));
+        const rc = c._umtx_op(
+            @intFromPtr(&ptr.raw),
+            @intFromEnum(c.UMTX_OP.WAKE_PRIVATE),
+            n,
+            0, // there is no timeout struct
+            0, // there is no timeout struct pointer
+        );
+
+        switch (std.posix.errno(rc)) {
+            .SUCCESS => {},
+            .FAULT => {}, // it's ok if the ptr doesn't point to valid memory
+            .INVAL => @panic("_umtx_op() WAKE returned EINVAL unexpectedly"),
+            else => @panic("Unexpected _umtx_op() WAKE return code"),
         }
     }
 };

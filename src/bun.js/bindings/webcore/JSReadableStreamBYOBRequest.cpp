@@ -150,7 +150,7 @@ JSObject* JSReadableStreamBYOBRequest::prototype(VM& vm, JSDOMGlobalObject& glob
 
 JSValue JSReadableStreamBYOBRequest::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSReadableStreamBYOBRequestDOMConstructor, DOMConstructorID::ReadableStreamBYOBRequest>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSReadableStreamBYOBRequestDOMConstructor, DOMConstructorID::ReadableStreamBYOBRequest>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSReadableStreamBYOBRequest::destroy(JSC::JSCell* cell)
@@ -163,7 +163,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamBYOBRequestConstructor, (JSGlobalObject
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSReadableStreamBYOBRequestPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSReadableStreamBYOBRequestPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSReadableStreamBYOBRequest::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));

@@ -445,7 +445,7 @@ template<typename WebCoreType, typename OutType>
 OutType* WebCoreCast(JSC::EncodedJSValue JSValue0)
 {
     // we must use jsDynamicCast here so that we check that the type is correct
-    WebCoreType* jsdomURL = JSC::jsDynamicCast<WebCoreType*>(JSC::JSValue::decode(JSValue0));
+    WebCoreType* jsdomURL = dynamicDowncast<WebCoreType>(JSC::JSValue::decode(JSValue0));
     if (jsdomURL == nullptr) {
         return nullptr;
     }

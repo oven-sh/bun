@@ -138,7 +138,7 @@ static JSValue modeStatFunction(JSC::JSGlobalObject* globalObject, CallFrame* ca
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = JSC::jsDynamicCast<JSObject*>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<JSObject>(callFrame->thisValue());
     if (!thisObject)
         return JSC::jsUndefined();
 
@@ -216,7 +216,7 @@ inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::Encoded
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::JSObject* thisObject = jsDynamicCast<JSC::JSObject*>(JSC::JSValue::decode(thisValue));
+    JSC::JSObject* thisObject = dynamicDowncast<JSC::JSObject>(JSC::JSValue::decode(thisValue));
     if (!thisObject)
         return JSC::jsUndefined();
 
@@ -278,7 +278,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsBigIntStatsPrototypeGetter_atime, (JSGlobalObject * g
 JSC_DEFINE_CUSTOM_SETTER(jsStatsPrototypeFunction_DatePutter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
 {
     auto& vm = globalObject->vm();
-    JSObject* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
+    JSObject* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
     if (!thisObject)
         return false;
 

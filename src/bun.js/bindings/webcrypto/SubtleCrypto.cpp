@@ -93,7 +93,7 @@ static ExceptionOr<CryptoAlgorithmIdentifier> toHashIdentifier(JSGlobalObject& s
 static bool isRSAESPKCSWebCryptoDeprecated(JSGlobalObject& state)
 {
     return true;
-    // auto& globalObject = *JSC::jsCast<JSDOMGlobalObject*>(&state);
+    // auto& globalObject = *uncheckedDowncast<JSDOMGlobalObject>(&state);
     // auto* context = globalObject.scriptExecutionContext();
     // return context && context->settingsValues().deprecateRSAESPKCSWebCryptoEnabled;
 }
@@ -101,7 +101,7 @@ static bool isRSAESPKCSWebCryptoDeprecated(JSGlobalObject& state)
 static bool isSafeCurvesEnabled(JSGlobalObject& state)
 {
     return true;
-    // auto& globalObject = *JSC::jsCast<JSDOMGlobalObject*>(&state);
+    // auto& globalObject = *uncheckedDowncast<JSDOMGlobalObject>(&state);
     // auto* context = globalObject.scriptExecutionContext();
     // return context && context->settingsValues().webCryptoSafeCurvesEnabled;
 }

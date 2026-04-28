@@ -8,7 +8,7 @@
  */
 
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 // @ts-ignore — utils.mjs has JSDoc types but no .d.ts
@@ -335,6 +335,7 @@ function upload(paths: string[], cwd: string): void {
 function computeBunTriplet(cfg: Config): string {
   let t = `bun-${cfg.os}-${cfg.arch}`;
   if (cfg.abi === "musl") t += "-musl";
+  if (cfg.abi === "android") t += "-android";
   if (cfg.baseline) t += "-baseline";
   return t;
 }
@@ -363,12 +364,18 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // Env vars match cmake's (BuildBun.cmake ~1462).
   // No setarch wrapper — cmake doesn't use one for features.mjs either
   // (only for the --revision smoke test).
-  console.log("Generating features.json...");
-  run([exe, resolve(cfg.cwd, "scripts", "features.mjs")], buildDir, {
-    BUN_GARBAGE_COLLECTOR_LEVEL: "1",
-    BUN_DEBUG_QUIET_LOGS: "1",
-    BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
-  });
+  // Cross-compiled binaries can't run on the build host — write a stub.
+  if (cfg.crossTarget !== undefined) {
+    console.log("Skipping features.json (cross-compiled binary cannot run on host)");
+    writeFileSync(resolve(buildDir, "features.json"), JSON.stringify({ crossTarget: cfg.crossTarget }));
+  } else {
+    console.log("Generating features.json...");
+    run([exe, resolve(cfg.cwd, "scripts", "features.mjs")], buildDir, {
+      BUN_GARBAGE_COLLECTOR_LEVEL: "1",
+      BUN_DEBUG_QUIET_LOGS: "1",
+      BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+    });
+  }
 
   const zipPaths: string[] = [];
 

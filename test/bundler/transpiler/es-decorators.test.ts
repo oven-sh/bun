@@ -705,5 +705,47 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("hi\nbye\n");
       expect(exitCode).toBe(0);
     });
+
+    test("auto-accessor with non-ASCII string key", async () => {
+      // Non-ASCII quoted keys are stored as UTF-16 in E.String. `isIdentifier`
+      // alone would accept "café" (é is ID_Continue) and the format string
+      // would then splice raw UTF-16 bytes into the symbol name, producing
+      // invalid JS with embedded NULs. The additional `isUTF8()` guard
+      // routes these to the safe fallback.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class A {
+          accessor "café" = "yes";
+        }
+        const a = new A();
+        console.log(a["café"]);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("yes\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated private auto-accessor in subclass with same name", async () => {
+      // Same collision as the public case, on the `is_private && k == 4`
+      // branch of the decorated lowering path. Each class's `accessor #x`
+      // must get its own WeakMap binding.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function tag(target, ctx) {
+          return target;
+        }
+        class A {
+          @tag accessor #x = "A";
+          getA() { return this.#x; }
+        }
+        class B extends A {
+          @tag accessor #x = "B";
+          getB() { return this.#x; }
+        }
+        const b = new B();
+        console.log(b.getA(), b.getB());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("A B\n");
+      expect(exitCode).toBe(0);
+    });
   });
 });

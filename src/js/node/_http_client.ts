@@ -280,12 +280,16 @@ function ClientRequest(input, options, cb) {
 
   const onAbort = (_err?: Error) => {
     this[kClearTimeout]?.();
+    // Release the agent slot before socketCloseListener() emits 'close' on
+    // the socket. The 'agentRemove' listener (see installListeners in
+    // _http_agent.ts) removes the agent's 'close' listener, so doing this
+    // first prevents both listeners from decrementing totalSocketCount.
+    releaseAgentSocket();
     socketCloseListener();
     if (!this[abortedSymbol] && !this?.res?.complete) {
       process.nextTick(emitAbortNextTick, this);
       this[abortedSymbol] = true;
     }
-    releaseAgentSocket();
   };
 
   let fetching = false;

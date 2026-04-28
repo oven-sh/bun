@@ -153,4 +153,40 @@ describe("node:http Agent socket accounting", () => {
       server.close();
     }
   });
+
+  test("aborting a request releases exactly one agent slot", async () => {
+    const agent = new http.Agent({ maxSockets: 2 });
+
+    const server = http.createServer(() => {
+      // never respond
+    });
+    server.listen(0);
+    try {
+      await once(server, "listening");
+      const port = (server.address() as AddressInfo).port;
+      const name = agent.getName({ port });
+
+      const reqs: http.ClientRequest[] = [];
+      for (let i = 0; i < 2; i++) {
+        const req = http.request({ port, agent });
+        req.on("error", () => {});
+        req.end();
+        reqs.push(req);
+      }
+
+      expect(agent.totalSocketCount).toBe(2);
+      expect(agent.sockets[name]!.length).toBe(2);
+
+      for (const r of reqs) r.abort();
+      await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+
+      // Each abort must decrement exactly once — not once for 'close' and
+      // again for 'agentRemove'.
+      expect(agent.totalSocketCount).toBe(0);
+      expect(name in agent.sockets).toBe(false);
+    } finally {
+      agent.destroy();
+      server.close();
+    }
+  });
 });

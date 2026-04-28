@@ -1592,6 +1592,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
         .ParameterDescription => {
             var description: protocol.ParameterDescription = undefined;
             try description.decodeInternal(Context, reader);
+            errdefer bun.default_allocator.free(description.parameters);
             const request = this.current() orelse return error.ExpectedRequest;
             var statement = request.statement orelse return error.ExpectedStatement;
             if (statement.parameters.len > 0) {

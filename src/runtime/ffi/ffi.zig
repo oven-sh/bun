@@ -71,6 +71,22 @@ pub const FFI = struct {
         bun.destroy(this);
     }
 
+    extern "c" fn Bun__FFIFunction_setOwner(*JSGlobalObject, jsc.JSValue, jsc.JSValue) void;
+
+    /// Each compiled symbol is exposed as a JSFFIFunction whose native entry
+    /// point lives in TCC-relocated (or dlopen'd) memory owned by this FFI
+    /// wrapper. Give every such function a strong GC edge back to the
+    /// wrapper so that extracting a symbol and dropping the wrapper (the
+    /// documented `const { symbols: { fn } } = dlopen(...)` pattern) cannot
+    /// let finalize() free the code page while `fn` is still callable.
+    fn setFunctionOwners(this: *FFI, globalThis: *JSGlobalObject, js_object: jsc.JSValue) void {
+        for (this.functions.values()) |*function| {
+            if (function.step == .compiled and function.step.compiled.js_function != .zero) {
+                Bun__FFIFunction_setOwner(globalThis, function.step.compiled.js_function, js_object);
+            }
+        }
+    }
+
     fn deinit(this: *FFI) void {
         if (this.closed) {
             return;
@@ -849,6 +865,7 @@ pub const FFI = struct {
         compile_c.symbols = .{};
 
         const js_object = lib.toJS(globalThis);
+        lib.setFunctionOwners(globalThis, js_object);
         jsc.Codegen.JSFFI.symbolsValueSetCached(js_object, globalThis, obj);
         return js_object;
     }
@@ -1179,6 +1196,7 @@ pub const FFI = struct {
         });
 
         const js_object = lib.toJS(global);
+        lib.setFunctionOwners(global, js_object);
         jsc.Codegen.JSFFI.symbolsValueSetCached(js_object, global, obj);
         return js_object;
     }
@@ -1289,6 +1307,7 @@ pub const FFI = struct {
         });
 
         const js_object = lib.toJS(global);
+        lib.setFunctionOwners(global, js_object);
         jsc.Codegen.JSFFI.symbolsValueSetCached(js_object, global, obj);
         return js_object;
     }

@@ -42,8 +42,11 @@ async function main() {
     assert.strictEqual(seen, PER_ITERATION, `iteration ${i}: expected ${PER_ITERATION} messages, got ${seen}`);
   }
 
-  await worker.terminate();
+  // The race under test has already been exercised above. Exit directly instead of awaiting
+  // worker.terminate() so this fixture is not coupled to worker-termination shutdown paths.
+  worker.unref();
   console.log("ok");
+  process.exit(0);
 }
 
 main();

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, invalidTls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, invalidTls, isASAN, isDebug, tmpdirSync } from "harness";
 import type { AddressInfo } from "node:net";
 import type { Server, TLSSocket } from "node:tls";
 import { join } from "path";
@@ -609,3 +609,78 @@ describe("tls ciphers should work", () => {
     );
   });
 });
+
+it("server-side getPeerCertificate() should not leak", async () => {
+  // Server path goes SSL_get_peer_certificate → X509.toJS → toLegacyObject.
+  // Two leaks on that path:
+  //   1. SSL_get_peer_certificate returns a +1 X509 ref that was passed
+  //      through a non-owning X509View and never freed (pins the X509 past
+  //      session close).
+  //   2. toLegacyObject/computeRaw leaked a BIO on every call (and its
+  //      ArrayBuffer destructor BIO_free'd the data pointer instead of the
+  //      BIO, which is UB).
+  // With both fixed, RSS is flat after warmup.
+  const { promise: serverSocketPromise, resolve: onServerSocket } = Promise.withResolvers<TLSSocket>();
+  const server = tls.createServer(
+    {
+      key: serverTls.key,
+      cert: serverTls.cert,
+      ca: [clientTls.ca],
+      requestCert: true,
+      rejectUnauthorized: false,
+    },
+    socket => onServerSocket(socket),
+  );
+  await once(server.listen(0, "127.0.0.1"), "listening");
+
+  const client = tls.connect({
+    host: "127.0.0.1",
+    port: (server.address() as AddressInfo).port,
+    key: clientTls.key,
+    cert: clientTls.cert,
+    ca: [serverTls.ca],
+    checkServerIdentity,
+  });
+  await once(client, "secureConnect");
+
+  const serverSocket = await serverSocketPromise;
+  try {
+    // Make sure the client actually sent a cert so we exercise the
+    // SSL_get_peer_certificate path rather than falling through to the
+    // cert-chain branch.
+    const first = serverSocket.getPeerCertificate();
+    expect(first).toBeDefined();
+    expect(first?.subject).toBeDefined();
+
+    function spin(n: number) {
+      for (let i = 0; i < n; i++) {
+        serverSocket.getPeerCertificate();
+        serverSocket.getPeerCertificate(false);
+      }
+      Bun.gc(true);
+      Bun.gc(true);
+    }
+
+    // Run in fixed-size rounds with a GC after each so the steady-state
+    // heap footprint stays bounded. The first few rounds grow the heap
+    // regardless of leaks, so take the baseline after warmup.
+    const perRound = 5_000;
+    for (let round = 0; round < 4; round++) spin(perRound);
+    const baseline = process.memoryUsage.rss();
+
+    const measureRounds = 8;
+    for (let round = 0; round < measureRounds; round++) spin(perRound);
+    const after = process.memoryUsage.rss();
+    const growth = after - baseline;
+
+    // Unpatched, the BIO leak alone is ~800 bytes/call → >32MB over the
+    // 40k abbreviated calls here. Leave slack for allocator/ASAN noise but
+    // stay well below that.
+    const threshold = 1024 * 1024 * (isASAN || isDebug ? 20 : 12);
+    expect(growth).toBeLessThan(threshold);
+  } finally {
+    client.end();
+    serverSocket.end();
+    server.close();
+  }
+}, 120_000);

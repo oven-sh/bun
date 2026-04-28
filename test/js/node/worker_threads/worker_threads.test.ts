@@ -281,19 +281,24 @@ describe("execArgv option", async () => {
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
-test("eval does not leak source code", async () => {
-  const proc = Bun.spawn({
-    cmd: [bunExe(), "eval-source-leak-fixture.js"],
-    env: bunEnv,
-    cwd: __dirname,
-    stderr: "pipe",
-    stdout: "ignore",
-  });
-  await proc.exited;
-  const errors = await proc.stderr.text();
-  if (errors.length > 0) throw new Error(errors);
-  expect(proc.exitCode).toBe(0);
-});
+test(
+  "eval does not leak source code",
+  async () => {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "eval-source-leak-fixture.js"],
+      env: bunEnv,
+      cwd: __dirname,
+      stderr: "pipe",
+      stdout: "ignore",
+    });
+    await proc.exited;
+    const errors = await proc.stderr.text();
+    if (errors.length > 0) throw new Error(errors);
+    expect(proc.exitCode).toBe(0);
+  },
+  // Spawns six workers with 100 MiB of source each; slow in debug builds.
+  60_000,
+);
 
 describe("worker event", () => {
   test("is emitted on the next tick with the right value", () => {
@@ -371,21 +376,26 @@ describe("environmentData", () => {
     expect(getEnvironmentData("does_not_exist")).toBeUndefined();
   });
 
-  test("is deeply inherited", async () => {
-    const proc = Bun.spawn({
-      cmd: [bunExe(), "environmentdata-inherit-fixture.js"],
-      env: bunEnv,
-      cwd: __dirname,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    await proc.exited;
-    const errors = await proc.stderr.text();
-    if (errors.length > 0) throw new Error(errors);
-    expect(proc.exitCode).toBe(0);
-    const out = await proc.stdout.text();
-    expect(out).toBe("foo\n".repeat(5));
-  });
+  test(
+    "is deeply inherited",
+    async () => {
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "environmentdata-inherit-fixture.js"],
+        env: bunEnv,
+        cwd: __dirname,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      await proc.exited;
+      const errors = await proc.stderr.text();
+      if (errors.length > 0) throw new Error(errors);
+      expect(proc.exitCode).toBe(0);
+      const out = await proc.stdout.text();
+      expect(out).toBe("foo\n".repeat(5));
+    },
+    // Five nested workers; slow in debug builds.
+    30_000,
+  );
 
   test("can be used if parent thread had not imported worker_threads", async () => {
     const proc = Bun.spawn({

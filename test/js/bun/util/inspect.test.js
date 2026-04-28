@@ -465,6 +465,34 @@ describe("crash testing", () => {
       }
     });
   }
+
+  it("inspecting object with Proxy prototype whose getPrototypeOf trap throws doesn't crash", () => {
+    const obj = { a: 1 };
+    const proto = new Proxy(
+      { b: 2 },
+      {
+        getPrototypeOf() {
+          throw new Error("nope");
+        },
+      },
+    );
+    Object.setPrototypeOf(obj, proto);
+    expect(() => Bun.inspect(obj)).not.toThrow();
+  });
+
+  it("inspecting object with Proxy prototype that leaves a pending exception during enumeration doesn't crash", () => {
+    const target = {
+      get first() {
+        return 1;
+      },
+      get second() {
+        throw new Error("getter threw");
+      },
+    };
+    const obj = { a: 1 };
+    Object.setPrototypeOf(obj, new Proxy(target, {}));
+    expect(() => Bun.inspect(obj)).not.toThrow();
+  });
 });
 
 it("possibly formatted emojis log", () => {

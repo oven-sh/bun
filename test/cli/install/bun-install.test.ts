@@ -5530,7 +5530,11 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.3.tgz`, `${ctx.registry_url}baz-0.0.5.tgz`]);
+      expect(urls.sort()).toEqual([
+        `${ctx.registry_url}baz`,
+        `${ctx.registry_url}baz-0.0.3.tgz`,
+        `${ctx.registry_url}baz-0.0.5.tgz`,
+      ]);
       expect(ctx.requested).toBe(3);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "baz"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
@@ -8586,7 +8590,11 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.3.tgz`, `${ctx.registry_url}baz-0.0.5.tgz`]);
+      expect(urls.sort()).toEqual([
+        `${ctx.registry_url}baz`,
+        `${ctx.registry_url}baz-0.0.3.tgz`,
+        `${ctx.registry_url}baz-0.0.5.tgz`,
+      ]);
       expect(ctx.requested).toBe(3);
 
       await access(join(ctx.package_dir, "bun.lockb"));

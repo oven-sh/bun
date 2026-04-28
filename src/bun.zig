@@ -3123,11 +3123,24 @@ pub fn unsafeAssert(condition: bool) callconv(callconv_inline) void {
 
 pub const dns = @import("./dns.zig");
 
+pub const hw_timer = @import("./hw_timer.zig");
+
 pub fn getRoughTickCount(comptime mock_mode: timespec.MockMode) timespec {
     if (mock_mode == .allow_mocked_time) {
         if (bun.jsc.Jest.bun_test.FakeTimers.current_time.getTimespecNow()) |fake_time| {
             return fake_time;
         }
+    }
+
+    if (comptime hw_timer.is_supported) {
+        // Unbarriered HW counter: faster *and* finer-grained than the
+        // approximate clocks below (e.g. ~24 ns vs ~12 µs resolution on
+        // Apple Silicon). See WebKit r312153.
+        const ns_value = hw_timer.nowNs();
+        return timespec{
+            .sec = @intCast(ns_value / std.time.ns_per_s),
+            .nsec = @intCast(ns_value % std.time.ns_per_s),
+        };
     }
 
     if (comptime Environment.isMac) {

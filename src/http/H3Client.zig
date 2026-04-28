@@ -140,6 +140,33 @@ pub const ClientSession = struct {
         if (client) |cl| cl.failFromH2(err);
     }
 
+    /// A stream closed before any response headers arrived. If the request
+    /// hasn't been retried yet and the body wasn't a JS stream (which may
+    /// already be consumed), re-enqueue it on a fresh session — this is the
+    /// standard h2/h3 client behavior for the GOAWAY / stateless-reset /
+    /// port-reuse race where a pooled session goes stale between the
+    /// `matches()` check and the first stream open.
+    fn retryOrFail(this: *ClientSession, stream: *Stream, err: anyerror) void {
+        const client = stream.client orelse return this.fail(stream, err);
+        if (client.flags.h3_retried or stream.is_streaming_body) {
+            return this.fail(stream, err);
+        }
+        const ctx = ClientContext.get() orelse return this.fail(stream, err);
+        client.flags.h3_retried = true;
+        // The old session is dead from our perspective; make sure connect()
+        // can't pick it again.
+        this.closed = true;
+        const port = this.port;
+        const host = bun.handleOom(bun.default_allocator.dupe(u8, this.hostname));
+        defer bun.default_allocator.free(host);
+        log("retry {s}:{d} after {s}", .{ host, port, @errorName(err) });
+        stream.abort();
+        this.detach(stream);
+        if (!ctx.connect(client, host, port)) {
+            client.failFromH2(err);
+        }
+    }
+
     pub fn abortByHttpId(this: *ClientSession, async_http_id: u32) bool {
         for (this.pending.items) |stream| {
             const cl = stream.client orelse continue;
@@ -319,7 +346,7 @@ pub const ClientSession = struct {
         if (client.state.response_stage != .body) {
             if (done) {
                 // Stream closed before headers — handshake/reset failure.
-                return this.fail(stream, if (stream.status_code == 0)
+                return this.retryOrFail(stream, if (stream.status_code == 0)
                     error.HTTP3StreamReset
                 else
                     error.ConnectionClosed);
@@ -519,18 +546,12 @@ fn onConnClose(qs: *quic.Socket) callconv(.c) void {
     const st = qs.status(&buf);
     log("conn_close status={d} '{s}'", .{ st, std.mem.sliceTo(&buf, 0) });
     if (ClientContext.instance) |ctx| ctx.unregister(session);
-    // Fail anything still waiting on a stream. Streams that already have a
-    // qstream get their own onStreamClose.
-    var i: usize = 0;
-    while (i < session.pending.items.len) {
-        const stream = session.pending.items[i];
-        if (stream.qstream != null) {
-            i += 1;
-            continue;
-        }
-        const client = stream.client;
-        session.detach(stream);
-        if (client) |cl| cl.failFromH2(if (session.handshake_done)
+    while (session.pending.items.len > 0) {
+        // lsquic fires on_stream_close for every bound stream before
+        // on_conn_closed, so anything still here never got a qstream.
+        const stream = session.pending.items[0];
+        bun.debugAssert(stream.qstream == null);
+        session.retryOrFail(stream, if (session.handshake_done)
             error.ConnectionClosed
         else
             error.HTTP3HandshakeFailed);

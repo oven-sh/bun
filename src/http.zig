@@ -593,7 +593,10 @@ pub const Flags = packed struct(u32) {
     /// Set by `fetch(url, { protocol: "http3" })`: skip TCP entirely and open
     /// a QUIC connection. HTTPS-only; no proxy/unix-socket support.
     force_http3: bool = false,
-    _: u14 = 0,
+    /// Set after the first H3 retry so a stale-session/GOAWAY race retries
+    /// once on a fresh connection but never loops.
+    h3_retried: bool = false,
+    _: u13 = 0,
 };
 
 // TODO: reduce the size of this struct

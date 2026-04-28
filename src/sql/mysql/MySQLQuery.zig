@@ -24,6 +24,13 @@ fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject: *J
         bun.default_allocator.free(params);
     }
     while (try iter.next()) |js_value| {
+        if (i >= params.len) {
+            // The binding array yielded more values than the prepared statement
+            // expects. This can happen when the user-supplied array is mutated (e.g.
+            // from an index getter) between signature generation and binding. Fail
+            // loudly instead of writing past the end of `params`/`param_types`.
+            return error.WrongNumberOfParametersProvided;
+        }
         const param = execute.param_types[i];
         params[i] = try Value.fromJS(
             js_value,
@@ -36,6 +43,12 @@ fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject: *J
 
     if (iter.anyFailed()) {
         return error.InvalidQueryBinding;
+    }
+
+    if (i != params.len) {
+        // Fewer values than the prepared statement expects; the remaining slots
+        // would be uninitialized.
+        return error.WrongNumberOfParametersProvided;
     }
 
     this.#status = .binding;

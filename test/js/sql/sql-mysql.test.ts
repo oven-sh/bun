@@ -1,6 +1,6 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { beforeAll, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunRun, describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
 import net from "net";
 import path from "path";
 const dir = tempDirWithFiles("sql-test", {
@@ -815,6 +815,36 @@ if (isDockerEnabled()) {
         test("unsafe simple", async () => {
           await using sql = new SQL({ ...getOptions(), max: 1 });
           expect(await sql.unsafe("select 1 as x")).toEqual([{ x: 1 }]);
+        });
+
+        test("unsafe does not OOB when the params array grows during binding", async () => {
+          // Signature generation and binding each iterate the user-supplied params
+          // array. If an index getter mutates the array so that the second
+          // iteration is longer than the first, bind() must not read/write past
+          // the param buffer it allocated based on the first iteration's length.
+          // Run in a subprocess so a crash doesn't take down the rest of the suite.
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), path.join(import.meta.dir, "sql-mysql-bind-oob.fixture.ts")],
+            env: {
+              ...bunEnv,
+              MYSQL_URL: String(getOptions().url),
+              CA_PATH: image.name === "MySQL with TLS" ? path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem") : "",
+            },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([
+            proc.stdout.text(),
+            proc.stderr.text(),
+            proc.exited,
+          ]);
+          expect(stderr).toBe("");
+          expect(JSON.parse(stdout.trim())).toEqual({
+            ok: false,
+            code: "ERR_MYSQL_WRONG_NUMBER_OF_PARAMETERS_PROVIDED",
+            message: expect.any(String),
+          });
+          expect(exitCode).toBe(0);
         });
 
         test("simple query with multiple statements", async () => {

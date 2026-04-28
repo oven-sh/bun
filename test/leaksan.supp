@@ -32,6 +32,7 @@ leak:dyld::ThreadLocalVariables
 leak:JSC__JSModuleLoader__loadAndEvaluateModule
 leak:uws_create_app
 leak:lshpack_wrapper_decode
+leak:lshpack_wrapper_encode
 leak:lshpack_wrapper_init
 leak:bun.js.ipc.onData2
 leak:bun.js.node.fs_events.InitLibrary

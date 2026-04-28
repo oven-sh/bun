@@ -11,16 +11,14 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // mimalloc heap (seq 0) directly — bun.default_allocator allocates there.
 // Each unfreed Load struct is one live block; (moduleCount * iterations)
 // leaked blocks is an unambiguous signal that survives allocator noise.
-test(
-  "Bun.build onLoad plugin does not leak the Load struct per matched file",
-  async () => {
-    const moduleCount = 100;
-    const iterations = 20;
-    const imports = Array.from({ length: moduleCount }, (_, i) => `import "virtual:mod${i}";`).join("\n");
+test("Bun.build onLoad plugin does not leak the Load struct per matched file", async () => {
+  const moduleCount = 100;
+  const iterations = 20;
+  const imports = Array.from({ length: moduleCount }, (_, i) => `import "virtual:mod${i}";`).join("\n");
 
-    using dir = tempDir("bundler-onload-leak", {
-      "index.ts": imports + "\nexport const ok = 1;\n",
-      "build.ts": /* ts */ `
+  using dir = tempDir("bundler-onload-leak", {
+    "index.ts": imports + "\nexport const ok = 1;\n",
+    "build.ts": /* ts */ `
         import { heapStats } from "bun:jsc";
 
         const plugin: import("bun").BunPlugin = {
@@ -66,22 +64,20 @@ test(
           throw new Error("leaked " + delta + " live mimalloc blocks over " + ${iterations} + " builds (threshold " + threshold + ")");
         }
       `,
-    });
+  });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--smol", "build.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", "build.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).not.toContain("leaked");
-    expect(stderr).not.toContain("build failed");
-    expect(stdout).toBe("");
-    expect(exitCode).toBe(0);
-  },
-  120_000,
-);
+  expect(stderr).not.toContain("leaked");
+  expect(stderr).not.toContain("build failed");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(0);
+}, 120_000);

@@ -460,7 +460,9 @@ pub fn decodeHeaderBlock(session: *ClientSession, stream: *Stream) void {
                 continue;
             }
             seen_status = true;
-            status = std.fmt.parseInt(u32, result.value, 10) catch 0;
+            // RFC 9110 §15: status-code is a 3-digit integer.
+            status = if (result.value.len == 3) std.fmt.parseInt(u32, result.value, 10) catch 0 else 0;
+            if (status < 100 or status > 999) malformed = true;
             continue;
         }
         seen_regular = true;

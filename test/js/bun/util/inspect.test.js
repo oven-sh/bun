@@ -692,6 +692,35 @@ it("CloseEvent", () => {
   `);
 });
 
+it("does not crash when the prototype is a Proxy wrapping a throwing getter", () => {
+  class Foo {
+    get bar() {
+      throw new Error("getter threw");
+    }
+  }
+  const obj = new Foo();
+  Object.setPrototypeOf(obj, new Proxy(Foo.prototype, {}));
+  expect(() => Bun.inspect(obj)).not.toThrow();
+});
+
+it("does not crash when the prototype is a Proxy with a throwing getPrototypeOf trap", () => {
+  class Foo {
+    get bar() {
+      return 1;
+    }
+  }
+  const obj = new Foo();
+  Object.setPrototypeOf(
+    obj,
+    new Proxy(Foo.prototype, {
+      getPrototypeOf() {
+        throw new Error("trap threw");
+      },
+    }),
+  );
+  expect(() => Bun.inspect(obj)).not.toThrow();
+});
+
 it("ErrorEvent", () => {
   const errorEvent = new ErrorEvent("error", {
     message: "Something went wrong",

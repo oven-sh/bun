@@ -1616,14 +1616,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!Bun__isMainThreadVM()) {
-        scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_WORKER_UNSUPPORTED_OPERATION,
-            "Calling process.execve is not supported in workers"_s));
+        scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_WORKER_UNSUPPORTED_OPERATION, "Calling process.execve is not supported in workers"_s));
         return {};
     }
 
 #if OS(WINDOWS)
-    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_FEATURE_UNAVAILABLE_ON_PLATFORM,
-        "The feature process.execve is unavailable on the current platform, which is being used to run Node.js"_s));
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_FEATURE_UNAVAILABLE_ON_PLATFORM, "The feature process.execve is unavailable on the current platform, which is being used to run Node.js"_s));
     return {};
 #else
     JSValue execPathValue = callFrame->argument(0);

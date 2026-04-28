@@ -193,7 +193,7 @@ var access = function access(path, mode, callback) {
     }
 
     ensureCallback(callback);
-    fs.rm(path, options).then(nullcallback(callback), callback);
+    fs.rm(path, options).then(nullcallback(callback), err => callback(maybeRemapRmEISDIR(err, path, options)));
   },
   rmdir = function rmdir(path, options, callback) {
     if ($isCallable(options)) {
@@ -590,7 +590,13 @@ var access = function access(path, mode, callback) {
   unlinkSync = fs.unlinkSync.bind(fs),
   utimesSync = fs.utimesSync.bind(fs),
   lutimesSync = fs.lutimesSync.bind(fs),
-  rmSync = fs.rmSync.bind(fs),
+  rmSync = function rmSync(path, options) {
+    try {
+      return fs.rmSync(path, options);
+    } catch (err) {
+      throw maybeRemapRmEISDIR(err, path, options);
+    }
+  },
   rmdirSync = fs.rmdirSync.bind(fs),
   writev = function writev(fd, buffers, position, callback) {
     if (typeof position === "function") {
@@ -648,6 +654,8 @@ defineCustomPromisifyArgs(writev, ["bytesWritten", "buffers"]);
 // the reason it's not done right now is because there isnt a great way to have multiple
 // listeners per StatWatcher with the current implementation in native code. the downside
 // of this means we need to do path validation in the js side of things
+const { maybeRemapRmEISDIR } = require("internal/fs/rm-utils");
+
 const statWatchers = new Map();
 function getValidatedPath(p: any) {
   if (p instanceof URL) return Bun.fileURLToPath(p as URL);

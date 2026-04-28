@@ -5827,7 +5827,43 @@ pub const NodeFS = struct {
 
             {
                 const code: E = switch (err1) {
-                    error.AccessDenied => .ACCES,
+                    // On Linux, unlink(2) on a directory returns EISDIR.
+                    // On macOS, unlink(2) on a directory returns EPERM,
+                    // which Zig maps to `error.AccessDenied`. We can't
+                    // tell that apart from a real EACCES/EPERM on a file,
+                    // so probe with a stat and only remap when the target
+                    // is actually a directory.
+                    //
+                    // Node.js throws `ERR_FS_EISDIR` in this case; the JS
+                    // wrapper in `src/js/node/fs.ts` remaps this.
+                    error.IsDir => .ISDIR,
+                    error.NotDir => .NOTDIR,
+                    error.AccessDenied => brk: {
+                        // On macOS `unlink(2)` on a directory returns
+                        // EPERM; on Windows `DeleteFile()` on a
+                        // directory returns ERROR_ACCESS_DENIED. Both
+                        // surface as `error.AccessDenied`, so probe the
+                        // path before remapping — we must not clobber a
+                        // real EACCES/EPERM on a regular file.
+                        //
+                        // `lstatat` uses `AT_SYMLINK_NOFOLLOW`, so a
+                        // symlink pointing at a directory is NOT
+                        // remapped — unlink on a symlink is legal and
+                        // any permission error on the link itself must
+                        // surface unchanged.
+                        if (comptime Environment.isMac or Environment.isWindows) {
+                            // Direct bit-test instead of `bun.S.ISDIR`:
+                            // on Windows `stat_buf.mode` is `u64`
+                            // (`uv_stat_t`) but `bun.S.ISDIR` takes an
+                            // `i32`, so the helper doesn't type-check
+                            // across platforms.
+                            switch (bun.sys.lstatat(bun.invalid_fd, dest)) {
+                                .result => |stat_buf| if (stat_buf.mode & bun.S.IFMT == bun.S.IFDIR) break :brk .ISDIR,
+                                .err => {},
+                            }
+                        }
+                        break :brk .ACCES;
+                    },
                     error.SymLinkLoop => .LOOP,
                     error.NameTooLong => .NAMETOOLONG,
                     error.SystemResources => .NOMEM,

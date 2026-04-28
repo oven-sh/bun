@@ -117,6 +117,8 @@ async function opendir(dir: string, options) {
   return new (require("node:fs").Dir)(1, dir, options);
 }
 
+const { maybeRemapRmEISDIR } = require("internal/fs/rm-utils");
+
 const private_symbols = {
   kRef,
   kUnref,
@@ -195,7 +197,13 @@ const exports = {
   unlink: asyncWrap(fs.unlink, "unlink"),
   utimes: asyncWrap(fs.utimes, "utimes"),
   lutimes: asyncWrap(fs.lutimes, "lutimes"),
-  rm: asyncWrap(fs.rm, "rm"),
+  rm: async function rm(path, options) {
+    try {
+      return await fs.rm(path, options);
+    } catch (err) {
+      throw maybeRemapRmEISDIR(err, path, options);
+    }
+  },
   rmdir: asyncWrap(fs.rmdir, "rmdir"),
   writev: async (fd, buffers, position) => {
     var bytesWritten = await fs.writev(fd, buffers, position);

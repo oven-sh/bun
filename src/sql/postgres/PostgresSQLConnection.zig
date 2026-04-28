@@ -1606,6 +1606,22 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             errdefer description.deinit();
             const request = this.current() orelse return error.ExpectedRequest;
             var statement = request.statement orelse return error.ExpectedStatement;
+            // A simple query can contain multiple statements, each producing
+            // its own RowDescription against the same PostgresSQLStatement.
+            // Free the previous fields before replacing them so we don't leak
+            // the prior result set's FieldDescription slice and owned column
+            // names, and reset the state derived from those fields so the
+            // next DataRow rebuilds the structure for the new result set.
+            if (statement.fields.len > 0) {
+                for (statement.fields) |*field| {
+                    field.deinit();
+                }
+                bun.default_allocator.free(statement.fields);
+                statement.cached_structure.deinit();
+                statement.cached_structure = .{};
+                statement.needs_duplicate_check = true;
+                statement.fields_flags = .{};
+            }
             statement.fields = description.fields;
         },
         .Authentication => {

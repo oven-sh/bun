@@ -13,7 +13,7 @@ const assert = require("assert");
 const { once } = require("events");
 const { Worker, MessageChannel } = require("worker_threads");
 
-const PER_ITERATION = 20;
+const PER_ITERATION = 50;
 
 async function main() {
   const worker = new Worker(

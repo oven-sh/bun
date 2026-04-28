@@ -78,9 +78,7 @@ function validatePattern(pattern: string | string[]): string[] {
 // layer uses to pick up Node-compatible semantics. They aren't part of
 // the public `GlobScanOptions` type; widen the return type locally so
 // the object literal below typechecks without exposing the knobs.
-function mapOptions(
-  options: GlobOptions,
-): GlobScanOptions & {
+function mapOptions(options: GlobOptions): GlobScanOptions & {
   exclude: GlobOptions["exclude"];
   descendLiteralSymlinks: boolean;
   swallowMissingCwd: boolean;

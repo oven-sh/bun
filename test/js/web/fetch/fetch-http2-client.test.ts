@@ -77,13 +77,29 @@ type RawConn = {
   goaway(lastId: number, code: number): void;
 };
 
+type RawState = {
+  connections: number;
+  rst: Array<{ id: number; code: number }>;
+  /** Resolves once every accepted socket has emitted `close` — i.e. all
+   *  in-flight client frames have been delivered to the `data` handler.
+   *  Tests asserting on server-side capture (`state.rst`) should await this
+   *  instead of racing the subprocess exit. */
+  allClosed: () => Promise<void>;
+};
+
 async function withRawH2Server(
   onStream: (conn: RawConn, streamId: number, connIndex: number) => void,
-  fn: (url: string, state: { connections: number; rst: Array<{ id: number; code: number }> }) => Promise<void>,
+  fn: (url: string, state: RawState) => Promise<void>,
 ) {
-  const state = { connections: 0, rst: [] as Array<{ id: number; code: number }> };
+  const closed: Promise<unknown>[] = [];
+  const state: RawState = {
+    connections: 0,
+    rst: [],
+    allClosed: () => Promise.all(closed).then(() => {}),
+  };
   const server = nodetls.createServer({ ...tls, ALPNProtocols: ["h2"] }, socket => {
     const connIndex = state.connections++;
+    closed.push(once(socket, "close"));
     const conn: RawConn = {
       socket,
       settings: () => socket.write(frame(4, 0, 0)),
@@ -1330,6 +1346,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
           const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           expect(stderr).toBe("");
           expect(stdout.trim()).toBe("200 true");
+          await state.allClosed();
           expect(state.rst).toEqual([{ id: 1, code: 8 }]);
           expect(exitCode).toBe(0);
         },
@@ -1353,6 +1370,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
           const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           expect(stdout).toContain("rejected");
           expect(exitCode).toBe(0);
+          await state.allClosed();
           // 0x8 = CANCEL
           expect(state.rst).toEqual([{ id: 1, code: 8 }]);
         },

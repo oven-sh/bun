@@ -1595,8 +1595,12 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
         .ParameterDescription => {
             var description: protocol.ParameterDescription = undefined;
             try description.decodeInternal(Context, reader);
+            errdefer bun.default_allocator.free(description.parameters);
             const request = this.current() orelse return error.ExpectedRequest;
             var statement = request.statement orelse return error.ExpectedStatement;
+            if (statement.parameters.len > 0) {
+                bun.default_allocator.free(statement.parameters);
+            }
             statement.parameters = description.parameters;
             if (statement.status == .parsing) {
                 statement.status = .prepared;
@@ -1609,6 +1613,22 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             errdefer description.deinit();
             const request = this.current() orelse return error.ExpectedRequest;
             var statement = request.statement orelse return error.ExpectedStatement;
+            // A simple-mode query containing multiple statements (e.g.
+            // "SELECT 1; SELECT a, b FROM t") receives one RowDescription per
+            // result set while the same statement stays current() until
+            // ReadyForQuery. Free any previous fields before overwriting and
+            // invalidate state derived from them so the next DataRow builds
+            // the correct structure instead of reusing a stale cached one.
+            if (statement.fields.len > 0) {
+                for (statement.fields) |*field| {
+                    field.deinit();
+                }
+                bun.default_allocator.free(statement.fields);
+                statement.cached_structure.deinit();
+                statement.cached_structure = .{};
+                statement.needs_duplicate_check = true;
+                statement.fields_flags = .{};
+            }
             statement.fields = description.fields;
         },
         .Authentication => {

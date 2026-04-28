@@ -5,6 +5,7 @@ type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
 const Readable = require("internal/streams/readable");
+const Writable = require("internal/streams/writable");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
 
 const {
@@ -12,10 +13,13 @@ const {
   BroadcastChannel,
   Worker: WebWorker,
 } = globalThis as typeof globalThis & {
-  // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
-  // instance. This is so that it can emit the `worker` event on the process with the
-  // node:worker_threads instance instead of the Web Worker instance.
-  Worker: new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker;
+  // The Worker constructor secretly takes extra parameters: the node:worker_threads
+  // instance (so the 'worker' event on the process carries the node:worker_threads
+  // Worker object instead of the Web Worker), and an internal-data array that is
+  // serialized alongside workerData and made available to the worker's binding.
+  Worker: new (
+    ...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker, internalData: unknown]
+  ) => WebWorker;
 };
 const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
 
@@ -25,11 +29,13 @@ const {
   1: _threadId,
   2: _receiveMessageOnPort,
   3: environmentData,
+  4: _internalData,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
   (port: unknown) => unknown,
   Map<unknown, unknown>,
+  [MessagePort, boolean] | undefined,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -223,6 +229,194 @@ function moveMessagePortToContext() {
   throwNotImplemented("worker_threads.moveMessagePortToContext");
 }
 
+// --- Worker stdio streams --------------------------------------------------
+// Node.js exposes Readable streams for a worker's stdout/stderr and an
+// optional Writable for stdin on the parent side. Inside the worker,
+// process.stdout/stderr/stdin are replaced with the counterpart Writable/
+// Readable streams. Data is exchanged over an internal MessagePort created by
+// the parent and transferred to the worker via the native constructor
+// (createNodeWorkerThreadsBinding returns it as index 4 of the binding array).
+
+const STDIO_PAYLOAD = 0;
+const STDIO_WANTS_MORE_DATA = 1;
+
+const kPort = Symbol("kPort");
+const kName = Symbol("kName");
+const kWaitingStreams = Symbol("kWaitingStreams");
+const kIncrementsPortRef = Symbol("kIncrementsPortRef");
+const kStartedReading = Symbol("kStartedReading");
+const kWritableCallback = Symbol("kWritableCallback");
+const kStdioWantsMoreDataCallback = Symbol("kStdioWantsMoreDataCallback");
+
+class ReadableWorkerStdio extends Readable {
+  constructor(port, name) {
+    super();
+    this[kPort] = port;
+    this[kName] = name;
+    this[kIncrementsPortRef] = true;
+    this[kStartedReading] = false;
+    this.on("end", () => {
+      if (this[kStartedReading] && this[kIncrementsPortRef]) {
+        if (--this[kPort][kWaitingStreams] === 0) this[kPort].unref();
+      }
+    });
+  }
+
+  _read() {
+    if (!this[kStartedReading] && this[kIncrementsPortRef]) {
+      this[kStartedReading] = true;
+      if (this[kPort][kWaitingStreams]++ === 0) this[kPort].ref();
+    }
+    this[kPort].postMessage({ type: STDIO_WANTS_MORE_DATA, stream: this[kName] });
+  }
+}
+
+class WritableWorkerStdio extends Writable {
+  constructor(port, name) {
+    super({ decodeStrings: false });
+    this[kPort] = port;
+    this[kName] = name;
+    this[kWritableCallback] = null;
+  }
+
+  _writev(chunks, cb) {
+    const toSend = new Array(chunks.length);
+    for (let i = 0; i < chunks.length; i++) {
+      const { chunk, encoding } = chunks[i];
+      toSend[i] = { chunk, encoding };
+    }
+    this[kPort].postMessage({
+      type: STDIO_PAYLOAD,
+      stream: this[kName],
+      chunks: toSend,
+    });
+    if (process._exiting) {
+      cb();
+    } else {
+      this[kWritableCallback] = cb;
+      if (this[kPort][kWaitingStreams]++ === 0) this[kPort].ref();
+    }
+  }
+
+  _final(cb) {
+    this[kPort].postMessage({
+      type: STDIO_PAYLOAD,
+      stream: this[kName],
+      chunks: [{ chunk: null, encoding: "" }],
+    });
+    cb();
+  }
+
+  [kStdioWantsMoreDataCallback]() {
+    const cb = this[kWritableCallback];
+    if (cb) {
+      this[kWritableCallback] = null;
+      cb();
+      if (--this[kPort][kWaitingStreams] === 0) this[kPort].unref();
+    }
+  }
+}
+
+function pipeWithoutWarning(source, dest) {
+  const sourceMaxListeners = source._maxListeners;
+  const destMaxListeners = dest._maxListeners;
+  source.setMaxListeners(Infinity);
+  dest.setMaxListeners(Infinity);
+
+  source.pipe(dest);
+
+  source._maxListeners = sourceMaxListeners;
+  dest._maxListeners = destMaxListeners;
+}
+
+// Worker-side: replace process.stdout/stderr/stdin with port-backed streams
+// so the parent's Worker#stdout/#stderr/#stdin see the worker's output/input.
+// Only applies when this worker was created via the node:worker_threads
+// wrapper (i.e. the internal stdio port was passed through); Web Workers and
+// workers that never load this module keep the real-fd-backed streams.
+if (!isMainThread && $isJSArray(_internalData)) {
+  const port = _internalData[0];
+  const hasStdin = _internalData[1];
+  if (port) {
+    const handleMessage = message => {
+      switch (message.type) {
+        case STDIO_PAYLOAD: {
+          if (message.stream === "stdin") {
+            const { chunks } = message;
+            for (let i = 0; i < chunks.length; i++) {
+              const { chunk, encoding } = chunks[i];
+              stdin.push(chunk, encoding);
+            }
+          }
+          return;
+        }
+        case STDIO_WANTS_MORE_DATA: {
+          const target = message.stream === "stdout" ? stdout : message.stream === "stderr" ? stderr : null;
+          if (target) target[kStdioWantsMoreDataCallback]();
+          return;
+        }
+      }
+    };
+    const listener = event => handleMessage((event as MessageEvent).data);
+
+    // A transferred (entangled) MessagePort in Bun refs the event loop while
+    // it has any 'message' listener (MessagePort::onDidChangeListenerImpl),
+    // independently of jsRef()/jsUnref(). Present the stream classes with a
+    // port-like object whose ref()/unref() add/remove that listener so an
+    // idle worker can exit. While no listener is attached the port can still
+    // postMessage; replies are drained synchronously in the 'exit' handler.
+    let listening = false;
+    const portWrap = {
+      [kWaitingStreams]: 0,
+      postMessage(msg) {
+        port.postMessage(msg);
+      },
+      ref() {
+        if (!listening) {
+          listening = true;
+          port.addEventListener("message", listener);
+        }
+      },
+      unref() {
+        if (listening) {
+          listening = false;
+          port.removeEventListener("message", listener);
+        }
+      },
+    };
+
+    const stdout = new WritableWorkerStdio(portWrap, "stdout");
+    const stderr = new WritableWorkerStdio(portWrap, "stderr");
+    const stdin = new ReadableWorkerStdio(portWrap, "stdin");
+    if (!hasStdin) stdin.push(null);
+
+    // Flush any in-flight writes (including ones made from inside 'exit'
+    // handlers, where process._exiting is already true and _writev's
+    // callback fires synchronously). Drain pending port messages first so
+    // buffered writes get posted before the thread tears down.
+    process.on("exit", () => {
+      let msg;
+      while ((msg = _receiveMessageOnPort(port)) !== undefined) {
+        handleMessage(msg);
+      }
+      stdout[kStdioWantsMoreDataCallback]();
+      stderr[kStdioWantsMoreDataCallback]();
+    });
+
+    const defineStdio = (name, stream) => {
+      Object.defineProperty(process, name, {
+        configurable: true,
+        enumerable: true,
+        get: () => stream,
+        set: () => {},
+      });
+    };
+    defineStdio("stdout", stdout);
+    defineStdio("stderr", stderr);
+    defineStdio("stdin", stdin);
+  }
+}
+
 class Worker extends EventEmitter {
   #worker: WebWorker;
   #performance;
@@ -231,6 +425,11 @@ class Worker extends EventEmitter {
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
   #onExitPromise: Promise<number> | number | undefined = undefined;
   #urlToRevoke = "";
+
+  #stdioPort: MessagePort;
+  #stdin: InstanceType<typeof WritableWorkerStdio> | null;
+  #stdout: InstanceType<typeof ReadableWorkerStdio>;
+  #stderr: InstanceType<typeof ReadableWorkerStdio>;
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
@@ -248,12 +447,22 @@ class Worker extends EventEmitter {
         this.#urlToRevoke = filename;
       }
     }
+
+    // Set up the internal stdio channel. port2 is transferred to the worker
+    // via the native constructor's internal-data slot and surfaces as index 4
+    // of createNodeWorkerThreadsBinding.
+    const { port1, port2 } = new MessageChannel();
+    this.#stdioPort = port1;
+    port1[kWaitingStreams] = 0;
+    const hasStdin = !!(options && options.stdin);
+
     try {
-      this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this);
+      this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this, [port2, hasStdin]);
     } catch (e) {
       if (this.#urlToRevoke) {
         URL.revokeObjectURL(this.#urlToRevoke);
       }
+      port1.close();
       throw e;
     }
     this.#worker.addEventListener("close", this.#onClose.bind(this), { once: true });
@@ -261,6 +470,23 @@ class Worker extends EventEmitter {
     this.#worker.addEventListener("message", this.#onMessage.bind(this));
     this.#worker.addEventListener("messageerror", this.#onMessageError.bind(this));
     this.#worker.addEventListener("open", this.#onOpen.bind(this), { once: true });
+
+    this.#stdin = hasStdin ? new WritableWorkerStdio(port1, "stdin") : null;
+    this.#stdout = new ReadableWorkerStdio(port1, "stdout");
+    this.#stderr = new ReadableWorkerStdio(port1, "stderr");
+    if (!(options && options.stdout)) {
+      this.#stdout[kIncrementsPortRef] = false;
+      pipeWithoutWarning(this.#stdout, process.stdout);
+    }
+    if (!(options && options.stderr)) {
+      this.#stderr[kIncrementsPortRef] = false;
+      pipeWithoutWarning(this.#stderr, process.stderr);
+    }
+
+    // addEventListener auto-starts the port but does not ref it; the worker
+    // lifecycle (not this port) governs whether the parent stays alive.
+    port1.addEventListener("message", event => this.#onStdioMessage((event as MessageEvent).data));
+    port1.unref();
 
     if (this.#urlToRevoke) {
       if (!urlRevokeRegistry) {
@@ -285,18 +511,15 @@ class Worker extends EventEmitter {
   }
 
   get stdin() {
-    // TODO:
-    return null;
+    return this.#stdin;
   }
 
   get stdout() {
-    // TODO:
-    return null;
+    return this.#stdout;
   }
 
   get stderr() {
-    // TODO:
-    return null;
+    return this.#stderr;
   }
 
   get performance() {
@@ -349,7 +572,45 @@ class Worker extends EventEmitter {
     return stringPromise.then(s => new HeapSnapshotStream(s));
   }
 
+  #onStdioMessage(message) {
+    switch (message.type) {
+      case STDIO_PAYLOAD: {
+        const { stream, chunks } = message;
+        const readable = stream === "stdout" ? this.#stdout : stream === "stderr" ? this.#stderr : null;
+        if (readable) {
+          for (let i = 0; i < chunks.length; i++) {
+            const { chunk, encoding } = chunks[i];
+            readable.push(chunk, encoding);
+          }
+        }
+        return;
+      }
+      case STDIO_WANTS_MORE_DATA: {
+        if (message.stream === "stdin" && this.#stdin) {
+          this.#stdin[kStdioWantsMoreDataCallback]();
+        }
+        return;
+      }
+    }
+  }
+
+  #drainStdio() {
+    // The worker posts stdio messages over a MessagePort; the close event
+    // arrives on a different queue (the Worker EventTarget). Drain whatever
+    // is still sitting in the port so the caller observes all writes before
+    // 'exit', including writes made from the worker's process.on('exit')
+    // handler.
+    let msg;
+    while ((msg = _receiveMessageOnPort(this.#stdioPort)) !== undefined) {
+      this.#onStdioMessage(msg);
+    }
+    if (!this.#stdout.readableEnded) this.#stdout.push(null);
+    if (!this.#stderr.readableEnded) this.#stderr.push(null);
+    this.#stdioPort.close();
+  }
+
   #onClose(e) {
+    this.#drainStdio();
     this.#onExitPromise = e.code;
     this.emit("exit", e.code);
   }

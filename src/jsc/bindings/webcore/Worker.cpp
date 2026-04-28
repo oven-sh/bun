@@ -634,6 +634,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     JSValue workerData = jsNull();
     JSValue threadId = jsNumber(0);
     JSMap* environmentData = nullptr;
+    JSValue internalData = jsUndefined();
 
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM())) {
         auto& options = worker->options();
@@ -641,9 +642,9 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
         RefPtr<WebCore::SerializedScriptValue> serialized = WTF::move(options.workerDataAndEnvironmentData);
         JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTF::move(ports));
         RETURN_IF_EXCEPTION(scope, {});
-        // Should always be set to an Array of length 2 in the constructor in JSWorker.cpp
+        // Should always be set to an Array of length 3 in the constructor in JSWorker.cpp
         auto* pair = uncheckedDowncast<JSArray>(deserialized);
-        ASSERT(pair->length() == 2);
+        ASSERT(pair->length() == 3);
         ASSERT(pair->canGetIndexQuickly(0u));
         ASSERT(pair->canGetIndexQuickly(1u));
         workerData = pair->getIndexQuickly(0);
@@ -652,6 +653,9 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
         // it might not be a Map if the parent had not set up environmentData yet
         environmentData = environmentDataValue ? dynamicDowncast<JSMap>(environmentDataValue) : nullptr;
         RETURN_IF_EXCEPTION(scope, {});
+        if (pair->canGetIndexQuickly(2u)) {
+            internalData = pair->getIndexQuickly(2);
+        }
 
         // Main thread starts at 1
         threadId = jsNumber(worker->clientIdentifier() - 1);
@@ -663,12 +667,18 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     ASSERT(environmentData);
     globalObject->setNodeWorkerEnvironmentData(environmentData);
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 4);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 5);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
     array->putDirectIndex(globalObject, 2, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 3, environmentData);
+    // Internal-only data from the node:worker_threads wrapper in the parent.
+    // Currently [stdioPort, hasStdin] so process.stdout/stderr/stdin inside
+    // the worker can be redirected to the parent-side Readable/Writable
+    // streams. Undefined for Web Workers or nested workers started via the
+    // global Worker constructor.
+    array->putDirectIndex(globalObject, 4, internalData);
     return array;
 }
 

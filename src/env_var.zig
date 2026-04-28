@@ -193,6 +193,11 @@ pub const feature_flag = struct {
     /// server selects it. Off by default while the client implementation
     /// matures. `--experimental-http2-fetch` is the CLI equivalent.
     pub const BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT = newFeatureFlag("BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT", .{});
+    /// Honor `Alt-Svc: h3` from fetch() responses: subsequent requests to the
+    /// same origin go over QUIC/HTTP-3 instead of TCP. Off by default while
+    /// the client implementation matures. `--experimental-http3-fetch` is the
+    /// CLI equivalent.
+    pub const BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT = newFeatureFlag("BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT", .{});
     pub const BUN_FEATURE_FLAG_FORCE_IO_POOL = newFeatureFlag("BUN_FEATURE_FLAG_FORCE_IO_POOL", .{});
     pub const BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS = newFeatureFlag("BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS", .{});
     pub const BUN_INSTRUMENTS = newFeatureFlag("BUN_INSTRUMENTS", .{});

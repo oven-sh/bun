@@ -1,5 +1,5 @@
 import { pathToFileURL } from "bun";
-import { bunEnv, bunExe, bunRun, bunRunAsScript, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, bunRunAsScript, isMacOS, isWindows, tempDir, tempDirWithFiles } from "harness";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
 
@@ -785,4 +785,61 @@ test.skipIf(!isWindows)("retrying a failed fs.watch does not crash (windows)", a
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0); // unpatched: exitCode is 3 (Windows segfault)
+});
+
+// The FSEvents path in PathWatcher.init() dupeZ's the resolved directory path
+// into `resolved_path`, but then immediately overwrote `this.*` with a struct
+// literal that did not include `.resolved_path`, resetting it to its default
+// `null`. PathWatcher.deinit()'s `if (this.resolved_path) |p| free(p)` was
+// therefore a no-op, and FSEventsWatcher.deinit() does not own the buffer
+// either. Every fs.watch(<directory>) on macOS leaked ~path-length bytes.
+test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvents path", async () => {
+  // Use long nested directory names so the resolved absolute path (and thus
+  // the per-watch leak) is large enough to show up in RSS within a reasonable
+  // number of iterations.
+  const seg = Buffer.alloc(200, "p").toString();
+  using dir = tempDir("fs-watch-fsevents-leak", {
+    [`${seg}/${seg}/${seg}/.keep`]: "x",
+  });
+  const watchDir = path.join(String(dir), seg, seg, seg);
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "--smol",
+      "-e",
+      /* ts */ `
+        const fs = require("fs");
+        const dir = process.argv[1];
+
+        // Warm up: let the FSEvents loop thread, mimalloc pools, and the
+        // PathWatcherManager fd cache reach steady state.
+        for (let i = 0; i < 2000; i++) fs.watch(dir, () => {}).close();
+        Bun.gc(true);
+        const before = process.memoryUsage.rss();
+
+        // With a ~700-byte resolved path, 20000 leaked dupeZ buffers is
+        // well over 10 MB of growth on unpatched builds.
+        for (let i = 0; i < 20000; i++) fs.watch(dir, () => {}).close();
+        Bun.gc(true);
+        const after = process.memoryUsage.rss();
+
+        const growthMB = (after - before) / 1024 / 1024;
+        console.log("RSS growth: " + growthMB.toFixed(2) + " MB");
+        if (growthMB > 8) {
+          throw new Error("fs.watch(dir) leaked " + growthMB.toFixed(2) + " MB");
+        }
+      `,
+      watchDir,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toContain("RSS growth:");
+  expect(exitCode).toBe(0);
 });

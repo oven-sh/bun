@@ -467,6 +467,39 @@ describe("crash testing", () => {
   }
 });
 
+it("Proxy prototype with throwing getter", () => {
+  const target = {
+    a: 1,
+    get x() {
+      throw new Error("boom");
+    },
+    z: 2,
+  };
+  const obj = {};
+  Object.setPrototypeOf(obj, new Proxy(target, {}));
+  const out = Bun.inspect(obj);
+  expect(out).toContain("a: 1");
+  expect(out).toContain("z: 2");
+});
+
+it("Proxy prototype with throwing getPrototypeOf trap", () => {
+  const obj = { own: 1 };
+  Object.setPrototypeOf(
+    obj,
+    new Proxy(
+      { x: 1 },
+      {
+        getPrototypeOf() {
+          throw new Error("proto trap");
+        },
+      },
+    ),
+  );
+  const out = Bun.inspect(obj);
+  expect(out).toContain("own: 1");
+  expect(out).toContain("x: 1");
+});
+
 it("possibly formatted emojis log", () => {
   expect(Bun.inspect("✔")).toBe('"✔"');
 });

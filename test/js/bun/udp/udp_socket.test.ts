@@ -253,7 +253,15 @@ describe("udpSocket()", () => {
             stdout: "pipe",
             stderr: "pipe",
           });
-          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          const [stdout, rawStderr, exitCode] = await Promise.all([
+            proc.stdout.text(),
+            proc.stderr.text(),
+            proc.exited,
+          ]);
+          const stderr = rawStderr
+            .split("\n")
+            .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+            .join("\n");
           expect(stderr).toBe("");
           expect(stdout).toBe("OK\n");
           expect(exitCode).toBe(0);

@@ -716,17 +716,22 @@ fn hoistDependency(
         }
 
         // now we either keep the dependency at this place in the tree,
-        // or hoist if peer version allows it
+        // or hoist if version allows it
+
+        // Peers prefer what an ancestor already provides over their own resolution.
+        // The check is symmetric: if either the dependency being hoisted or the
+        // already-placed one is a peer and the range is compatible, collapse.
+        if ((dependency.behavior.isPeer() or dep.behavior.isPeer()) and dependency.version.tag == .npm) {
+            const pkg_resolutions = builder.lockfile.packages.items(.resolution);
+            const existing_res = pkg_resolutions[res_id];
+            if (pkg_resolutions[package_id].tag == .npm and existing_res.tag == .npm and
+                dependency.version.value.npm.version.satisfies(existing_res.value.npm.version, builder.buf(), builder.buf()))
+            {
+                return .hoisted; // 1
+            }
+        }
 
         if (dependency.behavior.isPeer()) {
-            if (dependency.version.tag == .npm) {
-                const resolution: Resolution = builder.lockfile.packages.items(.resolution)[res_id];
-                const version = dependency.version.value.npm.version;
-                if (resolution.tag == .npm and version.satisfies(resolution.value.npm.version, builder.buf(), builder.buf())) {
-                    return .hoisted; // 1
-                }
-            }
-
             // Root dependencies are manually chosen by the user. Allow them
             // to hoist other peers even if they don't satisfy the version
             if (builder.lockfile.isWorkspaceRootDependency(dep_id)) {

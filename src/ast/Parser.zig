@@ -1414,12 +1414,18 @@ pub const Parser = struct {
         if (p.server_components_wrap_ref.isValid()) {
             const fw = p.options.framework orelse @panic("server components requires a framework configured, but none was set");
             const sc = fw.server_components.?;
+            const import_name = switch (p.options.features.server_components) {
+                .wrap_exports_for_client_reference => sc.server_register_client_reference,
+                .wrap_exports_for_server_reference => sc.server_register_server_reference,
+                // server_components_wrap_ref is only declared for the two modes above
+                else => unreachable,
+            };
             try p.generateReactRefreshImport(
                 &before,
                 sc.server_runtime_import,
                 &.{
                     .{
-                        .name = sc.server_register_client_reference,
+                        .name = import_name,
                         .ref = p.server_components_wrap_ref,
                         .enabled = true,
                     },

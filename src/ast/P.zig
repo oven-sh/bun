@@ -2192,9 +2192,11 @@ pub fn NewParser_(
                 .wrap_exports_for_client_reference => {
                     p.server_components_wrap_ref = try p.declareGeneratedSymbol(.other, "registerClientReference");
                 },
-                // TODO: these wrapping modes.
+                .wrap_exports_for_server_reference => {
+                    p.server_components_wrap_ref = try p.declareGeneratedSymbol(.other, "registerServerReference");
+                },
+                // TODO: function-level "use server" inside non-"use server" server modules.
                 .wrap_anon_server_functions => {},
-                .wrap_exports_for_server_reference => {},
             }
 
             // Server-side components:
@@ -6186,21 +6188,18 @@ pub fn NewParser_(
             bun.assert(p.options.features.server_components.wrapsExports());
             bun.assert(p.current_scope == p.module_scope);
 
-            if (p.options.features.server_components == .wrap_exports_for_server_reference)
-                bun.todoPanic(@src(), "registerServerReference", .{});
-
+            // TODO: production should use the chunk-path unique_key
+            // ("{prefix}S{source_index}" — see ServerComponentParseTask) so the id is
+            // stable across builds and doesn't leak absolute paths. Doing so requires
+            // plumbing BundleV2.unique_key into the parser. path.pretty matches what
+            // both sides see today, which is what the lookup actually requires.
             const module_path = p.newExpr(E.String{
-                .data = if (p.options.jsx.development)
-                    p.source.path.pretty
-                else
-                    bun.todoPanic(@src(), "TODO: unique_key here", .{}),
+                .data = p.source.path.pretty,
             }, logger.Loc.Empty);
 
-            // registerClientReference(
-            //   Comp,
-            //   "src/filepath.tsx",
-            //   "Comp"
-            // );
+            // Without this the linker tree-shakes the generated import as unused.
+            p.recordUsage(p.server_components_wrap_ref);
+
             return p.newExpr(E.Call{
                 .target = Expr.initIdentifier(p.server_components_wrap_ref, logger.Loc.Empty),
                 .args = js_ast.ExprNodeList.fromSlice(p.allocator, &.{

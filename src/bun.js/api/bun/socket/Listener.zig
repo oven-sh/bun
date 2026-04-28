@@ -186,7 +186,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
         }
     }
 
-    const ctx_opts: uws.SocketContext.BunSocketContextOptions = if (ssl) |some_ssl|
+    var ctx_opts: uws.SocketContext.BunSocketContextOptions = if (ssl) |some_ssl|
         some_ssl.asUSockets()
     else
         .{};
@@ -319,6 +319,12 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
         if (ssl_config.server_name) |server_name| {
             const slice = std.mem.span(server_name);
             if (slice.len > 0) {
+                // Pass ALPN protocols to the SNI context so it can
+                // negotiate ALPN during the TLS handshake
+                if (socket.protos) |protos| {
+                    ctx_opts.protos = protos.ptr;
+                    ctx_opts.protos_len = @intCast(protos.len);
+                }
                 socket.socket_context.?.addServerName(true, server_name, ctx_opts);
             }
         }
@@ -417,7 +423,13 @@ pub fn addServerName(this: *Listener, global: *jsc.JSGlobalObject, hostname: JSV
     if (try SSLConfig.fromJS(jsc.VirtualMachine.get(), global, tls)) |ssl_config| {
         // to keep nodejs compatibility, we allow to replace the server name
         this.socket_context.?.removeServerName(true, server_name);
-        this.socket_context.?.addServerName(true, server_name, ssl_config.asUSockets());
+        var opts = ssl_config.asUSockets();
+        // Pass ALPN protocols so the SNI context can negotiate ALPN
+        if (this.protos) |protos| {
+            opts.protos = protos.ptr;
+            opts.protos_len = @intCast(protos.len);
+        }
+        this.socket_context.?.addServerName(true, server_name, opts);
         var ssl_config_mut = ssl_config;
         ssl_config_mut.deinit();
     }

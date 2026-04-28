@@ -773,6 +773,12 @@ us_internal_create_child_ssl_socket_context(
 
 /* Common function for creating a context from options.
  * We must NOT free a SSL_CTX with only SSL_CTX_free! Also free any password */
+/* ALPN data attached to SNI SSL_CTX instances via ex_data slot 1 */
+struct alpn_data {
+  const unsigned char *protos;
+  unsigned int protos_len;
+};
+
 void free_ssl_context(SSL_CTX *ssl_context) {
   if (!ssl_context) {
     return;
@@ -782,6 +788,13 @@ void free_ssl_context(SSL_CTX *ssl_context) {
   void *password = SSL_CTX_get_default_passwd_cb_userdata(ssl_context);
   /* OpenSSL returns NULL if we have no set password */
   us_free(password);
+
+  /* Free ALPN data if set (includes copied protos) */
+  struct alpn_data *alpn = (struct alpn_data *)SSL_CTX_get_ex_data(ssl_context, 1);
+  if (alpn) {
+    us_free((void *)alpn->protos);
+    us_free(alpn);
+  }
 
   SSL_CTX_free(ssl_context);
 }
@@ -1167,6 +1180,23 @@ int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
   return 1;
 }
 
+/* ALPN select callback for SNI contexts */
+static int sni_alpn_select_cb(SSL *ssl, const unsigned char **out,
+                               unsigned char *outlen,
+                               const unsigned char *in, unsigned int inlen,
+                               void *arg) {
+  struct alpn_data *data = (struct alpn_data *)arg;
+  if (!data || !data->protos || data->protos_len == 0) {
+    return SSL_TLSEXT_ERR_NOACK;
+  }
+  if (SSL_select_next_proto((unsigned char **)out, outlen,
+                            data->protos, data->protos_len,
+                            in, inlen) == OPENSSL_NPN_NEGOTIATED) {
+    return SSL_TLSEXT_ERR_OK;
+  }
+  return SSL_TLSEXT_ERR_ALERT_FATAL;
+}
+
 SSL_CTX *create_ssl_context_from_bun_options(
     struct us_bun_socket_context_options_t options,
     enum create_bun_socket_error_t *err) {
@@ -1362,6 +1392,25 @@ SSL_CTX *create_ssl_context_from_bun_options(
 
   if (options.secure_options) {
     SSL_CTX_set_options(ssl_context, options.secure_options);
+  }
+
+  /* Set ALPN select callback if protocols were provided.
+   * The protos are copied so the SSL_CTX does not depend on the caller's
+   * memory lifetime.  The alpn_data (including its copy of the protos) is
+   * stored in ex_data slot 1 and freed in free_ssl_context. */
+  if (options.protos && options.protos_len > 0) {
+    unsigned char *protos_copy = (unsigned char *)us_malloc(options.protos_len);
+    struct alpn_data *data = (struct alpn_data *)us_malloc(sizeof(struct alpn_data));
+    if (protos_copy && data) {
+      memcpy(protos_copy, options.protos, options.protos_len);
+      data->protos = protos_copy;
+      data->protos_len = options.protos_len;
+      SSL_CTX_set_ex_data(ssl_context, 1, data);
+      SSL_CTX_set_alpn_select_cb(ssl_context, sni_alpn_select_cb, data);
+    } else {
+      us_free(protos_copy);
+      us_free(data);
+    }
   }
 
   /* This must be free'd with free_ssl_context, not SSL_CTX_free */

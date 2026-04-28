@@ -160,21 +160,19 @@ fn onHandshake(this: *HTTPClient, handshake_success: bool, ssl_error: uws.us_bun
                 bun.assert(proxy.wrapper != null);
                 const ssl_ptr = proxy.wrapper.?.ssl orelse return;
 
+                // checkServerIdentity returning false has already run closeAndFail
+                // → fail → result callback → ThreadlocalAsyncHTTP deinit, so `this`
+                // (the HTTPClient) is freed. Touching it here is a use-after-free.
                 switch (proxy.socket) {
                     .ssl => |socket| {
                         if (!this.checkServerIdentity(true, socket, handshake_error, ssl_ptr, false)) {
                             log("ProxyTunnel onHandshake checkServerIdentity failed", .{});
-                            this.flags.did_have_handshaking_error = true;
-
-                            this.unregisterAbortTracker();
                             return;
                         }
                     },
                     .tcp => |socket| {
                         if (!this.checkServerIdentity(false, socket, handshake_error, ssl_ptr, false)) {
                             log("ProxyTunnel onHandshake checkServerIdentity failed", .{});
-                            this.flags.did_have_handshaking_error = true;
-                            this.unregisterAbortTracker();
                             return;
                         }
                     },

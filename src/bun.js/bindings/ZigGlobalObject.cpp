@@ -739,8 +739,40 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     bool entryExistedBefore = false;
     if (auto* entry = loader->registryEntry(key)) {
         entryExistedBefore = true;
-        if (isModuleEvaluated(entry->record())) {
-            auto* ns = entry->record()->getModuleNamespace(globalObject, false);
+        auto* record = entry->record();
+        if (isModuleEvaluated(record)) {
+            auto* ns = record->getModuleNamespace(globalObject, false);
+            RETURN_IF_EXCEPTION(scope, {});
+            return JSValue::encode(ns);
+        }
+        // The record already exists at status Evaluating, i.e. it is on an
+        // outer InnerModuleEvaluation stack that we are re-entering. Calling
+        // loadModuleSync here would reach CyclicModuleRecord::evaluate() and
+        // violate its precondition (status must be LINKED, EVALUATING-ASYNC,
+        // or EVALUATED), so handle this case directly instead.
+        if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record); cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating) {
+            // ExecuteModule sets the generator State field from Init -> Executing
+            // before entering the body. State == Init therefore means the body
+            // has not started: the module is still in the requested-modules
+            // loop of InnerModuleEvaluation, and let/const/class exports are
+            // TDZ. Returning the namespace here is the regression that surfaces
+            // as a confusing "x is not a function" far from the cycle. Match
+            // Node's ERR_REQUIRE_CYCLE_MODULE instead.
+            JSValue state = record->internalField(JSC::AbstractModuleRecord::Field::State).get();
+            if (state.isInt32() && state.asInt32() == static_cast<int32_t>(JSC::AbstractModuleRecord::State::Init))
+                return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_REQUIRE_CYCLE_MODULE, makeString("Cannot require() ES Module "_s, keyString, " in a cycle."_s));
+            // State != Init: ExecuteModule has been entered. For a non-TLA
+            // record that means the body ran to completion synchronously
+            // (status only flips to Evaluated once the SCC root pops the
+            // Tarjan stack). The namespace is fully populated; return it
+            // without re-driving the loader. For a TLA record reachable here
+            // the body is suspended at its first await (status flips to
+            // EvaluatingAsync only when the SCC root pops), so post-await
+            // bindings are TDZ — treat that the same as the EvaluatingAsync
+            // path below and surface the async-module error.
+            if (cyclic->hasTLA())
+                return throwVMTypeError(globalObject, scope, makeString("require() async module \""_s, keyString, "\" is unsupported. use \"await import()\" instead."_s));
+            auto* ns = record->getModuleNamespace(globalObject, false);
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(ns);
         }

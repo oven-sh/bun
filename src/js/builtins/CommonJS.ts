@@ -103,16 +103,18 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
 
   // -1 means we need to lookup the module from the ESM registry.
   if (out === -1) {
+    let namespace;
     try {
-      out = $requireESM(id);
+      namespace = $requireESM(id);
     } catch (exception) {
       // Since the ESM code is mostly JS, we need to handle exceptions here.
       $requireMap.$delete(id);
       throw exception;
     }
 
-    // If we can pull out a ModuleNamespaceObject, let's do it.
-    const namespace = $esmNamespaceForCjs(id);
+    // $requireESM returns the namespace object directly (it throws on
+    // undefined). Use that — re-reading via $esmNamespaceForCjs would miss the
+    // Evaluating-but-body-ran case that $esmLoadSync handles.
     if (namespace !== undefined) {
       // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
       // Various libraries expect __esModule to be set when using ESM from require().
@@ -324,16 +326,18 @@ export function requireESM(this, resolved: string) {
 
 export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: string) {
   $assert(this);
+  let namespace;
   try {
-    $requireESM(id);
+    namespace = $requireESM(id);
   } catch (exception) {
     // Since the ESM code is mostly JS, we need to handle exceptions here.
     $requireMap.$delete(id);
     throw exception;
   }
 
-  // If we can pull out a ModuleNamespaceObject, let's do it.
-  const namespace = $esmNamespaceForCjs(id);
+  // $requireESM returns the namespace object directly (it throws on
+  // undefined). Use that — re-reading via $esmNamespaceForCjs would miss the
+  // Evaluating-but-body-ran case that $esmLoadSync handles.
   if (namespace !== undefined) {
     // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
     // Various libraries expect __esModule to be set when using ESM from require().

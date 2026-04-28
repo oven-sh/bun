@@ -8444,6 +8444,27 @@ declare module "bun" {
       timeout?: number;
     }
 
+    interface MouseButtonOptions {
+      /** @default "left" */
+      button?: "left" | "right" | "middle";
+      /** Modifier keys to hold during the event. */
+      modifiers?: Modifier[];
+      /** Click count for the event. @default 1 */
+      clickCount?: 1 | 2 | 3;
+    }
+
+    interface MouseMoveOptions {
+      /**
+       * Number of intermediate mousemove events to dispatch between the
+       * current position and `(x, y)`. Drag handlers that observe
+       * `pointermove` at rAF rate need at least a few; 5–20 is typical.
+       * @default 1
+       */
+      steps?: number;
+      /** Modifier keys to hold during the move. */
+      modifiers?: Modifier[];
+    }
+
     interface ScrollToOptions {
       /**
        * Maximum time in milliseconds to wait for the element to exist.
@@ -8860,6 +8881,52 @@ declare module "bun" {
      * ```
      */
     click(selector: string, options?: WebView.ClickSelectorOptions): Promise<void>;
+
+    /**
+     * Move the pointer to the given viewport coordinates.
+     *
+     * Dispatches `options.steps` intermediate `mousemove`/`pointermove`
+     * events between the current pointer position and `(x, y)`, then one
+     * final event at `(x, y)`. If a button is currently held (from a
+     * prior {@link mouseDown}), the events are `mousedrag` / `dragover`
+     * instead. The pointer position is tracked internally — call
+     * {@link mouseMove} before {@link mouseDown}/{@link mouseUp} to
+     * position the cursor.
+     *
+     * As a standalone hover (no prior {@link mouseDown}), moves cursor
+     * to `(x, y)` firing plain `mousemove`/`pointermove` — works for
+     * `:hover` styles and cursor-CSS assertions.
+     *
+     * @example
+     * ```ts
+     * // Canvas drag: mouseMove → mouseDown → mouseMove(steps: 5) → mouseUp.
+     * await view.mouseMove(from.x, from.y);
+     * await view.mouseDown();
+     * await view.mouseMove(to.x, to.y, { steps: 5 });
+     * await view.mouseUp();
+     * ```
+     */
+    mouseMove(x: number, y: number, options?: WebView.MouseMoveOptions): Promise<void>;
+
+    /**
+     * Press a mouse button at the current pointer position.
+     *
+     * Uses the position last set by {@link mouseMove} (defaults to
+     * `(0, 0)` if never moved). Fires a `mousedown`/`pointerdown` event
+     * with `isTrusted: true` and holds the button down until
+     * {@link mouseUp}; between the two, {@link mouseMove} dispatches
+     * drag events.
+     */
+    mouseDown(options?: WebView.MouseButtonOptions): Promise<void>;
+
+    /**
+     * Release a mouse button at the current pointer position.
+     *
+     * Fires `mouseup`/`pointerup`. If the press and release share the
+     * same position, the browser synthesizes a `click` event as well —
+     * same as manual interaction.
+     */
+    mouseUp(options?: WebView.MouseButtonOptions): Promise<void>;
 
     /**
      * Insert text into the focused element.

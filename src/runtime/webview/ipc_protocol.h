@@ -67,6 +67,15 @@ enum class Op : uint8_t {
     // fires (isTrusted:true — browser-driven), scrollY updates,
     // IntersectionObserver triggers.
     ScrollTo = 15, // ScrollToPayload + str selector
+
+    // Low-level pointer primitives for drag automation. Separate from
+    // Click so the caller threads down → move* → up without the synthesized
+    // click being spliced in. Each dispatches one NSEvent; the host fires
+    // _doAfterProcessingAllPendingMouseEvents: once after the batch so
+    // N-step moves cost one barrier wait, not N.
+    MouseDown = 16, // MouseDownPayload
+    MouseUp = 17, // MouseUpPayload
+    MouseMove = 18, // MouseMovePayload
 };
 
 // Mouse button: 0=left, 1=right, 2=middle.
@@ -128,6 +137,37 @@ struct ScrollToPayload {
     // str selector follows
 };
 
+struct MouseDownPayload {
+    float x; // viewport coords, y-down
+    float y;
+    uint8_t button; // 0=left 1=right 2=middle
+    uint8_t modifiers;
+    uint8_t clickCount;
+    uint8_t buttonsMask; // bitmask of all pressed buttons AFTER this down
+};
+
+struct MouseUpPayload {
+    float x;
+    float y;
+    uint8_t button;
+    uint8_t modifiers;
+    uint8_t clickCount;
+    uint8_t buttonsMask; // bitmask of all pressed buttons AFTER this up
+};
+
+// For N-step moves the parent expands before send: (fromX,fromY) to (x,y)
+// interpolated in `steps` segments. The host fires steps+1 NSEvents total
+// (one per intermediate coord + the final) and Acks after the drain barrier.
+struct MouseMovePayload {
+    float fromX; // interpolation start
+    float fromY;
+    float x; // target
+    float y;
+    uint32_t steps; // number of intermediate points between fromX/Y and x/y (>=1)
+    uint8_t buttonsMask; // pressed-button bitmask (determines move vs dragged event type)
+    uint8_t modifiers;
+};
+
 #pragma pack(pop)
 
 static_assert(sizeof(CreatePayload) == 9);
@@ -137,6 +177,9 @@ static_assert(sizeof(PressPayload) == 2);
 static_assert(sizeof(ScrollPayload) == 8);
 static_assert(sizeof(ClickSelectorPayload) == 7);
 static_assert(sizeof(ScrollToPayload) == 5);
+static_assert(sizeof(MouseDownPayload) == 12);
+static_assert(sizeof(MouseUpPayload) == 12);
+static_assert(sizeof(MouseMovePayload) == 22);
 
 // Encode: POD head + optional trailing string (u32 len + utf8). 64 bytes
 // inline covers every head; strings that overflow it heap-allocate, which

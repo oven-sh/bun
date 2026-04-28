@@ -397,10 +397,14 @@ struct NSEvent : Ref {
         LeftMouseUp = 2,
         RightMouseDown = 3,
         RightMouseUp = 4,
+        MouseMoved = 5,
+        LeftMouseDragged = 6,
+        RightMouseDragged = 7,
         KeyDown = 10,
         KeyUp = 11,
         OtherMouseDown = 25,
         OtherMouseUp = 26,
+        OtherMouseDragged = 27,
     };
     // NSEventModifierFlags — bits 16–20.
     enum : unsigned long {
@@ -632,6 +636,23 @@ struct WKWebView : Ref {
     static SEL s_rightMouseUp;
     static SEL s_otherMouseDown;
     static SEL s_otherMouseUp;
+    // Mouse movement without a button held goes through WKWebView's
+    // _simulateMouseMove: SPI (macOS 13+) — the public mouseMoved:
+    // responder doesn't route to WebContent unless the window has
+    // acceptsMouseMovedEvents:YES and a tracking area matches, which
+    // isn't wired for a hidden headless window. _simulateMouseMove: is
+    // what Safari's inspector uses for its hover simulation and
+    // forwards straight to WebViewImpl::mouseMoved — same path as a
+    // real pointer movement, all JS handlers fire with isTrusted:true.
+    //
+    // Dragged events go through the public selectors (mouseDragged:,
+    // rightMouseDragged:, otherMouseDragged:) — those DO route through
+    // the responder chain because a button is held (the mouseDown: that
+    // started the drag is already in WebContent's event queue).
+    static SEL s_simulateMouseMove;
+    static SEL s_mouseDragged;
+    static SEL s_rightMouseDragged;
+    static SEL s_otherMouseDragged;
     static SEL s_keyDown;
     static SEL s_keyUp;
     void mouseDown(NSEvent e) { msg<void>(s_mouseDown, e.m_id); }
@@ -640,6 +661,10 @@ struct WKWebView : Ref {
     void rightMouseUp(NSEvent e) { msg<void>(s_rightMouseUp, e.m_id); }
     void otherMouseDown(NSEvent e) { msg<void>(s_otherMouseDown, e.m_id); }
     void otherMouseUp(NSEvent e) { msg<void>(s_otherMouseUp, e.m_id); }
+    void simulateMouseMove(NSEvent e) { msg<void>(s_simulateMouseMove, e.m_id); }
+    void mouseDragged(NSEvent e) { msg<void>(s_mouseDragged, e.m_id); }
+    void rightMouseDragged(NSEvent e) { msg<void>(s_rightMouseDragged, e.m_id); }
+    void otherMouseDragged(NSEvent e) { msg<void>(s_otherMouseDragged, e.m_id); }
     void keyDown(NSEvent e) { msg<void>(s_keyDown, e.m_id); }
     void keyUp(NSEvent e) { msg<void>(s_keyUp, e.m_id); }
 

@@ -225,6 +225,67 @@ JSPromise* JSWebView::clickSelector(JSGlobalObject* g, const WTF::String& select
     WK_DISPATCH(WK::Ops::clickSelector(g, this, selector, timeout, button, modifiers, clickCount));
 }
 
+// Low-level pointer primitives. Each backend dispatches one event (down/up)
+// or a series (move with steps) and resolves when the event has been
+// processed. State updates happen here, AFTER dispatch, so a backend
+// failure doesn't leave a phantom press bit set.
+JSPromise* JSWebView::mouseDown(JSGlobalObject* g, uint8_t button, uint8_t modifiers, uint8_t clickCount)
+{
+    uint8_t bit = 1u << button;
+    uint8_t newMask = m_mouseButtons | bit;
+    JSPromise* p;
+    if (m_backend == WebViewBackend::Chrome) {
+        p = CDP::Ops::mouseDown(g, this, m_mouseX, m_mouseY, button, modifiers, clickCount, newMask);
+    } else {
+#if OS(DARWIN)
+        p = WK::Ops::mouseDown(g, this, m_mouseX, m_mouseY, button, modifiers, clickCount, newMask);
+#else
+        RELEASE_ASSERT_NOT_REACHED();
+        p = nullptr;
+#endif
+    }
+    m_mouseButtons = newMask;
+    return p;
+}
+
+JSPromise* JSWebView::mouseUp(JSGlobalObject* g, uint8_t button, uint8_t modifiers, uint8_t clickCount)
+{
+    uint8_t bit = 1u << button;
+    uint8_t newMask = m_mouseButtons & ~bit;
+    JSPromise* p;
+    if (m_backend == WebViewBackend::Chrome) {
+        p = CDP::Ops::mouseUp(g, this, m_mouseX, m_mouseY, button, modifiers, clickCount, newMask);
+    } else {
+#if OS(DARWIN)
+        p = WK::Ops::mouseUp(g, this, m_mouseX, m_mouseY, button, modifiers, clickCount, newMask);
+#else
+        RELEASE_ASSERT_NOT_REACHED();
+        p = nullptr;
+#endif
+    }
+    m_mouseButtons = newMask;
+    return p;
+}
+
+JSPromise* JSWebView::mouseMove(JSGlobalObject* g, float x, float y, uint32_t steps, uint8_t modifiers)
+{
+    float fromX = m_mouseX, fromY = m_mouseY;
+    JSPromise* p;
+    if (m_backend == WebViewBackend::Chrome) {
+        p = CDP::Ops::mouseMove(g, this, fromX, fromY, x, y, steps, m_mouseButtons, modifiers);
+    } else {
+#if OS(DARWIN)
+        p = WK::Ops::mouseMove(g, this, fromX, fromY, x, y, steps, m_mouseButtons, modifiers);
+#else
+        RELEASE_ASSERT_NOT_REACHED();
+        p = nullptr;
+#endif
+    }
+    m_mouseX = x;
+    m_mouseY = y;
+    return p;
+}
+
 JSPromise* JSWebView::type(JSGlobalObject* g, const WTF::String& text)
 {
     if (m_backend == WebViewBackend::Chrome) return CDP::Ops::type(g, this, text);

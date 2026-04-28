@@ -42,6 +42,14 @@ public:
     bool scrollIPC(float dx, float dy);
     bool clickSelectorIPC(const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount);
     bool scrollToIPC(const WTF::String& selector, uint32_t timeout, uint8_t block);
+    // Low-level pointer primitives. Each fires one (down/up) or
+    // multiple (move with steps) NSEvents and waits for the UIProcess
+    // mouseEventQueue drain barrier before Acking — same barrier click
+    // uses. buttonsMask is the state AFTER this op for down/up (callers
+    // already computed it parent-side), or the state DURING the move.
+    bool mouseDownIPC(float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount, uint8_t buttonsMask);
+    bool mouseUpIPC(float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount, uint8_t buttonsMask);
+    bool mouseMoveIPC(float fromX, float fromY, float x, float y, uint32_t steps, uint8_t buttonsMask, uint8_t modifiers);
     void onInputComplete();
     // _executeEditCommand: is void(^)(BOOL) — block ABI needs the arg slot.
     void onInputCompleteBool(signed char) { onInputComplete(); }

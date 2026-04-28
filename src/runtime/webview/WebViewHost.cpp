@@ -347,6 +347,147 @@ void WebViewHost::doNativeClick(float x, float y, uint8_t button, uint8_t modifi
     m_webview.doAfterPendingMouseEvents(makeHostBlock<&WebViewHost::onInputComplete>(*this));
 }
 
+// Low-level pointer primitives. Unlike click() which pairs down+up into
+// one barrier-gated sequence, these fire a single event (down/up) or a
+// burst of move events and let the caller compose. Each waits on
+// _doAfterProcessingAllPendingMouseEvents: so the promise resolves
+// after WebContent has dispatched every event's JS handlers.
+//
+// For mouseDown/mouseUp the button arg picks the NSEventType + the
+// right responder selector. buttonsMask is the state AFTER the press/
+// release — not used by NSEvent synthesis (AppKit doesn't encode a
+// buttons bitmap; it infers from the sequence), but threaded through
+// for parity with CDP and in case we expose a buttons field to page-
+// injected scripts later.
+bool WebViewHost::mouseDownIPC(float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount, uint8_t /*buttonsMask*/)
+{
+    using NSEvent = objc::NSEvent;
+    if (m_inputPending) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
+        return true;
+    }
+    double wy = static_cast<double>(m_height) - y;
+    unsigned long mods = expandModifiers(modifiers);
+    double ts = objc::NSProcessInfo::systemUptime();
+    long win = m_window.windowNumber();
+
+    switch (button) {
+    case 1:
+        m_webview.rightMouseDown(NSEvent::mouseEvent(NSEvent::RightMouseDown, x, wy, mods, ts, win, clickCount));
+        break;
+    case 2:
+        m_webview.otherMouseDown(NSEvent::mouseEvent(NSEvent::OtherMouseDown, x, wy, mods, ts, win, clickCount));
+        break;
+    default:
+        m_webview.mouseDown(NSEvent::mouseEvent(NSEvent::LeftMouseDown, x, wy, mods, ts, win, clickCount));
+    }
+
+    m_inputPending = true;
+    m_webview.doAfterPendingMouseEvents(makeHostBlock<&WebViewHost::onInputComplete>(*this));
+    return true;
+}
+
+bool WebViewHost::mouseUpIPC(float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount, uint8_t /*buttonsMask*/)
+{
+    using NSEvent = objc::NSEvent;
+    if (m_inputPending) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
+        return true;
+    }
+    double wy = static_cast<double>(m_height) - y;
+    unsigned long mods = expandModifiers(modifiers);
+    double ts = objc::NSProcessInfo::systemUptime();
+    long win = m_window.windowNumber();
+
+    switch (button) {
+    case 1:
+        m_webview.rightMouseUp(NSEvent::mouseEvent(NSEvent::RightMouseUp, x, wy, mods, ts, win, clickCount));
+        break;
+    case 2:
+        m_webview.otherMouseUp(NSEvent::mouseEvent(NSEvent::OtherMouseUp, x, wy, mods, ts, win, clickCount));
+        break;
+    default:
+        m_webview.mouseUp(NSEvent::mouseEvent(NSEvent::LeftMouseUp, x, wy, mods, ts, win, clickCount));
+    }
+
+    m_inputPending = true;
+    m_webview.doAfterPendingMouseEvents(makeHostBlock<&WebViewHost::onInputComplete>(*this));
+    return true;
+}
+
+// mouseMove: dispatch `steps` intermediate events + one final. When
+// buttonsMask==0 we fire MouseMoved via mouseMoved:. With a button held
+// it's mouseDragged (or right/other variant) — AppKit's responder
+// chain uses a separate selector. If multiple buttons are held we pick
+// the lowest-order set bit for the drag selector; WebKit processes a
+// single drag event per main loop tick, so one NSEvent per intermediate
+// coord is what the handlers see. Each event still lands in
+// mouseEventQueue and the final barrier drains them all.
+bool WebViewHost::mouseMoveIPC(float fromX, float fromY, float x, float y, uint32_t steps, uint8_t buttonsMask, uint8_t modifiers)
+{
+    using NSEvent = objc::NSEvent;
+    if (m_inputPending) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
+        return true;
+    }
+    unsigned long mods = expandModifiers(modifiers);
+    double ts = objc::NSProcessInfo::systemUptime();
+    long win = m_window.windowNumber();
+    double heightD = static_cast<double>(m_height);
+
+    // Pick the NSEventType once. No mixed move/drag within a single
+    // mouseMove(); the button state is constant for the duration of the
+    // call (down/up are separate IPC ops that serialize on m_inputPending).
+    // AppKit's responder chain uses a separate selector per button drag
+    // (mouseDragged: / rightMouseDragged: / otherMouseDragged:) — switch
+    // on a tag at each dispatch so we don't heap-allocate a std::function.
+    enum class MoveKind { Move, LeftDrag, RightDrag, OtherDrag };
+    unsigned long evtType = NSEvent::MouseMoved;
+    MoveKind kind = MoveKind::Move;
+    if (buttonsMask & 0x1) {
+        evtType = NSEvent::LeftMouseDragged;
+        kind = MoveKind::LeftDrag;
+    } else if (buttonsMask & 0x2) {
+        evtType = NSEvent::RightMouseDragged;
+        kind = MoveKind::RightDrag;
+    } else if (buttonsMask & 0x4) {
+        evtType = NSEvent::OtherMouseDragged;
+        kind = MoveKind::OtherDrag;
+    }
+    auto dispatch = [&](NSEvent e) {
+        switch (kind) {
+        case MoveKind::LeftDrag:
+            m_webview.mouseDragged(e);
+            return;
+        case MoveKind::RightDrag:
+            m_webview.rightMouseDragged(e);
+            return;
+        case MoveKind::OtherDrag:
+            m_webview.otherMouseDragged(e);
+            return;
+        case MoveKind::Move:
+            m_webview.simulateMouseMove(e);
+            return;
+        }
+    };
+
+    if (steps < 1) steps = 1;
+    // steps intermediate + one final; clickCount 0 is the convention for
+    // non-click mouse events (MouseMoved/Dragged have no click count).
+    for (uint32_t i = 1; i < steps; ++i) {
+        double ix = static_cast<double>(fromX) + (static_cast<double>(x) - static_cast<double>(fromX)) * (static_cast<double>(i) / static_cast<double>(steps));
+        double iy = static_cast<double>(fromY) + (static_cast<double>(y) - static_cast<double>(fromY)) * (static_cast<double>(i) / static_cast<double>(steps));
+        double iwy = heightD - iy;
+        dispatch(NSEvent::mouseEvent(evtType, ix, iwy, mods, ts, win, 0));
+    }
+    double wy = heightD - static_cast<double>(y);
+    dispatch(NSEvent::mouseEvent(evtType, x, wy, mods, ts, win, 0));
+
+    m_inputPending = true;
+    m_webview.doAfterPendingMouseEvents(makeHostBlock<&WebViewHost::onInputComplete>(*this));
+    return true;
+}
+
 // Actionability check: Playwright-style rAF-polled predicate. Runs entirely
 // page-side via callAsyncJavaScript: — WebKit awaits the returned Promise.
 // One IPC roundtrip regardless of how many frames the poll takes.

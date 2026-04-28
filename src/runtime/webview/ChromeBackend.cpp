@@ -1505,6 +1505,115 @@ JSPromise* click(JSGlobalObject* g, JSWebView* view, float x, float y, uint8_t b
             .num("modifiers"_s, mods));
 }
 
+// Translate Bun's button-mask bitmap (bit 0=left, bit 1=right, bit 2=middle)
+// to CDP's `buttons` field, which matches the W3C MouseEvent.buttons bit
+// layout: bit 0=left, bit 1=right, bit 2=middle. Same layout. Kept as a
+// helper for clarity and in case the layouts ever diverge.
+static int32_t cdpButtonsMask(uint8_t mask) { return mask; }
+
+// Low-level pointer primitives. mouseDown/mouseUp mirror click()'s single-
+// event paths. mouseMove emits one dispatchMouseEvent per intermediate
+// step plus the final — all but the last are fire-and-forget; the last
+// resolves the slot. Chrome processes events in send order, so the final
+// reply means all preceding events landed too.
+JSPromise* mouseDown(JSGlobalObject* g, JSWebView* view, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount, uint8_t buttonsMask)
+{
+    auto& t = transport();
+    auto sid = sidSpan(view->m_sessionId);
+    auto btn = cdpButton(button);
+    int32_t mods = cdpModifiers(modifiers);
+    int32_t buttons = cdpButtonsMask(buttonsMask);
+
+    uint32_t id = t.nextId();
+    return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
+        Method::InputDispatchMouseEvent, id,
+        Command(id, "Input.dispatchMouseEvent"_s, sid)
+            .raw("type"_s, "\"mousePressed\""_s)
+            .num("x"_s, x)
+            .num("y"_s, y)
+            .raw("button"_s, btn)
+            .num("buttons"_s, buttons)
+            .num("clickCount"_s, static_cast<int32_t>(clickCount))
+            .num("modifiers"_s, mods));
+}
+
+JSPromise* mouseUp(JSGlobalObject* g, JSWebView* view, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount, uint8_t buttonsMask)
+{
+    auto& t = transport();
+    auto sid = sidSpan(view->m_sessionId);
+    auto btn = cdpButton(button);
+    int32_t mods = cdpModifiers(modifiers);
+    int32_t buttons = cdpButtonsMask(buttonsMask);
+
+    uint32_t id = t.nextId();
+    return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
+        Method::InputDispatchMouseEvent, id,
+        Command(id, "Input.dispatchMouseEvent"_s, sid)
+            .raw("type"_s, "\"mouseReleased\""_s)
+            .num("x"_s, x)
+            .num("y"_s, y)
+            .raw("button"_s, btn)
+            .num("buttons"_s, buttons)
+            .num("clickCount"_s, static_cast<int32_t>(clickCount))
+            .num("modifiers"_s, mods));
+}
+
+// mouseMove: emit steps-1 intermediate events + 1 final. For pure hover
+// (buttonsMask==0) the event is a plain mouseMoved with button:"none".
+// When dragging (buttonsMask != 0) the event type is still "mouseMoved"
+// — CDP doesn't have a separate "mouseDragged" — but the non-zero
+// `buttons` field tells Chrome a drag is in progress. Chrome synthesizes
+// the right pointermove/mousemove + dragenter/dragover dispatch on the
+// page side.
+JSPromise* mouseMove(JSGlobalObject* g, JSWebView* view, float fromX, float fromY, float x, float y, uint32_t steps, uint8_t buttonsMask, uint8_t modifiers)
+{
+    auto& t = transport();
+    auto sid = sidSpan(view->m_sessionId);
+    int32_t mods = cdpModifiers(modifiers);
+    int32_t buttons = cdpButtonsMask(buttonsMask);
+
+    // CDP mouseMoved with no pressed button wants "none"; with a button
+    // held it wants the string name of the primary button for legacy
+    // `MouseEvent.button` in handlers. Pick the lowest-order pressed bit.
+    ASCIILiteral btnStr = "\"none\""_s;
+    if (buttonsMask & 0x1)
+        btnStr = "\"left\""_s;
+    else if (buttonsMask & 0x2)
+        btnStr = "\"right\""_s;
+    else if (buttonsMask & 0x4)
+        btnStr = "\"middle\""_s;
+
+    if (steps < 1) steps = 1;
+
+    // Emit the first (steps - 1) events as fire-and-forget; send the
+    // final event with a tracked id that resolves the slot. Chrome
+    // processes serially so the final reply means all prior events
+    // were handled.
+    for (uint32_t i = 1; i < steps; ++i) {
+        float ix = fromX + (x - fromX) * (static_cast<float>(i) / static_cast<float>(steps));
+        float iy = fromY + (y - fromY) * (static_cast<float>(i) / static_cast<float>(steps));
+        uint32_t idInterm = t.nextId();
+        t.send(0, Command(idInterm, "Input.dispatchMouseEvent"_s, sid)
+                      .raw("type"_s, "\"mouseMoved\""_s)
+                      .num("x"_s, ix)
+                      .num("y"_s, iy)
+                      .raw("button"_s, btnStr)
+                      .num("buttons"_s, buttons)
+                      .num("modifiers"_s, mods));
+    }
+
+    uint32_t id = t.nextId();
+    return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
+        Method::InputDispatchMouseEvent, id,
+        Command(id, "Input.dispatchMouseEvent"_s, sid)
+            .raw("type"_s, "\"mouseMoved\""_s)
+            .num("x"_s, x)
+            .num("y"_s, y)
+            .raw("button"_s, btnStr)
+            .num("buttons"_s, buttons)
+            .num("modifiers"_s, mods));
+}
+
 // Selector ops: Runtime.evaluate runs the rAF-polled actionability check
 // (same predicate as WKWebView's kActionabilityJS). The IIFE takes
 // (sel, timeout) — we appendQuotedJSONString the selector so any chars

@@ -467,6 +467,155 @@ it("chrome: scroll dispatches wheel event", async () => {
   expect(y).toBeGreaterThan(0);
 });
 
+// Drag-automation primitives: mouseDown/Up/Move. Chrome's
+// Input.dispatchMouseEvent synchronously processes each event and
+// replies — the sequence of moves lands on the page before the final
+// reply resolves our promise. No coalescing-off flag; Chromium
+// aggregates rapid moves at rAF rate (same as real user input), so
+// `steps` may emit fewer than N final pointermoves. The down/up/final
+// coords always hit.
+it("chrome: mouseDown/mouseUp/mouseMove drag sequence", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 400, height: 400 });
+  await view.navigate(
+    html(`
+      <script>
+        window.__ev = [];
+        for (const t of ["mousedown","mouseup","mousemove","click"]) {
+          document.addEventListener(t, e => __ev.push({
+            t, x: e.clientX, y: e.clientY, btn: e.button, btns: e.buttons, trusted: e.isTrusted,
+          }), true);
+        }
+      </script>
+      <div style="position:fixed;left:0;top:0;width:400px;height:400px"></div>
+    `),
+  );
+
+  // Position cursor, press, drag, release. Canvas drag pattern from the
+  // issue: the intermediate pointermove events are what the drag
+  // handlers need, not just down/up at endpoints.
+  await view.mouseMove(50, 50);
+  await view.mouseDown();
+  await view.mouseMove(200, 200, { steps: 5 });
+  await view.mouseUp();
+
+  const events = JSON.parse(await view.evaluate("JSON.stringify(__ev)")) as Array<{
+    t: string;
+    x: number;
+    y: number;
+    btn: number;
+    btns: number;
+    trusted: boolean;
+  }>;
+
+  // First event is the hover move with no buttons pressed.
+  expect(events[0]).toEqual({ t: "mousemove", x: 50, y: 50, btn: 0, btns: 0, trusted: true });
+  // mousedown fires at the current position with buttons: 1 (left bit).
+  const down = events.find(e => e.t === "mousedown")!;
+  expect(down).toEqual({ t: "mousedown", x: 50, y: 50, btn: 0, btns: 1, trusted: true });
+  // mouseup fires at the target position with buttons: 0 (released).
+  const up = events.find(e => e.t === "mouseup")!;
+  expect(up).toEqual({ t: "mouseup", x: 200, y: 200, btn: 0, btns: 0, trusted: true });
+  // Intermediate drag moves — at least one, all with buttons: 1.
+  const dragMoves = events.filter(e => e.t === "mousemove" && e.btns === 1);
+  expect(dragMoves.length).toBeGreaterThan(0);
+  // The final move always hits the target coords.
+  expect(dragMoves[dragMoves.length - 1]).toEqual({
+    t: "mousemove",
+    x: 200,
+    y: 200,
+    btn: 0,
+    btns: 1,
+    trusted: true,
+  });
+});
+
+it("chrome: mouseMove without mouseDown is a plain hover (buttons: 0)", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(
+    html(`
+      <script>
+        window.__ev = [];
+        document.addEventListener("mousemove", e => __ev.push({
+          x: e.clientX, y: e.clientY, btns: e.buttons, trusted: e.isTrusted,
+        }), true);
+      </script>
+      <div style="position:fixed;left:0;top:0;width:300px;height:300px"></div>
+    `),
+  );
+  await view.mouseMove(100, 100);
+  await view.mouseMove(150, 75);
+
+  const events = JSON.parse(await view.evaluate("JSON.stringify(__ev)")) as Array<{
+    x: number;
+    y: number;
+    btns: number;
+    trusted: boolean;
+  }>;
+  expect(events.length).toBeGreaterThanOrEqual(2);
+  // All hover events have buttons: 0 (no button pressed).
+  for (const e of events) expect(e.btns).toBe(0);
+  expect(events[events.length - 1]).toEqual({ x: 150, y: 75, btns: 0, trusted: true });
+});
+
+it("chrome: mouseDown + mouseUp at same position synthesizes click", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(
+    html(`
+      <script>
+        window.__clicks = 0;
+        document.addEventListener("click", e => { if (e.isTrusted) window.__clicks++; });
+      </script>
+      <div style="position:fixed;left:0;top:0;width:300px;height:300px"></div>
+    `),
+  );
+  await view.mouseMove(50, 50);
+  await view.mouseDown();
+  await view.mouseUp();
+  // No drag in between = the browser fires a synthesized click.
+  expect(await view.evaluate("String(__clicks)")).toBe("1");
+});
+
+it("chrome: mouseDown right button fires contextmenu with modifiers", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(
+    html(`
+      <script>
+        window.__ev = [];
+        document.addEventListener("contextmenu", e => {
+          e.preventDefault();
+          __ev.push({ btn: e.button, btns: e.buttons, shift: e.shiftKey, ctrl: e.ctrlKey });
+        }, true);
+      </script>
+      <div style="position:fixed;left:0;top:0;width:300px;height:300px"></div>
+    `),
+  );
+  await view.mouseMove(50, 50);
+  await view.mouseDown({ button: "right", modifiers: ["Shift", "Control"] });
+  await view.mouseUp({ button: "right", modifiers: ["Shift", "Control"] });
+
+  const events = JSON.parse(await view.evaluate("JSON.stringify(__ev)"));
+  // event.button = 2 for right; buttons bitmask bit 1 (= 2) for right.
+  expect(events).toEqual([{ btn: 2, btns: 2, shift: true, ctrl: true }]);
+});
+
+it("chrome: mouseDown validates — x/y must be finite in mouseMove", () => {
+  const view = new Bun.WebView({ backend: chrome, width: 100, height: 100 });
+  expect(() => view.mouseMove(NaN, 0)).toThrow(/must be finite/);
+  expect(() => view.mouseMove(Infinity, 0)).toThrow(/must be finite/);
+  expect(() => view.mouseMove(0, -Infinity)).toThrow(/must be finite/);
+  view.close();
+});
+
+// Method-existence check — runs without Chrome. Validates the three new
+// prototype functions are wired even if the test environment can't spawn
+// a browser subprocess (CI containers without Chrome, Linux as root
+// without --no-sandbox, etc.).
+test("WebView prototype exposes mouseDown/mouseUp/mouseMove", () => {
+  expect(typeof Bun.WebView.prototype.mouseDown).toBe("function");
+  expect(typeof Bun.WebView.prototype.mouseUp).toBe("function");
+  expect(typeof Bun.WebView.prototype.mouseMove).toBe("function");
+});
+
 it("chrome: url getter reflects committed URL", async () => {
   await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   const url = html("<body>test</body>");

@@ -23,6 +23,9 @@ static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncEvaluate);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncScreenshot);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncCdp);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncClick);
+static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncMouseDown);
+static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncMouseUp);
+static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncMouseMove);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncType);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncPress);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncScroll);
@@ -47,6 +50,9 @@ static const HashTableValue JSWebViewPrototypeTableValues[] = {
     { "screenshot"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncScreenshot, 0 } },
     { "cdp"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncCdp, 1 } },
     { "click"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncClick, 2 } },
+    { "mouseDown"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncMouseDown, 0 } },
+    { "mouseUp"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncMouseUp, 0 } },
+    { "mouseMove"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncMouseMove, 2 } },
     { "type"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncType, 1 } },
     { "press"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncPress, 1 } },
     { "scroll"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncScroll, 2 } },
@@ -484,6 +490,118 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncType, (JSGlobalObject * globalObject,
 
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->type(globalObject, text));
+}
+
+// Shared options parse for mouseDown/mouseUp: { button, modifiers, clickCount }.
+// button: "left" (default), "right", "middle" → 0/1/2.
+// modifiers: array of "Shift"/"Control"/"Alt"/"Meta".
+// clickCount: 1-3. Default 1.
+static bool parseMouseDownUpOpts(JSGlobalObject* g, ThrowScope& scope, JSValue opts,
+    uint8_t& button, uint8_t& mods, uint8_t& clickCount)
+{
+    button = 0;
+    mods = 0;
+    clickCount = 1;
+    if (!opts.isObject()) return true;
+    auto& vm = g->vm();
+    JSObject* o = opts.getObject();
+    JSValue b = o->get(g, Identifier::fromString(vm, "button"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (b.isString()) {
+        WTF::String bs = b.toWTFString(g);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (bs == "right"_s)
+            button = 1;
+        else if (bs == "middle"_s)
+            button = 2;
+    }
+    JSValue m = o->get(g, Identifier::fromString(vm, "modifiers"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    mods = parseModifiers(g, scope, m);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSValue cc = o->get(g, Identifier::fromString(vm, "clickCount"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (cc.isNumber()) clickCount = static_cast<uint8_t>(std::clamp(cc.toInt32(g), 1, 3));
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncMouseDown, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = unwrapThis(globalObject, scope, callFrame, "mouseDown"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    uint8_t button, mods, clickCount;
+    if (!parseMouseDownUpOpts(globalObject, scope, callFrame->argument(0), button, mods, clickCount)) return {};
+
+    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    return JSValue::encode(thisObject->mouseDown(globalObject, button, mods, clickCount));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncMouseUp, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = unwrapThis(globalObject, scope, callFrame, "mouseUp"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    uint8_t button, mods, clickCount;
+    if (!parseMouseDownUpOpts(globalObject, scope, callFrame->argument(0), button, mods, clickCount)) return {};
+
+    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    return JSValue::encode(thisObject->mouseUp(globalObject, button, mods, clickCount));
+}
+
+// mouseMove(x, y, opts?): dispatches steps intermediate mousemove events
+// from the current position to (x, y). Default steps=1 (just one event at
+// the target). When a button is held (from prior mouseDown), the host
+// dispatches mouseDragged NSEvents; otherwise mouseMoved.
+JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncMouseMove, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = unwrapThis(globalObject, scope, callFrame, "mouseMove"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    double x = callFrame->argument(0).toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    double y = callFrame->argument(1).toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    // NaN/Inf would propagate into m_mouseX/Y and poison every subsequent
+    // down/up dispatch. static_cast<int> of NaN at the CDP send site is UB.
+    if (!std::isfinite(x) || !std::isfinite(y))
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "x/y"_s,
+            jsNumber(std::isfinite(x) ? y : x), "must be finite"_s);
+
+    uint32_t steps = 1;
+    uint8_t mods = 0;
+    JSValue opts = callFrame->argument(2);
+    if (opts.isObject()) {
+        JSObject* o = opts.getObject();
+        JSValue s = o->get(globalObject, Identifier::fromString(vm, "steps"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (s.isNumber()) {
+            int32_t si = s.toInt32(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            // steps < 1 is meaningless (we still need at least one final
+            // event). Cap at 1000 — any higher is almost certainly a bug
+            // (tests that want smooth animation should use ~20). A 1000-
+            // event burst is already ~30KB of CDP payload.
+            if (si < 1) si = 1;
+            if (si > 1000) si = 1000;
+            steps = static_cast<uint32_t>(si);
+        }
+        JSValue m = o->get(globalObject, Identifier::fromString(vm, "modifiers"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        mods = parseModifiers(globalObject, scope, m);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    return JSValue::encode(thisObject->mouseMove(globalObject,
+        static_cast<float>(x), static_cast<float>(y), steps, mods));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncPress, (JSGlobalObject * globalObject, CallFrame* callFrame))

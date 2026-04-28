@@ -509,6 +509,9 @@ JSC::JSPromise* evaluate(JSC::JSGlobalObject*, JSWebView*, const WTF::String& sc
 JSC::JSPromise* screenshot(JSC::JSGlobalObject*, JSWebView*, ScreenshotFormat, uint8_t quality);
 JSC::JSPromise* click(JSC::JSGlobalObject*, JSWebView*, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount);
 JSC::JSPromise* clickSelector(JSC::JSGlobalObject*, JSWebView*, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount);
+JSC::JSPromise* mouseDown(JSC::JSGlobalObject*, JSWebView*, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount, uint8_t buttonsMask);
+JSC::JSPromise* mouseUp(JSC::JSGlobalObject*, JSWebView*, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount, uint8_t buttonsMask);
+JSC::JSPromise* mouseMove(JSC::JSGlobalObject*, JSWebView*, float fromX, float fromY, float x, float y, uint32_t steps, uint8_t buttonsMask, uint8_t modifiers);
 JSC::JSPromise* type(JSC::JSGlobalObject*, JSWebView*, const WTF::String& text);
 JSC::JSPromise* press(JSC::JSGlobalObject*, JSWebView*, uint8_t virtualKey, uint8_t modifiers, const WTF::String& character);
 JSC::JSPromise* scroll(JSC::JSGlobalObject*, JSWebView*, double dx, double dy);

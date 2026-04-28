@@ -239,7 +239,12 @@ pub fn hasPendingActivity(this: *PostgresSQLConnection) bool {
 
 fn updateHasPendingActivity(this: *PostgresSQLConnection) void {
     const a: u32 = if (this.requests.readableLength() > 0) 1 else 0;
-    const b: u32 = if (this.status != .disconnected) 1 else 0;
+    const b: u32 = switch (this.status) {
+        // Terminal states: nothing more will happen on this connection, so
+        // allow GC to collect the JS wrapper (and ultimately call deinit()).
+        .disconnected, .failed => 0,
+        else => 1,
+    };
     this.pending_activity_count.store(a + b, .release);
 }
 
@@ -741,10 +746,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         if (path.len > 0) {
             ptr.socket = .{
                 .SocketTCP = uws.SocketTCP.connectUnixAnon(path, ctx, ptr, false) catch |err| {
-                    tls_config.deinit();
-                    if (tls_ctx) |tls| {
-                        tls.deinit(true);
-                    }
+                    // ptr.deinit() frees tls_config, tls_ctx, and options_buf.
                     ptr.deinit();
                     return globalObject.throwError(err, "failed to connect to postgresql");
                 },
@@ -752,10 +754,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         } else {
             ptr.socket = .{
                 .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
-                    tls_config.deinit();
-                    if (tls_ctx) |tls| {
-                        tls.deinit(true);
-                    }
+                    // ptr.deinit() frees tls_config, tls_ctx, and options_buf.
                     ptr.deinit();
                     return globalObject.throwError(err, "failed to connect to postgresql");
                 },
@@ -911,6 +910,10 @@ pub fn deinit(this: *@This()) void {
     bun.freeSensitive(bun.default_allocator, this.options_buf);
 
     this.tls_config.deinit();
+    if (this.tls_ctx) |ctx| {
+        this.tls_ctx = null;
+        ctx.deinit(true);
+    }
     bun.default_allocator.destroy(this);
 }
 

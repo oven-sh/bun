@@ -1,6 +1,41 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { describe, expect, test } from "bun:test";
-import { describeWithContainer, isDockerEnabled } from "harness";
+import { bunEnv, bunExe, describeWithContainer, isDockerEnabled } from "harness";
+import path from "node:path";
+
+// Does not require Docker: the fixture points at a dummy TCP server, so the
+// native PostgresSQLConnection (and its per-connection SSL SocketContext) is
+// allocated and then torn down without ever speaking the Postgres protocol.
+test(
+  "TLS Postgres connections do not leak SSL SocketContext on close",
+  async () => {
+    // ASAN quarantines freed memory (for UAF detection), which inflates RSS
+    // for the *fixed* build where the SSL_CTX is actually freed. Disable the
+    // quarantine so RSS reflects live allocations only.
+    const asan = [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+      .filter(Boolean)
+      .join(":");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "postgres-tls-ctx-leak-fixture.ts")],
+      env: { ...bunEnv, ASAN_OPTIONS: asan },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const lastLine = stdout.trim().split("\n").pop()!;
+    const { deltaMB, iterations } = JSON.parse(lastLine);
+    console.log({ stderr, deltaMB, iterations });
+
+    // Before the fix, a failed TLS connection could never be GC'd
+    // (hasPendingActivity stayed true for .failed) and its SSL SocketContext
+    // was never freed in deinit(), so 2000 iterations grew RSS by 35-45 MB.
+    // With the fix growth is <20 MB on debug-asan and ~0 on release.
+    expect(deltaMB).toBeLessThan(30);
+    expect(exitCode).toBe(0);
+  },
+  300_000,
+);
 
 if (!isDockerEnabled()) {
   test.skip("skipping TLS SQL tests - Docker is not available", () => {});

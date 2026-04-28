@@ -1593,13 +1593,7 @@ JSPromise* mouseMove(JSGlobalObject* g, JSWebView* view, float fromX, float from
         float ix = fromX + (x - fromX) * (static_cast<float>(i) / static_cast<float>(steps));
         float iy = fromY + (y - fromY) * (static_cast<float>(i) / static_cast<float>(steps));
         uint32_t idInterm = t.nextId();
-        t.send(0, Command(idInterm, "Input.dispatchMouseEvent"_s, sid)
-                      .raw("type"_s, "\"mouseMoved\""_s)
-                      .num("x"_s, ix)
-                      .num("y"_s, iy)
-                      .raw("button"_s, btnStr)
-                      .num("buttons"_s, buttons)
-                      .num("modifiers"_s, mods));
+        t.send(0, Command(idInterm, "Input.dispatchMouseEvent"_s, sid).raw("type"_s, "\"mouseMoved\""_s).num("x"_s, ix).num("y"_s, iy).raw("button"_s, btnStr).num("buttons"_s, buttons).num("modifiers"_s, mods));
     }
 
     uint32_t id = t.nextId();

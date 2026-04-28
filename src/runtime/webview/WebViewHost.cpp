@@ -441,7 +441,10 @@ bool WebViewHost::mouseMoveIPC(float fromX, float fromY, float x, float y, uint3
     // AppKit's responder chain uses a separate selector per button drag
     // (mouseDragged: / rightMouseDragged: / otherMouseDragged:) — switch
     // on a tag at each dispatch so we don't heap-allocate a std::function.
-    enum class MoveKind { Move, LeftDrag, RightDrag, OtherDrag };
+    enum class MoveKind { Move,
+        LeftDrag,
+        RightDrag,
+        OtherDrag };
     unsigned long evtType = NSEvent::MouseMoved;
     MoveKind kind = MoveKind::Move;
     if (buttonsMask & 0x1) {

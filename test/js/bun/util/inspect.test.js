@@ -451,6 +451,29 @@ const fixture = [
         },
       },
     ),
+  () =>
+    Object.create(
+      new Proxy(
+        {
+          get foo() {
+            throw new Error("boom");
+          },
+          bar: 1,
+        },
+        {},
+      ),
+    ),
+  () =>
+    Object.create(
+      new Proxy(
+        { foo: 1 },
+        {
+          getPrototypeOf() {
+            throw new Error("trap");
+          },
+        },
+      ),
+    ),
 ];
 
 describe("crash testing", () => {

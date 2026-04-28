@@ -929,7 +929,13 @@ describe("WebSocket tls option does not leak SSLConfig on error paths", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    // ASAN builds may print a benign signal-handler warning to stderr at
+    // startup; ignore that line so only real subprocess errors fail the test.
+    const filteredStderr = stderr
+      .split("\n")
+      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
+    expect(filteredStderr).toBe("");
     const { growthMiB } = JSON.parse(stdout.trim());
     expect(growthMiB).toBeLessThan(64);
     expect(exitCode).toBe(0);

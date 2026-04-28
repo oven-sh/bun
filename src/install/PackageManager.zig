@@ -495,14 +495,13 @@ var ensureTempNodeGypScriptOnce = bun.once(struct {
             \\)
             \\
             ,
-            else =>
-            \\#!/bin/sh
-            \\if [ "x$npm_config_node_gyp" = "x" ]; then
-            \\  bun x --silent node-gyp $@
-            \\else
-            \\  "$npm_config_node_gyp" $@
-            \\fi
-            \\
+            else => (if (Environment.isAndroid) "#!/system/bin/sh\n" else "#!/bin/sh\n") ++
+                \\if [ "x$npm_config_node_gyp" = "x" ]; then
+                \\  bun x --silent node-gyp $@
+                \\else
+                \\  "$npm_config_node_gyp" $@
+                \\fi
+                \\
             ,
         };
 

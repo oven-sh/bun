@@ -692,34 +692,19 @@ pub fn spawnMaybeSync(
         .globalThis = globalThis,
         .process = process,
         .pid_rusage = null,
-        .stdin = Writable.init(
-            &stdio[0],
-            event_loop,
-            subprocess,
-            spawned.stdin,
-            &promise_for_stream,
-        ) catch {
-            subprocess.deref();
-            return globalThis.throwOutOfMemory();
-        },
-        .stdout = Readable.init(
-            stdio[1],
-            event_loop,
-            subprocess,
-            spawned.stdout,
-            jsc_vm.allocator,
-            subprocess.stdout_maxbuf,
-            is_sync,
-        ),
-        .stderr = Readable.init(
-            stdio[2],
-            event_loop,
-            subprocess,
-            spawned.stderr,
-            jsc_vm.allocator,
-            subprocess.stderr_maxbuf,
-            is_sync,
-        ),
+        // stdin/stdout/stderr are assigned immediately after this literal.
+        // `Writable.init()` writes to `subprocess.weak_file_sink_stdin_ptr`,
+        // `subprocess.flags`, and calls `subprocess.ref()` for `.pipe` /
+        // `.readable_stream` stdin; if called from inside this aggregate
+        // initializer those writes are clobbered by `.ref_count =
+        // .initExactRefs(2)`, `.flags = .{...}`, and the default
+        // `weak_file_sink_stdin_ptr = null` below. stdout/stderr are deferred
+        // so that if `Writable.init()` fails the catch block doesn't have to
+        // tear down unstarted `PipeReader`s (whose `deinit()` asserts
+        // `isDone()`).
+        .stdin = .{ .ignore = {} },
+        .stdout = .{ .ignore = {} },
+        .stderr = .{ .ignore = {} },
         // 1. JavaScript.
         // 2. Process.
         .ref_count = .initExactRefs(2),
@@ -739,6 +724,60 @@ pub fn spawnMaybeSync(
         .stdout_maxbuf = subprocess.stdout_maxbuf,
         .terminal = existing_terminal orelse if (terminal_info) |info| info.terminal else null,
     };
+
+    subprocess.stdin = Writable.init(
+        &stdio[0],
+        event_loop,
+        subprocess,
+        spawned.stdin,
+        &promise_for_stream,
+    ) catch |err| {
+        // ref_count = 2 from the aggregate above, but neither the JS
+        // wrapper nor the process exit handler are wired up yet, so
+        // release both. stdout/stderr are still `.ignore` — close the raw
+        // spawned pipe handles directly since `Readable.init()` will not
+        // run. `finalizeStreams()` here only closes `stdio_pipes` and the
+        // pidfd; stdin/stdout/stderr are `.ignore` so their `closeIO` is a
+        // no-op.
+        if (Environment.isPosix) {
+            if (spawned.stdout) |fd| fd.close();
+            if (spawned.stderr) |fd| fd.close();
+        } else {
+            inline for (.{ spawned.stdout, spawned.stderr }) |r| switch (r) {
+                .buffer => |pipe| pipe.close(Subprocess.onPipeClose),
+                .buffer_fd => |fd| fd.close(),
+                .unavailable => {},
+            };
+        }
+        subprocess.finalizeStreams();
+        subprocess.process.detach();
+        subprocess.process.deref();
+        MaxBuf.removeFromSubprocess(&subprocess.stdout_maxbuf);
+        MaxBuf.removeFromSubprocess(&subprocess.stderr_maxbuf);
+        subprocess.deref();
+        subprocess.deref();
+        if (err == error.JSError) return error.JSError;
+        return globalThis.throwOutOfMemory();
+    };
+
+    subprocess.stdout = Readable.init(
+        stdio[1],
+        event_loop,
+        subprocess,
+        spawned.stdout,
+        jsc_vm.allocator,
+        subprocess.stdout_maxbuf,
+        is_sync,
+    );
+    subprocess.stderr = Readable.init(
+        stdio[2],
+        event_loop,
+        subprocess,
+        spawned.stderr,
+        jsc_vm.allocator,
+        subprocess.stderr_maxbuf,
+        is_sync,
+    );
 
     // For inline terminal options: close parent's slave_fd so EOF is received when child exits
     // For existing terminal: keep slave_fd open so terminal can be reused for more spawns

@@ -319,6 +319,7 @@ function parseArgs(argv: string[]): CliArgs {
     "webkitVersion",
     "pgoGenerate",
     "pgoUse",
+    "androidNdk",
   ]);
 
   for (let i = 0; i < argv.length; i++) {

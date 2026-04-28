@@ -131,6 +131,13 @@ pub const FilePoll = struct {
 
     allocator_type: AllocatorType = .js,
 
+    /// Darwin uses the extended `kevent64_s` (extra `ext` field carries our
+    /// generation number); FreeBSD only has the plain `struct kevent`.
+    const KQueueEvent = if (Environment.isFreeBSD) std.c.Kevent else std.posix.system.kevent64_s;
+    /// Zig std's `.freebsd` `EV` struct omits EOF; the kernel value is the
+    /// same as Darwin/OpenBSD (sys/event.h: `#define EV_EOF 0x8000`).
+    const EV_EOF: u16 = if (@hasDecl(std.c.EV, "EOF")) std.c.EV.EOF else 0x8000;
+
     const ShellBufferedWriter = bun.shell.Interpreter.IOWriter.Poll;
     // const ShellBufferedWriter = bun.shell.Interpreter.WriterImpl;
 
@@ -223,11 +230,11 @@ pub const FilePoll = struct {
         return .pipe;
     }
 
-    pub fn onKQueueEvent(poll: *FilePoll, _: *Loop, kqueue_event: *const std.posix.system.kevent64_s) void {
+    pub fn onKQueueEvent(poll: *FilePoll, _: *Loop, kqueue_event: *const KQueueEvent) void {
         poll.updateFlags(Flags.fromKQueueEvent(kqueue_event.*));
         log("onKQueueEvent: {f}", .{poll});
 
-        if (KQueueGenerationNumber != u0)
+        if (comptime Environment.isMac and KQueueGenerationNumber != u0)
             bun.assert(poll.generation_number == kqueue_event.ext[0]);
 
         poll.onUpdate(kqueue_event.data);
@@ -323,7 +330,7 @@ pub const FilePoll = struct {
         return this.flags.contains(.poll_writable) or this.flags.contains(.poll_readable) or this.flags.contains(.poll_process) or this.flags.contains(.poll_machport);
     }
 
-    const kqueue_or_epoll = if (Environment.isMac) "kevent" else "epoll";
+    const kqueue_or_epoll = if (Environment.isKqueue) "kevent" else "epoll";
 
     pub fn onUpdate(poll: *FilePoll, size_or_offset: i64) void {
         if (poll.flags.contains(.one_shot) and !poll.flags.contains(.needs_rearm)) {
@@ -507,22 +514,24 @@ pub const FilePoll = struct {
             }
         }
 
-        pub fn fromKQueueEvent(kqueue_event: std.posix.system.kevent64_s) Flags.Set {
+        pub fn fromKQueueEvent(kqueue_event: KQueueEvent) Flags.Set {
             var flags = Flags.Set{};
-            if (kqueue_event.filter == std.posix.system.EVFILT.READ) {
+            if (kqueue_event.filter == std.c.EVFILT.READ) {
                 flags.insert(Flags.readable);
-                if (kqueue_event.flags & std.posix.system.EV.EOF != 0) {
+                if (kqueue_event.flags & EV_EOF != 0) {
                     flags.insert(Flags.hup);
                 }
-            } else if (kqueue_event.filter == std.posix.system.EVFILT.WRITE) {
+            } else if (kqueue_event.filter == std.c.EVFILT.WRITE) {
                 flags.insert(Flags.writable);
-                if (kqueue_event.flags & std.posix.system.EV.EOF != 0) {
+                if (kqueue_event.flags & EV_EOF != 0) {
                     flags.insert(Flags.hup);
                 }
-            } else if (kqueue_event.filter == std.posix.system.EVFILT.PROC) {
+            } else if (kqueue_event.filter == std.c.EVFILT.PROC) {
                 flags.insert(Flags.process);
-            } else if (kqueue_event.filter == std.posix.system.EVFILT.MACHPORT) {
-                flags.insert(Flags.machport);
+            } else if (comptime Environment.isMac) {
+                if (kqueue_event.filter == std.posix.system.EVFILT.MACHPORT) {
+                    flags.insert(Flags.machport);
+                }
             }
             return flags;
         }
@@ -779,7 +788,7 @@ pub const FilePoll = struct {
             return;
         }
 
-        if (comptime Environment.isMac)
+        if (comptime Environment.isKqueue)
             onKQueueEvent(file_poll, loop, &loop.ready_polls[@as(usize, @intCast(loop.current_ready_poll))])
         else if (comptime Environment.isLinux)
             onEpollEvent(file_poll, loop, &loop.ready_polls[@as(usize, @intCast(loop.current_ready_poll))]);
@@ -933,6 +942,66 @@ pub const FilePoll = struct {
                 this.deactivate(loop);
                 return .initErr(bun.sys.Error.fromCode(errno, .kqueue));
             }
+        } else if (comptime Environment.isFreeBSD) {
+            var changelist = std.mem.zeroes([1]std.c.Kevent);
+            const one_shot_flag: u16 = if (!this.flags.contains(.one_shot))
+                0
+            else if (one_shot == .dispatch)
+                std.c.EV.DISPATCH | std.c.EV.ENABLE
+            else
+                std.c.EV.ONESHOT;
+
+            changelist[0] = switch (flag) {
+                .readable => .{
+                    .ident = @intCast(fd.cast()),
+                    .filter = std.c.EVFILT.READ,
+                    .data = 0,
+                    .fflags = 0,
+                    .udata = @intFromPtr(Pollable.init(this).ptr()),
+                    .flags = std.c.EV.ADD | one_shot_flag,
+                },
+                .writable => .{
+                    .ident = @intCast(fd.cast()),
+                    .filter = std.c.EVFILT.WRITE,
+                    .data = 0,
+                    .fflags = 0,
+                    .udata = @intFromPtr(Pollable.init(this).ptr()),
+                    .flags = std.c.EV.ADD | one_shot_flag,
+                },
+                .process => .{
+                    .ident = @intCast(fd.cast()),
+                    .filter = std.c.EVFILT.PROC,
+                    .data = 0,
+                    .fflags = std.c.NOTE.EXIT,
+                    .udata = @intFromPtr(Pollable.init(this).ptr()),
+                    .flags = std.c.EV.ADD | one_shot_flag,
+                },
+                .machport => return .initErr(.{ .errno = @intFromEnum(bun.sys.E.OPNOTSUPP), .syscall = .kevent }),
+                else => unreachable,
+            };
+
+            const rc = rc: {
+                while (true) {
+                    const rc = std.c.kevent(
+                        watcher_fd,
+                        &changelist,
+                        1,
+                        // Same array for changelist and eventlist; nevents=0 so
+                        // registration errors come back via errno.
+                        @constCast(&changelist),
+                        0,
+                        null,
+                    );
+                    if (bun.sys.getErrno(rc) == .INTR) continue;
+                    break :rc rc;
+                }
+            };
+
+            this.flags.insert(.was_ever_registered);
+            if (bun.sys.Maybe(void).errnoSys(rc, .kevent)) |err| {
+                this.deactivate(loop);
+                return err;
+            }
         } else {
             @compileError("unsupported platform");
         }
@@ -1082,6 +1151,48 @@ pub const FilePoll = struct {
                 std.math.minInt(@TypeOf(rc))...-1 => return bun.sys.Maybe(void).errnoSys(@intFromEnum(errno), .kevent).?,
                 else => {},
             }
+        } else if (comptime Environment.isFreeBSD) {
+            var changelist = std.mem.zeroes([1]std.c.Kevent);
+            changelist[0] = switch (flag) {
+                .readable => .{
+                    .ident = @intCast(fd.cast()),
+                    .filter = std.c.EVFILT.READ,
+                    .data = 0,
+                    .fflags = 0,
+                    .udata = @intFromPtr(Pollable.init(this).ptr()),
+                    .flags = std.c.EV.DELETE,
+                },
+                .writable => .{
+                    .ident = @intCast(fd.cast()),
+                    .filter = std.c.EVFILT.WRITE,
+                    .data = 0,
+                    .fflags = 0,
+                    .udata = @intFromPtr(Pollable.init(this).ptr()),
+                    .flags = std.c.EV.DELETE,
+                },
+                .process => .{
+                    .ident = @intCast(fd.cast()),
+                    .filter = std.c.EVFILT.PROC,
+                    .data = 0,
+                    .fflags = std.c.NOTE.EXIT,
+                    .udata = @intFromPtr(Pollable.init(this).ptr()),
+                    .flags = std.c.EV.DELETE,
+                },
+                .machport => return .initErr(.{ .errno = @intFromEnum(bun.sys.E.OPNOTSUPP), .syscall = .kevent }),
+                else => unreachable,
+            };
+
+            const rc = std.c.kevent(
+                watcher_fd,
+                &changelist,
+                1,
+                @constCast(&changelist),
+                0,
+                null,
+            );
+            if (bun.sys.Maybe(void).errnoSys(rc, .kevent)) |err| {
+                return err;
+            }
         } else {
             @compileError("unsupported platform");
         }
@@ -1101,7 +1212,8 @@ pub const FilePoll = struct {
 
 pub const Waker = switch (Environment.os) {
     .mac => KEventWaker,
-    .linux => LinuxWaker,
+    // FreeBSD 13+ has eventfd(2), so the Linux waker works as-is.
+    .linux, .freebsd => LinuxWaker,
     .windows, .wasm => @compileError("unreachable"),
 };
 

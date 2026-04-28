@@ -92,8 +92,14 @@ pub fn reload(this: *Listener, globalObject: *jsc.JSGlobalObject, callframe: *js
     };
 
     const handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.mode == .server);
+    // Preserve the live connection count across the struct assignment. `Handlers.fromJS`
+    // returns `active_connections = 0`, but existing accepted sockets each hold a +1 via
+    // `markActive`. Without this, closing any of them after reload would underflow the
+    // counter (panic in safe builds, wrap in release).
+    const active_connections = this.handlers.active_connections;
     this.handlers.deinit();
     this.handlers = handlers;
+    this.handlers.active_connections = active_connections;
 
     return .js_undefined;
 }

@@ -180,7 +180,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
 }
 
 // HEAD requests have no body.
-pub fn onHEADRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void {
+pub fn onHEADRequest(this: *StaticRoute, req: uws.AnyRequest, resp: AnyResponse) void {
     // Check If-None-Match for HEAD requests with 200 status
     if (this.status_code == 200) {
         if (this.render304NotModifiedIfNoneMatch(req, resp)) {
@@ -210,7 +210,7 @@ fn renderMetadataAndEnd(this: *StaticRoute, resp: AnyResponse) void {
     resp.endWithoutBody(resp.shouldCloseConnection());
 }
 
-pub fn onRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void {
+pub fn onRequest(this: *StaticRoute, req: uws.AnyRequest, resp: AnyResponse) void {
     const method = bun.http.Method.find(req.method()) orelse .GET;
     if (method == .GET) {
         this.onGET(req, resp);
@@ -223,7 +223,7 @@ pub fn onRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void 
     }
 }
 
-pub fn onGET(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void {
+pub fn onGET(this: *StaticRoute, req: uws.AnyRequest, resp: AnyResponse) void {
     // Check If-None-Match for GET requests with 200 status
     if (this.status_code == 200) {
         if (this.render304NotModifiedIfNoneMatch(req, resp)) {
@@ -316,12 +316,16 @@ fn doWriteStatus(_: *StaticRoute, status: u16, resp: AnyResponse) void {
     switch (resp) {
         .SSL => |r| writeStatus(true, r, status),
         .TCP => |r| writeStatus(false, r, status),
+        .H3 => |r| {
+            var b: [16]u8 = undefined;
+            r.writeStatus(std.fmt.bufPrint(&b, "{d}", .{status}) catch unreachable);
+        },
     }
 }
 
 fn doWriteHeaders(this: *StaticRoute, resp: AnyResponse) void {
     switch (resp) {
-        inline .SSL, .TCP => |s| {
+        inline else => |s, tag| {
             const entries = this.headers.entries.slice();
             const names: []const api.StringPointer = entries.items(.name);
             const values: []const api.StringPointer = entries.items(.value);
@@ -330,6 +334,8 @@ fn doWriteHeaders(this: *StaticRoute, resp: AnyResponse) void {
             for (names, values) |name, value| {
                 s.writeHeader(name.slice(buf), value.slice(buf));
             }
+            if (comptime tag != .H3) if (this.server) |srv| if (srv.h3AltSvc()) |alt|
+                s.writeHeader("alt-svc", alt);
         },
     }
 }
@@ -362,7 +368,7 @@ pub fn onWithMethod(this: *StaticRoute, method: bun.http.Method, resp: AnyRespon
     }
 }
 
-fn render304NotModifiedIfNoneMatch(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) bool {
+fn render304NotModifiedIfNoneMatch(this: *StaticRoute, req: uws.AnyRequest, resp: AnyResponse) bool {
     const if_none_match = req.header("if-none-match") orelse return false;
     const etag = this.headers.get("etag") orelse return false;
     if (if_none_match.len == 0 or etag.len == 0) {

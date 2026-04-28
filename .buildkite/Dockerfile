@@ -25,7 +25,7 @@ RUN echo "Acquire::Queue-Mode \"host\";" > /etc/apt/apt.conf.d/99-apt-queue-mode
 RUN apt-get update && apt-get install -y --no-install-recommends \
    wget curl git python3 python3-pip ninja-build \
    software-properties-common apt-transport-https \
-   ca-certificates gnupg lsb-release unzip \
+   ca-certificates gnupg lsb-release unzip xz-utils \
    libxml2-dev ruby ruby-dev bison gawk perl make golang ccache qemu-user-static \
    && add-apt-repository ppa:ubuntu-toolchain-r/test \
    && apt-get update \
@@ -124,8 +124,53 @@ ARG BUILDKITE_AGENT_TAGS
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && export PATH=$HOME/.cargo/bin:$PATH \
     && rustup install nightly \
-    && rustup default nightly
+    && rustup default nightly \
+    && rustup target add aarch64-linux-android x86_64-linux-android \
+    && rustup target add x86_64-unknown-freebsd \
+    && rustup component add rust-src
 
+# Android NDK — sysroot/libc++/compiler-rt for --abi=android cross-compile.
+ARG ANDROID_NDK_VERSION="r27c"
+RUN curl -fsSL "https://dl.google.com/android/repository/android-ndk-${ANDROID_NDK_VERSION}-linux.zip" -o /tmp/ndk.zip \
+    && unzip -q /tmp/ndk.zip -d /opt \
+    && mv /opt/android-ndk-${ANDROID_NDK_VERSION} /opt/android-ndk \
+    && rm /tmp/ndk.zip \
+    # Trim ~1.1GB we don't use (NDK clang/lld, lldb, non-android runtimes) —
+    # we only need sysroot + android compiler-rt. Dramatically shrinks the
+    # docker layer / AMI size.
+    && rm -rf /opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin \
+              /opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/python3 \
+              /opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/lib/liblldb.so \
+              /opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/lib/*-gnu \
+              /opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/lib/*-musl* \
+              /opt/android-ndk/simpleperf /opt/android-ndk/shader-tools /opt/android-ndk/sources \
+    # Symlink NDK compiler-rt builtins + libunwind into host clang's resource
+    # dir — clang's driver hardcodes <resource-dir>/lib/<triple>/libclang_rt.*
+    # with no -L fallback. Done at image-build time (root) since the build
+    # user can't write to /usr.
+    && RES=$(clang -print-resource-dir) \
+    && NDK_RT=/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/$(ls /opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/)/lib/linux \
+    && mkdir -p $RES/lib/linux \
+    && for A in aarch64 x86_64; do \
+         ln -sf $NDK_RT/libclang_rt.builtins-${A}-android.a $RES/lib/linux/; \
+         mkdir -p $RES/lib/linux/${A}; \
+         ln -sf $NDK_RT/${A}/libunwind.a $RES/lib/linux/${A}/; \
+         DIR=$RES/lib/${A}-unknown-linux-android28; \
+         mkdir -p $DIR; \
+         ln -sf $NDK_RT/libclang_rt.builtins-${A}-android.a $DIR/libclang_rt.builtins.a; \
+         ln -sf $NDK_RT/${A}/libunwind.a $DIR/libunwind.a; \
+       done
+ENV ANDROID_NDK_ROOT=/opt/android-ndk
+
+# FreeBSD sysroot — extracted base.txz for --os=freebsd cross-compile.
+# Only the matching arch is fetched (x64 image gets amd64 sysroot, etc.).
+ARG FREEBSD_VERSION="14.3"
+RUN FBSD_ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "amd64"; fi) \
+    && mkdir -p /opt/freebsd-sysroot \
+    && curl -fsSL "https://download.freebsd.org/releases/${FBSD_ARCH}/${FREEBSD_VERSION}-RELEASE/base.txz" -o /tmp/base.txz \
+    && tar -C /opt/freebsd-sysroot --no-same-owner -xJf /tmp/base.txz ./usr/include ./usr/lib ./lib \
+    && rm /tmp/base.txz
+ENV FREEBSD_SYSROOT=/opt/freebsd-sysroot
 
 RUN ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "amd64"; fi) && \
     echo "Downloading buildkite" && \
@@ -190,7 +235,10 @@ COPY . /workspace/bun
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && export PATH=$HOME/.cargo/bin:$PATH \
     && rustup install nightly \
-    && rustup default nightly
+    && rustup default nightly \
+    && rustup target add aarch64-linux-android x86_64-linux-android \
+    && rustup target add x86_64-unknown-freebsd \
+    && rustup component add rust-src
 
 ENV PATH=/root/.cargo/bin:$PATH
 

@@ -50,6 +50,14 @@ pub const HPACK = extern struct {
         return offset;
     }
 
+    /// Adjust the encoder's dynamic-table capacity after init. Evicts entries
+    /// to fit; the caller is responsible for emitting the RFC 7541 §6.3
+    /// Dynamic Table Size Update opcode at the start of the next header block
+    /// so the peer's decoder evicts in lockstep.
+    pub fn setEncoderMaxCapacity(self: *HPACK, max_capacity: u32) void {
+        lshpack_wrapper_enc_set_max_capacity(self, max_capacity);
+    }
+
     pub fn deinit(self: *HPACK) void {
         lshpack_wrapper_deinit(self);
     }
@@ -58,6 +66,7 @@ pub const HPACK = extern struct {
 const lshpack_wrapper_alloc = ?*const fn (size: usize) callconv(.c) ?*anyopaque;
 const lshpack_wrapper_free = ?*const fn (ptr: ?*anyopaque) callconv(.c) void;
 extern fn lshpack_wrapper_init(alloc: lshpack_wrapper_alloc, free: lshpack_wrapper_free, capacity: usize) ?*HPACK;
+extern fn lshpack_wrapper_enc_set_max_capacity(self: *HPACK, max_capacity: c_uint) void;
 extern fn lshpack_wrapper_deinit(self: *HPACK) void;
 extern fn lshpack_wrapper_decode(self: *HPACK, src: [*]const u8, src_len: usize, output: *lshpack_header) usize;
 extern fn lshpack_wrapper_encode(self: *HPACK, name: [*]const u8, name_len: usize, value: [*]const u8, value_len: usize, never_index: c_int, buffer: [*]u8, buffer_len: usize, buffer_offset: usize) usize;

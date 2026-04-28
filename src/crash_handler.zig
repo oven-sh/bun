@@ -321,7 +321,7 @@ pub fn crashHandler(
                                 writer.print("(thread {d})", .{bun.c.GetCurrentThreadId()}) catch std.posix.abort();
                             }
                         },
-                        .mac, .linux => {},
+                        .mac, .linux, .freebsd => {},
                         .wasm => @compileError("TODO"),
                     }
 
@@ -351,7 +351,7 @@ pub fn crashHandler(
                     const desired_begin_addr = begin_addr orelse @returnAddress();
                     std.debug.captureStackTrace(desired_begin_addr, &trace_buf);
 
-                    if (comptime bun.Environment.isLinux and !bun.Environment.isMusl) {
+                    if (comptime bun.Environment.isGlibc) {
                         var addr_buf_libc: [20]usize = undefined;
                         var trace_buf_libc: std.builtin.StackTrace = .{
                             .index = 0,
@@ -561,6 +561,25 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                             bun.fmt.nullableFallback(limit, "<unknown>"),
                         },
                     );
+                } else if (comptime bun.Environment.isFreeBSD) {
+                    Output.prettyError(
+                        \\
+                        \\<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>
+                        \\
+                        \\<d>Current limit: {f}<r>
+                        \\
+                        \\To fix this, try running:
+                        \\
+                        \\  <cyan>sudo sysctl kern.maxfiles=2147483646 kern.maxfilesperproc=2147483646<r>
+                        \\  <cyan>ulimit -n 2147483646<r>
+                        \\
+                        \\To persist across reboots, add to /etc/sysctl.conf and edit /etc/login.conf.
+                        \\
+                    ,
+                        .{
+                            bun.fmt.nullableFallback(limit, "<unknown>"),
+                        },
+                    );
                 } else {
                     Output.prettyError(
                         \\
@@ -621,6 +640,23 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                         \\You may also need to run:
                         \\
                         \\  <cyan>sudo launchctl limit maxfiles 2147483646<r>
+                        \\
+                    ,
+                        .{
+                            bun.fmt.nullableFallback(limit, "<unknown>"),
+                        },
+                    );
+                } else if (comptime bun.Environment.isFreeBSD) {
+                    Output.prettyError(
+                        \\
+                        \\<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>
+                        \\
+                        \\<d>Current limit: {f}<r>
+                        \\
+                        \\To fix this, try running:
+                        \\
+                        \\  <cyan>ulimit -n 2147483646<r>
+                        \\  <cyan>sudo sysctl kern.maxfilesperproc=2147483646<r>
                         \\
                     ,
                         .{
@@ -830,7 +866,7 @@ const metadata_version_line = std.fmt.comptimePrint(
 fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const anyopaque) callconv(.c) noreturn {
     const addr = switch (bun.Environment.os) {
         .linux => @intFromPtr(info.fields.sigfault.addr),
-        .mac => @intFromPtr(info.addr),
+        .mac, .freebsd => @intFromPtr(info.addr),
         .windows, .wasm => @compileError("unreachable"),
     };
 
@@ -892,7 +928,7 @@ pub fn init() void {
         .windows => {
             windows_segfault_handle = windows.kernel32.AddVectoredExceptionHandler(0, handleSegfaultWindows);
         },
-        .mac, .linux => {
+        .mac, .linux, .freebsd => {
             resetOnPosix();
         },
         .wasm => @compileError("TODO"),
@@ -964,7 +1000,7 @@ pub fn printMetadata(writer: anytype) !void {
     {
         const platform = bun.analytics.GenerateHeader.GeneratePlatform.forOS();
         const cpu_features = CPUFeatures.get();
-        if (bun.Environment.isLinux and !bun.Environment.isMusl) {
+        if (bun.Environment.isGlibc) {
             const version = gnu_get_libc_version() orelse "";
             const kernel_version = bun.analytics.GenerateHeader.GeneratePlatform.kernelVersion();
             if (platform.os == .wsl) {
@@ -975,6 +1011,11 @@ pub fn printMetadata(writer: anytype) !void {
         } else if (bun.Environment.isLinux and bun.Environment.isMusl) {
             const kernel_version = bun.analytics.GenerateHeader.GeneratePlatform.kernelVersion();
             try writer.print("Linux Kernel v{d}.{d}.{d} | musl\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch });
+        } else if (bun.Environment.isAndroid) {
+            const kernel_version = bun.analytics.GenerateHeader.GeneratePlatform.kernelVersion();
+            try writer.print("Android Kernel v{d}.{d}.{d} | bionic\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch });
+        } else if (bun.Environment.isFreeBSD) {
+            try writer.print("FreeBSD Kernel v{s}\n", .{platform.version});
         } else if (bun.Environment.isMac) {
             try writer.print("macOS v{s}\n", .{platform.version});
         } else if (bun.Environment.isWindows) {
@@ -1104,6 +1145,10 @@ const Platform = enum(u8) {
     windows_x86_64 = 'w',
     windows_x86_64_baseline = 'e',
     windows_aarch64 = 'W',
+
+    freebsd_x86_64 = 'f',
+    freebsd_x86_64_baseline = 'g',
+    freebsd_aarch64 = 'F',
 
     const current = @field(Platform, @tagName(bun.Environment.os) ++
         "_" ++ @tagName(builtin.target.cpu.arch) ++
@@ -1500,7 +1545,7 @@ fn report(url: []const u8) void {
             // we don't care what happens with the process
             _ = spawn_result;
         },
-        .mac, .linux => {
+        .mac, .linux, .freebsd => {
             var buf: bun.PathBuffer = undefined;
             var buf2: bun.PathBuffer = undefined;
             const curl = bun.which(

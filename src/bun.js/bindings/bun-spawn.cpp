@@ -1,6 +1,6 @@
 #include "root.h"
 
-#if OS(LINUX) || OS(DARWIN)
+#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 
 #include <fcntl.h>
 #include <cstring>
@@ -33,7 +33,7 @@ static inline int getMaxFd(int start, int end)
 {
 #if OS(LINUX)
     int maxfd = static_cast<int>(sysconf(_SC_OPEN_MAX));
-#elif OS(DARWIN)
+#elif OS(DARWIN) || OS(FREEBSD)
     int maxfd = getdtablesize();
 #else
     int maxfd = 1024;
@@ -126,7 +126,7 @@ extern "C" ssize_t posix_spawn_bun(
     sigset_t blockall, oldmask;
     int res = 0, cs = 0;
 
-#if OS(DARWIN)
+#if OS(DARWIN) || OS(FREEBSD)
     // On macOS, we use fork() which requires a self-pipe trick to detect exec failures.
     // Create a pipe for child-to-parent error communication.
     // The write end has O_CLOEXEC so it's automatically closed on successful exec.
@@ -141,7 +141,9 @@ extern "C" ssize_t posix_spawn_bun(
 
     sigfillset(&blockall);
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
+#if !OS(ANDROID)
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
+#endif
 
 #if OS(LINUX)
     // On Linux, use vfork() for performance. The parent is suspended until
@@ -158,7 +160,7 @@ extern "C" ssize_t posix_spawn_bun(
     pid_t child = fork();
 #endif
 
-#if OS(DARWIN)
+#if OS(DARWIN) || OS(FREEBSD)
     const auto childFailed = [&]() -> ssize_t {
         int err = errno;
         // Write errno to pipe so parent can read it
@@ -308,14 +310,14 @@ extern "C" ssize_t posix_spawn_bun(
     };
 
     if (child == 0) {
-#if OS(DARWIN)
+#if OS(DARWIN) || OS(FREEBSD)
         // Close read end in child
         close(errpipe[0]);
 #endif
         return startChild();
     }
 
-#if OS(DARWIN)
+#if OS(DARWIN) || OS(FREEBSD)
     // macOS fork() path: use self-pipe trick to detect exec failure
     // Parent: close write end
     close(errpipe[1]);
@@ -380,7 +382,11 @@ extern "C" ssize_t posix_spawn_bun(
 #endif
 
     sigprocmask(SIG_SETMASK, &oldmask, 0);
+#if !OS(ANDROID)
     pthread_setcancelstate(cs, 0);
+#else
+    (void)cs;
+#endif
 
     return res;
 }

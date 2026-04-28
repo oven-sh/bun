@@ -757,12 +757,11 @@ pub fn transpileSourceCode(
                 if (jsc_vm.isWatcherEnabled()) auto_watch: {
                     if (std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                         const input_fd: bun.FD = brk: {
-                            // on macOS, we need a file descriptor to receive event notifications on it.
-                            // so we use O_EVTONLY to open the file descriptor without asking any additional permissions.
+                            // kqueue watchers need a file descriptor to receive event notifications on it.
                             if (bun.Watcher.requires_file_descriptors) {
                                 switch (bun.sys.open(
                                     &(std.posix.toPosixPath(path.text) catch break :auto_watch),
-                                    bun.c.O_EVTONLY,
+                                    bun.Watcher.watch_open_flags,
                                     0,
                                 )) {
                                     .err => break :auto_watch,

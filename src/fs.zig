@@ -579,7 +579,7 @@ pub const FileSystem = struct {
                     ) catch |err| bun.handleOom(err);
                 },
                 .mac => "/private/tmp",
-                else => "/tmp",
+                else => if (comptime Environment.isAndroid) "/data/local/tmp" else "/tmp",
             };
         }
 

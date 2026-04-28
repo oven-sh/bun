@@ -1,3 +1,37 @@
+/// Transport-agnostic request handle. Static/file routes (and RangeRequest)
+/// take this so the same handler body serves HTTP/1.1 and HTTP/3 without
+/// `anytype` — `inline else` keeps dispatch monomorphic.
+pub const AnyRequest = union(enum) {
+    h1: *Request,
+    h3: *uws.H3.Request,
+
+    pub fn header(this: AnyRequest, name: []const u8) ?[]const u8 {
+        return switch (this) {
+            inline else => |r| r.header(name),
+        };
+    }
+    pub fn method(this: AnyRequest) []const u8 {
+        return switch (this) {
+            inline else => |r| r.method(),
+        };
+    }
+    pub fn url(this: AnyRequest) []const u8 {
+        return switch (this) {
+            inline else => |r| r.url(),
+        };
+    }
+    pub fn setYield(this: AnyRequest, y: bool) void {
+        switch (this) {
+            inline else => |r| r.setYield(y),
+        }
+    }
+    pub fn dateForHeader(this: AnyRequest, name: []const u8) bun.JSError!?u64 {
+        return switch (this) {
+            inline else => |r| r.dateForHeader(name),
+        };
+    }
+};
+
 /// uWS::Request C++ -> Zig bindings.
 pub const Request = opaque {
     pub fn isAncient(req: *Request) bool {
@@ -31,7 +65,7 @@ pub const Request = opaque {
         var string = bun.String.init(value.?);
         defer string.deref();
         const date_f64 = try bun.String.parseDate(&string, bun.jsc.VirtualMachine.get().global);
-        if (!std.math.isNan(date_f64) and std.math.isFinite(date_f64)) {
+        if (!std.math.isNan(date_f64) and std.math.isFinite(date_f64) and date_f64 >= 0) {
             return @intFromFloat(date_f64);
         }
         return null;
@@ -57,5 +91,7 @@ const c = struct {
     pub extern fn uws_req_get_parameter(res: *Request, index: c_ushort, dest: *[*]const u8) usize;
 };
 
-const bun = @import("bun");
 const std = @import("std");
+
+const bun = @import("bun");
+const uws = bun.uws;

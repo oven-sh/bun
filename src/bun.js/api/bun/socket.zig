@@ -1382,9 +1382,20 @@ pub fn NewSocket(comptime ssl: bool) type {
             };
 
             const this_handlers = this.getHandlers();
-            const handlers = try Handlers.fromJS(globalObject, socket_obj, this_handlers.mode == .server);
+            const prev_mode = this_handlers.mode;
+            const handlers = try Handlers.fromJS(globalObject, socket_obj, prev_mode == .server);
+            // Preserve runtime state across the struct assignment. `Handlers.fromJS` returns a
+            // fresh struct with `active_connections = 0` and `mode` limited to `.server`/`.client`,
+            // but this socket (and any in-flight callback scope) still holds references that were
+            // counted against the old value, and a duplex-upgraded server socket must keep
+            // `.duplex_server`. Losing the counter causes the next `markInactive` to either free
+            // the heap-allocated client `Handlers` while the socket still points at it, or
+            // underflow on the server path.
+            const active_connections = this_handlers.active_connections;
             this_handlers.deinit();
             this_handlers.* = handlers;
+            this_handlers.mode = prev_mode;
+            this_handlers.active_connections = active_connections;
 
             return .js_undefined;
         }

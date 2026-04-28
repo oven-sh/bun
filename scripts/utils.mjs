@@ -3051,6 +3051,7 @@ const emojiMap = {
   rocket: ["🚀", "rocket"],
   openbsd: ["🐡", "openbsd"],
   netbsd: ["🚩", "netbsd"],
+  freebsd: ["😈", "freebsd"],
 };
 
 /**

@@ -683,7 +683,7 @@ pub const H2FrameParser = struct {
     // TODO: this will be removed when I re-add header and data priorization
     outboundQueueSize: usize = 0,
 
-    streams: bun.U32HashMap(Stream),
+    streams: bun.U32HashMap(*Stream),
 
     hpack: ?*lshpack.HPACK = null,
 
@@ -740,7 +740,7 @@ pub const H2FrameParser = struct {
             it.index = this.index;
             while (it.next()) |item| {
                 this.index = it.index;
-                return item.value_ptr;
+                return item.value_ptr.*;
             }
             this.index = it.index;
             return null;
@@ -787,6 +787,12 @@ pub const H2FrameParser = struct {
 
         // when we have backpressure we queue the data e round robin the Streams
         dataFrameQueue: PendingQueue,
+
+        // Stream is heap-allocated and stored by pointer in the streams map so that
+        // *Stream stays valid across re-entrant JS callbacks that may insert into
+        // (and rehash) the map. Lifetime == H2FrameParser lifetime; freed in deinit().
+        pub const new = bun.TrivialNew(Stream);
+
         const SignalRef = struct {
             signal: *jsc.WebCore.AbortSignal,
             parser: *H2FrameParser,
@@ -801,10 +807,9 @@ pub const H2FrameParser = struct {
             pub fn abortListener(this: *SignalRef, reason: JSValue) void {
                 log("abortListener", .{});
                 reason.ensureStillAlive();
-                const stream = this.parser.streams.getEntry(this.stream_id) orelse return;
-                const value = stream.value_ptr;
-                if (value.state != .CLOSED) {
-                    this.parser.abortStream(value, Bun__wrapAbortError(this.parser.globalThis, reason));
+                const stream = this.parser.streams.get(this.stream_id) orelse return;
+                if (stream.state != .CLOSED) {
+                    this.parser.abortStream(stream, Bun__wrapAbortError(this.parser.globalThis, reason));
                 }
             }
 
@@ -1252,7 +1257,8 @@ pub const H2FrameParser = struct {
 
     fn incrementWindowSizeIfNeeded(this: *H2FrameParser) void {
         var it = this.streams.valueIterator();
-        while (it.next()) |stream| {
+        while (it.next()) |item| {
+            const stream = item.*;
             log("incrementWindowSizeIfNeeded stream {} {} {} {}", .{ stream.id, stream.usedWindowSize, stream.windowSize, this.isServer });
             if (stream.usedWindowSize >= stream.windowSize / 2 and stream.usedWindowSize > 0) {
                 const consumed = stream.usedWindowSize;
@@ -1915,8 +1921,7 @@ pub const H2FrameParser = struct {
             if (this.isServer and strings.eqlComptime(header.name, ":status")) {
                 this.sendGoAway(stream_id, ErrorCode.PROTOCOL_ERROR, "Server received :status header", this.lastStreamID, true);
 
-                if (this.streams.getEntry(stream_id)) |entry| return entry.value_ptr;
-                return null;
+                return this.streams.get(stream_id);
             }
 
             // RFC 7540 Section 6.5.2: Calculate header list size
@@ -1931,8 +1936,7 @@ pub const H2FrameParser = struct {
                 } else {
                     this.endStream(stream, ErrorCode.ENHANCE_YOUR_CALM);
                 }
-                if (this.streams.getEntry(stream_id)) |entry| return entry.value_ptr;
-                return null;
+                return this.streams.get(stream_id);
             }
 
             count += 1;
@@ -1943,8 +1947,7 @@ pub const H2FrameParser = struct {
                 } else {
                     this.endStream(stream, ErrorCode.ENHANCE_YOUR_CALM);
                 }
-                if (this.streams.getEntry(stream_id)) |entry| return entry.value_ptr;
-                return null;
+                return this.streams.get(stream_id);
             }
 
             if (getHTTP2CommonString(globalObject, header.well_know)) |js_header_name| {
@@ -1982,9 +1985,7 @@ pub const H2FrameParser = struct {
         }
 
         this.dispatchWith3Extra(.onStreamHeaders, stream.getIdentifier(), headers, sensitiveHeaders, jsc.JSValue.jsNumber(flags));
-        // callbacks can change the Stream ptr in this case we always return the new one
-        if (this.streams.getEntry(stream_id)) |entry| return entry.value_ptr;
-        return null;
+        return this.streams.get(stream_id);
     }
 
     pub fn handleDataFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
@@ -2061,9 +2062,7 @@ pub const H2FrameParser = struct {
             this.currentFrame = null;
             stream.padding = null;
             if (emitted) {
-                // we need to revalidate the stream ptr after emitting onStreamData
-                const entry = this.streams.getEntry(frame.streamIdentifier) orelse return end;
-                stream = entry.value_ptr;
+                stream = this.streams.get(frame.streamIdentifier) orelse return end;
             }
             if (frame.flags & @intFromEnum(DataFrameFlags.END_STREAM) != 0) {
                 const identifier = stream.getIdentifier();
@@ -2446,7 +2445,8 @@ pub const H2FrameParser = struct {
                         const new_size: i64 = this.localSettings.initialWindowSize;
                         const delta = new_size - old_size;
                         var it = this.streams.valueIterator();
-                        while (it.next()) |stream| {
+                        while (it.next()) |item| {
+                            const stream = item.*;
                             // Adjust the stream's local window size by the delta
                             if (delta >= 0) {
                                 stream.windowSize +|= @intCast(@as(u64, @intCast(delta)));
@@ -2472,7 +2472,8 @@ pub const H2FrameParser = struct {
 
                     if (remoteSettings.initialWindowSize >= this.remoteWindowSize) {
                         var it = this.streams.valueIterator();
-                        while (it.next()) |stream| {
+                        while (it.next()) |item| {
+                            const stream = item.*;
                             if (remoteSettings.initialWindowSize >= stream.remoteWindowSize) {
                                 stream.remoteWindowSize = remoteSettings.initialWindowSize;
                             }
@@ -2503,7 +2504,8 @@ pub const H2FrameParser = struct {
             log("remoteSettings.initialWindowSize: {} {} {}", .{ remoteSettings.initialWindowSize, this.remoteUsedWindowSize, this.remoteWindowSize });
             if (remoteSettings.initialWindowSize >= this.remoteWindowSize) {
                 var it = this.streams.valueIterator();
-                while (it.next()) |stream| {
+                while (it.next()) |item| {
+                    const stream = item.*;
                     if (remoteSettings.initialWindowSize >= stream.remoteWindowSize) {
                         stream.remoteWindowSize = remoteSettings.initialWindowSize;
                     }
@@ -2516,7 +2518,7 @@ pub const H2FrameParser = struct {
         return data.len;
     }
 
-    /// We need to be very carefull because this is not a stable ptr
+    /// Returned *Stream is heap-allocated and stable for the lifetime of this H2FrameParser.
     fn handleReceivedStreamID(this: *H2FrameParser, streamIdentifier: u32) ?*Stream {
         // connection stream
         if (streamIdentifier == 0) {
@@ -2524,8 +2526,8 @@ pub const H2FrameParser = struct {
         }
 
         // already exists
-        if (this.streams.getEntry(streamIdentifier)) |entry| {
-            return entry.value_ptr;
+        if (this.streams.get(streamIdentifier)) |stream| {
+            return stream;
         }
 
         if (streamIdentifier > this.lastStreamID) {
@@ -2533,8 +2535,6 @@ pub const H2FrameParser = struct {
         }
 
         // new stream open
-        const entry = bun.handleOom(this.streams.getOrPut(streamIdentifier));
-
         // Per RFC 7540 Section 6.5.1: The sender of SETTINGS can only rely on the
         // setting being applied AFTER receiving SETTINGS_ACK. Until then, the peer
         // hasn't seen our settings and uses the default window size.
@@ -2543,21 +2543,22 @@ pub const H2FrameParser = struct {
             DEFAULT_WINDOW_SIZE
         else
             this.localSettings.initialWindowSize;
-        entry.value_ptr.* = Stream.init(
+        const stream = Stream.new(Stream.init(
             streamIdentifier,
             local_window_size,
             if (this.remoteSettings) |s| s.initialWindowSize else DEFAULT_WINDOW_SIZE,
             this.paddingStrategy,
-        );
-        const this_value = this.strong_this.tryGet() orelse return entry.value_ptr;
-        const ctx_value = js.gc.context.get(this_value) orelse return entry.value_ptr;
-        const callback = js.gc.onStreamStart.get(this_value) orelse return entry.value_ptr;
+        ));
+        bun.handleOom(this.streams.put(streamIdentifier, stream));
 
-        // we assume that onStreamStart will never mutate the stream hash map
+        const this_value = this.strong_this.tryGet() orelse return stream;
+        const ctx_value = js.gc.context.get(this_value) orelse return stream;
+        const callback = js.gc.onStreamStart.get(this_value) orelse return stream;
+
         _ = callback.call(this.handlers.globalObject, ctx_value, &[_]jsc.JSValue{ ctx_value, jsc.JSValue.jsNumber(streamIdentifier) }) catch |err| {
             this.handlers.globalObject.reportActiveExceptionAsUnhandled(err);
         };
-        return entry.value_ptr;
+        return stream;
     }
 
     fn readBytes(this: *H2FrameParser, bytes: []const u8) bun.JSError!usize {
@@ -2879,7 +2880,8 @@ pub const H2FrameParser = struct {
             this.sendWindowUpdate(0, UInt31WithReserved.init(increment, false));
         }
         var it = this.streams.valueIterator();
-        while (it.next()) |stream| {
+        while (it.next()) |item| {
+            const stream = item.*;
             if (stream.usedWindowSize > windowSizeValue) {
                 continue;
             }
@@ -3103,7 +3105,7 @@ pub const H2FrameParser = struct {
         }
         if (stream_id > 0) {
             // dont error but dont send frame to invalid stream id
-            _ = this.streams.getPtr(stream_id) orelse {
+            _ = this.streams.get(stream_id) orelse {
                 return .js_undefined;
             };
         }
@@ -3128,7 +3130,7 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Invalid stream id", .{});
         }
 
-        const stream = this.streams.getPtr(stream_id) orelse {
+        const stream = this.streams.get(stream_id) orelse {
             return globalObject.throw("Invalid stream id", .{});
         };
 
@@ -3152,7 +3154,7 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Invalid stream id", .{});
         }
 
-        const stream = this.streams.getPtr(stream_id) orelse {
+        const stream = this.streams.get(stream_id) orelse {
             return globalObject.throw("Invalid stream id", .{});
         };
 
@@ -3180,7 +3182,7 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Invalid stream id", .{});
         }
 
-        var stream = this.streams.getPtr(stream_id) orelse {
+        var stream = this.streams.get(stream_id) orelse {
             return globalObject.throw("Invalid stream id", .{});
         };
         var state = jsc.JSValue.createEmptyObject(globalObject, 6);
@@ -3214,7 +3216,7 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Invalid stream id", .{});
         }
 
-        var stream = this.streams.getPtr(stream_id) orelse {
+        var stream = this.streams.get(stream_id) orelse {
             return globalObject.throw("Invalid stream id", .{});
         };
 
@@ -3312,7 +3314,7 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Invalid stream id", .{});
         }
 
-        const stream = this.streams.getPtr(stream_id) orelse {
+        const stream = this.streams.get(stream_id) orelse {
             return globalObject.throw("Invalid stream id", .{});
         };
         if (!error_arg.isNumber()) {
@@ -3467,7 +3469,7 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Invalid stream id", .{});
         }
 
-        var stream = this.streams.getPtr(@intCast(stream_id)) orelse {
+        var stream = this.streams.get(@intCast(stream_id)) orelse {
             return globalObject.throw("Invalid stream id", .{});
         };
 
@@ -3545,7 +3547,7 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Invalid stream id", .{});
         }
 
-        var stream = this.streams.getPtr(@intCast(stream_id)) orelse {
+        var stream = this.streams.get(@intCast(stream_id)) orelse {
             return globalObject.throw("Invalid stream id", .{});
         };
 
@@ -3789,7 +3791,7 @@ pub const H2FrameParser = struct {
         }
         const close = close_arg.toBoolean();
 
-        var stream = this.streams.getPtr(@intCast(stream_id)) orelse {
+        var stream = this.streams.get(@intCast(stream_id)) orelse {
             return globalObject.throw("Invalid stream id", .{});
         };
         if (!stream.canSendData()) {
@@ -3902,7 +3904,7 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Expected stream_id to be a number", .{});
         }
 
-        var stream = this.streams.getPtr(stream_id_arg.to(u32)) orelse {
+        var stream = this.streams.get(stream_id_arg.to(u32)) orelse {
             return globalObject.throw("Invalid stream id", .{});
         };
 
@@ -3920,7 +3922,7 @@ pub const H2FrameParser = struct {
         if (!stream_id_arg.isNumber()) {
             return globalObject.throw("Expected stream_id to be a number", .{});
         }
-        var stream = this.streams.getPtr(stream_id_arg.to(u32)) orelse {
+        var stream = this.streams.get(stream_id_arg.to(u32)) orelse {
             return globalObject.throw("Invalid stream id", .{});
         };
         const context_arg = args_list.ptr[1];
@@ -3941,7 +3943,7 @@ pub const H2FrameParser = struct {
         const callback = args[0];
         const thisValue: JSValue = if (args.len > 1) args[1] else .js_undefined;
         var count: u32 = 0;
-        var it = this.streams.valueIterator();
+        var it = StreamResumableIterator.init(this);
         while (it.next()) |stream| {
             const value = stream.jsContext.get() orelse continue;
             this.handlers.vm.eventLoop().runCallback(callback, globalObject, thisValue, &[_]jsc.JSValue{value});
@@ -4638,7 +4640,7 @@ pub const H2FrameParser = struct {
                             .capacity = 0,
                         },
                     },
-                    .streams = bun.U32HashMap(Stream).init(bun.default_allocator),
+                    .streams = bun.U32HashMap(*Stream).init(bun.default_allocator),
                 };
                 break :brk self;
             } else {
@@ -4654,7 +4656,7 @@ pub const H2FrameParser = struct {
                             .capacity = 0,
                         },
                     },
-                    .streams = bun.U32HashMap(Stream).init(bun.default_allocator),
+                    .streams = bun.U32HashMap(*Stream).init(bun.default_allocator),
                 });
             }
         };
@@ -4759,7 +4761,7 @@ pub const H2FrameParser = struct {
 
     pub fn detachFromJS(this: *H2FrameParser, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
-        var it = this.streams.valueIterator();
+        var it = StreamResumableIterator.init(this);
         while (it.next()) |stream| {
             stream.freeResources(this, false);
         }
@@ -4801,12 +4803,14 @@ pub const H2FrameParser = struct {
         this.detach();
         this.strong_this.deinit();
         var it = this.streams.valueIterator();
-        while (it.next()) |stream| {
+        while (it.next()) |item| {
+            const stream = item.*;
             stream.freeResources(this, true);
+            bun.destroy(stream);
         }
         var streams = this.streams;
         defer streams.deinit();
-        this.streams = bun.U32HashMap(Stream).init(bun.default_allocator);
+        this.streams = bun.U32HashMap(*Stream).init(bun.default_allocator);
     }
 
     pub fn finalize(this: *H2FrameParser) void {

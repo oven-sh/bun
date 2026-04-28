@@ -3595,6 +3595,78 @@ pub const NodeFS = struct {
             return ret.errnoSysP(c.copyfile(src, dest, null, mode), .copyfile, src) orelse ret.success;
         }
 
+        if (comptime Environment.isFreeBSD) {
+            var src_buf: bun.PathBuffer = undefined;
+            var dest_buf: bun.PathBuffer = undefined;
+            const src = args.src.sliceZ(&src_buf);
+            const dest = args.dest.sliceZ(&dest_buf);
+
+            if (args.mode.isForceClone()) {
+                return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.EOPNOTSUPP), .syscall = .copyfile } };
+            }
+
+            const src_fd = switch (Syscall.open(src, bun.O.RDONLY, 0)) {
+                .result => |result| result,
+                .err => |err| return .{ .err = err.withPath(args.src.slice()) },
+            };
+            defer src_fd.close();
+
+            const stat_: bun.Stat = switch (Syscall.fstat(src_fd)) {
+                .result => |result| result,
+                .err => |err| return Maybe(Return.CopyFile){ .err = err },
+            };
+            if (!posix.S.ISREG(stat_.mode)) {
+                return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.EOPNOTSUPP), .syscall = .copyfile } };
+            }
+
+            var flags: i32 = bun.O.CREAT | bun.O.WRONLY;
+            if (args.mode.shouldntOverwrite()) {
+                flags |= bun.O.EXCL;
+            }
+            const dest_fd = switch (Syscall.open(dest, flags, jsc.Node.fs.default_permission)) {
+                .result => |result| result,
+                .err => |err| return Maybe(Return.CopyFile){ .err = err },
+            };
+            defer dest_fd.close();
+
+            // Don't O_TRUNC at open: if src and dest resolve to the same
+            // inode, that would zero the file before the first read. Match
+            // Node by checking inodes after both are open and refusing.
+            if (Syscall.fstat(dest_fd).asValue()) |dst_stat| {
+                if (stat_.ino == dst_stat.ino and stat_.dev == dst_stat.dev) {
+                    return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.EINVAL), .syscall = .copyfile, .path = args.src.slice() } };
+                }
+            }
+            _ = Syscall.ftruncate(dest_fd, 0);
+
+            // FreeBSD 13+ has copy_file_range(2). Try the kernel-side copy
+            // first; fall back to read/write on cross-device or unsupported
+            // fd types.
+            cfr: while (true) {
+                const rc = std.c.copy_file_range(src_fd.native(), null, dest_fd.native(), null, std.math.maxInt(i32) - 1, 0);
+                switch (bun.sys.getErrno(rc)) {
+                    .SUCCESS => if (rc == 0) {
+                        _ = Syscall.fchmod(dest_fd, stat_.mode);
+                        return ret.success;
+                    },
+                    .INTR => continue,
+                    .XDEV, .INVAL, .OPNOTSUPP, .BADF => break :cfr,
+                    else => |e| {
+                        _ = bun.sys.unlink(dest);
+                        return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(e), .syscall = .copyfile } };
+                    },
+                }
+            }
+
+            var wrote: u64 = 0;
+            if (copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, @intCast(@max(stat_.size, 0)), &wrote).asErr()) |err| {
+                _ = bun.sys.unlink(dest);
+                return Maybe(Return.CopyFile){ .err = err };
+            }
+            _ = Syscall.fchmod(dest_fd, stat_.mode);
+            return ret.success;
+        }
+
         if (comptime Environment.isLinux) {
             var src_buf: bun.PathBuffer = undefined;
             var dest_buf: bun.PathBuffer = undefined;
@@ -3858,6 +3930,11 @@ pub const NodeFS = struct {
     pub fn lchmod(this: *NodeFS, args: Arguments.LCHmod, _: Flavor) Maybe(Return.Lchmod) {
         if (comptime Environment.isWindows) {
             return Maybe(Return.Lchmod).todo();
+        }
+        if (comptime Environment.isAndroid) {
+            // bionic has no lchmod(); symlink modes are meaningless on Linux
+            // anyway. Match glibc's stub behaviour.
+            return .{ .err = .{ .errno = @intFromEnum(bun.sys.E.OPNOTSUPP), .syscall = .lchmod, .path = args.path.slice() } };
         }
 
         const path = args.path.sliceZ(&this.sync_error_buf);
@@ -6544,6 +6621,107 @@ pub const NodeFS = struct {
             }
 
             return ret.success;
+        }
+
+        if (Environment.isFreeBSD) {
+            if (mode.isForceClone()) {
+                return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.EOPNOTSUPP), .syscall = .copyfile } };
+            }
+
+            const src_fd = switch (Syscall.open(src, bun.O.RDONLY | bun.O.NOFOLLOW, 0o644)) {
+                .result => |result| result,
+                .err => |err| {
+                    // ELOOP from O_NOFOLLOW on a symlink → recreate the link.
+                    if (err.getErrno() == .LOOP) {
+                        return Syscall.symlink(src, dest);
+                    }
+                    return .{ .err = err };
+                },
+            };
+            defer src_fd.close();
+
+            const stat_: bun.Stat = switch (Syscall.fstat(src_fd)) {
+                .result => |result| result,
+                .err => |err| return Maybe(Return.CopyFile){ .err = err.withFd(src_fd) },
+            };
+            if (!posix.S.ISREG(stat_.mode)) {
+                return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.EOPNOTSUPP), .syscall = .copyfile } };
+            }
+
+            var flags: i32 = bun.O.CREAT | bun.O.WRONLY;
+            var wrote: u64 = 0;
+            if (mode.shouldntOverwrite()) {
+                flags |= bun.O.EXCL;
+            }
+
+            const dest_fd = dest_fd: {
+                switch (Syscall.open(dest, flags, jsc.Node.fs.default_permission)) {
+                    .result => |result| break :dest_fd result,
+                    .err => |err| {
+                        if (err.getErrno() == .NOENT) {
+                            var len = dest.len;
+                            while (len > 0 and dest[len - 1] != std.fs.path.sep) {
+                                len -= 1;
+                            }
+                            const mkdirResult = this.mkdirRecursive(.{
+                                .path = PathLike{ .string = PathString.init(dest[0..len]) },
+                                .recursive = true,
+                            });
+                            if (mkdirResult == .err) {
+                                return Maybe(Return.CopyFile){ .err = mkdirResult.err };
+                            }
+                            switch (Syscall.open(dest, flags, jsc.Node.fs.default_permission)) {
+                                .result => |result| break :dest_fd result,
+                                .err => {},
+                            }
+                        }
+                        @memcpy(this.sync_error_buf[0..dest.len], dest);
+                        return Maybe(Return.CopyFile){ .err = err.withPath(this.sync_error_buf[0..dest.len]) };
+                    },
+                }
+            };
+
+            // No O_TRUNC at open: if src and dest resolve to the same inode,
+            // that would zero the file before the first read.
+            if (Syscall.fstat(dest_fd).asValue()) |dst_stat| {
+                if (stat_.ino == dst_stat.ino and stat_.dev == dst_stat.dev) {
+                    dest_fd.close();
+                    @memcpy(this.sync_error_buf[0..src.len], src);
+                    return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.EINVAL), .syscall = .copyfile, .path = this.sync_error_buf[0..src.len] } };
+                }
+            }
+
+            defer {
+                _ = Syscall.ftruncate(dest_fd, @as(i64, @intCast(@as(u63, @truncate(wrote)))));
+                _ = Syscall.fchmod(dest_fd, stat_.mode);
+                dest_fd.close();
+            }
+
+            const size: usize = @intCast(@max(stat_.size, 0));
+
+            // FreeBSD 13+ has copy_file_range(2). std.c declares it returning
+            // usize on FreeBSD, so bitcast to isize before getErrno (see
+            // freebsd_errno.getErrno).
+            var off_in: i64 = 0;
+            var off_out: i64 = 0;
+            cfr: while (true) {
+                const rc: isize = @bitCast(std.c.copy_file_range(src_fd.native(), &off_in, dest_fd.native(), &off_out, if (size == 0) std.math.maxInt(i32) - 1 else size -| wrote, 0));
+                switch (bun.sys.getErrno(rc)) {
+                    .SUCCESS => {
+                        if (rc == 0) return ret.success;
+                        wrote +|= @intCast(rc);
+                        if (size != 0 and wrote >= size) return ret.success;
+                    },
+                    .INTR => continue,
+                    .XDEV, .INVAL, .OPNOTSUPP, .NOSYS, .BADF => break :cfr,
+                    else => |e| {
+                        @memcpy(this.sync_error_buf[0..dest.len], dest);
+                        return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(e), .syscall = .copyfile, .path = this.sync_error_buf[0..dest.len] } };
+                    },
+                }
+            }
+
+            return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
         }
 
         if (Environment.isWindows) {

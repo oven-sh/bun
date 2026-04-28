@@ -85,7 +85,7 @@ test("dynamic import of non-existent node: module in CJS rejects at runtime with
     "lib.js": `
       module.exports = async function() {
         try {
-          const { DatabaseSync } = await import("node:sqlite");
+          await import("node:quic");
           return "resolved";
         } catch (e) {
           return "caught: " + e.code;

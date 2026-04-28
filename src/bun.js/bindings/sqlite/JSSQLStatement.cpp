@@ -250,6 +250,11 @@ static Vector<VersionSqlite3*>& databases()
     return _instance->databases;
 }
 
+extern "C" const char* Bun__sqlite3_version()
+{
+    return SQLITE_VERSION;
+}
+
 extern "C" void Bun__closeAllSQLiteDatabasesForTermination()
 {
     if (!_instance) {
@@ -258,8 +263,13 @@ extern "C" void Bun__closeAllSQLiteDatabasesForTermination()
     auto& dbs = _instance->databases;
 
     for (auto& db : dbs) {
-        if (db->db)
+        if (db->db) {
             sqlite3_close(db->db);
+            // Prevent VersionSqlite3::release() (invoked later by the GC
+            // finalizer during VM teardown) from closing the same handle
+            // again, which would be a use-after-free.
+            db->db = nullptr;
+        }
     }
 }
 

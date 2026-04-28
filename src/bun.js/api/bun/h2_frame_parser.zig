@@ -3474,17 +3474,14 @@ pub const H2FrameParser = struct {
         };
 
         stream.waitForTrailers = false;
+        // sendData() drives the close itself: when the frame goes out
+        // immediately the defer at its top advances state and dispatches
+        // onStreamEnd; when it queues under backpressure, flushQueue() does
+        // the same once the frame is actually written. Doing it again here
+        // (the old code did) sets HALF_CLOSED_LOCAL/CLOSED before the queued
+        // frame is flushed, so canSendData() rejects it / freeResources()
+        // drops it and the peer never receives END_STREAM.
         this.sendData(stream, "", true, .js_undefined);
-
-        const identifier = stream.getIdentifier();
-        identifier.ensureStillAlive();
-        if (stream.state == .HALF_CLOSED_REMOTE) {
-            stream.state = .CLOSED;
-            stream.freeResources(this, false);
-        } else {
-            stream.state = .HALF_CLOSED_LOCAL;
-        }
-        this.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(stream.state)));
         return .js_undefined;
     }
 

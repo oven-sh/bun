@@ -1191,6 +1191,7 @@ pub const FetchTasklet = struct {
         const isStream = fetch_tasklet.request_body == .ReadableStream;
         fetch_tasklet.http.?.client.flags.is_streaming_request_body = isStream;
         fetch_tasklet.http.?.client.flags.force_http2 = fetch_options.force_http2;
+        fetch_tasklet.http.?.client.flags.force_http3 = fetch_options.force_http3;
         fetch_tasklet.http.?.client.flags.force_http1 = fetch_options.force_http1;
         fetch_tasklet.is_waiting_request_stream_start = isStream;
         if (isStream) {
@@ -1381,6 +1382,7 @@ pub const FetchTasklet = struct {
         ssl_config: ?SSLConfig.SharedPtr = null,
         upgraded_connection: bool = false,
         force_http2: bool = false,
+        force_http3: bool = false,
         force_http1: bool = false,
     };
 

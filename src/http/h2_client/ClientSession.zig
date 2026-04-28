@@ -271,7 +271,7 @@ pub fn attach(this: *ClientSession, client: *HTTPClient) void {
         return;
     };
     if (client.verbose != .none) {
-        HTTPClient.printRequest(request, client.url.href, !client.flags.reject_unauthorized, client.state.request_body, client.verbose == .curl);
+        HTTPClient.printRequest(.http2, request, client.url.href, !client.flags.reject_unauthorized, client.state.request_body, client.verbose == .curl);
     }
     client.state.request_stage = if (stream.localClosed()) .done else .body;
     client.state.response_stage = .headers;

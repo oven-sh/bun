@@ -43,6 +43,7 @@
     "build:debug:fuzzilli": "bun scripts/build.ts --profile=debug --fuzzilli=on --build-dir=build/debug-fuzz",
     "build:debug:noasan": "bun scripts/build.ts --profile=debug-no-asan",
     "build:release": "bun scripts/build.ts --profile=release",
+    "build:release:lto": "bun scripts/build.ts --profile=release --lto=on --build-dir=build/release-lto",
     "build:ci": "bun scripts/build.ts --profile=ci-release --build-dir=build/release-ci",
     "build:assert": "bun scripts/build.ts --profile=release-assertions --build-dir=build/release-assert",
     "build:asan": "bun scripts/build.ts --profile=release-asan --build-dir=build/release-asan",

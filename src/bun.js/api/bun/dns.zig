@@ -1397,11 +1397,13 @@ pub const internal = struct {
     pub const DNSRequestOwner = union(enum) {
         socket: *bun.uws.ConnectingSocket,
         prefetch: *bun.uws.Loop,
+        quic: *bun.http.H3.PendingConnect,
 
         pub fn notifyThreadsafe(this: DNSRequestOwner, req: *Request) void {
             switch (this) {
                 .socket => |socket| us_internal_dns_callback_threadsafe(socket, req),
                 .prefetch => freeaddrinfo(req, 0),
+                .quic => |pc| pc.onDNSResolvedThreadsafe(),
             }
         }
 
@@ -1409,6 +1411,7 @@ pub const internal = struct {
             switch (this) {
                 .prefetch => freeaddrinfo(req, 0),
                 .socket => us_internal_dns_callback(this.socket, req),
+                .quic => |pc| pc.onDNSResolved(),
             }
         }
 
@@ -1416,9 +1419,27 @@ pub const internal = struct {
             return switch (this) {
                 .prefetch => this.prefetch,
                 .socket => this.socket.loop(),
+                .quic => |pc| pc.loop(),
             };
         }
     };
+
+    /// Register `pc` to be notified when `request` resolves. Mirrors
+    /// us_getaddrinfo_set but for the QUIC client's connect path, which has
+    /// no us_connecting_socket_t to hang the callback on. The .quic notify
+    /// path frees the addrinfo request inline (via Bun__addrinfo_freeRequest),
+    /// which re-acquires global_cache.lock — so drop it before notifying.
+    pub fn registerQuic(request: *Request, pc: *bun.http.H3.PendingConnect) void {
+        global_cache.lock.lock();
+        const owner: DNSRequestOwner = .{ .quic = pc };
+        if (request.result != null) {
+            global_cache.lock.unlock();
+            owner.notify(request);
+            return;
+        }
+        bun.handleOom(request.notify.append(bun.default_allocator, owner));
+        global_cache.lock.unlock();
+    }
 
     const ResultEntry = extern struct {
         info: std.c.addrinfo,
@@ -1802,7 +1823,7 @@ pub const internal = struct {
                     _ = request.notify.swapRemove(i);
                     return 1;
                 },
-                .prefetch => {},
+                .prefetch, .quic => {},
             }
         }
         return 0;

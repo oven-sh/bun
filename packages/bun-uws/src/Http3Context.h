@@ -86,9 +86,9 @@ struct Http3Context {
         }, method == "*" ? cd->router.LOW_PRIORITY : cd->router.MEDIUM_PRIORITY);
     }
 
-    us_quic_listen_socket_t *listen(const char *host, int port) {
+    us_quic_listen_socket_t *listen(const char *host, int port, int flags) {
         return us_quic_socket_context_listen((us_quic_socket_context_t *) this,
-            host, port, sizeof(Http3ResponseData));
+            host, port, flags, sizeof(Http3ResponseData));
     }
 
     void shutdown() { us_quic_socket_context_shutdown((us_quic_socket_context_t *) this); }

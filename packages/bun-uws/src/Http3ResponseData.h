@@ -73,7 +73,7 @@ struct Http3ResponseData {
         }
         memcpy(dst + nlen, value, vlen);
         hdrs.append({(const char *)(uintptr_t) off, nlen,
-                     (const char *)(uintptr_t)(off + nlen), vlen});
+                     (const char *)(uintptr_t)(off + nlen), vlen, -1});
     }
 
     void reset() {

@@ -415,6 +415,9 @@ fn drainQueuedShutdowns(this: *@This()) void {
                 // with no abort-tracker entry); scan those first so the abort
                 // doesn't wait for the leader's connect to resolve.
                 if (this.abortPendingH2Waiter(http.async_http_id)) continue;
+                // Or it's on an HTTP/3 session, which has no TCP socket to
+                // register in the tracker.
+                if (bun.http.H3.ClientContext.abortByHttpId(http.async_http_id)) continue;
                 // Otherwise the request either hasn't started yet (still in
                 // `queued_tasks`/`deferred_tasks`) or has already completed.
                 // Flag it so `drainEvents` knows to scan the queue for
@@ -465,6 +468,8 @@ fn drainQueuedWrites(this: *@This()) void {
                         }
                     },
                 }
+            } else {
+                bun.http.H3.ClientContext.streamBodyByHttpId(write.async_http_id, ended);
             }
         }
         if (queued_writes.items.len == 0) {
@@ -552,6 +557,7 @@ fn drainEvents(this: *@This()) void {
     this.drainQueuedHTTPResponseBodyConsumed();
     this.drainQueuedWrites();
     this.drainQueuedShutdowns();
+    bun.http.H3.PendingConnect.drainResolved();
 
     for (this.queued_threadlocal_proxy_derefs.items) |http| {
         http.deref();

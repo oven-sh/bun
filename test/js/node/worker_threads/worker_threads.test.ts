@@ -293,8 +293,7 @@ test("eval does not leak source code", async () => {
   const errors = await proc.stderr.text();
   if (errors.length > 0) throw new Error(errors);
   expect(proc.exitCode).toBe(0);
-}, // Spawns six workers with 100 MiB of source each; slow in debug builds.
-60_000);
+}, 60_000); // Spawns six workers with 100 MiB of source each; slow in debug builds.
 
 describe("worker event", () => {
   test("is emitted on the next tick with the right value", () => {
@@ -386,8 +385,7 @@ describe("environmentData", () => {
     expect(proc.exitCode).toBe(0);
     const out = await proc.stdout.text();
     expect(out).toBe("foo\n".repeat(5));
-  }, // Five nested workers; slow in debug builds.
-  30_000);
+  }, 30_000); // Five nested workers; slow in debug builds.
 
   test("can be used if parent thread had not imported worker_threads", async () => {
     const proc = Bun.spawn({

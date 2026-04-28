@@ -44,6 +44,64 @@ struct H3App {
     H3_METHOD(any, "*")
 #undef H3_METHOD
 
+    /* WebSocket-shaped behaviour but no upgrade callback: the CONNECT
+     * request is routed like any other "connect"-method handler so the
+     * application can inspect headers (Origin, WT-Available-Protocols) and
+     * decide whether to res->upgradeWebTransport(). open/message/drain/close
+     * are stored on the context and dispatched from the WT stream/datagram
+     * callbacks. */
+    struct WebTransportBehavior {
+        unsigned int maxPayloadLength = 16 * 1024;
+        unsigned int maxBackpressure = 64 * 1024;
+        bool closeOnBackpressureLimit = false;
+        MoveOnlyFunction<void(Http3Response *, Http3Request *)> upgrade = nullptr;
+        MoveOnlyFunction<void(WebTransportSession *)> open = nullptr;
+        MoveOnlyFunction<void(WebTransportSession *, std::string_view, OpCode)> message = nullptr;
+        MoveOnlyFunction<void(WebTransportSession *)> drain = nullptr;
+        MoveOnlyFunction<void(WebTransportSession *, int, std::string_view)> close = nullptr;
+    };
+
+    H3App &&wt(std::string_view pattern, WebTransportBehavior &&behavior) {
+        WebTransportContextData *cd = &http3Context->getContextData()->wt;
+        cd->maxPayloadLength = behavior.maxPayloadLength;
+        cd->maxBackpressure = behavior.maxBackpressure;
+        cd->closeOnBackpressureLimit = behavior.closeOnBackpressureLimit;
+        cd->openHandler = std::move(behavior.open);
+        cd->messageHandler = std::move(behavior.message);
+        cd->drainHandler = std::move(behavior.drain);
+        cd->closeHandler = std::move(behavior.close);
+        if (!cd->topicTree) {
+            cd->topicTree = new TopicTree<TopicTreeMessage, TopicTreeBigMessage>(
+                [](Subscriber *s, TopicTreeMessage &m, auto) {
+                    ((WebTransportSession *) s->user)->send(m.message, (OpCode) m.opCode);
+                    return false;
+                });
+        }
+        /* Route the CONNECT itself. The handler is what decides 200 vs 404
+         * vs 403; the spec's :protocol check happens here so non-WT CONNECTs
+         * (e.g. RFC 9220 websocket-over-h3) fall through to the next route. */
+        http3Context->onHttp("connect", pattern,
+            [upgrade = std::move(behavior.upgrade)](Http3Response *res, Http3Request *req) mutable {
+                std::string_view proto = req->getHeader(":protocol");
+                if (proto != "webtransport" && proto != "webtransport-h3") {
+                    req->setYield(true);
+                    return;
+                }
+                if (upgrade) upgrade(res, req);
+                else res->upgradeWebTransport(nullptr);
+            });
+        return std::move(*this);
+    }
+
+    bool publish(std::string_view topic, std::string_view message, OpCode opCode = BINARY, bool = false) {
+        WebTransportContextData *cd = &http3Context->getContextData()->wt;
+        if (!cd->topicTree) return false;
+        return cd->topicTree->publishBig(nullptr, topic, {message, opCode, false},
+            [](Subscriber *s, TopicTreeBigMessage &m) {
+                ((WebTransportSession *) s->user)->send(m.message, (OpCode) m.opCode);
+            });
+    }
+
     H3App &&listen(const std::string &host, int port, int /*options*/,
                    MoveOnlyFunction<void(us_quic_listen_socket_t *)> &&cb) {
         cb(http3Context->listen(host.empty() ? nullptr : host.c_str(), port));

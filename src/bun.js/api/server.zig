@@ -853,6 +853,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 return globalThis.throwInvalidArguments("upgrade requires a Request object", .{});
             };
 
+            // WebTransport (extended-CONNECT over H3). The H3 RequestContext
+            // is a distinct concrete type in AnyRequestContext, so try it
+            // first; the RFC 6455 path below has no overlap.
+            if (comptime has_h3) {
+                if (request.request_context.get(H3RequestContext)) |h3| {
+                    return this.upgradeWebTransport(h3, request, optional, globalThis);
+                }
+            }
+
             var upgrader = request.request_context.get(RequestContext) orelse return .false;
 
             if (upgrader.isAbortedOrEnded()) {
@@ -1038,6 +1047,85 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 ctx,
             );
 
+            return .true;
+        }
+
+        /// `server.upgrade(req, {data, headers})` for an H3 request whose
+        /// `:protocol` is `webtransport`. There is no Sec-WebSocket-Key
+        /// handshake; accepting is just a 2xx HEADERS, so the only options
+        /// that make sense are `data` (attached to the ServerWebSocket) and
+        /// extra `headers` (e.g. WT-Protocol).
+        fn upgradeWebTransport(
+            this: *ThisServer,
+            upgrader: *H3RequestContext,
+            request: *Request,
+            optional: ?JSValue,
+            globalThis: *jsc.JSGlobalObject,
+        ) bun.JSError!jsc.JSValue {
+            if (comptime !has_h3) unreachable;
+            if (upgrader.isAbortedOrEnded()) return .false;
+            if (upgrader.upgrade_context == null or
+                @intFromPtr(upgrader.upgrade_context) == std.math.maxInt(usize)) return .false;
+            const resp = upgrader.resp orelse return .false;
+
+            var data_value: jsc.JSValue = .zero;
+            var fetch_headers_to_deref: ?*WebCore.FetchHeaders = null;
+            defer if (fetch_headers_to_deref) |fh| fh.deref();
+
+            if (optional) |opts| getter: {
+                if (opts.isEmptyOrUndefinedOrNull()) break :getter;
+                if (!opts.isObject())
+                    return globalThis.throwInvalidArguments("upgrade options must be an object", .{});
+                if (try opts.fastGet(globalThis, .data)) |v| data_value = v;
+                if (try opts.fastGet(globalThis, .headers)) |hv| {
+                    if (!hv.isEmptyOrUndefinedOrNull()) {
+                        const fh: *WebCore.FetchHeaders = hv.as(WebCore.FetchHeaders) orelse brk: {
+                            if (hv.isObject()) {
+                                if (try WebCore.FetchHeaders.createFromJS(globalThis, hv)) |created| {
+                                    fetch_headers_to_deref = created;
+                                    break :brk created;
+                                }
+                            }
+                            return globalThis.throwInvalidArguments(
+                                "upgrade options.headers must be a Headers or an object",
+                                .{},
+                            );
+                        };
+                        // Http3Response::upgradeWebTransport writes :status 200
+                        // itself, so emit user headers first; they're appended
+                        // to the same HEADERS frame buffer.
+                        fh.toUWSResponse(.h3, @ptrCast(resp));
+                    }
+                }
+            }
+
+            // Past here: no throws (mirrors the RFC 6455 path).
+            upgrader.upgrade_context = @as(*uws.SocketContext, @ptrFromInt(std.math.maxInt(usize)));
+            const signal = upgrader.signal;
+            upgrader.signal = null;
+            upgrader.resp = null;
+            request.request_context = AnyRequestContext.Null;
+            upgrader.request_weakref.deref();
+
+            data_value.ensureStillAlive();
+            const ws = ServerWebSocket.init(&this.config.websocket.?.handler, data_value, signal);
+            data_value.ensureStillAlive();
+
+            resp.clearAborted();
+            resp.clearOnData();
+            resp.clearOnWritable();
+            resp.clearTimeout();
+            upgrader.deref();
+
+            if (resp.upgradeWebTransport(ws) == null) {
+                // The C++ gate (HTTP_RESPONSE_PENDING / HTTP_WRITE_CALLED) can
+                // trip if user headers already ended the response. init() took
+                // a Strong ref on the JS wrapper; downgrade it so GC can run
+                // finalize() — otherwise both the native struct and the JS
+                // value leak forever.
+                ws.abandonAfterFailedUpgrade();
+                return .false;
+            }
             return .true;
         }
 
@@ -1554,6 +1642,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             {
                 if (this.config.websocket) |*ws| {
                     ws.handler.app = null;
+                    ws.handler.h3_app = null;
                 }
                 this.unref();
 
@@ -1621,6 +1710,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             } else if (!this.flags.terminated) {
                 if (this.config.websocket) |*ws| {
                     ws.handler.app = null;
+                    ws.handler.h3_app = null;
                 }
                 this.flags.terminated = true;
                 this.app.?.close();
@@ -2517,6 +2607,51 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             server.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
 
+        /// Extended-CONNECT with `:protocol = webtransport` reached a route
+        /// that has a `websocket:` handler. Mirror onWebSocketUpgrade: hand
+        /// the request to the user's fetch/route callback with
+        /// `upgrade_context` set so `server.upgrade(req, {data})` can accept.
+        /// Auto-accepting here would bypass any auth/Origin checks the
+        /// route does for the RFC 6455 path.
+        pub fn onWebTransportUpgrade(this: *ThisServer, resp: *uws.H3.Response, req: *uws.H3.Request, upgrade_ctx: *uws.SocketContext, id: usize) void {
+            if (comptime !has_h3) unreachable;
+            jsc.markBinding(@src());
+            // `this` is type-punned: when id == 1 the pointer registered with
+            // h3_app.ws() was a *UserRoute, not a *ThisServer. Do NOT touch
+            // `this.*` until id has been checked. (h3_app.ws() is only ever
+            // registered inside `if (this.config.websocket) |*websocket|`, so
+            // the old null-check this replaced was both wrong and dead.)
+            if (id == 1) {
+                const user_route: *UserRoute = @ptrCast(@alignCast(this));
+                const server = user_route.server;
+                var should_deinit_context = false;
+                var prepared = server.prepareJsRequestContextFor(H3RequestContext, req, resp, &should_deinit_context, .no, null) orelse return;
+                prepared.ctx.upgrade_context = upgrade_ctx;
+                const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
+                const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRouteH3, .{ server.globalThis, user_route.id, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
+                server.handleRequestFor(H3RequestContext, &should_deinit_context, prepared, req, response_value);
+                return;
+            }
+
+            // id==0 fallback route — ctx is *ThisServer.
+            bun.assert(id == 0);
+            if (this.config.onRequest == .zero) {
+                resp.writeStatus("403 Forbidden");
+                resp.endWithoutBody(false);
+                return;
+            }
+            var should_deinit_context = false;
+            var prepared = this.prepareJsRequestContextFor(H3RequestContext, req, resp, &should_deinit_context, .yes, null) orelse return;
+            prepared.ctx.upgrade_context = upgrade_ctx;
+            const js_value = this.jsValueAssertAlive();
+            const response_value = this.config.onRequest.call(
+                this.globalThis,
+                js_value,
+                &.{ prepared.js_request, js_value },
+            ) catch |err| this.globalThis.takeException(err);
+            this.handleRequestFor(H3RequestContext, &should_deinit_context, prepared, req, response_value);
+        }
+
         pub fn onWebSocketUpgrade(this: *ThisServer, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.SocketContext, id: usize) void {
             jsc.markBinding(@src());
             if (id == 1) {
@@ -2712,6 +2847,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             if (this.config.websocket) |*websocket| {
                 websocket.globalObject = this.globalThis;
                 websocket.handler.app = app;
+                websocket.handler.h3_app = if (comptime has_h3) this.h3_app else null;
                 websocket.handler.flags.ssl = ssl_enabled;
             }
 
@@ -2753,6 +2889,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                                 1, // id 1 means is a user route
                                 ServerWebSocket.behavior(ThisServer, ssl_enabled, websocket.toBehavior()),
                             );
+                            if (comptime has_h3) if (this.h3_app) |h3_app| h3_app.ws(
+                                user_route.route.path,
+                                user_route,
+                                1,
+                                ServerWebSocket.behaviorH3(ThisServer, websocket.toBehavior()),
+                            );
                         }
                     },
                     .specific => |method_val| { // method_val is HTTP.Method here
@@ -2773,6 +2915,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                                     user_route,
                                     1, // id 1 means is a user route
                                     ServerWebSocket.behavior(ThisServer, ssl_enabled, websocket.toBehavior()),
+                                );
+                                // WebTransport's CONNECT also matches the
+                                // GET-scoped route so the user's per-route
+                                // handler runs (and can reject) for both.
+                                if (comptime has_h3) if (this.h3_app) |h3_app| h3_app.ws(
+                                    user_route.route.path,
+                                    user_route,
+                                    1,
+                                    ServerWebSocket.behaviorH3(ThisServer, websocket.toBehavior()),
                                 );
                             }
                         }
@@ -2880,6 +3031,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         this,
                         0, // id 0 means is a fallback route and ctx is the server
                         ServerWebSocket.behavior(ThisServer, ssl_enabled, websocket.toBehavior()),
+                    );
+                    if (comptime has_h3) if (this.h3_app) |h3_app| h3_app.ws(
+                        "/*",
+                        this,
+                        0,
+                        ServerWebSocket.behaviorH3(ThisServer, websocket.toBehavior()),
                     );
                 }
             }

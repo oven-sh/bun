@@ -1,0 +1,106 @@
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -4375,25 +4375,25 @@
+ #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
+ void
+ lsquic_stream_set_webtransport_session(lsquic_stream_t *s) {
+-    s->stream_flags |= SMBF_WEBTRANSPORT_SESSION_STREAM;
++    s->sm_bflags |= SMBF_WEBTRANSPORT_SESSION_STREAM;
+ }
+
+
+ int
+ lsquic_stream_is_webtransport_session(const lsquic_stream_t *s) {
+-    return (s->stream_flags & SMBF_WEBTRANSPORT_SESSION_STREAM);
++    return (s->sm_bflags & SMBF_WEBTRANSPORT_SESSION_STREAM);
+ }
+
+
+ int
+ lsquic_stream_is_webtransport_client_bidi_stream(const lsquic_stream_t *s) {
+-    return (s->stream_flags & SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM);
++    return (s->sm_bflags & SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM);
+ }
+
+
+ int
+ lsquic_stream_get_webtransport_session_stream_id(const lsquic_stream_t *s) {
+-    if(s->stream_flags & SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM)
++    if(s->sm_bflags & SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM)
+     {
+         return s->webtransport_session_stream_id;
+     }
+@@ -4942,7 +4942,7 @@
+                     // check webtransport_session_stream_id availability as well SMBF_WEBTRANSPORT_SESSION_STREAM
+                     // flag for webtransport_session_stream_id stream in app code
+                     stream->webtransport_session_stream_id = filter->hqfi_webtransport_session_id;
+-                    stream->stream_flags |= SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM;
++                    stream->sm_bflags |= SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM;
+                     // disable header processing as we will not have any headers for this stream anymore
+                     stream->sm_bflags &= ~SMBF_USE_HEADERS;
+                     filter->hqfi_type = HQFT_DATA;
+--- a/src/liblsquic/lsquic_hcso_writer.c
++++ b/src/liblsquic/lsquic_hcso_writer.c
+@@ -131,25 +131,14 @@
+     unsigned char *p;
+     unsigned bits;
+     int was_empty;
+-#ifdef NDEBUG
+-#   define frame_size_len 1
+-#else
+-    /* Need to use two bytes for frame length, as randomization may require
+-     * more than 63 bytes.
+-     */
+-#   define frame_size_len 2
+-#endif
++    /* WebTransport settings push the SETTINGS payload past 63 bytes
++     * (4-byte setting IDs), so always reserve a 2-byte length varint. */
++#define frame_size_len 2
+     unsigned char buf[1 /* Frame type */ + /* Frame size */ frame_size_len
+-        /* There are maximum seven settings that need to be written out and
+-         * each value can be encoded in maximum 8 bytes:
++        /* Up to nine settings; both the setting id (large WT codepoints) and
++         * the value can occupy a full 8-byte varint:
+          */
+-        + 7 * (
+-#ifdef NDEBUG
+-            1   /* Each setting needs 1-byte varint number, */
+-#else
+-            8   /* but it can be up to 8 bytes when randomized */
+-#endif
+-              + 8) ];
++        + 9 * (8 + 8) ];
+
+     p = buf;
+     *p++ = HQFT_SETTINGS;
+@@ -201,6 +190,18 @@
+         vint_write(p, SETTINGS_ENABLE_WEBTRANSPORT_VALUE, bits, 1 << bits);
+         p += 1 << bits;
+
++        /* draft-ietf-webtrans-http3-15 renames the setting to
++         * SETTINGS_WT_ENABLED and assigns a new codepoint. Advertise both so
++         * draft-02 (Chrome stable) and draft-15 clients can negotiate. */
++#define SETTINGS_WT_ENABLED (0x2c7cf000)
++#define SETTINGS_WT_ENABLED_VALUE (1)
++        bits = hcso_setting_type2bits(writer, SETTINGS_WT_ENABLED);
++        vint_write(p, SETTINGS_WT_ENABLED, bits, 1 << bits);
++        p += 1 << bits;
++        bits = vint_val2bits(SETTINGS_WT_ENABLED_VALUE);
++        vint_write(p, SETTINGS_WT_ENABLED_VALUE, bits, 1 << bits);
++        p += 1 << bits;
++
+         /* Write out SETTINGS_ENABLE_WEBTRANSPORT */
+ #define WEBTRANSPORT_MAX_SESSIONS (0x2b603743)
+         bits = hcso_setting_type2bits(writer, WEBTRANSPORT_MAX_SESSIONS);
+@@ -232,11 +233,7 @@
+     }
+ #endif
+
+-#ifdef NDEBUG
+-    buf[1] = p - buf - 2;
+-#else
+     vint_write(buf + 1, p - buf - 3, 1, 2);
+-#endif
+
+     was_empty = lsquic_frab_list_empty(&writer->how_fral);
+

@@ -89,49 +89,53 @@ pub const RawWebSocket = opaque {
 pub const AnyWebSocket = union(enum) {
     ssl: *uws.NewApp(true).WebSocket,
     tcp: *uws.NewApp(false).WebSocket,
+    h3_wt: *uws.H3.WebTransportSession,
 
     pub fn raw(this: AnyWebSocket) *RawWebSocket {
         return switch (this) {
-            .ssl => this.ssl.raw(),
-            .tcp => this.tcp.raw(),
+            inline else => |w| w.raw(),
         };
     }
     pub fn as(this: AnyWebSocket, comptime Type: type) ?*Type {
         @setRuntimeSafety(false);
         return switch (this) {
-            .ssl => this.ssl.as(Type),
-            .tcp => this.tcp.as(Type),
+            inline else => |w| w.as(Type),
         };
     }
 
     pub fn memoryCost(this: AnyWebSocket) usize {
         return switch (this) {
-            .ssl => this.ssl.memoryCost(),
-            .tcp => this.tcp.memoryCost(),
+            inline else => |w| w.memoryCost(),
         };
     }
 
     pub fn close(this: AnyWebSocket) void {
-        const ssl_flag = @intFromBool(this == .ssl);
-        return c.uws_ws_close(ssl_flag, this.raw());
+        switch (this) {
+            .ssl => c.uws_ws_close(1, this.raw()),
+            .tcp => c.uws_ws_close(0, this.raw()),
+            .h3_wt => |w| w.close(),
+        }
     }
 
     pub fn send(this: AnyWebSocket, message: []const u8, opcode: Opcode, compress: bool, fin: bool) SendStatus {
         return switch (this) {
             .ssl => c.uws_ws_send_with_options(1, this.ssl.raw(), message.ptr, message.len, opcode, compress, fin),
             .tcp => c.uws_ws_send_with_options(0, this.tcp.raw(), message.ptr, message.len, opcode, compress, fin),
+            .h3_wt => |w| w.sendWithOptions(message, opcode, compress, fin),
         };
     }
     pub fn sendLastFragment(this: AnyWebSocket, message: []const u8, compress: bool) SendStatus {
-        switch (this) {
-            .tcp => return c.uws_ws_send_last_fragment(0, this.raw(), message.ptr, message.len, compress),
-            .ssl => return c.uws_ws_send_last_fragment(1, this.raw(), message.ptr, message.len, compress),
-        }
+        return switch (this) {
+            .tcp => c.uws_ws_send_last_fragment(0, this.raw(), message.ptr, message.len, compress),
+            .ssl => c.uws_ws_send_last_fragment(1, this.raw(), message.ptr, message.len, compress),
+            .h3_wt => |w| w.sendLastFragment(message, compress),
+        };
     }
     pub fn end(this: AnyWebSocket, code: i32, message: []const u8) void {
         switch (this) {
             .tcp => c.uws_ws_end(0, this.tcp.raw(), code, message.ptr, message.len),
             .ssl => c.uws_ws_end(1, this.ssl.raw(), code, message.ptr, message.len),
+            .h3_wt => |w| w.end(code, message),
         }
     }
     pub fn cork(this: AnyWebSocket, ctx: anytype, comptime callback: anytype) void {
@@ -145,39 +149,42 @@ pub const AnyWebSocket = union(enum) {
         switch (this) {
             .ssl => c.uws_ws_cork(1, this.raw(), Wrapper.wrap, ctx),
             .tcp => c.uws_ws_cork(0, this.raw(), Wrapper.wrap, ctx),
+            .h3_wt => |w| w.cork(ctx, callback),
         }
     }
     pub fn subscribe(this: AnyWebSocket, topic: []const u8) bool {
         return switch (this) {
             .ssl => c.uws_ws_subscribe(1, this.ssl.raw(), topic.ptr, topic.len),
             .tcp => c.uws_ws_subscribe(0, this.tcp.raw(), topic.ptr, topic.len),
+            .h3_wt => |w| w.subscribe(topic),
         };
     }
     pub fn unsubscribe(this: AnyWebSocket, topic: []const u8) bool {
         return switch (this) {
             .ssl => c.uws_ws_unsubscribe(1, this.raw(), topic.ptr, topic.len),
             .tcp => c.uws_ws_unsubscribe(0, this.raw(), topic.ptr, topic.len),
+            .h3_wt => |w| w.unsubscribe(topic),
         };
     }
     pub fn isSubscribed(this: AnyWebSocket, topic: []const u8) bool {
         return switch (this) {
             .ssl => c.uws_ws_is_subscribed(1, this.raw(), topic.ptr, topic.len),
             .tcp => c.uws_ws_is_subscribed(0, this.raw(), topic.ptr, topic.len),
+            .h3_wt => |w| w.isSubscribed(topic),
         };
     }
     pub fn getTopicsAsJSArray(this: AnyWebSocket, globalObject: *JSGlobalObject) JSValue {
         return switch (this) {
             .ssl => c.uws_ws_get_topics_as_js_array(1, this.raw(), globalObject),
             .tcp => c.uws_ws_get_topics_as_js_array(0, this.raw(), globalObject),
+            .h3_wt => c.uws_h3_wt_get_topics_as_js_array(this.raw(), globalObject),
         };
     }
-    // pub fn iterateTopics(this: AnyWebSocket) {
-    //     return uws_ws_iterate_topics(ssl_flag, this.raw(), callback: ?*const fn ([*c]const u8, usize, ?*anyopaque) callconv(.c) void, user_data: ?*anyopaque) void;
-    // }
     pub fn publish(this: AnyWebSocket, topic: []const u8, message: []const u8, opcode: Opcode, compress: bool) bool {
         return switch (this) {
             .ssl => c.uws_ws_publish_with_options(1, this.ssl.raw(), topic.ptr, topic.len, message.ptr, message.len, opcode, compress),
             .tcp => c.uws_ws_publish_with_options(0, this.tcp.raw(), topic.ptr, topic.len, message.ptr, message.len, opcode, compress),
+            .h3_wt => |w| w.publishWithOptions(topic, message, opcode, compress),
         };
     }
 
@@ -191,13 +198,13 @@ pub const AnyWebSocket = union(enum) {
         return switch (this) {
             .ssl => c.uws_ws_get_buffered_amount(1, this.ssl.raw()),
             .tcp => c.uws_ws_get_buffered_amount(0, this.tcp.raw()),
+            .h3_wt => |w| w.getBufferedAmount(),
         };
     }
 
     pub fn getRemoteAddress(this: AnyWebSocket, buf: []u8) []u8 {
         return switch (this) {
-            .ssl => this.ssl.getRemoteAddress(buf),
-            .tcp => this.tcp.getRemoteAddress(buf),
+            inline else => |w| w.getRemoteAddress(buf),
         };
     }
 };
@@ -301,6 +308,63 @@ pub const WebSocketBehavior = extern struct {
                 });
             }
 
+            /// Same handler set, but the upgrade callback receives an
+            /// H3.Response/H3.Request and the open/message/close/drain
+            /// wrappers tag the AnyWebSocket as `.h3_wt`. ping/pong are
+            /// dropped — WebTransport has no control frames; QUIC owns
+            /// keepalive.
+            pub fn applyH3(behavior: WebSocketBehavior) WebSocketBehavior {
+                const H3 = struct {
+                    fn onOpen(raw_ws: *RawWebSocket) callconv(.c) void {
+                        const ws: AnyWebSocket = .{ .h3_wt = @ptrCast(raw_ws) };
+                        @call(bun.callmod_inline, Type.onOpen, .{ ws.as(Type).?, ws });
+                    }
+                    fn onMessage(raw_ws: *RawWebSocket, msg: [*c]const u8, len: usize, op: Opcode) callconv(.c) void {
+                        const ws: AnyWebSocket = .{ .h3_wt = @ptrCast(raw_ws) };
+                        @call(bun.callmod_inline, Type.onMessage, .{
+                            ws.as(Type).?, ws, if (len > 0) msg[0..len] else "", op,
+                        });
+                    }
+                    fn onDrain(raw_ws: *RawWebSocket) callconv(.c) void {
+                        const ws: AnyWebSocket = .{ .h3_wt = @ptrCast(raw_ws) };
+                        @call(bun.callmod_inline, Type.onDrain, .{ ws.as(Type).?, ws });
+                    }
+                    fn onClose(raw_ws: *RawWebSocket, code: i32, msg: [*c]const u8, len: usize) callconv(.c) void {
+                        const ws: AnyWebSocket = .{ .h3_wt = @ptrCast(raw_ws) };
+                        @call(bun.callmod_inline, Type.onClose, .{
+                            ws.as(Type).?,                                    ws, code,
+                            if (len > 0 and msg != null) msg[0..len] else "",
+                        });
+                    }
+                    fn onUpgrade(ptr: *anyopaque, res: *uws_res, req: *Request, context: *uws.SocketContext, id: usize) callconv(.c) void {
+                        @call(bun.callmod_inline, Server.onWebTransportUpgrade, .{
+                            bun.cast(*Server, ptr),
+                            @as(*uws.H3.Response, @ptrCast(res)),
+                            @as(*uws.H3.Request, @ptrCast(req)),
+                            context,
+                            id,
+                        });
+                    }
+                };
+                return .{
+                    .compression = behavior.compression,
+                    .maxPayloadLength = behavior.maxPayloadLength,
+                    .idleTimeout = behavior.idleTimeout,
+                    .maxBackpressure = behavior.maxBackpressure,
+                    .closeOnBackpressureLimit = behavior.closeOnBackpressureLimit,
+                    .resetIdleTimeoutOnSend = behavior.resetIdleTimeoutOnSend,
+                    .sendPingsAutomatically = behavior.sendPingsAutomatically,
+                    .maxLifetime = behavior.maxLifetime,
+                    .upgrade = H3.onUpgrade,
+                    .open = H3.onOpen,
+                    .message = if (@hasDecl(Type, "onMessage")) H3.onMessage else null,
+                    .drain = if (@hasDecl(Type, "onDrain")) H3.onDrain else null,
+                    .ping = null,
+                    .pong = null,
+                    .close = H3.onClose,
+                };
+            }
+
             pub fn apply(behavior: WebSocketBehavior) WebSocketBehavior {
                 return .{
                     .compression = behavior.compression,
@@ -348,6 +412,7 @@ pub const c = struct {
     pub extern fn uws_ws_is_subscribed(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, length: usize) bool;
     pub extern fn uws_ws_iterate_topics(ssl: i32, ws: ?*RawWebSocket, callback: ?*const fn ([*c]const u8, usize, ?*anyopaque) callconv(.c) void, user_data: ?*anyopaque) void;
     pub extern fn uws_ws_get_topics_as_js_array(ssl: i32, ws: *RawWebSocket, globalObject: *JSGlobalObject) JSValue;
+    pub extern fn uws_h3_wt_get_topics_as_js_array(ws: *RawWebSocket, globalObject: *JSGlobalObject) JSValue;
     pub extern fn uws_ws_publish(ssl: i32, ws: ?*RawWebSocket, topic: [*]const u8, topic_length: usize, message: [*]const u8, message_length: usize) bool;
     pub extern fn uws_ws_publish_with_options(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, topic_length: usize, message: [*c]const u8, message_length: usize, opcode: Opcode, compress: bool) bool;
     pub extern fn uws_ws_get_buffered_amount(ssl: i32, ws: ?*RawWebSocket) usize;

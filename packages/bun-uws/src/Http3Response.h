@@ -4,6 +4,7 @@
 #include "quic.h"
 #include "Http3ResponseData.h"
 #include "HttpResponseData.h"
+#include "WebTransportSession.h"
 
 #include <charconv>
 #include <optional>
@@ -143,6 +144,30 @@ struct Http3Response {
 
     void close() { us_quic_stream_close((us_quic_stream_t *) this); }
     void *getNativeHandle() { return this; }
+
+    /* Accept an extended-CONNECT WebTransport request: send 200, mark the
+     * lsquic stream as a session so the 0x41 bidi prefix and Quarter Stream
+     * ID datagram routing resolve to it, and swap this stream's ext over to
+     * the WebTransportSession path. Returns the session pointer (same memory
+     * as `this`) or nullptr if the stream was already responded to. */
+    struct WebTransportSession *upgradeWebTransport(void *userData) {
+        Http3ResponseData *d = getHttpResponseData();
+        /* endWithoutBody()/the zero-body internalEnd() path complete the
+         * response without ever setting HTTP_WRITE_CALLED, so gate on
+         * HTTP_RESPONSE_PENDING — the bit markDone() always clears. */
+        if (!(d->state & Http3ResponseData::HTTP_RESPONSE_PENDING)
+            || (d->state & Http3ResponseData::HTTP_WRITE_CALLED)) return nullptr;
+        writeStatus("200 OK");
+        writeHeader("sec-webtransport-http3-draft", "draft02");
+        sendBufferedHeaders(d, false);
+        d->state |= Http3ResponseData::HTTP_WRITE_CALLED;
+        d->state &= ~Http3ResponseData::HTTP_RESPONSE_PENDING;
+        d->onAborted = nullptr;
+        us_quic_stream_set_webtransport_session((us_quic_stream_t *) this);
+        d->wt = new WebTransportSessionData;
+        d->wt->userData = userData;
+        return (struct WebTransportSession *) this;
+    }
     void *getSocketData() { return getHttpResponseData()->socketData; }
     bool isConnectRequest() { return false; }
     void setTimeout(uint8_t) {}

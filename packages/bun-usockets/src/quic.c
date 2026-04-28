@@ -5,6 +5,12 @@
 /* lsquic.h gates on WIN32 (not _WIN32) to pick <vc_compat.h> over <sys/uio.h>. */
 #define WIN32 1
 #endif
+/* lsquic gates es_webtransport_server / lsquic_stream_*webtransport* behind
+ * this. The lsquic build flips it via -D in scripts/build/deps/lsquic.ts; it
+ * has to be repeated for any TU that includes lsquic.h. */
+#ifndef LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
+#define LSQUIC_WEBTRANSPORT_SERVER_SUPPORT 1
+#endif
 #include "lsquic.h"
 #include "lsxpack_header.h"
 #include <openssl/ssl.h>
@@ -40,6 +46,15 @@ struct us_quic_sni {
     SSL_CTX *ctx;
 };
 
+/* One QUIC DATAGRAM queued on a connection. The Quarter Stream ID varint
+ * is already prepended so on_dg_write is a single memcpy. */
+struct us_quic_dgram {
+    struct us_quic_dgram *next;
+    struct us_quic_stream_s *session;
+    unsigned int len;
+    /* payload follows */
+};
+
 struct us_quic_socket_context_s {
     struct us_loop_t *loop;
     lsquic_engine_t *engine;
@@ -70,6 +85,9 @@ struct us_quic_socket_context_s {
     void (*on_stream_data)(us_quic_stream_t *, const char *, unsigned int, int);
     void (*on_stream_writable)(us_quic_stream_t *);
     void (*on_stream_close)(us_quic_stream_t *);
+    void (*on_wt_stream_data)(us_quic_stream_t *, us_quic_stream_t *, const char *, unsigned int, int);
+    void (*on_wt_stream_close)(us_quic_stream_t *, us_quic_stream_t *);
+    void (*on_datagram)(us_quic_stream_t *, const char *, unsigned int);
 
     char read_buf[US_QUIC_READ_BUF];
     /* ext follows */
@@ -85,6 +103,15 @@ struct us_quic_listen_socket_s {
 struct us_quic_socket_s {
     lsquic_conn_t *conn;
     us_quic_socket_context_t *ctx;
+    /* WebTransport sessions on this connection (intrusive list of CONNECT
+     * streams via wt_next_on_conn). Scanned on incoming WT bidi streams and
+     * datagrams to resolve Session ID; size bounded by
+     * es_max_webtransport_server_streams so a linear walk is fine. */
+    struct us_quic_stream_s *wt_sessions;
+    /* Outgoing datagram FIFO; on_dg_write pops from head. dgram_bytes
+     * is summed across all sessions on the conn. */
+    struct us_quic_dgram *dgram_head, *dgram_tail;
+    unsigned int dgram_bytes;
     /* ext follows */
 };
 
@@ -94,6 +121,13 @@ struct us_quic_stream_s {
     struct us_quic_hset *hset;
     int headers_delivered;
     int fin_delivered;
+    /* WebTransport bookkeeping. wt_kind: 0 = HTTP, 1 = CONNECT session,
+     * 2 = client bidi data stream. wt_session_id is the CONNECT stream id
+     * for kind 2 (cached so we can route after resolve). */
+    unsigned char wt_kind;
+    lsquic_stream_id_t wt_session_id;
+    struct us_quic_stream_s *wt_next_on_conn; /* session list link for kind 1 */
+    unsigned int wt_dgram_bytes;              /* per-session buffered datagram bytes */
     /* ext follows */
 };
 
@@ -469,6 +503,11 @@ static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
     us_quic_socket_context_t *ctx = qs->ctx;
     if (ctx->on_close) ctx->on_close(qs);
     lsquic_conn_set_ctx(conn, NULL);
+    for (struct us_quic_dgram *d = qs->dgram_head; d; ) {
+        struct us_quic_dgram *next = d->next;
+        free(d);
+        d = next;
+    }
     free(qs);
 #ifndef LIBUS_USE_LIBUV
     ctx->loop->num_polls--;
@@ -494,33 +533,69 @@ static lsquic_stream_ctx_t *us_quic_on_new_stream(void *if_ctx, lsquic_stream_t 
     return (lsquic_stream_ctx_t *) s;
 }
 
+static us_quic_stream_t *us_quic_find_wt_session(us_quic_socket_t *qs, lsquic_stream_id_t id) {
+    if (!qs) return NULL;
+    for (us_quic_stream_t *s = qs->wt_sessions; s; s = s->wt_next_on_conn)
+        if (lsquic_stream_id(s->stream) == id) return s;
+    return NULL;
+}
+
 static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     us_quic_stream_t *s = (us_quic_stream_t *) h;
     us_quic_socket_context_t *ctx = s->ctx;
 
     if (!s->headers_delivered) {
-        struct us_quic_hset *hset = (struct us_quic_hset *) lsquic_stream_get_hset(stream);
-        if (hset) {
-            us_quic_hset_finalize(hset);
-            s->hset = hset;
+        /* lsquic's hq filter parses the 0x41 + Session ID prefix on the first
+         * read, marks the stream as a WT bidi stream, and disables HTTP
+         * framing — there is no header set to claim. Route subsequent reads
+         * to the WT data callback instead of the HTTP body path. */
+        if (s->wt_kind == 0 && lsquic_stream_is_webtransport_client_bidi_stream(stream)) {
+            s->wt_kind = 2;
             s->headers_delivered = 1;
-            if (ctx->on_stream_headers) ctx->on_stream_headers(s);
-            /* on_stream_headers may have closed us */
-            if (!s->stream) return;
+            s->wt_session_id = (lsquic_stream_id_t)
+                lsquic_stream_get_webtransport_session_stream_id(stream);
+        } else {
+            struct us_quic_hset *hset = (struct us_quic_hset *) lsquic_stream_get_hset(stream);
+            if (hset) {
+                us_quic_hset_finalize(hset);
+                s->hset = hset;
+                s->headers_delivered = 1;
+                if (ctx->on_stream_headers) ctx->on_stream_headers(s);
+                /* on_stream_headers may have closed us */
+                if (!s->stream) return;
+            }
         }
+    }
+
+    /* Re-resolve the session on every read instead of caching across calls:
+     * the CONNECT stream can close mid-transfer and there's no back-pointer
+     * to invalidate. The session list is bounded (≤16) so the walk is cheap. */
+    us_quic_stream_t *session = NULL;
+    if (s->wt_kind == 2) {
+        us_quic_socket_t *qs = (us_quic_socket_t *) lsquic_conn_get_ctx(lsquic_stream_conn(stream));
+        session = us_quic_find_wt_session(qs, s->wt_session_id);
     }
 
     ssize_t r;
     while ((r = lsquic_stream_read(stream, ctx->read_buf, US_QUIC_READ_BUF)) > 0) {
-        if (ctx->on_stream_data)
+        if (s->wt_kind == 2) {
+            if (ctx->on_wt_stream_data)
+                ctx->on_wt_stream_data(s, session, ctx->read_buf, (unsigned int) r, 0);
+        } else if (ctx->on_stream_data) {
             ctx->on_stream_data(s, ctx->read_buf, (unsigned int) r, 0);
+        }
         if (!s->stream) return;
     }
     if (r == 0 && !s->fin_delivered) {
         s->fin_delivered = 1;
         lsquic_stream_wantread(stream, 0);
         lsquic_stream_shutdown(stream, 0);
-        if (ctx->on_stream_data) ctx->on_stream_data(s, ctx->read_buf, 0, 1);
+        if (s->wt_kind == 2) {
+            if (ctx->on_wt_stream_data)
+                ctx->on_wt_stream_data(s, session, ctx->read_buf, 0, 1);
+        } else if (ctx->on_stream_data) {
+            ctx->on_stream_data(s, ctx->read_buf, 0, 1);
+        }
     }
 }
 
@@ -528,12 +603,46 @@ static void us_quic_on_write(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     us_quic_stream_t *s = (us_quic_stream_t *) h;
     lsquic_stream_wantwrite(stream, 0);
     if (s->ctx->on_stream_writable) s->ctx->on_stream_writable(s);
+    /* lsquic_stream_send_headers stashes the QPACK block and writes it from
+     * dispatch_write_events into sm_buf, then hands control back here. With
+     * a body the next lsquic_stream_write packs it alongside; without one
+     * (WebTransport 200, future 1xx-then-wait) it sits buffered. Flush so a
+     * STREAM frame is generated regardless. No-op when already flushed. */
+    if (s->stream) lsquic_stream_flush(stream);
 }
 
 static void us_quic_on_close(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     (void) stream;
     us_quic_stream_t *s = (us_quic_stream_t *) h;
     if (!s) return;
+    if (s->wt_kind == 1) {
+        /* Unlink from the connection's session list and drop any datagrams
+         * we queued for it before the C++ layer learns the session is gone. */
+        us_quic_socket_t *qs = us_quic_stream_socket(s);
+        if (qs) {
+            for (us_quic_stream_t **pp = &qs->wt_sessions; *pp; pp = &(*pp)->wt_next_on_conn) {
+                if (*pp == s) { *pp = s->wt_next_on_conn; break; }
+            }
+            for (struct us_quic_dgram **pp = &qs->dgram_head; *pp; ) {
+                struct us_quic_dgram *d = *pp;
+                if (d->session == s) {
+                    *pp = d->next;
+                    qs->dgram_bytes -= d->len;
+                    free(d);
+                } else pp = &d->next;
+            }
+            qs->dgram_tail = NULL;
+            for (struct us_quic_dgram *d = qs->dgram_head; d; d = d->next) qs->dgram_tail = d;
+        }
+    }
+    if (s->wt_kind == 2) {
+        /* RESET_STREAM never delivers fin=1, so the C++ layer's reassembly
+         * entry survives. Give it a chance to drop the entry before the
+         * stream id is recycled. */
+        us_quic_socket_t *qs = us_quic_stream_socket(s);
+        us_quic_stream_t *session = qs ? us_quic_find_wt_session(qs, s->wt_session_id) : NULL;
+        if (s->ctx->on_wt_stream_close) s->ctx->on_wt_stream_close(s, session);
+    }
     if (s->ctx->on_stream_close) s->ctx->on_stream_close(s);
     s->stream = NULL;
     us_quic_hset_free(s->hset);
@@ -546,6 +655,72 @@ static void us_quic_on_reset(lsquic_stream_t *stream, lsquic_stream_ctx_t *h, in
     if (h && stream) lsquic_stream_close(stream);
 }
 
+/* ───── datagrams (RFC 9221 frame, RFC 9297 HTTP wrapping) ───── */
+
+/* QUIC varint: read a single value from [p,end). Returns bytes consumed, or
+ * 0 if truncated. */
+static unsigned int us_quic_varint_read(const unsigned char *p, const unsigned char *end, uint64_t *out) {
+    if (p >= end) return 0;
+    unsigned int len = 1u << (*p >> 6);
+    if ((unsigned int)(end - p) < len) return 0;
+    uint64_t v = *p & 0x3f;
+    for (unsigned int i = 1; i < len; i++) v = (v << 8) | p[i];
+    *out = v;
+    return len;
+}
+
+static unsigned int us_quic_varint_write(unsigned char *p, uint64_t v) {
+    if (v < 64) { p[0] = (unsigned char) v; return 1; }
+    if (v < 16384) { p[0] = (unsigned char)(0x40 | (v >> 8)); p[1] = (unsigned char) v; return 2; }
+    if (v < 1073741824) {
+        p[0] = (unsigned char)(0x80 | (v >> 24)); p[1] = (unsigned char)(v >> 16);
+        p[2] = (unsigned char)(v >> 8);           p[3] = (unsigned char) v;
+        return 4;
+    }
+    p[0] = (unsigned char)(0xc0 | (v >> 56));
+    for (int i = 1; i < 8; i++) p[i] = (unsigned char)(v >> (8 * (7 - i)));
+    return 8;
+}
+
+static ssize_t us_quic_on_dg_write(lsquic_conn_t *conn, void *buf, size_t sz) {
+    us_quic_socket_t *qs = (us_quic_socket_t *) lsquic_conn_get_ctx(conn);
+    if (!qs) return -1;
+    /* lsquic's contract: nw >= 0 means "wrote nw bytes" (no skip semantics),
+     * so 0 would serialise an empty DATAGRAM frame — invalid HTTP/3 datagram
+     * (no Quarter-Stream-ID). Pop oversize entries until one fits or the
+     * queue empties; only ever return >0 or -1. */
+    for (;;) {
+        struct us_quic_dgram *d = qs->dgram_head;
+        if (!d) { lsquic_conn_want_datagram_write(conn, 0); return -1; }
+        qs->dgram_head = d->next;
+        if (!qs->dgram_head) qs->dgram_tail = NULL;
+        qs->dgram_bytes -= d->len;
+        if (d->session) d->session->wt_dgram_bytes -= d->len;
+        if (d->len <= sz) {
+            memcpy(buf, d + 1, d->len);
+            ssize_t r = (ssize_t) d->len;
+            free(d);
+            if (qs->dgram_head) lsquic_conn_want_datagram_write(conn, 1);
+            return r;
+        }
+        free(d);
+    }
+}
+
+static void us_quic_on_datagram(lsquic_conn_t *conn, const void *buf, size_t sz) {
+    us_quic_socket_t *qs = (us_quic_socket_t *) lsquic_conn_get_ctx(conn);
+    if (!qs || !qs->ctx->on_datagram) return;
+    /* RFC 9297 §2.1: payload is Quarter Stream ID varint + HTTP Datagram
+     * Payload. Session ID is QSID * 4 (client-initiated bidi). */
+    uint64_t qsid;
+    unsigned int n = us_quic_varint_read((const unsigned char *) buf,
+        (const unsigned char *) buf + sz, &qsid);
+    if (!n) return;
+    us_quic_stream_t *session = us_quic_find_wt_session(qs, (lsquic_stream_id_t)(qsid * 4));
+    if (!session) return;
+    qs->ctx->on_datagram(session, (const char *) buf + n, (unsigned int)(sz - n));
+}
+
 /* ───── public API ───── */
 
 static const struct lsquic_stream_if us_quic_stream_if = {
@@ -556,6 +731,8 @@ static const struct lsquic_stream_if us_quic_stream_if = {
     .on_write = us_quic_on_write,
     .on_close = us_quic_on_close,
     .on_reset = us_quic_on_reset,
+    .on_dg_write = us_quic_on_dg_write,
+    .on_datagram = us_quic_on_datagram,
 };
 
 static const struct lsquic_hset_if us_quic_hset_if = {
@@ -629,6 +806,14 @@ us_quic_socket_context_t *us_create_quic_socket_context(
      * 9218 scheduler and the patched determine_bpt short-circuits the O(N)
      * stream-hash walk on every write. */
     ctx->settings.es_ext_http_prio = 0;
+    /* WebTransport: lsquic copies es_* at engine_new time, so flip these
+     * unconditionally. Harmless when no wt() route is registered — the
+     * SETTINGS frame advertises support, but on_datagram drops anything that
+     * doesn't match a registered session and the 0x41 prefix path falls
+     * through to a no-op on_wt_stream_data. */
+    ctx->settings.es_webtransport_server = 1;
+    ctx->settings.es_max_webtransport_server_streams = 16;
+    ctx->settings.es_datagrams = 1;
     if (idle_timeout_s) ctx->settings.es_idle_timeout = idle_timeout_s > 600 ? 600 : idle_timeout_s;
 
     struct lsquic_engine_api api;
@@ -781,7 +966,17 @@ DEF_CB(on_stream_headers, void (*cb)(us_quic_stream_t *))
 DEF_CB(on_stream_data, void (*cb)(us_quic_stream_t *, const char *, unsigned int, int))
 DEF_CB(on_stream_writable, void (*cb)(us_quic_stream_t *))
 DEF_CB(on_stream_close, void (*cb)(us_quic_stream_t *))
+DEF_CB(on_datagram, void (*cb)(us_quic_stream_t *, const char *, unsigned int))
 #undef DEF_CB
+
+void us_quic_socket_context_on_wt_stream_data(us_quic_socket_context_t *ctx,
+    void (*cb)(us_quic_stream_t *, us_quic_stream_t *, const char *, unsigned int, int)) {
+    ctx->on_wt_stream_data = cb;
+}
+void us_quic_socket_context_on_wt_stream_close(us_quic_socket_context_t *ctx,
+    void (*cb)(us_quic_stream_t *, us_quic_stream_t *)) {
+    ctx->on_wt_stream_close = cb;
+}
 
 int us_quic_stream_write(us_quic_stream_t *s, const char *data, unsigned int len) {
     if (!s->stream) return -1;
@@ -850,10 +1045,12 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
     int r = lsquic_stream_send_headers(s->stream, &lh, end_stream);
     if (buf != stackbuf) free(buf);
     if (xh != stackh) free(xh);
-    if (end_stream && r == 0) lsquic_stream_shutdown(s->stream, 1);
-    /* Mark the context dirty so drainQuicIfNecessary picks up header-only
-     * responses (204/304) that never call us_quic_stream_write. */
-    if (r == 0) s->ctx->pending_write_bytes += (unsigned int) total + 1;
+    if (r == 0) {
+        if (end_stream) lsquic_stream_shutdown(s->stream, 1);
+        /* Mark the context dirty so drainQuicIfNecessary picks up header-only
+         * responses (204/304) that never call us_quic_stream_write. */
+        s->ctx->pending_write_bytes += (unsigned int) total + 1;
+    }
     return r;
 }
 
@@ -881,6 +1078,66 @@ us_quic_socket_t *us_quic_stream_socket(us_quic_stream_t *s) {
 }
 
 us_quic_socket_context_t *us_quic_stream_context(us_quic_stream_t *s) { return s->ctx; }
+
+unsigned long long us_quic_stream_id(us_quic_stream_t *s) {
+    return s->stream ? (unsigned long long) lsquic_stream_id(s->stream) : (unsigned long long) -1;
+}
+
+void us_quic_stream_set_webtransport_session(us_quic_stream_t *s) {
+    if (!s->stream || s->wt_kind == 1) return;
+    lsquic_stream_set_webtransport_session(s->stream);
+    s->wt_kind = 1;
+    /* The 200 HEADERS we just queued via lsquic_stream_send_headers gets
+     * stashed and written from lsquic's internal header-block on_write,
+     * which then restores our callback but leaves the bytes sitting in
+     * sm_buf with wantwrite cleared. Re-arm wantwrite so us_quic_on_write
+     * runs once afterwards and flushes them — otherwise the client never
+     * sees the 2xx and the session looks half-open. */
+    lsquic_stream_wantwrite(s->stream, 1);
+    us_quic_socket_t *qs = us_quic_stream_socket(s);
+    if (!qs) return;
+    s->wt_next_on_conn = qs->wt_sessions;
+    qs->wt_sessions = s;
+}
+
+int us_quic_stream_send_datagram(us_quic_stream_t *session,
+    const char *data, unsigned int len, unsigned int max_queued)
+{
+    if (!session->stream || session->wt_kind != 1) return -1;
+    us_quic_socket_t *qs = us_quic_stream_socket(session);
+    if (!qs) return -1;
+    /* Prepend Quarter Stream ID (CONNECT stream id / 4). */
+    unsigned char prefix[8];
+    unsigned int plen = us_quic_varint_write(prefix,
+        (uint64_t) lsquic_stream_id(session->stream) / 4);
+    unsigned int total = plen + len;
+    /* lsquic offers an MTU-bounded buffer in on_dg_write; anything larger is
+     * dropped there, so reject up front. 1200 is the QUIC default initial
+     * max_udp_payload_size minus headers — conservative but predictable. */
+    if (total > 1200) return -1;
+    if (max_queued && session->wt_dgram_bytes + total > max_queued) return -2;
+    struct us_quic_dgram *d = (struct us_quic_dgram *) malloc(sizeof(*d) + total);
+    if (!d) return -1;
+    d->next = NULL;
+    d->session = session;
+    d->len = total;
+    memcpy(d + 1, prefix, plen);
+    memcpy((char *)(d + 1) + plen, data, len);
+    if (qs->dgram_tail) qs->dgram_tail->next = d; else qs->dgram_head = d;
+    qs->dgram_tail = d;
+    qs->dgram_bytes += total;
+    int prev = (int) session->wt_dgram_bytes;
+    session->wt_dgram_bytes += total;
+    lsquic_conn_want_datagram_write(qs->conn, 1);
+    /* Same flush gating as stream writes: bytes go out at the next
+     * process_conns, not inline. */
+    session->ctx->pending_write_bytes += total;
+    return prev;
+}
+
+unsigned int us_quic_stream_datagram_buffered(us_quic_stream_t *session) {
+    return session->wt_dgram_bytes;
+}
 
 
 unsigned int us_quic_stream_header_count(us_quic_stream_t *s) {

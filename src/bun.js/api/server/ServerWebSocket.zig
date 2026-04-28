@@ -7,26 +7,40 @@ const ServerWebSocket = @This();
 
 // We pack the per-socket data into this struct below
 const Flags = packed struct(u64) {
-    ssl: bool = false,
+    kind: Kind = .tcp,
     closed: bool = false,
     opened: bool = false,
     binary_type: jsc.ArrayBuffer.BinaryType = .Buffer,
-    packed_websocket_ptr: u57 = 0,
+    packed_websocket_ptr: u56 = 0,
+
+    const Kind = enum(u2) { tcp, ssl, h3_wt, _ };
 
     inline fn websocket(this: Flags) uws.AnyWebSocket {
         // Ensure those other bits are zeroed out
         const that = Flags{ .packed_websocket_ptr = this.packed_websocket_ptr };
-
-        return if (this.ssl) .{
-            .ssl = @ptrFromInt(@as(usize, that.packed_websocket_ptr)),
-        } else .{
-            .tcp = @ptrFromInt(@as(usize, that.packed_websocket_ptr)),
+        return switch (this.kind) {
+            .ssl => .{ .ssl = @ptrFromInt(@as(usize, that.packed_websocket_ptr)) },
+            .h3_wt => .{ .h3_wt = @ptrFromInt(@as(usize, that.packed_websocket_ptr)) },
+            else => .{ .tcp = @ptrFromInt(@as(usize, that.packed_websocket_ptr)) },
         };
     }
 };
 
 inline fn websocket(this: *const ServerWebSocket) uws.AnyWebSocket {
     return this.#flags.websocket();
+}
+
+/// App-level publish (the publish_to_self / closed-socket fallback). H3
+/// WebTransport sessions live under a separate TopicTree on the H3App, so
+/// route by `kind` instead of `flags.ssl` — otherwise WT subscribers miss
+/// every message that goes through the fallback.
+inline fn appPublish(this: *const ServerWebSocket, topic: []const u8, message: []const u8, opcode: uws.Opcode, compress: bool) bool {
+    if (this.#flags.kind == .h3_wt) {
+        const h3_app: *uws.H3.App = @ptrCast(@alignCast(this.#handler.h3_app orelse return false));
+        return h3_app.publishWithOptions(topic, message, opcode, compress);
+    }
+    const app = this.#handler.app orelse return false;
+    return uws.AnyWebSocket.publishWithOptions(this.#handler.flags.ssl, app, topic, message, opcode, compress);
 }
 
 pub const js = jsc.Codegen.JSServerWebSocket;
@@ -65,7 +79,11 @@ pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
 
     this.#flags.packed_websocket_ptr = @truncate(@intFromPtr(ws.raw()));
     this.#flags.closed = false;
-    this.#flags.ssl = ws == .ssl;
+    this.#flags.kind = switch (ws) {
+        .ssl => .ssl,
+        .tcp => .tcp,
+        .h3_wt => .h3_wt,
+    };
 
     var handler = this.#handler;
     const vm = this.#handler.vm;
@@ -354,8 +372,27 @@ pub fn behavior(comptime ServerType: type, comptime ssl: bool, opts: uws.WebSock
     return uws.WebSocketBehavior.Wrap(ServerType, @This(), ssl).apply(opts);
 }
 
+pub fn behaviorH3(comptime ServerType: type, opts: uws.WebSocketBehavior) uws.WebSocketBehavior {
+    return uws.WebSocketBehavior.Wrap(ServerType, @This(), true).applyH3(opts);
+}
+
 pub fn constructor(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!*ServerWebSocket {
     return globalObject.throw("Cannot construct ServerWebSocket", .{});
+}
+
+/// Release everything init() acquired when an upgrade is aborted before
+/// onOpen ever fires (so onClose's normal downgrade path is unreachable):
+/// the Strong ref on the JS wrapper *and* ownership of the AbortSignal that
+/// was transferred from the request context. GC then collects the wrapper
+/// and finalize() frees the native struct.
+pub fn abandonAfterFailedUpgrade(this: *ServerWebSocket) void {
+    this.#flags.closed = true;
+    if (this.#signal) |signal| {
+        this.#signal = null;
+        signal.pendingActivityUnref();
+        signal.unref();
+    }
+    if (this.#this_value.isNotEmpty()) this.#this_value.downgrade();
 }
 
 pub fn finalize(this: *ServerWebSocket) void {
@@ -385,9 +422,8 @@ pub fn publish(
         log("publish() closed", .{});
         return JSValue.jsNumber(0);
     };
-    const flags = this.#handler.flags;
-    const ssl = flags.ssl;
-    const publish_to_self = flags.publish_to_self;
+    _ = app;
+    const publish_to_self = this.#handler.flags.publish_to_self;
 
     const topic_value = args.ptr[0];
     const message_value = args.ptr[1];
@@ -421,7 +457,7 @@ pub fn publish(
         const result = if (!publish_to_self and !this.isClosed())
             this.websocket().publish(topic_slice.slice(), buffer, .binary, compress)
         else
-            uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .binary, compress);
+            this.appPublish(topic_slice.slice(), buffer, .binary, compress);
 
         return JSValue.jsNumber(
             // if 0, return 0
@@ -443,7 +479,7 @@ pub fn publish(
         const result = if (!publish_to_self and !this.isClosed())
             this.websocket().publish(topic_slice.slice(), buffer, .text, compress)
         else
-            uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .text, compress);
+            this.appPublish(topic_slice.slice(), buffer, .text, compress);
 
         return JSValue.jsNumber(
             // if 0, return 0
@@ -469,9 +505,8 @@ pub fn publishText(
         log("publish() closed", .{});
         return JSValue.jsNumber(0);
     };
-    const flags = this.#handler.flags;
-    const ssl = flags.ssl;
-    const publish_to_self = flags.publish_to_self;
+    _ = app;
+    const publish_to_self = this.#handler.flags.publish_to_self;
 
     const topic_value = args.ptr[0];
     const message_value = args.ptr[1];
@@ -507,7 +542,7 @@ pub fn publishText(
     const result = if (!publish_to_self and !this.isClosed())
         this.websocket().publish(topic_slice.slice(), buffer, .text, compress)
     else
-        uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .text, compress);
+        this.appPublish(topic_slice.slice(), buffer, .text, compress);
 
     return JSValue.jsNumber(
         // if 0, return 0
@@ -532,9 +567,8 @@ pub fn publishBinary(
         log("publish() closed", .{});
         return JSValue.jsNumber(0);
     };
-    const flags = this.#handler.flags;
-    const ssl = flags.ssl;
-    const publish_to_self = flags.publish_to_self;
+    _ = app;
+    const publish_to_self = this.#handler.flags.publish_to_self;
     const topic_value = args.ptr[0];
     const message_value = args.ptr[1];
     const compress_value = args.ptr[2];
@@ -568,7 +602,7 @@ pub fn publishBinary(
     const result = if (!publish_to_self and !this.isClosed())
         this.websocket().publish(topic_slice.slice(), buffer, .binary, compress)
     else
-        uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .binary, compress);
+        this.appPublish(topic_slice.slice(), buffer, .binary, compress);
 
     return JSValue.jsNumber(
         // if 0, return 0
@@ -587,9 +621,8 @@ pub fn publishBinaryWithoutTypeChecks(
         log("publish() closed", .{});
         return JSValue.jsNumber(0);
     };
-    const flags = this.#handler.flags;
-    const ssl = flags.ssl;
-    const publish_to_self = flags.publish_to_self;
+    _ = app;
+    const publish_to_self = this.#handler.flags.publish_to_self;
 
     var topic_slice = topic_str.toSlice(globalThis, bun.default_allocator);
     defer topic_slice.deinit();
@@ -607,7 +640,7 @@ pub fn publishBinaryWithoutTypeChecks(
     const result = if (!publish_to_self and !this.isClosed())
         this.websocket().publish(topic_slice.slice(), buffer, .binary, compress)
     else
-        uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .binary, compress);
+        this.appPublish(topic_slice.slice(), buffer, .binary, compress);
 
     return JSValue.jsNumber(
         // if 0, return 0
@@ -626,9 +659,8 @@ pub fn publishTextWithoutTypeChecks(
         log("publish() closed", .{});
         return JSValue.jsNumber(0);
     };
-    const flags = this.#handler.flags;
-    const ssl = flags.ssl;
-    const publish_to_self = flags.publish_to_self;
+    _ = app;
+    const publish_to_self = this.#handler.flags.publish_to_self;
 
     var topic_slice = topic_str.toSlice(globalThis, bun.default_allocator);
     defer topic_slice.deinit();
@@ -649,7 +681,7 @@ pub fn publishTextWithoutTypeChecks(
     const result = if (!publish_to_self and !this.isClosed())
         this.websocket().publish(topic_slice.slice(), buffer, .text, compress)
     else
-        uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .text, compress);
+        this.appPublish(topic_slice.slice(), buffer, .text, compress);
 
     return JSValue.jsNumber(
         // if 0, return 0

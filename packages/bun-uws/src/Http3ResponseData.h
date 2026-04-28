@@ -11,6 +11,7 @@
 namespace uWS {
 
 struct Http3Response;
+struct WebTransportSessionData;
 
 struct Http3ResponseData {
     /* Same callback signatures as HttpResponseData so the C ABI matches. */
@@ -58,6 +59,12 @@ struct Http3ResponseData {
     /* Body bytes the QUIC stream couldn't accept yet. */
     BackPressure backpressure;
     bool endAfterDrain = false;
+
+    /* Set by Http3Response::upgradeWebTransport() once the CONNECT is
+     * accepted; the stream then routes through WebTransportSession instead
+     * of the HTTP body path. Heap-allocated so non-WT requests don't pay the
+     * std::vector / std::string footprint. */
+    WebTransportSessionData *wt = nullptr;
 
     uint64_t offset = 0;
     uint64_t totalSize = 0;

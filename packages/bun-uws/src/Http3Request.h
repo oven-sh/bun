@@ -32,6 +32,8 @@ struct Http3Request {
                 query = q == std::string_view::npos ? std::string_view{} : value.substr(q);
             } else if (name == ":authority") {
                 authority = value;
+            } else if (name == ":protocol") {
+                protocol = value;
             } else if (authority.empty() && name.size() == 4 && equalsIgnoreCase(name, "host")) {
                 /* RFC 9114 §4.3.1: a request must contain :authority OR a
                  * Host field. Promote the literal Host so getHeader("host"),
@@ -66,8 +68,11 @@ struct Http3Request {
         return {methodLower, n};
     }
 
+    std::string_view getProtocol() { return protocol; }
+
     std::string_view getHeader(std::string_view lowerCasedHeader) {
         if (lowerCasedHeader == "host") return authority;
+        if (lowerCasedHeader == ":protocol") return protocol;
         unsigned int n = us_quic_stream_header_count(stream);
         for (unsigned int i = 0; i < n; i++) {
             const us_quic_header_t *h = us_quic_stream_header(stream, i);
@@ -112,7 +117,7 @@ private:
     }
 
     us_quic_stream_t *stream;
-    std::string_view method, url, fullUrl, query, authority;
+    std::string_view method, url, fullUrl, query, authority, protocol;
     std::pair<int, std::string_view *> params{-1, nullptr};
     char methodLower[32];
     bool yield = false;

@@ -256,9 +256,17 @@ pub const FileSystemRouter = struct {
             return globalThis.throw("Unable to find directory: {s}", .{this.router.config.dir});
         };
 
+        // `allocator.dupe(string, ...)` copies the slice headers but leaves
+        // each element pointing into the previous arena, which is about to be
+        // freed below. Deep-copy so the new router owns its extension strings.
+        const extensions = allocator.alloc(string, this.router.config.extensions.len) catch unreachable;
+        for (this.router.config.extensions, extensions) |src, *dst| {
+            dst.* = allocator.dupe(u8, src) catch unreachable;
+        }
+
         var router = Router.init(vm.transpiler.fs, allocator, .{
             .dir = allocator.dupe(u8, this.router.config.dir) catch unreachable,
-            .extensions = allocator.dupe(string, this.router.config.extensions) catch unreachable,
+            .extensions = extensions,
             .asset_prefix_path = this.router.config.asset_prefix_path,
         }) catch unreachable;
         router.loadRoutes(&log, root_dir_info, Resolver, &vm.transpiler.resolver, router.config.dir) catch {

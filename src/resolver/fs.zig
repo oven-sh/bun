@@ -120,6 +120,11 @@ pub const FileSystem = struct {
         dir: string,
         fd: FD = .invalid,
         generation: bun.Generation = 0,
+        /// Set by `RealFS.bustEntriesCache`. Forces the next read to go through
+        /// the `in_place` re-scan path regardless of generation, so the existing
+        /// `DirEntry` allocation and its `Entry`/`FilenameStore` slots are reused
+        /// instead of being orphaned.
+        stale: bool = false,
         data: EntryMap,
 
         // pub fn removeEntry(dir: *DirEntry, name: string) !void {
@@ -613,7 +618,7 @@ pub const FileSystem = struct {
         pub fn entriesAt(this: *RealFS, index: allocators.IndexType, generation: bun.Generation) ?*EntriesOption {
             var existing = this.entries.atIndex(index) orelse return null;
             if (existing.* == .entries) {
-                if (existing.entries.generation < generation) {
+                if (existing.entries.stale or existing.entries.generation < generation) {
                     var handle = bun.openDirForIteration(FD.cwd(), existing.entries.dir).unwrap() catch |err| {
                         existing.entries.data.clearAndFree(bun.default_allocator);
 
@@ -774,8 +779,25 @@ pub const FileSystem = struct {
             return !(rfs.file_limit > 254 and rfs.file_limit > (FileSystem.max_fd + 1) * 2);
         }
 
-        /// Returns `true` if an entry was removed
+        /// Returns `true` if a cached entry was invalidated.
         pub fn bustEntriesCache(rfs: *RealFS, file_path: string) bool {
+            // `BSSMap.remove()` only drops the hash→index mapping; the backing
+            // slot (and the heap `*DirEntry` it points at) are orphaned, and the
+            // next lookup allocates a fresh slot + fresh `DirEntry`. That skips
+            // the `in_place` re-scan, so every bust leaked the `DirEntry`, its
+            // `EntryMap`, and grew `EntryStore`/`FilenameStore` by one entry per
+            // file in the directory.
+            //
+            // Instead, keep the slot and flag the `DirEntry` so the next read
+            // takes the `in_place` path and reuses all of those allocations.
+            if (rfs.entries.get(file_path)) |entry| {
+                if (entry.* == .entries) {
+                    entry.entries.stale = true;
+                    return true;
+                }
+            }
+            // `.err` slots and `NotFound` sentinels hold no `*DirEntry`; fall
+            // back to dropping the key so the next read re-checks disk.
             return rfs.entries.remove(file_path);
         }
 
@@ -1064,7 +1086,7 @@ pub const FileSystem = struct {
 
                 if (cache_result.?.hasCheckedIfExists()) {
                     if (fs.entries.atIndex(cache_result.?.index)) |cached_result| {
-                        if (cached_result.* != .entries or (cached_result.* == .entries and cached_result.entries.generation >= generation)) {
+                        if (cached_result.* != .entries or (cached_result.* == .entries and !cached_result.entries.stale and cached_result.entries.generation >= generation)) {
                             return cached_result;
                         }
 

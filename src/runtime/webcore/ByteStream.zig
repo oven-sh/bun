@@ -241,6 +241,7 @@ pub fn append(
                 this.buffer.appendSliceAssumeCapacity(chunk);
             },
             .err => {
+                if (stream.err == .JSValue) stream.err.JSValue.protect();
                 this.pending.result = .{ .err = stream.err };
             },
             .done => {},
@@ -262,6 +263,7 @@ pub fn append(
                 @panic("Expected buffer action to be null");
             }
 
+            if (stream.err == .JSValue) stream.err.JSValue.protect();
             this.pending.result = .{ .err = stream.err };
         },
         .done => {},

@@ -264,7 +264,7 @@ pub fn attach(this: *ClientSession, client: *HTTPClient) void {
     if (client.verbose != .none) {
         HTTPClient.printRequest(request, client.url.href, !client.flags.reject_unauthorized, client.state.request_body, client.verbose == .curl);
     }
-    client.state.request_stage = if (stream.request_body_done) .done else .body;
+    client.state.request_stage = if (stream.localClosed()) .done else .body;
     client.state.response_stage = .headers;
 
     _ = this.flush() catch |err| {
@@ -370,7 +370,7 @@ fn replenishWindow(this: *ClientSession) void {
     var it = this.streams.iterator();
     while (it.next()) |e| {
         const s = e.value_ptr.*;
-        if (s.unacked_bytes >= threshold and !s.end_stream_received) {
+        if (s.unacked_bytes >= threshold and !s.remoteClosed()) {
             this.writeWindowUpdate(s.id, @intCast(s.unacked_bytes));
             s.unacked_bytes = 0;
         }
@@ -450,7 +450,7 @@ pub fn onData(this: *ClientSession, incoming: []const u8) void {
             // perspective (we never sent END_STREAM, *or* the server
             // never did and hasn't RST'd) must signal abandonment so the
             // server can release its concurrency slot. rst() is idempotent.
-            if (!stream.request_body_done or !(stream.end_stream_received or stream.rst_done)) {
+            if (stream.state != .closed) {
                 stream.rst(.CANCEL);
                 rst_any = true;
             }
@@ -661,16 +661,14 @@ fn deliverStream(this: *ClientSession, stream: *Stream) bool {
         // HTTPClient and the first one's `stream.client` becomes a
         // dangling pointer once the request completes.
         if (client.state.flags.is_redirect_pending) {
-            if (!(stream.end_stream_received and stream.request_body_done)) {
-                stream.rst(.CANCEL);
-                _ = this.flush() catch {};
-            }
+            stream.rst(.CANCEL);
+            _ = this.flush() catch {};
             stream.client = null;
             client.h2 = null;
             client.doRedirect(true, this.ctx, this.socket);
             return true;
         }
-        if (result == .finished or (stream.end_stream_received and stream.body_buffer.items.len == 0)) {
+        if (result == .finished or (stream.remoteClosed() and stream.body_buffer.items.len == 0)) {
             stream.client = null;
             client.h2 = null;
             client.cloneMetadata();
@@ -695,7 +693,7 @@ fn deliverStream(this: *ClientSession, stream: *Stream) bool {
     if (client.state.response_stage != .body) return false;
 
     if (stream.body_buffer.items.len > 0) {
-        const terminal = stream.end_stream_received;
+        const terminal = stream.remoteClosed();
         if (terminal) {
             client.state.flags.received_last_chunk = true;
             stream.client = null;
@@ -703,10 +701,8 @@ fn deliverStream(this: *ClientSession, stream: *Stream) bool {
         }
         const report = client.handleResponseBody(stream.body_buffer.items, false) catch |err| {
             stream.body_buffer.clearRetainingCapacity();
-            if (!(terminal and stream.request_body_done)) {
-                stream.rst(.CANCEL);
-                _ = this.flush() catch {};
-            }
+            stream.rst(.CANCEL);
+            _ = this.flush() catch {};
             if (!terminal) {
                 stream.client = null;
                 client.h2 = null;
@@ -733,7 +729,7 @@ fn deliverStream(this: *ClientSession, stream: *Stream) bool {
         return false;
     }
 
-    if (stream.end_stream_received) {
+    if (stream.remoteClosed()) {
         stream.client = null;
         client.h2 = null;
         client.state.flags.received_last_chunk = true;

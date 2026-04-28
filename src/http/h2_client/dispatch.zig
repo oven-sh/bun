@@ -268,7 +268,7 @@ pub fn dispatchFrame(session: *ClientSession, header: wire.FrameHeader, payload:
             bun.handleOom(stream.header_block.appendSlice(bun.default_allocator, fragment));
             stream.headers_end_stream = header.flags & @intFromEnum(wire.HeadersFrameFlags.END_STREAM) != 0;
             if (header.flags & @intFromEnum(wire.HeadersFrameFlags.END_HEADERS) != 0) {
-                stream.end_stream_received = stream.end_stream_received or stream.headers_end_stream;
+                if (stream.headers_end_stream) stream.recvEndStream();
                 decodeHeaderBlock(session, stream);
             } else {
                 session.expecting_continuation = stream.id;
@@ -287,7 +287,7 @@ pub fn dispatchFrame(session: *ClientSession, header: wire.FrameHeader, payload:
                 bun.handleOom(stream.header_block.appendSlice(bun.default_allocator, payload));
                 if (header.flags & @intFromEnum(wire.HeadersFrameFlags.END_HEADERS) != 0) {
                     session.expecting_continuation = 0;
-                    stream.end_stream_received = stream.end_stream_received or stream.headers_end_stream;
+                    if (stream.headers_end_stream) stream.recvEndStream();
                     decodeHeaderBlock(session, stream);
                 }
             } else {
@@ -326,7 +326,7 @@ pub fn dispatchFrame(session: *ClientSession, header: wire.FrameHeader, payload:
             // STREAM_CLOSED. Without this, frames in the same TCP read as
             // END_STREAM would be appended to body_buffer before the
             // deliver loop swaps the stream out.
-            if (stream.end_stream_received or stream.rst_done) {
+            if (stream.remoteClosed()) {
                 stream.fatal_error = stream.fatal_error orelse error.HTTP2ProtocolError;
                 return;
             }
@@ -339,7 +339,7 @@ pub fn dispatchFrame(session: *ClientSession, header: wire.FrameHeader, payload:
                 };
             }
             if (header.flags & @intFromEnum(wire.DataFrameFlags.END_STREAM) != 0) {
-                stream.end_stream_received = true;
+                stream.recvEndStream();
             }
             stream.data_bytes_received += fragment.len;
             if (fragment.len > 0) {
@@ -360,15 +360,16 @@ pub fn dispatchFrame(session: *ClientSession, header: wire.FrameHeader, payload:
                 return;
             }
             const stream = session.streams.get(stream_id) orelse return;
+            const had_response = stream.remoteClosed();
             stream.rst_done = true;
+            stream.state = .closed;
             const code: u32 = wire.u32FromBytes(payload[0..4]);
             // RFC 9113 §8.1: RST_STREAM(NO_ERROR) is the server's "stop
             // uploading, I've already sent the full response" signal —
-            // valid only if END_STREAM has already arrived. Synthesizing
-            // end_stream_received here would deliver a truncated body as
-            // success when the response had no Content-Length.
+            // valid only if END_STREAM had already arrived. Otherwise the
+            // body is truncated and must surface as an error.
             stream.fatal_error = switch (code) {
-                @intFromEnum(wire.ErrorCode.NO_ERROR) => if (stream.end_stream_received) null else error.HTTP2StreamReset,
+                @intFromEnum(wire.ErrorCode.NO_ERROR) => if (had_response) null else error.HTTP2StreamReset,
                 @intFromEnum(wire.ErrorCode.REFUSED_STREAM) => error.HTTP2RefusedStream,
                 else => error.HTTP2StreamReset,
             };
@@ -391,7 +392,7 @@ pub fn dispatchFrame(session: *ClientSession, header: wire.FrameHeader, payload:
                 const s = e.value_ptr.*;
                 if (s.id > session.goaway_last_stream_id) {
                     s.fatal_error = if (graceful) error.HTTP2RefusedStream else error.HTTP2GoAway;
-                } else if (!graceful and !s.end_stream_received) {
+                } else if (!graceful and !s.remoteClosed()) {
                     // RFC 9113 §6.8: streams ≤ last_stream_id "might
                     // still complete successfully" — don't discard a
                     // response that already finished in this same read.
@@ -497,23 +498,20 @@ pub fn decodeHeaderBlock(session: *ClientSession, stream: *Stream) void {
         stream.decoded_bytes.items.len = start_len;
         stream.awaiting_continue = false;
         // RFC 9113 §8.1: a 1xx HEADERS that ends the stream is malformed.
-        // Without this the stream sits at {end_stream_received, !headers_ready}
-        // and deliverStream() returns false forever.
-        if (stream.end_stream_received) stream.fatal_error = error.HTTP2ProtocolError;
+        if (stream.remoteClosed()) stream.fatal_error = error.HTTP2ProtocolError;
         return;
     }
 
     stream.status_code = status;
     stream.headers_ready = true;
     if (stream.awaiting_continue) {
-        // Final status without a preceding 100: server has decided
-        // without seeing the body. Signal abandonment with
-        // RST_STREAM(NO_ERROR) per RFC 9113 §8.1 rather than 0-byte
-        // DATA(END_STREAM); we've already stripped Content-Length on
-        // this path, but the explicit reset is what the spec describes.
+        // Final status without a preceding 100: server has decided without
+        // seeing the body. Half-close our side with an empty DATA so the
+        // response can finish normally; Content-Length was already stripped
+        // on this path so 0 bytes is not a §8.1.1 mismatch.
         stream.awaiting_continue = false;
-        stream.request_body_done = true;
-        stream.rst(.NO_ERROR);
+        session.writeFrame(.HTTP_FRAME_DATA, @intFromEnum(wire.DataFrameFlags.END_STREAM), stream.id, &.{});
+        stream.sentEndStream();
     }
     const bytes = stream.decoded_bytes.items;
     bun.handleOom(stream.decoded_headers.ensureTotalCapacityPrecise(bun.default_allocator, bounds.items.len));

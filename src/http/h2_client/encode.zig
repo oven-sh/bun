@@ -113,7 +113,7 @@ pub fn writeRequest(session: *ClientSession, client: *HTTPClient, stream: *Strea
         stream.pending_body = body;
         drainSendBody(session, stream, std.math.maxInt(usize));
     } else if (!is_streaming) {
-        stream.request_body_done = true;
+        stream.sentEndStream();
     }
 }
 
@@ -163,15 +163,14 @@ pub fn writeDataWindowed(session: *ClientSession, stream: *Stream, data: []const
 /// Push as much of `stream`'s request body as the send windows allow.
 /// Buffers into `write_buffer`; caller flushes.
 pub fn drainSendBody(session: *ClientSession, stream: *Stream, cap: usize) void {
-    if (stream.request_body_done or stream.awaiting_continue) return;
-    if (stream.rst_done or stream.fatal_error != null) return;
+    if (stream.localClosed() or stream.awaiting_continue or stream.fatal_error != null) return;
     const client = stream.client orelse return;
     switch (client.state.original_request_body) {
         .bytes => {
             const sent = writeDataWindowed(session, stream, stream.pending_body, true, cap);
             stream.pending_body = stream.pending_body[sent..];
             if (stream.pending_body.len == 0) {
-                stream.request_body_done = true;
+                stream.sentEndStream();
                 client.state.request_stage = .done;
             }
         },
@@ -188,13 +187,13 @@ pub fn drainSendBody(session: *ClientSession, stream: *Stream, cap: usize) void 
             const drained = buffer.isEmpty();
             if (drained) buffer.reset();
             if (drained and body.ended) {
-                stream.request_body_done = true;
+                stream.sentEndStream();
                 client.state.request_stage = .done;
             } else if (drained and data.len > 0) {
                 sb.reportDrain();
             }
             sb.release();
-            if (stream.request_body_done) body.detach();
+            if (stream.localClosed()) body.detach();
         },
         .sendfile => unreachable,
     }
@@ -208,10 +207,10 @@ pub fn drainSendBodies(session: *ClientSession) void {
     while (session.conn_send_window > 0 and session.write_buffer.size() < write_buffer_high_water) {
         var progressed = false;
         for (session.streams.values()) |stream| {
-            if (stream.request_body_done or stream.send_window <= 0) continue;
+            if (stream.localClosed() or stream.send_window <= 0) continue;
             const before = session.conn_send_window;
             drainSendBody(session, stream, slice);
-            if (session.conn_send_window != before or stream.request_body_done) progressed = true;
+            if (session.conn_send_window != before or stream.localClosed()) progressed = true;
         }
         if (!progressed) break;
     }

@@ -22,7 +22,11 @@ decoded_headers: std.ArrayListUnmanaged(picohttp.Header) = .{},
 /// Final (non-1xx) status code; 0 until the response HEADERS arrive.
 status_code: u32 = 0,
 
-end_stream_received: bool = false,
+state: State = .open,
+/// `.closed` was reached via RST_STREAM (sent or received). Kept distinct
+/// from `state` so `rst()` stays idempotent (never answers an inbound RST,
+/// per §5.4.2) and so RST(NO_ERROR) can be told apart from a clean close.
+rst_done: bool = false,
 /// Set once a non-1xx HEADERS block has been decoded and is awaiting
 /// delivery. Subsequent HEADERS are trailers and decoded-then-dropped.
 headers_ready: bool = false,
@@ -30,12 +34,6 @@ headers_end_stream: bool = false,
 /// Expect: 100-continue is in effect: hold the request body until a 1xx
 /// or final status arrives.
 awaiting_continue: bool = false,
-/// Set once the END_STREAM flag has been written on the request side.
-request_body_done: bool = false,
-/// Set once an RST_STREAM has been written *or* received, so the
-/// centralised cleanup in onData doesn't emit a redundant one (and never
-/// answers an inbound RST with another, per RFC 9113 §5.4.2).
-rst_done: bool = false,
 fatal_error: ?anyerror = null,
 /// DATA bytes consumed since the last WINDOW_UPDATE for this stream.
 unacked_bytes: u32 = 0,
@@ -50,6 +48,18 @@ send_window: i32,
 /// window is exhausted. Borrows from `client.state.request_body`.
 pending_body: []const u8 = "",
 
+/// RFC 9113 §5.1. A `Stream` is created by sending HEADERS, so it starts
+/// `.open`; `idle`/`reserved` are never represented as objects. END_STREAM
+/// half-closes one side; both, or any RST_STREAM, transitions to `.closed`.
+pub const State = enum(u2) {
+    open,
+    /// We have written END_STREAM; no more DATA may be queued.
+    half_closed_local,
+    /// Peer has sent END_STREAM; further DATA is STREAM_CLOSED.
+    half_closed_remote,
+    closed,
+};
+
 pub fn deinit(this: *@This()) void {
     _ = H2.live_streams.fetchSub(1, .monotonic);
     this.header_block.deinit(bun.default_allocator);
@@ -60,10 +70,38 @@ pub fn deinit(this: *@This()) void {
 }
 
 pub fn rst(this: *@This(), code: wire.ErrorCode) void {
-    if (this.rst_done) return;
+    if (this.rst_done or this.state == .closed) return;
     this.rst_done = true;
+    this.state = .closed;
     var value: u32 = @byteSwap(@intFromEnum(code));
     this.session.writeFrame(.HTTP_FRAME_RST_STREAM, 0, this.id, std.mem.asBytes(&value));
+}
+
+pub fn sentEndStream(this: *@This()) void {
+    this.state = switch (this.state) {
+        .open => .half_closed_local,
+        .half_closed_remote => .closed,
+        else => this.state,
+    };
+}
+
+pub fn recvEndStream(this: *@This()) void {
+    this.state = switch (this.state) {
+        .open => .half_closed_remote,
+        .half_closed_local => .closed,
+        else => this.state,
+    };
+}
+
+/// We have sent END_STREAM (or RST): no more request DATA may be queued.
+pub inline fn localClosed(this: *const @This()) bool {
+    return this.state == .half_closed_local or this.state == .closed;
+}
+
+/// Peer has sent END_STREAM (or RST): the response body is complete and
+/// further inbound DATA is a protocol error.
+pub inline fn remoteClosed(this: *const @This()) bool {
+    return this.state == .half_closed_remote or this.state == .closed;
 }
 
 const ClientSession = @import("./ClientSession.zig");

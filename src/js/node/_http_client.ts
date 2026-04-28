@@ -102,7 +102,14 @@ function ClientRequest(input, options, cb) {
   const pushChunk = chunk => {
     this[kBodyChunks].push(chunk);
     if (writeCount > 1) {
-      startFetch();
+      if (socketAssigned) {
+        startFetch();
+      } else {
+        // Request is queued in the agent waiting for a socket slot
+        // (maxSockets). Buffer the chunk; onSocket() will flush and start
+        // the fetch once a slot opens.
+        deferredFlush = true;
+      }
     }
     resolveNextChunk?.(false);
   };
@@ -230,13 +237,16 @@ function ClientRequest(input, options, cb) {
     // be dispatched later.
     if (!socketAssigned) {
       const agent = this[kAgent];
-      if (agent?.requests) {
-        for (const key of Object.keys(agent.requests)) {
-          const reqs = agent.requests[key];
+      const requests = agent?.requests;
+      if (requests) {
+        // agent.requests is created with { __proto__: null } so for...in is
+        // safe and avoids the (tamperable) global Object.keys lookup.
+        for (const key in requests) {
+          const reqs = requests[key];
           const idx = reqs.indexOf(this);
           if (idx !== -1) {
             reqs.splice(idx, 1);
-            if (reqs.length === 0) delete agent.requests[key];
+            if (reqs.length === 0) delete requests[key];
             break;
           }
         }

@@ -739,11 +739,31 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     bool entryExistedBefore = false;
     if (auto* entry = loader->registryEntry(key)) {
         entryExistedBefore = true;
-        if (isModuleEvaluated(entry->record())) {
-            auto* ns = entry->record()->getModuleNamespace(globalObject, false);
+        auto* record = entry->record();
+        if (isModuleEvaluated(record)) {
+            auto* ns = record->getModuleNamespace(globalObject, false);
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(ns);
         }
+        // status == New means an outer InnerModuleLoading is still walking
+        // this record's import graph (it only flips to Unlinked once every
+        // [[PendingModulesCount]] hits zero). We can only reach here from
+        // inside that walk — a CJS body running in the SyntheticSourceProvider
+        // generator during makeModule() of one of this record's deps. Calling
+        // loadModuleSync now would re-enter HostLoadImportedModule for the
+        // dep we're currently inside (still Status::Fetching), re-run
+        // makeModule on it, and double-evaluate the graph (release) / trip
+        // ModuleRegistryEntry::fetchComplete's m_status assertion (debug).
+        // Node throws ERR_REQUIRE_CYCLE_MODULE here; do the same.
+        //
+        // loadPromise() distinguishes this from a fresh require: the
+        // CJS-require → fetchCommonJSModuleNonBuiltin path only provideFetch()s
+        // the entry (record stays at New, no loadPromise), then re-enters here
+        // expecting loadModuleSync to do the actual loadRequestedModules +
+        // link + evaluate. Only HostLoadImportedModule sets loadPromise, so a
+        // non-null one means an outer graph load owns this record.
+        if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record); cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::New && entry->loadPromise())
+            return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_REQUIRE_CYCLE_MODULE, makeString("Cannot require() ES Module "_s, keyString, " in a cycle."_s));
     }
 
     JSPromise* promise = loader->loadModuleSync(globalObject, key, nullptr, nullptr);

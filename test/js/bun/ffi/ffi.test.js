@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, isGlibcVersionAtLeast } from "harness";
+import { bunEnv, bunExe, isArm64, isGlibcVersionAtLeast, isWindows } from "harness";
 import { platform } from "os";
 import path from "path";
 
@@ -678,7 +678,8 @@ it(".ptr is not leaked", () => {
   }
 });
 
-it("JSCallback does not leak memory after close()", async () => {
+// TinyCC (and therefore JSCallback) is disabled on Windows ARM64.
+it.skipIf(isWindows && isArm64)("JSCallback does not leak memory after close()", async () => {
   // Each JSCallback heap-allocates a Function struct and generates ~11KB of C
   // source for TinyCC. Both must be freed when close() is called.
   await using proc = Bun.spawn({

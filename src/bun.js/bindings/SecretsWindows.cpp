@@ -203,12 +203,62 @@ std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CS
         return std::nullopt;
     }
 
-    // Convert credential blob to CString for thread safety
+    // Convert credential blob to UTF-8 vector for thread safety.
+    // Windows Credential Manager UI stores credentials as UTF-16LE, but Bun stores
+    // them as UTF-8. We detect encoding by first checking if the data is valid UTF-8,
+    // and only attempt UTF-16LE conversion if UTF-8 validation fails.
     std::optional<WTF::Vector<uint8_t>> result;
     if (cred->CredentialBlob && cred->CredentialBlobSize > 0) {
-        result = WTF::Vector<uint8_t>(std::span<const char>(
-            reinterpret_cast<const char*>(cred->CredentialBlob),
-            cred->CredentialBlobSize));
+        DWORD blobSize = cred->CredentialBlobSize;
+        BYTE* blob = cred->CredentialBlob;
+
+        // First, check if the blob is valid UTF-8 by attempting to convert it.
+        // MB_ERR_INVALID_CHARS causes the function to fail on invalid UTF-8 sequences.
+        bool isValidUtf8 = false;
+        int wideLen = MultiByteToWideChar(
+            CP_UTF8,
+            MB_ERR_INVALID_CHARS,
+            reinterpret_cast<const char*>(blob),
+            blobSize,
+            nullptr,
+            0);
+        isValidUtf8 = (wideLen > 0);
+
+        if (isValidUtf8) {
+            // Data is valid UTF-8, use it directly
+            result = WTF::Vector<uint8_t>(std::span<const char>(
+                reinterpret_cast<const char*>(blob),
+                blobSize));
+        } else if (blobSize >= 2 && (blobSize % 2) == 0) {
+            // UTF-8 validation failed and blob size is even, try UTF-16LE conversion
+            int utf8Length = WideCharToMultiByte(
+                CP_UTF8, 0,
+                reinterpret_cast<const wchar_t*>(blob),
+                blobSize / sizeof(wchar_t),
+                nullptr, 0,
+                nullptr, nullptr);
+
+            if (utf8Length > 0) {
+                std::vector<char> utf8Buffer(utf8Length);
+                int converted = WideCharToMultiByte(
+                    CP_UTF8, 0,
+                    reinterpret_cast<const wchar_t*>(blob),
+                    blobSize / sizeof(wchar_t),
+                    utf8Buffer.data(), utf8Length,
+                    nullptr, nullptr);
+
+                if (converted > 0) {
+                    result = WTF::Vector<uint8_t>(std::span<const char>(utf8Buffer.data(), converted));
+                }
+            }
+        }
+
+        // Fallback: use raw bytes if all else fails
+        if (!result.has_value()) {
+            result = WTF::Vector<uint8_t>(std::span<const char>(
+                reinterpret_cast<const char*>(blob),
+                blobSize));
+        }
     }
 
     framework->CredFree(cred);

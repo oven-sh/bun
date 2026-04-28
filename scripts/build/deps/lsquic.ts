@@ -116,7 +116,6 @@ export const lsquic: Dependency = {
     "patches/lsquic/versions-to-string.patch",
     "patches/lsquic/allow-no-sni.patch",
     "patches/lsquic/skip-priority-walk.patch",
-    "patches/lsquic/stream-level-errors.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

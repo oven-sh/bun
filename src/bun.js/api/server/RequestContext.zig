@@ -1634,7 +1634,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             streamLog("handleRejectStream", .{});
 
             if (req.sink) |wrapper| {
-                wrapper.sink.pending_flush = null;
+                if (wrapper.sink.pending_flush) |prom| {
+                    // The promise value was protected when pending_flush was
+                    // assigned (flushFromJS / endFromJS). Drop that root before
+                    // abandoning the pointer, otherwise it leaks for the
+                    // lifetime of the VM.
+                    prom.toJS().unprotect();
+                    wrapper.sink.pending_flush = null;
+                }
                 wrapper.sink.done = true;
                 req.flags.aborted = req.flags.aborted or wrapper.sink.aborted;
                 wrapper.sink.finalize();

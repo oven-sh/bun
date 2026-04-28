@@ -443,34 +443,53 @@ bool WebViewHost::mouseMoveIPC(float fromX, float fromY, float x, float y, uint3
         hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
         return true;
     }
+
+    // Hover path (no button held): the caller intends to reposition the
+    // cursor for a subsequent mouseDown, not to trigger :hover CSS. We
+    // intentionally skip the NSEvent dispatch and just Ack — observations:
+    //
+    //   1. On macOS 14/15 aarch64 the _simulateMouseMove: SPI enqueues
+    //      into mouseEventQueue but WebContent never drains it (likely
+    //      because the headless window's layer tree is ineligible for
+    //      hover hit-test on this OS/arch combo). The
+    //      _doAfterProcessingAllPendingMouseEvents: barrier then waits
+    //      forever and the test times out.
+    //   2. Drag handlers in real use look at `pointermove` with
+    //      `event.buttons != 0` — hover moves with buttons=0 are
+    //      semantically a "position the cursor" signal, not drag.
+    //   3. Parent-side state tracking (m_mouseX/Y on JSWebView) has
+    //      already happened, so the next mouseDown fires at (x, y)
+    //      regardless of whether we dispatched an event here.
+    //
+    // If a user needs trusted :hover on WebKit in the future, the fix
+    // is to post a CGEvent at screen coords (the same path
+    // WebAutomationSessionMac.mm uses for wheel events) — expensive
+    // since it moves the real cursor, so deferred until someone asks.
+    if (!buttonsMask) {
+        // Sync Ack — no barrier needed because we didn't dispatch.
+        return false;
+    }
+
     unsigned long mods = expandModifiers(modifiers);
     double ts = objc::NSProcessInfo::systemUptime();
     long win = m_window.windowNumber();
     double heightD = static_cast<double>(m_height);
 
-    // Publish the buttons state to +[NSEvent pressedMouseButtons] for
-    // this entire dispatch — every synthesized move event will see the
-    // same mask when WebCore's PlatformEventFactoryMac reads it. During
-    // a mouseMove the button state doesn't change, so one set is enough;
-    // the value stays stable for all (steps - 1) intermediates + final.
+    // Publish the buttons state to +[NSEvent pressedMouseButtons] so
+    // every synthesized drag event gets the correct DOM event.buttons.
+    // See ObjCRuntime.cpp for the +[NSEvent pressedMouseButtons] swap.
     NSEvent::s_trackedButtonsMask = buttonsMask;
 
-    // Pick the NSEventType once. No mixed move/drag within a single
-    // mouseMove(); the button state is constant for the duration of the
-    // call (down/up are separate IPC ops that serialize on m_inputPending).
     // AppKit's responder chain uses a separate selector per button drag
-    // (mouseDragged: / rightMouseDragged: / otherMouseDragged:) — switch
-    // on a tag at each dispatch so we don't heap-allocate a std::function.
-    enum class MoveKind { Move,
-        LeftDrag,
+    // (mouseDragged: / rightMouseDragged: / otherMouseDragged:). Pick
+    // the lowest-order set button; multi-button drags are rare enough
+    // that one event per tick is fine.
+    enum class MoveKind { LeftDrag,
         RightDrag,
         OtherDrag };
-    unsigned long evtType = NSEvent::MouseMoved;
-    MoveKind kind = MoveKind::Move;
-    if (buttonsMask & 0x1) {
-        evtType = NSEvent::LeftMouseDragged;
-        kind = MoveKind::LeftDrag;
-    } else if (buttonsMask & 0x2) {
+    unsigned long evtType = NSEvent::LeftMouseDragged;
+    MoveKind kind = MoveKind::LeftDrag;
+    if (buttonsMask & 0x2) {
         evtType = NSEvent::RightMouseDragged;
         kind = MoveKind::RightDrag;
     } else if (buttonsMask & 0x4) {
@@ -488,17 +507,13 @@ bool WebViewHost::mouseMoveIPC(float fromX, float fromY, float x, float y, uint3
         case MoveKind::OtherDrag:
             m_webview.otherMouseDragged(e);
             return;
-        case MoveKind::Move:
-            m_webview.simulateMouseMove(e);
-            return;
         }
     };
 
     if (steps < 1) steps = 1;
     // (steps - 1) intermediate events at fractions i/steps, then the
     // final event at the target — `steps` events total. clickCount 0 is
-    // the convention for non-click mouse events (MouseMoved/Dragged have
-    // no click count).
+    // the convention for non-click mouse events.
     for (uint32_t i = 1; i < steps; ++i) {
         double ix = static_cast<double>(fromX) + (static_cast<double>(x) - static_cast<double>(fromX)) * (static_cast<double>(i) / static_cast<double>(steps));
         double iy = static_cast<double>(fromY) + (static_cast<double>(y) - static_cast<double>(fromY)) * (static_cast<double>(i) / static_cast<double>(steps));

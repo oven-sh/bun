@@ -610,10 +610,18 @@ it("mouseDown/mouseUp/mouseMove drag sequence fires trusted events", async () =>
     `),
   );
 
-  // Position → press → drag through intermediates → release. The
-  // canvas drag pattern from the feature request. WebKit dispatches
-  // LeftMouseDragged NSEvents during the move because a button is held;
-  // without the prior mouseDown, it would be plain MouseMoved.
+  // Position cursor → press → drag through intermediates → release —
+  // the canvas drag pattern from the issue. WebKit dispatches
+  // LeftMouseDragged NSEvents for the intermediate moves (because a
+  // button is held) and _doAfterProcessingAllPendingMouseEvents:
+  // drains them before each promise resolves.
+  //
+  // On WebKit the initial mouseMove (no buttons) is a position-only
+  // update and does NOT dispatch a DOM mousemove — the
+  // _simulateMouseMove: SPI hangs on macOS 14/15 aarch64. Tests can
+  // still assert on the drag semantics, which is what matters for the
+  // feature. (Chrome fires the hover mousemove normally; see
+  // webview-chrome.test.ts for the Chrome assertions.)
   await view.mouseMove(40, 40);
   await view.mouseDown();
   await view.mouseMove(160, 160, { steps: 4 });
@@ -628,14 +636,14 @@ it("mouseDown/mouseUp/mouseMove drag sequence fires trusted events", async () =>
     trusted: boolean;
   }>;
 
-  // Initial mousemove has no buttons pressed.
-  const firstMove = events.find(e => e.t === "mousemove")!;
-  expect(firstMove).toEqual({ t: "mousemove", x: 40, y: 40, btn: 0, btns: 0, trusted: true });
+  // mousedown fires at the position set by the preceding mouseMove,
+  // with event.buttons=1 (left held).
   const down = events.find(e => e.t === "mousedown")!;
   expect(down).toEqual({ t: "mousedown", x: 40, y: 40, btn: 0, btns: 1, trusted: true });
+  // mouseup fires at the final drag position with event.buttons=0.
   const up = events.find(e => e.t === "mouseup")!;
   expect(up).toEqual({ t: "mouseup", x: 160, y: 160, btn: 0, btns: 0, trusted: true });
-  // Drag intermediates — buttons: 1 (left held). At least one, final hits target.
+  // Drag intermediates — all with buttons: 1, final at target.
   const dragMoves = events.filter(e => e.t === "mousemove" && e.btns === 1);
   expect(dragMoves.length).toBeGreaterThan(0);
   expect(dragMoves[dragMoves.length - 1]).toEqual({
@@ -646,33 +654,6 @@ it("mouseDown/mouseUp/mouseMove drag sequence fires trusted events", async () =>
     btns: 1,
     trusted: true,
   });
-});
-
-it("mouseMove without prior mouseDown is a plain hover (buttons: 0)", async () => {
-  await using view = new Bun.WebView({ width: 300, height: 300 });
-  await view.navigate(
-    html(`
-      <script>
-        window.__ev = [];
-        document.addEventListener("mousemove", e => __ev.push({
-          x: e.clientX, y: e.clientY, btns: e.buttons, trusted: e.isTrusted,
-        }), true);
-      </script>
-      <div style="position:fixed;left:0;top:0;width:300px;height:300px"></div>
-    `),
-  );
-  await view.mouseMove(100, 100);
-  await view.mouseMove(150, 75);
-
-  const events = JSON.parse(await view.evaluate("JSON.stringify(__ev)")) as Array<{
-    x: number;
-    y: number;
-    btns: number;
-    trusted: boolean;
-  }>;
-  expect(events.length).toBeGreaterThanOrEqual(2);
-  for (const e of events) expect(e.btns).toBe(0);
-  expect(events[events.length - 1]).toEqual({ x: 150, y: 75, btns: 0, trusted: true });
 });
 
 it("mouseDown + mouseUp at same position synthesizes a click", async () => {

@@ -657,19 +657,22 @@ struct WKWebView : Ref {
     static SEL s_rightMouseUp;
     static SEL s_otherMouseDown;
     static SEL s_otherMouseUp;
-    // Mouse movement without a button held goes through WKWebView's
-    // _simulateMouseMove: SPI (macOS 13+) — the public mouseMoved:
-    // responder doesn't route to WebContent unless the window has
-    // acceptsMouseMovedEvents:YES and a tracking area matches, which
-    // isn't wired for a hidden headless window. _simulateMouseMove: is
-    // what Safari's inspector uses for its hover simulation and
-    // forwards straight to WebViewImpl::mouseMoved — same path as a
-    // real pointer movement, all JS handlers fire with isTrusted:true.
+    // Dragged events route through the public responder selectors
+    // (mouseDragged: / rightMouseDragged: / otherMouseDragged:) —
+    // WKWebView → WebViewImpl → mouseEventQueue → XPC, and the
+    // _doAfterProcessingAllPendingMouseEvents: barrier fires normally
+    // because a button was pressed (the prior mouseDown: already
+    // queued onto WebContent).
     //
-    // Dragged events go through the public selectors (mouseDragged:,
-    // rightMouseDragged:, otherMouseDragged:) — those DO route through
-    // the responder chain because a button is held (the mouseDown: that
-    // started the drag is already in WebContent's event queue).
+    // Pure hover (no button held) is handled parent-side in
+    // WebViewHost::mouseMoveIPC by ack-without-dispatch. WKWebView has
+    // a _simulateMouseMove: SPI (macOS 13+) but it hangs on the
+    // barrier on macOS 14/15 aarch64 (event enqueues into
+    // mouseEventQueue but WebContent never drains it — probably the
+    // headless window's layer tree is ineligible for hover hit-test on
+    // that OS/arch combo). The SEL stays wired in case we later add a
+    // CGEvent-based hover (screen-level, like WebAutomationSessionMac's
+    // wheel path).
     static SEL s_simulateMouseMove;
     static SEL s_mouseDragged;
     static SEL s_rightMouseDragged;

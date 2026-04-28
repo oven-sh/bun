@@ -586,7 +586,8 @@ pub const UDPSocket = struct {
         }
 
         const ttl = try arguments[0].coerceToInt32(globalThis);
-        const res = function(this.socket.?, ttl);
+        const socket = this.socket orelse return globalThis.throw("Socket is closed", .{});
+        const res = function(socket, ttl);
 
         if (getUSError(res, .setsockopt, true)) |err| {
             return globalThis.throwValue(try err.toJS(globalThis));

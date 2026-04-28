@@ -5,6 +5,37 @@ import path from "node:path";
 import { dataCases, dataTypes } from "./testdata";
 
 describe("udpSocket()", () => {
+  test.each(["setTTL", "setMulticastTTL"])("%s does not crash when socket is closed during argument coercion", async method => {
+    // coerceToInt32 on the argument can run user JS (valueOf), which may close
+    // the socket before the native call. Previously this unwrapped a null
+    // socket pointer and crashed; now it should throw "Socket is closed".
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const s = await Bun.udpSocket({});
+          let err;
+          try {
+            s.${method}({ valueOf() { s.close(); return 1; } });
+          } catch (e) {
+            err = e;
+          }
+          if (!err) throw new Error("expected ${method} to throw");
+          if (!String(err.message).includes("closed")) throw new Error("expected 'closed' error, got: " + err.message);
+          console.log("OK");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
   test("connect with invalid hostname rejects", async () => {
     expect(async () =>
       udpSocket({

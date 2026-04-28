@@ -3989,6 +3989,59 @@ describe("hoisting", async () => {
     expect(await exists(join(packageDir, "node_modules", "peer-deps-fixed", "node_modules"))).toBeFalse();
   });
 
+  test("incorrect peer dep warning fires once and lockfile is stable across installs", async () => {
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "peer-deps-fixed": "1.0.0",
+          "no-deps": "2.0.0",
+        },
+      }),
+    );
+
+    async function install() {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install", "--save-text-lockfile"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(err).not.toContain("error:");
+      expect(code).toBe(0);
+      return { out, err };
+    }
+
+    // first install
+    const first = await install();
+    expect(first.err.match(/incorrect peer dependency/g)?.length).toBe(1);
+    const lockfile1 = await Bun.file(join(packageDir, "bun.lock")).text();
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      version: "2.0.0",
+    });
+    expect(await exists(join(packageDir, "node_modules", "peer-deps-fixed", "node_modules"))).toBeFalse();
+
+    // second install with nothing changed: no-op fast path, no warning, lockfile identical
+    const second = await install();
+    expect(second.err).not.toContain("incorrect peer dependency");
+    const lockfile2 = await Bun.file(join(packageDir, "bun.lock")).text();
+    expect(lockfile2).toBe(lockfile1);
+
+    // third install after wiping node_modules: lockfile still identical, no new resolution so no warning
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    const third = await install();
+    expect(third.err).not.toContain("incorrect peer dependency");
+    const lockfile3 = await Bun.file(join(packageDir, "bun.lock")).text();
+    expect(lockfile3).toBe(lockfile1);
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      version: "2.0.0",
+    });
+    expect(await exists(join(packageDir, "node_modules", "peer-deps-fixed", "node_modules"))).toBeFalse();
+  });
+
   describe("devDependencies", () => {
     test("from normal dependency", async () => {
       // Root package should choose no-deps@1.0.1.

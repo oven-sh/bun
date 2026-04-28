@@ -103,7 +103,6 @@ function bindParameters(statement, args) {
 class StatementSync {
   #db;
   #stmt;
-  #readBigInts = false;
   #returnArrays = false;
 
   constructor(token, db, stmt) {
@@ -212,7 +211,6 @@ class StatementSync {
 
   setReadBigInts(enabled) {
     validateBoolean(enabled, "readBigInts");
-    this.#readBigInts = enabled;
     this.#stmt.safeIntegers(enabled);
     return undefined;
   }
@@ -397,7 +395,7 @@ class DatabaseSync {
     return this.#db.loadExtension(path, entryPoint);
   }
 
-  location(dbName) {
+  location(_dbName) {
     if (this.#db === null) {
       throw ERR_INVALID_STATE("database is not open");
     }

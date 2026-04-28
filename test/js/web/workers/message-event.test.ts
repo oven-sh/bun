@@ -75,12 +75,12 @@ describe("MessageEvent constructor", () => {
     // @ts-expect-error
     expect(() => new MessageEvent("message", { source: 1 })).toThrow({
       name: "TypeError",
-      message: 'The "eventInitDict.source" property must be of type MessagePort. Received type number (1)',
+      message: 'The "eventInitDict.source" property must be an instance of MessagePort. Received type number (1)',
     });
     // @ts-expect-error
     expect(() => new MessageEvent("message", { source: {} })).toThrow({
       name: "TypeError",
-      message: 'The "eventInitDict.source" property must be of type MessagePort. Received an instance of Object',
+      message: 'The "eventInitDict.source" property must be an instance of MessagePort. Received an instance of Object',
     });
   });
 

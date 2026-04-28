@@ -316,11 +316,12 @@ static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject)
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(bunObject->globalObject());
     JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
-#if BUN_DEBUG
-    if (scope.exception()) globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
-#endif
-    RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword));
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
+    if (!sqlValue || !sqlValue.isObject()) [[unlikely]]
+        return jsUndefined();
+    JSValue result = sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword);
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
+    RELEASE_AND_RETURN(scope, result);
 }
 
 static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
@@ -328,12 +329,13 @@ static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(bunObject->globalObject());
     JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
-#if BUN_DEBUG
-    if (scope.exception()) globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
-#endif
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
+    if (!sqlValue || !sqlValue.isObject()) [[unlikely]]
+        return jsUndefined();
     auto clientData = WebCore::clientData(vm);
-    RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, clientData->builtinNames().SQLPublicName()));
+    JSValue result = sqlValue.getObject()->get(globalObject, clientData->builtinNames().SQLPublicName());
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
+    RELEASE_AND_RETURN(scope, result);
 }
 
 extern "C" JSC::EncodedJSValue JSPasswordObject__create(JSGlobalObject*);
@@ -366,20 +368,20 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     args.append(createShellInterpreterFunction);
     args.append(createParsedShellScript);
     JSC::JSValue shell = JSC::call(globalObject, createShellFn, args, "BunShell"_s);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
 
     if (!shell.isObject()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Internal error: BunShell constructor did not return an object"_s);
-        return {};
+        return jsUndefined();
     }
 
     auto* bunShell = shell.getObject();
 
     auto ShellError = bunShell->get(globalObject, JSC::Identifier::fromString(vm, "ShellError"_s));
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
     if (!ShellError.isObject()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Internal error: BunShell.ShellError is not an object"_s);
-        return {};
+        return jsUndefined();
     }
 
     bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "braces"_s), 1, Generated::BunObject::jsBraces, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);

@@ -795,7 +795,6 @@ pub const PathWatcher = struct {
                     bun.default_allocator.destroy(this);
                     return err;
                 };
-                this.resolved_path = resolved_path;
                 this.* = PathWatcher{
                     .path = path,
                     .callback = callback,
@@ -806,6 +805,7 @@ pub const PathWatcher = struct {
                         updateEndCallback,
                         bun.cast(*anyopaque, ctx),
                     ) catch |err| {
+                        bun.default_allocator.free(resolved_path);
                         bun.default_allocator.destroy(this);
                         return err;
                     },
@@ -815,6 +815,7 @@ pub const PathWatcher = struct {
                     .file_paths = .{},
                     .ctx = ctx,
                     .mutex = .{},
+                    .resolved_path = resolved_path,
                 };
 
                 errdefer this.deinit();

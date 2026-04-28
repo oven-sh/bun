@@ -662,7 +662,7 @@ pub fn cleanWithLogger(
     defer old_preinstall_state.deinit(old.allocator);
     @memset(preinstall_state.items, .unknown);
 
-    if (updates.len > 0) {
+    if (updates.len > 0 and !manager.options.global) {
         try old.preprocessUpdateRequests(manager, updates, exact_versions);
     }
 

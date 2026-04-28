@@ -1077,7 +1077,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 if (!opts.isObject())
                     return globalThis.throwInvalidArguments("upgrade options must be an object", .{});
                 if (try opts.fastGet(globalThis, .data)) |v| data_value = v;
-                if (globalThis.hasException()) return error.JSError;
                 if (try opts.fastGet(globalThis, .headers)) |hv| {
                     if (!hv.isEmptyOrUndefinedOrNull()) {
                         const fh: *WebCore.FetchHeaders = hv.as(WebCore.FetchHeaders) orelse brk: {
@@ -1098,7 +1097,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         fh.toUWSResponse(.h3, @ptrCast(resp));
                     }
                 }
-                if (globalThis.hasException()) return error.JSError;
             }
 
             // Past here: no throws (mirrors the RFC 6455 path).

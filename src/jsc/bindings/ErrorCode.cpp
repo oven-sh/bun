@@ -589,6 +589,11 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
 {
     unsigned length = expected_types.size();
 
+    // Empty arrays are not expected but guard against `length - 1` wrap.
+    if (length == 0) {
+        return ERR_INVALID_ARG_TYPE(scope, globalObject, arg_name, "undefined"_s, actual_value);
+    }
+
     // A single-element array should format identically to passing that
     // element directly as a string (Node.js has the same behaviour).
     if (length == 1) {

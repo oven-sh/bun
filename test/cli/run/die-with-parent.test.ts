@@ -9,12 +9,17 @@ import { setTimeout as sleep } from "node:timers/promises";
 // Tree: test → sh (the "parent" we SIGKILL) → bun-debug.
 // We SIGKILL sh and observe whether bun survives.
 
-const isPosix = process.platform !== "win32";
+// The watchdog only installs on Linux (prctl) and macOS (kqueue); gate to
+// exactly those platforms rather than generic POSIX.
+const isSupported = process.platform === "linux" || process.platform === "darwin";
 
 async function spawnTree(dieWithParent: string | undefined) {
   // bun child writes "pid ppid" to stdout once it's up; the test reads sh's
   // stdout (inherited by bun) before SIGKILLing sh.
   const env: Record<string, string> = { ...bunEnv };
+  // bunEnv spreads process.env; make sure an ambient BUN_DIE_WITH_PARENT
+  // from the test runner doesn't leak into the "unset" case.
+  delete env.BUN_DIE_WITH_PARENT;
   if (dieWithParent !== undefined) env.BUN_DIE_WITH_PARENT = dieWithParent;
 
   const sh = Bun.spawn({
@@ -72,7 +77,7 @@ async function waitUntilDead(pid: number, timeoutMs: number): Promise<boolean> {
   return !isAlive(pid);
 }
 
-test.skipIf(!isPosix)(
+test.skipIf(!isSupported)(
   "without BUN_DIE_WITH_PARENT, bun is orphaned when its parent is SIGKILLed",
   async () => {
     const { sh, bunPid } = await spawnTree(undefined);
@@ -85,7 +90,7 @@ test.skipIf(!isPosix)(
   },
 );
 
-test.skipIf(!isPosix)(
+test.skipIf(!isSupported)(
   "BUN_DIE_WITH_PARENT=1: bun exits when its parent is SIGKILLed",
   async () => {
     const { sh, bunPid } = await spawnTree("1");
@@ -100,7 +105,7 @@ test.skipIf(!isPosix)(
   30000,
 );
 
-test.skipIf(!isPosix)(
+test.skipIf(!isSupported)(
   "BUN_DIE_WITH_PARENT=0 is treated as unset",
   async () => {
     const { sh, bunPid } = await spawnTree("0");
@@ -112,7 +117,7 @@ test.skipIf(!isPosix)(
   },
 );
 
-test.skipIf(!isPosix)(
+test.skipIf(!isSupported)(
   "BUN_DIE_WITH_PARENT=1 does not fire while the parent is alive",
   async () => {
     const { sh, bunPid } = await spawnTree("1");

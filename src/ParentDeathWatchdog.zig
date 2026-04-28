@@ -1,8 +1,11 @@
-//! Opt-in self-termination when our parent process dies.
+//! Opt-in self-termination when our parent goes away.
 //!
 //! Enabled via env var `BUN_DIE_WITH_PARENT`. When set, Bun captures its
-//! parent pid at startup and exits as soon as that process is gone — even if
-//! the parent was SIGKILLed and never got a chance to signal us.
+//! original parent pid at startup and exits as soon as that parent is
+//! gone — even if the parent was SIGKILLed and never got a chance to signal
+//! us. On Linux this is implemented with `PR_SET_PDEATHSIG`, which tracks
+//! the creating *thread* rather than the whole parent process; for the
+//! single-threaded shims this feature targets the distinction is moot.
 //!
 //! Motivation: process supervisors that wrap Bun in a thin shim (e.g. a
 //! macOS TCC "disclaimer" trampoline: Electron → shim → bun) can be

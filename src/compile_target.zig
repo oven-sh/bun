@@ -53,6 +53,7 @@ pub const DownloadError = error{
     NetworkError,
     InvalidResponse,
     ExtractionFailed,
+    CacheDirectoryError,
     InvalidTarget,
     OutOfMemory,
     NoSpaceLeft,
@@ -216,6 +217,7 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
         }
 
         var tarball_bytes = std.ArrayListUnmanaged(u8){};
+        defer tarball_bytes.deinit(allocator);
         {
             refresher.refresh();
             defer compressed_archive_bytes.list.deinit(allocator);
@@ -249,9 +251,37 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
                 const libarchive = bun.libarchive;
                 var tmpname_buf: [1024]u8 = undefined;
                 const tempdir_name = try bun.fs.FileSystem.tmpname("tmp", &tmpname_buf, bun.fastRandom());
-                var tmpdir = try std.fs.cwd().makeOpenPath(tempdir_name, .{});
+
+                // Create the temp directory in the same parent directory as
+                // the destination so that the final rename never crosses a
+                // filesystem / drive boundary. On Windows, renameat cannot
+                // move files across drives (returns XDEV), which caused
+                // "Failed to extract executable" when cwd was on a different
+                // drive than the bun install cache.
+                const dest_dir = bun.path.dirname(dest_z, .loose);
+                if (dest_dir.len > 0) {
+                    bun.makePath(std.fs.cwd(), dest_dir) catch {};
+                }
+
+                // Open the destination's parent directory so we can create
+                // the temp dir inside it, guaranteeing same-filesystem rename.
+                var tmpdir_parent = if (dest_dir.len > 0)
+                    std.fs.cwd().openDir(dest_dir, .{}) catch
+                        return error.CacheDirectoryError
+                else
+                    std.fs.cwd();
+                defer if (dest_dir.len > 0) tmpdir_parent.close();
+
+                var tmpdir = tmpdir_parent.makeOpenPath(tempdir_name, .{}) catch |e| return switch (e) {
+                    error.NoSpaceLeft, error.DiskQuota => error.NoSpaceLeft,
+                    else => error.CacheDirectoryError,
+                };
+                // deleteTree registered first so it runs after tmpdir.close()
+                // (Zig defers are LIFO). On Windows, RemoveDirectoryW fails
+                // with ERROR_SHARING_VIOLATION if the handle is still open.
+                defer tmpdir_parent.deleteTree(tempdir_name) catch {};
                 defer tmpdir.close();
-                defer std.fs.cwd().deleteTree(tempdir_name) catch {};
+
                 _ = libarchive.Archiver.extractToDir(
                     tarball_bytes.items,
                     tmpdir,
@@ -264,29 +294,13 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
                     },
                 ) catch {
                     node.end();
-                    // Return error without printing - let caller handle the messaging
                     return error.ExtractionFailed;
                 };
 
-                var did_retry = false;
-                while (true) {
-                    bun.sys.moveFileZ(.fromStdDir(tmpdir), if (this.os == .windows) "bun.exe" else "bun", bun.invalid_fd, dest_z) catch {
-                        if (!did_retry) {
-                            did_retry = true;
-                            const dirname = bun.path.dirname(dest_z, .loose);
-                            if (dirname.len > 0) {
-                                std.fs.cwd().makePath(dirname) catch {};
-                                continue;
-                            }
-
-                            // fallthrough, failed for another reason
-                        }
-                        node.end();
-                        // Return error without printing - let caller handle the messaging
-                        return error.ExtractionFailed;
-                    };
-                    break;
-                }
+                bun.sys.moveFileZ(.fromStdDir(tmpdir), if (this.os == .windows) "bun.exe" else "bun", bun.invalid_fd, dest_z) catch {
+                    node.end();
+                    return error.ExtractionFailed;
+                };
             }
             refresher.refresh();
         }

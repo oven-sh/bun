@@ -1105,6 +1105,21 @@ pub const StandaloneModuleGraph = struct {
                             \\Could not extract executable for {}
                         , .{target.*});
                     },
+                    error.CacheDirectoryError => {
+                        Output.errGeneric(
+                            \\Cannot open or create the cache directory for {}.
+                            \\
+                            \\Check permissions on the bun install cache directory,
+                            \\or set BUN_INSTALL_CACHE_DIR to a writable path.
+                        , .{target.*});
+                    },
+                    error.NoSpaceLeft => {
+                        Output.errGeneric(
+                            \\Not enough disk space to extract {}.
+                            \\
+                            \\Free up disk space and try again.
+                        , .{target.*});
+                    },
                     else => {
                         Output.errGeneric("Failed to download {}: {s}", .{ target.*, @errorName(err) });
                     },
@@ -1159,6 +1174,8 @@ pub const StandaloneModuleGraph = struct {
                         error.NetworkError => CompileResult.failFmt("Network error downloading executable for '{f}'. Check your internet connection and proxy settings.", .{target}),
                         error.InvalidResponse => CompileResult.failFmt("Downloaded file for '{f}' appears to be corrupted. Please try again.", .{target}),
                         error.ExtractionFailed => CompileResult.failFmt("Failed to extract executable for '{f}'. The download may be incomplete.", .{target}),
+                        error.CacheDirectoryError => CompileResult.failFmt("Cannot open or create the cache directory for '{f}'. Check permissions on the bun install cache, or set BUN_INSTALL_CACHE_DIR to a writable path.", .{target}),
+                        error.NoSpaceLeft => CompileResult.failFmt("Not enough disk space to extract '{f}'. Free up disk space and try again.", .{target}),
                         error.UnsupportedTarget => CompileResult.failFmt("Target '{f}' is not supported", .{target}),
                         else => CompileResult.failFmt("Failed to download '{f}': {s}", .{ target, @errorName(err) }),
                     };

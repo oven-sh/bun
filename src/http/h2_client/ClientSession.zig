@@ -148,6 +148,7 @@ pub fn adopt(this: *ClientSession, client: *HTTPClient) void {
     // attaches directly so the preface still goes out.
     if (this.delivering or !this.settings_received) {
         bun.handleOom(this.pending_attach.append(bun.default_allocator, client));
+        this.rearmTimeout();
         return;
     }
     // Belt-and-suspenders: callers gate on hasHeadroom(), but a session
@@ -167,6 +168,7 @@ pub fn adopt(this: *ClientSession, client: *HTTPClient) void {
 pub fn enqueue(this: *ClientSession, client: *HTTPClient) void {
     client.registerAbortTracker(true, this.socket);
     bun.handleOom(this.pending_attach.append(bun.default_allocator, client));
+    this.rearmTimeout();
 }
 
 fn drainPending(this: *ClientSession) void {

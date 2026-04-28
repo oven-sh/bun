@@ -496,7 +496,9 @@ pub fn decodeHeaderBlock(session: *ClientSession, stream: *Stream) void {
     }
     if (status >= 100 and status < 200) {
         stream.decoded_bytes.items.len = start_len;
-        stream.awaiting_continue = false;
+        // Only `100 Continue` is the go-ahead for a withheld body; 102/103
+        // are informational and do not satisfy `Expect: 100-continue`.
+        if (status == 100) stream.awaiting_continue = false;
         // RFC 9113 §8.1: a 1xx HEADERS that ends the stream is malformed.
         if (stream.remoteClosed()) stream.fatal_error = error.HTTP2ProtocolError;
         return;

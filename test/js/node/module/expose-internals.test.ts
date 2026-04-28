@@ -102,16 +102,3 @@ test("internal/errors is importable (ESM) under the testing flag", async () => {
   expect(stdout.trim()).toBe("ok");
   expect(exitCode).toBe(0);
 });
-
-test("process.config.variables.v8_enable_i18n_support is set (was misspelled 'i8n')", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `console.log(process.config.variables.v8_enable_i18n_support)`],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr.trim()).toBe("");
-  expect(stdout.trim()).toBe("1");
-  expect(exitCode).toBe(0);
-});

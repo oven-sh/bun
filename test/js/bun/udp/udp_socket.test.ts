@@ -34,7 +34,7 @@ describe("udpSocket()", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("OK");
     expect(exitCode).toBe(0);
-  }, 30_000);
+  });
 
   test("connect with invalid hostname rejects", async () => {
     expect(async () =>

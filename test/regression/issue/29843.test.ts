@@ -20,8 +20,8 @@
 // replicates exactly what Go's c-shared runtime does at init time: bulk
 // sigaction() calls for the full signal set. No Go toolchain required.
 
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isPosix, tempDir } from "harness";
+import { beforeAll, expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, isPosix, tmpdirSync } from "harness";
 import { join } from "node:path";
 
 // Reproduce Go's c-shared init-time signal-handler install. sa_flags
@@ -57,8 +57,13 @@ static void on_load(void) {
 int version(void) { return 1; }
 `;
 
-// Compile the shared lib into `dir`. Caller owns the tempDir lifetime.
-async function buildLib(dir: string): Promise<string> {
+// Compiled once in beforeAll so each test body is just "spawn a subprocess
+// that loads this path" — well within the default per-test timeout even
+// on slow ASAN CI lanes. (The test/CLAUDE.md rule is "no explicit
+// per-test timeouts".)
+let libPath = "";
+beforeAll(async () => {
+  const dir = tmpdirSync("issue-29843-");
   const ext = process.platform === "darwin" ? "dylib" : "so";
   await Bun.write(join(dir, "lib.c"), libSource);
   await using proc = Bun.spawn({
@@ -70,16 +75,13 @@ async function buildLib(dir: string): Promise<string> {
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   if (exitCode !== 0) throw new Error(`cc failed (${exitCode}): ${stderr}`);
-  return join(dir, `libsigtest.${ext}`);
-}
+  libPath = join(dir, `libsigtest.${ext}`);
+});
 
 // Direct sigaction inspection via /proc/self/status. Linux-only because
 // other POSIX systems don't expose this via procfs, but it's the most
 // precise way to assert "the handler state matches pre-dlopen".
-test.skipIf(!isLinux)("bun:ffi dlopen restores Bun's sigactions (#29843)", { timeout: 30_000 }, async () => {
-  using dir = tempDir("issue-29843-mask", {});
-  const libPath = await buildLib(String(dir));
-
+test.skipIf(!isLinux)("bun:ffi dlopen restores Bun's sigactions (#29843)", async () => {
   // The fixture reads /proc/self/status's SigIgn and SigCgt bitmasks
   // before and after dlopen and reports any signal whose bit flipped —
   // either gained a handler or lost one. The test then asserts that any
@@ -162,10 +164,7 @@ test.skipIf(!isLinux)("bun:ffi dlopen restores Bun's sigactions (#29843)", { tim
 // in BunProcess.cpp installs sigaction() with its own forwardSignal stub;
 // a Go-style constructor would clobber it, leaving the JS listener
 // attached to a signal that can no longer reach it.
-test.skipIf(!isPosix)("bun:ffi dlopen preserves process.on SIGUSR1 handler (#29843)", { timeout: 30_000 }, async () => {
-  using dir = tempDir("issue-29843-sigusr1", {});
-  const libPath = await buildLib(String(dir));
-
+test.skipIf(!isPosix)("bun:ffi dlopen preserves process.on SIGUSR1 handler (#29843)", async () => {
   const fixture = `
     import { dlopen, FFIType } from "bun:ffi";
 

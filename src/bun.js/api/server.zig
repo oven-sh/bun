@@ -2618,14 +2618,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub fn onWebTransportUpgrade(this: *ThisServer, resp: *uws.H3.Response, req: *uws.H3.Request, upgrade_ctx: *uws.SocketContext, id: usize) void {
             if (comptime !has_h3) unreachable;
             jsc.markBinding(@src());
-            if (this.config.websocket == null) {
-                resp.writeStatus("404 Not Found");
-                resp.endWithoutBody(false);
-                return;
-            }
-
+            // `this` is type-punned: when id == 1 the pointer registered with
+            // h3_app.ws() was a *UserRoute, not a *ThisServer. Do NOT touch
+            // `this.*` until id has been checked. (h3_app.ws() is only ever
+            // registered inside `if (this.config.websocket) |*websocket|`, so
+            // the old null-check this replaced was both wrong and dead.)
             if (id == 1) {
-                // ctx is *UserRoute when id==1 (set by uws_h3_ws below).
                 const user_route: *UserRoute = @ptrCast(@alignCast(this));
                 const server = user_route.server;
                 var should_deinit_context = false;

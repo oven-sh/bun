@@ -18,6 +18,44 @@ comptime {
 
 pub var is_allowed_to_use_internal_testing_apis = false;
 
+/// Comptime-generated map from `internal/*` specifiers to their ResolvedSource.Tag.
+/// Bun's internal JS modules (src/js/internal/*.ts) are registered in the
+/// InternalModuleRegistry with tag names like `internal:errors`. Node.js tests with
+/// `// Flags: --expose-internals` expect `require("internal/errors")` to work. When
+/// `is_allowed_to_use_internal_testing_apis` is set (same gate as `bun:internal-for-testing`),
+/// we resolve `internal/xxx` -> the matching InternalModuleRegistry entry.
+pub const ExposedInternals = struct {
+    pub const map = bun.ComptimeStringMap(ResolvedSource.Tag, brk: {
+        @setEvalBranchQuota(100_000);
+        const fields = @typeInfo(ResolvedSource.Tag).@"enum".fields;
+        const prefix = "internal:";
+        var count: usize = 0;
+        for (fields) |f| {
+            if (f.name.len > prefix.len and std.mem.eql(u8, f.name[0..prefix.len], prefix)) {
+                count += 1;
+            }
+        }
+        var entries: [count]struct { []const u8, ResolvedSource.Tag } = undefined;
+        var i: usize = 0;
+        for (fields) |f| {
+            if (f.name.len > prefix.len and std.mem.eql(u8, f.name[0..prefix.len], prefix)) {
+                // expose as `internal/<name>` (Node.js spelling)
+                entries[i] = .{ "internal/" ++ f.name[prefix.len..], @field(ResolvedSource.Tag, f.name) };
+                i += 1;
+            }
+        }
+        const final = entries;
+        break :brk final;
+    });
+
+    pub fn get(specifier: bun.String) ?ResolvedSource.Tag {
+        if (!specifier.hasPrefixComptime("internal/")) return null;
+        const spec = specifier.toUTF8(bun.default_allocator);
+        defer spec.deinit();
+        return map.get(spec.slice());
+    }
+};
+
 /// This must be called after calling transpileSourceCode
 pub fn resetArena(this: *ModuleLoader, jsc_vm: *VirtualMachine) void {
     bun.assert(&jsc_vm.module_loader == this);
@@ -1173,6 +1211,12 @@ fn getHardcodedModule(jsc_vm: *VirtualMachine, specifier: bun.String, hardcoded:
 pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?ResolvedSource {
     if (HardcodedModule.map.getWithEql(specifier, bun.String.eqlComptime)) |hardcoded| {
         return getHardcodedModule(jsc_vm, specifier, hardcoded);
+    }
+
+    if (Environment.isDebug or is_allowed_to_use_internal_testing_apis) {
+        if (ExposedInternals.get(specifier)) |tag| {
+            return jsSyntheticModule(tag, specifier);
+        }
     }
 
     if (specifier.hasPrefixComptime(js_ast.Macro.namespaceWithColon)) {

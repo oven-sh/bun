@@ -481,17 +481,22 @@ describe("crash testing", () => {
   });
 
   it("inspecting object with Proxy prototype that leaves a pending exception during enumeration doesn't crash", () => {
+    // When a Proxy sits in the prototype chain, getPropertySlot uses InternalMethodType::Get
+    // which invokes [[Get]] on the Proxy and therefore runs getters on the target.
+    let getterCalled = false;
     const target = {
       get first() {
         return 1;
       },
       get second() {
+        getterCalled = true;
         throw new Error("getter threw");
       },
     };
     const obj = { a: 1 };
     Object.setPrototypeOf(obj, new Proxy(target, {}));
     expect(() => Bun.inspect(obj)).not.toThrow();
+    expect(getterCalled).toBeTrue();
   });
 });
 

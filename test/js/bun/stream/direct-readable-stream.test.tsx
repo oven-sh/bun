@@ -8,7 +8,7 @@ import {
   Server,
 } from "bun";
 import { describe, expect, it } from "bun:test";
-import { expectMaxObjectTypeCount, gc } from "harness";
+import { expectMaxObjectTypeCount, gc, tls } from "harness";
 // @ts-ignore
 import * as React from "react";
 import * as ReactDOM from "react-dom/server";
@@ -298,5 +298,48 @@ describe("ReactDOM", () => {
         },
       );
     }
+  }
+
+  // HTTP/3 iteration: one shared server across all fixtures so the client's
+  // pooled QUIC session stays bound to a single live origin instead of
+  // churning through dozens of serve/stop cycles.
+  for (let renderToReadableStream of [renderToReadableStreamBun, renderToReadableStreamBrowser]) {
+    describe.skipIf(typeof renderToReadableStream !== "function")(`h3 ${renderToReadableStream.name}`, () => {
+      let server: Server;
+      const init = { protocol: "http3", tls: { rejectUnauthorized: false } } as const;
+      const cases = fixtures.map(([s, e]) => [s, e] as const);
+      it("(setup)", () => {
+        server = serve({
+          port: 0,
+          tls,
+          h3: true,
+          h1: false,
+          routes: {
+            "/:i": async req =>
+              new Response(await renderToReadableStream(cases[Number(req.params.i)][1]), {
+                headers: { "X-React": "1" },
+              }),
+          },
+        });
+      });
+      for (const [i, [inputString]] of cases.entries()) {
+        it(`(${inputString}) 1 request`, async () => {
+          const response = await fetch(`https://127.0.0.1:${server.port}/${i}`, init);
+          const result = await response.text();
+          expect(result.replaceAll("<!-- -->", "")).toBe(inputString);
+          expect(response.headers.get("X-React")).toBe("1");
+        });
+        it(`(${inputString}) 4 requests`, async () => {
+          for (let n = 0; n < 4; n++) {
+            const response = await fetch(`https://127.0.0.1:${server.port}/${i}`, init);
+            expect((await response.text()).replaceAll("<!-- -->", "")).toBe(inputString);
+          }
+        });
+      }
+      it("(teardown)", async () => {
+        void server?.stop(true);
+        await expectMaxObjectTypeCount(expect, "ReadableH3ResponseSinkController", 3);
+      });
+    });
   }
 });

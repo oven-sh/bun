@@ -964,11 +964,19 @@ extern "C" void Bun__unregisterSignalsForForwarding()
 // restore Bun's handler *unless* the previous action was SIG_DFL (in
 // which case the library is free to install whatever handler it needs —
 // e.g. Go's SIGURG handler for preemption, which Bun doesn't care about).
+//
+// The snapshot buffers are process-global, so the save→dlopen→restore
+// sequence is serialised under bun_dlopen_mutex. Workers are free to
+// call bun:ffi dlopen / process.dlopen on their own threads.
+#include <mutex>
+static std::mutex bun_dlopen_mutex;
 static struct sigaction bun_dlopen_saved_actions[NSIG];
 static bool bun_dlopen_saved_valid[NSIG];
 
 extern "C" void Bun__saveSignalHandlersForDlopen()
 {
+    // Held until the matching Bun__restoreSignalHandlersAfterDlopen().
+    bun_dlopen_mutex.lock();
     for (int sig = 1; sig < NSIG; sig++) {
         // Skip signals that can't be intercepted — SIGKILL and SIGSTOP.
         // sigaction returns EINVAL for those on some platforms; save a sentinel.
@@ -993,16 +1001,17 @@ extern "C" void Bun__restoreSignalHandlersAfterDlopen()
         if (sigaction(sig, nullptr, &current) != 0) continue;
 
         // Compare: did the loaded library change this signal's action?
-        // Cheap byte-wise comparison of the relevant fields.
-        bool changed = false;
-        if ((current.sa_flags & SA_SIGINFO) != (bun_dlopen_saved_actions[sig].sa_flags & SA_SIGINFO)) {
-            changed = true;
-        } else if (current.sa_flags & SA_SIGINFO) {
-            changed = (current.sa_sigaction != bun_dlopen_saved_actions[sig].sa_sigaction)
-                || (current.sa_flags != bun_dlopen_saved_actions[sig].sa_flags);
-        } else {
-            changed = (current.sa_handler != bun_dlopen_saved_actions[sig].sa_handler)
-                || (current.sa_flags != bun_dlopen_saved_actions[sig].sa_flags);
+        // Cover sa_flags, the handler pointer (sa_handler or sa_sigaction
+        // depending on SA_SIGINFO), and sa_mask — any of these differing
+        // means Bun's disposition wasn't fully preserved.
+        bool changed = memcmp(&current.sa_mask, &bun_dlopen_saved_actions[sig].sa_mask, sizeof(sigset_t)) != 0
+            || current.sa_flags != bun_dlopen_saved_actions[sig].sa_flags;
+        if (!changed) {
+            if (current.sa_flags & SA_SIGINFO) {
+                changed = current.sa_sigaction != bun_dlopen_saved_actions[sig].sa_sigaction;
+            } else {
+                changed = current.sa_handler != bun_dlopen_saved_actions[sig].sa_handler;
+            }
         }
 
         if (changed) {
@@ -1013,6 +1022,8 @@ extern "C" void Bun__restoreSignalHandlersAfterDlopen()
 
     memset(bun_dlopen_saved_actions, 0, sizeof(bun_dlopen_saved_actions));
     memset(bun_dlopen_saved_valid, 0, sizeof(bun_dlopen_saved_valid));
+    // Pairs with the lock() in Bun__saveSignalHandlersForDlopen().
+    bun_dlopen_mutex.unlock();
 }
 
 #endif

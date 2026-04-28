@@ -61,7 +61,10 @@ pub const Result = struct {
     status: ItemStatus,
 
     pub fn hasCheckedIfExists(r: *const Result) bool {
-        return r.index.index != Unassigned.index;
+        // A reclaimed slot (status == .unknown but index is a real slot) must be
+        // treated as "never looked up" so callers re-resolve instead of returning
+        // stale data. See BSSMap.remove / BSSMap.getOrPut.
+        return r.status != .unknown;
     }
 
     pub fn isOverflowing(r: *const Result, comptime count: usize) bool {
@@ -526,6 +529,11 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         mutex: Mutex = .{},
         backing_buf: [count]ValueType,
         backing_buf_used: u16,
+        /// Slots freed by `remove()` that can be reused by the next `put()` for
+        /// the same key. Without this, every remove+getOrPut+put cycle consumes
+        /// a fresh `backing_buf` slot (and eventually overflows to the heap),
+        /// leaking the old slot and whatever heap pointers it owned.
+        reclaimable: std.AutoHashMapUnmanaged(HashKeyType, IndexType),
 
         pub var instance: *Self = undefined;
 
@@ -542,6 +550,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
                 instance.overflow_list.zero();
                 instance.backing_buf_used = 0;
                 instance.mutex = .{};
+                instance.reclaimable = .{};
                 loaded = true;
             }
 
@@ -550,6 +559,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
 
         pub fn deinit(self: *Self) void {
             self.index.deinit(self.allocator);
+            self.reclaimable.deinit(self.allocator);
             bun.default_allocator.destroy(instance);
             loaded = false;
         }
@@ -567,17 +577,25 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             const index = try self.index.getOrPut(self.allocator, _key);
 
             if (index.found_existing) {
+                switch (index.value_ptr.index) {
+                    NotFound.index => return Result{ .hash = _key, .index = index.value_ptr.*, .status = .not_found },
+                    Unassigned.index => {},
+                    else => return Result{ .hash = _key, .index = index.value_ptr.*, .status = .exists },
+                }
+            } else {
+                index.value_ptr.* = Unassigned;
+            }
+
+            // status is .unknown — if this key previously had a real slot that was
+            // invalidated via remove(), hand it back so put() overwrites in place
+            // instead of burning a fresh slot.
+            if (self.reclaimable.get(_key)) |slot| {
                 return Result{
                     .hash = _key,
-                    .index = index.value_ptr.*,
-                    .status = switch (index.value_ptr.index) {
-                        NotFound.index => .not_found,
-                        Unassigned.index => .unknown,
-                        else => .exists,
-                    },
+                    .index = slot,
+                    .status = .unknown,
                 };
             }
-            index.value_ptr.* = Unassigned;
 
             return Result{
                 .hash = _key,
@@ -600,6 +618,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             defer self.mutex.unlock();
 
             self.index.put(self.allocator, result.hash, NotFound) catch unreachable;
+            _ = self.reclaimable.remove(result.hash);
         }
 
         pub fn atIndex(self: *Self, index: IndexType) ?*ValueType {
@@ -626,6 +645,8 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
                 }
             }
 
+            _ = self.reclaimable.remove(result.hash);
+
             try self.index.put(self.allocator, result.hash, result.index);
 
             if (result.index.is_overflow) {
@@ -643,7 +664,15 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             }
         }
 
-        /// Returns true if the entry was removed
+        /// Invalidate the cache entry for `key` so the next `getOrPut` returns
+        /// `.unknown`. The backing slot (and its value) is preserved in
+        /// `reclaimable` so the next `put()` for the same key overwrites it in
+        /// place instead of consuming a fresh slot. We do not `deinit()` the
+        /// value here because other cache entries may still hold raw pointers
+        /// into it (e.g. DirInfo.enclosing_package_json references a parent
+        /// directory's PackageJSON).
+        ///
+        /// Returns true if the entry was removed.
         pub fn remove(self: *Self, denormalized_key: []const u8) bool {
             self.mutex.lock();
             defer self.mutex.unlock();
@@ -654,28 +683,11 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
                 denormalized_key;
 
             const _key = bun.hash(key);
-            return self.index.remove(_key);
-            // const index = self.index.get(_key) orelse return;
-            // switch (index) {
-            //     Unassigned.index, NotFound.index => {
-            //         self.index.remove(_key);
-            //     },
-            //     0...max_index => {
-            //         if (comptime hasDeinit(ValueType)) {
-            //             instance.backing_buf[index].deinit();
-            //         }
-
-            //         instance.backing_buf[index] = undefined;
-            //     },
-            //     else => {
-            //         const i = index - count;
-            //         if (hasDeinit(ValueType)) {
-            //             self.overflow_list.items[i].deinit();
-            //         }
-            //         self.overflow_list.items[index - count] = undefined;
-            //     },
-            // }
-
+            const kv = self.index.fetchRemove(_key) orelse return false;
+            if (kv.value.index != NotFound.index and kv.value.index != Unassigned.index) {
+                self.reclaimable.put(self.allocator, _key, kv.value) catch {};
+            }
+            return true;
         }
 
         pub fn values(self: *Self) []ValueType {

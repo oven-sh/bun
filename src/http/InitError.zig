@@ -3,4 +3,5 @@ pub const InitError = error{
     LoadCAFile,
     InvalidCAFile,
     InvalidCA,
+    InvalidGroups,
 };

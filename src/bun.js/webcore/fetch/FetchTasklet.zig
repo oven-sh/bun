@@ -775,6 +775,7 @@ pub const FetchTasklet = struct {
             .message = switch (this.result.fail.?) {
                 error.ConnectionClosed => bun.String.static("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"),
                 error.FailedToOpenSocket => bun.String.static("Was there a typo in the url or port?"),
+                error.InvalidGroups => bun.String.static("Invalid TLS groups string (rejected by BoringSSL)"),
                 error.TooManyRedirects => bun.String.static("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),
                 error.ConnectionRefused => bun.String.static("Unable to connect. Is the computer able to access the url?"),
                 error.RedirectURLInvalid => bun.String.static("Redirect URL in Location header is invalid."),

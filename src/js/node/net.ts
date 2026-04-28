@@ -620,17 +620,46 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
   },
 };
 
+// `doConnect` can fail synchronously (e.g. SSL_CTX construction rejected by
+// BoringSSL: invalid `groups` / `ciphers` / cert config). The synchronous
+// throw escapes user-controlled try/catch and the Promise boundary because
+// `tls.connect` returns the socket immediately, before any handler is
+// attached. Catch the synchronous failure and route it through the socket's
+// "error" event on the next tick, after the caller has had a chance to
+// attach listeners. Mirrors how Node surfaces connect-time TLS errors.
+function emitConnectError(self, err) {
+  process.nextTick(() => {
+    self.destroy(err);
+  });
+}
+
+// Sentinel returned by kConnectTcp / kConnectPipe when they caught a
+// synchronous doConnect failure and already handed it to the socket via
+// emitConnectError. Distinct from 0 (attempt-started OK) and from positive
+// libuv errnos. Callers (single-address, multi-address auto-select-family)
+// recognize this and skip both their own destroy and any attempt-timeout
+// scheduling. Same socket instance is reusable across multi-address attempts;
+// once SSL_CTX construction fails, every subsequent address would fail
+// identically, so the multi-address loop bails too.
+const kConnectStartedSync = -1;
+
 function kConnectTcp(self, addressType, req, address, port) {
   $debug("SocketHandle.kConnectTcp", addressType, address, port);
-  const promise = doConnect(self._handle, {
-    hostname: address,
-    port,
-    ipv6Only: addressType === 6,
-    allowHalfOpen: self.allowHalfOpen,
-    tls: req.tls,
-    data: { self, req },
-    socket: self[khandlers],
-  });
+  let promise;
+  try {
+    promise = doConnect(self._handle, {
+      hostname: address,
+      port,
+      ipv6Only: addressType === 6,
+      allowHalfOpen: self.allowHalfOpen,
+      tls: req.tls,
+      data: { self, req },
+      socket: self[khandlers],
+    });
+  } catch (err) {
+    emitConnectError(self, err);
+    return kConnectStartedSync;
+  }
   promise.catch(_reason => {
     // eat this so there's no unhandledRejection
     // we already catch this in connectError and error
@@ -640,14 +669,20 @@ function kConnectTcp(self, addressType, req, address, port) {
 
 function kConnectPipe(self, req, address) {
   $debug("SocketHandle.kConnectPipe");
-  const promise = doConnect(self._handle, {
-    hostname: address,
-    unix: address,
-    allowHalfOpen: self.allowHalfOpen,
-    tls: req.tls,
-    data: { self, req },
-    socket: self[khandlers],
-  });
+  let promise;
+  try {
+    promise = doConnect(self._handle, {
+      hostname: address,
+      unix: address,
+      allowHalfOpen: self.allowHalfOpen,
+      tls: req.tls,
+      data: { self, req },
+      socket: self[khandlers],
+    });
+  } catch (err) {
+    emitConnectError(self, err);
+    return kConnectStartedSync;
+  }
   promise.catch(_reason => {
     // eat this so there's no unhandledRejection
     // we already catch this in connectError and error
@@ -1782,6 +1817,11 @@ function internalConnect(self, options, address, port, addressType, localAddress
     err = kConnectPipe(self, req, address);
   }
 
+  if (err === kConnectStartedSync) {
+    // doConnect threw synchronously; emitConnectError already scheduled the
+    // socket destroy on the next tick. Don't fabricate a second error.
+    return;
+  }
   if (err) {
     const ex = new ExceptionWithHostPort(err, "connect", address, port);
     self.destroy(ex);
@@ -1909,6 +1949,13 @@ function internalConnectMultiple(context, canceled?) {
 
   err = kConnectTcp(self, addressType, req, address, port);
 
+  if (err === kConnectStartedSync) {
+    // doConnect threw synchronously; emitConnectError already scheduled the
+    // destroy. Don't try further addresses (a SSL_CTX construction failure
+    // is not address-specific) and don't arm the attempt timeout, which
+    // would otherwise fire on the already-destroyed socket.
+    return;
+  }
   if (err) {
     const ex = new ExceptionWithHostPort(err, "connect", address, port);
     ArrayPrototypePush.$call(context.errors, ex);

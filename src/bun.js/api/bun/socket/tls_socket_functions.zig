@@ -436,6 +436,24 @@ pub fn getEphemeralKeyInfo(this: *This, globalObject: *jsc.JSGlobalObject, _: *j
     return result;
 }
 
+/// Returns the BoringSSL name of the negotiated key-exchange / KEM group
+/// (e.g. "X25519MLKEM768", "X25519", "P-256"), or null if the handshake
+/// has not yet completed or no group was negotiated.
+///
+/// Mirrors the spirit of Node.js's `tls.TLSSocket.getEphemeralKeyInfo()`,
+/// but reports the *agreed* group rather than the local ephemeral key.
+/// PQ KEMs (ML-KEM-768) don't fit the EVP_PKEY model that Node's API
+/// assumes, so a dedicated accessor is the cleaner shape.
+pub fn getSharedGroup(this: *This, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
+    const ssl_ptr = this.socket.ssl() orelse return JSValue.jsNull();
+    const curve_id = BoringSSL.SSL_get_curve_id(ssl_ptr);
+    if (curve_id == 0) return JSValue.jsNull();
+    const name_ptr = BoringSSL.SSL_get_curve_name(curve_id);
+    if (name_ptr == null) return JSValue.jsNull();
+    const name = name_ptr[0..bun.len(name_ptr)];
+    return bun.String.createUTF8ForJS(globalObject, name);
+}
+
 pub fn getALPNProtocol(this: *This, globalObject: *jsc.JSGlobalObject) bun.JSError!JSValue {
     var alpn_proto: [*c]const u8 = null;
     var alpn_proto_len: u32 = 0;

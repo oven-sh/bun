@@ -519,6 +519,23 @@ function TLSSocket(socket?, options?) {
     validateCiphers(options.ciphers);
   }
 
+  // `groups` is the modern name (Node 22+); `ecdhCurve` is the legacy alias
+  // (predates ML-KEM). Both map to BoringSSL's set1_groups_list. Node accepts
+  // either; we mirror that.
+  this.groups = options.groups ?? options.ecdhCurve;
+  if (this.groups != null) {
+    if (typeof this.groups !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("options.groups", "string", this.groups);
+    }
+    // Reject embedded NUL: the string crosses to BoringSSL via a NUL-terminated
+    // [*:0] pointer, so an embedded NUL silently truncates the group list and
+    // would let an attacker who controls the string downgrade the offered
+    // groups without surfacing any error.
+    if ((this.groups as string).indexOf("\u0000") !== -1) {
+      throw $ERR_INVALID_ARG_VALUE("options.groups", this.groups, "must not contain NUL bytes");
+    }
+  }
+
   if (typeof options === "object") {
     const { ALPNProtocols } = options;
     if (ALPNProtocols) {
@@ -552,6 +569,13 @@ TLSSocket.prototype.getSession = function getSession() {
 
 TLSSocket.prototype.getEphemeralKeyInfo = function getEphemeralKeyInfo() {
   return this._handle?.getEphemeralKeyInfo?.();
+};
+
+// Returns the BoringSSL name of the negotiated key-exchange / KEM group
+// (e.g. "X25519MLKEM768", "X25519", "P-256"). Null until the handshake
+// completes. Bun-specific extension; mirrors Node 22's `getSharedGroup`.
+TLSSocket.prototype.getSharedGroup = function getSharedGroup() {
+  return this._handle?.getSharedGroup?.() ?? null;
 };
 
 TLSSocket.prototype.getCipher = function getCipher() {
@@ -693,7 +717,7 @@ TLSSocket.prototype[buntls] = function (port, host) {
   if (servername === undefined) {
     servername = host && !net.isIP(host) ? host : "";
   }
-  return {
+  const out: any = {
     socket: this._handle,
     ALPNProtocols: this.ALPNProtocols,
     checkServerIdentity: this[kcheckServerIdentity],
@@ -704,6 +728,12 @@ TLSSocket.prototype[buntls] = function (port, host) {
     ...ctx,
     servername,
   };
+  // Only attach `groups` when explicitly set; leaving the field absent lets
+  // the C-side BUN_DEFAULT_SSL_GROUPS apply as the floor. Passing
+  // `undefined` here resolves the SSLConfig bindgen union differently and
+  // crashed downstream parsing.
+  if (this.groups != null) out.groups = this.groups;
+  return out;
 };
 
 let CLIENT_RENEG_LIMIT = 3,
@@ -725,6 +755,8 @@ function Server(options, secureConnectionListener): void {
   this._requestCert = undefined;
   this.servername = undefined;
   this.ALPNProtocols = undefined;
+  this.ciphers = undefined;
+  this.groups = undefined;
 
   let contexts: Map<string, typeof InternalSecureContext> | null = null;
 
@@ -810,6 +842,20 @@ function Server(options, secureConnectionListener): void {
 
         this.ciphers = options.ciphers;
       }
+
+      // Match TLSSocket constructor and _http_client.ts: treat null and
+      // undefined the same ("no override"), only validate type for actual
+      // values. Asymmetric throw on null was a Server-path-only divergence.
+      const groupsOption = options.groups ?? options.ecdhCurve;
+      if (groupsOption != null) {
+        if (typeof groupsOption !== "string") {
+          throw $ERR_INVALID_ARG_TYPE("options.groups", "string", groupsOption);
+        }
+        if (groupsOption.indexOf("\u0000") !== -1) {
+          throw $ERR_INVALID_ARG_VALUE("options.groups", groupsOption, "must not contain NUL bytes");
+        }
+        this.groups = groupsOption;
+      }
     }
   };
 
@@ -822,24 +868,28 @@ function Server(options, secureConnectionListener): void {
   };
 
   this[buntls] = function (port, host, isClient) {
-    return [
-      {
-        serverName: this.servername || host || "localhost",
-        key: this.key,
-        cert: this.cert,
-        ca: this.ca,
-        passphrase: this.passphrase,
-        secureOptions: this.secureOptions,
-        rejectUnauthorized: this._rejectUnauthorized,
-        requestCert: isClient ? true : this._requestCert,
-        ALPNProtocols: this.ALPNProtocols,
-        clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
-        clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
-        contexts: contexts,
-        ciphers: this.ciphers,
-      },
-      TLSSocket,
-    ];
+    // Mirror the TLSSocket prototype's `[buntls]` thunk: only attach `groups`
+    // when explicitly set. The Server-side bindings flow may currently
+    // tolerate `groups: undefined`, but the asymmetry with the client thunk
+    // (which had to switch to conditional-attach to avoid a SocketConfigTLS
+    // bindgen union crash) is a footgun. Keep both shapes identical.
+    const opts: any = {
+      serverName: this.servername || host || "localhost",
+      key: this.key,
+      cert: this.cert,
+      ca: this.ca,
+      passphrase: this.passphrase,
+      secureOptions: this.secureOptions,
+      rejectUnauthorized: this._rejectUnauthorized,
+      requestCert: isClient ? true : this._requestCert,
+      ALPNProtocols: this.ALPNProtocols,
+      clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
+      clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
+      contexts: contexts,
+      ciphers: this.ciphers,
+    };
+    if (this.groups != null) opts.groups = this.groups;
+    return [opts, TLSSocket];
   };
 
   this.setSecureContext(options);

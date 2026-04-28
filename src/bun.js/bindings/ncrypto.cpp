@@ -3094,6 +3094,30 @@ SSLCtxPointer::~SSLCtxPointer()
     reset();
 }
 
+namespace {
+// Default TLS supported_groups list (PQ hybrid first). Must stay in sync with
+// BUN_DEFAULT_SSL_GROUPS in libusockets.h.
+constexpr const char* kBunDefaultSslGroups = "X25519MLKEM768:X25519:P-256:P-384";
+
+// Applied by the SSL_METHOD-taking SSLCtxPointer factories (NewServer,
+// NewClient, New, reset(method)). The raw-pointer constructors and
+// reset(SSL_CTX*) overload deliberately skip this — they exist to wrap an
+// already-configured SSL_CTX, where forcing defaults would clobber the
+// caller's configuration. Debug ASSERT catches a BoringSSL rename of these
+// names; release tolerates the silent fallback to BoringSSL's compile-time
+// default and clears the error queue so subsequent crypto ops don't pick up
+// a stale error.
+inline void applyBunDefaultGroups(SSL_CTX* ctx)
+{
+    if (ctx == nullptr) return;
+    [[maybe_unused]] int ok = SSL_CTX_set1_groups_list(ctx, kBunDefaultSslGroups);
+    ASSERT(ok == 1);
+    if (ok != 1) {
+        ERR_clear_error();
+    }
+}
+} // namespace
+
 void SSLCtxPointer::reset(SSL_CTX* ctx)
 {
     ctx_.reset(ctx);
@@ -3101,7 +3125,9 @@ void SSLCtxPointer::reset(SSL_CTX* ctx)
 
 void SSLCtxPointer::reset(const SSL_METHOD* method)
 {
-    ctx_.reset(SSL_CTX_new(method));
+    SSL_CTX* ctx = SSL_CTX_new(method);
+    applyBunDefaultGroups(ctx);
+    ctx_.reset(ctx);
 }
 
 SSL_CTX* SSLCtxPointer::release()
@@ -3111,21 +3137,35 @@ SSL_CTX* SSLCtxPointer::release()
 
 SSLCtxPointer SSLCtxPointer::NewServer()
 {
-    return SSLCtxPointer(SSL_CTX_new(TLS_server_method()));
+    SSL_CTX* ctx = SSL_CTX_new(TLS_server_method());
+    applyBunDefaultGroups(ctx);
+    return SSLCtxPointer(ctx);
 }
 
 SSLCtxPointer SSLCtxPointer::NewClient()
 {
-    return SSLCtxPointer(SSL_CTX_new(TLS_client_method()));
+    SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
+    applyBunDefaultGroups(ctx);
+    return SSLCtxPointer(ctx);
 }
 
 SSLCtxPointer SSLCtxPointer::New(const SSL_METHOD* method)
 {
-    return SSLCtxPointer(SSL_CTX_new(method));
+    SSL_CTX* ctx = SSL_CTX_new(method);
+    applyBunDefaultGroups(ctx);
+    return SSLCtxPointer(ctx);
 }
 
 bool SSLCtxPointer::setGroups(const char* groups)
 {
+    // NULL / "": no-op. The SSL_CTX already has BUN_DEFAULT_SSL_GROUPS applied
+    // by applyBunDefaultGroups() at construction time; there is no clean
+    // BoringSSL API to restore the compile-time default after that, so an
+    // explicit empty string passed through THIS API leaves the Bun default in
+    // place. Tri-state opt-out for "" should go through the C uws path
+    // (BunSocketContextOptions.ssl_groups in openssl.c), which keeps the
+    // SSL_CTX defaults un-touched until ssl_groups is resolved.
+    if (groups == nullptr || groups[0] == '\0') return true;
     return SSL_CTX_set1_groups_list(get(), groups) == 1;
 }
 

@@ -33,6 +33,10 @@ function generate(ssl) {
         fn: "getEphemeralKeyInfo",
         length: 0,
       },
+      getSharedGroup: {
+        fn: "getSharedGroup",
+        length: 0,
+      },
       getCipher: {
         fn: "getCipher",
         length: 0,

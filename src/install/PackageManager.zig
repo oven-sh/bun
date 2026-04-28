@@ -551,6 +551,9 @@ fn httpThreadOnInitError(err: HTTP.InitError, opts: HTTP.HTTPThread.InitOpts) no
         error.InvalidCA => {
             Output.err("HTTPThread", "the CA is invalid", .{});
         },
+        error.InvalidGroups => {
+            Output.err("HTTPThread", "the provided TLS groups string was rejected by BoringSSL", .{});
+        },
         error.FailedToOpenSocket => {
             Output.errGeneric("failed to start HTTP client thread", .{});
         },

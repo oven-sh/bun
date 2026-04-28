@@ -28,6 +28,7 @@ test/js/node/test/parallel/test-worker-message-channel-sharedarraybuffer.js
 test/js/node/test/parallel/test-worker-message-event.js
 test/js/node/test/parallel/test-worker-message-port-constructor.js
 test/js/node/test/parallel/test-worker-message-port-infinite-message-loop.js
+test/js/node/test/parallel/test-worker-message-port-message-before-close.js
 test/js/node/test/parallel/test-worker-message-port-receive-message.js
 test/js/node/test/parallel/test-worker-message-port-terminate-transfer-list.js
 test/js/node/test/parallel/test-worker-message-port-transfer-duplicate.js

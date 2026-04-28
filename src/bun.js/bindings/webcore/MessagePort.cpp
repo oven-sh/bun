@@ -130,18 +130,22 @@ MessagePort::MessagePort(ScriptExecutionContext& scriptExecutionContext, const M
 
 MessagePort::~MessagePort()
 {
+    {
+        Locker locker { allMessagePortsLock };
 
-    Locker locker { allMessagePortsLock };
-
-    auto iterator = allMessagePorts().find(m_identifier);
-    if (iterator != allMessagePorts().end()) {
-        // ThreadSafeWeakPtr::get() returns null as soon as the object has started destruction.
-        if (RefPtr messagePort = iterator->value.get(); !messagePort) {
-            allMessagePorts().remove(iterator);
-            portToContextIdentifier().remove(m_identifier);
+        auto iterator = allMessagePorts().find(m_identifier);
+        if (iterator != allMessagePorts().end()) {
+            // ThreadSafeWeakPtr::get() returns null as soon as the object has started destruction.
+            if (RefPtr messagePort = iterator->value.get(); !messagePort) {
+                allMessagePorts().remove(iterator);
+                portToContextIdentifier().remove(m_identifier);
+            }
         }
     }
 
+    // close() enters the MessagePortChannelRegistry which has its own lock. That lock can be held
+    // by another thread while it creates a MessagePort (acquiring allMessagePortsLock), so we must
+    // release allMessagePortsLock before calling close() to avoid a lock-order inversion.
     if (m_entangled)
         close();
 

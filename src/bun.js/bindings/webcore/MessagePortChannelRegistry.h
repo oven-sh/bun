@@ -31,6 +31,7 @@
 #include "ProcessIdentifier.h"
 #include <wtf/HashMap.h>
 #include <wtf/CheckedRef.h>
+#include <wtf/RecursiveLockAdapter.h>
 
 namespace WebCore {
 
@@ -57,6 +58,12 @@ public:
     WEBCORE_EXPORT void messagePortChannelDestroyed(MessagePortChannel&);
 
 private:
+    // In upstream WebKit all registry access happens on the main thread. In Bun the registry is a
+    // process-wide singleton shared by the main thread and every Worker thread, so every public
+    // method must serialize. The lock is recursive because MessagePortChannel's destructor calls
+    // back into messagePortChannelDestroyed(), and the takeAllMessagesForPort() callback can
+    // re-enter via MessagePort::entanglePorts() -> didEntangleLocalToRemote().
+    RecursiveLock m_lock;
     UncheckedKeyHashMap<MessagePortIdentifier, WeakRef<MessagePortChannel>> m_openChannels;
 };
 

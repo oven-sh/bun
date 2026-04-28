@@ -8,8 +8,8 @@
 
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
-import net from "net";
 import { once } from "events";
+import net from "net";
 
 function u16le(n: number) {
   return Buffer.from([n & 0xff, (n >> 8) & 0xff]);
@@ -65,12 +65,7 @@ function okPacket(seq: number) {
 }
 
 function errorPacket(seq: number, errno: number, message: string) {
-  const payload = Buffer.concat([
-    Buffer.from([0xff]),
-    u16le(errno),
-    Buffer.from("#42000"),
-    Buffer.from(message),
-  ]);
+  const payload = Buffer.concat([Buffer.from([0xff]), u16le(errno), Buffer.from("#42000"), Buffer.from(message)]);
   return packet(seq, payload);
 }
 

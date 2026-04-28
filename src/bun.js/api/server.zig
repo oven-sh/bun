@@ -1195,7 +1195,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             if (first_arg.isString()) {
                 const url_zig_str = try arguments[0].toSlice(ctx, bun.default_allocator);
                 defer url_zig_str.deinit();
-                var temp_url_str = url_zig_str.slice();
+                const temp_url_str = url_zig_str.slice();
 
                 if (temp_url_str.len == 0) {
                     const fetch_error = jsc.WebCore.Fetch.fetch_error_blank_url;
@@ -1204,14 +1204,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                 var url = URL.parse(temp_url_str);
 
-                if (url.hostname.len == 0) {
-                    url = URL.parse(
-                        strings.append(this.allocator, this.base_url_string_for_joining, url.pathname) catch unreachable,
-                    );
-                } else {
-                    temp_url_str = this.allocator.dupe(u8, temp_url_str) catch unreachable;
-                    url = URL.parse(temp_url_str);
-                }
+                // Both branches produce a heap-owned buffer that `url.href` borrows.
+                // `bun.String.cloneUTF8(url.href)` below makes its own copy, so this
+                // buffer must be freed before we leave the block.
+                const owned_url_buf: []const u8 = if (url.hostname.len == 0)
+                    bun.handleOom(strings.append(this.allocator, this.base_url_string_for_joining, url.pathname))
+                else
+                    bun.handleOom(this.allocator.dupe(u8, temp_url_str));
+                defer this.allocator.free(owned_url_buf);
+                url = URL.parse(owned_url_buf);
 
                 if (arguments.len >= 2 and arguments[1].isObject()) {
                     var opts = arguments[1];

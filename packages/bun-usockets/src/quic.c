@@ -758,7 +758,11 @@ void us_quic_listen_socket_close(us_quic_listen_socket_t *ls) {
 }
 
 int us_quic_listen_socket_port(us_quic_listen_socket_t *ls) {
-    return us_udp_socket_bound_port(ls->udp);
+    /* ls->udp goes NULL in udp_on_close while ls itself survives until
+     * context_free; read from the cached getsockname() result instead. */
+    return ntohs(ls->local.ss_family == AF_INET6
+        ? ((struct sockaddr_in6 *) &ls->local)->sin6_port
+        : ((struct sockaddr_in *) &ls->local)->sin_port);
 }
 
 int us_quic_listen_socket_local_address(us_quic_listen_socket_t *ls, char *buf, int len) {

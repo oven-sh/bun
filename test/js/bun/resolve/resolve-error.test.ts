@@ -116,7 +116,7 @@ describe("ResolveMessage", () => {
   // toJSON) then accessed the inactive `.resolve` union field — garbage in
   // release, a hard panic in safe/debug builds. Run in a subprocess so the
   // panic (if it regresses) doesn't take down the test runner.
-  it("NameTooLong error has .resolve metadata (specifier/importKind/toJSON are safe)", async () => {
+  it.concurrent("NameTooLong error has .resolve metadata (specifier/importKind/toJSON are safe)", async () => {
     const src = `
       // Exceeds MAX_PATH_BYTES * 1.5 on every platform (Windows' is largest at ~98302).
       const long = Buffer.alloc(150000, "a").toString();
@@ -150,7 +150,7 @@ describe("ResolveMessage", () => {
   // both triggers the fast-path and fits — verify `.specifier` is populated
   // via `BabyString.in` there. Skipped on Windows: the threshold (~147k)
   // itself exceeds u16, so no length can hit both conditions.
-  it.skipIf(isWindows)("NameTooLong error populates .specifier when it fits in u16", async () => {
+  it.concurrent.skipIf(isWindows)("NameTooLong error populates .specifier when it fits in u16", async () => {
     const src = `
       const long = Buffer.alloc(10000, "a").toString();
       const spec = "./" + long + ".js";

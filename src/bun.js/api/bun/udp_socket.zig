@@ -636,7 +636,7 @@ pub const UDPSocket = struct {
 
         var iter = try arg.arrayIterator(globalThis);
 
-        var i: u16 = 0;
+        var i: u32 = 0;
         var port: JSValue = .zero;
         while (try iter.next()) |val| : (i += 1) {
             if (i >= array_len) {

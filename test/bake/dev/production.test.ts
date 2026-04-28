@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
+import { existsSync, readdirSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps } from "../bake-harness";
@@ -585,8 +585,9 @@ export default async function logIt(message: string) {
 
     // --debug-dump-server-files is gated behind FeatureFlags.bake_debugging_features,
     // which is on for debug/canary builds (this test runs against a debug build).
-    const { exitCode, stderr } =
-      await Bun.$`${bunExe()} build --app --debug-dump-server-files ./src/index.tsx`.cwd(dir).throws(false);
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app --debug-dump-server-files ./src/index.tsx`
+      .cwd(dir)
+      .throws(false);
 
     const stderrText = stderr.toString();
 
@@ -597,20 +598,23 @@ export default async function logIt(message: string) {
 
     // The cross-graph proxy for client-side dispatch is still unimplemented; the
     // bundler now warns instead of panicking.
-    expect(stderrText).toContain("\"use server\" is partially implemented");
+    expect(stderrText).toContain('"use server" is partially implemented');
 
     // Walk the dumped server output and find the bundle containing the wrapped exports.
     const distRoot = path.join(dir, "dist");
     expect(existsSync(distRoot)).toBe(true);
 
-    const allFiles = (await Bun.$`find ${distRoot} -type f -name "*.js"`.text()).trim().split("\n").filter(Boolean);
+    // Recursive readdir works on Windows too, unlike a `find` shell-out.
+    const allFiles = readdirSync(distRoot, { recursive: true })
+      .map(name => path.join(distRoot, name as string))
+      .filter(p => p.endsWith(".js"));
     expect(allFiles.length).toBeGreaterThan(0);
 
     let actionsBundle: string | null = null;
     for (const file of allFiles) {
       const content = await Bun.file(file).text();
-      // Match either a direct call (unminified debug build) or the wrapper symbol after
-      // potential renaming. The string "registerServerReference" being imported is the tell.
+      // The literal symbol matches both the wrap call (e.g. `$registerServerReference(...)`
+      // after renaming) and the generated `import { registerServerReference }` statement.
       if (content.includes("registerServerReference") && content.includes("greet")) {
         actionsBundle = content;
         break;
@@ -624,8 +628,9 @@ export default async function logIt(message: string) {
     expect(actionsBundle!).toContain('"increment"');
     expect(actionsBundle!).toContain('"default"');
 
-    // The wrap should reference react-server-dom-bun's server entry — the framework's
-    // configured server_runtime_import.
-    expect(actionsBundle!).toMatch(/react-server-dom-bun|registerServerReference/);
+    // The runtime symbol must be reached through an actual import statement, not just
+    // appear as a free reference (which would error at SSG time — see the
+    // recordUsage/tree-shaking note in the parser change).
+    expect(actionsBundle!).toMatch(/import\b[\s\S]*?registerServerReference[\s\S]*?from/);
   });
 });

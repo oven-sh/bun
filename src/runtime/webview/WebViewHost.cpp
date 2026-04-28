@@ -475,8 +475,10 @@ bool WebViewHost::mouseMoveIPC(float fromX, float fromY, float x, float y, uint3
     };
 
     if (steps < 1) steps = 1;
-    // steps intermediate + one final; clickCount 0 is the convention for
-    // non-click mouse events (MouseMoved/Dragged have no click count).
+    // (steps - 1) intermediate events at fractions i/steps, then the
+    // final event at the target — `steps` events total. clickCount 0 is
+    // the convention for non-click mouse events (MouseMoved/Dragged have
+    // no click count).
     for (uint32_t i = 1; i < steps; ++i) {
         double ix = static_cast<double>(fromX) + (static_cast<double>(x) - static_cast<double>(fromX)) * (static_cast<double>(i) / static_cast<double>(steps));
         double iy = static_cast<double>(fromY) + (static_cast<double>(y) - static_cast<double>(fromY)) * (static_cast<double>(i) / static_cast<double>(steps));

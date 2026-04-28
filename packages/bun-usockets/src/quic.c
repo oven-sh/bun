@@ -774,6 +774,34 @@ void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {
 void *us_quic_socket_context_ext(us_quic_socket_context_t *ctx) { return ctx + 1; }
 struct us_loop_t *us_quic_socket_context_loop(us_quic_socket_context_t *ctx) { return ctx->loop; }
 
+/* RFC 9000 §14: QUIC packets must not be IP-fragmented. _PROBE (vs _DO) sets
+ * DF but ignores the kernel's cached path-MTU so lsquic's own DPLPMTUD can
+ * send oversized probes without sendmsg returning EMSGSIZE. Set both v4 and
+ * v6 since the dual-stack client socket carries v4-mapped traffic. Mirrors
+ * lsquic's reference setup in bin/test_common.c. */
+static void us_quic_set_dontfrag(struct us_udp_socket_t *udp) {
+    LIBUS_SOCKET_DESCRIPTOR fd = us_poll_fd((struct us_poll_t *) udp);
+    int on;
+#if defined(IP_MTU_DISCOVER)
+    on = IP_PMTUDISC_PROBE;
+    setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &on, sizeof(on));
+#elif defined(IP_DONTFRAG)
+    on = 1;
+    setsockopt(fd, IPPROTO_IP, IP_DONTFRAG, &on, sizeof(on));
+#elif defined(_WIN32)
+    on = 1;
+    setsockopt(fd, IPPROTO_IP, IP_DONTFRAGMENT, (const char *) &on, sizeof(on));
+#endif
+#if defined(IPV6_MTU_DISCOVER)
+    on = IP_PMTUDISC_PROBE;
+    setsockopt(fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &on, sizeof(on));
+#elif defined(IPV6_DONTFRAG)
+    on = 1;
+    setsockopt(fd, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *) &on, sizeof(on));
+#endif
+    (void) on;
+}
+
 us_quic_listen_socket_t *us_quic_socket_context_listen(
     us_quic_socket_context_t *ctx, const char *host, int port,
     unsigned int stream_ext_size)
@@ -789,6 +817,7 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(
         us_quic_udp_on_data, us_quic_udp_on_drain, us_quic_udp_on_close, NULL,
         host, (unsigned short) port, 0, &err, ls);
     if (!ls->udp) { free(ls); return NULL; }
+    us_quic_set_dontfrag(ls->udp);
 
     /* Record actual bound address — packet_in needs sa_local. */
     socklen_t sl = sizeof(ls->local);
@@ -1133,6 +1162,7 @@ static us_quic_listen_socket_t *us_quic_client_endpoint(us_quic_socket_context_t
             "0.0.0.0", 0, 0, &err, ls);
     }
     if (!ls->udp) { free(ls); return NULL; }
+    us_quic_set_dontfrag(ls->udp);
     socklen_t sl = sizeof(ls->local);
     getsockname(us_poll_fd((struct us_poll_t *) ls->udp), (struct sockaddr *) &ls->local, &sl);
     ls->next = ctx->listeners;

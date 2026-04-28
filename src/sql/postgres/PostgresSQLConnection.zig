@@ -1612,16 +1612,17 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             // the prior result set's FieldDescription slice and owned column
             // names, and reset the state derived from those fields so the
             // next DataRow rebuilds the structure for the new result set.
-            if (statement.fields.len > 0) {
-                for (statement.fields) |*field| {
-                    field.deinit();
-                }
-                bun.default_allocator.free(statement.fields);
-                statement.cached_structure.deinit();
-                statement.cached_structure = .{};
-                statement.needs_duplicate_check = true;
-                statement.fields_flags = .{};
+            // A prior result set may have had zero fields (e.g. `SELECT;`)
+            // yet still populated cached_structure via DataRow, so reset the
+            // derived state unconditionally.
+            for (statement.fields) |*field| {
+                field.deinit();
             }
+            bun.default_allocator.free(statement.fields);
+            statement.cached_structure.deinit();
+            statement.cached_structure = .{};
+            statement.needs_duplicate_check = true;
+            statement.fields_flags = .{};
             statement.fields = description.fields;
         },
         .Authentication => {

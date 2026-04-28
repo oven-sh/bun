@@ -1936,6 +1936,17 @@ if (isDockerEnabled()) {
       expect(result).toEqual([[{ a: 1 }], [{ b: 2, c: 3 }]]);
     });
 
+    test("simple query with multiple statements including a zero-column result set", async () => {
+      // `SELECT;` returns one row with zero columns. The zero-field
+      // RowDescription must still invalidate the cached structure so the
+      // following result set is built correctly.
+      const result = await sql`select;select 1 as a`.simple();
+      expect(result).toEqual([[{}], [{ a: 1 }]]);
+
+      const result2 = await sql`select 1 as a;select;select 2 as b`.simple();
+      expect(result2).toEqual([[{ a: 1 }], [{}], [{ b: 2 }]]);
+    });
+
     // t('listen and notify', async() => {
     //   const sql = postgres(options)
     //   const channel = 'hello'

@@ -833,6 +833,7 @@ pub const FFI = struct {
     pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) JSValue {
         var function: *Function = @ptrFromInt(ctx.asPtrAddress());
         function.deinit(globalThis);
+        bun.default_allocator.destroy(function);
         return .js_undefined;
     }
 
@@ -1620,7 +1621,7 @@ pub const FFI = struct {
             }
 
             try source_code.append(0);
-            // defer source_code.deinit();
+            defer source_code.deinit();
 
             const state = TCC.State.init(Function, .{
                 .options = tcc_options,

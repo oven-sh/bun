@@ -14,8 +14,12 @@ fn JSSocketType(comptime ssl: bool) type {
     }
 }
 
-fn selectALPNCallback(_: ?*BoringSSL.SSL, out: [*c][*c]const u8, outlen: [*c]u8, in: [*c]const u8, inlen: c_uint, arg: ?*anyopaque) callconv(.c) c_int {
-    const this = bun.cast(*TLSSocket, arg);
+fn selectALPNCallback(ssl: ?*BoringSSL.SSL, out: [*c][*c]const u8, outlen: [*c]u8, in: [*c]const u8, inlen: c_uint, _: ?*anyopaque) callconv(.c) c_int {
+    // SSL_CTX_set_alpn_select_cb registers on the listener-level SSL_CTX, so its
+    // `arg` is shared across every accepted connection — using it for a
+    // per-connection *TLSSocket is a UAF when handshakes overlap. Read the
+    // socket back from the per-SSL ex_data slot set in onOpen instead.
+    const this = bun.cast(*TLSSocket, BoringSSL.SSL_get_ex_data(ssl, 0) orelse return BoringSSL.SSL_TLSEXT_ERR_NOACK);
     if (this.protos) |protos| {
         if (protos.len == 0) {
             return BoringSSL.SSL_TLSEXT_ERR_NOACK;
@@ -459,7 +463,10 @@ pub fn NewSocket(comptime ssl: bool) type {
                         }
                         if (this.protos) |protos| {
                             if (this.isServer()) {
-                                BoringSSL.SSL_CTX_set_alpn_select_cb(BoringSSL.SSL_get_SSL_CTX(ssl_ptr), selectALPNCallback, bun.cast(*anyopaque, this));
+                                // Per-connection: callback reads `this` from the SSL,
+                                // not the CTX-level arg (shared across the listener).
+                                _ = BoringSSL.SSL_set_ex_data(ssl_ptr, 0, this);
+                                BoringSSL.SSL_CTX_set_alpn_select_cb(BoringSSL.SSL_get_SSL_CTX(ssl_ptr), selectALPNCallback, null);
                             } else {
                                 _ = BoringSSL.SSL_set_alpn_protos(ssl_ptr, protos.ptr, @as(c_uint, @intCast(protos.len)));
                             }

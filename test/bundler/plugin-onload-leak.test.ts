@@ -80,4 +80,4 @@ test("Bun.build onLoad plugin does not leak the Load struct per matched file", a
   expect(stderr).not.toContain("build failed");
   expect(stdout).toBe("");
   expect(exitCode).toBe(0);
-}, 120_000);
+});

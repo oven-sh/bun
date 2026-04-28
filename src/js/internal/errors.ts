@@ -336,7 +336,7 @@ function hideStackFrames(fn) {
     try {
       return fn.$apply(this, args);
     } catch (error) {
-      Error.stackTraceLimit && ErrorCaptureStackTrace(error, wrappedFn);
+      if (Error.stackTraceLimit) ErrorCaptureStackTrace(error, wrappedFn);
       throw error;
     }
   }
@@ -561,7 +561,7 @@ function determineSpecificType(value) {
       }
       return `${lazyInternalUtilInspect().inspect(value, { depth: -1 })}`;
     case "string":
-      value.length > 28 && (value = `${StringPrototypeSlice.$call(value, 0, 25)}...`);
+      if (value.length > 28) value = `${StringPrototypeSlice.$call(value, 0, 25)}...`;
       if (StringPrototypeIndexOf.$call(value, "'") === -1) {
         return `type string ('${value}')`;
       }

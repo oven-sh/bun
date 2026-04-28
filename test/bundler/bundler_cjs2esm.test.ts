@@ -392,4 +392,180 @@ describe("bundler", () => {
       stdout: '[[{"xyz":456},456],[{"xyz":123},123],[{"xyz":456},456],[{"xyz":123},123]]',
     },
   });
+
+  // Object.defineProperty(exports, ...) pattern tests
+
+  itBundled("cjs2esm/DefinePropertyValuePattern", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo } from 'lib';
+        console.log(foo);
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        Object.defineProperty(exports, "__esModule", { value: true });
+        Object.defineProperty(exports, "foo", { value: "hello" });
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "hello",
+    },
+  });
+
+  itBundled("cjs2esm/DefinePropertyValueTreeShaking", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo } from 'lib';
+        console.log(foo);
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        Object.defineProperty(exports, "__esModule", { value: true });
+        Object.defineProperty(exports, "foo", { value: "kept" });
+        Object.defineProperty(exports, "bar", { value: "remove_me" });
+      `,
+    },
+    cjs2esm: true,
+    dce: true,
+    treeShaking: true,
+    run: {
+      stdout: "kept",
+    },
+  });
+
+  itBundled("cjs2esm/DefinePropertyGetterPattern", {
+    files: {
+      "/entry.js": /* js */ `
+        import { pi } from 'lib';
+        console.log(pi);
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        Object.defineProperty(exports, "__esModule", { value: true });
+        var _pi = 3.14;
+        Object.defineProperty(exports, "pi", {
+          enumerable: true,
+          get: function() { return _pi; }
+        });
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "3.14",
+    },
+  });
+
+  itBundled("cjs2esm/DefinePropertyGetterTreeShaking", {
+    files: {
+      "/entry.js": /* js */ `
+        import { used } from 'lib';
+        console.log(used);
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        Object.defineProperty(exports, "__esModule", { value: true });
+        var _used = "yes";
+        var _unused = "remove_me";
+        Object.defineProperty(exports, "used", {
+          enumerable: true,
+          get: function() { return _used; }
+        });
+        Object.defineProperty(exports, "unused", {
+          enumerable: true,
+          get: function() { return _unused; }
+        });
+      `,
+    },
+    cjs2esm: true,
+    dce: true,
+    treeShaking: true,
+    run: {
+      stdout: "yes",
+    },
+  });
+
+  itBundled("cjs2esm/DefinePropertyMixedWithDirectExports", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo, bar } from 'lib';
+        console.log(foo, bar);
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        Object.defineProperty(exports, "__esModule", { value: true });
+        Object.defineProperty(exports, "foo", { value: "from_define" });
+        exports.bar = "from_direct";
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "from_define from_direct",
+    },
+  });
+
+  itBundled("cjs2esm/DefinePropertyModuleExports", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo } from 'lib';
+        console.log(foo);
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        Object.defineProperty(module.exports, "__esModule", { value: true });
+        Object.defineProperty(module.exports, "foo", { value: "via_module" });
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "via_module",
+    },
+  });
+
+  itBundled("cjs2esm/DefinePropertyEnumerableFalseNotConverted", {
+    files: {
+      "/entry.js": /* js */ `
+        const lib = require('lib');
+        console.log(lib.foo);
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        Object.defineProperty(exports, "foo", { enumerable: false, value: "hidden" });
+      `,
+    },
+    run: {
+      stdout: "hidden",
+    },
+  });
+
+  itBundled("cjs2esm/DefinePropertyWithSetterNotConverted", {
+    files: {
+      "/entry.js": /* js */ `
+        const lib = require('lib');
+        console.log(lib.foo);
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        var _foo = "with_setter";
+        Object.defineProperty(exports, "foo", {
+          get: function() { return _foo; },
+          set: function(v) { _foo = v; }
+        });
+      `,
+    },
+    run: {
+      stdout: "with_setter",
+    },
+  });
+
+  itBundled("cjs2esm/DefinePropertyMultipleExports", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a, b, c } from 'lib';
+        console.log(a, b, c);
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        Object.defineProperty(exports, "__esModule", { value: true });
+        Object.defineProperty(exports, "a", { value: 1 });
+        Object.defineProperty(exports, "b", { enumerable: true, value: 2 });
+        Object.defineProperty(exports, "c", { enumerable: true, get: function() { return 3; } });
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "1 2 3",
+    },
+  });
 });

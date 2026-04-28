@@ -168,6 +168,7 @@ pub fn CompressionStream(comptime T: type) type {
 
             vm.eventLoop().runCallback(write_callback, global, this_value, &.{});
 
+            if (this.pending_reset) resetInternal(this, global, this_value);
             if (this.pending_close) _ = closeInternal(this);
         }
 
@@ -245,11 +246,25 @@ pub fn CompressionStream(comptime T: type) type {
         }
 
         pub fn reset(this: *T, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) jsc.JSValue {
+            resetInternal(this, globalThis, callframe.this());
+            return .js_undefined;
+        }
+
+        fn resetInternal(this: *T, globalThis: *jsc.JSGlobalObject, this_value: jsc.JSValue) void {
+            // reset() destroys and re-creates the brotli/zstd encoder state (or
+            // mutates the z_stream). Doing so while an async write is running on
+            // the threadpool would be a use-after-free / data race, so defer it
+            // until the in-flight write completes (mirrors pending_close).
+            if (this.write_in_progress) {
+                this.pending_reset = true;
+                return;
+            }
+            this.pending_reset = false;
+            if (this.closed) return;
             const err = this.stream.reset();
             if (err.isError()) {
-                emitError(this, globalThis, callframe.this(), err);
+                emitError(this, globalThis, this_value, err);
             }
-            return .js_undefined;
         }
 
         pub fn close(this: *T, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {

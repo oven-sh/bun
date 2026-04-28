@@ -128,13 +128,13 @@ fn matchDnsName(pattern: []const u8, hostname: []const u8) bool {
         if (pattern.len >= 2 and pattern[1] == '.') {
             const suffix = pattern[2..];
             // Disallow "*.tld" (suffix must contain at least one dot for proper domain hierarchy)
-            if (std.mem.indexOfScalar(u8, suffix, '.') != null) {
+            if (strings.containsChar(suffix, '.')) {
                 // Host must be at least "label.suffix" (suffix_len + 1 for dot + at least 1 char for label)
                 if (hostname.len > suffix.len + 1) {
                     const dot_index = hostname.len - suffix.len - 1;
                     // The character before suffix must be a dot, and there must be no other
                     // dots in the prefix (single-label wildcard only).
-                    if (hostname[dot_index] == '.' and std.mem.indexOfScalar(u8, hostname[0..dot_index], '.') == null) {
+                    if (hostname[dot_index] == '.' and !strings.containsChar(hostname[0..dot_index], '.')) {
                         const host_suffix = hostname[dot_index + 1 ..];
                         // RFC 4343: DNS names are case-insensitive
                         if (strings.eqlCaseInsensitiveASCII(suffix, host_suffix, true)) {

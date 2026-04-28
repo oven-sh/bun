@@ -925,6 +925,8 @@ pub const FetchTasklet = struct {
                 const source = readable.ptr.Bytes.parent();
                 source.cancel_handler = null;
                 source.cancel_ctx = null;
+                source.drain_handler = null;
+                source.drain_ctx = null;
             }
         }
     }
@@ -933,6 +935,17 @@ pub const FetchTasklet = struct {
         const this = bun.cast(*FetchTasklet, ctx.?);
         if (this.ignore_data) return;
         this.ignoreRemainingResponseBody();
+    }
+
+    /// ByteStream delivered `bytes` to the JS reader. Forward to the HTTP
+    /// thread so the HTTP/2 client can release per-stream flow-control
+    /// window proportional to what JS has actually drained; no-op for
+    /// HTTP/1.1 sockets.
+    fn onStreamConsumedCallback(ctx: ?*anyopaque, bytes: usize) void {
+        const this = bun.cast(*FetchTasklet, ctx.?);
+        if (this.signal_store.aborted.load(.monotonic)) return;
+        const http_ = this.http orelse return;
+        bun.http.http_thread.scheduleResponseBodyConsumed(http_.async_http_id, bytes);
     }
 
     fn toBodyValue(this: *FetchTasklet) Body.Value {
@@ -948,6 +961,7 @@ pub const FetchTasklet = struct {
                     .onStartStreaming = FetchTasklet.onStartStreamingHTTPResponseBodyCallback,
                     .onReadableStreamAvailable = FetchTasklet.onReadableStreamAvailable,
                     .onStreamCancelled = FetchTasklet.onStreamCancelledCallback,
+                    .onStreamConsumed = FetchTasklet.onStreamConsumedCallback,
                 },
             };
             return response;

@@ -76,6 +76,16 @@ pub fn unpipeWithoutDeref(this: *@This()) void {
     this.pipe.onPipe = null;
 }
 
+/// Report `n` bytes delivered to the JS consumer (reader fulfilled, pipe
+/// target, or buffer-action sink) so the producer can release backpressure.
+/// Bytes parked in `this.buffer` awaiting a future `onPull` are *not*
+/// reported until that pull happens.
+inline fn didDrain(this: *@This(), n: usize) void {
+    if (n == 0) return;
+    const source = this.parent();
+    if (source.drain_handler) |handler| handler(source.drain_ctx, n);
+}
+
 pub fn onData(
     this: *@This(),
     stream: streams.Result,
@@ -98,6 +108,7 @@ pub fn onData(
     this.has_received_last_chunk = stream.isDone();
 
     if (this.pipe.ctx) |ctx| {
+        this.didDrain(stream.slice().len);
         this.pipe.onPipe.?(ctx, stream, allocator);
         return;
     }
@@ -105,6 +116,10 @@ pub fn onData(
     const chunk = stream.slice();
 
     if (this.buffer_action) |*action| {
+        // Buffer-action consumers (`readableStreamToText` etc.) explicitly
+        // want the whole body; treat every append as consumed so the
+        // producer isn't throttled waiting for a pull that never comes.
+        this.didDrain(chunk.len);
         if (stream == .err) {
             defer {
                 this.buffer.clearAndFree();
@@ -206,6 +221,7 @@ pub fn onData(
 
         log("ByteStream.onData pending.run()", .{});
 
+        this.didDrain(to_copy.len);
         this.pending.run();
 
         return;
@@ -306,6 +322,7 @@ pub fn onPull(this: *@This(), buffer: []u8, view: jsc.JSValue) streams.Result {
         if (this.has_received_last_chunk and remaining_in_buffer.len == 0) {
             this.buffer.clearAndFree();
             this.done = true;
+            this.didDrain(to_write);
 
             return .{
                 .into_array_and_done = .{
@@ -315,6 +332,7 @@ pub fn onPull(this: *@This(), buffer: []u8, view: jsc.JSValue) streams.Result {
             };
         }
 
+        this.didDrain(to_write);
         return .{
             .into_array = .{
                 .value = view,

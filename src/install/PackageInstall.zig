@@ -160,6 +160,17 @@ pub const PackageInstall = struct {
         resolution: *const Resolution,
         root_node_modules_dir: std.fs.Dir,
     ) bool {
+        // If the existing entry's form (symlink vs. real directory) doesn't match
+        // what the new resolution expects, force a reinstall. This catches cases
+        // like `bun link --save` followed by `bun install <pkg>`, where the
+        // existing `node_modules/<pkg>` is still a symlink into the linked clone
+        // but the new resolution points at an npm/tarball/git package that must
+        // be extracted on top. The reverse direction (real dir -> link) is also
+        // handled here.
+        if (!this.verifyEntryKindMatchesResolution(resolution.tag, root_node_modules_dir)) {
+            return false;
+        }
+
         const verified =
             switch (resolution.tag) {
                 .git => this.verifyGitResolution(&resolution.value.git, root_node_modules_dir),
@@ -177,6 +188,48 @@ pub const PackageInstall = struct {
             return this.verifyPatchHash(patch, root_node_modules_dir);
         }
         return verified;
+    }
+
+    /// Returns true if the existing `node_modules/<pkg>` entry (if any) is the
+    /// right kind for the given resolution tag — a top-level symlink for the
+    /// resolutions that `installFromLink` creates (`.symlink`, `.workspace`,
+    /// `.root`) and a real directory for everything else. On mismatch, returns
+    /// false and the caller forces a reinstall.
+    ///
+    /// Note `.folder` installs (including transitive non-workspace `file:`
+    /// deps) go through `installWithSymlink` which creates a **real directory**
+    /// at `node_modules/<pkg>` and populates it with per-file symlinks — the
+    /// top-level entry is not itself a symlink, so `.folder` lands in the
+    /// `else` branch alongside npm/tarball/git.
+    ///
+    /// Missing-entry behavior is asymmetric but reinstall is correct in both
+    /// cases:
+    ///   - `expected_symlink == false` (npm/git/tarball/folder): a missing
+    ///     entry also reports `entry_is_symlink == false`, so the kinds match
+    ///     and we fall through to the downstream verify steps (package.json
+    ///     check / directoryExistsAt), which report the miss and trigger the
+    ///     reinstall there.
+    ///   - `expected_symlink == true` (.symlink/.workspace/.root): a missing
+    ///     entry still reports false, so the mismatch check here returns
+    ///     false early and skips the downstream steps — reinstall still
+    ///     happens, just via this early exit rather than through package.json
+    ///     checks.
+    fn verifyEntryKindMatchesResolution(
+        this: *@This(),
+        tag: Resolution.Tag,
+        root_node_modules_dir: std.fs.Dir,
+    ) bool {
+        const expected_symlink = switch (tag) {
+            .symlink, .workspace, .root => true,
+            else => false,
+        };
+
+        const entry_is_symlink = this.node_modules.entryIsSymlink(
+            root_node_modules_dir,
+            this.destination_dir_subpath,
+        );
+
+        return entry_is_symlink == expected_symlink;
     }
 
     // Only check for destination directory in node_modules. We can't use package.json because

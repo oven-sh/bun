@@ -72,6 +72,33 @@ pub const PackageInstaller = struct {
         }
 
         // Since the stack size of these functions are rather large, let's not let them be inlined.
+        noinline fn entryIsSymlinkWithoutOpeningDirectories(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8) bool {
+            var path_buf: bun.PathBuffer = undefined;
+            const parts: [2][]const u8 = .{ this.path.items, file_path };
+            const joined = bun.path.joinZBuf(&path_buf, &parts, .auto);
+            return switch (bun.sys.lstatat(.fromStdDir(root_node_modules_dir), joined)) {
+                .result => |stat| bun.S.ISLNK(@intCast(stat.mode)),
+                .err => false,
+            };
+        }
+
+        /// Returns true if `<node_modules path>/<file_path>` exists and is a symlink
+        /// (as opposed to a real directory/file). Used to detect stale `bun link`
+        /// entries when a new install wants a real extracted package.
+        pub fn entryIsSymlink(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8) bool {
+            if (file_path.len + this.path.items.len * 2 < bun.MAX_PATH_BYTES) {
+                return this.entryIsSymlinkWithoutOpeningDirectories(root_node_modules_dir, file_path);
+            }
+
+            const dir = FD.fromStdDir(this.openDir(root_node_modules_dir) catch return false);
+            defer dir.close();
+            return switch (bun.sys.lstatat(dir, file_path)) {
+                .result => |stat| bun.S.ISLNK(@intCast(stat.mode)),
+                .err => false,
+            };
+        }
+
+        // Since the stack size of these functions are rather large, let's not let them be inlined.
         noinline fn openFileWithoutOpeningDirectories(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8) bun.sys.Maybe(bun.sys.File) {
             var path_buf: bun.PathBuffer = undefined;
             const parts: [2][]const u8 = .{ this.path.items, file_path };

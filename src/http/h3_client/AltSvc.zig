@@ -80,7 +80,7 @@ const Record = struct {
     expires_at: i64,
 };
 
-var cache: std.StringHashMapUnmanaged(Record) = .{};
+var cache: bun.StringHashMapUnmanaged(Record) = .{};
 
 fn key(buf: []u8, hostname: []const u8, port: u16) []const u8 {
     return std.fmt.bufPrint(buf, "{s}:{d}", .{ hostname, port }) catch buf;

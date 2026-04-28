@@ -1331,8 +1331,16 @@ pub const HTTPResponseSink = HTTPServerWritable(false, false);
 pub const H3ResponseSink = HTTPServerWritable(true, true);
 pub const NetworkSink = struct {
     pub const new = bun.TrivialNew(@This());
-    pub const deinit = bun.TrivialDeinit(@This());
 
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
+    /// One ref is owned by the JS wrapper (dropped via `finalize()` from the
+    /// C++ destructor), and one ref is owned by the `MultiPartUpload` task via
+    /// its `callback_context` back-pointer (dropped via `finalize()` from the
+    /// upload-completion callback). The struct is freed when both have run.
+    ref_count: RefCount,
     task: ?*bun.S3.MultiPartUpload = null,
     signal: Signal = .{},
     globalThis: *JSGlobalObject = undefined,
@@ -1388,6 +1396,14 @@ pub const NetworkSink = struct {
     }
     pub fn finalize(this: *@This()) void {
         this.detachWritable();
+        this.deref();
+    }
+
+    fn deinit(this: *@This()) void {
+        this.detachWritable();
+        this.flushPromise.deinit();
+        this.endPromise.deinit();
+        bun.destroy(this);
     }
 
     fn detachWritable(this: *@This()) void {
@@ -1429,17 +1445,12 @@ pub const NetworkSink = struct {
         // we are done flushing no backpressure
         return .{ .result = jsc.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(0)) };
     }
-    pub fn finalizeAndDestroy(this: *@This()) void {
-        this.finalize();
-        bun.destroy(this);
-    }
-
     pub fn abort(this: *@This()) void {
         this.ended = true;
         this.done = true;
         this.signal.close(null);
         this.cancel = true;
-        this.finalize();
+        this.detachWritable();
     }
 
     pub fn write(this: *@This(), data: Result) Result.Writable {

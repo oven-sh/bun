@@ -8,14 +8,13 @@
 // RSS growth compared to a baseline run with a tiny value. Taking the
 // delta cancels out per-call overhead that is unrelated to the leaked
 // option strings (TinyCC allocations, ASAN quarantine, JIT code, etc).
+//
+// The C source path is passed in argv[2] by cc.test.ts, which owns the
+// temp directory (via tempDirWithFiles) and cleans it up.
 import { cc } from "bun:ffi";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
 
-const dir = mkdtempSync(path.join(tmpdir(), "bun-ffi-cc-leak-"));
-const source = path.join(dir, "add.c");
-writeFileSync(source, "int add(int a, int b) { return a + b; }\n");
+const source = process.argv[2];
+if (!source) throw new Error("usage: bun cc-leak-fixture.js <path/to/add.c>");
 
 const ITERATIONS = 30;
 const WARMUP = 5;

@@ -611,15 +611,8 @@ describe("tls ciphers should work", () => {
 });
 
 it("server-side getPeerCertificate() should not leak", async () => {
-  // Server path goes SSL_get_peer_certificate → X509.toJS → toLegacyObject.
-  // Two leaks on that path:
-  //   1. SSL_get_peer_certificate returns a +1 X509 ref that was passed
-  //      through a non-owning X509View and never freed (pins the X509 past
-  //      session close).
-  //   2. toLegacyObject/computeRaw leaked a BIO on every call (and its
-  //      ArrayBuffer destructor BIO_free'd the data pointer instead of the
-  //      BIO, which is UB).
-  // With both fixed, RSS is flat after warmup.
+  // Guards against the SSL_get_peer_certificate X509 ref leak and the
+  // computeRaw BIO leak on the server getPeerCertificate() path.
   const { promise: serverSocketPromise, resolve: onServerSocket } = Promise.withResolvers<TLSSocket>();
   const server = tls.createServer(
     {

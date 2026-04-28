@@ -1932,12 +1932,7 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
   function callClose(controller: ReadableStreamDefaultController) {
     try {
       var source = controller.$underlyingSource;
-      const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
-      if (!stream) {
-        return;
-      }
-
-      if ($getByIdDirectPrivate(stream, "state") !== $streamReadable) return;
+      if (!$readableStreamDefaultControllerCanCloseOrEnqueue(controller)) return;
       controller.close();
     } catch (e) {
       globalThis.reportError(e);

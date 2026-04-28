@@ -87,5 +87,4 @@ test.skipIf(!isDebug)(
     expect(destroyed).toBeLessThanOrEqual(created);
     expect(exitCode).toBe(0);
   },
-  60_000,
 );

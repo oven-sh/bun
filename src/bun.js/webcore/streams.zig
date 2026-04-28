@@ -1337,9 +1337,10 @@ pub const NetworkSink = struct {
     pub const deref = RefCount.deref;
 
     /// One ref is owned by the JS wrapper (dropped via `finalize()` from the
-    /// C++ destructor), and one ref is owned by the `MultiPartUpload` task via
-    /// its `callback_context` back-pointer (dropped via `finalize()` from the
-    /// upload-completion callback). The struct is freed when both have run.
+    /// C++ destructor, or from `__doClose` when `.close()` detaches early)
+    /// and one by the `MultiPartUpload` task via its `callback_context`
+    /// back-pointer (dropped via `finalize()` from the upload-completion
+    /// callback). The struct is freed once both have run.
     ref_count: RefCount,
     task: ?*bun.S3.MultiPartUpload = null,
     signal: Signal = .{},

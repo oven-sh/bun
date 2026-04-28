@@ -158,7 +158,7 @@ describe("fetch() HTTP/2 adversarial", () => {
           clearInterval(t);
           console.log(JSON.stringify({ growth: peak - baseline, result: r.err ?? r.status }));
         `);
-        const { stdout, stderr, exitCode, killed } = await collect(proc, 30_000);
+        const { stdout, exitCode, killed } = await collect(proc, 30_000);
         expect(killed).toBe(false);
         const out = JSON.parse(stdout.trim());
         // Connection should error well before the ~80 MB of CONTINUATION payload
@@ -218,7 +218,7 @@ describe("fetch() HTTP/2 adversarial", () => {
           }).then(r => r.status, e => e.code || e.name);
           console.log(JSON.stringify(r));
         `);
-        const { stdout, stderr, exitCode, killed } = await collect(proc, 10_000);
+        const { stdout, exitCode, killed } = await collect(proc, 10_000);
         expect(killed).toBe(false);
         expect(exitCode).toBe(0);
         // Either the request errors with a flow-control code, or the server
@@ -240,7 +240,7 @@ describe("fetch() HTTP/2 adversarial", () => {
           }).then(r => r.status, e => e.name || e.code);
           console.log(r);
         `);
-      const { stdout, stderr, exitCode, killed } = await collect(proc, 10_000);
+      const { stdout, exitCode, killed } = await collect(proc, 10_000);
       expect(killed).toBe(false);
       // AbortSignal.timeout should fire → TimeoutError (or some HTTP2 code).
       expect(stdout.trim()).toMatch(/Timeout|Abort|HTTP2/i);
@@ -265,7 +265,7 @@ describe("fetch() HTTP/2 adversarial", () => {
           const body = await r.text().catch(e => "ERR:" + (e.code || e.name));
           console.log(JSON.stringify({ status: r.status, body }));
         `);
-        const { stdout, stderr, exitCode, killed } = await collect(proc, 10_000);
+        const { stdout, exitCode, killed } = await collect(proc, 10_000);
         expect(killed).toBe(false);
         const out = JSON.parse(stdout.trim());
         expect(out.status).toBe(200);
@@ -313,7 +313,7 @@ describe("fetch() HTTP/2 adversarial", () => {
           const t1 = performance.now();
           console.log(JSON.stringify({ len: body.length, ok: body === "x".repeat(50000), ms: Math.round(t1 - t0) }));
         `);
-        const { stdout, stderr, exitCode, killed } = await collect(proc, 30_000);
+        const { stdout, exitCode, killed } = await collect(proc, 30_000);
         expect(killed).toBe(false);
         const out = JSON.parse(stdout.trim());
         expect(out).toMatchObject({ len: 50_000, ok: true });
@@ -340,7 +340,7 @@ describe("fetch() HTTP/2 adversarial", () => {
           });
           console.log(r.status, await r.text());
         `);
-        const { stdout, stderr, exitCode, killed } = await collect(proc, 10_000);
+        const { stdout, exitCode, killed } = await collect(proc, 10_000);
         expect(killed).toBe(false);
         expect(stdout.trim()).toBe("200 ok");
         expect(exitCode).toBe(0);
@@ -366,7 +366,7 @@ describe("fetch() HTTP/2 adversarial", () => {
                   e => "ERR:" + (e.code || e.name));
           console.log(r);
         `);
-        const { stdout, stderr, exitCode, killed } = await collect(proc, 10_000);
+        const { stdout, exitCode, killed } = await collect(proc, 10_000);
         expect(killed).toBe(false);
         // Either fetch() or text() should surface the protocol error; the bad
         // padding must never produce a successful body.
@@ -403,7 +403,7 @@ describe("fetch() HTTP/2 adversarial", () => {
       },
       async url => {
         await using proc = spawnFetch(fetchOnce(url));
-        const { stdout, stderr, exitCode, killed } = await collect(proc, 10_000);
+        const { stdout, exitCode, killed } = await collect(proc, 10_000);
         expect(killed).toBe(false);
         const out = JSON.parse(stdout.trim());
         expect(out.body).not.toBe("helloEXTRA");
@@ -428,7 +428,7 @@ describe("fetch() HTTP/2 adversarial", () => {
       },
       async url => {
         await using proc = spawnFetch(fetchOnce(url));
-        const { stdout, stderr, exitCode, killed } = await collect(proc, 10_000);
+        const { stdout, exitCode, killed } = await collect(proc, 10_000);
         expect(killed).toBe(false);
         const out = JSON.parse(stdout.trim());
         expect(out).not.toEqual({ status: 200, body: "partial" });
@@ -454,7 +454,7 @@ describe("fetch() HTTP/2 adversarial", () => {
       },
       async url => {
         await using proc = spawnFetch(fetchOnce(url));
-        const { stdout, stderr, exitCode, killed } = await collect(proc, 10_000);
+        const { stdout, exitCode, killed } = await collect(proc, 10_000);
         expect(killed).toBe(false);
         const out = JSON.parse(stdout.trim());
         expect(out.body).not.toBe("ab");
@@ -479,7 +479,7 @@ describe("fetch() HTTP/2 adversarial", () => {
       },
       async url => {
         await using proc = spawnFetch(fetchOnce(url));
-        const { stdout, stderr, exitCode, killed } = await collect(proc, 10_000);
+        const { stdout, exitCode, killed } = await collect(proc, 10_000);
         expect(killed).toBe(false);
         expect(JSON.parse(stdout.trim())).toEqual({ status: 200, body: "ok" });
         expect(exitCode).toBe(0);
@@ -495,7 +495,7 @@ describe("fetch() HTTP/2 adversarial", () => {
       },
       async url => {
         await using proc = spawnFetch(fetchOnce(url));
-        const { stdout, stderr, exitCode, killed } = await collect(proc, 5_000);
+        const { stdout, exitCode, killed } = await collect(proc, 5_000);
         expect(killed).toBe(false);
         expect(JSON.parse(stdout.trim())).toEqual({ err: "HTTP2ProtocolError" });
         expect(exitCode).toBe(0);

@@ -1763,16 +1763,27 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
   // completes the handshake. ssl_on_data must fire on_handshake there or the
   // socket never gets re-tagged for h2 and the frame bytes hit the HTTP/1.1
   // parser as Malformed_HTTP_Response. Neither node:tls nor Bun.listen exposes
-  // the 0.5-RTT write window, so this hits a real Cloudflare-fronted origin.
+  // the 0.5-RTT write window, so this hits a real Cloudflare-fronted origin —
+  // tolerate network blips by only failing on the specific regression code.
   test("GET https://registry.npmjs.org over protocol: http2", async () => {
     await using proc = spawnFetch(`
-      const r = await fetch("https://registry.npmjs.org", { protocol: "http2" });
-      console.log(r.status);
+      try {
+        const r = await fetch("https://registry.npmjs.org", { protocol: "http2" });
+        console.log("status", r.status);
+      } catch (e) { console.log("error", e?.code ?? e?.name ?? String(e)); }
     `);
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("200");
     expect(exitCode).toBe(0);
+    const out = stdout.trim();
+    // The bug under test surfaces as Malformed_HTTP_Response — DNS/connect
+    // failures or 5xx are environmental, not regressions.
+    expect(out).not.toContain("Malformed_HTTP_Response");
+    if (!out.startsWith("status")) {
+      console.warn(`skipping live h2 assertion: ${out}`);
+      return;
+    }
+    expect(out).toBe("status 200");
   });
 });
 

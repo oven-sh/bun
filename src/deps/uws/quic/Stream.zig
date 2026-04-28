@@ -39,5 +39,6 @@ pub const Stream = opaque {
 };
 
 const uws = @import("../../uws.zig");
-const Socket = uws.quic.Socket;
+
 const Header = uws.quic.Header;
+const Socket = uws.quic.Socket;

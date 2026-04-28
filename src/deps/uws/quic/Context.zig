@@ -29,6 +29,7 @@ pub const Context = opaque {
 };
 
 const uws = @import("../../uws.zig");
+
+const PendingConnect = uws.quic.PendingConnect;
 const Socket = uws.quic.Socket;
 const Stream = uws.quic.Stream;
-const PendingConnect = uws.quic.PendingConnect;

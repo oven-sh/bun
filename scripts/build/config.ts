@@ -7,19 +7,19 @@
  */
 
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
 import { homedir, arch as hostArch, platform as hostPlatform } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { NODEJS_ABI_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
-import { BuildError, assert } from "./error.ts";
+import { assert, BuildError } from "./error.ts";
 import { clangTargetArch } from "./tools.ts";
 import { cyan, dim, green } from "./tty.ts";
-import { defaultZigCommit } from "./zig.ts";
+import { ZIG_COMMIT } from "./zig.ts";
 
-export type OS = "linux" | "darwin" | "windows";
+export type OS = "linux" | "darwin" | "windows" | "freebsd";
 export type Arch = "x64" | "aarch64";
-export type Abi = "gnu" | "musl";
+export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
 export type BuildMode = "full" | "cpp-only" | "zig-only" | "link-only";
 export type WebKitMode = "prebuilt" | "local";
@@ -34,7 +34,8 @@ export type WebKitMode = "prebuilt" | "local";
  * vs sh), quoting, and tool executable suffixes.
  *
  * For all other modes (full, cpp-only, link-only), host == target
- * since we don't cross-compile C++.
+ * unless cfg.crossTarget is set (currently: Android), in which case
+ * the C++ side is cross-compiled via clang's --target/--sysroot.
  */
 export interface Host {
   os: OS;
@@ -51,7 +52,7 @@ export interface Host {
 const versionDefaults = {
   nodejsVersion: NODEJS_VERSION,
   nodejsAbiVersion: NODEJS_ABI_VERSION,
-  // zigCommit's default varies by host OS — see defaultZigCommit() in zig.ts.
+  zigCommit: ZIG_COMMIT,
   webkitVersion: WEBKIT_VERSION,
 };
 
@@ -71,8 +72,11 @@ export interface Config {
   linux: boolean;
   darwin: boolean;
   windows: boolean;
-  /** linux || darwin */
+  freebsd: boolean;
+  /** linux || darwin || freebsd */
   unix: boolean;
+  /** darwin || freebsd — kqueue-based event loop */
+  kqueue: boolean;
   x64: boolean;
   arm64: boolean;
 
@@ -120,6 +124,17 @@ export interface Config {
   tinycc: boolean;
   valgrind: boolean;
   fuzzilli: boolean;
+  /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */
+  unifiedSources: boolean;
+  /**
+   * Archive each `direct` dep's objects into a per-dep .a (the old
+   * behaviour). Default off — dep .o files go straight into bun's link/
+   * cpp-only archive instead. Turn on to bisect duplicate-symbol issues:
+   * a .a only contributes members the linker actually pulls.
+   */
+  archiveDeps: boolean;
+  /** Emit clang -ftime-trace .json next to each .o for build profiling. */
+  timeTrace: boolean;
 
   // ─── Environment ───
   ci: boolean;
@@ -180,12 +195,30 @@ export interface Config {
   rc: string | undefined;
   /** Windows: llvm-mt for nested cmake (CMAKE_MT). May be absent in some LLVM distros. */
   mt: string | undefined;
+  /** Windows-x64: nasm for BoringSSL's NASM-syntax assembly. */
+  nasm: string | undefined;
 
   // ─── macOS SDK (darwin only, undefined elsewhere) ───
   /** e.g. "13.0". Passed to deps as -DCMAKE_OSX_DEPLOYMENT_TARGET. */
   osxDeploymentTarget: string | undefined;
   /** SDK path from `xcrun --show-sdk-path`. Passed to deps as -DCMAKE_OSX_SYSROOT. */
   osxSysroot: string | undefined;
+
+  // ─── Cross-compilation (set when host != target for C++) ───
+  // Generic so future targets (e.g. cross-compiling to macOS from Linux)
+  // go through the same plumbing. Currently populated only for Android.
+  /** clang `--target=` triple, e.g. "aarch64-unknown-linux-android28". undefined = native. */
+  crossTarget: string | undefined;
+  /** clang `--sysroot=` path. For Android: `<ndk>/toolchains/llvm/prebuilt/<host>/sysroot`. */
+  sysroot: string | undefined;
+  /** Android NDK root. undefined when abi != "android". */
+  androidNdk: string | undefined;
+  /** Android API level (the N in `__ANDROID_API__=N`). undefined when abi != "android". */
+  androidApiLevel: number | undefined;
+  /** NDK compiler-rt/libunwind dir: `<ndk>/toolchains/llvm/prebuilt/<host>/lib/clang/<ver>/lib/linux`. */
+  androidNdkRuntimeDir: string | undefined;
+  /** FreeBSD release version targeted (e.g. "14.3"). undefined when os != "freebsd". */
+  freebsdVersion: string | undefined;
 
   // ─── Versioning ───
   /** Bun's own version (from package.json). */
@@ -226,11 +259,22 @@ export interface PartialConfig {
   tinycc?: boolean;
   valgrind?: boolean;
   fuzzilli?: boolean;
+  unifiedSources?: boolean;
+  archiveDeps?: boolean;
+  timeTrace?: boolean;
   ci?: boolean;
   buildkite?: boolean;
   webkit?: WebKitMode;
   buildDir?: string;
   cacheDir?: string;
+  /** Override NDK location (default: $ANDROID_NDK_ROOT etc). Only used when abi=android. */
+  androidNdk?: string;
+  /** Override Android API level (default: ANDROID_API_LEVEL_DEFAULT). Only used when abi=android. */
+  androidApiLevel?: number;
+  /** FreeBSD sysroot (extracted base.txz). Only used when os=freebsd. */
+  freebsdSysroot?: string;
+  /** FreeBSD release version (default: FREEBSD_VERSION_DEFAULT). Only used when os=freebsd. */
+  freebsdVersion?: string;
   // Version pins (defaults in versions.ts).
   nodejsVersion?: string;
   nodejsAbiVersion?: string;
@@ -287,6 +331,12 @@ export interface Toolchain {
    * source.ts) sidesteps the need.
    */
   mt: string | undefined;
+  /**
+   * Windows only: nasm. BoringSSL's win-x64 assembly is NASM syntax;
+   * clang's integrated assembler can't read it. win-aarch64 uses gas
+   * .S files instead, so this is x64-only in practice.
+   */
+  nasm: string | undefined;
 }
 
 /**
@@ -301,11 +351,13 @@ export function detectHost(): Host {
         ? "darwin"
         : plat === "win32"
           ? "windows"
-          : (() => {
-              throw new BuildError(`Unsupported host platform: ${plat}`, {
-                hint: "Bun builds on linux, darwin, or windows",
-              });
-            })();
+          : plat === "freebsd"
+            ? "freebsd"
+            : (() => {
+                throw new BuildError(`Unsupported host platform: ${plat}`, {
+                  hint: "Bun builds on linux, darwin, windows, or freebsd",
+                });
+              })();
 
   const a = hostArch();
   const arch: Arch =
@@ -322,9 +374,145 @@ export function detectHost(): Host {
 
 /**
  * Detect linux ABI (gnu vs musl) by checking for /etc/alpine-release.
+ * Android is never auto-detected — it's always a cross-compile target,
+ * so it must be requested explicitly via --abi=android.
  */
 export function detectLinuxAbi(): Abi {
   return existsSync("/etc/alpine-release") ? "musl" : "gnu";
+}
+
+/**
+ * Minimum Android API level we target. 28 = Android 9 (2018), the oldest
+ * release with the bionic syscall wrappers we rely on without raw-syscall
+ * fallbacks. Covers ~96% of active devices as of 2026.
+ */
+export const ANDROID_API_LEVEL_DEFAULT = 28;
+
+/**
+ * FreeBSD release we target. 14.x is the current production series; 14.3
+ * is the oldest 14.x still on download.freebsd.org. Building against 14.3
+ * produces binaries that run on 14.3+ (FreeBSD guarantees forward ABI
+ * compat within a major).
+ */
+export const FREEBSD_VERSION_DEFAULT = "14.3";
+
+/**
+ * Locate a FreeBSD sysroot (extracted base.txz). Checks env var then
+ * well-known install paths. The sysroot is arch-specific (different
+ * crt/libc for amd64 vs arm64), so when cross-compiling for arm64 we
+ * look for the `-arm64` variant first. Returns undefined if none found.
+ */
+export function detectFreebsdSysroot(arch: Arch): string | undefined {
+  const env = process.env.FREEBSD_SYSROOT;
+  if (env && existsSync(join(env, "usr", "include", "sys", "param.h"))) return env;
+  const candidates =
+    arch === "aarch64"
+      ? ["/opt/freebsd-sysroot-arm64", "/opt/freebsd-sysroot"]
+      : ["/opt/freebsd-sysroot", "/opt/freebsd-sysroot-amd64"];
+  for (const p of candidates) {
+    if (existsSync(join(p, "usr", "include", "sys", "param.h"))) return p;
+  }
+  return undefined;
+}
+
+/**
+ * Locate the Android NDK. Checks the conventional env vars in priority
+ * order, then a couple of well-known install paths. Returns undefined if
+ * none found — caller decides whether to error.
+ */
+export function detectAndroidNdk(): string | undefined {
+  for (const v of ["ANDROID_NDK_ROOT", "ANDROID_NDK_HOME", "ANDROID_NDK"]) {
+    const p = process.env[v];
+    if (p && existsSync(join(p, "toolchains"))) return p;
+  }
+  for (const p of ["/opt/android-ndk", "/usr/local/android-ndk"]) {
+    if (existsSync(join(p, "toolchains"))) return p;
+  }
+  // Android Studio's sdkmanager puts NDKs under $ANDROID_HOME/ndk/<version>.
+  // We don't pick one automatically — too easy to get a stale version.
+  return undefined;
+}
+
+/**
+ * NDK toolchain prebuilt directory for the current build host. The NDK
+ * ships one prebuilt per host OS (always x86_64; arm64 macOS runs it
+ * under Rosetta).
+ */
+function ndkHostTag(host: Host): string {
+  switch (host.os) {
+    case "linux":
+      return "linux-x86_64";
+    case "darwin":
+      return "darwin-x86_64";
+    case "windows":
+      return "windows-x86_64";
+    case "freebsd":
+      throw new BuildError("Android NDK does not ship FreeBSD prebuilts", {
+        hint: "Cross-compile to Android from a Linux host",
+      });
+  }
+}
+
+/**
+ * Make the host clang able to link Android binaries by symlinking the
+ * NDK's compiler-rt builtins + libunwind into clang's resource dir.
+ *
+ * clang's driver emits a FULL PATH to `<resource-dir>/lib/<triple>/
+ * libclang_rt.builtins.a` — there's no `-L`-style search, so the file
+ * must exist at exactly that path. Our host clang has no Android-target
+ * compiler-rt; the NDK does. This is the standard "bring your own clang"
+ * setup for NDK cross-builds (Chromium does the same).
+ *
+ * Idempotent. Warns with a sudo hint if the resource dir isn't writable
+ * (CI build images create the symlinks as root in bootstrap.sh/Dockerfile).
+ */
+function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: string): void {
+  const resourceDir = execSync(`"${cc}" -print-resource-dir`, { encoding: "utf8" }).trim();
+  const targetDir = join(resourceDir, "lib", triple);
+  // NDK r23+ layout: <prebuilt>/lib/clang/<ver>/lib/linux/<arch>/ for
+  // libunwind.a + new-style libclang_rt.builtins.a
+  const ndkPrebuilt = join(ndk, "toolchains", "llvm", "prebuilt", ndkHostTag(host));
+  const ndkClangLib = join(ndkPrebuilt, "lib", "clang");
+  // NDK ships exactly one clang version per release.
+  const ndkClangVer = readdirSync(ndkClangLib)[0];
+  if (ndkClangVer === undefined) {
+    throw new BuildError(`NDK clang resource dir not found under ${ndkClangLib}`);
+  }
+  const arch = triple.startsWith("x86_64") ? "x86_64" : "aarch64";
+  const ndkRtLinux = join(ndkClangLib, ndkClangVer, "lib", "linux");
+  // Populate BOTH layouts: apt.llvm.org clang uses old-style flat
+  // (lib/linux/libclang_rt.builtins-<arch>-android.a) while tarball builds use
+  // per-triple (lib/<triple>/libclang_rt.builtins.a). NDK r27 keeps builtins in
+  // the flat dir but libunwind in the per-arch subdir.
+  const flatDir = join(resourceDir, "lib", "linux");
+  const links = {
+    [join(targetDir, "libclang_rt.builtins.a")]: join(ndkRtLinux, `libclang_rt.builtins-${arch}-android.a`),
+    [join(targetDir, "libunwind.a")]: join(ndkRtLinux, arch, "libunwind.a"),
+    [join(flatDir, `libclang_rt.builtins-${arch}-android.a`)]: join(
+      ndkRtLinux,
+      `libclang_rt.builtins-${arch}-android.a`,
+    ),
+    [join(flatDir, arch, "libunwind.a")]: join(ndkRtLinux, arch, "libunwind.a"),
+  };
+  if (Object.keys(links).every(dst => existsSync(dst))) return;
+  try {
+    mkdirSync(targetDir, { recursive: true });
+    mkdirSync(join(flatDir, arch), { recursive: true });
+    for (const [dst, src] of Object.entries(links)) {
+      if (!existsSync(dst)) symlinkSync(src, dst);
+    }
+  } catch (cause) {
+    // Don't throw — zig-only mode doesn't need these, and on CI bootstrap.sh
+    // creates them as root during image build. The actual link step will fail
+    // loudly later if they're genuinely missing where needed.
+    const lnCmds = Object.entries(links)
+      .map(([dst, src]) => `sudo ln -sf "${src}" "${dst}"`)
+      .join(" && ");
+    console.warn(
+      `warning: could not link NDK compiler-rt into ${resourceDir} (${(cause as NodeJS.ErrnoException).code}). ` +
+        `If the final link fails on libclang_rt.builtins.a, run: sudo mkdir -p "${targetDir}" "${join(flatDir, arch)}" && ${lnCmds}`,
+    );
+  }
 }
 
 /**
@@ -349,7 +537,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const linux = os === "linux";
   const darwin = os === "darwin";
   const windows = os === "windows";
-  const unix = linux || darwin;
+  const freebsd = os === "freebsd";
+  const unix = linux || darwin || freebsd;
+  const kqueue = darwin || freebsd;
   const x64 = arch === "x64";
   const arm64 = arch === "aarch64";
 
@@ -379,7 +569,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
 
   // ASAN: default on for debug builds on arm64 macOS or linux
   const asanDefault = debug && ((darwin && arm64) || linux);
-  const asan = partial.asan ?? asanDefault;
+  // Android: force off. NDK ASAN deployment needs wrap.sh + runtime .so
+  // shipping alongside the binary; UBSan likewise. Not worth the matrix.
+  // FreeBSD: force off. Cross-compiled — we'd need to ship FreeBSD's
+  // libclang_rt.asan, and there's no -asan WebKit prebuilt for it.
+  const asan = abi === "android" || freebsd ? false : (partial.asan ?? asanDefault);
 
   // Zig ASAN follows ASAN unless explicitly overridden
   const zigAsan = partial.zigAsan ?? asan;
@@ -394,8 +588,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // LTO: default on only for CI release linux non-asan non-assertions
   const ltoDefault = release && linux && ci && !assertions && !asan;
   let lto = partial.lto ?? ltoDefault;
-  // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit)
-  if (asan && lto) {
+  // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit).
+  // Android: no LTO prebuilt WebKit exists; force off so the right tarball is fetched.
+  if ((asan && lto) || abi === "android") {
     lto = false;
   }
 
@@ -421,8 +616,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // failure is loud ("cannot find -l:libatomic.a") and the fix is obvious.
   const staticLibatomic = partial.staticLibatomic ?? true;
 
-  // TinyCC: off on Windows ARM64 (not supported), on elsewhere
-  const tinycc = partial.tinycc ?? !(windows && arm64);
+  // TinyCC: off on Windows ARM64 (not supported), Android (no upstream
+  // bionic support; FFI cc() falls back to dlopen-only), and FreeBSD
+  // (oven-sh/tinycc has no FreeBSD target).
+  const tinycc = partial.tinycc ?? !((windows && arm64) || abi === "android" || freebsd);
 
   const valgrind = partial.valgrind ?? false;
   const fuzzilli = partial.fuzzilli ?? false;
@@ -457,7 +654,77 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   assert(!baseline || x64, "baseline=true requires arch=x64 (baseline disables AVX which is x64-only)");
   assert(!valgrind || linux, "valgrind=true requires os=linux");
   assert(!(asan && valgrind), "Cannot enable both asan and valgrind simultaneously");
-  assert(os !== "linux" || abi !== undefined, "Linux builds require an abi (gnu or musl)");
+  assert(os !== "linux" || abi !== undefined, "Linux builds require an abi (gnu, musl, or android)");
+
+  // ─── Cross-compilation (Android) ───
+  // We keep using the host's clang (same version everywhere) and pass
+  // --target/--sysroot. The NDK is needed only for its bionic sysroot,
+  // libc++, and compiler-rt — not for its bundled clang.
+  let crossTarget: string | undefined;
+  let sysroot: string | undefined;
+  let androidNdk: string | undefined;
+  let androidApiLevel: number | undefined;
+  let androidNdkRuntimeDir: string | undefined;
+  if (abi === "android") {
+    androidNdk =
+      partial.androidNdk !== undefined
+        ? isAbsolute(partial.androidNdk)
+          ? partial.androidNdk
+          : resolve(cwd, partial.androidNdk)
+        : detectAndroidNdk();
+    if (androidNdk === undefined) {
+      throw new BuildError("--abi=android requires the Android NDK", {
+        hint: "Set ANDROID_NDK_ROOT or pass --android-ndk=<path>. Download: https://developer.android.com/ndk/downloads",
+      });
+    }
+    androidApiLevel = partial.androidApiLevel ?? ANDROID_API_LEVEL_DEFAULT;
+    const ndkPrebuilt = join(androidNdk, "toolchains", "llvm", "prebuilt", ndkHostTag(host));
+    sysroot = join(ndkPrebuilt, "sysroot");
+    if (!existsSync(sysroot)) {
+      throw new BuildError(`Android NDK sysroot not found at ${sysroot}`, {
+        hint: `Is ANDROID_NDK_ROOT (${androidNdk}) a valid NDK? Expected r26 or newer.`,
+      });
+    }
+    // NDK ships exactly one clang version per release.
+    const ndkClangLib = join(ndkPrebuilt, "lib", "clang");
+    const ndkClangVer = readdirSync(ndkClangLib)[0];
+    if (ndkClangVer === undefined) {
+      throw new BuildError(`NDK clang resource dir not found under ${ndkClangLib}`);
+    }
+    androidNdkRuntimeDir = join(ndkClangLib, ndkClangVer, "lib", "linux");
+    const llvmArch = arch === "x64" ? "x86_64" : "aarch64";
+    crossTarget = `${llvmArch}-unknown-linux-android${androidApiLevel}`;
+    linkNdkRuntimesIntoClang(toolchain.cc, androidNdk, host, crossTarget);
+  }
+
+  // ─── Cross-compilation (FreeBSD) ───
+  // Same pattern as Android: host clang + --target/--sysroot. The sysroot
+  // is an extracted base.txz (libc, libc++, headers, crt files). When
+  // building ON FreeBSD, no cross flags are needed.
+  let freebsdVersion: string | undefined;
+  if (freebsd) {
+    freebsdVersion = partial.freebsdVersion ?? FREEBSD_VERSION_DEFAULT;
+    if (host.os !== "freebsd") {
+      sysroot =
+        partial.freebsdSysroot !== undefined
+          ? isAbsolute(partial.freebsdSysroot)
+            ? partial.freebsdSysroot
+            : resolve(cwd, partial.freebsdSysroot)
+          : detectFreebsdSysroot(arch);
+      if (sysroot === undefined) {
+        const dlArch = arch === "x64" ? "amd64" : "arm64";
+        const sysrootPath = arch === "x64" ? "/opt/freebsd-sysroot" : "/opt/freebsd-sysroot-arm64";
+        throw new BuildError("--os=freebsd requires a FreeBSD sysroot when cross-compiling", {
+          hint: `Set FREEBSD_SYSROOT or pass --freebsd-sysroot=<path>. Create one with: mkdir -p ${sysrootPath} && curl -L https://download.freebsd.org/releases/${dlArch}/${freebsdVersion}-RELEASE/base.txz | tar -C ${sysrootPath} -xJf - ./usr/include ./usr/lib ./lib`,
+        });
+      }
+      const llvmArch = arch === "x64" ? "x86_64" : "aarch64";
+      crossTarget = `${llvmArch}-unknown-freebsd${freebsdVersion}`;
+      // No compiler-rt symlinking needed (unlike Android): FreeBSD's base
+      // ships libgcc.a (which IS compiler-rt builtins, renamed for compat)
+      // in /usr/lib, and clang's freebsd driver finds it via --sysroot.
+    }
+  }
 
   // ─── Versioning ───
   const pkgJsonPath = resolve(cwd, "package.json");
@@ -469,7 +736,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // to test a branch before bumping the pinned default.
   const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
-  const zigCommit = partial.zigCommit ?? defaultZigCommit(host.os);
+  const zigCommit = partial.zigCommit ?? versionDefaults.zigCommit;
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
   // ─── macOS SDK ───
@@ -490,7 +757,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     linux,
     darwin,
     windows,
+    freebsd,
     unix,
+    kqueue,
     x64,
     arm64,
     host,
@@ -517,6 +786,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     tinycc,
     valgrind,
     fuzzilli,
+    unifiedSources: partial.unifiedSources ?? true,
+    archiveDeps: partial.archiveDeps ?? false,
+    timeTrace: partial.timeTrace ?? false,
     ci,
     buildkite,
     webkit: partial.webkit ?? "prebuilt",
@@ -545,8 +817,15 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     msvcLinker: toolchain.msvcLinker,
     rc: toolchain.rc,
     mt: toolchain.mt,
+    nasm: toolchain.nasm,
     osxDeploymentTarget,
     osxSysroot,
+    crossTarget,
+    sysroot,
+    androidNdk,
+    androidApiLevel,
+    androidNdkRuntimeDir,
+    freebsdVersion,
     version,
     revision,
     nodejsVersion,
@@ -795,7 +1074,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   // revert my WebKit test branch" before the build goes weird.
   if (cfg.webkitVersion !== versionDefaults.webkitVersion)
     features.push(`webkit-version:${cfg.webkitVersion.slice(0, 10)}`);
-  if (cfg.zigCommit !== defaultZigCommit(cfg.host.os)) features.push(`zig-commit:${cfg.zigCommit.slice(0, 10)}`);
+  if (cfg.zigCommit !== versionDefaults.zigCommit) features.push(`zig-commit:${cfg.zigCommit.slice(0, 10)}`);
   if (cfg.nodejsVersion !== versionDefaults.nodejsVersion) features.push(`nodejs:${cfg.nodejsVersion}`);
   lines.push(`  ${label("features")} ${features.length > 0 ? c.cyan(features.join(", ")) : c.dim("(none)")}`);
   return lines.join("\n");

@@ -3068,6 +3068,8 @@ pub const api = struct {
 
         node_linker: ?bun.install.PackageManager.Options.NodeLinker = null,
 
+        global_store: ?bool = null,
+
         security_scanner: ?[]const u8 = null,
 
         minimum_release_age_ms: ?f64 = null,

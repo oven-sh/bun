@@ -29,7 +29,7 @@ void JSDiffieHellman::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObj
 template<typename Visitor>
 void JSDiffieHellman::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSDiffieHellman* thisObject = jsCast<JSDiffieHellman*>(cell);
+    JSDiffieHellman* thisObject = uncheckedDowncast<JSDiffieHellman>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
@@ -59,7 +59,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDiffieHellmanGetter_verifyError, (JSC::JSGlobalObject
 
     JSValue thisValue = callFrame->thisValue();
 
-    JSDiffieHellman* thisObject = JSC::jsDynamicCast<JSDiffieHellman*>(thisValue);
+    JSDiffieHellman* thisObject = dynamicDowncast<JSDiffieHellman>(thisValue);
     if (!thisObject) [[unlikely]] {
         throwVMTypeError(globalObject, scope);
         return {};

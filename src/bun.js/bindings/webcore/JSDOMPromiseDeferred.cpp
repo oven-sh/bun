@@ -77,7 +77,7 @@ void DeferredPromise::callFunction(JSGlobalObject& lexicalGlobalObject, ResolveM
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto handleExceptionOnExit = makeScopeExit([&] {
         if (scope.exception()) [[unlikely]]
-            handleUncaughtException(scope, *jsCast<JSDOMGlobalObject*>(&lexicalGlobalObject));
+            handleUncaughtException(scope, *uncheckedDowncast<JSDOMGlobalObject>(&lexicalGlobalObject));
     });
     switch (mode) {
     case ResolveMode::Resolve:

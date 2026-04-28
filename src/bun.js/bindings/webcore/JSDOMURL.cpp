@@ -143,7 +143,7 @@ static const HashTableValue JSDOMURLConstructorTableValues[] = {
 
 size_t JSDOMURL::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
 {
-    auto* thisObject = jsCast<JSDOMURL*>(cell);
+    auto* thisObject = uncheckedDowncast<JSDOMURL>(cell);
     auto& wrapped = thisObject->wrapped();
     return Base::estimatedSize(cell, vm) + wrapped.memoryCost();
 }
@@ -152,7 +152,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMURLDOMConstructor::const
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSDOMURLDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSDOMURLDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
@@ -171,7 +171,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMURLDOMConstructor::const
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<DOMURL>(lexicalGlobalObject, callFrame, asObject(jsValue));
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto* jsDOMURL = jsCast<JSDOMURL*>(jsValue.asCell());
+    auto* jsDOMURL = uncheckedDowncast<JSDOMURL>(jsValue.asCell());
     vm.heap.reportExtraMemoryAllocated(jsDOMURL, jsDOMURL->wrapped().memoryCostForGC());
     return JSValue::encode(jsValue);
 }
@@ -259,7 +259,7 @@ JSObject* JSDOMURL::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSDOMURL::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSDOMURLDOMConstructor, DOMConstructorID::DOMURL>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSDOMURLDOMConstructor, DOMConstructorID::DOMURL>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSDOMURL::destroy(JSC::JSCell* cell)
@@ -272,7 +272,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsDOMURLConstructor, (JSGlobalObject * lexicalGlobalObj
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSDOMURLPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSDOMURLPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSDOMURL::getConstructor(vm, prototype->globalObject()));
@@ -643,7 +643,7 @@ static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_parseBody(JSC::JSG
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto base = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLInterface<DOMURL>>>(*lexicalGlobalObject, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), throwScope, DOMURL::parse(WTF::move(url), WTF::move(base)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLInterface<DOMURL>>>(*lexicalGlobalObject, *uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), throwScope, DOMURL::parse(WTF::move(url), WTF::move(base)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDOMURLConstructorFunction_parse, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -694,7 +694,7 @@ static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_createObjectURL1Bo
     // auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(lexicalGlobalObject);
     UNUSED_PARAM(callFrame);
-    // auto* context = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject)->scriptExecutionContext();
+    // auto* context = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext();
     // if (!context) [[unlikely]]
     return JSValue::encode(jsUndefined());
     // EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
@@ -711,7 +711,7 @@ static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_revokeObjectURLBod
     UNUSED_PARAM(callFrame);
     // if (callFrame->argumentCount() < 1) [[unlikely]]
     //     return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-    // auto* context = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject)->scriptExecutionContext();
+    // auto* context = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext();
     // if (!context) [[unlikely]]
     return JSValue::encode(jsUndefined());
     // EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
@@ -785,7 +785,7 @@ JSC::GCClient::IsoSubspace* JSDOMURL::subspaceForImpl(JSC::VM& vm)
 template<typename Visitor>
 void JSDOMURL::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSDOMURL*>(cell);
+    auto* thisObject = uncheckedDowncast<JSDOMURL>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_searchParams);
@@ -796,7 +796,7 @@ DEFINE_VISIT_CHILDREN(JSDOMURL);
 
 void JSDOMURL::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSDOMURL*>(cell);
+    auto* thisObject = uncheckedDowncast<JSDOMURL>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -864,7 +864,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 DOMURL* JSDOMURL::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSDOMURL*>(value))
+    if (auto* wrapper = dynamicDowncast<JSDOMURL>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

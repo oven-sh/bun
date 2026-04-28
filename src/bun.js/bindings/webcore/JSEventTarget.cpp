@@ -105,7 +105,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventTargetDOMConstruc
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSEventTargetDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSEventTargetDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
     if (!context) [[unlikely]]
@@ -187,7 +187,7 @@ JSObject* JSEventTarget::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSEventTarget::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSEventTargetDOMConstructor, DOMConstructorID::EventTarget>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSEventTargetDOMConstructor, DOMConstructorID::EventTarget>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSEventTarget::destroy(JSC::JSCell* cell)
@@ -200,7 +200,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsEventTargetConstructor, (JSGlobalObject * lexicalGlob
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSEventTargetPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSEventTargetPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSEventTarget::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -316,7 +316,7 @@ JSC::GCClient::IsoSubspace* JSEventTarget::subspaceForImpl(JSC::VM& vm)
 template<typename Visitor>
 void JSEventTarget::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSEventTarget*>(cell);
+    auto* thisObject = uncheckedDowncast<JSEventTarget>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     thisObject->visitAdditionalChildrenInGCThread(visitor);
@@ -327,7 +327,7 @@ DEFINE_VISIT_CHILDREN(JSEventTarget);
 template<typename Visitor>
 void JSEventTarget::visitOutputConstraints(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSEventTarget*>(cell);
+    auto* thisObject = uncheckedDowncast<JSEventTarget>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitOutputConstraints(thisObject, visitor);
     thisObject->visitAdditionalChildrenInGCThread(visitor);
@@ -337,7 +337,7 @@ template void JSEventTarget::visitOutputConstraints(JSCell*, AbstractSlotVisitor
 template void JSEventTarget::visitOutputConstraints(JSCell*, SlotVisitor&);
 void JSEventTarget::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSEventTarget*>(cell);
+    auto* thisObject = uncheckedDowncast<JSEventTarget>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -346,7 +346,7 @@ void JSEventTarget::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 
 bool JSEventTargetOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
-    auto* jsEventTarget = jsCast<JSEventTarget*>(handle.slot()->asCell());
+    auto* jsEventTarget = uncheckedDowncast<JSEventTarget>(handle.slot()->asCell());
     if (jsEventTarget->wrapped().isFiringEventListeners()) {
         if (reason) [[unlikely]]
             *reason = "EventTarget firing event listeners"_s;
@@ -370,7 +370,7 @@ JSC_DEFINE_HOST_FUNCTION(jsEventTargetGetEventListenersCount, (JSC::JSGlobalObje
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* thisValue = jsDynamicCast<WebCore::JSEventTarget*>(callFrame->argument(0));
+    auto* thisValue = dynamicDowncast<WebCore::JSEventTarget>(callFrame->argument(0));
     if (!thisValue) return JSC::JSValue::encode(JSC::jsUndefined());
     JSC::JSString* eventName = callFrame->argument(1).toString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});

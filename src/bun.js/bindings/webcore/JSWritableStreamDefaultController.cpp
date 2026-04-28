@@ -37,6 +37,7 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
+#include "WebCoreJSBuiltins.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -146,7 +147,7 @@ JSObject* JSWritableStreamDefaultController::prototype(VM& vm, JSDOMGlobalObject
 
 JSValue JSWritableStreamDefaultController::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSWritableStreamDefaultControllerDOMConstructor, DOMConstructorID::WritableStreamDefaultController>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSWritableStreamDefaultControllerDOMConstructor, DOMConstructorID::WritableStreamDefaultController>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSWritableStreamDefaultController::destroy(JSC::JSCell* cell)
@@ -159,7 +160,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultControllerConstructor, (JSGlobal
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSWritableStreamDefaultControllerPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSWritableStreamDefaultControllerPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSWritableStreamDefaultController::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));

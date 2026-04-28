@@ -188,7 +188,7 @@ void ProcessBindingNatives::finishCreation(JSC::VM& vm)
 template<typename Visitor>
 void ProcessBindingNatives::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    ProcessBindingNatives* thisObject = jsCast<ProcessBindingNatives*>(cell);
+    ProcessBindingNatives* thisObject = uncheckedDowncast<ProcessBindingNatives>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 }

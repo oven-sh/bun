@@ -901,7 +901,7 @@ pub const StandaloneModuleGraph = struct {
                 }
                 return cloned_executable_fd;
             },
-            .linux => {
+            .linux, .freebsd => {
                 // ELF section approach: find .bun section and expand it
                 const input_result = bun.sys.File.readToEnd(.{ .handle = cloned_executable_fd }, bun.default_allocator);
                 if (input_result.err) |err| {
@@ -1329,7 +1329,7 @@ pub const StandaloneModuleGraph = struct {
             return try fromBytesAlloc(allocator, @constCast(pe_bytes), offsets);
         }
 
-        if (comptime Environment.isLinux) {
+        if (comptime Environment.isLinux or Environment.isFreeBSD) {
             const elf_bytes = ELF.getData() orelse return null;
             if (elf_bytes.len < @sizeOf(Offsets) + trailer.len) {
                 Output.debugWarn("bun standalone module graph is too small to be valid", .{});
@@ -1346,6 +1346,38 @@ pub const StandaloneModuleGraph = struct {
         }
 
         comptime unreachable;
+    }
+
+    /// Hint to the kernel that the embedded `__BUN`/`.bun` source pages are
+    /// unlikely to be accessed again after the entrypoint has been parsed.
+    /// The pages are clean file-backed COW, so any later read (lazy require,
+    /// stack-trace source lookup) faults back in transparently from the
+    /// executable on disk. Only applies when running as a compiled
+    /// standalone binary.
+    pub fn hintSourcePagesDontNeed() void {
+        if (comptime Environment.isWindows) return;
+
+        const bytes: []const u8 = if (comptime Environment.isMac)
+            Macho.getData() orelse return
+        else if (comptime Environment.isLinux)
+            ELF.getData() orelse return
+        else
+            return;
+
+        if (bytes.len == 0) return;
+
+        const page: usize = std.heap.pageSize();
+        const start = std.mem.alignBackward(usize, @intFromPtr(bytes.ptr), page);
+        const end = std.mem.alignForward(usize, @intFromPtr(bytes.ptr) + bytes.len, page);
+
+        // std.posix.madvise hits `unreachable` on unexpected errnos; this is a
+        // best-effort hint, so call libc directly and just log on failure.
+        const rc = std.c.madvise(@ptrFromInt(start), end - start, std.posix.MADV.DONTNEED);
+        if (rc != 0) {
+            Output.debugWarn("hintSourcePagesDontNeed: madvise failed errno={d}", .{std.c._errno().*});
+            return;
+        }
+        Output.debugWarn("hintSourcePagesDontNeed: MADV_DONTNEED {d} bytes", .{end - start});
     }
 
     /// Allocates a StandaloneModuleGraph on the heap, populates it from bytes, sets it globally, and returns the pointer.

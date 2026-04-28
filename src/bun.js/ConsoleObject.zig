@@ -1390,8 +1390,6 @@ pub const Formatter = struct {
                     .CodeBlock,
                     .JSCellButterfly,
                     .JSSourceCode,
-                    .JSScriptFetcher,
-                    .JSScriptFetchParameters,
                     .JSCallee,
                     .GlobalLexicalEnvironment,
                     .LexicalEnvironment,

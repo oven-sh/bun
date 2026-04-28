@@ -32,7 +32,7 @@ Structure* Function::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObj
 template<typename Visitor>
 void Function::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    Function* fn = jsCast<Function*>(cell);
+    Function* fn = uncheckedDowncast<Function>(cell);
     ASSERT_GC_OBJECT_INHERITS(fn, info());
     Base::visitChildren(fn, visitor);
 

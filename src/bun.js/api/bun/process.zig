@@ -69,7 +69,32 @@ pub fn uv_getrusage(process: *uv.uv_process_t) win_rusage {
 
     return usage_info;
 }
-pub const Rusage = if (Environment.isWindows) win_rusage else std.posix.rusage;
+pub const Rusage = if (Environment.isWindows)
+    win_rusage
+    // std.posix.rusage has no .freebsd arm; field names also differ
+    // (ru_* instead of bare). Define a layout-compatible struct so
+    // ResourceUsage can use the same field names everywhere.
+else if (Environment.isFreeBSD)
+    extern struct {
+        utime: std.c.timeval,
+        stime: std.c.timeval,
+        maxrss: isize,
+        ixrss: isize,
+        idrss: isize,
+        isrss: isize,
+        minflt: isize,
+        majflt: isize,
+        nswap: isize,
+        inblock: isize,
+        oublock: isize,
+        msgsnd: isize,
+        msgrcv: isize,
+        nsignals: isize,
+        nvcsw: isize,
+        nivcsw: isize,
+    }
+else
+    std.posix.rusage;
 
 // const ShellSubprocessMini = bun.shell.ShellSubprocessMini;
 pub const ProcessExitHandler = struct {
@@ -1030,6 +1055,8 @@ pub const PosixSpawnOptions = struct {
     new_process_group: bool = false,
     /// PTY slave fd for controlling terminal setup (-1 if not using PTY).
     pty_slave_fd: i32 = -1,
+    /// Windows-only ConPTY handle; void placeholder on POSIX.
+    pseudoconsole: void = {},
     /// Linux only. When non-null, the child sets PR_SET_PDEATHSIG to this
     /// signal between vfork and exec in posix_spawn_bun, so the kernel kills
     /// it when the spawning thread dies. When null, defaults to whatever this
@@ -1108,8 +1135,11 @@ pub const WindowsSpawnOptions = struct {
     linux_pdeathsig: ?u8 = null,
     /// POSIX-only; placeholder for struct compatibility.
     new_process_group: bool = false,
-    /// PTY not supported on Windows - this is a void placeholder for struct compatibility
+    /// POSIX-only PTY slave fd; void placeholder on Windows.
     pty_slave_fd: void = {},
+    /// Windows ConPTY handle. When set, the child is attached to the
+    /// pseudoconsole and stdin/stdout/stderr are provided by ConPTY.
+    pseudoconsole: ?bun.windows.HPCON = null,
     pub const WindowsOptions = struct {
         verbatim_arguments: bool = false,
         hide_window: bool = true,
@@ -1151,16 +1181,39 @@ pub const PosixSpawnResult = struct {
     stdout: ?bun.FD = null,
     stderr: ?bun.FD = null,
     ipc: ?bun.FD = null,
-    extra_pipes: std.array_list.Managed(bun.FD) = std.array_list.Managed(bun.FD).init(bun.default_allocator),
+    extra_pipes: std.array_list.Managed(ExtraPipe) = std.array_list.Managed(ExtraPipe).init(bun.default_allocator),
 
     memfds: [3]bool = .{ false, false, false },
 
     // ESRCH can happen when requesting the pidfd
     has_exited: bool = false,
 
-    pub fn close(this: *WindowsSpawnResult) void {
-        for (this.extra_pipes.items) |fd| {
-            fd.close();
+    /// Entry in `extra_pipes` for a stdio slot at index >= 3.
+    pub const ExtraPipe = union(enum) {
+        /// We created this fd (e.g. socketpair for `"pipe"`); expose it via
+        /// `Subprocess.stdio[N]` and close it in `finalizeStreams`.
+        owned_fd: bun.FD,
+        /// The caller supplied this fd in the stdio array; expose it via
+        /// `Subprocess.stdio[N]` but never close it — the caller retains ownership.
+        unowned_fd: bun.FD,
+        /// Nothing to expose for this slot (`"ignore"`, `"inherit"`, a path, or
+        /// the IPC channel after ownership has been transferred to uSockets).
+        unavailable: void,
+
+        pub fn fd(this: ExtraPipe) bun.FD {
+            return switch (this) {
+                .owned_fd, .unowned_fd => |f| f,
+                .unavailable => bun.invalid_fd,
+            };
+        }
+    };
+
+    pub fn close(this: *PosixSpawnResult) void {
+        for (this.extra_pipes.items) |item| {
+            switch (item) {
+                .owned_fd => |f| f.close(),
+                .unowned_fd, .unavailable => {},
+            }
         }
 
         this.extra_pipes.clearAndFree();
@@ -1304,7 +1357,10 @@ pub fn spawnProcessPosix(
     }
 
     if (options.detached) {
-        flags |= bun.c.POSIX_SPAWN_SETSID;
+        if (comptime @hasDecl(bun.c, "POSIX_SPAWN_SETSID")) {
+            flags |= bun.c.POSIX_SPAWN_SETSID;
+        }
+        attr.detached = true;
     }
 
     // Pass PTY slave fd to attr for controlling terminal setup
@@ -1319,7 +1375,7 @@ pub fn spawnProcessPosix(
         try actions.chdir(options.cwd);
     }
     var spawned = PosixSpawnResult{};
-    var extra_fds = std.array_list.Managed(bun.FD).init(bun.default_allocator);
+    var extra_fds = std.array_list.Managed(PosixSpawnResult.ExtraPipe).init(bun.default_allocator);
     errdefer extra_fds.deinit();
     var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
     const allocator = stack_fallback.get();
@@ -1475,13 +1531,16 @@ pub fn spawnProcessPosix(
             .dup2 => @panic("TODO dup2 extra fd"),
             .inherit => {
                 try actions.inherit(fileno);
+                try extra_fds.append(.unavailable);
             },
             .ignore => {
                 try actions.openZ(fileno, "/dev/null", bun.O.RDWR, 0o664);
+                try extra_fds.append(.unavailable);
             },
 
             .path => |path| {
                 try actions.open(fileno, path, bun.O.RDWR | bun.O.CREAT, 0o664);
+                try extra_fds.append(.unavailable);
             },
             .ipc, .buffer => {
                 const fds: [2]bun.FD = try bun.sys.socketpair(
@@ -1500,12 +1559,14 @@ pub fn spawnProcessPosix(
                 try actions.dup2(fds[1], fileno);
                 if (fds[1] != fileno)
                     try actions.close(fds[1]);
-                try extra_fds.append(fds[0]);
+                try extra_fds.append(.{ .owned_fd = fds[0] });
             },
             .pipe => |fd| {
                 try actions.dup2(fd, fileno);
-
-                try extra_fds.append(fd);
+                // The fd was supplied by the caller (a number in the stdio array) and is
+                // not owned by us. Record it so `stdio[N]` returns the caller's fd, but
+                // mark it unowned so finalizeStreams leaves it open.
+                try extra_fds.append(.{ .unowned_fd = fd });
             },
         }
     }
@@ -1536,7 +1597,7 @@ pub fn spawnProcessPosix(
         .result => |pid| {
             spawned.pid = pid;
             spawned.extra_pipes = extra_fds;
-            extra_fds = std.array_list.Managed(bun.FD).init(bun.default_allocator);
+            extra_fds = std.array_list.Managed(PosixSpawnResult.ExtraPipe).init(bun.default_allocator);
 
             if (comptime Environment.isLinux) {
                 // If it's spawnSync and we want to block the entire thread
@@ -1609,6 +1670,10 @@ pub fn spawnProcessWindows(
     }
 
     errdefer failed = true;
+
+    if (options.pseudoconsole) |hpcon| {
+        uv_process_options.pseudoconsole = hpcon;
+    }
 
     if (options.windows.hide_window) {
         uv_process_options.flags |= uv.UV_PROCESS_WINDOWS_HIDE;

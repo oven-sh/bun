@@ -4,6 +4,7 @@ namespace WebCore {
 
 class ExtendedDOMClientIsoSubspaces;
 class ExtendedDOMIsoSubspaces;
+class JSBuiltinFunctions;
 
 class DOMWrapperWorld;
 }
@@ -23,10 +24,10 @@ class DOMWrapperWorld;
 #include "JSVMClientDataClient.h"
 #include <JavaScriptCore/WeakInlines.h>
 #include <wtf/StdLibExtras.h>
-#include "WebCoreJSBuiltins.h"
 #include "JSCTaskScheduler.h"
 #include "HTTPHeaderIdentifiers.h"
 namespace Zig {
+class GlobalObject;
 }
 
 namespace WebCore {
@@ -43,6 +44,7 @@ class JSHeapData {
 
 public:
     JSHeapData(JSC::Heap&);
+    ~JSHeapData();
 
     static JSHeapData* ensureHeapData(JSC::Heap&);
 
@@ -92,7 +94,7 @@ public:
 
     JSHeapData& heapData() { return *m_heapData; }
     BunBuiltinNames& builtinNames() { return m_builtinNames; }
-    JSBuiltinFunctions& builtinFunctions() { return m_builtinFunctions; }
+    JSBuiltinFunctions& builtinFunctions() { return *m_builtinFunctions; }
 
     String overrideSourceURL(const StackFrame&, const String& originalSourceURL) const
     {
@@ -134,7 +136,7 @@ private:
     bool isWebCoreJSClientData() const final { return true; }
 
     BunBuiltinNames m_builtinNames;
-    JSBuiltinFunctions m_builtinFunctions;
+    std::unique_ptr<JSBuiltinFunctions> m_builtinFunctions;
 
     JSHeapData* m_heapData;
 

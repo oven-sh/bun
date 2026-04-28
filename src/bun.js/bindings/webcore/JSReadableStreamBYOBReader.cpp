@@ -38,6 +38,7 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
+#include "WebCoreJSBuiltins.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -150,7 +151,7 @@ JSObject* JSReadableStreamBYOBReader::prototype(VM& vm, JSDOMGlobalObject& globa
 
 JSValue JSReadableStreamBYOBReader::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSReadableStreamBYOBReaderDOMConstructor, DOMConstructorID::ReadableStreamBYOBReader>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSReadableStreamBYOBReaderDOMConstructor, DOMConstructorID::ReadableStreamBYOBReader>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSReadableStreamBYOBReader::destroy(JSC::JSCell* cell)
@@ -163,7 +164,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamBYOBReaderConstructor, (JSGlobalObject 
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSReadableStreamBYOBReaderPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSReadableStreamBYOBReaderPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSReadableStreamBYOBReader::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));

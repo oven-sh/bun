@@ -51,7 +51,7 @@ WebCoreTypedArrayController::~WebCoreTypedArrayController() = default;
 
 JSC::JSArrayBuffer* WebCoreTypedArrayController::toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer& buffer)
 {
-    return JSC::jsCast<JSC::JSArrayBuffer*>(WebCore::toJS(lexicalGlobalObject, getDefaultGlobal(globalObject), buffer));
+    return uncheckedDowncast<JSC::JSArrayBuffer>(WebCore::toJS(lexicalGlobalObject, getDefaultGlobal(globalObject), buffer));
 }
 
 void WebCoreTypedArrayController::registerWrapper(JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer& native, JSC::JSArrayBuffer& wrapper)
@@ -68,7 +68,7 @@ bool WebCoreTypedArrayController::JSArrayBufferOwner::isReachableFromOpaqueRoots
 {
     if (reason) [[unlikely]]
         *reason = "ArrayBuffer is opaque root"_s;
-    auto& wrapper = *JSC::jsCast<JSC::JSArrayBuffer*>(handle.slot()->asCell());
+    auto& wrapper = *uncheckedDowncast<JSC::JSArrayBuffer>(handle.slot()->asCell());
     return visitor.containsOpaqueRoot(wrapper.impl());
 }
 

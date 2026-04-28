@@ -705,7 +705,7 @@ public:
         }
 
         if (value.isSymbol()) {
-            auto* symbol = jsDynamicCast<JSC::Symbol*>(value);
+            auto* symbol = dynamicDowncast<JSC::Symbol>(value);
             ASSERT(symbol != nullptr);
             if (symbol->uid().isRegistered()) {
                 // Global symbols must always be retrievable,

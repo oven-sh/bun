@@ -20,7 +20,8 @@ pub const FetchHeaders = opaque {
     extern fn WebCore__FetchHeaders__put_(arg0: *FetchHeaders, arg1: [*c]const ZigString, arg2: [*c]const ZigString, arg3: *JSGlobalObject) void;
     extern fn WebCore__FetchHeaders__remove(arg0: *FetchHeaders, arg1: [*c]const ZigString, arg2: *JSGlobalObject) void;
     extern fn WebCore__FetchHeaders__toJS(arg0: *FetchHeaders, arg1: *JSGlobalObject) JSValue;
-    extern fn WebCore__FetchHeaders__toUWSResponse(arg0: *FetchHeaders, arg1: bool, arg2: ?*anyopaque) void;
+    extern fn WebCore__FetchHeaders__toUWSResponse(arg0: *FetchHeaders, kind: bun.uws.ResponseKind, arg2: ?*anyopaque) void;
+    extern fn WebCore__FetchHeaders__createFromH3(arg0: *anyopaque) *FetchHeaders;
 
     pub fn createValue(
         global: *JSGlobalObject,
@@ -104,14 +105,22 @@ pub const FetchHeaders = opaque {
         );
     }
 
+    pub fn createFromH3(
+        h3_request: *anyopaque,
+    ) *FetchHeaders {
+        return WebCore__FetchHeaders__createFromH3(
+            h3_request,
+        );
+    }
+
     pub fn toUWSResponse(
         headers: *FetchHeaders,
-        is_ssl: bool,
+        kind: bun.uws.ResponseKind,
         uws_response: *anyopaque,
     ) void {
         return WebCore__FetchHeaders__toUWSResponse(
             headers,
-            is_ssl,
+            kind,
             uws_response,
         );
     }
@@ -306,6 +315,7 @@ pub const FetchHeaders = opaque {
         PingTo,
         Pragma,
         ProxyAuthorization,
+        ProxyConnection,
         Purpose,
         Range,
         Referer,

@@ -5,9 +5,9 @@ const resolvedURL = Bun.pathToFileURL(resolvedPath).href;
 
 beforeEach(() => {
   globalThis.importQueryFixtureOrder = [];
-  Loader.registry.delete(resolvedPath);
-  Loader.registry.delete(resolvedPath + "?query");
-  Loader.registry.delete(resolvedPath + "?query2");
+  delete require.cache[resolvedPath];
+  delete require.cache[resolvedPath + "?query"];
+  delete require.cache[resolvedPath + "?query2"];
 });
 
 test("[query, no query]", async () => {

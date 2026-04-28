@@ -136,7 +136,7 @@ template<> void JSAbortSignalDOMConstructor::initializeProperties(VM& vm, JSDOMG
     //     DeletePropertySlot slot;
     //     JSObject::deleteProperty(this, &globalObject, propertyName, slot);
     // }
-    // if (!jsCast<JSDOMGlobalObject*>(&globalObject)->scriptExecutionContext()->settingsValues().abortSignalAnyOperationEnabled) {
+    // if (!uncheckedDowncast<JSDOMGlobalObject>(&globalObject)->scriptExecutionContext()->settingsValues().abortSignalAnyOperationEnabled) {
     //     auto propertyName = Identifier::fromString(vm, "any"_s);
     //     VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
     //     DeletePropertySlot slot;
@@ -195,14 +195,14 @@ JSObject* JSAbortSignal::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSAbortSignal::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSAbortSignalDOMConstructor, DOMConstructorID::AbortSignal>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSAbortSignalDOMConstructor, DOMConstructorID::AbortSignal>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsAbortSignalConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSAbortSignalPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSAbortSignalPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSAbortSignal::getConstructor(vm, prototype->globalObject()));
@@ -267,13 +267,13 @@ static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_abortBody(JSC
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
-    auto* context = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject)->scriptExecutionContext();
+    auto* context = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext();
     if (!context) [[unlikely]]
         return JSValue::encode(jsUndefined());
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto reason = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), throwScope, AbortSignal::abort(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), *context, WTF::move(reason)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), throwScope, AbortSignal::abort(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), *context, WTF::move(reason)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsAbortSignalConstructorFunction_abort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -289,13 +289,13 @@ static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_timeoutBody(J
     UNUSED_PARAM(callFrame);
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-    auto* context = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject)->scriptExecutionContext();
+    auto* context = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext();
     if (!context) [[unlikely]]
         return JSValue::encode(jsUndefined());
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto milliseconds = convert<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), throwScope, AbortSignal::timeout(*context, WTF::move(milliseconds)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), throwScope, AbortSignal::timeout(*context, WTF::move(milliseconds)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsAbortSignalConstructorFunction_timeout, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -309,7 +309,7 @@ static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_anyBody(JSC::
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
-    auto* context = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject)->scriptExecutionContext();
+    auto* context = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext();
     if (!context) [[unlikely]]
         return JSValue::encode(jsUndefined());
     EnsureStillAliveScope argument0 = callFrame->argument(0);
@@ -331,7 +331,7 @@ static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_anyBody(JSC::
         i++;
     });
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), throwScope, AbortSignal::any(*context, WTF::move(signals)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), throwScope, AbortSignal::any(*context, WTF::move(signals)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsAbortSignalConstructorFunction_any, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -346,7 +346,7 @@ static inline JSC::EncodedJSValue jsAbortSignalPrototypeFunction_throwIfAbortedB
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.throwIfAborted(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.throwIfAborted(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsAbortSignalPrototypeFunction_throwIfAborted, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -356,7 +356,7 @@ JSC_DEFINE_HOST_FUNCTION(jsAbortSignalPrototypeFunction_throwIfAborted, (JSGloba
 
 size_t JSAbortSignal::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
 {
-    auto* thisObject = jsCast<JSAbortSignal*>(cell);
+    auto* thisObject = uncheckedDowncast<JSAbortSignal>(cell);
     auto& wrapped = thisObject->wrapped();
     return Base::estimatedSize(cell, vm) + wrapped.memoryCost();
 }
@@ -374,7 +374,7 @@ JSC::GCClient::IsoSubspace* JSAbortSignal::subspaceForImpl(JSC::VM& vm)
 template<typename Visitor>
 void JSAbortSignal::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSAbortSignal*>(cell);
+    auto* thisObject = uncheckedDowncast<JSAbortSignal>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     thisObject->visitAdditionalChildrenInGCThread(visitor);
@@ -385,7 +385,7 @@ DEFINE_VISIT_CHILDREN(JSAbortSignal);
 template<typename Visitor>
 void JSAbortSignal::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSAbortSignal*>(cell);
+    auto* thisObject = uncheckedDowncast<JSAbortSignal>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitOutputConstraints(thisObject, visitor);
     thisObject->visitAdditionalChildrenInGCThread(visitor);
@@ -395,7 +395,7 @@ DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSAbortSignal);
 
 void JSAbortSignal::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSAbortSignal*>(cell);
+    auto* thisObject = uncheckedDowncast<JSAbortSignal>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -451,7 +451,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 AbortSignal* JSAbortSignal::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSAbortSignal*>(value))
+    if (auto* wrapper = dynamicDowncast<JSAbortSignal>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

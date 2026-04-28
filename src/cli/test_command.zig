@@ -1495,6 +1495,7 @@ pub const TestCommand = struct {
         vm.argv = ctx.passthrough;
         vm.preload = ctx.preloads;
         vm.transpiler.options.rewrite_jest_for_tests = true;
+        bun.http.experimental_http2_client_from_cli = ctx.runtime_options.experimental_http2_fetch;
         vm.transpiler.options.env.behavior = .load_all_without_inlining;
 
         const node_env_entry = try env_loader.map.getOrPutWithoutValue("NODE_ENV");
@@ -2164,7 +2165,7 @@ pub const TestCommand = struct {
 
             switch (promise.status()) {
                 .rejected => {
-                    vm.unhandledRejection(vm.global, promise.result(), promise.asValue());
+                    vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.toJS());
                     reporter.summary().fail += 1;
 
                     if (reporter.jest.bail == reporter.summary().fail) {

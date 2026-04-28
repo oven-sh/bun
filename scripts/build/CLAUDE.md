@@ -20,14 +20,14 @@ This directory generates `build.ninja`. The scripts **describe** the build; ninj
 
 **Minimal cross-platform diffs.** Platform-specific logic is abstracted once, consumed everywhere. `Config` derives `cfg.exeSuffix`/`cfg.objSuffix`/`cfg.libPrefix`/`cfg.libSuffix` so callers write `lib${name}${cfg.libSuffix}` not `if windows ".lib" else ".a"`. Flag tables use `when: c => c.darwin` predicates — one table entry, not a new branch in N files. `shell.ts`/`stream.ts`/`tools.ts`/`compile.ts` absorb the remaining cmd.exe-vs-sh, `.exe` suffix, and clang-vs-clang-cl differences. Where a branch is unavoidable (Windows resources, Darwin dsymutil, Linux setarch), it lives in one function and returns empty on other platforms.
 
-**First-class support for deps with their own build systems.** Vendored deps keep their native cmake/cargo — we don't rewrite their build into our graph. `BuildSpec` variants:
+**Deps in our graph by default; native build systems when needed.** `BuildSpec` variants:
 
-- `nested-cmake` — invoke the dep's own cmake configure + build as ninja edges. Flags forwarded via `-DCMAKE_C_FLAGS`; cmake's own dependency tracking handles incrementality inside.
-- `cargo` — invoke cargo build. Cargo's incremental build is reliable; `restat = 1` keeps our downstream no-ops fast.
-- `direct` — for deps simple enough that an overlay CMakeLists.txt is more work than listing files (tinycc, picohttpparser). Sources become first-class `cc` edges in our graph.
+- `direct` — list the dep's sources explicitly; each becomes a first-class `cc`/`cxx` edge in our graph and the `.o`s go straight into bun's link. The default for the C/C++ deps (zlib, zstd, boringssl, libarchive, mimalloc, …). Skips a sub-process configure entirely and lets LTO see across the dep boundary.
+- `nested-cmake` — invoke the dep's own cmake configure + build as ninja edges. For deps whose build is too entangled to list by hand. Flags forwarded via `-DCMAKE_C_FLAGS`; cmake's own dependency tracking handles incrementality inside.
+- `cargo` — invoke cargo build (lolhtml). Cargo's incremental build is reliable; `restat = 1` keeps our downstream no-ops fast.
 - `prebuilt` — skip build entirely, download compiled `.a`/`.lib` (WebKit, nodejs-headers).
 
-The `dep` pool (depth 4) throttles concurrent sub-builds so 15 nested `cmake --build -j` don't oversubscribe cores.
+The `dep` pool (depth 4) throttles concurrent nested cmake/cargo sub-builds so they don't oversubscribe cores.
 
 **Self-obsoleting workarounds** — see "Adding a workaround" below.
 
@@ -157,7 +157,7 @@ For `mode: "full"` (the normal case):
 2. **Codegen** — `emitCodegen(n, cfg, sources)` emits ~20 generation steps (bindgen, `.classes.ts` → C++, bundled modules, LUTs). Returns grouped outputs.
 3. **Zig** — `emitZig(n, cfg, {...})` emits zig download + `zig build obj` → `bun-zig.o`.
 4. **Flags** — `computeFlags(cfg)` evaluates flag tables → cflags/cxxflags/defines/ldflags/stripflags.
-5. **PCH** — compile `root.h` → PCH (skipped on Windows, skipped in CI full mode).
+5. **PCH** — compile `root-pch.h` → PCH (skipped in CI full mode).
 6. **Compile** — loop sources, `cxx()`/`cc()` per file.
 7. **Link** — `emitShims(n, cfg)` for platform workaround dylibs, then `link(n, cfg, exeName, objects, {libs, flags})`.
 8. **Post-link** — strip (release only), dsymutil (darwin release only).
@@ -183,6 +183,7 @@ Split CI modes: `zig-only` (zstd+codegen+zig), `cpp-only` (deps+codegen+compile 
 | `ninja.ts`                     | `Ninja` class — the build-file writer                                              |
 | `rules.ts`                     | `registerAllRules()` — calls each module's `registerXxxRules()`                    |
 | `compile.ts`                   | `cc`/`cxx`/`pch`/`link`/`ar` + `registerCompileRules()`                            |
+| `unified.ts`                   | WebKit-style unified-source bundling, `generateUnifiedSources()`                   |
 | `source.ts`                    | `Dependency` types, `resolveDep()`, fetch/configure/build emission                 |
 | `codegen.ts`                   | Code generation steps, `emitCodegen()`, `CodegenOutputs`                           |
 | `zig.ts`                       | Zig download + `zig build`, `emitZig()`                                            |

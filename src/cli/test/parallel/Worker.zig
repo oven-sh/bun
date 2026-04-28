@@ -90,7 +90,7 @@ pub fn start(this: *Worker) !void {
         if (spawned.stdout) |fd| try this.out.reader.start(fd, true).unwrap();
         if (spawned.stderr) |fd| try this.err.reader.start(fd, true).unwrap();
         if (spawned.extra_pipes.items.len > 0) {
-            if (!this.ipc.adopt(coord.vm, spawned.extra_pipes.items[0])) return error.ChannelAdoptFailed;
+            if (!this.ipc.adopt(coord.vm, spawned.extra_pipes.items[0].fd())) return error.ChannelAdoptFailed;
         } else {
             this.ipc.done = true;
         }

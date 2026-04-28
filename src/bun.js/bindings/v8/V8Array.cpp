@@ -114,7 +114,7 @@ void Array::CheckCast(Value* obj)
     }
 
     JSValue jsValue = obj->localToJSValue();
-    if (!jsValue || !JSC::jsDynamicCast<JSArray*>(jsValue)) {
+    if (!jsValue || !dynamicDowncast<JSArray>(jsValue)) {
         RELEASE_ASSERT_NOT_REACHED();
     }
 }

@@ -31,8 +31,14 @@ typedef SSIZE_T ssize_t;
 #include <stdalign.h>
 #endif
 
-#if defined(LIBUS_USE_KQUEUE)
+#if defined(LIBUS_USE_KQUEUE) && defined(__APPLE__)
 #include <mach/mach.h>
+#endif
+
+#if defined(__FreeBSD__)
+/* arm64 FreeBSD's <machine/_align.h> casts to u_long but <sys/socket.h>
+ * (via <sys/_types.h>) reaches it without including <sys/types.h> first. */
+#include <sys/types.h>
 #endif
 
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
@@ -61,6 +67,9 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 #define LIKELY(cond) __builtin_expect((_Bool)(cond), 1)
 #define UNLIKELY(cond) __builtin_expect((_Bool)(cond), 0)
 #endif
+
+extern void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t length);
+#define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
 
 #ifdef _WIN32
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
@@ -254,7 +263,7 @@ struct us_udp_socket_t {
     struct us_udp_socket_t *next;
 };
 
-#if defined(LIBUS_USE_KQUEUE)
+#if defined(LIBUS_USE_KQUEUE) && defined(__APPLE__)
 /* Internal callback types are polls just like sockets */
 struct us_internal_callback_t {
   alignas(LIBUS_EXT_ALIGNMENT) struct us_poll_t p;

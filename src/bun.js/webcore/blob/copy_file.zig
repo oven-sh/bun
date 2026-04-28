@@ -597,6 +597,23 @@ pub const CopyFile = struct {
             }
 
             this.doClose();
+        } else if (comptime Environment.isFreeBSD) {
+            var total_written: u64 = 0;
+            switch (jsc.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", this.source_fd, this.destination_fd, 0, &total_written)) {
+                .err => |err| {
+                    this.system_error = err.toSystemError();
+                    this.doClose();
+                    return;
+                },
+                .result => {},
+            }
+            if (stat.size != 0 and @as(SizeType, @intCast(stat.size)) > this.max_length) {
+                _ = bun.sys.ftruncate(this.destination_fd, @intCast(this.max_length));
+                this.read_len = @truncate(@min(total_written, @as(u64, this.max_length)));
+            } else {
+                this.read_len = @truncate(total_written);
+            }
+            this.doClose();
         } else {
             @compileError("TODO: implement copyfile");
         }

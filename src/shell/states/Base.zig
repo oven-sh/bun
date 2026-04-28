@@ -99,6 +99,16 @@ pub fn throw(this: *const Base, err: *const bun.shell.ShellErr) void {
     throwShellErr(err, this.eventLoop()) catch {}; //TODO:
 }
 
+/// Unwrap a `Maybe(T)` into `error{Sys}!T`, stashing the rich error on the interpreter.
+/// See `ThisInterpreter.try_` — this is sugar for `this.interpreter.try_(m)`.
+pub inline fn try_(this: *Base, m: anytype) error{Sys}!@TypeOf(m).ReturnType {
+    return this.interpreter.try_(m);
+}
+
+pub inline fn takeErr(this: *Base) bun.sys.Error {
+    return this.interpreter.takeErr();
+}
+
 pub fn rootIO(this: *const Base) *const IO {
     return this.interpreter.rootIO();
 }

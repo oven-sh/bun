@@ -19,10 +19,11 @@ import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { availableParallelism, homedir } from "node:os";
 import { join, resolve } from "node:path";
-import type { Config, OS } from "./config.ts";
-import { downloadWithRetry, extractZip } from "./download.ts";
-import { assert } from "./error.ts";
+import type { Config } from "./config.ts";
+import { downloadWithRetry, extractZip, tryPrefetchExtracted } from "./download.ts";
+import { BuildError, assert } from "./error.ts";
 import { fetchCliPath } from "./fetch-cli.ts";
+import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
 import { streamPath } from "./stream.ts";
@@ -31,38 +32,8 @@ import { streamPath } from "./stream.ts";
  * Zig compiler commit — determines compiler download + bundled stdlib.
  * Override via `--zig-commit=<hash>` to test a new compiler.
  * From https://github.com/oven-sh/zig releases.
- *
- * TEMPORARY SPLIT: ZIG_COMMIT is the pre-parallel-sema compiler, kept
- * for Windows hosts only (COFF shard emission isn't implemented and
- * the build path needs a single object). Everything else — local and
- * CI, all targets — uses ZIG_COMMIT_PARALLEL (parallel sema is
- * deterministic; codegen-unit count is decided separately by
- * codegenThreads()). Once Windows is supported, collapse both back to
- * one constant.
  */
-export const ZIG_COMMIT = "365343af4fc5a1a632e6b54aadd0b87be30edd81";
-export const ZIG_COMMIT_PARALLEL = "0bcf4c3d998133e724d27e9fd783172ffed4c943";
-
-/**
- * The one place that picks which compiler to use. The parallel compiler
- * is used everywhere except Windows (its sharded-codegen object emission
- * for COFF is unimplemented). Parallel SEMA is deterministic and changes
- * no output, so CI gets it too — only the codegen-unit count differs by
- * config (see codegenThreads()).
- */
-export function defaultZigCommit(hostOs: OS): string {
-  if (hostOs === "windows") return ZIG_COMMIT;
-  return ZIG_COMMIT_PARALLEL;
-}
-
-/**
- * True iff `cfg` is using the parallel-sema compiler. Gates
- * ZIG_PARALLEL_SEMA and the `llvm_no_merge_shards` build.zig path —
- * the stable compiler doesn't understand either.
- */
-function usingParallelCompiler(cfg: Config): boolean {
-  return cfg.zigCommit !== ZIG_COMMIT;
-}
+export const ZIG_COMMIT = "04e7f6ac1e009525bc00934f20199c68f04e0a24";
 
 /**
  * Number of LLVM codegen units. >1 splits the build into N independent
@@ -73,6 +44,8 @@ function usingParallelCompiler(cfg: Config): boolean {
  *   - Non-ASAN CI: shipped releases want full IPO; cg=1 keeps that and
  *     keeps the upload/download contract a single file.
  *   - Windows targets: COFF shard emission is unimplemented in oven-sh/zig.
+ *   - LTO: zig_llvm.cpp gates SplitModule on !lto, so cg>1 would emit one
+ *     .o instead of N and the no_merge_shards path would expect missing files.
  *
  * ASAN CI uses a FIXED count (CI_ASAN_CODEGEN_THREADS) so zig-only and
  * link-only — which run on different machines — agree on the artifact
@@ -80,8 +53,8 @@ function usingParallelCompiler(cfg: Config): boolean {
  * a non-ASAN CI artifact if cross-unit inlining matters.
  */
 function codegenThreads(cfg: Config): number {
-  if (!usingParallelCompiler(cfg)) return 0;
   if (cfg.windows) return 1;
+  if (cfg.lto) return 1;
   if (cfg.ci) {
     // ASAN is a test-only build (not shipped), so cross-shard IPO loss is
     // fine and the speedup is worth it. The count is FIXED so zig-only and
@@ -119,9 +92,65 @@ export function zigTarget(cfg: Config): string {
   const arch = cfg.x64 ? "x86_64" : "aarch64";
   if (cfg.darwin) return `${arch}-macos-none`;
   if (cfg.windows) return `${arch}-windows-msvc`;
+  if (cfg.freebsd) {
+    assert(cfg.freebsdVersion !== undefined, "freebsd build missing version");
+    return `${arch}-freebsd.${cfg.freebsdVersion}-none`;
+  }
   // linux: abi is always set (resolveConfig asserts)
   assert(cfg.abi !== undefined, "linux build missing abi");
+  if (cfg.abi === "android") {
+    assert(cfg.androidApiLevel !== undefined, "android build missing api level");
+    return `${arch}-linux-android.${cfg.androidApiLevel}`;
+  }
   return `${arch}-linux-${cfg.abi}`;
+}
+
+/**
+ * Zig doesn't bundle bionic or FreeBSD libc headers, so cross-compile
+ * targets need an explicit libc file (`--libc`) pointing at the sysroot
+ * for Compile steps, and the sysroot path passed separately for
+ * translate-c. Writes the libc file at configure time (idempotent via
+ * writeIfChanged).
+ */
+function crossLibcArgs(cfg: Config): string[] {
+  if (cfg.abi === "android") {
+    assert(cfg.sysroot !== undefined && cfg.androidApiLevel !== undefined, "android build missing sysroot");
+    const archTriple = cfg.x64 ? "x86_64-linux-android" : "aarch64-linux-android";
+    const libcFile = resolve(cfg.buildDir, "android-libc.txt");
+    writeIfChanged(
+      libcFile,
+      [
+        `include_dir=${cfg.sysroot}/usr/include`,
+        `sys_include_dir=${cfg.sysroot}/usr/include/${archTriple}`,
+        `crt_dir=${cfg.sysroot}/usr/lib/${archTriple}/${cfg.androidApiLevel}`,
+        `msvc_lib_dir=`,
+        `kernel32_lib_dir=`,
+        `gcc_dir=`,
+        ``,
+      ].join("\n"),
+    );
+    return ["--libc", libcFile, `-Dandroid_ndk_sysroot=${cfg.sysroot}`];
+  }
+  if (cfg.freebsd) {
+    // Native FreeBSD host: sysroot is "/". Cross-compile: extracted base.txz.
+    // build.zig requires -Dfreebsd_sysroot for translate-c either way.
+    const root = cfg.sysroot ?? "";
+    const libcFile = resolve(cfg.buildDir, "freebsd-libc.txt");
+    writeIfChanged(
+      libcFile,
+      [
+        `include_dir=${root}/usr/include`,
+        `sys_include_dir=${root}/usr/include`,
+        `crt_dir=${root}/usr/lib`,
+        `msvc_lib_dir=`,
+        `kernel32_lib_dir=`,
+        `gcc_dir=`,
+        ``,
+      ].join("\n"),
+    );
+    return ["--libc", libcFile, `-Dfreebsd_sysroot=${root || "/"}`];
+  }
+  return [];
 }
 
 /**
@@ -240,13 +269,20 @@ function zigCacheDirs(cfg: Config): { local: string; global: string } {
  * os-abi: zig binaries are always statically linked (musl on linux, gnu
  * on windows), so the abi is fixed per-os.
  */
-function zigDownloadUrl(cfg: Config, safe: boolean): string {
+export function zigDownloadUrl(cfg: Config, safe: boolean): string {
   const arch = cfg.host.arch === "aarch64" ? "aarch64" : "x86_64";
   let osAbi: string;
   if (cfg.host.os === "darwin") {
     osAbi = "macos-none";
   } else if (cfg.host.os === "windows") {
     osAbi = "windows-gnu";
+  } else if (cfg.host.os === "freebsd") {
+    // oven-sh/zig has no FreeBSD-hosted prebuilt; native builds must use a
+    // system zig via $BUN_ZIG_PATH. Cross-compile from Linux is the
+    // expected path (host.os === "linux" → linux-musl below).
+    throw new BuildError(
+      "No prebuilt zig compiler for FreeBSD hosts — set $BUN_ZIG_PATH to a system zig, or cross-compile from Linux",
+    );
   } else {
     // linux: always musl for the compiler binary (static).
     osAbi = "linux-musl";
@@ -291,10 +327,11 @@ export function registerZigRules(n: Ninja, cfg: Config): void {
   // our fork (upstream added Feb 2026, not backported).
   const interleave = false;
   const consoleMode = !interleave || hostWin;
-  const parallelSema = usingParallelCompiler(cfg) ? " --env=ZIG_PARALLEL_SEMA=1" : "";
+  const parallelSema = " --env=ZIG_PARALLEL_SEMA=1";
   n.rule("zig_build", {
     command: `${stream} ${consoleMode ? "--console" : "--zig-progress"} --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache${parallelSema} $zig build $step $args`,
-    description: "zig $step → $out",
+    // $out can be 16 shard paths; the build edge sets a compact $label.
+    description: "zig $step → $label",
     ...(consoleMode && { pool: "console" }),
     restat: true,
   });
@@ -421,6 +458,7 @@ export function emitZig(n: Ninja, cfg: Config, inputs: ZigBuildInputs): string[]
       args: quoteArgs(args, cfg.host.os === "windows"),
       zig_local_cache: cacheDirs.local,
       zig_global_cache: cacheDirs.global,
+      label: outputs.length > 1 ? `bun-zig.{0..${outputs.length - 1}}.o` : "bun-zig.o",
     },
   });
   n.phony("bun-zig", outputs);
@@ -460,6 +498,7 @@ function zigBuildArgs(cfg: Config): string[] {
     `-Dtarget=${zigTarget(cfg)}`,
     `-Doptimize=${zigOptimize(cfg)}`,
     `-Dcpu=${zigCpu(cfg)}`,
+    ...crossLibcArgs(cfg),
 
     // Feature flags
     `-Denable_logs=${bool(cfg.logs)}`,
@@ -467,6 +506,7 @@ function zigBuildArgs(cfg: Config): string[] {
     `-Denable_fuzzilli=${bool(cfg.fuzzilli)}`,
     `-Denable_valgrind=${bool(cfg.valgrind)}`,
     `-Denable_tinycc=${bool(cfg.tinycc)}`,
+    `-Dlto=${bool(cfg.lto)}`,
     // Always ON — bun uses mimalloc as its default allocator. The flag
     // exists for experimentation; in practice it's never OFF.
     `-Duse_mimalloc=true`,
@@ -628,6 +668,9 @@ export async function fetchZig(url: string, dest: string, commit: string): Promi
     }
     console.log(`commit changed (was ${existing}, now ${commit}), re-fetching`);
   }
+
+  // Prefetch cache: pre-extracted tree with matching commit?
+  if (await tryPrefetchExtracted(dest, ".zig-commit", commit)) return;
 
   console.log(`fetching ${url}`);
 

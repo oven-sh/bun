@@ -79,7 +79,7 @@ void toWrapper(CCallHelpers& jit, JSC::SnippetParams& params, GPRReg wrapped, GP
     CCallHelpers::JumpList slowCases;
 
     if (globalObjectConstant) {
-        if (!JSC::jsCast<JSDOMGlobalObject*>(globalObjectConstant)->worldIsNormal()) {
+        if (!uncheckedDowncast<JSDOMGlobalObject>(globalObjectConstant)->worldIsNormal()) {
             slowCases.append(jit.jump());
             params.addSlowPathCall(slowCases, jit, function, result, globalObject, wrapped);
             return;

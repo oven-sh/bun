@@ -146,7 +146,7 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
         JSC::JSType type = cell->type();
 
         if (type == JSDOMWrapperType) {
-            if (auto* headers = jsDynamicCast<JSFetchHeaders*>(value)) {
+            if (auto* headers = dynamicDowncast<JSFetchHeaders>(value)) {
                 auto* array = constructEmptyArray(exec, nullptr);
                 RETURN_IF_EXCEPTION(scope, {});
                 constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, headers));
@@ -154,7 +154,7 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
                 return array;
             }
 
-            if (auto* formData = jsDynamicCast<JSDOMFormData*>(value)) {
+            if (auto* formData = dynamicDowncast<JSDOMFormData>(value)) {
                 auto* array = constructEmptyArray(exec, nullptr);
                 RETURN_IF_EXCEPTION(scope, {});
                 constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, formData));
@@ -163,7 +163,7 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
             }
 
         } else if (type == JSAsJSONType) {
-            if (auto* params = jsDynamicCast<JSURLSearchParams*>(value)) {
+            if (auto* params = dynamicDowncast<JSURLSearchParams>(value)) {
                 auto* array = constructEmptyArray(exec, nullptr);
                 RETURN_IF_EXCEPTION(scope, {});
                 constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, params));
@@ -171,7 +171,7 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
                 return array;
             }
 
-            if (auto* cookie = jsDynamicCast<JSCookie*>(value)) {
+            if (auto* cookie = dynamicDowncast<JSCookie>(value)) {
                 auto* array = constructEmptyArray(exec, nullptr);
                 RETURN_IF_EXCEPTION(scope, {});
                 constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, cookie));
@@ -179,7 +179,7 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
                 return array;
             }
 
-            if (auto* cookieMap = jsDynamicCast<JSCookieMap*>(value)) {
+            if (auto* cookieMap = dynamicDowncast<JSCookieMap>(value)) {
                 auto* array = constructEmptyArray(exec, nullptr);
                 RETURN_IF_EXCEPTION(scope, {});
                 constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, cookieMap));

@@ -81,6 +81,7 @@
 #include "JSCommonJSExtensions.h"
 
 #include "ErrorCode.h"
+#include "WebCoreJSBuiltins.h"
 
 extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const BunString*);
 
@@ -197,7 +198,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     args.append(filename); // filename
     args.append(dirname); // dirname
 
-    if (auto* jsFunction = jsDynamicCast<JSC::JSFunction*>(fn)) {
+    if (auto* jsFunction = dynamicDowncast<JSC::JSFunction>(fn)) {
         if (jsFunction->jsExecutable()->parameterCount() > 5) {
             // it expects ImportMetaObject
             args.append(Zig::ImportMetaObject::create(globalObject, filename));
@@ -225,7 +226,7 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
 
     evaluateCommonJSModuleOnce(
         globalObject->vm(),
-        jsCast<Zig::GlobalObject*>(globalObject),
+        globalObject,
         this,
         this->m_dirname.get(),
         this->m_filename.get());
@@ -248,13 +249,13 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     // These casts are jsDynamicCast because require.cache pollution + invalid
     // this calls can put arbitrary values here instead of JSCommonJSModule*
     ASSERT(callframe->argumentCount() == 2);
-    JSCommonJSModule* moduleObject = jsDynamicCast<JSCommonJSModule*>(callframe->uncheckedArgument(0));
-    JSCommonJSModule* referrer = jsDynamicCast<JSCommonJSModule*>(callframe->uncheckedArgument(1));
+    JSCommonJSModule* moduleObject = dynamicDowncast<JSCommonJSModule>(callframe->uncheckedArgument(0));
+    JSCommonJSModule* referrer = dynamicDowncast<JSCommonJSModule>(callframe->uncheckedArgument(1));
     if (!moduleObject) [[unlikely]] {
         RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
     }
@@ -305,12 +306,12 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
     // every single module. Instead, we can unwrap the bound function that we
     // can see through the `this`.
     JSValue thisValue = callframe->thisValue();
-    auto* requireResolveBound = jsDynamicCast<JSC::JSBoundFunction*>(thisValue);
+    auto* requireResolveBound = dynamicDowncast<JSC::JSBoundFunction>(thisValue);
     if (!requireResolveBound) [[unlikely]] {
         return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
     }
     JSValue boundThis = requireResolveBound->boundThis();
-    JSString* filename = jsDynamicCast<JSString*>(boundThis);
+    JSString* filename = dynamicDowncast<JSString>(boundThis);
     if (!filename) [[unlikely]] {
         return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
     }
@@ -321,7 +322,7 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
 
 JSC_DEFINE_CUSTOM_GETTER(jsRequireCacheGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    Zig::GlobalObject* thisObject = jsCast<Zig::GlobalObject*>(globalObject);
+    Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     return JSValue::encode(thisObject->lazyRequireCacheObject());
 }
 
@@ -329,7 +330,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsRequireCacheSetter,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
-    JSObject* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
+    JSObject* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
     if (!thisObject)
         return false;
 
@@ -339,7 +340,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsRequireCacheSetter,
 
 JSC_DEFINE_CUSTOM_GETTER(jsRequireExtensionsGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    Zig::GlobalObject* thisObject = jsCast<Zig::GlobalObject*>(globalObject);
+    Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     return JSValue::encode(thisObject->lazyRequireExtensionsObject());
 }
 
@@ -347,7 +348,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsRequireExtensionsSetter,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
-    JSObject* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
+    JSObject* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
     if (!thisObject)
         return false;
 
@@ -401,7 +402,7 @@ RequireFunctionPrototype* RequireFunctionPrototype::create(
     RequireFunctionPrototype* prototype = new (NotNull, JSC::allocateCell<RequireFunctionPrototype>(vm)) RequireFunctionPrototype(vm, structure);
     prototype->finishCreation(vm);
 
-    prototype->putDirect(vm, vm.propertyNames->resolve, jsCast<Zig::GlobalObject*>(globalObject)->requireResolveFunctionUnbound(), 0);
+    prototype->putDirect(vm, vm.propertyNames->resolve, uncheckedDowncast<Zig::GlobalObject>(globalObject)->requireResolveFunctionUnbound(), 0);
 
     return prototype;
 }
@@ -428,7 +429,7 @@ void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
 
 JSC_DEFINE_CUSTOM_GETTER(getterFilename, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
@@ -436,7 +437,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterFilename, (JSC::JSGlobalObject * globalObject, JS
 }
 JSC_DEFINE_CUSTOM_GETTER(getterId, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
@@ -445,7 +446,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterId, (JSC::JSGlobalObject * globalObject, JSC::Enc
 
 JSC_DEFINE_CUSTOM_GETTER(getterPath, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
@@ -457,7 +458,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
@@ -490,7 +491,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterPath,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
-    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
         return false;
 
@@ -504,7 +505,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterPaths, (JSC::JSGlobalObject * globalObject, JSC::
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
-    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
@@ -528,7 +529,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterChildren,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
-    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
         return false;
     thisObject->m_children.clear();
@@ -538,7 +539,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterChildren,
 
 JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    JSCommonJSModule* mod = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    JSCommonJSModule* mod = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!mod) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
@@ -552,7 +553,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
         JSCommonJSModule* last = nullptr;
         int n = -1;
         for (WriteBarrier<Unknown> childBarrier : mod->m_children) {
-            JSCommonJSModule* child = jsCast<JSCommonJSModule*>(childBarrier.get());
+            JSCommonJSModule* child = uncheckedDowncast<JSCommonJSModule>(childBarrier.get());
             // Check the last module since duplicate imports, if any, will
             // probably be adjacent. Then just do a linear scan.
             if (last == child) [[unlikely]]
@@ -585,7 +586,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
 
 JSC_DEFINE_CUSTOM_GETTER(getterLoaded, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
@@ -597,7 +598,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterPaths,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
-    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
         return false;
 
@@ -609,7 +610,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterFilename,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
-    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
         return false;
 
@@ -621,7 +622,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterId,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
-    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
         return false;
 
@@ -632,13 +633,13 @@ JSC_DEFINE_CUSTOM_SETTER(setterParent,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
-    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
         return false;
 
     JSValue decodedValue = JSValue::decode(value);
 
-    if (auto* parent = jsDynamicCast<JSCommonJSModule*>(decodedValue)) {
+    if (auto* parent = dynamicDowncast<JSCommonJSModule>(decodedValue)) {
         thisObject->m_parent = parent;
         thisObject->m_overriddenParent.clear();
     } else {
@@ -651,7 +652,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterLoaded,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
-    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
         return false;
 
@@ -662,7 +663,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterLoaded,
 
 JSC_DEFINE_CUSTOM_GETTER(getterUnderscoreCompile, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
@@ -676,7 +677,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
-    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
         return false;
     JSValue decodedValue = JSValue::decode(value);
@@ -686,7 +687,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
 
 JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
-    auto* moduleObject = jsDynamicCast<JSCommonJSModule*>(callframe->thisValue());
+    auto* moduleObject = dynamicDowncast<JSCommonJSModule>(callframe->thisValue());
     if (!moduleObject) {
         return JSValue::encode(jsUndefined());
     }
@@ -702,7 +703,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
     RETURN_IF_EXCEPTION(throwScope, {});
 
     String wrappedString;
-    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
+    auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     if (zigGlobalObject->hasOverriddenModuleWrapper) [[unlikely]] {
         wrappedString = makeString(
             zigGlobalObject->m_moduleWrapperStart,
@@ -736,7 +737,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
     WTF::NakedPtr<JSC::Exception> exception;
     evaluateCommonJSModuleOnce(
         vm,
-        jsCast<Zig::GlobalObject*>(globalObject),
+        uncheckedDowncast<Zig::GlobalObject>(globalObject),
         moduleObject,
         jsString(vm, dirnameString),
         jsString(vm, filenameString));
@@ -860,7 +861,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateCommonJSModule, (JSGlobalObject * globa
     ASSERT(hasEvaluated.isBoolean());
     JSValue parent = callframe->uncheckedArgument(3);
 
-    return JSValue::encode(JSCommonJSModule::create(jsCast<Zig::GlobalObject*>(globalObject), id, object, hasEvaluated.isTrue(), parent));
+    return JSValue::encode(JSCommonJSModule::create(uncheckedDowncast<Zig::GlobalObject>(globalObject), id, object, hasEvaluated.isTrue(), parent));
 }
 
 JSCommonJSModule* JSCommonJSModule::create(
@@ -893,7 +894,7 @@ JSCommonJSModule* JSCommonJSModule::create(
         0);
     out->hasEvaluated = hasEvaluated;
     if (parent && parent.isCell()) {
-        if (auto* parentModule = jsDynamicCast<JSCommonJSModule*>(parent)) {
+        if (auto* parentModule = dynamicDowncast<JSCommonJSModule>(parent)) {
             out->m_parent = JSC::Weak<JSCommonJSModule>(parentModule);
         } else {
             out->m_overriddenParent.set(vm, out, parent);
@@ -919,7 +920,7 @@ JSCommonJSModule* JSCommonJSModule::create(
 
 size_t JSCommonJSModule::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
 {
-    auto* thisObject = jsCast<JSCommonJSModule*>(cell);
+    auto* thisObject = uncheckedDowncast<JSCommonJSModule>(cell);
     size_t additionalSize = 0;
     if (!thisObject->sourceCode.isNull() && !thisObject->sourceCode.view().isEmpty()) {
         additionalSize += thisObject->sourceCode.view().length();
@@ -1155,7 +1156,7 @@ Structure* createCommonJSModuleStructure(
 template<typename Visitor>
 void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSCommonJSModule* thisObject = jsCast<JSCommonJSModule*>(cell);
+    JSCommonJSModule* thisObject = uncheckedDowncast<JSCommonJSModule>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
@@ -1174,7 +1175,7 @@ DEFINE_VISIT_CHILDREN(JSCommonJSModule);
 
 void JSCommonJSModule::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSCommonJSModule*>(cell);
+    auto* thisObject = uncheckedDowncast<JSCommonJSModule>(cell);
 
     analyzer.setLabelForCell(cell, "Module (CommonJS)"_s);
 
@@ -1240,12 +1241,12 @@ ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObj
 // JSCommonJSModule.$require(resolvedId, newModule, userArgumentCount, userOptions)
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
-    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     ASSERT(callframe->argumentCount() == 4);
     // If overriddenRequire is called with invalid this, execution could potentially reach here.
-    JSCommonJSModule* referrerModule = jsDynamicCast<JSCommonJSModule*>(callframe->thisValue());
+    JSCommonJSModule* referrerModule = dynamicDowncast<JSCommonJSModule>(callframe->thisValue());
     if (!referrerModule)
         return throwVMTypeError(globalObject, throwScope);
     JSValue specifierValue = callframe->uncheckedArgument(0);
@@ -1257,7 +1258,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
     REQUIRE_CJS_RETURN_IF_EXCEPTION;
 
     // This is always a new JSCommonJSModule object; cast cannot fail.
-    JSCommonJSModule* child = jsCast<JSCommonJSModule*>(callframe->uncheckedArgument(1));
+    JSCommonJSModule* child = uncheckedDowncast<JSCommonJSModule>(callframe->uncheckedArgument(1));
 
     BunString referrerStr = Bun::toString(referrer);
     BunString typeAttributeStr = { BunStringTag::Dead };
@@ -1302,11 +1303,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
-    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(callframe->thisValue());
+    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(callframe->thisValue());
     if (!thisObject)
         return throwVMTypeError(globalObject, throwScope);
 
@@ -1362,7 +1363,7 @@ void JSCommonJSModule::evaluate(
         }
     }
 
-    auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program, isBuiltIn);
+    auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
     this->ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
     if (!isBuiltIn && !globalObject->hasOverriddenModuleWrapper && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
         Bun::IsolatedModuleCache::insert(vm, key, sourceProvider.get());
@@ -1454,7 +1455,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     SourceOrigin sourceOrigin;
 
     if (entry) {
-        moduleObject = jsDynamicCast<JSCommonJSModule*>(entry);
+        moduleObject = dynamicDowncast<JSCommonJSModule>(entry);
     }
 
     if (!moduleObject) {
@@ -1481,7 +1482,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             source.source_code = Bun::toStringRef(concat);
         }
 
-        auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program, isBuiltIn);
+        auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
         if (!isBuiltIn && !globalObject->hasOverriddenModuleWrapper && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
             Bun::IsolatedModuleCache::insert(vm, sourceURL, sourceProvider.get());
         }
@@ -1514,7 +1515,7 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 const JSC::Identifier& moduleKey,
                 Vector<JSC::Identifier, 4>& exportNames,
                 JSC::MarkedArgumentBuffer& exportValues) -> void {
-                auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+                auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
                 auto& vm = JSC::getVM(globalObject);
                 auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1523,7 +1524,7 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 RETURN_IF_EXCEPTION(scope, {});
 
                 if (entry) {
-                    if (auto* moduleObject = jsDynamicCast<JSCommonJSModule*>(entry)) {
+                    if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
                         if (!moduleObject->hasEvaluated) {
                             evaluateCommonJSModuleOnce(
                                 vm,
@@ -1571,7 +1572,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     RETURN_IF_EXCEPTION(scope, {});
 
     if (entry) {
-        moduleObject = jsDynamicCast<JSCommonJSModule*>(entry);
+        moduleObject = dynamicDowncast<JSCommonJSModule>(entry);
     }
 
     if (!moduleObject) {
@@ -1611,7 +1612,7 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
 {
     ASSERT(!pathString.startsWith("file://"_s));
 
-    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSString* filename = JSC::jsStringWithCache(vm, pathString);

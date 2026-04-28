@@ -560,6 +560,9 @@ function _write(data, encoding, cb) {
   const fileSink = this[kWriteStreamFastPath];
 
   if (fileSink && fileSink !== true) {
+    if (typeof data === "string" && encoding && encoding !== "utf8" && encoding !== "utf-8" && encoding !== "buffer") {
+      data = Buffer.from(data, encoding);
+    }
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
       maybePromise
@@ -603,6 +606,9 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
       this.fd = fileSink._getFd();
     }
 
+    if (typeof data === "string" && encoding && encoding !== "utf8" && encoding !== "utf-8" && encoding !== "buffer") {
+      data = Buffer.from(data, encoding);
+    }
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
       maybePromise.then(
@@ -652,6 +658,9 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
 
   const fileSink = this[kWriteStreamFastPath];
   if (fileSink && fileSink !== true) {
+    if (typeof data === "string" && encoding && encoding !== "utf8" && encoding !== "utf-8" && encoding !== "buffer") {
+      data = Buffer.from(data, encoding);
+    }
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
       maybePromise

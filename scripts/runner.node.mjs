@@ -40,6 +40,7 @@ import {
   getArch,
   getBranch,
   getBuildLabel,
+  getBuildMetadata,
   getBuildUrl,
   getCommit,
   getDistro,
@@ -190,29 +191,53 @@ let allFiles = [];
 let newFiles = [];
 let prFileCount = 0;
 if (isBuildkite) {
-  try {
-    console.log("on buildkite: collecting new files from PR");
-    const per_page = 50;
-    const { BUILDKITE_PULL_REQUEST } = process.env;
-    for (let i = 1; i <= 10; i++) {
-      const res = await fetch(
-        `https://api.github.com/repos/oven-sh/bun/pulls/${BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
-        { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
-      );
-      const doc = await res.json();
-      console.log(`-> page ${i}, found ${doc.length} items`);
-      if (doc.length === 0) break;
-      for (const { filename, status } of doc) {
-        prFileCount += 1;
-        allFiles.push(filename);
-        if (status !== "added") continue;
-        newFiles.push(filename);
-      }
-      if (doc.length < per_page) break;
+  // The pipeline-upload step (.buildkite/ci.mjs) already fetched the PR file
+  // list once and stored it as build meta-data. Read it from there so each of
+  // the ~150 test shards doesn't repeat the GitHub API call and burn through
+  // the token's hourly rate limit.
+  const cachedAll = await getBuildMetadata("pr-all-files");
+  const cachedNew = await getBuildMetadata("pr-new-files");
+  if (cachedAll) {
+    try {
+      allFiles = JSON.parse(cachedAll);
+      newFiles = cachedNew ? JSON.parse(cachedNew) : [];
+      prFileCount = allFiles.length;
+      console.log(`- PR file list from build meta-data: ${prFileCount} files, ${newFiles.length} new files`);
+    } catch (e) {
+      console.error("Failed to parse pr-*-files meta-data:", e);
+      allFiles = [];
+      newFiles = [];
     }
-    console.log(`- PR ${BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
-  } catch (e) {
-    console.error(e);
+  }
+  if (allFiles.length === 0) {
+    try {
+      console.log("on buildkite: collecting new files from PR");
+      const per_page = 50;
+      const { BUILDKITE_PULL_REQUEST } = process.env;
+      for (let i = 1; i <= 10; i++) {
+        const res = await fetch(
+          `https://api.github.com/repos/oven-sh/bun/pulls/${BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
+          { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
+        );
+        const doc = await res.json();
+        if (!res.ok || !Array.isArray(doc)) {
+          console.error(`-> page ${i}: GitHub API ${res.status} ${res.statusText}:`, JSON.stringify(doc));
+          throw new Error(`GitHub API returned ${res.status}; cannot determine changed files`);
+        }
+        console.log(`-> page ${i}, found ${doc.length} items`);
+        if (doc.length === 0) break;
+        for (const { filename, status } of doc) {
+          prFileCount += 1;
+          allFiles.push(filename);
+          if (status !== "added") continue;
+          newFiles.push(filename);
+        }
+        if (doc.length < per_page) break;
+      }
+      console.log(`- PR ${BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
+    } catch (e) {
+      console.error(e);
+    }
   }
 }
 
@@ -2679,7 +2704,11 @@ export async function main() {
 
   let doRunTests = true;
   if (isCI) {
-    if (allFiles.every(filename => filename.startsWith("docs/"))) {
+    // allFiles can be empty if the GitHub API call failed (bad token, rate
+    // limit, non-PR build). [].every() is vacuously true, which would skip the
+    // entire suite and exit 0 — so require at least one file before treating
+    // the change set as docs-only.
+    if (allFiles.length > 0 && allFiles.every(filename => filename.startsWith("docs/"))) {
       doRunTests = false;
     }
   }

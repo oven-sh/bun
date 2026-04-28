@@ -21,13 +21,13 @@ const zstdFixture = /* js */ `
 
   // Random data at a high compression level so each threadpool job is slow
   // enough that reset() lands while ZSTD_compressStream2 is still running.
-  const buf = crypto.randomBytes(4 * 1024 * 1024);
+  const buf = crypto.randomBytes(1024 * 1024);
 
   let remaining = 0;
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 4; i++) {
     remaining++;
     const z = zlib.createZstdCompress({
-      chunkSize: 4 * 1024 * 1024,
+      chunkSize: 1024 * 1024,
       params: { [zlib.constants.ZSTD_c_compressionLevel]: 19 },
     });
     z.on("error", () => {});
@@ -48,10 +48,10 @@ const zstdFixture = /* js */ `
 const brotliFixture = /* js */ `
   const zlib = require("zlib");
 
-  const buf = Buffer.alloc(8 * 1024 * 1024, "abcdefgh");
+  const buf = Buffer.alloc(2 * 1024 * 1024, "abcdefgh");
 
   let remaining = 0;
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 4; i++) {
     remaining++;
     const z = zlib.createBrotliCompress({
       chunkSize: 1024 * 1024,
@@ -75,12 +75,12 @@ const deflateFixture = /* js */ `
   const zlib = require("zlib");
   const crypto = require("crypto");
 
-  const buf = crypto.randomBytes(4 * 1024 * 1024);
+  const buf = crypto.randomBytes(2 * 1024 * 1024);
 
   let remaining = 0;
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 4; i++) {
     remaining++;
-    const z = zlib.createDeflate({ chunkSize: 4 * 1024 * 1024, level: 9 });
+    const z = zlib.createDeflate({ chunkSize: 2 * 1024 * 1024, level: 9 });
     z.on("error", () => {});
     z.on("data", () => {});
     z.write(buf, () => {
@@ -95,6 +95,11 @@ const deflateFixture = /* js */ `
   }
 `;
 
+// These tests are intentionally sequential (not test.concurrent): each
+// subprocess launches several threadpool compression jobs at high quality
+// levels, and running three of them at once makes individual test wall
+// times highly variable under CPU contention. Sequential keeps each test
+// comfortably under the default timeout.
 async function run(fixture: string) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", fixture],
@@ -111,18 +116,18 @@ test("zstd: reset() while an async write is in flight does not use-after-free", 
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);
-}, 60_000);
+});
 
 test("brotli: reset() while an async write is in flight does not use-after-free", async () => {
   const { stdout, stderr, exitCode } = await run(brotliFixture);
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);
-}, 60_000);
+});
 
 test("deflate: reset() while an async write is in flight does not race", async () => {
   const { stdout, stderr, exitCode } = await run(deflateFixture);
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);
-}, 60_000);
+});

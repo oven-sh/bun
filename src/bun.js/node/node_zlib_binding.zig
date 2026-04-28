@@ -317,6 +317,7 @@ pub fn CompressionStream(comptime T: type) type {
             vm.eventLoop().runCallback(callback, globalThis, this_value, &.{ msg_value, err_value, code_value });
 
             this.write_in_progress = false;
+            if (this.pending_reset) resetInternal(this, globalThis, this_value);
             if (this.pending_close) _ = closeInternal(this);
         }
 

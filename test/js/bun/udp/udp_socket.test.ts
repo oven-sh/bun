@@ -1,6 +1,7 @@
 import { udpSocket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { disableAggressiveGCScope, randomPort } from "harness";
+import { bunEnv, bunExe, disableAggressiveGCScope, randomPort } from "harness";
+import path from "node:path";
 import { dataCases, dataTypes } from "./testdata";
 
 describe("udpSocket()", () => {
@@ -236,4 +237,37 @@ describe("udpSocket()", () => {
       });
     }
   }
+
+  // sendMany() iterates the input array and may run user JS (array index
+  // getters, port `valueOf()`, address `toString()`). That user JS can
+  // connect or disconnect the socket; sendMany must snapshot the connection
+  // state up front so the arena buffer indexing cannot change mid-loop.
+  describe("sendMany does not crash when the connection state changes during iteration", () => {
+    for (const direction of ["connect", "disconnect"] as const) {
+      test(
+        direction,
+        async () => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), path.join(import.meta.dir, "sendMany-reentrancy-fixture.ts"), direction],
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, rawStderr, exitCode] = await Promise.all([
+            proc.stdout.text(),
+            proc.stderr.text(),
+            proc.exited,
+          ]);
+          const stderr = rawStderr
+            .split("\n")
+            .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+            .join("\n");
+          expect(stderr).toBe("");
+          expect(stdout).toBe("OK\n");
+          expect(exitCode).toBe(0);
+        },
+        30_000,
+      );
+    }
+  });
 });

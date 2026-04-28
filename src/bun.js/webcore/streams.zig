@@ -1257,6 +1257,13 @@ pub fn HTTPServerWritable(comptime ssl: bool, comptime http3: bool) type {
 
         pub fn destroy(this: *@This()) void {
             log("destroy()", .{});
+            // Callers may tear this sink down without routing through
+            // flushPromise() (e.g. handleResolveStream / handleRejectStream).
+            // Drop the GC root so the promise can be collected.
+            if (this.pending_flush) |prom| {
+                prom.toJS().unprotect();
+                this.pending_flush = null;
+            }
             this.buffer.deinit(this.allocator);
             this.unregisterAutoFlusher();
             this.allocator.destroy(this);

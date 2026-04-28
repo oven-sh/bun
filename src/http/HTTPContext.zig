@@ -417,9 +417,12 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                             // if checkServerIdentity returns false, we dont call firstCall — the connection was rejected
                             const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
                             if (!client.checkServerIdentity(comptime ssl, socket, handshake_error, ssl_ptr, true)) {
-                                client.flags.did_have_handshaking_error = true;
-                                client.unregisterAbortTracker();
-                                if (!socket.isClosed()) terminateSocket(socket);
+                                // checkServerIdentity already called closeAndFail() → fail()
+                                // → result callback, which may have destroyed the
+                                // AsyncHTTP that embeds `client`. Socket is terminated
+                                // and the abort tracker is unregistered there, so the
+                                // only safe action is to return without touching
+                                // `client` again.
                                 return;
                             }
                         }

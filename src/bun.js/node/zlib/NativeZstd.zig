@@ -25,6 +25,7 @@ poll_ref: CountedKeepAlive = .{},
 this_value: jsc.Strong.Optional = .empty,
 write_in_progress: bool = false,
 pending_close: bool = false,
+pending_reset: bool = false,
 closed: bool = false,
 task: jsc.WorkPoolTask = .{ .callback = undefined },
 

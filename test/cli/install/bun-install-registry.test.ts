@@ -4042,6 +4042,65 @@ describe("hoisting", async () => {
     expect(await exists(join(packageDir, "node_modules", "peer-deps-fixed", "node_modules"))).toBeFalse();
   });
 
+  test("dependencies + peerDependencies on same name does not loop on missing version", async () => {
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "no-deps": "9.9.9" },
+        peerDependencies: { "no-deps": "^1" },
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).toContain("No version matching");
+    expect(err).not.toContain("Saved lockfile");
+    expect(code).not.toBe(0);
+  });
+
+  test("bun add exact version when root also has peerDependency on same name", async () => {
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        peerDependencies: { "no-deps": "^1" },
+      }),
+    );
+
+    let { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      version: "1.1.0",
+    });
+
+    ({ stderr, exited } = spawn({
+      cmd: [bunExe(), "add", "no-deps@1.0.0"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      version: "1.0.0",
+    });
+  });
+
   describe("devDependencies", () => {
     test("from normal dependency", async () => {
       // Root package should choose no-deps@1.0.1.

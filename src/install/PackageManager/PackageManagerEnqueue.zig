@@ -523,6 +523,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
 
     switch (version.tag) {
         .dist_tag, .folder, .npm => {
+            var did_retry_from_manifests = false;
             retry_from_manifests_ptr: while (true) {
                 var resolve_result_ = getOrPutResolvedPackage(
                     this,
@@ -795,7 +796,8 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                         }
 
                                         // Was it recent enough to just load it without the network call?
-                                        if (this.options.enable.manifest_cache_control and !expired) {
+                                        if (this.options.enable.manifest_cache_control and !expired and !did_retry_from_manifests) {
+                                            did_retry_from_manifests = true;
                                             _ = this.network_dedupe_map.remove(task_id);
                                             continue :retry_from_manifests_ptr;
                                         }

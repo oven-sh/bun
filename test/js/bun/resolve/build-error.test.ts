@@ -28,6 +28,7 @@ test("BuildMessage finalize frees with the same allocator it was created with", 
   for (let i = 0; i < 20; i++) {
     const r = await Bun.build({ entrypoints: [entry], throw: false });
     expect(r.success).toBe(false);
+    expect(r.logs.length).toBeGreaterThan(0);
     for (const e of r.logs) {
       void e.message;
       void e.level;

@@ -634,7 +634,7 @@ pub const IniTestingAPIs = struct {
         var configs = std.array_list.Managed(ConfigIterator.Item).init(allocator);
         defer configs.deinit();
         loadNpmrc(allocator, install, env, ".npmrc", &log, source, &configs) catch {
-            return log.toJS(globalThis, allocator, "error");
+            return log.toJS(globalThis, bun.default_allocator, "error");
         };
 
         const default_registry_url, const default_registry_token, const default_registry_username, const default_registry_password, const default_registry_email = brk: {

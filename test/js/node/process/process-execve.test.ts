@@ -142,6 +142,7 @@ describe("process.execve", () => {
         `
           const codes = [];
           try { process.execve(123); } catch (e) { codes.push(e.code); }
+          try { process.execve("/bin/sh\\u0000oops", ["sh"]); } catch (e) { codes.push(e.code); }
           try { process.execve(process.execPath, "123"); } catch (e) { codes.push(e.code); }
           try { process.execve(process.execPath, [123]); } catch (e) { codes.push(e.code); }
           try { process.execve(process.execPath, ["a\\u0000b"]); } catch (e) { codes.push(e.code); }
@@ -160,6 +161,7 @@ describe("process.execve", () => {
 
     expect(JSON.parse(stdout.trim())).toEqual([
       "ERR_INVALID_ARG_TYPE",
+      "ERR_INVALID_ARG_VALUE",
       "ERR_INVALID_ARG_TYPE",
       "ERR_INVALID_ARG_VALUE",
       "ERR_INVALID_ARG_VALUE",

@@ -1636,15 +1636,17 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
 
     WTF::String execPath = execPathValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    if (execPath.contains(static_cast<char16_t>(0))) {
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "execPath"_s,
+            execPathValue, "must be a string without null bytes"_s);
+    }
 
     JSObject* argsObject = argsValue.getObject();
     unsigned argsLength = static_cast<unsigned>(toLength(globalObject, argsObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     Vector<CString> argvStorage;
-    Vector<char*> argv;
     argvStorage.reserveInitialCapacity(argsLength);
-    argv.reserveInitialCapacity(argsLength + 1);
 
     for (unsigned i = 0; i < argsLength; i++) {
         JSValue item = argsObject->getIndex(globalObject, i);
@@ -1661,12 +1663,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
                 item, "must be a string without null bytes"_s);
         }
         argvStorage.append(str.utf8());
-        argv.append(const_cast<char*>(argvStorage.last().data()));
     }
-    argv.append(nullptr);
 
     Vector<CString> envStorage;
-    Vector<char*> envp;
     if (!envValue.isUndefined()) {
         Bun::V::validateObject(scope, globalObject, envValue, "env"_s);
         RETURN_IF_EXCEPTION(scope, {});
@@ -1677,7 +1676,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
         RETURN_IF_EXCEPTION(scope, {});
 
         envStorage.reserveInitialCapacity(envNames.size());
-        envp.reserveInitialCapacity(envNames.size() + 1);
 
         for (unsigned i = 0; i < envNames.size(); i++) {
             JSValue value = envObject->get(globalObject, envNames[i]);
@@ -1695,12 +1693,23 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
                     envValue, "must be an object with string keys and values without null bytes"_s);
             }
             envStorage.append(makeString(keyStr, '=', valueStr).utf8());
-            envp.append(const_cast<char*>(envStorage.last().data()));
         }
     }
-    envp.append(nullptr);
 
     CString execPathUtf8 = execPath.utf8();
+
+    // Build the null-terminated argv/envp pointer arrays only after the
+    // backing storage is fully populated so there is no risk of pointers
+    // becoming stale across any intermediate Vector growth.
+    Vector<char*> argv;
+    argv.reserveInitialCapacity(argvStorage.size() + 1);
+    for (auto& s : argvStorage) argv.append(const_cast<char*>(s.data()));
+    argv.append(nullptr);
+
+    Vector<char*> envp;
+    envp.reserveInitialCapacity(envStorage.size() + 1);
+    for (auto& s : envStorage) envp.append(const_cast<char*>(s.data()));
+    envp.append(nullptr);
 
     // Set stdin, stdout and stderr to be non-close-on-exec so that the new
     // process will inherit them.

@@ -402,6 +402,13 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncPrepare, (JSGlobalObject * globalObject, 
         throwSqliteError(globalObject, scope, self->connection());
         return {};
     }
+    // sqlite3_prepare_v2 returns SQLITE_OK with *ppStmt == nullptr when the
+    // input contains no SQL (empty / whitespace / comment only). Node.js
+    // surfaces that as ERR_INVALID_STATE at prepare() time.
+    if (stmt == nullptr) {
+        return Bun::ERR::INVALID_STATE(scope, globalObject,
+            "The supplied SQL string contains no statements"_s);
+    }
     auto* zigGlobal = defaultGlobalObject(globalObject);
     auto* structure = zigGlobal->m_JSStatementSyncClassStructure.get(zigGlobal);
     auto* stmtObj = JSStatementSync::create(vm, structure, self, stmt);
@@ -572,7 +579,10 @@ static bool validateDatabasePath(JSGlobalObject* globalObject, ThrowScope& scope
         RETURN_IF_EXCEPTION(scope, false);
         return true;
     }
-    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(pathVal)) {
+    // Node.js only accepts Uint8Array (and Buffer, which subclasses it).
+    // Reject other TypedArrays / DataView so the error message below is
+    // accurate.
+    if (auto* view = dynamicDowncast<JSC::JSUint8Array>(pathVal)) {
         auto span = view->span();
         out = WTF::String::fromUTF8({ reinterpret_cast<const char*>(span.data()), span.size() });
         return true;
@@ -642,7 +652,18 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSDatabaseSyncConstructor::construct(JSG
         JSValue timeoutVal = opts->get(globalObject, Identifier::fromString(vm, "timeout"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (!timeoutVal.isUndefined()) {
-            if (!timeoutVal.isInt32() && !(timeoutVal.isNumber() && std::trunc(timeoutVal.asNumber()) == timeoutVal.asNumber())) {
+            // Node.js validates with V8's IsInt32(), i.e. a finite integral
+            // value within the int32 range. {timeout: Infinity} and
+            // out-of-range integers must throw rather than silently
+            // wrapping through ToInt32.
+            bool ok = false;
+            if (timeoutVal.isInt32()) {
+                ok = true;
+            } else if (timeoutVal.isNumber()) {
+                double d = timeoutVal.asNumber();
+                ok = std::isfinite(d) && std::trunc(d) == d && d >= INT32_MIN && d <= INT32_MAX;
+            }
+            if (!ok) {
                 return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options.timeout"_s, "integer"_s, timeoutVal);
             }
             config.timeout = timeoutVal.toInt32(globalObject);

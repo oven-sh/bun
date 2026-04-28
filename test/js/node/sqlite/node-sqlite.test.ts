@@ -109,6 +109,44 @@ describe("DatabaseSync", () => {
     expect(() => new StatementSync()).toThrow(/Illegal constructor/);
   });
 
+  test("prepare() rejects empty / comment-only SQL", () => {
+    const db = new DatabaseSync(":memory:");
+    for (const sql of ["", "   ", "-- a comment"]) {
+      expect(() => db.prepare(sql)).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_STATE",
+          message: expect.stringMatching(/contains no statements/),
+        }),
+      );
+    }
+    db.close();
+  });
+
+  test("constructor rejects non-int32 timeout values", () => {
+    for (const timeout of [Infinity, -Infinity, 2 ** 32, 1.5, NaN, "100"]) {
+      expect(() => new DatabaseSync(":memory:", { timeout })).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    }
+    // int32-range integers are accepted.
+    const db = new DatabaseSync(":memory:", { timeout: 1000 });
+    expect(db.isOpen).toBe(true);
+    db.close();
+  });
+
+  test("constructor rejects non-Uint8Array TypedArray paths", () => {
+    expect(() => new DatabaseSync(new Float64Array([1.5]))).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    expect(() => new DatabaseSync(new Int32Array([65, 66]))).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    // Buffer (which extends Uint8Array) is accepted.
+    const db = new DatabaseSync(Buffer.from(":memory:"));
+    expect(db.isOpen).toBe(true);
+    db.close();
+  });
+
   test("exposes changeset constants", () => {
     expect(constants.SQLITE_CHANGESET_OMIT).toBe(0);
     expect(constants.SQLITE_CHANGESET_REPLACE).toBe(1);

@@ -60,6 +60,7 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
+#include <wtf/Scope.h>
 #include <wtf/URL.h>
 #include "IDLTypes.h"
 #include "FetchHeaders.h"
@@ -213,7 +214,14 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
 
     Vector<String> protocols;
     int rejectUnauthorized = -1;
-    void* sslConfig = nullptr; // SSLConfig pointer from Zig
+    // SSLConfig pointer heap-allocated by Zig. Ownership stays with this
+    // local until it is handed to WebSocket::create(); any early return
+    // before that point must free it, so guard it with a scope exit.
+    void* sslConfig = nullptr;
+    auto freeSSLConfigOnEarlyReturn = WTF::makeScopeExit([&sslConfig] {
+        if (sslConfig)
+            Bun__WebSocket__freeSSLConfig(sslConfig);
+    });
     auto headersInit = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>();
     // Default true — matches Bun's existing behavior of always offering permessage-deflate.
     // ws.WebSocket passes `perMessageDeflate: false` to opt out.
@@ -324,9 +332,13 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
         }
     }
 
+    // WebSocket::create() takes ownership of sslConfig unconditionally
+    // (it frees the config on its own failure paths), so release the
+    // scope guard before handing the pointer over.
+    auto* transferredSSLConfig = std::exchange(sslConfig, nullptr);
     auto object = (rejectUnauthorized == -1)
-        ? WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), WTF::move(proxyUrl), WTF::move(proxyHeadersInit), sslConfig, offerPerMessageDeflate)
-        : WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), rejectUnauthorized ? true : false, WTF::move(proxyUrl), WTF::move(proxyHeadersInit), sslConfig, offerPerMessageDeflate);
+        ? WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), WTF::move(proxyUrl), WTF::move(proxyHeadersInit), transferredSSLConfig, offerPerMessageDeflate)
+        : WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), rejectUnauthorized ? true : false, WTF::move(proxyUrl), WTF::move(proxyHeadersInit), transferredSSLConfig, offerPerMessageDeflate);
 
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});

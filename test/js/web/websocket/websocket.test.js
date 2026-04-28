@@ -865,3 +865,77 @@ it.serial("instances should be finalized when GC'd", async () => {
   // expect that current and initial websocket be close to the same (normaly 1 or 2 difference)
   expect(Math.abs(current_websocket_count - initial_websocket_count)).toBeLessThanOrEqual(50);
 });
+
+// The Zig-heap-allocated SSLConfig (holding duped cert/key/ca strings) used
+// to leak on every early-return path between parseSSLConfig and the point
+// where the Zig upgrade client takes ownership: throwing option getters
+// (JSWebSocket.cpp), invalid proxy, and any connect() validation failure
+// (WebSocket.cpp). Exercise both families of paths with a large `ca` payload
+// and assert RSS stays bounded.
+describe("WebSocket tls option does not leak SSLConfig on error paths", () => {
+  const fixture = /* js */ `
+    const iterations = 1000;
+    // 128 KiB duped per SSLConfig -> ~128 MiB per path if every iteration leaks.
+    const bigCA = Buffer.alloc(128 * 1024, "A").toString();
+    const tls = { ca: bigCA, rejectUnauthorized: false };
+
+    function hit() {
+      // Path 1: getter on a later option throws after the SSLConfig has
+      // already been heap-allocated in constructJSWebSocket3.
+      try {
+        new WebSocket("wss://127.0.0.1:1", {
+          tls,
+          get proxy() { throw new Error("boom"); },
+        });
+        throw new Error("expected proxy getter to throw");
+      } catch (e) {
+        if (e?.message !== "boom") throw e;
+      }
+
+      // Path 2: WebSocket::create assigns m_sslConfig, then connect() rejects
+      // the URL (fragment identifier) before handing the config to Zig.
+      let threw = false;
+      try {
+        new WebSocket("wss://127.0.0.1:1/path#fragment", { tls });
+      } catch {
+        threw = true;
+      }
+      if (!threw) throw new Error("expected fragment URL to throw");
+    }
+
+    // Warm up so one-off allocations (ICU, resolver caches, JIT) settle.
+    for (let i = 0; i < 200; i++) hit();
+    Bun.gc(true);
+    const baseline = process.memoryUsage.rss();
+
+    for (let i = 0; i < iterations; i++) hit();
+    Bun.gc(true);
+    const after = process.memoryUsage.rss();
+
+    const growthMiB = (after - baseline) / (1024 * 1024);
+    console.log(JSON.stringify({ baseline, after, growthMiB }));
+    // 1000 iterations * 2 paths * 128 KiB would leak ~250 MiB. Allow generous
+    // headroom for allocator noise while still catching the regression.
+    if (growthMiB > 64) {
+      process.exitCode = 1;
+    }
+  `;
+
+  it("bounded RSS growth across throwing-option and connect-failure paths", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stderr).toBe("");
+    const { growthMiB } = JSON.parse(stdout.trim());
+    expect(growthMiB).toBeLessThan(64);
+    expect(exitCode).toBe(0);
+  }, 60_000);
+});

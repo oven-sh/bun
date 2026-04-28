@@ -108,10 +108,14 @@ fn readFrequency() u64 {
             return hz;
         }
 
-        // Linux/Windows: CPUID 0x15 gives an exact answer on Intel Skylake+
-        // when fully populated (implies invariant TSC). AMD and older Intel
-        // leave fields zero — we just fall back to vDSO/QPC per call.
-        if (cpuid(0, 0).eax >= 0x15) {
+        // Linux/Windows: require invariant TSC (CPUID 0x8000_0007 EDX[8]) so
+        // rdtsc is monotonic across cores and P/C-states, then read CPUID 0x15
+        // for an exact frequency (Intel Skylake+ when fully populated). AMD and
+        // older Intel leave 0x15 fields zero — we fall back to vDSO/QPC per call.
+        if (cpuid(0x8000_0000, 0).eax >= 0x8000_0007 and
+            cpuid(0x8000_0007, 0).edx & (1 << 8) != 0 and
+            cpuid(0, 0).eax >= 0x15)
+        {
             const r = cpuid(0x15, 0);
             if (r.eax != 0 and r.ebx != 0 and r.ecx != 0)
                 return @as(u64, r.ecx) * r.ebx / r.eax;

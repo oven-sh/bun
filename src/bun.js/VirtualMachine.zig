@@ -2084,6 +2084,11 @@ pub fn deinit(this: *VirtualMachine) void {
     this.source_mappings.deinit();
     if (this.rare_data) |rare_data| {
         jsc.API.cron.CronJob.clearAllForVM(this, .teardown);
+        // Paired with rareData()'s registerRootRegion. Without this, every
+        // terminated Worker leaves a stale LSAN root entry pointing into a
+        // freed arena (harmless to the final leak verdict but accumulates one
+        // dead range per Worker for LSAN to scan).
+        bun.asan.unregisterRootRegion(rare_data, @sizeOf(jsc.RareData));
         rare_data.deinit();
     }
     this.proxy_env_storage.deinit();

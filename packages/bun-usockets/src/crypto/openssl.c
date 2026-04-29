@@ -95,20 +95,34 @@ long us_ssl_ctx_live_count(void) {
   return atomic_load(&ssl_ctx_live);
 }
 
-/* ex_data indices, registered lazily at first use:
+/* ex_data indices, registered once at first SSL_CTX/SSL touch:
  *   - us_ctx_ex_idx (SSL_CTX): packed reneg {limit:u32,window:u32}; its
  *     free_func also decrements ssl_ctx_live so the counter tracks ACTUAL
  *     destruction (refcount→0), not every SSL_CTX_free.
  *   - us_sni_ex_idx (SSL_CTX): per-domain userdata (uWS HttpRouter*).
  *   - us_ssl_reneg_state_idx (SSL): per-connection reneg counter, malloc'd on
- *     first reneg attempt only — never on the hot path. */
+ *     first reneg attempt only — never on the hot path.
+ *   - us_ssl_listener_ex_idx (SSL): the accepting us_listen_socket_t*. The
+ *     SSL_CTX is shared and can outlive any one listener, so storing ls as the
+ *     CTX-level servername_arg is a UAF after listener close (and overwritten
+ *     on multi-listen).
+ *
+ * SSL_CTX creation runs from both the JS thread (SecureContext, Bun.connect/
+ * listen) and the HTTP-client thread (HTTPContext.initWithOpts). A racy `<0`
+ * check would let two threads each register the ctx_ex_idx free_func, double-
+ * decrementing ssl_ctx_live forever after. (BoringSSL's CRYPTO_once is
+ * internal-only, so use the platform primitive directly; root_certs.cpp does
+ * the same via std::call_once.) */
 static int us_ctx_ex_idx = -1;
 static int us_sni_ex_idx = -1;
 static int us_ssl_reneg_state_idx = -1;
-/* Per-SSL: the accepting us_listen_socket_t*. The SSL_CTX is shared and can
- * outlive any one listener, so storing ls as the CTX-level servername_arg is a
- * UAF after listener close (and overwritten on multi-listen). */
 static int us_ssl_listener_ex_idx = -1;
+#ifdef _WIN32
+static INIT_ONCE us_ex_idx_once = INIT_ONCE_STATIC_INIT;
+#else
+#include <pthread.h>
+static pthread_once_t us_ex_idx_once = PTHREAD_ONCE_INIT;
+#endif
 
 #define US_RENEG_PACK(limit, window) ((void *)(uintptr_t)(((uint64_t)(limit) << 32) | (uint32_t)(window)))
 #define US_RENEG_LIMIT(p)  ((uint32_t)((uint64_t)(uintptr_t)(p) >> 32))
@@ -130,9 +144,31 @@ static void us_ssl_reneg_state_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
   us_free(ptr);
 }
 
+static void us_ex_idx_init(void) {
+  us_ctx_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, us_ctx_ex_free);
+  us_sni_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ssl_reneg_state_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_reneg_state_free);
+  us_ssl_listener_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+}
+
+#ifdef _WIN32
+static BOOL CALLBACK us_ex_idx_init_win(PINIT_ONCE o, PVOID p, PVOID *c) {
+  (void)o; (void)p; (void)c;
+  us_ex_idx_init();
+  return TRUE;
+}
+#endif
+
+static inline void us_ex_idx_ensure(void) {
+#ifdef _WIN32
+  InitOnceExecuteOnce(&us_ex_idx_once, us_ex_idx_init_win, NULL, NULL);
+#else
+  pthread_once(&us_ex_idx_once, us_ex_idx_init);
+#endif
+}
+
 static inline int us_ssl_ctx_ex_idx(void) {
-  if (us_ctx_ex_idx < 0)
-    us_ctx_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, us_ctx_ex_free);
+  us_ex_idx_ensure();
   return us_ctx_ex_idx;
 }
 
@@ -144,8 +180,7 @@ static inline void us_reneg_policy(SSL *ssl, uint32_t *limit, uint32_t *window) 
 }
 
 static inline struct us_ssl_reneg_state_t *us_reneg_state(SSL *ssl) {
-  if (us_ssl_reneg_state_idx < 0)
-    us_ssl_reneg_state_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_reneg_state_free);
+  us_ex_idx_ensure();
   struct us_ssl_reneg_state_t *st = SSL_get_ex_data(ssl, us_ssl_reneg_state_idx);
   if (!st) {
     st = us_calloc(1, sizeof(*st));
@@ -630,8 +665,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
     SSL_set_accept_state(ssl);
     SSL_set_renegotiate_mode(ssl, ssl_renegotiate_never);
     /* sni_cb recovers ls per-SSL — never via the shared SSL_CTX. */
-    if (us_ssl_listener_ex_idx < 0)
-      us_ssl_listener_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+    us_ex_idx_ensure();
     SSL_set_ex_data(ssl, us_ssl_listener_ex_idx, listener);
   }
 
@@ -1209,8 +1243,7 @@ int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
   SSL_CTX_up_ref(ctx);
   /* Stash userdata on the SSL_CTX too so per-socket lookup via
    * SSL_get_SSL_CTX works regardless of which ctx the SNI cb selected. */
-  if (us_sni_ex_idx < 0)
-    us_sni_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ex_idx_ensure();
   SSL_CTX_set_ex_data(ctx, us_sni_ex_idx, user);
 
   if (sni_add(ls->sni, hostname_pattern, node)) {
@@ -1257,6 +1290,17 @@ void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls) {
   if (us_ssl_listener_ex_idx >= 0 && ls->accept_group) {
     for (struct us_socket_t *s = ls->accept_group->head_sockets; s; s = s->next) {
       if (s->ssl && SSL_get_ex_data((SSL *)s->ssl, us_ssl_listener_ex_idx) == ls) {
+        SSL_set_ex_data((SSL *)s->ssl, us_ssl_listener_ex_idx, NULL);
+      }
+    }
+    /* Mid-handshake sockets (SSL_in_init → low_prio) are *unlinked* from
+     * head_sockets while parked in loop->data.low_prio_head, and they're
+     * exactly the population that will run sni_cb on the next tick. Miss them
+     * here and sni_cb dereferences `ls` after it's freed. Same group-filter as
+     * close_all's drain. */
+    for (struct us_socket_t *s = ls->accept_group->loop->data.low_prio_head; s; s = s->next) {
+      if (s->group == ls->accept_group && s->ssl &&
+          SSL_get_ex_data((SSL *)s->ssl, us_ssl_listener_ex_idx) == ls) {
         SSL_set_ex_data((SSL *)s->ssl, us_ssl_listener_ex_idx, NULL);
       }
     }

@@ -477,16 +477,28 @@ function secureContextCacheKey(o) {
   // delimiter bytes inside values can alias two configs. A false miss is fine
   // (just one extra SSL_CTX), so unhashable shapes return null → uncached.
   const sha = new Bun.CryptoHasher("sha256");
+  let unhashable = false;
   const tag = (t, s) => sha.update(t + s.length + ":").update(s);
   const feed = v => {
     if (v == null) sha.update("n");
     else if (typeof v === "string") tag("s", v);
+    // boolean/number/bigint — String(v) is content-exact for primitives; the
+    // typeof prefix keeps `true` distinct from `"true"` and `1` from `"1"`.
+    else if (typeof v !== "object") tag("p", typeof v + ":" + v);
     else if ($isJSArray(v)) {
       sha.update("a" + v.length + "[");
       for (const e of v) feed(e);
       sha.update("]");
     } else if ($isTypedArrayView(v)) tag("b", v);
-    else tag("o", String(v));
+    else if (v instanceof ArrayBuffer || v instanceof SharedArrayBuffer)
+      // Hash the actual bytes — `String(ab)` is content-independent.
+      tag("b", new Uint8Array(v));
+    // Blob / BunFile / `{pem, passphrase}` and any other object the bindgen
+    // union accepts: we can't hash these synchronously and content-exactly
+    // (Blob bytes are async; identity isn't stable across calls). String(v)
+    // would collapse them all to "[object Blob]" and produce a *false hit*, so
+    // bail to uncached instead.
+    else unhashable = true;
   };
   feed(o.key);
   feed(o.cert);
@@ -512,6 +524,7 @@ function secureContextCacheKey(o) {
   feed(o.ecdhCurve);
   feed(o.sigalgs);
   feed(o.ALPNProtocols);
+  if (unhashable) return null;
   return sha.digest("base64");
 }
 
@@ -536,6 +549,7 @@ function createSecureContext(options) {
     return new SecureContext(options);
   }
   const key = secureContextCacheKey(options);
+  if (key === null) return new SecureContext(options);
   // Cache the NATIVE handle (SSL_CTX), not the wrapper. The wrapper carries
   // `servername` (per-connection, omitted from the key); reusing it would let
   // the second caller inherit the first caller's servername.

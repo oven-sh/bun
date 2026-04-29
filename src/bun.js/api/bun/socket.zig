@@ -1458,7 +1458,14 @@ pub fn NewSocket(comptime ssl: bool) type {
             jsc.markBinding(@src());
 
             if (comptime ssl) return .js_undefined;
-            if (this.socket.isDetached() or this.socket.isNamedPipe()) return .js_undefined;
+            // adoptTLS needs a real `*us_socket_t`. `.connecting` (DNS /
+            // happy-eyeballs in flight) and `.upgradedDuplex` have no fd to
+            // adopt; the old `isDetached()/isNamedPipe()` guard let those
+            // through and the `.connected` payload read below would then be
+            // illegal-union-access on a `.connecting` socket.
+            const raw_socket = this.socket.socket.get() orelse {
+                return globalObject.throwInvalidArguments("upgradeTLS requires an established socket", .{});
+            };
             if (this.isServer()) {
                 return globalObject.throw("Server-side upgradeTLS is not supported. Use upgradeDuplexToTLS with isServer: true instead.", .{});
             }
@@ -1568,7 +1575,6 @@ pub fn NewSocket(comptime ssl: bool) type {
 
             const sni: ?[*:0]const u8 = if (cfg) |c| c.server_name else null;
             const group = vm.rareData().bunConnectGroup(vm, true);
-            const raw_socket = this.socket.socket.connected;
             const new_raw = raw_socket.adoptTLS(group, .bun_socket_tls, tls.owned_ssl_ctx.?, sni, @sizeOf(*anyopaque), @sizeOf(*anyopaque)) orelse {
                 const err = BoringSSL.ERR_get_error();
                 defer if (err != 0) BoringSSL.ERR_clear_error();

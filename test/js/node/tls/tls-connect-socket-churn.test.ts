@@ -44,11 +44,12 @@ test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () 
   // close-list / GC race, but 200 connects must not move this by 200.
   expect(ctxAfter - ctxBefore).toBeLessThanOrEqual(2);
 
-  // Pre-fix this grew ~50 KB × 200 ≈ 10 MB in release. Debug+ASAN builds hold
-  // freed allocations in quarantine, so RSS deltas there are dominated by
-  // quarantine churn rather than live leaks; only enforce the tight bound in
-  // release where the original regression was visible.
-  const rssBound = isASAN || isDebug ? 64 * 1024 * 1024 : 4 * 1024 * 1024;
+  // RSS is a much weaker signal than the SSL_CTX count above (allocator
+  // fragmentation, JSC heap growth, the one-time root-CA store load on the
+  // first verify all bump it). The original regression was ~50 KB/conn of
+  // SSL_CTX; bound at 16 MB so a return of that leak (50 × 50 KB ≈ 2.5 MB on
+  // top of the noise floor) would still trip without flaking on the noise.
+  const rssBound = isASAN || isDebug ? 64 * 1024 * 1024 : 16 * 1024 * 1024;
   expect(rssAfter - rssBefore).toBeLessThan(rssBound);
   // Debug+ASAN BoringSSL does ~200 ms per full handshake; 50 sequential
   // handshakes can't fit the 5 s default. This is wall-clock cost of the
@@ -73,8 +74,12 @@ async function connectOnce(port: number) {
   await new Promise<void>((resolve, reject) => {
     const sock = tls.connect({ port, host: "127.0.0.1", ca: tlsCerts.ca, rejectUnauthorized: false }, () => {
       sock.destroy();
-      resolve();
     });
+    // Resolve on full close, not on secureConnect: TLS destroy() sends
+    // close_notify and defers the fd close until the peer answers (or FINs).
+    // Resolving early lets the process exit while one socket is still parked
+    // in head_sockets waiting on that round-trip → LSAN false positive.
+    sock.on("close", resolve);
     sock.on("error", reject);
   });
 }

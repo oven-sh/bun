@@ -397,6 +397,14 @@ void *us_listen_socket_ext(struct us_listen_socket_t *ls) {
     return ls + 1;
 }
 
+struct us_listen_socket_t *us_socket_group_head_listen_socket(struct us_socket_group_t *group) {
+    return group->head_listen_sockets;
+}
+
+struct us_listen_socket_t *us_listen_socket_next(struct us_listen_socket_t *ls) {
+    return ls->next;
+}
+
 LIBUS_SOCKET_DESCRIPTOR us_listen_socket_get_fd(struct us_listen_socket_t *ls) {
     return us_poll_fd(&ls->s.p);
 }

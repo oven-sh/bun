@@ -523,6 +523,11 @@ void *us_listen_socket_ext(struct us_listen_socket_t *ls) nonnull_fn_decl;
 LIBUS_SOCKET_DESCRIPTOR us_listen_socket_get_fd(struct us_listen_socket_t *ls) nonnull_fn_decl;
 int us_listen_socket_port(struct us_listen_socket_t *ls) nonnull_fn_decl;
 struct us_socket_group_t *us_listen_socket_group(struct us_listen_socket_t *ls) nonnull_fn_decl;
+/* Walk a group's live listeners. The list is the source of truth — anything
+ * that caches us_listen_socket_t* across event-loop ticks (e.g. a std::vector
+ * in C++) is a UAF once a listener is closed and freed in loop_post. */
+struct us_listen_socket_t *us_socket_group_head_listen_socket(us_socket_group_r group) nonnull_fn_decl;
+struct us_listen_socket_t *us_listen_socket_next(struct us_listen_socket_t *ls) nonnull_fn_decl;
 LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) nonnull_fn_decl;
 
 /* Bun extras */

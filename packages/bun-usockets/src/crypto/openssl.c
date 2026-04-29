@@ -877,7 +877,10 @@ struct us_socket_t *us_internal_ssl_on_close(struct us_socket_t *s, int code, vo
 
 struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
   ssl_set_loop_data(s);
-  /* TCP FIN under TLS is always treated as an answered shutdown. */
+  /* TCP FIN under TLS is always treated as an answered shutdown. loop.c's
+   * non-half-open path follows this with an unconditional us_socket_close, so
+   * even if ssl_handle_shutdown deferred (close_notify sent, peer reply
+   * impossible after FIN) the second ssl_close sees SENT_SHUTDOWN → raw-close. */
   return ssl_close(s, 0, NULL);
 }
 

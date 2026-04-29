@@ -105,7 +105,18 @@ private:
         HttpRouter<typename HttpContextData<SSL>::RouterData> *router;
     };
     std::vector<PendingServerName> pendingServerNames;
-    std::vector<us_listen_socket_t *> listenSockets;
+    /* No raw us_listen_socket_t* cache here. server.zig's non-abrupt stop calls
+     * us_listen_socket_close(ls) directly; the listener is queued for free in
+     * loop_post, so any vector we kept would dangle by the time the deferred
+     * App::close() task runs. The group's intrusive head_listen_sockets list is
+     * the only source of truth and is kept in sync by us_listen_socket_close(). */
+    template <typename Fn>
+    void forEachListenSocket(Fn &&fn) {
+        for (auto *ls = us_socket_group_head_listen_socket(httpContext->getSocketGroup()); ls;
+             ls = us_listen_socket_next(ls)) {
+            fn(ls);
+        }
+    }
     /* WebSocketContexts are of differing type, but we as owners and creators must delete them correctly */
     std::vector<MoveOnlyFunction<void()>> webSocketContextDeleters;
     std::vector<us_socket_group_t *> webSocketGroups;
@@ -128,9 +139,9 @@ public:
             }
             auto *domainRouter = new HttpRouter<typename HttpContextData<SSL>::RouterData>();
             int result = 0;
-            for (auto *ls : listenSockets) {
+            forEachListenSocket([&](us_listen_socket_t *ls) {
                 result |= us_listen_socket_add_server_name(ls, hostname_pattern.c_str(), domainCtx, domainRouter);
-            }
+            });
             /* Queue for any listeners not yet created. We hold one SSL_CTX ref;
              * each listen socket took its own via SSL_CTX_up_ref. */
             pendingServerNames.push_back({hostname_pattern, domainCtx, domainRouter});
@@ -146,9 +157,9 @@ public:
              * (and its own SSL_CTX_up_ref). pendingServerNames is the single
              * owner — drop the borrowers first, then free the owner exactly
              * once. The old loop deleted the router once per listener. */
-            for (auto *ls : listenSockets) {
+            forEachListenSocket([&](us_listen_socket_t *ls) {
                 us_listen_socket_remove_server_name(ls, hostname_pattern.c_str());
-            }
+            });
             for (auto it = pendingServerNames.begin(); it != pendingServerNames.end(); ) {
                 if (it->hostname == hostname_pattern) {
                     us_internal_ssl_ctx_unref(it->ctx);
@@ -163,9 +174,9 @@ public:
     TemplatedApp &&missingServerName(MoveOnlyFunction<void(const char *hostname)> &&handler) {
         if (!constructorFailed()) {
             httpContext->getSocketContextData()->missingServerNameHandler = std::move(handler);
-            for (auto *ls : listenSockets) {
+            forEachListenSocket([&](us_listen_socket_t *ls) {
                 us_listen_socket_on_server_name(ls, &onMissingServerName);
-            }
+            });
         }
         return std::move(*this);
     }
@@ -321,10 +332,8 @@ public:
 
     /* Closes all sockets including listen sockets. */
     TemplatedApp &&close() {
-        for (auto *ls : listenSockets) {
-            us_listen_socket_close(ls);
-        }
-        listenSockets.clear();
+        /* close_all() walks head_listen_sockets first, so listeners are closed
+         * here without us holding raw pointers to them across loop ticks. */
         us_socket_group_close_all(httpContext->getSocketGroup());
         for (us_socket_group_t *g : webSocketGroups) {
             us_socket_group_close_all(g);
@@ -626,11 +635,11 @@ public:
     }
 
 private:
-    /* Replay queued SNI entries onto a fresh listener and remember it for
-     * close() / removeServerName(). */
+    /* Replay queued SNI entries onto a fresh listener. The listener is already
+     * linked into the http group's head_listen_sockets by us_socket_group_listen,
+     * which is the only owner — we don't (and must not) cache the raw pointer. */
     us_listen_socket_t *trackListenSocket(us_listen_socket_t *ls) {
         if (!ls) return nullptr;
-        listenSockets.push_back(ls);
         if constexpr (SSL) {
             for (auto &p : pendingServerNames) {
                 us_listen_socket_add_server_name(ls, p.hostname.c_str(), p.ctx, p.router);

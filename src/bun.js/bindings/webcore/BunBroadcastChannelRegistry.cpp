@@ -58,9 +58,14 @@ void BunBroadcastChannelRegistry::post(const String& name, BroadcastChannel& sou
             continue;
         // Keep the channel alive for GC until the task runs.
         channel->m_state.fetch_add(BroadcastChannel::QueuedOne, std::memory_order_acq_rel);
-        ScriptExecutionContext::postTaskTo(sub.ctxId, [channel = channel.releaseNonNull(), message = message.copyRef()](ScriptExecutionContext&) mutable {
+        bool posted = ScriptExecutionContext::postTaskTo(sub.ctxId, [channel, message = message.copyRef()](ScriptExecutionContext&) mutable {
             channel->dispatchMessage(WTF::move(message));
         });
+        if (!posted) {
+            // Context is already gone; balance the count so a subsequent
+            // close() doesn't leave the channel looking busy forever.
+            channel->m_state.fetch_sub(BroadcastChannel::QueuedOne, std::memory_order_acq_rel);
+        }
     }
 }
 

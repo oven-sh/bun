@@ -8,10 +8,12 @@
 // that lockless readers (the GC's hasPendingActivity check, and senders
 // deciding whether to schedule a wakeup) can observe a consistent snapshot.
 //
-// Wakeups are coalesced: a burst of N sends schedules at most one drain task
-// on the receiving context. The receiving side clears DrainScheduled before
-// swapping the inbox, so a send that races past the clear simply schedules a
-// second (harmless, no-op) drain. No message is ever stranded.
+// Wakeups are coalesced: a burst of N sends schedules one cross-thread drain
+// task on the receiving context. Each drain task delivers exactly one message
+// and, if more remain, posts itself again as a local task — so microtasks
+// checkpoint between deliveries, and messages stay in the inbox until the
+// instant they are dispatched (a transfer between drain tasks carries the
+// remaining queue to the new owner).
 //
 // The Web API semantics (start(), close(), transfer, event dispatch) live in
 // MessagePort; this class knows nothing about EventTarget or JS.
@@ -51,9 +53,8 @@ public:
     // `fromSide` is the sender's side; the message lands in the *other* side's inbox.
     void send(uint8_t fromSide, MessageWithMessagePorts&&);
 
-    // Receiver-thread operations.
-    Deque<MessageWithMessagePorts> takeAll(uint8_t side);
-    std::optional<MessageWithMessagePorts> takeOne(uint8_t side); // receiveMessageOnPort
+    // Receiver-thread synchronous pop, for node:worker_threads receiveMessageOnPort.
+    std::optional<MessageWithMessagePorts> takeOne(uint8_t side);
 
     // Attach this side to a context + port. Schedules a drain if messages are
     // already queued (e.g. after transfer). Passing a null port is allowed and

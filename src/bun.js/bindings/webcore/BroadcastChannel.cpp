@@ -108,19 +108,24 @@ void BroadcastChannel::close()
 void BroadcastChannel::contextDestroyed()
 {
     close();
+    ContextDestructionObserver::contextDestroyed();
 }
 
 void BroadcastChannel::eventListenersDidChange()
 {
-    m_hasRelevantEventListener = hasEventListeners(eventNames().messageEvent);
+    if (hasEventListeners(eventNames().messageEvent))
+        m_state.fetch_or(HasMessageListener, std::memory_order_acq_rel);
+    else
+        m_state.fetch_and(~uint64_t(HasMessageListener), std::memory_order_acq_rel);
 }
 
 bool BroadcastChannel::hasPendingActivity() const
 {
+    // Called from the GC thread; a single atomic load covers everything.
     uint64_t s = m_state.load(std::memory_order_acquire);
     if (s & Closed)
         return false;
-    return m_hasRelevantEventListener || (s >> QueuedShift) > 0;
+    return (s & HasMessageListener) || (s >> QueuedShift) > 0;
 }
 
 void BroadcastChannel::jsRef(JSGlobalObject* lexicalGlobalObject)

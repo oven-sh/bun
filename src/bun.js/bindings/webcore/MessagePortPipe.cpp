@@ -40,36 +40,58 @@ void MessagePortPipe::scheduleDrain(uint8_t side, ScriptExecutionContextIdentifi
     // The posted task holds a strong ref to the pipe so it can't be destroyed
     // while a wakeup is in flight. The task runs on the receiver's context
     // thread and calls back into the attached port to fire events.
-    ScriptExecutionContext::postTaskTo(ctxId, [pipe = Ref { *this }, side](ScriptExecutionContext&) {
+    bool posted = ScriptExecutionContext::postTaskTo(ctxId, [pipe = Ref { *this }, side](ScriptExecutionContext&) {
         pipe->drainAndDispatch(side);
     });
+    if (!posted) {
+        // Context already torn down. Drop DrainScheduled so a future
+        // attach() to a new context can reschedule.
+        Locker locker { m_sides[side].lock };
+        m_sides[side].state.fetch_and(~uint64_t(DrainScheduled), std::memory_order_acq_rel);
+    }
 }
 
 void MessagePortPipe::drainAndDispatch(uint8_t side)
 {
-    RefPtr<MessagePort> port;
-    {
-        Locker locker { m_sides[side].lock };
-        port = m_sides[side].port.get();
-    }
-    // If the port was detached or collected between scheduling and now, the
-    // messages stay buffered; the next attach() will reschedule.
-    if (port)
-        port->drainAndDispatch();
-}
-
-Deque<MessageWithMessagePorts> MessagePortPipe::takeAll(uint8_t side)
-{
-    ASSERT(side < 2);
+    // Each drain task delivers exactly one message and, if more remain,
+    // posts itself again. Messages stay in the inbox until the instant they
+    // are dispatched, so a port transferred between drain tasks carries its
+    // undelivered queue to the new owner — nothing is pulled out early that
+    // could be dropped by a racing disentangle().
     auto& s = m_sides[side];
-    Locker locker { s.lock };
-    // Clear DrainScheduled (and queued count) *before* handing the messages
-    // back. Because the lock is held, a concurrent send() can't interleave;
-    // it will observe DrainScheduled=0 on its next attempt and reschedule.
-    uint64_t ns = s.state.load(std::memory_order_relaxed);
-    ns &= (Closed | Attached); // preserve only these; drop DrainScheduled + count.
-    s.state.store(ns, std::memory_order_release);
-    return std::exchange(s.inbox, {});
+
+    RefPtr<MessagePort> port;
+    std::optional<MessageWithMessagePorts> message;
+    ScriptExecutionContextIdentifier rescheduleCtx = 0;
+    {
+        Locker locker { s.lock };
+        port = s.port.get();
+        uint64_t st = s.state.load(std::memory_order_relaxed);
+        if (!port || s.inbox.isEmpty()) {
+            // No receiver or nothing to deliver. Drop DrainScheduled so the
+            // next send() (or attach()) reschedules.
+            s.state.store(st & ~DrainScheduled, std::memory_order_release);
+            return;
+        }
+        message = s.inbox.takeFirst();
+        uint64_t ns = st - QueuedOne;
+        if (s.inbox.isEmpty()) {
+            ns &= ~DrainScheduled;
+        } else {
+            // Leave DrainScheduled set and arrange the follow-up task. It's
+            // posted *before* dispatch so that, on the receiver's task queue,
+            // the next port message precedes any tasks the handler enqueues
+            // — matching the previous implementation's observable ordering.
+            rescheduleCtx = s.ctxId;
+        }
+        s.state.store(ns, std::memory_order_release);
+    }
+
+    if (rescheduleCtx)
+        scheduleDrain(side, rescheduleCtx);
+
+    if (auto* context = port->scriptExecutionContext())
+        port->dispatchOneMessage(*context, WTF::move(*message));
 }
 
 std::optional<MessageWithMessagePorts> MessagePortPipe::takeOne(uint8_t side)

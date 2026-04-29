@@ -75,8 +75,7 @@ public:
     bool started() const { return m_started; }
     bool isDetached() const { return m_isDetached; }
 
-    // Called by the pipe on this port's context thread when messages are ready.
-    void drainAndDispatch();
+    // Called by the pipe on this port's context thread with one dequeued message.
     void dispatchOneMessage(ScriptExecutionContext&, MessageWithMessagePorts&&);
 
     // Only here for JSMessagePortCustom's GC optimization; always null.

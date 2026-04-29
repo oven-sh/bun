@@ -119,6 +119,12 @@ TransferredMessagePort MessagePort::disentangle()
 {
     ASSERT(isEntangled());
 
+    // Drop any message listeners (and the event-loop ref they carry) while
+    // this port is still attached to its context; after observeContext(null)
+    // there would be nothing to unref.
+    removeAllEventListeners();
+    m_hasMessageEventListener = false;
+
     // Release the pipe to its next owner. Messages that arrive while in
     // transit buffer in the pipe; the receiving context's entangle() call
     // re-attaches and flushes them.
@@ -143,30 +149,6 @@ Ref<MessagePort> MessagePort::entangle(ScriptExecutionContext& context, Transfer
     // MessageChannel) don't hold the process open.
     port->onDidChangeListener = &MessagePort::onDidChangeListenerImpl;
     return port;
-}
-
-void MessagePort::drainAndDispatch()
-{
-    if (!m_started || !isEntangled())
-        return;
-
-    RefPtr context = scriptExecutionContext();
-    if (!context)
-        return;
-    ASSERT(context->isContextThread());
-
-    // Empty the inbox in one go (this is the sender-side batching win: a
-    // burst of N postMessage()s produced ONE cross-thread wakeup to get
-    // here). Each message then becomes its own local task so that
-    // microtasks are checkpointed between deliveries — the HTML spec
-    // models the port message queue as a task source, and Node matches
-    // that observable ordering.
-    auto messages = m_pipe->takeAll(m_side);
-    for (auto& message : messages) {
-        context->postTask([protectedThis = Ref { *this }, message = WTF::move(message)](ScriptExecutionContext& context) mutable {
-            protectedThis->dispatchOneMessage(context, WTF::move(message));
-        });
-    }
 }
 
 void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWithMessagePorts&& message)

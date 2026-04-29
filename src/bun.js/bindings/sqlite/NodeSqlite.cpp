@@ -2030,7 +2030,10 @@ Structure* JSStatementSync::ensureRowStructure(JSGlobalObject* globalObject)
         int8_t off = -1;
         bool dup = false;
         for (const auto& existing : names) {
-            if (existing == id) { dup = true; break; }
+            if (existing == id) {
+                dup = true;
+                break;
+            }
         }
         if (!dup) {
             off = static_cast<int8_t>(names.size());
@@ -2384,7 +2387,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncColumns, (JSGlobalObject * globalObject,
         REQUIRE_STMT(self);                                                                  \
         JSValue v = callFrame->argument(0);                                                  \
         if (!v.isBoolean()) {                                                                \
-            return throwNodeArgType(globalObject, scope, argName, "a boolean"_s);           \
+            return throwNodeArgType(globalObject, scope, argName, "a boolean"_s);            \
         }                                                                                    \
         self->setter(v.asBoolean());                                                         \
         return JSValue::encode(jsUndefined());                                               \
@@ -3034,8 +3037,10 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
         // call the same conversion directly here (subset of bindValue).
         JSValue v = callFrame->argument(static_cast<size_t>(i) + 1);
         int br = SQLITE_OK;
-        if (v.isInt32()) br = sqlite3_bind_int(stmt, i + 1, v.asInt32());
-        else if (v.isNumber()) br = sqlite3_bind_double(stmt, i + 1, v.asNumber());
+        if (v.isInt32())
+            br = sqlite3_bind_int(stmt, i + 1, v.asInt32());
+        else if (v.isNumber())
+            br = sqlite3_bind_double(stmt, i + 1, v.asNumber());
         else if (v.isString()) {
             auto s = v.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, nullptr);
@@ -3062,13 +3067,13 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
     return stmtObj;
 }
 
-#define THIS_TAGSTORE()                                                                                                  \
-    auto& vm = JSC::getVM(globalObject);                                                                                 \
-    auto scope = DECLARE_THROW_SCOPE(vm);                                                                                \
-    JSNodeSqliteTagStore* self = dynamicDowncast<JSNodeSqliteTagStore>(callFrame->thisValue());                          \
-    if (!self) [[unlikely]] {                                                                                            \
+#define THIS_TAGSTORE()                                                                                                    \
+    auto& vm = JSC::getVM(globalObject);                                                                                   \
+    auto scope = DECLARE_THROW_SCOPE(vm);                                                                                  \
+    JSNodeSqliteTagStore* self = dynamicDowncast<JSNodeSqliteTagStore>(callFrame->thisValue());                            \
+    if (!self) [[unlikely]] {                                                                                              \
         scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), "SQLTagStore"_s)); \
-        return {};                                                                                                       \
+        return {};                                                                                                         \
     }
 
 // Shared tag execution: prepare/reset/bind then drive the cached
@@ -3084,7 +3089,8 @@ JSC_DEFINE_HOST_FUNCTION(jsTagStoreRun, (JSGlobalObject * globalObject, CallFram
     RETURN_IF_EXCEPTION(scope, {});
     sqlite3_stmt* s = stmt->statement();
     int r;
-    while ((r = sqlite3_step(s)) == SQLITE_ROW) { }
+    while ((r = sqlite3_step(s)) == SQLITE_ROW) {
+    }
     CHECK_UDF_EXCEPTION(scope, self->database());
     if (r != SQLITE_DONE) {
         throwSqliteError(globalObject, scope, self->database()->connection());
@@ -3147,9 +3153,15 @@ JSC_DEFINE_HOST_FUNCTION(jsTagStoreAll, (JSGlobalObject * globalObject, CallFram
         JSValue row = stmt->returnArrays()
             ? rowToArray(globalObject, scope, s, numCols, stmt->useBigInts())
             : rowToObjectCached(globalObject, scope, stmt, numCols, stmt->useBigInts());
-        if (scope.exception()) [[unlikely]] { sqlite3_reset(s); return {}; }
+        if (scope.exception()) [[unlikely]] {
+            sqlite3_reset(s);
+            return {};
+        }
         rows->putDirectIndex(globalObject, idx++, row);
-        if (scope.exception()) [[unlikely]] { sqlite3_reset(s); return {}; }
+        if (scope.exception()) [[unlikely]] {
+            sqlite3_reset(s);
+            return {};
+        }
     }
     CHECK_UDF_EXCEPTION(scope, self->database());
     sqlite3_reset(s);

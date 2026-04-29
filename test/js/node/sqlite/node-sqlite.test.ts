@@ -188,9 +188,7 @@ describe("DatabaseSync", () => {
     expect(db.prepare("SELECT a FROM t").get()).toEqual({ a: 1 });
     // Read-only came from the URI query, not from {readOnly: true} —
     // if the query were stripped this insert would succeed.
-    expect(() => db.exec("INSERT INTO t VALUES (2)")).toThrow(
-      expect.objectContaining({ code: "ERR_SQLITE_ERROR" }),
-    );
+    expect(() => db.exec("INSERT INTO t VALUES (2)")).toThrow(expect.objectContaining({ code: "ERR_SQLITE_ERROR" }));
     db.close();
   });
 
@@ -721,9 +719,7 @@ describe("DatabaseSync.prototype.setAuthorizer()", () => {
     db.setAuthorizer(null);
     // Cleared — same prepare now succeeds.
     expect(db.prepare("SELECT * FROM users").all()).toEqual([]);
-    expect(() => db.setAuthorizer(42 as any)).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-    );
+    expect(() => db.setAuthorizer(42 as any)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     db.close();
   });
 
@@ -757,17 +753,13 @@ describe("db.limits", () => {
     expect(() => (db.limits.column = -1)).toThrow(RangeError);
     expect(() => (db.limits.column = "no" as any)).toThrow(TypeError);
     db.close();
-    expect(() => db.limits.column).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_STATE" }),
-    );
+    expect(() => db.limits.column).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
   });
 
   test("constructor {limits} option seeds sqlite3_limit on open", () => {
     const db = new DatabaseSync(":memory:", { limits: { variableNumber: 3 } });
     expect(db.limits.variableNumber).toBe(3);
-    expect(() => db.prepare("SELECT ?, ?, ?, ?")).toThrow(
-      expect.objectContaining({ code: "ERR_SQLITE_ERROR" }),
-    );
+    expect(() => db.prepare("SELECT ?, ?, ?, ?")).toThrow(expect.objectContaining({ code: "ERR_SQLITE_ERROR" }));
     db.close();
     expect(() => new DatabaseSync(":memory:", { limits: { column: -1 } })).toThrow(RangeError);
   });

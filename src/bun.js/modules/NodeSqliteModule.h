@@ -26,9 +26,7 @@ DEFINE_NATIVE_MODULE(NodeSqlite)
     // ourselves.
     {
         auto id = JSC::Identifier::fromString(vm, "backup"_s);
-        put(id, JSC::JSFunction::create(vm, globalObject, 2, id.string(),
-                    Bun::jsNodeSqliteBackup, JSC::ImplementationVisibility::Public,
-                    JSC::NoIntrinsic, Bun::jsNodeSqliteBackup));
+        put(id, JSC::JSFunction::create(vm, globalObject, 2, id.string(), Bun::jsNodeSqliteBackup, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, Bun::jsNodeSqliteBackup));
     }
 
     RETURN_NATIVE_MODULE();

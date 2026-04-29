@@ -206,6 +206,27 @@ it("write result is not cumulative", async () => {
   await util.promisify(fs.close)(fd);
 });
 
+it.skipIf(isWindows)("close() while a write() promise is pending still settles it", async () => {
+  // Regression: `__doClose` runs `finalize()` now that it detaches the
+  // wrapper. `finalize()` used to `pending.deinit()`, which wiped the
+  // backpressure promise's Strong before `onWrite` could fulfil it,
+  // leaving `await p` hung forever.
+  await using child = Bun.spawn({
+    cmd: [process.execPath, "-e", "for await (const _ of process.stdin) {}"],
+    stdin: "pipe",
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  const writer = child.stdin;
+  // 1 MiB overflows the default 64 KiB pipe capacity on Linux/macOS, so
+  // this write() goes .pending and returns a promise.
+  const p = writer.write(Buffer.alloc(1024 * 1024, 0x61));
+  expect(p).toBeInstanceOf(Promise);
+  writer.close();
+  expect(await p).toBeGreaterThanOrEqual(0);
+  await child.exited;
+});
+
 if (isWindows) {
   it("ENOENT, Windows", () => {
     expect(() => Bun.file("A:\\this-does-not-exist.txt").writer()).toThrow(

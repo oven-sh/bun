@@ -485,7 +485,13 @@ pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, wait: bool) bun
 
 pub fn finalize(this: *FileSink) void {
     this.readable_stream.deinit();
-    this.pending.deinit();
+    // Do not touch `this.pending` here. `finalize()` is reachable both from
+    // the C++ destructor and from the prototype `.close()` (see `__doClose`
+    // in generate-jssink.ts). In the latter case a backpressured `write()`
+    // may have returned `pending.future.promise` to user code; clearing it
+    // to `.none` would make `runPending()` a no-op and leave that promise
+    // unsettled. The refcount destructor `deinit()` already releases it once
+    // `must_be_kept_alive_until_eof` has been dropped.
     this.js_sink_ref.deinit();
     this.deref();
 }

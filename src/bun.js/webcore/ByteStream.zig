@@ -407,6 +407,12 @@ pub fn deinit(this: *@This()) void {
 
 pub fn drain(this: *@This()) bun.ByteList {
     if (this.buffer.items.len > 0) {
+        // Bytes placed here before the JS stream was constructed (e.g.
+        // the `.owned` drain_result from `onStartStreaming`) are handed
+        // out via `handle.drain()` without going through `onPull`; report
+        // them so they don't become a permanent `unacked_bytes` floor in
+        // the HTTP/2 per-stream window accounting.
+        this.didDrain(this.buffer.items.len);
         return bun.ByteList.moveFromList(&this.buffer);
     }
     return .{};

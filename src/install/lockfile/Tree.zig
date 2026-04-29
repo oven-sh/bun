@@ -439,19 +439,54 @@ pub fn pruneSavedTree(
     // is active. Tree structure (ids, parents, folder names) is preserved so the
     // on-disk layout matches the lockfile. Empty trees are kept in place so tree
     // ids stay stable for callers that index `buffers.trees` by id.
+    //
+    // A tree's *container* package (the one whose `node_modules/` this folder is)
+    // must itself be active — otherwise the whole tree is an orphan nested under
+    // a package that was filtered out. Without this check, a `foo/lodash` tree
+    // whose `lodash` happens to be reachable through some other active package
+    // (same pkg_id) would still emit `node_modules/foo/node_modules/lodash/`
+    // without `foo/` existing. `container_active` is precomputed in a single
+    // pass since a tree is valid only when every ancestor up to the root is
+    // active.
+    var container_active = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator, saved_trees.len);
+    defer container_active.deinit(allocator);
+    if (saved_trees.len > 0) {
+        // Root tree (id 0) is the root package's `node_modules/` — always a
+        // valid container.
+        container_active.set(0);
+        for (saved_trees[1..], 1..) |saved, i| {
+            // `saved.parent` is always < `i` in a saved tree (parents are
+            // allocated before children), so we can rely on the parent's
+            // `container_active` bit being up to date.
+            if (saved.parent == invalid_id or !container_active.isSet(saved.parent)) continue;
+            const dep_id = saved.dependency_id;
+            if (dep_id == invalid_dependency_id or dep_id == root_dep_id) {
+                // Non-root trees shouldn't carry `root_dep_id` / invalid, but
+                // be defensive and keep them when the parent is active.
+                container_active.set(i);
+                continue;
+            }
+            const pkg_id = resolutions[dep_id];
+            if (pkg_id == invalid_package_id or pkg_id >= num_packages) continue;
+            if (active.isSet(pkg_id)) container_active.set(i);
+        }
+    }
+
     var out_trees = try std.ArrayListUnmanaged(Tree).initCapacity(allocator, saved_trees.len);
     out_trees.items.len = saved_trees.len;
 
     var out_dep_ids = try DependencyIDList.initCapacity(allocator, saved_hoisted_deps.len);
 
-    for (saved_trees, out_trees.items) |saved, *out| {
+    for (saved_trees, out_trees.items, 0..) |saved, *out, tree_idx| {
         out.* = saved;
         const off: u32 = @intCast(out_dep_ids.items.len);
-        for (saved.dependencies.get(saved_hoisted_deps)) |dep_id| {
-            const pkg_id = resolutions[dep_id];
-            if (pkg_id == invalid_package_id or pkg_id >= num_packages) continue;
-            if (!active.isSet(pkg_id)) continue;
-            out_dep_ids.appendAssumeCapacity(dep_id);
+        if (container_active.isSet(tree_idx)) {
+            for (saved.dependencies.get(saved_hoisted_deps)) |dep_id| {
+                const pkg_id = resolutions[dep_id];
+                if (pkg_id == invalid_package_id or pkg_id >= num_packages) continue;
+                if (!active.isSet(pkg_id)) continue;
+                out_dep_ids.appendAssumeCapacity(dep_id);
+            }
         }
         const len: u32 = @intCast(out_dep_ids.items.len - off);
         out.dependencies = .{ .off = off, .len = len };

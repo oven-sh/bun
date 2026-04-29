@@ -80,19 +80,23 @@ const fixture = /* js */ `
   async function settle() {
     // External strings / ArrayBuffers need their finalizers to run before
     // the backing allocation is released; cycle GC a few times.
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
       Bun.gc(true);
       await Bun.sleep(10);
     }
   }
 
-  // Warmup: prime connection pool, JIT, and allocator caches so the
-  // baseline RSS reflects steady state.
-  for (let i = 0; i < 10; i++) await readOnce();
+  const iterations = 50;
+
+  // Warmup runs the same number of iterations as the measured phase so that
+  // allocator segments, the HTTP connection pool, and JIT state are already
+  // sized for steady state when the baseline sample is taken. If the body is
+  // being freed, the measured phase reuses the same segments and growth is
+  // near zero; if it leaks, the measured phase adds another ~iterations MiB.
+  for (let i = 0; i < iterations; i++) await readOnce();
   await settle();
   const baseline = process.memoryUsage.rss();
 
-  const iterations = 50;
   for (let i = 0; i < iterations; i++) await readOnce();
   await settle();
   const after = process.memoryUsage.rss();

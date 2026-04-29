@@ -461,7 +461,7 @@ fn isPulling(this: *const FileReader) bool {
 pub fn onPull(this: *FileReader, buffer: []u8, array: jsc.JSValue) streams.Result {
     array.ensureStillAlive();
     defer array.ensureStillAlive();
-    const drained = this.drain();
+    var drained = this.drain();
 
     if (drained.len > 0) {
         log("onPull({d}) = {d}", .{ buffer.len, drained.len });
@@ -470,13 +470,17 @@ pub fn onPull(this: *FileReader, buffer: []u8, array: jsc.JSValue) streams.Resul
         this.pending_view = &.{};
 
         if (buffer.len >= @as(usize, drained.len)) {
-            @memcpy(buffer[0..drained.len], drained.slice());
-            this.buffered.clearAndFree(bun.default_allocator);
+            const drained_len = drained.len;
+            @memcpy(buffer[0..drained_len], drained.slice());
+            // drain() moved ownership of the allocation into `drained` and
+            // left `this.buffered` / the reader buffer empty, so free
+            // `drained` here — freeing `this.buffered` would be a no-op.
+            drained.deinit(bun.default_allocator);
 
             if (this.reader.isDone()) {
-                return .{ .into_array_and_done = .{ .value = array, .len = drained.len } };
+                return .{ .into_array_and_done = .{ .value = array, .len = drained_len } };
             } else {
-                return .{ .into_array = .{ .value = array, .len = drained.len } };
+                return .{ .into_array = .{ .value = array, .len = drained_len } };
             }
         }
 

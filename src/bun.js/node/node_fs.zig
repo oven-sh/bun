@@ -3338,10 +3338,14 @@ pub const NodeFS = struct {
     pub const ReturnType = Return;
 
     pub fn access(this: *NodeFS, args: Arguments.Access, _: Flavor) Maybe(Return.Access) {
+        // sync_error_buf is [98302]u8 align(2): fits an OSPathBuffer (65534 bytes on Windows).
+        const buf: *bun.OSPathBuffer = @ptrCast(&this.sync_error_buf);
         const path: bun.OSPathSliceZ = if (args.path.slice().len == 0)
             comptime bun.OSPathLiteral("")
         else
-            args.path.osPathKernel32(&this.sync_error_buf);
+            args.path.osPathKernel32(buf) catch |err| switch (err) {
+                error.NameTooLong => return .{ .err = .{ .errno = @intFromEnum(bun.sys.E.NAMETOOLONG), .syscall = .access, .path = args.path.slice() } },
+            };
         return switch (Syscall.access(path, args.mode.asInt())) {
             .err => |err| .{ .err = err.withPath(args.path.slice()) },
             .result => .{ .result = .{} },
@@ -3828,10 +3832,12 @@ pub const NodeFS = struct {
             }
         }
 
+        const buf: *bun.OSPathBuffer = @ptrCast(&this.sync_error_buf);
         const slice = if (path.slice().len == 0)
             comptime bun.OSPathLiteral("")
         else
-            path.osPathKernel32(&this.sync_error_buf);
+            // Over PATH_MAX_WIDE — can't exist on disk.
+            path.osPathKernel32(buf) catch return .{ .result = false };
 
         return .{ .result = bun.sys.existsOSPath(slice, false) };
     }
@@ -4016,9 +4022,11 @@ pub const NodeFS = struct {
     }
 
     pub fn mkdirRecursiveImpl(this: *NodeFS, args: Arguments.Mkdir, comptime Ctx: type, ctx: Ctx) Maybe(Return.Mkdir) {
-        const buf = bun.path_buffer_pool.get();
-        defer bun.path_buffer_pool.put(buf);
-        const path = args.path.osPathKernel32(buf);
+        const buf = bun.os_path_buffer_pool.get();
+        defer bun.os_path_buffer_pool.put(buf);
+        const path = args.path.osPathKernel32(buf) catch |err| switch (err) {
+            error.NameTooLong => return .{ .err = .{ .errno = @intFromEnum(bun.sys.E.NAMETOOLONG), .syscall = .mkdir, .path = args.path.slice() } },
+        };
 
         return switch (args.always_return_none) {
             inline else => |always_return_none| this.mkdirRecursiveOSPathImpl(Ctx, ctx, path, args.mode, !always_return_none),

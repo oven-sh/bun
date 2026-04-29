@@ -648,7 +648,10 @@ pub const PathLike = union(enum) {
         return sliceZWithForceCopy(this, buf, false);
     }
 
-    pub fn osPathKernel32(this: PathLike, buf: *bun.PathBuffer) callconv(bun.callconv_inline) bun.OSPathSliceZ {
+    // error.NameTooLong means the normalized path won't fit in a WPathBuffer.
+    // NT caps paths at PATH_MAX_WIDE wchars anyway, so such a path can't exist
+    // on disk — callers map this to false/ENOENT or ENAMETOOLONG as they see fit.
+    pub fn osPathKernel32(this: PathLike, buf: *bun.OSPathBuffer) error{NameTooLong}!bun.OSPathSliceZ {
         if (comptime Environment.isWindows) {
             const s = this.slice();
             const b = bun.path_buffer_pool.get();
@@ -656,22 +659,37 @@ pub const PathLike = union(enum) {
             // Device paths (\\.\, \\?\) and NT object paths (\??\) should not be normalized
             // because the "." in \\.\pipe\name would be incorrectly stripped as a "current directory" component.
             if (s.len >= 4 and bun.path.isSepAny(s[0]) and bun.path.isSepAny(s[1]) and (s[2] == '.' or s[2] == '?') and bun.path.isSepAny(s[3])) {
-                return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), s);
+                try checkFitsAsWide(s, buf.len);
+                return strings.toKernel32Path(buf, s);
             }
             if (s.len > 0 and bun.path.isSepAny(s[0])) {
-                const resolve = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBuf(buf, s) catch @panic("Error while resolving path.");
+                const resolve_scratch = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(resolve_scratch);
+                const resolve = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBuf(resolve_scratch, s) catch @panic("Error while resolving path.");
                 const normal = path_handler.normalizeBuf(resolve, b, .windows);
-                return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), normal);
+                try checkFitsAsWide(normal, buf.len);
+                return strings.toKernel32Path(buf, normal);
             }
             // Handle "." specially since normalizeStringBuf strips it to an empty string
             if (s.len == 1 and s[0] == '.') {
-                return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), ".");
+                return strings.toKernel32Path(buf, ".");
             }
             const normal = path_handler.normalizeStringBuf(s, b, true, .windows, false);
-            return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), normal);
+            try checkFitsAsWide(normal, buf.len);
+            return strings.toKernel32Path(buf, normal);
         }
 
         return sliceZWithForceCopy(this, buf, false);
+    }
+
+    fn checkFitsAsWide(utf8: []const u8, wbuf_len: usize) error{NameTooLong}!void {
+        // toKernel32Path may prepend \\?\ and always null-terminates.
+        const overhead = bun.windows.long_path_prefix.len + 1;
+        // UTF-8→UTF-16 never expands, so byte count fitting already proves it.
+        // Only compute the real UTF-16 count when it doesn't (i.e. >32KB input).
+        if (utf8.len + overhead <= wbuf_len) return;
+        if (bun.simdutf.length.utf16.from.utf8(utf8) + overhead <= wbuf_len) return;
+        return error.NameTooLong;
     }
 
     pub fn fromJS(ctx: *jsc.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!?PathLike {

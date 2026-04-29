@@ -772,3 +772,28 @@ it("CustomEvent", () => {
     }"
   `);
 });
+
+describe("JSX element", () => {
+  it("handles circular props without crashing", () => {
+    const el = { $$typeof: Symbol.for("react.element"), type: "div", props: {} };
+    el.props = el;
+    expect(Bun.inspect(el)).toContain("[Circular]");
+  });
+
+  it("handles circular children without crashing", () => {
+    const el = { $$typeof: Symbol.for("react.element"), type: "div", props: {} };
+    el.props.children = el;
+    expect(Bun.inspect(el)).toContain("[Circular]");
+  });
+
+  it("handles circular array children without crashing", () => {
+    const el = { $$typeof: Symbol.for("react.element"), type: "div", props: { children: [] } };
+    el.props.children.push(el);
+    expect(Bun.inspect(el)).toContain("[Circular]");
+  });
+
+  it("handles non-object props without crashing", () => {
+    const el = { $$typeof: Symbol.for("react.element"), type: "div", props: 42 };
+    expect(Bun.inspect(el)).toBe("<div />");
+  });
+});

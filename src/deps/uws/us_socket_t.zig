@@ -150,7 +150,9 @@ pub const us_socket_t = opaque {
     }
 
     /// `adopt` + attach a fresh `SSL*` from `ssl_ctx` (refcounted by the C
-    /// side for the socket's lifetime). Kicks the handshake. Replaces
+    /// side for the socket's lifetime). Does NOT kick the handshake — the
+    /// caller must repoint `ext` first (so any dispatch lands in the new
+    /// owner) and then call `startTLSHandshake`. Replaces
     /// `us_socket_upgrade_to_tls` / `wrapTLS`.
     pub fn adoptTLS(
         this: *us_socket_t,
@@ -162,6 +164,12 @@ pub const us_socket_t = opaque {
         new_ext: i32,
     ) ?*us_socket_t {
         return c.us_socket_adopt_tls(this, g, @intFromEnum(k), ssl_ctx, sni, old_ext, new_ext);
+    }
+
+    /// Send ClientHello. Separate from `adoptTLS` so the ext slot can be
+    /// repointed before any handshake/close dispatch can fire.
+    pub fn startTLSHandshake(this: *us_socket_t) void {
+        c.us_socket_start_tls_handshake(this);
     }
 
     pub fn write(this: *us_socket_t, data: []const u8) i32 {
@@ -254,6 +262,7 @@ pub const c_externs = struct {
 
     pub extern fn us_socket_adopt(s: *us_socket_t, group: *SocketGroup, kind: u8, old_ext_size: i32, ext_size: i32) ?*us_socket_t;
     pub extern fn us_socket_adopt_tls(s: *us_socket_t, group: *SocketGroup, kind: u8, ssl_ctx: ?*anyopaque, sni: ?[*:0]const u8, old_ext_size: i32, ext_size: i32) ?*us_socket_t;
+    pub extern fn us_socket_start_tls_handshake(s: *us_socket_t) void;
     pub extern fn us_socket_from_fd(group: *SocketGroup, kind: u8, ssl_ctx: ?*anyopaque, ext_size: c_int, fd: uws.LIBUS_SOCKET_DESCRIPTOR, is_ipc: c_int) ?*us_socket_t;
     pub extern fn us_socket_pair(group: *SocketGroup, kind: u8, ext_size: c_int, fds: *[2]uws.LIBUS_SOCKET_DESCRIPTOR) ?*us_socket_t;
 

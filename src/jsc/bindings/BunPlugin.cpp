@@ -642,18 +642,32 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         }
 
         // On any failure path below, put the stashed entries back so a
-        // previously-working mock/plugin isn't silently destroyed. The
-        // require-map set call runs under a top-exception scope so any
-        // exception it raises doesn't shadow the original failure.
+        // previously-working mock/plugin isn't silently destroyed.
+        //
+        // restoreStash may be called while the VM already has an
+        // exception pending (from the caller's failure). We snapshot
+        // it, transiently clear it so our own calls into JSMap::set run
+        // under a clean scope, run the restore, and reinstall the
+        // snapshot. If the set itself throws we drop that secondary
+        // exception and keep the original one — the caller's failure
+        // is what the user needs to see.
         auto restoreStash = [&]() {
             if (stashedVirtualEntry) {
                 globalObject->onLoadPlugins.virtualModules->set(specifier, WTF::move(stashedVirtualEntry));
             }
             if (!stashedRequireMapEntry.isUndefined()) {
-                auto restoreScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+                JSC::Exception* savedException = scope.exception();
+                if (savedException) {
+                    (void)scope.tryClearException();
+                }
                 requireMap->set(globalObject, specifierString, stashedRequireMapEntry);
-                if (restoreScope.exception()) {
-                    (void)restoreScope.tryClearException();
+                // Drop any secondary exception from the set() itself — we
+                // only want to surface the original.
+                if (scope.exception()) {
+                    (void)scope.tryClearException();
+                }
+                if (savedException) {
+                    scope.throwException(globalObject, savedException);
                 }
             }
         };

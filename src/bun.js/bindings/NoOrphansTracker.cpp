@@ -43,11 +43,11 @@ namespace Bun {
 // `_Static_assert`s sizeof == 56, so the layout is ABI.
 struct ProcUniqIdentifierInfo {
     static constexpr int flavor = 17; // PROC_PIDUNIQIDENTIFIERINFO
-    uint8_t  p_uuid[16];
-    uint64_t p_uniqueid;          // per-boot monotone counter, never recycled
-    uint64_t p_puniqueid;         // spawning parent's p_uniqueid; immutable
-    int32_t  p_idversion;
-    int32_t  p_orig_ppidversion;
+    uint8_t p_uuid[16];
+    uint64_t p_uniqueid; // per-boot monotone counter, never recycled
+    uint64_t p_puniqueid; // spawning parent's p_uniqueid; immutable
+    int32_t p_idversion;
+    int32_t p_orig_ppidversion;
     uint64_t p_reserve2;
     uint64_t p_reserve3;
 
@@ -105,7 +105,7 @@ public:
         do {
             grew = false;
             int n = proc_listallpids(m_pidbuf.mutableSpan().data(),
-                                     static_cast<int>(m_pidbuf.size() * sizeof(pid_t)));
+                static_cast<int>(m_pidbuf.size() * sizeof(pid_t)));
             if (n <= 0) return;
 
             for (int i = 0; i < n; ++i) {

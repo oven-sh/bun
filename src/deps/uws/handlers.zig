@@ -244,8 +244,11 @@ pub fn HTTPClient(comptime ssl: bool) type {
             fwd(ext, "onEnd", .{wrap(s)});
         }
         pub fn onConnectError(ext: Ext, s: *us_socket_t, code: i32) void {
-            s.close(.normal);
+            // Notify before close — close() can synchronously fire handshake/
+            // close callbacks that tear down the owner the tagged pointer
+            // resolves to (same ordering PtrHandler/NsHandler use).
             fwd(ext, "onConnectError", .{ wrap(s), code });
+            s.close(.normal);
         }
         pub fn onConnectingError(cs: *ConnectingSocket, code: i32) void {
             if (@hasDecl(H, "onConnectError"))

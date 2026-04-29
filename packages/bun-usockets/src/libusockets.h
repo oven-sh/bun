@@ -405,12 +405,14 @@ enum create_bun_socket_error_t {
  * inside this call once private-key load completes, so a plain SSL_CTX_free()
  * is sufficient on every path.
  *
- * Policy that BoringSSL doesn't natively store (client renegotiation limits)
- * is attached as SSL_CTX ex_data; verify mode (reject_unauthorized /
- * request_cert) is encoded via SSL_CTX_set_verify() and recoverable from the
- * SSL_CTX itself. */
+ * Mode-neutral: the same SSL_CTX may back client connects and server accepts
+ * (Node's createSecureContext semantics). CTX-level verify mode is derived
+ * purely from options.{ca,request_cert,reject_unauthorized}; the per-socket
+ * client override happens in us_internal_ssl_attach so a server using this
+ * SSL_CTX never sends CertificateRequest unless options asked it to. Reneg
+ * limits attach as SSL_CTX ex_data. */
 struct ssl_ctx_st *us_ssl_ctx_from_options(
-    struct us_bun_socket_context_options_t options, int is_client,
+    struct us_bun_socket_context_options_t options,
     enum create_bun_socket_error_t *err);
 /* SSL_CTX_up_ref / SSL_CTX_free without an OpenSSL include — for C++ callers
  * (uWS App.h) that don't pull in BoringSSL headers. */

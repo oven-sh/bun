@@ -477,6 +477,11 @@ function secureContextCacheKey(o) {
   feed(o.passphrase);
   feed(o.ciphers);
   feed(o.secureOptions);
+  // rejectUnauthorized/requestCert: these still shape SSL_CTX_set_verify in
+  // build_raw when ca/requestCert are present (FAIL_IF_NO_PEER_CERT bit), and
+  // a SecureContext is mode-neutral so we can't assume client-only use where
+  // the per-SSL override would mask the difference. A false miss is cheap; a
+  // false hit hands a server a CTX with the wrong CertificateRequest policy.
   feed(o.rejectUnauthorized);
   feed(o.requestCert);
   // The remaining knobs that feed `us_ssl_ctx_from_options`. Anything that
@@ -498,13 +503,15 @@ function createSecureContext(options) {
   // Uncacheable shapes — pfx/engine/sessionIdContext/privateKey* bypass
   // us_ssl_ctx_from_options or are validation-only (must hit the constructor
   // to throw, not return a cached entry built from a different call).
+  // Presence-checked: `sessionIdContext: ""` or `pfx: emptyBuffer` are still
+  // meaningful inputs that must not fall through to a cache built without them.
   if (
     !options ||
-    options.pfx ||
-    options.sessionIdContext ||
-    options.clientCertEngine ||
-    options.privateKeyEngine !== undefined ||
-    options.privateKeyIdentifier !== undefined
+    "pfx" in options ||
+    "sessionIdContext" in options ||
+    "clientCertEngine" in options ||
+    "privateKeyEngine" in options ||
+    "privateKeyIdentifier" in options
   ) {
     return new SecureContext(options);
   }

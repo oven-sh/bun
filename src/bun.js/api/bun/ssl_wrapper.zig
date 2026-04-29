@@ -95,7 +95,7 @@ pub fn SSLWrapper(comptime T: type) type {
 
             const ctx_opts: uws.SocketContext.BunSocketContextOptions = ssl_options.asUSockets();
             var err: uws.create_bun_socket_error_t = .none;
-            const ssl_ctx = ctx_opts.createSSLContext(is_client, &err) orelse return error.InvalidOptions;
+            const ssl_ctx = ctx_opts.createSSLContext(&err) orelse return error.InvalidOptions;
             // initWithCTX adopts the SSL_CTX* (one ref). The passphrase was
             // already freed inside createSSLContext, so SSL_CTX_free is
             // sufficient on the error path.

@@ -280,7 +280,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             const secure_ptr: ?*uws.SslCtx = if (comptime ssl) brk: {
                 if (ssl_config) |config| if (config.requires_custom_request_ctx) {
                     var err: uws.create_bun_socket_error_t = .none;
-                    if (config.asUSocketsForClientVerification().createSSLContext(true, &err)) |ctx| {
+                    if (config.asUSocketsForClientVerification().createSSLContext(&err)) |ctx| {
                         // Owned ref; transferred to the connected WebSocket on
                         // upgrade, freed in `deinit` if we never get that far.
                         client.secure = ctx;

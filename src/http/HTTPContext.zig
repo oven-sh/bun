@@ -238,7 +238,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
         fn initWithOpts(this: *@This(), opts: *const uws.SocketContext.BunSocketContextOptions) InitError!void {
             if (!comptime ssl) @compileError("ssl only");
             var err: uws.create_bun_socket_error_t = .none;
-            this.secure = opts.createSSLContext(true, &err) orelse return switch (err) {
+            this.secure = opts.createSSLContext(&err) orelse return switch (err) {
                 .load_ca_file => error.LoadCAFile,
                 .invalid_ca_file => error.InvalidCAFile,
                 .invalid_ca => error.InvalidCA,
@@ -268,7 +268,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     .request_cert = 1,
                     // we manually abort the connection if the hostname doesn't match
                     .reject_unauthorized = 0,
-                }).createSSLContext(true, &err).?;
+                }).createSSLContext(&err).?;
                 this.sslCtx().setup();
             }
         }

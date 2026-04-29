@@ -28,21 +28,21 @@ pub fn constructor(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
     var config = (try SSLConfig.fromJS(global.bunVM(), global, opts)) orelse SSLConfig.zero;
     defer config.deinit();
 
-    return try create(global, &config, true);
+    return try create(global, &config);
 }
 
-pub fn create(global: *jsc.JSGlobalObject, config: *const SSLConfig, is_client: bool) bun.JSError!*SecureContext {
-    var ctx_opts = config.asUSockets();
-    // node:tls always needs the trust store: rejectUnauthorized is a
-    // per-connection decision (the JS handshake handler reads verify_error
-    // and either ignores or destroys), but verification itself must be
-    // *possible* on the SSL_CTX. Without this a memoised SecureContext built
-    // for a `rejectUnauthorized: false` caller would be reused by a
-    // default-true caller and silently report "unable to get local issuer
-    // certificate".
-    if (is_client) ctx_opts.request_cert = 1;
+/// Mode-neutral: Node lets one `SecureContext` back both `tls.connect()` and
+/// `tls.createServer({secureContext})`, so we cannot bake client-vs-server
+/// into the `SSL_CTX`. CTX-level verify mode is whatever `config` asked for
+/// (i.e. servers don't send CertificateRequest unless `requestCert` was set);
+/// the per-socket attach overrides client SSLs to `SSL_VERIFY_PEER` so chain
+/// validation always runs and `verify_error` is populated for the JS-side
+/// `rejectUnauthorized` decision. The trust store is loaded unconditionally in
+/// `us_ssl_ctx_from_options` so that override has roots to validate against.
+pub fn create(global: *jsc.JSGlobalObject, config: *const SSLConfig) bun.JSError!*SecureContext {
+    const ctx_opts = config.asUSockets();
     var err: uws.create_bun_socket_error_t = .none;
-    const ctx = ctx_opts.createSSLContext(is_client, &err) orelse {
+    const ctx = ctx_opts.createSSLContext(&err) orelse {
         return global.throwValue(err.toJS(global));
     };
     return bun.new(SecureContext, .{

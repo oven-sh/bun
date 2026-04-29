@@ -26,10 +26,16 @@ pub const BunSocketContextOptions = extern struct {
     /// Build a BoringSSL `SSL_CTX*` from these options. Caller owns one ref
     /// and releases with `SSL_CTX_free` — the passphrase is freed inside this
     /// call once private-key load completes, so plain `SSL_CTX_free` is
-    /// correct on every path. Policy (verify mode, reneg limits) is encoded on
-    /// the SSL_CTX itself.
-    pub fn createSSLContext(options: BunSocketContextOptions, is_client: bool, err: *uws.create_bun_socket_error_t) ?*BoringSSL.SSL_CTX {
-        return c.us_ssl_ctx_from_options(options, @intFromBool(is_client), err);
+    /// correct on every path.
+    ///
+    /// Mode-neutral: the same `SSL_CTX*` may back client connects and server
+    /// accepts. CTX-level verify mode comes from `request_cert`/`ca`/
+    /// `reject_unauthorized` here; the per-socket client override (always run
+    /// chain validation, populate verify_error) is applied in
+    /// `us_internal_ssl_attach`, so a server reusing this ctx never sends
+    /// CertificateRequest unless these options asked it to.
+    pub fn createSSLContext(options: BunSocketContextOptions, err: *uws.create_bun_socket_error_t) ?*BoringSSL.SSL_CTX {
+        return c.us_ssl_ctx_from_options(options, err);
     }
 
     /// Best-effort byte count of cert/key/CA material — fed into
@@ -50,7 +56,7 @@ pub const BunSocketContextOptions = extern struct {
 };
 
 pub const c = struct {
-    pub extern fn us_ssl_ctx_from_options(BunSocketContextOptions, c_int, *uws.create_bun_socket_error_t) ?*BoringSSL.SSL_CTX;
+    pub extern fn us_ssl_ctx_from_options(BunSocketContextOptions, *uws.create_bun_socket_error_t) ?*BoringSSL.SSL_CTX;
     pub extern fn us_ssl_ctx_live_count() c_long;
 };
 

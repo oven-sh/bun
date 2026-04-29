@@ -559,26 +559,16 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
 }
 
 SSL_CTX *us_ssl_ctx_from_options(struct us_bun_socket_context_options_t options,
-                                 int is_client,
                                  enum create_bun_socket_error_t *err) {
   SSL_CTX *ctx = us_ssl_ctx_build_raw(options, err);
   if (!ctx) return NULL;
 
-  /* node:tls defaults rejectUnauthorized=true so its clients land here with
-   * options.request_cert set (via SecureContext) and got the store in
-   * build_raw. Bun.connect({tls:true}) lands here with neither — it doesn't
-   * verify against system CAs (matches `main`; the JS side reads verify_error
-   * and applies the policy itself). The store build adds ~150 roots every
-   * call (only the X509 *parse* is cached), which is the dominant cost of an
-   * SSL_CTX in debug+ASAN, so don't pay it for the no-verify case. */
-  if (is_client && SSL_CTX_get_verify_mode(ctx) == SSL_VERIFY_NONE &&
-      (options.reject_unauthorized || options.request_cert)) {
-    SSL_CTX_set_cert_store(ctx, us_get_default_ca_store());
-    SSL_CTX_set_verify(ctx,
-        options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
-                                    : SSL_VERIFY_PEER,
-        us_verify_callback);
-  }
+  /* SecureContext is mode-neutral (Node lets one back both tls.connect and
+   * tls.createServer), so we can't bake client-vs-server into the CTX. CTX
+   * verify_mode comes purely from options (ca/request_cert/reject_unauthorized)
+   * in build_raw — for a server that decides whether CertificateRequest is
+   * sent, so we MUST NOT force VERIFY_PEER here. The per-SSL client override
+   * (verify mode + trust store) lives in us_internal_ssl_attach. */
 
   /* Reneg policy is the only Bun-specific config BoringSSL has nowhere to
    * store. Packed into one ex_data slot (no malloc; the void* IS the value)
@@ -622,6 +612,19 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
     SSL_set_renegotiate_mode(ssl, ssl_renegotiate_explicit);
     SSL_set_connect_state(ssl);
     if (sni) SSL_set_tlsext_host_name(ssl, sni);
+    /* The CTX is mode-neutral and may have verify_mode == NONE (no
+     * ca/requestCert in options). Clients must always run verification so
+     * verify_error is populated for the JS rejectUnauthorized check — but
+     * setting VERIFY_PEER on the CTX would make a server using the same
+     * SecureContext send CertificateRequest. SSL_set_verify scopes the mode to
+     * this socket; SSL_set0_verify_cert_store gives it the process-shared root
+     * bundle without touching the CTX (servers using the same CTX never pay
+     * the ~150-root build). us_verify_callback returns 1 so the handshake
+     * never aborts here — JS reads verify_error and decides. */
+    if (SSL_CTX_get_verify_mode(ctx) == SSL_VERIFY_NONE) {
+      SSL_set_verify(ssl, SSL_VERIFY_PEER, us_verify_callback);
+      SSL_set0_verify_cert_store(ssl, us_get_shared_default_ca_store());
+    }
   } else {
     SSL_set_accept_state(ssl);
     SSL_set_renegotiate_mode(ssl, ssl_renegotiate_never);

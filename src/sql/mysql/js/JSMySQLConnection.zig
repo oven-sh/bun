@@ -365,7 +365,7 @@ pub fn createInstance(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
         // abort the connection if the hostname doesn't match. Built here so
         // CA/cert errors throw synchronously, applied later by upgradeToTLS.
         var err: uws.create_bun_socket_error_t = .none;
-        secure = tls_config.asUSocketsForClientVerification().createSSLContext(true, &err) orelse {
+        secure = tls_config.asUSocketsForClientVerification().createSSLContext(&err) orelse {
             tls_config.deinit();
             return globalObject.throwValue(err.toJS(globalObject));
         };

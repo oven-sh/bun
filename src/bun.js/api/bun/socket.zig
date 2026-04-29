@@ -1518,7 +1518,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 }
                 const cfg = &(ssl_opts orelse return globalObject.throw("Expected \"tls\" option", .{}));
                 var create_err: uws.create_bun_socket_error_t = .none;
-                owned_ctx = cfg.asUSockets().createSSLContext(true, &create_err) orelse {
+                owned_ctx = cfg.asUSockets().createSSLContext(&create_err) orelse {
                     // us_ssl_ctx_from_options only sets *err for the CA/cipher
                     // cases; bad cert/key/DH return NULL with err==.none and the
                     // detail is on the BoringSSL error queue.

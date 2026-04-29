@@ -215,7 +215,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
 
     if (ssl) |ssl_cfg| {
         var create_err: uws.create_bun_socket_error_t = .none;
-        this.secure_ctx = ssl_cfg.asUSockets().createSSLContext(false, &create_err) orelse {
+        this.secure_ctx = ssl_cfg.asUSockets().createSSLContext(&create_err) orelse {
             return globalObject.throwValue(create_err.toJS(globalObject));
         };
     }
@@ -375,7 +375,7 @@ pub fn addServerName(this: *Listener, global: *jsc.JSGlobalObject, hostname: JSV
         var cfg = ssl_config;
         defer cfg.deinit();
         var create_err: uws.create_bun_socket_error_t = .none;
-        break :brk cfg.asUSockets().createSSLContext(false, &create_err) orelse {
+        break :brk cfg.asUSockets().createSSLContext(&create_err) orelse {
             if (create_err != .none) return global.throwValue(create_err.toJS(global));
             return global.throwValue(bun.BoringSSL.ERR_toJS(global, BoringSSL.ERR_get_error()));
         };
@@ -743,7 +743,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 owned_ssl_ctx = shared;
             } else {
                 var create_err: uws.create_bun_socket_error_t = .none;
-                owned_ssl_ctx = ssl_cfg.asUSockets().createSSLContext(true, &create_err) orelse {
+                owned_ssl_ctx = ssl_cfg.asUSockets().createSSLContext(&create_err) orelse {
                     return globalObject.throwValue(create_err.toJS(globalObject));
                 };
             }
@@ -975,7 +975,7 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
             const ctx_opts: uws.SocketContext.BunSocketContextOptions = ssl_options.asUSockets();
             var err: uws.create_bun_socket_error_t = .none;
             // Create SSL context using uSockets to match behavior of node.js
-            this.ctx = ctx_opts.createSSLContext(false, &err) orelse return error.InvalidOptions;
+            this.ctx = ctx_opts.createSSLContext(&err) orelse return error.InvalidOptions;
         }
 
         const initResult = this.uvPipe.init(this.vm.uvLoop(), false);

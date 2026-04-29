@@ -738,7 +738,7 @@ pub fn defaultClientSslCtx(rare: *RareData) *uws.SslCtx {
         // verify_error and applies rejectUnauthorized itself). The node:tls
         // path goes through SecureContext, which DOES set request_cert/ca and
         // gets a verifying ctx.
-        rare.default_client_ssl_ctx = (uws.SocketContext.BunSocketContextOptions{}).createSSLContext(true, &err) orelse bun.Output.panic(
+        rare.default_client_ssl_ctx = (uws.SocketContext.BunSocketContextOptions{}).createSSLContext(&err) orelse bun.Output.panic(
             "default client SSL_CTX init failed: {s}",
             .{err.message() orelse "unknown"},
         );

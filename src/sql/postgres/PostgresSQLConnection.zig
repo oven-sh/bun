@@ -628,7 +628,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         // abort the connection if the hostname doesn't match. Built here (not
         // at STARTTLS time) so cert/CA errors throw synchronously.
         var err: uws.create_bun_socket_error_t = .none;
-        secure = tls_config.asUSocketsForClientVerification().createSSLContext(true, &err) orelse {
+        secure = tls_config.asUSocketsForClientVerification().createSSLContext(&err) orelse {
             tls_config.deinit();
             return globalObject.throwValue(err.toJS(globalObject));
         };

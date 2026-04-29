@@ -1117,8 +1117,7 @@ pub const FFI = struct {
                 const resolved_symbol = dylib.lookup(*anyopaque, function_name) orelse {
                     const ret = global.toInvalidArguments("Symbol \"{s}\" not found in \"{s}\"", .{ bun.asByteSlice(function_name), name });
                     for (symbols.values()) |*value| {
-                        bun.default_allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
-                        value.arg_types.clearAndFree(bun.default_allocator);
+                        value.deinit(global);
                     }
                     symbols.clearAndFree(bun.default_allocator);
                     dylib.close();
@@ -1233,8 +1232,7 @@ pub const FFI = struct {
             if (function.symbol_from_dynamic_library == null) {
                 const ret = global.toInvalidArguments("Symbol \"{s}\" is missing a \"ptr\" field. When using linkSymbols() or CFunction(), you must provide a \"ptr\" field with the memory address of the native function.", .{bun.asByteSlice(function_name)});
                 for (symbols.values()) |*value| {
-                    allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
-                    value.arg_types.clearAndFree(allocator);
+                    value.deinit(global);
                 }
                 symbols.clearAndFree(allocator);
                 return ret;
@@ -1253,20 +1251,16 @@ pub const FFI = struct {
             };
             switch (function.step) {
                 .failed => |err| {
-                    for (symbols.values()) |*value| {
-                        allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
-                        value.arg_types.clearAndFree(allocator);
-                    }
-
                     const res = ZigString.init(err.msg).toErrorInstance(global);
-                    function.deinit(global);
+                    for (symbols.values()) |*value| {
+                        value.deinit(global);
+                    }
                     symbols.clearAndFree(allocator);
                     return res;
                 },
                 .pending => {
                     for (symbols.values()) |*value| {
-                        allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
-                        value.arg_types.clearAndFree(allocator);
+                        value.deinit(global);
                     }
                     symbols.clearAndFree(allocator);
                     return ZigString.static("Failed to compile (nothing happend!)").toErrorInstance(global);

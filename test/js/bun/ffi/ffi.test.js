@@ -1045,6 +1045,30 @@ describe.skipIf(isWindows && isArm64)("calling an FFI symbol after close()", () 
     }
   });
 
+  it("mid-loop failure unroots and detaches already-compiled symbols", () => {
+    // If linkSymbols fails on symbol N after symbols 0..N-1 have been
+    // compiled + protected, the cleanup path must run Function.deinit on
+    // each earlier symbol (unprotect + setClosed) rather than only freeing
+    // base_name/arg_types. Otherwise each earlier JSFFIFunction becomes a
+    // permanent GC root and its TCC state leaks.
+    const cb = new JSCallback(() => 7, { returns: "i32" });
+    try {
+      let captured;
+      expect(() => {
+        captured = linkSymbols({
+          good: { returns: "i32", ptr: cb.ptr },
+          // missing `ptr` triggers the mid-loop error after `good` compiled
+          bad: { returns: "i32" },
+        });
+      }).toThrow(/"bad".*ptr/);
+      expect(captured).toBeUndefined();
+      // No observable side effects; primary regression signal is no ASAN
+      // leak report and (once the process exits) a balanced gcProtect table.
+    } finally {
+      cb.close();
+    }
+  });
+
   it("JSCallback.close() does not detach an FFI symbol passed as the callback", () => {
     // On the JSCallback path, Function.step.compiled.js_function holds the
     // user's callback (which may itself be a JSFFIFunction from another

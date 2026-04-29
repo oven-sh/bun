@@ -48,14 +48,54 @@ pub fn isEnabled() bool {
     return enabled;
 }
 
-/// macOS only — the original parent pid to watch via kqueue from contexts that
-/// have no event loop (`bun run` blocking in `spawnSync`, etc.). Returns null
-/// when no-orphans isn't enabled or there is no parent worth watching.
+/// The original parent pid to watch from contexts that have no event loop
+/// (`bun run` blocking in `spawnSync`, etc.). Returns null when no-orphans
+/// isn't enabled or there is no parent worth watching. Both Linux and macOS
+/// use this from `spawnSync` so the pgroup-kill cleanup path runs even though
+/// Linux already has a SIGKILL PDEATHSIG backstop.
 pub fn ppidToWatch() ?std.c.pid_t {
-    if (comptime !Environment.isMac) return null;
+    if (comptime !Environment.isPosix) return null;
     if (!enabled or original_ppid <= 1) return null;
     return original_ppid;
 }
+
+/// `bun run`/`bunx` set this to the script's pgid (= script pid, since we
+/// `setpgid(0,0)` in the child) so the exit callback can `kill(-pgid, KILL)`.
+/// Process-group membership survives reparenting to launchd/init, so this
+/// reaches grandchildren that the libproc/procfs walk would miss once the
+/// script itself has exited. Stack-disciplined for nested `spawnSync` (e.g.
+/// `pre`/`post` lifecycle scripts) — though in practice depth is 1.
+var sync_pgids_buf: [4]std.c.pid_t = .{0} ** 4;
+var sync_pgids: []std.c.pid_t = sync_pgids_buf[0..0];
+
+pub fn pushSyncPgid(pgid: std.c.pid_t) void {
+    if (comptime !Environment.isPosix) return;
+    if (sync_pgids.len >= sync_pgids_buf.len) return;
+    sync_pgids.len += 1;
+    sync_pgids[sync_pgids.len - 1] = pgid;
+}
+
+pub fn popSyncPgid() void {
+    if (comptime !Environment.isPosix) return;
+    if (sync_pgids.len > 0) sync_pgids.len -= 1;
+}
+
+/// SIGKILL every registered pgroup, then platform-specific deep walk.
+/// Idempotent. Runs from `Bun__onExit` (any clean exit) and from the
+/// no-orphans wait loop's defer.
+pub fn killSyncPgroupsAndDescendants() void {
+    if (comptime !Environment.isPosix) return;
+    for (sync_pgids) |pgid| {
+        if (pgid > 1) _ = std.c.kill(-pgid, std.posix.SIG.KILL);
+    }
+    // macOS: p_puniqueid spawn-graph (catches setsid+double-fork escapees).
+    // Linux: subreaper means they're already in our tree; killDescendants
+    //        finds them.
+    if (comptime Environment.isMac) Bun__noOrphans_killTracked();
+    killDescendants();
+}
+
+extern "c" fn Bun__noOrphans_killTracked() void;
 
 /// Whether the spawn-side `linux_pdeathsig` default should apply to a child
 /// being spawned *right now*. `PR_SET_PDEATHSIG` is thread-scoped: it fires
@@ -96,6 +136,13 @@ pub fn enable() void {
     // nested bun) inherits no-orphans mode without the parent having to thread
     // the flag through. No-op if we got here via the env var.
     _ = setenv("BUN_FEATURE_FLAG_NO_ORPHANS", "1", 1);
+
+    if (comptime Environment.isLinux) {
+        // Become a subreaper: any orphaned descendant — including ones that
+        // `setsid()` and double-fork — reparents to *us* instead of init, so
+        // the procfs walk in `killDescendants()` finds them. Linux ≥3.4.
+        _ = std.posix.prctl(.SET_CHILD_SUBREAPER, .{1}) catch {};
+    }
     // Descendant cleanup runs on every clean exit regardless of whether we end
     // up watching a parent (Bun may have been spawned directly by launchd/init).
     bun.Global.addExitCallback(&onProcessExit);
@@ -170,7 +217,7 @@ pub fn onParentExit(_: *ParentDeathWatchdog) void {
 /// (atexit on macOS, at_quick_exit on Linux, and the explicit `Global.exit`
 /// path). C calling convention because that's the exit-callback ABI.
 fn onProcessExit() callconv(.c) void {
-    killDescendants();
+    killSyncPgroupsAndDescendants();
 }
 
 /// Walk the process tree rooted at `getpid()` and SIGKILL every descendant.

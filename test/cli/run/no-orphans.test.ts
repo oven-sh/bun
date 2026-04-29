@@ -321,6 +321,49 @@ describe.each([
   });
 });
 
+// The script daemonizes a non-Bun process (setsid + double-fork) — leaves the
+// pgroup AND reparents to launchd/init. The outer `bun run` must still find
+// and kill it: Linux via PR_SET_CHILD_SUBREAPER (the daemon reparents to
+// `bun run`, not init), macOS via the p_puniqueid spawn-graph tracker.
+test.skipIf(!isSupported)("bun run --no-orphans: setsid+double-fork daemon is reaped on script exit", async () => {
+  using dir = tempDir("no-orphans-daemon", {
+    "package.json": JSON.stringify({ name: "p", scripts: { go: `${bunExe()} daemon.js` } }),
+    "daemon.js": `
+      const { spawnSync } = require("child_process");
+      // perl: portable setsid+double-fork that prints the daemon's own pid.
+      const r = spawnSync("/usr/bin/perl", ["-e", \`
+        use POSIX qw(setsid);
+        exit if fork;      # parent of session leader exits
+        setsid;            # new session, new pgroup
+        exit if fork;      # session leader exits — daemon is fully detached
+        $| = 1; print "$$\\n";
+        sleep 1 while 1;
+      \`]);
+      // perl's stdout is the daemon's pid (written before the intermediates exit).
+      process.stdout.write(r.stdout);
+      process.exit(0);
+    `,
+  });
+  const env: Record<string, string> = { ...bunEnv };
+  delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "--no-orphans", "--silent", "go"],
+    env,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+  await proc.exited;
+  const daemonPid = Number(out.trim());
+  expect(err).toBe("");
+  expect(daemonPid).toBeGreaterThan(0);
+  const died = await waitUntilDead(daemonPid, 10000);
+  reap(daemonPid);
+  expect(died).toBe(true);
+  expect(proc.exitCode).toBe(0);
+});
+
 // `bun run --no-orphans <script>`: the package.json script spawns a non-Bun
 // grandchild, prints its pid, and exits. The outer `bun run` process must reap
 // the grandchild on its own clean exit. Uses a non-Bun grandchild so the test

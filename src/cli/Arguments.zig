@@ -224,6 +224,7 @@ pub const build_params = build_only_params ++ transpiler_params_ ++ base_params_
 
 // TODO: update test completions
 pub const test_only_params = [_]ParamType{
+    clap.parseParam("--no-orphans                     Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only.") catch unreachable,
     clap.parseParam("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
     clap.parseParam("-u, --update-snapshots           Update snapshot files") catch unreachable,
     clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
@@ -468,11 +469,14 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         cwd = try bun.getcwdAlloc(allocator);
     }
 
+    if (cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand) {
+        if (args.flag("--no-orphans")) bun.ParentDeathWatchdog.enable();
+    }
+
     if (cmd == .RunCommand or cmd == .AutoCommand) {
         ctx.filters = args.options("--filter");
         ctx.workspaces = args.flag("--workspaces");
         ctx.if_present = args.flag("--if-present");
-        if (args.flag("--no-orphans")) bun.ParentDeathWatchdog.enable();
         ctx.parallel = args.flag("--parallel");
         ctx.sequential = args.flag("--sequential");
         ctx.no_exit_on_error = args.flag("--no-exit-on-error");

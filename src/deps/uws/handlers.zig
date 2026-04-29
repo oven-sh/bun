@@ -156,10 +156,12 @@ pub fn HTTPClient(comptime ssl: bool) type {
 
 // ── WebSocket client ────────────────────────────────────────────────────────
 pub fn WSUpgrade(comptime ssl: bool) type {
-    return PtrHandler(bun.http.NewHTTPUpgradeClient(ssl), ssl);
+    const T = @import("../../http/websocket_client/WebSocketUpgradeClient.zig").NewHTTPUpgradeClient(ssl);
+    return PtrHandler(T, ssl);
 }
 pub fn WSClient(comptime ssl: bool) type {
-    return PtrHandler(bun.http.NewWebSocketClient(ssl), ssl);
+    const T = @import("../../http/websocket_client.zig").NewWebSocketClient(ssl);
+    return PtrHandler(T, ssl);
 }
 
 // ── SQL drivers ─────────────────────────────────────────────────────────────

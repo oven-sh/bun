@@ -207,7 +207,8 @@ pub fn finalize(this: *@This()) void {
     this.deref();
 }
 
-fn SocketHandler(comptime ssl: bool) type {
+/// Referenced by `dispatch.zig` (kind = `.mysql[_tls]`).
+pub fn SocketHandler(comptime ssl: bool) type {
     return struct {
         pub const SocketType = uws.NewSocketHandler(ssl);
         fn _socket(s: SocketType) uws.AnySocket {

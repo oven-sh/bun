@@ -1,3 +1,4 @@
+import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -20,6 +21,10 @@ import wt, {
   Worker,
   workerData,
 } from "worker_threads";
+
+// Many tests here spawn subprocesses or workers that each take 1-3s in debug/ASAN builds,
+// and the default 5s per-test timeout is too tight under load.
+setDefaultTimeout(30_000);
 
 test("support eval in worker", async () => {
   const worker = new Worker(`postMessage(1 + 1)`, {

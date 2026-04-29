@@ -2054,8 +2054,12 @@ pub const H2FrameParser = struct {
         if (payload.len > 0) {
             // amount of data received so far
             const received_size = frame.length - this.remainingLength;
-            // max size possible for the chunk without padding and skipping the start_idx
-            const max_payload_size: usize = frame.length - padding - @as(usize, if (padding > 0) 1 else 0) - start_idx;
+            // Remaining data bytes (excluding Pad Length octet and trailing padding)
+            // from start_idx onwards. When a frame is split across multiple reads
+            // and this chunk lands entirely in the padding region, start_idx can
+            // exceed the data region; saturate to 0 rather than underflowing.
+            const data_end: usize = frame.length - padding - @as(usize, if (padding > 0) 1 else 0);
+            const max_payload_size: usize = data_end -| start_idx;
             payload = payload[0..@min(payload.len, max_payload_size)];
             log("received_size: {d} max_payload_size: {d} padding: {d} payload.len: {d}", .{
                 received_size,
@@ -2395,11 +2399,18 @@ pub const H2FrameParser = struct {
                 // skip priority (client dont need to care about it)
                 offset += 5;
             }
+            // RFC 7540 Section 4.2: A frame that is too small to contain mandatory
+            // frame data (here: the Pad Length octet and/or the 5-byte priority
+            // block) MUST be treated as a FRAME_SIZE_ERROR.
+            if (offset > payload.len) {
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid Headers frame size", this.lastStreamID, true);
+                return content.end;
+            }
             // RFC 7540 Section 6.2: Padding that exceeds the size remaining for the
             // header block fragment MUST be treated as a connection error of type
             // PROTOCOL_ERROR. Validate before subtracting to avoid underflowing
             // `payload.len - padding` when a peer sends Pad Length > payload length.
-            if (offset + padding > payload.len) {
+            if (padding > payload.len - offset) {
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "invalid Headers frame padding", this.lastStreamID, true);
                 return content.end;
             }

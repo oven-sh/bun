@@ -120,12 +120,13 @@ export fn us_dispatch_is_low_prio(s: *us_socket_t) c_int {
     return if (vt(s).is_low_prio) |f| f(s) else 0;
 }
 
-const std = @import("std");
 const bun = @import("bun");
+const handlers = @import("./handlers.zig");
+const std = @import("std");
+const vtable = @import("./vtable.zig");
+
 const uws = bun.uws;
-const us_socket_t = uws.us_socket_t;
 const ConnectingSocket = uws.ConnectingSocket;
 const SocketKind = uws.SocketKind;
+const us_socket_t = uws.us_socket_t;
 const VTable = uws.SocketGroup.VTable;
-const vtable = @import("./vtable.zig");
-const handlers = @import("./handlers.zig");

@@ -61,6 +61,6 @@ const c = struct {
 };
 
 const bun = @import("bun");
+
 const uws = bun.uws;
 const SocketGroup = uws.SocketGroup;
-const BoringSSL = bun.BoringSSL.c;

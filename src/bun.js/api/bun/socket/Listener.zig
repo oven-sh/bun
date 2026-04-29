@@ -1044,10 +1044,10 @@ const uv = bun.windows.libuv;
 
 const api = bun.api;
 const Handlers = bun.api.SocketHandlers;
+const SecureContext = bun.api.SecureContext;
 const TCPSocket = bun.api.TCPSocket;
 const TLSSocket = bun.api.TLSSocket;
 const SSLConfig = bun.api.ServerConfig.SSLConfig;
-const SecureContext = bun.api.SecureContext;
 
 const NewSocket = api.socket.NewSocket;
 const SocketConfig = api.socket.SocketConfig;

@@ -644,9 +644,9 @@ const BoringSSL = bun.BoringSSL.c;
 
 const uws = bun.uws;
 const ConnectingSocket = uws.ConnectingSocket;
+const SocketGroup = uws.SocketGroup;
+const SocketKind = uws.SocketKind;
 const UpgradedDuplex = uws.UpgradedDuplex;
 const WindowsNamedPipe = uws.WindowsNamedPipe;
 const us_bun_verify_error_t = uws.us_bun_verify_error_t;
 const us_socket_t = uws.us_socket_t;
-const SocketGroup = uws.SocketGroup;
-const SocketKind = uws.SocketKind;

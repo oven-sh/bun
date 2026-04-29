@@ -4,5 +4,3 @@
 //! `RareData.defaultClientSslCtx()`.
 
 pub fn deinit(_: *@This()) void {}
-
-const bun = @import("bun");

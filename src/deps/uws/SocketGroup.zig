@@ -152,9 +152,10 @@ pub const c = struct {
 };
 
 const bun = @import("bun");
+
 const uws = bun.uws;
-const Loop = uws.Loop;
-const us_socket_t = uws.us_socket_t;
 const ConnectingSocket = uws.ConnectingSocket;
+const Loop = uws.Loop;
 const SocketKind = uws.SocketKind;
 const SslCtx = uws.SslCtx;
+const us_socket_t = uws.us_socket_t;

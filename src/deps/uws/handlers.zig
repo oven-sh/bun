@@ -220,7 +220,8 @@ pub const SpawnIPC = struct {
 };
 
 const bun = @import("bun");
-const uws = bun.uws;
-const us_socket_t = uws.us_socket_t;
-const ConnectingSocket = uws.ConnectingSocket;
 const api = bun.jsc.API;
+
+const uws = bun.uws;
+const ConnectingSocket = uws.ConnectingSocket;
+const us_socket_t = uws.us_socket_t;

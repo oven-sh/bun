@@ -844,11 +844,12 @@ const Environment = bun.Environment;
 const FeatureFlags = bun.FeatureFlags;
 const assert = bun.assert;
 const strings = bun.strings;
-const uws = bun.uws;
 const BoringSSL = bun.BoringSSL.c;
 const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
 
 const HTTPClient = bun.http;
 const H2 = bun.http.H2;
 const InitError = HTTPClient.InitError;
+
+const uws = bun.uws;
 const SslCtx = uws.SslCtx;

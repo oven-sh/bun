@@ -373,7 +373,6 @@ const std = @import("std");
 const uws = @import("../uws.zig");
 const SocketGroup = uws.SocketGroup;
 const SocketKind = uws.SocketKind;
-const BoringSSL = bun.BoringSSL.c;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;

@@ -40,7 +40,7 @@ using namespace JSC;
 using namespace WebViewProto;
 
 // Spawn + process-exit watch in Zig (reuses bun.spawn.Process / EVFILT_PROC).
-extern "C" int32_t Bun__WebViewHost__ensure(Zig::GlobalObject*, bool stdoutInherit, bool stderrInherit);
+extern "C" int32_t Bun__WebViewHost__ensure(Zig::GlobalObject*, bool stdoutInherit, bool stderrInherit, bool detached);
 extern "C" void* Blob__fromMmapWithType(JSC::JSGlobalObject*, uint8_t* ptr, size_t len, const char* mime);
 extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
 extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Zig::GlobalObject*, void* ptr, size_t length);
@@ -127,7 +127,7 @@ void HostClient::updateKeepAlive()
         WebCore::clientData(global->vm())->bunVM, want ? 1 : -1);
 }
 
-bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool stderrInherit)
+bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool stderrInherit, bool detached)
 {
     if (sock && !dead) return true;
 
@@ -142,7 +142,7 @@ bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool 
         txQueue.clear();
     }
 
-    int fd = Bun__WebViewHost__ensure(zig, stdoutInherit, stderrInherit);
+    int fd = Bun__WebViewHost__ensure(zig, stdoutInherit, stderrInherit, detached);
     if (fd < 0) {
         dead = true;
         return false;

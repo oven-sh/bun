@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast } from "harness";
+import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
 
 // Chrome backend works on any platform with Chrome/Chromium installed.
 // Mark tests todo if no Chrome found (CI may not have it). Mirrors
@@ -7,7 +7,7 @@ import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast } from "harness";
 // paths, then Playwright cache — so the test detects Chrome whenever the
 // runtime would.
 import { dlopen, FFIType, ptr } from "bun:ffi";
-import { accessSync, constants as fsConstants, readdirSync, rmSync } from "node:fs";
+import { accessSync, chmodSync, constants as fsConstants, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -976,4 +976,76 @@ it("chrome: large evaluate payload crosses the pipe", async () => {
   const big = "x".repeat(100_000);
   const result = await view.evaluate(`${JSON.stringify(big)}.length`);
   expect(result).toBe(100_000);
+});
+
+// backend.detached — doesn't need real Chrome; we point backend.path at a
+// shell script that reports its own PID/PGID. setsid() (POSIX_SPAWN_SETSID)
+// makes the child its own session + process-group leader, so PID == PGID.
+// Without it the child inherits the spawner's group, so PID != PGID.
+// Windows skipped: ChromeProcess.zig returns -1 there and POSIX_SPAWN_SETSID
+// has no equivalent.
+test.skipIf(isWindows)("chrome: backend.detached runs the subprocess in its own session", async () => {
+  using dir = tempDir("webview-detached", {
+    // Write "<pid>,<pgid>" atomically (tmp + mv) so the poll below never
+    // observes a half-written file. Then block on fd 3 (Chrome's CDP read
+    // pipe) until the parent kills us.
+    "fake-chrome": [
+      "#!/bin/sh",
+      'pgid=$(ps -o pgid= -p $$ | tr -d " ")',
+      'echo "$$,$pgid" > "$OUT_FILE.tmp"',
+      'mv "$OUT_FILE.tmp" "$OUT_FILE"',
+      "exec cat <&3 >/dev/null 2>&1",
+      "",
+    ].join("\n"),
+  });
+  const fakeChrome = join(String(dir), "fake-chrome");
+  chmodSync(fakeChrome, 0o755);
+
+  async function spawnWith(detached: boolean) {
+    const outFile = join(String(dir), `out-${detached}`);
+    // Subprocess per case — the Chrome transport is a process-wide
+    // singleton; first spawn wins and later backend options are ignored.
+    const script = `
+      const fs = require("node:fs");
+      new Bun.WebView({
+        backend: { type: "chrome", path: ${JSON.stringify(fakeChrome)}, url: false, detached: ${detached} },
+      });
+      const out = ${JSON.stringify(outFile)};
+      while (!fs.existsSync(out)) await Bun.sleep(5);
+      process.stdout.write(fs.readFileSync(out, "utf8"));
+      Bun.WebView.closeAll();
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, OUT_FILE: outFile },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const [pid, pgid] = stdout.trim().split(",");
+    expect(pid).toMatch(/^\d+$/);
+    expect(pgid).toMatch(/^\d+$/);
+    return { pid, pgid };
+  }
+
+  // detached: true → setsid() → child is its own process-group leader.
+  const d = await spawnWith(true);
+  expect(d.pgid).toBe(d.pid);
+
+  // detached: false (default) → child inherits the bun subprocess's group.
+  const nd = await spawnWith(false);
+  expect(nd.pgid).not.toBe(nd.pid);
+});
+
+test.skipIf(isWindows)("chrome: backend.detached validates", () => {
+  // Type validation happens before any spawn attempt — no Chrome needed.
+  expect(() => new Bun.WebView({ backend: { type: "chrome", url: false, detached: "yes" } } as any)).toThrow(
+    /backend\.detached must be a boolean/,
+  );
+  expect(() => new Bun.WebView({ backend: { type: "chrome", url: false, detached: 1 } } as any)).toThrow(
+    /backend\.detached must be a boolean/,
+  );
 });

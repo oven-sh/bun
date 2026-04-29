@@ -380,7 +380,7 @@ public:
     // one Chrome, so mismatched args across views get the first-call's.
     bool ensureSpawned(Zig::GlobalObject*, const WTF::String& userDataDir = {},
         const WTF::String& path = {}, const WTF::Vector<WTF::String>& extraArgv = {},
-        bool stdoutInherit = false, bool stderrInherit = false);
+        bool stdoutInherit = false, bool stderrInherit = false, bool detached = false);
 
     // Connect to an already-running Chrome's DevTools endpoint. wsUrl is
     // a full ws:// URL (from DevToolsActivePort or user-supplied). Same
@@ -399,7 +399,8 @@ public:
     // confusing WebSocket error. autoDetected=false means explicit
     // backend.url; connect failure surfaces directly.
     bool ensureConnected(Zig::GlobalObject*, const WTF::String& wsUrl, bool autoDetected,
-        const WTF::String& userDataDir = {}, bool stdoutInherit = false, bool stderrInherit = false);
+        const WTF::String& userDataDir = {}, bool stdoutInherit = false, bool stderrInherit = false,
+        bool detached = false);
 
     // Next CDP id — caller uses it with Command(id, ...) then calls send().
     uint32_t nextId() { return m_nextId++; }
@@ -450,6 +451,7 @@ public:
     WTF::String m_fallbackUserDataDir;
     bool m_fallbackStdoutInherit = false;
     bool m_fallbackStderrInherit = false;
+    bool m_fallbackDetached = false;
     bool m_dead = false;
 
     uint32_t m_nextId = 1;

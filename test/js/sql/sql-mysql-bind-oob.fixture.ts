@@ -20,6 +20,9 @@ try {
   // Prime the prepared-statement cache so the next call with the same
   // signature goes straight to bindAndExecute without re-preparing.
   await sql.unsafe("select ? as x", [1]);
+  // Marker so the test harness can distinguish "couldn't connect" from
+  // "connected then crashed" when no docker-managed MySQL is available.
+  console.log("CONNECTED");
 
   const values: number[] = [1];
   let fired = 0;

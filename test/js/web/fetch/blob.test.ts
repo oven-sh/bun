@@ -381,8 +381,10 @@ test.each([
     env: {
       ...bunEnv,
       // Skip slow symbolization so a pre-fix ASAN crash exits promptly
-      // instead of pushing the test past its default timeout.
-      ASAN_OPTIONS: (bunEnv.ASAN_OPTIONS ? bunEnv.ASAN_OPTIONS + ":" : "") + "symbolize=0",
+      // instead of pushing the test past its default timeout. symbolize=0
+      // defeats LSan's symbol-name suppressions, so disable leak checks in
+      // this subprocess too (we're checking for UAF, not leaks).
+      ASAN_OPTIONS: (bunEnv.ASAN_OPTIONS ? bunEnv.ASAN_OPTIONS + ":" : "") + "symbolize=0:detect_leaks=0",
     },
     stdout: "pipe",
     stderr: "pipe",

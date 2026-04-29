@@ -595,9 +595,14 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     RETURN_IF_EXCEPTION(scope, {});
 
     // For auto-mock, synchronously require the real module and generate a
-    // mock from its exports. This runs *before* we register our mock in the
-    // virtual-module map, so for a fresh mock the require() hits the real
-    // module and not us.
+    // mock from its exports. Two bypasses are needed so we get the *real*
+    // exports instead of a leftover mock:
+    //   1. An earlier mock may already live in `virtualModules` for this
+    //      specifier — we remove it before the require and restore it after
+    //      (or replace with the new one).
+    //   2. An earlier mock may have overwritten the cached `JSCommonJSModule`'s
+    //      `.exports` in requireMap — we remove that entry so the real source
+    //      re-executes.
     JSC::JSObject* callback = nullptr;
     if (isAutoMock) {
         JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
@@ -614,6 +619,23 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         auto* boundRequire = Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, fromPath);
         RETURN_IF_EXCEPTION(scope, {});
 
+        // Stash and drop any prior mock entry so the require() hits the real
+        // module. (We'll re-install below via addModuleMock, which uses
+        // insert-or-replace, so nothing to restore.)
+        if (globalObject->onLoadPlugins.hasVirtualModules()) {
+            globalObject->onLoadPlugins.virtualModules->remove(specifier);
+        }
+
+        // Also drop any cached JSCommonJSModule entry whose `.exports` was
+        // previously overwritten by a mock — otherwise require() returns the
+        // patched mock exports instead of re-evaluating the real source.
+        auto* requireMap = globalObject->requireMap();
+        bool hadRequireMapEntry = requireMap->has(globalObject, specifierString);
+        if (hadRequireMapEntry) {
+            requireMap->remove(globalObject, specifierString);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+
         JSC::JSValue realExports;
         if (boundRequire) {
             JSC::CallData callData = JSC::getCallData(boundRequire);
@@ -628,10 +650,18 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
             RETURN_IF_EXCEPTION(scope, {});
         }
 
-        JSC::JSObject* mockObject = Bun::createAutoMockFromExports(globalObject, realExports);
+        JSC::JSValue mockValue = Bun::createAutoMockFromExports(globalObject, realExports);
         RETURN_IF_EXCEPTION(scope, {});
-        if (!mockObject) [[unlikely]] {
-            return {};
+
+        JSC::JSObject* mockObject = mockValue.isObject() ? mockValue.getObject() : nullptr;
+        if (!mockObject) {
+            // Primitive exports (`module.exports = 42`) need an object-shaped
+            // carrier so the JSModuleMock can cache them. Wrap in
+            // `{ default: value }` — consistent with how Jest represents
+            // primitive modules, and how a factory mock would encode one.
+            mockObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
+            RETURN_IF_EXCEPTION(scope, {});
+            mockObject->putDirect(vm, vm.propertyNames->defaultKeyword, mockValue, 0);
         }
 
         callback = mockObject;
@@ -840,13 +870,14 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsRequireMock, (JSC::JSGlobalObject 
         }
     }
 
-    // If a mock has already been registered for this specifier, return the
-    // cached mock exports object.
+    // If a `jest.mock(specifier)` has already installed a global mock for
+    // this specifier, return its cached result. (virtualModules also holds
+    // non-mock `builder.module()` callbacks — those are not mocks, so we
+    // ignore them and fall through.)
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         auto& virtualModules = *globalObject->onLoadPlugins.virtualModules;
         if (auto existing = virtualModules.get(specifier)) {
-            JSC::JSObject* entry = existing.get();
-            if (auto* moduleMock = dynamicDowncast<JSModuleMock>(entry)) {
+            if (auto* moduleMock = dynamicDowncast<JSModuleMock>(existing.get())) {
                 JSObject* result = moduleMock->executeOnce(globalObject);
                 RETURN_IF_EXCEPTION(scope, {});
                 if (result) {
@@ -871,11 +902,26 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsRequireMock, (JSC::JSGlobalObject 
                     return JSValue::encode(resultValue);
                 }
             }
-            return JSValue::encode(JSValue(entry));
+            // Not a JSModuleMock (e.g. a builder.module() callback) — fall
+            // through and build an auto-mock from the real module.
         }
     }
 
-    // No existing mock — synthesise one from the real module.
+    // Check the `requireMockCache` side-map. Caching here (and NOT in
+    // virtualModules) ensures a subsequent `require(id)` / `import(id)` on
+    // the same specifier still sees the REAL module — matching Jest's
+    // distinction between `jest.mock()` (globally patches imports) and
+    // `jest.requireMock()` (returns a mocked handle without side effects).
+    if (auto& cache = globalObject->mockModule.requireMockCache) {
+        JSC::JSMap* map = cache.get();
+        JSValue cached = map->get(globalObject, specifierString);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!cached.isUndefined()) {
+            return JSValue::encode(cached);
+        }
+    }
+
+    // Not cached — synthesise from the real module.
     WTF::String fromPath;
     JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
     if (sourceOrigin.url().isValid() && sourceOrigin.url().protocolIsFile()) {
@@ -902,21 +948,21 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsRequireMock, (JSC::JSGlobalObject 
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    JSC::JSObject* mockObject = Bun::createAutoMockFromExports(globalObject, realExports);
+    JSC::JSValue mockValue = Bun::createAutoMockFromExports(globalObject, realExports);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!mockObject) [[unlikely]] {
-        return {};
+
+    // Cache in the side-map so repeat calls return the same instance, without
+    // affecting how `require()` / `import()` resolve the specifier. Primitive
+    // exports are cached directly — no `{default:...}` wrapping, so the
+    // caller sees the same shape `require()` would have returned.
+    if (!globalObject->mockModule.requireMockCache) {
+        JSC::JSMap* map = JSC::JSMap::create(vm, globalObject->mapStructure());
+        globalObject->mockModule.requireMockCache.set(vm, map);
     }
+    globalObject->mockModule.requireMockCache.get()->set(globalObject, specifierString, mockValue);
+    RETURN_IF_EXCEPTION(scope, {});
 
-    // Cache the synthesised mock so a second `jest.requireMock(specifier)` on
-    // the same module hands back the same mock instance — without this,
-    // configuring `.mockReturnValue()` on one handle wouldn't be visible via
-    // another call (Jest's own `Runtime.requireMock` caches in `_mockRegistry`).
-    JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), mockObject);
-    mock->hasCalledModuleMock = true;
-    globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock);
-
-    return JSValue::encode(JSValue(mockObject));
+    return JSValue::encode(mockValue);
 }
 
 template<typename Visitor>

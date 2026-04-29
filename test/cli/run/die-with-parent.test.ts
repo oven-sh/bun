@@ -4,7 +4,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 // BUN_DIE_WITH_PARENT: Bun watches its original ppid and exits when that
 // process dies, even if the parent was SIGKILLed and couldn't signal us. On
-// the way out it also recursively SIGTERMs every descendant so nothing it
+// the way out it also recursively SIGKILLs every descendant so nothing it
 // spawned outlives it. Linux uses prctl(PR_SET_PDEATHSIG); macOS registers
 // EVFILT_PROC/NOTE_EXIT on the existing event loop's kqueue (no thread).
 //
@@ -159,7 +159,7 @@ test.skipIf(!isSupported)("BUN_DIE_WITH_PARENT=1: grandchildren are reaped when 
   process.kill(sh.pid!, "SIGKILL");
   await sh.exited;
   const bunDied = await waitUntilDead(bunPid, 10000);
-  // macOS: bun's NOTE_EXIT fires → Global.exit → libproc walk SIGTERMs the
+  // macOS: bun's NOTE_EXIT fires → Global.exit → libproc walk SIGKILLs the
   // grandchild. Linux: bun gets SIGKILL via PDEATHSIG, but the grandchild is
   // also Bun with the env var inherited and so has its own PDEATHSIG.
   const grandchildDied = await waitUntilDead(grandchildPid, 10000);
@@ -209,7 +209,7 @@ test.skipIf(!isSupported)("BUN_DIE_WITH_PARENT=1 does not fire while the parent 
 });
 
 // Descendant cleanup must not depend on the parent-watch path. With the env
-// var set, a Bun that exits *cleanly* should still SIGTERM its children. On
+// var set, a Bun that exits *cleanly* should still SIGKILL its children. On
 // macOS this is the only place the libproc walk is exercised independently of
 // NOTE_EXIT.
 test.skipIf(!isSupported)("BUN_DIE_WITH_PARENT=1: clean exit reaps descendants", async () => {

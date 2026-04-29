@@ -18,7 +18,7 @@
 //!        loop are short-lived enough not to need it.
 //!
 //!   2. On any clean exit (`Global.exit` → `Bun__onExit`), walks the process
-//!      tree rooted at `getpid()` and SIGTERMs every descendant so children
+//!      tree rooted at `getpid()` and SIGKILLs every descendant so children
 //!      Bun spawned don't outlive it.
 //!      - macOS: libproc `proc_listchildpids()`.
 //!      - Linux: `/proc/<pid>/task/*/children`.
@@ -133,7 +133,7 @@ fn onProcessExit() callconv(.c) void {
     killDescendants();
 }
 
-/// Walk the process tree rooted at `getpid()` and SIGTERM every descendant.
+/// Walk the process tree rooted at `getpid()` and SIGKILL every descendant.
 ///
 /// Pid-reuse safety: enumeration is a point-in-time snapshot, so a pid we
 /// collect could exit and be recycled by an unrelated process before we
@@ -144,9 +144,9 @@ fn onProcessExit() callconv(.c) void {
 ///      longer `parent`, the pid was recycled in the (microsecond) window
 ///      between enumerate and STOP — undo with SIGCONT and skip. Otherwise
 ///      `c` is now frozen and confirmed ours; recurse into it.
-///   3. Once the whole tree is frozen, SIGTERM + SIGCONT each pid
-///      (leaves-first so a parent isn't woken before its children are
-///      signalled).
+///   3. Once the whole tree is frozen, SIGKILL each pid (leaves-first).
+///      SIGKILL terminates stopped processes directly — no SIGCONT needed —
+///      and unlike SIGTERM can't be trapped or ignored.
 /// A frozen process can neither exit (so its pid can't be reused) nor fork
 /// (so its child set is stable while we recurse), which is what makes the
 /// verify step sufficient. The only forking process is `self`, and we're in
@@ -163,7 +163,7 @@ pub fn killDescendants() void {
 
     to_visit.append(bun.default_allocator, self_pid) catch return;
 
-    var buf: [256]std.c.pid_t = undefined;
+    var buf: [4096]std.c.pid_t = undefined;
     // Hard cap on tree size so a fork bomb under us can't make exit hang.
     while (to_visit.items.len > 0 and to_kill.items.len < 4096) {
         const parent = to_visit.swapRemove(to_visit.items.len - 1);
@@ -182,13 +182,11 @@ pub fn killDescendants() void {
         }
     }
 
-    // Reverse: leaves first. SIGTERM then SIGCONT so the (now-pending) TERM
-    // is delivered as soon as the process is unfrozen.
+    // Reverse: leaves first. SIGKILL terminates stopped processes directly.
     var i = to_kill.items.len;
     while (i > 0) {
         i -= 1;
-        _ = std.c.kill(to_kill.items[i], std.posix.SIG.TERM);
-        _ = std.c.kill(to_kill.items[i], std.posix.SIG.CONT);
+        _ = std.c.kill(to_kill.items[i], std.posix.SIG.KILL);
     }
 }
 

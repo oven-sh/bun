@@ -3523,26 +3523,19 @@ pub fn dupe(this: *const Blob) Blob {
 }
 
 pub fn dupeWithContentType(this: *const Blob, include_content_type: bool) Blob {
+    _ = include_content_type;
     if (this.store != null) this.store.?.ref();
     var duped = this.*;
     duped.setNotHeapAllocated();
     // If the source's content_type is heap-allocated, the bitwise copy above aliases
-    // the same allocation with content_type_allocated == true. We must either drop
-    // ownership (by resolving to a static mime string) or take our own copy so that
-    // freeing one side does not leave the other with a dangling pointer.
-    if (duped.content_type_allocated and !include_content_type) {
-        if (jsc.VirtualMachine.get().mimeType(duped.content_type)) |mime| {
-            duped.content_type = mime.value;
-        } else {
-            duped.content_type = "";
-        }
-
-        duped.content_type_allocated = false;
-        duped.content_type_was_set = false;
-        if (this.content_type_was_set) {
-            duped.content_type_was_set = duped.content_type.len > 0;
-        }
-    } else if (duped.content_type_allocated and include_content_type) {
+    // the same allocation with content_type_allocated == true. Take our own copy so
+    // that freeing one side does not leave the other with a dangling pointer.
+    //
+    // Historically the !include_content_type path tried to avoid this allocation by
+    // resolving to a static mime string and falling back to "" on a miss. That miss
+    // case drops user-supplied types with parameters (e.g. the multipart boundary for
+    // FormData bodies), so both paths now deep-copy and the parameter is ignored.
+    if (duped.content_type_allocated) {
         duped.content_type = bun.handleOom(bun.default_allocator.dupe(u8, this.content_type));
     }
     duped.name = duped.name.dupeRef();

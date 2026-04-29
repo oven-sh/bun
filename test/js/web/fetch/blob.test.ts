@@ -306,4 +306,21 @@ test("dupeWithContentType does not alias the source's allocated content_type", a
   expect(stderr).toBe("");
   expect(stdout).toBe("application/x-custom-type-not-in-registry-abcdefghijklm");
   expect(exitCode).toBe(0);
-}, 60_000);
+});
+
+test("dupe() preserves allocated content_type for Body clone", () => {
+  // Body.Value.clone() goes through Blob.dupe() -> dupeWithContentType(false).
+  // That path must deep-copy a heap-allocated content_type rather than drop
+  // it, otherwise Response.clone() loses FormData's multipart boundary (and
+  // any other non-registry type) when headers haven't been materialized yet.
+  const fd = new FormData();
+  fd.append("a", "b");
+  const original = new Response(fd);
+  // Clone before touching .headers so the clone has to derive Content-Type
+  // from its own body Blob rather than copied-over FetchHeaders.
+  const cloned = original.clone();
+  const originalType = original.headers.get("content-type");
+  const clonedType = cloned.headers.get("content-type");
+  expect(originalType).toStartWith("multipart/form-data; boundary=");
+  expect(clonedType).toBe(originalType);
+});

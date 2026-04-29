@@ -50,4 +50,46 @@ test("deep nesting", () => {
     // Verify it actually formatted and showed the diff (not just crashed)
     expect(stderr).toContain("expect(received).toEqual(expected)");
   }, 30000);
+
+  test("JSX element with circular or non-object props", async () => {
+    const dir = tempDirWithFiles("pretty-format-jsx", {
+      "jsx.test.ts": `
+import { test, expect } from "bun:test";
+
+test("circular props", () => {
+  const el: any = { $$typeof: Symbol.for("react.element"), type: "div", props: {} };
+  el.props = el;
+  expect(el).toEqual({});
+});
+
+test("circular children", () => {
+  const el: any = { $$typeof: Symbol.for("react.element"), type: "div", props: {} };
+  el.props.children = el;
+  expect(el).toEqual({});
+});
+
+test("non-object props", () => {
+  const el: any = { $$typeof: Symbol.for("react.element"), type: "div", props: 42 };
+  expect(el).toEqual({});
+});
+`,
+    });
+
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "test", "jsx.test.ts"],
+      env: bunEnv,
+      cwd: dir,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).toBe(1);
+    expect(stderr).not.toContain("panic");
+    expect(stderr).not.toContain("SIGSEGV");
+    expect(stderr).toContain("[Circular]");
+    expect(stderr).toContain("expect(received).toEqual(expected)");
+    expect(stderr).toContain("3 fail");
+  }, 30000);
 });

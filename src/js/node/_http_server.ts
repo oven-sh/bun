@@ -923,6 +923,12 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
         req.destroy();
       }
     }
+
+    // Fire the close callback set by assignSocketInternal
+    // (onServerResponseClose). This forwards the socket close to the
+    // attached ServerResponse so `res.on("close", ...)` runs on client
+    // disconnect, matching Node.js. See issues #29219, #14697.
+    callCloseCallback(this);
   }
   #onCloseForDestroy(closeCallback) {
     this.#onClose();

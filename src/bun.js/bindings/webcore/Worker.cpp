@@ -676,7 +676,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
 
     ExceptionOr<Vector<TransferredMessagePort>> disentangledPorts = MessagePort::disentanglePorts(WTF::move(ports));
     if (disentangledPorts.hasException()) {
-        WebCore::propagateException(*globalObject, scope, serialized.releaseException());
+        WebCore::propagateException(*globalObject, scope, disentangledPorts.releaseException());
         RELEASE_AND_RETURN(scope, {});
     }
     scope.assertNoException();

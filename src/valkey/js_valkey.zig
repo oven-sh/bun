@@ -1517,38 +1517,56 @@ fn SocketHandler(comptime ssl: bool) type {
             this.ref();
             defer this.deref();
             defer this.updatePollRef();
+            const vm = this.client.vm;
             if (handshake_success) {
-                const vm = this.client.vm;
                 if (this.client.tls.rejectUnauthorized(vm)) {
+                    // only reject the connection if reject_unauthorized == true
                     if (ssl_error.error_no != 0) {
-                        // only reject the connection if reject_unauthorized == true
+                        // Certificate chain validation failed.
+                        return try failHandshakeWithVerifyError(this, vm, &ssl_error);
+                    }
 
-                        const ssl_ptr: *BoringSSL.c.SSL = @ptrCast(this.client.socket.getNativeHandle());
-                        if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
-                            const hostname = servername[0..bun.len(servername)];
-                            if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
-                                this.client.flags.is_authenticated = false;
-                                const loop = vm.eventLoop();
-                                loop.enter();
-                                defer loop.exit();
-                                this.client.flags.is_manually_closed = true;
-                                defer this.client.close();
-                                const ssl_js_value = ssl_error.toJS(this.globalObject) catch |err| switch (err) {
-                                    error.JSTerminated => return error.JSTerminated,
-                                    else => {
-                                        // Clear any pending exception since we can't convert it to JS
-                                        this.globalObject.clearException();
-                                        return;
-                                    },
-                                };
-                                try this.client.failWithJSValue(this.globalObject, ssl_js_value);
-                                return;
-                            }
-                        }
+                    // Certificate chain is valid; verify the hostname matches the
+                    // certificate. Prefer the SNI servername if one was set, otherwise
+                    // fall back to the host from the connection URL.
+                    const ssl_ptr: *BoringSSL.c.SSL = @ptrCast(this.client.socket.getNativeHandle());
+                    const hostname = if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername|
+                        servername[0..bun.len(servername)]
+                    else
+                        this.client.address.hostname();
+                    if (hostname.len > 0 and !BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
+                        const err = this.globalObject.ERR(.TLS_CERT_ALTNAME_INVALID, "Hostname/IP does not match certificate's altnames: Host: {s}", .{hostname}).toJS();
+                        return try failHandshake(this, vm, err);
                     }
                 }
                 try this.client.start();
+            } else {
+                // if we are here is because the server rejected us, and the error_no is the cause of this
+                // no matter if reject_unauthorized is false, because we were disconnected by the server
+                return try failHandshakeWithVerifyError(this, vm, &ssl_error);
             }
+        }
+
+        fn failHandshakeWithVerifyError(this: *JSValkeyClient, vm: *jsc.VirtualMachine, ssl_error: *const uws.us_bun_verify_error_t) bun.JSTerminated!void {
+            const ssl_js_value = ssl_error.toJS(this.globalObject) catch |err| switch (err) {
+                error.JSTerminated => return error.JSTerminated,
+                else => {
+                    // Clear any pending exception since we can't convert it to JS
+                    this.globalObject.clearException();
+                    return;
+                },
+            };
+            return try failHandshake(this, vm, ssl_js_value);
+        }
+
+        fn failHandshake(this: *JSValkeyClient, vm: *jsc.VirtualMachine, err_value: jsc.JSValue) bun.JSTerminated!void {
+            this.client.flags.is_authenticated = false;
+            const loop = vm.eventLoop();
+            loop.enter();
+            defer loop.exit();
+            this.client.flags.is_manually_closed = true;
+            defer this.client.close();
+            try this.client.failWithJSValue(this.globalObject, err_value);
         }
 
         pub const onHandshake = if (ssl) onHandshake_ else null;

@@ -2047,6 +2047,52 @@ describe("global virtual store", () => {
       "types-versions/index.js": "module.exports = {};\n",
       "types-versions/ts4/index.d.ts": "export {};\n",
 
+      // No `exports`, no `types`/`typings`, no `typesVersions` — but an
+      // `index.d.ts` sits at the package root. TS's no-`exports` fallback
+      // finds it, so the ATW-style resolver must too.
+      "implicit-index/package.json": JSON.stringify({
+        name: "implicit-index",
+        version: "1.0.0",
+      }),
+      "implicit-index/index.js": "module.exports = {};\n",
+      "implicit-index/index.d.ts": "export {};\n",
+
+      // `"exports"` set without a `types` condition, but the resolved
+      // JS target has a sibling `.d.ts` — TS picks that up via the
+      // JS-to-declaration pairing. Common for packages that haven't
+      // migrated to explicit `types` conditions yet.
+      "sibling-dts/package.json": JSON.stringify({
+        name: "sibling-dts",
+        version: "1.0.0",
+        exports: {
+          ".": {
+            import: "./index.mjs",
+            require: "./index.cjs",
+          },
+        },
+      }),
+      "sibling-dts/index.mjs": "export default {};\n",
+      "sibling-dts/index.cjs": "module.exports = {};\n",
+      "sibling-dts/index.d.mts": "export {};\n",
+      "sibling-dts/index.d.cts": "export {};\n",
+
+      // `"exports"` maps every condition to a plain JS file that has NO
+      // sibling declaration. The field-scan heuristic would have
+      // false-positive-d on the old `typesVersions`-presence check; ATW
+      // resolution correctly reports no types exposed.
+      "exports-no-types/package.json": JSON.stringify({
+        name: "exports-no-types",
+        version: "1.0.0",
+        exports: {
+          ".": {
+            import: "./index.mjs",
+            require: "./index.cjs",
+          },
+        },
+      }),
+      "exports-no-types/index.mjs": "export default {};\n",
+      "exports-no-types/index.cjs": "module.exports = {};\n",
+
       "pure-js/package.json": JSON.stringify({
         name: "pure-js",
         version: "1.0.0",
@@ -2067,15 +2113,23 @@ describe("global virtual store", () => {
       return Buffer.from(await Bun.file(join(String(fixtures), `${subdir}-1.0.0.tgz`)).arrayBuffer());
     }
 
-    const tarballs: Record<string, Buffer> = {
-      "top-types": await pack("top-types"),
-      "top-typings": await pack("top-typings"),
-      "exports-types": await pack("exports-types"),
-      "exports-types-dual": await pack("exports-types-dual"),
-      "exports-types-array": await pack("exports-types-array"),
-      "types-versions": await pack("types-versions"),
-      "pure-js": await pack("pure-js"),
-    };
+    const fixtureNames = [
+      "top-types",
+      "top-typings",
+      "exports-types",
+      "exports-types-dual",
+      "exports-types-array",
+      "types-versions",
+      "implicit-index",
+      "sibling-dts",
+      "exports-no-types",
+      "pure-js",
+    ] as const;
+    // Pack all fixtures in parallel — each `bun pm pack` is a debug-build
+    // subprocess launch (~2-3s cold); serialising ten of them makes this
+    // test needlessly flaky under load.
+    const packed = await Promise.all(fixtureNames.map(n => pack(n)));
+    const tarballs: Record<string, Buffer> = Object.fromEntries(fixtureNames.map((n, i) => [n, packed[i]]));
 
     using server = Bun.serve({
       port: 0,
@@ -2126,6 +2180,9 @@ describe("global virtual store", () => {
           "exports-types-dual": "1.0.0",
           "exports-types-array": "1.0.0",
           "types-versions": "1.0.0",
+          "implicit-index": "1.0.0",
+          "sibling-dts": "1.0.0",
+          "exports-no-types": "1.0.0",
           "pure-js": "1.0.0",
         },
       }),
@@ -2135,18 +2192,34 @@ describe("global virtual store", () => {
 
     const bunDir = join(String(packageDir), "node_modules", ".bun");
 
-    // A package without any types signal stays in the global store →
-    // symlink into `<cache>/links/<storepath>-<hash>`.
-    const pureEntry = join(bunDir, "pure-js@1.0.0");
-    expect(lstatSync(pureEntry).isSymbolicLink()).toBe(true);
-    expect(readlinkSync(pureEntry)).toMatch(/links[/\\]pure-js@1\.0\.0-[0-9a-f]{16}$/);
+    // Packages without any resolvable declaration file stay in the
+    // global store → symlinked into `<cache>/links/<storepath>-<hash>`.
+    // `pure-js` has no types-related package.json signals at all;
+    // `exports-no-types` has an `"exports"` map whose resolved JS
+    // targets have no sibling `.d.*` and no `"types"` condition —
+    // exactly the case where the earlier field-scan heuristic would
+    // have false-positive-d on the presence of `"exports"` alone.
+    for (const name of ["pure-js", "exports-no-types"] as const) {
+      const entry = join(bunDir, `${name}@1.0.0`);
+      expect(lstatSync(entry).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(entry)).toMatch(new RegExp(`links[/\\\\]${name}@1\\.0\\.0-[0-9a-f]{16}$`));
+    }
 
-    // Each type-shipping signal — top-level `types`, top-level `typings`,
-    // a `"types"` condition with a string target under `exports`, a
-    // `"types"` condition with a nested-object target (the dual ESM/CJS
-    // shape), a `"types"` key nested inside an array-of-fallbacks, or a
-    // non-empty `"typesVersions"` map — keeps the package project-local
-    // as a real directory.
+    // Every path through the ATW-style resolver lands on a declaration
+    // file:
+    //   * top-level `"types"` / `"typings"` → string points at .d.ts
+    //   * `"exports"` walk with types-priority conditions → .d.ts
+    //   * `"exports"` walk into a nested conditional `types` object
+    //     (dual .d.mts/.d.cts) → .d.*
+    //   * `"exports"` walk into an array fallback containing a types
+    //     condition → .d.ts
+    //   * non-empty `"typesVersions"` (TS resolves through version
+    //     mappings) → true
+    //   * no `"exports"`/`"types"`/`"typesVersions"` but implicit
+    //     `index.d.ts` at package root → true
+    //   * `"exports"` with no `"types"` condition but the JS target
+    //     has a sibling `.d.ts`/`.d.mts`/`.d.cts` → true
+    // Each fixture is forced project-local as a real directory.
     const typeShippingNames = [
       "top-types",
       "top-typings",
@@ -2154,6 +2227,8 @@ describe("global virtual store", () => {
       "exports-types-dual",
       "exports-types-array",
       "types-versions",
+      "implicit-index",
+      "sibling-dts",
     ] as const;
     for (const name of typeShippingNames) {
       const entry = join(bunDir, `${name}@1.0.0`);
@@ -2198,7 +2273,10 @@ describe("global virtual store", () => {
       expect(lstatSync(entry).isSymbolicLink()).toBe(false);
       expect(lstatSync(entry).isDirectory()).toBe(true);
     }
-    expect(lstatSync(join(bunDir, "pure-js@1.0.0")).isSymbolicLink()).toBe(true);
-    expect(readlinkSync(join(bunDir, "pure-js@1.0.0"))).toMatch(/links[/\\]pure-js@1\.0\.0-[0-9a-f]{16}$/);
+    for (const name of ["pure-js", "exports-no-types"] as const) {
+      const entry = join(bunDir, `${name}@1.0.0`);
+      expect(lstatSync(entry).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(entry)).toMatch(new RegExp(`links[/\\\\]${name}@1\\.0\\.0-[0-9a-f]{16}$`));
+    }
   });
 });

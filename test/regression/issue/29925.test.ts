@@ -106,4 +106,28 @@ describe.skipIf(!redisAvailable)("RedisClient connection recovery (#29925)", () 
       stop();
     }
   });
+
+  // Also covers #22808: tight close()/connect()/send() cycles used to lock
+  // up on the second iteration because `flags.is_authenticated` was still
+  // true from the prior session, causing the new HELLO response to be
+  // dropped by `handleResponse` and the connect promise to hang.
+  test("repeated close()/connect()/send() cycles do not lock up", async () => {
+    const { port, stop } = await spawnRedis();
+    try {
+      const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`);
+
+      for (let i = 0; i < 3; i++) {
+        if (client.connected) {
+          client.close();
+        }
+        await client.connect();
+        expect(client.connected).toBe(true);
+        expect(await client.send("FLUSHALL", ["SYNC"])).toBe("OK");
+      }
+
+      client.close();
+    } finally {
+      stop();
+    }
+  });
 });

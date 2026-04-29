@@ -1561,7 +1561,8 @@ fn SocketHandler(comptime ssl: bool) type {
         fn failHandshakeWithVerifyError(this: *JSValkeyClient, vm: *jsc.VirtualMachine, ssl_error: *const uws.us_bun_verify_error_t) bun.JSTerminated!void {
             const ssl_js_value = ssl_error.toJS(this.globalObject) catch |err| switch (err) {
                 error.JSTerminated => return error.JSTerminated,
-                else => {
+                error.OutOfMemory => bun.outOfMemory(),
+                error.JSError => {
                     // Clear any pending exception since we can't convert it to JS,
                     // but still fail-close the connection so we never fall through
                     // to the authenticated state after a rejected handshake.

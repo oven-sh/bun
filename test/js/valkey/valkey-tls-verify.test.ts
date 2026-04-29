@@ -150,7 +150,8 @@ describe("RedisClient TLS hostname verification", () => {
       }
       expect(err).toBeInstanceOf(Error);
       // Should be the BoringSSL verify error, not the hostname error.
-      expect(err.code).not.toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+      expect(err.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+      expect(err.message).toContain("self signed certificate");
     });
   });
 

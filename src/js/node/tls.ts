@@ -8,6 +8,10 @@ const { throwOnInvalidTLSArray } = require("internal/tls");
 const { validateString } = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
+// Captured at load so a tampered global `Bun.CryptoHasher` can't change
+// secureContextCacheKey()'s hashing — same reason the cache Map ops are
+// $-prefixed.
+const { CryptoHasher } = Bun;
 
 const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
 const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
@@ -476,7 +480,7 @@ function secureContextCacheKey(o) {
   // field into SHA-256 with explicit type+length tags so neither truncation nor
   // delimiter bytes inside values can alias two configs. A false miss is fine
   // (just one extra SSL_CTX), so unhashable shapes return null → uncached.
-  const sha = new Bun.CryptoHasher("sha256");
+  const sha = new CryptoHasher("sha256");
   let unhashable = false;
   const tag = (t, s) => sha.update(t + s.length + ":").update(s);
   const feed = v => {

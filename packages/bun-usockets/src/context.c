@@ -90,7 +90,21 @@ void us_socket_group_close_all(struct us_socket_group_t *group) {
     struct us_socket_t *s = group->head_sockets;
     while (s) {
         struct us_socket_t *nextS = s->next;
-        us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+        if (us_internal_poll_type(&s->p) & POLL_TYPE_SEMI_SOCKET) {
+            /* In-flight connect — close_raw skips dispatch for SEMI_SOCKET
+             * (on_close without on_open is wrong), so the Zig wrapper's
+             * `socket = .connected` would never detach and finalize() UAFs
+             * after drainClosedSockets(). Deliver the same on_connect_error
+             * the natural failure path would have, which detaches the
+             * wrapper. The handler then closes; if it doesn't, the
+             * force-drain below catches it. */
+            us_dispatch_connect_error(s, ECONNABORTED);
+            if (!us_socket_is_closed(s)) {
+                us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
+            }
+        } else {
+            us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+        }
         s = nextS;
     }
 

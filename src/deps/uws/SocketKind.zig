@@ -79,8 +79,8 @@ pub const SocketKind = enum(u8) {
 };
 
 comptime {
-    // 7 bits available in us_socket_flags.kind / us_socket_t.kind.
-    bun.assert(@typeInfo(SocketKind).@"enum".fields.len <= 128);
+    // `unsigned char kind` on us_socket_t — full byte, not the flags bitfield.
+    bun.assert(@typeInfo(SocketKind).@"enum".fields.len <= 256);
 }
 
 /// The four kinds whose handlers live in C++ are also referenced from C++

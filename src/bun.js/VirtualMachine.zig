@@ -973,6 +973,14 @@ pub fn globalExit(this: *VirtualMachine) noreturn {
         // BUN_DESTRUCT_VM_ON_EXIT.
         if (this.rare_data) |rare| rare.closeAllSocketGroups(this);
         Zig__GlobalObject__destructOnExit(this.global);
+        // lastChanceToFinalize() above runs Listener/Server finalize → their
+        // own embedded group.closeAll() → sockets land in loop.closed_head.
+        // The pre-JSC drain in closeAllSocketGroups() can't see those (the
+        // groups aren't on RareData), so drain again now or LSAN reports
+        // every accepted socket that was still open at process.exit().
+        // uws.Loop is the usockets loop on every platform; event_loop_handle
+        // on Windows is the libuv loop, which has no closed_head.
+        uws.Loop.get().drainClosedSockets();
         this.transpiler.deinit();
         this.gc_controller.deinit();
         this.deinit();

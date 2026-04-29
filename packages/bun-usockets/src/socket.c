@@ -306,6 +306,10 @@ struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code
             res = s->ssl ? us_internal_ssl_on_close(s, code, reason)
                          : us_dispatch_close(s, code, reason);
         }
+        /* SEMI_SOCKET: never-opened connect — owner is notified via
+         * on_connect_error from the connect path (after_open / close_all),
+         * not here. Dispatching here would double-fire on the natural path
+         * (after_open → handler.close → close_raw). */
 
         us_internal_ssl_detach(s);
 

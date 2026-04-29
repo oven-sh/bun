@@ -858,6 +858,33 @@ pub fn spawnMaybeSync(
         subprocess.toJS(globalThis)
     else
         JSValue.zero;
+
+    // For spawnSync no JS wrapper is created, so GC will never call
+    // finalize(). Every exit path from here on must reap the child and
+    // free the Subprocess, including pipe.start() failures below, a
+    // pending exception after the wait loop (e.g. worker termination or
+    // a bun:test timeout), and errors thrown while building the result.
+    defer if (comptime is_sync) {
+        if (!subprocess.process.hasExited()) {
+            // An error path bailed before the sync wait loop could reap
+            // the child. tryKill() was already called at the error site;
+            // reap now so onProcessExit drops its ref and closes IO.
+            subprocess.process.wait(true);
+            if (comptime Environment.isWindows) {
+                // Process.wait() is a no-op on Windows and watchOrReap()
+                // has not run yet, so drive the exit handler manually to
+                // release the Process ref and close IO.
+                if (!subprocess.process.hasExited()) {
+                    subprocess.process.onExit(
+                        .{ .signaled = subprocess.killSignal },
+                        &std.mem.zeroes(Rusage),
+                    );
+                }
+            }
+        }
+        subprocess.finalize();
+    };
+
     if (out != .zero) {
         subprocess.this_value.setWeak(out);
         // Immediately upgrade to strong if there's pending activity to prevent premature GC
@@ -1111,7 +1138,7 @@ pub fn spawnMaybeSync(
     const exitedDueToTimeout = did_timeout;
     const exitedDueToMaxBuffer = subprocess.exited_due_to_maxbuf;
     const resultPid = jsc.JSValue.jsNumberFromInt32(subprocess.pid());
-    subprocess.finalize();
+    // subprocess.finalize() is handled by the `defer if (is_sync)` above.
 
     const sync_value = jsc.JSValue.createEmptyObject(globalThis, 0);
     sync_value.put(globalThis, jsc.ZigString.static("exitCode"), exitCode);

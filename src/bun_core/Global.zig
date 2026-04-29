@@ -67,11 +67,15 @@ pub inline fn getStartTime() i128 {
 
 extern "kernel32" fn SetThreadDescription(thread: std.os.windows.HANDLE, name: [*:0]const u16) callconv(.winapi) std.os.windows.HRESULT;
 
-/// Flush stdio for every CRT instance loaded in the process (Bun's static /MT
-/// CRT plus any /MD ucrtbase/msvcrt brought in by native addons). Called before
-/// TerminateProcess, which otherwise skips the CRT teardown that would flush
-/// these. Defined in c-bindings.cpp.
+/// Flush stdio for every dynamically-linked CRT loaded in the process (Bun's
+/// own /MT CRT plus ucrtbase/msvcrt). Cannot reach /MT-linked .node addon CRTs.
+/// Defined in c-bindings.cpp.
 pub extern "c" fn Bun__flushAllCRTs() void;
+
+/// SEH-wrapped ExitProcess: runs DLL_PROCESS_DETACH for every module (so each
+/// /MT addon CRT flushes itself), falling through to TerminateProcess if any
+/// DETACH handler faults. Defined in c-bindings.cpp.
+pub extern "c" fn Bun__exitProcessWindows(code: u32) noreturn;
 
 pub fn setThreadName(name: [:0]const u8) void {
     if (Environment.isLinux) {
@@ -134,22 +138,32 @@ pub fn exit(code: u32) noreturn {
         .mac => std.c.exit(@bitCast(code)),
         .windows => {
             Bun__onExit();
-            // ExitProcess walks every loaded DLL's DLL_PROCESS_DETACH, which is
-            // both slow and a recurring source of crashes when third-party
-            // modules (native addons that statically link their own allocator,
-            // injected AV/overlay DLLs, etc.) fault during teardown.
-            // TerminateProcess skips all of that. The one thing we lose is the
-            // CRT-side stdio flush that DETACH would have done for dynamically-
-            // linked CRTs (ucrtbase/msvcrt) used by /MD-built native addons —
-            // Bun__flushAllCRTs() does that explicitly.
-            Bun__flushAllCRTs();
-            _ = std.os.windows.kernel32.TerminateProcess(
-                std.os.windows.kernel32.GetCurrentProcess(),
-                code,
-            );
-            // TerminateProcess on the current process should not return; if it
-            // somehow does, hang rather than fall through into UB.
-            while (true) std.atomic.spinLoopHint();
+            // Fast path: no native addon was dlopen'd. There are no foreign
+            // /MT CRTs with buffered stdio, so skip the DLL_PROCESS_DETACH
+            // walk entirely — it's both slow (every loaded system DLL) and a
+            // recurring source of crashes from injected AV/overlay DLLs.
+            // Bun__flushAllCRTs() still drains any dynamic CRT (ucrtbase) that
+            // got pulled in.
+            //
+            // Addon path: at least one .node was loaded. node-gyp builds /MT
+            // by default, so the addon has a private static CRT we cannot
+            // flush from outside; the only way its stdio reaches the pipe is
+            // its own DLL_PROCESS_DETACH. Take the ExitProcess path, but
+            // wrapped in SEH so a faulting DETACH (e.g. an addon bundling its
+            // own allocator) degrades to TerminateProcess with the right code
+            // instead of a crash. The dlopen already cost more than the few
+            // ms of DETACH this adds.
+            if (bun.analytics.Features.process_dlopen == 0) {
+                Bun__flushAllCRTs();
+                _ = std.os.windows.kernel32.TerminateProcess(
+                    std.os.windows.kernel32.GetCurrentProcess(),
+                    code,
+                );
+                // TerminateProcess on the current process should not return;
+                // if it somehow does, hang rather than fall through into UB.
+                while (true) std.atomic.spinLoopHint();
+            }
+            Bun__exitProcessWindows(code);
         },
         else => {
             if (Environment.enable_asan) {

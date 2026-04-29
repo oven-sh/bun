@@ -672,8 +672,11 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
         return false;
     }
 
+    // No SQLITE_OPEN_URI: validateDatabasePath() already decodes file:
+    // URLs to plain paths, and enabling URI mode here would make string
+    // paths starting with "file:" leak ?nolock=/vfs=/mode=ro/cache= into
+    // the connection — Node passes the string verbatim as a filename.
     int flags = m_config.readOnly ? SQLITE_OPEN_READONLY : (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
-    flags |= SQLITE_OPEN_URI;
 
     auto utf8 = m_location.utf8();
     sqlite3* db = nullptr;
@@ -1376,10 +1379,9 @@ static bool validateDatabasePath(JSGlobalObject* globalObject, ThrowScope& scope
             // Decode to a plain filesystem path (like Node's
             // FileURLToPath) so the caller's find('\0') check sees the
             // decoded byte — the raw href keeps `%00` as three literal
-            // characters, and sqlite3_open_v2 with SQLITE_OPEN_URI would
-            // then percent-decode it itself and silently truncate. This
-            // also strips any ?query (cache=/vfs=/nolock=…) so it isn't
-            // leaked through to sqlite3ParseUri.
+            // characters. This also strips any ?query so open()
+            // needn't set SQLITE_OPEN_URI (which would expose string
+            // paths beginning "file:" to sqlite3ParseUri).
             auto url = WTF::URL(hrefStr);
             if (!url.isValid() || !url.protocolIsFile()) {
                 Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_URL_SCHEME, "The URL must be of scheme file:"_s);
@@ -2355,7 +2357,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
 
     auto destPathUtf8 = destPath.utf8();
     sqlite3* dest = nullptr;
-    int r = sqlite3_open_v2(destPathUtf8.data(), &dest, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI, nullptr);
+    int r = sqlite3_open_v2(destPathUtf8.data(), &dest, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr);
     if (r != SQLITE_OK) {
         if (dest) {
             throwSqliteError(globalObject, scope, dest);

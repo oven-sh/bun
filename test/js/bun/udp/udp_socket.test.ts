@@ -1,4 +1,5 @@
 import { udpSocket } from "bun";
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { disableAggressiveGCScope, randomPort } from "harness";
 import { dataCases, dataTypes } from "./testdata";
@@ -11,6 +12,49 @@ describe("udpSocket()", () => {
       }),
     ).toThrow();
   });
+
+  // The Strong ref on the JS wrapper used to be left in place when udpSocket()
+  // threw before the underlying uws socket was created (invalid options, bind
+  // failure), pinning the wrapper forever and leaking the Zig struct.
+  describe("does not leak UDPSocket wrapper when creation fails", () => {
+    async function countUDPSocketsAfterGC(max: number) {
+      // Conservative stack scanning may keep the most-recently-created
+      // wrapper alive for a bit, so stop once we're at or below `max`
+      // instead of waiting forever for exactly zero.
+      for (let i = 0; i < 20; i++) {
+        Bun.gc(true);
+        const count = heapStats().objectTypeCounts.UDPSocket || 0;
+        if (count <= max) return count;
+        await Bun.sleep(5);
+      }
+      Bun.gc(true);
+      return heapStats().objectTypeCounts.UDPSocket || 0;
+    }
+
+    test.each([
+      ["config validation throws", { port: -1 }],
+      ["user getter throws", { get port() { throw new Error("nope"); } }],
+      ["bind fails", { hostname: "256.256.256.256", port: 0 }],
+    ] as const)("%s", async (_, options) => {
+      const iterations = 200;
+      let thrown = 0;
+      for (let i = 0; i < iterations; i++) {
+        try {
+          await udpSocket(options as any);
+        } catch {
+          thrown++;
+        }
+      }
+      expect(thrown).toBe(iterations);
+
+      // Allow a tiny amount of slack for GC timing, but nowhere near `iterations`.
+      // Before the fix this equaled `iterations` (every wrapper leaked).
+      const remaining = await countUDPSocketsAfterGC(5);
+      expect(remaining).toBeLessThan(10);
+      expect(heapStats().protectedObjectTypeCounts.UDPSocket || 0).toBe(0);
+    });
+  });
+
   test("can create a socket", async () => {
     const socket = await udpSocket({});
     expect(socket).toBeInstanceOf(Object);

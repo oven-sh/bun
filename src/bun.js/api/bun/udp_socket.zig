@@ -295,8 +295,12 @@ pub const UDPSocket = struct {
                 this.socket = null;
                 socket.close();
             }
-
-            // Do not deinit, rely on GC to free it.
+            // Release the strong reference so the JS wrapper can be garbage
+            // collected, which will in turn call finalize() to free this struct.
+            // Without this, failed config parsing or bind would leave the wrapper
+            // pinned forever by the Strong handle and leak. This is idempotent, so
+            // it is safe even if onClose() already downgraded via socket.close().
+            this.this_value.downgrade();
         }
         const thisValue = this.toJS(globalThis);
         thisValue.ensureStillAlive();

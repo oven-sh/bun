@@ -78,18 +78,15 @@ async function waitUntilDead(pid: number, timeoutMs: number): Promise<boolean> {
   return !isAlive(pid);
 }
 
-test.skipIf(!isSupported)(
-  "without BUN_DIE_WITH_PARENT, bun is orphaned when its parent is SIGKILLed",
-  async () => {
-    const { sh, bunPid } = await spawnTree(undefined);
-    process.kill(sh.pid!, "SIGKILL");
-    await sh.exited;
-    // bun must NOT die: poll for death and expect the poll to time out.
-    const died = await waitUntilDead(bunPid, 1000);
-    if (isAlive(bunPid)) process.kill(bunPid, "SIGKILL");
-    expect(died).toBe(false);
-  },
-);
+test.skipIf(!isSupported)("without BUN_DIE_WITH_PARENT, bun is orphaned when its parent is SIGKILLed", async () => {
+  const { sh, bunPid } = await spawnTree(undefined);
+  process.kill(sh.pid!, "SIGKILL");
+  await sh.exited;
+  // bun must NOT die: poll for death and expect the poll to time out.
+  const died = await waitUntilDead(bunPid, 1000);
+  if (isAlive(bunPid)) process.kill(bunPid, "SIGKILL");
+  expect(died).toBe(false);
+});
 
 test.skipIf(!isSupported)(
   "BUN_DIE_WITH_PARENT=1: bun exits when its parent is SIGKILLed",
@@ -106,17 +103,14 @@ test.skipIf(!isSupported)(
   30000,
 );
 
-test.skipIf(!isSupported)(
-  "BUN_DIE_WITH_PARENT=0 is treated as unset",
-  async () => {
-    const { sh, bunPid } = await spawnTree("0");
-    process.kill(sh.pid!, "SIGKILL");
-    await sh.exited;
-    const died = await waitUntilDead(bunPid, 1000);
-    if (isAlive(bunPid)) process.kill(bunPid, "SIGKILL");
-    expect(died).toBe(false);
-  },
-);
+test.skipIf(!isSupported)("BUN_DIE_WITH_PARENT=0 is treated as unset", async () => {
+  const { sh, bunPid } = await spawnTree("0");
+  process.kill(sh.pid!, "SIGKILL");
+  await sh.exited;
+  const died = await waitUntilDead(bunPid, 1000);
+  if (isAlive(bunPid)) process.kill(bunPid, "SIGKILL");
+  expect(died).toBe(false);
+});
 
 test.skipIf(!isSupported)(
   "BUN_DIE_WITH_PARENT=1 does not fire while the parent is alive",

@@ -1004,6 +1004,17 @@ function ClientRequest(input, options, cb) {
       this.destroyed = true;
       socketAssigned = true;
       releaseAgentSocket();
+      // Match Node.js onSocketNT: don't orphan a socket handed over by a
+      // custom agent when the request is already destroyed or errored.
+      // Skip the built-in path where socket is this request's own FakeSocket
+      // (that one is handled by releaseAgentSocket / socketCloseListener).
+      if (socket && socket !== this.socket) {
+        if (!err && this[kAgent] && !socket.destroyed) {
+          socket.emit?.("free");
+        } else {
+          socket.destroy?.(err);
+        }
+      }
       process.nextTick(() => {
         if (err != null && !this[abortedSymbol]) this.emit("error", err);
         // Match Node.js: 'close' always follows, even on the destroyed/err

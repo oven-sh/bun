@@ -127,8 +127,9 @@ test.skipIf(!isSupported)(
     expect(diedEarly).toBe(false);
     process.kill(sh.pid!, "SIGKILL");
     await sh.exited;
-    await waitUntilDead(bunPid, 10000);
+    const diedAfter = await waitUntilDead(bunPid, 10000);
     if (isAlive(bunPid)) process.kill(bunPid, "SIGKILL");
+    expect(diedAfter).toBe(true);
   },
   30000,
 );

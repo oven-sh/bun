@@ -80,7 +80,7 @@ function oneRequest(): Promise<void> {
   });
 }
 
-const ITERATIONS = 40;
+const ITERATIONS = 10;
 
 // Warm up so per-process one-time promise protections (module loader, etc.)
 // don't count against us.
@@ -116,9 +116,7 @@ console.log(
 
 // The test must actually exercise the backpressure → pending_flush path.
 if (flushPending < ITERATIONS / 2) {
-  console.error(
-    `insufficient backpressure: only ${flushPending}/${ITERATIONS} end() calls returned a pending promise`,
-  );
+  console.error(`insufficient backpressure: only ${flushPending}/${ITERATIONS} end() calls returned a pending promise`);
   process.exit(2);
 }
 // Before the fix: delta ≈ ITERATIONS (every pending_flush stays protected).

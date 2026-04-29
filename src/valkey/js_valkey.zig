@@ -652,6 +652,11 @@ pub const JSValkeyClient = struct {
 
         // If was manually closed, reset that flag
         this.client.flags.is_manually_closed = false;
+        // Explicit connect() should also clear the sticky `failed` flag so the
+        // client can recover after prior connection attempts exhausted retries.
+        // Without this, every subsequent command rejects with "Connection has
+        // failed" forever — see https://github.com/oven-sh/bun/issues/29925.
+        this.client.flags.failed = false;
         defer this.updatePollRef();
 
         if (this.client.flags.needs_to_open_socket) {

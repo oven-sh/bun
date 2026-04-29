@@ -253,9 +253,7 @@ describe("node:http Agent socket accounting", () => {
     try {
       const name = agent.getName({ host: "example.test", port: 80 });
       const makeReq = (lookup: (...a: any[]) => void) =>
-        http
-          .get({ host: "example.test", port: 80, agent, lookup } as any, () => {})
-          .on("error", () => {});
+        http.get({ host: "example.test", port: 80, agent, lookup } as any, () => {}).on("error", () => {});
 
       // Callback error
       makeReq((_h, _o, cb) => cb(new Error("boom")));

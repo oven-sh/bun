@@ -290,6 +290,7 @@ fn readFileOnce(path: [:0]const u8, buf: []u8) ?[]const u8 {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const jsc = bun.jsc;
 const Environment = bun.Environment;
+const jsc = bun.jsc;

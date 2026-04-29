@@ -375,7 +375,8 @@ public:
     {
         auto& vm = getVM(globalObject_);
         auto scope = DECLARE_THROW_SCOPE(vm);
-        if (scope.exception()) [[unlikely]] return;
+        if (scope.exception()) [[unlikely]]
+            return;
         auto* state = getState(ctx);
         if (!state) return;
 
@@ -2024,7 +2025,7 @@ GCClient::IsoSubspace* JSNodeSqliteSession::subspaceForImpl(VM& vm)
 #define THIS_SESSION()                                                                                                 \
     auto& vm = JSC::getVM(globalObject);                                                                               \
     auto scope = DECLARE_THROW_SCOPE(vm);                                                                              \
-    JSNodeSqliteSession* self = dynamicDowncast<JSNodeSqliteSession>(callFrame->thisValue());                         \
+    JSNodeSqliteSession* self = dynamicDowncast<JSNodeSqliteSession>(callFrame->thisValue());                          \
     if (!self) [[unlikely]] {                                                                                          \
         scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), "Session"_s)); \
         return {};                                                                                                     \

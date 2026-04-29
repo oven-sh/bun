@@ -248,9 +248,7 @@ describe("DatabaseSync.prototype.aggregate()", () => {
       step: (acc: number, n: number) => acc + n,
       inverse: (acc: number, n: number) => acc - n,
     });
-    const rows = db
-      .prepare("SELECT win_sum(n) OVER (ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) AS s FROM t")
-      .all();
+    const rows = db.prepare("SELECT win_sum(n) OVER (ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) AS s FROM t").all();
     expect(rows.map(r => r.s)).toEqual([3, 6, 9, 7]);
     db.close();
   });
@@ -340,7 +338,12 @@ describe("Session / changeset", () => {
     const dst = new DatabaseSync(":memory:");
     dst.exec("CREATE TABLE s (id INTEGER PRIMARY KEY, v TEXT)");
     expect(dst.applyChangeset(changeset)).toBe(true);
-    expect(dst.prepare("SELECT v FROM s ORDER BY id").all().map(r => r.v)).toEqual(["hello", "world"]);
+    expect(
+      dst
+        .prepare("SELECT v FROM s ORDER BY id")
+        .all()
+        .map(r => r.v),
+    ).toEqual(["hello", "world"]);
 
     src.close();
     dst.close();

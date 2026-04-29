@@ -997,8 +997,9 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncFunction, (JSGlobalObject * globalObject,
     int r = sqlite3_create_function_v2(self->connection(), nameUtf8.data(), argc, textRep,
         udf, NodeSqliteUDF::xFunc, nullptr, nullptr, NodeSqliteUDF::xDestroy);
     if (r != SQLITE_OK) {
-        // xDestroy is not called when registration itself fails.
-        delete udf;
+        // SQLite owns udf once xDestroy is passed in — it invokes xDestroy
+        // on the failure path too (name too long / nArg out of range /
+        // SQLITE_BUSY), so a manual delete here would double-free.
         throwSqliteError(globalObject, scope, self->connection());
         return {};
     }
@@ -1081,7 +1082,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncAggregate, (JSGlobalObject * globalObject
     int r = sqlite3_create_window_function(self->connection(), nameUtf8.data(), argc, textRep, agg,
         NodeSqliteAggregate::xStep, NodeSqliteAggregate::xFinal, xValue, xInverse, NodeSqliteAggregate::xDestroy);
     if (r != SQLITE_OK) {
-        delete agg;
+        // SQLite already invoked xDestroy(agg) on the failure path.
         throwSqliteError(globalObject, scope, self->connection());
         return {};
     }

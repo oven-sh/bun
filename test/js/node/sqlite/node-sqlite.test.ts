@@ -8,6 +8,7 @@ test("node:sqlite is a built-in module", () => {
   expect(isBuiltin("node:sqlite")).toBe(true);
   // Like node:test, node:sqlite is only available with the node: prefix.
   expect(isBuiltin("sqlite")).toBe(false);
+  expect(require("node:module").builtinModules).toContain("node:sqlite");
 });
 
 test("process.versions.sqlite is set", () => {
@@ -252,6 +253,21 @@ describe("DatabaseSync.prototype.function()", () => {
     db.function("async_bad", () => Promise.resolve(1));
     expect(() => db.prepare("SELECT async_bad()").get()).toThrow(
       /Asynchronous user-defined functions are not supported/,
+    );
+    db.close();
+  });
+
+  test("registration failure does not double-free the UDF context", () => {
+    // sqlite3_create_function_v2 calls xDestroy(p) on the failure path
+    // (name >255 bytes → SQLITE_MISUSE); a second manual delete on our
+    // side would crash under ASAN. These should throw cleanly.
+    const db = new DatabaseSync(":memory:");
+    const longName = "a".repeat(300);
+    expect(() => db.function(longName, () => 0)).toThrow(
+      expect.objectContaining({ code: "ERR_SQLITE_ERROR" }),
+    );
+    expect(() => db.aggregate(longName, { start: 0, step: (a, n) => a + n })).toThrow(
+      expect.objectContaining({ code: "ERR_SQLITE_ERROR" }),
     );
     db.close();
   });

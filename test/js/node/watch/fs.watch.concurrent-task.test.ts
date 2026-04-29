@@ -8,9 +8,8 @@
 // both `.task` and `.next`. A debug assertion in `enqueueTaskConcurrent` verifies
 // `.next.getPtr() == null` before push, which fires on any regression of this
 // pattern (Zig's debug `undefined` = 0xAA..AA → non-null pointer bits).
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import path from "node:path";
 
 // FSWatchTaskPosix is the POSIX-only code path.
 test.skipIf(isWindows)("fs.watch: FSWatchTask enqueue fully initializes ConcurrentTask", async () => {

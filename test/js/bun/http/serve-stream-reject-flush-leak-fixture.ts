@@ -21,11 +21,7 @@
 import { heapStats } from "bun:jsc";
 import { connect } from "node:net";
 
-// 64 MiB outsizes Windows' loopback autotuned SO_SNDBUF + SO_RCVBUF (which
-// can absorb ~16 MiB combined even with the client paused). On POSIX 8 MiB
-// was already plenty; the buffer is reused so the larger size only costs one
-// allocation.
-const CHUNK = Buffer.alloc(64 * 1024 * 1024, "x");
+const CHUNK = Buffer.alloc(8 * 1024 * 1024, "x");
 
 let flushPending = 0;
 let currentSocket: import("node:net").Socket | undefined;

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "node:events";
 import http from "node:http";
-import net from "node:net";
 import type { AddressInfo } from "node:net";
+import net from "node:net";
 
 describe("node:http Agent socket accounting", () => {
   test("agent.sockets and agent.requests are populated and maxSockets is enforced", async () => {
@@ -293,9 +293,7 @@ describe("node:http Agent socket accounting", () => {
       const name = agent.getName({ port });
 
       const { promise, resolve } = Promise.withResolvers<string>();
-      http
-        .get({ port, agent }, () => resolve("response"))
-        .on("error", (e: any) => resolve(e?.code ?? "error"));
+      http.get({ port, agent }, () => resolve("response")).on("error", (e: any) => resolve(e?.code ?? "error"));
       const result = await promise;
       // The response is rejected with a parse error before 'response' fires,
       // so the res 'end'/'close' hooks never run; the slot must be released

@@ -969,6 +969,15 @@ extern "C" void Bun__unregisterSignalsForForwarding()
 // sequence is serialised under bun_dlopen_mutex. Workers are free to
 // call bun:ffi dlopen / process.dlopen on their own threads.
 //
+// Same-thread re-entrancy is handled by a `thread_local` depth counter:
+// legacy V8-style addons (NODE_MODULE macro) run their `Init` function
+// synchronously inside dlopen() via node_module_register(), and that
+// Init is arbitrary user code that may load another .node addon —
+// re-entering process.dlopen on the same thread. Recursive saves would
+// either deadlock on a non-recursive mutex or overwrite the outer
+// snapshot; instead, nested calls are no-ops and only the outermost
+// save/restore touches the buffers.
+//
 // Known limitation: the mutex serialises save/restore against each
 // other, but NOT against Bun's other sigaction() call sites
 // (`process.on("SIG…")` in BunProcess.cpp, SigintWatcher, TTY-exit).
@@ -982,11 +991,16 @@ extern "C" void Bun__unregisterSignalsForForwarding()
 // process; leaving as a follow-up.
 #include <mutex>
 static std::mutex bun_dlopen_mutex;
+static thread_local int bun_dlopen_depth = 0;
 static struct sigaction bun_dlopen_saved_actions[NSIG];
 static bool bun_dlopen_saved_valid[NSIG];
 
 extern "C" void Bun__saveSignalHandlersForDlopen()
 {
+    // Re-entrant case (e.g. a V8-style addon's Init synchronously
+    // require()s another .node addon during its dlopen): only the
+    // outermost call snapshots, only the outermost restore reverts.
+    if (bun_dlopen_depth++ > 0) return;
     // Held until the matching Bun__restoreSignalHandlersAfterDlopen().
     bun_dlopen_mutex.lock();
     for (int sig = 1; sig < NSIG; sig++) {
@@ -998,6 +1012,7 @@ extern "C" void Bun__saveSignalHandlersForDlopen()
 
 extern "C" void Bun__restoreSignalHandlersAfterDlopen()
 {
+    if (--bun_dlopen_depth > 0) return;
     for (int sig = 1; sig < NSIG; sig++) {
         if (!bun_dlopen_saved_valid[sig]) continue;
 

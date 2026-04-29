@@ -277,6 +277,7 @@ private:
     Vector<WebCodecsVideoFrameData> m_serializedVideoFrames;
 #endif
     // Vector<URLKeepingBlobAlive> m_blobHandles;
+    Vector<JSC::Strong<JSC::JSObject>> m_transferredStreams;
 
     // Fast path for postMessage with pure strings - avoids serialization overhead
     String m_fastPathString;

@@ -109,6 +109,10 @@
 #include "ZigGlobalObject.h"
 #include "blob.h"
 #include "ZigGeneratedClasses.h"
+#include "JSReadableStream.h"
+#include "JSWritableStream.h"
+#include "JSTransformStream.h"
+#include "ReadableStream.h"
 #include "JSX509Certificate.h"
 #include "ncrypto.h"
 #include "JSKeyObject.h"
@@ -139,6 +143,8 @@
 #else
 #define ASSUME_LITTLE_ENDIAN 1
 #endif
+
+extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream1, JSC::EncodedJSValue* possibleReadableStream2);
 
 namespace WebCore {
 
@@ -252,6 +258,9 @@ enum SerializationTag {
     Bun__KeyObjectTag = 252,
     Bun__nodenet_BlockList = 251,
     Bun__NodePerformanceHooksHistogramTag = 250,
+    Bun__ReadableStreamTransferTag = 249,
+    Bun__WritableStreamTransferTag = 248,
+    Bun__TransformStreamTransferTag = 247,
 
     ErrorTag = 255
 };
@@ -899,7 +908,8 @@ public:
         WasmMemoryHandleArray& wasmMemoryHandles,
 #endif
         Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers,
-        SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer)
+        SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer,
+        const Vector<JSC::Strong<JSC::JSObject>>& transferredStreams = {})
     {
         CloneSerializer serializer(lexicalGlobalObject, messagePorts, arrayBuffers,
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
@@ -916,7 +926,7 @@ public:
             wasmModules,
             wasmMemoryHandles,
 #endif
-            out, context, sharedBuffers, forStorage, forTransfer);
+            out, context, sharedBuffers, forStorage, forTransfer, transferredStreams);
         return serializer.serialize(value);
     }
 
@@ -1001,7 +1011,8 @@ private:
         WasmModuleArray& wasmModules,
         WasmMemoryHandleArray& wasmMemoryHandles,
 #endif
-        Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers, SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer)
+        Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers, SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer,
+        const Vector<JSC::Strong<JSC::JSObject>>& transferredStreams = {})
         : CloneBase(lexicalGlobalObject)
         , m_buffer(out)
         , m_emptyIdentifier(Identifier::fromString(lexicalGlobalObject->vm(), emptyString()))
@@ -1027,6 +1038,13 @@ private:
 #if ENABLE(WEB_RTC)
         fillTransferMap(rtcDataChannels, m_transferredRTCDataChannels);
 #endif
+        // Populate unified stream transfer map — indices must match the
+        // resolvedTransferredStreams vector built during create().
+        for (size_t i = 0; i < transferredStreams.size(); i++) {
+            JSC::JSObject* obj = transferredStreams[i].get();
+            if (!m_transferredStreams.contains(obj))
+                m_transferredStreams.add(obj, i);
+        }
     }
 
     template<class T>
@@ -1946,6 +1964,21 @@ private:
                 return true;
             }
 #endif
+            if (obj->inherits<JSReadableStream>() || obj->inherits<JSWritableStream>() || obj->inherits<JSTransformStream>()) {
+                auto index = m_transferredStreams.find(obj);
+                if (index != m_transferredStreams.end()) {
+                    if (obj->inherits<JSReadableStream>())
+                        write(Bun__ReadableStreamTransferTag);
+                    else if (obj->inherits<JSWritableStream>())
+                        write(Bun__WritableStreamTransferTag);
+                    else
+                        write(Bun__TransformStreamTransferTag);
+                    write(index->value);
+                    return true;
+                }
+                code = SerializationReturnCode::DataCloneError;
+                return true;
+            }
             if (obj->inherits<JSDOMException>()) {
                 dumpDOMException(obj, code);
                 return true;
@@ -2567,6 +2600,7 @@ private:
     ObjectPool m_transferredMessagePorts;
     ObjectPool m_transferredArrayBuffers;
     ObjectPool m_transferredImageBitmaps;
+    ObjectPool m_transferredStreams;
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
     ObjectPool m_transferredOffscreenCanvases;
 #endif
@@ -2946,7 +2980,8 @@ public:
         ,
         Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>>&& serializedVideoChunks, Vector<WebCodecsVideoFrameData>&& serializedVideoFrames
 #endif
-    )
+        ,
+        const Vector<JSC::Strong<JSC::JSObject>>& transferredStreams = {})
     {
         if (!buffer.size())
             return std::make_pair(jsNull(), SerializationReturnCode::UnspecifiedError);
@@ -2968,6 +3003,7 @@ public:
             WTF::move(serializedVideoChunks), WTF::move(serializedVideoFrames)
 #endif
         );
+        deserializer.m_transferredStreams = transferredStreams;
         if (!deserializer.isValid())
             return std::make_pair(JSValue(), SerializationReturnCode::ValidationError);
         return deserializer.deserialize();
@@ -3084,7 +3120,8 @@ private:
     //             m_version = 0xFFFFFFFF;
     //     }
 
-    CloneDeserializer(JSGlobalObject* lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<RefPtr<MessagePort>>& messagePorts, ArrayBufferContentsArray* arrayBufferContents, const std::span<uint8_t>& buffer
+    CloneDeserializer(JSGlobalObject* lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<RefPtr<MessagePort>>& messagePorts, ArrayBufferContentsArray* arrayBufferContents, const std::span<uint8_t>& buffer,
+        const Vector<JSC::Strong<JSC::JSObject>>& transferredStreams = {}
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
         ,
         Vector<std::unique_ptr<DetachedOffscreenCanvas>>&& detachedOffscreenCanvases = {}
@@ -3112,6 +3149,7 @@ private:
         , m_messagePorts(messagePorts)
         , m_arrayBufferContents(arrayBufferContents)
         , m_arrayBuffers(arrayBufferContents ? arrayBufferContents->size() : 0)
+        , m_transferredStreams(transferredStreams)
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
         , m_detachedOffscreenCanvases(WTF::move(detachedOffscreenCanvases))
         , m_offscreenCanvases(m_detachedOffscreenCanvases.size())
@@ -5218,6 +5256,17 @@ private:
         case Bun__KeyObjectTag:
             return readKeyObject();
 
+        case Bun__ReadableStreamTransferTag:
+        case Bun__WritableStreamTransferTag:
+        case Bun__TransformStreamTransferTag: {
+            uint32_t index;
+            if (!read(index) || index >= m_transferredStreams.size()) {
+                fail();
+                return JSValue();
+            }
+            return m_transferredStreams[index].get();
+        }
+
             // case Bun__NodePerformanceHooksHistogramTag:
             // ?
 
@@ -5247,6 +5296,7 @@ private:
     const Vector<RefPtr<MessagePort>>& m_messagePorts;
     ArrayBufferContentsArray* m_arrayBufferContents;
     Vector<RefPtr<JSC::ArrayBuffer>> m_arrayBuffers;
+    Vector<JSC::Strong<JSC::JSObject>> m_transferredStreams;
     Vector<String> m_blobURLs;
     Vector<String> m_blobFilePaths;
     ArrayBufferContentsArray* m_sharedBuffers;
@@ -6154,6 +6204,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 
     Vector<RefPtr<JSC::ArrayBuffer>> arrayBuffers;
     // Vector<RefPtr<ImageBitmap>> imageBitmaps;
+    Vector<JSC::Strong<JSC::JSObject>> transferredStreams;
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
     Vector<RefPtr<OffscreenCanvas>> offscreenCanvases;
 #endif
@@ -6225,6 +6276,56 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
             continue;
         }
 #endif
+        if (auto* readableStream = jsDynamicCast<JSReadableStream*>(transferable.get())) {
+            if (context == SerializationContext::WorkerPostMessage)
+                return Exception { DataCloneError, "ReadableStream cannot be transferred across workers"_s };
+            auto lockedIdent = JSC::Identifier::fromString(vm, "locked"_s);
+            JSC::JSValue lockedVal = readableStream->get(&lexicalGlobalObject, lockedIdent);
+            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (lockedVal.isTrue())
+                return Exception { DataCloneError, "ReadableStream in transfer list is locked"_s };
+            transferredStreams.append(JSC::Strong<JSC::JSObject>(vm, transferable.get()));
+            continue;
+        }
+        if (jsDynamicCast<JSWritableStream*>(transferable.get())) {
+            if (context == SerializationContext::WorkerPostMessage)
+                return Exception { DataCloneError, "WritableStream cannot be transferred across workers"_s };
+            auto wsLockedIdent = JSC::Identifier::fromString(vm, "locked"_s);
+            JSC::JSValue wsLockedVal = transferable.get()->get(&lexicalGlobalObject, wsLockedIdent);
+            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (wsLockedVal.isTrue())
+                return Exception { DataCloneError, "WritableStream in transfer list is locked"_s };
+            transferredStreams.append(JSC::Strong<JSC::JSObject>(vm, transferable.get()));
+            continue;
+        }
+        if (jsDynamicCast<JSTransformStream*>(transferable.get())) {
+            if (context == SerializationContext::WorkerPostMessage)
+                return Exception { DataCloneError, "TransformStream cannot be transferred across workers"_s };
+            // TransformStream locked state is checked via its readable/writable sides
+            auto lockedIdent = JSC::Identifier::fromString(vm, "locked"_s);
+            // Check readable side
+            auto readableIdent = JSC::Identifier::fromString(vm, "readable"_s);
+            JSC::JSValue readable = transferable.get()->get(&lexicalGlobalObject, readableIdent);
+            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (readable.isObject()) {
+                JSC::JSValue readableLocked = readable.getObject()->get(&lexicalGlobalObject, lockedIdent);
+                RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+                if (readableLocked.isTrue())
+                    return Exception { DataCloneError, "TransformStream in transfer list has a locked readable side"_s };
+            }
+            // Check writable side
+            auto writableIdent = JSC::Identifier::fromString(vm, "writable"_s);
+            JSC::JSValue writable = transferable.get()->get(&lexicalGlobalObject, writableIdent);
+            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (writable.isObject()) {
+                JSC::JSValue writableLocked = writable.getObject()->get(&lexicalGlobalObject, lockedIdent);
+                RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+                if (writableLocked.isTrue())
+                    return Exception { DataCloneError, "TransformStream in transfer list has a locked writable side"_s };
+            }
+            transferredStreams.append(JSC::Strong<JSC::JSObject>(vm, transferable.get()));
+            continue;
+        }
         return Exception { DataCloneError };
     }
 
@@ -6281,7 +6382,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         wasmModules,
         wasmMemoryHandles,
 #endif
-        buffer, context, *sharedBuffers, forStorage, forTransfer);
+        buffer, context, *sharedBuffers, forStorage, forTransfer, transferredStreams);
 
     // Serialize may throw an exception. This code looks weird, but we'll rethrow it
     // in maybeThrowExceptionIfSerializationFailed (since that may also throw other
@@ -6339,8 +6440,58 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     //         WTF::move(serializedVideoChunks), WTF::move(serializedVideoFrameData)
     // #endif
     //             ));
+    // Transfer streams: for ReadableStream, tee the stream to create a new branch
+    // for the deserialized value. The original becomes locked (spec-compliant).
+    // For WritableStream/TransformStream, store the original directly.
+    Vector<JSC::Strong<JSC::JSObject>> resolvedTransferredStreams;
+    for (auto& stream : transferredStreams) {
+        if (auto* readableStream = jsDynamicCast<JSReadableStream*>(stream.get())) {
+            // Call readableStreamTee with shouldClone=false (unlike ReadableStream__tee
+            // which uses shouldClone=true). We don't need cloning since branch2 is abandoned.
+            auto* clientData = static_cast<Bun::JSVMClientData*>(vm.clientData);
+            auto& teeName = clientData->builtinFunctions().readableStreamInternalsBuiltins().readableStreamTeePrivateName();
+            JSC::JSValue teeFunc = lexicalGlobalObject.get(&lexicalGlobalObject, teeName);
+            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (teeFunc.isCallable()) {
+                JSC::MarkedArgumentBuffer teeArgs;
+                teeArgs.append(readableStream);
+                teeArgs.append(JSC::jsBoolean(false)); // shouldClone=false
+                auto callData = JSC::getCallData(teeFunc);
+                JSC::JSValue teeResult = JSC::call(&lexicalGlobalObject, teeFunc, callData, jsUndefined(), teeArgs);
+                if (scope.exception()) [[unlikely]]
+                    RELEASE_AND_RETURN(scope, exceptionForSerializationFailure(SerializationReturnCode::ExistingExceptionError));
+                // teeResult should be an array [branch1, branch2]
+                if (teeResult.isObject()) {
+                    JSC::JSObject* resultObj = teeResult.getObject();
+                    JSC::JSValue b1 = resultObj->getIndex(&lexicalGlobalObject, 0);
+                    if (b1.isObject()) {
+                        resolvedTransferredStreams.append(JSC::Strong<JSC::JSObject>(vm, b1.getObject()));
+                        // Mark original as transferred so native ptr returns -1
+                        readableStream->setTransferred();
+                        // branch2 is abandoned; per the tee spec, the underlying source
+                        // is only cancelled when both branches are cancelled. Resources
+                        // are released when GC collects branch2.
+                        continue;
+                    }
+                }
+            }
+            // If tee threw or failed, bail out without neutering the original
+            if (scope.exception()) [[unlikely]]
+                RELEASE_AND_RETURN(scope, exceptionForSerializationFailure(SerializationReturnCode::ExistingExceptionError));
+            // Fallback: store original directly
+            readableStream->setTransferred();
+            resolvedTransferredStreams.append(JSC::Strong<JSC::JSObject>(vm, stream.get()));
+        } else {
+            // WritableStream/TransformStream: store directly
+            resolvedTransferredStreams.append(JSC::Strong<JSC::JSObject>(vm, stream.get()));
+        }
+    }
+
+    if (scope.exception()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, exceptionForSerializationFailure(SerializationReturnCode::ExistingExceptionError));
+
     scope.releaseAssertNoException();
-    return adoptRef(*new SerializedScriptValue(WTF::move(buffer), arrayBufferContentsArray.releaseReturnValue(), context == SerializationContext::WorkerPostMessage ? WTF::move(sharedBuffers) : nullptr
+    auto result = adoptRef(*new SerializedScriptValue(WTF::move(buffer), arrayBufferContentsArray.releaseReturnValue(), context == SerializationContext::WorkerPostMessage ? WTF::move(sharedBuffers) : nullptr
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
         ,
         WTF::move(detachedCanvases)
@@ -6358,6 +6509,8 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         WTF::move(serializedVideoChunks), WTF::move(serializedVideoFrameData)
 #endif
             ));
+    result->m_transferredStreams = WTF::move(resolvedTransferredStreams);
+    return result;
 }
 
 RefPtr<SerializedScriptValue> SerializedScriptValue::create(StringView string)
@@ -6727,7 +6880,11 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
                                       ,
         WTF::move(m_serializedVideoChunks), WTF::move(m_serializedVideoFrames)
 #endif
-    );
+                                                ,
+        m_transferredStreams);
+    // Clear Strong<JSObject> handles on the JS thread to prevent
+    // off-thread destruction if the SSV outlives this call
+    m_transferredStreams.clear();
     if (didFail)
         *didFail = result.second != SerializationReturnCode::SuccessfullyCompleted;
     // Deserialize may throw an exception. Similar to serialize (~L6240, SerializedScriptValue::create),

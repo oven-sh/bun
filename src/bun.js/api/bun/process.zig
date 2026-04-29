@@ -2215,33 +2215,6 @@ pub const sync = struct {
     /// targets has stdin as a pipe and `give()` is a no-op. Blocks SIGTTOU
     /// around `tcsetpgrp` per the usual job-control dance — a background
     /// process that calls it gets stopped otherwise.
-    const ForegroundPgrp = struct {
-        prev: std.c.pid_t = 0,
-
-        extern "c" fn tcgetpgrp(fd: c_int) std.c.pid_t;
-        extern "c" fn tcsetpgrp(fd: c_int, pgrp: std.c.pid_t) c_int;
-
-        fn give(self: *@This(), pgid: std.c.pid_t) void {
-            if (std.c.isatty(0) == 0) return;
-            self.prev = tcgetpgrp(0);
-            if (self.prev <= 0) return;
-            ttouBlocked(pgid);
-        }
-        fn restore(self: *@This()) void {
-            if (self.prev <= 0) return;
-            ttouBlocked(self.prev);
-            self.prev = 0;
-        }
-        fn ttouBlocked(pgid: std.c.pid_t) void {
-            var set = std.posix.sigemptyset();
-            var old = std.posix.sigemptyset();
-            std.posix.sigaddset(&set, std.posix.SIG.TTOU);
-            std.posix.sigprocmask(std.posix.SIG.BLOCK, &set, &old);
-            _ = tcsetpgrp(0, pgid);
-            std.posix.sigprocmask(std.posix.SIG.SETMASK, &old, null);
-        }
-    };
-
     // The PID to forward signals to.
     // Set to 0 when unregistering.
     extern "c" var Bun__currentSyncPID: i64;
@@ -2266,14 +2239,23 @@ pub const sync = struct {
         //
         // Disabled when `use_execve_on_macos` actually applies (macOS only —
         // see `spawnProcessPosix`): that path is `POSIX_SPAWN_SETEXEC`, which
-        // replaces *our own* image and never returns, so SETPGROUP would
-        // `setpgid(0,0)` *us* into a new background pgroup with no `tcsetpgrp`
-        // follow-up (defer never runs), breaking TTY job control for the
-        // exec'd target. Callers (`runBinaryWithoutBunxPath`, `bunx`) set the
-        // flag unconditionally; on Linux it's a spawn-side no-op so no-orphans
-        // must stay armed there.
+        // replaces *our own* image and never returns, so there is no parent to
+        // run the wait loop or the cleanup defers. Callers
+        // (`runBinaryWithoutBunxPath`, `bunx`) set the flag unconditionally;
+        // on Linux it's a spawn-side no-op so no-orphans must stay armed there.
         const no_orphans = bun.ParentDeathWatchdog.isEnabled() and
             !(Environment.isMac and options.use_execve_on_macos);
+        // The pgroup-kill is split out from `no_orphans` because creating a
+        // separate pgroup on a controlling TTY would make `bun run` a mini
+        // job-control shell: Ctrl-Z stops only the script's pgroup, the wait
+        // loop has no WUNTRACED/NOTE_SIGNAL to observe the stop, and the
+        // user's shell (waitpid(WUNTRACED) on `bun run`) never gets a prompt.
+        // The non-TTY case — supervisors, CI, Electron shims — is exactly what
+        // this feature targets, and there the script staying in our pgroup
+        // would let an `exec`-replaced ancestor's pgroup-kill miss it. On a
+        // TTY the user has Ctrl-C and the subreaper/NoOrphansTracker/PDEATHSIG
+        // layers cover cleanup without needing `kill(-pgid)`.
+        const want_pgroup = no_orphans and std.c.isatty(0) == 0;
 
         if (comptime Environment.isLinux) if (no_orphans) {
             // Subreaper: arm *before* spawn so a fast-daemonizing script can't
@@ -2296,27 +2278,19 @@ pub const sync = struct {
             Bun__unregisterSignalsForForwarding();
             bun.crash_handler.resetOnPosix();
         }
-        const process = switch (try spawnProcessPosix(&options.toSpawnOptions(no_orphans), argv, envp)) {
+        const process = switch (try spawnProcessPosix(&options.toSpawnOptions(want_pgroup), argv, envp)) {
             .err => |err| return .{ .err = err },
             .result => |proces| proces,
         };
         // Negative → kill() in the C++ signal forwarder targets the pgroup, so
-        // a SIGTERM/SIGINT delivered to `bun run` reaches every descendant.
-        Bun__currentSyncPID = if (no_orphans) -@as(i64, @intCast(process.pid)) else @intCast(process.pid);
+        // a SIGTERM/SIGINT delivered to `bun run` reaches every descendant
+        // that hasn't `setsid()`-escaped. Only valid when we actually created
+        // a pgroup; otherwise forward to the pid alone.
+        Bun__currentSyncPID = if (want_pgroup) -@as(i64, @intCast(process.pid)) else @intCast(process.pid);
 
-        var fg = ForegroundPgrp{};
-        var pgid_pushed = false;
-        if (no_orphans) {
-            pgid_pushed = bun.ParentDeathWatchdog.pushSyncPgid(process.pid);
-            // Script is now a background pgroup; if stdin is a TTY hand it the
-            // foreground so Ctrl-C / Ctrl-Z and TTY reads behave exactly as
-            // before. Non-TTY stdin (the Electron / CI / VS Code case this
-            // feature targets) skips this entirely.
-            fg.give(process.pid);
-        }
+        const pgid_pushed = want_pgroup and bun.ParentDeathWatchdog.pushSyncPgid(process.pid);
         defer if (no_orphans) {
-            fg.restore();
-            // pgroup → tracked uniqueids (macOS). Do NOT call the
+            // pgroup (no-op on TTY) → tracked uniqueids (macOS). Do NOT call the
             // getpid()-rooted `killDescendants()` here — `spawnSync` can be
             // reached from inside a live VM (ffi.zig xcrun probe, etc.) and
             // that would SIGKILL the user's unrelated `Bun.spawn` children.
@@ -2554,10 +2528,12 @@ pub const sync = struct {
                     if (ev.fflags & std.c.NOTE.EXIT != 0) {
                         if (ev.udata == TAG_PPID)
                             bun.Global.exit(bun.ParentDeathWatchdog.exit_code);
+                        // Drop from the live set (root included — `begin()`
+                        // seeded it into `m_tracked`, and `reapChild()` is
+                        // about to free its pid before `killTracked()` runs).
+                        Bun__noOrphans_onExit(@intCast(ev.ident));
                         if (ev.ident == @as(usize, @intCast(child)))
-                            child_exited = true
-                        else // tracked descendant died — drop from live set
-                            Bun__noOrphans_onExit(@intCast(ev.ident));
+                            child_exited = true;
                     }
                     if (ev.fflags & NOTE_FORK != 0) saw_fork = true;
                 } else if (ev.filter == std.c.EVFILT.READ) {

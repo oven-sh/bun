@@ -255,6 +255,12 @@ private:
     bool bindValue(JSC::JSGlobalObject*, JSC::ThrowScope&, int index, JSC::JSValue);
 
     sqlite3_stmt* m_stmt = nullptr;
+    // Connection this statement was prepared on. After db.close()+db.open()
+    // the JSDatabaseSync holds a *different* sqlite3*, but the stmt still
+    // points into the old (zombified) connection — comparing against this
+    // lets isFinalized() surface that instead of stepping a dead handle and
+    // reporting `errcode: 0 "not an error"` from the new connection.
+    sqlite3* m_originDb = nullptr;
     unsigned m_resetGeneration = 0;
     bool m_useBigInts : 1 = false;
     bool m_returnArrays : 1 = false;

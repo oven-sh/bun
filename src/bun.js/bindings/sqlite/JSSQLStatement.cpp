@@ -250,11 +250,6 @@ static Vector<VersionSqlite3*>& databases()
     return _instance->databases;
 }
 
-extern "C" const char* Bun__sqlite3_version()
-{
-    return SQLITE_VERSION;
-}
-
 extern "C" void Bun__closeAllSQLiteDatabasesForTermination()
 {
     if (!_instance) {

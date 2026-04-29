@@ -147,6 +147,34 @@ describe("DatabaseSync", () => {
     db.close();
   });
 
+  test("constructor rejects non-UTF-8 Uint8Array paths instead of opening a temp db", () => {
+    // 0xff 0xfe is not valid UTF-8. Previously this would fall through to
+    // sqlite3_open_v2("") which opens an anonymous temporary database —
+    // silently swallowing the user's path.
+    expect(() => new DatabaseSync(Buffer.from([0x3a, 0xff, 0xfe]))).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+  });
+
+  test("statements from a prior connection are finalized across close()/open()", () => {
+    const db = new DatabaseSync(":memory:", { open: false });
+    db.open();
+    const stmt = db.prepare("SELECT 1 AS v");
+    expect(stmt.get().v).toBe(1);
+    db.close();
+    db.open();
+    // Statement was prepared on the *previous* (now-zombie) connection.
+    // Using it must report ERR_INVALID_STATE, not step against the
+    // zombie and then read a bogus "not an error" from the new handle.
+    expect(() => stmt.get()).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_STATE",
+        message: expect.stringMatching(/statement has been finalized/),
+      }),
+    );
+    db.close();
+  });
+
   test("exposes changeset constants", () => {
     expect(constants.SQLITE_CHANGESET_OMIT).toBe(0);
     expect(constants.SQLITE_CHANGESET_REPLACE).toBe(1);

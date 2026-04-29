@@ -69,6 +69,15 @@
 #define SQLITE_CHANGESET_FOREIGN_KEY 5
 #endif
 
+// process.versions.sqlite — reported from this TU (not JSSQLStatement.cpp)
+// because on macOS's LAZY_LOAD_SQLITE path that file sees the *system*
+// sqlite3.h and would report Apple's SDK version, whereas node:sqlite always
+// links the bundled amalgamation included above.
+extern "C" const char* Bun__sqlite3_version()
+{
+    return SQLITE_VERSION;
+}
+
 namespace Bun {
 
 using namespace JSC;
@@ -1258,6 +1267,15 @@ static bool validateDatabasePath(JSGlobalObject* globalObject, ThrowScope& scope
     if (auto* view = dynamicDowncast<JSC::JSUint8Array>(pathVal)) {
         auto span = view->span();
         out = WTF::String::fromUTF8({ reinterpret_cast<const char*>(span.data()), span.size() });
+        if (out.isNull()) {
+            // fromUTF8 returns null for byte sequences that aren't valid
+            // UTF-8. Without this guard the null String would become ""
+            // and sqlite3_open_v2("") would silently open a private
+            // temporary database instead of the requested file.
+            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
+                "The \"path\" argument must be a Uint8Array containing a valid UTF-8 byte sequence."_s);
+            return false;
+        }
         return true;
     }
     // URL-like object: must have href+protocol and protocol "file:"
@@ -1393,6 +1411,7 @@ void JSStatementSync::finishCreation(VM& vm, JSDatabaseSync* db, sqlite3_stmt* s
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
     m_stmt = stmt;
+    m_originDb = db->connection();
     m_database.set(vm, this, db);
 }
 
@@ -1423,7 +1442,11 @@ bool JSStatementSync::isFinalized() const
 {
     if (m_stmt == nullptr) return true;
     auto* db = m_database.get();
-    return db == nullptr || !db->isOpen();
+    // The connection() check covers both "database is closed" (nullptr)
+    // and "database was closed then re-opened to a different handle" —
+    // in the latter case the stmt belongs to the zombified old connection
+    // and must not be stepped.
+    return db == nullptr || db->connection() != m_originDb;
 }
 
 template<typename Visitor>

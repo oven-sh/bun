@@ -2685,8 +2685,36 @@ pub const BundleV2 = struct {
             .success => |result| {
                 var out_source_index: ?Index = null;
                 if (!result.external) {
-                    var path = Fs.Path.init(result.path);
-                    if (result.namespace.len == 0 or strings.eqlComptime(result.namespace, "file")) {
+                    const is_file_namespace = result.namespace.len == 0 or strings.eqlComptime(result.namespace, "file");
+
+                    // Plugins may append ?query or #fragment to resolved paths.
+                    // Since ? and # are valid filename characters on Unix, only
+                    // strip the suffix when the full path doesn't exist on disk
+                    // (mirroring the fallback approach in resolver.zig for CSS).
+                    // Search only the filename portion so that ? or # in
+                    // directory names (e.g. /projects/C#/main.js) are preserved.
+                    // Prefer the first '?' (essentially never a real filename
+                    // char), else the last '#' so files literally named C#.ts
+                    // with an appended ?query or #fragment strip at the suffix,
+                    // not inside the name.
+                    const path_to_use = if (is_file_namespace) blk: {
+                        const basename_start = if (bun.path.lastIndexOfSep(result.path)) |sep| sep + 1 else 0;
+                        const basename = result.path[basename_start..];
+                        const suffix_at: ?usize = if (bun.strings.indexOfChar(basename, '?')) |q|
+                            @intCast(q)
+                        else
+                            bun.strings.lastIndexOfChar(basename, '#');
+                        if (suffix_at) |offset| {
+                            break :blk if (bun.sys.exists(result.path))
+                                result.path
+                            else
+                                result.path[0 .. basename_start + offset];
+                        }
+                        break :blk result.path;
+                    } else result.path;
+
+                    var path = Fs.Path.init(path_to_use);
+                    if (is_file_namespace) {
                         path.namespace = "file";
                     } else {
                         path.namespace = result.namespace;

@@ -231,7 +231,7 @@ static inline bool setJSMessagePort_onmessageerrorSetter(JSGlobalObject& lexical
     vm.writeBarrier(&thisObject, value);
     ensureStillAliveHere(value);
 
-    thisObject.wrapped().jsRef(&lexicalGlobalObject);
+    // Unlike onmessage, Node.js does not ref the port when only onmessageerror is set.
 
     return true;
 }

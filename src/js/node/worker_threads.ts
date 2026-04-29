@@ -213,6 +213,13 @@ let parentPort: MessagePort | null = isMainThread ? null : fakeParentPort();
 // Every worker gets a direct MessageChannel to the main thread (mainThreadPort). The main thread
 // keeps a Map of threadId -> port. postMessageToThread always routes through the main thread, and
 // a SharedArrayBuffer carries the ack so the sender can await delivery with Atomics.waitAsync.
+//
+// Known limitation: the worker side of the channel is only set up the first time the worker
+// evaluates node:worker_threads (see setupMainThreadPort below). Node.js wires it during worker
+// bootstrap unconditionally, so postMessageToThread(id, value) with no timeout to a worker that
+// never imports worker_threads rejects with ERR_WORKER_MESSAGING_FAILED there, whereas here the
+// promise stays pending until the worker exits or a timeout is supplied. In practice a
+// node:worker_threads Worker almost always imports the module for parentPort/workerData.
 
 const kRegisterMainThreadPort = 0;
 const kUnregisterMainThreadPort = 1;

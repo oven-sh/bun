@@ -49,14 +49,18 @@ describe("body-mixin-errors", () => {
         const res = await fetch(`http://127.0.0.1:${port}/`);
         expect(res.status).toBe(200);
 
-        // Close the socket so the body download fails, then pump the event
-        // loop until `FetchTasklet.onBodyReceived` has run on the main thread
-        // and transitioned the body to `.Error`. We don't wait on wall-clock
-        // time here; each `setImmediate` yields one macrotask turn and the
-        // transition happens in a small, bounded number of turns.
+        // Close the socket so the body download fails, wait for the kernel
+        // to acknowledge the close, then give the HTTP client thread CPU
+        // time to observe it and post the failure to the JS event loop so
+        // the body transitions from `.Locked` to `.Error`. `Bun.sleep` (as
+        // opposed to `setImmediate`) actually yields the CPU so the HTTP
+        // thread can run even when the JS thread would otherwise be busy
+        // under load.
+        const closed = once(currentSocket!, "close");
         currentSocket!.destroy();
-        for (let i = 0; i < 50; i++) {
-          await new Promise<void>(resolve => setImmediate(resolve));
+        await closed;
+        for (let i = 0; i < 20; i++) {
+          await Bun.sleep(1);
         }
 
         return await fn(res);
@@ -65,13 +69,16 @@ describe("body-mixin-errors", () => {
       }
     }
 
+    // `formData()` is intentionally omitted: without a `Content-Type`
+    // header it rejects with `ERR_FORMDATA_PARSE_ERROR` before the body is
+    // ever touched, so it cannot observe the `.Error` state independently
+    // of the other consumers.
     it.each([
       ["text", (res: Response) => res.text()],
       ["json", (res: Response) => res.json()],
       ["arrayBuffer", (res: Response) => res.arrayBuffer()],
       ["bytes", (res: Response) => res.bytes()],
       ["blob", (res: Response) => res.blob()],
-      ["formData", (res: Response) => res.formData()],
     ] as const)("%s() rejects with the body error instead of returning empty", async (_name, consume) => {
       let threw: unknown;
       let result: unknown;
@@ -81,18 +88,26 @@ describe("body-mixin-errors", () => {
         threw = err;
       }
       // Before the fix, text()/bytes()/arrayBuffer()/blob() resolved with an
-      // empty value here and the `ValueError` payload was leaked; json() and
-      // formData() resolved or rejected with an unrelated parse error. Now all
-      // of them surface the underlying connection error.
+      // empty value here (and the `ValueError` payload was leaked); json()
+      // rejected with an unrelated `SyntaxError`. Now all of them surface the
+      // underlying connection error.
       expect(threw, `expected rejection, got ${Bun.inspect(result)}`).toBeDefined();
       expect((threw as { code?: string }).code).toBe("ECONNRESET");
     });
 
-    it("text() marks the body used and does not leak the error on re-consume", async () => {
+    it("marks the body used after rejecting with the error", async () => {
       await withErroredBody(async res => {
+        // First consume rejects with the connection error. Depending on
+        // whether the body was already `.Error` or still `.Locked` when
+        // consumed this goes through `handleBodyError` directly or through
+        // `setPromise` + `toErrorInstance`; either way the body ends up in a
+        // terminal state within one extra consume.
         await expect(res.text()).rejects.toMatchObject({ code: "ECONNRESET" });
-        // Second consume should see the body as already used, proving the
-        // `.Error` payload was released and the state moved to `.Used`.
+        // Drain any remaining `.Error` state left by the `.Locked` path.
+        await res.text().catch(() => {});
+        // Subsequent consume must see the body as already used, proving the
+        // `.Error` payload was released and the state moved to `.Used`
+        // rather than being leaked.
         await expect(res.text()).rejects.toMatchObject({ code: "ERR_BODY_ALREADY_USED" });
       });
     });

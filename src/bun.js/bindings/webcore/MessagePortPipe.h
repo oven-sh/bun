@@ -9,11 +9,12 @@
 // deciding whether to schedule a wakeup) can observe a consistent snapshot.
 //
 // Wakeups are coalesced: a burst of N sends schedules one cross-thread drain
-// task on the receiving context. Each drain task delivers exactly one message
-// and, if more remain, posts itself again as a local task — so microtasks
-// checkpoint between deliveries, and messages stay in the inbox until the
-// instant they are dispatched (a transfer between drain tasks carries the
-// remaining queue to the new owner).
+// task on the receiving context. The drain task loops, popping one message at
+// a time under the lock and dispatching it, draining microtasks between each
+// (matching Node's MakeCallback / InternalCallbackScope behavior), up to
+// max(initial-queue-size, 1000) iterations before yielding back to the event
+// loop. Messages stay in the inbox until the instant they are dispatched, so
+// a port transferred mid-loop carries the remaining queue to the new owner.
 //
 // The Web API semantics (start(), close(), transfer, event dispatch) live in
 // MessagePort; this class knows nothing about EventTarget or JS.

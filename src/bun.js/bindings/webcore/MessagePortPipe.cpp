@@ -83,45 +83,73 @@ void MessagePortPipe::scheduleDrain(uint8_t side, ScriptExecutionContextIdentifi
 
 void MessagePortPipe::drainAndDispatch(uint8_t side)
 {
-    // Each drain task delivers exactly one message and, if more remain,
-    // posts itself again. Messages stay in the inbox until the instant they
-    // are dispatched, so a port transferred between drain tasks carries its
-    // undelivered queue to the new owner — nothing is pulled out early that
-    // could be dropped by a racing disentangle().
+    // Mirrors Node's MessagePort::OnMessage (src/node_messaging.cc): one
+    // drain task processes the whole inbox in a loop, draining microtasks
+    // between each delivery so queueMicrotask/Promise callbacks observe
+    // messages one at a time, but without a separate posted task per
+    // message. The per-invocation limit is max(initial queue size, 1000)
+    // — enough to amortize the uv_async-style reschedule cost, capped so a
+    // fast sender can't starve the event loop indefinitely.
+    //
+    // Messages are popped one at a time under the lock, so if the handler
+    // transfers this port (pipe->detach clears `s.port`/`Attached`) the
+    // remaining inbox stays buffered for the new owner.
     auto& s = m_sides[side];
 
     RefPtr<MessagePort> port;
-    std::optional<MessageWithMessagePorts> message;
-    ScriptExecutionContextIdentifier rescheduleCtx = 0;
+    size_t limit;
     {
         Locker locker { s.lock };
         port = s.port.get();
         uint64_t st = s.state.load(std::memory_order_relaxed);
         if (!port || s.inbox.isEmpty()) {
-            // No receiver or nothing to deliver. Drop DrainScheduled so the
-            // next send() (or attach()) reschedules.
             s.state.store(st & ~DrainScheduled, std::memory_order_release);
             return;
         }
-        message = s.inbox.takeFirst();
-        uint64_t ns = st - QueuedOne;
-        if (s.inbox.isEmpty()) {
-            ns &= ~DrainScheduled;
-        } else {
-            // Leave DrainScheduled set and arrange the follow-up task. It's
-            // posted *before* dispatch so that, on the receiver's task queue,
-            // the next port message precedes any tasks the handler enqueues
-            // — matching the previous implementation's observable ordering.
-            rescheduleCtx = s.ctxId;
+        limit = std::max<size_t>(s.inbox.size(), 1000);
+    }
+
+    auto* context = port->scriptExecutionContext();
+    if (!context || !context->globalObject()) {
+        Locker locker { s.lock };
+        s.state.fetch_and(~uint64_t(DrainScheduled), std::memory_order_acq_rel);
+        return;
+    }
+    auto* globalObject = defaultGlobalObject(context->globalObject());
+
+    ScriptExecutionContextIdentifier rescheduleCtx = 0;
+    while (true) {
+        std::optional<MessageWithMessagePorts> message;
+        {
+            Locker locker { s.lock };
+            uint64_t st = s.state.load(std::memory_order_relaxed);
+            // Re-check each iteration: the handler may have closed or
+            // transferred this port (detach() clears Attached and s.port).
+            if (!(st & Attached) || s.inbox.isEmpty()) {
+                s.state.store(st & ~DrainScheduled, std::memory_order_release);
+                break;
+            }
+            if (limit-- == 0) {
+                // Yield to the rest of the event loop; DrainScheduled stays
+                // set so concurrent sends don't double-schedule.
+                rescheduleCtx = s.ctxId;
+                break;
+            }
+            message = s.inbox.takeFirst();
+            s.state.store(st - QueuedOne, std::memory_order_release);
         }
-        s.state.store(ns, std::memory_order_release);
+
+        port->dispatchOneMessage(*context, WTF::move(*message));
+
+        // Node's MakeCallback wraps each emit in an InternalCallbackScope,
+        // which drains nextTick + microtasks on exit; match that so
+        // queueMicrotask(cb) inside onmessage runs before the next message.
+        if (globalObject->drainMicrotasks())
+            break; // termination pending
     }
 
     if (rescheduleCtx)
         scheduleDrain(side, rescheduleCtx);
-
-    if (auto* context = port->scriptExecutionContext())
-        port->dispatchOneMessage(*context, WTF::move(*message));
 }
 
 std::optional<MessageWithMessagePorts> MessagePortPipe::takeOne(uint8_t side)

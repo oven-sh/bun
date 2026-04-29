@@ -51,6 +51,7 @@
 #include <JavaScriptCore/StrongInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSIteratorPrototype.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/MakeString.h>
 
@@ -160,19 +161,31 @@ static bool readBoolOption(JSGlobalObject* globalObject, ThrowScope& scope, JSOb
 // user-defined function: if the JS callback threw, the pending exception
 // on the VM is the real error and any SQLITE_ERROR from sqlite is just
 // the "user function raised an exception" wrapper. Propagate the JS
-// exception instead.
-static inline bool checkUDFException(ThrowScope& scope, JSDatabaseSync* db)
-{
-    if (db) db->takeIgnoreNextSqliteError();
-    return scope.exception() != nullptr;
-}
+// exception instead. Expands to RETURN_IF_EXCEPTION so JSC's
+// validateExceptionChecks records the check after each step() — a plain
+// `if (scope.exception())` does not satisfy it.
+#define CHECK_UDF_EXCEPTION(scope, db)             \
+    do {                                           \
+        if (db) (db)->takeIgnoreNextSqliteError(); \
+        RETURN_IF_EXCEPTION(scope, {});            \
+    } while (0)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // sqlite3_value* ⇄ JSValue conversions for user-defined functions and
 // aggregates. These mirror columnToJS() but operate on the xFunc argv.
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// These conversion helpers are called from sqlite's xFunc/xStep callbacks,
+// which run INSIDE sqlite3_step() and may be re-invoked many times before
+// control returns to the outer JS→native host function. A nested ThrowScope
+// would simulateThrow() in its destructor on every iteration, tripping JSC's
+// validateExceptionChecks on the next callback's constructor. So the callbacks
+// use a TopExceptionScope (whose destructor does not simulate a throw) and
+// this helper throws via vm.throwException directly rather than taking a
+// ThrowScope&. The outer host function's own ThrowScope observes the final
+// result via CHECK_UDF_EXCEPTION after sqlite3_step returns.
 
-static JSValue sqliteValueToJS(JSGlobalObject* globalObject, ThrowScope& scope, sqlite3_value* value, bool useBigInts)
+static JSValue sqliteValueToJS(JSGlobalObject* globalObject, TopExceptionScope& outer, sqlite3_value* value, bool useBigInts)
 {
     auto& vm = getVM(globalObject);
     switch (sqlite3_value_type(value)) {
@@ -182,8 +195,16 @@ static JSValue sqliteValueToJS(JSGlobalObject* globalObject, ThrowScope& scope, 
             return JSBigInt::makeHeapBigIntOrBigInt32(globalObject, v);
         }
         if (v > JSC::maxSafeInteger() || v < -JSC::maxSafeInteger()) {
+            // Rare edge case — open a transient ThrowScope just to raise
+            // the error. Its destructor's simulateThrow() sets the
+            // need-check flag, which the caller clears via
+            // outer.exception() immediately on return; release so the
+            // destructor's own verify doesn't object to the error we just
+            // threw.
+            auto scope = DECLARE_THROW_SCOPE(vm);
             Bun::throwError(globalObject, scope, ErrorCode::ERR_OUT_OF_RANGE,
                 makeString("Value is too large to be represented as a JavaScript number: "_s, v));
+            scope.release();
             return {};
         }
         return jsNumber(static_cast<double>(v));
@@ -202,13 +223,14 @@ static JSValue sqliteValueToJS(JSGlobalObject* globalObject, ThrowScope& scope, 
         size_t len = sqlite3_value_bytes(value);
         const void* blob = sqlite3_value_blob(value);
         auto* array = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->m_typedArrayUint8.get(globalObject), len);
-        RETURN_IF_EXCEPTION(scope, {});
+        if (outer.exception()) [[unlikely]] return {};
         if (len > 0) memcpy(array->typedVector(), blob, len);
         return array;
     }
     default:
         return jsNull();
     }
+    (void)outer;
 }
 
 // Write a JS return value back into an sqlite3_context*. On type mismatch
@@ -275,29 +297,36 @@ public:
         auto* self = static_cast<NodeSqliteUDF*>(sqlite3_user_data(ctx));
         auto* globalObject = self->globalObject_;
         auto& vm = getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
+        // TopExceptionScope (not ThrowScope): sqlite may invoke this callback
+        // many times per sqlite3_step(), and a ThrowScope's destructor
+        // simulateThrow() would trip validateExceptionChecks on the next
+        // invocation's constructor. TopExceptionScope's destructor doesn't
+        // simulate, so the only requirement is that we consume each inner
+        // scope's need-check via scope.exception() before returning. The
+        // pending exception itself is left on the VM for the outer host
+        // function to observe via CHECK_UDF_EXCEPTION.
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+        auto abortWithPending = [&] {
+            self->db_->setIgnoreNextSqliteError();
+            sqlite3_result_error(ctx, "", 0);
+        };
+        if (scope.exception()) [[unlikely]] return abortWithPending();
 
         MarkedArgumentBuffer args;
         args.ensureCapacity(argc);
         for (int i = 0; i < argc; ++i) {
             JSValue v = sqliteValueToJS(globalObject, scope, argv[i], self->useBigIntArgs_);
-            if (scope.exception()) [[unlikely]] {
-                self->db_->setIgnoreNextSqliteError();
-                sqlite3_result_error(ctx, "", 0);
-                return;
-            }
+            if (scope.exception()) [[unlikely]] return abortWithPending();
             args.append(v);
         }
 
         JSValue fn = self->fn_.get();
         auto callData = JSC::getCallData(fn);
         JSValue result = JSC::call(globalObject, fn, callData, jsUndefined(), args);
-        if (scope.exception()) [[unlikely]] {
-            self->db_->setIgnoreNextSqliteError();
-            sqlite3_result_error(ctx, "", 0);
-            return;
-        }
+        if (scope.exception()) [[unlikely]] return abortWithPending();
         jsValueToSqliteResult(globalObject, ctx, result);
+        if (scope.exception()) [[unlikely]] return abortWithPending();
     }
 
     static void xDestroy(void* p) { delete static_cast<NodeSqliteUDF*>(p); }
@@ -339,7 +368,7 @@ public:
     {
     }
 
-    State* getState(sqlite3_context* ctx)
+    State* getState(sqlite3_context* ctx, TopExceptionScope& scope)
     {
         auto* state = static_cast<State*>(sqlite3_aggregate_context(ctx, sizeof(State)));
         if (state == nullptr) return nullptr;
@@ -353,7 +382,6 @@ public:
             state->initialized = true;
 
             auto& vm = getVM(globalObject_);
-            auto scope = DECLARE_THROW_SCOPE(vm);
             state->value.set(vm, jsUndefined());
             JSValue startV = start_.get();
             if (startV.isCallable()) {
@@ -383,10 +411,16 @@ public:
     void stepBase(sqlite3_context* ctx, int argc, sqlite3_value** argv, JSObject* fn)
     {
         auto& vm = getVM(globalObject_);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        if (scope.exception()) [[unlikely]]
-            return;
-        auto* state = getState(ctx);
+        // TopExceptionScope — see the rationale on xFunc. Pending exceptions
+        // are deliberately left on the VM for the outer step()/exec() to
+        // observe via CHECK_UDF_EXCEPTION.
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        auto abortWithPending = [&] {
+            db_->setIgnoreNextSqliteError();
+            sqlite3_result_error(ctx, "", 0);
+        };
+        if (scope.exception()) [[unlikely]] return;
+        auto* state = getState(ctx, scope);
         if (!state) return;
 
         MarkedArgumentBuffer args;
@@ -394,28 +428,21 @@ public:
         args.append(state->value.get());
         for (int i = 0; i < argc; ++i) {
             JSValue v = sqliteValueToJS(globalObject_, scope, argv[i], useBigIntArgs_);
-            if (scope.exception()) [[unlikely]] {
-                db_->setIgnoreNextSqliteError();
-                sqlite3_result_error(ctx, "", 0);
-                return;
-            }
+            if (scope.exception()) [[unlikely]] return abortWithPending();
             args.append(v);
         }
 
         auto callData = JSC::getCallData(fn);
         JSValue ret = JSC::call(globalObject_, fn, callData, jsUndefined(), args);
-        if (scope.exception()) [[unlikely]] {
-            db_->setIgnoreNextSqliteError();
-            sqlite3_result_error(ctx, "", 0);
-            return;
-        }
+        if (scope.exception()) [[unlikely]] return abortWithPending();
         state->value.set(vm, ret);
     }
 
     void valueBase(sqlite3_context* ctx, bool isFinal)
     {
         auto& vm = getVM(globalObject_);
-        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        (void)vm;
         // An exception from an earlier xStep may still be pending —
         // don't re-enter JS (or overwrite sqlite3_result_error with a
         // NULL result) in that case; just tear down the state.
@@ -423,7 +450,7 @@ public:
             if (isFinal) destroyState(ctx);
             return;
         }
-        auto* state = getState(ctx);
+        auto* state = getState(ctx, scope);
         if (!state) {
             if (isFinal) destroyState(ctx);
             return;
@@ -453,8 +480,10 @@ public:
         } else {
             result = state->value.get();
         }
-        (void)vm;
         jsValueToSqliteResult(globalObject_, ctx, result);
+        if (scope.exception()) [[unlikely]] {
+            db_->setIgnoreNextSqliteError();
+        }
         if (isFinal) destroyState(ctx);
     }
 
@@ -755,7 +784,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncExec, (JSGlobalObject * globalObject, Cal
     RETURN_IF_EXCEPTION(scope, {});
     auto utf8 = sql.utf8();
     int r = sqlite3_exec(self->connection(), utf8.data(), nullptr, nullptr, nullptr);
-    if (checkUDFException(scope, self)) return {};
+    CHECK_UDF_EXCEPTION(scope, self);
     if (r != SQLITE_OK) {
         throwSqliteError(globalObject, scope, self->connection());
         return {};
@@ -1116,7 +1145,8 @@ static int applyChangesetXConflict(void* pCtx, int eConflict, sqlite3_changeset_
     if (!ctx->onConflict) return SQLITE_CHANGESET_ABORT;
     auto* globalObject = ctx->globalObject;
     auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (scope.exception()) [[unlikely]] return SQLITE_CHANGESET_ABORT;
     MarkedArgumentBuffer args;
     args.append(jsNumber(eConflict));
     auto callData = JSC::getCallData(ctx->onConflict);
@@ -1139,7 +1169,8 @@ static int applyChangesetXFilter(void* pCtx, const char* zTab)
     if (!ctx->filter) return 1;
     auto* globalObject = ctx->globalObject;
     auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (scope.exception()) [[unlikely]] return 0;
     MarkedArgumentBuffer args;
     args.append(jsString(vm, WTF::String::fromUTF8(zTab)));
     auto callData = JSC::getCallData(ctx->filter);
@@ -1194,7 +1225,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncApplyChangeset, (JSGlobalObject * globalO
     int r = sqlite3changeset_apply(self->connection(),
         static_cast<int>(span.size()), const_cast<unsigned char*>(span.data()),
         applyChangesetXFilter, applyChangesetXConflict, &ctx);
-    if (checkUDFException(scope, self)) return {};
+    CHECK_UDF_EXCEPTION(scope, self);
     if (r == SQLITE_ABORT) {
         // Conflict handler returned ABORT — Node.js surfaces this as
         // `false` rather than throwing.
@@ -1635,7 +1666,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncRun, (JSGlobalObject * globalObject, Cal
     while (r == SQLITE_ROW) {
         r = sqlite3_step(self->statement());
     }
-    if (checkUDFException(scope, self->database())) return {};
+    CHECK_UDF_EXCEPTION(scope, self->database());
     if (r != SQLITE_DONE && r != SQLITE_OK) {
         throwSqliteError(globalObject, scope, self->connection());
         return {};
@@ -1668,7 +1699,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncGet, (JSGlobalObject * globalObject, Cal
     StatementResetter resetter { self->statement() };
 
     int r = sqlite3_step(self->statement());
-    if (checkUDFException(scope, self->database())) return {};
+    CHECK_UDF_EXCEPTION(scope, self->database());
     if (r == SQLITE_DONE) return JSValue::encode(jsUndefined());
     if (r != SQLITE_ROW) {
         throwSqliteError(globalObject, scope, self->connection());
@@ -1704,7 +1735,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncAll, (JSGlobalObject * globalObject, Cal
         rows->push(globalObject, row);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    if (checkUDFException(scope, self->database())) return {};
+    CHECK_UDF_EXCEPTION(scope, self->database());
     if (r != SQLITE_DONE) {
         throwSqliteError(globalObject, scope, self->connection());
         return {};
@@ -1931,7 +1962,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorNext, (JSGlobalObject * globalOb
     }
 
     int r = sqlite3_step(stmt->statement());
-    if (checkUDFException(scope, stmt->database())) return {};
+    CHECK_UDF_EXCEPTION(scope, stmt->database());
     if (r == SQLITE_ROW) {
         int numCols = sqlite3_column_count(stmt->statement());
         JSValue row = stmt->returnArrays()

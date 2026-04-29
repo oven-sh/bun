@@ -475,9 +475,14 @@ describe("backup()", () => {
   }, 30_000);
 
   test("rejects with ERR_SQLITE_ERROR when the destination is unwritable", async () => {
+    using dir = tempDir("node-sqlite-backup-badpath", {});
     const src = new DatabaseSync(":memory:");
     src.exec("CREATE TABLE t (x)");
-    await expect(backup(src, "/nonexistent-dir-please-fail/x.db")).rejects.toMatchObject({
+    // A file inside a directory that doesn't exist — sqlite3_open_v2 will
+    // fail with SQLITE_CANTOPEN on every platform. Using tempDir keeps the
+    // path shape correct on Windows.
+    const bad = path.join(String(dir), "no-such-subdir", "x.db");
+    await expect(backup(src, bad)).rejects.toMatchObject({
       code: "ERR_SQLITE_ERROR",
     });
     src.close();

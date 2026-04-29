@@ -661,4 +661,66 @@ describe("bun", () => {
     expect(stderr).toContain("skipping this workspace package");
     expect(exitCode).toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/29938
+  test("--filter with a path glob works when a workspace dir contains uppercase letters (issue #29938)", () => {
+    const dir = tempDirWithFiles("filter-casepath", {
+      apps: {
+        app1: {
+          "package.json": JSON.stringify({
+            name: "@issue/app1",
+            scripts: { build: "echo app1-built" },
+          }),
+        },
+        app2: {
+          "package.json": JSON.stringify({
+            name: "@issue/app2",
+            scripts: { build: "echo app2-built" },
+          }),
+        },
+      },
+      packages: {
+        somePackage: {
+          "package.json": JSON.stringify({
+            name: "@issue/somepackage",
+            scripts: { build: "echo somepackage-built" },
+          }),
+        },
+        "somePackage.test": {
+          "package.json": JSON.stringify({
+            name: "@issue/somepackage.test",
+            scripts: { build: "echo somepackage-test-built" },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "issue",
+        workspaces: ["apps/*", "packages/*"],
+      }),
+    });
+
+    const apps = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "./apps/**", "build"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(apps.stderr.toString()).not.toContain("ENOENT");
+    expect(apps.stdout.toString()).toContain("app1-built");
+    expect(apps.stdout.toString()).toContain("app2-built");
+    expect(apps.exitCode).toBe(0);
+
+    const pkgs = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "./packages/**", "build"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(pkgs.stderr.toString()).not.toContain("ENOENT");
+    expect(pkgs.stdout.toString()).toContain("somepackage-built");
+    expect(pkgs.stdout.toString()).toContain("somepackage-test-built");
+    expect(pkgs.exitCode).toBe(0);
+  });
 });

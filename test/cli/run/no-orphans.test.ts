@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -49,19 +49,6 @@ const fixture = tempDir("no-orphans", {
     await gc.stdout.getReader().read();
     console.log(process.pid, process.ppid, gc.pid);
     setInterval(()=>{}, 1000);
-  `,
-  // Spawns a grandchild, prints its pid, then exits cleanly. Exercises the
-  // descendant reaper independently of the parent-watch path.
-  "clean-exit.js": `
-    const gc = Bun.spawn({
-      cmd: [process.execPath, "grandchild.js"],
-      cwd: import.meta.dir,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    await gc.stdout.getReader().read();
-    gc.unref();
-    console.log(gc.pid);
-    process.exit(0);
   `,
 });
 
@@ -215,174 +202,93 @@ test.skipIf(!isSupported)("BUN_FEATURE_FLAG_NO_ORPHANS=1 does not fire while the
   expect(died).toBe(true);
 });
 
-// Descendant cleanup must not depend on the parent-watch path. With the env
-// var set, a Bun that exits *cleanly* should still SIGKILL its children. On
-// macOS this is the only place the libproc walk is exercised independently of
-// NOTE_EXIT.
-test.skipIf(!isSupported)("BUN_FEATURE_FLAG_NO_ORPHANS=1: clean exit reaps descendants", async () => {
-  const env: Record<string, string> = { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: "1" };
-  const proc = Bun.spawn({
-    cmd: [bunExe(), `${String(fixture)}/clean-exit.js`],
-    env,
-    stdout: "pipe",
-    stderr: "ignore",
+// Descendant cleanup must not depend on the parent-watch path. A Bun that
+// exits *cleanly* should SIGKILL its children. Same fixture, three enable()
+// call sites — env var, --no-orphans flag, bunfig.
+describe.each([
+  { via: "BUN_FEATURE_FLAG_NO_ORPHANS=1", argv: [], bunfig: false, env: { BUN_FEATURE_FLAG_NO_ORPHANS: "1" } },
+  { via: "--no-orphans", argv: ["--no-orphans"], bunfig: false, env: {} },
+  { via: "bunfig [run] noOrphans = true", argv: [], bunfig: true, env: {} },
+])("clean exit reaps descendants", ({ via, argv, bunfig, env: extraEnv }) => {
+  test.skipIf(!isSupported)(via, async () => {
+    using dir = tempDir("no-orphans-clean-exit", {
+      ...(bunfig && { "bunfig.toml": "[run]\nnoOrphans = true\n" }),
+      "grandchild.js": `process.stdout.write("r"); setInterval(()=>{}, 1000);`,
+      "clean-exit.js": `
+        const gc = Bun.spawn({
+          cmd: [process.execPath, "grandchild.js"],
+          cwd: import.meta.dir,
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+        await gc.stdout.getReader().read();
+        gc.unref();
+        console.log(gc.pid);
+        process.exit(0);
+      `,
+    });
+    const env: Record<string, string> = { ...bunEnv, ...extraEnv };
+    if (!("BUN_FEATURE_FLAG_NO_ORPHANS" in extraEnv)) delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+    const proc = Bun.spawn({
+      cmd: [bunExe(), ...argv, "clean-exit.js"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const out = await proc.stdout.text();
+    await proc.exited;
+    const gcPid = Number(out.trim());
+    expect(gcPid).toBeGreaterThan(0);
+    const died = await waitUntilDead(gcPid, 10000);
+    reap(gcPid);
+    expect(died).toBe(true);
+    expect(proc.exitCode).toBe(0);
   });
-  const out = await proc.stdout.text();
-  await proc.exited;
-  const gcPid = Number(out.trim());
-  expect(gcPid).toBeGreaterThan(0);
-  const died = await waitUntilDead(gcPid, 10000);
-  reap(gcPid);
-  expect(died).toBe(true);
-  expect(proc.exitCode).toBe(0);
 });
 
-// Same as the clean-exit test but enabled via bunfig.toml instead of the env
-// var, exercising the second `enable()` call site.
-test.skipIf(!isSupported)("bunfig [run] noOrphans = true: clean exit reaps descendants", async () => {
-  using dir = tempDir("no-orphans-bunfig", {
-    "bunfig.toml": "[run]\nnoOrphans = true\n",
-    "grandchild.js": `process.stdout.write("r"); setInterval(()=>{}, 1000);`,
-    "clean-exit.js": `
-      const gc = Bun.spawn({
-        cmd: [process.execPath, "grandchild.js"],
-        cwd: import.meta.dir,
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-      await gc.stdout.getReader().read();
-      gc.unref();
-      console.log(gc.pid);
-      process.exit(0);
-    `,
-  });
-  const env: Record<string, string> = { ...bunEnv };
-  delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
-  const proc = Bun.spawn({
-    cmd: [bunExe(), "clean-exit.js"],
-    env,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "ignore",
-  });
-  const out = await proc.stdout.text();
-  await proc.exited;
-  const gcPid = Number(out.trim());
-  expect(gcPid).toBeGreaterThan(0);
-  const died = await waitUntilDead(gcPid, 10000);
-  reap(gcPid);
-  expect(died).toBe(true);
-  expect(proc.exitCode).toBe(0);
-});
-
-// `--no-orphans` CLI flag: same effect as the env var, including setenv()
-// propagation so the bun grandchild inherits it.
-test.skipIf(!isSupported)("--no-orphans: clean exit reaps descendants", async () => {
-  const env: Record<string, string> = { ...bunEnv };
-  delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
-  const proc = Bun.spawn({
-    cmd: [bunExe(), "--no-orphans", `${String(fixture)}/clean-exit.js`],
-    env,
-    stdout: "pipe",
-    stderr: "ignore",
-  });
-  const out = await proc.stdout.text();
-  await proc.exited;
-  const gcPid = Number(out.trim());
-  expect(gcPid).toBeGreaterThan(0);
-  const died = await waitUntilDead(gcPid, 10000);
-  reap(gcPid);
-  expect(died).toBe(true);
-  expect(proc.exitCode).toBe(0);
-});
-
-// `bun run --no-orphans <script>` while the supervisor is SIGKILLed.
+// `bun run --no-orphans` while the supervisor is SIGKILLed.
 // Tree: test → sh (supervisor) → `bun run` → /bin/sh (script). The script is
 // non-Bun so it never installs its own watchdog — survival of the script after
 // the supervisor dies would prove `bun run` slept through it.
 //
-// macOS: this is the only test that exercises `waitForChildKqueueMac` —
-// `bun run` has no event loop, so without the kqueue path it would block in
-// wait4() forever after sh dies. Linux: covered by PDEATHSIG on `bun run` +
-// linux_pdeathsig on the spawned script.
-test.skipIf(!isSupported)(
-  "bun run --no-orphans <script>: bun run and the script exit when the supervisor is SIGKILLed",
-  async () => {
-    using dir = tempDir("no-orphans-run-supervisor", {
-      "package.json": JSON.stringify({
-        name: "no-orphans-run-supervisor",
-        // Non-Bun script: prints "<self> <ppid>" and idles. "exec" so the
-        // script process *is* the sh — no extra layer between `bun run` and it.
-        scripts: { go: `exec /bin/sh -c 'echo "$$ $PPID"; while :; do sleep 1; done'` },
-      }),
-    });
-    const env: Record<string, string> = { ...bunEnv };
-    delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
-    const sh = Bun.spawn({
-      // sh → `bun run --no-orphans go`. Trailing `wait` keeps sh as a distinct
-      // pid we can SIGKILL. Do NOT `cd ... &&` here — that adds a subshell
-      // between sh and `bun run`, so `bun run`'s ppid would survive the SIGKILL.
-      cmd: ["/bin/sh", "-c", `"${bunExe()}" run --no-orphans --silent go & wait`],
-      env,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-
-    const reader = sh.stdout.getReader();
-    const decoder = new TextDecoder();
-    let line = "";
-    while (!line.includes("\n")) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      line += decoder.decode(value, { stream: true });
-    }
-    reader.releaseLock();
-    const [scriptPid, runPid] = line.trim().split(" ").map(Number);
-    expect(scriptPid).toBeGreaterThan(0);
-    expect(runPid).toBeGreaterThan(0);
-    expect(isAlive(runPid)).toBe(true);
-    expect(isAlive(scriptPid)).toBe(true);
-
-    process.kill(sh.pid!, "SIGKILL");
-    await sh.exited;
-
-    const runDied = await waitUntilDead(runPid, 10000);
-    const scriptDied = await waitUntilDead(scriptPid, 10000);
-    reap(runPid, scriptPid);
-    expect(runDied).toBe(true);
-    expect(scriptDied).toBe(true);
+// Two macOS code paths under test:
+//   - plain `bun run <script>` → spawnSync → `waitForChildKqueueMac`
+//   - `--filter='*'` → MiniEventLoop → `installOnEventLoop`
+// Linux: both covered by PDEATHSIG on `bun run` + linux_pdeathsig on the spawn.
+//
+// `exec` collapses the script's wrapper sh into the script pid, so $PPID is
+// `bun run`. Do NOT `cd ... &&` inside sh -c — that adds a subshell between sh
+// and `bun run`, so `bun run`'s ppid would survive the SIGKILL.
+const goScript = `exec /bin/sh -c 'echo "$$ $PPID"; while :; do sleep 1; done'`;
+describe.each([
+  {
+    label: "<script>",
+    runArgs: "--silent go",
+    files: { "package.json": JSON.stringify({ name: "p", scripts: { go: goScript } }) },
   },
-);
-
-// `bun run --no-orphans --filter='*'` while the supervisor is SIGKILLed.
-// --filter uses a MiniEventLoop (filter_run.zig) instead of spawnSync, so the
-// macOS parent watch goes through `installOnEventLoop` on that loop rather than
-// `waitForChildKqueueMac`. Non-Bun script for the same reason as above.
-test.skipIf(!isSupported)(
-  "bun run --no-orphans --filter: bun run and the script exit when the supervisor is SIGKILLed",
-  async () => {
-    using dir = tempDir("no-orphans-filter", {
-      "package.json": JSON.stringify({
-        name: "no-orphans-filter",
-        workspaces: ["pkg"],
-      }),
-      "pkg/package.json": JSON.stringify({
-        name: "pkg",
-        scripts: { go: `exec /bin/sh -c 'echo "$$ $PPID"; while :; do sleep 1; done'` },
-      }),
-    });
+  {
+    label: "--filter='*'",
+    runArgs: "--filter='*' --elide-lines=0 go",
+    files: {
+      "package.json": JSON.stringify({ name: "p", workspaces: ["pkg"] }),
+      "pkg/package.json": JSON.stringify({ name: "pkg", scripts: { go: goScript } }),
+    },
+  },
+])("bun run --no-orphans $label: supervisor SIGKILLed", ({ runArgs, files }) => {
+  test.skipIf(!isSupported)("bun run and the script exit", async () => {
+    using dir = tempDir("no-orphans-run", files);
     const env: Record<string, string> = { ...bunEnv };
     delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
     const sh = Bun.spawn({
-      cmd: ["/bin/sh", "-c", `"${bunExe()}" run --no-orphans --filter='*' --elide-lines=0 go & wait`],
+      cmd: ["/bin/sh", "-c", `"${bunExe()}" run --no-orphans ${runArgs} & wait`],
       env,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "ignore",
     });
 
-    // --filter prefixes each line with the package label; scan for the first
-    // "<pid> <pid>" pair anywhere in the output.
+    // --filter prefixes each line with a package label, plain run doesn't —
+    // just scan for the first "<pid> <pid>" pair anywhere in the stream.
     const reader = sh.stdout.getReader();
     const decoder = new TextDecoder();
     let buf = "";
@@ -412,8 +318,8 @@ test.skipIf(!isSupported)(
     reap(runPid, scriptPid);
     expect(runDied).toBe(true);
     expect(scriptDied).toBe(true);
-  },
-);
+  });
+});
 
 // `bun run --no-orphans <script>`: the package.json script spawns a non-Bun
 // grandchild, prints its pid, and exits. The outer `bun run` process must reap

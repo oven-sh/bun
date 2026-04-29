@@ -2293,59 +2293,21 @@ pub const sync = struct {
 
         while (out_fds_to_wait_for[0] != bun.invalid_fd or out_fds_to_wait_for[1] != bun.invalid_fd) {
             for (&out_fds_to_wait_for, &out, &out_fds) |*fd, *bytes, *out_fd| {
-                if (fd.* == bun.invalid_fd) continue;
-                while (true) {
-                    bytes.ensureUnusedCapacity(16384) catch {
-                        return .{ .err = bun.sys.Error.fromCode(.NOMEM, .recv) };
-                    };
-                    switch (bun.sys.recvNonBlock(fd.*, bytes.unusedCapacitySlice())) {
-                        .err => |err| {
-                            if (err.isRetry() or err.getErrno() == .PIPE) {
-                                break;
-                            }
-                            return .{ .err = err };
-                        },
-                        .result => |bytes_read| {
-                            bytes.items.len += bytes_read;
-                            if (bytes_read == 0) {
-                                fd.*.close();
-                                fd.* = bun.invalid_fd;
-                                out_fd.* = bun.invalid_fd;
-                                break;
-                            }
-                        },
-                    }
-                }
+                if (drainFd(fd, out_fd, bytes)) |err| return .{ .err = err };
             }
 
-            var poll_fds_buf = [_]std.c.pollfd{
-                .{
-                    .fd = 0,
+            var poll_fds_buf: [2]std.c.pollfd = undefined;
+            var poll_fds: []std.c.pollfd = poll_fds_buf[0..0];
+            for (out_fds_to_wait_for) |fd| {
+                if (fd == bun.invalid_fd) continue;
+                poll_fds.len += 1;
+                poll_fds[poll_fds.len - 1] = .{
+                    .fd = @intCast(fd.cast()),
                     .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP,
                     .revents = 0,
-                },
-                .{
-                    .fd = 0,
-                    .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP,
-                    .revents = 0,
-                },
-            };
-            var poll_fds: []std.c.pollfd = poll_fds_buf[0..];
-            poll_fds.len = 0;
-
-            if (out_fds_to_wait_for[0] != bun.invalid_fd) {
-                poll_fds.len += 1;
-                poll_fds[poll_fds.len - 1].fd = @intCast(out_fds_to_wait_for[0].cast());
+                };
             }
-
-            if (out_fds_to_wait_for[1] != bun.invalid_fd) {
-                poll_fds.len += 1;
-                poll_fds[poll_fds.len - 1].fd = @intCast(out_fds_to_wait_for[1].cast());
-            }
-
-            if (poll_fds.len == 0) {
-                break;
-            }
+            if (poll_fds.len == 0) break;
 
             const rc = std.c.poll(poll_fds.ptr, @intCast(poll_fds.len), -1);
             switch (bun.sys.getErrno(rc)) {
@@ -2355,13 +2317,7 @@ pub const sync = struct {
             }
         }
 
-        const status: Status = brk: {
-            while (true) {
-                if (Status.from(process.pid, &PosixSpawn.wait4(process.pid, 0, null))) |stat| break :brk stat;
-            }
-
-            unreachable;
-        };
+        const status = reapChild(process.pid);
 
         if (comptime Environment.isLinux) {
             for (process.memfds[1..], &out, out_fds) |memfd, *bytes, out_fd| {
@@ -2409,48 +2365,36 @@ pub const sync = struct {
         const kq_fd = bun.FD.fromNative(kq);
         defer kq_fd.close();
 
-        var changes: [4]std.c.Kevent = undefined;
-        var n: usize = 0;
-        changes[n] = .{
-            .ident = @intCast(ppid),
-            .filter = std.c.EVFILT.PROC,
-            .flags = std.c.EV.ADD | std.c.EV.RECEIPT,
-            .fflags = std.c.NOTE.EXIT,
-            .data = 0,
-            .udata = 0,
-        };
-        n += 1;
-        changes[n] = .{
-            .ident = @intCast(child),
-            .filter = std.c.EVFILT.PROC,
-            .flags = std.c.EV.ADD | std.c.EV.RECEIPT,
-            .fflags = std.c.NOTE.EXIT,
-            .data = 0,
-            .udata = 0,
-        };
-        n += 1;
+        var changes_buf: [4]std.c.Kevent = undefined;
+        var changes: []std.c.Kevent = changes_buf[0..0];
+        const add = struct {
+            fn f(list: *[]std.c.Kevent, ident: usize, filter: i16, fflags: u32, udata: usize) void {
+                list.len += 1;
+                list.*[list.len - 1] = .{
+                    .ident = ident,
+                    .filter = filter,
+                    .flags = std.c.EV.ADD | std.c.EV.RECEIPT,
+                    .fflags = fflags,
+                    .data = 0,
+                    .udata = udata,
+                };
+            }
+        }.f;
+        add(&changes, @intCast(ppid), std.c.EVFILT.PROC, std.c.NOTE.EXIT, 0);
+        add(&changes, @intCast(child), std.c.EVFILT.PROC, std.c.NOTE.EXIT, 0);
         for (out_fds_to_wait_for, 0..) |fd, i| {
-            if (fd == bun.invalid_fd) continue;
-            changes[n] = .{
-                .ident = @intCast(fd.cast()),
-                .filter = std.c.EVFILT.READ,
-                .flags = std.c.EV.ADD | std.c.EV.RECEIPT,
-                .fflags = 0,
-                .data = 0,
-                .udata = i,
-            };
-            n += 1;
+            if (fd != bun.invalid_fd) add(&changes, @intCast(fd.cast()), std.c.EVFILT.READ, 0, i);
         }
 
         // Register with EV_RECEIPT: each change comes back as an EV_ERROR with
         // .data = errno (0 on success). The ppid may have died between
         // enable() and now — that surfaces as ESRCH on the ppid PROC entry.
         var receipts: [4]std.c.Kevent = undefined;
-        switch (bun.sys.kevent(kq_fd, changes[0..n], receipts[0..n], null)) {
+        switch (bun.sys.kevent(kq_fd, changes, receipts[0..changes.len], null)) {
             .err => |err| return .{ .err = err },
             .result => {},
         }
-        for (receipts[0..n]) |r| {
+        for (receipts[0..changes.len]) |r| {
             if (r.flags & std.c.EV.ERROR == 0) continue;
             if (r.data == 0) continue;
             if (r.filter == std.c.EVFILT.PROC and r.ident == @as(usize, @intCast(ppid))) {
@@ -2485,14 +2429,14 @@ pub const sync = struct {
                     }
                 } else if (ev.filter == std.c.EVFILT.READ) {
                     const i: usize = ev.udata;
-                    drainFd(&out_fds_to_wait_for[i], &out_fds[i], &out[i]);
+                    if (drainFd(&out_fds_to_wait_for[i], &out_fds[i], &out[i])) |err| return .{ .err = err };
                 }
             }
             if (child_exited) {
                 // Child is gone; drain whatever's left in any still-open pipes
                 // (NOTE_EXIT can arrive before the final READ events), then reap.
                 for (out_fds_to_wait_for, out_fds, out) |*fd, *ofd, *bytes| {
-                    drainFd(fd, ofd, bytes);
+                    _ = drainFd(fd, ofd, bytes);
                 }
                 return .{ .result = reapChild(child) };
             }
@@ -2500,23 +2444,17 @@ pub const sync = struct {
     }
 
     /// Non-blocking drain of `fd` into `bytes`. Closes and invalidates both
-    /// slots on EOF or error so the caller's deferred cleanup skips them.
-    fn drainFd(fd: *bun.FD, out_fd: *bun.FD, bytes: *std.array_list.Managed(u8)) void {
-        if (fd.* == bun.invalid_fd) return;
+    /// slots on EOF so the caller's deferred cleanup skips them; returns null
+    /// on EOF/retry/EPIPE (caller keeps polling) or the recv/OOM error
+    /// otherwise. Shared by the `poll()` path and `waitForChildKqueueMac`.
+    fn drainFd(fd: *bun.FD, out_fd: *bun.FD, bytes: *std.array_list.Managed(u8)) ?bun.sys.Error {
+        if (fd.* == bun.invalid_fd) return null;
         while (true) {
-            bytes.ensureUnusedCapacity(16384) catch {
-                fd.*.close();
-                fd.* = bun.invalid_fd;
-                out_fd.* = bun.invalid_fd;
-                return;
-            };
+            bytes.ensureUnusedCapacity(16384) catch return bun.sys.Error.fromCode(.NOMEM, .recv);
             switch (bun.sys.recvNonBlock(fd.*, bytes.unusedCapacitySlice())) {
                 .err => |err| {
-                    if (err.isRetry()) return;
-                    fd.*.close();
-                    fd.* = bun.invalid_fd;
-                    out_fd.* = bun.invalid_fd;
-                    return;
+                    if (err.isRetry() or err.getErrno() == .PIPE) return null;
+                    return err;
                 },
                 .result => |bytes_read| {
                     bytes.items.len += bytes_read;
@@ -2524,13 +2462,15 @@ pub const sync = struct {
                         fd.*.close();
                         fd.* = bun.invalid_fd;
                         out_fd.* = bun.invalid_fd;
-                        return;
+                        return null;
                     }
                 },
             }
         }
     }
 
+    /// Blocking `wait4()` until `Status.from` returns a terminal status.
+    /// Shared by the `poll()` path and `waitForChildKqueueMac`.
     fn reapChild(child: std.c.pid_t) Status {
         while (true) {
             if (Status.from(child, &PosixSpawn.wait4(child, 0, null))) |stat| return stat;

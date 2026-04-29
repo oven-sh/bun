@@ -759,6 +759,17 @@ pub fn remove(this: *Watcher, hash: HashType) void {
     this.mutex.lock();
     defer this.mutex.unlock();
     if (this.indexOf(hash)) |index| {
+        // `removeAtIndex` only queues the index into `evict_list`; the real
+        // removal happens in `flushEvictions()`, which is normally driven by
+        // `onFileUpdate()` on the watcher thread. `remove()` can be called
+        // many times without any fs events firing (e.g. `fs.watch()`
+        // followed by `.close()` in a tight loop), so the fixed-size
+        // `evict_list` can fill up and overflow. Drain it here when full —
+        // we already hold `this.mutex`, matching how `flushEvictions()` is
+        // invoked from the platform watch loops.
+        if (this.evict_list_i >= max_eviction_count) {
+            this.flushEvictions();
+        }
         this.removeAtIndex(@truncate(index), hash, &[_]HashType{}, .file);
     }
 }

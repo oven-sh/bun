@@ -1766,7 +1766,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 .config = config.*,
                 .base_url_string_for_joining = base_url,
                 .vm = jsc.VirtualMachine.get(),
-                .allocator = Arena.getThreadLocalDefault(),
+                // Was MimallocArena.getThreadLocalDefault(), but that uses a vtable
+                // distinct from bun.default_allocator's even though both route
+                // to mimalloc. Collections that flow between server-owned and
+                // default-owned code (e.g. BabyList in the response sink) trip
+                // CheckedAllocator's vtable check in ci_assert builds. There's
+                // no longer a per-thread heap to bind to, so just use default.
+                .allocator = bun.default_allocator,
                 .dev_server = dev_server,
             });
 
@@ -3787,7 +3793,6 @@ const js_printer = bun.js_printer;
 const logger = bun.logger;
 const strings = bun.strings;
 const uws = bun.uws;
-const Arena = bun.allocators.MimallocArena;
 const BoringSSL = bun.BoringSSL.c;
 const SocketAddress = bun.api.socket.SocketAddress;
 

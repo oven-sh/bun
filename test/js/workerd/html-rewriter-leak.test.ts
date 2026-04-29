@@ -38,14 +38,28 @@ test("HTMLRewriter does not leak element/document handler allocations", async ()
       const warmup = haveMimallocStats ? 500 : 4000;
       const iterations = haveMimallocStats ? 4000 : 16000;
 
-      for (let i = 0; i < warmup; i++) once();
-      Bun.gc(true);
+      // GC every batch instead of once at the end. With a single trailing GC
+      // the lol-html builder allocations (Rust side) for all N rewriters are
+      // live simultaneously, then freed in one burst. Under ASAN those go
+      // through the sanitizer allocator, which never returns freed pages to
+      // the OS, so RSS pins at the peak live set (~230 MB at 16k iterations)
+      // regardless of whether the Zig-side handler structs leak. Batched GC
+      // bounds the live set so RSS only tracks the *retained* handler structs
+      // — exactly the leak being measured.
+      const batch = 1000;
+      function spin(n) {
+        for (let i = 0; i < n; i += batch) {
+          for (let j = 0; j < batch && i + j < n; j++) once();
+          Bun.gc(true);
+        }
+      }
+
+      spin(warmup);
 
       const beforeMi = heapStats().mimalloc.malloc_normal.current;
       const beforeRss = process.memoryUsage.rss();
 
-      for (let i = 0; i < iterations; i++) once();
-      Bun.gc(true);
+      spin(iterations);
 
       const afterMi = heapStats().mimalloc.malloc_normal.current;
       const afterRss = process.memoryUsage.rss();

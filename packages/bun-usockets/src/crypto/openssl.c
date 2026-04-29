@@ -1665,11 +1665,11 @@ struct us_socket_t *us_internal_ssl_socket_context_connect(
 }
 struct us_socket_t *us_internal_ssl_socket_context_connect_unix(
     struct us_internal_ssl_socket_context_t *context, const char *server_path,
-    size_t pathlen, int options, int socket_ext_size) {
+    size_t pathlen, int options, int socket_ext_size, int *err) {
   struct us_socket_t *s = (struct us_socket_t *)us_socket_context_connect_unix(
       0, &context->sc, server_path, pathlen, options,
       sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
-          socket_ext_size);
+          socket_ext_size, err);
   if (s) {
     us_internal_zero_ssl_data_for_connected_socket_before_onopen((struct us_internal_ssl_socket_t*) s);
   }

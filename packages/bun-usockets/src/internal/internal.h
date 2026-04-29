@@ -440,7 +440,7 @@ struct us_socket_t *us_internal_ssl_socket_context_connect(
 
 struct us_socket_t *us_internal_ssl_socket_context_connect_unix(
     us_internal_ssl_socket_context_r context, const char *server_path,
-    size_t pathlen, int options, int socket_ext_size);
+    size_t pathlen, int options, int socket_ext_size, int *err);
 
 int us_internal_ssl_socket_write(us_internal_ssl_socket_r s,
                                  const char *data, int length);

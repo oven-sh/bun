@@ -107,7 +107,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn doConnect(this: *This, connection: Listener.UnixOrHost) !void {
+        pub fn doConnect(this: *This, connection: Listener.UnixOrHost, connect_errno: *c_int) !void {
             bun.assert(this.socket_context != null);
             this.ref();
             defer this.deref();
@@ -128,6 +128,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                         this.socket_context.?,
                         this,
                         this.flags.allow_half_open,
+                        connect_errno,
                     );
                 },
                 .fd => |f| {
@@ -298,8 +299,24 @@ pub fn NewSocket(comptime ssl: bool) type {
             }
 
             bun.assert(errno >= 0);
-            var errno_: c_int = if (errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) @intFromEnum(bun.sys.SystemErrno.ENOENT) else @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
-            const code_ = if (errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED");
+            // On POSIX the value is a real kernel errno — either from the
+            // synchronous unix-socket connect (Listener.connectInner →
+            // connect_errno) or from getsockopt(SO_ERROR) for async TCP
+            // (us_internal_socket_after_open). Preserve it so e.g. EAGAIN for
+            // a full unix-socket backlog reaches the caller, matching Node.js.
+            //
+            // On Windows the value that reaches here is typically WSAENOTCONN
+            // from the recv() probe in us_internal_socket_after_open (which is
+            // not the actual connect errno) or a synthetic sentinel; named-pipe
+            // connects take a separate path. Keep the pre-existing
+            // ENOENT-or-ECONNREFUSED mapping there until SO_ERROR is plumbed
+            // through the libuv polling path.
+            const sys_errno: bun.sys.SystemErrno = if (Environment.isWindows)
+                (if (errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) .ENOENT else .ECONNREFUSED)
+            else
+                bun.sys.SystemErrno.init(errno) orelse .ECONNREFUSED;
+            var errno_: c_int = @intFromEnum(sys_errno);
+            const code_ = bun.String.static(@tagName(sys_errno));
             if (Environment.isWindows and errno_ == @intFromEnum(bun.sys.SystemErrno.ENOENT)) errno_ = @intFromEnum(bun.sys.SystemErrno.UV_ENOENT);
             if (Environment.isWindows and errno_ == @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED)) errno_ = @intFromEnum(bun.sys.SystemErrno.UV_ECONNREFUSED);
 

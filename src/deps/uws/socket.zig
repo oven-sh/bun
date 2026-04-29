@@ -592,8 +592,10 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             comptime Context: type,
             ctx: *Context,
             comptime socket_field_name: []const u8,
+            allowHalfOpen: bool,
+            err: *c_int,
         ) !*Context {
-            const this_socket = try connectUnixAnon(path, socket_ctx, ctx);
+            const this_socket = try connectUnixAnon(path, socket_ctx, ctx, allowHalfOpen, err);
             @field(ctx, socket_field_name) = this_socket;
             return ctx;
         }
@@ -603,6 +605,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             socket_ctx: *SocketContext,
             ctx: *anyopaque,
             allowHalfOpen: bool,
+            err: *c_int,
         ) !ThisSocket {
             debug("connect(unix:{s})", .{path});
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
@@ -610,7 +613,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             const path_ = bun.handleOom(allocator.dupeZ(u8, path));
             defer allocator.free(path_);
 
-            const socket = socket_ctx.connectUnix(is_ssl, path_, if (allowHalfOpen) uws.LIBUS_SOCKET_ALLOW_HALF_OPEN else 0, 8) orelse
+            const socket = socket_ctx.connectUnix(is_ssl, path_, if (allowHalfOpen) uws.LIBUS_SOCKET_ALLOW_HALF_OPEN else 0, 8, err) orelse
                 return error.FailedToOpenSocket;
 
             const socket_ = ThisSocket{ .socket = .{ .connected = socket } };

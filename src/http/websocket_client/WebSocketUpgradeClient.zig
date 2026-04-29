@@ -326,11 +326,13 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             // Unix domain socket path (ws+unix:// / wss+unix://)
             if (unix_socket_path_slice) |usp| {
+                var connect_errno: c_int = 0;
                 if (Socket.connectUnixAnon(
                     usp.slice(),
                     connect_ctx,
                     client,
                     false,
+                    &connect_errno,
                 )) |socket| {
                     client.tcp = socket;
                     if (client.state == .failed) {

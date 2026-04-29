@@ -1646,16 +1646,19 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
     return fd;
 }
 
-static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const char *server_path, size_t len, int options, struct sockaddr_un* server_address, const size_t addrlen) {
+static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const char *server_path, size_t len, int options, struct sockaddr_un* server_address, const size_t addrlen, int *err) {
     LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, NULL);
 
     if (fd == LIBUS_SOCKET_ERROR) {
+        *err = errno;
         return LIBUS_SOCKET_ERROR;
     }
 
     win32_set_nonblocking(fd);
 
-    if (bsd_do_connect_raw(fd, (struct sockaddr *)server_address, addrlen) != 0) {
+    int rc = bsd_do_connect_raw(fd, (struct sockaddr *)server_address, addrlen);
+    if (rc != 0) {
+        *err = rc;
         bsd_close_socket(fd);
         return LIBUS_SOCKET_ERROR;
     }
@@ -1663,11 +1666,12 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const cha
     return fd;
 }
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, size_t len, int options) {
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, size_t len, int options, int *err) {
     struct sockaddr_un server_address;
     size_t addrlen = 0;
     int dirfd_workaround_for_unix_path_len = -1;
     if (bsd_create_unix_socket_address(server_path, len, &dirfd_workaround_for_unix_path_len, &server_address, &addrlen)) {
+        *err = errno;
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1675,20 +1679,18 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, 
     if (dirfd_workaround_for_unix_path_len != -1) {
         if (__pthread_fchdir(dirfd_workaround_for_unix_path_len) != 0) {
             close(dirfd_workaround_for_unix_path_len);
-            errno = ENAMETOOLONG;
+            *err = ENAMETOOLONG;
             return LIBUS_SOCKET_ERROR;
         }
     }
 #endif
 
-    LIBUS_SOCKET_DESCRIPTOR fd = internal_bsd_create_connect_socket_unix(server_path, len, options, &server_address, addrlen);
+    LIBUS_SOCKET_DESCRIPTOR fd = internal_bsd_create_connect_socket_unix(server_path, len, options, &server_address, addrlen, err);
 
 #if defined(__APPLE__)
     if (dirfd_workaround_for_unix_path_len != -1) {
-        int saved_errno = errno;
         __pthread_fchdir(-1);
         close(dirfd_workaround_for_unix_path_len);
-        errno = saved_errno;
     }
 #elif defined(__linux__)
     if (dirfd_workaround_for_unix_path_len != -1) {

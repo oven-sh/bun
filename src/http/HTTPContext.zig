@@ -722,11 +722,13 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
 
         pub fn connectSocket(this: *@This(), client: *HTTPClient, socket_path: []const u8) !?HTTPSocket {
             client.connected_url = if (client.http_proxy) |proxy| proxy else client.url;
+            var connect_errno: c_int = 0;
             const socket = try HTTPSocket.connectUnixAnon(
                 socket_path,
                 this.us_socket_context,
                 ActiveSocket.init(client).ptr(),
                 false, // dont allow half-open sockets
+                &connect_errno,
             );
             client.allow_retry = false;
             return socket;

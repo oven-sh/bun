@@ -711,6 +711,15 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
     #endif
     /* It is perfectly possible to come here with an error */
     if (error) {
+        #ifndef _WIN32
+        /* On POSIX the caller passes `error || eof` from the poll loop, so
+         * `error` is a boolean (1), not an errno. Ask the socket for the real
+         * errno before we close it so the error callback receives e.g.
+         * ECONNREFUSED, ETIMEDOUT, EHOSTUNREACH instead of EPERM(1). Windows
+         * already populated `error` via WSAGetLastError() above. */
+        int socket_error = us_socket_get_error(0, s);
+        error = socket_error != 0 ? socket_error : ECONNREFUSED;
+        #endif
 
         /* Emit error, close without emitting on_close */
 
@@ -721,6 +730,9 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
             We differentiate between these two cases by checking if the connect_state is null.
         */
         if (c) {
+            // Record the last real connect errno so us_connecting_socket_close
+            // can report it instead of defaulting to ECONNABORTED.
+            c->error = error;
             // remove this connecting socket from the list of connecting sockets
             // if it was the last one, signal the error to the user
             for (struct us_socket_t **next = &c->connecting_head; *next; next = &(*next)->connect_next) {
@@ -781,14 +793,14 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
     }
 }
 
-struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_context_t *context, const char *server_path, size_t pathlen, int options, int socket_ext_size) {
+struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_context_t *context, const char *server_path, size_t pathlen, int options, int socket_ext_size, int *err) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
-        return (struct us_socket_t *) us_internal_ssl_socket_context_connect_unix((struct us_internal_ssl_socket_context_t *) context, server_path, pathlen, options, socket_ext_size);
+        return (struct us_socket_t *) us_internal_ssl_socket_context_connect_unix((struct us_internal_ssl_socket_context_t *) context, server_path, pathlen, options, socket_ext_size, err);
     }
 #endif
 
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket_unix(server_path, pathlen, options);
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket_unix(server_path, pathlen, options, err);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
         return 0;
     }

@@ -687,6 +687,49 @@ pub const SubscriptionPushMessage = enum(u2) {
         .{ "subscribe", .subscribe },
         .{ "unsubscribe", .unsubscribe },
     });
+
+    /// A subscription frame as it is presented to the rest of the client.
+    ///
+    /// Under RESP3 these frames arrive as `.Push` values; under RESP2 (after a
+    /// client sends `HELLO 2`) the same frames arrive as ordinary `.Array`
+    /// values whose first element is a `SimpleString`/`BulkString` tag.
+    /// This struct abstracts over both so callers don't have to branch on the
+    /// wire-level representation.
+    pub const Frame = struct {
+        kind: SubscriptionPushMessage,
+        /// The elements after the kind tag. For `message` this is
+        /// `[channel, payload]`; for `subscribe`/`unsubscribe` this is
+        /// `[channel, subscription_count]`.
+        data: []RESPValue,
+    };
+
+    /// Try to interpret `value` as a subscription frame. Returns `null` if it
+    /// is not a recognized subscription frame — regular command replies on a
+    /// subscriber connection (for example a `PONG` reply to `PING`) fall into
+    /// that bucket and must be routed through the normal command path.
+    pub fn asFrame(value: *RESPValue) ?Frame {
+        switch (value.*) {
+            .Push => |push| {
+                if (map.get(push.kind)) |kind| {
+                    return .{ .kind = kind, .data = push.data };
+                }
+                return null;
+            },
+            .Array => |array| {
+                if (array.len == 0) return null;
+                const kind_str: []const u8 = switch (array[0]) {
+                    .SimpleString => |s| s,
+                    .BulkString => |maybe| maybe orelse return null,
+                    else => return null,
+                };
+                if (map.get(kind_str)) |kind| {
+                    return .{ .kind = kind, .data = array[1..] };
+                }
+                return null;
+            },
+            else => return null,
+        }
+    }
 };
 
 const std = @import("std");

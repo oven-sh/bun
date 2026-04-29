@@ -650,14 +650,18 @@ pub const ValkeyClient = struct {
         // If the loop finishes, the entire 'data' was processed without needing the buffer.
     }
 
-    /// Try handling this response as a subscriber-state response.
-    /// Returns `handled` if we handled it, `fallthrough` if we did not.
+    /// Handle a response that has already been classified as a subscription
+    /// frame by the caller (via `SubscriptionPushMessage.asFrame`).
+    ///
+    /// `frame` is the parsed subscription frame. This abstracts over the two
+    /// wire shapes: RESP3 `.Push` frames and RESP2 inline-array pub/sub
+    /// frames; both reach this function via the same dispatch.
     fn handleSubscribeResponse(
         this: *ValkeyClient,
         value: *protocol.RESPValue,
+        frame: protocol.SubscriptionPushMessage.Frame,
         pair: ?*ValkeyCommand.PromisePair,
-    ) bun.JSError!enum { handled, fallthrough } {
-        // Resolve the promise with the potentially transformed value
+    ) bun.JSError!void {
         const globalThis = this.globalObject();
         const loop = this.vm.eventLoop();
 
@@ -665,63 +669,38 @@ pub const ValkeyClient = struct {
         loop.enter();
         defer loop.exit();
 
-        return switch (value.*) {
-            .Error => {
-                if (pair) |p| {
-                    try p.promise.reject(globalThis, value.toJS(globalThis));
-                }
-                return .handled;
+        const p = this.parent();
+
+        switch (frame.kind) {
+            .message => {
+                // Hot path during active pub/sub: skip the JS-side channel-count
+                // lookup entirely, since message frames don't resolve a promise.
+                this.onValkeyMessage(frame.data);
             },
-            .Push => |push| {
-                const p = this.parent();
+            .subscribe => {
+                // `channelsSubscribedToCount` reads from a JSMap via the JS
+                // getter, so only touch it on the path that actually needs it.
                 const sub_count = try p._subscription_ctx.channelsSubscribedToCount(globalThis);
+                p.addSubscription();
+                this.onValkeySubscribe(value);
 
-                if (protocol.SubscriptionPushMessage.map.get(push.kind)) |msg_type| {
-                    switch (msg_type) {
-                        .message => {
-                            this.onValkeyMessage(push.data);
-                            return .handled;
-                        },
-                        .subscribe => {
-                            p.addSubscription();
-                            this.onValkeySubscribe(value);
-
-                            // For SUBSCRIBE responses, only resolve the promise for the first channel confirmation
-                            // Additional channel confirmations from multi-channel SUBSCRIBE commands don't need promise pairs
-                            if (pair) |req_pair| {
-                                try req_pair.promise.promise.resolve(globalThis, .jsNumber(sub_count));
-                            }
-                            return .handled;
-                        },
-                        .unsubscribe => {
-                            try this.onValkeyUnsubscribe();
-                            p.removeSubscription();
-
-                            // For UNSUBSCRIBE responses, only resolve the promise if we have one
-                            // Additional channel confirmations from multi-channel UNSUBSCRIBE commands don't need promise pairs
-                            if (pair) |req_pair| {
-                                try req_pair.promise.promise.resolve(globalThis, .js_undefined);
-                            }
-                            return .handled;
-                        },
-                    }
-                } else {
-                    // We should rarely reach this point. If we're guaranteed to be handling a subscribe/unsubscribe,
-                    // then this is an unexpected path.
-                    @branchHint(.cold);
-                    try this.fail(
-                        "Push message is not a subscription message.",
-                        protocol.RedisError.InvalidResponseType,
-                    );
-                    return .handled;
+                // For SUBSCRIBE responses, only resolve the promise for the first channel confirmation
+                // Additional channel confirmations from multi-channel SUBSCRIBE commands don't need promise pairs
+                if (pair) |req_pair| {
+                    try req_pair.promise.promise.resolve(globalThis, .jsNumber(sub_count));
                 }
             },
-            else => {
-                // This may be a regular command response. Let's pass it down
-                // to the next handler.
-                return .fallthrough;
+            .unsubscribe => {
+                try this.onValkeyUnsubscribe();
+                p.removeSubscription();
+
+                // For UNSUBSCRIBE responses, only resolve the promise if we have one
+                // Additional channel confirmations from multi-channel UNSUBSCRIBE commands don't need promise pairs
+                if (pair) |req_pair| {
+                    try req_pair.promise.promise.resolve(globalThis, .js_undefined);
+                }
             },
-        };
+        }
     }
 
     fn handleHelloResponse(this: *ValkeyClient, value: *protocol.RESPValue) bun.JSTerminated!void {
@@ -819,26 +798,45 @@ pub const ValkeyClient = struct {
         var should_consume_promise_pair = true;
         var pair_maybe: ?ValkeyCommand.PromisePair = null;
 
-        // For subscription clients, check if this is a push message that doesn't need a promise pair
+        // Check whether this response is a pub/sub notification frame.
+        //
+        // Under RESP3, subscription frames arrive as `.Push` values (`>`).
+        // Under RESP2, the same frames arrive as regular `.Array` values whose first element is a
+        // `SimpleString`/`BulkString` tag (for example `["message", "chan", "payload"]`).
+        //
+        // `SubscriptionPushMessage.asFrame` accepts either shape. We check this even before the first
+        // SUBSCRIBE confirmation promotes the client into subscriber state, because that very first
+        // reply IS a subscription frame and we have to route it through `handleSubscribeResponse`.
+        const subscription_frame: ?protocol.SubscriptionPushMessage.Frame = protocol.SubscriptionPushMessage.asFrame(value);
+
+        // A RESP3 `.Push` frame with an unrecognized kind (keyspace notification,
+        // CLIENT TRACKING `invalidate`, sharded/pattern push, etc.) is a server-initiated
+        // async notification ONLY when nothing is in flight. If a command is pending,
+        // the push is actually its reply (for example `psubscribe`/`pmessage` arrive as
+        // `.Push` on RESP3 and are the reply to a user-issued `PSUBSCRIBE`). Dropping
+        // those would leave the caller's promise hanging — fall through to the regular
+        // handler in that case and resolve the pair with the raw value, matching the
+        // pre-refactor behavior for unrouted kinds.
+        if (value.* == .Push and subscription_frame == null and this.in_flight.readableLength() == 0) {
+            @branchHint(.cold);
+            debug("Dropping unrouted server push frame (kind={s})", .{value.Push.kind});
+            return;
+        }
+
         if (this.parent().isSubscriber()) {
-            switch (value.*) {
-                .Push => |push| {
-                    if (protocol.SubscriptionPushMessage.map.get(push.kind)) |msg_type| {
-                        switch (msg_type) {
-                            .message => {
-                                // Message pushes never need promise pairs
-                                should_consume_promise_pair = false;
-                            },
-                            .subscribe, .unsubscribe => {
-                                // Subscribe/unsubscribe pushes only need promise pairs if we have pending commands
-                                if (this.in_flight.readableLength() == 0) {
-                                    should_consume_promise_pair = false;
-                                }
-                            },
+            if (subscription_frame) |frame| {
+                switch (frame.kind) {
+                    .message => {
+                        // Message frames never need promise pairs
+                        should_consume_promise_pair = false;
+                    },
+                    .subscribe, .unsubscribe => {
+                        // Subscribe/unsubscribe frames only need promise pairs if we have pending commands
+                        if (this.in_flight.readableLength() == 0) {
+                            should_consume_promise_pair = false;
                         }
-                    }
-                },
-                else => {},
+                    },
+                }
             }
         }
 
@@ -857,31 +855,30 @@ pub const ValkeyClient = struct {
         if (this.parent().isSubscriber() or request_is_subscribe) {
             debug("This client is a subscriber. Handling as subscriber...", .{});
 
-            switch (value.*) {
-                .Error => |err| {
-                    try this.fail(err, protocol.RedisError.InvalidResponse);
+            if (value.* == .Error) {
+                // If we already popped a pair for this reply, reject ITS promise — otherwise
+                // `fail()` would reject everything else in the queue and orphan the caller that
+                // actually issued this command. Only call `fail()` when the error is
+                // unattributed (no in-flight pair to blame).
+                if (pair_maybe) |*pm| {
+                    const globalThis = this.globalObject();
+                    const loop = this.vm.eventLoop();
+                    loop.enter();
+                    defer loop.exit();
+                    try pm.promise.reject(globalThis, value.toJS(globalThis) catch |err| globalThis.takeError(err));
                     return;
-                },
-                .Push => |push| {
-                    if (protocol.SubscriptionPushMessage.map.get(push.kind)) |_| {
-                        if ((try this.handleSubscribeResponse(value, if (pair_maybe) |*pm| pm else null)) == .handled) {
-                            return;
-                        }
-                    } else {
-                        @branchHint(.cold);
-                        try this.fail(
-                            "Unexpected push message kind without promise",
-                            protocol.RedisError.InvalidResponseType,
-                        );
-                        return;
-                    }
-                },
-                else => {
-                    // In the else case, we fall through to the regular
-                    // handler. Subscribers can send .Push commands which have
-                    // the same semantics as regular commands.
-                },
+                }
+                try this.fail(value.Error, protocol.RedisError.InvalidResponse);
+                return;
             }
+
+            if (subscription_frame) |frame| {
+                try this.handleSubscribeResponse(value, frame, if (pair_maybe) |*pm| pm else null);
+                return;
+            }
+            // Fall through to the regular command handler. Subscribers can receive regular
+            // command replies (for example a `+PONG\r\n` reply to `PING` issued outside the
+            // subscription workflow on a RESP2 subscribe-only connection).
 
             debug("Treating subscriber response as a regular command...", .{});
         }

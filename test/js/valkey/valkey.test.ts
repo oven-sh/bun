@@ -6324,6 +6324,70 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(counter.count()).toBe(TEST_MESSAGE_COUNT);
       });
 
+      // https://github.com/oven-sh/bun/issues/29042
+      // Under RESP2 (after sending `HELLO 2` on the subscriber connection),
+      // Redis delivers `message` / `subscribe` / `unsubscribe` notifications as
+      // ordinary `*3\r\n$7\r\nmessage\r\n...` arrays rather than RESP3 push
+      // frames. Bun used to only match the RESP3 `.Push` variant, so the
+      // subscriber counted as subscribed on the server (PUBLISH returned 1)
+      // but the JS handler silently never fired.
+      test("subscribing after HELLO 2 (RESP2) still receives messages (#29042)", async () => {
+        const TEST_MESSAGE_COUNT = 16;
+        const subscriber = await ctx.newSubscriberClient(connectionType);
+        const channel = testChannel();
+        const message = testMessage();
+
+        // Force the subscriber connection into RESP2 mode. This used to make
+        // every subsequent pub/sub notification be silently dropped.
+        await subscriber.send("HELLO", ["2"]);
+
+        const counter = awaitableCounter();
+        const received: string[] = [];
+        await subscriber.subscribe(channel, (msg, ch) => {
+          received.push(msg);
+          expect(ch).toBe(channel);
+          counter.increment();
+        });
+
+        for (let i = 0; i < TEST_MESSAGE_COUNT; i++) {
+          expect(await ctx.redis.publish(channel, message)).toBe(1);
+        }
+
+        await counter.untilValue(TEST_MESSAGE_COUNT);
+        expect(received).toEqual(Array.from({ length: TEST_MESSAGE_COUNT }, () => message));
+
+        await subscriber.unsubscribe(channel);
+      });
+
+      // https://github.com/oven-sh/bun/issues/29042 — combine multi-channel
+      // subscribe with a RESP2-negotiated connection. Exercises both the
+      // subscribe-confirmation path (which is pair-resolved) and the
+      // message-delivery path on the same RESP2 connection.
+      test("multi-channel subscribe works after HELLO 2 (RESP2) (#29042)", async () => {
+        const subscriber = await ctx.newSubscriberClient(connectionType);
+        await subscriber.send("HELLO", ["2"]);
+
+        const channels = [testChannel(), testChannel()];
+        const counter = awaitableCounter();
+        const received: Record<string, string[]> = {};
+
+        await subscriber.subscribe(channels, (msg, ch) => {
+          (received[ch] ??= []).push(msg);
+          counter.increment();
+        });
+
+        expect(await ctx.redis.publish(channels[0], "a")).toBe(1);
+        expect(await ctx.redis.publish(channels[1], "b")).toBe(1);
+
+        await counter.untilValue(2);
+        expect(received).toEqual({
+          [channels[0]]: ["a"],
+          [channels[1]]: ["b"],
+        });
+
+        await subscriber.unsubscribe(channels);
+      });
+
       test("messages are received in order", async () => {
         const channel = testChannel();
 

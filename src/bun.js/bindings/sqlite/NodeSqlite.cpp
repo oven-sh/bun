@@ -3404,7 +3404,13 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
             continue;
         }
 
-        throwSqliteError(globalObject, scope, dest);
+        // sqlite3_backup_step()'s *return value* is the authoritative
+        // error here. It isn't reliably mirrored onto `dest`'s
+        // sqlite3_errcode() until sqlite3_backup_finish() runs (and
+        // that also clears some codes), so asking `dest` can yield
+        // "not an error"/errcode 0. Node's BackupJob uses the step
+        // return code directly for the rejected error — do the same.
+        throwSqliteMessage(globalObject, scope, r, WTF::String::fromUTF8(sqlite3_errstr(r)));
         sqlite3_backup_finish(backup);
         sqlite3_close_v2(dest);
         return rejectWithPending();
@@ -3412,7 +3418,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
 
     r = sqlite3_backup_finish(backup);
     if (r != SQLITE_OK) {
-        throwSqliteError(globalObject, scope, dest);
+        throwSqliteMessage(globalObject, scope, r, WTF::String::fromUTF8(sqlite3_errstr(r)));
         sqlite3_close_v2(dest);
         return rejectWithPending();
     }

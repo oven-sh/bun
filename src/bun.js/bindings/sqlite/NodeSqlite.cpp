@@ -2001,14 +2001,16 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorReturn, (JSGlobalObject * global
         scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), "StatementSyncIterator"_s));
         return {};
     }
+    // return() is the iterator-protocol cleanup hook (called implicitly by
+    // for-of's IteratorClose on break/return). Cleanup must be tolerant of
+    // already-closed state — throwing here would turn a benign
+    // `for (r of stmt.iterate()) { db.close(); break; }` into an exception.
+    // Matches Node, and this PR's own [Symbol.dispose]() convention.
     JSStatementSync* stmt = self->statement();
-    if (!stmt || stmt->isFinalized()) {
-        return Bun::ERR::INVALID_STATE(scope, globalObject, "statement has been finalized"_s);
-    }
-    if (!self->done()) {
+    if (!self->done() && stmt && !stmt->isFinalized()) {
         sqlite3_reset(stmt->statement());
-        self->setDone();
     }
+    self->setDone();
     return JSValue::encode(createIterResult(vm, globalObject, true, jsNull()));
 }
 

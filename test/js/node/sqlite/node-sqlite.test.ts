@@ -345,6 +345,23 @@ describe("StatementSync.prototype.iterate()", () => {
     expect(() => iter.next()).toThrow(/statement has been reset/);
     db.close();
   });
+
+  test("return() is tolerant of a finalized statement (IteratorClose on break)", () => {
+    const db = setup();
+    const stmt = db.prepare("SELECT n FROM t ORDER BY n");
+    const iter = stmt.iterate();
+    // Closing the db inside the loop body finalizes the statement; the
+    // implicit return() from `break` (IteratorClose) must not turn that
+    // into an exception — cleanup should just report done.
+    expect(() => {
+      for (const _row of iter) {
+        db.close();
+        break;
+      }
+    }).not.toThrow();
+    // Explicit return() on the now-finalized iterator likewise succeeds.
+    expect(iter.return()).toEqual({ __proto__: null, done: true, value: null });
+  });
 });
 
 describe("Session / changeset", () => {

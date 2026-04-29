@@ -52,12 +52,10 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub const Socket = uws.NewSocketHandler(ssl);
         socket: Socket,
-        /// `us_ssl_ctx_t` this client connection was opened with. Owned (built
-        /// from the user's inline `tls:` config) — `us_ssl_ctx_deinit` on
-        /// deinit. Server-accepted sockets, plain TCP, and SecureContext-backed
-        /// connects leave this zeroed; in those cases the ctx lives on the
-        /// Listener / JS SecureContext and is refcounted by C.
-        owned_ssl_ctx: SecureContext.Native = std.mem.zeroes(SecureContext.Native),
+        /// `SSL_CTX*` this client connection was opened with. One owned ref —
+        /// `SSL_CTX_free` on deinit. Server-accepted sockets and plain TCP
+        /// leave this null (the Listener / SecureContext owns the ref there).
+        owned_ssl_ctx: ?*BoringSSL.SSL_CTX = null,
 
         flags: Flags = .{},
         ref_count: RefCount,
@@ -116,7 +114,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             const group = vm.rareData().bunConnectGroup(vm, ssl);
             const kind: uws.SocketKind = if (ssl) .bun_socket_tls else .bun_socket_tcp;
             const flags: i32 = if (this.flags.allow_half_open) uws.LIBUS_SOCKET_ALLOW_HALF_OPEN else 0;
-            const ssl_ctx: ?*uws.SslCtx = if (ssl and this.owned_ssl_ctx.ssl_ctx != null) @ptrCast(&this.owned_ssl_ctx) else null;
+            const ssl_ctx: ?*uws.SslCtx = if (ssl) this.owned_ssl_ctx else null;
 
             switch (connection) {
                 .host => |host| {
@@ -1351,9 +1349,9 @@ pub fn NewSocket(comptime ssl: bool) type {
                 this.connection = null;
                 connection.deinit();
             }
-            if (this.owned_ssl_ctx.ssl_ctx != null) {
-                SecureContext.c.us_ssl_ctx_deinit(&this.owned_ssl_ctx);
-                this.owned_ssl_ctx = std.mem.zeroes(SecureContext.Native);
+            if (this.owned_ssl_ctx) |ctx| {
+                BoringSSL.SSL_CTX_free(ctx);
+                this.owned_ssl_ctx = null;
             }
             bun.destroy(this);
         }
@@ -1446,12 +1444,12 @@ pub fn NewSocket(comptime ssl: bool) type {
             const handlers = try Handlers.fromJS(globalObject, socket_obj, false);
             if (globalObject.hasException()) return .zero;
 
-            // Resolve the `us_ssl_ctx_t`. Prefer a passed `SecureContext` (the
+            // Resolve the `SSL_CTX*`. Prefer a passed `SecureContext` (the
             // memoised `tls.createSecureContext` path) so 10k upgrades share
             // one `SSL_CTX_new`; otherwise build an owned one from inline
-            // `tls:` options.
-            var owned_native = std.mem.zeroes(SecureContext.Native);
-            var native_handle: *SecureContext.Native = undefined;
+            // `tls:` options. Either way `owned_ctx` holds one ref we drop in
+            // deinit; SSL_new() takes its own.
+            var owned_ctx: ?*BoringSSL.SSL_CTX = null;
             var ssl_opts: ?jsc.API.ServerConfig.SSLConfig = null;
             defer if (ssl_opts) |*cfg| cfg.deinit();
 
@@ -1471,10 +1469,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 const sc = SecureContext.fromJS(sc_js) orelse {
                     return globalObject.throwInvalidArgumentTypeValue("secureContext", "SecureContext", sc_js);
                 };
-                // Borrow into per-connection storage so the SecureContext can
-                // be GC'd while this socket is alive.
-                owned_native = uws.SslCtx.initBorrowed(sc.handle());
-                native_handle = &owned_native;
+                owned_ctx = sc.borrow();
                 // servername / ALPN still come from the surrounding tls config.
                 if (try opts.getTruthy(globalObject, "tls")) |t| {
                     if (!t.isBoolean()) ssl_opts = try jsc.API.ServerConfig.SSLConfig.fromJS(jsc.VirtualMachine.get(), globalObject, t);
@@ -1487,15 +1482,14 @@ pub fn NewSocket(comptime ssl: bool) type {
                 }
                 const cfg = &(ssl_opts orelse return globalObject.throw("Expected \"tls\" option", .{}));
                 var create_err: uws.create_bun_socket_error_t = .none;
-                if (SecureContext.c.us_ssl_ctx_init(&owned_native, cfg.asUSockets(), 1, &create_err) == 0) {
+                owned_ctx = cfg.asUSockets().createSSLContext(true, &create_err) orelse {
                     return globalObject.throwValue(create_err.toJS(globalObject));
-                }
-                native_handle = &owned_native;
+                };
             } else {
                 return globalObject.throw("Expected \"tls\" option", .{});
             }
             if (globalObject.hasException()) {
-                if (owned_native.ssl_ctx != null) SecureContext.c.us_ssl_ctx_deinit(&owned_native);
+                if (owned_ctx) |c| BoringSSL.SSL_CTX_free(c);
                 return .zero;
             }
 
@@ -1523,19 +1517,16 @@ pub fn NewSocket(comptime ssl: bool) type {
                     bun.handleOom(bun.default_allocator.dupe(u8, std.mem.span(sn)))
                 else
                     null else null,
-                .owned_ssl_ctx = owned_native,
+                .owned_ssl_ctx = owned_ctx,
             });
-            // Once moved into `tls`, point at its storage so adopt sees the
-            // address that survives this scope.
-            if (owned_native.ssl_ctx != null) native_handle = &tls.owned_ssl_ctx;
 
             const sni: ?[*:0]const u8 = if (cfg) |c| c.server_name else null;
             const group = vm.rareData().bunConnectGroup(vm, true);
             const raw_socket = this.socket.socket.connected;
-            const new_raw = raw_socket.adoptTLS(group, .bun_socket_tls, @ptrCast(native_handle), sni, @sizeOf(*anyopaque), @sizeOf(*anyopaque)) orelse {
+            const new_raw = raw_socket.adoptTLS(group, .bun_socket_tls, owned_ctx.?, sni, @sizeOf(*anyopaque), @sizeOf(*anyopaque)) orelse {
                 const err = BoringSSL.ERR_get_error();
                 defer if (err != 0) BoringSSL.ERR_clear_error();
-                // tls.deinit will us_ssl_ctx_deinit owned_native
+                // tls.deinit drops the owned_ctx ref
                 tls.deref();
                 handlers_ptr.deinit();
                 vm.allocator.destroy(handlers_ptr);

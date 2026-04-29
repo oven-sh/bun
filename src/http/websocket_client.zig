@@ -113,8 +113,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             if (this.deflate) |d| d.deinit();
             this.deflate = null;
             if (this.secure) |s| {
-                s.deinit();
-                bun.destroy(s);
+                bun.BoringSSL.c.SSL_CTX_free(s);
                 this.secure = null;
             }
             // Clean up proxy tunnel if we own one

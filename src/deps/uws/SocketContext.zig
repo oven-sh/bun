@@ -23,13 +23,13 @@ pub const BunSocketContextOptions = extern struct {
     client_renegotiation_limit: u32 = 3,
     client_renegotiation_window: u32 = 600,
 
-    /// Build a `us_ssl_ctx_t` from these options. Caller owns the result and
-    /// must `us_ssl_ctx_deinit` it (which drops the strdup'd passphrase
-    /// ex-data — bare `SSL_CTX_free` would leak it).
-    pub fn createSSLContext(options: BunSocketContextOptions, is_client: bool, err: *uws.create_bun_socket_error_t) ?SslCtx {
-        var out: SslCtx = undefined;
-        if (c.us_ssl_ctx_init(&out, options, @intFromBool(is_client), err) == 0) return null;
-        return out;
+    /// Build a BoringSSL `SSL_CTX*` from these options. Caller owns one ref
+    /// and releases with `SSL_CTX_free` — the passphrase is freed inside this
+    /// call once private-key load completes, so plain `SSL_CTX_free` is
+    /// correct on every path. Policy (verify mode, reneg limits) is encoded on
+    /// the SSL_CTX itself.
+    pub fn createSSLContext(options: BunSocketContextOptions, is_client: bool, err: *uws.create_bun_socket_error_t) ?*BoringSSL.SSL_CTX {
+        return c.us_ssl_ctx_from_options(options, @intFromBool(is_client), err);
     }
 
     /// Best-effort byte count of cert/key/CA material — fed into
@@ -49,35 +49,8 @@ pub const BunSocketContextOptions = extern struct {
     }
 };
 
-/// `struct us_ssl_ctx_t` mirror — also embedded in `SecureContext`.
-pub const SslCtx = extern struct {
-    ssl_ctx: ?*BoringSSL.SSL_CTX,
-    ref_count: u32,
-    client_renegotiation_limit: u32,
-    client_renegotiation_window: u32,
-    reject_unauthorized: u8,
-    request_cert: u8,
-    is_client: u8,
-    borrowed: u8,
-
-    /// Value-typed copy that shares `from`'s `SSL_CTX*` (up_ref'd) but owns
-    /// its own refcount. Safe to embed in a per-connection object whose
-    /// lifetime is independent of the `SecureContext` JS wrapper.
-    pub fn initBorrowed(from: *const SslCtx) SslCtx {
-        var out: SslCtx = undefined;
-        c.us_ssl_ctx_init_borrowed(&out, from);
-        return out;
-    }
-
-    pub fn deinit(self: *SslCtx) void {
-        c.us_ssl_ctx_deinit(self);
-    }
-};
-
 pub const c = struct {
-    pub extern fn us_ssl_ctx_init(*SslCtx, BunSocketContextOptions, c_int, *uws.create_bun_socket_error_t) c_int;
-    pub extern fn us_ssl_ctx_init_borrowed(*SslCtx, *const SslCtx) void;
-    pub extern fn us_ssl_ctx_deinit(*SslCtx) void;
+    pub extern fn us_ssl_ctx_from_options(BunSocketContextOptions, c_int, *uws.create_bun_socket_error_t) ?*BoringSSL.SSL_CTX;
     pub extern fn us_ssl_ctx_live_count() c_long;
 };
 

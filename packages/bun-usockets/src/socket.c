@@ -273,10 +273,7 @@ struct us_socket_t *us_socket_close(struct us_socket_t *s, int code, void *reaso
                          : us_dispatch_close(s, code, reason);
         }
 
-        if (s->ssl) {
-            us_internal_ssl_data_free(s->ssl);
-            s->ssl = NULL;
-        }
+        us_internal_ssl_detach(s);
 
         /* Link this socket to the close-list and let it be deleted after this iteration */
         s->next = loop->data.closed_head;
@@ -311,10 +308,7 @@ struct us_socket_t *us_socket_detach(struct us_socket_t *s) {
         }
         us_poll_stop((struct us_poll_t *) s, loop);
 
-        if (s->ssl) {
-            us_internal_ssl_data_free(s->ssl);
-            s->ssl = NULL;
-        }
+        us_internal_ssl_detach(s);
 
         /* Link this socket to the close-list and let it be deleted after this iteration */
         s->next = loop->data.closed_head;

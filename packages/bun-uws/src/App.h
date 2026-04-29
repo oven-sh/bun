@@ -94,15 +94,14 @@ struct TemplatedApp {
 private:
     /* The app always owns at least one http context, but creates websocket contexts on demand */
     HttpContext<SSL> *httpContext;
-    /* Shared SSL_CTX + policy for every accepted socket. Unused (ssl_ctx=null)
-     * for plain HTTP. Built once in the constructor; the listener up_ref's it. */
-    us_ssl_ctx_t sslCtx{};
-    bool sslCtxValid = false;
+    /* Shared SSL_CTX for every accepted socket. nullptr for plain HTTP. Built
+     * once in the constructor; the listener up_ref's it; SSL_CTX_free in dtor. */
+    void /* SSL_CTX */ *sslCtx = nullptr;
     /* SNI: the tree hangs off the listen socket, but addServerName() is allowed
      * before listen(). Queue them and replay onto each us_listen_socket_t. */
     struct PendingServerName {
         std::string hostname;
-        us_ssl_ctx_t ctx;
+        void /* SSL_CTX */ *ctx;
         HttpRouter<typename HttpContextData<SSL>::RouterData> *router;
     };
     std::vector<PendingServerName> pendingServerNames;
@@ -121,19 +120,19 @@ public:
 
         /* Do nothing if not even on SSL */
         if constexpr (SSL) {
-            us_ssl_ctx_t domainCtx{};
             enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
-            if (!us_ssl_ctx_init(&domainCtx, options, /*is_client*/ 0, &err)) {
+            void *domainCtx = us_ssl_ctx_from_options(options, /*is_client*/ 0, &err);
+            if (!domainCtx) {
                 if (success) *success = false;
                 return std::move(*this);
             }
             auto *domainRouter = new HttpRouter<typename HttpContextData<SSL>::RouterData>();
             int result = 0;
             for (auto *ls : listenSockets) {
-                result |= us_listen_socket_add_server_name(ls, hostname_pattern.c_str(), &domainCtx, domainRouter);
+                result |= us_listen_socket_add_server_name(ls, hostname_pattern.c_str(), domainCtx, domainRouter);
             }
-            /* Queue for any listeners not yet created. We hold the original
-             * domainCtx (ref_count=1); each listen socket took its own ref. */
+            /* Queue for any listeners not yet created. We hold one SSL_CTX ref;
+             * each listen socket took its own via SSL_CTX_up_ref. */
             pendingServerNames.push_back({hostname_pattern, domainCtx, domainRouter});
             if (success) *success = result == 0;
         }
@@ -152,7 +151,7 @@ public:
             }
             for (auto it = pendingServerNames.begin(); it != pendingServerNames.end(); ) {
                 if (it->hostname == hostname_pattern) {
-                    us_ssl_ctx_deinit(&it->ctx);
+                    us_internal_ssl_ctx_unref(it->ctx);
                     /* router already deleted above if it was on a listener; if
                      * never listened, delete here. */
                     if (listenSockets.empty()) delete it->router;
@@ -175,7 +174,7 @@ public:
 
     /* Returns the SSL_CTX* of this app, or nullptr. */
     void *getNativeHandle() {
-        return sslCtxValid ? sslCtx.ssl_ctx : nullptr;
+        return sslCtx;
     }
 
     /* Attaches a "filter" function to track socket connections/disconnections */
@@ -238,9 +237,9 @@ public:
 
         if constexpr (SSL) {
             for (auto &p : pendingServerNames) {
-                us_ssl_ctx_deinit(&p.ctx);
+                us_internal_ssl_ctx_unref(p.ctx);
             }
-            if (sslCtxValid) us_ssl_ctx_deinit(&sslCtx);
+            us_internal_ssl_ctx_unref(sslCtx);
         }
 
         /* Delete TopicTree */
@@ -269,8 +268,8 @@ private:
     TemplatedApp(SocketContextOptions options) {
         if constexpr (SSL) {
             enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
-            sslCtxValid = us_ssl_ctx_init(&sslCtx, options, /*is_client*/ 0, &err) != 0;
-            if (!sslCtxValid) { httpContext = nullptr; return; }
+            sslCtx = us_ssl_ctx_from_options(options, /*is_client*/ 0, &err);
+            if (!sslCtx) { httpContext = nullptr; return; }
         }
         httpContext = HttpContext<SSL>::create(Loop::get(), options.request_cert, options.reject_unauthorized);
     }
@@ -630,7 +629,7 @@ private:
         listenSockets.push_back(ls);
         if constexpr (SSL) {
             for (auto &p : pendingServerNames) {
-                us_listen_socket_add_server_name(ls, p.hostname.c_str(), &p.ctx, p.router);
+                us_listen_socket_add_server_name(ls, p.hostname.c_str(), p.ctx, p.router);
             }
             if (httpContext->getSocketContextData()->missingServerNameHandler) {
                 us_listen_socket_on_server_name(ls, &onMissingServerName);
@@ -639,7 +638,7 @@ private:
         return ls;
     }
 
-    void *sslCtxOrNull() { return (SSL && sslCtxValid) ? &sslCtx : nullptr; }
+    void *sslCtxOrNull() { return SSL ? sslCtx : nullptr; }
 
 public:
     /* Host, port, callback */

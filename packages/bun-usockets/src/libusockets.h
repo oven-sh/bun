@@ -378,39 +378,26 @@ enum create_bun_socket_error_t {
     CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS,
 };
 
-/* Shared TLS context. The Zig `SecureContext` JS class embeds one of these
- * and passes its address to listen/connect/adopt; openssl.c reads the policy
- * fields directly at handshake / renegotiation time and SSL_new()'s off
- * `ssl_ctx`. Layout MUST match `SecureContext.Native` in SecureContext.zig
- * (asserted there). Refcounted so a borrow outlives a GC'd SecureContext. */
-struct us_ssl_ctx_t {
-    void /* SSL_CTX */ *ssl_ctx;
-    uint32_t ref_count;
-    uint32_t client_renegotiation_limit;
-    uint32_t client_renegotiation_window;
-    uint8_t reject_unauthorized;
-    uint8_t request_cert;
-    uint8_t is_client;
-    /* 1 = `ssl_ctx` is an SSL_CTX_up_ref()'d borrow of another wrapper's
-     * native; deinit must ONLY SSL_CTX_free() (drop the borrow), not free the
-     * passphrase ex-data or touch the live counter — the owning wrapper does
-     * that exactly once. Set by us_ssl_ctx_init_borrowed(). */
-    uint8_t borrowed;
-};
-
-int us_ssl_ctx_init(struct us_ssl_ctx_t *out,
+/* Build an SSL_CTX from options. Returns the BoringSSL SSL_CTX*; caller owns
+ * one reference and releases with SSL_CTX_free() (no wrapper struct — the
+ * SSL_CTX's own refcount is the refcount). The strdup'd passphrase is freed
+ * inside this call once private-key load completes, so a plain SSL_CTX_free()
+ * is sufficient on every path.
+ *
+ * Policy that BoringSSL doesn't natively store (client renegotiation limits)
+ * is attached as SSL_CTX ex_data; verify mode (reject_unauthorized /
+ * request_cert) is encoded via SSL_CTX_set_verify() and recoverable from the
+ * SSL_CTX itself.
+ *
+ * All `void *ssl_ctx` parameters elsewhere in this header are raw `SSL_CTX*`. */
+void /* SSL_CTX */ *us_ssl_ctx_from_options(
     struct us_bun_socket_context_options_t options, int is_client,
     enum create_bun_socket_error_t *err);
-/* Copy `from`'s policy fields, SSL_CTX_up_ref() its native, and mark the copy
- * as a borrow. The result is a value-typed wrapper safe to store on a
- * per-connection object whose lifetime is independent of `from`'s. */
-void us_ssl_ctx_init_borrowed(struct us_ssl_ctx_t *out, const struct us_ssl_ctx_t *from);
-void us_ssl_ctx_deinit(struct us_ssl_ctx_t *ctx);
+/* SSL_CTX_up_ref / SSL_CTX_free without an OpenSSL include — for C++ callers
+ * (uWS App.h) that hold ssl_ctx as void*. */
+void us_internal_ssl_ctx_up_ref(void *ssl_ctx);
+void us_internal_ssl_ctx_unref(void *ssl_ctx);
 long us_ssl_ctx_live_count(void);
-
-/* All `void *ssl_ctx` parameters elsewhere in this header are
- * `struct us_ssl_ctx_t *` (kept opaque so C++ callers can pass NULL without
- * the include). */
 
 /* Public interfaces for loops */
 

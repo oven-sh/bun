@@ -392,7 +392,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         us_internal_socket_group_link_socket(accept_group, s);
 
                         if (listen_socket->ssl_ctx) {
-                            s->ssl = us_internal_ssl_data_create(s, listen_socket->ssl_ctx, /*is_client*/ 0, NULL);
+                            us_internal_ssl_attach(s, listen_socket->ssl_ctx, /*is_client*/ 0, NULL);
                             us_internal_ssl_on_open(s, 0, bsd_addr_get_ip(&addr), bsd_addr_get_ip_length(&addr));
                         } else {
                             us_dispatch_open(s, 0, bsd_addr_get_ip(&addr), bsd_addr_get_ip_length(&addr));

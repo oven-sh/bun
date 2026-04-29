@@ -346,7 +346,7 @@ pub fn createInstance(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
     const tls_object = arguments[6];
 
     var tls_config: jsc.API.ServerConfig.SSLConfig = .{};
-    var secure: ?uws.SslCtx = null;
+    var secure: ?*uws.SslCtx = null;
     if (ssl_mode != .disable) {
         tls_config = if (tls_object.isBoolean() and tls_object.toBoolean())
             .{}
@@ -417,7 +417,7 @@ pub fn createInstance(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
         if (entry[0].len > 0 and std.mem.indexOfScalar(u8, entry[0], 0) != null) {
             bun.default_allocator.free(options_buf);
             tls_config.deinit();
-            if (secure) |*s| s.deinit();
+            if (secure) |s| bun.BoringSSL.c.SSL_CTX_free(s);
             return globalObject.throwInvalidArguments(entry[1] ++ " must not contain null bytes", .{});
         }
     }

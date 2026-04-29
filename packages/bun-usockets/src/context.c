@@ -391,7 +391,7 @@ struct us_socket_t *us_socket_group_connect_resolved_dns(struct us_socket_group_
      * the SSL state now; on_open will see s->ssl != NULL and route through the
      * TLS layer. */
     if (ssl_ctx) {
-        socket->ssl = us_internal_ssl_data_create(socket, ssl_ctx, 1, NULL);
+        us_internal_ssl_attach(socket, ssl_ctx, 1, NULL);
     }
 
     us_internal_socket_group_link_socket(group, socket);
@@ -506,7 +506,7 @@ struct us_socket_t *us_socket_group_connect_unix(struct us_socket_group_t *group
     us_internal_init_connect_socket(connect_socket, group, kind, options);
 
     if (ssl_ctx) {
-        connect_socket->ssl = us_internal_ssl_data_create(connect_socket, ssl_ctx, 1, NULL);
+        us_internal_ssl_attach(connect_socket, ssl_ctx, 1, NULL);
     }
 
     us_internal_socket_group_link_socket(group, connect_socket);
@@ -631,7 +631,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
             }
             /* Attach TLS now that we know which candidate won. */
             if (c->ssl_ctx) {
-                s->ssl = us_internal_ssl_data_create(s, c->ssl_ctx, 1, NULL);
+                us_internal_ssl_attach(s, c->ssl_ctx, 1, NULL);
             }
             Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
             us_connecting_socket_free(c);

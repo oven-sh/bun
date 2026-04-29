@@ -285,8 +285,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 if (ssl_config) |config| if (config.requires_custom_request_ctx) {
                     var err: uws.create_bun_socket_error_t = .none;
                     if (config.asUSocketsForClientVerification().createSSLContext(true, &err)) |ctx| {
-                        client.secure = bun.new(uws.SslCtx, ctx);
-                        break :brk client.secure;
+                        // Owned ref; transferred to the connected WebSocket on
+                        // upgrade, freed in `deinit` if we never get that far.
+                        client.secure = ctx;
+                        break :brk ctx;
                     }
                     log("Failed to create custom SSL context: {s}", .{@tagName(err)});
                 };
@@ -405,8 +407,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 this.ssl_config = null;
             }
             if (this.secure) |s| {
-                s.deinit();
-                bun.destroy(s);
+                bun.BoringSSL.c.SSL_CTX_free(s);
                 this.secure = null;
             }
         }

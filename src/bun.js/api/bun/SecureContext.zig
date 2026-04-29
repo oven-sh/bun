@@ -1,11 +1,10 @@
-//! Native backing for `node:tls` `SecureContext`. The shared TLS state is the
-//! embedded `Native` (`us_ssl_ctx_t`) — `SSL_CTX*` plus the handful of policy
-//! fields the C handshake/renegotiation code needs but BoringSSL doesn't store
-//! (`reject_unauthorized`, `request_cert`, reneg limits). Every
-//! `tls.connect`/`upgradeTLS`/`addContext` that names this object passes
-//! `&this.native` to listen/connect/adopt; the C side `SSL_CTX_up_ref`s and
-//! reads policy directly off the struct, so the expensive cert/key/CA parse
-//! happens once.
+//! Native backing for `node:tls` `SecureContext`. Owns one BoringSSL
+//! `SSL_CTX*`; every `tls.connect`/`upgradeTLS`/`addContext` that names this
+//! object passes that pointer to listen/connect/adopt, where `SSL_new()`
+//! up-refs it for each socket. Policy (verify mode, reneg limits) is encoded
+//! on the SSL_CTX itself in `us_ssl_ctx_from_options`, so the SSL_CTX's own
+//! refcount is the only refcount and a socket safely outlives a GC'd
+//! SecureContext.
 //!
 //! `tls.ts` memoises `createSecureContext()` by config hash, so the common
 //! "one config, thousands of connections" pattern allocates one of these and
@@ -17,19 +16,10 @@ pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 
-native: Native,
+ctx: *BoringSSL.SSL_CTX,
 /// Approximate cert/key/CA byte length plus the BoringSSL `SSL_CTX` floor
 /// (~50 KB), so the GC can account for the off-heap allocation.
 extra_memory: usize,
-
-/// `struct us_ssl_ctx_t`. Single source of truth lives in
-/// `uws/SocketContext.zig` so non-JS callers (HTTP thread, SQL drivers) can
-/// build one without pulling in the JSC class.
-pub const Native = uws.SocketContext.SslCtx;
-
-comptime {
-    if (@sizeOf(Native) != 24) @compileError("us_ssl_ctx_t layout drift vs libusockets.h");
-}
 
 pub fn constructor(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*SecureContext {
     const args = callframe.arguments();
@@ -44,24 +34,25 @@ pub fn constructor(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
 pub fn create(global: *jsc.JSGlobalObject, config: *const SSLConfig, is_client: bool) bun.JSError!*SecureContext {
     const ctx_opts = config.asUSockets();
     var err: uws.create_bun_socket_error_t = .none;
-    const native = ctx_opts.createSSLContext(is_client, &err) orelse {
+    const ctx = ctx_opts.createSSLContext(is_client, &err) orelse {
         return global.throwValue(err.toJS(global));
     };
     return bun.new(SecureContext, .{
-        .native = native,
+        .ctx = ctx,
         .extra_memory = ctx_opts.approxCertBytes() + ssl_ctx_base_cost,
     });
 }
 
-/// Hand the C-visible context to listen/connect/adopt. The C side bumps
-/// `ref_count` while it holds it, so this is safe even if JS drops its ref
-/// mid-connection.
-pub inline fn handle(this: *SecureContext) *Native {
-    return &this.native;
+/// `SSL_CTX_up_ref` and return — for callers that want to outlive this
+/// wrapper's GC. Most paths just pass `this.ctx` directly and let `SSL_new`
+/// take its own ref.
+pub fn borrow(this: *SecureContext) *BoringSSL.SSL_CTX {
+    _ = BoringSSL.SSL_CTX_up_ref(this.ctx);
+    return this.ctx;
 }
 
 pub fn finalize(this: *SecureContext) callconv(.c) void {
-    this.native.deinit();
+    BoringSSL.SSL_CTX_free(this.ctx);
     bun.destroy(this);
 }
 
@@ -70,7 +61,7 @@ pub fn memoryCost(this: *SecureContext) usize {
 }
 
 pub fn getNativeHandle(this: *SecureContext, _: *jsc.JSGlobalObject) jsc.JSValue {
-    return jsc.JSValue.jsNumber(@as(f64, @floatFromInt(@intFromPtr(this.native.ssl_ctx))));
+    return jsc.JSValue.jsNumber(@as(f64, @floatFromInt(@intFromPtr(this.ctx))));
 }
 
 /// Exposed via `bun:internal-for-testing` so churn tests can assert

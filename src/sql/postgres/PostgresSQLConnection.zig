@@ -35,7 +35,7 @@ authentication_state: AuthenticationState = .{ .pending = {} },
 
 /// `us_ssl_ctx_t` built from `tls_config` at construct time. Applied via
 /// `us_socket_adopt_tls` when the server replies `S` to the SSLRequest.
-secure: ?uws.SslCtx = null,
+secure: ?*uws.SslCtx = null,
 tls_config: jsc.API.ServerConfig.SSLConfig = .{},
 tls_status: TLSStatus = .none,
 ssl_mode: SSLMode = .disable,
@@ -177,7 +177,7 @@ pub fn setupTLS(this: *PostgresSQLConnection) void {
         this.socket.SocketTCP.socket.connected,
         tls_group,
         @intFromEnum(uws.SocketKind.postgres_tls),
-        &this.secure.?,
+        this.secure.?,
         this.tls_config.server_name,
         @sizeOf(*anyopaque),
         @sizeOf(*anyopaque),
@@ -608,7 +608,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     const tls_object = arguments[6];
 
     var tls_config: jsc.API.ServerConfig.SSLConfig = .{};
-    var secure: ?uws.SslCtx = null;
+    var secure: ?*uws.SslCtx = null;
     if (ssl_mode != .disable) {
         tls_config = if (tls_object.isBoolean() and tls_object.toBoolean())
             .{}
@@ -680,7 +680,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         if (entry[0].len > 0 and std.mem.indexOfScalar(u8, entry[0], 0) != null) {
             bun.default_allocator.free(options_buf);
             tls_config.deinit();
-            if (secure) |*s| s.deinit();
+            if (secure) |s| bun.BoringSSL.c.SSL_CTX_free(s);
             return globalObject.throwInvalidArguments(entry[1] ++ " must not contain null bytes", .{});
         }
     }
@@ -887,7 +887,7 @@ pub fn deinit(this: *@This()) void {
     bun.freeSensitive(bun.default_allocator, this.options_buf);
 
     this.tls_config.deinit();
-    if (this.secure) |*s| s.deinit();
+    if (this.secure) |s| bun.BoringSSL.c.SSL_CTX_free(s);
     bun.default_allocator.destroy(this);
 }
 

@@ -47,10 +47,10 @@ ws_upgrade_group: uws.SocketGroup = .{},
 ws_upgrade_tls_group: uws.SocketGroup = .{},
 ws_client_group: uws.SocketGroup = .{},
 ws_client_tls_group: uws.SocketGroup = .{},
-/// Default `us_ssl_ctx_t` for the WS client / Valkey TLS path when no custom
-/// CA is supplied. Built once on first use; replaces the `valkey_context.tls`
-/// / shared C++ WS context.
-default_client_ssl_ctx: ?uws.SslCtx = null,
+/// Default `SSL_CTX*` for the WS client / Valkey TLS path when no custom CA
+/// is supplied. Built once on first use; replaces the `valkey_context.tls` /
+/// shared C++ WS context.
+default_client_ssl_ctx: ?*uws.SslCtx = null,
 
 mime_types: ?bun.http.MimeType.Map = null,
 
@@ -725,7 +725,7 @@ pub fn wsClientGroup(rare: *RareData, vm: *jsc.VirtualMachine, comptime ssl: boo
     return rare.lazyGroup(vm, if (ssl) "ws_client_tls_group" else "ws_client_group");
 }
 
-/// Shared `us_ssl_ctx_t` for client connects that didn't supply a custom CA
+/// Shared `SSL_CTX*` for client connects that didn't supply a custom CA
 /// (`Valkey({tls: true})`, `new WebSocket("wss://…")`). The old code allocated
 /// a fresh `us_socket_context_t` per such case and cached the pointer; now
 /// the SSL_CTX is the only thing worth caching.
@@ -739,7 +739,7 @@ pub fn defaultClientSslCtx(rare: *RareData) *uws.SslCtx {
             .{err.message() orelse "unknown"},
         );
     }
-    return &rare.default_client_ssl_ctx.?;
+    return rare.default_client_ssl_ctx.?;
 }
 
 pub fn globalDNSResolver(rare: *RareData, vm: *jsc.VirtualMachine) *api.dns.Resolver {
@@ -848,7 +848,7 @@ pub fn deinit(this: *RareData) void {
 
     this.valkey_context.deinit();
 
-    if (this.default_client_ssl_ctx) |*s| s.deinit();
+    if (this.default_client_ssl_ctx) |s| bun.BoringSSL.c.SSL_CTX_free(s);
     inline for (.{
         "bun_connect_group_tcp", "bun_connect_group_tls",
         "spawn_ipc_group",       "test_parallel_ipc_group",

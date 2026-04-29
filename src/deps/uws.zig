@@ -11,10 +11,13 @@ pub const SocketKind = @import("./uws/SocketKind.zig").SocketKind;
 pub const vtable = @import("./uws/vtable.zig");
 pub const dispatch = @import("./uws/dispatch.zig");
 /// The opaque `us_socket_context_t` is gone; this namespace now only carries
-/// the SSL-options extern struct (`SSLConfig.asUSockets()` return type) and
-/// the shared `us_ssl_ctx_t` mirror that listen/connect/adopt take.
+/// the SSL-options extern struct (`SSLConfig.asUSockets()` return type).
 pub const SocketContext = @import("./uws/SocketContext.zig");
-pub const SslCtx = SocketContext.SslCtx;
+/// Bare BoringSSL `SSL_CTX`. `SSL_CTX_up_ref`/`SSL_CTX_free` is the refcount;
+/// policy (verify mode, reneg limits) is encoded on the SSL_CTX itself via
+/// `us_ssl_ctx_from_options`, so there's no wrapper struct. `?*SslCtx` is what
+/// listen/connect/adopt take.
+pub const SslCtx = bun.BoringSSL.c.SSL_CTX;
 pub const ConnectingSocket = @import("./uws/ConnectingSocket.zig").ConnectingSocket;
 pub const InternalLoopData = @import("./uws/InternalLoopData.zig").InternalLoopData;
 pub const WindowsNamedPipe = @import("./uws/WindowsNamedPipe.zig");

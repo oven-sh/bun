@@ -228,7 +228,7 @@ pub const JSValkeyClient = struct {
     _subscription_ctx: SubscriptionCtx,
     /// `us_ssl_ctx_t` for `tls: { …custom CA… }`. `tls: true` borrows
     /// `RareData.defaultClientSslCtx()` instead; `tls: false` leaves this null.
-    _secure: ?uws.SslCtx = null,
+    _secure: ?*uws.SslCtx = null,
 
     timer: Timer.EventLoopTimer = .{
         .tag = .ValkeyConnectionTimeout,
@@ -1126,7 +1126,7 @@ pub const JSValkeyClient = struct {
                         return;
                     };
                 }
-                break :brk &this._secure.?;
+                break :brk this._secure.?;
             },
         };
 
@@ -1181,7 +1181,7 @@ pub const JSValkeyClient = struct {
 
     fn deinit(this: *JSValkeyClient) void {
         bun.debugAssert(this.client.socket.isClosed());
-        if (this._secure) |*s| s.deinit();
+        if (this._secure) |s| bun.BoringSSL.c.SSL_CTX_free(s);
         this.client.deinit(null);
         this.poll_ref.disable();
         this.stopTimers();

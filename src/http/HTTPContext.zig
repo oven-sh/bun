@@ -85,9 +85,10 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
         /// struct is either a `http_thread.{http,https}_context` static or a
         /// `bun.default_allocator.create()` for custom-SSL entries.
         group: uws.SocketGroup = .{},
-        /// `us_ssl_ctx_t` built from this context's SSLConfig (or the default
-        /// `request_cert=1` opts). Only meaningful when `comptime ssl`.
-        secure: SslCtx = std.mem.zeroes(SslCtx),
+        /// `SSL_CTX*` built from this context's SSLConfig (or the default
+        /// `request_cert=1` opts). One owned ref; `SSL_CTX_free` on deinit.
+        /// Only meaningful when `comptime ssl`.
+        secure: ?*BoringSSL.SSL_CTX = null,
         /// HTTP/2 sessions with at least one active stream, available for
         /// concurrent attachment if `hasHeadroom()`.
         active_h2_sessions: std.ArrayListUnmanaged(*H2.ClientSession) = .{},
@@ -172,7 +173,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             if (comptime !ssl) {
                 unreachable;
             }
-            return this.secure.ssl_ctx.?;
+            return this.secure.?;
         }
 
         fn deinit(this: *@This()) void {
@@ -219,7 +220,9 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             // the loop never dereferences a freed `*Context` via `group->ext`.
             this.group.closeAll();
             this.group.deinit();
-            if (comptime ssl) this.secure.deinit();
+            if (comptime ssl) {
+                if (this.secure) |c| BoringSSL.SSL_CTX_free(c);
+            }
             bun.default_allocator.destroy(this);
         }
 
@@ -710,7 +713,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             const socket = try HTTPSocket.connectUnixGroup(
                 &this.group,
                 kind,
-                if (comptime ssl) &this.secure else null,
+                if (comptime ssl) this.secure else null,
                 socket_path,
                 ActiveSocket.init(client).ptr(),
                 false, // dont allow half-open sockets
@@ -800,7 +803,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             const socket = try HTTPSocket.connectGroup(
                 &this.group,
                 kind,
-                if (comptime ssl) &this.secure else null,
+                if (comptime ssl) this.secure else null,
                 hostname,
                 port,
                 ActiveSocket.init(client).ptr(),

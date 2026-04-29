@@ -28,7 +28,7 @@ statements: PreparedStatementsMap = .{},
 #password: []const u8 = "",
 #options: []const u8 = "",
 #options_buf: []const u8 = "",
-#secure: ?uws.SslCtx = null,
+#secure: ?*uws.SslCtx = null,
 #tls_config: jsc.API.ServerConfig.SSLConfig = .{},
 #tls_status: TLSStatus = .none,
 #ssl_mode: SSLMode = .disable,
@@ -41,7 +41,7 @@ pub fn init(
     options: []const u8,
     options_buf: []const u8,
     tls_config: jsc.API.ServerConfig.SSLConfig,
-    secure: ?uws.SslCtx,
+    secure: ?*uws.SslCtx,
     ssl_mode: SSLMode,
 ) @This() {
     return .{
@@ -189,8 +189,8 @@ pub fn cleanup(this: *MySQLConnection) void {
 
     tls_config.deinit();
     this.#auth_data.deinit();
-    if (this.#secure) |*s| {
-        s.deinit();
+    if (this.#secure) |s| {
+        bun.BoringSSL.c.SSL_CTX_free(s);
         this.#secure = null;
     }
 
@@ -207,7 +207,7 @@ pub fn upgradeToTLS(this: *MySQLConnection) !void {
             this.#socket.SocketTCP.socket.connected,
             tls_group,
             @intFromEnum(uws.SocketKind.mysql_tls),
-            &this.#secure.?,
+            this.#secure.?,
             this.#tls_config.server_name,
             @sizeOf(*anyopaque),
             @sizeOf(*anyopaque),

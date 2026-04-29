@@ -11,12 +11,10 @@ connection: UnixOrHost,
 /// listener. `group.ext` = `*Listener`, so the dispatch handler recovers us
 /// from the socket without a context-ext lookup.
 group: uws.SocketGroup = .{},
-/// SSL_CTX + handshake policy for accepted sockets. Owned; deinit on close.
-secure_ctx: SecureContext.Native = std.mem.zeroes(SecureContext.Native),
-/// Heap-allocated `us_ssl_ctx_t` per `addContext()` SNI hostname. The C SNI
-/// tree holds borrowed pointers into these; freed in `deinit` after the listen
-/// socket closes (which drops the C-side refs first).
-sni_contexts: std.ArrayList(*uws.SslCtx) = .empty,
+/// `SSL_CTX*` for accepted sockets. One owned ref; `SSL_CTX_free` on close.
+/// `SSL_new()` per-accept takes its own ref, so accepted sockets outlive a
+/// stopped listener safely.
+secure_ctx: ?*BoringSSL.SSL_CTX = null,
 ssl: bool = false,
 protos: ?[]const u8 = null,
 
@@ -209,7 +207,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
     this.group.init(uws.Loop.get(), null, this);
     var listener_allocated = true;
     errdefer if (listener_allocated) {
-        if (this.secure_ctx.ssl_ctx != null) this.secure_ctx.deinit();
+        if (this.secure_ctx) |c| BoringSSL.SSL_CTX_free(c);
         if (this.protos) |p| bun.default_allocator.free(p);
         this.group.deinit();
         handlers.vm.allocator.destroy(this);
@@ -221,7 +219,6 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
             return globalObject.throwValue(create_err.toJS(globalObject));
         };
     }
-    const ssl_ctx: ?*uws.SslCtx = if (ssl_enabled) &this.secure_ctx else null;
     const kind: uws.SocketKind = if (ssl_enabled) .bun_listener_tls else .bun_listener_tcp;
 
     const hostname = bun.handleOom(hostname_or_unix.intoOwnedSlice(bun.default_allocator));
@@ -236,14 +233,14 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
             .host => |host| {
                 const hostz = bun.handleOom(bun.default_allocator.dupeZ(u8, host.host));
                 defer bun.default_allocator.free(hostz);
-                const ls = this.group.listen(kind, ssl_ctx, hostz.ptr, host.port, socket_flags, @sizeOf(?*anyopaque), &errno);
+                const ls = this.group.listen(kind, this.secure_ctx, hostz.ptr, host.port, socket_flags, @sizeOf(?*anyopaque), &errno);
                 if (ls) |s| connection.host.port = @intCast(s.getLocalPort());
                 break :brk ls;
             },
             .unix => |u| {
                 const pathz = bun.handleOom(bun.default_allocator.dupeZ(u8, u));
                 defer bun.default_allocator.free(pathz);
-                break :brk this.group.listenUnix(kind, ssl_ctx, pathz.ptr, pathz.len, socket_flags, @sizeOf(?*anyopaque), &errno);
+                break :brk this.group.listenUnix(kind, this.secure_ctx, pathz.ptr, pathz.len, socket_flags, @sizeOf(?*anyopaque), &errno);
             },
             .fd => |fd| {
                 const err: bun.jsc.SystemError = .{
@@ -280,7 +277,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
     if (ssl) |ssl_config| {
         if (ssl_config.server_name) |server_name| {
             if (std.mem.span(server_name).len > 0) {
-                _ = listen_socket.addServerName(server_name, &this.secure_ctx, null);
+                _ = listen_socket.addServerName(server_name, this.secure_ctx.?, null);
             }
         }
     }
@@ -371,16 +368,13 @@ pub fn addServerName(this: *Listener, global: *jsc.JSGlobalObject, hostname: JSV
         var cfg = ssl_config;
         defer cfg.deinit();
         var create_err: uws.create_bun_socket_error_t = .none;
-        // The SNI tree stores a `us_ssl_ctx_t*` (not a bare SSL_CTX*), so the
-        // wrapper must outlive this call. Heap-allocate and let the listener's
-        // `sni_contexts` own it; the C side bumps `ref_count` and the deinit
-        // path drops it when the listen socket closes.
-        const sni_ctx = bun.new(uws.SslCtx, cfg.asUSockets().createSSLContext(false, &create_err) orelse {
+        const sni_ctx = cfg.asUSockets().createSSLContext(false, &create_err) orelse {
             return global.throwValue(create_err.toJS(global));
-        });
-        bun.handleOom(this.sni_contexts.append(bun.default_allocator, sni_ctx));
+        };
+        // The C SNI tree SSL_CTX_up_ref()s; drop our build ref once added.
         ls.removeServerName(server_name);
         _ = ls.addServerName(server_name, sni_ctx, null);
+        BoringSSL.SSL_CTX_free(sni_ctx);
     }
 
     return .js_undefined;
@@ -464,12 +458,7 @@ pub fn deinit(this: *Listener) void {
         this.group.closeAll();
     }
     this.group.deinit();
-    if (this.secure_ctx.ssl_ctx != null) this.secure_ctx.deinit();
-    for (this.sni_contexts.items) |ctx| {
-        ctx.deinit();
-        bun.destroy(ctx);
-    }
-    this.sni_contexts.deinit(bun.default_allocator);
+    if (this.secure_ctx) |ctx| BoringSSL.SSL_CTX_free(ctx);
 
     this.connection.deinit();
     if (this.protos) |protos| {
@@ -714,15 +703,15 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
         }
     }
 
-    // Build the SSL_CTX once here (or pull it from a passed SecureContext);
-    // doConnect hands `&socket.owned_ssl_ctx` to the per-VM connect group.
-    var owned_ssl_ctx = std.mem.zeroes(uws.SslCtx);
+    // Build the SSL_CTX once here (or borrow from a passed SecureContext);
+    // doConnect hands `socket.owned_ssl_ctx` to the per-VM connect group.
+    var owned_ssl_ctx: ?*BoringSSL.SSL_CTX = null;
     if (ssl_enabled) {
         // node:tls passes the native SecureContext as `tls.secureContext` so
         // we share its already-built SSL_CTX (CA bundle, cert chain, ciphers)
-        // instead of rebuilding ~50 KB of BoringSSL state per connect. The
-        // borrow up_ref()s the SSL_CTX*; the SecureContext can be GC'd while
-        // the connection is alive without taking the cert store with it.
+        // instead of rebuilding ~50 KB of BoringSSL state per connect.
+        // SSL_new() up_ref()s again per socket, so the SecureContext can be
+        // GC'd while the connection is alive.
         const native_sc: ?*SecureContext = blk: {
             const tls_js = (try opts.getTruthy(globalObject, "tls")) orelse break :blk null;
             if (!tls_js.isObject()) break :blk null;
@@ -730,14 +719,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
             break :blk SecureContext.fromJS(sc_js);
         };
         if (native_sc) |sc| {
-            owned_ssl_ctx = uws.SslCtx.initBorrowed(sc.handle());
-            // Per-connection policy can diverge from the cached context's
-            // (e.g. `rejectUnauthorized: false` on this connect only).
-            if (ssl) |ssl_cfg| {
-                owned_ssl_ctx.reject_unauthorized = @intFromBool(ssl_cfg.reject_unauthorized != 0);
-                owned_ssl_ctx.request_cert = @intFromBool(ssl_cfg.request_cert != 0);
-            }
-            owned_ssl_ctx.is_client = 1;
+            owned_ssl_ctx = sc.borrow();
         } else if (ssl) |ssl_cfg| {
             var create_err: uws.create_bun_socket_error_t = .none;
             owned_ssl_ctx = ssl_cfg.asUSockets().createSSLContext(true, &create_err) orelse {
@@ -745,7 +727,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
             };
         }
     }
-    errdefer if (owned_ssl_ctx.ssl_ctx != null) owned_ssl_ctx.deinit();
+    errdefer if (owned_ssl_ctx) |c| BoringSSL.SSL_CTX_free(c);
 
     default_data.ensureStillAlive();
 
@@ -789,7 +771,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                     bun.default_allocator.free(old_server_name);
                 }
                 prev.server_name = if (ssl) |s| s.takeServerName() else null;
-                if (prev.owned_ssl_ctx.ssl_ctx != null) prev.owned_ssl_ctx.deinit();
+                if (prev.owned_ssl_ctx) |old| BoringSSL.SSL_CTX_free(old);
                 prev.owned_ssl_ctx = owned_ssl_ctx;
                 break :blk prev;
             } else bun.new(SocketType, .{
@@ -802,7 +784,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 .owned_ssl_ctx = owned_ssl_ctx,
             });
             // Ownership moved into `socket`; disarm the errdefer.
-            owned_ssl_ctx = std.mem.zeroes(uws.SslCtx);
+            owned_ssl_ctx = null;
             socket.ref();
             SocketType.js.dataSetCached(socket.getThisValue(globalObject), globalObject, default_data);
             socket.flags.allow_half_open = socket_config.allowHalfOpen;
@@ -971,8 +953,7 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
             const ctx_opts: uws.SocketContext.BunSocketContextOptions = ssl_options.asUSockets();
             var err: uws.create_bun_socket_error_t = .none;
             // Create SSL context using uSockets to match behavior of node.js
-            const ctx = ctx_opts.createSSLContext(&err) orelse return error.InvalidOptions; // invalid options
-            this.ctx = ctx;
+            this.ctx = ctx_opts.createSSLContext(false, &err) orelse return error.InvalidOptions;
         }
 
         const initResult = this.uvPipe.init(this.vm.uvLoop(), false);

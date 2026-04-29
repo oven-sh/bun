@@ -177,12 +177,12 @@ void us_internal_socket_group_unlink_socket(us_socket_group_r group, us_socket_r
 
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *s);
 void us_internal_socket_after_open(us_socket_r s, int error);
-/* Common header for the per-socket SSL state. The actual layout is private to
- * openssl.c (renegotiation counters etc. follow), but loop.c/socket.c need to
- * test `s->ssl != NULL` and read handshake_state. */
-struct us_ssl_socket_data_t;
-struct us_ssl_socket_data_t *us_internal_ssl_data_create(us_socket_r s, void /* us_ssl_ctx_t */ *ssl_ctx, int is_client, const char *sni);
-void us_internal_ssl_data_free(struct us_ssl_socket_data_t *ssl);
+/* SSL_new() + BIO setup + connect/accept state; sets s->ssl and the ssl_*
+ * bitfields on us_socket_t. No separate per-socket allocation — `s->ssl` is a
+ * direct SSL*, and the 6 state bits live in us_socket_t's pad-to-pointer gap. */
+void us_internal_ssl_attach(us_socket_r s, void /* SSL_CTX */ *ssl_ctx, int is_client, const char *sni);
+/* SSL_free(s->ssl); s->ssl = NULL. Idempotent. */
+void us_internal_ssl_detach(us_socket_r s);
 
 /* TLS-layer event hooks. loop.c calls these instead of us_dispatch_* when
  * s->ssl != NULL; they decrypt/encrypt and re-dispatch the plaintext. */
@@ -239,11 +239,20 @@ struct us_socket_t {
   struct us_socket_flags flags;
   /* enum SocketKind. Selects the static dispatch arm in us_dispatch_*. */
   unsigned char kind;
+  /* SSL state. These 6 bits live in the pad-to-pointer gap before `group`, so
+   * they cost nothing on epoll/kqueue (poll=4 + 4×u8 + 1 byte bits = 9, padded
+   * to 16 anyway for the pointer). Per-socket reneg counters and SNI userdata
+   * hang off SSL ex_data, allocated on first use only. */
+  unsigned char ssl_handshake_state : 2;
+  unsigned char ssl_write_wants_read : 1;
+  unsigned char ssl_read_wants_write : 1;
+  unsigned char ssl_fatal_error : 1;
+  unsigned char ssl_is_server : 1;
 
   struct us_socket_group_t *group;
-  /* NULL for plain TCP. Allocated by us_internal_ssl_data_create() in
-   * adopt_tls / connect-with-ssl_ctx / accept-with-ssl_ctx. */
-  struct us_ssl_socket_data_t *ssl;
+  /* NULL for plain TCP. Direct BoringSSL `SSL*`; set by us_internal_ssl_attach
+   * in adopt_tls / connect-with-ssl_ctx / accept-with-ssl_ctx. */
+  void /* SSL* */ *ssl;
   struct us_socket_t *prev, *next;
   struct us_socket_t *connect_next;
   struct us_connecting_socket_t *connect_state;

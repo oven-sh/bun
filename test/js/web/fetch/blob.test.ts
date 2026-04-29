@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
 import path from "node:path";
@@ -254,3 +255,55 @@ test("#12894", () => {
   const bunFile = Bun.file("foo.txt");
   expect(new File([bunFile], "bar.txt").name).toBe("bar.txt");
 });
+
+test("dupeWithContentType does not alias the source's allocated content_type", async () => {
+  // Regression: #23015 refactored Blob to be ref-counted and moved
+  // `setNotHeapAllocated()` before the `isHeapAllocated()` guard in
+  // `dupeWithContentType`, making the guard always false. The branch that
+  // deep-copies a heap-allocated content_type became dead code, so duped
+  // blobs aliased the source's allocation while both claimed ownership.
+  //
+  // Observable: create a Bun.file with a custom (non-registry) type so
+  // content_type_allocated=true, wrap it in a Response (which dupes the
+  // blob into its body), then call file.write() with a new type which
+  // frees the original content_type. Reading the Response's headers then
+  // reads freed memory. Under ASAN this is a use-after-poison crash.
+  using dir = tempDir("blob-dupe-content-type", {
+    "run.ts": `
+      import { join } from "path";
+      const p = join(process.argv[2], "out.txt");
+      // Must NOT be a known mime type so the string is heap-allocated.
+      const originalType = "application/x-custom-type-not-in-registry-abcdefghijklm";
+      const file = Bun.file(p, { type: originalType });
+      if (file.type !== originalType) throw new Error("precondition: unexpected type " + file.type);
+
+      // Response body holds a dupe of the file blob.
+      const response = new Response(file);
+
+      // Frees file.content_type and reallocates something else of the same
+      // length into (hopefully) the same slot on non-ASAN builds.
+      const overwriteType = "application/x-overwritten-type-zzzzzzzzzzzzzzzzzzzzzzzz";
+      if (overwriteType.length !== originalType.length) throw new Error("precondition: lengths must match");
+      await file.write("hello", { type: overwriteType });
+
+      // Lazily initializes headers from the body blob's content_type.
+      // Without the fix this reads freed memory.
+      const ct = response.headers.get("content-type");
+      process.stdout.write(ct ?? "<null>");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.ts", String(dir)],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("application/x-custom-type-not-in-registry-abcdefghijklm");
+  expect(exitCode).toBe(0);
+}, 60_000);

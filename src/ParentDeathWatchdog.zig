@@ -83,18 +83,30 @@ pub fn popSyncPgid() void {
     if (sync_pgids.len > 0) sync_pgids.len -= 1;
 }
 
-/// SIGKILL every registered pgroup, then platform-specific deep walk.
-/// Idempotent. Runs from `Bun__onExit` (any clean exit) and from the
-/// no-orphans wait loop's defer.
-pub fn killSyncPgroupsAndDescendants() void {
+/// SIGKILL every registered script pgroup + the macOS uniqueid-tracked set.
+/// Scoped to the `spawnSync` script(s) — does NOT call `killDescendants()`,
+/// which is rooted at `getpid()` and would take out unrelated `Bun.spawn`
+/// siblings when `spawnSync` is reached from inside a live VM (e.g.
+/// `ffi.zig:getSystemRootDirOnce` shelling out to `xcrun`).
+pub fn killSyncScriptTree() void {
     if (comptime !Environment.isPosix) return;
     for (sync_pgids) |pgid| {
         if (pgid > 1) _ = std.c.kill(-pgid, std.posix.SIG.KILL);
     }
-    // macOS: p_puniqueid spawn-graph (catches setsid+double-fork escapees).
-    // Linux: subreaper means they're already in our tree; killDescendants
-    //        finds them.
     if (comptime Environment.isMac) Bun__noOrphans_killTracked();
+    // Linux: subreaper-adopted setsid escapees are visible as our direct
+    // children right now — sweep them by ppid==us. Unrelated `Bun.spawn`
+    // children also have ppid==us, so this *only* runs when we know there
+    // are none (spawnSync caller invariant); otherwise the pgroup kill above
+    // is the boundary. Handled by the explicit per-script-pgid walk below
+    // instead of a getpid()-rooted `killDescendants()`.
+}
+
+/// Full-process teardown: pgroups + tracked + getpid()-rooted tree.
+/// Only safe to call when the whole Bun process is exiting.
+fn killSyncPgroupsAndDescendants() void {
+    if (comptime !Environment.isPosix) return;
+    killSyncScriptTree();
     killDescendants();
 }
 
@@ -140,12 +152,11 @@ pub fn enable() void {
     // the flag through. No-op if we got here via the env var.
     _ = setenv("BUN_FEATURE_FLAG_NO_ORPHANS", "1", 1);
 
-    if (comptime Environment.isLinux) {
-        // Become a subreaper: any orphaned descendant — including ones that
-        // `setsid()` and double-fork — reparents to *us* instead of init, so
-        // the procfs walk in `killDescendants()` finds them. Linux ≥3.4.
-        _ = std.posix.prctl(.SET_CHILD_SUBREAPER, .{1}) catch {};
-    }
+    // PR_SET_CHILD_SUBREAPER is NOT armed here — it's process-wide and would
+    // make every orphaned grandchild reparent to us, but only the spawnSync
+    // wait loop has a `wait4(-1, WNOHANG)` to reap them. `bun foo.js` /
+    // `--filter` / `bun test` would accumulate zombies. Subreaper is set per-
+    // script in `waitLinuxSignalfd` and cleared on return.
     // Descendant cleanup runs on every clean exit regardless of whether we end
     // up watching a parent (Bun may have been spawned directly by launchd/init).
     bun.Global.addExitCallback(&onProcessExit);

@@ -2263,7 +2263,23 @@ pub const sync = struct {
         // once their parent dies). A `setsid()`+double-fork escapee is caught
         // by PR_SET_CHILD_SUBREAPER (Linux) / the p_puniqueid spawn-graph
         // tracker (macOS) — see `waitForChildNoOrphans`.
-        const no_orphans = bun.ParentDeathWatchdog.isEnabled();
+        //
+        // Disabled when `use_execve_on_macos` (bunx with `--silent`): that
+        // path is `POSIX_SPAWN_SETEXEC` — it replaces *our own* image and
+        // never returns, so SETPGROUP would `setpgid(0,0)` *us* into a new
+        // background pgroup with no `tcsetpgrp` follow-up (defer never runs),
+        // breaking TTY job control for the exec'd target.
+        const no_orphans = bun.ParentDeathWatchdog.isEnabled() and !options.use_execve_on_macos;
+
+        if (comptime Environment.isLinux) if (no_orphans) {
+            // Subreaper: arm *before* spawn so a fast-daemonizing script can't
+            // reparent its grandchild to init in the gap. Process-wide and
+            // only the spawnSync wait loop has a `wait4(-1)` to reap
+            // adoptees, so arming it globally from `enable()` would leak
+            // zombies in `bun foo.js` / `--filter` / `bun test`. Cleared in
+            // the `defer if (no_orphans)` below.
+            _ = std.posix.prctl(.SET_CHILD_SUBREAPER, .{1}) catch {};
+        };
 
         Bun__currentSyncPID = 0;
         Bun__registerSignalsForForwarding();
@@ -2291,11 +2307,23 @@ pub const sync = struct {
         }
         defer if (no_orphans) {
             fg.restore();
-            // pgroup → tracked uniqueids (macOS) → descendant tree. Order
-            // matters: pgroup-kill is one syscall and stops most things from
-            // forking before the slower scans run.
-            bun.ParentDeathWatchdog.killSyncPgroupsAndDescendants();
+            // pgroup → tracked uniqueids (macOS). Do NOT call the
+            // getpid()-rooted `killDescendants()` here — `spawnSync` can be
+            // reached from inside a live VM (ffi.zig xcrun probe, etc.) and
+            // that would SIGKILL the user's unrelated `Bun.spawn` children.
+            // The full-tree walk runs from `onProcessExit` when the whole
+            // process is actually exiting.
+            bun.ParentDeathWatchdog.killSyncScriptTree();
             if (pgid_pushed) bun.ParentDeathWatchdog.popSyncPgid();
+            if (comptime Environment.isLinux) {
+                // One last reap for anything we adopted, then drop subreaper
+                // so post-script orphans go to init like they would normally.
+                while (true) switch (PosixSpawn.wait4(-1, std.posix.W.NOHANG, null)) {
+                    .err => break,
+                    .result => |w| if (w.pid <= 0) break,
+                };
+                _ = std.posix.prctl(.SET_CHILD_SUBREAPER, .{0}) catch {};
+            }
         };
 
         Bun__sendPendingSignalIfNecessary();
@@ -2574,8 +2602,7 @@ pub const sync = struct {
 
         // Parent-death: pidfd when available (instant wake). When not
         // (gVisor, sandboxes, pre-5.3): bound the poll at 100ms and recheck
-        // `getppid()`. PDEATHSIG=SIGKILL still backstops, so the worst case
-        // is 100ms of cleanup latency, not a leak.
+        // `getppid()`.
         var ppid_fd = bun.invalid_fd;
         if (ppid > 1) switch (bun.sys.pidfd_open(ppid, 0)) {
             .result => |fd| ppid_fd = bun.FD.fromNative(fd),
@@ -2583,6 +2610,20 @@ pub const sync = struct {
                 bun.Global.exit(bun.ParentDeathWatchdog.exit_code),
         };
         defer if (ppid_fd != bun.invalid_fd) ppid_fd.close();
+        // `enable()` armed `PDEATHSIG=SIGKILL` on us. The kernel queues
+        // PDEATHSIG to children inside `exit_notify()` *before*
+        // `do_notify_pidfd()` wakes pidfd pollers (both under tasklist_lock),
+        // and SIGKILL is processed on syscall-return — so `poll()` would never
+        // get back to userspace and the cleanup defer never runs. Clear it
+        // now that we have a parent watch (pidfd or 100ms-getppid fallback);
+        // restore on return so the next caller — or `bun run`'s own
+        // post-script lifetime — keeps the backstop.
+        if (ppid > 1) {
+            _ = std.posix.prctl(.SET_PDEATHSIG, .{0}) catch {};
+        }
+        defer if (ppid > 1) {
+            _ = std.posix.prctl(.SET_PDEATHSIG, .{std.posix.SIG.KILL}) catch {};
+        };
         if (ppid > 1 and std.c.getppid() != ppid)
             bun.Global.exit(bun.ParentDeathWatchdog.exit_code);
 

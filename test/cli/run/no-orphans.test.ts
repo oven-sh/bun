@@ -344,10 +344,12 @@ test.skipIf(!isSupported || !hasPerl)(
             // outer: spin until daemon recorded its pid, then exit — this is
             // bun run's direct child, so bun run can't finish (and reap the
             // daemon) before the test can read the pid.
+            // record getpgrp() before/after setsid so the test can prove the
+            // daemon actually left the script's pgroup.
             `if(fork){ select undef,undef,undef,0.01 until -e $f; exit } ` +
-            `setsid; ` + // new session+pgroup → leaves bun run's pgroup
+            `$old=getpgrp(); setsid; ` + // new session+pgroup
             `exit if fork; ` + // session leader exits → daemon fully detached
-            `open F,">",$f; print F "$$ ".getppid()." ".getpgrp(); close F; ` +
+            `open F,">",$f; print F "$$ $old ".getpgrp(); close F; ` +
             `sleep 1 while 1'`,
         },
       }),
@@ -366,11 +368,13 @@ test.skipIf(!isSupported || !hasPerl)(
     const stderr = await proc.stderr.text();
 
     const txt = await Bun.file(`${dir}/pid`).text();
-    const [daemonPid, , daemonPgid] = txt.trim().split(" ").map(Number);
+    const [daemonPid, pgidBefore, pgidAfter] = txt.trim().split(" ").map(Number);
     expect(daemonPid).toBeGreaterThan(0);
-    // Prove setsid actually escaped the script's pgroup before we claim
-    // credit for reaping it.
-    expect(daemonPgid).not.toBe(proc.pid);
+    // Prove setsid actually moved the daemon out of the script's pgroup —
+    // before/after captured around the setsid call itself, so this can't be
+    // vacuously true.
+    expect(pgidAfter).not.toBe(pgidBefore);
+    expect(pgidAfter).toBeGreaterThan(0);
 
     const died = await waitUntilDead(daemonPid, 10000);
     reap(daemonPid);

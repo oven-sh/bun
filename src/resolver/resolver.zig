@@ -4300,10 +4300,29 @@ pub const Resolver = struct {
                         // "not defined" from "defined as {}" — the latter clears inherited
                         // paths per TypeScript semantics.
                         if (parent_config.base_url_for_paths.len > 0) {
+                            // The previous merged_config.paths is being replaced; free its
+                            // backing storage before overwriting so the PathsMap from the
+                            // deeper config doesn't leak. Each value is a []string slice
+                            // that was separately heap-allocated in TSConfigJSON.parse()
+                            // (tsconfig_json.zig), so free those before the map itself.
+                            for (merged_config.paths.values()) |v| bun.default_allocator.free(v);
+                            merged_config.paths.deinit();
                             merged_config.paths = parent_config.paths;
                             merged_config.base_url_for_paths = parent_config.base_url_for_paths;
+                        } else {
+                            // paths were not moved to merged_config, so they're still owned
+                            // by parent_config. base_url_for_paths.len == 0 implies the map
+                            // is empty (it's only set when the `paths` key is present in the
+                            // JSON), so this is a no-op but documents the ownership.
+                            parent_config.paths.deinit();
                         }
-                        // todo deinit these parent configs somehow?
+                        // Every scalar/reference we need has been copied into merged_config
+                        // (strings live in dirname_store or default_allocator and outlive the
+                        // struct). The heap-allocated TSConfigJSON itself is no longer needed;
+                        // without this, every intermediate config in an extends chain leaks on
+                        // each dirInfoUncached() call, which is especially bad under HMR where
+                        // bustDirCache triggers a re-parse of the whole chain on every reload.
+                        bun.destroy(parent_config);
                     }
                     info.tsconfig_json = merged_config;
                 }

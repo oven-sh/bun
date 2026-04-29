@@ -304,6 +304,15 @@ pub fn CompressionStream(comptime T: type) type {
         }
 
         pub fn emitError(this: *T, globalThis: *jsc.JSGlobalObject, this_value: jsc.JSValue, err_: Error) void {
+            // Clear write_in_progress *before* invoking the onerror callback.
+            // The callback may re-enter write(), which sets write_in_progress=true
+            // and schedules a WorkPool task. If we cleared the flag after the
+            // callback, we would clobber that state and closeInternal()/resetInternal()
+            // below could free the native zlib/brotli/zstd state while a task is
+            // still queued, leading to a use-after-free when the worker thread
+            // runs doWork().
+            this.write_in_progress = false;
+
             var msg_str = bun.handleOom(bun.String.createFormat("{s}", .{std.mem.sliceTo(err_.msg, 0) orelse ""}));
             const msg_value = msg_str.transferToJS(globalThis) catch return;
             const err_value: jsc.JSValue = .jsNumber(err_.err);
@@ -316,7 +325,6 @@ pub fn CompressionStream(comptime T: type) type {
             const vm = globalThis.bunVM();
             vm.eventLoop().runCallback(callback, globalThis, this_value, &.{ msg_value, err_value, code_value });
 
-            this.write_in_progress = false;
             if (this.pending_reset) resetInternal(this, globalThis, this_value);
             if (this.pending_close) _ = closeInternal(this);
         }

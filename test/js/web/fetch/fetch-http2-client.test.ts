@@ -145,8 +145,34 @@ async function withRawH2Server(
   }
 }
 
+// Each test spawns a fresh subprocess so the BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT
+// env var is read at startup. With describe.concurrent + max_concurrency=20 that
+// peaks at ~8GB of debug subprocesses, which under ASAN (~2-3x) OOM-kills the
+// 16GB/0-swap runner; fully serialising under ASAN instead pushes the 50+ spawns
+// past the 3-minute file timeout. Cap live subprocesses to a few under ASAN so
+// describe.concurrent can still overlap them without exhausting memory. Non-ASAN
+// keeps the cap at max_concurrency so the semaphore is a no-op.
+const slotLimit = isASAN ? 4 : 20;
+let live = 0;
+const waiters: Array<() => void> = [];
+async function spawnCapped(options: Parameters<typeof Bun.spawn>[0]) {
+  if (live >= slotLimit) {
+    await new Promise<void>(r => waiters.push(r)); // slot handed off to us, `live` already counts it
+  } else {
+    live++;
+  }
+  const proc = Bun.spawn(options);
+  proc.exited.finally(() => {
+    const next = waiters.shift();
+    if (next)
+      next(); // hand the slot off directly; `live` stays as-is
+    else live--;
+  });
+  return proc;
+}
+
 function spawnFetch(script: string) {
-  return Bun.spawn({
+  return spawnCapped({
     cmd: [bunExe(), "--no-warnings", "-e", script],
     env: {
       ...bunEnv,
@@ -158,10 +184,7 @@ function spawnFetch(script: string) {
   });
 }
 
-// Under ASAN, 20 concurrent ASAN-instrumented subprocesses (~800MB+ each) OOM-kill
-// the 16GB CI runner. Serialise so the asan shard survives; everywhere else stays
-// concurrent (peak ≈8GB across ~23 debug procs).
-(isASAN ? describe : describe.concurrent)("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () => {
+describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () => {
   test("GET: status, headers and body round-trip", async () => {
     await withH2Server(
       (req, res) => {
@@ -173,7 +196,7 @@ function spawnFetch(script: string) {
         res.end("hello over h2");
       },
       async url => {
-        await using proc = spawnFetch(`
+        await using proc = await spawnFetch(`
           const res = await fetch(${JSON.stringify(url)} + "/hello?x=1", {
             headers: { "X-Foo": "bar" },
             tls: { rejectUnauthorized: false },
@@ -218,7 +241,7 @@ function spawnFetch(script: string) {
         });
       },
       async url => {
-        await using proc = spawnFetch(`
+        await using proc = await spawnFetch(`
           const res = await fetch(${JSON.stringify(url)} + "/echo", {
             method: "POST",
             body: "the payload",
@@ -242,7 +265,7 @@ function spawnFetch(script: string) {
         res.end(big);
       },
       async url => {
-        await using proc = spawnFetch(`
+        await using proc = await spawnFetch(`
           const res = await fetch(${JSON.stringify(url)}, { tls: { rejectUnauthorized: false } });
           const buf = await res.arrayBuffer();
           console.log(buf.byteLength);
@@ -264,7 +287,7 @@ function spawnFetch(script: string) {
         res.end(gz);
       },
       async url => {
-        await using proc = spawnFetch(`
+        await using proc = await spawnFetch(`
           const res = await fetch(${JSON.stringify(url)}, { tls: { rejectUnauthorized: false } });
           process.stdout.write(await res.text());
         `);
@@ -296,7 +319,7 @@ function spawnFetch(script: string) {
     await once(server, "listening");
     const { port } = server.address() as import("node:net").AddressInfo;
     try {
-      await using proc = spawnFetch(`
+      await using proc = await spawnFetch(`
         const url = "https://localhost:${port}";
         const opts = { tls: { rejectUnauthorized: false } };
         // Warmup so the session exists before the concurrent burst.
@@ -329,7 +352,7 @@ function spawnFetch(script: string) {
         });
       },
       async url => {
-        await using proc = spawnFetch(`
+        await using proc = await spawnFetch(`
           const chunks = ["alpha-", "bravo-", "charlie-", "delta-", "echo"];
           const body = new ReadableStream({
             async pull(ctrl) {
@@ -369,7 +392,7 @@ function spawnFetch(script: string) {
         });
       },
       async url => {
-        await using proc = spawnFetch(`
+        await using proc = await spawnFetch(`
           // 256 KiB > 64 KiB default INITIAL_WINDOW_SIZE: requires the
           // client to honour the server's WINDOW_UPDATE before continuing.
           const buf = new Uint8Array(256 * 1024).fill(0x61);
@@ -407,7 +430,7 @@ function spawnFetch(script: string) {
     await once(server, "listening");
     const { port } = server.address() as import("node:net").AddressInfo;
     try {
-      await using proc = spawnFetch(`
+      await using proc = await spawnFetch(`
         const url = "https://localhost:${port}";
         const opts = { tls: { rejectUnauthorized: false } };
         // No warmup: all 12 race the same fresh handshake.
@@ -444,7 +467,7 @@ function spawnFetch(script: string) {
     await once(server, "listening");
     const { port } = server.address() as import("node:net").AddressInfo;
     try {
-      await using proc = spawnFetch(`
+      await using proc = await spawnFetch(`
         const url = "https://localhost:${port}";
         const opts = { tls: { rejectUnauthorized: false } };
         // Warmup so /slow, /fast, /after share one session.
@@ -492,7 +515,7 @@ function spawnFetch(script: string) {
     await once(server, "listening");
     const { port } = server.address() as import("node:net").AddressInfo;
     try {
-      await using proc = spawnFetch(`
+      await using proc = await spawnFetch(`
         const url = "https://localhost:${port}";
         const opts = { tls: { rejectUnauthorized: false } };
         // First request alone so the server's SETTINGS arrives before the
@@ -528,7 +551,7 @@ function spawnFetch(script: string) {
     await once(server, "listening");
     const { port } = server.address() as import("node:net").AddressInfo;
     try {
-      await using proc = spawnFetch(`
+      await using proc = await spawnFetch(`
         const url = "https://localhost:${port}";
         const opts = { tls: { rejectUnauthorized: false } };
         for (let i = 0; i < 4; i++) {
@@ -564,7 +587,7 @@ function spawnFetch(script: string) {
     await once(server, "listening");
     const { port } = server.address() as import("node:net").AddressInfo;
     try {
-      await using proc = spawnFetch(`
+      await using proc = await spawnFetch(`
         const url = "https://localhost:${port}";
         const opts = { tls: { rejectUnauthorized: false } };
         const a = await (await fetch(url + "/first", opts)).text();
@@ -590,7 +613,7 @@ function spawnFetch(script: string) {
         res.end(big);
       },
       async url => {
-        await using proc = spawnFetch(`
+        await using proc = await spawnFetch(`
           const res = await fetch(${JSON.stringify(url)}, { tls: { rejectUnauthorized: false } });
           const buf = new Uint8Array(await res.arrayBuffer());
           let ok = buf.length === ${big.length};
@@ -616,7 +639,7 @@ function spawnFetch(script: string) {
     await once(server, "listening");
     const { port } = server.address() as import("node:net").AddressInfo;
     try {
-      await using proc = spawnFetch(`
+      await using proc = await spawnFetch(`
         const r = await fetch("https://localhost:${port}", { tls: { rejectUnauthorized: false } });
         console.log(r.status, await r.text());
       `);
@@ -651,7 +674,7 @@ function spawnFetch(script: string) {
     await once(server, "listening");
     const { port } = server.address() as import("node:net").AddressInfo;
     try {
-      await using proc = spawnFetch(`
+      await using proc = await spawnFetch(`
         const url = "https://localhost:${port}";
         const opts = { tls: { rejectUnauthorized: false } };
         const [good, bad] = await Promise.allSettled([
@@ -682,7 +705,7 @@ function spawnFetch(script: string) {
     await once(server, "listening");
     const { port } = server.address() as import("node:net").AddressInfo;
     try {
-      await using proc = spawnFetch(`
+      await using proc = await spawnFetch(`
         const r = await fetch("https://localhost:${port}", {
           headers: {
             "x-keep": "me",
@@ -718,7 +741,7 @@ function spawnFetch(script: string) {
     await once(server, "listening");
     const { port } = server.address() as import("node:net").AddressInfo;
     try {
-      await using proc = spawnFetch(`
+      await using proc = await spawnFetch(`
         const r = await fetch("https://localhost:${port}", { tls: { rejectUnauthorized: false } });
         console.log(JSON.stringify(r.headers.getSetCookie()));
       `);
@@ -741,7 +764,7 @@ function spawnFetch(script: string) {
           conn.headers(id, hpackStatus(204), { endStream: true });
         },
         async (url, state) => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
             console.log(r.status);
           `);
@@ -763,7 +786,7 @@ function spawnFetch(script: string) {
           conn.rst(id, http2.constants.NGHTTP2_REFUSED_STREAM);
         },
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
             catch (e) { console.log("rejected", String(e).includes("Refused")); }
           `);
@@ -784,7 +807,7 @@ function spawnFetch(script: string) {
           conn.rst(id, http2.constants.NGHTTP2_PROTOCOL_ERROR);
         },
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
             catch (e) { console.log("rejected"); }
           `);
@@ -809,7 +832,7 @@ function spawnFetch(script: string) {
           conn.data(id, "second-conn", true);
         },
         async (url, state) => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
             console.log(r.status, await r.text());
           `);
@@ -830,7 +853,7 @@ function spawnFetch(script: string) {
           conn.rst(id, http2.constants.NGHTTP2_REFUSED_STREAM);
         },
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             const body = new ReadableStream({ start(c) { c.enqueue(new Uint8Array([1,2,3])); c.close(); } });
             try {
               await fetch("${url}", { method: "POST", body, duplex: "half", tls: { rejectUnauthorized: false } });
@@ -856,7 +879,7 @@ function spawnFetch(script: string) {
           conn.socket.write(frame(0, 0x8 | 0x1, id, payload));
         },
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
             console.log(r.status, await r.text());
           `);
@@ -882,7 +905,7 @@ function spawnFetch(script: string) {
           );
         },
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
             console.log(r.status, r.headers.get("x-after"), await r.text());
           `);
@@ -898,7 +921,7 @@ function spawnFetch(script: string) {
       await withRawH2Server(
         (conn, id) => conn.headers(id, hpackStatus(100), { endStream: true }),
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             try {
               await fetch("${url}", { tls: { rejectUnauthorized: false } });
               console.log("resolved");
@@ -918,7 +941,7 @@ function spawnFetch(script: string) {
           conn.socket.write(Buffer.concat([frame(1, 4, id, hpackStatus(100)), frame(0, 1, id, Buffer.from("body"))]));
         },
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             try {
               await fetch("${url}", { tls: { rejectUnauthorized: false } });
               console.log("resolved");
@@ -944,7 +967,7 @@ function spawnFetch(script: string) {
           );
         },
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
             console.log(r.status, r.headers.get("x-real"), await r.text());
           `);
@@ -996,7 +1019,7 @@ function spawnFetch(script: string) {
       await once(server, "listening");
       const { port } = server.address() as import("node:net").AddressInfo;
       try {
-        await using proc = spawnFetch(`
+        await using proc = await spawnFetch(`
           const r = await fetch("https://localhost:${port}", {
             method: "POST",
             headers: { Expect: "100-continue" },
@@ -1037,7 +1060,7 @@ function spawnFetch(script: string) {
           });
         },
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             const r = await fetch("${url}", {
               method: "POST",
               headers: { Expect: "100-continue" },
@@ -1062,7 +1085,7 @@ function spawnFetch(script: string) {
           conn.data(id, "short", true);
         },
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             try {
               const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
               await r.text();
@@ -1085,7 +1108,7 @@ function spawnFetch(script: string) {
           conn.headers(id, Buffer.concat([hpackStatus(200), hpackLit("content-length", "42")]), { endStream: true });
         },
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             try {
               const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
               console.log("ok", r.status, (await r.text()).length);
@@ -1104,7 +1127,7 @@ function spawnFetch(script: string) {
           conn.headers(id, hpackLit("content-type", "text/plain"), { endStream: true });
         },
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
             catch (e) { console.log("rejected"); }
           `);
@@ -1128,7 +1151,7 @@ function spawnFetch(script: string) {
           setTimeout(() => conn.data(id, "", true), 30);
         },
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
             console.log(r.status, await r.text());
             await Bun.sleep(80);
@@ -1152,7 +1175,7 @@ function spawnFetch(script: string) {
           conn.headers(id, hpackStatus(200), { endStream: true });
         },
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             try {
               const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
               console.log("status", r.status);
@@ -1174,7 +1197,7 @@ function spawnFetch(script: string) {
           conn.headers(id, hpackStatus(200), { endStream: true });
         },
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
             catch (e) { console.log("rejected", e.code); }
           `);
@@ -1193,7 +1216,7 @@ function spawnFetch(script: string) {
           conn.headers(id, hpackStatus(200), { endStream: true });
         },
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
             catch (e) { console.log("rejected", e.code); }
           `);
@@ -1214,7 +1237,7 @@ function spawnFetch(script: string) {
           conn.headers(id, hpackStatus(200), { endStream: true });
         },
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
             catch (e) { console.log("rejected", e.code); }
           `);
@@ -1236,7 +1259,7 @@ function spawnFetch(script: string) {
           conn.socket.write(frame(0, 0, 1, Buffer.alloc(16385)));
         },
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
             catch (e) { console.log("rejected", e.code); }
           `);
@@ -1255,7 +1278,7 @@ function spawnFetch(script: string) {
           conn.headers(id, hpackStatus(200), { endStream: true });
         },
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
             catch (e) { console.log("rejected", e.code); }
           `);
@@ -1274,7 +1297,7 @@ function spawnFetch(script: string) {
           conn.headers(id, hpackStatus(200), { endStream: true });
         },
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
             catch (e) { console.log("rejected", e.code); }
           `);
@@ -1293,7 +1316,7 @@ function spawnFetch(script: string) {
           conn.headers(id, hpackStatus(200), { endStream: true });
         },
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
             catch (e) { console.log("rejected", e.code); }
           `);
@@ -1312,7 +1335,7 @@ function spawnFetch(script: string) {
           conn.headers(id, hpackStatus(200), { endStream: true });
         },
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
             catch (e) { console.log("rejected", e.code); }
           `);
@@ -1338,7 +1361,7 @@ function spawnFetch(script: string) {
           }
         },
         async (url, state) => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             const body = new ReadableStream({
               async start(ctrl) { ctrl.enqueue(new Uint8Array([1,2,3])); await new Promise(r => setTimeout(r, 60_000)); },
             });
@@ -1366,7 +1389,7 @@ function spawnFetch(script: string) {
           conn.data(id, Buffer.from("not gzip"));
         },
         async (url, state) => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             try { await (await fetch("${url}", { tls: { rejectUnauthorized: false } })).arrayBuffer(); console.log("ok"); }
             catch (e) { console.log("rejected", e.code ?? e.message); }
           `);
@@ -1386,7 +1409,7 @@ function spawnFetch(script: string) {
           conn.rst(id, 0);
         },
         async url => {
-          await using proc = spawnFetch(`
+          await using proc = await spawnFetch(`
             try {
               await fetch("${url}", { tls: { rejectUnauthorized: false } });
               console.log("ok");
@@ -1411,7 +1434,7 @@ function spawnFetch(script: string) {
     await once(server, "listening");
     const { port } = server.address() as import("node:net").AddressInfo;
     try {
-      await using proc = Bun.spawn({
+      await using proc = await spawnCapped({
         cmd: [
           bunExe(),
           "--no-warnings",
@@ -1443,7 +1466,7 @@ function spawnFetch(script: string) {
       async url => {
         // No BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT in env; the CLI flag
         // alone should make ALPN offer h2.
-        await using proc = Bun.spawn({
+        await using proc = await spawnCapped({
           cmd: [
             bunExe(),
             "--no-warnings",
@@ -1472,7 +1495,7 @@ function spawnFetch(script: string) {
       },
       async url => {
         // No BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT in env.
-        await using proc = Bun.spawn({
+        await using proc = await spawnCapped({
           cmd: [
             bunExe(),
             "--no-warnings",
@@ -1498,7 +1521,7 @@ function spawnFetch(script: string) {
     await once(server, "listening");
     const { port } = server.address() as import("node:net").AddressInfo;
     try {
-      await using proc = Bun.spawn({
+      await using proc = await spawnCapped({
         cmd: [
           bunExe(),
           "--no-warnings",
@@ -1540,7 +1563,7 @@ function spawnFetch(script: string) {
     await once(server, "listening");
     const { port } = server.address() as import("node:net").AddressInfo;
     try {
-      await using proc = spawnFetch(`
+      await using proc = await spawnFetch(`
         const url = "https://localhost:${port}/";
         const tls = { rejectUnauthorized: false };
         const rs = await Promise.all(Array.from({ length: 5 }, () => fetch(url, { tls }).then(r => r.text())));
@@ -1564,7 +1587,7 @@ function spawnFetch(script: string) {
     await withH2Server(
       (req, res) => res.end(req.httpVersion),
       async url => {
-        await using proc = spawnFetch(`
+        await using proc = await spawnFetch(`
           const tls = { rejectUnauthorized: false };
           const a = await fetch("${url}", { tls }).then(r => r.text());
           const b = await fetch("${url}", { protocol: "http1.1", tls }).then(r => r.text(), e => "rejected");
@@ -1581,7 +1604,7 @@ function spawnFetch(script: string) {
   test('protocol: "http2" on a plain http:// URL fails with HTTP2Unsupported', async () => {
     // h2c is out of scope; without an explicit check the request would
     // silently complete over HTTP/1.1.
-    await using proc = Bun.spawn({
+    await using proc = await spawnCapped({
       cmd: [
         bunExe(),
         "--no-warnings",
@@ -1604,7 +1627,7 @@ function spawnFetch(script: string) {
     // Leader's TLS handshake never completes (server is plain TCP), so its
     // PendingConnect stays open. The waiter has no abort-tracker entry and
     // would otherwise wait for the leader before observing the abort.
-    await using proc = Bun.spawn({
+    await using proc = await spawnCapped({
       cmd: [
         bunExe(),
         "--no-warnings",
@@ -1659,7 +1682,7 @@ function spawnFetch(script: string) {
     await once(server, "listening");
     const { port } = server.address() as import("node:net").AddressInfo;
     try {
-      await using proc = spawnFetch(`
+      await using proc = await spawnFetch(`
         const url = "https://localhost:${port}";
         const tls = { rejectUnauthorized: false };
         for (let i = 0; i < 3; i++) {
@@ -1682,7 +1705,7 @@ function spawnFetch(script: string) {
     // body fall through to the keep-alive pool even though the chunked
     // upload's terminating 0\r\n\r\n was never written. The follow-up GET
     // must open a fresh connection.
-    await using proc = Bun.spawn({
+    await using proc = await spawnCapped({
       cmd: [
         bunExe(),
         "--no-warnings",
@@ -1736,7 +1759,7 @@ function spawnFetch(script: string) {
     // sits in handshake; the waiter coalesces onto its PendingConnect. When
     // the leader is aborted, the waiter must retry as the new leader (a
     // second TCP connect) rather than be told the server lacks h2.
-    await using proc = Bun.spawn({
+    await using proc = await spawnCapped({
       cmd: [
         bunExe(),
         "--no-warnings",
@@ -1787,7 +1810,7 @@ function spawnFetch(script: string) {
   // the 0.5-RTT write window, so this hits a real Cloudflare-fronted origin —
   // tolerate network blips by only failing on the specific regression code.
   test("GET https://registry.npmjs.org over protocol: http2", async () => {
-    await using proc = spawnFetch(`
+    await using proc = await spawnFetch(`
       try {
         const r = await fetch("https://registry.npmjs.org", { protocol: "http2" });
         console.log("status", r.status);
@@ -1826,7 +1849,7 @@ test("await fetch() over HTTP/2 resolves on headers, before a content-length bod
   await once(server, "listening");
   const { port } = server.address() as import("node:net").AddressInfo;
   try {
-    await using proc = spawnFetch(`
+    await using proc = await spawnFetch(`
       const r = await fetch("https://localhost:${port}", { tls: { rejectUnauthorized: false } });
       const reader = r.body.getReader();
       let n = 0;

@@ -457,8 +457,11 @@ pub fn pruneSavedTree(
         for (saved_trees[1..], 1..) |saved, i| {
             // `saved.parent` is always < `i` in a saved tree (parents are
             // allocated before children), so we can rely on the parent's
-            // `container_active` bit being up to date.
-            if (saved.parent == invalid_id or !container_active.isSet(saved.parent)) continue;
+            // `container_active` bit being up to date. Bound-check anyway
+            // so a corrupted lockfile doesn't assert-out.
+            if (saved.parent == invalid_id) continue;
+            if (saved.parent >= saved_trees.len) continue;
+            if (!container_active.isSet(saved.parent)) continue;
             const dep_id = saved.dependency_id;
             if (dep_id == invalid_dependency_id or dep_id == root_dep_id) {
                 // Non-root trees shouldn't carry `root_dep_id` / invalid, but
@@ -466,6 +469,7 @@ pub fn pruneSavedTree(
                 container_active.set(i);
                 continue;
             }
+            if (dep_id >= lockfile.buffers.dependencies.items.len) continue;
             const pkg_id = resolutions[dep_id];
             if (pkg_id == invalid_package_id or pkg_id >= num_packages) continue;
             if (active.isSet(pkg_id)) container_active.set(i);

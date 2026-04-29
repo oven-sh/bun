@@ -916,12 +916,38 @@ pub fn filter(
     workspace_filters: []const WorkspaceFilter,
     packages_to_install: ?[]const PackageID,
 ) Tree.SubtreeError!void {
-    _ = log;
-    // Prune the already-resolved tree in `buffers.trees` / `buffers.hoisted_dependencies`
-    // to the subset of dep_ids reachable from the filtered root set. This preserves
-    // the hoist layout the lockfile already records (matching `--frozen-lockfile`'s
-    // contract) instead of re-running hoisting over a smaller workspace set, which
-    // produces a different `node_modules` layout than the lockfile describes.
+    // `--filter <workspace>` must honor the hoist layout already recorded in
+    // `bun.lock` (#29944): the installed `node_modules` has to be a subset
+    // of the saved layout, not a re-hoisted tree computed over the filtered
+    // workspace set. Prune the saved `buffers.trees` / `hoisted_dependencies`
+    // instead of re-running the hoister.
+    //
+    // Only workspace-scoped filters are layout-preserving. `--production`,
+    // `--omit=…`, and security-scanner `packages_to_install` can *shift*
+    // which dep fills a root slot (e.g. with a package appearing in both
+    // `dependencies` at `1.0.0` and `devDependencies` at `1.0.1`, the dev
+    // entry wins the saved root slot because `DepSorter` sorts dev first;
+    // `--production` then needs to swap in the prod `1.0.0`, which pruning
+    // can't do from the saved tree alone). Rebuild via the full `.filter`
+    // hoist for those cases — the layout-subset contract only matters for
+    // workspace filters.
+    //
+    // `features_are_default` mirrors the feature flags that produced the
+    // saved tree: the root (workspace) is resolved with all dep types
+    // enabled. When any of these are turned off by `--production` /
+    // `--omit=…`, pruning alone can't swap in an alternative dep that would
+    // fill a root slot the saved layout assigned to a now-filtered dep.
+    // Rebuild via the full `.filter` hoist in those cases.
+    const features_are_default = manager.options.local_package_features.dev_dependencies and
+        manager.options.local_package_features.optional_dependencies and
+        manager.options.local_package_features.peer_dependencies and
+        manager.options.remote_package_features.optional_dependencies and
+        manager.options.remote_package_features.peer_dependencies;
+
+    if (workspace_filters.len == 0 or !features_are_default or packages_to_install != null) {
+        return lockfile.hoist(log, .filter, manager, install_root_dependencies, workspace_filters, packages_to_install);
+    }
+
     const pruned = try Tree.pruneSavedTree(
         lockfile,
         manager,

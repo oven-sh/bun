@@ -15,17 +15,39 @@ const serverKey = fs.readFileSync(path.join(fixturesDir, "agent1-key.pem"));
 const serverCert = fs.readFileSync(path.join(fixturesDir, "agent1-cert.pem"));
 const ca = fs.readFileSync(path.join(fixturesDir, "ca1-cert.pem"));
 
+// Consume one complete RESP array (*N\r\n followed by N bulk strings) from the
+// front of `buf`. Returns the number of bytes consumed, or 0 if incomplete.
+function consumeRespArray(buf: Buffer): number {
+  if (buf.length < 4 || buf[0] !== 0x2a /* '*' */) return 0;
+  let eol = buf.indexOf("\r\n");
+  if (eol < 0) return 0;
+  const count = parseInt(buf.subarray(1, eol).toString("latin1"), 10);
+  let off = eol + 2;
+  for (let i = 0; i < count; i++) {
+    if (off >= buf.length || buf[off] !== 0x24 /* '$' */) return 0;
+    eol = buf.indexOf("\r\n", off);
+    if (eol < 0) return 0;
+    const len = parseInt(buf.subarray(off + 1, eol).toString("latin1"), 10);
+    off = eol + 2 + len + 2;
+    if (off > buf.length) return 0;
+  }
+  return off;
+}
+
 // Minimal Redis-ish server. It replies +OK to the first command (HELLO) so the
 // client's authentication handshake succeeds, then +PONG to everything else.
+// Buffers and frames RESP arrays so commands split across packets (or batched
+// into one) are each answered exactly once.
 async function withServer<T>(serverOpts: tls.TlsOptions, fn: (port: number) => Promise<T>): Promise<T> {
   const server = tls.createServer(serverOpts, socket => {
-    let first = true;
-    socket.on("data", () => {
-      if (first) {
-        first = false;
-        socket.write("+OK\r\n");
-      } else {
-        socket.write("+PONG\r\n");
+    let buf = Buffer.alloc(0);
+    let seen = 0;
+    socket.on("data", chunk => {
+      buf = Buffer.concat([buf, chunk]);
+      let consumed: number;
+      while ((consumed = consumeRespArray(buf)) > 0) {
+        buf = buf.subarray(consumed);
+        socket.write(seen++ === 0 ? "+OK\r\n" : "+PONG\r\n");
       }
     });
     socket.on("error", () => {});

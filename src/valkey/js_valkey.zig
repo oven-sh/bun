@@ -1551,8 +1551,13 @@ fn SocketHandler(comptime ssl: bool) type {
             const ssl_js_value = ssl_error.toJS(this.globalObject) catch |err| switch (err) {
                 error.JSTerminated => return error.JSTerminated,
                 else => {
-                    // Clear any pending exception since we can't convert it to JS
+                    // Clear any pending exception since we can't convert it to JS,
+                    // but still fail-close the connection so we never fall through
+                    // to the authenticated state after a rejected handshake.
                     this.globalObject.clearException();
+                    this.client.flags.is_authenticated = false;
+                    this.client.flags.is_manually_closed = true;
+                    this.client.close();
                     return;
                 },
             };

@@ -22,9 +22,10 @@ test.skipIf(!(isASAN || isDebug))(
       env: {
         ...bunEnv,
         KEYS_DIR: keysDir,
-        // 30 concurrent servers is enough to span multiple heap blocks so
-        // finalization order between Listener and TLSSocket varies.
-        N: "30",
+        // N≥10 reliably spans enough heap blocks for finalization order
+        // between Listener and TLSSocket to vary (0/5 repro at N<10, 5/5 at
+        // N≥10). 15 gives headroom without slowing the fixture further.
+        N: "15",
         BUN_DESTRUCT_VM_ON_EXIT: "1",
         BUN_GARBAGE_COLLECTOR_LEVEL: "1",
         ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:abort_on_error=1",
@@ -37,14 +38,21 @@ test.skipIf(!(isASAN || isDebug))(
 
     // The fixture throws from every 'stream' handler, so stderr is full of
     // "error: boom N" traces — that's expected. The process should exit with
-    // code 1 (unhandled exception) rather than abort (ASAN trap / signal).
-    // stderr is checked first so the ASAN trace is the failure message when
-    // the bug is present.
-    expect(stderr).not.toContain("AddressSanitizer");
-    expect(stderr).not.toContain("use-after-poison");
+    // code 1 (unhandled exception) rather than abort. With
+    // `ASAN_OPTIONS=abort_on_error=1`, an ASAN trap produces SIGABRT, so the
+    // signalCode/exitCode assertions are the load-bearing regression checks.
+    // Dump stderr so the ASAN report is visible in the failure output.
+    if (proc.signalCode !== null || exitCode !== 1) {
+      console.error(stderr);
+    }
     expect(stdout).toBe("");
     expect(proc.signalCode).toBeNull();
     expect(exitCode).toBe(1);
   },
+  // 15 concurrent TLS handshakes + h2 session setup + VM-destroy finalizer
+  // sweep under a debug ASAN build runs ~5–6s — above the 5s default. CI
+  // passes --timeout=90000 so this only matters for local `bun bd test`.
+  // Matches neighbouring socket.test.ts / socket-retention.test.ts which
+  // extend timeouts for the same reason.
   30_000,
 );

@@ -427,6 +427,473 @@ function getGlobalOrigin() {}
 // Create empty CacheStorage
 const caches = {};
 
+// Cache store validation helpers
+function assertCacheKey(key) {
+  if (typeof key !== "object") {
+    throw new TypeError(`expected key to be object, got ${typeof key}`);
+  }
+  for (const property of ["origin", "method", "path"]) {
+    if (typeof key[property] !== "string") {
+      throw new TypeError(`expected key.${property} to be string, got ${typeof key[property]}`);
+    }
+  }
+  if (key.headers !== undefined && typeof key.headers !== "object") {
+    throw new TypeError(`expected headers to be object, got ${typeof key.headers}`);
+  }
+}
+
+function assertCacheValue(value) {
+  if (typeof value !== "object") {
+    throw new TypeError(`expected value to be object, got ${typeof value}`);
+  }
+  for (const property of ["statusCode", "cachedAt", "staleAt", "deleteAt"]) {
+    if (typeof value[property] !== "number") {
+      throw new TypeError(`expected value.${property} to be number, got ${typeof value[property]}`);
+    }
+  }
+  if (typeof value.statusMessage !== "string") {
+    throw new TypeError(`expected value.statusMessage to be string, got ${typeof value.statusMessage}`);
+  }
+  if (value.headers != null && typeof value.headers !== "object") {
+    throw new TypeError(`expected value.headers to be object, got ${typeof value.headers}`);
+  }
+  if (value.vary !== undefined && typeof value.vary !== "object") {
+    throw new TypeError(`expected value.vary to be object, got ${typeof value.vary}`);
+  }
+  if (value.etag !== undefined && typeof value.etag !== "string") {
+    throw new TypeError(`expected value.etag to be string, got ${typeof value.etag}`);
+  }
+}
+
+function findCacheEntry(key, entries, now) {
+  return entries.find(
+    entry =>
+      entry.deleteAt > now &&
+      entry.method === key.method &&
+      (entry.vary == null ||
+        Object.keys(entry.vary).every(headerName => {
+          if (entry.vary[headerName] === null) {
+            return key.headers[headerName] === undefined;
+          }
+          return entry.vary[headerName] === key.headers[headerName];
+        })),
+  );
+}
+
+class MemoryCacheStore extends EventEmitter {
+  #maxCount = 1024;
+  #maxSize = 104857600; // 100MB
+  #maxEntrySize = 5242880; // 5MB
+
+  #size = 0;
+  #count = 0;
+  #entries = new Map();
+  #hasEmittedMaxSizeEvent = false;
+
+  constructor(opts) {
+    super();
+    if (opts) {
+      if (typeof opts !== "object") {
+        throw new TypeError("MemoryCacheStore options must be an object");
+      }
+      if (opts.maxCount !== undefined) {
+        if (typeof opts.maxCount !== "number" || !Number.isInteger(opts.maxCount) || opts.maxCount < 0) {
+          throw new TypeError("MemoryCacheStore options.maxCount must be a non-negative integer");
+        }
+        this.#maxCount = opts.maxCount;
+      }
+      if (opts.maxSize !== undefined) {
+        if (typeof opts.maxSize !== "number" || !Number.isInteger(opts.maxSize) || opts.maxSize < 0) {
+          throw new TypeError("MemoryCacheStore options.maxSize must be a non-negative integer");
+        }
+        this.#maxSize = opts.maxSize;
+      }
+      if (opts.maxEntrySize !== undefined) {
+        if (typeof opts.maxEntrySize !== "number" || !Number.isInteger(opts.maxEntrySize) || opts.maxEntrySize < 0) {
+          throw new TypeError("MemoryCacheStore options.maxEntrySize must be a non-negative integer");
+        }
+        this.#maxEntrySize = opts.maxEntrySize;
+      }
+    }
+  }
+
+  get size() {
+    return this.#size;
+  }
+
+  isFull() {
+    return this.#size >= this.#maxSize || this.#count >= this.#maxCount;
+  }
+
+  get(key) {
+    assertCacheKey(key);
+    const topLevelKey = `${key.origin}:${key.path}`;
+    const now = Date.now();
+    const entries = this.#entries.get(topLevelKey);
+    const entry = entries ? findCacheEntry(key, entries, now) : null;
+    return entry == null
+      ? undefined
+      : {
+          statusMessage: entry.statusMessage,
+          statusCode: entry.statusCode,
+          headers: entry.headers,
+          body: entry.body,
+          vary: entry.vary ? entry.vary : undefined,
+          etag: entry.etag,
+          cacheControlDirectives: entry.cacheControlDirectives,
+          cachedAt: entry.cachedAt,
+          staleAt: entry.staleAt,
+          deleteAt: entry.deleteAt,
+        };
+  }
+
+  createWriteStream(key, val) {
+    assertCacheKey(key);
+    assertCacheValue(val);
+    const topLevelKey = `${key.origin}:${key.path}`;
+    const store = this;
+    const entry = { ...key, ...val, body: [], size: 0 };
+    const { Writable } = StreamModule;
+    return new Writable({
+      write(chunk, encoding, callback) {
+        if (typeof chunk === "string") {
+          chunk = Buffer.from(chunk, encoding);
+        }
+        entry.size += chunk.byteLength;
+        if (entry.size >= store.#maxEntrySize) {
+          this.destroy();
+        } else {
+          entry.body.push(chunk);
+        }
+        callback(null);
+      },
+      final(callback) {
+        let entries = store.#entries.get(topLevelKey);
+        if (!entries) {
+          entries = [];
+          store.#entries.set(topLevelKey, entries);
+        }
+        const previousEntry = findCacheEntry(key, entries, Date.now());
+        if (previousEntry) {
+          const index = entries.indexOf(previousEntry);
+          entries.splice(index, 1, entry);
+          store.#size -= previousEntry.size;
+        } else {
+          entries.push(entry);
+          store.#count += 1;
+        }
+        store.#size += entry.size;
+        if (store.#size > store.#maxSize || store.#count > store.#maxCount) {
+          if (!store.#hasEmittedMaxSizeEvent) {
+            store.emit("maxSizeExceeded", {
+              size: store.#size,
+              maxSize: store.#maxSize,
+              count: store.#count,
+              maxCount: store.#maxCount,
+            });
+            store.#hasEmittedMaxSizeEvent = true;
+          }
+          for (const [key, entries] of store.#entries) {
+            for (const entry of entries.splice(0, entries.length / 2)) {
+              store.#size -= entry.size;
+              store.#count -= 1;
+            }
+            if (entries.length === 0) {
+              store.#entries.delete(key);
+            }
+          }
+          if (store.#size < store.#maxSize && store.#count < store.#maxCount) {
+            store.#hasEmittedMaxSizeEvent = false;
+          }
+        }
+        callback(null);
+      },
+    });
+  }
+
+  delete(key) {
+    if (typeof key !== "object") {
+      throw new TypeError(`expected key to be object, got ${typeof key}`);
+    }
+    const topLevelKey = `${key.origin}:${key.path}`;
+    for (const entry of this.#entries.get(topLevelKey) ?? []) {
+      this.#size -= entry.size;
+      this.#count -= 1;
+    }
+    this.#entries.delete(topLevelKey);
+  }
+}
+
+const SQLITE_MAX_ENTRY_SIZE = 2 * 1000 * 1000 * 1000; // 2GB
+const SQLITE_VERSION = 3;
+
+function headerValueEquals(lhs, rhs) {
+  if (lhs == null && rhs == null) {
+    return true;
+  }
+  if ((lhs == null && rhs != null) || (lhs != null && rhs == null)) {
+    return false;
+  }
+  if (Array.isArray(lhs) && Array.isArray(rhs)) {
+    if (lhs.length !== rhs.length) {
+      return false;
+    }
+    return lhs.every((x, i) => x === rhs[i]);
+  }
+  return lhs === rhs;
+}
+
+class SqliteCacheStore {
+  #maxEntrySize = SQLITE_MAX_ENTRY_SIZE;
+  #maxCount = Infinity;
+  #db;
+  #getValuesQuery;
+  #updateValueQuery;
+  #insertValueQuery;
+  #deleteExpiredValuesQuery;
+  #deleteByUrlQuery;
+  #countEntriesQuery;
+  #deleteOldValuesQuery;
+
+  constructor(opts) {
+    if (opts) {
+      if (typeof opts !== "object") {
+        throw new TypeError("SqliteCacheStore options must be an object");
+      }
+      if (opts.maxEntrySize !== undefined) {
+        if (typeof opts.maxEntrySize !== "number" || !Number.isInteger(opts.maxEntrySize) || opts.maxEntrySize < 0) {
+          throw new TypeError("SqliteCacheStore options.maxEntrySize must be a non-negative integer");
+        }
+        if (opts.maxEntrySize > SQLITE_MAX_ENTRY_SIZE) {
+          throw new TypeError("SqliteCacheStore options.maxEntrySize must be less than 2gb");
+        }
+        this.#maxEntrySize = opts.maxEntrySize;
+      }
+      if (opts.maxCount !== undefined) {
+        if (typeof opts.maxCount !== "number" || !Number.isInteger(opts.maxCount) || opts.maxCount < 0) {
+          throw new TypeError("SqliteCacheStore options.maxCount must be a non-negative integer");
+        }
+        this.#maxCount = opts.maxCount;
+      }
+    }
+
+    const { Database } = require("../bun/sqlite.ts");
+    this.#db = new Database(opts?.location ?? ":memory:");
+
+    this.#db.exec(`
+      PRAGMA journal_mode = WAL;
+      PRAGMA synchronous = NORMAL;
+      PRAGMA temp_store = memory;
+
+      CREATE TABLE IF NOT EXISTS cacheInterceptorV${SQLITE_VERSION} (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        url TEXT NOT NULL,
+        method TEXT NOT NULL,
+        body BLOB NULL,
+        deleteAt INTEGER NOT NULL,
+        statusCode INTEGER NOT NULL,
+        statusMessage TEXT NOT NULL,
+        headers TEXT NULL,
+        cacheControlDirectives TEXT NULL,
+        etag TEXT NULL,
+        vary TEXT NULL,
+        cachedAt INTEGER NOT NULL,
+        staleAt INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_cacheInterceptorV${SQLITE_VERSION}_getValuesQuery ON cacheInterceptorV${SQLITE_VERSION}(url, method, deleteAt);
+      CREATE INDEX IF NOT EXISTS idx_cacheInterceptorV${SQLITE_VERSION}_deleteByUrlQuery ON cacheInterceptorV${SQLITE_VERSION}(deleteAt);
+    `);
+
+    this.#getValuesQuery = this.#db.prepare(`
+      SELECT id, body, deleteAt, statusCode, statusMessage, headers, etag, cacheControlDirectives, vary, cachedAt, staleAt
+      FROM cacheInterceptorV${SQLITE_VERSION}
+      WHERE url = ? AND method = ?
+      ORDER BY deleteAt ASC
+    `);
+
+    this.#updateValueQuery = this.#db.prepare(`
+      UPDATE cacheInterceptorV${SQLITE_VERSION} SET
+        body = ?, deleteAt = ?, statusCode = ?, statusMessage = ?, headers = ?, etag = ?, cacheControlDirectives = ?, cachedAt = ?, staleAt = ?
+      WHERE id = ?
+    `);
+
+    this.#insertValueQuery = this.#db.prepare(`
+      INSERT INTO cacheInterceptorV${SQLITE_VERSION} (url, method, body, deleteAt, statusCode, statusMessage, headers, etag, cacheControlDirectives, vary, cachedAt, staleAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    this.#deleteByUrlQuery = this.#db.prepare(`DELETE FROM cacheInterceptorV${SQLITE_VERSION} WHERE url = ?`);
+    this.#countEntriesQuery = this.#db.prepare(`SELECT COUNT(*) AS total FROM cacheInterceptorV${SQLITE_VERSION}`);
+    this.#deleteExpiredValuesQuery = this.#db.prepare(
+      `DELETE FROM cacheInterceptorV${SQLITE_VERSION} WHERE deleteAt <= ?`,
+    );
+    this.#deleteOldValuesQuery =
+      this.#maxCount === Infinity
+        ? null
+        : this.#db.prepare(`
+        DELETE FROM cacheInterceptorV${SQLITE_VERSION}
+        WHERE id IN (
+          SELECT id FROM cacheInterceptorV${SQLITE_VERSION} ORDER BY cachedAt DESC LIMIT ?
+        )
+      `);
+  }
+
+  close() {
+    this.#db.close();
+  }
+
+  get(key) {
+    assertCacheKey(key);
+    const value = this.#findValue(key);
+    return value
+      ? {
+          body: value.body ? Buffer.from(value.body) : undefined,
+          statusCode: value.statusCode,
+          statusMessage: value.statusMessage,
+          headers: value.headers ? JSON.parse(value.headers) : undefined,
+          etag: value.etag ? value.etag : undefined,
+          vary: value.vary ? JSON.parse(value.vary) : undefined,
+          cacheControlDirectives: value.cacheControlDirectives ? JSON.parse(value.cacheControlDirectives) : undefined,
+          cachedAt: value.cachedAt,
+          staleAt: value.staleAt,
+          deleteAt: value.deleteAt,
+        }
+      : undefined;
+  }
+
+  set(key, value) {
+    assertCacheKey(key);
+    const url = this.#makeValueUrl(key);
+    const body = Array.isArray(value.body) ? Buffer.concat(value.body) : value.body;
+    const size = body?.byteLength;
+    if (size && size > this.#maxEntrySize) {
+      return;
+    }
+    const existingValue = this.#findValue(key, true);
+    if (existingValue) {
+      this.#updateValueQuery.run(
+        body,
+        value.deleteAt,
+        value.statusCode,
+        value.statusMessage,
+        value.headers ? JSON.stringify(value.headers) : null,
+        value.etag ? value.etag : null,
+        value.cacheControlDirectives ? JSON.stringify(value.cacheControlDirectives) : null,
+        value.cachedAt,
+        value.staleAt,
+        existingValue.id,
+      );
+    } else {
+      this.#prune();
+      this.#insertValueQuery.run(
+        url,
+        key.method,
+        body,
+        value.deleteAt,
+        value.statusCode,
+        value.statusMessage,
+        value.headers ? JSON.stringify(value.headers) : null,
+        value.etag ? value.etag : null,
+        value.cacheControlDirectives ? JSON.stringify(value.cacheControlDirectives) : null,
+        value.vary ? JSON.stringify(value.vary) : null,
+        value.cachedAt,
+        value.staleAt,
+      );
+    }
+  }
+
+  createWriteStream(key, value) {
+    assertCacheKey(key);
+    assertCacheValue(value);
+    let size = 0;
+    const body = [];
+    const store = this;
+    const { Writable } = StreamModule;
+    return new Writable({
+      decodeStrings: true,
+      write(chunk, encoding, callback) {
+        size += chunk.byteLength;
+        if (size < store.#maxEntrySize) {
+          body.push(chunk);
+        } else {
+          this.destroy();
+        }
+        callback();
+      },
+      final(callback) {
+        store.set(key, { ...value, body });
+        callback();
+      },
+    });
+  }
+
+  delete(key) {
+    if (typeof key !== "object") {
+      throw new TypeError(`expected key to be object, got ${typeof key}`);
+    }
+    this.#deleteByUrlQuery.run(this.#makeValueUrl(key));
+  }
+
+  #prune() {
+    if (Number.isFinite(this.#maxCount) && this.size <= this.#maxCount) {
+      return 0;
+    }
+    const removed = this.#deleteExpiredValuesQuery.run(Date.now()).changes;
+    if (removed) {
+      return removed;
+    }
+    const removedOld = this.#deleteOldValuesQuery?.run(Math.max(Math.floor(this.#maxCount * 0.1), 1)).changes;
+    if (removedOld) {
+      return removedOld;
+    }
+    return 0;
+  }
+
+  get size() {
+    const { total } = this.#countEntriesQuery.get();
+    return total;
+  }
+
+  #makeValueUrl(key) {
+    return `${key.origin}/${key.path}`;
+  }
+
+  #findValue(key, canBeExpired = false) {
+    const url = this.#makeValueUrl(key);
+    const { headers, method } = key;
+    const values = this.#getValuesQuery.all(url, method);
+    if (values.length === 0) {
+      return undefined;
+    }
+    const now = Date.now();
+    for (const value of values) {
+      if (now >= value.deleteAt && !canBeExpired) {
+        return undefined;
+      }
+      let matches = true;
+      if (value.vary) {
+        const vary = JSON.parse(value.vary);
+        for (const header in vary) {
+          if (!headerValueEquals(headers[header], vary[header])) {
+            matches = false;
+            break;
+          }
+        }
+      }
+      if (matches) {
+        return value;
+      }
+    }
+    return undefined;
+  }
+}
+
+const cacheStores = {
+  MemoryCacheStore,
+  SqliteCacheStore,
+};
+
 /**
  * Builds a connector function for making network connections
  * @param {Object} [options] Configuration options for the connector
@@ -455,6 +922,7 @@ const moduleExports = {
   BalancedPool,
   buildConnector,
   caches,
+  cacheStores,
   Client,
   CloseEvent,
   connect,

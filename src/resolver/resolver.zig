@@ -3084,6 +3084,14 @@ pub const Resolver = struct {
             // its heap-allocated PackageJSON / TSConfigJSON instead of leaking
             // them. atIndex() returns null for Unassigned/NotFound, so this is a
             // no-op on first population.
+            //
+            // Note: if the file was deleted (or fails to parse) between busts,
+            // dirInfoUncached never consumes these and the allocations are
+            // orphaned. That's a one-off leak per delete event, not per save;
+            // freeing here would UAF through child DirInfo.enclosing_* aliases,
+            // and parking the pointer back on the new DirInfo would make the
+            // resolver think the file still exists. Accepting the bounded leak
+            // is the conservative choice.
             var reuse_package_json: ?*PackageJSON = null;
             var reuse_tsconfig_json: ?*TSConfigJSON = null;
             if (r.dir_cache.atIndex(queue_top.result.index)) |prev| {

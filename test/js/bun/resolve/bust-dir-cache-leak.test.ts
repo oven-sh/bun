@@ -66,4 +66,4 @@ test("bustDirCache reuses DirInfo and EntriesOption slots across repeated reload
   // dirname-store appends.
   expect(perIter).toBeLessThan(7 * 1024);
   expect(exitCode).toBe(0);
-}, 60_000);
+});

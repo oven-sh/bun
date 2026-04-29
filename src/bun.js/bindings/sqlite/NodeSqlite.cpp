@@ -241,6 +241,10 @@ static void jsValueToSqliteResult(JSGlobalObject* globalObject, sqlite3_context*
 {
     if (value.isUndefinedOrNull()) {
         sqlite3_result_null(ctx);
+    } else if (value.isInt32()) {
+        // Match bindValue(): int32 results keep INTEGER storage class so
+        // `typeof(udf())` on a function returning 42 yields 'integer'.
+        sqlite3_result_int(ctx, value.asInt32());
     } else if (value.isNumber()) {
         sqlite3_result_double(ctx, value.asNumber());
     } else if (value.isString()) {

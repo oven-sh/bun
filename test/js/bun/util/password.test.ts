@@ -19,10 +19,8 @@ describe("does not leak", () => {
     expect(exitCode).toBe(0);
   }
 
-  test(
-    "hashSync",
-    async () => {
-      await run(/* js */ `
+  test("hashSync", async () => {
+    await run(/* js */ `
         const opts = { algorithm: "argon2id", memoryCost: 4, timeCost: 1 };
         // Large warm-up so the JSC heap and allocator arenas reach steady state
         // before we start measuring (debug/ASAN builds especially need this).
@@ -34,14 +32,10 @@ describe("does not leak", () => {
         const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
         if (growthMB > 4) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
       `);
-    },
-    90_000,
-  );
+  }, 90_000);
 
-  test(
-    "hash",
-    async () => {
-      await run(/* js */ `
+  test("hash", async () => {
+    await run(/* js */ `
         const opts = { algorithm: "argon2id", memoryCost: 4, timeCost: 1 };
         async function batch(n) {
           const promises = [];
@@ -56,9 +50,7 @@ describe("does not leak", () => {
         const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
         if (growthMB > 20) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
       `);
-    },
-    90_000,
-  );
+  }, 90_000);
 });
 
 describe("hash", () => {

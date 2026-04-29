@@ -239,6 +239,7 @@ void MessagePort::close()
     MessagePortChannelProvider::singleton().messagePortClosed(m_identifier);
 
     removeAllEventListeners();
+    updateEventLoopRef();
 }
 
 void MessagePort::dispatchMessages()

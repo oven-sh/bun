@@ -555,6 +555,16 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         }
 
         if (url.isValid() && url.protocolIsFile()) {
+            // Skip module resolution for specifiers that contain characters never
+            // valid in real module names/paths. Running the resolver on arbitrary
+            // text would otherwise fall through to the auto-install code path.
+            for (unsigned i = 0; i < specifier.length(); ++i) {
+                auto c = specifier[i];
+                if (c == '\0' || c == '\n' || c == '\r') {
+                    return;
+                }
+            }
+
             auto fromString = url.fileSystemPath();
             BunString from = Bun::toString(fromString);
             auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);

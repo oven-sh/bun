@@ -2209,12 +2209,6 @@ pub const sync = struct {
     extern "c" fn Bun__noOrphans_scan() void;
     extern "c" fn Bun__noOrphans_onExit(pid: std.c.pid_t) void;
 
-    /// Hands the controlling terminal's foreground pgroup to the script's
-    /// pgroup and back. Only meaningful when stdin is a TTY (the interactive
-    /// `bun run --no-orphans dev` case); the supervisor/CI case this feature
-    /// targets has stdin as a pipe and `give()` is a no-op. Blocks SIGTTOU
-    /// around `tcsetpgrp` per the usual job-control dance — a background
-    /// process that calls it gets stopped otherwise.
     // The PID to forward signals to.
     // Set to 0 when unregistering.
     extern "c" var Bun__currentSyncPID: i64;
@@ -2358,7 +2352,7 @@ pub const sync = struct {
         // tree via NOTE_FORK + p_puniqueid). Linux/macOS only — other POSIX
         // (FreeBSD) falls through to the original `poll()`+`wait4()` below so
         // buffered stdio still drains; the `defer` above still does the
-        // pgroup kill + tcsetpgrp restore there.
+        // pgroup kill there.
         //
         // Do NOT return from here — Linux backs `.buffer` stdio with memfds
         // that are read *after* the wait, so falling through to the memfd block

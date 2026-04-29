@@ -1519,7 +1519,14 @@ bool JSStatementSync::bindValue(JSGlobalObject* globalObject, ThrowScope& scope,
 {
     int r = SQLITE_OK;
     if (value.isNumber()) {
-        r = sqlite3_bind_double(m_stmt, index, value.asNumber());
+        // Match Node's IsInt32() → sqlite3_bind_int fast path so that
+        // `typeof(?)` on a bare parameter yields 'integer' (not 'real')
+        // and expandedSQL shows `42`, not `42.0`.
+        if (value.isInt32()) {
+            r = sqlite3_bind_int(m_stmt, index, value.asInt32());
+        } else {
+            r = sqlite3_bind_double(m_stmt, index, value.asNumber());
+        }
     } else if (value.isString()) {
         auto str = value.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
@@ -1962,12 +1969,15 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorNext, (JSGlobalObject * globalOb
         scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), "StatementSyncIterator"_s));
         return {};
     }
+    // Once exhausted, next() doesn't touch the statement — so keep
+    // returning {done:true} regardless of whether the db has since been
+    // closed (matches the iterator protocol's "exhausted is permanent").
+    if (self->done()) {
+        return JSValue::encode(createIterResult(vm, globalObject, true, jsNull()));
+    }
     JSStatementSync* stmt = self->statement();
     if (!stmt || stmt->isFinalized()) {
         return Bun::ERR::INVALID_STATE(scope, globalObject, "statement has been finalized"_s);
-    }
-    if (self->done()) {
-        return JSValue::encode(createIterResult(vm, globalObject, true, jsNull()));
     }
     if (self->capturedGeneration() != stmt->resetGeneration()) {
         return Bun::ERR::INVALID_STATE(scope, globalObject, "statement has been reset"_s);

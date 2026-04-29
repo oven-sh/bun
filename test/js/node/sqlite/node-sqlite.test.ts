@@ -64,6 +64,19 @@ describe("DatabaseSync", () => {
     db.close();
   });
 
+  test("binds small integers with INTEGER storage class (not REAL)", () => {
+    const db = new DatabaseSync(":memory:");
+    // Without the isInt32() fast path, 42 would bind via sqlite3_bind_double
+    // and typeof(?) on a bare parameter (no column affinity) returns 'real'.
+    expect(db.prepare("SELECT typeof(?) AS t").get(42).t).toBe("integer");
+    expect(db.prepare("SELECT typeof(?) AS t").get(1.5).t).toBe("real");
+    // expandedSQL reflects the bound storage class.
+    const stmt = db.prepare("SELECT ?");
+    stmt.get(42);
+    expect(stmt.expandedSQL).toBe("SELECT 42");
+    db.close();
+  });
+
   test("rejects unbindable values with ERR_INVALID_ARG_TYPE", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (a, b)");

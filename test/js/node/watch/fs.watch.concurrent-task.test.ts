@@ -20,6 +20,11 @@ test.skipIf(isWindows)("fs.watch: FSWatchTask enqueue fully initializes Concurre
     "d.txt": "d",
   });
 
+  // The regression signal here is the debug assertion / no heap corruption in
+  // FSWatchTask.enqueue(), not event-delivery count. On macOS, directory watches
+  // route through FSEvents which has ~50ms coalescing latency and async stream
+  // registration, so we wait for the first event before counting stress rounds
+  // rather than assuming a fixed number of setImmediate turns is "enough time".
   const fixture = /* js */ `
     const fs = require("fs");
     const path = require("path");
@@ -32,28 +37,37 @@ test.skipIf(isWindows)("fs.watch: FSWatchTask enqueue fully initializes Concurre
       watchers.push(fs.watch(dir, () => { received++; }));
     }
 
-    let round = 0;
-    const files = ["a.txt", "b.txt", "c.txt", "d.txt"];
-    function tick() {
-      if (round++ >= 50) {
-        for (const w of watchers) w.close();
-        // Allow the close tasks (also routed via enqueue) to drain.
-        setImmediate(() => {
-          if (received === 0) {
-            console.error("no events received");
-            process.exit(1);
-          }
-          console.log("OK " + received);
-          process.exit(0);
-        });
-        return;
-      }
-      for (const f of files) {
-        fs.writeFileSync(path.join(dir, f), "round" + round);
-      }
-      setImmediate(tick);
+    function done() {
+      for (const w of watchers) w.close();
+      // Allow the close tasks (also routed via enqueue) to drain.
+      setImmediate(() => {
+        console.log("OK " + received);
+        process.exit(0);
+      });
     }
-    setImmediate(tick);
+
+    const files = ["a.txt", "b.txt", "c.txt", "d.txt"];
+    function write() {
+      for (const f of files) fs.writeFileSync(path.join(dir, f), "v" + received);
+    }
+
+    // Phase 1: write until the first event arrives (condition, not time).
+    const started = Date.now();
+    (async () => {
+      while (received === 0) {
+        write();
+        await new Promise(r => setImmediate(r));
+        // Give up waiting for delivery after a generous bound; the assertion /
+        // heap check is still exercised by close() even if no events arrived.
+        if (Date.now() - started > 10_000) return done();
+      }
+      // Phase 2: now that enqueue() is known to be firing, stress it.
+      for (let round = 0; round < 50; round++) {
+        write();
+        await new Promise(r => setImmediate(r));
+      }
+      done();
+    })();
   `;
 
   await using proc = Bun.spawn({

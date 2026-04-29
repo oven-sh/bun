@@ -1175,9 +1175,12 @@ function emitContinueAndSocketNT(self) {
     const socket = self.socket;
     self.emit("socket", socket);
     // The client uses an internal fetch-based transport, so the socket is
-    // a FakeSocket with no real TCP handshake. Emit 'connect' so user code
-    // listening for it (in the 'socket' handler) observes Node.js behavior.
-    process.nextTick(emitConnectNT, socket);
+    // normally a FakeSocket with no real TCP handshake. Emit 'connect' so
+    // user code listening for it (in the 'socket' handler) observes Node.js
+    // behavior. Skip when a custom agent supplied a real net.Socket that is
+    // still connecting — it will emit its own 'connect' on handshake and
+    // a synthetic one here would cause a double-fire.
+    if (!socket?.connecting) process.nextTick(emitConnectNT, socket);
   }
 
   // Emit continue event for the client (internally we auto handle it)

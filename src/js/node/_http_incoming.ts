@@ -243,11 +243,11 @@ const IncomingMessagePrototype = {
     } else if ((internalRequest = this[kHandle])) {
       const bodyReadState = internalRequest.hasBody;
 
-      if (
+      const isDone =
         (bodyReadState & NodeHTTPBodyReadState.done) !== 0 ||
         bodyReadState === NodeHTTPBodyReadState.none ||
-        this._dumped
-      ) {
+        this._dumped;
+      if (isDone) {
         emitEOFIncomingMessage(this);
       }
 
@@ -258,7 +258,10 @@ const IncomingMessagePrototype = {
         }
       }
 
-      if (!internalRequest.ondata) {
+      // Don't re-register ondata once the body is done/dumped — the native side has
+      // already released body_read_ref and re-registering would just churn uWS state
+      // for a stream that's about to EOF.
+      if (!isDone && !internalRequest.ondata) {
         internalRequest.ondata = onDataIncomingMessage.bind(this);
         internalRequest.hasCustomOnData = false;
       }

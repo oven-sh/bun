@@ -2033,8 +2033,8 @@ pub const H2FrameParser = struct {
             }
             // RFC 7540 Section 6.1: If the length of the padding is the length of
             // the frame payload or greater, the recipient MUST treat this as a
-            // connection error of type PROTOCOL_ERROR. Validate before subtracting
-            // below to avoid underflowing `frame.length - padding - 1`.
+            // connection error of type PROTOCOL_ERROR. Validate before computing
+            // `data_region_end = frame.length - padding` below to avoid underflow.
             if (@as(usize, padding) >= frame.length) {
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Invalid data frame padding", this.lastStreamID, true);
                 return data.len;

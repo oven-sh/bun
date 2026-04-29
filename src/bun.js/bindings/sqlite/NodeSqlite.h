@@ -23,12 +23,15 @@
 extern "C" {
 struct sqlite3;
 struct sqlite3_stmt;
+struct sqlite3_session;
 }
 
 namespace Bun {
 
 class JSDatabaseSync;
 class JSStatementSync;
+class JSNodeSqliteSession;
+class JSStatementSyncIterator;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DatabaseSync
@@ -40,6 +43,12 @@ struct DatabaseSyncOpenConfiguration {
     bool enableDoubleQuotedStringLiterals = false;
     bool allowExtension = false;
     int timeout = 0;
+    // Defaults inherited by statements prepared on this connection
+    // (overridable per-statement via setReadBigInts() etc.).
+    bool readBigInts = false;
+    bool returnArrays = false;
+    bool allowBareNamedParameters = true;
+    bool allowUnknownNamedParameters = false;
 };
 
 class JSDatabaseSync final : public JSC::JSDestructibleObject {
@@ -80,6 +89,23 @@ public:
     bool enableLoadExtensionIsOn() const { return m_enableLoadExtension; }
     void setEnableLoadExtension(bool v) { m_enableLoadExtension = v; }
 
+    const DatabaseSyncOpenConfiguration& config() const { return m_config; }
+
+    // User-defined functions call back into JS from inside sqlite3_step().
+    // If the JS callback throws, we record that here so the enclosing
+    // step()/exec() can propagate the JS exception instead of wrapping the
+    // uninformative "user-defined function raised exception" SQLite error.
+    bool takeIgnoreNextSqliteError()
+    {
+        bool v = m_ignoreNextSqliteError;
+        m_ignoreNextSqliteError = false;
+        return v;
+    }
+    void setIgnoreNextSqliteError() { m_ignoreNextSqliteError = true; }
+
+    void trackSession(sqlite3_session* s) { m_sessions.append(s); }
+    void untrackSession(sqlite3_session* s) { m_sessions.removeFirst(s); }
+
 private:
     JSDatabaseSync(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
@@ -91,7 +117,12 @@ private:
     WTF::String m_location;
     DatabaseSyncOpenConfiguration m_config {};
     sqlite3* m_db = nullptr;
+    // Sessions must be deleted before sqlite3_close_v2() to avoid
+    // use-after-free inside the preupdate hook; track them by raw handle
+    // (not JS object) so close() can sweep regardless of GC ordering.
+    WTF::Vector<sqlite3_session*> m_sessions;
     bool m_enableLoadExtension = false;
+    bool m_ignoreNextSqliteError = false;
 };
 
 class JSDatabaseSyncPrototype final : public JSC::JSNonFinalObject {
@@ -184,6 +215,7 @@ public:
 
     sqlite3_stmt* statement() const { return m_stmt; }
     sqlite3* connection() const;
+    JSDatabaseSync* database() const { return m_database.get(); }
     // A statement is considered finalized either when it has been
     // explicitly finalized or when its owning database has been closed
     // (the underlying sqlite3_stmt* then points into a zombie connection
@@ -199,6 +231,12 @@ public:
     void setReturnArrays(bool v) { m_returnArrays = v; }
     void setAllowBareNamedParams(bool v) { m_allowBareNamedParams = v; }
     void setAllowUnknownNamedParams(bool v) { m_allowUnknownNamedParams = v; }
+
+    // Incremented whenever run()/get()/all()/iterate() resets the statement,
+    // so a live StatementSyncIterator can detect that its cursor position
+    // has been invalidated by another call on the same statement.
+    unsigned resetGeneration() const { return m_resetGeneration; }
+    void bumpResetGeneration() { ++m_resetGeneration; }
 
     // Bind callFrame->argument(anon_start..) to the statement using Node.js
     // semantics. Returns false and throws on failure.
@@ -217,6 +255,7 @@ private:
     bool bindValue(JSC::JSGlobalObject*, JSC::ThrowScope&, int index, JSC::JSValue);
 
     sqlite3_stmt* m_stmt = nullptr;
+    unsigned m_resetGeneration = 0;
     bool m_useBigInts : 1 = false;
     bool m_returnArrays : 1 = false;
     bool m_allowBareNamedParams : 1 = true;
@@ -278,6 +317,171 @@ private:
     {
     }
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* prototype);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// StatementSyncIterator — lazy row cursor returned by iterate().
+//
+// Not its own public constructor; the prototype chain is
+//   iter → StatementSyncIteratorPrototype → %IteratorPrototype%
+// so for-of, spread, Iterator helpers all work.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class JSStatementSyncIterator final : public JSC::JSDestructibleObject {
+public:
+    using Base = JSC::JSDestructibleObject;
+    static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+
+    DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+    static JSStatementSyncIterator* create(JSC::VM& vm, JSC::Structure* structure, JSStatementSync* stmt);
+
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return subspaceForImpl(vm);
+    }
+    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
+
+    static void destroy(JSC::JSCell* cell) { static_cast<JSStatementSyncIterator*>(cell)->~JSStatementSyncIterator(); }
+    ~JSStatementSyncIterator() = default;
+
+    JSStatementSync* statement() const { return m_statement.get(); }
+    bool done() const { return m_done; }
+    void setDone() { m_done = true; }
+    unsigned capturedGeneration() const { return m_capturedGeneration; }
+
+    JSC::WriteBarrier<JSStatementSync> m_statement;
+
+private:
+    JSStatementSyncIterator(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+    void finishCreation(JSC::VM& vm, JSStatementSync* stmt);
+
+    unsigned m_capturedGeneration = 0;
+    bool m_done = false;
+};
+
+class JSStatementSyncIteratorPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+    DECLARE_INFO;
+
+    static JSStatementSyncIteratorPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        auto* ptr = new (NotNull, JSC::allocateCell<JSStatementSyncIteratorPrototype>(vm)) JSStatementSyncIteratorPrototype(vm, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStatementSyncIteratorPrototype, Base);
+        return &vm.plainObjectSpace();
+    }
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSStatementSyncIteratorPrototype(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Session — thin wrapper over sqlite3_session* returned by
+// DatabaseSync.prototype.createSession(). No public constructor.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class JSNodeSqliteSession final : public JSC::JSDestructibleObject {
+public:
+    using Base = JSC::JSDestructibleObject;
+    static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+
+    DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+    static JSNodeSqliteSession* create(JSC::VM& vm, JSC::Structure* structure, JSDatabaseSync* db, sqlite3_session* session);
+
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return subspaceForImpl(vm);
+    }
+    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
+
+    static void destroy(JSC::JSCell* cell) { static_cast<JSNodeSqliteSession*>(cell)->~JSNodeSqliteSession(); }
+    ~JSNodeSqliteSession();
+
+    sqlite3_session* session() const { return m_session; }
+    JSDatabaseSync* database() const { return m_database.get(); }
+    void deleteSession();
+
+    JSC::WriteBarrier<JSDatabaseSync> m_database;
+
+private:
+    JSNodeSqliteSession(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+    void finishCreation(JSC::VM& vm, JSDatabaseSync* db, sqlite3_session* session);
+
+    sqlite3_session* m_session = nullptr;
+};
+
+class JSNodeSqliteSessionPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+    DECLARE_INFO;
+
+    static JSNodeSqliteSessionPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        auto* ptr = new (NotNull, JSC::allocateCell<JSNodeSqliteSessionPrototype>(vm)) JSNodeSqliteSessionPrototype(vm, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSNodeSqliteSessionPrototype, Base);
+        return &vm.plainObjectSpace();
+    }
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSNodeSqliteSessionPrototype(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 };
 
 // Module-level constants object (SQLITE_CHANGESET_*).

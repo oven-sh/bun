@@ -38,6 +38,15 @@ export const sqlite: Dependency = {
       SQLITE_ENABLE_MATH_FUNCTIONS: 1,
       SQLITE_ENABLE_UPDATE_DELETE_LIMIT: 1,
       SQLITE_UDL_CAPABLE_PARSER: 1,
+      // node:sqlite exposes createSession/applyChangeset + columns()
+      // metadata. Match Node.js's compile-time feature set so those
+      // APIs work identically. PREUPDATE_HOOK is a prerequisite for the
+      // session extension.
+      SQLITE_ENABLE_SESSION: 1,
+      SQLITE_ENABLE_PREUPDATE_HOOK: 1,
+      SQLITE_ENABLE_DBSTAT_VTAB: 1,
+      SQLITE_ENABLE_GEOPOLY: 1,
+      SQLITE_ENABLE_RBU: 1,
     },
     cflags: [
       "-Wno-incompatible-pointer-types-discards-qualifiers",

@@ -473,10 +473,22 @@ const Linux = struct {
         const wd: i32 = @intCast(rc);
         const gop = bun.handleOom(plat.wd_map.getOrPut(bun.default_allocator, wd));
         if (!gop.found_existing) gop.value_ptr.* = .{};
-        // A recursive walk can revisit a directory we already registered (e.g. via
-        // a symlink cycle or an IN_CREATE race); don't add the same owner twice.
-        for (gop.value_ptr.items) |o| {
-            if (o.watcher == watcher) return .success;
+        // This wd may already have this watcher as an owner:
+        //   - IN_CREATE raced the initial walk (same subpath → the reassign is a no-op)
+        //   - a subdirectory was *renamed* within the tree: IN_MOVED_TO re-adds it,
+        //     inotify returns the same wd (it watches by inode), and the cached subpath
+        //     is now stale. Overwrite so later events under the moved dir report the
+        //     new name. `walkAndAdd` never follows symlinks (`entry.kind == .directory`,
+        //     not `.sym_link`), so this can't pick a longer alias via a cycle.
+        for (gop.value_ptr.items) |*o| {
+            if (o.watcher == watcher) {
+                if (!bun.strings.eql(o.subpath, subpath)) {
+                    const old = o.subpath;
+                    o.subpath = bun.handleOom(bun.default_allocator.dupeZ(u8, subpath));
+                    bun.default_allocator.free(old);
+                }
+                return .success;
+            }
         }
         bun.handleOom(gop.value_ptr.append(bun.default_allocator, .{
             .watcher = watcher,

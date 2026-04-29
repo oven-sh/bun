@@ -58,6 +58,45 @@ describe.skipIf(isFreeBSD)("fs.watch recursive tracks post-watch structure", () 
   });
 });
 
+// inotify watches by inode, so renaming a subdirectory inside a recursive watch keeps
+// the same wd. On IN_MOVED_TO the dispatch loop re-adds the moved dir, inotify returns
+// the *same* wd, and the backend must replace the owner's cached subpath — otherwise
+// writes under the new name would be reported under the old name. (macOS/Windows are
+// path-based natively; FreeBSD has no dir-child events so is skipped as above.)
+test.skipIf(isFreeBSD)("recursive watch reports new path after subdirectory rename", async () => {
+  using dir = tempDir("fs-watch-recursive-rename", { "a/seed.txt": "x" });
+  const root = String(dir);
+
+  const seen: string[] = [];
+  const watcher = fs.watch(root, { recursive: true }, (_ev, filename) => {
+    if (typeof filename === "string") seen.push(filename.replaceAll("\\", "/"));
+  });
+
+  try {
+    // Poke until the backend has picked up the subdir (sync on Linux, ~50ms on FSEvents).
+    for (let i = 0; i < 80 && !seen.some(p => p.startsWith("a/")); i++) {
+      fs.writeFileSync(path.join(root, "a", "seed.txt"), String(i));
+      await Bun.sleep(50);
+    }
+
+    fs.renameSync(path.join(root, "a"), path.join(root, "b"));
+    seen.length = 0;
+
+    let ok = false;
+    for (let i = 0; i < 80 && !ok; i++) {
+      fs.writeFileSync(path.join(root, "b", "inside.txt"), String(i));
+      await Bun.sleep(50);
+      ok = seen.some(p => p === "b/inside.txt");
+    }
+
+    // Must surface as "b/inside.txt"; a stale subpath would have emitted "a/inside.txt".
+    expect(seen).toContain("b/inside.txt");
+    expect(seen.some(p => p.startsWith("a/"))).toBe(false);
+  } finally {
+    watcher.close();
+  }
+});
+
 // Dedup: two fs.watch() calls on the same path share one OS watch. Both must receive
 // events, and closing one must not silence the other. Previously each call routed to
 // a shared bun.Watcher but through separate PathWatcher shims with their own

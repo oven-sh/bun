@@ -76,6 +76,6 @@ if (isDockerEnabled()) {
         return;
       }
       assertFixtureOutput(stdout, stderr, exitCode);
-    }, 30_000);
+    });
   });
 }

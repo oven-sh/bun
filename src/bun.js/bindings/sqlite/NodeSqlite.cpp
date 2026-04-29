@@ -131,6 +131,12 @@ static void throwSqliteMessage(JSGlobalObject* globalObject, ThrowScope& scope, 
         }                                                                                          \
     } while (0)
 
+// Pin the owning database for the duration of a StatementSync call that
+// may re-enter JS (bindParams getters, UDFs, aggregate callbacks). Must
+// follow REQUIRE_STMT so database() is known live.
+#define BUSY_SCOPE_STMT(self) \
+    JSDatabaseSync::BusyScope busy__ { (self)->database() }
+
 // Node.js's node_sqlite.cc validation errors use a fixed phrasing that the
 // upstream test suite asserts on verbatim. Bun's generic ERR_INVALID_ARG_TYPE
 // helper produces a slightly different sentence, so emit Node's form here.
@@ -770,6 +776,13 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncClose, (JSGlobalObject * globalObject, Ca
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    if (self->isBusy()) {
+        // A native call on this connection is on the stack (option-getter,
+        // UDF, xFilter, progress, …). Closing now would null/free the
+        // sqlite3* out from under it — see BusyScope users below.
+        return Bun::ERR::INVALID_STATE(scope, globalObject,
+            "cannot close database while a statement is executing"_s);
+    }
     self->closeInternal();
     return JSValue::encode(jsUndefined());
 }
@@ -779,7 +792,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncDispose, (JSGlobalObject * globalObject, 
     auto& vm = JSC::getVM(globalObject);
     (void)vm;
     JSDatabaseSync* self = dynamicDowncast<JSDatabaseSync>(callFrame->thisValue());
-    if (self && self->isOpen()) {
+    if (self && self->isOpen() && !self->isBusy()) {
         self->closeInternal();
     }
     return JSValue::encode(jsUndefined());
@@ -789,6 +802,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncExec, (JSGlobalObject * globalObject, Cal
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    JSDatabaseSync::BusyScope busy { self };
     JSValue sqlVal = callFrame->argument(0);
     if (!sqlVal.isString()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "sql"_s, "string"_s, sqlVal);
@@ -809,6 +823,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncPrepare, (JSGlobalObject * globalObject, 
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    JSDatabaseSync::BusyScope busy { self };
     JSValue sqlVal = callFrame->argument(0);
     if (!sqlVal.isString()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "sql"_s, "string"_s, sqlVal);
@@ -947,6 +962,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncFunction, (JSGlobalObject * globalObject,
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    JSDatabaseSync::BusyScope busy { self };
 
     JSValue nameVal = callFrame->argument(0);
     if (!nameVal.isString()) {
@@ -1010,6 +1026,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncAggregate, (JSGlobalObject * globalObject
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    JSDatabaseSync::BusyScope busy { self };
 
     JSValue nameVal = callFrame->argument(0);
     if (!nameVal.isString()) {
@@ -1093,6 +1110,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncCreateSession, (JSGlobalObject * globalOb
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    JSDatabaseSync::BusyScope busy { self };
 
     WTF::String table;
     WTF::String dbName = "main"_s;
@@ -1203,6 +1221,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncApplyChangeset, (JSGlobalObject * globalO
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    JSDatabaseSync::BusyScope busy { self };
 
     auto* buf = dynamicDowncast<JSC::JSUint8Array>(callFrame->argument(0));
     if (!buf) {
@@ -1235,11 +1254,23 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncApplyChangeset, (JSGlobalObject * globalO
         }
     }
 
+    // sqlite3changeset_apply stores pChangeset (no copy) and streams from
+    // it between xFilter/xConflict invocations. Those callbacks re-enter
+    // JS, which could detach `buf` (e.g. `changeset.buffer.transfer()`)
+    // and let GC free the backing store while SQLite is still reading
+    // from it. Copy into an owned buffer so the lifetime is tied to this
+    // stack frame regardless of what JS does. Changesets are typically
+    // small, so the copy is cheap relative to the safety it buys.
     auto span = buf->span();
+    WTF::Vector<uint8_t> owned;
+    if (!owned.tryAppend(span)) {
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_OUT_OF_RANGE,
+            "changeset is too large"_s);
+    }
     // sqlite3changeset_apply declares pChangeset as `void*` (non-const)
     // for historical reasons; the buffer is not written to.
     int r = sqlite3changeset_apply(self->connection(),
-        static_cast<int>(span.size()), const_cast<unsigned char*>(span.data()),
+        static_cast<int>(owned.size()), owned.mutableSpan().data(),
         applyChangesetXFilter, applyChangesetXConflict, &ctx);
     CHECK_UDF_EXCEPTION(scope, self);
     if (r == SQLITE_ABORT) {
@@ -1340,8 +1371,21 @@ static bool validateDatabasePath(JSGlobalObject* globalObject, ThrowScope& scope
                 Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_URL_SCHEME, "The URL must be of scheme file:"_s);
                 return false;
             }
-            out = href.toWTFString(globalObject);
+            auto hrefStr = href.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, false);
+            // Decode to a plain filesystem path (like Node's
+            // FileURLToPath) so the caller's find('\0') check sees the
+            // decoded byte — the raw href keeps `%00` as three literal
+            // characters, and sqlite3_open_v2 with SQLITE_OPEN_URI would
+            // then percent-decode it itself and silently truncate. This
+            // also strips any ?query (cache=/vfs=/nolock=…) so it isn't
+            // leaked through to sqlite3ParseUri.
+            auto url = WTF::URL(hrefStr);
+            if (!url.isValid() || !url.protocolIsFile()) {
+                Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_URL_SCHEME, "The URL must be of scheme file:"_s);
+                return false;
+            }
+            out = url.fileSystemPath();
             return true;
         }
     }
@@ -1681,6 +1725,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncRun, (JSGlobalObject * globalObject, Cal
 {
     THIS_STATEMENT();
     REQUIRE_STMT(self);
+    BUSY_SCOPE_STMT(self);
     sqlite3_reset(self->statement());
     self->bumpResetGeneration();
     if (!self->bindParams(globalObject, scope, callFrame)) return {};
@@ -1723,6 +1768,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncGet, (JSGlobalObject * globalObject, Cal
 {
     THIS_STATEMENT();
     REQUIRE_STMT(self);
+    BUSY_SCOPE_STMT(self);
     sqlite3_reset(self->statement());
     self->bumpResetGeneration();
     if (!self->bindParams(globalObject, scope, callFrame)) return {};
@@ -1748,6 +1794,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncAll, (JSGlobalObject * globalObject, Cal
 {
     THIS_STATEMENT();
     REQUIRE_STMT(self);
+    BUSY_SCOPE_STMT(self);
     sqlite3_reset(self->statement());
     self->bumpResetGeneration();
     if (!self->bindParams(globalObject, scope, callFrame)) return {};
@@ -1777,6 +1824,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIterate, (JSGlobalObject * globalObject,
 {
     THIS_STATEMENT();
     REQUIRE_STMT(self);
+    BUSY_SCOPE_STMT(self);
     sqlite3_reset(self->statement());
     self->bumpResetGeneration();
     if (!self->bindParams(globalObject, scope, callFrame)) return {};
@@ -1993,6 +2041,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorNext, (JSGlobalObject * globalOb
     if (self->capturedGeneration() != stmt->resetGeneration()) {
         return Bun::ERR::INVALID_STATE(scope, globalObject, "statement has been reset"_s);
     }
+    JSDatabaseSync::BusyScope busy { stmt->database() };
 
     int r = sqlite3_step(stmt->statement());
     CHECK_UDF_EXCEPTION(scope, stmt->database());
@@ -2234,6 +2283,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
     if (!sourceDb->isOpen()) {
         return Bun::ERR::INVALID_STATE(scope, globalObject, "database is not open"_s);
     }
+    JSDatabaseSync::BusyScope busy { sourceDb };
 
     WTF::String destPath;
     if (!validateDatabasePath(globalObject, scope, callFrame->argument(1), destPath)) return {};

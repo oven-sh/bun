@@ -170,25 +170,81 @@ describe("DatabaseSync", () => {
     );
   });
 
-  test("run() does not crash if a parameter getter closes the database", () => {
-    // bindParams() invokes [[Get]] on named-parameter keys, which can
-    // call db.close() before sqlite3_step(). After step, run() reads
-    // sqlite3_changes64 — that must come from sqlite3_db_handle(stmt)
-    // (the zombie connection), not the wrapper's now-null m_db.
+  test("constructor rejects percent-encoded NUL in file: URLs", () => {
+    // The raw href keeps "%00" as three literal characters, so find('\0')
+    // on it misses the embedded NUL. The URL must be decoded to a
+    // filesystem path before the check, or sqlite3_open_v2 with
+    // SQLITE_OPEN_URI would itself decode %00 and silently truncate.
+    expect(() => new DatabaseSync(new URL("file:///tmp/a%00b.db"))).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringMatching(/without null bytes/),
+      }),
+    );
+  });
+
+  test("close() is rejected while a native call is in flight (re-entrant close)", () => {
+    // bindParams/UDFs/xFilter/progress can re-enter JS mid-operation.
+    // If that JS calls db.close(), the in-flight sqlite call would see a
+    // freed/null sqlite3* on return. A BusyScope around each operation
+    // makes close() throw ERR_INVALID_STATE instead of pulling the rug.
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (a)");
     const stmt = db.prepare("INSERT INTO t VALUES (:a)");
+    let closeErr: unknown;
     const r = stmt.run({
       get a() {
-        db.close();
+        try {
+          db.close();
+        } catch (e) {
+          closeErr = e;
+        }
         return 1;
       },
     });
-    // Statement ran against the zombied connection; {changes,lastInsertRowid}
-    // still come back since sqlite3_db_handle keeps a valid handle.
+    expect(closeErr).toMatchObject({ code: "ERR_INVALID_STATE" });
+    expect(db.isOpen).toBe(true);
     expect(r).toEqual({ changes: 1, lastInsertRowid: 1 });
-    // But the statement is now finalized from JS's perspective.
-    expect(() => stmt.get()).toThrow(/statement has been finalized/);
+
+    // Same guard applies to option getters on function()/aggregate()/
+    // createSession()/applyChangeset().
+    expect(() =>
+      db.function(
+        "f",
+        {
+          get varargs() {
+            db.close();
+            return true;
+          },
+        },
+        () => 0,
+      ),
+    ).toThrow(/cannot close database/);
+    expect(db.isOpen).toBe(true);
+
+    // And to xFilter inside applyChangeset (where sqlite would otherwise
+    // continue using a freed — not zombied — connection).
+    const dst = new DatabaseSync(":memory:");
+    dst.exec("CREATE TABLE t (a INTEGER PRIMARY KEY)");
+    db.exec("CREATE TABLE s (a INTEGER PRIMARY KEY)");
+    const session = db.createSession();
+    db.exec("INSERT INTO s VALUES (1)");
+    const cs = session.changeset();
+    let filterCloseErr: unknown;
+    dst.applyChangeset(cs, {
+      filter: () => {
+        try {
+          dst.close();
+        } catch (e) {
+          filterCloseErr = e;
+        }
+        return false;
+      },
+    });
+    expect(filterCloseErr).toMatchObject({ code: "ERR_INVALID_STATE" });
+    expect(dst.isOpen).toBe(true);
+    dst.close();
+    db.close();
   });
 
   test("statements from a prior connection are finalized across close()/open()", () => {
@@ -483,6 +539,40 @@ describe("Session / changeset", () => {
     });
     expect(dst.prepare("SELECT count(*) AS c FROM a").get().c).toBe(1);
     expect(dst.prepare("SELECT count(*) AS c FROM b").get().c).toBe(0);
+    src.close();
+    dst.close();
+  });
+
+  test("applyChangeset copies the input so callbacks can't detach it mid-iteration", () => {
+    // sqlite3changeset_apply stores the raw pointer and streams from it
+    // between xFilter calls; detaching the backing ArrayBuffer there
+    // would free the memory sqlite is still reading. applyChangeset
+    // copies into an owned buffer first, so this must not crash (and the
+    // changes are still applied correctly).
+    const src = new DatabaseSync(":memory:");
+    const dst = new DatabaseSync(":memory:");
+    for (const db of [src, dst]) {
+      db.exec("CREATE TABLE a (id INTEGER PRIMARY KEY, v TEXT)");
+      db.exec("CREATE TABLE b (id INTEGER PRIMARY KEY, v TEXT)");
+    }
+    const session = src.createSession();
+    src.exec("INSERT INTO a VALUES (1, 'x')");
+    src.exec("INSERT INTO b VALUES (1, 'y')");
+    const changeset = session.changeset();
+    let detached = false;
+    dst.applyChangeset(changeset, {
+      filter: () => {
+        if (!detached) {
+          // Move the backing store to an unreferenced temp → GC-eligible.
+          changeset.buffer.transfer();
+          detached = true;
+        }
+        Bun.gc(true);
+        return true;
+      },
+    });
+    expect(dst.prepare("SELECT count(*) AS c FROM a").get().c).toBe(1);
+    expect(dst.prepare("SELECT count(*) AS c FROM b").get().c).toBe(1);
     src.close();
     dst.close();
   });

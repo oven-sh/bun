@@ -112,6 +112,25 @@ public:
     void trackSession(sqlite3_session* s) { m_sessions.append(s); }
     void untrackSession(sqlite3_session* s) { m_sessions.removeFirst(s); }
 
+    // Incremented for the duration of any native call that hands this
+    // connection into SQLite and may re-enter JS (option-getter, xFunc,
+    // xFilter, progress, …). close() rejects with ERR_INVALID_STATE while
+    // non-zero so a re-entrant close() can't free the sqlite3* out from
+    // under the in-flight C call. [Symbol.dispose] becomes a no-op.
+    bool isBusy() const { return m_busyDepth > 0; }
+    struct BusyScope {
+        JSDatabaseSync* db;
+        BusyScope(JSDatabaseSync* d)
+            : db(d)
+        {
+            if (db) ++db->m_busyDepth;
+        }
+        ~BusyScope()
+        {
+            if (db) --db->m_busyDepth;
+        }
+    };
+
 private:
     JSDatabaseSync(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
@@ -124,6 +143,7 @@ private:
     DatabaseSyncOpenConfiguration m_config {};
     sqlite3* m_db = nullptr;
     unsigned m_openGeneration = 0;
+    unsigned m_busyDepth = 0;
     // Sessions must be deleted before sqlite3_close_v2() to avoid
     // use-after-free inside the preupdate hook; track them by raw handle
     // (not JS object) so close() can sweep regardless of GC ordering.

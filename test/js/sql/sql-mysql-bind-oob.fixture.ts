@@ -38,7 +38,12 @@ try {
     rows => ({ ok: true, rows }),
     err => ({ ok: false, code: err?.code, message: String(err?.message ?? err) }),
   );
-  console.log(JSON.stringify(result));
+
+  // The connection must still be usable after the bind failure; a partial
+  // packet header left in the write buffer would desync the protocol here.
+  const after = await sql.unsafe("select ? as x", [2]);
+
+  console.log(JSON.stringify({ result, after }));
 } finally {
   await sql.close();
 }

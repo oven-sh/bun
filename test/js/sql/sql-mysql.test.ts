@@ -840,9 +840,13 @@ if (isDockerEnabled()) {
           ]);
           expect(stderr).toBe("");
           expect(JSON.parse(stdout.trim())).toEqual({
-            ok: false,
-            code: "ERR_MYSQL_WRONG_NUMBER_OF_PARAMETERS_PROVIDED",
-            message: expect.any(String),
+            result: {
+              ok: false,
+              code: "ERR_MYSQL_WRONG_NUMBER_OF_PARAMETERS_PROVIDED",
+              message: expect.any(String),
+            },
+            // Connection must remain usable after the bind failure.
+            after: [{ x: 2 }],
           });
           expect(exitCode).toBe(0);
         });

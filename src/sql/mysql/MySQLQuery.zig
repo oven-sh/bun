@@ -60,16 +60,19 @@ fn bindAndExecute(this: *MySQLQuery, writer: anytype, statement: *MySQLStatement
     if (statement.signature.fields.len != statement.params.len) {
         return error.WrongNumberOfParametersProvided;
     }
-    var packet = try writer.start(0);
     var execute = PreparedStatement.Execute{
         .statement_id = statement.statement_id,
         .param_types = statement.signature.fields,
         .new_params_bind_flag = statement.execution_flags.need_to_send_params,
         .iteration_count = 1,
     };
-    statement.execution_flags.need_to_send_params = false;
     defer execute.deinit();
+    // Bind before touching the writer so a bind failure (user-triggerable via JS
+    // getters / param-count mismatch) doesn't leave a partial packet header in
+    // the connection's write buffer.
     try this.bind(&execute, globalObject, binding_value, columns_value);
+    statement.execution_flags.need_to_send_params = false;
+    var packet = try writer.start(0);
     try execute.write(writer);
     try packet.end();
     this.#status = .running;

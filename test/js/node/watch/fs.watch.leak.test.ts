@@ -31,7 +31,10 @@ async function run(code: string) {
 function fixture(call: string, throwMsg: string): string {
   return /* ts */ `
     import fs from "node:fs";
-    const tail = Buffer.alloc(2048, "x").toString();
+    // Keep the total UTF-8 length under PATH_MAX so Valid.pathStringLength
+    // does not throw before reaching the code under test. macOS PATH_MAX is
+    // 1024; Linux/Windows are >= 4096.
+    const tail = Buffer.alloc(process.platform === "darwin" ? 900 : 2048, "x").toString();
     function makePath(i) {
       return "/\u65b0\u5efa\u6587\u4ef6\u5939/does-not-exist-" + i + "-" + tail;
     }
@@ -52,7 +55,7 @@ function fixture(call: string, throwMsg: string): string {
   `;
 }
 
-describe("fs.watch argument leaks", () => {
+describe.concurrent("fs.watch argument leaks", () => {
   test(
     "fs.watch does not leak path",
     async () => {

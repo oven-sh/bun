@@ -4,6 +4,14 @@ pub const CppTask = opaque {
         jsc.markBinding(@src());
         return bun.cpp.Bun__performTask(global, this);
     }
+
+    /// Free the underlying C++ EventLoopTask without running it. Used when a
+    /// worker terminates with cross-thread messages still queued — the only
+    /// other free path is `performTask()` → `delete this`, which never happens
+    /// if the event loop doesn't tick again.
+    pub fn deinit(this: *CppTask) void {
+        bun.cpp.Bun__deleteEventLoopTask(this);
+    }
 };
 
 /// A task created from C++ code that runs inside the workpool, usually via ScriptExecutionContext.

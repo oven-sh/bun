@@ -698,6 +698,53 @@ pub fn getActiveTasks(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.
     return result;
 }
 
+/// Free any tasks still queued without running them.
+///
+/// Called when a worker thread terminates before its event loop could drain
+/// every cross-thread message posted to it (worker.postMessage / MessagePort /
+/// BroadcastChannel right before `terminate()`). Each message is an
+/// auto_delete `ConcurrentTask` wrapping a heap-allocated C++ `EventLoopTask`;
+/// both are normally freed only when the task runs (`tickConcurrentWithCount`
+/// → `Bun__performTask` → `delete this`), so anything left here would leak.
+///
+/// Must be called after the worker's `ScriptExecutionContext` has been removed
+/// from the global contexts map so no new enqueues race with the drain.
+pub fn drainCancelledTasks(this: *EventLoop) void {
+    var concurrent = this.concurrent_tasks.popBatch();
+    var iter = concurrent.iterator();
+    // Defer destruction of the ConcurrentTask node until after we've read the
+    // next pointer out of it, matching tickConcurrentWithCount().
+    var to_destroy: ?*ConcurrentTask = null;
+    while (iter.next()) |concurrent_task| {
+        if (to_destroy) |dest| {
+            to_destroy = null;
+            dest.deinit();
+        }
+        if (concurrent_task.autoDelete()) {
+            to_destroy = concurrent_task;
+        }
+        freeUnrunTask(concurrent_task.task);
+    }
+    if (to_destroy) |dest| {
+        dest.deinit();
+    }
+
+    // Tasks already migrated from the concurrent queue into `tasks` by a prior
+    // tickConcurrentWithCount() but never executed.
+    while (this.tasks.readItem()) |task| {
+        freeUnrunTask(task);
+    }
+}
+
+fn freeUnrunTask(task: Task) void {
+    if (task.get(CppTask)) |cpp_task| {
+        cpp_task.deinit();
+    } else if (task.get(ManagedTask)) |managed| {
+        // ManagedTask self-destroys in run(); free the wrapper since run() won't.
+        bun.default_allocator.destroy(managed);
+    }
+}
+
 pub fn deinit(this: *EventLoop) void {
     this.tasks.deinit();
     this.immediate_tasks.clearAndFree(bun.default_allocator);

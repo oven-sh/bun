@@ -738,6 +738,16 @@ fn shutdown(this: *WebWorker) noreturn {
         WebWorker__teardownJSCVM(global);
     }
 
+    // The JSC VM teardown above removed this worker's ScriptExecutionContext
+    // from the global map (via ~GlobalObject → removeFromContextsMap), so no
+    // new cross-thread tasks can be enqueued past this point. Free any
+    // EventLoopTask/ConcurrentTask pairs that were posted to this worker
+    // (worker.postMessage / MessagePort / BroadcastChannel) but never ran —
+    // otherwise each leaks until process exit.
+    if (vm_to_deinit) |vm| {
+        vm.event_loop.drainCancelledTasks();
+    }
+
     // JSC is down; no more resolver/module-loader access past this point.
     // Unregister so the main thread's terminateAllAndWait() can proceed to
     // free process-global resolver state. Must happen before dispatchExit

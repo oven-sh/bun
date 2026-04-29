@@ -3130,6 +3130,13 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__performTask(Zig::GlobalObject* g
     task->performTask(*globalObject->scriptExecutionContext());
 }
 
+// Free a queued EventLoopTask without running it. Used when a worker terminates
+// with cross-thread messages still sitting in its concurrent task queue.
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__deleteEventLoopTask(WebCore::EventLoopTask* task)
+{
+    delete task;
+}
+
 RefPtr<Performance> GlobalObject::performance()
 {
     if (!m_performance) {

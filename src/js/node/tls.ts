@@ -512,15 +512,19 @@ function createSecureContext(options) {
   // Cache the NATIVE handle (SSL_CTX), not the wrapper. The wrapper carries
   // `servername` (per-connection, omitted from the key); reusing it would let
   // the second caller inherit the first caller's servername.
-  const hit = secureContextCache.get(key)?.deref();
+  // $-intrinsic Map ops: this is a builtin, so user-tamperable Map.prototype
+  // must not be on the lookup/mutation path.
+  const hit = secureContextCache.$get(key)?.deref();
   if (hit) return new InternalSecureContext(options, hit);
   const native = new NativeSecureContext(options);
-  secureContextCache.set(key, new WeakRef(native));
+  secureContextCache.$set(key, new WeakRef(native));
   // Opportunistic dead-WeakRef sweep so the map can't grow unbounded across
   // many distinct configs (one CA per tenant, etc.).
   if (++secureContextCacheTrim > 64) {
     secureContextCacheTrim = 0;
-    for (const [k, ref] of secureContextCache) if (!ref.deref()) secureContextCache.delete(k);
+    secureContextCache.$forEach((ref, k) => {
+      if (!ref.deref()) secureContextCache.$delete(k);
+    });
   }
   return new InternalSecureContext(options, native);
 }

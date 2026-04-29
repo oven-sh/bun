@@ -1,8 +1,8 @@
 //! Opt-in self-termination when our parent goes away, plus recursive
 //! descendant cleanup on exit.
 //!
-//! Enabled via env var `BUN_FEATURE_FLAG_DIE_WITH_PARENT` or
-//! `bunfig.toml` `[run] dieWithParent = true`. When set, Bun:
+//! Enabled via env var `BUN_FEATURE_FLAG_NO_ORPHANS`, `--no-orphans`, or
+//! `bunfig.toml` `[run] noOrphans = true`. When set, Bun:
 //!
 //!   1. Captures its original parent pid at startup and exits as soon as that
 //!      parent is gone — even if the parent was SIGKILLed and never got a
@@ -36,16 +36,25 @@ pub const ParentDeathWatchdog = @This();
 
 /// Exit code used when the watchdog fires. 128 + SIGHUP, matching the
 /// convention for "terminated because the controlling end went away".
-const exit_code: u8 = 128 + 1;
+pub const exit_code: u8 = 128 + 1;
 
 var enabled: bool = false;
 var original_ppid: std.c.pid_t = 0;
 var install_thread_id: std.Thread.Id = 0;
 
-/// Whether `BUN_FEATURE_FLAG_DIE_WITH_PARENT` was set at startup. Read by the spawn path to
+/// Whether no-orphans mode was enabled at startup. Read by the spawn path to
 /// decide whether to default `linux_pdeathsig` on children.
 pub fn isEnabled() bool {
     return enabled;
+}
+
+/// macOS only — the original parent pid to watch via kqueue from contexts that
+/// have no event loop (`bun run` blocking in `spawnSync`, etc.). Returns null
+/// when no-orphans isn't enabled or there is no parent worth watching.
+pub fn ppidToWatch() ?std.c.pid_t {
+    if (comptime !Environment.isMac) return null;
+    if (!enabled or original_ppid <= 1) return null;
+    return original_ppid;
 }
 
 /// Whether the spawn-side `linux_pdeathsig` default should apply to a child
@@ -66,23 +75,27 @@ var instance: ParentDeathWatchdog = .{};
 
 /// Called from `main()` before the CLI starts. Checks the env var and enables
 /// the watchdog as early as possible so the Linux `prctl` window is minimal.
-/// `bunfig.toml`'s `[run] dieWithParent` calls `enable()` directly later in
-/// startup if the env var wasn't set.
+/// `bunfig.toml`'s `[run] noOrphans` and the `--no-orphans` flag call
+/// `enable()` directly later in startup if the env var wasn't set.
 pub fn install() void {
     if (comptime !Environment.isPosix) return;
-    if (!bun.env_var.BUN_FEATURE_FLAG_DIE_WITH_PARENT.get()) return;
+    if (!bun.env_var.BUN_FEATURE_FLAG_NO_ORPHANS.get()) return;
     enable();
 }
 
 /// Idempotent. Arms the watchdog: Linux `prctl(PR_SET_PDEATHSIG)`, exit-time
 /// descendant reaper, and (lazily) the macOS kqueue parent watch. Safe to call
-/// from `main()` (env-var path) and again from bunfig parsing.
+/// from `main()` (env-var path) and again from bunfig / CLI flag parsing.
 pub fn enable() void {
     if (comptime !Environment.isPosix) return;
     if (enabled) return;
 
     enabled = true;
     install_thread_id = std.Thread.getCurrentId();
+    // Export the env var so any Bun child we spawn (e.g. `bun run` → script →
+    // nested bun) inherits no-orphans mode without the parent having to thread
+    // the flag through. No-op if we got here via the env var.
+    _ = setenv("BUN_FEATURE_FLAG_NO_ORPHANS", "1", 1);
     // Descendant cleanup runs on every clean exit regardless of whether we end
     // up watching a parent (Bun may have been spawned directly by launchd/init).
     bun.Global.addExitCallback(&onProcessExit);
@@ -320,6 +333,8 @@ fn readFileOnce(path: [:0]const u8, buf: []u8) ?[]const u8 {
         .err => null,
     };
 }
+
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
 
 const std = @import("std");
 

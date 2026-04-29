@@ -1060,8 +1060,8 @@ pub const PosixSpawnOptions = struct {
     /// Linux only. When non-null, the child sets PR_SET_PDEATHSIG to this
     /// signal between vfork and exec in posix_spawn_bun, so the kernel kills
     /// it when the spawning thread dies. When null, defaults to SIGKILL if
-    /// `BUN_FEATURE_FLAG_DIE_WITH_PARENT` is enabled (see `ParentDeathWatchdog`), else 0
-    /// (no PDEATHSIG). Not exposed to JS yet.
+    /// no-orphans mode is enabled (see `ParentDeathWatchdog`), else 0 (no
+    /// PDEATHSIG). Not exposed to JS yet.
     linux_pdeathsig: ?u8 = null,
 
     pub const Stdio = union(enum) {
@@ -1368,7 +1368,7 @@ pub fn spawnProcessPosix(
     attr.new_process_group = options.new_process_group;
 
     if (Environment.isLinux) {
-        // Explicit per-spawn value wins; otherwise BUN_FEATURE_FLAG_DIE_WITH_PARENT defaults
+        // Explicit per-spawn value wins; otherwise no-orphans mode defaults
         // every child to SIGKILL-on-parent-death so non-Bun descendants are
         // covered without relying on env-var inheritance, and the prctl happens
         // in the vfork child before exec so there's no startup race.
@@ -2272,6 +2272,25 @@ pub const sync = struct {
             out_fds_to_wait_for[1] = bun.invalid_fd;
         }
 
+        // macOS no-orphans: `bun run <script>` (and other spawnSync callers)
+        // never spin up an event loop, so the kqueue parent watch in
+        // `ParentDeathWatchdog.installOnEventLoop` is never armed and we'd
+        // block forever in `wait4()` after our parent is SIGKILLed. Replace the
+        // poll()+wait4() with a single kevent() loop watching parent NOTE_EXIT,
+        // child NOTE_EXIT, and any buffered stdio fds. Linux doesn't need this:
+        // PDEATHSIG already covers the spawnSync caller and the spawned child.
+        if (comptime Environment.isMac) {
+            if (bun.ParentDeathWatchdog.ppidToWatch()) |ppid| {
+                switch (waitForChildKqueueMac(process.pid, ppid, &out, &out_fds_to_wait_for, &out_fds)) {
+                    .err => |err| return .{ .err = err },
+                    .result => |status| {
+                        success = true;
+                        return .{ .result = Result{ .status = status, .stdout = out[0], .stderr = out[1] } };
+                    },
+                }
+            }
+        }
+
         while (out_fds_to_wait_for[0] != bun.invalid_fd or out_fds_to_wait_for[1] != bun.invalid_fd) {
             for (&out_fds_to_wait_for, &out, &out_fds) |*fd, *bytes, *out_fd| {
                 if (fd.* == bun.invalid_fd) continue;
@@ -2360,6 +2379,162 @@ pub const sync = struct {
                 .stderr = out[1],
             },
         };
+    }
+
+    /// macOS-only no-orphans wait loop for `spawnSync`. Standalone kqueue
+    /// (not the uws loop — there isn't one here) watching:
+    ///   - `EVFILT_PROC`/`NOTE_EXIT` on `ppid`  → `Global.exit(129)`
+    ///     (runs `killDescendants()`, which SIGKILLs the child + its tree)
+    ///   - `EVFILT_PROC`/`NOTE_EXIT` on `child` → drain remaining stdio,
+    ///     `wait4()`, return its status
+    ///   - `EVFILT_READ` on each buffered stdio fd → drain into `out[i]`;
+    ///     EOF closes the fd and clears the slot
+    ///
+    /// Replaces the `poll()` drain + blocking `wait4()` in `spawnPosix`, both
+    /// of which sleep through parent death. Registration uses `EV_RECEIPT` so
+    /// the ppid race (parent already gone → ESRCH on add) is reported per-entry
+    /// instead of failing the whole batch.
+    fn waitForChildKqueueMac(
+        child: std.c.pid_t,
+        ppid: std.c.pid_t,
+        out: *[2]std.array_list.Managed(u8),
+        out_fds_to_wait_for: *[2]bun.FD,
+        out_fds: *[2]bun.FD,
+    ) Maybe(Status) {
+        if (comptime !Environment.isMac) unreachable;
+
+        // Best-effort: if we can't get a kqueue, fall back to a plain blocking
+        // wait4 — same behaviour as without no-orphans, never fails the spawn.
+        const kq = std.posix.kqueue() catch return .{ .result = reapChild(child) };
+        const kq_fd = bun.FD.fromNative(kq);
+        defer kq_fd.close();
+
+        var changes: [4]std.c.Kevent = undefined;
+        var n: usize = 0;
+        changes[n] = .{
+            .ident = @intCast(ppid),
+            .filter = std.c.EVFILT.PROC,
+            .flags = std.c.EV.ADD | std.c.EV.RECEIPT,
+            .fflags = std.c.NOTE.EXIT,
+            .data = 0,
+            .udata = 0,
+        };
+        n += 1;
+        changes[n] = .{
+            .ident = @intCast(child),
+            .filter = std.c.EVFILT.PROC,
+            .flags = std.c.EV.ADD | std.c.EV.RECEIPT,
+            .fflags = std.c.NOTE.EXIT,
+            .data = 0,
+            .udata = 0,
+        };
+        n += 1;
+        for (out_fds_to_wait_for, 0..) |fd, i| {
+            if (fd == bun.invalid_fd) continue;
+            changes[n] = .{
+                .ident = @intCast(fd.cast()),
+                .filter = std.c.EVFILT.READ,
+                .flags = std.c.EV.ADD | std.c.EV.RECEIPT,
+                .fflags = 0,
+                .data = 0,
+                .udata = i,
+            };
+            n += 1;
+        }
+
+        // Register with EV_RECEIPT: each change comes back as an EV_ERROR with
+        // .data = errno (0 on success). The ppid may have died between
+        // enable() and now — that surfaces as ESRCH on the ppid PROC entry.
+        var receipts: [4]std.c.Kevent = undefined;
+        switch (bun.sys.kevent(kq_fd, changes[0..n], receipts[0..n], null)) {
+            .err => |err| return .{ .err = err },
+            .result => {},
+        }
+        for (receipts[0..n]) |r| {
+            if (r.flags & std.c.EV.ERROR == 0) continue;
+            if (r.data == 0) continue;
+            if (r.filter == std.c.EVFILT.PROC and r.ident == @as(usize, @intCast(ppid))) {
+                // Parent already gone (ESRCH) — treat as fired.
+                bun.Global.exit(bun.ParentDeathWatchdog.exit_code);
+            }
+            // Any other registration error: best-effort feature, fall through
+            // to a plain wait4 rather than failing the spawn.
+            return .{ .result = reapChild(child) };
+        }
+        // Registration receipts can't observe a death that happened *during*
+        // the syscall; re-check ppid once now that we're armed.
+        if (std.c.getppid() != ppid) {
+            bun.Global.exit(bun.ParentDeathWatchdog.exit_code);
+        }
+
+        var events: [4]std.c.Kevent = undefined;
+        var child_exited = false;
+        while (true) {
+            const got = switch (bun.sys.kevent(kq_fd, &.{}, events[0..], null)) {
+                .err => |err| return .{ .err = err },
+                .result => |c| c,
+            };
+            for (events[0..got]) |ev| {
+                if (ev.filter == std.c.EVFILT.PROC) {
+                    if (ev.ident == @as(usize, @intCast(ppid))) {
+                        // Parent died → killDescendants() runs from Bun__onExit.
+                        bun.Global.exit(bun.ParentDeathWatchdog.exit_code);
+                    }
+                    if (ev.ident == @as(usize, @intCast(child))) {
+                        child_exited = true;
+                    }
+                } else if (ev.filter == std.c.EVFILT.READ) {
+                    const i: usize = ev.udata;
+                    drainFd(&out_fds_to_wait_for[i], &out_fds[i], &out[i]);
+                }
+            }
+            if (child_exited) {
+                // Child is gone; drain whatever's left in any still-open pipes
+                // (NOTE_EXIT can arrive before the final READ events), then reap.
+                for (out_fds_to_wait_for, out_fds, out) |*fd, *ofd, *bytes| {
+                    drainFd(fd, ofd, bytes);
+                }
+                return .{ .result = reapChild(child) };
+            }
+        }
+    }
+
+    /// Non-blocking drain of `fd` into `bytes`. Closes and invalidates both
+    /// slots on EOF or error so the caller's deferred cleanup skips them.
+    fn drainFd(fd: *bun.FD, out_fd: *bun.FD, bytes: *std.array_list.Managed(u8)) void {
+        if (fd.* == bun.invalid_fd) return;
+        while (true) {
+            bytes.ensureUnusedCapacity(16384) catch {
+                fd.*.close();
+                fd.* = bun.invalid_fd;
+                out_fd.* = bun.invalid_fd;
+                return;
+            };
+            switch (bun.sys.recvNonBlock(fd.*, bytes.unusedCapacitySlice())) {
+                .err => |err| {
+                    if (err.isRetry()) return;
+                    fd.*.close();
+                    fd.* = bun.invalid_fd;
+                    out_fd.* = bun.invalid_fd;
+                    return;
+                },
+                .result => |bytes_read| {
+                    bytes.items.len += bytes_read;
+                    if (bytes_read == 0) {
+                        fd.*.close();
+                        fd.* = bun.invalid_fd;
+                        out_fd.* = bun.invalid_fd;
+                        return;
+                    }
+                },
+            }
+        }
+    }
+
+    fn reapChild(child: std.c.pid_t) Status {
+        while (true) {
+            if (Status.from(child, &PosixSpawn.wait4(child, 0, null))) |stat| return stat;
+        }
     }
 };
 

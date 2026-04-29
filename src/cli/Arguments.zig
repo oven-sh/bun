@@ -133,6 +133,7 @@ pub const runtime_params_ = [_]ParamType{
 pub const auto_or_run_params = [_]ParamType{
     clap.parseParam("-F, --filter <STR>...             Run a script in all workspace packages matching the pattern") catch unreachable,
     clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
+    clap.parseParam("--no-orphans                      Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only.") catch unreachable,
     clap.parseParam("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'") catch unreachable,
     clap.parseParam("--workspaces                      Run a script in all workspace packages (from the \"workspaces\" field in package.json)") catch unreachable,
     clap.parseParam("--parallel                        Run multiple scripts concurrently with Foreman-style output") catch unreachable,
@@ -471,6 +472,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.filters = args.options("--filter");
         ctx.workspaces = args.flag("--workspaces");
         ctx.if_present = args.flag("--if-present");
+        if (args.flag("--no-orphans")) bun.ParentDeathWatchdog.enable();
         ctx.parallel = args.flag("--parallel");
         ctx.sequential = args.flag("--sequential");
         ctx.no_exit_on_error = args.flag("--no-exit-on-error");

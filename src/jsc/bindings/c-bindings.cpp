@@ -968,6 +968,18 @@ extern "C" void Bun__unregisterSignalsForForwarding()
 // The snapshot buffers are process-global, so the save→dlopen→restore
 // sequence is serialised under bun_dlopen_mutex. Workers are free to
 // call bun:ffi dlopen / process.dlopen on their own threads.
+//
+// Known limitation: the mutex serialises save/restore against each
+// other, but NOT against Bun's other sigaction() call sites
+// (`process.on("SIG…")` in BunProcess.cpp, SigintWatcher, TTY-exit).
+// If the main thread runs `process.on("SIGTERM", …)` while a worker is
+// inside a Go-style dlopen, restore() will see SIGTERM "changed" and
+// revert the user's new forwardSignal to Bun's pre-dlopen onExitSignal
+// — the JS listener stays in the EventEmitter map but the kernel
+// disposition no longer routes to it. Window is narrow (worker-dlopen
+// overlapping a main-thread process.on for a signal Bun already
+// handles) and the correct fix touches every sigaction caller in the
+// process; leaving as a follow-up.
 #include <mutex>
 static std::mutex bun_dlopen_mutex;
 static struct sigaction bun_dlopen_saved_actions[NSIG];

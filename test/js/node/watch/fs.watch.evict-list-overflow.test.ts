@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 // Regression test for `Watcher.evict_list` overflow.
 //
@@ -30,9 +30,11 @@ import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 // IN_OPEN / IN_CLOSE so re-opening the fd each cycle doesn't generate
 // events that would opportunistically flush.
 //
-// Windows uses win_watcher.zig (no evict_list); macOS directory watches
-// use FSEvents. The overflow is reachable on Linux/FreeBSD only.
-test.skipIf(isWindows || isMacOS)(
+// Windows uses win_watcher.zig (no evict_list). macOS/FreeBSD file
+// watches go through KEventWatcher and hit the same `Watcher.remove()`
+// → `evict_list` path, so they're covered too — only directory watches
+// on macOS bypass it via FSEvents.
+test.skipIf(isWindows)(
   "Watcher.remove() does not overflow evict_list when no fs events fire",
   async () => {
     using dir = tempDir("fswatch-evict-overflow", { "f.txt": "x" });

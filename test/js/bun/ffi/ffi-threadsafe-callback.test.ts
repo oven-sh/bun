@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import path from "node:path";
 import { bunEnv, bunExe, isArm64, isMacOS, isWindows, tempDir } from "harness";
+import path from "node:path";
 
 // TinyCC (and all of bun:ffi) is disabled on Windows ARM64.
 // On Windows x64 there is no system `cc`, so skip there too — the bug being

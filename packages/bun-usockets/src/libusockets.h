@@ -268,9 +268,10 @@ struct us_socket_group_t {
 };
 
 /* Initialise an embedded group. Does NOT link into the loop — that happens
- * lazily on first socket add. Idempotent. */
+ * lazily on first socket add. Idempotent. vtable/ext may be NULL (Zig kinds
+ * use neither). */
 void us_socket_group_init(us_socket_group_r group, us_loop_r loop,
-    const struct us_socket_vtable_t *vtable, void *ext) nonnull_fn_decl;
+    const struct us_socket_vtable_t *vtable, void *ext) __attribute__((nonnull(1, 2)));
 
 /* Unlinks from loop and asserts the socket list is empty. The owner is about
  * to free the embedding storage. */

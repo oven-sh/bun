@@ -1834,6 +1834,12 @@ pub const DuplexUpgradeContext = struct {
         const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
 
         if (this.tls) |tls| {
+            // `tls.onClose` consumes the +1 we hold (its `defer this.deref()`
+            // is the ext-slot/owner pin). Null our pointer first so the
+            // `deinitInNextTick` → `deinit` path doesn't deref it a second
+            // time — that's the over-deref behind the cross-file
+            // `TLSSocket.finalize` use-after-poison.
+            this.tls = null;
             tls.onClose(socket, 0, null) catch {};
         }
 
@@ -1851,9 +1857,16 @@ pub const DuplexUpgradeContext = struct {
                             else => {
                                 const errno = @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
                                 if (this.tls) |tls| {
-                                    const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
+                                    // `handleConnectError` consumes our +1
+                                    // (its `needs_deref` path) and detaches.
+                                    // Calling `tls.onClose` afterwards (as
+                                    // main did) double-derefs; null `this.tls`
+                                    // so the eventual `deinit` doesn't make it
+                                    // a triple. Pre-existing on main, latent
+                                    // until the leak fix made `deinit`
+                                    // reachable.
+                                    this.tls = null;
                                     tls.handleConnectError(errno) catch {};
-                                    tls.onClose(socket, errno, null) catch {};
                                 }
                             },
                         }

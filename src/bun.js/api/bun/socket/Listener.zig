@@ -279,6 +279,11 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
         const secure = this.secure_ctx orelse unreachable;
         if (ssl_config.server_name) |server_name| {
             if (std.mem.span(server_name).len > 0) {
+                // Registering the default cert under its own server_name is a
+                // hint for sni_cb, not load-bearing — sni_find() miss falls
+                // through to the default SSL_CTX anyway. A false here (e.g.
+                // hostname already added via addContext before listen) is
+                // benign, so don't fail the whole listen() for it.
                 _ = listen_socket.addServerName(server_name, secure, null);
             }
         }
@@ -383,8 +388,13 @@ pub fn addServerName(this: *Listener, global: *jsc.JSGlobalObject, hostname: JSV
 
     // The C SNI tree SSL_CTX_up_ref()s; drop our build/borrow ref once added.
     ls.removeServerName(server_name);
-    _ = ls.addServerName(server_name, sni_ctx, null);
+    const ok = ls.addServerName(server_name, sni_ctx, null);
     BoringSSL.SSL_CTX_free(sni_ctx);
+    if (!ok) {
+        // Old entry was already removed; failing silently would leave the
+        // hostname with no SNI mapping at all. Surface it.
+        return global.throwValue(global.ERR(.BORINGSSL, "Failed to register SNI for '{s}'", .{server_name}).toJS());
+    }
 
     return .js_undefined;
 }

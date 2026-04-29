@@ -142,10 +142,22 @@ public:
             forEachListenSocket([&](us_listen_socket_t *ls) {
                 result |= us_listen_socket_add_server_name(ls, hostname_pattern.c_str(), domainCtx, domainRouter);
             });
+            if (result != 0) {
+                /* At least one listener rejected the entry (duplicate hostname).
+                 * Roll back any that succeeded so we don't leave the SNI tree
+                 * pointing at a router we're about to delete. */
+                forEachListenSocket([&](us_listen_socket_t *ls) {
+                    us_listen_socket_remove_server_name(ls, hostname_pattern.c_str());
+                });
+                us_internal_ssl_ctx_unref(domainCtx);
+                delete domainRouter;
+                if (success) *success = false;
+                return std::move(*this);
+            }
             /* Queue for any listeners not yet created. We hold one SSL_CTX ref;
              * each listen socket took its own via SSL_CTX_up_ref. */
             pendingServerNames.push_back({hostname_pattern, domainCtx, domainRouter});
-            if (success) *success = result == 0;
+            if (success) *success = true;
         }
 
         return std::move(*this);

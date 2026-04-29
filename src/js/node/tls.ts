@@ -426,11 +426,11 @@ var InternalSecureContext = class SecureContext {
       if (options.cert) throwOnInvalidTLSArray("options.cert", options.cert);
       if (options.key) throwOnInvalidTLSArray("options.key", options.key);
       if (options.ca) throwOnInvalidTLSArray("options.ca", options.ca);
-      if (options.passphrase && typeof options.passphrase !== "string")
+      if (options.passphrase != null && typeof options.passphrase !== "string")
         throw new TypeError("passphrase argument must be an string");
-      if (options.servername && typeof options.servername !== "string")
+      if (options.servername != null && typeof options.servername !== "string")
         throw new TypeError("servername argument must be an string");
-      if (options.secureOptions && typeof options.secureOptions !== "number")
+      if (options.secureOptions != null && typeof options.secureOptions !== "number")
         throw new TypeError("secureOptions argument must be an number");
       if (!$isUndefinedOrNull(options.privateKeyIdentifier)) {
         if ($isUndefinedOrNull(options.privateKeyEngine))
@@ -517,13 +517,16 @@ function secureContextCacheKey(o) {
 
 function createSecureContext(options) {
   if (options instanceof InternalSecureContext) return options;
+  // Normalise the no-options call so it hits the cache (the empty config is
+  // exactly the case worth memoising — every `tls.connect(port, host)` lands
+  // here and should share one SSL_CTX).
+  if (options == null) options = {};
   // Uncacheable shapes — pfx/engine/sessionIdContext/privateKey* bypass
   // us_ssl_ctx_from_options or are validation-only (must hit the constructor
   // to throw, not return a cached entry built from a different call).
   // Presence-checked: `sessionIdContext: ""` or `pfx: emptyBuffer` are still
   // meaningful inputs that must not fall through to a cache built without them.
   if (
-    !options ||
     "pfx" in options ||
     "sessionIdContext" in options ||
     "clientCertEngine" in options ||

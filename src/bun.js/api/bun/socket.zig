@@ -1592,6 +1592,10 @@ pub fn NewSocket(comptime ssl: bool) type {
             // ciphertext, index 1 gets the new ones and sees plaintext).
             const raw_handlers = this.handlers;
             this.handlers = null;
+            // Preserve `socket.unref()` across the upgrade — node:tls callers
+            // that unref the underlying TCP socket before upgrading must not
+            // suddenly hold the loop open via the TLS wrapper.
+            const was_reffed = this.poll_ref.isActive();
             // Capture before downgrade so the cached `data` (net.ts stores
             // `{self: net.Socket}` there) survives onto the raw twin.
             const original_data: JSValue = This.js.dataGetCached(this.getThisValue(globalObject)) orelse .js_undefined;
@@ -1639,7 +1643,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             TLSSocket.js.dataSetCached(raw_js_value, globalObject, original_data);
 
             tls.markActive();
-            tls.poll_ref.ref(vm);
+            if (was_reffed) tls.poll_ref.ref(vm);
 
             // Fire onOpen with the right `this`, then send ClientHello. Doing
             // it before ext was repointed would have ALPN/onOpen land in the

@@ -623,7 +623,8 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
      * never aborts here — JS reads verify_error and decides. */
     if (SSL_CTX_get_verify_mode(ctx) == SSL_VERIFY_NONE) {
       SSL_set_verify(ssl, SSL_VERIFY_PEER, us_verify_callback);
-      SSL_set0_verify_cert_store(ssl, us_get_shared_default_ca_store());
+      X509_STORE *roots = us_get_shared_default_ca_store();
+      if (roots) SSL_set0_verify_cert_store(ssl, roots);
     }
   } else {
     SSL_set_accept_state(ssl);
@@ -808,20 +809,38 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
     if (ssl_gone(s)) return s;
   }
 
-  /* Send close_notify (best-effort) then close the transport unconditionally.
-   * RFC 8446 §6.1 permits closing the read side immediately after sending
-   * close_notify without waiting for the peer's reply. We previously deferred
-   * the fd close on code==0 hoping to observe the peer's close_notify, but the
-   * JS-bound close() path detaches + unref()s right after this call, so nothing
-   * keeps the loop alive to receive it — the us_socket_t poll allocation is
-   * orphaned and leaks. */
-  ssl_handle_shutdown(s, code != 0);
-  return us_internal_socket_close_raw(s, code, reason);
+  /* code != 0 (forceful — `_destroy()` / `_handle.close()` / abort): send
+   * close_notify best-effort and raw-close now. The Zig destroy path detaches
+   * + poll_ref.unref() right after, so deferring would orphan the us_socket_t.
+   *
+   * code == 0 (graceful — `end()` → markInactive → closeAndDetach(.normal)):
+   * send close_notify and DEFER the fd close until the peer replies. The
+   * graceful path keeps `poll_ref` held until onClose runs, so the loop stays
+   * alive to receive the peer's close_notify/FIN; raw-closing here would let
+   * the client resolve `close` before the server has even seen our Finished
+   * under low-prio fan-out (connectionListener race). The actual raw-close
+   * happens via on_end/ZERO_RETURN re-entering this function with
+   * SSL_SENT_SHUTDOWN already set (ssl_handle_shutdown then returns 1). */
+  if (ssl_handle_shutdown(s, code != 0)) {
+    return us_internal_socket_close_raw(s, code, reason);
+  }
+  return s;
 }
 #define ssl_close us_internal_ssl_close
 
 static void ssl_update_handshake(struct us_socket_t *s) {
     if (!s->ssl || s->ssl_handshake_state != HANDSHAKE_PENDING) return;
+
+  /* SSL_read may have driven the handshake to completion before we got here
+   * (TLS 1.3 server: client's Finished + close_notify in one segment lands as
+   * ZERO_RETURN with init already finished). Report success based on what
+   * BoringSSL actually negotiated, not on whether the peer happens to have
+   * already closed — RECEIVED_SHUTDOWN after a completed handshake is a clean
+   * close, not a handshake failure. */
+  if (SSL_is_init_finished(s_ssl(s))) {
+    ssl_trigger_handshake(s, 1);
+    return;
+  }
 
   if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s) ||
       (s_ssl(s) && SSL_get_shutdown(s_ssl(s)) & SSL_RECEIVED_SHUTDOWN)) {

@@ -873,9 +873,24 @@ const socket_group_fields = .{
 /// after `WebWorker__teardownJSCVM` (web_worker.zig), so doing the closeAll
 /// there would dispatch into freed JSC heap.
 pub fn closeAllSocketGroups(this: *RareData) void {
-    inline for (socket_group_fields) |f| {
-        const g: *uws.SocketGroup = &@field(this, f);
-        if (!g.isEmpty()) g.closeAll();
+    // closeAll() dispatches on_close into JS while the VM is still alive, so a
+    // handler can call Bun.connect/postgres/etc. and re-populate a group we
+    // just drained. Loop until every group is observed empty in the same pass
+    // (bounded — each retry only happens if a JS callback opened a *new*
+    // socket, and the cap stops a deliberately-spinning on_close from wedging
+    // teardown; the post-close force-drain in close_all handles whatever's
+    // left after the cap).
+    var rounds: u8 = 0;
+    while (rounds < 8) : (rounds += 1) {
+        var any = false;
+        inline for (socket_group_fields) |f| {
+            const g: *uws.SocketGroup = &@field(this, f);
+            if (!g.isEmpty()) {
+                g.closeAll();
+                any = true;
+            }
+        }
+        if (!any) return;
     }
 }
 

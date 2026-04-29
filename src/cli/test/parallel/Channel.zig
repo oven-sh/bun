@@ -100,7 +100,12 @@ pub fn Channel(comptime Owner: type, comptime owner_field: []const u8) type {
                 return true;
             }
             const g = ensurePosixGroup(vm);
-            const sock = Socket.fromFd(g, .dynamic, fd, Self, self, null, true) orelse return false;
+            const sock = Socket.fromFd(g, .dynamic, fd, Self, self, null, true) orelse {
+                // us_socket_from_fd does NOT take ownership on failure; leaving
+                // the inherited IPC endpoint open keeps the peer process alive.
+                fd.close();
+                return false;
+            };
             self.backend.socket = sock;
             sock.setTimeout(0);
             return true;

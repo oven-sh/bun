@@ -604,4 +604,67 @@ console.log("PRELOAD");
       setCwd: true,
     },
   });
+
+  // Regression test for #28275: Workers loading files from the filesystem at
+  // runtime must be able to resolve bare package specifiers via package.json
+  itBundled("compile/AutoloadPackageJsonWorkerRequire", {
+    compile: true,
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        import { Worker } from "worker_threads";
+        import { join } from "path";
+        const worker = new Worker(join(process.cwd(), "worker.js"));
+        worker.on("message", (msg) => {
+          console.log(msg);
+          worker.terminate();
+        });
+        worker.on("error", (err) => {
+          console.log("error: " + err.message);
+          worker.terminate();
+        });
+      `,
+    },
+    runtimeFiles: {
+      "/worker.js": /* js */ `
+        const { parentPort } = require("worker_threads");
+        const pkg = require("runtime-pkg");
+        parentPort.postMessage(pkg.value);
+      `,
+      "/node_modules/runtime-pkg/package.json": JSON.stringify({
+        name: "runtime-pkg",
+        main: "src/index.js",
+      }),
+      "/node_modules/runtime-pkg/src/index.js": `module.exports = { value: "resolved-via-main-field" };`,
+    },
+    run: {
+      stdout: "resolved-via-main-field",
+      setCwd: true,
+    },
+  });
+
+  // Regression test for #28275: package.json loading enabled by default
+  // in compiled executables for runtime-resolved modules
+  itBundled("compile/AutoloadPackageJsonDefaultEnabled", {
+    compile: true,
+    files: {
+      "/entry.js": /* js */ `
+        const pkgName = "my-runtime-pkg";
+        import(pkgName)
+          .then(m => console.log(m.default))
+          .catch(e => console.log("import-failed: " + e.message));
+      `,
+    },
+    runtimeFiles: {
+      "/node_modules/my-runtime-pkg/package.json": JSON.stringify({
+        name: "my-runtime-pkg",
+        main: "lib/index.js",
+      }),
+      "/node_modules/my-runtime-pkg/lib/index.js": `export default "resolved-via-main-field";`,
+    },
+    run: {
+      stdout: "resolved-via-main-field",
+      setCwd: true,
+    },
+  });
 });

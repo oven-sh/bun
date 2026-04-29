@@ -285,7 +285,9 @@ fn listChildPidsLinux(parent: std.c.pid_t, out: []std.c.pid_t) ?usize {
     defer task_fd.close();
 
     var written: usize = 0;
-    var read_buf: [4096]u8 = undefined;
+    // Sized so a single read can saturate the 4096-pid `out` buffer
+    // (~8 bytes per "1234567 " entry × 4096).
+    var read_buf: [32 * 1024]u8 = undefined;
     var it = bun.iterateDir(task_fd);
     while (it.next().unwrap() catch null) |entry| {
         if (written >= out.len) break;

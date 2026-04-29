@@ -864,7 +864,7 @@ elide-lines = 10
 
 When `true`, Bun watches the process that spawned it and exits as soon as that parent goes away — even if the parent was `SIGKILL`ed and never got a chance to forward a signal. On its own exit, Bun also recursively `SIGKILL`s every descendant process so nothing it spawned outlives it. Useful when Bun is launched by a supervisor (Electron, a CI runner, a thin shim) that may be force-killed.
 
-POSIX only (no-op on Windows). Equivalent to the `BUN_FEATURE_FLAG_DIE_WITH_PARENT=1` environment variable.
+Linux and macOS only (no-op on Windows and other platforms). Equivalent to the `BUN_FEATURE_FLAG_DIE_WITH_PARENT=1` environment variable.
 
 ```toml title="bunfig.toml" icon="settings"
 [run]

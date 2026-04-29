@@ -440,6 +440,10 @@ function ClientRequest(input, options, cb) {
       //@ts-ignore
       this[kFetchRequest] = nodeHttpClient(url, fetchOptions).then(response => {
         if (this.aborted) {
+          // The res 'end'/'close' release hooks below are never installed on
+          // this path, and .catch→finally won't run (promise resolved), so
+          // release the agent slot directly.
+          releaseAgentSocket();
           maybeEmitClose();
           return;
         }
@@ -654,6 +658,7 @@ function ClientRequest(input, options, cb) {
     } catch (err) {
       if (!!$debug) globalReportError(err);
       this.emit("error", err);
+      releaseAgentSocket();
     } finally {
       process.nextTick(maybeEmitFinish.bind(this));
     }

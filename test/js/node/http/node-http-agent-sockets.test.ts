@@ -308,4 +308,33 @@ describe("node:http Agent socket accounting", () => {
       server.close();
     }
   });
+
+  test("a request with an already-aborted signal releases the agent slot", async () => {
+    const agent = new http.Agent({ maxSockets: 1 });
+    const server = http.createServer((req, res) => res.end("ok"));
+    server.listen(0);
+    try {
+      await once(server, "listening");
+      const port = (server.address() as AddressInfo).port;
+      const name = agent.getName({ port });
+
+      // With a pre-aborted signal, the fetch resolves but the .then handler
+      // sees this.aborted=true and returns early before installing the
+      // res 'end'/'close' release hooks. The slot must still be released.
+      const ac = new AbortController();
+      ac.abort();
+      const { promise, resolve } = Promise.withResolvers<void>();
+      const req = http.get({ port, agent, signal: ac.signal }, () => {});
+      req.on("error", () => {});
+      req.on("close", resolve);
+      await promise;
+
+      await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+      expect(agent.totalSocketCount).toBe(0);
+      expect(name in agent.sockets).toBe(false);
+    } finally {
+      agent.destroy();
+      server.close();
+    }
+  });
 });

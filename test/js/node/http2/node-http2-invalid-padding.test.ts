@@ -117,3 +117,107 @@ test("should reject DATA frame with Pad Length >= payload length", async () => {
     close();
   }
 });
+
+async function receiveBody(write: (socket: net.Socket) => void | Promise<void>): Promise<{ body: Buffer; close: () => void }> {
+  const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers<void>();
+  const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers<void>();
+  const server = net.createServer(async socket => {
+    socket.on("error", () => {});
+    socket.setNoDelay(true);
+    const settings = new http2utils.SettingsFrame(true);
+    socket.write(settings.data);
+    await waitToWrite;
+    const headers = new http2utils.HeadersFrame(1, http2utils.kFakeResponseHeaders, 0, true, false);
+    socket.write(headers.data);
+    await write(socket);
+  });
+  server.listen(0, "127.0.0.1", () => serverResolve());
+  await serverListening;
+
+  const url = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
+  const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
+  const client = http2.connect(url);
+  client.on("error", reject);
+  client.on("connect", () => {
+    const req = client.request({ ":path": "/" });
+    const chunks: Buffer[] = [];
+    req.on("data", c => chunks.push(Buffer.from(c)));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+    req.end();
+    allowWrite();
+  });
+  const body = await promise;
+  return {
+    body,
+    close: () => {
+      client.destroy();
+      server.close();
+    },
+  };
+}
+
+test("should strip Pad Length octet from DATA frame when Pad Length is 0", async () => {
+  // RFC 7540 Section 6.1: "A frame can be increased in size by one octet by
+  // including a Pad Length field with a value of zero." The Pad Length octet
+  // is present whenever PADDED is set and must be stripped regardless of its
+  // value; previously `padding > 0` was used as the guard so the 0x00 leaked
+  // into the response body.
+  const { body, close } = await receiveBody(socket => {
+    // DATA (type=0), flags = PADDED (0x8) | END_STREAM (0x1), stream=1, length=5
+    // payload = [0x00, 'A', 'B', 'C', 'D'] -> Pad Length = 0, body = "ABCD".
+    const frame = new http2utils.Frame(5, 0, 0x8 | 0x1, 1).data;
+    socket.write(Buffer.concat([frame, Buffer.from([0x00, 0x41, 0x42, 0x43, 0x44])]));
+  });
+  try {
+    expect(body.toString("latin1")).toBe("ABCD");
+  } finally {
+    close();
+  }
+});
+
+test("should not drop trailing data byte from padded DATA frame split across reads", async () => {
+  // When a padded DATA frame is delivered across multiple socket reads, the
+  // Pad Length octet is consumed in the first chunk. On subsequent chunks the
+  // frame-relative start offset already accounts for it, so it must not be
+  // subtracted a second time when computing how many bytes of this chunk are
+  // data (vs trailing padding).
+  const { body, close } = await receiveBody(async socket => {
+    // Drain the client first: send a PING and wait for the PONG so the
+    // HEADERS above have been consumed and the socket read buffer is empty.
+    const pingOpaque = Buffer.from("h2splitA");
+    socket.write(Buffer.concat([new http2utils.Frame(8, 6, 0, 0).data, pingOpaque]));
+    let buffered = Buffer.alloc(0);
+    await new Promise<void>((resolve, reject) => {
+      const onData = (chunk: Buffer) => {
+        buffered = Buffer.concat([buffered, chunk]);
+        if (buffered.includes(pingOpaque)) {
+          socket.off("data", onData);
+          socket.off("close", onClose);
+          resolve();
+        }
+      };
+      const onClose = () => reject(new Error("socket closed before PONG"));
+      socket.on("data", onData);
+      socket.once("close", onClose);
+    });
+
+    // DATA (type=0), flags = PADDED (0x8) | END_STREAM (0x1), stream=1, length=10
+    // payload = [0x02, D1..D7, P1, P2] -> Pad Length = 2, body = 7 bytes.
+    // Deliver the frame header + Pad Length byte first, then the remaining
+    // bytes in a separate write so the parser re-enters handleDataFrame with
+    // start_idx > 0.
+    const header = new http2utils.Frame(10, 0, 0x8 | 0x1, 1).data;
+    await new Promise<void>(r => socket.write(Buffer.concat([header, Buffer.from([0x02])]), () => r()));
+    // Yield several event-loop iterations so the first chunk is delivered on
+    // its own. We cannot insert another PING round-trip here because the DATA
+    // frame is mid-payload.
+    for (let i = 0; i < 16; i++) await new Promise<void>(r => setImmediate(r));
+    socket.write(Buffer.from([0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x00, 0x00]));
+  });
+  try {
+    expect(body.toString("latin1")).toBe("ABCDEFG");
+  } finally {
+    close();
+  }
+});

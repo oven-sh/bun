@@ -2014,7 +2014,8 @@ pub const H2FrameParser = struct {
 
         this.remainingLength -= @intCast(end);
         var padding: u8 = 0;
-        if (frame.flags & @intFromEnum(DataFrameFlags.PADDED) != 0) {
+        const padded = frame.flags & @intFromEnum(DataFrameFlags.PADDED) != 0;
+        if (padded) {
             if (frame.length < 1) {
                 // PADDED flag set but no room for the Pad Length octet
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid data frame size", this.lastStreamID, true);
@@ -2046,20 +2047,25 @@ pub const H2FrameParser = struct {
         var emitted = false;
 
         const start_idx = frame.length - @as(usize, @intCast(previous_remaining_length));
-        if (start_idx < 1 and padding > 0 and payload.len > 0) {
-            // we need to skip the padding byte
+        if (start_idx < 1 and padded and payload.len > 0) {
+            // Skip the Pad Length octet. Keyed on the PADDED flag rather than
+            // `padding > 0` because Pad Length = 0 is valid (RFC 7540 Section 6.1)
+            // and must still be stripped.
             payload = payload[1..];
         }
 
         if (payload.len > 0) {
             // amount of data received so far
             const received_size = frame.length - this.remainingLength;
-            // Remaining data bytes (excluding Pad Length octet and trailing padding)
-            // from start_idx onwards. When a frame is split across multiple reads
-            // and this chunk lands entirely in the padding region, start_idx can
-            // exceed the data region; saturate to 0 rather than underflowing.
-            const data_end: usize = frame.length - padding - @as(usize, if (padding > 0) 1 else 0);
-            const max_payload_size: usize = data_end -| start_idx;
+            // The data region of this frame, in frame-relative offsets, is
+            // `[padded ? 1 : 0, frame.length - padding)`. This chunk begins at
+            // offset `start_idx` (and the Pad Length octet has already been
+            // stripped above when `start_idx == 0`), so the number of data bytes
+            // it can contribute is `data_region_end - max(start_idx, data_region_start)`.
+            // Saturate to 0 for chunks that land entirely in the trailing padding.
+            const data_region_end: usize = frame.length - @as(usize, padding);
+            const data_region_start: usize = if (padded) @max(start_idx, 1) else start_idx;
+            const max_payload_size: usize = data_region_end -| data_region_start;
             payload = payload[0..@min(payload.len, max_payload_size)];
             log("received_size: {d} max_payload_size: {d} padding: {d} payload.len: {d}", .{
                 received_size,

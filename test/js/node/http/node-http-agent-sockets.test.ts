@@ -337,4 +337,37 @@ describe("node:http Agent socket accounting", () => {
       server.close();
     }
   });
+
+  test("agent.destroy() destroys every tracked socket", async () => {
+    // FakeSocket.destroy() → req.destroy() → onAbort → releaseAgentSocket
+    // splices the live agent.sockets[name] array synchronously; iterating
+    // by forward index would skip every other entry.
+    const agent = new http.Agent({ maxSockets: 10 });
+    const server = http.createServer(() => {});
+    server.listen(0);
+    try {
+      await once(server, "listening");
+      const port = (server.address() as AddressInfo).port;
+      const name = agent.getName({ port });
+
+      const reqs: http.ClientRequest[] = [];
+      for (let i = 0; i < 6; i++) {
+        const r = http.get({ port, agent }, () => {});
+        r.on("error", () => {});
+        reqs.push(r);
+      }
+      expect(agent.sockets[name]!.length).toBe(6);
+      expect(agent.totalSocketCount).toBe(6);
+
+      agent.destroy();
+      await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+
+      for (const r of reqs) expect(r.destroyed).toBe(true);
+      expect(agent.totalSocketCount).toBe(0);
+      expect(name in agent.sockets).toBe(false);
+    } finally {
+      agent.destroy();
+      server.close();
+    }
+  });
 });

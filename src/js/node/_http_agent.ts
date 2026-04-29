@@ -464,7 +464,12 @@ Agent.prototype.destroy = function destroy() {
     const set = sets[s];
     const keys = Object.keys(set);
     for (let v = 0; v < keys.length; v++) {
-      const setName = set[keys[v]];
+      // Snapshot before iterating: destroying a FakeSocket runs
+      // req.destroy() → abort() → onAbort → releaseAgentSocket() →
+      // 'agentRemove' → removeSocket synchronously, which splices this
+      // array in place. Iterating the live array by index would skip
+      // every other entry.
+      const setName = set[keys[v]].slice();
       for (let n = 0; n < setName.length; n++) {
         setName[n].destroy();
       }

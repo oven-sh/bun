@@ -83,8 +83,9 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn memoryCost(this: *This) usize {
             // Per-socket SSL state (SSL*, BIO pair, handshake buffers) is ~40 KB
             // off-heap. Reporting it lets the GC apply pressure when JS churns
-            // through short-lived TLS connections.
-            const ssl_cost: usize = if (ssl) 40 * 1024 else 0;
+            // through short-lived TLS connections. The raw `[raw, tls]` upgrade
+            // twin shares the same SSL* — only the encrypted half reports it.
+            const ssl_cost: usize = if (ssl and !this.flags.bypass_tls) 40 * 1024 else 0;
             return @sizeOf(This) + this.buffered_data_for_node_net.cap + ssl_cost;
         }
 
@@ -1467,8 +1468,14 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return globalObject.throw("Expected \"socket\" option", .{});
             };
             if (globalObject.hasException()) return .zero;
-            const handlers = try Handlers.fromJS(globalObject, socket_obj, false);
+            var handlers = try Handlers.fromJS(globalObject, socket_obj, false);
             if (globalObject.hasException()) return .zero;
+            // 9 .protect()'d JS callbacks live in `handlers`; every error/throw
+            // from here until they're moved into `tls.handlers` would leak them.
+            // The flag flips once ownership transfers so the errdefer is a no-op
+            // on success.
+            var handlers_consumed = false;
+            errdefer if (!handlers_consumed) handlers.deinit();
 
             // Resolve the `SSL_CTX*`. Prefer a passed `SecureContext` (the
             // memoised `tls.createSecureContext` path) so 10k upgrades share
@@ -1476,6 +1483,9 @@ pub fn NewSocket(comptime ssl: bool) type {
             // `tls:` options. Either way `owned_ctx` holds one ref we drop in
             // deinit; SSL_new() takes its own.
             var owned_ctx: ?*BoringSSL.SSL_CTX = null;
+            // Dropped once `tls.owned_ssl_ctx` takes ownership; covers throws
+            // between sc.borrow()/createSSLContext() and `bun.new(TLSSocket, …)`.
+            errdefer if (owned_ctx) |c| BoringSSL.SSL_CTX_free(c);
             var ssl_opts: ?jsc.API.ServerConfig.SSLConfig = null;
             defer if (ssl_opts) |*cfg| cfg.deinit();
 
@@ -1518,10 +1528,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             } else {
                 return globalObject.throw("Expected \"tls\" option", .{});
             }
-            if (globalObject.hasException()) {
-                if (owned_ctx) |c| BoringSSL.SSL_CTX_free(c);
-                return .zero;
-            }
+            if (globalObject.hasException()) return error.JSError;
 
             var default_data = JSValue.zero;
             if (try opts.fastGet(globalObject, .data)) |v| {
@@ -1532,6 +1539,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             const vm = handlers.vm;
             const handlers_ptr = bun.handleOom(vm.allocator.create(Handlers));
             handlers_ptr.* = handlers;
+            handlers_consumed = true;
 
             const cfg = if (ssl_opts) |*c| c else null;
             var tls = bun.new(TLSSocket, .{
@@ -1549,11 +1557,13 @@ pub fn NewSocket(comptime ssl: bool) type {
                     null else null,
                 .owned_ssl_ctx = owned_ctx,
             });
+            // tls.deinit() now drops the ref; clear so errdefer doesn't double-free.
+            owned_ctx = null;
 
             const sni: ?[*:0]const u8 = if (cfg) |c| c.server_name else null;
             const group = vm.rareData().bunConnectGroup(vm, true);
             const raw_socket = this.socket.socket.connected;
-            const new_raw = raw_socket.adoptTLS(group, .bun_socket_tls, owned_ctx.?, sni, @sizeOf(*anyopaque), @sizeOf(*anyopaque)) orelse {
+            const new_raw = raw_socket.adoptTLS(group, .bun_socket_tls, tls.owned_ssl_ctx.?, sni, @sizeOf(*anyopaque), @sizeOf(*anyopaque)) orelse {
                 const err = BoringSSL.ERR_get_error();
                 defer if (err != 0) BoringSSL.ERR_clear_error();
                 // tls.deinit drops the owned_ctx ref

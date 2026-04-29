@@ -857,7 +857,15 @@ pub fn deinit(this: *RareData) void {
         "valkey_group",          "valkey_tls_group",
         "ws_upgrade_group",      "ws_upgrade_tls_group",
         "ws_client_group",       "ws_client_tls_group",
-    }) |f| @field(this, f).deinit();
+    }) |f| {
+        const g: *uws.SocketGroup = &@field(this, f);
+        // us_socket_group_deinit asserts every list/count is empty (debug). A
+        // Worker.terminate() with an in-flight Bun.connect/postgres/etc. would
+        // hit that. Drain first; the common path (group never used) is a couple
+        // of NULL checks.
+        if (!g.isEmpty()) g.closeAll();
+        g.deinit();
+    }
 }
 
 pub fn websocketDeflate(this: *RareData) *WebSocketDeflate.RareData {

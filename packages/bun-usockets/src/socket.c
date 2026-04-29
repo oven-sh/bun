@@ -384,7 +384,6 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
 #if defined(LIBUS_USE_LIBUV) || defined(WIN32)
     return 0;
 #else
-    (void) ssl_ctx; /* IPC / pre-connected fds enter as plain TCP; STARTTLS goes through us_socket_adopt_tls. */
     struct us_poll_t *p1 = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p1, fd, POLL_TYPE_SOCKET);
     int rc = us_poll_start_rc(p1, group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
@@ -412,6 +411,14 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     apple_no_sigpipe(fd);
     bsd_set_nonblocking(fd);
     us_internal_socket_group_link_socket(group, s);
+
+    /* Bun.connect({fd, tls}) hands us an already-connected fd that should
+     * speak TLS from the first byte (no STARTTLS). Mirror connect_resolved_dns
+     * — attach SSL here so the caller's onOpen()/startTLSHandshake() see
+     * s->ssl set. The IPC path passes ssl_ctx == NULL. */
+    if (ssl_ctx) {
+        us_internal_ssl_attach(s, ssl_ctx, 1, NULL, NULL);
+    }
 
     return s;
 #endif

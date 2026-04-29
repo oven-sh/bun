@@ -248,12 +248,10 @@ pub fn HTTPClient(comptime ssl: bool) type {
 
 // ── WebSocket client ────────────────────────────────────────────────────────
 pub fn WSUpgrade(comptime ssl: bool) type {
-    const T = @import("../../http/websocket_client/WebSocketUpgradeClient.zig").NewHTTPUpgradeClient(ssl);
-    return PtrHandler(T, ssl);
+    return PtrHandler(websocket_upgrade_client.NewHTTPUpgradeClient(ssl), ssl);
 }
 pub fn WSClient(comptime ssl: bool) type {
-    const T = @import("../../http/websocket_client.zig").NewWebSocketClient(ssl);
-    return PtrHandler(T, ssl);
+    return PtrHandler(websocket_client.NewWebSocketClient(ssl), ssl);
 }
 
 // ── SQL drivers ─────────────────────────────────────────────────────────────
@@ -262,12 +260,10 @@ pub fn Postgres(comptime ssl: bool) type {
     return NsHandler(C, C.SocketHandler(ssl), ssl);
 }
 pub fn MySQL(comptime ssl: bool) type {
-    const C = @import("../../sql/mysql.zig").MySQLConnection;
-    return NsHandler(C, C.SocketHandler(ssl), ssl);
+    return NsHandler(mysql.MySQLConnection, mysql.MySQLConnection.SocketHandler(ssl), ssl);
 }
 pub fn Valkey(comptime ssl: bool) type {
-    const js = @import("../../valkey/js_valkey.zig");
-    return NsHandler(js.JSValkeyClient, js.SocketHandler(ssl), ssl);
+    return NsHandler(js_valkey.JSValkeyClient, js_valkey.SocketHandler(ssl), ssl);
 }
 
 // ── Bun.spawn IPC / process.send() ──────────────────────────────────────────
@@ -275,7 +271,6 @@ pub fn Valkey(comptime ssl: bool) type {
 // `Bun.spawn({ipc})`. Handlers live in `ipc.zig` as free functions, not
 // methods on SendQueue, so we adapt manually instead of via PtrHandler.
 pub const SpawnIPC = struct {
-    const IPC = @import("../../bun.js/ipc.zig");
     const H = IPC.IPCHandlers.PosixSocket;
     const S = uws.NewSocketHandler(false);
     pub const Ext = *?*IPC.SendQueue;
@@ -306,3 +301,9 @@ const api = bun.jsc.API;
 const uws = bun.uws;
 const ConnectingSocket = uws.ConnectingSocket;
 const us_socket_t = uws.us_socket_t;
+
+const websocket_upgrade_client = @import("../../http/websocket_client/WebSocketUpgradeClient.zig");
+const websocket_client = @import("../../http/websocket_client.zig");
+const mysql = @import("../../sql/mysql.zig");
+const js_valkey = @import("../../valkey/js_valkey.zig");
+const IPC = @import("../../bun.js/ipc.zig");

@@ -750,11 +750,10 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
     }
 
     // SQLITE_OPEN_URI mirrors Node's `default_flags = SQLITE_OPEN_URI`
-    // (node_sqlite.cc). A *string* path that happens to be a file: URI
-    // is passed straight to sqlite3ParseUri, so `?cache=shared` and
-    // friends work exactly as they do in Node; a URL object has already
-    // been reduced to a plain filesystem path by validateDatabasePath,
-    // so the flag is inert for that branch.
+    // (node_sqlite.cc). Strings, Uint8Arrays, and URL objects all reach
+    // sqlite3ParseUri verbatim (validateDatabasePath passes a URL's raw
+    // href through), so a `file:…?mode=ro` / `?cache=shared` query is
+    // honoured on any of those input types.
     int flags = SQLITE_OPEN_URI | (m_config.readOnly ? SQLITE_OPEN_READONLY : (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE));
 
     auto utf8 = m_location.utf8();
@@ -1577,6 +1576,13 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncDeserialize, (JSGlobalObject * globalObje
     if (self->isBusy()) {
         return throwNodeState(globalObject, scope, "cannot deserialize database while a statement is executing"_s);
     }
+    // …and establish our own busy scope before reading options. The
+    // opts.dbName [[Get]] below can re-enter JS; without this guard
+    // a hostile getter could db.close() and sqlite3_deserialize would
+    // see a null connection (no SQLITE_ENABLE_API_ARMOR → segfault on
+    // db->mutex). Matches the sweep in 78f8f229e7 for the other
+    // option-reading methods.
+    JSDatabaseSync::BusyScope busy { self };
 
     auto* buf = dynamicDowncast<JSC::JSUint8Array>(callFrame->argument(0));
     if (!buf) {
@@ -2914,6 +2920,7 @@ void JSNodeSqliteTagStore::finishCreation(VM& vm, JSDatabaseSync* db, unsigned c
 
 void JSNodeSqliteTagStore::clear()
 {
+    WTF::Locker locker { cellLock() };
     m_order.clear();
 }
 
@@ -2924,6 +2931,12 @@ void JSNodeSqliteTagStore::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_database);
+    // JSC's Riptide marker runs concurrently with the mutator, and
+    // prepare()/clear() can removeAt()/insert(0,…) — which may
+    // realloc or memmove — while this loop walks the vector. Same
+    // protocol as WriteBarrierList: serialise mutator-side Vector
+    // edits against visitation with the cell's lock.
+    WTF::Locker locker { thisObject->cellLock() };
     for (auto& e : thisObject->m_order) {
         visitor.append(e.stmt);
     }
@@ -2981,21 +2994,28 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
     WTF::String sqlStr = sql.toString();
 
     // LRU lookup: hit → move to front; evict stale entries as we go.
+    // m_order is walked by visitChildren() on a concurrent marker
+    // thread, so every mutation of the Vector (removeAt/insert, and
+    // the miss-branch below) is serialised under the cell lock —
+    // same protocol as WriteBarrierList.
     JSStatementSync* stmtObj = nullptr;
-    for (size_t i = 0; i < m_order.size(); ++i) {
-        if (m_order[i].sql != sqlStr) continue;
-        auto* cand = m_order[i].stmt.get();
-        if (!cand || cand->isFinalized()) {
-            m_order.removeAt(i);
+    {
+        WTF::Locker locker { cellLock() };
+        for (size_t i = 0; i < m_order.size(); ++i) {
+            if (m_order[i].sql != sqlStr) continue;
+            auto* cand = m_order[i].stmt.get();
+            if (!cand || cand->isFinalized()) {
+                m_order.removeAt(i);
+                break;
+            }
+            stmtObj = cand;
+            if (i > 0) {
+                Entry e = std::move(m_order[i]);
+                m_order.removeAt(i);
+                m_order.insert(0, std::move(e));
+            }
             break;
         }
-        stmtObj = cand;
-        if (i > 0) {
-            Entry e = std::move(m_order[i]);
-            m_order.removeAt(i);
-            m_order.insert(0, std::move(e));
-        }
-        break;
     }
 
     if (!stmtObj) {
@@ -3019,11 +3039,14 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
         stmtObj->setAllowBareNamedParams(db->config().allowBareNamedParameters);
         stmtObj->setAllowUnknownNamedParams(db->config().allowUnknownNamedParameters);
 
-        if (m_order.size() >= m_capacity) m_order.removeLast();
-        Entry e;
-        e.sql = sqlStr;
-        e.stmt.set(vm, this, stmtObj);
-        m_order.insert(0, std::move(e));
+        {
+            WTF::Locker locker { cellLock() };
+            if (m_order.size() >= m_capacity) m_order.removeLast();
+            Entry e;
+            e.sql = sqlStr;
+            e.stmt.set(vm, this, stmtObj);
+            m_order.insert(0, std::move(e));
+        }
     }
 
     // Reset + bind positional values. Named-parameter handling is not

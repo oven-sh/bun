@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { isBuiltin } from "node:module";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { DatabaseSync, StatementSync, backup, constants } from "node:sqlite";
 
 test("node:sqlite is a built-in module", () => {
@@ -177,13 +178,13 @@ describe("DatabaseSync", () => {
     // filesystem path first (doing so would drop the query and,
     // on Windows, misinterpret drive-letter handling).
     using dir = tempDir("node-sqlite-uri", {});
-    const path = require("node:path").join(String(dir), "ro.db");
-    const seed = new DatabaseSync(path);
+    const dbFile = path.join(String(dir), "ro.db");
+    const seed = new DatabaseSync(dbFile);
     seed.exec("CREATE TABLE t(a INTEGER PRIMARY KEY)");
     seed.exec("INSERT INTO t VALUES (1)");
     seed.close();
 
-    const url = new URL(require("node:url").pathToFileURL(path).href + "?mode=ro");
+    const url = new URL(pathToFileURL(dbFile).href + "?mode=ro");
     const db = new DatabaseSync(url);
     expect(db.prepare("SELECT a FROM t").get()).toEqual({ a: 1 });
     // Read-only came from the URI query, not from {readOnly: true} —
@@ -253,6 +254,35 @@ describe("DatabaseSync", () => {
     expect(filterCloseErr).toMatchObject({ code: "ERR_INVALID_STATE" });
     expect(dst.isOpen).toBe(true);
     dst.close();
+    db.close();
+  });
+
+  test("deserialize() is guarded against re-entrant close via options getter", () => {
+    // deserialize() checks isBusy() (refuses while something ELSE is
+    // in flight) but must also ESTABLISH a BusyScope before reading
+    // options — a hostile opts.dbName getter could otherwise close()
+    // the db and sqlite3_deserialize would segfault on the null
+    // connection (the bundled amalgamation lacks SQLITE_ENABLE_API_ARMOR).
+    const src = new DatabaseSync(":memory:");
+    src.exec("CREATE TABLE t(x INTEGER)");
+    const buf = src.serialize();
+    src.close();
+
+    const db = new DatabaseSync(":memory:");
+    let closeErr: unknown;
+    db.deserialize(buf, {
+      get dbName() {
+        try {
+          db.close();
+        } catch (e) {
+          closeErr = e;
+        }
+        return "main";
+      },
+    });
+    expect(closeErr).toMatchObject({ code: "ERR_INVALID_STATE" });
+    expect(db.isOpen).toBe(true);
+    expect(db.prepare("SELECT name FROM sqlite_master").get().name).toBe("t");
     db.close();
   });
 

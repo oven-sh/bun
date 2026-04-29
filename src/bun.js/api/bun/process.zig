@@ -1060,7 +1060,7 @@ pub const PosixSpawnOptions = struct {
     /// Linux only. When non-null, the child sets PR_SET_PDEATHSIG to this
     /// signal between vfork and exec in posix_spawn_bun, so the kernel kills
     /// it when the spawning thread dies. When null, defaults to SIGKILL if
-    /// `BUN_DIE_WITH_PARENT` is enabled (see `ParentDeathWatchdog`), else 0
+    /// `BUN_FEATURE_FLAG_DIE_WITH_PARENT` is enabled (see `ParentDeathWatchdog`), else 0
     /// (no PDEATHSIG). Not exposed to JS yet.
     linux_pdeathsig: ?u8 = null,
 
@@ -1368,7 +1368,7 @@ pub fn spawnProcessPosix(
     attr.new_process_group = options.new_process_group;
 
     if (Environment.isLinux) {
-        // Explicit per-spawn value wins; otherwise BUN_DIE_WITH_PARENT defaults
+        // Explicit per-spawn value wins; otherwise BUN_FEATURE_FLAG_DIE_WITH_PARENT defaults
         // every child to SIGKILL-on-parent-death so non-Bun descendants are
         // covered without relying on env-var inheritance, and the prctl happens
         // in the vfork child before exec so there's no startup race.

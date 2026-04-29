@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { setTimeout as sleep } from "node:timers/promises";
 
-// BUN_DIE_WITH_PARENT: Bun watches its original ppid and exits when that
+// BUN_FEATURE_FLAG_DIE_WITH_PARENT: Bun watches its original ppid and exits when that
 // process dies, even if the parent was SIGKILLed and couldn't signal us. On
 // the way out it also recursively SIGKILLs every descendant so nothing it
 // spawned outlives it. Linux uses prctl(PR_SET_PDEATHSIG); macOS registers
@@ -66,10 +66,10 @@ const fixture = tempDir("die-with-parent", {
 
 async function spawnTree(dieWithParent: string | undefined, childScript = "child.js") {
   const env: Record<string, string> = { ...bunEnv };
-  // bunEnv spreads process.env; make sure an ambient BUN_DIE_WITH_PARENT from
+  // bunEnv spreads process.env; make sure an ambient BUN_FEATURE_FLAG_DIE_WITH_PARENT from
   // the test runner doesn't leak into the "unset" case.
-  delete env.BUN_DIE_WITH_PARENT;
-  if (dieWithParent !== undefined) env.BUN_DIE_WITH_PARENT = dieWithParent;
+  delete env.BUN_FEATURE_FLAG_DIE_WITH_PARENT;
+  if (dieWithParent !== undefined) env.BUN_FEATURE_FLAG_DIE_WITH_PARENT = dieWithParent;
 
   const sh = Bun.spawn({
     // Trailing `wait` defeats sh's implicit-exec-of-last-command so sh stays a
@@ -132,17 +132,20 @@ function reap(...pids: number[]) {
   }
 }
 
-test.skipIf(!isSupported)("without BUN_DIE_WITH_PARENT, bun is orphaned when its parent is SIGKILLed", async () => {
-  const { sh, bunPid, grandchildPid } = await spawnTree(undefined);
-  process.kill(sh.pid!, "SIGKILL");
-  await sh.exited;
-  // bun must NOT die: poll for death and expect the poll to time out.
-  const died = await waitUntilDead(bunPid, 1000);
-  reap(bunPid, grandchildPid);
-  expect(died).toBe(false);
-});
+test.skipIf(!isSupported)(
+  "without BUN_FEATURE_FLAG_DIE_WITH_PARENT, bun is orphaned when its parent is SIGKILLed",
+  async () => {
+    const { sh, bunPid, grandchildPid } = await spawnTree(undefined);
+    process.kill(sh.pid!, "SIGKILL");
+    await sh.exited;
+    // bun must NOT die: poll for death and expect the poll to time out.
+    const died = await waitUntilDead(bunPid, 1000);
+    reap(bunPid, grandchildPid);
+    expect(died).toBe(false);
+  },
+);
 
-test.skipIf(!isSupported)("BUN_DIE_WITH_PARENT=1: bun exits when its parent is SIGKILLed", async () => {
+test.skipIf(!isSupported)("BUN_FEATURE_FLAG_DIE_WITH_PARENT=1: bun exits when its parent is SIGKILLed", async () => {
   const { sh, bunPid, grandchildPid } = await spawnTree("1");
   process.kill(sh.pid!, "SIGKILL");
   await sh.exited;
@@ -153,27 +156,30 @@ test.skipIf(!isSupported)("BUN_DIE_WITH_PARENT=1: bun exits when its parent is S
   expect(died).toBe(true);
 });
 
-test.skipIf(!isSupported)("BUN_DIE_WITH_PARENT=1: grandchildren are reaped when bun dies with its parent", async () => {
-  const { sh, bunPid, grandchildPid } = await spawnTree("1");
-  expect(isAlive(grandchildPid)).toBe(true);
-  process.kill(sh.pid!, "SIGKILL");
-  await sh.exited;
-  const bunDied = await waitUntilDead(bunPid, 10000);
-  // macOS: bun's NOTE_EXIT fires → Global.exit → libproc walk SIGKILLs the
-  // grandchild. Linux: bun gets SIGKILL via PDEATHSIG, but the grandchild is
-  // also Bun with the env var inherited and so has its own PDEATHSIG.
-  const grandchildDied = await waitUntilDead(grandchildPid, 10000);
-  reap(bunPid, grandchildPid);
-  expect(bunDied).toBe(true);
-  expect(grandchildDied).toBe(true);
-});
+test.skipIf(!isSupported)(
+  "BUN_FEATURE_FLAG_DIE_WITH_PARENT=1: grandchildren are reaped when bun dies with its parent",
+  async () => {
+    const { sh, bunPid, grandchildPid } = await spawnTree("1");
+    expect(isAlive(grandchildPid)).toBe(true);
+    process.kill(sh.pid!, "SIGKILL");
+    await sh.exited;
+    const bunDied = await waitUntilDead(bunPid, 10000);
+    // macOS: bun's NOTE_EXIT fires → Global.exit → libproc walk SIGKILLs the
+    // grandchild. Linux: bun gets SIGKILL via PDEATHSIG, but the grandchild is
+    // also Bun with the env var inherited and so has its own PDEATHSIG.
+    const grandchildDied = await waitUntilDead(grandchildPid, 10000);
+    reap(bunPid, grandchildPid);
+    expect(bunDied).toBe(true);
+    expect(grandchildDied).toBe(true);
+  },
+);
 
 // The grandchild here is plain /bin/sh — it never calls prctl itself. On
 // Linux this is covered by Bun setting linux_pdeathsig on every spawn when
-// BUN_DIE_WITH_PARENT is enabled (prctl in the vfork child before exec). On
+// BUN_FEATURE_FLAG_DIE_WITH_PARENT is enabled (prctl in the vfork child before exec). On
 // macOS it's covered by the libproc descendant walk in the exit handler.
 test.skipIf(!isSupported)(
-  "BUN_DIE_WITH_PARENT=1: non-Bun grandchildren are reaped when bun dies with its parent",
+  "BUN_FEATURE_FLAG_DIE_WITH_PARENT=1: non-Bun grandchildren are reaped when bun dies with its parent",
   async () => {
     const { sh, bunPid, grandchildPid } = await spawnTree("1", "child-nonbun.js");
     expect(isAlive(grandchildPid)).toBe(true);
@@ -187,7 +193,7 @@ test.skipIf(!isSupported)(
   },
 );
 
-test.skipIf(!isSupported)("BUN_DIE_WITH_PARENT=0 is treated as unset", async () => {
+test.skipIf(!isSupported)("BUN_FEATURE_FLAG_DIE_WITH_PARENT=0 is treated as unset", async () => {
   const { sh, bunPid, grandchildPid } = await spawnTree("0");
   process.kill(sh.pid!, "SIGKILL");
   await sh.exited;
@@ -196,7 +202,7 @@ test.skipIf(!isSupported)("BUN_DIE_WITH_PARENT=0 is treated as unset", async () 
   expect(died).toBe(false);
 });
 
-test.skipIf(!isSupported)("BUN_DIE_WITH_PARENT=1 does not fire while the parent is alive", async () => {
+test.skipIf(!isSupported)("BUN_FEATURE_FLAG_DIE_WITH_PARENT=1 does not fire while the parent is alive", async () => {
   const { sh, bunPid, grandchildPid } = await spawnTree("1");
   // Parent is alive; bun must stay alive. Poll for premature death.
   const diedEarly = await waitUntilDead(bunPid, 1000);
@@ -212,11 +218,48 @@ test.skipIf(!isSupported)("BUN_DIE_WITH_PARENT=1 does not fire while the parent 
 // var set, a Bun that exits *cleanly* should still SIGKILL its children. On
 // macOS this is the only place the libproc walk is exercised independently of
 // NOTE_EXIT.
-test.skipIf(!isSupported)("BUN_DIE_WITH_PARENT=1: clean exit reaps descendants", async () => {
-  const env: Record<string, string> = { ...bunEnv, BUN_DIE_WITH_PARENT: "1" };
+test.skipIf(!isSupported)("BUN_FEATURE_FLAG_DIE_WITH_PARENT=1: clean exit reaps descendants", async () => {
+  const env: Record<string, string> = { ...bunEnv, BUN_FEATURE_FLAG_DIE_WITH_PARENT: "1" };
   const proc = Bun.spawn({
     cmd: [bunExe(), `${String(fixture)}/clean-exit.js`],
     env,
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const out = await proc.stdout.text();
+  await proc.exited;
+  const gcPid = Number(out.trim());
+  expect(gcPid).toBeGreaterThan(0);
+  const died = await waitUntilDead(gcPid, 10000);
+  reap(gcPid);
+  expect(proc.exitCode).toBe(0);
+  expect(died).toBe(true);
+});
+
+// Same as the clean-exit test but enabled via bunfig.toml instead of the env
+// var, exercising the second `enable()` call site.
+test.skipIf(!isSupported)("bunfig [run] dieWithParent = true: clean exit reaps descendants", async () => {
+  using dir = tempDir("die-with-parent-bunfig", {
+    "bunfig.toml": "[run]\ndieWithParent = true\n",
+    "grandchild.js": `process.stdout.write("r"); setInterval(()=>{}, 1000);`,
+    "clean-exit.js": `
+      const gc = Bun.spawn({
+        cmd: [process.execPath, "grandchild.js"],
+        cwd: import.meta.dir,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      await gc.stdout.getReader().read();
+      gc.unref();
+      console.log(gc.pid);
+      process.exit(0);
+    `,
+  });
+  const env: Record<string, string> = { ...bunEnv };
+  delete env.BUN_FEATURE_FLAG_DIE_WITH_PARENT;
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "clean-exit.js"],
+    env,
+    cwd: String(dir),
     stdout: "pipe",
     stderr: "ignore",
   });

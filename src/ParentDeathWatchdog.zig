@@ -1,7 +1,8 @@
 //! Opt-in self-termination when our parent goes away, plus recursive
 //! descendant cleanup on exit.
 //!
-//! Enabled via env var `BUN_DIE_WITH_PARENT`. When set, Bun:
+//! Enabled via env var `BUN_FEATURE_FLAG_DIE_WITH_PARENT` or
+//! `bunfig.toml` `[run] dieWithParent = true`. When set, Bun:
 //!
 //!   1. Captures its original parent pid at startup and exits as soon as that
 //!      parent is gone — even if the parent was SIGKILLed and never got a
@@ -41,7 +42,7 @@ var enabled: bool = false;
 var original_ppid: std.c.pid_t = 0;
 var install_thread_id: std.Thread.Id = 0;
 
-/// Whether `BUN_DIE_WITH_PARENT` was set at startup. Read by the spawn path to
+/// Whether `BUN_FEATURE_FLAG_DIE_WITH_PARENT` was set at startup. Read by the spawn path to
 /// decide whether to default `linux_pdeathsig` on children.
 pub fn isEnabled() bool {
     return enabled;
@@ -63,10 +64,22 @@ var event_loop_installed = std.atomic.Value(bool).init(false);
 /// per-instance state.
 var instance: ParentDeathWatchdog = .{};
 
+/// Called from `main()` before the CLI starts. Checks the env var and enables
+/// the watchdog as early as possible so the Linux `prctl` window is minimal.
+/// `bunfig.toml`'s `[run] dieWithParent` calls `enable()` directly later in
+/// startup if the env var wasn't set.
 pub fn install() void {
     if (comptime !Environment.isPosix) return;
+    if (!bun.env_var.BUN_FEATURE_FLAG_DIE_WITH_PARENT.get()) return;
+    enable();
+}
 
-    if (!bun.env_var.BUN_DIE_WITH_PARENT.get()) return;
+/// Idempotent. Arms the watchdog: Linux `prctl(PR_SET_PDEATHSIG)`, exit-time
+/// descendant reaper, and (lazily) the macOS kqueue parent watch. Safe to call
+/// from `main()` (env-var path) and again from bunfig parsing.
+pub fn enable() void {
+    if (comptime !Environment.isPosix) return;
+    if (enabled) return;
 
     enabled = true;
     install_thread_id = std.Thread.getCurrentId();

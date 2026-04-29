@@ -1332,6 +1332,13 @@ pub inline fn assertOnJSThread(vm: *const VirtualMachine) void {
     }
 }
 
+/// The ScriptExecutionContext identifier for this VM's global. Main thread is
+/// always 1; workers get a unique id allocated by ScriptExecutionContext::
+/// generateIdentifier() in C++.
+pub inline fn scriptExecutionContextId(vm: *const VirtualMachine) u32 {
+    return @intCast(vm.initial_script_execution_context_identifier);
+}
+
 fn configureDebugger(this: *VirtualMachine, cli_flag: bun.cli.Command.Debugger) void {
     if (bun.env_var.HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET.get() != null) {
         return;

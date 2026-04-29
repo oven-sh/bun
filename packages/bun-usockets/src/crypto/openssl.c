@@ -905,6 +905,16 @@ struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *s, char *data, i
     return NULL;
   }
 
+  /* Drive the handshake on inbound bytes too (not just on_writable). The
+   * server side otherwise only fires on_handshake from update_handshake() in
+   * on_writable; under low-prio throttling that lets every client's handshake
+   * + close land before the server's own handshake events drain, which races
+   * connectionListener counts. */
+  if (s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
+    s = ssl_update_handshake(s);
+    if (!s || us_socket_is_closed(s) || !s->ssl) return s;
+  }
+
   int read = 0;
 restart:
   while (1) {

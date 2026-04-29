@@ -81,7 +81,7 @@ public:
     // Only here for JSMessagePortCustom's GC optimization; always null.
     MessagePort* locallyEntangledPort() { return nullptr; }
 
-    MessagePortPipe* pipe() const { return m_pipe.get(); }
+    MessagePortPipe* pipe() const { return m_pipe.ptr(); }
     uint8_t side() const { return m_side; }
 
     void ref() const { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::ref(); }
@@ -111,11 +111,13 @@ private:
 
     void contextDestroyed() final;
 
-    // A port gives up its pipe on transfer or close; until then it "is entangled".
-    bool isEntangled() const { return m_pipe && !m_isDetached; }
+    bool isEntangled() const { return !m_isDetached; }
 
-    RefPtr<MessagePortPipe> m_pipe;
-    uint8_t m_side { 0 };
+    // Held for the port's entire lifetime — never nulled — so that the GC
+    // thread's hasPendingActivity() can dereference it without racing the
+    // mutator. close()/disentangle() flip pipe-side state bits instead.
+    const Ref<MessagePortPipe> m_pipe;
+    const uint8_t m_side { 0 };
 
     bool m_started { false };
     bool m_isDetached { false };

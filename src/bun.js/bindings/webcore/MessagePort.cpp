@@ -58,7 +58,7 @@ MessagePort::MessagePort(ScriptExecutionContext& context, Ref<MessagePortPipe>&&
 
 MessagePort::~MessagePort()
 {
-    if (m_pipe && !m_isDetached)
+    if (!m_isDetached)
         m_pipe->close(m_side);
 }
 
@@ -76,7 +76,7 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
     if (!ports.isEmpty()) {
         // A port may not be posted through itself or its own entangled peer.
         for (auto& port : ports) {
-            if (port->pipe() == m_pipe.get())
+            if (port->pipe() == m_pipe.ptr())
                 return Exception { DataCloneError };
         }
         auto disentangled = MessagePort::disentanglePorts(WTF::move(ports));
@@ -108,9 +108,9 @@ void MessagePort::close()
         return;
     m_isDetached = true;
 
-    if (m_pipe)
-        m_pipe->close(m_side);
-    m_pipe = nullptr;
+    // m_pipe is held for the port's whole lifetime (the GC thread reads
+    // it in hasPendingActivity()); marking our side Closed is sufficient.
+    m_pipe->close(m_side);
 
     removeAllEventListeners();
 }
@@ -125,11 +125,12 @@ TransferredMessagePort MessagePort::disentangle()
     removeAllEventListeners();
     m_hasMessageEventListener = false;
 
-    // Release the pipe to its next owner. Messages that arrive while in
-    // transit buffer in the pipe; the receiving context's entangle() call
-    // re-attaches and flushes them.
+    // Hand the pipe endpoint to its next owner. Messages that arrive while
+    // in transit buffer in the pipe; the receiving context's entangle()
+    // re-attaches and flushes them. We keep our own ref to the pipe so the
+    // GC thread can always dereference it — our side is detached, so all
+    // further operations on it are no-ops.
     m_pipe->detach(m_side);
-    auto pipe = std::exchange(m_pipe, nullptr);
     m_isDetached = true;
     m_started = false;
 
@@ -137,7 +138,7 @@ TransferredMessagePort MessagePort::disentangle()
         context->willDestroyDestructionObserver(*this);
     observeContext(nullptr);
 
-    return TransferredMessagePort { WTF::move(pipe), m_side };
+    return TransferredMessagePort { m_pipe.copyRef(), m_side };
 }
 
 Ref<MessagePort> MessagePort::entangle(ScriptExecutionContext& context, TransferredMessagePort&& transferred)
@@ -204,8 +205,13 @@ void MessagePort::contextDestroyed()
 
 bool MessagePort::hasPendingActivity() const
 {
-    // Called from the GC thread; must be lockless.
-    if (!scriptExecutionContext() || m_isDetached || !m_pipe)
+    // Called from the GC thread concurrently with the mutator; must be
+    // lockless. m_pipe is a Ref<> held for the port's whole lifetime, so
+    // the dereference is always safe; state() and isOtherSideOpen() are
+    // atomic loads. The plain bool reads can observe stale values but
+    // cannot crash — at worst the wrapper is collected one cycle early
+    // or late, which is the same tolerance as before this refactor.
+    if (!scriptExecutionContext() || m_isDetached)
         return false;
     if (!m_hasMessageEventListener)
         return false;

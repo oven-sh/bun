@@ -54,8 +54,8 @@ async function run(iters: number) {
   }
 
   proc.stdin!.end();
-  proc.stdout!.resume();
   proc.stdout!.on("data", (d: Buffer) => void (total += d.length));
+  proc.stdout!.resume();
   await once(proc, "close");
   if (total !== (iters * 2 + 1) * CHUNK) {
     throw new Error(`wrong total: got ${total}, expected ${(iters * 2 + 1) * CHUNK}`);

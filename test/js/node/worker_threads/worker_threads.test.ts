@@ -613,6 +613,33 @@ test("process.emit returns false when there are no listeners", () => {
   expect(called).toBe(true);
 });
 
+test("transferring a ref'd MessagePort releases its event-loop ref on the source thread", async () => {
+  // port1.onmessage = fn takes an event-loop ref; transferring port1 detaches it from the
+  // source context. disentangle() used to leave that ref behind, so the source process hung.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+        const { Worker } = require("node:worker_threads");
+        const { port1 } = new MessageChannel();
+        port1.onmessage = () => {};
+        const w = new Worker("setTimeout(() => {}, 100)", { ev${/* bundler hates eval */ ""}al: true });
+        w.postMessage({ p: port1 }, [port1]);
+        w.unref();
+        setTimeout(() => console.log("DONE"), 50);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("DONE");
+  expect(exitCode).toBe(0);
+});
+
 test("worker does not stay alive after unref() on a transferred port with a listener", async () => {
   // A transferred MessagePort with a 'message' listener used to hold a separate
   // event loop ref that .unref() could not release, keeping the worker alive forever.

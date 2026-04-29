@@ -193,6 +193,15 @@ TransferredMessagePort MessagePort::disentangle()
     auto& context = *scriptExecutionContext();
     MessagePortChannelProvider::fromContext(context).messagePortDisentangled(m_identifier);
 
+    // Release any event-loop ref we hold on the source context before detaching. After
+    // observeContext(nullptr), updateEventLoopRef() has no context to unref, so a port that
+    // was ref'd (via onmessage / .ref() / a message listener on a transferred port) and then
+    // itself transferred would otherwise leave its source thread with a permanent +1 ref.
+    if (m_isRefingEventLoop) {
+        m_isRefingEventLoop = false;
+        context.unrefEventLoop();
+    }
+
     // We can't receive any messages or generate any events after this, so remove ourselves from the list of active ports.
     context.destroyedMessagePort(*this);
     // context.willDestroyActiveDOMObject(*this);

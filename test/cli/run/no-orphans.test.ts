@@ -674,11 +674,14 @@ test.skipIf(!isSupported || !hasPerl)(
       `use POSIX qw(:sys_wait_h setpgid tcsetpgrp WIFSTOPPED);` +
       `$|=1; $SIG{TTOU}="IGNORE"; ` +
       `my $bun = fork(); ` +
-      `if ($bun == 0) { setpgid(0,0); ` +
+      // Child sets its own pgroup AND makes itself foreground *before* exec
+      // so `JobControl.give()`'s `tcgetpgrp(0)==getpgrp()` gate is satisfied
+      // regardless of whether the parent's tcsetpgrp won the fork race.
+      `if ($bun == 0) { setpgid(0,0); tcsetpgrp(0,$$); ` +
       `  exec($ENV{BUN_EXE}, "run", "--no-orphans", "--silent", "dev") or die $!; } ` +
       `setpgid($bun, $bun); ` +
-      `print "BUN_PGID $bun\\n"; ` +
       `tcsetpgrp(0, $bun); ` +
+      `print "BUN_PGID $bun\\n"; ` +
       `while (1) { ` +
       `  my $w = waitpid($bun, WUNTRACED); last if $w <= 0; ` +
       `  if (WIFSTOPPED(\${^CHILD_ERROR_NATIVE})) { ` +
@@ -761,6 +764,84 @@ test.skipIf(!isSupported || !hasPerl)(
           } catch {}
         }
       }
+      await proc.exited;
+      proc.terminal?.close();
+    }
+  },
+  15000,
+);
+
+// `bun run --no-orphans dev &` — backgrounded on a TTY — must NOT steal the
+// foreground. bash/zsh leave stdin as the controlling TTY for a backgrounded
+// job (they rely on SIGTTIN), so `isatty(0)` is true and `tcgetpgrp(0)`
+// returns the *shell's* pgid. `JobControl.give()` blocks SIGTTOU, so without
+// the `tcgetpgrp(0) == getpgrp()` gate its `tcsetpgrp` would succeed from the
+// background and displace the user's shell.
+//
+// Same perl-shell/pty rig as above, but perl never hands bun the foreground
+// (the `&` shape). After the script announces READY, perl re-reads
+// `tcgetpgrp(0)` and reports whether it's still perl's own pgroup.
+test.skipIf(!isSupported || !hasPerl)(
+  "bun run --no-orphans backgrounded on a TTY does not steal the foreground pgroup",
+  async () => {
+    using dir = tempDir("no-orphans-tty-bg", {
+      "package.json": JSON.stringify({
+        name: "p",
+        // Handshake via a file (extra fds don't survive bun run's spawn):
+        // the script touching `$OUT/ready` proves it's past `give()`, so
+        // perl's `tcgetpgrp` probe is sequenced after the point a regressing
+        // build would have stolen the foreground.
+        scripts: { dev: `perl -e 'open F,">","$ENV{OUT}/ready"; close F; sleep 1 while 1'` },
+      }),
+    });
+    const env: Record<string, string> = { ...bunEnv, BUN_EXE: bunExe(), OUT: String(dir) };
+    delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+
+    const shellSim =
+      `use POSIX qw(setpgid tcgetpgrp getpgrp);` +
+      `$|=1; $SIG{TTOU}="IGNORE"; ` +
+      `my $bun = fork(); ` +
+      `if ($bun == 0) { setpgid(0,0); ` +
+      `  exec($ENV{BUN_EXE}, "run", "--no-orphans", "--silent", "dev") or die $!; } ` +
+      `setpgid($bun, $bun); ` +
+      // Deliberately NO tcsetpgrp — bun is a background job (`&`).
+      `select undef,undef,undef,0.01 until -e "$ENV{OUT}/ready"; ` +
+      `my $fg = tcgetpgrp(0); my $me = getpgrp(); ` +
+      `printf "FG %d ME %d BUN %d %s\\n", $fg, $me, $bun, ` +
+      `  ($fg == $me ? "FG_OK" : "FG_STOLEN"); ` +
+      `kill "KILL", -$bun; waitpid($bun, 0);`;
+
+    let out = "";
+    const decoder = new TextDecoder();
+    let wake = Promise.withResolvers<void>();
+    const eof = Promise.withResolvers<void>();
+    const proc = Bun.spawn({
+      cmd: ["perl", "-e", shellSim],
+      env,
+      cwd: String(dir),
+      terminal: {
+        data(_t, chunk) {
+          out += decoder.decode(chunk, { stream: true });
+          wake.resolve();
+        },
+        exit() {
+          eof.resolve();
+        },
+      },
+    });
+
+    let timedOut = false;
+    const deadline = sleep(10000).then(() => (timedOut = true));
+    try {
+      while (!out.includes("FG ") && !timedOut) {
+        wake = Promise.withResolvers();
+        await Promise.race([wake.promise, eof.promise, deadline]);
+        if (proc.terminal!.closed) break;
+      }
+      expect(out).toContain("FG_OK");
+      expect(out).not.toContain("FG_STOLEN");
+    } finally {
+      proc.kill("SIGKILL");
       await proc.exited;
       proc.terminal?.close();
     }

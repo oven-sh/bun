@@ -2220,7 +2220,8 @@ pub const sync = struct {
     /// then, matching plain `bun run`.
     const JobControl = struct {
         /// Foreground pgroup we displaced (i.e. the one the user's shell put
-        /// `bun run` in). 0 when stdin isn't a TTY or `tcgetpgrp` failed.
+        /// `bun run` in). 0 when stdin isn't a TTY, `tcgetpgrp` failed, or we
+        /// weren't the foreground pgroup to begin with.
         prev: std.c.pid_t = 0,
         script_pgid: std.c.pid_t = 0,
 
@@ -2235,8 +2236,16 @@ pub const sync = struct {
         fn give(self: *@This(), pgid: std.c.pid_t) void {
             self.script_pgid = pgid;
             if (std.c.isatty(0) == 0) return;
-            self.prev = tcgetpgrp(0);
-            if (self.prev <= 0) return;
+            const fg = tcgetpgrp(0);
+            // Only take the terminal if we *are* the foreground pgroup.
+            // `bun run --no-orphans dev &` from an interactive shell leaves
+            // stdin as the TTY (shells rely on SIGTTIN, not redirection), so
+            // `tcgetpgrp` returns the shell's pgid — blocking SIGTTOU and
+            // `tcsetpgrp`'ing anyway would steal the terminal from the user.
+            // Same gate as `onChildStopped`'s resume path below; real shells
+            // (bash `give_terminal_to`, zsh `attachtty`) do the same.
+            if (fg <= 0 or fg != getpgrp()) return;
+            self.prev = fg;
             ttouBlocked(pgid);
         }
         fn restore(self: *@This()) void {
@@ -2416,13 +2425,18 @@ pub const sync = struct {
         // Do NOT return from here — Linux backs `.buffer` stdio with memfds
         // that are read *after* the wait, so falling through to the memfd block
         // below is required.
-        const status: Status = if (no_orphans and (Environment.isLinux or Environment.isMac)) blk: {
-            const ppid = bun.ParentDeathWatchdog.ppidToWatch() orelse 0;
-            switch (waitForChildNoOrphans(process.pid, ppid, &jc, &out, &out_fds_to_wait_for, &out_fds)) {
-                .err => |err| return .{ .err = err },
-                .result => |st| break :blk st,
+        const status: Status = blk: {
+            if (no_orphans and (Environment.isLinux or Environment.isMac)) {
+                const ppid = bun.ParentDeathWatchdog.ppidToWatch() orelse 0;
+                if (waitForChildNoOrphans(process.pid, ppid, &jc, &out, &out_fds_to_wait_for, &out_fds)) |r|
+                    switch (r) {
+                        .err => |err| return .{ .err = err },
+                        .result => |st| break :blk st,
+                    };
+                // null: kqueue()/kevent-receipt failed — fall through to the
+                // plain poll() loop so `.buffer` stdio still drains instead
+                // of being dropped (or deadlocking) in a blind `wait4()`.
             }
-        } else blk: {
             while (out_fds_to_wait_for[0] != bun.invalid_fd or out_fds_to_wait_for[1] != bun.invalid_fd) {
                 for (&out_fds_to_wait_for, &out, &out_fds) |*fd, *bytes, *out_fd| {
                     if (drainFd(fd, out_fd, bytes)) |err| return .{ .err = err };
@@ -2481,6 +2495,11 @@ pub const sync = struct {
     ///
     /// `ppid == 0` means "no parent worth watching" — still run the loop for
     /// the descendant tracking + pgroup cleanup on script exit.
+    ///
+    /// Returns `null` when macOS kqueue setup fails: the caller falls through
+    /// to the plain `poll()`+`wait4()` loop so `.buffer` stdio still drains
+    /// (a blind `reapChild()` would drop captured output or deadlock if the
+    /// child fills the pipe while we block in `wait4`).
     fn waitForChildNoOrphans(
         child: std.c.pid_t,
         ppid: std.c.pid_t,
@@ -2488,7 +2507,7 @@ pub const sync = struct {
         out: *[2]std.array_list.Managed(u8),
         out_fds_to_wait_for: *[2]bun.FD,
         out_fds: *[2]bun.FD,
-    ) Maybe(Status) {
+    ) ?Maybe(Status) {
         if (comptime Environment.isMac)
             return waitMacKqueue(child, ppid, jc, out, out_fds_to_wait_for, out_fds);
         if (comptime Environment.isLinux)
@@ -2503,11 +2522,14 @@ pub const sync = struct {
         out: *[2]std.array_list.Managed(u8),
         out_fds_to_wait_for: *[2]bun.FD,
         out_fds: *[2]bun.FD,
-    ) Maybe(Status) {
+    ) ?Maybe(Status) {
         if (comptime !Environment.isMac) unreachable;
         const NOTE_FORK: u32 = 0x40000000; // sys/event.h; not in std.c.NOTE
 
-        const kq = std.posix.kqueue() catch return .{ .result = reapChild(child) };
+        // EMFILE/ENOMEM etc.: let the caller's plain `poll()` loop drain
+        // `.buffer` stdio and reap. The spawnPosix defers (pgroup-kill,
+        // killTracked()) still run on return.
+        const kq = std.posix.kqueue() catch return null;
         const kq_fd = bun.FD.fromNative(kq);
         Bun__noOrphans_begin(kq, child);
         defer {
@@ -2563,8 +2585,21 @@ pub const sync = struct {
         }
         for (receipts[0..changes.len]) |r| {
             if (r.flags & std.c.EV.ERROR == 0 or r.data == 0) continue;
-            if (r.udata == TAG_PPID) bun.Global.exit(bun.ParentDeathWatchdog.exit_code);
-            return .{ .result = reapChild(child) };
+            if (r.udata == TAG_PPID) {
+                // ESRCH: parent already gone — treat as fired. Any other
+                // errno (ENOMEM, sandbox EACCES via `mac_proc_check_kqfilter`)
+                // is a best-effort miss — same policy as
+                // `ParentDeathWatchdog.installOnEventLoop`. The
+                // `getppid() != ppid` recheck below is the backstop.
+                if (r.data == @intFromEnum(std.c.E.SRCH))
+                    bun.Global.exit(bun.ParentDeathWatchdog.exit_code);
+                continue;
+            }
+            // Non-ppid registration (child PROC / EVFILT_SIGNAL / EVFILT_READ)
+            // failed — fall through to the caller's `poll()` loop so
+            // `.buffer` stdio still drains instead of a blind `reapChild()`
+            // that would drop output or deadlock on a full pipe.
+            return null;
         }
         if (ppid > 1 and std.c.getppid() != ppid)
             bun.Global.exit(bun.ParentDeathWatchdog.exit_code);

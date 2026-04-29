@@ -1,24 +1,24 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 
 // Each .on() / .onDocument() call heap-allocates an ElementHandler / DocumentHandler
 // struct via bun.default_allocator. When the HTMLRewriter is garbage-collected,
 // LOLHTMLContext.deinit() must destroy those allocations. Previously it only
 // unprotected the held JSValues and leaked the struct memory.
 //
-// Measuring the leak:
-//  - The handler structs live in mimalloc (bun.default_allocator), so in debug
-//    builds (where mimalloc stats are compiled in) we read the live-heap counter
-//    from `heapStats().mimalloc.malloc_normal.current`. This is exact and
-//    unaffected by ASAN quarantine / page retention.
-//  - In release builds mimalloc stats are compiled out (all zeros), so we fall
-//    back to RSS. RSS carries allocator-arena retention noise (notably on
-//    Windows), so the release path uses a much bigger warmup + workload to make
-//    the actual leak dominate that noise. Release is fast enough that 20k
-//    iterations still finish in well under a second.
-test("HTMLRewriter does not leak element/document handler allocations", async () => {
-  const code = /* js */ `
-      const { heapStats } = require("bun:jsc");
+// RSS is a high-water mark — Bun.gc(true) collects every wrapper and its
+// lol-html builder, but the allocators don't promptly hand pages back to the
+// OS. So warmup runs the *same* workload as the measured phase: the allocator
+// footprint is established before the baseline, and any growth past that is
+// what's actually retained.
+//
+// Skipped in debug: at this N a debug pass is ~40s and the extra debug-build
+// allocation tracking adds enough RSS noise to drown the signal. CI has no
+// debug test lane; release + ASAN cover the regression.
+test.skipIf(isDebug)(
+  "HTMLRewriter does not leak element/document handler allocations",
+  async () => {
+    const code = /* js */ `
       const noop = { element() {}, comments() {}, text() {} };
       const docNoop = { doctype() {}, comments() {}, text() {}, end() {} };
 
@@ -28,66 +28,54 @@ test("HTMLRewriter does not leak element/document handler allocations", async ()
         for (let i = 0; i < 32; i++) rw.onDocument(docNoop);
       }
 
-      // Probe whether mimalloc stats are being collected (debug builds only).
-      once();
-      Bun.gc(true);
-      const haveMimallocStats = heapStats().mimalloc.malloc_normal.total > 0;
+      const N = 4000;
+      function pass() {
+        for (let i = 0; i < N; i++) once();
+        Bun.gc(true);
+        return process.memoryUsage.rss();
+      }
 
-      // In release (no mimalloc stats) use a much larger workload so the
-      // handler leak dwarfs RSS noise from allocator arena retention.
-      const warmup = haveMimallocStats ? 500 : 4000;
-      const iterations = haveMimallocStats ? 4000 : 16000;
+      pass(); pass();
+      const before = pass();
+      pass(); pass();
+      const after = pass();
 
-      for (let i = 0; i < warmup; i++) once();
-      Bun.gc(true);
-
-      const beforeMi = heapStats().mimalloc.malloc_normal.current;
-      const beforeRss = process.memoryUsage.rss();
-
-      for (let i = 0; i < iterations; i++) once();
-      Bun.gc(true);
-
-      const afterMi = heapStats().mimalloc.malloc_normal.current;
-      const afterRss = process.memoryUsage.rss();
-
-      const miDeltaMB = (afterMi - beforeMi) / 1024 / 1024;
-      const rssDeltaMB = (afterRss - beforeRss) / 1024 / 1024;
-      process.stdout.write(JSON.stringify({ haveMimallocStats, miDeltaMB, rssDeltaMB }) + "\\n");
+      process.stdout.write(
+        JSON.stringify({ before, after, deltaMB: (after - before) / 1024 / 1024 }) + "\\n",
+      );
     `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--smol", "-e", code],
-    env: {
-      ...bunEnv,
-      // ASAN's freed-block quarantine inflates RSS with transient lol-html
-      // builder allocations; it is irrelevant to what we're measuring.
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
-        .filter(Boolean)
-        .join(":"),
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "-e", code],
+      env: {
+        ...bunEnv,
+        // Don't inherit the runner's GC_LEVEL=1 — it changes the per-pass live set.
+        BUN_GARBAGE_COLLECTOR_LEVEL: "0",
+        // ASAN's freed-block quarantine is exactly the thing that pins RSS at
+        // peak; disable it so freed lol-html builders get reused across passes.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+          .filter(Boolean)
+          .join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const filteredStderr = stderr
-    .split("\n")
-    .filter(line => !line.startsWith("WARNING: ASAN interferes"))
-    .join("\n")
-    .trim();
-  expect(filteredStderr).toBe("");
+    const filteredStderr = stderr
+      .split("\n")
+      .filter(line => !line.startsWith("WARNING: ASAN interferes"))
+      .join("\n")
+      .trim();
+    expect(filteredStderr).toBe("");
 
-  const { haveMimallocStats, miDeltaMB, rssDeltaMB } = JSON.parse(stdout.trim());
+    const { deltaMB } = JSON.parse(stdout.trim());
 
-  if (haveMimallocStats) {
-    // 4000 * 64 handlers * ~48 bytes each => ~12-20 MB when leaking; ~0 MB when fixed.
-    expect(miDeltaMB).toBeLessThan(4);
-  } else {
-    // Release: 16000 * 64 handlers * ~48 bytes each => ~49 MB of leaked handler
-    // structs (plus overhead) when leaking; a few MB of arena churn when fixed.
-    expect(rssDeltaMB).toBeLessThan(30);
-  }
-
-  expect(exitCode).toBe(0);
-}, 120_000);
+    // Unfixed: ~50 MB over 3 measured passes. Fixed: ±1 MB plateau.
+    // Threshold sits at ~half the unfixed signal.
+    expect(deltaMB).toBeLessThan(25);
+    expect(exitCode).toBe(0);
+  },
+  15_000,
+);

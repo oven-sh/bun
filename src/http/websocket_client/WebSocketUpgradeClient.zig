@@ -1054,9 +1054,12 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                         this.tcp.timeout(0);
                         log("onDidConnect (tunnel mode)", .{});
 
-                        // Take the outgoing_websocket reference but DON'T deref the upgrade client.
-                        // We need to keep it alive to forward socket data to the tunnel.
-                        // The upgrade client will be cleaned up when the socket closes.
+                        // Release the ref that paired with C++'s m_upgradeClient: C++
+                        // nulls m_upgradeClient inside didConnectWithTunnel() so it will
+                        // never call cancel() to drop it. The TCP socket's ref (released
+                        // in handleClose) is what keeps this struct alive to forward
+                        // socket data to the tunnel after we switch to .done.
+                        defer this.deref();
                         const ws = bun.take(&this.outgoing_websocket).?;
 
                         // Create the WebSocket client with the tunnel

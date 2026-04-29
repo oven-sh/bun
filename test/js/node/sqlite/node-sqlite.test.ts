@@ -263,9 +263,7 @@ describe("DatabaseSync.prototype.function()", () => {
     // side would crash under ASAN. These should throw cleanly.
     const db = new DatabaseSync(":memory:");
     const longName = "a".repeat(300);
-    expect(() => db.function(longName, () => 0)).toThrow(
-      expect.objectContaining({ code: "ERR_SQLITE_ERROR" }),
-    );
+    expect(() => db.function(longName, () => 0)).toThrow(expect.objectContaining({ code: "ERR_SQLITE_ERROR" }));
     expect(() => db.aggregate(longName, { start: 0, step: (a, n) => a + n })).toThrow(
       expect.objectContaining({ code: "ERR_SQLITE_ERROR" }),
     );

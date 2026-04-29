@@ -3,6 +3,10 @@ const Store = @This();
 data: Data,
 
 mime_type: MimeType = .none,
+/// When true, `mime_type.value` is heap-allocated via `bun.default_allocator`
+/// and owned by this Store. `deinit` frees it. Every other `mime_type.value`
+/// must be a static string (registry entry or comptime literal).
+mime_type_allocated: bool = false,
 ref_count: std.atomic.Value(u32) = .init(1),
 is_all_ascii: ?bool = null,
 allocator: std.mem.Allocator,
@@ -178,6 +182,12 @@ pub fn deref(this: *Blob.Store) void {
 
 pub fn deinit(this: *Blob.Store) void {
     const allocator = this.allocator;
+
+    if (this.mime_type_allocated) {
+        bun.default_allocator.free(@constCast(this.mime_type.value));
+        this.mime_type = .none;
+        this.mime_type_allocated = false;
+    }
 
     switch (this.data) {
         .bytes => |*bytes| {

@@ -324,3 +324,72 @@ test("dupe() preserves allocated content_type for Body clone", () => {
   expect(originalType).toStartWith("multipart/form-data; boundary=");
   expect(clonedType).toBe(originalType);
 });
+
+test.each([
+  ["Body.Value.resolve (fetch)", true],
+  ["getBlobWithThisValue (sync Response)", false],
+])("response.blob() does not alias store.mime_type with blob.content_type: %s", async (_, useFetch) => {
+  // Regression: when the response Content-Type is not a known static mime
+  // (e.g. "image/png"), `MimeType.init` heap-allocates `.value`. Both the
+  // returned Blob's `content_type` (owned, freed in Blob.deinit) and the
+  // shared Store's `mime_type.value` (not owned) were set to the same
+  // pointer. A slice shares the Store via refcount; when the original Blob
+  // is collected first its deinit frees `content_type`, leaving the Store's
+  // `mime_type.value` dangling. Reading `sliced.type` then falls through to
+  // `store.mime_type.value` -> use-after-free.
+  //
+  // Run in a subprocess so the ASAN crash surfaces as a non-zero exit code
+  // and the UAF read can't corrupt the test runner's heap on release builds.
+  const src = `
+    // Must be a category MimeType.init() heap-allocates for (not text/plain,
+    // text/html, application/json, etc.).
+    const expected = "image/png";
+
+    let res;
+    if (${useFetch}) {
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () => new Response("hello world", { headers: { "Content-Type": expected } }),
+      });
+      res = await fetch(server.url);
+    } else {
+      res = new Response("hello world", { headers: { "Content-Type": expected } });
+    }
+
+    let blob = await res.blob();
+    if (blob.type !== expected) throw new Error("precondition: unexpected type " + blob.type);
+
+    // slice() shares the Store (refcount++) but gets content_type = ""
+    // because the parent's content_type is heap-allocated.
+    const sliced = blob.slice(0, 1);
+
+    // Drop the original so only 'sliced' holds the Store, then force GC so
+    // the original Blob's finalizer runs and frees its content_type.
+    blob = null;
+    Bun.gc(true);
+    await Bun.sleep(0);
+    Bun.gc(true);
+
+    // getType(): content_type.len == 0 -> store.mime_type.value. Previously
+    // that pointer aliased the original Blob's freed content_type; now the
+    // Store owns its own copy. ASAN reports use-after-poison here pre-fix.
+    process.stdout.write(sliced.type);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: {
+      ...bunEnv,
+      // Skip slow symbolization so a pre-fix ASAN crash exits promptly
+      // instead of pushing the test past its default timeout.
+      ASAN_OPTIONS: (bunEnv.ASAN_OPTIONS ? bunEnv.ASAN_OPTIONS + ":" : "") + "symbolize=0",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("image/png");
+  expect(exitCode).toBe(0);
+});

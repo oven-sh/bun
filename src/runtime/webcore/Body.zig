@@ -764,8 +764,19 @@ pub const Value = union(Tag) {
                                 blob.content_type = mimeType.value;
                                 blob.content_type_allocated = allocated;
                                 blob.content_type_was_set = true;
-                                if (blob.store != null) {
-                                    blob.store.?.mime_type = mimeType;
+                                if (blob.store) |store| {
+                                    // The Store is refcounted and can outlive this Blob (e.g. via
+                                    // blob.slice()). When `mimeType.value` is heap-allocated it is
+                                    // owned by `blob.content_type` and freed in Blob.deinit, so the
+                                    // Store must hold its own copy rather than alias the Blob's.
+                                    if (store.mime_type_allocated) {
+                                        bun.default_allocator.free(@constCast(store.mime_type.value));
+                                    }
+                                    store.mime_type = if (allocated)
+                                        .{ .value = bun.handleOom(bun.default_allocator.dupe(u8, mimeType.value)), .category = mimeType.category }
+                                    else
+                                        mimeType;
+                                    store.mime_type_allocated = allocated;
                                 }
                             }
                         }
@@ -1440,8 +1451,19 @@ pub fn Mixin(comptime Type: type) type {
                         blob.content_type = mimeType.value;
                         blob.content_type_allocated = allocated;
                         blob.content_type_was_set = true;
-                        if (blob.store != null) {
-                            blob.store.?.mime_type = mimeType;
+                        if (blob.store) |store| {
+                            // The Store is refcounted and can outlive this Blob (e.g. via
+                            // blob.slice()). When `mimeType.value` is heap-allocated it is
+                            // owned by `blob.content_type` and freed in Blob.deinit, so the
+                            // Store must hold its own copy rather than alias the Blob's.
+                            if (store.mime_type_allocated) {
+                                bun.default_allocator.free(@constCast(store.mime_type.value));
+                            }
+                            store.mime_type = if (allocated)
+                                .{ .value = bun.handleOom(bun.default_allocator.dupe(u8, mimeType.value)), .category = mimeType.category }
+                            else
+                                mimeType;
+                            store.mime_type_allocated = allocated;
                         }
                     }
                 }

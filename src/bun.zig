@@ -1590,6 +1590,7 @@ pub fn reloadProcess(
     if (comptime Environment.isWindows) {
         // on windows we assume that we have a parent process that is monitoring us and will restart us if we exit with a magic exit code
         // see becomeWatcherManager
+        Global.Bun__flushAllCRTs();
         const rc = c.TerminateProcess(c.GetCurrentProcess(), windows.watcher_reload_exit);
         if (rc == 0) {
             const err = bun.windows.GetLastError();

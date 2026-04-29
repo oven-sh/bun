@@ -67,6 +67,12 @@ pub inline fn getStartTime() i128 {
 
 extern "kernel32" fn SetThreadDescription(thread: std.os.windows.HANDLE, name: [*:0]const u16) callconv(.winapi) std.os.windows.HRESULT;
 
+/// Flush stdio for every CRT instance loaded in the process (Bun's static /MT
+/// CRT plus any /MD ucrtbase/msvcrt brought in by native addons). Called before
+/// TerminateProcess, which otherwise skips the CRT teardown that would flush
+/// these. Defined in c-bindings.cpp.
+pub extern "c" fn Bun__flushAllCRTs() void;
+
 pub fn setThreadName(name: [:0]const u8) void {
     if (Environment.isLinux) {
         _ = std.posix.prctl(.SET_NAME, .{@intFromPtr(name.ptr)}) catch 0;
@@ -128,7 +134,22 @@ pub fn exit(code: u32) noreturn {
         .mac => std.c.exit(@bitCast(code)),
         .windows => {
             Bun__onExit();
-            std.os.windows.kernel32.ExitProcess(code);
+            // ExitProcess walks every loaded DLL's DLL_PROCESS_DETACH, which is
+            // both slow and a recurring source of crashes when third-party
+            // modules (native addons that statically link their own allocator,
+            // injected AV/overlay DLLs, etc.) fault during teardown.
+            // TerminateProcess skips all of that. The one thing we lose is the
+            // CRT-side stdio flush that DETACH would have done for dynamically-
+            // linked CRTs (ucrtbase/msvcrt) used by /MD-built native addons —
+            // Bun__flushAllCRTs() does that explicitly.
+            Bun__flushAllCRTs();
+            _ = std.os.windows.kernel32.TerminateProcess(
+                std.os.windows.kernel32.GetCurrentProcess(),
+                code,
+            );
+            // TerminateProcess on the current process should not return; if it
+            // somehow does, hang rather than fall through into UB.
+            while (true) std.atomic.spinLoopHint();
         },
         else => {
             if (Environment.enable_asan) {

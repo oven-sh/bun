@@ -19,6 +19,7 @@
 #include <uv.h>
 #include <windows.h>
 #include <corecrt_io.h>
+#include <psapi.h>
 #endif // !OS(WINDOWS)
 #include <lshpack.h>
 
@@ -426,6 +427,38 @@ extern "C" ssize_t pwritev2(int fd, const struct iovec* iov, int iovcnt,
 #endif
 
 extern "C" void Bun__onExit();
+
+#if OS(WINDOWS)
+// Bun links the CRT statically (/MT) but native addons built with node-gyp use
+// /MD and get their stdio FILE* from ucrtbase.dll (or msvcrt.dll for older
+// toolchains). Those are separate stream tables; fflush/setvbuf from Bun's CRT
+// cannot reach them. ExitProcess used to flush them as a side effect of each
+// CRT's DLL_PROCESS_DETACH, but TerminateProcess skips that — so we do it
+// explicitly: walk every loaded module and call its _flushall if it exports one.
+//
+// GetModuleHandle/GetProcAddress/EnumProcessModules are loader-data reads and
+// safe to call here (no loader lock held; nothing has been detached yet).
+extern "C" void Bun__flushAllCRTs()
+{
+    // Our own static CRT first. stdout/stderr are _IONBF (set in
+    // bun_initialize_process) so this is normally a no-op, but cheap.
+    _flushall();
+
+    HMODULE mods[512];
+    DWORD needed = 0;
+    if (!EnumProcessModules(GetCurrentProcess(), mods, sizeof(mods), &needed)) {
+        return;
+    }
+    const DWORD count = needed / sizeof(HMODULE);
+    using flushall_t = int(__cdecl*)(void);
+    for (DWORD i = 0; i < count && i < (sizeof(mods) / sizeof(mods[0])); i++) {
+        if (auto fn = reinterpret_cast<flushall_t>(GetProcAddress(mods[i], "_flushall"))) {
+            fn();
+        }
+    }
+}
+#endif
+
 extern "C" int32_t bun_stdio_tty[3];
 #if !OS(WINDOWS)
 static termios termios_to_restore_later[3];

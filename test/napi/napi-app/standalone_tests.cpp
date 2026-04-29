@@ -1508,6 +1508,45 @@ static napi_value test_napi_typeof_empty_value(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// Regression test for https://github.com/oven-sh/bun/issues/27439
+// napi_typeof must not segfault when given a near-null pointer like the
+// 0x8 address from the original crash report.
+static napi_value
+test_napi_typeof_invalid_pointer(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  // Test with a pointer near null (the 0x8 address from the crash report).
+  // In JSC's NaN-boxing, 0x8 has tag bits 0x0000, so isCell() returns true
+  // and the code would try to dereference it without our validation.
+  napi_value near_null = reinterpret_cast<napi_value>(static_cast<uintptr_t>(0x8));
+  napi_valuetype type;
+  napi_status status = napi_typeof(env, near_null, &type);
+
+  if (status == napi_invalid_arg) {
+    printf("PASS: napi_typeof(0x8 pointer) returned napi_invalid_arg "
+           "instead of crashing\n");
+  } else {
+    printf("FAIL: napi_typeof(0x8 pointer) returned status %d, "
+           "expected napi_invalid_arg (%d)\n",
+           status, napi_invalid_arg);
+  }
+
+  // Test with another near-null address to cover the pattern.
+  napi_value near_null2 = reinterpret_cast<napi_value>(static_cast<uintptr_t>(0x40));
+  status = napi_typeof(env, near_null2, &type);
+
+  if (status == napi_invalid_arg) {
+    printf("PASS: napi_typeof(0x40 pointer) returned napi_invalid_arg "
+           "instead of crashing\n");
+  } else {
+    printf("FAIL: napi_typeof(0x40 pointer) returned status %d, "
+           "expected napi_invalid_arg (%d)\n",
+           status, napi_invalid_arg);
+  }
+
+  return ok(env);
+}
+
 // Test for Object.freeze and Object.seal with indexed properties
 static napi_value
 test_napi_freeze_seal_indexed(const Napi::CallbackInfo &info) {
@@ -2148,6 +2187,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_create_array_boundary);
   REGISTER_FUNCTION(env, exports, test_napi_dataview_bounds_errors);
   REGISTER_FUNCTION(env, exports, test_napi_typeof_empty_value);
+  REGISTER_FUNCTION(env, exports, test_napi_typeof_invalid_pointer);
   REGISTER_FUNCTION(env, exports, test_napi_freeze_seal_indexed);
   REGISTER_FUNCTION(env, exports, test_napi_create_external_buffer_empty);
   REGISTER_FUNCTION(env, exports, test_napi_empty_buffer_info);

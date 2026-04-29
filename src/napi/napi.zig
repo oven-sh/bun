@@ -56,6 +56,7 @@ pub const NapiEnv = opaque {
     }
 
     extern fn NapiEnv__globalObject(*NapiEnv) *jsc.JSGlobalObject;
+    extern fn NapiEnv__canRunFinalizer(*NapiEnv) bool;
     extern fn NapiEnv__getAndClearPendingException(*NapiEnv, *JSValue) bool;
     extern fn napi_internal_get_version(*NapiEnv) u32;
     extern fn NapiEnv__deref(*NapiEnv) void;
@@ -1369,6 +1370,15 @@ pub const Finalizer = struct {
 
     pub fn run(this: *Finalizer) void {
         const env = this.env.get();
+
+        // Safety check: the env's globalObject may have been destroyed between
+        // when this finalizer was enqueued and when it runs on the JS thread.
+        // This can happen during VM teardown, particularly on Windows where
+        // NAPI module cleanup ordering differs from Unix.
+        if (!NapiEnv.NapiEnv__canRunFinalizer(env)) {
+            return;
+        }
+
         const handle_scope = NapiHandleScope.open(env, false);
         defer if (handle_scope) |scope| scope.close(env);
 

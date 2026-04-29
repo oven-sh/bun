@@ -854,6 +854,35 @@ describe("cleanup hooks", () => {
       expect(output).toContain("PASS: napi_create_threadsafe_function accepted AsyncContextFrame");
     });
 
+    it("should not crash with garbage cell pointer (#27439)", async () => {
+      // Regression test for https://github.com/oven-sh/bun/issues/27439
+      // napi_typeof should return an error status instead of segfaulting
+      // when a native module passes a garbage pointer as napi_value.
+      // This test is Bun-only because Node.js also crashes with garbage pointers.
+      const addonPath = join(__dirname, "napi-app", "build", "Debug", "napitests.node");
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const addon = require(${JSON.stringify(addonPath)}); addon.test_napi_typeof_invalid_pointer(() => { Bun.gc(true); });`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+
+      expect(stderr).toBe("");
+      expect(stdout).toContain("PASS: napi_typeof(0x8 pointer) returned napi_invalid_arg");
+      expect(stdout).toContain("PASS: napi_typeof(0x40 pointer) returned napi_invalid_arg");
+      expect(exitCode).toBe(0);
+    });
+
     it("should return napi_object for boxed primitives (String, Number, Boolean)", async () => {
       // Regression test for https://github.com/oven-sh/bun/issues/25351
       // napi_typeof was incorrectly returning napi_string for String objects (new String("hello"))

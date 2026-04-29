@@ -747,5 +747,27 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("A B\n");
       expect(exitCode).toBe(0);
     });
+
+    test("digit-suffixed key does not collide with later counter value", async () => {
+      // Without a separator between the key and the storage counter,
+      // \`accessor x1\` at counter=0 produces \`_x10\` and \`accessor x\`
+      // at counter=10 produces the same \`_x10\` — recreating the
+      // #29837 double-__privateAdd collision for an input that did NOT
+      // collide before the fix. Needs ≥11 accessors to trigger.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class A { accessor x1 = "A"; }
+        class F1 { accessor a = 0; accessor b = 0; accessor c = 0; }
+        class F2 { accessor a = 0; accessor b = 0; accessor c = 0; }
+        class F3 { accessor a = 0; accessor b = 0; accessor c = 0; }
+        class K extends A {
+          accessor x = "K";
+          log() { console.log(this.x, super.x1); }
+        }
+        new K().log();
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("K A\n");
+      expect(exitCode).toBe(0);
+    });
   });
 });

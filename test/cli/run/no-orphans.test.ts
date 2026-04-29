@@ -321,6 +321,65 @@ describe.each([
   });
 });
 
+// The package.json script *itself* is a perl one-liner that setsid +
+// double-forks — no Bun anywhere in the chain after `bun run`. The daemon
+// writes "<pid> <ppid> <pgid>" to a file; the outer perl blocks until that
+// file exists so `bun run` can't reap before the test has the daemon's pid.
+// We then assert (a) the daemon really escaped (pgid != bun run's child pgid)
+// and (b) it died anyway when `bun run` exited.
+//
+// Linux: PR_SET_CHILD_SUBREAPER claims the orphan, procfs walk finds it.
+// macOS: NoOrphansTracker's p_puniqueid spawn-graph finds it.
+const hasPerl = Bun.which("perl") != null;
+test.skipIf(!isSupported || !hasPerl)(
+  "bun run --no-orphans: perl setsid+double-fork daemon (no Bun in chain) is reaped",
+  async () => {
+    using dir = tempDir("no-orphans-perl", {
+      "package.json": JSON.stringify({
+        name: "p",
+        scripts: {
+          dev:
+            `perl -MPOSIX -e '` +
+            `$f="$ENV{OUT}/pid"; ` +
+            // outer: spin until daemon recorded its pid, then exit — this is
+            // bun run's direct child, so bun run can't finish (and reap the
+            // daemon) before the test can read the pid.
+            `if(fork){ select undef,undef,undef,0.01 until -e $f; exit } ` +
+            `setsid; ` + // new session+pgroup → leaves bun run's pgroup
+            `exit if fork; ` + // session leader exits → daemon fully detached
+            `open F,">",$f; print F "$$ ".getppid()." ".getpgrp(); close F; ` +
+            `sleep 1 while 1'`,
+        },
+      }),
+    });
+    const env: Record<string, string> = { ...bunEnv, OUT: String(dir) };
+    delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--no-orphans", "--silent", "dev"],
+      env,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    await proc.exited;
+    const stderr = await proc.stderr.text();
+
+    const txt = await Bun.file(`${dir}/pid`).text();
+    const [daemonPid, , daemonPgid] = txt.trim().split(" ").map(Number);
+    expect(daemonPid).toBeGreaterThan(0);
+    // Prove setsid actually escaped the script's pgroup before we claim
+    // credit for reaping it.
+    expect(daemonPgid).not.toBe(proc.pid);
+
+    const died = await waitUntilDead(daemonPid, 10000);
+    reap(daemonPid);
+    expect(stderr).toBe("");
+    expect(died).toBe(true);
+    expect(proc.exitCode).toBe(0);
+  },
+);
+
 // The script daemonizes a non-Bun process (setsid + double-fork) — leaves the
 // pgroup AND reparents to launchd/init. The outer `bun run` must still find
 // and kill it: Linux via PR_SET_CHILD_SUBREAPER (the daemon reparents to

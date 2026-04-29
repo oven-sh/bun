@@ -26,7 +26,7 @@
 #endif
 #define CONCURRENT_CONNECTIONS 4
 
-#ifdef BUN_DEBUG
+#if defined(BUN_DEBUG) || (defined(__has_feature) && __has_feature(address_sanitizer)) || defined(__SANITIZE_ADDRESS__)
 #include <assert.h>
 #define US_ASSERT(x) assert(x)
 #else
@@ -92,6 +92,16 @@ void us_socket_group_close_all(struct us_socket_group_t *group) {
         struct us_socket_t *nextS = s->next;
         us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
         s = nextS;
+    }
+
+    /* TLS sockets may have *deferred* the close above: us_internal_ssl_close
+     * with code==0 sends close_notify and, on WANT_READ, leaves the socket
+     * open in head_sockets waiting for the peer's reply. Callers of close_all
+     * (e.g. Listener.deinit) free the embedding storage immediately after, so
+     * any survivor's s->group becomes a dangling pointer. The graceful walk
+     * already flushed close_notify; force-drain the rest synchronously now. */
+    while (group->head_sockets) {
+        us_internal_socket_close_raw(group->head_sockets, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
     }
 
     /* Sockets parked in the loop-wide low-prio queue aren't in head_sockets

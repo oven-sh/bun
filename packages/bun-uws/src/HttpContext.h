@@ -162,11 +162,15 @@ private:
                     return;
                 }
             }
-            /* `success` only means the TLS state machine finished; with
-             * rejectUnauthorized=false the cert chain may still have failed.
-             * Downstream (Bun.serve `tls.authorized`, node:http2 origin checks)
-             * reads this bit, so reflect the verify result. */
-            httpResponseData->isAuthorized = success && verify_error.error == 0;
+            /* This bit backs node's `socket._secureEstablished` (via
+             * JSNodeHTTPServerSocket::isAuthorized → handle.secureEstablished),
+             * i.e. "TLS handshake completed", not "peer cert verified". A
+             * server that doesn't requestCert will always see
+             * verify_error.error != 0 (no client cert), so do NOT fold the
+             * verify result in here — that would make every HTTPS request
+             * report _secureEstablished = false. Peer-cert authorization is
+             * surfaced separately (rejectUnauthorized above / tls.authorized). */
+            httpResponseData->isAuthorized = success;
 
             /* Any connected socket should timeout until it has a request */
             ((HttpResponse<SSL> *) s)->resetTimeout();

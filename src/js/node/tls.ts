@@ -400,6 +400,23 @@ function checkServerIdentity(hostname, cert) {
 // rebuilding ~50 KB of BoringSSL state per connection.
 const NativeSecureContext = $zig("SecureContext.zig", "js.getConstructor");
 
+// Node treats any falsy key/cert/ca as "not provided" (test-tls-options-
+// boolean-check.js exercises false/0/""). The bindgen SSLConfigFile union only
+// accepts null|string|ArrayBuffer|Blob|array, so coerce falsy → null before
+// crossing into native so `{ key: false }` etc. doesn't throw
+// ERR_INVALID_ARG_TYPE from the bindgen layer.
+function newNativeSecureContext(options) {
+  if (options && (!options.key || !options.cert || !options.ca)) {
+    options = {
+      ...options,
+      key: options.key || null,
+      cert: options.cert || null,
+      ca: options.ca || null,
+    };
+  }
+  return new NativeSecureContext(options);
+}
+
 var InternalSecureContext = class SecureContext {
   context;
   servername;
@@ -435,7 +452,7 @@ var InternalSecureContext = class SecureContext {
     // The native handle (SSL_CTX wrapper) is what's memoised — not this JS
     // object — so per-call fields like `servername` come from THIS call's
     // options while the expensive SSL_CTX is shared.
-    this.context = native ?? new NativeSecureContext(options);
+    this.context = native ?? newNativeSecureContext(options);
     this.servername = options?.servername;
   }
 };
@@ -523,7 +540,7 @@ function createSecureContext(options) {
   // must not be on the lookup/mutation path.
   const hit = secureContextCache.$get(key)?.deref();
   if (hit) return new InternalSecureContext(options, hit);
-  const native = new NativeSecureContext(options);
+  const native = newNativeSecureContext(options);
   secureContextCache.$set(key, new WeakRef(native));
   // Opportunistic dead-WeakRef sweep so the map can't grow unbounded across
   // many distinct configs (one CA per tenant, etc.).

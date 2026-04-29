@@ -838,6 +838,15 @@ pub inline fn rareData(this: *VirtualMachine) *jsc.RareData {
     return this.rare_data orelse brk: {
         this.rare_data = this.allocator.create(jsc.RareData) catch unreachable;
         this.rare_data.?.* = .{};
+        // RareData embeds the per-VM `us_socket_group_t` heads as value fields.
+        // `this.allocator` is mimalloc, whose pages LSAN does not scan, so a
+        // socket still open at exit and reachable only via e.g.
+        // `rare_data.bun_connect_group_tls.head_sockets` would otherwise be
+        // reported as leaked from `us_create_poll`. Registering the allocation
+        // as a root region lets LSAN trace `RareData → group.head_sockets →
+        // us_socket_t` the same way it traced the old malloc-backed
+        // `us_socket_context_t` chain.
+        bun.asan.registerRootRegion(this.rare_data.?, @sizeOf(jsc.RareData));
         break :brk this.rare_data.?;
     };
 }

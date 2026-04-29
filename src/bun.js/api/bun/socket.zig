@@ -1306,7 +1306,13 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn close(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
             jsc.markBinding(@src());
             _ = callframe;
-            this.socket.close(.normal);
+            // `_handle.close()` is the net.Socket `_destroy()` path — Node emits close_notify
+            // once and closes the fd without waiting for the peer's reply. Use `.failure` so
+            // `ssl_handle_shutdown` takes the fast-shutdown branch and the raw close runs
+            // synchronously; with `.normal` the SSL layer defers the raw close to wait for the
+            // peer's close_notify, but we detach + unref immediately below, leaking the
+            // `us_socket_t` (never reaches `closed_head`).
+            this.socket.close(.failure);
             this.socket.detach();
             this.poll_ref.unref(globalObject.bunVM());
             return .js_undefined;

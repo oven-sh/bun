@@ -639,6 +639,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl_write_wants_read = 0;
   s->ssl_read_wants_write = 0;
   s->ssl_fatal_error = 0;
+  s->ssl_raw_tap = 0;
   s->ssl_is_server = is_client ? 0 : 1;
 }
 
@@ -807,14 +808,15 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
     if (ssl_gone(s)) return s;
   }
 
-  /* code==0 (clean) → send close_notify and DEFER the fd close until the peer
-   * answers (peer's close_notify lands as ZERO_RETURN in on_data and re-enters
-   * here with the bidirectional shutdown done). code!=0 (forced) → fast path. */
-  int can_close = ssl_handle_shutdown(s, code != 0);
-  if (can_close) {
-    return us_internal_socket_close_raw(s, code, reason);
-  }
-  return s;
+  /* Send close_notify (best-effort) then close the transport unconditionally.
+   * RFC 8446 §6.1 permits closing the read side immediately after sending
+   * close_notify without waiting for the peer's reply. We previously deferred
+   * the fd close on code==0 hoping to observe the peer's close_notify, but the
+   * JS-bound close() path detaches + unref()s right after this call, so nothing
+   * keeps the loop alive to receive it — the us_socket_t poll allocation is
+   * orphaned and leaks. */
+  ssl_handle_shutdown(s, code != 0);
+  return us_internal_socket_close_raw(s, code, reason);
 }
 #define ssl_close us_internal_ssl_close
 
@@ -877,10 +879,7 @@ struct us_socket_t *us_internal_ssl_on_close(struct us_socket_t *s, int code, vo
 
 struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
   ssl_set_loop_data(s);
-  /* TCP FIN under TLS is always treated as an answered shutdown. loop.c's
-   * non-half-open path follows this with an unconditional us_socket_close, so
-   * even if ssl_handle_shutdown deferred (close_notify sent, peer reply
-   * impossible after FIN) the second ssl_close sees SENT_SHUTDOWN → raw-close. */
+  /* TCP FIN under TLS — send our close_notify (if not already) and raw-close. */
   return ssl_close(s, 0, NULL);
 }
 

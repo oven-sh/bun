@@ -174,7 +174,7 @@ fn onReceivedData(
 fn onEnd(
     globalObject: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
-) void {
+) bun.JSError!jsc.JSValue {
     log("onEnd", .{});
     _ = globalObject;
     const function = callframe.callee();
@@ -186,6 +186,7 @@ fn onEnd(
             this.handlers.onEnd(this.handlers.ctx);
         }
     }
+    return .js_undefined;
 }
 
 fn onWritable(

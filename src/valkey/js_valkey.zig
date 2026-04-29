@@ -1109,7 +1109,7 @@ pub const JSValkeyClient = struct {
         defer this.deref();
 
         const is_tls = this.client.tls != .none;
-        const group = vm.rareData().valkeyGroup(vm, is_tls);
+        const group = if (is_tls) vm.rareData().valkeyGroup(vm, true) else vm.rareData().valkeyGroup(vm, false);
         const ssl_ctx: ?*uws.SslCtx = switch (this.client.tls) {
             .none => null,
             .enabled => vm.rareData().defaultClientSslCtx(),

@@ -9,6 +9,12 @@ const max_i32 = std.math.maxInt(i32);
 /// Higher-level wrappers (`uws.SocketTCP`/`SocketTLS`) cover named pipes,
 /// upgraded duplexes, and async DNS.
 pub const us_socket_t = opaque {
+    /// Raw externs. Prefer the typed methods; this is here so call sites that
+    /// must hit the C ABI directly (spawn IPC handing a raw fd to
+    /// `us_socket_from_fd`, the `handlers.zig` close path) can spell
+    /// `uws.us_socket_t.c.X` without a separate import of this file.
+    pub const c = c_externs;
+
     pub const CloseCode = enum(i32) {
         normal = 0,
         failure = 1,
@@ -208,7 +214,7 @@ pub const us_socket_t = opaque {
     }
 };
 
-pub const c = struct {
+pub const c_externs = struct {
     pub extern fn us_socket_get_native_handle(s: ?*us_socket_t) ?*anyopaque;
 
     pub extern fn us_socket_local_port(s: ?*us_socket_t) i32;

@@ -36,9 +36,15 @@ pub const BunSocketContextOptions = extern struct {
     /// `SecureContext.memoryCost` so the GC sees the off-heap allocation.
     pub fn approxCertBytes(self: BunSocketContextOptions) usize {
         var n: usize = 0;
-        if (self.key) |arr| for (arr[0..self.key_count]) |k| n += bun.strings.len(k orelse continue);
-        if (self.cert) |arr| for (arr[0..self.cert_count]) |k| n += bun.strings.len(k orelse continue);
-        if (self.ca) |arr| for (arr[0..self.ca_count]) |k| n += bun.strings.len(k orelse continue);
+        if (self.key) |arr| for (arr[0..self.key_count]) |k| {
+            if (k) |s| n += bun.sliceTo(s, 0).len;
+        };
+        if (self.cert) |arr| for (arr[0..self.cert_count]) |k| {
+            if (k) |s| n += bun.sliceTo(s, 0).len;
+        };
+        if (self.ca) |arr| for (arr[0..self.ca_count]) |k| {
+            if (k) |s| n += bun.sliceTo(s, 0).len;
+        };
         return n;
     }
 };

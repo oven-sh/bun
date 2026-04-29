@@ -348,7 +348,10 @@ static void ssl_ctx_destroy_native(SSL_CTX *ssl_context) {
   atomic_fetch_sub(&ssl_ctx_live, 1);
 }
 
-static SSL_CTX *ssl_ctx_build(struct us_bun_socket_context_options_t options,
+/* Exported for quic.c, which manages its own QUIC-flavoured SSL_CTX (lsquic
+ * sets ALPN/transport-params on it directly) and so can't go through the
+ * us_ssl_ctx_t wrapper. Everywhere else uses us_ssl_ctx_init(). */
+SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
                               enum create_bun_socket_error_t *err) {
   ERR_clear_error();
 
@@ -495,7 +498,7 @@ static SSL_CTX *ssl_ctx_build(struct us_bun_socket_context_options_t options,
 int us_ssl_ctx_init(struct us_ssl_ctx_t *out,
                     struct us_bun_socket_context_options_t options,
                     int is_client, enum create_bun_socket_error_t *err) {
-  SSL_CTX *native = ssl_ctx_build(options, err);
+  SSL_CTX *native = us_ssl_ctx_build_raw(options, err);
   if (!native) {
     memset(out, 0, sizeof(*out));
     return 0;

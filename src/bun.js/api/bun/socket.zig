@@ -80,7 +80,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             // Per-socket SSL state (SSL*, BIO pair, handshake buffers) is ~40 KB
             // off-heap. Reporting it lets the GC apply pressure when JS churns
             // through short-lived TLS connections.
-            const ssl_cost: usize = if (ssl and this.socket.isTLS()) 40 * 1024 else 0;
+            const ssl_cost: usize = if (ssl) 40 * 1024 else 0;
             return @sizeOf(This) + this.buffered_data_for_node_net.cap + ssl_cost;
         }
 
@@ -146,7 +146,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                     const pathz = bun.handleOom(alloc.dupeZ(u8, u));
                     defer alloc.free(pathz);
 
-                    const s = group.connectUnix(kind, ssl_ctx, pathz, pathz.len, flags, @sizeOf(*anyopaque)) orelse
+                    const s = group.connectUnix(kind, ssl_ctx, pathz.ptr, pathz.len, flags, @sizeOf(*anyopaque)) orelse
                         return error.FailedToOpenSocket;
                     s.ext(*This).* = this;
                     this.socket = Socket.from(s);
@@ -1014,7 +1014,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 if (comptime !ssl and Environment.isPosix) {
                     // fast-ish path: use writev() to avoid cloning to another buffer.
                     if (this.socket.socket == .connected and buffer.slice().len > 0) {
-                        const rc = this.socket.socket.connected.write2(ssl, this.buffered_data_for_node_net.slice(), buffer.slice());
+                        const rc = this.socket.socket.connected.write2(this.buffered_data_for_node_net.slice(), buffer.slice());
                         const written: usize = @intCast(@max(rc, 0));
                         const leftover = total_to_write -| written;
                         if (leftover == 0) {

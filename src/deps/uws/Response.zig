@@ -519,8 +519,8 @@ pub const AnyResponse = union(enum) {
 
     pub fn forceClose(this: AnyResponse) void {
         switch (this) {
-            .SSL => |resp| resp.downcastSocket().close(true, .failure),
-            .TCP => |resp| resp.downcastSocket().close(false, .failure),
+            .SSL => |resp| resp.downcastSocket().close(.failure),
+            .TCP => |resp| resp.downcastSocket().close(.failure),
             .H3 => |resp| resp.forceClose(),
         }
     }

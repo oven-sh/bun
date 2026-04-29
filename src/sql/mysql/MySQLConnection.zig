@@ -201,7 +201,7 @@ pub fn cleanup(this: *MySQLConnection) void {
 
 pub fn upgradeToTLS(this: *MySQLConnection) !void {
     if (this.#socket == .SocketTCP) {
-        const vm = this.getJSConnection().vm();
+        const vm = jsc.VirtualMachine.get();
         const tls_group = vm.rareData().mysqlGroup(vm, true);
         const new_socket = uws.us_socket_t.c.us_socket_adopt_tls(
             this.#socket.SocketTCP.socket.connected,

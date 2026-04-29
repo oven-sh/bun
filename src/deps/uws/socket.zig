@@ -354,7 +354,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             kind: SocketKind,
             ssl_ctx: ?*anyopaque, // *us_ssl_ctx_t
             host: []const u8,
-            port: u16,
+            port: anytype,
             owner: anytype,
             allow_half_open: bool,
         ) !ThisSocket {
@@ -369,7 +369,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             defer if (hostZ.ptr != &stack) bun.default_allocator.free(hostZ);
 
             var is_connecting: c_int = 0;
-            const ptr = SocketGroup.c.us_socket_group_connect(g, @intFromEnum(kind), ssl_ctx, hostZ.ptr, port, opts, @sizeOf(*anyopaque), &is_connecting) orelse return error.FailedToOpenSocket;
+            const ptr = SocketGroup.c.us_socket_group_connect(g, @intFromEnum(kind), ssl_ctx, hostZ.ptr, @intCast(port), opts, @sizeOf(*anyopaque), &is_connecting) orelse return error.FailedToOpenSocket;
             if (is_connecting != 0) {
                 const s: *us_socket_t = @ptrCast(@alignCast(ptr));
                 s.ext(*anyopaque).* = owner;

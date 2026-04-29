@@ -295,7 +295,7 @@ pub fn Channel(comptime Owner: type, comptime owner_field: []const u8) type {
                 self.*.markDone();
             }
             pub fn onEnd(_: Ext, s: *uws.us_socket_t) void {
-                _ = s.close(.normal, null);
+                s.close(.normal);
             }
         };
 

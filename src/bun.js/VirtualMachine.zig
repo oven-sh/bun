@@ -3884,6 +3884,7 @@ pub const IPCInstance = struct {
     }
 
     pub fn handleIPCClose(this: *IPCInstance) void {
+        _ = this;
         IPC.log("IPCInstance#handleIPCClose", .{});
         var vm = VirtualMachine.get();
         const event_loop = vm.eventLoop();

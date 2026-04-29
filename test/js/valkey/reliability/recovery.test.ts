@@ -30,39 +30,40 @@ describe.skipIf(!isEnabled)("Valkey: Recovery after failure (#29925)", () => {
       autoReconnect: false,
       maxRetries: 0,
     });
+    try {
+      // Initial round-trip to authenticate and settle the client into the
+      // connected state.
+      await client.set("recovery:k", "before");
+      expect(await client.get("recovery:k")).toBe("before");
+      expect(client.connected).toBe(true);
 
-    // Initial round-trip to authenticate and settle the client into the
-    // connected state.
-    await client.set("recovery:k", "before");
-    expect(await client.get("recovery:k")).toBe("before");
-    expect(client.connected).toBe(true);
+      // Force the same end state the issue reporter hits: the socket
+      // closes, the client moves to disconnected, and `flags.failed` is
+      // set. `close()` is the deterministic way to reach it without
+      // having to wait for the reconnect-exhaustion retry loop.
+      client.close();
 
-    // Force the same end state the issue reporter hits: the socket
-    // closes, the client moves to disconnected, and `flags.failed` is
-    // set. `close()` is the deterministic way to reach it without
-    // having to wait for the reconnect-exhaustion retry loop.
-    client.close();
+      // While the client is failed, commands reject. Before the fix this
+      // was terminal — every subsequent command got "Connection has
+      // failed" and there was no way to recover short of replacing the
+      // client instance.
+      await expect(client.get("recovery:k")).rejects.toThrow(/connection/i);
 
-    // While the client is failed, commands reject. Before the fix this
-    // was terminal — every subsequent command got "Connection has
-    // failed" and there was no way to recover short of replacing the
-    // client instance.
-    await expect(client.get("recovery:k")).rejects.toThrow(/connection/i);
+      // The key assertion: explicit connect() recovers the client.
+      // Without the fix this either hung forever (because the new HELLO
+      // response was dropped and `.connected` was never reached) or
+      // resolved into a still-dead client that rejected the next
+      // command.
+      await client.connect();
+      expect(client.connected).toBe(true);
 
-    // The key assertion: explicit connect() recovers the client.
-    // Without the fix this either hung forever (because the new HELLO
-    // response was dropped and `.connected` was never reached) or
-    // resolved into a still-dead client that rejected the next
-    // command.
-    await client.connect();
-    expect(client.connected).toBe(true);
-
-    // A full round-trip after recovery confirms the client is actually
-    // usable, not just carrying a stale `connected` flag.
-    await client.set("recovery:k", "after");
-    expect(await client.get("recovery:k")).toBe("after");
-
-    client.close();
+      // A full round-trip after recovery confirms the client is actually
+      // usable, not just carrying a stale `connected` flag.
+      await client.set("recovery:k", "after");
+      expect(await client.get("recovery:k")).toBe("after");
+    } finally {
+      client.close();
+    }
   });
 
   // Also covers #22808: tight close()/connect()/send() cycles used to lock
@@ -71,16 +72,17 @@ describe.skipIf(!isEnabled)("Valkey: Recovery after failure (#29925)", () => {
   // dropped by `handleResponse` and the connect promise to hang.
   test("repeated close()/connect()/send() cycles do not lock up", async () => {
     const client = new RedisClient(DEFAULT_REDIS_URL, DEFAULT_REDIS_OPTIONS);
-
-    for (let i = 0; i < 3; i++) {
-      if (client.connected) {
-        client.close();
+    try {
+      for (let i = 0; i < 3; i++) {
+        if (client.connected) {
+          client.close();
+        }
+        await client.connect();
+        expect(client.connected).toBe(true);
+        expect(await client.send("FLUSHALL", ["SYNC"])).toBe("OK");
       }
-      await client.connect();
-      expect(client.connected).toBe(true);
-      expect(await client.send("FLUSHALL", ["SYNC"])).toBe("OK");
+    } finally {
+      client.close();
     }
-
-    client.close();
   });
 });

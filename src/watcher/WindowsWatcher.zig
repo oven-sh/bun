@@ -197,6 +197,15 @@ pub fn stop(this: *WindowsWatcher) void {
     w.CloseHandle(this.iocp);
 }
 
+pub fn shutdown(this: *WindowsWatcher) void {
+    _ = w.kernel32.PostQueuedCompletionStatus(
+        this.iocp,
+        0,
+        0,
+        &this.watcher.overlapped,
+    );
+}
+
 pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
     const buf = &this.platform.buf;
     const base_idx = this.platform.base_idx;
@@ -205,7 +214,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
 
     // first wait has infinite timeout - we're waiting for the next event and don't want to spin
     var timeout = WindowsWatcher.Timeout.infinite;
-    while (true) {
+    while (this.running) {
         var iter = switch (this.platform.next(timeout)) {
             .err => |err| return .{ .err = err },
             .result => |iter| iter orelse break,
@@ -214,7 +223,11 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
         // NOTE: using a 1ms timeout would be ideal, but that actually makes the thread wait for at least 10ms more than it should
         // Instead we use a 0ms timeout, which may not do as much coalescing but is more responsive.
         timeout = WindowsWatcher.Timeout.none;
+
+        this.mutex.lock();
+        defer this.mutex.unlock();
         const item_paths = this.watchlist.items(.file_path);
+
         log("number of watched items: {d}", .{item_paths.len});
         while (iter.next()) |event| {
             const convert_res = bun.strings.copyUTF16IntoUTF8(buf[base_idx..], event.filename);
@@ -242,7 +255,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
                 // Check if we're about to exceed the watch_events array capacity
                 if (event_id >= this.watch_events.len) {
                     // Process current batch of events
-                    switch (processWatchEventBatch(this, event_id)) {
+                    switch (processWatchEventBatch(this, event_id, .dont_lock)) {
                         .err => |err| return .{ .err = err },
                         .result => {},
                     }
@@ -258,7 +271,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
 
     // Process any remaining events in the final batch
     if (event_id > 0) {
-        switch (processWatchEventBatch(this, event_id)) {
+        switch (processWatchEventBatch(this, event_id, .lock)) {
             .err => |err| return .{ .err = err },
             .result => {},
         }
@@ -267,7 +280,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
     return .success;
 }
 
-fn processWatchEventBatch(this: *bun.Watcher, event_count: usize) bun.sys.Maybe(void) {
+fn processWatchEventBatch(this: *bun.Watcher, event_count: usize, lock: enum { lock, dont_lock }) bun.sys.Maybe(void) {
     if (event_count == 0) {
         return .success;
     }
@@ -293,8 +306,12 @@ fn processWatchEventBatch(this: *bun.Watcher, event_count: usize) bun.sys.Maybe(
 
     log("calling onFileUpdate (all_events.len = {d})", .{all_events.len});
 
-    this.writeTraceEvents(all_events, this.changed_filepaths[0 .. last_event_index + 1]);
-    this.onFileUpdate(this.ctx, all_events, this.changed_filepaths[0 .. last_event_index + 1], this.watchlist);
+    {
+        if (lock == .lock) this.mutex.lock();
+        defer if (lock == .lock) this.mutex.unlock();
+        this.writeTraceEvents(all_events, this.changed_filepaths[0 .. last_event_index + 1]);
+        this.onFileUpdate(this.ctx, all_events, this.changed_filepaths[0 .. last_event_index + 1], this.watchlist);
+    }
 
     return .success;
 }

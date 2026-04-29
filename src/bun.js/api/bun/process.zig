@@ -2264,12 +2264,16 @@ pub const sync = struct {
         // by PR_SET_CHILD_SUBREAPER (Linux) / the p_puniqueid spawn-graph
         // tracker (macOS) — see `waitForChildNoOrphans`.
         //
-        // Disabled when `use_execve_on_macos` (bunx with `--silent`): that
-        // path is `POSIX_SPAWN_SETEXEC` — it replaces *our own* image and
-        // never returns, so SETPGROUP would `setpgid(0,0)` *us* into a new
-        // background pgroup with no `tcsetpgrp` follow-up (defer never runs),
-        // breaking TTY job control for the exec'd target.
-        const no_orphans = bun.ParentDeathWatchdog.isEnabled() and !options.use_execve_on_macos;
+        // Disabled when `use_execve_on_macos` actually applies (macOS only —
+        // see `spawnProcessPosix`): that path is `POSIX_SPAWN_SETEXEC`, which
+        // replaces *our own* image and never returns, so SETPGROUP would
+        // `setpgid(0,0)` *us* into a new background pgroup with no `tcsetpgrp`
+        // follow-up (defer never runs), breaking TTY job control for the
+        // exec'd target. Callers (`runBinaryWithoutBunxPath`, `bunx`) set the
+        // flag unconditionally; on Linux it's a spawn-side no-op so no-orphans
+        // must stay armed there.
+        const no_orphans = bun.ParentDeathWatchdog.isEnabled() and
+            !(Environment.isMac and options.use_execve_on_macos);
 
         if (comptime Environment.isLinux) if (no_orphans) {
             // Subreaper: arm *before* spawn so a fast-daemonizing script can't

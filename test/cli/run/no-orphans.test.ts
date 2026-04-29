@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { chmodSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
 // --no-orphans / BUN_FEATURE_FLAG_NO_ORPHANS / [run] noOrphans: Bun watches its
@@ -380,6 +381,58 @@ test.skipIf(!isSupported || !hasPerl)(
     reap(daemonPid);
     // ASAN/debug warnings can land on stderr even on success; only surface
     // stderr as a diagnostic when the test is already failing.
+    if (proc.exitCode !== 0) console.error(stderr);
+    expect(died).toBe(true);
+    expect(proc.exitCode).toBe(0);
+  },
+);
+
+// Same perl daemon, but run via a `node_modules/.bin` entry instead of a
+// package.json script. That path is `runBinaryWithoutBunxPath`, which sets
+// `use_execve_on_macos = silent` *unconditionally* — on macOS that's
+// POSIX_SPAWN_SETEXEC (replaces our image; no_orphans intentionally off), but
+// on Linux the spawn side ignores the flag, so the no_orphans gate must too.
+// Regression for that gate reading the flag platform-agnostically and silently
+// dropping subreaper here, which let the setsid daemon escape.
+test.skipIf(!isLinux || !hasPerl)(
+  "bun run --no-orphans (node_modules/.bin, Linux): setsid daemon is reaped despite use_execve_on_macos",
+  async () => {
+    const perlDaemon =
+      `#!/usr/bin/env perl\n` +
+      `use POSIX;\n` +
+      `$f="$ENV{OUT}/pid";\n` +
+      `if(fork){ select undef,undef,undef,0.01 until -s $f; exit }\n` +
+      `$old=getpgrp(); setsid;\n` +
+      `exit if fork;\n` +
+      `open F,">",$f; print F "$$ $old ".getpgrp(); close F;\n` +
+      `sleep 1 while 1;\n`;
+    using dir = tempDir("no-orphans-bin", {
+      "package.json": JSON.stringify({ name: "p" }),
+      "node_modules/.bin/dev": perlDaemon,
+    });
+    chmodSync(`${dir}/node_modules/.bin/dev`, 0o755);
+    const env: Record<string, string> = { ...bunEnv, OUT: String(dir) };
+    delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--no-orphans", "--silent", "dev"],
+      env,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    await proc.exited;
+    const stderr = await proc.stderr.text();
+
+    const txt = await Bun.file(`${dir}/pid`).text();
+    const [daemonPid, pgidBefore, pgidAfter] = txt.trim().split(" ").map(Number);
+    expect(daemonPid).toBeGreaterThan(0);
+    expect(pgidAfter).not.toBe(pgidBefore);
+
+    // Under the default 5s test timeout — short enough that reap() runs even
+    // on failure, so a regressing build doesn't leak the daemon into CI.
+    const died = await waitUntilDead(daemonPid, 3000);
+    reap(daemonPid);
     if (proc.exitCode !== 0) console.error(stderr);
     expect(died).toBe(true);
     expect(proc.exitCode).toBe(0);

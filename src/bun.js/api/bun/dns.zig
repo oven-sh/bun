@@ -2559,6 +2559,12 @@ pub const Resolver = struct {
             // direction set differs from what's registered, drop the old
             // registration first so we never hold both .poll_readable and
             // .poll_writable on the same poll (unregister asserts on that).
+            //
+            // When c-ares asks for both, prefer readable. This intentionally
+            // degrades the rare both-flags case (queued TCP send that hit EAGAIN
+            // while a response is also pending) to readable-only — the send queue
+            // is driven on the next readable event when c-ares re-evaluates state.
+            // Matches the Windows path's precedence at AsyncDNSSocketCreate.
             const want_readable = readable;
             const want_writable = writable and !readable;
             const have_readable = poll.flags.contains(.poll_readable);

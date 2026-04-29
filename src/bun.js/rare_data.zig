@@ -23,11 +23,34 @@ file_polls_: ?*Async.FilePoll.Store = null,
 
 global_dns_data: ?*bun.api.dns.GlobalData = null,
 
-spawn_ipc_usockets_context: ?*uws.SocketContext = null,
-
+/// Embedded socket groups for kinds that aren't tied to a Listener / server.
+/// Lazily linked into the loop on first socket; never separately allocated.
+spawn_ipc_group: uws.SocketGroup = .{},
 /// `bun test --parallel` IPC channel (worker ↔ coordinator). Survives the
 /// per-file isolation swap so the worker keeps its link to the coordinator.
-test_parallel_ipc_context: ?*uws.SocketContext = null,
+test_parallel_ipc_group: uws.SocketGroup = .{},
+/// `Bun.connect` client sockets — one group per VM (not per connection).
+bun_connect_group_tcp: uws.SocketGroup = .{},
+bun_connect_group_tls: uws.SocketGroup = .{},
+/// SQL drivers — TCP and TLS share one group each per VM. STARTTLS adopts
+/// from the `_tcp` group into `_tls` without reallocating a context.
+postgres_group: uws.SocketGroup = .{},
+postgres_tls_group: uws.SocketGroup = .{},
+mysql_group: uws.SocketGroup = .{},
+mysql_tls_group: uws.SocketGroup = .{},
+valkey_group: uws.SocketGroup = .{},
+valkey_tls_group: uws.SocketGroup = .{},
+/// `new WebSocket(...)` client. Upgrade phase (HTTP handshake) and connected
+/// phase (frame I/O) live in separate kinds so the handshake handler doesn't
+/// have to runtime-branch on state.
+ws_upgrade_group: uws.SocketGroup = .{},
+ws_upgrade_tls_group: uws.SocketGroup = .{},
+ws_client_group: uws.SocketGroup = .{},
+ws_client_tls_group: uws.SocketGroup = .{},
+/// Default `us_ssl_ctx_t` for the WS client / Valkey TLS path when no custom
+/// CA is supplied. Built once on first use; replaces the `valkey_context.tls`
+/// / shared C++ WS context.
+default_client_ssl_ctx: ?uws.SslCtx = null,
 
 mime_types: ?bun.http.MimeType.Map = null,
 
@@ -657,15 +680,66 @@ comptime {
     @export(&js_getTLSDefaultCiphers, .{ .name = "Bun__getTLSDefaultCiphers" });
 }
 
-pub fn spawnIPCContext(rare: *RareData, vm: *jsc.VirtualMachine) *uws.SocketContext {
-    if (rare.spawn_ipc_usockets_context) |ctx| {
-        return ctx;
+pub fn spawnIPCGroup(rare: *RareData, vm: *jsc.VirtualMachine) *uws.SocketGroup {
+    if (rare.spawn_ipc_group.loop == null) {
+        rare.spawn_ipc_group.init(vm.uwsLoop(), null, null);
     }
+    return &rare.spawn_ipc_group;
+}
 
-    const ctx = uws.SocketContext.createNoSSLContext(vm.event_loop_handle.?, @sizeOf(usize)).?;
-    IPC.Socket.configure(ctx, true, *IPC.SendQueue, IPC.IPCHandlers.PosixSocket);
-    rare.spawn_ipc_usockets_context = ctx;
-    return ctx;
+pub fn testParallelIPCGroup(rare: *RareData, vm: *jsc.VirtualMachine) *uws.SocketGroup {
+    if (rare.test_parallel_ipc_group.loop == null) {
+        rare.test_parallel_ipc_group.init(vm.uwsLoop(), null, null);
+    }
+    return &rare.test_parallel_ipc_group;
+}
+
+/// One shared group per (VM, ssl) for every `Bun.connect` / `tls.connect`
+/// client socket. Replaces the old per-connection `us_socket_context_t`
+/// allocation that was the root of the SSL_CTX-per-connect leak.
+pub fn bunConnectGroup(rare: *RareData, vm: *jsc.VirtualMachine, comptime ssl: bool) *uws.SocketGroup {
+    const g = if (ssl) &rare.bun_connect_group_tls else &rare.bun_connect_group_tcp;
+    if (g.loop == null) g.init(vm.uwsLoop(), null, null);
+    return g;
+}
+
+inline fn lazyGroup(rare: *RareData, vm: *jsc.VirtualMachine, comptime field: []const u8) *uws.SocketGroup {
+    const g = &@field(rare, field);
+    if (g.loop == null) g.init(vm.uwsLoop(), null, null);
+    return g;
+}
+
+pub fn postgresGroup(rare: *RareData, vm: *jsc.VirtualMachine, comptime ssl: bool) *uws.SocketGroup {
+    return rare.lazyGroup(vm, if (ssl) "postgres_tls_group" else "postgres_group");
+}
+pub fn mysqlGroup(rare: *RareData, vm: *jsc.VirtualMachine, comptime ssl: bool) *uws.SocketGroup {
+    return rare.lazyGroup(vm, if (ssl) "mysql_tls_group" else "mysql_group");
+}
+pub fn valkeyGroup(rare: *RareData, vm: *jsc.VirtualMachine, comptime ssl: bool) *uws.SocketGroup {
+    return rare.lazyGroup(vm, if (ssl) "valkey_tls_group" else "valkey_group");
+}
+pub fn wsUpgradeGroup(rare: *RareData, vm: *jsc.VirtualMachine, comptime ssl: bool) *uws.SocketGroup {
+    return rare.lazyGroup(vm, if (ssl) "ws_upgrade_tls_group" else "ws_upgrade_group");
+}
+pub fn wsClientGroup(rare: *RareData, vm: *jsc.VirtualMachine, comptime ssl: bool) *uws.SocketGroup {
+    return rare.lazyGroup(vm, if (ssl) "ws_client_tls_group" else "ws_client_group");
+}
+
+/// Shared `us_ssl_ctx_t` for client connects that didn't supply a custom CA
+/// (`Valkey({tls: true})`, `new WebSocket("wss://…")`). The old code allocated
+/// a fresh `us_socket_context_t` per such case and cached the pointer; now
+/// the SSL_CTX is the only thing worth caching.
+pub fn defaultClientSslCtx(rare: *RareData) *uws.SslCtx {
+    if (rare.default_client_ssl_ctx == null) {
+        var err: uws.create_bun_socket_error_t = .none;
+        rare.default_client_ssl_ctx = (uws.SocketContext.BunSocketContextOptions{
+            .request_cert = 1,
+        }).createSSLContext(true, &err) orelse bun.Output.panic(
+            "default client SSL_CTX init failed: {s}",
+            .{err.message() orelse "unknown"},
+        );
+    }
+    return &rare.default_client_ssl_ctx.?;
 }
 
 pub fn globalDNSResolver(rare: *RareData, vm: *jsc.VirtualMachine) *api.dns.Resolver {
@@ -773,6 +847,17 @@ pub fn deinit(this: *RareData) void {
     }
 
     this.valkey_context.deinit();
+
+    if (this.default_client_ssl_ctx) |*s| s.deinit();
+    inline for (.{
+        "bun_connect_group_tcp", "bun_connect_group_tls",
+        "spawn_ipc_group",       "test_parallel_ipc_group",
+        "postgres_group",        "postgres_tls_group",
+        "mysql_group",           "mysql_tls_group",
+        "valkey_group",          "valkey_tls_group",
+        "ws_upgrade_group",      "ws_upgrade_tls_group",
+        "ws_client_group",       "ws_client_tls_group",
+    }) |f| @field(this, f).deinit();
 }
 
 pub fn websocketDeflate(this: *RareData) *WebSocketDeflate.RareData {
@@ -793,7 +878,6 @@ pub fn spawnSyncEventLoop(this: *RareData, vm: *jsc.VirtualMachine) *SpawnSyncEv
     };
 }
 
-const IPC = @import("./ipc.zig");
 const UUID = @import("./uuid.zig");
 const WebSocketDeflate = @import("../http/websocket_client/WebSocketDeflate.zig");
 const std = @import("std");

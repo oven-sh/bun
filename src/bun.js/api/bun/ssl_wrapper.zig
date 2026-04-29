@@ -95,10 +95,13 @@ pub fn SSLWrapper(comptime T: type) type {
 
             const ctx_opts: uws.SocketContext.BunSocketContextOptions = ssl_options.asUSockets();
             var err: uws.create_bun_socket_error_t = .none;
-            // Create SSL context using uSockets to match behavior of node.js
-            const ctx = ctx_opts.createSSLContext(&err) orelse return error.InvalidOptions; // invalid options
-            errdefer BoringSSL.SSL_CTX_free(ctx);
-            return try This.initWithCTX(ctx, is_client, handlers);
+            var ssl_ctx = ctx_opts.createSSLContext(is_client, &err) orelse return error.InvalidOptions;
+            // initWithCTX adopts the bare SSL_CTX*; the wrapper struct's ref is
+            // the one we're transferring, so don't deinit on success. On
+            // failure, route through us_ssl_ctx_deinit (not bare SSL_CTX_free)
+            // so the strdup'd passphrase ex-data is dropped too.
+            errdefer ssl_ctx.deinit();
+            return try This.initWithCTX(ssl_ctx.ssl_ctx.?, is_client, handlers);
         }
 
         pub fn start(this: *This) void {

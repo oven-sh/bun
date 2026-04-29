@@ -395,84 +395,109 @@ function checkServerIdentity(hostname, cert) {
   }
 }
 
+// Native SSL_CTX wrapper. The constructor parses cert/key/CA/ciphers once;
+// every connect/upgrade that names this object SSL_CTX_up_ref()s it instead of
+// rebuilding ~50 KB of BoringSSL state per connection.
+const NativeSecureContext = $zig("SecureContext.zig", "js.getConstructor");
+
 var InternalSecureContext = class SecureContext {
   context;
-  key;
-  cert;
-  ca;
-  passphrase;
   servername;
-  secureOptions;
 
   constructor(options) {
-    const context = {};
-
     if (options) {
-      let cert = options.cert;
-      if (cert) {
-        throwOnInvalidTLSArray("options.cert", cert);
-        this.cert = cert;
-      }
-
-      let key = options.key;
-      if (key) {
-        throwOnInvalidTLSArray("options.key", key);
-        this.key = key;
-      }
-
-      let ca = options.ca;
-      if (ca) {
-        throwOnInvalidTLSArray("options.ca", ca);
-        this.ca = ca;
-      }
-
-      let passphrase = options.passphrase;
-      if (passphrase && typeof passphrase !== "string") {
+      if (options.cert) throwOnInvalidTLSArray("options.cert", options.cert);
+      if (options.key) throwOnInvalidTLSArray("options.key", options.key);
+      if (options.ca) throwOnInvalidTLSArray("options.ca", options.ca);
+      if (options.passphrase && typeof options.passphrase !== "string")
         throw new TypeError("passphrase argument must be an string");
-      }
-      this.passphrase = passphrase;
-
-      let servername = options.servername;
-      if (servername && typeof servername !== "string") {
+      if (options.servername && typeof options.servername !== "string")
         throw new TypeError("servername argument must be an string");
-      }
-      this.servername = servername;
-
-      let secureOptions = options.secureOptions || 0;
-      if (secureOptions && typeof secureOptions !== "number") {
+      if (options.secureOptions && typeof options.secureOptions !== "number")
         throw new TypeError("secureOptions argument must be an number");
-      }
-
-      this.secureOptions = secureOptions;
-
       if (!$isUndefinedOrNull(options.privateKeyIdentifier)) {
-        if ($isUndefinedOrNull(options.privateKeyEngine)) {
-          // prettier-ignore
+        if ($isUndefinedOrNull(options.privateKeyEngine))
           throw $ERR_INVALID_ARG_VALUE("options.privateKeyEngine", options.privateKeyEngine);
-        } else if (typeof options.privateKeyEngine !== "string") {
-          // prettier-ignore
-          throw $ERR_INVALID_ARG_TYPE("options.privateKeyEngine", ["string", "null", "undefined"], options.privateKeyEngine);
-        }
-
-        if (typeof options.privateKeyIdentifier !== "string") {
-          // prettier-ignore
-          throw $ERR_INVALID_ARG_TYPE("options.privateKeyIdentifier", ["string", "null", "undefined"], options.privateKeyIdentifier);
-        }
+        if (typeof options.privateKeyEngine !== "string")
+          throw $ERR_INVALID_ARG_TYPE(
+            "options.privateKeyEngine",
+            ["string", "null", "undefined"],
+            options.privateKeyEngine,
+          );
+        if (typeof options.privateKeyIdentifier !== "string")
+          throw $ERR_INVALID_ARG_TYPE(
+            "options.privateKeyIdentifier",
+            ["string", "null", "undefined"],
+            options.privateKeyIdentifier,
+          );
       }
     }
-
-    this.context = context;
+    // The native handle IS the context. node:tls userland reaches for
+    // `.context` to call SSL_CTX_* via N-API, so expose the wrapper there.
+    this.context = new NativeSecureContext(options);
+    // servername is per-connection, not per-SSL_CTX, but Node hangs it here.
+    this.servername = options?.servername;
   }
 };
 
 function SecureContext(options): void {
-  // TODO: The `never` exists because TypeScript only lets you construct functions that return void
-  // but in reality we should just be calling like InternalSecureContext.$call or similar
   return new InternalSecureContext(options) as never;
 }
 
+// ── Memoised createSecureContext ────────────────────────────────────────────
+// pg/mysql2/ioredis call tls.connect() per connection with the same options
+// object (or shallow-equal copies). Without memoisation each call rebuilt an
+// SSL_CTX (cert parse + CA load + cipher init). We key on the few fields that
+// actually feed us_ssl_ctx_from_options and hand back a WeakRef'd shared
+// SecureContext so it can still be collected if the config falls out of use.
+const secureContextCache: Map<string, WeakRef<any>> = new Map();
+let secureContextCacheTrim = 0;
+
+function secureContextCacheKey(o) {
+  // Buffers/arrays are content-hashed by length + first 64 bytes; a false miss
+  // costs one extra SSL_CTX, never a false hit (different lengths can't collide
+  // and same-length-different-tail certs are not a thing in practice).
+  const h = v =>
+    v == null
+      ? ""
+      : typeof v === "string"
+        ? v
+        : $isJSArray(v)
+          ? v.map(h).join("|")
+          : $isTypedArrayView(v)
+            ? `b${v.byteLength}:${Buffer.prototype.hexSlice.$call(v, 0, Math.min(v.byteLength, 64))}`
+            : String(v);
+  return [
+    h(o.key),
+    h(o.cert),
+    h(o.ca),
+    o.passphrase ?? "",
+    o.ciphers ?? "",
+    o.secureOptions ?? 0,
+    o.rejectUnauthorized ?? "",
+    o.requestCert ?? "",
+  ].join("\x00");
+}
+
 function createSecureContext(options) {
-  return new SecureContext(options);
+  if (options instanceof InternalSecureContext) return options;
+  // Uncacheable shapes — pfx/engine/sessionIdContext bypass us_ssl_ctx_from_options
+  // or carry per-call state.
+  if (!options || options.pfx || options.sessionIdContext || options.clientCertEngine) {
+    return new SecureContext(options);
+  }
+  const key = secureContextCacheKey(options);
+  const hit = secureContextCache.get(key)?.deref();
+  if (hit) return hit;
+  const sc = new SecureContext(options);
+  secureContextCache.set(key, new WeakRef(sc));
+  // Opportunistic dead-WeakRef sweep so the map can't grow unbounded across
+  // many distinct configs (one CA per tenant, etc.).
+  if (++secureContextCacheTrim > 64) {
+    secureContextCacheTrim = 0;
+    for (const [k, ref] of secureContextCache) if (!ref.deref()) secureContextCache.delete(k);
+  }
+  return sc;
 }
 
 // Translate some fields from the handle's C-friendly format into more idiomatic
@@ -701,7 +726,9 @@ TLSSocket.prototype[buntls] = function (port, host) {
     rejectUnauthorized: this._rejectUnauthorized,
     requestCert: this._requestCert,
     ciphers: this.ciphers,
-    ...ctx,
+    // Hand the native SSL_CTX wrapper to upgradeTLS so it can up_ref instead
+    // of rebuilding from raw cert/key bytes.
+    secureContext: ctx?.context,
     servername,
   };
 };

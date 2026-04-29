@@ -288,7 +288,7 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *jsc.JSGlobalObject) bun
                 globalThis,
                 null,
                 0,
-                onReceivedData,
+                onEnd,
                 this,
             );
             endCallback.ensureStillAlive();

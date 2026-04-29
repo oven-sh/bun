@@ -6,7 +6,15 @@ pub const SocketTCP = @import("./uws/socket.zig").SocketTCP;
 pub const InternalSocket = @import("./uws/socket.zig").InternalSocket;
 pub const Socket = us_socket_t;
 pub const Timer = @import("./uws/Timer.zig").Timer;
-pub const SocketContext = @import("./uws/SocketContext.zig").SocketContext;
+pub const SocketGroup = @import("./uws/SocketGroup.zig");
+pub const SocketKind = @import("./uws/SocketKind.zig").SocketKind;
+pub const vtable = @import("./uws/vtable.zig");
+pub const dispatch = @import("./uws/dispatch.zig");
+/// The opaque `us_socket_context_t` is gone; this namespace now only carries
+/// the SSL-options extern struct (`SSLConfig.asUSockets()` return type) and
+/// the shared `us_ssl_ctx_t` mirror that listen/connect/adopt take.
+pub const SocketContext = @import("./uws/SocketContext.zig");
+pub const SslCtx = SocketContext.SslCtx;
 pub const ConnectingSocket = @import("./uws/ConnectingSocket.zig").ConnectingSocket;
 pub const InternalLoopData = @import("./uws/InternalLoopData.zig").InternalLoopData;
 pub const WindowsNamedPipe = @import("./uws/WindowsNamedPipe.zig");

@@ -196,12 +196,10 @@ fn initOnce(opts: *const InitOpts) void {
         .loop = undefined,
         .http_context = .{
             .ref_count = .init(),
-            .us_socket_context = undefined,
             .pending_sockets = NewHTTPContext(false).PooledSocketHiveAllocator.empty,
         },
         .https_context = .{
             .ref_count = .init(),
-            .us_socket_context = undefined,
             .pending_sockets = NewHTTPContext(true).PooledSocketHiveAllocator.empty,
         },
         .timer = std.time.Timer.start() catch unreachable,
@@ -274,7 +272,6 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !?New
             custom_context.* = .{
                 .ref_count = .init(),
                 .pending_sockets = NewHTTPContext(is_ssl).PooledSocketHiveAllocator.empty,
-                .us_socket_context = undefined,
             };
             custom_context.initWithClientConfig(client) catch |err| {
                 bun.default_allocator.destroy(custom_context);

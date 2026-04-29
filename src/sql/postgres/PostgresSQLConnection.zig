@@ -33,7 +33,9 @@ options_buf: []const u8 = "",
 
 authentication_state: AuthenticationState = .{ .pending = {} },
 
-tls_ctx: ?*uws.SocketContext = null,
+/// `us_ssl_ctx_t` built from `tls_config` at construct time. Applied via
+/// `us_socket_adopt_tls` when the server replies `S` to the SSLRequest.
+secure: ?uws.SslCtx = null,
 tls_config: jsc.API.ServerConfig.SSLConfig = .{},
 tls_status: TLSStatus = .none,
 ssl_mode: SSLMode = .disable,
@@ -170,18 +172,21 @@ pub fn setOnClose(_: *PostgresSQLConnection, thisValue: jsc.JSValue, globalObjec
 
 pub fn setupTLS(this: *PostgresSQLConnection) void {
     debug("setupTLS", .{});
-    const new_socket = this.socket.SocketTCP.socket.connected.upgrade(this.tls_ctx.?, this.tls_config.server_name) orelse {
+    const tls_group = this.vm.rareData().postgresGroup(this.vm, true);
+    const new_socket = uws.us_socket_t.c.us_socket_adopt_tls(
+        this.socket.SocketTCP.socket.connected,
+        tls_group,
+        @intFromEnum(uws.SocketKind.postgres_tls),
+        &this.secure.?,
+        this.tls_config.server_name,
+        @sizeOf(*anyopaque),
+        @sizeOf(*anyopaque),
+    ) orelse {
         this.fail("Failed to upgrade to TLS", error.TLSUpgradeFailed);
         return;
     };
-    this.socket = .{
-        .SocketTLS = .{
-            .socket = .{
-                .connected = new_socket,
-            },
-        },
-    };
-
+    new_socket.ext(*anyopaque).* = this;
+    this.socket = .{ .SocketTLS = .{ .socket = .{ .connected = new_socket } } };
     this.start();
 }
 fn setupMaxLifetimeTimerIfNecessary(this: *PostgresSQLConnection) void {
@@ -603,7 +608,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     const tls_object = arguments[6];
 
     var tls_config: jsc.API.ServerConfig.SSLConfig = .{};
-    var tls_ctx: ?*uws.SocketContext = null;
+    var secure: ?uws.SslCtx = null;
     if (ssl_mode != .disable) {
         tls_config = if (tls_object.isBoolean() and tls_object.toBoolean())
             .{}
@@ -618,26 +623,14 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             return .zero;
         }
 
-        // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match.
-        // We create it right here so we can throw errors early.
-        const context_options = tls_config.asUSocketsForClientVerification();
+        // We always request the cert so we can verify it and also we manually
+        // abort the connection if the hostname doesn't match. Built here (not
+        // at STARTTLS time) so cert/CA errors throw synchronously.
         var err: uws.create_bun_socket_error_t = .none;
-        tls_ctx = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*PostgresSQLConnection), context_options, &err) orelse {
-            if (err != .none) {
-                return globalObject.throw("failed to create TLS context", .{});
-            } else {
-                return globalObject.throwValue(err.toJS(globalObject));
-            }
-        };
-        if (err != .none) {
+        secure = tls_config.asUSocketsForClientVerification().createSSLContext(true, &err) orelse {
             tls_config.deinit();
-            if (tls_ctx) |ctx| {
-                ctx.deinit(true);
-            }
             return globalObject.throwValue(err.toJS(globalObject));
-        }
-
-        uws.NewSocketHandler(true).configure(tls_ctx.?, true, *PostgresSQLConnection, SocketHandler(true));
+        };
     }
 
     var username: []const u8 = "";
@@ -687,9 +680,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         if (entry[0].len > 0 and std.mem.indexOfScalar(u8, entry[0], 0) != null) {
             bun.default_allocator.free(options_buf);
             tls_config.deinit();
-            if (tls_ctx) |tls| {
-                tls.deinit(true);
-            }
+            if (secure) |*s| s.deinit();
             return globalObject.throwInvalidArguments(entry[1] ++ " must not contain null bytes", .{});
         }
     }

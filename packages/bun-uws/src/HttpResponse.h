@@ -37,6 +37,8 @@
 
 namespace uWS {
 
+template <bool, bool, typename> struct WebSocketContext;
+
 /* Some pre-defined status constants to use with writeStatus */
 static const char *HTTP_200_OK = "200 OK";
 
@@ -52,7 +54,7 @@ public:
     }
 
     static HttpResponseData<SSL> *getHttpResponseDataS(us_socket_t *s) {
-        return (HttpResponseData<SSL> *) us_socket_ext(SSL, s);
+        return (HttpResponseData<SSL> *) us_socket_ext(s);
     }
 
     void setTimeout(uint8_t seconds) {
@@ -90,7 +92,7 @@ public:
             return;
         }
         /* Date is always written */
-        writeHeader("Date", std::string_view(((LoopData *) us_loop_ext(us_socket_context_loop(SSL, (us_socket_context(SSL, (us_socket_t *) this)))))->date, 29));
+        writeHeader("Date", std::string_view(((LoopData *) us_loop_ext(us_socket_group_loop(us_socket_group((us_socket_t *) this))))->date, 29));
         getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_WROTE_DATE_HEADER;
     }
 
@@ -248,10 +250,10 @@ public:
     template <typename UserData>
     us_socket_t *upgrade(UserData&& userData, std::string_view secWebSocketKey, std::string_view secWebSocketProtocol,
             std::string_view secWebSocketExtensions,
-            struct us_socket_context_t *webSocketContext) {
+            WebSocketContext<SSL, true, UserData> *webSocketContext) {
 
         /* Extract needed parameters from WebSocketContextData */
-        WebSocketContextData<SSL, UserData> *webSocketContextData = (WebSocketContextData<SSL, UserData> *) us_socket_context_ext(SSL, webSocketContext);
+        WebSocketContextData<SSL, UserData> *webSocketContextData = webSocketContext->getExt();
 
         /* Note: OpenSSL can be used here to speed this up somewhat */
         char secWebSocketAccept[29] = {};
@@ -318,15 +320,15 @@ public:
         internalEnd({nullptr, 0}, 0, false, false, false, true);
 
         /* Grab the httpContext from res */
-        HttpContext<SSL> *httpContext = (HttpContext<SSL> *) us_socket_context(SSL, (struct us_socket_t *) this);
+        HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((struct us_socket_t *) this);
 
         /* Move any backpressure out of HttpResponse */
         auto* responseData = getHttpResponseData();
         BackPressure backpressure(std::move(((AsyncSocketData<SSL> *) responseData)->buffer));
-        
+
         auto* socketData = responseData->socketData;
         HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
-        
+
         /* Destroy HttpResponseData */
         responseData->~HttpResponseData();
 
@@ -336,7 +338,9 @@ public:
         int corkedSlot = loopData->findCorkSlot(this);
 
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
-        us_socket_t *usSocket = us_socket_context_adopt_socket(SSL, (us_socket_context_t *) webSocketContext, (us_socket_t *) this, sizeof(HttpResponseData<SSL>), sizeof(WebSocketData) + sizeof(UserData));
+        us_socket_t *usSocket = us_socket_adopt((us_socket_t *) this, webSocketContext->getSocketGroup(),
+            WebSocketContext<SSL, true, UserData>::SOCKET_KIND,
+            sizeof(HttpResponseData<SSL>), sizeof(WebSocketData) + sizeof(UserData));
         WebSocket<SSL, true, UserData> *webSocket = (WebSocket<SSL, true, UserData> *) usSocket;
 
         /* For whatever reason we were corked, update cork to the new socket */
@@ -357,10 +361,10 @@ public:
         }
 
         /* Arm maxLifetime timeout */
-        us_socket_long_timeout(SSL, (us_socket_t *) webSocket, webSocketContextData->maxLifetime);
+        us_socket_long_timeout((us_socket_t *) webSocket, webSocketContextData->maxLifetime);
 
         /* Arm idleTimeout */
-        us_socket_timeout(SSL, (us_socket_t *) webSocket, webSocketContextData->idleTimeoutComponents.first);
+        us_socket_timeout((us_socket_t *) webSocket, webSocketContextData->idleTimeoutComponents.first);
 
         /* Move construct the UserData right before calling open handler */
         new (webSocket->getUserData()) UserData(std::forward<UserData>(userData));

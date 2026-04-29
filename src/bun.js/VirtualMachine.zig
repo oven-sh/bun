@@ -965,6 +965,13 @@ pub fn globalExit(this: *VirtualMachine) noreturn {
 
     if (this.shouldDestructMainThreadOnExit()) {
         if (this.eventLoop().forever_timer) |t| t.deinit(true);
+        // Embedded per-VM socket groups must drain while JSC is still alive
+        // (closeAll() fires on_close → JS). After JSC teardown,
+        // RareData.deinit() only deinit()s the groups (asserts empty).
+        // Mirrors web_worker.zig — without this, every still-open Bun.connect
+        // / postgres / etc. socket is an LSAN leak under
+        // BUN_DESTRUCT_VM_ON_EXIT.
+        if (this.rare_data) |rare| rare.closeAllSocketGroups(this);
         Zig__GlobalObject__destructOnExit(this.global);
         this.transpiler.deinit();
         this.gc_controller.deinit();

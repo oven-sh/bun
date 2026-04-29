@@ -775,7 +775,7 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         // Embedded socket groups must drain while JSC is still alive —
         // closeAll() fires on_close → JS callbacks. RareData.deinit() runs
         // after teardownJSCVM and only deinit()s (asserts empty in debug).
-        if (vm.rare_data) |rare| rare.closeAllSocketGroups();
+        if (vm.rare_data) |rare| rare.closeAllSocketGroups(vm);
         exit_code = vm.exit_handler.exit_code;
         globalObject = vm.global;
     }

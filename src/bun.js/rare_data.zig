@@ -872,7 +872,7 @@ const socket_group_fields = .{
 /// fires on_close → JS callbacks → needs a live VM. RareData.deinit() runs
 /// after `WebWorker__teardownJSCVM` (web_worker.zig), so doing the closeAll
 /// there would dispatch into freed JSC heap.
-pub fn closeAllSocketGroups(this: *RareData) void {
+pub fn closeAllSocketGroups(this: *RareData, vm: *jsc.VirtualMachine) void {
     // closeAll() dispatches on_close into JS while the VM is still alive, so a
     // handler can call Bun.connect/postgres/etc. and re-populate a group we
     // just drained. Loop until every group is observed empty in the same pass
@@ -890,8 +890,14 @@ pub fn closeAllSocketGroups(this: *RareData) void {
                 any = true;
             }
         }
-        if (!any) return;
+        if (!any) break;
     }
+    // us_socket_close pushes to loop->data.closed_head; loop_post() normally
+    // frees it on the next tick. We're past the last tick, so drain it now —
+    // every us_socket_t is libc-allocated and otherwise becomes an LSAN leak
+    // (the only pointer into it lives in mimalloc-backed RareData, which LSAN
+    // can't trace once we unregister the root region).
+    vm.uwsLoop().drainClosedSockets();
 }
 
 pub fn websocketDeflate(this: *RareData) *WebSocketDeflate.RareData {

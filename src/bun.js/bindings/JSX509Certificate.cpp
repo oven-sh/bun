@@ -566,12 +566,16 @@ JSUint8Array* JSX509Certificate::computeRaw(ncrypto::X509View view, JSGlobalObje
         return nullptr;
     }
 
-    auto bio_ptr = bio.release();
+    BIO* bio_ptr = bio.release();
     BUF_MEM* bptr = nullptr;
     BIO_get_mem_ptr(bio_ptr, &bptr);
 
-    Ref<JSC::ArrayBuffer> buffer = JSC::ArrayBuffer::createFromBytes(std::span(reinterpret_cast<uint8_t*>(bptr->data), bptr->length), createSharedTask<void(void*)>([](void* data) {
-        ncrypto::BIOPointer free_me(static_cast<BIO*>(data));
+    // The ArrayBuffer aliases the BIO's internal buffer; free the BIO (which
+    // owns the buffer) when the ArrayBuffer is destroyed. The destructor is
+    // invoked with the data pointer (bptr->data), not the BIO, so capture
+    // bio_ptr explicitly.
+    Ref<JSC::ArrayBuffer> buffer = JSC::ArrayBuffer::createFromBytes(std::span(reinterpret_cast<uint8_t*>(bptr->data), bptr->length), createSharedTask<void(void*)>([bio_ptr](void*) {
+        ncrypto::BIOPointer free_me(bio_ptr);
     }));
     RELEASE_AND_RETURN(scope, Bun::createBuffer(globalObject, WTF::move(buffer)));
 }

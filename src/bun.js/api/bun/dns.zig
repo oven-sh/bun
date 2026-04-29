@@ -2554,11 +2554,20 @@ pub const Resolver = struct {
 
             var poll = poll_entry.value_ptr.*;
 
-            if (readable and !poll.flags.contains(.poll_readable))
-                _ = poll.register(vm.event_loop_handle.?, .readable, false);
-
-            if (writable and !poll.flags.contains(.poll_writable))
-                _ = poll.register(vm.event_loop_handle.?, .writable, false);
+            // c-ares reports the full desired (readable, writable) set for this
+            // fd; sync the poll's registration to match. FilePoll now supports
+            // both directions on one poll (epoll: combined mask via CTL_MOD;
+            // kqueue: two filters, both EV_DELETEd on unregister).
+            const have_readable = poll.flags.contains(.poll_readable);
+            const have_writable = poll.flags.contains(.poll_writable);
+            if (have_readable != readable or have_writable != writable) {
+                if (have_readable or have_writable)
+                    _ = poll.unregister(vm.event_loop_handle.?, false);
+                if (readable)
+                    _ = poll.register(vm.event_loop_handle.?, .readable, false);
+                if (writable)
+                    _ = poll.register(vm.event_loop_handle.?, .writable, false);
+            }
         }
     }
 

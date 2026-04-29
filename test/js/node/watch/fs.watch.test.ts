@@ -1,5 +1,5 @@
 import { pathToFileURL } from "bun";
-import { bunEnv, bunExe, bunRun, bunRunAsScript, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, bunRunAsScript, isMacOS, isWindows, tempDir, tempDirWithFiles } from "harness";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
 
@@ -726,6 +726,60 @@ describe("immediately closing", () => {
   });
 });
 
+// FSWatcher.close() set `closed = true` before calling refTask(), so refTask() returned
+// false without incrementing pending_activity_count and the paired unrefTask() ran anyway.
+// For { persistent: false } watchers (count starts at 1), close() did a net -2, wrapping the
+// u32 to MAX. hasPendingActivity() then returned true forever, pinning the native FSWatcher
+// (and via its cached listener closure, the JS FSWatcher) as a GC root — a permanent leak
+// per watcher. Persistent watchers only landed at 0 by accident (start=2, -2).
+describe("closed FSWatcher is collectable", () => {
+  for (const persistent of [false, true]) {
+    test(`persistent: ${persistent}`, async () => {
+      using dir = tempDir("fswatch-gc", { "f.txt": "x" });
+      const watchDir = String(dir);
+
+      const fixture = /* js */ `
+        const fs = require("fs");
+
+        let collected = 0;
+        const registry = new FinalizationRegistry(() => { collected++; });
+
+        const ITERS = 64;
+        (function create() {
+          for (let i = 0; i < ITERS; i++) {
+            const w = fs.watch(${JSON.stringify(watchDir)}, { persistent: ${persistent} }, () => {});
+            registry.register(w);
+            w.close();
+          }
+        })();
+
+        (async () => {
+          for (let i = 0; i < 30 && collected < ITERS; i++) {
+            Bun.gc(true);
+            await Bun.sleep(10);
+          }
+          console.log(JSON.stringify({ collected, iters: ITERS }));
+        })();
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      const { collected, iters } = JSON.parse(stdout.trim());
+      // Before the fix, `collected` is 0 for persistent:false — every watcher leaks.
+      // After the fix, all of them are collectable; allow a little slack for GC timing.
+      expect(collected).toBeGreaterThanOrEqual(Math.floor(iters / 2));
+      expect(exitCode).toBe(0);
+    });
+  }
+});
+
 // On Windows, if fs.watch() fails after getOrPut() inserts into the internal path->watcher
 // map (e.g. uv_fs_event_start fails on a dangling junction, an ACL-protected dir, or a
 // directory deleted mid-watch), an errdefer that was silently broken by a !*T -> Maybe(*T)
@@ -785,4 +839,61 @@ test.skipIf(!isWindows)("retrying a failed fs.watch does not crash (windows)", a
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0); // unpatched: exitCode is 3 (Windows segfault)
+});
+
+// The FSEvents path in PathWatcher.init() dupeZ's the resolved directory path
+// into `resolved_path`, but then immediately overwrote `this.*` with a struct
+// literal that did not include `.resolved_path`, resetting it to its default
+// `null`. PathWatcher.deinit()'s `if (this.resolved_path) |p| free(p)` was
+// therefore a no-op, and FSEventsWatcher.deinit() does not own the buffer
+// either. Every fs.watch(<directory>) on macOS leaked ~path-length bytes.
+test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvents path", async () => {
+  // Use long nested directory names so the resolved absolute path (and thus
+  // the per-watch leak) is large enough to show up in RSS within a reasonable
+  // number of iterations.
+  const seg = Buffer.alloc(200, "p").toString();
+  using dir = tempDir("fs-watch-fsevents-leak", {
+    [`${seg}/${seg}/${seg}/.keep`]: "x",
+  });
+  const watchDir = path.join(String(dir), seg, seg, seg);
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "--smol",
+      "-e",
+      /* ts */ `
+        const fs = require("fs");
+        const dir = process.argv[1];
+
+        // Warm up: let the FSEvents loop thread, mimalloc pools, and the
+        // PathWatcherManager fd cache reach steady state.
+        for (let i = 0; i < 2000; i++) fs.watch(dir, () => {}).close();
+        Bun.gc(true);
+        const before = process.memoryUsage.rss();
+
+        // With a ~700-byte resolved path, 20000 leaked dupeZ buffers is
+        // well over 10 MB of growth on unpatched builds.
+        for (let i = 0; i < 20000; i++) fs.watch(dir, () => {}).close();
+        Bun.gc(true);
+        const after = process.memoryUsage.rss();
+
+        const growthMB = (after - before) / 1024 / 1024;
+        console.log("RSS growth: " + growthMB.toFixed(2) + " MB");
+        if (growthMB > 8) {
+          throw new Error("fs.watch(dir) leaked " + growthMB.toFixed(2) + " MB");
+        }
+      `,
+      watchDir,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toContain("RSS growth:");
+  expect(exitCode).toBe(0);
 });

@@ -1021,6 +1021,30 @@ describe.skipIf(isWindows && isArm64)("calling an FFI symbol after close()", () 
     }
   });
 
+  it("close() after symbol was deleted from lib.symbols and GC'd does not read a freed cell", () => {
+    // compiled.js_function is stored in the Zig heap; it must be rooted so
+    // that close() can safely detach it even if the user removed it from
+    // the (mutable) symbols object and a GC ran in between.
+    const cb = new JSCallback(() => 7, { returns: "i32" });
+    try {
+      const lib = linkSymbols({ seven: { returns: "i32", ptr: cb.ptr } });
+      const seven = lib.symbols.seven;
+      expect(seven()).toBe(7);
+
+      delete lib.symbols.seven;
+      Bun.gc(true);
+
+      // Must not read a freed/reused GC cell.
+      lib.close();
+
+      // `seven` was kept alive by our local reference and must have been
+      // detached by close().
+      expect(() => seven()).toThrow(TypeError);
+    } finally {
+      cb.close();
+    }
+  });
+
   it("JSCallback.close() does not detach an FFI symbol passed as the callback", () => {
     // On the JSCallback path, Function.step.compiled.js_function holds the
     // user's callback (which may itself be a JSFFIFunction from another

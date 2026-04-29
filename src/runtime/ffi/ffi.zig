@@ -810,6 +810,9 @@ pub const FFI = struct {
                         function.symbol_from_dynamic_library,
                     );
                     compiled.js_function = cb;
+                    // Rooted so Function.deinit can safely detach it on
+                    // close() even if it was removed from the symbols object.
+                    cb.protect();
                     obj.put(globalThis, &str, cb);
                 },
             }
@@ -1164,6 +1167,9 @@ pub const FFI = struct {
                         function.symbol_from_dynamic_library,
                     );
                     compiled.js_function = cb;
+                    // Rooted so Function.deinit can safely detach it on
+                    // close() even if it was removed from the symbols object.
+                    cb.protect();
                     obj.put(global, &str, cb);
                 },
             }
@@ -1273,6 +1279,9 @@ pub const FFI = struct {
                         function.symbol_from_dynamic_library,
                     );
                     compiled.js_function = cb;
+                    // Rooted so Function.deinit can safely detach it on
+                    // close() even if it was removed from the symbols object.
+                    cb.protect();
 
                     obj.put(global, name, cb);
                 },
@@ -1476,17 +1485,20 @@ pub const FFI = struct {
             if (val.step == .compiled) {
                 if (val.step.compiled.js_function != .zero) {
                     // On the dlopen/linkSymbols/cc paths, js_function is the
-                    // JSFFIFunction we created for this symbol and whose
-                    // native trampoline lives in the TCC state about to be
-                    // freed. Detach it so calling it throws instead of
-                    // jumping into freed JIT memory.
+                    // JSFFIFunction we created for this symbol (rooted via
+                    // protect() at creation time) whose native trampoline
+                    // lives in the TCC state about to be freed. Detach it so
+                    // calling it throws instead of jumping into freed JIT
+                    // memory, then release the GC root.
                     //
                     // On the JSCallback path (ffi_callback_function_wrapper
                     // != null), js_function is the user's callback which we
-                    // merely borrowed; it may itself be an unrelated FFI
-                    // symbol and must not be detached here.
+                    // merely borrowed — it is rooted via the wrapper's
+                    // Strong<JSFunction> and may itself be an unrelated FFI
+                    // symbol, so it must not be detached here.
                     if (val.step.compiled.ffi_callback_function_wrapper == null) {
                         Bun__FFIFunction_setClosed(val.step.compiled.js_function);
+                        val.step.compiled.js_function.unprotect();
                     }
                     val.step.compiled.js_function = .zero;
                 }

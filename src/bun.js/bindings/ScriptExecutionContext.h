@@ -25,7 +25,6 @@ struct us_loop_t;
 namespace WebCore {
 
 class WebSocket;
-class MessagePort;
 
 class ScriptExecutionContext;
 class EventLoopTask;

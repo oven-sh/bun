@@ -39,11 +39,24 @@ const exit_code: u8 = 128 + 1;
 
 var enabled: bool = false;
 var original_ppid: std.c.pid_t = 0;
+var install_thread_id: std.Thread.Id = 0;
 
 /// Whether `BUN_DIE_WITH_PARENT` was set at startup. Read by the spawn path to
 /// decide whether to default `linux_pdeathsig` on children.
 pub fn isEnabled() bool {
     return enabled;
+}
+
+/// Whether the spawn-side `linux_pdeathsig` default should apply to a child
+/// being spawned *right now*. `PR_SET_PDEATHSIG` is thread-scoped: it fires
+/// when the *thread* that vforked the child exits, not when the parent
+/// process exits. A `Bun.spawn()` from a JS `Worker` vforks on that Worker's
+/// OS thread, so defaulting PDEATHSIG there would kill the child on
+/// `worker.terminate()` while Bun itself is still alive. Restricting the
+/// default to the main thread keeps "die with Bun" semantics; Workers can
+/// still opt in explicitly via the (Zig-level) `linux_pdeathsig` option.
+pub fn shouldDefaultSpawnPdeathsig() bool {
+    return enabled and std.Thread.getCurrentId() == install_thread_id;
 }
 var event_loop_installed = std.atomic.Value(bool).init(false);
 /// Singleton instance — `FilePoll.Owner` needs a real pointer, but we have no
@@ -56,6 +69,7 @@ pub fn install() void {
     if (!bun.env_var.BUN_DIE_WITH_PARENT.get()) return;
 
     enabled = true;
+    install_thread_id = std.Thread.getCurrentId();
     // Descendant cleanup runs on every clean exit regardless of whether we end
     // up watching a parent (Bun may have been spawned directly by launchd/init).
     bun.Global.addExitCallback(&onProcessExit);
@@ -177,7 +191,12 @@ pub fn killDescendants() void {
                 _ = std.c.kill(child, std.posix.SIG.CONT);
                 continue;
             }
-            to_kill.append(bun.default_allocator, child) catch break;
+            to_kill.append(bun.default_allocator, child) catch {
+                // OOM after we've already STOPped+verified this child — kill it
+                // now rather than leaving it frozen and absent from to_kill.
+                _ = std.c.kill(child, std.posix.SIG.KILL);
+                break;
+            };
             to_visit.append(bun.default_allocator, child) catch break;
         }
     }

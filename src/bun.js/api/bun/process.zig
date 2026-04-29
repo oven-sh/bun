@@ -1374,7 +1374,7 @@ pub fn spawnProcessPosix(
         // in the vfork child before exec so there's no startup race.
         attr.linux_pdeathsig = if (options.linux_pdeathsig) |sig|
             @intCast(sig)
-        else if (bun.ParentDeathWatchdog.isEnabled())
+        else if (bun.ParentDeathWatchdog.shouldDefaultSpawnPdeathsig())
             std.posix.SIG.KILL
         else
             0;

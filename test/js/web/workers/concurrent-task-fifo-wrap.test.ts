@@ -61,8 +61,11 @@ test("tickConcurrent does not drop tasks when the FIFO writable region wraps", a
 
     // Block until the worker is REENTER_DEPTH tasks deep and about to reenter
     // tick(). Atomics.wait on the main thread is fine here: the worker is on
-    // its own thread.
-    Atomics.wait(flags, 0, 0);
+    // its own thread. Bounded wait so a worker-side failure surfaces as a test
+    // failure instead of parking the test runner in a futex forever (the
+    // event-loop-based per-test timeout cannot fire while this thread is
+    // blocked).
+    expect(Atomics.wait(flags, 0, 0, 10_000)).not.toBe("timed-out");
 
     // Second burst: M messages. These land in the worker's concurrent_tasks
     // queue and are popped by the reentrant tickConcurrent().
@@ -72,7 +75,7 @@ test("tickConcurrent does not drop tasks when the FIFO writable region wraps", a
     Atomics.store(flags, 1, 1);
 
     // Wait for the worker to finish its reentrant processing before probing.
-    Atomics.wait(flags, 2, 0);
+    expect(Atomics.wait(flags, 2, 0, 10_000)).not.toBe("timed-out");
 
     // The finalize probe goes through a fresh tickConcurrent() with head=0, so
     // it is never itself subject to the wrap. The worker replies with every

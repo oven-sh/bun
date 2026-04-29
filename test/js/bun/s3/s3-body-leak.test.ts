@@ -132,7 +132,11 @@ describe.concurrent("s3 body methods do not leak the downloaded buffer", () => {
 
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-        expect(stderr).toBe("");
+        const filteredStderr = stderr
+          .split("\n")
+          .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+          .join("\n");
+        expect(filteredStderr).toBe("");
         const { iterations, growthMiB } = JSON.parse(stdout);
         // When leaking, growth is ~`iterations` MiB (one 1 MiB buffer per call).
         // When fixed, the buffer is reused by the allocator and growth stays

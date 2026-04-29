@@ -65,7 +65,9 @@ public:
 JSC::JSObject* createAutoMockedFunction(JSC::JSGlobalObject* globalObject, JSC::JSValue originalValue);
 
 // Generate an auto-mock value from a module's real exports. For each own
-// enumerable property of `exports`:
+// data property of `exports` (enumerable and non-enumerable alike;
+// accessor/custom-slot properties are skipped so their getters are never
+// invoked):
 //   - function: replaced with a mock function that returns undefined (plus
 //     any of its own properties mocked recursively so static methods work)
 //   - plain object: recursively auto-mocked

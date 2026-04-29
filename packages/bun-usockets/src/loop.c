@@ -539,7 +539,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             if (cmsg_ptr && cmsg_ptr->cmsg_level == SOL_SOCKET && cmsg_ptr->cmsg_type == SCM_RIGHTS) {
                                 int fd = *(int *)CMSG_DATA(cmsg_ptr);
                                 s = us_dispatch_fd(s, fd);
-                                if(us_socket_is_closed(s)) {
+                                if (!s || us_socket_is_closed(s)) {
                                     break;
                                 }
                             }

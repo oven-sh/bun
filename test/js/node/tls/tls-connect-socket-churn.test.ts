@@ -55,13 +55,18 @@ test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () 
   // crypto, not a wait-for-condition.
 }, 30_000);
 
-test("createSecureContext memoises by config", () => {
+test("createSecureContext memoises the native SSL_CTX (not the wrapper) by config", () => {
   const a = tls.createSecureContext({ cert: tlsCerts.cert });
-  const b = tls.createSecureContext({ cert: tlsCerts.cert });
-  expect(a).toBe(b);
-  // Different config → different context.
+  const b = tls.createSecureContext({ cert: tlsCerts.cert, servername: "other.example" });
+  // Same SSL_CTX-relevant fields → same native handle…
+  expect(a.context).toBe(b.context);
+  // …but the wrapper is fresh so per-call fields don't leak across callers.
+  expect(a).not.toBe(b);
+  expect(b.servername).toBe("other.example");
+  expect(a.servername).toBeUndefined();
+  // Different SSL_CTX-relevant config → different native handle.
   const c = tls.createSecureContext({ cert: tlsCerts.cert, rejectUnauthorized: false });
-  expect(c).not.toBe(a);
+  expect(c.context).not.toBe(a.context);
 });
 
 async function connectOnce(port: number) {

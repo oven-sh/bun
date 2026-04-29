@@ -162,7 +162,11 @@ private:
                     return;
                 }
             }
-            httpResponseData->isAuthorized = success;
+            /* `success` only means the TLS state machine finished; with
+             * rejectUnauthorized=false the cert chain may still have failed.
+             * Downstream (Bun.serve `tls.authorized`, node:http2 origin checks)
+             * reads this bit, so reflect the verify result. */
+            httpResponseData->isAuthorized = success && verify_error.error == 0;
 
             /* Any connected socket should timeout until it has a request */
             ((HttpResponse<SSL> *) s)->resetTimeout();

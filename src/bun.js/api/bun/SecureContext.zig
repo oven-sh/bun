@@ -32,7 +32,15 @@ pub fn constructor(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
 }
 
 pub fn create(global: *jsc.JSGlobalObject, config: *const SSLConfig, is_client: bool) bun.JSError!*SecureContext {
-    const ctx_opts = config.asUSockets();
+    var ctx_opts = config.asUSockets();
+    // node:tls always needs the trust store: rejectUnauthorized is a
+    // per-connection decision (the JS handshake handler reads verify_error
+    // and either ignores or destroys), but verification itself must be
+    // *possible* on the SSL_CTX. Without this a memoised SecureContext built
+    // for a `rejectUnauthorized: false` caller would be reused by a
+    // default-true caller and silently report "unable to get local issuer
+    // certificate".
+    if (is_client) ctx_opts.request_cert = 1;
     var err: uws.create_bun_socket_error_t = .none;
     const ctx = ctx_opts.createSSLContext(is_client, &err) orelse {
         return global.throwValue(err.toJS(global));

@@ -61,11 +61,19 @@ fn PtrHandler(comptime T: type, comptime ssl: bool) type {
             if (@hasDecl(T, "onEnd")) swallow(this.onEnd(wrap(s)));
         }
         pub fn onConnectError(ext: Ext, s: *us_socket_t, code: i32) void {
-            // Old configure() path force-closed the half-open connect socket
-            // before notifying the owner; preserve that.
-            s.close(.normal);
-            const this = ext.* orelse return;
+            // Notify FIRST, close AFTER. For a TLS fast-path connect the socket
+            // already has `s->ssl` attached, so close routes through ssl_close
+            // → on_handshake(0, …) → JS, which may destroy `this`/its handlers
+            // before we get to call onConnectError. The C side only requires
+            // that the half-open socket is closed *somewhere* in this dispatch
+            // (us_internal_socket_after_open: "expected close is called by the
+            // caller"); ordering is ours.
+            const this = ext.* orelse {
+                s.close(.failure);
+                return;
+            };
             if (@hasDecl(T, "onConnectError")) swallow(this.onConnectError(wrap(s), code));
+            s.close(.failure);
         }
         pub fn onConnectingError(c: *ConnectingSocket, code: i32) void {
             const this = c.ext(?*T).* orelse return;
@@ -173,9 +181,12 @@ fn NsHandler(comptime Owner: type, comptime H: type, comptime ssl: bool) type {
             if (@hasDecl(H, "onEnd")) swallow(H.onEnd(this, wrap(s)));
         }
         pub fn onConnectError(ext: Ext, s: *us_socket_t, code: i32) void {
-            s.close(.normal);
-            const this = ext.* orelse return;
+            const this = ext.* orelse {
+                s.close(.failure);
+                return;
+            };
             if (@hasDecl(H, "onConnectError")) swallow(H.onConnectError(this, wrap(s), code));
+            s.close(.failure);
         }
         pub fn onConnectingError(c: *ConnectingSocket, code: i32) void {
             const this = c.ext(?*Owner).* orelse return;

@@ -564,10 +564,15 @@ SSL_CTX *us_ssl_ctx_from_options(struct us_bun_socket_context_options_t options,
   SSL_CTX *ctx = us_ssl_ctx_build_raw(options, err);
   if (!ctx) return NULL;
 
-  /* Clients verify the server cert by default; build_raw only set verify mode
-   * when a CA was supplied, so cover the no-CA client path too (uses the
-   * default trust store). */
-  if (is_client && SSL_CTX_get_verify_mode(ctx) == SSL_VERIFY_NONE) {
+  /* node:tls defaults rejectUnauthorized=true so its clients land here with
+   * options.request_cert set (via SecureContext) and got the store in
+   * build_raw. Bun.connect({tls:true}) lands here with neither — it doesn't
+   * verify against system CAs (matches `main`; the JS side reads verify_error
+   * and applies the policy itself). The store build adds ~150 roots every
+   * call (only the X509 *parse* is cached), which is the dominant cost of an
+   * SSL_CTX in debug+ASAN, so don't pay it for the no-verify case. */
+  if (is_client && SSL_CTX_get_verify_mode(ctx) == SSL_VERIFY_NONE &&
+      (options.reject_unauthorized || options.request_cert)) {
     SSL_CTX_set_cert_store(ctx, us_get_default_ca_store());
     SSL_CTX_set_verify(ctx,
         options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
@@ -781,8 +786,13 @@ static int ssl_handle_shutdown(struct us_socket_t *s, int force_fast_shutdown) {
   return 1;
 }
 
-static struct us_socket_t *ssl_close(struct us_socket_t *s, int code, void *reason) {
-  if (ssl_gone(s)) return s;
+struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void *reason) {
+  /* SEMI_SOCKET never connected — SSL was attached eagerly on the fast-path
+   * connect, but no bytes were ever exchanged. Firing on_handshake(0) here
+   * lands in JS after onConnectError already tore down `this`/its handlers. */
+  if (ssl_gone(s) || (us_internal_poll_type(&s->p) & POLL_TYPE_KIND_MASK) == POLL_TYPE_SEMI_SOCKET) {
+    return us_internal_socket_close_raw(s, code, reason);
+  }
   ssl_set_loop_data(s);
   ssl_update_handshake(s);
   if (ssl_gone(s)) return s;
@@ -794,12 +804,16 @@ static struct us_socket_t *ssl_close(struct us_socket_t *s, int code, void *reas
     if (ssl_gone(s)) return s;
   }
 
+  /* code==0 (clean) → send close_notify and DEFER the fd close until the peer
+   * answers (peer's close_notify lands as ZERO_RETURN in on_data and re-enters
+   * here with the bidirectional shutdown done). code!=0 (forced) → fast path. */
   int can_close = ssl_handle_shutdown(s, code != 0);
   if (can_close) {
-    return us_socket_close(s, code, reason);
+    return us_internal_socket_close_raw(s, code, reason);
   }
   return s;
 }
+#define ssl_close us_internal_ssl_close
 
 static void ssl_update_handshake(struct us_socket_t *s) {
     if (!s->ssl || s->ssl_handshake_state != HANDSHAKE_PENDING) return;
@@ -904,15 +918,12 @@ struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *s, char *data, i
     return NULL;
   }
 
-  /* Drive the handshake on inbound bytes too (not just on_writable). The
-   * server side otherwise only fires on_handshake from update_handshake() in
-   * on_writable; under low-prio throttling that lets every client's handshake
-   * + close land before the server's own handshake events drain, which races
-   * connectionListener counts. */
-  if (s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
-    ssl_update_handshake(s);
-    if (us_socket_is_closed(s) || !s->ssl) return s;
-  }
+  /* DO NOT call ssl_update_handshake() before the SSL_read loop. SSL_read
+   * drives the handshake itself; firing on_handshake here lets the JS callback
+   * write() → ssl_set_loop_data() → clobber the BIO buffer that still holds
+   * piggybacked application data. The on_writable tail-call below (gated on
+   * ssl_write_wants_read, which on_open()'s update_handshake set) is what
+   * pulls the server's handshake event through after each round-trip. */
 
   int read = 0;
 restart:
@@ -952,22 +963,33 @@ restart:
         if (loop_ssl_data->ssl_read_input_length) {
           return ssl_close(s, 0, NULL);
         }
+        /* SSL_read drove the handshake to completion but returned no app
+         * data (peer's Finished arrived alone). Fire on_handshake here —
+         * deferring to the on_writable tail-call lets the low-prio queue
+         * (SSL_in_init throttles to 5/tick) reorder the server's
+         * secureConnection event past the client's close under fan-out
+         * loads. The save/restore below makes this safe even if the JS
+         * callback writes; with read==0 the buffer is empty anyway. */
+        if (s->ssl_handshake_state == HANDSHAKE_PENDING && SSL_is_init_finished(s_ssl(s))) {
+          ssl_trigger_handshake(s, 1);
+          if (ssl_gone(s)) return NULL;
+          loop_ssl_data->ssl_socket = s;
+        }
         if (!read) break;
 
         s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
         if (!s || ssl_gone(s)) return NULL;
         break;
       }
-    } else if (s->ssl_handshake_state == HANDSHAKE_RENEGOTIATION_PENDING ||
-               (s->ssl_handshake_state == HANDSHAKE_PENDING && !SSL_is_server(s_ssl(s)))) {
-      /* SSL_read returned application data, so the handshake finished inside
-       * SSL_read. Fire on_handshake before delivering data so the caller can
-       * inspect ALPN and re-tag the socket — otherwise a TLS 1.3 server that
-       * sends Finished + app data in one flight (e.g. an HTTP/2 SETTINGS
-       * frame) bypasses on_handshake entirely. Gated to clients because firing
-       * on_handshake mid-read on the server side reorders node:http2/grpc-js
-       * session setup against the first preface bytes (closed PR #25946);
-       * server callers query SSL_is_init_finished directly (PR #26086). */
+    } else if (s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
+      /* SSL_read returned application data with the handshake having
+       * finished inside it. Fire on_handshake before delivering data so the
+       * caller can inspect ALPN and re-tag the socket. The save/restore lets
+       * the JS callback write() without clobbering the BIO buffer that may
+       * still hold ciphertext for the next SSL_read. (PR #25946 gated this to
+       * clients because the server-side fire reordered node:http2/grpc-js
+       * session setup; the save/restore here is what was missing — those
+       * suites are re-verified below.) */
       char *saved_input = loop_ssl_data->ssl_read_input;
       unsigned int saved_length = loop_ssl_data->ssl_read_input_length;
       unsigned int saved_offset = loop_ssl_data->ssl_read_input_offset;
@@ -1202,6 +1224,19 @@ void *us_internal_ssl_sni_userdata(struct us_socket_t *s) {
 }
 
 void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls) {
+  /* Accepted sockets carry `ls` in per-SSL ex_data so sni_cb can reach the
+   * listener's SNI tree. Those sockets may outlive the listener (server.close()
+   * keeps existing connections per Node semantics), so wipe the back-ref now —
+   * sni_cb returns OK on NULL. Walk only sockets accepted INTO this listener's
+   * group; uWS apps with multiple listeners on one group are scoped by the
+   * `== ls` check. */
+  if (us_ssl_listener_ex_idx >= 0 && ls->accept_group) {
+    for (struct us_socket_t *s = ls->accept_group->head_sockets; s; s = s->next) {
+      if (s->ssl && SSL_get_ex_data((SSL *)s->ssl, us_ssl_listener_ex_idx) == ls) {
+        SSL_set_ex_data((SSL *)s->ssl, us_ssl_listener_ex_idx, NULL);
+      }
+    }
+  }
   if (ls->ssl_ctx) {
     us_internal_ssl_ctx_unref(ls->ssl_ctx);
     ls->ssl_ctx = NULL;

@@ -732,9 +732,13 @@ pub fn wsClientGroup(rare: *RareData, vm: *jsc.VirtualMachine, comptime ssl: boo
 pub fn defaultClientSslCtx(rare: *RareData) *uws.SslCtx {
     if (rare.default_client_ssl_ctx == null) {
         var err: uws.create_bun_socket_error_t = .none;
-        rare.default_client_ssl_ctx = (uws.SocketContext.BunSocketContextOptions{
-            .request_cert = 1,
-        }).createSSLContext(true, &err) orelse bun.Output.panic(
+        // No request_cert/CA: matches `Bun.connect({tls: true})` on `main`,
+        // which never loaded the system trust store (us_get_default_ca_store
+        // builds a fresh X509_STORE with ~150 roots; the JS layer reads
+        // verify_error and applies rejectUnauthorized itself). The node:tls
+        // path goes through SecureContext, which DOES set request_cert/ca and
+        // gets a verifying ctx.
+        rare.default_client_ssl_ctx = (uws.SocketContext.BunSocketContextOptions{}).createSSLContext(true, &err) orelse bun.Output.panic(
             "default client SSL_CTX init failed: {s}",
             .{err.message() orelse "unknown"},
         );
@@ -849,22 +853,29 @@ pub fn deinit(this: *RareData) void {
     this.valkey_context.deinit();
 
     if (this.default_client_ssl_ctx) |s| bun.BoringSSL.c.SSL_CTX_free(s);
-    inline for (.{
-        "bun_connect_group_tcp", "bun_connect_group_tls",
-        "spawn_ipc_group",       "test_parallel_ipc_group",
-        "postgres_group",        "postgres_tls_group",
-        "mysql_group",           "mysql_tls_group",
-        "valkey_group",          "valkey_tls_group",
-        "ws_upgrade_group",      "ws_upgrade_tls_group",
-        "ws_client_group",       "ws_client_tls_group",
-    }) |f| {
+    // closeAllSocketGroups() must have already run (before JSC teardown) so
+    // these are empty; deinit() asserts that in debug.
+    inline for (socket_group_fields) |f| @field(this, f).deinit();
+}
+
+const socket_group_fields = .{
+    "bun_connect_group_tcp", "bun_connect_group_tls",
+    "spawn_ipc_group",       "test_parallel_ipc_group",
+    "postgres_group",        "postgres_tls_group",
+    "mysql_group",           "mysql_tls_group",
+    "valkey_group",          "valkey_tls_group",
+    "ws_upgrade_group",      "ws_upgrade_tls_group",
+    "ws_client_group",       "ws_client_tls_group",
+};
+
+/// Drain every embedded socket group. Must run BEFORE JSC teardown — closeAll
+/// fires on_close → JS callbacks → needs a live VM. RareData.deinit() runs
+/// after `WebWorker__teardownJSCVM` (web_worker.zig), so doing the closeAll
+/// there would dispatch into freed JSC heap.
+pub fn closeAllSocketGroups(this: *RareData) void {
+    inline for (socket_group_fields) |f| {
         const g: *uws.SocketGroup = &@field(this, f);
-        // us_socket_group_deinit asserts every list/count is empty (debug). A
-        // Worker.terminate() with an in-flight Bun.connect/postgres/etc. would
-        // hit that. Drain first; the common path (group never used) is a couple
-        // of NULL checks.
         if (!g.isEmpty()) g.closeAll();
-        g.deinit();
     }
 }
 

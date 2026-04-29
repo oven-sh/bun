@@ -252,7 +252,13 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
     us_connecting_socket_free(c);
 }
 
-struct us_socket_t *us_socket_close(struct us_socket_t *s, int code, void *reason) {
+/* Tear the fd down + dispatch on_close. Bypasses the SSL layer entirely —
+ * the public us_socket_close() routes through us_internal_ssl_close() first
+ * so a client-initiated close sends close_notify and (with code==0) waits for
+ * the peer's, instead of slamming the fd shut and racing the peer's
+ * handshake/secureConnection event. openssl.c re-enters here once that
+ * graceful path is done. */
+struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code, void *reason) {
     if (!us_socket_is_closed(s)) {
         struct us_loop_t *loop = s->group->loop;
 
@@ -312,6 +318,13 @@ struct us_socket_t *us_socket_close(struct us_socket_t *s, int code, void *reaso
     }
 
     return s;
+}
+
+struct us_socket_t *us_socket_close(struct us_socket_t *s, int code, void *reason) {
+    if (s->ssl && !us_socket_is_closed(s)) {
+        return us_internal_ssl_close(s, code, reason);
+    }
+    return us_internal_socket_close_raw(s, code, reason);
 }
 
 // This function is the same as us_socket_close but:

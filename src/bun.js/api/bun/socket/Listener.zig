@@ -730,10 +730,23 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
         if (native_sc) |sc| {
             owned_ssl_ctx = sc.borrow();
         } else if (ssl) |ssl_cfg| {
-            var create_err: uws.create_bun_socket_error_t = .none;
-            owned_ssl_ctx = ssl_cfg.asUSockets().createSSLContext(true, &create_err) orelse {
-                return globalObject.throwValue(create_err.toJS(globalObject));
-            };
+            // `Bun.connect({tls: true})` and other no-cert/no-CA configs are
+            // the common case for clients (default trust store, default
+            // ciphers). Building a fresh SSL_CTX for those is ~70 ms of cert
+            // parsing and ex-data registration on debug+ASAN — measurable
+            // first-connect latency and exactly the per-connection cost this
+            // PR exists to remove. Reuse the per-VM default; only fall through
+            // to a fresh build when the config actually customises something.
+            if (!ssl_cfg.requires_custom_request_ctx) {
+                const shared = vm.rareData().defaultClientSslCtx();
+                _ = BoringSSL.SSL_CTX_up_ref(shared);
+                owned_ssl_ctx = shared;
+            } else {
+                var create_err: uws.create_bun_socket_error_t = .none;
+                owned_ssl_ctx = ssl_cfg.asUSockets().createSSLContext(true, &create_err) orelse {
+                    return globalObject.throwValue(create_err.toJS(globalObject));
+                };
+            }
         }
     }
     errdefer if (owned_ssl_ctx) |c| BoringSSL.SSL_CTX_free(c);

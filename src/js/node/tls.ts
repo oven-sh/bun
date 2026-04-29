@@ -404,7 +404,7 @@ var InternalSecureContext = class SecureContext {
   context;
   servername;
 
-  constructor(options) {
+  constructor(options, native?) {
     if (options) {
       if (options.cert) throwOnInvalidTLSArray("options.cert", options.cert);
       if (options.key) throwOnInvalidTLSArray("options.key", options.key);
@@ -432,10 +432,10 @@ var InternalSecureContext = class SecureContext {
           );
       }
     }
-    // The native handle IS the context. node:tls userland reaches for
-    // `.context` to call SSL_CTX_* via N-API, so expose the wrapper there.
-    this.context = new NativeSecureContext(options);
-    // servername is per-connection, not per-SSL_CTX, but Node hangs it here.
+    // The native handle (SSL_CTX wrapper) is what's memoised — not this JS
+    // object — so per-call fields like `servername` come from THIS call's
+    // options while the expensive SSL_CTX is shared.
+    this.context = native ?? new NativeSecureContext(options);
     this.servername = options?.servername;
   }
 };
@@ -509,17 +509,20 @@ function createSecureContext(options) {
     return new SecureContext(options);
   }
   const key = secureContextCacheKey(options);
+  // Cache the NATIVE handle (SSL_CTX), not the wrapper. The wrapper carries
+  // `servername` (per-connection, omitted from the key); reusing it would let
+  // the second caller inherit the first caller's servername.
   const hit = secureContextCache.get(key)?.deref();
-  if (hit) return hit;
-  const sc = new SecureContext(options);
-  secureContextCache.set(key, new WeakRef(sc));
+  if (hit) return new InternalSecureContext(options, hit);
+  const native = new NativeSecureContext(options);
+  secureContextCache.set(key, new WeakRef(native));
   // Opportunistic dead-WeakRef sweep so the map can't grow unbounded across
   // many distinct configs (one CA per tenant, etc.).
   if (++secureContextCacheTrim > 64) {
     secureContextCacheTrim = 0;
     for (const [k, ref] of secureContextCache) if (!ref.deref()) secureContextCache.delete(k);
   }
-  return sc;
+  return new InternalSecureContext(options, native);
 }
 
 // Translate some fields from the handle's C-friendly format into more idiomatic

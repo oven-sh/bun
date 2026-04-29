@@ -1,6 +1,6 @@
 import { RedisClient } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isWindows, tls as localhostTls, tempDir } from "harness";
+import { isIPv6, isWindows, tls as localhostTls, tempDir } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import type { AddressInfo } from "node:net";
@@ -174,7 +174,7 @@ describe("RedisClient TLS hostname verification", () => {
     });
   });
 
-  test("accepts a cert whose IP altnames match a bracketed IPv6 URL host", async () => {
+  test.skipIf(!isIPv6())("accepts a cert whose IP altnames match a bracketed IPv6 URL host", async () => {
     // The "harness" cert has SAN IP:::1. URL.host() serialises IPv6 literals
     // with brackets ("[::1]"), which must be stripped before IP SAN matching.
     await withServer(

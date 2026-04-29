@@ -107,7 +107,7 @@ describe("MessagePort pipe", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("OK");
     expect(exitCode).toBe(0);
-  }, 60_000);
+  });
 
   test("burst of postMessage across threads delivers every message in order", async () => {
     await using proc = Bun.spawn({
@@ -150,5 +150,5 @@ describe("MessagePort pipe", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("OK");
     expect(exitCode).toBe(0);
-  }, 60_000);
+  });
 });

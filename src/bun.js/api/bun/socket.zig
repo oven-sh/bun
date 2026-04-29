@@ -73,6 +73,12 @@ pub fn NewSocket(comptime ssl: bool) type {
         bytes_written: u64 = 0,
 
         native_callback: NativeCallbacks = .none,
+        /// `upgradeTLS` produces two `TLSSocket` wrappers over one
+        /// `us_socket_t` (the encrypted view + the raw-bytes view node:net
+        /// expects at index 0). The encrypted half holds a ref on the raw half
+        /// here so a single `onClose` can retire both — no `Handlers.clone()`,
+        /// no second context.
+        twin: ?*This = null,
 
         pub fn memoryCost(this: *This) usize {
             // Per-socket SSL state (SSL*, BIO pair, handshake buffers) is ~40 KB
@@ -649,6 +655,17 @@ pub fn NewSocket(comptime ssl: bool) type {
             log("onClose {s}", .{if (handlers.mode == .server) "S" else "C"});
             this.detachNativeCallback();
             this.socket.detach();
+            // Retire the upgradeTLS raw twin alongside us — it shares the same
+            // us_socket_t, so it never gets its own onClose dispatch.
+            if (this.twin) |raw| {
+                this.twin = null;
+                raw.socket.detach();
+                if (raw.flags.is_active) {
+                    raw.poll_ref.disable();
+                    raw.flags.is_active = false;
+                }
+                raw.deref();
+            }
             defer this.deref();
             defer this.markInactive();
 
@@ -905,12 +922,19 @@ pub fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsNumber(this.socket.remotePort());
         }
 
+        inline fn doSocketWrite(this: *This, buffer: []const u8) i32 {
+            return if (this.flags.bypass_tls)
+                this.socket.rawWrite(buffer)
+            else
+                this.socket.write(buffer);
+        }
+
         pub fn writeMaybeCorked(this: *This, buffer: []const u8) i32 {
             if (this.socket.isShutdown() or this.socket.isClosed()) {
                 return -1;
             }
 
-            const res = this.socket.write(buffer);
+            const res = this.doSocketWrite(buffer);
             const uwrote: usize = @intCast(@max(res, 0));
             this.bytes_written += uwrote;
             log("write({d}) = {d}", .{ buffer.len, res });
@@ -1231,7 +1255,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         fn internalFlush(this: *This) void {
             if (this.buffered_data_for_node_net.len > 0) {
-                const written: usize = @intCast(@max(this.socket.write(this.buffered_data_for_node_net.slice()), 0));
+                const written: usize = @intCast(@max(this.doSocketWrite(this.buffered_data_for_node_net.slice()), 0));
                 this.bytes_written += written;
                 if (written > 0) {
                     if (this.buffered_data_for_node_net.len > written) {
@@ -1414,13 +1438,13 @@ pub fn NewSocket(comptime ssl: bool) type {
             return jsc.JSValue.jsNumber(this.bytes_written + this.buffered_data_for_node_net.len);
         }
 
-        /// In-place TCP→TLS upgrade. Replaces the old `WrappedSocket` two-object
-        /// dance: the underlying `us_socket_t` is `adoptTLS`'d into the per-VM
-        /// TLS group with a fresh (or SecureContext-shared) `SSL_CTX*`, and a
-        /// single new `TLSSocket` takes over. The original `TCPSocket` is
-        /// detached. Returns `[tls, tls]` for `node:net` compatibility — the
-        /// "raw" slot is the same object since raw bytes go through
-        /// `us_socket_raw_write` on the TLS socket itself.
+        /// In-place TCP→TLS upgrade. The underlying `us_socket_t` is
+        /// `adoptTLS`'d into the per-VM TLS group with a fresh (or
+        /// SecureContext-shared) `SSL_CTX*`. Returns `[raw, tls]` — two
+        /// `TLSSocket` wrappers over one fd: `tls` is the encrypted view that
+        /// owns dispatch; `raw` has `bypass_tls` set so node:net's
+        /// `socket._handle` can pipe pre-handshake/tunnelled bytes via
+        /// `us_socket_raw_write`. No second context, no `Handlers.clone()`.
         pub fn upgradeTLS(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
             jsc.markBinding(@src());
 
@@ -1539,17 +1563,8 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return .js_undefined;
             };
 
-            new_raw.ext(*TLSSocket).* = tls;
-            tls.socket = TLSSocket.Socket.from(new_raw);
-            tls.ref();
-
-            const tls_js_value = tls.getThisValue(globalObject);
-            TLSSocket.js.dataSetCached(tls_js_value, globalObject, default_data);
-
-            tls.markActive();
-            tls.poll_ref.ref(vm);
-
-            // Retire the original TCP wrapper.
+            // Retire the original TCP wrapper before any TLS dispatch can run
+            // back into JS — it must not see two live owners on one fd.
             if (this.flags.is_active) {
                 this.poll_ref.disable();
                 this.flags.is_active = false;
@@ -1560,8 +1575,41 @@ pub fn NewSocket(comptime ssl: bool) type {
             this.detachNativeCallback();
             this.socket.detach();
 
+            // Only NOW is it safe for dispatch to fire: ext + kind point at `tls`.
+            new_raw.ext(*TLSSocket).* = tls;
+            tls.socket = TLSSocket.Socket.from(new_raw);
+            tls.ref();
+
+            // The `raw` half node:net expects at index 0 — same `us_socket_t*`,
+            // same `*Handlers`, but writes bypass SSL. Dispatch never targets
+            // it (the ext slot holds `tls`); `tls.twin` retires it on close.
+            var raw = bun.new(TLSSocket, .{
+                .ref_count = .init(),
+                .handlers = handlers_ptr,
+                .socket = TLSSocket.Socket.from(new_raw),
+                .connection = null,
+                .protos = null,
+                .flags = .{ .bypass_tls = true },
+            });
+            raw.ref();
+            tls.twin = raw;
+
+            const tls_js_value = tls.getThisValue(globalObject);
+            const raw_js_value = raw.getThisValue(globalObject);
+            TLSSocket.js.dataSetCached(tls_js_value, globalObject, default_data);
+            TLSSocket.js.dataSetCached(raw_js_value, globalObject, default_data);
+
+            tls.markActive();
+            tls.poll_ref.ref(vm);
+
+            // Fire onOpen with the right `this`, then send ClientHello. Doing
+            // it before ext was repointed would have ALPN/onOpen land in the
+            // dead TCPSocket.
+            tls.onOpen(tls.socket);
+            new_raw.startTLSHandshake();
+
             const array = try jsc.JSValue.createEmptyArray(globalObject, 2);
-            try array.putIndex(globalObject, 0, tls_js_value);
+            try array.putIndex(globalObject, 0, raw_js_value);
             try array.putIndex(globalObject, 1, tls_js_value);
             return array;
         }
@@ -1656,7 +1704,11 @@ const Flags = packed struct(u16) {
     owned_protos: bool = true,
     is_paused: bool = false,
     allow_half_open: bool = false,
-    _: u7 = 0,
+    /// Set on the `raw` half of an `upgradeTLS` pair. Writes route through
+    /// `us_socket_raw_write` (bypassing the SSL layer) so node:net can pipe
+    /// pre-handshake bytes / read the underlying TCP stream.
+    bypass_tls: bool = false,
+    _: u6 = 0,
 };
 
 /// Unified socket mode replacing the old is_server bool + TLSMode pair.

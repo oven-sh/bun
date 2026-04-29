@@ -142,19 +142,17 @@ public:
 
     TemplatedApp &&removeServerName(const std::string &hostname_pattern) {
         if constexpr (SSL) {
+            /* The SNI tree on each listener stores a *borrowed* router pointer
+             * (and its own SSL_CTX_up_ref). pendingServerNames is the single
+             * owner — drop the borrowers first, then free the owner exactly
+             * once. The old loop deleted the router once per listener. */
             for (auto *ls : listenSockets) {
-                auto *domainRouter = us_listen_socket_find_server_name_userdata(ls, hostname_pattern.c_str());
-                if (domainRouter) {
-                    delete (HttpRouter<typename HttpContextData<SSL>::RouterData> *) domainRouter;
-                }
                 us_listen_socket_remove_server_name(ls, hostname_pattern.c_str());
             }
             for (auto it = pendingServerNames.begin(); it != pendingServerNames.end(); ) {
                 if (it->hostname == hostname_pattern) {
                     us_internal_ssl_ctx_unref(it->ctx);
-                    /* router already deleted above if it was on a listener; if
-                     * never listened, delete here. */
-                    if (listenSockets.empty()) delete it->router;
+                    delete it->router;
                     it = pendingServerNames.erase(it);
                 } else ++it;
             }
@@ -236,8 +234,12 @@ public:
         }
 
         if constexpr (SSL) {
+            /* pendingServerNames owns each domain router (the SNI trees on the
+             * listen sockets hold borrowed pointers and were freed above via
+             * httpContext->free() → close_all() → us_listen_socket_close()). */
             for (auto &p : pendingServerNames) {
                 us_internal_ssl_ctx_unref(p.ctx);
+                delete p.router;
             }
             us_internal_ssl_ctx_unref(sslCtx);
         }

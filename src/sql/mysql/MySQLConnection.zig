@@ -214,6 +214,8 @@ pub fn upgradeToTLS(this: *MySQLConnection) !void {
         ) orelse return error.AuthenticationFailed;
         new_socket.ext(*anyopaque).* = this.getJSConnection();
         this.#socket = .{ .SocketTLS = .{ .socket = .{ .connected = new_socket } } };
+        // ext is now repointed; safe to kick the handshake (any dispatch lands here).
+        new_socket.startTLSHandshake();
     }
 }
 

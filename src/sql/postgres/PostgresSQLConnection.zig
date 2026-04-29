@@ -187,6 +187,8 @@ pub fn setupTLS(this: *PostgresSQLConnection) void {
     };
     new_socket.ext(*anyopaque).* = this;
     this.socket = .{ .SocketTLS = .{ .socket = .{ .connected = new_socket } } };
+    // ext is now repointed; safe to kick the handshake (any dispatch lands here).
+    new_socket.startTLSHandshake();
     this.start();
 }
 fn setupMaxLifetimeTimerIfNecessary(this: *PostgresSQLConnection) void {

@@ -1,4 +1,4 @@
-// Fixture for the accessor-protection path of auto-mock.test.ts. The module
+// Fixture for the accessor-protection path of mock-module.test.ts. The module
 // exposes a getter that records side effects; the auto-mock walker must not
 // invoke it while walking exports to build the mock.
 

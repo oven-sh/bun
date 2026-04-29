@@ -825,18 +825,20 @@ pub fn LowerDecorators(
                         const storage_id = p.accessor_storage_counter;
                         p.accessor_storage_counter += 1;
                         const accessor_name = brk: {
-                            // `accessor "foo"` → `_foo0`, but only when the key is
+                            // `accessor "foo"` → `_foo_0`, but only when the key is
                             // UTF-8 bytes and a valid identifier. `accessor "foo-bar"`
-                            // would produce `_foo-bar0` (unparseable); a UTF-16
+                            // would produce `_foo-bar_0` (unparseable); a UTF-16
                             // `E.String` (any non-ASCII quoted key) would splice raw
                             // UTF-16 bytes into `{s}` via `@ptrCast` and print
                             // embedded NULs. Fall back to the synthetic name in both
-                            // cases.
+                            // cases. The `_` between key and counter is load-bearing:
+                            // without it, `accessor x1` at counter=0 and `accessor x`
+                            // at counter=10 both produce `_x10`, recreating #29837.
                             if (prop.key.?.data == .e_string and
                                 prop.key.?.data.e_string.isUTF8() and
                                 prop.key.?.data.e_string.isIdentifier(p.allocator))
-                                break :brk std.fmt.allocPrint(p.allocator, "_{s}{d}", .{ prop.key.?.data.e_string.data, storage_id }) catch unreachable;
-                            break :brk std.fmt.allocPrint(p.allocator, "_accessor_storage{d}", .{storage_id}) catch unreachable;
+                                break :brk std.fmt.allocPrint(p.allocator, "_{s}_{d}", .{ prop.key.?.data.e_string.data, storage_id }) catch unreachable;
+                            break :brk std.fmt.allocPrint(p.allocator, "_accessor_storage_{d}", .{storage_id}) catch unreachable;
                         };
                         const wm_ref = newSym(p, .other, accessor_name);
                         prefix_stmts.append(varDecl(p, wm_ref, newWeakMapExpr(p, loc), loc)) catch unreachable;
@@ -976,9 +978,11 @@ pub fn LowerDecorators(
                         // symbol under `NoOpRenamer`), so share the same counter.
                         const storage_id = p.accessor_storage_counter;
                         p.accessor_storage_counter += 1;
-                        const wm_ref = newSym(p, .other, std.fmt.allocPrint(p.allocator, "_{s}{d}", .{ private_orig[1..], storage_id }) catch unreachable);
+                        // `_` between key and counter for injectivity — otherwise
+                        // `#x1` at counter=0 and `#x` at counter=10 both yield `_x10`.
+                        const wm_ref = newSym(p, .other, std.fmt.allocPrint(p.allocator, "_{s}_{d}", .{ private_orig[1..], storage_id }) catch unreachable);
                         private_storage_ref = wm_ref;
-                        const acc_ref = newSym(p, .other, std.fmt.allocPrint(p.allocator, "_{s}_acc{d}", .{ private_orig[1..], storage_id }) catch unreachable);
+                        const acc_ref = newSym(p, .other, std.fmt.allocPrint(p.allocator, "_{s}_acc_{d}", .{ private_orig[1..], storage_id }) catch unreachable);
                         private_method_fn_ref = acc_ref;
                         private_lowered_map.put(p.allocator, priv_inner, .{
                             .storage_ref = wm_ref,
@@ -992,14 +996,15 @@ pub fn LowerDecorators(
                     const storage_id = p.accessor_storage_counter;
                     p.accessor_storage_counter += 1;
                     const accessor_name = brk: {
-                        // See the note on the undecorated path: reject non-UTF-8
-                        // keys (otherwise `{s}` prints raw UTF-16 bytes) and
-                        // keys that aren't valid identifiers.
+                        // See the note on the undecorated path for the `_` between
+                        // key and counter, and for why `isUTF8()` must gate the
+                        // embed (UTF-16 keys pass `isIdentifier` but `{s}` prints
+                        // their raw bytes with embedded NULs).
                         if (key_expr.data == .e_string and
                             key_expr.data.e_string.isUTF8() and
                             key_expr.data.e_string.isIdentifier(p.allocator))
-                            break :brk std.fmt.allocPrint(p.allocator, "_{s}{d}", .{ key_expr.data.e_string.data, storage_id }) catch unreachable;
-                        break :brk std.fmt.allocPrint(p.allocator, "_accessor_storage{d}", .{storage_id}) catch unreachable;
+                            break :brk std.fmt.allocPrint(p.allocator, "_{s}_{d}", .{ key_expr.data.e_string.data, storage_id }) catch unreachable;
+                        break :brk std.fmt.allocPrint(p.allocator, "_accessor_storage_{d}", .{storage_id}) catch unreachable;
                     };
                     const wm_ref = newSym(p, .other, accessor_name);
                     private_extra_ref = wm_ref;

@@ -66,18 +66,12 @@ test.skipIf(isWindows || isMacOS)(
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       results.push({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode });
     }
 
     // Every attempt must have completed the full loop cleanly.
-    expect(results).toEqual(
-      Array.from({ length: ATTEMPTS }, () => ({ stdout: "ok 3000", stderr: "", exitCode: 0 })),
-    );
+    expect(results).toEqual(Array.from({ length: ATTEMPTS }, () => ({ stdout: "ok 3000", stderr: "", exitCode: 0 })));
   },
   60000,
 );

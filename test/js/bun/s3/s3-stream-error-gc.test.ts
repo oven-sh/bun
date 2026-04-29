@@ -62,4 +62,4 @@ test("S3 stream sign error survives GC until the stream is finalized", async () 
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);
-}, 30_000);
+});

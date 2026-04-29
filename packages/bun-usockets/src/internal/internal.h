@@ -146,6 +146,8 @@ void us_internal_disable_sweep_timer(struct us_loop_t *loop);
 void us_internal_free_closed_sockets(us_loop_r loop);
 void us_internal_loop_link_group(struct us_loop_t *loop, struct us_socket_group_t *group);
 void us_internal_loop_unlink_group(struct us_loop_t *loop, struct us_socket_group_t *group);
+/* Unlink the group from the loop iff every list/count is now zero. */
+void us_internal_group_maybe_unlink(struct us_socket_group_t *group);
 void us_internal_loop_data_init(struct us_loop_t *loop,
                                 void (*wakeup_cb)(us_loop_r loop),
                                 void (*pre_cb)(us_loop_r loop),

@@ -123,7 +123,7 @@ pub const us_socket_t = opaque {
 
     pub fn ext(this: *us_socket_t, comptime T: type) *T {
         @setRuntimeSafety(true);
-        return @ptrCast(@alignCast(c.us_socket_ext(this).?));
+        return @ptrCast(@alignCast(c.us_socket_ext(this)));
     }
 
     pub fn group(this: *us_socket_t) *SocketGroup {
@@ -223,46 +223,49 @@ pub const us_socket_t = opaque {
 };
 
 pub const c_externs = struct {
-    pub extern fn us_socket_get_native_handle(s: ?*us_socket_t) ?*anyopaque;
+    // Every C-side decl takes `us_socket_r` (= `us_socket_t* nonnull_arg`), so
+    // mirror that here — passing null is UB and the typed methods above never do.
+    pub extern fn us_socket_get_native_handle(s: *us_socket_t) ?*anyopaque;
 
-    pub extern fn us_socket_local_port(s: ?*us_socket_t) i32;
-    pub extern fn us_socket_remote_port(s: ?*us_socket_t) i32;
-    pub extern fn us_socket_remote_address(s: ?*us_socket_t, buf: [*c]u8, length: [*c]i32) void;
-    pub extern fn us_socket_local_address(s: ?*us_socket_t, buf: [*c]u8, length: [*c]i32) void;
-    pub extern fn us_socket_timeout(s: ?*us_socket_t, seconds: c_uint) void;
-    pub extern fn us_socket_long_timeout(s: ?*us_socket_t, minutes: c_uint) void;
-    pub extern fn us_socket_nodelay(s: ?*us_socket_t, enable: c_int) void;
-    pub extern fn us_socket_keepalive(s: ?*us_socket_t, enable: c_int, delay: c_uint) c_int;
+    pub extern fn us_socket_local_port(s: *us_socket_t) i32;
+    pub extern fn us_socket_remote_port(s: *us_socket_t) i32;
+    pub extern fn us_socket_remote_address(s: *us_socket_t, buf: [*]u8, length: *i32) void;
+    pub extern fn us_socket_local_address(s: *us_socket_t, buf: [*]u8, length: *i32) void;
+    pub extern fn us_socket_timeout(s: *us_socket_t, seconds: c_uint) void;
+    pub extern fn us_socket_long_timeout(s: *us_socket_t, minutes: c_uint) void;
+    pub extern fn us_socket_nodelay(s: *us_socket_t, enable: c_int) void;
+    pub extern fn us_socket_keepalive(s: *us_socket_t, enable: c_int, delay: c_uint) c_int;
 
-    pub extern fn us_socket_ext(s: ?*us_socket_t) ?*anyopaque;
-    pub extern fn us_socket_group(s: ?*us_socket_t) *SocketGroup;
-    pub extern fn us_socket_kind(s: ?*us_socket_t) u8;
-    pub extern fn us_socket_set_kind(s: ?*us_socket_t, kind: u8) void;
-    pub extern fn us_socket_set_ssl_raw_tap(s: ?*us_socket_t, enabled: c_int) void;
-    pub extern fn us_socket_is_tls(s: ?*us_socket_t) i32;
+    pub extern fn us_socket_ext(s: *us_socket_t) *anyopaque;
+    pub extern fn us_socket_group(s: *us_socket_t) *SocketGroup;
+    pub extern fn us_socket_kind(s: *us_socket_t) u8;
+    pub extern fn us_socket_set_kind(s: *us_socket_t, kind: u8) void;
+    pub extern fn us_socket_set_ssl_raw_tap(s: *us_socket_t, enabled: c_int) void;
+    pub extern fn us_socket_is_tls(s: *us_socket_t) i32;
 
-    pub extern fn us_socket_write(s: ?*us_socket_t, data: [*c]const u8, length: i32) i32;
-    pub extern fn us_socket_ipc_write_fd(s: ?*us_socket_t, data: [*c]const u8, length: i32, fd: i32) i32;
+    pub extern fn us_socket_write(s: *us_socket_t, data: [*]const u8, length: i32) i32;
+    pub extern fn us_socket_ipc_write_fd(s: *us_socket_t, data: [*]const u8, length: i32, fd: i32) i32;
     pub extern fn us_socket_write2(*us_socket_t, header: ?[*]const u8, len: usize, payload: ?[*]const u8, usize) i32;
-    pub extern fn us_socket_raw_write(s: ?*us_socket_t, data: [*c]const u8, length: i32) i32;
-    pub extern fn us_socket_flush(s: ?*us_socket_t) void;
+    pub extern fn us_socket_raw_write(s: *us_socket_t, data: [*]const u8, length: i32) i32;
+    pub extern fn us_socket_flush(s: *us_socket_t) void;
 
-    pub extern fn us_socket_open(s: ?*us_socket_t, is_client: i32, ip: [*c]const u8, ip_length: i32) ?*us_socket_t;
-    pub extern fn us_socket_pause(s: ?*us_socket_t) void;
-    pub extern fn us_socket_resume(s: ?*us_socket_t) void;
-    pub extern fn us_socket_close(s: ?*us_socket_t, code: us_socket_t.CloseCode, reason: ?*anyopaque) ?*us_socket_t;
-    pub extern fn us_socket_shutdown(s: ?*us_socket_t) void;
-    pub extern fn us_socket_is_closed(s: ?*us_socket_t) i32;
-    pub extern fn us_socket_shutdown_read(s: ?*us_socket_t) void;
-    pub extern fn us_socket_is_shut_down(s: ?*us_socket_t) i32;
+    pub extern fn us_socket_open(s: *us_socket_t, is_client: i32, ip: ?[*]const u8, ip_length: i32) ?*us_socket_t;
+    pub extern fn us_socket_pause(s: *us_socket_t) void;
+    pub extern fn us_socket_resume(s: *us_socket_t) void;
+    pub extern fn us_socket_close(s: *us_socket_t, code: us_socket_t.CloseCode, reason: ?*anyopaque) ?*us_socket_t;
+    pub extern fn us_socket_shutdown(s: *us_socket_t) void;
+    pub extern fn us_socket_is_closed(s: *us_socket_t) i32;
+    pub extern fn us_socket_shutdown_read(s: *us_socket_t) void;
+    pub extern fn us_socket_is_shut_down(s: *us_socket_t) i32;
     pub extern fn us_socket_sendfile_needs_more(socket: *us_socket_t) void;
-    pub extern fn us_socket_get_fd(s: ?*us_socket_t) uws.LIBUS_SOCKET_DESCRIPTOR;
+    pub extern fn us_socket_get_fd(s: *us_socket_t) uws.LIBUS_SOCKET_DESCRIPTOR;
     pub extern fn us_socket_verify_error(s: *us_socket_t) uws.us_bun_verify_error_t;
     pub extern fn us_socket_get_error(s: *us_socket_t) c_int;
     pub extern fn us_socket_is_established(s: *us_socket_t) i32;
 
     pub extern fn us_socket_adopt(s: *us_socket_t, group: *SocketGroup, kind: u8, old_ext_size: i32, ext_size: i32) ?*us_socket_t;
-    pub extern fn us_socket_adopt_tls(s: *us_socket_t, group: *SocketGroup, kind: u8, ssl_ctx: ?*anyopaque, sni: ?[*:0]const u8, old_ext_size: i32, ext_size: i32) ?*us_socket_t;
+    /// ssl_ctx is required (the whole point); sni may be null.
+    pub extern fn us_socket_adopt_tls(s: *us_socket_t, group: *SocketGroup, kind: u8, ssl_ctx: *anyopaque, sni: ?[*:0]const u8, old_ext_size: i32, ext_size: i32) ?*us_socket_t;
     pub extern fn us_socket_start_tls_handshake(s: *us_socket_t) void;
     pub extern fn us_socket_from_fd(group: *SocketGroup, kind: u8, ssl_ctx: ?*anyopaque, ext_size: c_int, fd: uws.LIBUS_SOCKET_DESCRIPTOR, is_ipc: c_int) ?*us_socket_t;
     pub extern fn us_socket_pair(group: *SocketGroup, kind: u8, ext_size: c_int, fds: *[2]uws.LIBUS_SOCKET_DESCRIPTOR) ?*us_socket_t;

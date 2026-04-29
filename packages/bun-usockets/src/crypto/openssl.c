@@ -911,8 +911,8 @@ struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *s, char *data, i
    * + close land before the server's own handshake events drain, which races
    * connectionListener counts. */
   if (s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
-    s = ssl_update_handshake(s);
-    if (!s || us_socket_is_closed(s) || !s->ssl) return s;
+    ssl_update_handshake(s);
+    if (us_socket_is_closed(s) || !s->ssl) return s;
   }
 
   int read = 0;

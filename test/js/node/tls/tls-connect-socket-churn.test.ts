@@ -25,9 +25,14 @@ test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () 
   const ctxBefore = sslCtxLiveCount();
   const rssBefore = process.memoryUsage.rss();
 
-  for (let i = 0; i < 200; i++) await connectOnce(port);
-  Bun.gc(true);
-  await Bun.sleep(10); // let the close-list drain
+  // 50 is enough to prove O(1): the old code leaked one SSL_CTX per connect,
+  // so the count delta would be ~50 not ≤2. (200 was used originally but
+  // debug+ASAN does ~50 ms per handshake, putting it past the default timeout
+  // for a property that's just as visible at 50.)
+  for (let i = 0; i < 50; i++) await connectOnce(port);
+  // The close-list drains on the next loop tick (us_internal_free_closed_sockets
+  // runs in loop-post). Await a microtask + macrotask boundary instead of time.
+  await new Promise<void>(r => setImmediate(() => queueMicrotask(r)));
   Bun.gc(true);
 
   const ctxAfter = sslCtxLiveCount();
@@ -45,7 +50,10 @@ test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () 
   // release where the original regression was visible.
   const rssBound = isASAN || isDebug ? 64 * 1024 * 1024 : 4 * 1024 * 1024;
   expect(rssAfter - rssBefore).toBeLessThan(rssBound);
-}, 20_000);
+  // Debug+ASAN BoringSSL does ~200 ms per full handshake; 50 sequential
+  // handshakes can't fit the 5 s default. This is wall-clock cost of the
+  // crypto, not a wait-for-condition.
+}, 30_000);
 
 test("createSecureContext memoises by config", () => {
   const a = tls.createSecureContext({ cert: tlsCerts.cert });

@@ -65,6 +65,16 @@ pub const SocketGroup = extern struct {
         c.us_socket_group_close_all(self);
     }
 
+    /// Non-null after `init`. The fields stay `?*T` only because the struct is
+    /// zero-init'd by default and read directly by C; these accessors encode
+    /// the post-init invariant.
+    pub fn getLoop(self: *const SocketGroup) *Loop {
+        return self.loop.?;
+    }
+
+    /// Recover the embedding owner. Only valid for groups whose `init` passed a
+    /// non-null `ext` (Listener, uWS App/Context). Per-kind VM groups in
+    /// `RareData` pass `null`, so callers must know which they have.
     pub fn owner(self: *const SocketGroup, comptime T: type) *T {
         return @ptrCast(@alignCast(self.ext.?));
     }

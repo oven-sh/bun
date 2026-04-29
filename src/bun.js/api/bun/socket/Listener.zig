@@ -275,9 +275,11 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
     }
 
     if (ssl) |ssl_config| {
+        // `ssl_enabled` ⇒ `createSSLContext` succeeded above ⇒ `secure_ctx` set.
+        const secure = this.secure_ctx orelse unreachable;
         if (ssl_config.server_name) |server_name| {
             if (std.mem.span(server_name).len > 0) {
-                _ = listen_socket.addServerName(server_name, this.secure_ctx.?, null);
+                _ = listen_socket.addServerName(server_name, secure, null);
             }
         }
     }

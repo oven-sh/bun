@@ -293,10 +293,11 @@ struct us_socket_t *us_socket_adopt(us_socket_r s, us_socket_group_r group,
     unsigned char kind, int old_ext_size, int ext_size) nonnull_fn_decl;
 
 /* Same, but also attaches a fresh SSL* built from ssl_ctx (which is up_ref'd
- * for the lifetime of the socket). Used for STARTTLS / Bun.connect upgrade. */
+ * for the lifetime of the socket). Used for STARTTLS / Bun.connect upgrade.
+ * sni may be NULL. */
 struct us_socket_t *us_socket_adopt_tls(us_socket_r s, us_socket_group_r group,
     unsigned char kind, void /* SSL_CTX */ *ssl_ctx, const char *sni,
-    int old_ext_size, int ext_size) nonnull_fn_decl;
+    int old_ext_size, int ext_size) __attribute__((nonnull(1, 2, 4)));
 /* Send ClientHello after adopt_tls. Separate so the caller can repoint the
  * ext slot before any dispatch can fire. */
 void us_socket_start_tls_handshake(us_socket_r s) nonnull_fn_decl;
@@ -307,22 +308,25 @@ void us_socket_start_tls_handshake(us_socket_r s) nonnull_fn_decl;
  * accepted sockets. */
 struct us_listen_socket_t *us_socket_group_listen(us_socket_group_r group,
     unsigned char kind, void /* SSL_CTX */ *ssl_ctx,
-    const char *host, int port, int options, int socket_ext_size, int *error);
+    const char *host, int port, int options, int socket_ext_size, int *error)
+    __attribute__((nonnull(1, 8)));  /* ssl_ctx, host nullable */
 struct us_listen_socket_t *us_socket_group_listen_unix(us_socket_group_r group,
     unsigned char kind, void /* SSL_CTX */ *ssl_ctx,
-    const char *path, size_t pathlen, int options, int socket_ext_size, int *error);
+    const char *path, size_t pathlen, int options, int socket_ext_size, int *error)
+    __attribute__((nonnull(1, 4, 8)));  /* ssl_ctx nullable */
 void us_listen_socket_close(struct us_listen_socket_t *ls) nonnull_fn_decl;
 
 /* SNI: tree hangs off the listen socket. ssl_ctx is up_ref'd; user is opaque
- * (uWS stores a per-domain HttpRouter*). */
+ * (uWS stores a per-domain HttpRouter*). user may be NULL. */
 int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
-    const char *hostname_pattern, void /* SSL_CTX */ *ssl_ctx, void *user);
+    const char *hostname_pattern, void /* SSL_CTX */ *ssl_ctx, void *user)
+    __attribute__((nonnull(1, 2, 3)));
 void us_listen_socket_remove_server_name(struct us_listen_socket_t *ls,
-    const char *hostname_pattern);
+    const char *hostname_pattern) nonnull_fn_decl;
 void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
-    const char *hostname_pattern);
+    const char *hostname_pattern) nonnull_fn_decl;
 void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
-    void (*cb)(struct us_listen_socket_t *, const char *hostname));
+    void (*cb)(struct us_listen_socket_t *, const char *hostname)) nonnull_fn_decl;
 void *us_socket_server_name_userdata(us_socket_r s);
 
 /* ── Connect ──────────────────────────────────────────────────────────────
@@ -331,10 +335,12 @@ void *us_socket_server_name_userdata(us_socket_r s);
  * ssl_ctx may be NULL for plain TCP. */
 void *us_socket_group_connect(us_socket_group_r group, unsigned char kind,
     void /* SSL_CTX */ *ssl_ctx, const char *host, int port, int options,
-    int socket_ext_size, int *is_connecting) __attribute__((nonnull(1)));
+    int socket_ext_size, int *is_connecting)
+    __attribute__((nonnull(1, 4, 8)));  /* ssl_ctx nullable */
 struct us_socket_t *us_socket_group_connect_unix(us_socket_group_r group,
     unsigned char kind, void /* SSL_CTX */ *ssl_ctx,
-    const char *server_path, size_t pathlen, int options, int socket_ext_size);
+    const char *server_path, size_t pathlen, int options, int socket_ext_size)
+    __attribute__((nonnull(1, 4)));  /* ssl_ctx nullable */
 
 int us_socket_is_established(us_socket_r s) nonnull_fn_decl;
 void us_connecting_socket_free(struct us_connecting_socket_t *c) nonnull_fn_decl;
@@ -514,8 +520,9 @@ struct us_socket_group_t *us_listen_socket_group(struct us_listen_socket_t *ls) 
 LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) nonnull_fn_decl;
 
 /* Bun extras */
-struct us_socket_t *us_socket_pair(us_socket_group_r group, unsigned char kind, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR *fds);
-struct us_socket_t *us_socket_from_fd(us_socket_group_r group, unsigned char kind, void /* SSL_CTX */ *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc);
+struct us_socket_t *us_socket_pair(us_socket_group_r group, unsigned char kind, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR *fds) nonnull_fn_decl;
+struct us_socket_t *us_socket_from_fd(us_socket_group_r group, unsigned char kind, void /* SSL_CTX */ *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc)
+    __attribute__((nonnull(1)));  /* ssl_ctx nullable */
 struct us_socket_t *us_socket_open(struct us_socket_t *s, int is_client, char *ip, int ip_length);
 int us_raw_root_certs(struct us_cert_string_t **out);
 unsigned int us_get_remote_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);

@@ -267,6 +267,10 @@ struct us_socket_t *us_socket_close(struct us_socket_t *s, int code, void *reaso
             s->next = 0;
             s->flags.low_prio_state = 0;
             s->group->low_prio_count--;
+            /* Mirror the else branch: if this was the last thing keeping the
+             * group linked, drop it from the loop now rather than waiting for
+             * the next link/unlink to notice. */
+            us_internal_group_maybe_unlink(s->group);
         } else {
             us_internal_socket_group_unlink_socket(s->group, s);
         }
@@ -328,6 +332,10 @@ struct us_socket_t *us_socket_detach(struct us_socket_t *s) {
             s->next = 0;
             s->flags.low_prio_state = 0;
             s->group->low_prio_count--;
+            /* Mirror the else branch: if this was the last thing keeping the
+             * group linked, drop it from the loop now rather than waiting for
+             * the next link/unlink to notice. */
+            us_internal_group_maybe_unlink(s->group);
         } else {
             us_internal_socket_group_unlink_socket(s->group, s);
         }

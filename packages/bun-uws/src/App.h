@@ -234,9 +234,11 @@ public:
         }
 
         if constexpr (SSL) {
-            /* pendingServerNames owns each domain router (the SNI trees on the
-             * listen sockets hold borrowed pointers and were freed above via
-             * httpContext->free() → close_all() → us_listen_socket_close()). */
+            /* pendingServerNames is the single owner of each domain router; the
+             * SNI trees on listen sockets hold borrowed pointers. The caller
+             * must have already run TemplatedApp::close() (which close_all()'s
+             * the http group → us_listen_socket_close() → sni_free()) before
+             * destroying us — httpContext->free() above only deinit()'s. */
             for (auto &p : pendingServerNames) {
                 us_internal_ssl_ctx_unref(p.ctx);
                 delete p.router;

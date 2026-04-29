@@ -98,17 +98,18 @@ void us_socket_group_close_all(struct us_socket_group_t *group) {
      * (the queue reuses prev/next), so they'd survive the walk above and later
      * dereference s->group into freed owner storage. Drain ours out now. */
     if (group->low_prio_count) {
+        /* Don't pre-unlink — leave low_prio_state==1 so us_socket_close takes
+         * its low-prio branch (which knows the socket is NOT in head_sockets
+         * and decrements low_prio_count itself). Walking via *pp survives the
+         * close because that branch rewires the list before dispatch. */
         struct us_internal_loop_data_t *ld = &group->loop->data;
-        struct us_socket_t **pp = &ld->low_prio_head;
-        while (*pp) {
-            struct us_socket_t *q = *pp;
-            if (q->group != group) { pp = &q->next; continue; }
-            *pp = q->next;
-            if (q->next) q->next->prev = q->prev;
-            q->prev = q->next = 0;
-            q->flags.low_prio_state = 0;
-            group->low_prio_count--;
-            us_socket_close(q, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+        struct us_socket_t *q = ld->low_prio_head;
+        while (q) {
+            struct us_socket_t *next = q->next;
+            if (q->group == group) {
+                us_socket_close(q, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+            }
+            q = next;
         }
         US_ASSERT(group->low_prio_count == 0);
     }
@@ -146,7 +147,7 @@ static inline void us_internal_group_touched(struct us_socket_group_t *group) {
     }
 }
 
-static inline void us_internal_group_maybe_unlink(struct us_socket_group_t *group) {
+void us_internal_group_maybe_unlink(struct us_socket_group_t *group) {
     if (group->linked && us_internal_group_is_empty(group)) {
         us_internal_loop_unlink_group(group->loop, group);
         group->linked = 0;

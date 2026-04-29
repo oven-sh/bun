@@ -65,7 +65,7 @@ pub const max_size = std.math.maxInt(SizeType);
 ///    and f64 for `last_modified`. Removed reserved bytes, it's handled by version
 ///    number.
 /// 3: Added File name serialization for File objects (when is_jsdom_file is true)
-const serialization_version: u8 = 3;
+const serialization_version: u8 = 4;
 
 comptime {
     _ = Bun__Blob__getSizeForBindings;
@@ -434,7 +434,10 @@ fn _onStructuredCloneDeserialize(
             const bytes_len = try reader.readInt(u32, .little);
             const bytes = try readSlice(reader, bytes_len, allocator);
 
-            const blob = Blob.init(bytes, allocator, globalThis);
+            var blob = Blob.init(bytes, allocator, globalThis);
+            // If any subsequent read fails, tear the blob down so its store
+            // (and any part-size metadata already attached) isn't leaked.
+            errdefer blob.deinit();
 
             versions: {
                 if (version == 1) break :versions;
@@ -448,6 +451,22 @@ fn _onStructuredCloneDeserialize(
                 };
 
                 if (version == 2) break :versions;
+                if (version == 3) break :versions;
+
+                // Version 4: part boundaries for multi-part blobs. The
+                // serializer only writes trailing sizes when part_count > 1
+                // (setPartSizes refuses shorter arrays), so part_count < 2
+                // means "no trailing sizes" — don't drain anything.
+                const part_count = try reader.readInt(u32, .little);
+                if (part_count > 1) {
+                    const sizes = try bun.default_allocator.alloc(SizeType, part_count);
+                    errdefer bun.default_allocator.free(sizes);
+                    var i: u32 = 0;
+                    while (i < part_count) : (i += 1) {
+                        sizes[i] = @truncate(try reader.readInt(u64, .little));
+                    }
+                    setPartSizes(blob.store, sizes);
+                }
             }
 
             break :bytes Blob.new(blob);
@@ -1878,6 +1897,8 @@ fn calculateEstimatedByteSize(this: *Blob) void {
         switch (store.data) {
             .bytes => {
                 size += store.data.bytes.stored_name.estimatedSize();
+                if (store.data.bytes.part_sizes != null)
+                    size += @as(usize, store.data.bytes.part_count) * @sizeOf(SizeType);
                 size += if (this.size != Blob.max_size)
                     this.size
                 else
@@ -3410,6 +3431,17 @@ pub fn initWithAllASCII(bytes: []u8, allocator: std.mem.Allocator, globalThis: *
     };
 }
 
+fn setPartSizes(store: ?*Blob.Store, part_sizes: ?[]SizeType) void {
+    const sizes = part_sizes orelse return;
+    if (store == null or sizes.len <= 1) {
+        bun.default_allocator.free(sizes);
+        return;
+    }
+    const s = store.?;
+    s.data.bytes.part_sizes = sizes.ptr;
+    s.data.bytes.part_count = @truncate(sizes.len);
+}
+
 /// Takes ownership of `bytes`, which must have been allocated with `allocator`.
 pub fn init(bytes: []u8, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) Blob {
     return Blob{
@@ -4180,12 +4212,16 @@ fn fromJSWithoutDeferGC(
         current = stack.pop() orelse break;
     }
 
-    const joined = try joiner.done(bun.default_allocator);
+    const joined, const part_sizes = try joiner.doneWithPartSizes(bun.default_allocator, true);
 
     if (!could_have_non_ascii) {
-        return Blob.initWithAllASCII(joined, bun.default_allocator, global, true);
+        const blob = Blob.initWithAllASCII(joined, bun.default_allocator, global, true);
+        setPartSizes(blob.store, part_sizes);
+        return blob;
     }
-    return Blob.init(joined, bun.default_allocator, global);
+    const blob = Blob.init(joined, bun.default_allocator, global);
+    setPartSizes(blob.store, part_sizes);
+    return blob;
 }
 
 pub const Any = union(enum) {

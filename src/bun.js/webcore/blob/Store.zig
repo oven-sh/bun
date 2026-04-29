@@ -11,7 +11,8 @@ pub const new = bun.TrivialNew(@This());
 
 pub fn memoryCost(this: *const Store) usize {
     return if (this.hasOneRef()) @sizeOf(@This()) + switch (this.data) {
-        .bytes => this.data.bytes.len,
+        .bytes => this.data.bytes.len +
+            if (this.data.bytes.part_sizes != null) @as(usize, this.data.bytes.part_count) * @sizeOf(SizeType) else 0,
         .file => 0,
         .s3 => |s3| s3.estimatedSize(),
     } else 0;
@@ -238,6 +239,16 @@ pub fn serialize(this: *Store, comptime Writer: type, writer: Writer) !void {
 
             try writer.writeInt(u32, @truncate(bytes.stored_name.slice().len), .little);
             try writer.writeAll(bytes.stored_name.slice());
+
+            // Version 4: preserve multi-part boundaries so a blob transferred
+            // via postMessage/structuredClone still streams one chunk per part.
+            try writer.writeInt(u32, @truncate(bytes.part_count), .little);
+            if (bytes.part_sizes) |sizes| {
+                var i: SizeType = 0;
+                while (i < bytes.part_count) : (i += 1) {
+                    try writer.writeInt(u64, @as(u64, @intCast(sizes[i])), .little);
+                }
+            }
         },
     }
 }
@@ -478,6 +489,11 @@ pub const Bytes = struct {
     /// Used by standalone module graph and the File constructor
     stored_name: bun.PathString = bun.PathString.empty,
 
+    /// Original part sizes from Blob construction (for streaming with
+    /// preserved part boundaries). Owned by default_allocator.
+    part_sizes: ?[*]SizeType = null,
+    part_count: SizeType = 0,
+
     /// Takes ownership of `bytes`, which must have been allocated with
     /// `allocator`.
     pub fn init(bytes: []u8, allocator: std.mem.Allocator) Bytes {
@@ -540,6 +556,11 @@ pub const Bytes = struct {
 
     pub fn deinit(this: *Bytes) void {
         bun.default_allocator.free(this.stored_name.slice());
+        if (this.part_sizes) |sizes| {
+            bun.default_allocator.free(sizes[0..this.part_count]);
+            this.part_sizes = null;
+            this.part_count = 0;
+        }
         if (this.ptr) |ptr| {
             this.allocator.free(ptr[0..this.cap]);
         }

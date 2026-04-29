@@ -12,7 +12,6 @@
 #include "CachedScript.h"
 #include "wtf/ThreadSafeWeakPtr.h"
 #include <wtf/URL.h>
-#include <wtf/LazyRef.h>
 
 namespace uWS {
 template<bool isServer, bool isClient, typename UserData>
@@ -26,7 +25,6 @@ struct us_loop_t;
 namespace WebCore {
 
 class WebSocket;
-class BunBroadcastChannelRegistry;
 class MessagePort;
 
 class ScriptExecutionContext;
@@ -114,11 +112,6 @@ public:
     void didCreateDestructionObserver(ContextDestructionObserver&);
     void willDestroyDestructionObserver(ContextDestructionObserver&);
 
-    void processMessageWithMessagePortsSoon(CompletionHandler<void()>&&);
-    void createdMessagePort(MessagePort&);
-    void destroyedMessagePort(MessagePort&);
-
-    void dispatchMessagePortEvents();
     void checkConsistency() const;
 
     void regenerateIdentifier();
@@ -149,8 +142,6 @@ public:
         m_vm = &globalObject->vm();
     }
 
-    BunBroadcastChannelRegistry& broadcastChannelRegistry() { return m_broadcastChannelRegistry.get(*this); }
-
     static ScriptExecutionContext* getMainThreadScriptExecutionContext();
 
 private:
@@ -159,12 +150,7 @@ private:
     WTF::URL m_url = WTF::URL();
     ScriptExecutionContextIdentifier m_identifier;
 
-    UncheckedKeyHashSet<MessagePort*> m_messagePorts;
     UncheckedKeyHashSet<ContextDestructionObserver*> m_destructionObservers;
-    Vector<CompletionHandler<void()>> m_processMessageWithMessagePortsSoonHandlers;
-    LazyRef<ScriptExecutionContext, BunBroadcastChannelRegistry> m_broadcastChannelRegistry;
-
-    bool m_willProcessMessageWithMessagePortsSoon { false };
 
     us_socket_context_t* webSocketContextSSL();
     us_socket_context_t* webSocketContextNoSSL();

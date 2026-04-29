@@ -1,52 +1,67 @@
 #include "config.h"
-
 #include "BunBroadcastChannelRegistry.h"
-#include "webcore/BroadcastChannel.h"
-#include "webcore/MessageWithMessagePorts.h"
-#include <wtf/CallbackAggregator.h>
+
+#include "BroadcastChannel.h"
+#include "SerializedScriptValue.h"
+#include <wtf/Locker.h>
+#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 
-void BunBroadcastChannelRegistry::registerChannel(const String& name, BroadcastChannelIdentifier identifier)
+BunBroadcastChannelRegistry& BunBroadcastChannelRegistry::singleton()
 {
-    auto& channels = m_channelsForName.ensure(name, [] { return Vector<BroadcastChannelIdentifier> {}; }).iterator->value;
-    channels.append(identifier);
+    static NeverDestroyed<BunBroadcastChannelRegistry> registry;
+    return registry.get();
 }
 
-void BunBroadcastChannelRegistry::unregisterChannel(const String& name, BroadcastChannelIdentifier identifier)
+void BunBroadcastChannelRegistry::subscribe(const String& name, ScriptExecutionContextIdentifier ctxId, BroadcastChannel& channel)
 {
-    auto channels = m_channelsForName.find(name);
-    if (channels == m_channelsForName.end())
+    Locker locker { m_lock };
+    auto& list = m_subscribers.ensure(name.isolatedCopy(), [] { return Vector<Subscriber> {}; }).iterator->value;
+    list.append(Subscriber { ctxId, ThreadSafeWeakPtr<BroadcastChannel> { channel }, &channel });
+}
+
+void BunBroadcastChannelRegistry::unsubscribe(const String& name, BroadcastChannel& channel)
+{
+    Locker locker { m_lock };
+    auto it = m_subscribers.find(name);
+    if (it == m_subscribers.end())
         return;
-
-    auto& channelIds = channels->value;
-    channelIds.removeFirst(identifier);
+    it->value.removeFirstMatching([&](const Subscriber& s) {
+        return s.identity == &channel;
+    });
+    if (it->value.isEmpty())
+        m_subscribers.remove(it);
 }
 
-void BunBroadcastChannelRegistry::postMessage(const String& name, BroadcastChannelIdentifier source, Ref<SerializedScriptValue>&& message)
+void BunBroadcastChannelRegistry::post(const String& name, BroadcastChannel& source, Ref<SerializedScriptValue>&& message)
 {
-    postMessageLocally(name, source, message.copyRef());
-}
+    // Snapshot under the lock so fan-out runs without holding it —
+    // postTaskTo takes the contexts-map lock and we don't want to nest.
+    Vector<Subscriber> snapshot;
+    {
+        Locker locker { m_lock };
+        auto it = m_subscribers.find(name);
+        if (it == m_subscribers.end())
+            return;
+        snapshot = it->value;
+    }
 
-void BunBroadcastChannelRegistry::postMessageLocally(const String& name, BroadcastChannelIdentifier sourceInProcess, Ref<SerializedScriptValue>&& message)
-{
-    auto channels = m_channelsForName.find(name);
-    if (channels == m_channelsForName.end())
-        return;
-
-    auto& channelIds = channels->value;
-    for (auto& channelId : channelIds) {
-        if (channelId == sourceInProcess)
+    // One task per (message, subscriber), queued in subscription order.
+    // Same-context subscribers share a task queue, so this preserves the
+    // spec-mandated (message-major, creation-minor) delivery order.
+    for (auto& sub : snapshot) {
+        if (sub.identity == &source)
             continue;
-
-        BroadcastChannel::dispatchMessageTo(channelId, message.copyRef());
+        RefPtr channel = sub.channel.get();
+        if (!channel)
+            continue;
+        // Keep the channel alive for GC until the task runs.
+        channel->m_state.fetch_add(BroadcastChannel::QueuedOne, std::memory_order_acq_rel);
+        ScriptExecutionContext::postTaskTo(sub.ctxId, [channel = channel.releaseNonNull(), message = message.copyRef()](ScriptExecutionContext&) mutable {
+            channel->dispatchMessage(WTF::move(message));
+        });
     }
 }
 
-void BunBroadcastChannelRegistry::postMessageToRemote(const String& name, MessageWithMessagePorts&& message)
-{
-    // auto callbackAggregator = CallbackAggregator::create(WTF::move(completionHandler));
-    // PartitionedSecurityOrigin origin { clientOrigin.topOrigin.securityOrigin(), clientOrigin.clientOrigin.securityOrigin() };
-    // postMessageLocally(origin, name, std::nullopt, *message.message, callbackAggregator.copyRef());
-}
-}
+} // namespace WebCore

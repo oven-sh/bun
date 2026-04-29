@@ -12,9 +12,6 @@
 
 namespace WebCore {
 
-class MessagePortChannelProvider;
-class MessagePortChannelProviderImpl;
-
 class WorkerGlobalScope : public RefCounted<WorkerGlobalScope>, public EventTargetWithInlineData {
     WTF_MAKE_TZONE_ALLOCATED(WorkerGlobalScope);
 
@@ -45,8 +42,6 @@ public:
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
     void eventListenersDidChange() final {}
-
-    MessagePortChannelProvider& messagePortChannelProvider();
 
     ScriptExecutionContext* m_context;
 };

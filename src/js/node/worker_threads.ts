@@ -218,8 +218,9 @@ let parentPort: MessagePort | null = isMainThread ? null : fakeParentPort();
 // evaluates node:worker_threads (see setupMainThreadPort below). Node.js wires it during worker
 // bootstrap unconditionally, so postMessageToThread(id, value) with no timeout to a worker that
 // never imports worker_threads rejects with ERR_WORKER_MESSAGING_FAILED there, whereas here the
-// promise stays pending until the worker exits or a timeout is supplied. In practice a
-// node:worker_threads Worker almost always imports the module for parentPort/workerData.
+// promise stays pending indefinitely unless a timeout is supplied (worker exit closes the port
+// but does not notify already-pending waiters). In practice a node:worker_threads Worker almost
+// always imports the module for parentPort/workerData.
 
 const kRegisterMainThreadPort = 0;
 const kUnregisterMainThreadPort = 1;

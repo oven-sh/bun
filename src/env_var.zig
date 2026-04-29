@@ -50,6 +50,11 @@ pub const BUN_DEBUG_HASH_RANDOM_SEED = New(kind.unsigned, "BUN_DEBUG_HASH_RANDOM
 pub const BUN_DEBUG_QUIET_LOGS = New(kind.boolean, "BUN_DEBUG_QUIET_LOGS", .{});
 pub const BUN_DEBUG_TEST_TEXT_LOCKFILE = New(kind.boolean, "BUN_DEBUG_TEST_TEXT_LOCKFILE", .{ .default = false });
 pub const BUN_DEV_SERVER_TEST_RUNNER = New(kind.string, "BUN_DEV_SERVER_TEST_RUNNER", .{});
+/// Opt-in: when truthy, Bun watches its original parent pid and exits as soon
+/// as that process dies (even if the parent was SIGKILLed and couldn't forward
+/// a signal), and on its own clean exit recursively SIGTERMs every descendant
+/// so nothing it spawned outlives it. See `src/ParentDeathWatchdog.zig`.
+pub const BUN_DIE_WITH_PARENT = New(kind.boolean, "BUN_DIE_WITH_PARENT", .{ .default = false });
 pub const BUN_ENABLE_CRASH_REPORTING = New(kind.boolean, "BUN_ENABLE_CRASH_REPORTING", .{});
 pub const BUN_FEATURE_FLAG_DUMP_CODE = New(kind.string, "BUN_FEATURE_FLAG_DUMP_CODE", .{});
 /// TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior

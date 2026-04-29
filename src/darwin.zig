@@ -101,5 +101,41 @@ pub const OSLog = opaque {
     };
 };
 
+/// libproc: enumerate the direct children of `ppid`. `buffersize` is in
+/// *bytes*; return value is the *count* of pids written (libproc.c divides the
+/// kernel's byte count by `sizeof(int)` for you), or -1 on error. Passing a
+/// null buffer / zero size returns the count needed.
+pub extern "c" fn proc_listchildpids(ppid: std.c.pid_t, buffer: ?[*]std.c.pid_t, buffersize: c_int) c_int;
+
+/// libproc: per-pid info. `flavor` selects the struct returned in `buffer`.
+pub extern "c" fn proc_pidinfo(pid: std.c.pid_t, flavor: c_int, arg: u64, buffer: *anyopaque, buffersize: c_int) c_int;
+
+pub const PROC_PIDTBSDINFO: c_int = 3;
+
+/// Prefix of `struct proc_bsdinfo` from `<sys/proc_info.h>` — only the leading
+/// fields we read. `proc_pidinfo` is given the full `PROC_PIDTBSDINFO_SIZE` so
+/// the kernel fills past these; we just don't name the tail.
+pub const proc_bsdinfo = extern struct {
+    pbi_flags: u32,
+    pbi_status: u32,
+    pbi_xstatus: u32,
+    pbi_pid: u32,
+    pbi_ppid: u32,
+    // … 0x40 bytes total before the two MAXCOMLEN name arrays.
+    _tail: [PROC_PIDTBSDINFO_SIZE - 5 * @sizeOf(u32)]u8 = undefined,
+};
+
+/// `sizeof(struct proc_bsdinfo)` — required as `buffersize` for
+/// `PROC_PIDTBSDINFO`; the syscall rejects anything smaller.
+pub const PROC_PIDTBSDINFO_SIZE: c_int = 136;
+
+comptime {
+    bun.assertf(
+        @sizeOf(proc_bsdinfo) == PROC_PIDTBSDINFO_SIZE,
+        "proc_bsdinfo size drifted from PROC_PIDTBSDINFO_SIZE",
+        .{},
+    );
+}
+
 const bun = @import("bun");
 const std = @import("std");

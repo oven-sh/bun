@@ -1368,7 +1368,16 @@ pub fn spawnProcessPosix(
     attr.new_process_group = options.new_process_group;
 
     if (Environment.isLinux) {
-        attr.linux_pdeathsig = if (options.linux_pdeathsig) |sig| @intCast(sig) else 0;
+        // Explicit per-spawn value wins; otherwise BUN_DIE_WITH_PARENT defaults
+        // every child to SIGTERM-on-parent-death so non-Bun descendants are
+        // covered without relying on env-var inheritance, and the prctl happens
+        // in the vfork child before exec so there's no startup race.
+        attr.linux_pdeathsig = if (options.linux_pdeathsig) |sig|
+            @intCast(sig)
+        else if (bun.ParentDeathWatchdog.isEnabled())
+            std.posix.SIG.TERM
+        else
+            0;
     }
 
     if (options.cwd.len > 0) {

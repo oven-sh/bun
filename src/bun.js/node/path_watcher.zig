@@ -423,7 +423,6 @@ const Linux = struct {
 
     /// Caller holds `manager.mutex`.
     fn addWatch(manager: *PathWatcherManager, watcher: *PathWatcher) bun.sys.Maybe(void) {
-        const plat = &manager.platform;
         switch (addOne(manager, watcher, watcher.path, "")) {
             .err => |e| return .{ .err = e },
             .result => {},
@@ -431,7 +430,6 @@ const Linux = struct {
         if (watcher.recursive and !watcher.is_file) {
             walkAndAdd(manager, watcher, watcher.path, "");
         }
-        _ = plat;
         return .success;
     }
 
@@ -578,7 +576,7 @@ const Linux = struct {
                     continue;
                 }
 
-                const owners = plat.wd_map.getPtr(ev.wd) orelse continue;
+                if (plat.wd_map.getPtr(ev.wd) == null) continue;
 
                 const name: []const u8 = if (ev.len > 0) blk: {
                     const name_ptr: [*:0]const u8 = @ptrCast(buf[i - ev.len ..].ptr);
@@ -592,13 +590,20 @@ const Linux = struct {
                 else
                     .change;
 
-                // Dispatch to every owner of this wd. `addOne` may append to `owners`
-                // (when a recursive owner picks up a newly-created subdir that happens
-                // to share this wd), so iterate by index and re-read `.items` each turn.
+                // Dispatch to every owner of this wd. The recursive branch below calls
+                // `addOne`/`walkAndAdd`, which insert into `wd_map` via `getOrPut` and
+                // may rehash — that would invalidate any pointer into the map's value
+                // storage. Re-fetch the owners list by key each iteration rather than
+                // caching `getPtr(ev.wd)` across the loop.
                 var oi: usize = 0;
-                while (oi < owners.items.len) : (oi += 1) {
+                while (true) : (oi += 1) {
+                    const owners = plat.wd_map.getPtr(ev.wd) orelse break;
+                    if (oi >= owners.items.len) break;
                     const owner = owners.items[oi];
                     const watcher = owner.watcher;
+                    // `owner.subpath` is heap-owned by the entry and stays valid across a
+                    // rehash (only the ArrayList header moves), so copying it out here is
+                    // not required.
 
                     // Build the path relative to this owner's root.
                     const rel: []const u8 = if (watcher.is_file) blk: {
@@ -625,6 +630,7 @@ const Linux = struct {
                             std.fmt.bufPrintZ(abs_buf, "{s}/{s}", .{ watcher.path, name }) catch continue
                         else
                             std.fmt.bufPrintZ(abs_buf, "{s}/{s}/{s}", .{ watcher.path, owner.subpath, name }) catch continue;
+                        // These may rehash `wd_map`; `owners` is re-fetched next iteration.
                         _ = addOne(manager, watcher, child_abs, rel);
                         walkAndAdd(manager, watcher, child_abs, rel);
                     }

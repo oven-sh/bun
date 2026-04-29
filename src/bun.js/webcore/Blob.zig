@@ -2329,6 +2329,7 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
                 if (strings.isAllASCII(slice)) {
                     if (this.content_type_allocated) {
                         bun.default_allocator.free(this.content_type);
+                        this.content_type_allocated = false;
                     }
                     this.content_type_was_set = true;
 
@@ -2672,6 +2673,7 @@ pub fn getWriter(
                     if (strings.isAllASCII(slice)) {
                         if (this.content_type_allocated) {
                             bun.default_allocator.free(this.content_type);
+                            this.content_type_allocated = false;
                         }
                         this.content_type_was_set = true;
 
@@ -2841,6 +2843,12 @@ pub fn getSliceFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, relativeStart:
     var blob = this.dupe();
     blob.offset = offset;
     blob.size = len;
+
+    // dupe() deep-copies an allocated content_type; we're about to replace it,
+    // so release that copy first to avoid leaking it.
+    if (blob.content_type_allocated) {
+        bun.default_allocator.free(blob.content_type);
+    }
 
     // infer the content type if it was not specified
     if (content_type.len == 0 and this.content_type.len > 0 and !this.content_type_allocated) {
@@ -3560,6 +3568,12 @@ pub fn deinit(this: *Blob) void {
     this.name.deref();
     this.name = .dead;
 
+    if (this.content_type_allocated) {
+        bun.default_allocator.free(this.content_type);
+        this.content_type = "";
+        this.content_type_allocated = false;
+    }
+
     if (this.isHeapAllocated()) {
         bun.destroy(this);
     }
@@ -3998,22 +4012,26 @@ fn fromJSWithoutDeferGC(
                 if (!fail_if_top_value_is_not_typed_array_like) {
                     if (top_value.as(Blob)) |blob| {
                         if (comptime move) {
+                            // Move the store without bumping its refcount, but take
+                            // independent ownership of name/content_type so the
+                            // source's eventual finalize() doesn't double-free them.
                             var _blob = blob.*;
                             _blob.setNotHeapAllocated();
+                            _blob.name = blob.name.dupeRef();
+                            if (blob.content_type_allocated) {
+                                _blob.content_type = bun.handleOom(bun.default_allocator.dupe(u8, blob.content_type));
+                            }
                             blob.transfer();
                             return _blob;
                         } else {
                             return blob.dupe();
                         }
                     } else if (top_value.as(jsc.API.BuildArtifact)) |build| {
-                        if (comptime move) {
-                            // I don't think this case should happen?
-                            var blob = build.blob;
-                            blob.transfer();
-                            return blob;
-                        } else {
-                            return build.blob.dupe();
-                        }
+                        // The previous "move" path here only nulled the store on a
+                        // local copy and left `build.blob` fully intact, so it was
+                        // never a real move. Share the store and deep-copy owned
+                        // buffers instead.
+                        return build.blob.dupe();
                     } else {
                         const sliced = try current.toSliceClone(global);
                         if (sliced.allocator.get()) |allocator| {

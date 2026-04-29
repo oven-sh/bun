@@ -12,20 +12,22 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 // FSWatchTaskPosix is the POSIX-only code path.
-test.skipIf(isWindows)("fs.watch: FSWatchTask enqueue fully initializes ConcurrentTask", async () => {
-  using dir = tempDir("fswatch-concurrent-task", {
-    "a.txt": "a",
-    "b.txt": "b",
-    "c.txt": "c",
-    "d.txt": "d",
-  });
+test.skipIf(isWindows)(
+  "fs.watch: FSWatchTask enqueue fully initializes ConcurrentTask",
+  async () => {
+    using dir = tempDir("fswatch-concurrent-task", {
+      "a.txt": "a",
+      "b.txt": "b",
+      "c.txt": "c",
+      "d.txt": "d",
+    });
 
-  // The regression signal here is the debug assertion / no heap corruption in
-  // FSWatchTask.enqueue(), not event-delivery count. On macOS, directory watches
-  // route through FSEvents which has ~50ms coalescing latency and async stream
-  // registration, so we wait for the first event before counting stress rounds
-  // rather than assuming a fixed number of setImmediate turns is "enough time".
-  const fixture = /* js */ `
+    // The regression signal here is the debug assertion / no heap corruption in
+    // FSWatchTask.enqueue(), not event-delivery count. On macOS, directory watches
+    // route through FSEvents which has ~50ms coalescing latency and async stream
+    // registration, so we wait for the first event before counting stress rounds
+    // rather than assuming a fixed number of setImmediate turns is "enough time".
+    const fixture = /* js */ `
     const fs = require("fs");
     const path = require("path");
     const dir = ${JSON.stringify(String(dir))};
@@ -70,16 +72,18 @@ test.skipIf(isWindows)("fs.watch: FSWatchTask enqueue fully initializes Concurre
     })();
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout).toStartWith("OK ");
-  expect(exitCode).toBe(0);
-}, 30_000);
+    expect(stderr).toBe("");
+    expect(stdout).toStartWith("OK ");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);

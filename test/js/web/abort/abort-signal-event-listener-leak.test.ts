@@ -1,5 +1,6 @@
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 // addEventListener({ signal }) registers an abort algorithm on the signal
 // that removes the listener when the signal aborts. That algorithm must be
@@ -108,5 +109,46 @@ describe("addEventListener({ signal }) does not leak abort algorithms", () => {
 
     target.dispatchEvent(new Event("qux"));
     expect(calls).toBe(0);
+  });
+
+  test("GC of signal with self-referencing { signal } listener does not crash", async () => {
+    // signal.addEventListener(type, fn, { signal }) stores a WeakPtr back
+    // to the signal on the RegisteredEventListener. When the signal is
+    // GC'd without aborting, ~AbortSignal() must invalidate that WeakPtr
+    // before m_algorithms is destroyed, otherwise ~EventTarget() →
+    // EventListenerMap::clear() → markAsRemoved() resolves it (the
+    // WeakPtrFactory base destructor runs after ~EventTarget()) and calls
+    // removeAlgorithm() on a freed Vector / ref()s a mid-deletion object.
+    // Run in a subprocess so an ASAN report or debug ASSERT surfaces as a
+    // non-zero exit instead of taking down the test runner.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          for (let i = 0; i < 200; i++) {
+            const controller = new AbortController();
+            const signal = controller.signal;
+            signal.addEventListener("abort", () => {}, { signal });
+            signal.addEventListener("foo", () => {}, { signal });
+          }
+          Bun.gc(true);
+          for (let i = 0; i < 200; i++) {
+            const controller = new AbortController();
+            const signal = controller.signal;
+            signal.addEventListener("abort", () => {}, { signal });
+          }
+          Bun.gc(true);
+          console.log("ok");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
   });
 });

@@ -43,10 +43,17 @@ void RegisteredEventListener::markAsRemoved()
     // If this listener was registered with an AbortSignal, drop the
     // corresponding abort algorithm so the signal's m_algorithms vector
     // doesn't grow unboundedly when the same long-lived signal is reused
-    // across many addEventListener/removeEventListener cycles. This is
-    // safe when called from AbortSignal::runAbortSteps() because that path
-    // swaps out m_algorithms before iterating, so removeAlgorithm() is a
-    // no-op on the (now empty) vector.
+    // across many addEventListener/removeEventListener cycles.
+    //
+    // Safe when reached via AbortSignal::runAbortSteps(): that path swaps
+    // out m_algorithms before iterating, so removeAlgorithm() is a no-op
+    // on the (now empty) vector.
+    //
+    // Safe when reached via ~EventTarget() for the self-signal case
+    // (signal.addEventListener(type, fn, { signal })): ~AbortSignal()
+    // invalidates WeakPtrs to itself before member destruction, so
+    // m_abortSignal.get() is null here and we never touch the signal
+    // mid-destruction.
     if (RefPtr signal = m_abortSignal.get()) {
         m_abortSignal = nullptr;
         signal->removeAlgorithm(m_abortAlgorithmIdentifier);

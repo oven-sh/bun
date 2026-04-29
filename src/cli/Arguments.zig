@@ -469,7 +469,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         cwd = try bun.getcwdAlloc(allocator);
     }
 
-    if (cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand) {
+    if (cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand or cmd == .BunxCommand) {
         if (args.flag("--no-orphans")) bun.ParentDeathWatchdog.enable();
     }
 

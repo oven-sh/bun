@@ -71,18 +71,27 @@ public:
     }
 
     // Called once per spawnSync, after the kqueue is created and the script
-    // has been spawned. Seeds `seen` with our own uniqueid (so the script —
-    // and anything we ourselves spawned — chains) and stashes kq for later
+    // has been spawned. Seeds `seen` with the *script's* uniqueid (not the
+    // current process's — we don't want to track or kill unrelated siblings
+    // the caller may have spawned) and stashes kq for later
     // NOTE_FORK|NOTE_EXIT registrations on newly discovered descendants.
-    void begin(int kq)
+    void begin(int kq, pid_t root)
     {
         m_seen.clear();
         m_tracked.clear();
         m_kq = kq;
-        ProcUniqIdentifierInfo self;
-        if (ProcUniqIdentifierInfo::read(getpid(), self))
-            m_seen.add(self.p_uniqueid);
+        ProcUniqIdentifierInfo r;
+        if (ProcUniqIdentifierInfo::read(root, r)) {
+            m_seen.add(r.p_uniqueid);
+            m_tracked.append({ root, r.p_uniqueid });
+        }
     }
+
+    // Detach from the borrowed kqueue before its owner closes it. The
+    // final-sweep `scan()` inside `killTracked()` runs after `waitMacKqueue`
+    // has returned and its `defer kq_fd.close()` has fired; without this we'd
+    // `kevent()` on a closed (or worse, reused) fd.
+    void releaseKq() { m_kq = -1; }
 
     // Fixed-point scan: enumerate all pids, pull anyone whose p_puniqueid is
     // already in `seen` into the tracked set (and into `seen` so the next
@@ -198,14 +207,16 @@ private:
 
 } // namespace Bun
 
-extern "C" void Bun__noOrphans_begin(int kq) { Bun::NoOrphansTracker::get().begin(kq); }
+extern "C" void Bun__noOrphans_begin(int kq, pid_t root) { Bun::NoOrphansTracker::get().begin(kq, root); }
+extern "C" void Bun__noOrphans_releaseKq() { Bun::NoOrphansTracker::get().releaseKq(); }
 extern "C" void Bun__noOrphans_scan() { Bun::NoOrphansTracker::get().scan(); }
 extern "C" void Bun__noOrphans_onExit(pid_t pid) { Bun::NoOrphansTracker::get().onExit(pid); }
 extern "C" void Bun__noOrphans_killTracked() { Bun::NoOrphansTracker::get().killTracked(); }
 
 #else // !OS(DARWIN)
 
-extern "C" void Bun__noOrphans_begin(int) {}
+extern "C" void Bun__noOrphans_begin(int, int) {}
+extern "C" void Bun__noOrphans_releaseKq() {}
 extern "C" void Bun__noOrphans_scan() {}
 extern "C" void Bun__noOrphans_onExit(int) {}
 extern "C" void Bun__noOrphans_killTracked() {}

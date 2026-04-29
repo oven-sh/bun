@@ -2204,7 +2204,8 @@ pub const sync = struct {
     extern "c" fn Bun__unregisterSignalsForForwarding() void;
 
     // macOS p_puniqueid descendant tracker — see NoOrphansTracker.cpp.
-    extern "c" fn Bun__noOrphans_begin(kq: c_int) void;
+    extern "c" fn Bun__noOrphans_begin(kq: c_int, root: std.c.pid_t) void;
+    extern "c" fn Bun__noOrphans_releaseKq() void;
     extern "c" fn Bun__noOrphans_scan() void;
     extern "c" fn Bun__noOrphans_onExit(pid: std.c.pid_t) void;
 
@@ -2279,8 +2280,9 @@ pub const sync = struct {
         Bun__currentSyncPID = if (no_orphans) -@as(i64, @intCast(process.pid)) else @intCast(process.pid);
 
         var fg = ForegroundPgrp{};
+        var pgid_pushed = false;
         if (no_orphans) {
-            bun.ParentDeathWatchdog.pushSyncPgid(process.pid);
+            pgid_pushed = bun.ParentDeathWatchdog.pushSyncPgid(process.pid);
             // Script is now a background pgroup; if stdin is a TTY hand it the
             // foreground so Ctrl-C / Ctrl-Z and TTY reads behave exactly as
             // before. Non-TTY stdin (the Electron / CI / VS Code case this
@@ -2293,7 +2295,7 @@ pub const sync = struct {
             // matters: pgroup-kill is one syscall and stops most things from
             // forking before the slower scans run.
             bun.ParentDeathWatchdog.killSyncPgroupsAndDescendants();
-            bun.ParentDeathWatchdog.popSyncPgid();
+            if (pgid_pushed) bun.ParentDeathWatchdog.popSyncPgid();
         };
 
         Bun__sendPendingSignalIfNecessary();
@@ -2347,44 +2349,44 @@ pub const sync = struct {
         // (FreeBSD) falls through to the original `poll()`+`wait4()` below so
         // buffered stdio still drains; the `defer` above still does the
         // pgroup kill + tcsetpgrp restore there.
-        if (no_orphans and (Environment.isLinux or Environment.isMac)) {
+        //
+        // Do NOT return from here — Linux backs `.buffer` stdio with memfds
+        // that are read *after* the wait, so falling through to the memfd block
+        // below is required.
+        const status: Status = if (no_orphans and (Environment.isLinux or Environment.isMac)) blk: {
             const ppid = bun.ParentDeathWatchdog.ppidToWatch() orelse 0;
-            switch (waitForChildNoOrphans(process.pid, ppid, process.pidfd, &out, &out_fds_to_wait_for, &out_fds)) {
+            switch (waitForChildNoOrphans(process.pid, ppid, &out, &out_fds_to_wait_for, &out_fds)) {
                 .err => |err| return .{ .err = err },
-                .result => |status| {
-                    success = true;
-                    return .{ .result = Result{ .status = status, .stdout = out[0], .stderr = out[1] } };
-                },
+                .result => |st| break :blk st,
             }
-        }
+        } else blk: {
+            while (out_fds_to_wait_for[0] != bun.invalid_fd or out_fds_to_wait_for[1] != bun.invalid_fd) {
+                for (&out_fds_to_wait_for, &out, &out_fds) |*fd, *bytes, *out_fd| {
+                    if (drainFd(fd, out_fd, bytes)) |err| return .{ .err = err };
+                }
 
-        while (out_fds_to_wait_for[0] != bun.invalid_fd or out_fds_to_wait_for[1] != bun.invalid_fd) {
-            for (&out_fds_to_wait_for, &out, &out_fds) |*fd, *bytes, *out_fd| {
-                if (drainFd(fd, out_fd, bytes)) |err| return .{ .err = err };
+                var poll_fds_buf: [2]std.c.pollfd = undefined;
+                var poll_fds: []std.c.pollfd = poll_fds_buf[0..0];
+                for (out_fds_to_wait_for) |fd| {
+                    if (fd == bun.invalid_fd) continue;
+                    poll_fds.len += 1;
+                    poll_fds[poll_fds.len - 1] = .{
+                        .fd = @intCast(fd.cast()),
+                        .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP,
+                        .revents = 0,
+                    };
+                }
+                if (poll_fds.len == 0) break;
+
+                const rc = std.c.poll(poll_fds.ptr, @intCast(poll_fds.len), -1);
+                switch (bun.sys.getErrno(rc)) {
+                    .SUCCESS => {},
+                    .AGAIN, .INTR => continue,
+                    else => |err| return .{ .err = bun.sys.Error.fromCode(err, .poll) },
+                }
             }
-
-            var poll_fds_buf: [2]std.c.pollfd = undefined;
-            var poll_fds: []std.c.pollfd = poll_fds_buf[0..0];
-            for (out_fds_to_wait_for) |fd| {
-                if (fd == bun.invalid_fd) continue;
-                poll_fds.len += 1;
-                poll_fds[poll_fds.len - 1] = .{
-                    .fd = @intCast(fd.cast()),
-                    .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP,
-                    .revents = 0,
-                };
-            }
-            if (poll_fds.len == 0) break;
-
-            const rc = std.c.poll(poll_fds.ptr, @intCast(poll_fds.len), -1);
-            switch (bun.sys.getErrno(rc)) {
-                .SUCCESS => {},
-                .AGAIN, .INTR => continue,
-                else => |err| return .{ .err = bun.sys.Error.fromCode(err, .poll) },
-            }
-        }
-
-        const status = reapChild(process.pid);
+            break :blk reapChild(process.pid);
+        };
 
         if (comptime Environment.isLinux) {
             for (process.memfds[1..], &out, out_fds) |memfd, *bytes, out_fd| {
@@ -2419,12 +2421,10 @@ pub const sync = struct {
     fn waitForChildNoOrphans(
         child: std.c.pid_t,
         ppid: std.c.pid_t,
-        child_pidfd: ?PidFDType,
         out: *[2]std.array_list.Managed(u8),
         out_fds_to_wait_for: *[2]bun.FD,
         out_fds: *[2]bun.FD,
     ) Maybe(Status) {
-        _ = child_pidfd;
         if (comptime Environment.isMac)
             return waitMacKqueue(child, ppid, out, out_fds_to_wait_for, out_fds);
         if (comptime Environment.isLinux)
@@ -2444,9 +2444,14 @@ pub const sync = struct {
 
         const kq = std.posix.kqueue() catch return .{ .result = reapChild(child) };
         const kq_fd = bun.FD.fromNative(kq);
-        defer kq_fd.close();
-
-        Bun__noOrphans_begin(kq);
+        Bun__noOrphans_begin(kq, child);
+        defer {
+            // Detach the tracker from kq *before* closing it — the spawnPosix
+            // defer that calls killTracked()→scan() runs after this one, and
+            // would otherwise kevent() on a closed/reused fd.
+            Bun__noOrphans_releaseKq();
+            kq_fd.close();
+        }
 
         // udata tag for the ppid PROC filter — the only PROC registration the
         // tracker can't overwrite (ppid isn't in our subtree). 0/1 reserved
@@ -2585,7 +2590,27 @@ pub const sync = struct {
         const timeout_ms: i32 = if (need_ppid_fallback or chld_fd == bun.invalid_fd) 100 else -1;
 
         var child_status: ?Status = null;
-        while (child_status == null) {
+        while (true) {
+            // Reap *before* poll(). Covers (a) the SIGCHLD-before-block race —
+            // child may have exited between spawnProcessPosix and the
+            // sigprocmask above, in which case the kernel discarded SIGCHLD
+            // (default disposition is ignore) and signalfd will never wake;
+            // (b) the no-signalfd fallback; (c) subreaper-adopted orphans that
+            // would otherwise re-fire SIGCHLD forever. `wait4(-1)` is safe
+            // here: spawnSync callers (`bun run`, `bunx`, CLI subcommands)
+            // have no JS event loop and no other `Process` watchers — every
+            // pid we see is either `child` or a subreaper-adopted orphan.
+            while (true) {
+                const r = PosixSpawn.wait4(-1, std.posix.W.NOHANG, null);
+                const pid = switch (r) {
+                    .err => break,
+                    .result => |w| w.pid,
+                };
+                if (pid <= 0) break;
+                if (pid == child) child_status = Status.from(child, &r);
+            }
+            if (child_status != null) break;
+
             for (out_fds_to_wait_for, out, out_fds) |*fd, *bytes, *out_fd| {
                 if (drainFd(fd, out_fd, bytes)) |err| return .{ .err = err };
             }
@@ -2611,7 +2636,7 @@ pub const sync = struct {
             const rc = std.c.poll(pfds.ptr, @intCast(pfds.len), timeout_ms);
             switch (bun.sys.getErrno(rc)) {
                 .SUCCESS => {},
-                .AGAIN, .INTR => continue,
+                .AGAIN, .INTR => {},
                 else => |err| return .{ .err = bun.sys.Error.fromCode(err, .poll) },
             }
 
@@ -2619,27 +2644,11 @@ pub const sync = struct {
                 (need_ppid_fallback and std.c.getppid() != ppid))
                 bun.Global.exit(bun.ParentDeathWatchdog.exit_code);
 
-            // SIGCHLD pending (or fallback tick): drain the signalfd, then
-            // reap *all* available children — subreaper hands us orphaned
-            // grandchildren too, and leaving them un-waited would re-fire
-            // SIGCHLD forever.
-            if (chld_fd == bun.invalid_fd or pfds[chld_idx].revents != 0) {
-                if (chld_fd != bun.invalid_fd) {
-                    var si: linux.signalfd_siginfo = undefined;
-                    while (bun.sys.read(chld_fd, std.mem.asBytes(&si)).unwrapOr(0) == @sizeOf(linux.signalfd_siginfo)) {}
-                }
-                while (true) {
-                    const r = PosixSpawn.wait4(-1, std.posix.W.NOHANG, null);
-                    const pid = switch (r) {
-                        .err => break,
-                        .result => |w| w.pid,
-                    };
-                    if (pid <= 0) break;
-                    // Status.from returns null for stopped/continued; with
-                    // WNOHANG and pid > 0 the child has actually exited, so
-                    // null only means "ignore this state change, keep waiting".
-                    if (pid == child) child_status = Status.from(child, &r);
-                }
+            // Drain the signalfd so the next poll blocks; the actual reap
+            // happens at the top of the next iteration.
+            if (chld_fd != bun.invalid_fd and pfds[chld_idx].revents != 0) {
+                var si: linux.signalfd_siginfo = undefined;
+                while (bun.sys.read(chld_fd, std.mem.asBytes(&si)).unwrapOr(0) == @sizeOf(linux.signalfd_siginfo)) {}
             }
         }
         for (out_fds_to_wait_for, out, out_fds) |*fd, *bytes, *out_fd| _ = drainFd(fd, out_fd, bytes);
@@ -2649,7 +2658,7 @@ pub const sync = struct {
     /// Non-blocking drain of `fd` into `bytes`. Closes and invalidates both
     /// slots on EOF so the caller's deferred cleanup skips them; returns null
     /// on EOF/retry/EPIPE (caller keeps polling) or the recv/OOM error
-    /// otherwise. Shared by the `poll()` path and `waitForChildKqueueMac`.
+    /// otherwise. Shared by the `poll()` path and `waitForChildNoOrphans`.
     fn drainFd(fd: *bun.FD, out_fd: *bun.FD, bytes: *std.array_list.Managed(u8)) ?bun.sys.Error {
         if (fd.* == bun.invalid_fd) return null;
         while (true) {
@@ -2673,6 +2682,7 @@ pub const sync = struct {
     }
 
     /// Blocking `wait4()` until `Status.from` returns a terminal status.
+    /// Shared by the `poll()` path and `waitForChildNoOrphans`.
     /// Shared by the `poll()` path and `waitForChildKqueueMac`.
     fn reapChild(child: std.c.pid_t) Status {
         while (true) {

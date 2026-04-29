@@ -68,11 +68,14 @@ pub fn ppidToWatch() ?std.c.pid_t {
 var sync_pgids_buf: [4]std.c.pid_t = .{0} ** 4;
 var sync_pgids: []std.c.pid_t = sync_pgids_buf[0..0];
 
-pub fn pushSyncPgid(pgid: std.c.pid_t) void {
-    if (comptime !Environment.isPosix) return;
-    if (sync_pgids.len >= sync_pgids_buf.len) return;
+/// Returns true if the push was recorded; caller must pop iff true. Depth >4
+/// would lose stack discipline if push were a silent no-op while pop wasn't.
+pub fn pushSyncPgid(pgid: std.c.pid_t) bool {
+    if (comptime !Environment.isPosix) return false;
+    if (sync_pgids.len >= sync_pgids_buf.len) return false;
     sync_pgids.len += 1;
     sync_pgids[sync_pgids.len - 1] = pgid;
+    return true;
 }
 
 pub fn popSyncPgid() void {

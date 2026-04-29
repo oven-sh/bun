@@ -374,23 +374,26 @@ test.skipIf(!isSupported || !hasPerl)(
 
     const died = await waitUntilDead(daemonPid, 10000);
     reap(daemonPid);
-    expect(stderr).toBe("");
+    // ASAN/debug warnings can land on stderr even on success; only surface
+    // stderr as a diagnostic when the test is already failing.
+    if (proc.exitCode !== 0) console.error(stderr);
     expect(died).toBe(true);
     expect(proc.exitCode).toBe(0);
   },
 );
 
-// The script daemonizes a non-Bun process (setsid + double-fork) — leaves the
-// pgroup AND reparents to launchd/init. The outer `bun run` must still find
-// and kill it: Linux via PR_SET_CHILD_SUBREAPER (the daemon reparents to
-// `bun run`, not init), macOS via the p_puniqueid spawn-graph tracker.
-test.skipIf(!isSupported)("bun run --no-orphans: setsid+double-fork daemon is reaped on script exit", async () => {
-  using dir = tempDir("no-orphans-daemon", {
-    "package.json": JSON.stringify({ name: "p", scripts: { go: `${bunExe()} daemon.js` } }),
-    "daemon.js": `
+// Same scenario via an inner `bun daemon.js` (one extra Bun hop) — covers
+// env-var propagation through `bun run` and the inner Bun's own tracker.
+test.skipIf(!isSupported || !hasPerl)(
+  "bun run --no-orphans: setsid+double-fork daemon is reaped on script exit",
+  async () => {
+    const perl = Bun.which("perl")!;
+    using dir = tempDir("no-orphans-daemon", {
+      "package.json": JSON.stringify({ name: "p", scripts: { go: `${bunExe()} daemon.js` } }),
+      "daemon.js": `
       const { spawnSync } = require("child_process");
       // perl: portable setsid+double-fork that prints the daemon's own pid.
-      const r = spawnSync("/usr/bin/perl", ["-e", \`
+      const r = spawnSync(${JSON.stringify(perl)}, ["-e", \`
         use POSIX qw(setsid);
         exit if fork;      # parent of session leader exits
         setsid;            # new session, new pgroup
@@ -402,26 +405,27 @@ test.skipIf(!isSupported)("bun run --no-orphans: setsid+double-fork daemon is re
       process.stdout.write(r.stdout);
       process.exit(0);
     `,
-  });
-  const env: Record<string, string> = { ...bunEnv };
-  delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", "--no-orphans", "--silent", "go"],
-    env,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [out, err] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
-  await proc.exited;
-  const daemonPid = Number(out.trim());
-  expect(err).toBe("");
-  expect(daemonPid).toBeGreaterThan(0);
-  const died = await waitUntilDead(daemonPid, 10000);
-  reap(daemonPid);
-  expect(died).toBe(true);
-  expect(proc.exitCode).toBe(0);
-});
+    });
+    const env: Record<string, string> = { ...bunEnv };
+    delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--no-orphans", "--silent", "go"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+    await proc.exited;
+    const daemonPid = Number(out.trim());
+    expect(daemonPid).toBeGreaterThan(0);
+    const died = await waitUntilDead(daemonPid, 10000);
+    reap(daemonPid);
+    if (proc.exitCode !== 0) console.error(err);
+    expect(died).toBe(true);
+    expect(proc.exitCode).toBe(0);
+  },
+);
 
 // `bun run --no-orphans <script>`: the package.json script spawns a non-Bun
 // grandchild, prints its pid, and exits. The outer `bun run` process must reap

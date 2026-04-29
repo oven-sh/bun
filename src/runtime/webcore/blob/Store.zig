@@ -53,6 +53,17 @@ pub fn hasOneRef(this: *const Store) bool {
     return this.ref_count.load(.monotonic) == 1;
 }
 
+/// Replace `mime_type`, freeing any previous heap-allocated value first.
+/// When `allocated` is true, `mime` must own a `bun.default_allocator`
+/// allocation that the Store takes ownership of.
+pub fn setMimeType(this: *Store, mime: MimeType, allocated: bool) void {
+    if (this.mime_type_allocated) {
+        bun.default_allocator.free(@constCast(this.mime_type.value));
+    }
+    this.mime_type = mime;
+    this.mime_type_allocated = allocated;
+}
+
 /// Caller is responsible for derefing the Store.
 pub fn toAnyBlob(this: *Store) ?Blob.Any {
     if (this.hasOneRef()) {

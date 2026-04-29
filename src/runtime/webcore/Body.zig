@@ -769,14 +769,13 @@ pub const Value = union(Tag) {
                                     // blob.slice()). When `mimeType.value` is heap-allocated it is
                                     // owned by `blob.content_type` and freed in Blob.deinit, so the
                                     // Store must hold its own copy rather than alias the Blob's.
-                                    if (store.mime_type_allocated) {
-                                        bun.default_allocator.free(@constCast(store.mime_type.value));
-                                    }
-                                    store.mime_type = if (allocated)
-                                        .{ .value = bun.handleOom(bun.default_allocator.dupe(u8, mimeType.value)), .category = mimeType.category }
-                                    else
-                                        mimeType;
-                                    store.mime_type_allocated = allocated;
+                                    store.setMimeType(
+                                        if (allocated)
+                                            .{ .value = bun.handleOom(bun.default_allocator.dupe(u8, mimeType.value)), .category = mimeType.category }
+                                        else
+                                            mimeType,
+                                        allocated,
+                                    );
                                 }
                             }
                         }
@@ -784,7 +783,7 @@ pub const Value = union(Tag) {
                             blob.content_type = MimeType.text.value;
                             blob.content_type_allocated = false;
                             blob.content_type_was_set = true;
-                            blob.store.?.mime_type = MimeType.text;
+                            blob.store.?.setMimeType(MimeType.text, false);
                         }
                         try promise.resolve(global, blob.toJS(global));
                     },
@@ -1456,14 +1455,13 @@ pub fn Mixin(comptime Type: type) type {
                             // blob.slice()). When `mimeType.value` is heap-allocated it is
                             // owned by `blob.content_type` and freed in Blob.deinit, so the
                             // Store must hold its own copy rather than alias the Blob's.
-                            if (store.mime_type_allocated) {
-                                bun.default_allocator.free(@constCast(store.mime_type.value));
-                            }
-                            store.mime_type = if (allocated)
-                                .{ .value = bun.handleOom(bun.default_allocator.dupe(u8, mimeType.value)), .category = mimeType.category }
-                            else
-                                mimeType;
-                            store.mime_type_allocated = allocated;
+                            store.setMimeType(
+                                if (allocated)
+                                    .{ .value = bun.handleOom(bun.default_allocator.dupe(u8, mimeType.value)), .category = mimeType.category }
+                                else
+                                    mimeType,
+                                allocated,
+                            );
                         }
                     }
                 }
@@ -1471,7 +1469,7 @@ pub fn Mixin(comptime Type: type) type {
                     blob.content_type = MimeType.text.value;
                     blob.content_type_allocated = false;
                     blob.content_type_was_set = true;
-                    blob.store.?.mime_type = MimeType.text;
+                    blob.store.?.setMimeType(MimeType.text, false);
                 }
             }
             return jsc.JSPromise.resolvedPromiseValue(globalObject, blob.toJS(globalObject));

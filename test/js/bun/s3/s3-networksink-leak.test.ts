@@ -43,9 +43,9 @@ test.skipIf(!isDebug)("s3 writer() NetworkSink struct should be freed", async ()
 
     // Drop the JS wrappers so the C++ finalizer runs.
     Bun.gc(true);
-    await Bun.sleep(10);
+    await Bun.sleep(0);
     Bun.gc(true);
-    await Bun.sleep(10);
+    await Bun.sleep(0);
     Bun.gc(true);
   `;
 

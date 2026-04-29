@@ -8,6 +8,8 @@ pub const Pointer = bun.TaggedPointerUnion(.{
     HTTPSServer.RequestContext,
     DebugHTTPServer.RequestContext,
     DebugHTTPSServer.RequestContext,
+    HTTPSServer.H3RequestContext,
+    DebugHTTPSServer.H3RequestContext,
 });
 
 tagged_pointer: Pointer,
@@ -18,52 +20,35 @@ pub fn init(request_ctx: anytype) AnyRequestContext {
     return .{ .tagged_pointer = Pointer.init(request_ctx) };
 }
 
-pub fn setAdditionalOnAbortCallback(self: AnyRequestContext, cb: ?AdditionalOnAbortCallback) void {
-    if (self.tagged_pointer.isNull()) {
-        return;
+/// Dispatch `cb(ctx, args...)` to the concrete RequestContext type behind the
+/// tagged pointer. The pointer types only differ in their comptime parameters
+/// (ssl/debug/http3), so every method body is identical — this collapses what
+/// used to be six hand-written switch arms per accessor.
+inline fn dispatch(self: AnyRequestContext, comptime Ret: type, default: Ret, comptime cb: anytype, args: anytype) Ret {
+    if (self.tagged_pointer.isNull()) return default;
+    inline for (Pointer.type_map) |entry| {
+        if (self.tagged_pointer.repr.data == entry.value) {
+            return @call(.auto, cb, .{ entry.ty, self.tagged_pointer.as(entry.ty) } ++ args);
+        }
     }
+    @panic("Unexpected AnyRequestContext tag");
+}
 
-    switch (self.tagged_pointer.tag()) {
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
-            bun.assert(self.tagged_pointer.as(HTTPServer.RequestContext).additional_on_abort == null);
-            self.tagged_pointer.as(HTTPServer.RequestContext).additional_on_abort = cb;
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
-            bun.assert(self.tagged_pointer.as(HTTPSServer.RequestContext).additional_on_abort == null);
-            self.tagged_pointer.as(HTTPSServer.RequestContext).additional_on_abort = cb;
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
-            bun.assert(self.tagged_pointer.as(DebugHTTPServer.RequestContext).additional_on_abort == null);
-            self.tagged_pointer.as(DebugHTTPServer.RequestContext).additional_on_abort = cb;
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
-            bun.assert(self.tagged_pointer.as(DebugHTTPSServer.RequestContext).additional_on_abort == null);
-            self.tagged_pointer.as(DebugHTTPSServer.RequestContext).additional_on_abort = cb;
-        },
-        else => @panic("Unexpected AnyRequestContext tag"),
-    }
+pub fn setAdditionalOnAbortCallback(self: AnyRequestContext, cb: ?AdditionalOnAbortCallback) void {
+    self.dispatch(void, {}, struct {
+        fn f(comptime _: type, ctx: anytype, c: ?AdditionalOnAbortCallback) void {
+            bun.assert(ctx.additional_on_abort == null);
+            ctx.additional_on_abort = c;
+        }
+    }.f, .{cb});
 }
 
 pub fn memoryCost(self: AnyRequestContext) usize {
-    if (self.tagged_pointer.isNull()) {
-        return 0;
-    }
-
-    switch (self.tagged_pointer.tag()) {
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
-            return self.tagged_pointer.as(HTTPServer.RequestContext).memoryCost();
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
-            return self.tagged_pointer.as(HTTPSServer.RequestContext).memoryCost();
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
-            return self.tagged_pointer.as(DebugHTTPServer.RequestContext).memoryCost();
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
-            return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).memoryCost();
-        },
-        else => @panic("Unexpected AnyRequestContext tag"),
-    }
+    return self.dispatch(usize, 0, struct {
+        fn f(comptime _: type, ctx: anytype) usize {
+            return ctx.memoryCost();
+        }
+    }.f, .{});
 }
 
 pub fn get(self: AnyRequestContext, comptime T: type) ?*T {
@@ -71,250 +56,107 @@ pub fn get(self: AnyRequestContext, comptime T: type) ?*T {
 }
 
 pub fn setTimeout(self: AnyRequestContext, seconds: c_uint) bool {
-    if (self.tagged_pointer.isNull()) {
-        return false;
-    }
-
-    switch (self.tagged_pointer.tag()) {
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
-            return self.tagged_pointer.as(HTTPServer.RequestContext).setTimeout(seconds);
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
-            return self.tagged_pointer.as(HTTPSServer.RequestContext).setTimeout(seconds);
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
-            return self.tagged_pointer.as(DebugHTTPServer.RequestContext).setTimeout(seconds);
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
-            return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).setTimeout(seconds);
-        },
-        else => @panic("Unexpected AnyRequestContext tag"),
-    }
-    return false;
+    return self.dispatch(bool, false, struct {
+        fn f(comptime _: type, ctx: anytype, s: c_uint) bool {
+            return ctx.setTimeout(s);
+        }
+    }.f, .{seconds});
 }
 
 pub fn setCookies(self: AnyRequestContext, cookie_map: ?*jsc.WebCore.CookieMap) void {
-    if (self.tagged_pointer.isNull()) {
-        return;
-    }
-
-    switch (self.tagged_pointer.tag()) {
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
-            return self.tagged_pointer.as(HTTPServer.RequestContext).setCookies(cookie_map);
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
-            return self.tagged_pointer.as(HTTPSServer.RequestContext).setCookies(cookie_map);
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
-            return self.tagged_pointer.as(DebugHTTPServer.RequestContext).setCookies(cookie_map);
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
-            return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).setCookies(cookie_map);
-        },
-        else => @panic("Unexpected AnyRequestContext tag"),
-    }
+    self.dispatch(void, {}, struct {
+        fn f(comptime _: type, ctx: anytype, c: ?*jsc.WebCore.CookieMap) void {
+            ctx.setCookies(c);
+        }
+    }.f, .{cookie_map});
 }
 
 pub fn enableTimeoutEvents(self: AnyRequestContext) void {
-    if (self.tagged_pointer.isNull()) {
-        return;
-    }
-
-    switch (self.tagged_pointer.tag()) {
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
-            return self.tagged_pointer.as(HTTPServer.RequestContext).setTimeoutHandler();
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
-            return self.tagged_pointer.as(HTTPSServer.RequestContext).setTimeoutHandler();
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
-            return self.tagged_pointer.as(DebugHTTPServer.RequestContext).setTimeoutHandler();
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
-            return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).setTimeoutHandler();
-        },
-        else => @panic("Unexpected AnyRequestContext tag"),
-    }
+    self.dispatch(void, {}, struct {
+        fn f(comptime _: type, ctx: anytype) void {
+            ctx.setTimeoutHandler();
+        }
+    }.f, .{});
 }
 
 pub fn getRemoteSocketInfo(self: AnyRequestContext) ?uws.SocketAddress {
-    if (self.tagged_pointer.isNull()) {
-        return null;
-    }
-
-    switch (self.tagged_pointer.tag()) {
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
-            return self.tagged_pointer.as(HTTPServer.RequestContext).getRemoteSocketInfo();
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
-            return self.tagged_pointer.as(HTTPSServer.RequestContext).getRemoteSocketInfo();
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
-            return self.tagged_pointer.as(DebugHTTPServer.RequestContext).getRemoteSocketInfo();
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
-            return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).getRemoteSocketInfo();
-        },
-        else => @panic("Unexpected AnyRequestContext tag"),
-    }
+    return self.dispatch(?uws.SocketAddress, null, struct {
+        fn f(comptime _: type, ctx: anytype) ?uws.SocketAddress {
+            return ctx.getRemoteSocketInfo();
+        }
+    }.f, .{});
 }
 
 pub fn detachRequest(self: AnyRequestContext) void {
-    if (self.tagged_pointer.isNull()) {
-        return;
-    }
-    switch (self.tagged_pointer.tag()) {
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
-            self.tagged_pointer.as(HTTPServer.RequestContext).req = null;
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
-            self.tagged_pointer.as(HTTPSServer.RequestContext).req = null;
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
-            self.tagged_pointer.as(DebugHTTPServer.RequestContext).req = null;
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
-            self.tagged_pointer.as(DebugHTTPSServer.RequestContext).req = null;
-        },
-        else => @panic("Unexpected AnyRequestContext tag"),
-    }
+    self.dispatch(void, {}, struct {
+        fn f(comptime _: type, ctx: anytype) void {
+            ctx.req = null;
+        }
+    }.f, .{});
 }
 
 /// Wont actually set anything if `self` is `.none`
 pub fn setRequest(self: AnyRequestContext, req: *uws.Request) void {
-    if (self.tagged_pointer.isNull()) {
-        return;
-    }
-
-    switch (self.tagged_pointer.tag()) {
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
-            self.tagged_pointer.as(HTTPServer.RequestContext).req = req;
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
-            self.tagged_pointer.as(HTTPSServer.RequestContext).req = req;
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
-            self.tagged_pointer.as(DebugHTTPServer.RequestContext).req = req;
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
-            self.tagged_pointer.as(DebugHTTPSServer.RequestContext).req = req;
-        },
-        else => @panic("Unexpected AnyRequestContext tag"),
-    }
+    self.dispatch(void, {}, struct {
+        fn f(comptime T: type, ctx: anytype, r: *uws.Request) void {
+            if (comptime T.is_h3) return; // H3 populates url/headers eagerly
+            ctx.req = r;
+        }
+    }.f, .{req});
 }
 
 pub fn getRequest(self: AnyRequestContext) ?*uws.Request {
-    if (self.tagged_pointer.isNull()) {
-        return null;
-    }
-
-    switch (self.tagged_pointer.tag()) {
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
-            return self.tagged_pointer.as(HTTPServer.RequestContext).req;
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
-            return self.tagged_pointer.as(HTTPSServer.RequestContext).req;
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
-            return self.tagged_pointer.as(DebugHTTPServer.RequestContext).req;
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
-            return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).req;
-        },
-        else => @panic("Unexpected AnyRequestContext tag"),
-    }
+    return self.dispatch(?*uws.Request, null, struct {
+        fn f(comptime T: type, ctx: anytype) ?*uws.Request {
+            if (comptime T.is_h3) return null; // url/headers already on the Request
+            return ctx.req;
+        }
+    }.f, .{});
 }
 
 pub fn onAbort(self: AnyRequestContext, response: uws.AnyResponse) void {
-    if (self.tagged_pointer.isNull()) {
-        return;
-    }
-
-    switch (self.tagged_pointer.tag()) {
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
-            self.tagged_pointer.as(HTTPServer.RequestContext).onAbort(response.TCP);
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
-            self.tagged_pointer.as(HTTPSServer.RequestContext).onAbort(response.SSL);
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
-            self.tagged_pointer.as(DebugHTTPServer.RequestContext).onAbort(response.TCP);
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
-            self.tagged_pointer.as(DebugHTTPSServer.RequestContext).onAbort(response.SSL);
-        },
-        else => @panic("Unexpected AnyRequestContext tag"),
-    }
+    self.dispatch(void, {}, struct {
+        fn f(comptime T: type, ctx: anytype, r: uws.AnyResponse) void {
+            // The AnyResponse arm and T.Resp are created together; assert
+            // they agree so a mismatch traps in safe builds instead of being
+            // silently @ptrCast.
+            ctx.onAbort(switch (r) {
+                inline else => |p| if (comptime @TypeOf(p) == *T.Resp) p else unreachable,
+            });
+        }
+    }.f, .{response});
 }
 
 pub fn ref(self: AnyRequestContext) void {
-    if (self.tagged_pointer.isNull()) {
-        return;
-    }
-
-    switch (self.tagged_pointer.tag()) {
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
-            self.tagged_pointer.as(HTTPServer.RequestContext).ref();
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
-            self.tagged_pointer.as(HTTPSServer.RequestContext).ref();
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
-            self.tagged_pointer.as(DebugHTTPServer.RequestContext).ref();
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
-            self.tagged_pointer.as(DebugHTTPSServer.RequestContext).ref();
-        },
-        else => @panic("Unexpected AnyRequestContext tag"),
-    }
+    self.dispatch(void, {}, struct {
+        fn f(comptime _: type, ctx: anytype) void {
+            ctx.ref();
+        }
+    }.f, .{});
 }
 
 pub fn setSignalAborted(self: AnyRequestContext, reason: bun.jsc.CommonAbortReason) void {
-    if (self.tagged_pointer.isNull()) {
-        return;
-    }
-    return switch (self.tagged_pointer.tag()) {
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => self.tagged_pointer.as(HTTPServer.RequestContext).setSignalAborted(reason),
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => self.tagged_pointer.as(HTTPSServer.RequestContext).setSignalAborted(reason),
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => self.tagged_pointer.as(DebugHTTPServer.RequestContext).setSignalAborted(reason),
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => self.tagged_pointer.as(DebugHTTPSServer.RequestContext).setSignalAborted(reason),
-        else => @panic("Unexpected AnyRequestContext tag"),
-    };
+    self.dispatch(void, {}, struct {
+        fn f(comptime _: type, ctx: anytype, r: bun.jsc.CommonAbortReason) void {
+            ctx.setSignalAborted(r);
+        }
+    }.f, .{reason});
 }
 
 pub fn devServer(self: AnyRequestContext) ?*bun.bake.DevServer {
-    if (self.tagged_pointer.isNull()) {
-        return null;
-    }
-    return switch (self.tagged_pointer.tag()) {
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => self.tagged_pointer.as(HTTPServer.RequestContext).devServer(),
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => self.tagged_pointer.as(HTTPSServer.RequestContext).devServer(),
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => self.tagged_pointer.as(DebugHTTPServer.RequestContext).devServer(),
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => self.tagged_pointer.as(DebugHTTPSServer.RequestContext).devServer(),
-        else => @panic("Unexpected AnyRequestContext tag"),
-    };
+    return self.dispatch(?*bun.bake.DevServer, null, struct {
+        fn f(comptime _: type, ctx: anytype) ?*bun.bake.DevServer {
+            return ctx.devServer();
+        }
+    }.f, .{});
 }
 
 pub fn deref(self: AnyRequestContext) void {
-    if (self.tagged_pointer.isNull()) {
-        return;
-    }
-
-    switch (self.tagged_pointer.tag()) {
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
-            self.tagged_pointer.as(HTTPServer.RequestContext).deref();
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
-            self.tagged_pointer.as(HTTPSServer.RequestContext).deref();
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
-            self.tagged_pointer.as(DebugHTTPServer.RequestContext).deref();
-        },
-        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
-            self.tagged_pointer.as(DebugHTTPSServer.RequestContext).deref();
-        },
-        else => @panic("Unexpected AnyRequestContext tag"),
-    }
+    self.dispatch(void, {}, struct {
+        fn f(comptime _: type, ctx: anytype) void {
+            ctx.deref();
+        }
+    }.f, .{});
 }
 
 pub const AdditionalOnAbortCallback = @import("./RequestContext.zig").AdditionalOnAbortCallback;

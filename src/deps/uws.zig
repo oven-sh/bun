@@ -13,6 +13,7 @@ pub const WindowsNamedPipe = @import("./uws/WindowsNamedPipe.zig");
 pub const PosixLoop = @import("./uws/Loop.zig").PosixLoop;
 pub const WindowsLoop = @import("./uws/Loop.zig").WindowsLoop;
 pub const Request = @import("./uws/Request.zig").Request;
+pub const AnyRequest = @import("./uws/Request.zig").AnyRequest;
 pub const AnyResponse = @import("./uws/Response.zig").AnyResponse;
 pub const NewApp = @import("./uws/App.zig").NewApp;
 pub const uws_res = @import("./uws/Response.zig").uws_res;
@@ -27,6 +28,20 @@ pub const State = @import("./uws/Response.zig").State;
 pub const Loop = @import("./uws/Loop.zig").Loop;
 pub const udp = @import("./uws/udp.zig");
 pub const BodyReaderMixin = @import("./uws/BodyReaderMixin.zig").BodyReaderMixin;
+pub const H3 = @import("./uws/h3.zig");
+pub const quic = @import("./uws/quic.zig");
+
+/// Recovers the concrete uWS response type from `*anyopaque` across the
+/// Zig→C++ boundary. Mirrors `UWSResponseKind` in headers-handwritten.h.
+pub const ResponseKind = enum(i32) {
+    tcp = 0,
+    ssl = 1,
+    h3 = 2,
+
+    pub fn from(comptime ssl: bool, comptime http3: bool) ResponseKind {
+        return if (http3) .h3 else if (ssl) .ssl else .tcp;
+    }
+};
 
 pub const LIBUS_TIMEOUT_GRANULARITY = @as(i32, 4);
 pub const LIBUS_RECV_BUFFER_PADDING = @as(i32, 32);

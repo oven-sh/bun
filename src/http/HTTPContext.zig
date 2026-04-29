@@ -26,6 +26,9 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             /// established with different credentials are not cross-shared.
             /// 0 = no proxy auth.
             proxy_auth_hash: u64 = 0,
+            /// HTTP/2 connection state (HPACK tables, server SETTINGS) when
+            /// this socket negotiated "h2". Owned by the pool while parked.
+            h2_session: ?*H2.ClientSession = null,
         };
 
         pub fn markTaggedSocketAsDead(socket: HTTPSocket, tagged: ActiveSocket) void {
@@ -78,6 +81,14 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
         ref_count: RefCount,
         pending_sockets: PooledSocketHiveAllocator,
         us_socket_context: *uws.SocketContext,
+        /// HTTP/2 sessions with at least one active stream, available for
+        /// concurrent attachment if `hasHeadroom()`.
+        active_h2_sessions: std.ArrayListUnmanaged(*H2.ClientSession) = .{},
+        /// HTTPClients whose fresh TLS connect is in flight and whose request
+        /// is h2-capable. Subsequent h2-capable requests to the same origin
+        /// coalesce onto the first one's session once ALPN resolves rather
+        /// than each opening its own socket.
+        pending_h2_connects: std.ArrayListUnmanaged(*H2.PendingConnect) = .{},
 
         const Context = @This();
         pub const HTTPSocket = uws.NewSocketHandler(ssl);
@@ -94,10 +105,55 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             DeadSocket,
             HTTPClient,
             PooledSocket,
+            H2.ClientSession,
         });
         const ssl_int = @as(c_int, @intFromBool(ssl));
 
         const MAX_KEEPALIVE_HOSTNAME = 128;
+
+        pub fn registerH2(this: *@This(), session: *H2.ClientSession) void {
+            if (comptime !ssl) return;
+            if (session.registry_index != std.math.maxInt(u32)) return;
+            session.ref();
+            session.registry_index = @intCast(this.active_h2_sessions.items.len);
+            bun.handleOom(this.active_h2_sessions.append(bun.default_allocator, session));
+        }
+
+        /// Called from drainQueuedShutdowns when the abort-tracker lookup
+        /// misses: a request parked in `PendingConnect.waiters` (coalesced
+        /// onto a leader's in-flight TLS connect) never registered a socket,
+        /// so it can only be found by scanning here.
+        pub fn abortPendingH2Waiter(this: *@This(), async_http_id: u32) bool {
+            if (comptime !ssl) return false;
+            for (this.pending_h2_connects.items) |pc| {
+                for (pc.waiters.items, 0..) |waiter, i| {
+                    if (waiter.async_http_id == async_http_id) {
+                        _ = pc.waiters.swapRemove(i);
+                        waiter.failFromH2(error.Aborted);
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        pub fn unregisterH2(this: *@This(), session: *H2.ClientSession) void {
+            if (comptime !ssl) return;
+            const idx = session.registry_index;
+            if (idx == std.math.maxInt(u32)) return;
+            session.registry_index = std.math.maxInt(u32);
+            const list = &this.active_h2_sessions;
+            bun.debugAssert(idx < list.items.len and list.items[idx] == session);
+            _ = list.swapRemove(idx);
+            if (idx < list.items.len) list.items[idx].registry_index = idx;
+            session.deref();
+        }
+
+        pub fn tagAsH2(socket: HTTPSocket, session: *H2.ClientSession) void {
+            if (socket.ext(**anyopaque)) |ctx| {
+                ctx.* = bun.cast(**anyopaque, ActiveSocket.init(session).ptr());
+            }
+        }
 
         pub fn sslCtx(this: *@This()) *BoringSSL.SSL_CTX {
             if (comptime !ssl) {
@@ -140,9 +196,15 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         bun.default_allocator.free(pooled.target_hostname);
                         pooled.target_hostname = "";
                     }
+                    if (pooled.h2_session) |s| s.deref();
+                    pooled.h2_session = null;
                     pooled.http_socket.close(.failure);
                 }
             }
+
+            this.active_h2_sessions.deinit(bun.default_allocator);
+            for (this.pending_h2_connects.items) |pc| pc.deinit();
+            this.pending_h2_connects.deinit(bun.default_allocator);
 
             // Use deferred free pattern (via nextTick) to avoid freeing the uSockets
             // context while close callbacks may still reference it.
@@ -244,6 +306,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             target_hostname: []const u8,
             target_port: u16,
             proxy_auth_hash: u64,
+            h2_session: ?*H2.ClientSession,
         ) void {
             // log("releaseSocket(0x{f})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
 
@@ -285,6 +348,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     else
                         "";
                     pending.target_port = target_port;
+                    pending.h2_session = h2_session;
 
                     log("Keep-Alive release {s}:{d} tunnel={} target={s}:{d}", .{
                         hostname,
@@ -301,6 +365,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 t.shutdown();
                 t.detachAndDeref();
             }
+            if (h2_session) |s| s.deref();
             closeSocket(socket);
         }
 
@@ -352,9 +417,12 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                             // if checkServerIdentity returns false, we dont call firstCall — the connection was rejected
                             const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
                             if (!client.checkServerIdentity(comptime ssl, socket, handshake_error, ssl_ptr, true)) {
-                                client.flags.did_have_handshaking_error = true;
-                                client.unregisterAbortTracker();
-                                if (!socket.isClosed()) terminateSocket(socket);
+                                // checkServerIdentity already called closeAndFail() → fail()
+                                // → result callback, which may have destroyed the
+                                // AsyncHTTP that embeds `client`. Socket is terminated
+                                // and the abort tracker is unregistered there, so the
+                                // only safe action is to return without touching
+                                // `client` again.
                                 return;
                             }
                         }
@@ -402,6 +470,9 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 if (tagged.get(HTTPClient)) |client| {
                     return client.onClose(comptime ssl, socket);
                 }
+                if (tagged.get(H2.ClientSession)) |session| {
+                    return session.onClose(error.ConnectionClosed);
+                }
             }
 
             fn addMemoryBackToPool(pooled: *PooledSocket) void {
@@ -415,6 +486,8 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     bun.default_allocator.free(pooled.target_hostname);
                     pooled.target_hostname = "";
                 }
+                if (pooled.h2_session) |s| s.deref();
+                pooled.h2_session = null;
                 assert(pooled.owner.pending_sockets.put(pooled));
             }
 
@@ -431,6 +504,8 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         client.getSslCtx(ssl),
                         socket,
                     );
+                } else if (tagged.get(H2.ClientSession)) |session| {
+                    return session.onData(buf);
                 } else if (tagged.is(PooledSocket)) {
                     const pooled = tagged.as(PooledSocket);
                     // If this pooled socket carries a CONNECT tunnel, any
@@ -441,6 +516,12 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     if (pooled.proxy_tunnel != null) {
                         log("Data on idle pooled tunnel — evicting", .{});
                         terminateSocket(socket);
+                        return;
+                    }
+
+                    if (pooled.h2_session) |session| {
+                        session.onIdleData(buf);
+                        if (!session.canPool()) terminateSocket(socket);
                         return;
                     }
 
@@ -467,6 +548,8 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         comptime ssl,
                         socket,
                     );
+                } else if (tagged.get(H2.ClientSession)) |session| {
+                    return session.onWritable();
                 } else if (tagged.is(PooledSocket)) {
                     // it's a keep-alive socket
                 } else {
@@ -482,6 +565,10 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 const tagged = getTagged(ptr);
                 if (tagged.get(HTTPClient)) |client| {
                     return client.onTimeout(comptime ssl, socket);
+                }
+                if (tagged.get(H2.ClientSession)) |session| {
+                    markSocketAsDead(socket);
+                    session.onClose(error.Timeout);
                 }
 
                 terminateSocket(socket);
@@ -505,16 +592,21 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 // TCP fin must be closed, but we must keep the original tagged
                 // pointer so that their onClose callback is called.
                 //
-                // Three possible states:
+                // Four possible states:
                 // 1. HTTP Keep-Alive socket: it must be removed from the pool
                 // 2. HTTP Client socket: it might need to be retried
-                // 3. Dead socket: it is already marked as dead
+                // 3. HTTP/2 session: fail every stream on it
+                // 4. Dead socket: it is already marked as dead
                 const tagged = getTagged(ptr);
                 markTaggedSocketAsDead(socket, tagged);
                 socket.close(.failure);
 
                 if (tagged.get(HTTPClient)) |client| {
                     client.onClose(comptime ssl, socket);
+                    return;
+                }
+                if (tagged.get(H2.ClientSession)) |session| {
+                    session.onClose(error.ConnectionClosed);
                     return;
                 }
             }
@@ -525,6 +617,8 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             /// Non-null if the socket carries an established CONNECT tunnel.
             /// Ownership (one strong ref) is transferred to the caller.
             tunnel: ?*ProxyTunnel,
+            /// Non-null if the socket negotiated "h2"; ownership transferred.
+            h2_session: ?*H2.ClientSession,
         };
 
         fn existingSocket(
@@ -537,6 +631,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             target_hostname: []const u8,
             target_port: u16,
             proxy_auth_hash: u64,
+            want_h2: BoringSSL.SSL.AlpnOffer,
         ) ?ExistingSocket {
             if (hostname.len > MAX_KEEPALIVE_HOSTNAME)
                 return null;
@@ -555,6 +650,14 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 }
 
                 if (socket.did_have_handshaking_error_while_reject_unauthorized_is_false and reject_unauthorized) {
+                    continue;
+                }
+
+                // ALPN on the pooled socket has already decided which protocol
+                // it speaks; only match callers compatible with that choice.
+                if (socket.h2_session != null) {
+                    if (want_h2 == .h1) continue;
+                } else if (want_h2 == .h2_only) {
                     continue;
                 }
 
@@ -606,16 +709,18 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         bun.default_allocator.free(socket.target_hostname);
                         socket.target_hostname = "";
                     }
+                    const h2_session = socket.h2_session;
+                    socket.h2_session = null;
                     assert(this.pending_sockets.put(socket));
                     log("+ Keep-Alive reuse {s}:{d}{s}", .{ hostname, port, if (tunnel != null) " (with tunnel)" else "" });
-                    return .{ .socket = http_socket, .tunnel = tunnel };
+                    return .{ .socket = http_socket, .tunnel = tunnel, .h2_session = h2_session };
                 }
             }
 
             return null;
         }
 
-        pub fn connectSocket(this: *@This(), client: *HTTPClient, socket_path: []const u8) !HTTPSocket {
+        pub fn connectSocket(this: *@This(), client: *HTTPClient, socket_path: []const u8) !?HTTPSocket {
             client.connected_url = if (client.http_proxy) |proxy| proxy else client.url;
             const socket = try HTTPSocket.connectUnixAnon(
                 socket_path,
@@ -627,7 +732,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             return socket;
         }
 
-        pub fn connect(this: *@This(), client: *HTTPClient, hostname_: []const u8, port: u16) !HTTPSocket {
+        pub fn connect(this: *@This(), client: *HTTPClient, hostname_: []const u8, port: u16) !?HTTPSocket {
             const hostname = if (FeatureFlags.hardcode_localhost_to_127_0_0_1 and strings.eqlComptime(hostname_, "localhost"))
                 "127.0.0.1"
             else
@@ -635,6 +740,23 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
 
             client.connected_url = if (client.http_proxy) |proxy| proxy else client.url;
             client.connected_url.hostname = hostname;
+
+            if (comptime ssl) {
+                if (client.canOfferH2()) {
+                    for (this.active_h2_sessions.items) |session| {
+                        if (session.hasHeadroom() and session.matches(hostname, port, SSLConfig.rawPtr(client.tls_props))) {
+                            session.adopt(client);
+                            return null;
+                        }
+                    }
+                    for (this.pending_h2_connects.items) |pc| {
+                        if (pc.matches(hostname, port, SSLConfig.rawPtr(client.tls_props))) {
+                            bun.handleOom(pc.waiters.append(bun.default_allocator, client));
+                            return null;
+                        }
+                    }
+                }
+            }
 
             if (client.isKeepAlivePossible()) {
                 const want_tunnel = client.http_proxy != null and client.url.isHTTPS();
@@ -653,12 +775,22 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     target_hostname,
                     target_port,
                     proxy_auth_hash,
+                    if (comptime ssl) client.alpnOffer() else .h1,
                 )) |found| {
                     const sock = found.socket;
                     if (sock.ext(**anyopaque)) |ctx| {
                         ctx.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
                     }
                     client.allow_retry = true;
+                    if (found.h2_session) |session| {
+                        if (comptime ssl) {
+                            session.socket = sock;
+                            tagAsH2(sock, session);
+                            this.registerH2(session);
+                            session.adopt(client);
+                        } else unreachable;
+                        return null;
+                    }
                     if (found.tunnel) |tunnel| {
                         // Reattach the pooled tunnel BEFORE onOpen so the
                         // request/response stage is already .proxy_headers.
@@ -686,6 +818,17 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 false,
             );
             client.allow_retry = false;
+            if (comptime ssl) {
+                if (client.canOfferH2()) {
+                    const pc = H2.PendingConnect.new(.{
+                        .hostname = bun.handleOom(bun.default_allocator.dupe(u8, hostname)),
+                        .port = port,
+                        .ssl_config = SSLConfig.rawPtr(client.tls_props),
+                    });
+                    bun.handleOom(this.pending_h2_connects.append(bun.default_allocator, pc));
+                    client.pending_h2 = pc;
+                }
+            }
             return socket;
         }
     };
@@ -704,6 +847,7 @@ const log = bun.Output.scoped(.HTTPContext, .hidden);
 const HTTPCertError = @import("./HTTPCertError.zig");
 const HTTPThread = @import("./HTTPThread.zig");
 const ProxyTunnel = @import("./ProxyTunnel.zig");
+const std = @import("std");
 const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
 
 const bun = @import("bun");
@@ -716,4 +860,5 @@ const BoringSSL = bun.BoringSSL.c;
 const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
 
 const HTTPClient = bun.http;
+const H2 = bun.http.H2;
 const InitError = HTTPClient.InitError;

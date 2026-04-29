@@ -119,8 +119,11 @@ pub fn getPeerCertificate(this: *This, globalObject: *jsc.JSGlobalObject, callfr
 
     if (abbreviated) {
         if (this.isServer()) {
+            // SSL_get_peer_certificate returns a +1 reference; we must free it.
+            // X509.toJS only borrows the pointer (X509View is non-owning).
             const cert = BoringSSL.SSL_get_peer_certificate(ssl_ptr);
             if (cert) |x509| {
+                defer x509.free();
                 return X509.toJS(x509, globalObject);
             }
         }
@@ -131,8 +134,10 @@ pub fn getPeerCertificate(this: *This, globalObject: *jsc.JSGlobalObject, callfr
     }
     var cert: ?*BoringSSL.X509 = null;
     if (this.isServer()) {
+        // SSL_get_peer_certificate returns a +1 reference; we must free it.
         cert = BoringSSL.SSL_get_peer_certificate(ssl_ptr);
     }
+    defer if (cert) |c| c.free();
 
     const cert_chain = BoringSSL.SSL_get_peer_cert_chain(ssl_ptr);
     const first_cert = if (cert) |c| c else if (cert_chain) |cc| BoringSSL.sk_X509_value(cc, 0) else null;
@@ -495,6 +500,9 @@ pub fn setSession(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *js
         const ssl_ptr = this.socket.ssl();
         var tmp = @as([*c]const u8, @ptrCast(session_slice.ptr));
         const session = BoringSSL.d2i_SSL_SESSION(null, &tmp, @as(c_long, @intCast(session_slice.len))) orelse return .js_undefined;
+        // SSL_set_session takes its own reference ("the caller retains ownership of |session|"),
+        // so we must release the one returned by d2i_SSL_SESSION on every path.
+        defer BoringSSL.SSL_SESSION_free(session);
         if (BoringSSL.SSL_set_session(ssl_ptr, session) != 1) {
             return globalObject.throwValue(getSSLException(globalObject, "SSL_set_session error"));
         }

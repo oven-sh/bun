@@ -189,6 +189,15 @@ pub const feature_flag = struct {
     pub const BUN_DUMP_STATE_ON_CRASH = newFeatureFlag("BUN_DUMP_STATE_ON_CRASH", .{});
     pub const BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS = newFeatureFlag("BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS", .{});
     pub const BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE = newFeatureFlag("BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE", .{});
+    /// Offer "h2" in the fetch() TLS ALPN list and speak HTTP/2 when the
+    /// server selects it. Off by default while the client implementation
+    /// matures. `--experimental-http2-fetch` is the CLI equivalent.
+    pub const BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT = newFeatureFlag("BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT", .{});
+    /// Honor `Alt-Svc: h3` from fetch() responses: subsequent requests to the
+    /// same origin go over QUIC/HTTP-3 instead of TCP. Off by default while
+    /// the client implementation matures. `--experimental-http3-fetch` is the
+    /// CLI equivalent.
+    pub const BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT = newFeatureFlag("BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT", .{});
     pub const BUN_FEATURE_FLAG_FORCE_IO_POOL = newFeatureFlag("BUN_FEATURE_FLAG_FORCE_IO_POOL", .{});
     pub const BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS = newFeatureFlag("BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS", .{});
     pub const BUN_INSTRUMENTS = newFeatureFlag("BUN_INSTRUMENTS", .{});

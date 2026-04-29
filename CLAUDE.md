@@ -202,6 +202,8 @@ Third-party C/C++ libraries are vendored locally and can be read from disk (thes
 - `vendor/libuv/` - libuv (Windows event loop)
 - `vendor/lolhtml/` - lol-html (HTML rewriter)
 - `vendor/lshpack/` - ls-hpack (HTTP/2 HPACK)
+- `vendor/lsqpack/` - ls-qpack (HTTP/3 QPACK)
+- `vendor/lsquic/` - lsquic (QUIC / HTTP/3)
 - `vendor/mimalloc/` - mimalloc (memory allocator)
 - `vendor/nodejs/` - Node.js headers (compatibility)
 - `vendor/picohttpparser/` - PicoHTTPParser (HTTP parsing)

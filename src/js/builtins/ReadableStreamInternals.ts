@@ -853,7 +853,11 @@ export function assignStreamIntoResumableSink(stream, sink) {
       }
     }
 
-    function cancelStream(reason: Error | null) {
+    // Native ResumableSink invokes this as (undefined, reason) — see
+    // ResumableSink.cancel in ResumableSink.zig. The first slot is unused
+    // here (we close over `stream`), but the parameter is required so the
+    // abort reason lands in the right argument.
+    function cancelStream(_, reason: Error | null) {
       if (closed) return;
       let wasClosed = closed;
       closed = true;
@@ -1925,17 +1929,10 @@ export function readableStreamFromAsyncIterator(target, fn) {
 }
 
 export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultController {
-  const closer = [false];
-
   function callClose(controller: ReadableStreamDefaultController) {
     try {
       var source = controller.$underlyingSource;
-      const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
-      if (!stream) {
-        return;
-      }
-
-      if ($getByIdDirectPrivate(stream, "state") !== $streamReadable) return;
+      if (!$readableStreamDefaultControllerCanCloseOrEnqueue(controller)) return;
       controller.close();
     } catch (e) {
       globalThis.reportError(e);
@@ -2009,6 +2006,16 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
 
     autoAllocateChunkSize = 0;
     #closed = false;
+
+    // EOF signal array passed to `handle.pull(view, closer)`. Native code
+    // writes `closer[0] = true` synchronously on EOF and the pull callback
+    // reads it back (including after awaiting a pending pull promise).
+    // MUST be per-instance: if this were a factory-scope constant it would
+    // be shared across every NativeReadableStreamSource backed by the same
+    // prototype (e.g. stdin + a fetch() response body, or two concurrent
+    // fetch() bodies), and one instance's EOF could incorrectly close
+    // another. See #29787.
+    #closer: [boolean] = [false];
 
     $data?: Uint8Array;
 
@@ -2103,6 +2110,7 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
         this.#controller = new WeakRef(controller);
       }
 
+      const closer = this.#closer;
       closer[0] = false;
 
       if (this.$data) {

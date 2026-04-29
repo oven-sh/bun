@@ -94,6 +94,14 @@ pub const PosixLoop = extern struct {
         return c.uws_get_loop();
     }
 
+    /// Packetize HTTP/3 stream writes that happened since the last
+    /// process_conns. Early-returns when nothing wrote, so safe to call
+    /// from drainMicrotasks without per-iteration cost.
+    pub fn drainQuicIfNecessary(this: *Loop) void {
+        if (this.internal_loop_data.quic_head == null) return;
+        c.us_quic_loop_flush_if_pending(this);
+    }
+
     pub fn create(comptime Handler: anytype) *Loop {
         return c.us_create_loop(
             null,
@@ -230,6 +238,11 @@ pub const WindowsLoop = extern struct {
         c.us_loop_pump(this);
     }
 
+    pub fn drainQuicIfNecessary(this: *WindowsLoop) void {
+        if (this.internal_loop_data.quic_head == null) return;
+        c.us_quic_loop_flush_if_pending(this);
+    }
+
     pub fn create(comptime Handler: anytype) *WindowsLoop {
         return c.us_create_loop(
             null,
@@ -304,6 +317,7 @@ const c = struct {
     ) ?*Loop;
     pub extern fn us_loop_free(loop: ?*Loop) void;
     pub extern fn us_loop_ext(loop: ?*Loop) ?*anyopaque;
+    pub extern fn us_quic_loop_flush_if_pending(loop: *Loop) void;
     pub extern fn us_loop_run(loop: ?*Loop) void;
     pub extern fn us_loop_pump(loop: ?*Loop) void;
     pub extern fn us_wakeup_loop(loop: ?*Loop) void;

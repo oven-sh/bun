@@ -19058,17 +19058,28 @@ pub const SSL = opaque {
     }
 
     pub fn configureHTTPClient(ssl: *SSL, hostname: [:0]const u8) void {
+        configureHTTPClientWithALPN(ssl, hostname, .h1);
+    }
+
+    pub const AlpnOffer = enum { h1, h1_or_h2, h2_only };
+
+    pub fn configureHTTPClientWithALPN(ssl: *SSL, hostname: [:0]const u8, offer: AlpnOffer) void {
         if (hostname.len > 0) ssl.setHostname(hostname);
         _ = SSL_clear_options(ssl, SSL_OP_LEGACY_SERVER_CONNECT);
         _ = SSL_set_options(ssl, SSL_OP_LEGACY_SERVER_CONNECT);
 
-        const alpns = &[_]u8{ 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
-        bun.assert(SSL_set_alpn_protos(ssl, alpns, alpns.len) == 0);
+        const alpn_h1 = &[_]u8{ 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
+        const alpn_h2 = &[_]u8{ 2, 'h', '2' };
+        const alpn_h2_h1 = &[_]u8{ 2, 'h', '2', 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
+        const alpns: []const u8 = switch (offer) {
+            .h1 => alpn_h1,
+            .h1_or_h2 => alpn_h2_h1,
+            .h2_only => alpn_h2,
+        };
+        bun.assert(SSL_set_alpn_protos(ssl, alpns.ptr, alpns.len) == 0);
 
         SSL_enable_signed_cert_timestamps(ssl);
         SSL_enable_ocsp_stapling(ssl);
-
-        SSL_set_enable_ech_grease(ssl, 1);
     }
 
     pub fn handshake(this: *SSL) Error!void {

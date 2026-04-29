@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { fileDescriptorLeakChecker, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, fileDescriptorLeakChecker, isWindows, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -212,7 +212,8 @@ it.skipIf(isWindows)("close() while a write() promise is pending still settles i
   // backpressure promise's Strong before `onWrite` could fulfil it,
   // leaving `await p` hung forever.
   await using child = Bun.spawn({
-    cmd: [process.execPath, "-e", "for await (const _ of process.stdin) {}"],
+    cmd: [bunExe(), "-e", "for await (const _ of process.stdin) {}"],
+    env: bunEnv,
     stdin: "pipe",
     stdout: "ignore",
     stderr: "pipe",

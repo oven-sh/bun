@@ -484,14 +484,19 @@ pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, wait: bool) bun
 }
 
 pub fn finalize(this: *FileSink) void {
-    this.readable_stream.deinit();
-    // Do not touch `this.pending` here. `finalize()` is reachable both from
-    // the C++ destructor and from the prototype `.close()` (see `__doClose`
-    // in generate-jssink.ts). In the latter case a backpressured `write()`
-    // may have returned `pending.future.promise` to user code; clearing it
-    // to `.none` would make `runPending()` a no-op and leave that promise
-    // unsettled. The refcount destructor `deinit()` already releases it once
-    // `must_be_kept_alive_until_eof` has been dropped.
+    // `finalize()` is reachable both from the C++ destructor and from the
+    // prototype `.close()` (see `__doClose` in generate-jssink.ts), so it
+    // must not tear down state that in-flight IO still needs:
+    //   * `this.pending` — a backpressured `write()` may have returned
+    //     `pending.future.promise` to user code; clearing it to `.none`
+    //     would make `runPending()` a no-op and leave that promise
+    //     unsettled.
+    //   * `this.readable_stream` — when a ReadableStream is piped into this
+    //     sink (Bun.spawn stdin), clearing it here makes
+    //     `handleResolveStream`/`handleRejectStream`/`onAttachedProcessExit`
+    //     skip `.done()`/`.cancel()` on the source stream.
+    // Both are released by the refcount destructor `deinit()` once
+    // `must_be_kept_alive_until_eof` / the assignToStream ref are dropped.
     this.js_sink_ref.deinit();
     this.deref();
 }

@@ -627,12 +627,10 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
         // Also drop any cached JSCommonJSModule entry whose `.exports` was
         // previously overwritten by a mock — otherwise require() returns the
         // patched mock exports instead of re-evaluating the real source.
-        auto* requireMap = globalObject->requireMap();
-        bool hadRequireMapEntry = requireMap->has(globalObject, specifierString);
-        if (hadRequireMapEntry) {
-            requireMap->remove(globalObject, specifierString);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
+        // JSMap::remove is a no-op when the key isn't present and returns
+        // false in that case — no need to pre-check.
+        globalObject->requireMap()->remove(globalObject, specifierString);
+        RETURN_IF_EXCEPTION(scope, {});
 
         JSC::JSValue realExports;
         if (boundRequire) {

@@ -108,13 +108,26 @@ private:
     us_socket_group_t group{};
     HttpContextData<SSL> data;
 
+    /* fromSocket() / getSocketContextDataS() cast group.ext back to
+     * HttpContext*; nothing else relies on offsetof(data), but pin group at 0
+     * so a future base class or vptr doesn't quietly break the cast. */
+    static void layoutAssert() {
+        static_assert(!std::is_polymorphic_v<HttpContext>,
+                      "HttpContext must stay non-polymorphic (group.ext = this)");
+        static_assert(offsetof(HttpContext, group) == 0,
+                      "HttpContext::fromSocket layout assumption broken");
+    }
+
     /* Maximum delay allowed until an HTTP connection is terminated due to outstanding request or rejected data (slow loris protection) */
     static constexpr int HTTP_IDLE_TIMEOUT_S = 10;
 
     /* Minimum allowed receive throughput per second (clients uploading less than 16kB/sec get dropped) */
     static constexpr int HTTP_RECEIVE_THROUGHPUT_BYTES = 16 * 1024;
 
-    static constexpr unsigned char SOCKET_KIND = SSL ? US_SOCKET_KIND_UWS_HTTP_TLS : US_SOCKET_KIND_UWS_HTTP;
+    /* Not constexpr — the ordinals are linked from Zig (`SocketKind.zig`
+     * @export) so a reorder there can't silently mis-route us. Only ever read
+     * at runtime (listen/adopt). */
+    static unsigned char socketKind() { return SSL ? US_SOCKET_KIND_UWS_HTTP_TLS : US_SOCKET_KIND_UWS_HTTP; }
 
 public:
     us_socket_group_t *getSocketGroup() {
@@ -232,6 +245,9 @@ private:
 
         /* Do not accept any data while in shutdown state */
         if (us_socket_is_shut_down((us_socket_t *) s)) {
+            /* Balance the us_socket_ref above — every other return path
+             * reaches the unref via returnedData. */
+            us_socket_unref(s);
             return s;
         }
 
@@ -651,7 +667,7 @@ public:
         int error = 0;
         /* HTTP clients always send first (the request, or ClientHello for TLS), so defer
          * accept() until data arrives and dispatch the read immediately after accept. */
-        auto socket = us_socket_group_listen(&group, SOCKET_KIND, sslCtx, host, port, options | LIBUS_LISTEN_DEFER_ACCEPT, sizeof(HttpResponseData<SSL>), &error);
+        auto socket = us_socket_group_listen(&group, socketKind(), sslCtx, host, port, options | LIBUS_LISTEN_DEFER_ACCEPT, sizeof(HttpResponseData<SSL>), &error);
         // we dont depend on libuv ref for keeping it alive
         if (socket) {
           us_socket_unref(&socket->s);
@@ -662,7 +678,7 @@ public:
     /* Listen to unix domain socket using this HttpContext */
     us_listen_socket_t *listen_unix(struct ssl_ctx_st *sslCtx, const char *path, size_t pathlen, int options) {
         int error = 0;
-        auto* socket = us_socket_group_listen_unix(&group, SOCKET_KIND, sslCtx, path, pathlen, options, sizeof(HttpResponseData<SSL>), &error);
+        auto* socket = us_socket_group_listen_unix(&group, socketKind(), sslCtx, path, pathlen, options, sizeof(HttpResponseData<SSL>), &error);
         // we dont depend on libuv ref for keeping it alive
         if (socket) {
             us_socket_unref(&socket->s);

@@ -172,11 +172,18 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
                 s->timeout = 255;
                 us_dispatch_timeout(s);
             }
+            /* A timeout handler may have closed every socket and the owner may
+             * have deinit'd the embedding group in response (release builds —
+             * deinit() asserts iterator==NULL in debug). loop_data->iterator
+             * would have been advanced past `group` by unlink_group(); if so,
+             * `group` is freed storage and we must not touch it again. */
+            if (loop_data->iterator != group) goto outer_continue;
 
             if (group->iterator == s && long_ticks == s->long_timeout) {
                 s->long_timeout = 255;
                 us_dispatch_long_timeout(s);
             }
+            if (loop_data->iterator != group) goto outer_continue;
 
             /* Check for unlink / link (if the event handler did not modify the chain, we step 1) */
             if (s == group->iterator) {
@@ -186,14 +193,11 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
                 s = group->iterator;
             }
         }
-        /* We always store a 0 to group->iterator here since we are no longer iterating this group */
         next_group:
+        /* Only safe to write back / step ->next if the group survived dispatch. */
         group->iterator = 0;
-        /* Advance, accounting for us_internal_loop_unlink_group having moved the iterator
-         * if a timeout callback deinit'd this group. */
-        if (loop_data->iterator == group) {
-            loop_data->iterator = group->next;
-        }
+        loop_data->iterator = group->next;
+        outer_continue:;
     }
 }
 

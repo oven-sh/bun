@@ -1,12 +1,16 @@
 #pragma once
-/* C++ mirror of `src/deps/uws/SocketKind.zig` ordinals for the uWS server
- * kinds. The Zig dispatcher routes these through `group->vtable`, so the only
- * load-bearing requirement is that they don't collide with `invalid = 0` and
- * stay in sync with the Zig enum. */
-enum : unsigned char {
-    US_SOCKET_KIND_DYNAMIC      = 1,
-    US_SOCKET_KIND_UWS_HTTP     = 19,
-    US_SOCKET_KIND_UWS_HTTP_TLS = 20,
-    US_SOCKET_KIND_UWS_WS       = 21,
-    US_SOCKET_KIND_UWS_WS_TLS   = 22,
-};
+/* `src/deps/uws/SocketKind.zig` is the source of truth for these ordinals.
+ * The Zig side `@export`s them so the dispatch ABI can't silently drift if
+ * the enum is reordered — C++ links against the actual values instead of
+ * hand-mirrored literals. */
+extern "C" const unsigned char BUN_SOCKET_KIND_DYNAMIC;
+extern "C" const unsigned char BUN_SOCKET_KIND_UWS_HTTP;
+extern "C" const unsigned char BUN_SOCKET_KIND_UWS_HTTP_TLS;
+extern "C" const unsigned char BUN_SOCKET_KIND_UWS_WS;
+extern "C" const unsigned char BUN_SOCKET_KIND_UWS_WS_TLS;
+
+#define US_SOCKET_KIND_DYNAMIC      BUN_SOCKET_KIND_DYNAMIC
+#define US_SOCKET_KIND_UWS_HTTP     BUN_SOCKET_KIND_UWS_HTTP
+#define US_SOCKET_KIND_UWS_HTTP_TLS BUN_SOCKET_KIND_UWS_HTTP_TLS
+#define US_SOCKET_KIND_UWS_WS       BUN_SOCKET_KIND_UWS_WS
+#define US_SOCKET_KIND_UWS_WS_TLS   BUN_SOCKET_KIND_UWS_WS_TLS

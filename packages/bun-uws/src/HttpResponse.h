@@ -339,7 +339,7 @@ public:
 
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
         us_socket_t *usSocket = us_socket_adopt((us_socket_t *) this, webSocketContext->getSocketGroup(),
-            WebSocketContext<SSL, true, UserData>::SOCKET_KIND,
+            WebSocketContext<SSL, true, UserData>::socketKind(),
             sizeof(HttpResponseData<SSL>), sizeof(WebSocketData) + sizeof(UserData));
         WebSocket<SSL, true, UserData> *webSocket = (WebSocket<SSL, true, UserData> *) usSocket;
 

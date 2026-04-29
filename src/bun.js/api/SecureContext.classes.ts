@@ -8,13 +8,12 @@ export default [
     memoryCost: true,
     configurable: false,
     klass: {},
-    proto: {
-      // Exposed for parity with Node's `SecureContext.prototype.context`
-      // (which userland sometimes pokes at to call `SSL_CTX_*` via N-API).
-      // Returns the raw pointer as a number; not stable across GC.
-      _nativeHandle: {
-        getter: "getNativeHandle",
-      },
-    },
+    // No prototype surface — node:tls hands out the SecureContext object
+    // itself as `.context`. We deliberately do NOT expose the underlying
+    // SSL_CTX* to JS: a Number would lose precision above 2^53, and Node's
+    // `context._external` is a V8 External (opaque) used only by N-API
+    // addons that link OpenSSL directly, which Bun's BoringSSL build can't
+    // satisfy anyway.
+    proto: {},
   }),
 ];

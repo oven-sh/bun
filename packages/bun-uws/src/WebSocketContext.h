@@ -38,8 +38,21 @@ private:
     us_socket_group_t group{};
     WebSocketContextData<SSL, USERDATA> data;
 
+    /* WebSocket::getContextData() recovers &data as
+     * (us_socket_group_t*)group.ext + 1 to avoid pulling this header into
+     * WebSocket.h. That's only sound if `group` is the first member and `data`
+     * sits immediately after it with no inserted base/field. */
+    static void layoutAssert() {
+        static_assert(offsetof(WebSocketContext, group) == 0,
+                      "WebSocket::getContextData layout assumption broken");
+        static_assert(offsetof(WebSocketContext, data) == sizeof(us_socket_group_t),
+                      "WebSocket::getContextData layout assumption broken");
+    }
+
 public:
-    static constexpr unsigned char SOCKET_KIND = SSL ? US_SOCKET_KIND_UWS_WS_TLS : US_SOCKET_KIND_UWS_WS;
+    /* Not constexpr — the ordinals are linked from Zig (`SocketKind.zig`
+     * @export) so a reorder there can't silently mis-route us. */
+    static unsigned char socketKind() { return SSL ? US_SOCKET_KIND_UWS_WS_TLS : US_SOCKET_KIND_UWS_WS; }
 
     us_socket_group_t *getSocketGroup() {
         return &group;

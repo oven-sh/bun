@@ -60,10 +60,6 @@ pub fn memoryCost(this: *SecureContext) usize {
     return @sizeOf(SecureContext) + this.extra_memory;
 }
 
-pub fn getNativeHandle(this: *SecureContext, _: *jsc.JSGlobalObject) jsc.JSValue {
-    return jsc.JSValue.jsNumber(@as(f64, @floatFromInt(@intFromPtr(this.ctx))));
-}
-
 /// Exposed via `bun:internal-for-testing` so churn tests can assert
 /// `SSL_CTX_new` was called O(1) times, not O(connections).
 pub fn jsLiveCount(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {

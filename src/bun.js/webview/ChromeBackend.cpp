@@ -1,5 +1,6 @@
 #include "root.h"
 #include "ChromeBackend.h"
+#include "bun-uws/src/SocketKinds.h"
 #include "JSWebView.h"
 #include "ipc_protocol.h"
 #include "ZigGlobalObject.h"
@@ -329,7 +330,7 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     // care about READABLE — writable events on a read-end pipe fire
     // constantly, but onWritable is a no-op when m_txQueue is empty so
     // they're harmless. kind=1 (.dynamic) → dispatch via s_cdpVTable.
-    m_readSock = us_socket_from_fd(&s_cdpGroup, /*kind=dynamic*/ 1, nullptr, sizeof(void*), fd, 0);
+    m_readSock = us_socket_from_fd(&s_cdpGroup, BUN_SOCKET_KIND_DYNAMIC, nullptr, sizeof(void*), fd, 0);
     if (!m_readSock) {
         closefd(fd);
         m_dead = true;

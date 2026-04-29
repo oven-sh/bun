@@ -391,11 +391,20 @@ struct us_ssl_ctx_t {
     uint8_t reject_unauthorized;
     uint8_t request_cert;
     uint8_t is_client;
+    /* 1 = `ssl_ctx` is an SSL_CTX_up_ref()'d borrow of another wrapper's
+     * native; deinit must ONLY SSL_CTX_free() (drop the borrow), not free the
+     * passphrase ex-data or touch the live counter — the owning wrapper does
+     * that exactly once. Set by us_ssl_ctx_init_borrowed(). */
+    uint8_t borrowed;
 };
 
 int us_ssl_ctx_init(struct us_ssl_ctx_t *out,
     struct us_bun_socket_context_options_t options, int is_client,
     enum create_bun_socket_error_t *err);
+/* Copy `from`'s policy fields, SSL_CTX_up_ref() its native, and mark the copy
+ * as a borrow. The result is a value-typed wrapper safe to store on a
+ * per-connection object whose lifetime is independent of `from`'s. */
+void us_ssl_ctx_init_borrowed(struct us_ssl_ctx_t *out, const struct us_ssl_ctx_t *from);
 void us_ssl_ctx_deinit(struct us_ssl_ctx_t *ctx);
 long us_ssl_ctx_live_count(void);
 

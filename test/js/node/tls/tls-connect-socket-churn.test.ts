@@ -9,7 +9,7 @@ import tls from "node:tls";
 import { once } from "node:events";
 // @ts-expect-error - debug-only export
 import { sslCtxLiveCount } from "bun:internal-for-testing";
-import { tls as tlsCerts } from "harness";
+import { tls as tlsCerts, isASAN, isDebug } from "harness";
 
 test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () => {
   const server = tls.createServer({ ...tlsCerts, rejectUnauthorized: false }, sock => {
@@ -39,17 +39,20 @@ test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () 
   // close-list / GC race, but 200 connects must not move this by 200.
   expect(ctxAfter - ctxBefore).toBeLessThanOrEqual(2);
 
-  // Pre-fix this grew ~50 KB × 200 ≈ 10 MB. Allow 4 MB headroom for allocator
-  // noise; the leak was an order of magnitude above that.
-  expect(rssAfter - rssBefore).toBeLessThan(4 * 1024 * 1024);
+  // Pre-fix this grew ~50 KB × 200 ≈ 10 MB in release. Debug+ASAN builds hold
+  // freed allocations in quarantine, so RSS deltas there are dominated by
+  // quarantine churn rather than live leaks; only enforce the tight bound in
+  // release where the original regression was visible.
+  const rssBound = isASAN || isDebug ? 64 * 1024 * 1024 : 4 * 1024 * 1024;
+  expect(rssAfter - rssBefore).toBeLessThan(rssBound);
 }, 20_000);
 
 test("createSecureContext memoises by config", () => {
-  const a = tls.createSecureContext({ ca: tlsCerts.ca });
-  const b = tls.createSecureContext({ ca: tlsCerts.ca });
+  const a = tls.createSecureContext({ cert: tlsCerts.cert });
+  const b = tls.createSecureContext({ cert: tlsCerts.cert });
   expect(a).toBe(b);
   // Different config → different context.
-  const c = tls.createSecureContext({ ca: tlsCerts.ca, rejectUnauthorized: false });
+  const c = tls.createSecureContext({ cert: tlsCerts.cert, rejectUnauthorized: false });
   expect(c).not.toBe(a);
 });
 

@@ -717,11 +717,33 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
     // Build the SSL_CTX once here (or pull it from a passed SecureContext);
     // doConnect hands `&socket.owned_ssl_ctx` to the per-VM connect group.
     var owned_ssl_ctx = std.mem.zeroes(uws.SslCtx);
-    if (ssl) |ssl_cfg| {
-        var create_err: uws.create_bun_socket_error_t = .none;
-        owned_ssl_ctx = ssl_cfg.asUSockets().createSSLContext(true, &create_err) orelse {
-            return globalObject.throwValue(create_err.toJS(globalObject));
+    if (ssl_enabled) {
+        // node:tls passes the native SecureContext as `tls.secureContext` so
+        // we share its already-built SSL_CTX (CA bundle, cert chain, ciphers)
+        // instead of rebuilding ~50 KB of BoringSSL state per connect. The
+        // borrow up_ref()s the SSL_CTX*; the SecureContext can be GC'd while
+        // the connection is alive without taking the cert store with it.
+        const native_sc: ?*SecureContext = blk: {
+            const tls_js = (try opts.getTruthy(globalObject, "tls")) orelse break :blk null;
+            if (!tls_js.isObject()) break :blk null;
+            const sc_js = (try tls_js.getTruthy(globalObject, "secureContext")) orelse break :blk null;
+            break :blk SecureContext.fromJS(sc_js);
         };
+        if (native_sc) |sc| {
+            owned_ssl_ctx = uws.SslCtx.initBorrowed(sc.handle());
+            // Per-connection policy can diverge from the cached context's
+            // (e.g. `rejectUnauthorized: false` on this connect only).
+            if (ssl) |ssl_cfg| {
+                owned_ssl_ctx.reject_unauthorized = @intFromBool(ssl_cfg.reject_unauthorized != 0);
+                owned_ssl_ctx.request_cert = @intFromBool(ssl_cfg.request_cert != 0);
+            }
+            owned_ssl_ctx.is_client = 1;
+        } else if (ssl) |ssl_cfg| {
+            var create_err: uws.create_bun_socket_error_t = .none;
+            owned_ssl_ctx = ssl_cfg.asUSockets().createSSLContext(true, &create_err) orelse {
+                return globalObject.throwValue(create_err.toJS(globalObject));
+            };
+        }
     }
     errdefer if (owned_ssl_ctx.ssl_ctx != null) owned_ssl_ctx.deinit();
 

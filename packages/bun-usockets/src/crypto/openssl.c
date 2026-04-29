@@ -510,13 +510,27 @@ int us_ssl_ctx_init(struct us_ssl_ctx_t *out,
   out->reject_unauthorized = options.reject_unauthorized ? 1 : 0;
   out->request_cert = options.request_cert ? 1 : 0;
   out->is_client = is_client ? 1 : 0;
+  out->borrowed = 0;
   return 1;
+}
+
+void us_ssl_ctx_init_borrowed(struct us_ssl_ctx_t *out, const struct us_ssl_ctx_t *from) {
+  *out = *from;
+  out->ref_count = 1;
+  out->borrowed = 1;
+  SSL_CTX_up_ref((SSL_CTX *)out->ssl_ctx);
 }
 
 void us_ssl_ctx_deinit(struct us_ssl_ctx_t *ctx) {
   if (!ctx || !ctx->ssl_ctx) return;
   if (--ctx->ref_count == 0) {
-    ssl_ctx_destroy_native((SSL_CTX *)ctx->ssl_ctx);
+    if (ctx->borrowed) {
+      /* Only drop the up_ref; passphrase ex-data and the live counter belong
+       * to the owning wrapper. */
+      SSL_CTX_free((SSL_CTX *)ctx->ssl_ctx);
+    } else {
+      ssl_ctx_destroy_native((SSL_CTX *)ctx->ssl_ctx);
+    }
     ctx->ssl_ctx = NULL;
   }
 }
@@ -648,6 +662,9 @@ struct us_bun_verify_error_t us_internal_ssl_verify_error(struct us_socket_t *s)
 
 /* ── Handshake state machine ─────────────────────────────────────────────── */
 
+/* The on_handshake callback runs JS which may us_socket_close(s) — that frees
+ * s->ssl. Every caller MUST check ssl_gone(s) immediately after this returns
+ * and bail before touching s->ssl/d again. */
 static void ssl_trigger_handshake(struct us_socket_t *s, int success) {
   s->ssl->handshake_state = HANDSHAKE_COMPLETED;
   struct us_bun_verify_error_t verify_error = us_internal_ssl_verify_error(s);
@@ -660,6 +677,12 @@ static void ssl_trigger_handshake_econnreset(struct us_socket_t *s) {
       .error = -46, .code = "ECONNRESET",
       .reason = "Client network socket disconnected before secure TLS connection was established"};
   us_dispatch_handshake(s, 0, verify_error);
+}
+
+/* True once a re-entrant us_socket_close() has run inside a dispatch. Any
+ * cached `d = s->ssl` pointer is dangling at that point. */
+static inline int ssl_gone(struct us_socket_t *s) {
+  return us_socket_is_closed(s) || s->ssl == NULL;
 }
 
 static int ssl_renegotiate(struct us_socket_t *s) {
@@ -704,14 +727,16 @@ static int ssl_handle_shutdown(struct us_socket_t *s, int force_fast_shutdown) {
 }
 
 static struct us_socket_t *ssl_close(struct us_socket_t *s, int code, void *reason) {
-  if (us_socket_is_closed(s)) return s;
+  if (ssl_gone(s)) return s;
   ssl_set_loop_data(s);
   ssl_update_handshake(s);
+  if (ssl_gone(s)) return s;
 
   if (s->ssl->handshake_state != HANDSHAKE_COMPLETED) {
     /* Surface ECONNRESET-style handshake failure exactly once so callers
      * (fetch, sockets) don't each have to check on_close themselves. */
     ssl_trigger_handshake_econnreset(s);
+    if (ssl_gone(s)) return s;
   }
 
   int can_close = ssl_handle_shutdown(s, code != 0);
@@ -723,7 +748,7 @@ static struct us_socket_t *ssl_close(struct us_socket_t *s, int code, void *reas
 
 static void ssl_update_handshake(struct us_socket_t *s) {
   struct us_ssl_socket_data_t *d = s->ssl;
-  if (d->handshake_state != HANDSHAKE_PENDING) return;
+  if (!d || d->handshake_state != HANDSHAKE_PENDING) return;
 
   if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s) ||
       (d->ssl && SSL_get_shutdown(d->ssl) & SSL_RECEIVED_SHUTDOWN)) {
@@ -755,7 +780,8 @@ static void ssl_update_handshake(struct us_socket_t *s) {
   }
 
   ssl_trigger_handshake(s, 1);
-  d->ssl_write_wants_read = 1;
+  if (ssl_gone(s)) return;
+  s->ssl->ssl_write_wants_read = 1;
 }
 
 /* ── Event hooks (called from loop.c / socket.c when s->ssl != NULL) ────── */
@@ -764,7 +790,7 @@ struct us_socket_t *us_internal_ssl_on_open(struct us_socket_t *s, int is_client
                                             char *ip, int ip_length) {
   ssl_set_loop_data(s);
   struct us_socket_t *result = us_dispatch_open(s, is_client, ip, ip_length);
-  if (!result || us_socket_is_closed(result)) return result;
+  if (!result || ssl_gone(result)) return result;
   /* Kick the handshake immediately — some peers stall waiting for ClientHello. */
   ssl_update_handshake(result);
   return result;
@@ -788,20 +814,21 @@ struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
 }
 
 struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
-  struct us_ssl_socket_data_t *d = s->ssl;
   ssl_set_loop_data(s);
   ssl_update_handshake(s);
+  if (ssl_gone(s)) return s;
 
-  if (d->ssl_read_wants_write) {
-    d->ssl_read_wants_write = 0;
+  if (s->ssl->ssl_read_wants_write) {
+    s->ssl->ssl_read_wants_write = 0;
     /* Re-enter the data path with an empty buffer; SSL_read will pull from
      * the kernel via the next readable event but this lets it flush any
      * pending decrypt that was blocked on a write. */
     s = us_internal_ssl_on_data(s, "", 0);
+    if (!s || ssl_gone(s)) return s;
   }
-  if (!s || us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s)) return s;
+  if (us_internal_ssl_is_shut_down(s)) return s;
 
-  if (d->handshake_state == HANDSHAKE_COMPLETED) {
+  if (s->ssl->handshake_state == HANDSHAKE_COMPLETED) {
     s = us_dispatch_writable(s);
   }
   return s;
@@ -832,12 +859,14 @@ restart:
       if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
         if (err == SSL_ERROR_WANT_RENEGOTIATE) {
           if (ssl_renegotiate(s)) continue;
+          if (ssl_gone(s)) return NULL;
+          d = s->ssl;
           err = SSL_ERROR_SSL;
         } else if (err == SSL_ERROR_ZERO_RETURN) {
           /* Remote close_notify. Flush what we decrypted, then close. */
           if (read) {
             s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
-            if (!s || us_socket_is_closed(s)) return NULL;
+            if (!s || ssl_gone(s)) return NULL;
           }
           ssl_close(s, 0, NULL);
           return NULL;
@@ -860,7 +889,7 @@ restart:
         if (!read) break;
 
         s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
-        if (!s || us_socket_is_closed(s)) return NULL;
+        if (!s || ssl_gone(s)) return NULL;
         break;
       }
     } else if (d->handshake_state == HANDSHAKE_RENEGOTIATION_PENDING ||
@@ -877,7 +906,8 @@ restart:
       unsigned int saved_length = loop_ssl_data->ssl_read_input_length;
       unsigned int saved_offset = loop_ssl_data->ssl_read_input_offset;
       ssl_trigger_handshake(s, 1);
-      if (us_socket_is_closed(s)) return NULL;
+      if (ssl_gone(s)) return NULL;
+      d = s->ssl;
       loop_ssl_data->ssl_read_input = saved_input;
       loop_ssl_data->ssl_read_input_length = saved_length;
       loop_ssl_data->ssl_read_input_offset = saved_offset;
@@ -888,7 +918,7 @@ restart:
 
     if (read == LIBUS_RECV_BUFFER_LENGTH) {
       s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
-      if (!s || us_socket_is_closed(s)) return NULL;
+      if (!s || ssl_gone(s)) return NULL;
       d = s->ssl;
       read = 0;
       goto restart;
@@ -897,11 +927,14 @@ restart:
 
   /* If the last SSL_write failed with WANT_READ and we've now read, give the
    * application a writable callback — but not if SSL_read just told us it
-   * needs to write first (would recurse). */
+   * needs to write first (would recurse). Re-load `d`: any dispatch above may
+   * have closed and freed s->ssl. */
+  if (ssl_gone(s)) return NULL;
+  d = s->ssl;
   if (d->ssl_write_wants_read && !d->ssl_read_wants_write) {
     d->ssl_write_wants_read = 0;
     s = us_internal_ssl_on_writable(s);
-    if (!s || us_socket_is_closed(s)) return NULL;
+    if (!s || ssl_gone(s)) return NULL;
   }
 
   return s;

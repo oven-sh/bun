@@ -1455,11 +1455,29 @@ pub fn NewSocket(comptime ssl: bool) type {
             var ssl_opts: ?jsc.API.ServerConfig.SSLConfig = null;
             defer if (ssl_opts) |*cfg| cfg.deinit();
 
-            if (try opts.getTruthy(globalObject, "secureContext")) |sc_js| {
-                if (SecureContext.fromJS(sc_js)) |sc| {
-                    native_handle = sc.handle();
-                } else {
+            // node:net wraps the result of `[buntls]` as `opts.tls`, so the
+            // SecureContext arrives as `opts.tls.secureContext`. Bun.connect
+            // userland may also pass it top-level. Check both.
+            const sc_js: JSValue = blk: {
+                if (try opts.getTruthy(globalObject, "secureContext")) |v| break :blk v;
+                if (try opts.getTruthy(globalObject, "tls")) |t| {
+                    if (t.isObject()) {
+                        if (try t.getTruthy(globalObject, "secureContext")) |v| break :blk v;
+                    }
+                }
+                break :blk .zero;
+            };
+            if (sc_js != .zero) {
+                const sc = SecureContext.fromJS(sc_js) orelse {
                     return globalObject.throwInvalidArgumentTypeValue("secureContext", "SecureContext", sc_js);
+                };
+                // Borrow into per-connection storage so the SecureContext can
+                // be GC'd while this socket is alive.
+                owned_native = uws.SslCtx.initBorrowed(sc.handle());
+                native_handle = &owned_native;
+                // servername / ALPN still come from the surrounding tls config.
+                if (try opts.getTruthy(globalObject, "tls")) |t| {
+                    if (!t.isBoolean()) ssl_opts = try jsc.API.ServerConfig.SSLConfig.fromJS(jsc.VirtualMachine.get(), globalObject, t);
                 }
             } else if (try opts.getTruthy(globalObject, "tls")) |tls_js| {
                 if (!tls_js.isBoolean()) {

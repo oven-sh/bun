@@ -58,6 +58,16 @@ pub const SslCtx = extern struct {
     reject_unauthorized: u8,
     request_cert: u8,
     is_client: u8,
+    borrowed: u8,
+
+    /// Value-typed copy that shares `from`'s `SSL_CTX*` (up_ref'd) but owns
+    /// its own refcount. Safe to embed in a per-connection object whose
+    /// lifetime is independent of the `SecureContext` JS wrapper.
+    pub fn initBorrowed(from: *const SslCtx) SslCtx {
+        var out: SslCtx = undefined;
+        c.us_ssl_ctx_init_borrowed(&out, from);
+        return out;
+    }
 
     pub fn deinit(self: *SslCtx) void {
         c.us_ssl_ctx_deinit(self);
@@ -66,6 +76,7 @@ pub const SslCtx = extern struct {
 
 pub const c = struct {
     pub extern fn us_ssl_ctx_init(*SslCtx, BunSocketContextOptions, c_int, *uws.create_bun_socket_error_t) c_int;
+    pub extern fn us_ssl_ctx_init_borrowed(*SslCtx, *const SslCtx) void;
     pub extern fn us_ssl_ctx_deinit(*SslCtx) void;
     pub extern fn us_ssl_ctx_live_count() c_long;
 };

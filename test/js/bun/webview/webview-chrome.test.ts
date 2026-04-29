@@ -1032,10 +1032,10 @@ test.skipIf(isWindows)("chrome: backend.detached runs the subprocess in its own 
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
     const [pid, pgid] = stdout.trim().split(",");
     expect(pid).toMatch(/^\d+$/);
     expect(pgid).toMatch(/^\d+$/);
+    expect(exitCode).toBe(0);
     return { pid, pgid };
   }
 
@@ -1048,8 +1048,10 @@ test.skipIf(isWindows)("chrome: backend.detached runs the subprocess in its own 
   expect(nd.pgid).not.toBe(nd.pid);
 });
 
-test.skipIf(isWindows)("chrome: backend.detached validates", () => {
-  // Type validation happens before any spawn attempt — no Chrome needed.
+test("chrome: backend.detached validates", () => {
+  // Type validation happens before any platform-specific spawn code — runs
+  // identically on Windows. Matches the sibling backend.stderr/option
+  // validation tests which also use plain test().
   expect(() => new Bun.WebView({ backend: { type: "chrome", url: false, detached: "yes" } } as any)).toThrow(
     /backend\.detached must be a boolean/,
   );

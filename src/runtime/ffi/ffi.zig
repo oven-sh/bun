@@ -1459,9 +1459,11 @@ pub const FFI = struct {
         }
 
         extern "c" fn FFICallbackFunctionWrapper_destroy(*anyopaque) void;
+        extern "c" fn Bun__FFIFunction_setClosed(JSValue) void;
 
         pub fn deinit(val: *Function, globalThis: *jsc.JSGlobalObject) void {
             jsc.markBinding(@src());
+            _ = globalThis;
 
             if (val.base_name) |base_name| {
                 if (bun.asByteSlice(base_name).len > 0) {
@@ -1471,14 +1473,13 @@ pub const FFI = struct {
 
             val.arg_types.clearAndFree(val.allocator);
 
-            if (val.state) |state| {
-                state.deinit();
-                val.state = null;
-            }
-
             if (val.step == .compiled) {
+                // The JSFFIFunction may still be reachable from JS (e.g. the
+                // cached symbols object or a user-held reference). Detach its
+                // native trampoline before freeing the TCC state so calling
+                // it throws instead of jumping into freed JIT memory.
                 if (val.step.compiled.js_function != .zero) {
-                    _ = globalThis;
+                    Bun__FFIFunction_setClosed(val.step.compiled.js_function);
                     val.step.compiled.js_function = .zero;
                 }
 
@@ -1486,6 +1487,11 @@ pub const FFI = struct {
                     FFICallbackFunctionWrapper_destroy(wrapper);
                     val.step.compiled.ffi_callback_function_wrapper = null;
                 }
+            }
+
+            if (val.state) |state| {
+                state.deinit();
+                val.state = null;
             }
 
             if (val.step == .failed and val.step.failed.allocated) {

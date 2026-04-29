@@ -8,6 +8,7 @@ import {
   CFunction,
   CString,
   JSCallback,
+  linkSymbols,
   ptr,
   read,
   suffix,
@@ -969,4 +970,68 @@ describe.if(!!libPath)("can open more than 63 symbols via", () => {
       expect(lib.symbols.strlen(Buffer.from("bunbun\0", "ascii"))).toBe(6n);
     });
   }
+});
+
+describe("calling an FFI symbol after close()", () => {
+  // Regression test: calling a captured FFI symbol after its library has been
+  // closed must throw instead of jumping into the freed TinyCC JIT pages.
+  it("linkSymbols: throws instead of calling freed code", () => {
+    const cb = new JSCallback(x => x + 1, { args: ["i32"], returns: "i32" });
+    try {
+      const lib = linkSymbols({
+        inc: { args: ["i32"], returns: "i32", ptr: cb.ptr },
+      });
+      const inc = lib.symbols.inc;
+      const native = inc.native;
+      expect(inc(41)).toBe(42);
+      expect(native(41)).toBe(42);
+
+      lib.close();
+
+      expect(() => inc(1)).toThrow(TypeError);
+      expect(() => inc(1)).toThrow("Cannot call an FFI function after the library has been closed");
+      expect(() => native(1)).toThrow(TypeError);
+
+      // close() is idempotent
+      lib.close();
+      expect(() => inc(1)).toThrow(TypeError);
+    } finally {
+      cb.close();
+    }
+  });
+
+  it("linkSymbols: zero-arg function throws instead of calling freed code", () => {
+    const cb = new JSCallback(() => 7, { returns: "i32" });
+    try {
+      const lib = linkSymbols({
+        seven: { returns: "i32", ptr: cb.ptr },
+      });
+      // zero-arg functions are not wrapped by FFIBuilder, so the symbol IS
+      // the native JSFFIFunction itself.
+      const seven = lib.symbols.seven;
+      expect(seven()).toBe(7);
+
+      lib.close();
+
+      expect(() => seven()).toThrow(TypeError);
+      expect(() => seven()).toThrow("Cannot call an FFI function after the library has been closed");
+    } finally {
+      cb.close();
+    }
+  });
+
+  it.if(!!libPath)("dlopen: throws instead of calling freed code", () => {
+    const lib = _dlopen(libPath, { strlen: { args: ["ptr"], returns: "usize" } });
+    const strlen = lib.symbols.strlen;
+    const native = strlen.native;
+    expect(strlen(Buffer.from("bun\0"))).toBe(3n);
+
+    lib.close();
+
+    expect(() => strlen(Buffer.from("bun\0"))).toThrow(TypeError);
+    expect(() => strlen(Buffer.from("bun\0"))).toThrow(
+      "Cannot call an FFI function after the library has been closed",
+    );
+    expect(() => native(Buffer.from("bun\0"))).toThrow(TypeError);
+  });
 });

@@ -1057,7 +1057,13 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncAggregate, (JSGlobalObject * globalObject
     }
     JSValue resultV = opts->get(globalObject, Identifier::fromString(vm, "result"_s));
     RETURN_IF_EXCEPTION(scope, {});
-    JSObject* resultFn = resultV.isCallable() ? resultV.getObject() : nullptr;
+    JSObject* resultFn = nullptr;
+    if (!resultV.isUndefined()) {
+        if (!resultV.isCallable()) {
+            return throwNodeArgType(globalObject, scope, "options.result"_s, "a function"_s);
+        }
+        resultFn = resultV.getObject();
+    }
 
     bool useBigIntArgs = false;
     bool varargs = false;
@@ -2318,6 +2324,11 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
             }
             rate = rateV.toInt32(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
+            // sqlite3_backup_step(_, 0) copies zero pages and returns
+            // SQLITE_OK without advancing — on the JS thread that's an
+            // infinite busy-spin. Negative means "all remaining", which
+            // is fine.
+            if (rate == 0) rate = 1;
         }
         JSValue sourceV = opts->get(globalObject, Identifier::fromString(vm, "source"_s));
         RETURN_IF_EXCEPTION(scope, {});

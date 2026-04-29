@@ -1528,12 +1528,16 @@ fn SocketHandler(comptime ssl: bool) type {
 
                     // Certificate chain is valid; verify the hostname matches the
                     // certificate. Prefer the SNI servername if one was set, otherwise
-                    // fall back to the host from the connection URL.
+                    // fall back to the host from the connection URL. Unix-domain
+                    // sockets have no hostname to verify, so skip the identity check
+                    // for redis+tls+unix:// / valkey+tls+unix:// connections.
                     const ssl_ptr: *BoringSSL.c.SSL = @ptrCast(this.client.socket.getNativeHandle());
-                    const hostname = if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername|
+                    const hostname: []const u8 = if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername|
                         servername[0..bun.len(servername)]
-                    else
-                        this.client.address.hostname();
+                    else switch (this.client.address) {
+                        .host => |h| h.host,
+                        .unix => "",
+                    };
                     if (hostname.len > 0 and !BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
                         const err = this.globalObject.ERR(.TLS_CERT_ALTNAME_INVALID, "Hostname/IP does not match certificate's altnames: Host: {s}", .{hostname}).toJS();
                         return try failHandshake(this, vm, err);

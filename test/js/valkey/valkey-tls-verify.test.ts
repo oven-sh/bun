@@ -1,6 +1,6 @@
 import { RedisClient } from "bun";
 import { describe, expect, test } from "bun:test";
-import { tls as localhostTls } from "harness";
+import { isWindows, tempDir, tls as localhostTls } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import type { AddressInfo } from "node:net";
@@ -38,7 +38,7 @@ function consumeRespArray(buf: Buffer): number {
 // client's authentication handshake succeeds, then +PONG to everything else.
 // Buffers and frames RESP arrays so commands split across packets (or batched
 // into one) are each answered exactly once.
-async function withServer<T>(serverOpts: tls.TlsOptions, fn: (port: number) => Promise<T>): Promise<T> {
+function fakeServer(serverOpts: tls.TlsOptions): tls.Server {
   const server = tls.createServer(serverOpts, socket => {
     let buf = Buffer.alloc(0);
     let seen = 0;
@@ -53,10 +53,28 @@ async function withServer<T>(serverOpts: tls.TlsOptions, fn: (port: number) => P
     socket.on("error", () => {});
   });
   server.on("tlsClientError", () => {});
+  return server;
+}
+
+async function withServer<T>(serverOpts: tls.TlsOptions, fn: (port: number) => Promise<T>): Promise<T> {
+  const server = fakeServer(serverOpts);
   server.listen(0);
   await once(server, "listening");
   try {
     return await fn((server.address() as AddressInfo).port);
+  } finally {
+    server.close();
+  }
+}
+
+async function withUnixServer<T>(serverOpts: tls.TlsOptions, fn: (socketPath: string) => Promise<T>): Promise<T> {
+  using dir = tempDir("valkey-tls-unix", {});
+  const socketPath = path.join(String(dir), "r.sock");
+  const server = fakeServer(serverOpts);
+  server.listen(socketPath);
+  await once(server, "listening");
+  try {
+    return await fn(socketPath);
   } finally {
     server.close();
   }
@@ -85,7 +103,7 @@ describe("RedisClient TLS hostname verification", () => {
       expect(err.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
       expect(err.message).toContain("localhost");
     });
-  }, 15000);
+  });
 
   test("rejects a CA-trusted cert whose altnames do not match an IP host", async () => {
     // The "harness" cert is valid for localhost/127.0.0.1. Connect via 127.0.0.1
@@ -110,7 +128,7 @@ describe("RedisClient TLS hostname verification", () => {
       expect(err).toBeInstanceOf(Error);
       expect(err.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
     });
-  }, 15000);
+  });
 
   test("still rejects invalid certificate chains when rejectUnauthorized is true", async () => {
     // Self-signed cert that the client does NOT trust.
@@ -134,7 +152,7 @@ describe("RedisClient TLS hostname verification", () => {
       // Should be the BoringSSL verify error, not the hostname error.
       expect(err.code).not.toBe("ERR_TLS_CERT_ALTNAME_INVALID");
     });
-  }, 15000);
+  });
 
   test("allows mismatched hostname when rejectUnauthorized is false", async () => {
     await withServer({ key: serverKey, cert: serverCert }, async port => {
@@ -153,7 +171,7 @@ describe("RedisClient TLS hostname verification", () => {
         client.close();
       }
     });
-  }, 15000);
+  });
 
   test("accepts a cert whose altnames match the URL host", async () => {
     // The "harness" cert has SAN: DNS:localhost, IP:127.0.0.1, IP:::1
@@ -173,5 +191,26 @@ describe("RedisClient TLS hostname verification", () => {
         client.close();
       }
     });
-  }, 15000);
+  });
+
+  test.skipIf(isWindows)("skips hostname verification for redis+tls+unix:// sockets", async () => {
+    // Unix-domain sockets have no hostname; a CA-trusted cert for the wrong
+    // CN must still be accepted as long as the chain validates.
+    await withUnixServer({ key: serverKey, cert: serverCert }, async socketPath => {
+      const client = new RedisClient(`redis+tls+unix://${socketPath}`, {
+        autoReconnect: false,
+        connectionTimeout: 5000,
+        tls: {
+          ca,
+          rejectUnauthorized: true,
+        },
+      });
+      try {
+        const result = await client.send("PING", []);
+        expect(result).toBe("PONG");
+      } finally {
+        client.close();
+      }
+    });
+  });
 });

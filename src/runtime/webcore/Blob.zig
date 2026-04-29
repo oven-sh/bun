@@ -116,7 +116,12 @@ pub fn doReadFromS3(this: *Blob, comptime Function: anytype, global: *JSGlobalOb
 
     const WrappedFn = struct {
         pub fn wrapped(b: *Blob, g: *JSGlobalObject, by: []u8) jsc.JSValue {
-            return jsc.toJSHostCall(g, @src(), Function, .{ b, g, by, .clone });
+            // The downloaded body is a heap allocation owned by this callback (see
+            // S3BlobDownloadTask.onS3DownloadResolved). It is not backed by the S3
+            // Blob's Store, so `.clone` would orphan it. Use `.temporary` so the
+            // consumer takes ownership and frees it, matching the local-file path
+            // in read_file.zig.
+            return jsc.toJSHostCall(g, @src(), Function, .{ b, g, by, .temporary });
         }
     };
     return S3BlobDownloadTask.init(global, this, WrappedFn.wrapped);
@@ -2351,7 +2356,11 @@ pub fn getFormData(
     if (store) |st| st.ref();
     defer if (store) |st| st.deref();
 
-    return jsc.JSPromise.wrap(globalThis, lifetimeWrap(toFormData, .temporary), .{ this, globalThis });
+    // For in-memory Blobs, toFormData hands sharedView() (Store-owned bytes)
+    // to toFormDataWithBytes, so the lifetime here must not be `.temporary`.
+    // File and S3 Blobs supply their own `.temporary` buffers internally and
+    // ignore this value.
+    return jsc.JSPromise.wrap(globalThis, lifetimeWrap(toFormData, .clone), .{ this, globalThis });
 }
 
 fn getExistsSync(this: *Blob) jsc.JSValue {
@@ -3917,7 +3926,10 @@ pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const 
     return ZigString.init(buf).toJSONObject(global);
 }
 
-pub fn toFormDataWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime _: Lifetime) JSValue {
+pub fn toFormDataWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime lifetime: Lifetime) JSValue {
+    // FormData.toJS copies the relevant slices out of `buf`, so we can free
+    // `buf` afterwards when the caller passed us ownership.
+    defer if (lifetime == .temporary) bun.default_allocator.free(buf);
     var encoder = this.getFormDataEncoding() orelse return {
         return ZigString.init("Invalid encoding").toErrorInstance(global);
     };

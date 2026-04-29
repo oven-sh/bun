@@ -399,8 +399,8 @@ pub fn load(
     }
 
     if (env.get("BUN_INSTALL_GLOBAL_STORE")) |val| {
-        // Treat any non-empty value other than "0" as opt-in. Default is off;
-        // BUN_INSTALL_GLOBAL_STORE=1 enables it, =0 (or unset) keeps it off.
+        // Treat any non-empty value other than "0" as opt-in. =1 enables it,
+        // =0 forces it off; unset leaves the bunfig/default value untouched.
         this.enable.global_virtual_store = val.len > 0 and !strings.eqlComptime(val, "0");
     }
 

@@ -1577,8 +1577,14 @@ pub fn installIsolatedPackages(
                     // write the new project-local tree through the link into
                     // the shared cache). Treat the stale link as
                     // needs-install so `link_package` detaches and rebuilds.
+                    // Intentionally not gated on `global_store_path != null`:
+                    // a stale symlink from a previous GVS-enabled install
+                    // can survive after the user flips `globalStore = false`
+                    // (bunfig, env, or the default itself changing). We must
+                    // still detect and detach it, else `existsZ` below would
+                    // follow the link into `<cache>/links/` and we'd reuse
+                    // the shared entry through a project symlink.
                     const has_stale_gvs_link = !uses_global_store and stale: {
-                        if (installer.global_store_path == null) break :stale false;
                         var local: bun.Path(.{ .sep = .auto }) = .initTopLevelDir();
                         defer local.deinit();
                         installer.appendLocalStoreEntryPath(&local, entry_id);

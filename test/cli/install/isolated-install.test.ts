@@ -1983,6 +1983,46 @@ describe("global virtual store", () => {
     expect(existsSync(join(entry, "node_modules", "no-deps", "package.json"))).toBe(true);
   });
 
+  test("migrates a GVS-on node_modules to project-local after the default flips off (#29614)", async () => {
+    // Mirror of the off→on upgrade test above. A user installed under
+    // globalStore=true (e.g. the default before #29614) has
+    // `node_modules/.bun/<X>` as a symlink into `<cache>/links/<X>-<hash>`.
+    // After they upgrade to a bun where globalStore defaults to false (or
+    // flip the bunfig/env themselves), a plain `bun install` that does NOT
+    // wipe node_modules must detach the stale symlink and rebuild the entry
+    // as a real project-local directory — otherwise `readlink -f
+    // node_modules/<pkg>` still escapes into `<cache>/links/`, which is
+    // exactly the bundler-compat regression this PR fixes for fresh installs.
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-gvs-to-local-migration",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    // Populate node_modules under the old default (GVS on via env override).
+    await runBunInstall({ ...bunEnv, BUN_INSTALL_GLOBAL_STORE: "1" }, packageDir);
+    const entry = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0");
+    expect(lstatSync(entry).isSymbolicLink()).toBe(true);
+
+    // Re-install under the new default (GVS off) WITHOUT wiping node_modules.
+    // The stale symlink must be detached and rebuilt as a real directory.
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    expect(lstatSync(entry).isSymbolicLink()).toBe(false);
+    expect(lstatSync(entry).isDirectory()).toBe(true);
+    expect(existsSync(join(entry, "node_modules", "no-deps", "package.json"))).toBe(true);
+
+    // Canonical path stays in-project — the whole point of the fix.
+    const canonical = realpathSync(join(packageDir, "node_modules", "no-deps"));
+    const nodeModulesRoot = realpathSync(join(packageDir, "node_modules"));
+    expect(canonical.startsWith(nodeModulesRoot + sep)).toBe(true);
+  });
+
   test("preserves bun patch workspace when install runs before --commit", async () => {
     // Regression: `bun patch <pkg>` detaches the project store entry from the
     // global virtual store (symlink → real directory) so the user can edit it.

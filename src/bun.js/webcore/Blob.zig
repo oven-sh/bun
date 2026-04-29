@@ -606,7 +606,10 @@ pub fn fromDOMFormData(
 
     const store = Blob.Store.init(bun.handleOom(context.joiner.done(allocator)), allocator);
     var blob = Blob.initWithStore(store, globalThis);
-    blob.content_type = std.fmt.allocPrint(allocator, "multipart/form-data; boundary={s}", .{boundary}) catch |err| bun.handleOom(err);
+    // Always allocate content_type with the default allocator so deinit() can
+    // free it unconditionally; the only caller passes bun.default_allocator
+    // anyway, but don't rely on that.
+    blob.content_type = std.fmt.allocPrint(bun.default_allocator, "multipart/form-data; boundary={s}", .{boundary}) catch |err| bun.handleOom(err);
     blob.content_type_allocated = true;
     blob.content_type_was_set = true;
 

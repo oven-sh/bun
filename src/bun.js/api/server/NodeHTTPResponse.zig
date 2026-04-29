@@ -1075,10 +1075,14 @@ pub fn setOnData(this: *NodeHTTPResponse, thisValue: jsc.JSValue, globalObject: 
     }
     this.flags.is_data_buffered_during_pause = false;
 
-    if (!this.body_read_ref.has) {
-        this.ref();
-        this.body_read_ref.ref(globalObject.bunVM());
-    }
+    // Every site that unrefs `body_read_ref` also transitions `body_read_state` out of
+    // `.pending` (to `.done` or `.none`) or sets `is_data_buffered_during_pause_last`. Since
+    // `.none` and `is_data_buffered_during_pause_last` are rejected by the guard above, reaching
+    // here with `!body_read_ref.has` implies `body_read_state == .done`: the body has been fully
+    // received and uSockets will not deliver more data. Do not re-acquire `body_read_ref` (event
+    // loop keep-alive) or `this.ref()` in that case — there is nothing left to wait for and no
+    // code path would release them, leaking the NodeHTTPResponse.
+    bun.debugAssert(this.body_read_ref.has or this.body_read_state == .done);
 }
 
 pub fn write(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {

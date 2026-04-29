@@ -13,6 +13,10 @@ connection: UnixOrHost,
 group: uws.SocketGroup = .{},
 /// SSL_CTX + handshake policy for accepted sockets. Owned; deinit on close.
 secure_ctx: SecureContext.Native = std.mem.zeroes(SecureContext.Native),
+/// Heap-allocated `us_ssl_ctx_t` per `addContext()` SNI hostname. The C SNI
+/// tree holds borrowed pointers into these; freed in `deinit` after the listen
+/// socket closes (which drops the C-side refs first).
+sni_contexts: std.ArrayList(*uws.SslCtx) = .empty,
 ssl: bool = false,
 protos: ?[]const u8 = null,
 
@@ -276,7 +280,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
     if (ssl) |ssl_config| {
         if (ssl_config.server_name) |server_name| {
             if (std.mem.span(server_name).len > 0) {
-                _ = listen_socket.addServerName(server_name, this.secure_ctx.ssl_ctx.?, null);
+                _ = listen_socket.addServerName(server_name, &this.secure_ctx, null);
             }
         }
     }
@@ -367,13 +371,16 @@ pub fn addServerName(this: *Listener, global: *jsc.JSGlobalObject, hostname: JSV
         var cfg = ssl_config;
         defer cfg.deinit();
         var create_err: uws.create_bun_socket_error_t = .none;
-        var sni_ctx = cfg.asUSockets().createSSLContext(false, &create_err) orelse {
+        // The SNI tree stores a `us_ssl_ctx_t*` (not a bare SSL_CTX*), so the
+        // wrapper must outlive this call. Heap-allocate and let the listener's
+        // `sni_contexts` own it; the C side bumps `ref_count` and the deinit
+        // path drops it when the listen socket closes.
+        const sni_ctx = bun.new(uws.SslCtx, cfg.asUSockets().createSSLContext(false, &create_err) orelse {
             return global.throwValue(create_err.toJS(global));
-        };
-        // The SNI tree owns the SSL_CTX ref; us_ssl_ctx_t wrapper is local.
+        });
+        bun.handleOom(this.sni_contexts.append(bun.default_allocator, sni_ctx));
         ls.removeServerName(server_name);
-        _ = ls.addServerName(server_name, sni_ctx.ssl_ctx.?, null);
-        sni_ctx.deinit();
+        _ = ls.addServerName(server_name, sni_ctx, null);
     }
 
     return .js_undefined;
@@ -458,6 +465,11 @@ pub fn deinit(this: *Listener) void {
     }
     this.group.deinit();
     if (this.secure_ctx.ssl_ctx != null) this.secure_ctx.deinit();
+    for (this.sni_contexts.items) |ctx| {
+        ctx.deinit();
+        bun.destroy(ctx);
+    }
+    this.sni_contexts.deinit(bun.default_allocator);
 
     this.connection.deinit();
     if (this.protos) |protos| {

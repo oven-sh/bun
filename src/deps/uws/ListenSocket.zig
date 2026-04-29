@@ -28,8 +28,10 @@ pub const ListenSocket = opaque {
         return .fromNative(c.us_listen_socket_get_fd(this));
     }
 
-    /// `ssl_ctx` is `SSL_CTX_up_ref`'d; the listener owns one ref until close.
-    pub fn addServerName(this: *ListenSocket, hostname: [*:0]const u8, ssl_ctx: *BoringSSL.SSL_CTX, user: ?*anyopaque) bool {
+    /// `ssl_ctx` is up-ref'd via `us_ssl_ctx_t.ref_count`; the listener owns
+    /// one ref until close. NOT a raw `SSL_CTX*` — the C side reads policy
+    /// fields off the wrapper.
+    pub fn addServerName(this: *ListenSocket, hostname: [*:0]const u8, ssl_ctx: *uws.SslCtx, user: ?*anyopaque) bool {
         return c.us_listen_socket_add_server_name(this, hostname, ssl_ctx, user) == 0;
     }
 

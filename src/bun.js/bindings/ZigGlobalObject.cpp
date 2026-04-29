@@ -349,8 +349,27 @@ extern "C" JSC::EncodedJSValue BunObject__createBunStdin(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue BunObject__createBunStderr(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue BunObject__createBunStdout(JSC::JSGlobalObject*);
 
+// ECMA-262 sec-clear-kept-objects requires [[KeptAlive]] to be cleared between
+// microtask jobs so WeakRef.deref() does not strongly hold targets across
+// `await` boundaries. JSC implements this as VM::finalizeSynchronousJSExecution
+// (just bumps the weak-ref version counter — essentially free). We hook it
+// onto the per-microtask tick because Bun's outer microtask drain in
+// drainMicrotasksWithGlobal() only fires when control returns to Bun's event
+// loop, while async-function continuations on already-fulfilled promises
+// resume inside JSC's own microtask checkpoint without surfacing to Bun.
+//
+// V8's MicrotaskQueue::PerformCheckpoint clears [[KeptAlive]] once at the end
+// of the checkpoint; per-microtask is more aggressive but spec-compliant
+// (see the note on sec-clear-kept-objects: "ClearKeptObjects can be called at
+// the end of every Job").
+static ALWAYS_INLINE void releaseWeakRefsOnMicrotaskTick(JSC::VM& vm)
+{
+    vm.finalizeSynchronousJSExecution();
+}
+
 static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 {
+    releaseWeakRefsOnMicrotaskTick(vm);
     auto* globalObject = defaultGlobalObject();
     if (auto queue = globalObject->m_nextTickQueue.get()) {
         globalObject->resetOnEachMicrotaskTick();
@@ -358,8 +377,14 @@ static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
     }
 }
 
+static void releaseWeakRefsOnMicrotask(JSC::VM& vm)
+{
+    releaseWeakRefsOnMicrotaskTick(vm);
+}
+
 static void cleanupAsyncHooksData(JSC::VM& vm)
 {
+    releaseWeakRefsOnMicrotaskTick(vm);
     auto* globalObject = defaultGlobalObject();
     globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
     globalObject->asyncHooksNeedsCleanup = false;
@@ -367,7 +392,7 @@ static void cleanupAsyncHooksData(JSC::VM& vm)
         vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
         checkIfNextTickWasCalledDuringMicrotask(vm);
     } else {
-        vm.setOnEachMicrotaskTick(nullptr);
+        vm.setOnEachMicrotaskTick(&releaseWeakRefsOnMicrotask);
     }
 }
 
@@ -413,7 +438,12 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
         vm.setOnEachMicrotaskTick(&cleanupAsyncHooksData);
     } else {
         if (this->m_nextTickQueue) {
-            vm.setOnEachMicrotaskTick(nullptr);
+            // Was nullptr; install a hook that bumps the WeakRef version every
+            // microtask tick so ECMA-262 ClearKeptObjects fires at every
+            // microtask job, including JSC-internal checkpoints (e.g.
+            // async-function resumes on already-fulfilled promises) that never
+            // surface to Bun's outer drainMicrotasksWithGlobal().
+            vm.setOnEachMicrotaskTick(&releaseWeakRefsOnMicrotask);
         } else {
             vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
         }
@@ -520,6 +550,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     vm.setOnComputeErrorInfoJSValue(computeErrorInfoWrapperToJSValue);
     vm.setComputeLineColumnWithSourcemap(computeLineColumnWithSourcemap);
     vm.setOnEachMicrotaskTick([](JSC::VM& vm) -> void {
+        releaseWeakRefsOnMicrotaskTick(vm);
         // if you process.nextTick on a microtask we need this
         auto* globalObject = defaultGlobalObject();
         if (auto queue = globalObject->m_nextTickQueue.get()) {

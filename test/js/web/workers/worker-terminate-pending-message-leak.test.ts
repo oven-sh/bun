@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 // ScriptExecutionContext::postTaskConcurrently heap-allocates an EventLoopTask
 // and Bun__queueTaskConcurrently wraps it in a heap-allocated ConcurrentTask.
@@ -9,12 +9,22 @@ import { bunEnv, bunExe } from "harness";
 // worker has left its spin loop but before ~GlobalObject removes the worker's
 // ScriptExecutionContext from the global map, both allocations — and the
 // captured SerializedScriptValue — leaked until process exit.
-test("postMessage to a terminating Worker does not leak EventLoopTask/ConcurrentTask", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+//
+// Skipped on Windows: the test widens the teardown window via a busy-wait in
+// the worker's process.on('exit') handler, and measures the leak via RSS.
+// On Windows the exit-handler stall does not hold (the teardown window
+// collapses to near-zero so nothing lands in the queue) and working-set size
+// does not shrink back after the parent-side serialization buffers are
+// freed, so the RSS check cannot distinguish fixed from unfixed. The drain
+// itself (EventLoop.drainCancelledTasks) is platform-independent.
+test.skipIf(isWindows)(
+  "postMessage to a terminating Worker does not leak EventLoopTask/ConcurrentTask",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
         // Stall inside process.on('exit') so the teardown window (between
         // the worker leaving its event loop and removeFromContextsMap())
         // is wide enough for the parent's postMessage flood to land in the
@@ -62,15 +72,23 @@ test("postMessage to a terminating Worker does not leak EventLoopTask/Concurrent
         }
         console.log("PASS: delta", deltaMB.toFixed(2), "MB");
       `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout).toContain("PASS");
-  expect(exitCode).toBe(0);
-}, 60_000);
+    // ASAN builds print a startup warning about JSC signal handlers; strip it
+    // so we can still assert the subprocess produced no other stderr output.
+    const stderrFiltered = stderr
+      .split(/\r?\n/)
+      .filter(line => line && !line.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
+    expect(stderrFiltered).toBe("");
+    expect(stdout).toContain("PASS");
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);

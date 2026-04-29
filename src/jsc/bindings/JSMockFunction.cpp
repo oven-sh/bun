@@ -1782,7 +1782,10 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
                 (void)scope.tryClearException();
                 continue;
             }
-            mockFn->putDirect(vm, name, mockedProp, 0);
+            // Preserve the source descriptor attributes so that e.g. static
+            // class methods (non-enumerable by default) stay non-enumerable
+            // on the mock, and `ReadOnly`/`DontDelete` constants survive.
+            mockFn->putDirect(vm, name, mockedProp, slot.attributes());
             if (scope.exception()) [[unlikely]] {
                 (void)scope.tryClearException();
             }
@@ -1823,13 +1826,18 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
                         (void)scope.tryClearException();
                         continue;
                     }
-                    mockProto->putDirect(vm, name, mockedProp, 0);
+                    // Prototype methods are non-enumerable in ES2015 classes;
+                    // preserve that so `Object.keys(instance)` matches.
+                    mockProto->putDirect(vm, name, mockedProp, slot.attributes());
                     if (scope.exception()) [[unlikely]] {
                         (void)scope.tryClearException();
                     }
                 }
             }
-            mockFn->putDirect(vm, vm.propertyNames->prototype, mockProto, 0);
+            // Function.prototype's own `prototype` descriptor is writable +
+            // non-enumerable + non-configurable — match that.
+            mockFn->putDirect(vm, vm.propertyNames->prototype, mockProto,
+                JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
             if (scope.exception()) [[unlikely]] {
                 (void)scope.tryClearException();
             }
@@ -1860,8 +1868,11 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
 
     visited.set(object, JSC::Strong<JSC::JSObject> { vm, mockObject });
 
+    // Include non-enumerable own properties so objects built with
+    // `Object.defineProperty` (e.g. module exports with `{ enumerable: false }`
+    // constants) don't silently lose entries in the mock.
     JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-    object->methodTable()->getOwnPropertyNames(object, lexicalGlobalObject, names, DontEnumPropertiesMode::Exclude);
+    object->methodTable()->getOwnPropertyNames(object, lexicalGlobalObject, names, DontEnumPropertiesMode::Include);
     if (scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
         return JSValue(mockObject);
@@ -1890,7 +1901,9 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
             (void)scope.tryClearException();
             continue;
         }
-        mockObject->putDirect(vm, name, mockedProp, 0);
+        // Preserve the source descriptor attributes (DontEnum, ReadOnly,
+        // DontDelete) so the mock keeps the same property shape.
+        mockObject->putDirect(vm, name, mockedProp, slot.attributes());
         if (scope.exception()) [[unlikely]] {
             (void)scope.tryClearException();
         }
@@ -1899,26 +1912,16 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
     return JSValue(mockObject);
 }
 
-JSC::JSObject* createAutoMockFromExports(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exports)
+JSC::JSValue createAutoMockFromExports(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exports)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     WTF::UncheckedKeyHashMap<JSC::JSObject*, JSC::Strong<JSC::JSObject>> visited;
     JSValue mocked = autoMockValue(lexicalGlobalObject, exports, visited, 0);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
 
-    if (mocked.isObject()) {
-        return mocked.getObject();
-    }
-
-    // If the real exports was a primitive, wrap it in { default: value } so
-    // the virtual-module handling has something object-shaped to work with,
-    // matching the behaviour of a factory that returns `{ default: ... }`.
-    JSObject* wrapper = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype());
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    wrapper->putDirect(vm, vm.propertyNames->defaultKeyword, mocked, 0);
-    return wrapper;
+    return mocked;
 }
 
 } // namespace Bun

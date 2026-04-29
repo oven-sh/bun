@@ -1562,9 +1562,11 @@ JSPromise* mouseUp(JSGlobalObject* g, JSWebView* view, float x, float y, uint8_t
 // (buttonsMask==0) the event is a plain mouseMoved with button:"none".
 // When dragging (buttonsMask != 0) the event type is still "mouseMoved"
 // — CDP doesn't have a separate "mouseDragged" — but the non-zero
-// `buttons` field tells Chrome a drag is in progress. Chrome synthesizes
-// the right pointermove/mousemove + dragenter/dragover dispatch on the
-// page side.
+// `buttons` field tells Chrome a drag is in progress, so page-side
+// `mousemove` / `pointermove` handlers see `e.buttons !== 0`. This is
+// NOT the HTML5 Drag and Drop API — no `dragenter`/`dragover` events
+// fire unless a `draggable` element initiates them page-side (via the
+// separate `Input.dispatchDragEvent` CDP method, not used here).
 JSPromise* mouseMove(JSGlobalObject* g, JSWebView* view, float fromX, float fromY, float x, float y, uint32_t steps, uint8_t buttonsMask, uint8_t modifiers)
 {
     auto& t = transport();

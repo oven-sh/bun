@@ -683,7 +683,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
 
     MessageWithMessagePorts messageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() };
 
-    ScriptExecutionContext::postTaskTo(context->identifier(), [message = messageWithMessagePorts, protectedThis = Ref { *worker }, ports](ScriptExecutionContext& context) mutable {
+    ScriptExecutionContext::postTaskTo(context->identifier(), [message = WTF::move(messageWithMessagePorts), protectedThis = Ref { *worker }](ScriptExecutionContext& context) mutable {
         Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(context.jsGlobalObject());
 
         auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));

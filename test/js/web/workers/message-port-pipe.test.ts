@@ -55,6 +55,45 @@ describe("MessagePort pipe", () => {
     port2.close();
   });
 
+  // A port transferred through a carrier whose destination is already
+  // closed never reaches a new owner. The endpoint must be marked Closed
+  // when the in-transit struct is dropped, otherwise the peer's
+  // hasPendingActivity() pins it forever.
+  test("port dropped in transit does not pin its peer", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { port1: A, port2: B } = new MessageChannel();
+          B.close();
+          const finalized = { count: 0 };
+          const reg = new FinalizationRegistry(() => { finalized.count++; });
+          for (let i = 0; i < 200; i++) {
+            const { port1: C, port2: D } = new MessageChannel();
+            D.onmessage = () => {};
+            reg.register(D, "D");
+            A.postMessage(null, [C]); // C dropped: B is closed
+          }
+          for (let i = 0; i < 10; i++) { Bun.gc(true); await Bun.sleep(0); }
+          // If dropped-in-transit endpoints weren't closed, every D would
+          // be pinned via isOtherSideOpen and finalized.count would be 0.
+          console.log(JSON.stringify({ finalized: finalized.count }));
+          A.close();
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { finalized } = JSON.parse(stdout.trim());
+    expect(finalized).toBeGreaterThan(0);
+    expect(exitCode).toBe(0);
+  });
+
   // The old design kept every channel in a process-global HashMap with no
   // lock (MessagePortChannelRegistry). Concurrent new MessageChannel() from
   // worker threads mutated that map simultaneously. Under ASAN this shows

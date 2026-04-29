@@ -9,6 +9,28 @@ namespace WebCore {
 
 MessagePortPipe::~MessagePortPipe() = default;
 
+// Defined here (not in TransferredMessagePort.h) to break the header cycle
+// MessagePortPipe.h → MessageWithMessagePorts.h → TransferredMessagePort.h.
+TransferredMessagePort::~TransferredMessagePort()
+{
+    // If this endpoint is destroyed while still owning the pipe side (never
+    // handed off to a new MessagePort via entangle()), the side is orphaned;
+    // mark it Closed so the peer's hasPendingActivity() can return false.
+    if (pipe)
+        pipe->close(side);
+}
+
+TransferredMessagePort& TransferredMessagePort::operator=(TransferredMessagePort&& other)
+{
+    if (this != &other) {
+        if (pipe)
+            pipe->close(side);
+        pipe = WTF::move(other.pipe);
+        side = other.side;
+    }
+    return *this;
+}
+
 void MessagePortPipe::send(uint8_t fromSide, MessageWithMessagePorts&& message)
 {
     ASSERT(fromSide < 2);

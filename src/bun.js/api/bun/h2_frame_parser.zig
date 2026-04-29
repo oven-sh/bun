@@ -2014,7 +2014,13 @@ pub const H2FrameParser = struct {
 
         this.remainingLength -= @intCast(end);
         var padding: u8 = 0;
-        if (frame.flags & @intFromEnum(DataFrameFlags.PADDED) != 0) {
+        const padded = frame.flags & @intFromEnum(DataFrameFlags.PADDED) != 0;
+        if (padded) {
+            if (frame.length < 1) {
+                // PADDED flag set but no room for the Pad Length octet
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid data frame size", this.lastStreamID, true);
+                return data.len;
+            }
             if (stream.padding) |p| {
                 padding = p;
             } else {
@@ -2025,6 +2031,14 @@ pub const H2FrameParser = struct {
                 padding = payload[0];
                 stream.padding = payload[0];
             }
+            // RFC 7540 Section 6.1: If the length of the padding is the length of
+            // the frame payload or greater, the recipient MUST treat this as a
+            // connection error of type PROTOCOL_ERROR. Validate before computing
+            // `data_region_end = frame.length - padding` below to avoid underflow.
+            if (@as(usize, padding) >= frame.length) {
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Invalid data frame padding", this.lastStreamID, true);
+                return data.len;
+            }
         }
         if (this.remainingLength < 0) {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid data frame size", this.lastStreamID, true);
@@ -2033,16 +2047,25 @@ pub const H2FrameParser = struct {
         var emitted = false;
 
         const start_idx = frame.length - @as(usize, @intCast(previous_remaining_length));
-        if (start_idx < 1 and padding > 0 and payload.len > 0) {
-            // we need to skip the padding byte
+        if (start_idx < 1 and padded and payload.len > 0) {
+            // Skip the Pad Length octet. Keyed on the PADDED flag rather than
+            // `padding > 0` because Pad Length = 0 is valid (RFC 7540 Section 6.1)
+            // and must still be stripped.
             payload = payload[1..];
         }
 
         if (payload.len > 0) {
             // amount of data received so far
             const received_size = frame.length - this.remainingLength;
-            // max size possible for the chunk without padding and skipping the start_idx
-            const max_payload_size: usize = frame.length - padding - @as(usize, if (padding > 0) 1 else 0) - start_idx;
+            // The data region of this frame, in frame-relative offsets, is
+            // `[padded ? 1 : 0, frame.length - padding)`. This chunk begins at
+            // offset `start_idx` (and the Pad Length octet has already been
+            // stripped above when `start_idx == 0`), so the number of data bytes
+            // it can contribute is `data_region_end - max(start_idx, data_region_start)`.
+            // Saturate to 0 for chunks that land entirely in the trailing padding.
+            const data_region_end: usize = frame.length - @as(usize, padding);
+            const data_region_start: usize = if (padded) @max(start_idx, 1) else start_idx;
+            const max_payload_size: usize = data_region_end -| data_region_start;
             payload = payload[0..@min(payload.len, max_payload_size)];
             log("received_size: {d} max_payload_size: {d} padding: {d} payload.len: {d}", .{
                 received_size,
@@ -2369,6 +2392,11 @@ pub const H2FrameParser = struct {
             this.readBuffer.reset();
 
             if (frame.flags & @intFromEnum(HeadersFrameFlags.PADDED) != 0) {
+                if (payload.len < 1) {
+                    // PADDED flag set but no room for the Pad Length octet
+                    this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid Headers frame size", this.lastStreamID, true);
+                    return content.end;
+                }
                 // padding length
                 padding = payload[0];
                 offset += 1;
@@ -2377,11 +2405,22 @@ pub const H2FrameParser = struct {
                 // skip priority (client dont need to care about it)
                 offset += 5;
             }
-            const end = payload.len - padding;
-            if (offset > end) {
+            // RFC 7540 Section 4.2: A frame that is too small to contain mandatory
+            // frame data (here: the Pad Length octet and/or the 5-byte priority
+            // block) MUST be treated as a FRAME_SIZE_ERROR.
+            if (offset > payload.len) {
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid Headers frame size", this.lastStreamID, true);
                 return content.end;
             }
+            // RFC 7540 Section 6.2: Padding that exceeds the size remaining for the
+            // header block fragment MUST be treated as a connection error of type
+            // PROTOCOL_ERROR. Validate before subtracting to avoid underflowing
+            // `payload.len - padding` when a peer sends Pad Length > payload length.
+            if (padding > payload.len - offset) {
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "invalid Headers frame padding", this.lastStreamID, true);
+                return content.end;
+            }
+            const end = payload.len - padding;
             stream.endAfterHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0;
             stream = (try this.decodeHeaderBlock(payload[offset..end], stream, frame.flags)) orelse {
                 return content.end;

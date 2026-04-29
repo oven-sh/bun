@@ -56,9 +56,9 @@ function fakeServer(serverOpts: tls.TlsOptions): tls.Server {
   return server;
 }
 
-async function withServer<T>(serverOpts: tls.TlsOptions, fn: (port: number) => Promise<T>): Promise<T> {
+async function withServer<T>(serverOpts: tls.TlsOptions, fn: (port: number) => Promise<T>, host?: string): Promise<T> {
   const server = fakeServer(serverOpts);
-  server.listen(0);
+  server.listen(0, host);
   await once(server, "listening");
   try {
     return await fn((server.address() as AddressInfo).port);
@@ -171,6 +171,31 @@ describe("RedisClient TLS hostname verification", () => {
         client.close();
       }
     });
+  });
+
+  test("accepts a cert whose IP altnames match a bracketed IPv6 URL host", async () => {
+    // The "harness" cert has SAN IP:::1. URL.host() serialises IPv6 literals
+    // with brackets ("[::1]"), which must be stripped before IP SAN matching.
+    await withServer(
+      { key: localhostTls.key, cert: localhostTls.cert },
+      async port => {
+        const client = new RedisClient(`rediss://[::1]:${port}`, {
+          autoReconnect: false,
+          connectionTimeout: 5000,
+          tls: {
+            ca: localhostTls.cert,
+            rejectUnauthorized: true,
+          },
+        });
+        try {
+          const result = await client.send("PING", []);
+          expect(result).toBe("PONG");
+        } finally {
+          client.close();
+        }
+      },
+      "::1",
+    );
   });
 
   test("accepts a cert whose altnames match the URL host", async () => {

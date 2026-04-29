@@ -1532,12 +1532,19 @@ fn SocketHandler(comptime ssl: bool) type {
                     // sockets have no hostname to verify, so skip the identity check
                     // for redis+tls+unix:// / valkey+tls+unix:// connections.
                     const ssl_ptr: *BoringSSL.c.SSL = @ptrCast(this.client.socket.getNativeHandle());
-                    const hostname: []const u8 = if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername|
+                    var hostname: []const u8 = if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername|
                         servername[0..bun.len(servername)]
                     else switch (this.client.address) {
                         .host => |h| h.host,
                         .unix => "",
                     };
+                    // URL.host() serialises IPv6 literals with surrounding brackets
+                    // (e.g. "[::1]"). Strip them so checkServerIdentity can recognise
+                    // the value as an IP and match against IP SAN entries; this
+                    // mirrors what connectAnon already does before getaddrinfo.
+                    if (hostname.len >= 2 and hostname[0] == '[' and hostname[hostname.len - 1] == ']') {
+                        hostname = hostname[1 .. hostname.len - 1];
+                    }
                     if (hostname.len > 0 and !BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
                         const err = this.globalObject.ERR(.TLS_CERT_ALTNAME_INVALID, "Hostname/IP does not match certificate's altnames: Host: {s}", .{hostname}).toJS();
                         return try failHandshake(this, vm, err);

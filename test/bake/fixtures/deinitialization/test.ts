@@ -29,17 +29,21 @@ async function run({ closeActiveConnections = false, sendAnyRequests = true, web
     if (websocket > 0) {
       const opens: Promise<void>[] = [];
       for (let i = 0; i < websocket; i++) {
-        const { promise, resolve } = Promise.withResolvers<void>();
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
         const ws = new WebSocket(server.url.origin + "/_bun/hmr");
+        let opened = false;
         ws.onopen = () => {
+          opened = true;
           console.log("WebSocket opened");
           resolve();
         };
         ws.onerror = e => {
           e.preventDefault();
+          if (!opened) reject(new Error(`websocket ${i} failed before open`));
         };
         ws.onclose = () => {
           console.log("WebSocket closed");
+          if (!opened) reject(new Error(`websocket ${i} closed before open`));
         };
         sockets.push(ws);
         opens.push(promise);

@@ -119,10 +119,13 @@ test("should reject DATA frame with Pad Length >= payload length", async () => {
 });
 
 async function receiveBody(
-  write: (socket: net.Socket) => void | Promise<void>,
+  write: (socket: net.Socket, onFirstData: Promise<void>) => void | Promise<void>,
 ): Promise<{ body: Buffer; close: () => void }> {
   const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers<void>();
   const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers<void>();
+  // Resolves the first time the client request emits 'data', so the server
+  // can observe that the parser has already consumed what was sent so far.
+  const { promise: onFirstData, resolve: gotFirstData } = Promise.withResolvers<void>();
   const server = net.createServer(async socket => {
     socket.on("error", () => {});
     socket.setNoDelay(true);
@@ -131,7 +134,7 @@ async function receiveBody(
     await waitToWrite;
     const headers = new http2utils.HeadersFrame(1, http2utils.kFakeResponseHeaders, 0, true, false);
     socket.write(headers.data);
-    await write(socket);
+    await write(socket, onFirstData);
   });
   server.listen(0, "127.0.0.1", () => serverResolve());
   await serverListening;
@@ -143,7 +146,10 @@ async function receiveBody(
   client.on("connect", () => {
     const req = client.request({ ":path": "/" });
     const chunks: Buffer[] = [];
-    req.on("data", c => chunks.push(Buffer.from(c)));
+    req.on("data", c => {
+      chunks.push(Buffer.from(c));
+      gotFirstData();
+    });
     req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", reject);
     req.end();
@@ -184,38 +190,17 @@ test("should not drop trailing data byte from padded DATA frame split across rea
   // frame-relative start offset already accounts for it, so it must not be
   // subtracted a second time when computing how many bytes of this chunk are
   // data (vs trailing padding).
-  const { body, close } = await receiveBody(async socket => {
-    // Drain the client first: send a PING and wait for the PONG so the
-    // HEADERS above have been consumed and the socket read buffer is empty.
-    const pingOpaque = Buffer.from("h2splitA");
-    socket.write(Buffer.concat([new http2utils.Frame(8, 6, 0, 0).data, pingOpaque]));
-    let buffered = Buffer.alloc(0);
-    await new Promise<void>((resolve, reject) => {
-      const onData = (chunk: Buffer) => {
-        buffered = Buffer.concat([buffered, chunk]);
-        if (buffered.includes(pingOpaque)) {
-          socket.off("data", onData);
-          socket.off("close", onClose);
-          resolve();
-        }
-      };
-      const onClose = () => reject(new Error("socket closed before PONG"));
-      socket.on("data", onData);
-      socket.once("close", onClose);
-    });
-
+  const { body, close } = await receiveBody(async (socket, onFirstData) => {
     // DATA (type=0), flags = PADDED (0x8) | END_STREAM (0x1), stream=1, length=10
     // payload = [0x02, D1..D7, P1, P2] -> Pad Length = 2, body = 7 bytes.
-    // Deliver the frame header + Pad Length byte first, then the remaining
-    // bytes in a separate write so the parser re-enters handleDataFrame with
-    // start_idx > 0.
+    // Deliver the frame header + Pad Length octet + first data byte, then
+    // wait for the client request to emit 'data' (proving the parser has
+    // already consumed the first chunk and will re-enter handleDataFrame
+    // with start_idx >= 2 for the remainder) before sending the rest.
     const header = new http2utils.Frame(10, 0, 0x8 | 0x1, 1).data;
-    await new Promise<void>(r => socket.write(Buffer.concat([header, Buffer.from([0x02])]), () => r()));
-    // Yield several event-loop iterations so the first chunk is delivered on
-    // its own. We cannot insert another PING round-trip here because the DATA
-    // frame is mid-payload.
-    for (let i = 0; i < 16; i++) await new Promise<void>(r => setImmediate(r));
-    socket.write(Buffer.from([0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x00, 0x00]));
+    socket.write(Buffer.concat([header, Buffer.from([0x02, 0x41])]));
+    await onFirstData;
+    socket.write(Buffer.from([0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x00, 0x00]));
   });
   try {
     expect(body.toString("latin1")).toBe("ABCDEFG");

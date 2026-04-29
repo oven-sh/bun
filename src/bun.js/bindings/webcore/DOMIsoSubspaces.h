@@ -28,6 +28,8 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForNodeSqliteStatementSync;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeSqliteStatementSyncIterator;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeSqliteSession;
+    std::unique_ptr<IsoSubspace> m_subspaceForNodeSqliteLimits;
+    std::unique_ptr<IsoSubspace> m_subspaceForNodeSqliteTagStore;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSinkConstructor;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSinkController;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSink;

@@ -170,17 +170,28 @@ describe("DatabaseSync", () => {
     );
   });
 
-  test("constructor rejects percent-encoded NUL in file: URLs", () => {
-    // The raw href keeps "%00" as three literal characters, so find('\0')
-    // on it misses the embedded NUL. The URL must be decoded to a
-    // filesystem path before the check, or sqlite3_open_v2 with
-    // SQLITE_OPEN_URI would itself decode %00 and silently truncate.
-    expect(() => new DatabaseSync(new URL("file:///tmp/a%00b.db"))).toThrow(
-      expect.objectContaining({
-        code: "ERR_INVALID_ARG_TYPE",
-        message: expect.stringMatching(/without null bytes/),
-      }),
+  test("file: URL objects pass query parameters to SQLite", () => {
+    // Node hands the raw href (including ?query) to sqlite3_open_v2
+    // with SQLITE_OPEN_URI set, so ?mode=ro / ?cache=shared are
+    // honoured. A URL object must NOT be reduced to a bare
+    // filesystem path first (doing so would drop the query and,
+    // on Windows, misinterpret drive-letter handling).
+    using dir = tempDir("node-sqlite-uri", {});
+    const path = require("node:path").join(String(dir), "ro.db");
+    const seed = new DatabaseSync(path);
+    seed.exec("CREATE TABLE t(a INTEGER PRIMARY KEY)");
+    seed.exec("INSERT INTO t VALUES (1)");
+    seed.close();
+
+    const url = new URL(require("node:url").pathToFileURL(path).href + "?mode=ro");
+    const db = new DatabaseSync(url);
+    expect(db.prepare("SELECT a FROM t").get()).toEqual({ a: 1 });
+    // Read-only came from the URI query, not from {readOnly: true} —
+    // if the query were stripped this insert would succeed.
+    expect(() => db.exec("INSERT INTO t VALUES (2)")).toThrow(
+      expect.objectContaining({ code: "ERR_SQLITE_ERROR" }),
     );
+    db.close();
   });
 
   test("close() is rejected while a native call is in flight (re-entrant close)", () => {
@@ -446,7 +457,7 @@ describe("StatementSync.prototype.iterate()", () => {
     // Calling run()/all()/get() on the same statement resets it, so the
     // iterator's cursor position is no longer meaningful.
     stmt.all();
-    expect(() => iter.next()).toThrow(/statement has been reset/);
+    expect(() => iter.next()).toThrow(/iterator was invalidated/);
     db.close();
   });
 
@@ -683,6 +694,200 @@ describe("backup()", () => {
     ).rejects.toThrow("nope");
     src.close();
   });
+});
+
+describe("DatabaseSync.prototype.setAuthorizer()", () => {
+  test("callback receives action code + parameters and gates prepare()", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE users (id INTEGER, name TEXT)");
+    const calls: unknown[][] = [];
+    db.setAuthorizer((action, p1, p2, p3, p4) => {
+      calls.push([action, p1, p2, p3, p4]);
+      return constants.SQLITE_OK;
+    });
+    db.prepare("SELECT id FROM users").get();
+    // One SELECT, one READ(users.id, main). Exact shape is what
+    // sqlite hands to the authorizer; Node surfaces it verbatim.
+    expect(calls).toEqual([
+      [constants.SQLITE_SELECT, null, null, null, null],
+      [constants.SQLITE_READ, "users", "id", "main", null],
+    ]);
+
+    db.setAuthorizer(() => constants.SQLITE_DENY);
+    expect(() => db.prepare("SELECT * FROM users")).toThrow(
+      expect.objectContaining({ code: "ERR_SQLITE_ERROR", message: expect.stringMatching(/not authorized/) }),
+    );
+
+    db.setAuthorizer(null);
+    // Cleared — same prepare now succeeds.
+    expect(db.prepare("SELECT * FROM users").all()).toEqual([]);
+    expect(() => db.setAuthorizer(42 as any)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    db.close();
+  });
+
+  test("non-integer return is surfaced as a TypeError, out-of-range as RangeError", () => {
+    const db = new DatabaseSync(":memory:");
+    db.setAuthorizer(() => "nope" as any);
+    expect(() => db.prepare("SELECT 1")).toThrow(TypeError);
+    db.setAuthorizer(() => 12345);
+    expect(() => db.prepare("SELECT 1")).toThrow(RangeError);
+    db.close();
+  });
+});
+
+describe("db.limits", () => {
+  test("named limits read/write through to sqlite3_limit and are enumerable", () => {
+    const db = new DatabaseSync(":memory:");
+    const original = db.limits.column;
+    expect(typeof original).toBe("number");
+    expect(original).toBeGreaterThan(0);
+
+    db.limits.column = 10;
+    expect(db.limits.column).toBe(10);
+    db.exec("CREATE TABLE t1 (a,b,c,d,e,f,g,h,i,j)");
+    expect(() => db.exec("CREATE TABLE t2 (a,b,c,d,e,f,g,h,i,j,k)")).toThrow(
+      expect.objectContaining({ code: "ERR_SQLITE_ERROR" }),
+    );
+
+    db.limits.column = Infinity;
+    expect(db.limits.column).toBe(original);
+    expect(Object.keys(db.limits)).toContain("sqlLength");
+    expect(() => (db.limits.column = -1)).toThrow(RangeError);
+    expect(() => (db.limits.column = "no" as any)).toThrow(TypeError);
+    db.close();
+    expect(() => db.limits.column).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_STATE" }),
+    );
+  });
+
+  test("constructor {limits} option seeds sqlite3_limit on open", () => {
+    const db = new DatabaseSync(":memory:", { limits: { variableNumber: 3 } });
+    expect(db.limits.variableNumber).toBe(3);
+    expect(() => db.prepare("SELECT ?, ?, ?, ?")).toThrow(
+      expect.objectContaining({ code: "ERR_SQLITE_ERROR" }),
+    );
+    db.close();
+    expect(() => new DatabaseSync(":memory:", { limits: { column: -1 } })).toThrow(RangeError);
+  });
+});
+
+describe("serialize() / deserialize()", () => {
+  test("round-trips schema and data, and invalidates prior statements", () => {
+    const src = new DatabaseSync(":memory:");
+    src.exec("CREATE TABLE t(a INTEGER PRIMARY KEY, b TEXT)");
+    src.exec("INSERT INTO t VALUES (1,'hi'),(2,'there')");
+    const buf = src.serialize();
+    src.close();
+    expect(buf).toBeInstanceOf(Uint8Array);
+    expect(new TextDecoder().decode(buf.slice(0, 15))).toBe("SQLite format 3");
+
+    const dst = new DatabaseSync(":memory:");
+    dst.exec("CREATE TABLE old(x)");
+    const stale = dst.prepare("SELECT x FROM old");
+    dst.deserialize(buf);
+    // deserialize bumps the open-generation so the wrapper reports
+    // finalized rather than stepping into a vanished schema. The
+    // underlying sqlite3_stmt* is still owned by the wrapper — GC
+    // finalizes it, no double-free.
+    expect(() => stale.get()).toThrow(/statement has been finalized/);
+    expect(dst.prepare("SELECT a, b FROM t ORDER BY a").all()).toEqual([
+      { a: 1, b: "hi" },
+      { a: 2, b: "there" },
+    ]);
+    dst.close();
+    Bun.gc(true);
+  });
+});
+
+describe("createTagStore()", () => {
+  test("caches prepared statements by template-literal shape", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
+    const sql = db.createTagStore(4);
+    expect(sql.capacity).toBe(4);
+    expect(sql.db).toBe(db);
+    expect(sql.size).toBe(0);
+
+    expect(sql.run`INSERT INTO t (v) VALUES (${"a"})`.changes).toBe(1);
+    expect(sql.size).toBe(1);
+    // Same template, different interpolation → cache hit.
+    expect(sql.run`INSERT INTO t (v) VALUES (${"b"})`.changes).toBe(1);
+    expect(sql.size).toBe(1);
+
+    expect(sql.get`SELECT v FROM t WHERE id = ${2}`).toEqual({ v: "b" });
+    expect(sql.all`SELECT v FROM t ORDER BY id`.map(r => r.v)).toEqual(["a", "b"]);
+    expect([...sql.iterate`SELECT v FROM t ORDER BY id`].map(r => r.v)).toEqual(["a", "b"]);
+
+    sql.clear();
+    expect(sql.size).toBe(0);
+    db.close();
+  });
+});
+
+describe("enableDefensive()", () => {
+  test("defaults on; {defensive:false} and enableDefensive() toggle it", () => {
+    // Defensive mode blocks PRAGMA journal_mode=OFF (among other
+    // things). That's the observable Node's own test uses.
+    const pragma = (db: any) => db.prepare("PRAGMA journal_mode").get().journal_mode;
+    const on = new DatabaseSync(":memory:");
+    expect(pragma(on)).toBe("memory");
+    on.exec("PRAGMA journal_mode=OFF");
+    expect(pragma(on)).toBe("memory"); // unchanged → defensive on
+    on.close();
+
+    const off = new DatabaseSync(":memory:", { defensive: false });
+    off.exec("PRAGMA journal_mode=OFF");
+    expect(pragma(off)).toBe("off");
+    off.enableDefensive(true);
+    // Can't reopen journal mode once off, so just check the call
+    // reaches sqlite without throwing.
+    off.enableDefensive(false);
+    off.close();
+    expect(() => new DatabaseSync(":memory:").enableDefensive("nope" as any)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
+});
+
+describe("row-shape structure caching", () => {
+  test("all() results share a null-prototype structure and handle duplicate columns", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (a INTEGER, b TEXT)");
+    for (let i = 0; i < 5; i++) db.prepare("INSERT INTO t VALUES (?,?)").run(i, `v${i}`);
+    const stmt = db.prepare("SELECT a, b FROM t ORDER BY a");
+    const rows = stmt.all();
+    expect(rows).toHaveLength(5);
+    for (const r of rows) {
+      expect(Object.getPrototypeOf(r)).toBe(null);
+      expect(Object.keys(r)).toEqual(["a", "b"]);
+    }
+    expect(rows[0]).toEqual({ a: 0, b: "v0" });
+    expect(rows[4]).toEqual({ a: 4, b: "v4" });
+    // Duplicate-name column collapses to a single property (first
+    // occurrence wins — matches Node's plain-object put behaviour)
+    // and the cached-offset path must skip, not overwrite with the
+    // later value.
+    const dup = db.prepare("SELECT 1 AS x, 2 AS x").get();
+    expect(Object.keys(dup)).toEqual(["x"]);
+    expect(dup.x).toBe(1);
+    db.close();
+  });
+});
+
+test("authorizer constants are exposed on constants", () => {
+  expect(constants.SQLITE_OK).toBe(0);
+  expect(constants.SQLITE_DENY).toBe(1);
+  expect(constants.SQLITE_IGNORE).toBe(2);
+  expect(typeof constants.SQLITE_SELECT).toBe("number");
+  expect(typeof constants.SQLITE_CREATE_TABLE).toBe("number");
+});
+
+test("Symbol.for('sqlite-type') identifies a node:sqlite DatabaseSync", () => {
+  const db = new DatabaseSync(":memory:");
+  expect(db[Symbol.for("sqlite-type")]).toBe("node:sqlite");
+  db.close();
 });
 
 describe("StatementSync.prototype.columns()", () => {

@@ -2588,6 +2588,24 @@ void GlobalObject::finishCreation(VM& vm)
             init.setStructure(structure);
         });
 
+    m_JSNodeSqliteLimitsClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            // Null prototype: Node's DatabaseSyncLimits is an ObjectTemplate
+            // with only the named-property handler, so Object.prototype is
+            // NOT on its chain and can't shadow a limit name.
+            auto* structure = Bun::JSNodeSqliteLimits::createStructure(init.vm, init.global, JSC::jsNull());
+            init.setStructure(structure);
+        });
+
+    m_JSNodeSqliteTagStoreClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = Bun::JSNodeSqliteTagStorePrototype::create(
+                init.vm, init.global, Bun::JSNodeSqliteTagStorePrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+            auto* structure = Bun::JSNodeSqliteTagStore::createStructure(init.vm, init.global, prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+        });
+
     m_JSFFIFunctionStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));

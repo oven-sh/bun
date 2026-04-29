@@ -14,6 +14,7 @@
 #include <JavaScriptCore/InternalFunction.h>
 #include <wtf/HashMap.h>
 #include <wtf/text/StringHash.h>
+#include <array>
 
 // Forward-declare the opaque SQLite handle types so this header does not
 // pull the (large) sqlite3 amalgamation header into every translation unit
@@ -32,17 +33,33 @@ class JSDatabaseSync;
 class JSStatementSync;
 class JSNodeSqliteSession;
 class JSStatementSyncIterator;
+class JSNodeSqliteLimits;
+class JSNodeSqliteTagStore;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DatabaseSync
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Must equal the number of SQLITE_LIMIT_* categories (SQLITE_LIMIT_LENGTH ..
+// SQLITE_LIMIT_TRIGGER_DEPTH). A static_assert in the .cpp enforces this
+// against SQLITE_N_LIMIT-1 once the amalgamation header is visible.
+static constexpr size_t kNodeSqliteLimitCount = 11;
+
 struct DatabaseSyncOpenConfiguration {
     bool readOnly = false;
     bool enableForeignKeyConstraints = true;
     bool enableDoubleQuotedStringLiterals = false;
+    // Node.js turns SQLITE_DBCONFIG_DEFENSIVE on by default; callers can
+    // disable it with {defensive: false} or db.enableDefensive(false).
+    bool enableDefensive = true;
     bool allowExtension = false;
     int timeout = 0;
+    // Per-limit value supplied via the constructor's {limits: {...}}
+    // option, applied after open(). Indexed by SQLITE_LIMIT_* id.
+    // -1 means "unset" — we never accept a negative limit from the user,
+    // so this is an unambiguous sentinel and keeps the struct trivially
+    // copyable (std::optional<int>[11] would bloat every DatabaseSync).
+    std::array<int, kNodeSqliteLimitCount> initialLimits { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
     // Defaults inherited by statements prepared on this connection
     // (overridable per-statement via setReadBigInts() etc.).
     bool readBigInts = false;
@@ -91,6 +108,13 @@ public:
     // the new connection (ABA), so pointer equality isn't a sound
     // "same connection" check.
     unsigned openGeneration() const { return m_openGeneration; }
+    // deserialize() replaces the backing database without a
+    // close()+open() cycle, so it bumps the generation manually to
+    // invalidate every outstanding StatementSync/Session wrapper. We do
+    // NOT sqlite3_finalize() those stmts here — the JS wrappers still
+    // hold the raw handle and will free it themselves on GC, so a
+    // pre-emptive finalize would make them double-free.
+    void bumpOpenGeneration() { ++m_openGeneration; }
     bool allowLoadExtension() const { return m_config.allowExtension; }
     bool enableLoadExtensionIsOn() const { return m_enableLoadExtension; }
     void setEnableLoadExtension(bool v) { m_enableLoadExtension = v; }
@@ -111,6 +135,14 @@ public:
 
     void trackSession(sqlite3_session* s) { m_sessions.append(s); }
     void untrackSession(sqlite3_session* s) { m_sessions.removeFirst(s); }
+
+    // setAuthorizer(cb) callback and the lazily-created limits wrapper.
+    // Kept as GC-traced fields on the DatabaseSync cell rather than a
+    // C-side Strong<> so a db → authorizer-closure → db cycle is
+    // collectable (Node stores the callback in an internal field on the
+    // wrapper object for the same reason).
+    JSC::WriteBarrier<JSC::JSObject> m_authorizer;
+    JSC::WriteBarrier<JSNodeSqliteLimits> m_limits;
 
     // Incremented for the duration of any native call that hands this
     // connection into SQLite and may re-enter JS (option-getter, xFunc,
@@ -272,6 +304,20 @@ public:
     JSC::WriteBarrier<JSDatabaseSync> m_database;
     std::optional<WTF::HashMap<WTF::String, WTF::String>> m_bareNamedParams;
 
+    // Structure-caching fast path for result rows (mirrors bun:sqlite's
+    // JSSQLStatement). For queries whose column list fits in a final
+    // object's inline storage, we precompute one null-prototype Structure
+    // with a slot per distinct column name and then fill each row via
+    // putDirectOffset instead of running the generic put machinery per
+    // cell. Built lazily on the first step() that yields columns;
+    // invalidated when the statement is reset with a different shape.
+    JSC::Structure* ensureRowStructure(JSC::JSGlobalObject*);
+    void invalidateRowStructure();
+    JSC::Structure* rowStructure() const { return m_rowStructure.get(); }
+    // Per-result-column index into the structure's inline slots, or -1
+    // for duplicate names (first occurrence wins — Node behaviour).
+    const WTF::Vector<int8_t>& columnOffsets() const { return m_columnOffsets; }
+
 private:
     JSStatementSync(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
@@ -282,6 +328,9 @@ private:
     bool bindValue(JSC::JSGlobalObject*, JSC::ThrowScope&, int index, JSC::JSValue);
 
     sqlite3_stmt* m_stmt = nullptr;
+    JSC::WriteBarrier<JSC::Structure> m_rowStructure;
+    WTF::Vector<int8_t> m_columnOffsets;
+    int m_rowColumnCount = -1;
     // Open-generation this statement was prepared on. After db.close()
     // + db.open() the JSDatabaseSync may even get the *same* sqlite3*
     // back (allocator reuse — ABA), so compare the generation counter
@@ -525,7 +574,159 @@ private:
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 };
 
-// Module-level constants object (SQLITE_CHANGESET_*).
+// ─────────────────────────────────────────────────────────────────────────────
+// DatabaseSyncLimits — the object returned by `db.limits`. Reads and
+// writes to its eleven named properties (length, sqlLength, …) call
+// sqlite3_limit() on the owning connection. No prototype (so an
+// overridden Object.prototype can't shadow a limit name). Intercepted
+// via getOwnPropertySlot/put/getOwnPropertyNames rather than per-name
+// accessors so the properties present as enumerable *own* data-like
+// properties (Node's tests do `Object.keys(db.limits)`).
+// ─────────────────────────────────────────────────────────────────────────────
+
+class JSNodeSqliteLimits final : public JSC::JSDestructibleObject {
+public:
+    using Base = JSC::JSDestructibleObject;
+    static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot | JSC::OverridesPut | JSC::OverridesGetOwnPropertyNames | JSC::ProhibitsPropertyCaching;
+
+    DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+    static JSNodeSqliteLimits* create(JSC::VM& vm, JSC::Structure* structure, JSDatabaseSync* db);
+
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return subspaceForImpl(vm);
+    }
+    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
+
+    static void destroy(JSC::JSCell* cell) { static_cast<JSNodeSqliteLimits*>(cell)->~JSNodeSqliteLimits(); }
+    ~JSNodeSqliteLimits() = default;
+
+    JSDatabaseSync* database() const { return m_database.get(); }
+
+    static bool getOwnPropertySlot(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
+    static bool put(JSC::JSCell*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
+    static void getOwnPropertyNames(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
+
+    JSC::WriteBarrier<JSDatabaseSync> m_database;
+
+private:
+    JSNodeSqliteLimits(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+    void finishCreation(JSC::VM& vm, JSDatabaseSync* db);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SQLTagStore — returned by db.createTagStore(). A small LRU of
+// prepared StatementSyncs keyed on the joined template-literal string,
+// so sql.get`SELECT … ${x}` reuses the same compiled statement across
+// calls. No public constructor.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class JSNodeSqliteTagStore final : public JSC::JSDestructibleObject {
+public:
+    using Base = JSC::JSDestructibleObject;
+    static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+
+    DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+    static JSNodeSqliteTagStore* create(JSC::VM& vm, JSC::Structure* structure, JSDatabaseSync* db, unsigned capacity);
+
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return subspaceForImpl(vm);
+    }
+    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
+
+    static void destroy(JSC::JSCell* cell) { static_cast<JSNodeSqliteTagStore*>(cell)->~JSNodeSqliteTagStore(); }
+    ~JSNodeSqliteTagStore() = default;
+
+    JSDatabaseSync* database() const { return m_database.get(); }
+    unsigned capacity() const { return m_capacity; }
+    unsigned size() const { return static_cast<unsigned>(m_order.size()); }
+    void clear();
+
+    // Build SQL from the template-tag arguments ("part0 ? part1 ? …"),
+    // look it up in the cache (or prepare a fresh StatementSync and
+    // insert it, evicting the least-recently-used entry if at capacity)
+    // and bind the interpolated values to the result. Returns nullptr
+    // and throws on any failure.
+    JSStatementSync* prepare(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::CallFrame*);
+
+    JSC::WriteBarrier<JSDatabaseSync> m_database;
+
+private:
+    JSNodeSqliteTagStore(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+    void finishCreation(JSC::VM& vm, JSDatabaseSync* db, unsigned capacity);
+
+    struct Entry {
+        WTF::String sql;
+        JSC::WriteBarrier<JSStatementSync> stmt;
+    };
+    // Move-to-front LRU. O(n) is fine at the small capacities Node
+    // documents (default 1000, tests use 10); the structure-caching on
+    // StatementSync is where the real win is, this just avoids
+    // re-preparing the SQL.
+    WTF::Vector<Entry> m_order;
+    unsigned m_capacity = 1000;
+};
+
+class JSNodeSqliteTagStorePrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+    DECLARE_INFO;
+
+    static JSNodeSqliteTagStorePrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        auto* ptr = new (NotNull, JSC::allocateCell<JSNodeSqliteTagStorePrototype>(vm)) JSNodeSqliteTagStorePrototype(vm, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSNodeSqliteTagStorePrototype, Base);
+        return &vm.plainObjectSpace();
+    }
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSNodeSqliteTagStorePrototype(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+// Module-level constants object (SQLITE_CHANGESET_* + authorizer codes).
 JSC::JSValue createNodeSqliteConstants(JSC::VM&, JSC::JSGlobalObject*);
 
 } // namespace Bun

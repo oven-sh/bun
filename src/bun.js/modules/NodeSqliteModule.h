@@ -21,7 +21,15 @@ DEFINE_NATIVE_MODULE(NodeSqlite)
     put(JSC::Identifier::fromString(vm, "constants"_s),
         Bun::createNodeSqliteConstants(vm, globalObject));
 
-    putNativeFn(JSC::Identifier::fromString(vm, "backup"_s), Bun::jsNodeSqliteBackup);
+    // backup.length === 2 (sourceDb, path) — Node's test-sqlite-backup
+    // asserts it. putNativeFn hardcodes 1, so construct the function
+    // ourselves.
+    {
+        auto id = JSC::Identifier::fromString(vm, "backup"_s);
+        put(id, JSC::JSFunction::create(vm, globalObject, 2, id.string(),
+                    Bun::jsNodeSqliteBackup, JSC::ImplementationVisibility::Public,
+                    JSC::NoIntrinsic, Bun::jsNodeSqliteBackup));
+    }
 
     RETURN_NATIVE_MODULE();
 }

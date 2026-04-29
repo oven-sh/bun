@@ -12,9 +12,71 @@ function run() {
   throwNotImplemented("run()", 5090, "Use `bun:test` in the interim.");
 }
 
-function mock() {
-  throwNotImplemented("mock()", 5090, "Use `bun:test` in the interim.");
+// Minimal `mock` tracker — enough for Node's own test suite (notably
+// test/parallel/test-sqlite-*.{js,mjs}) which only uses `mock.fn()`,
+// `spy.mock.calls[i].arguments`, and `spy.mock.callCount()`. The full
+// MockTracker API (timers, getters, method mocking, restore/reset) is
+// still #5090.
+class MockFunctionContext {
+  calls: { arguments: unknown[]; result?: unknown; error?: unknown; this: unknown }[];
+  #impl: Function;
+  constructor(impl: Function) {
+    this.calls = [];
+    this.#impl = impl;
+  }
+  callCount() {
+    return this.calls.length;
+  }
+  mockImplementation(impl: Function) {
+    this.#impl = impl;
+  }
+  resetCalls() {
+    this.calls.length = 0;
+  }
+  _invoke(thisArg: unknown, args: unknown[]) {
+    const record: any = { arguments: args, this: thisArg };
+    try {
+      record.result = this.#impl.$apply(thisArg, args);
+      this.calls.push(record);
+      return record.result;
+    } catch (e) {
+      record.error = e;
+      this.calls.push(record);
+      throw e;
+    }
+  }
 }
+
+class MockTracker {
+  fn(original: Function = kDefaultFunction, impl: Function = original) {
+    const ctx = new MockFunctionContext(impl);
+    function spy(this: unknown, ...args: unknown[]) {
+      return ctx._invoke(this, args);
+    }
+    Object.defineProperty(spy, "mock", { value: ctx, enumerable: true });
+    // Preserve .length so code that inspects the spy's declared arity
+    // (sqlite's aggregate() infers varargs from it) sees the original.
+    Object.defineProperty(spy, "length", { value: original.length, configurable: true });
+    return spy;
+  }
+  method() {
+    throwNotImplemented("mock.method()", 5090, "Use `bun:test` in the interim.");
+  }
+  getter() {
+    throwNotImplemented("mock.getter()", 5090, "Use `bun:test` in the interim.");
+  }
+  setter() {
+    throwNotImplemented("mock.setter()", 5090, "Use `bun:test` in the interim.");
+  }
+  reset() {}
+  restoreAll() {}
+  get timers() {
+    throwNotImplemented("mock.timers", 5090, "Use `bun:test` in the interim.");
+    return undefined;
+  }
+}
+
+const mock = new MockTracker();
 
 function fileSnapshot(_value: unknown, _path: string, _options: { serializers?: Function[] } = kEmptyObject) {
   throwNotImplemented("fileSnapshot()", 5090, "Use `bun:test` in the interim.");
@@ -98,8 +160,10 @@ class TestContext {
   }
 
   get mock() {
-    throwNotImplemented("mock", 5090, "Use `bun:test` in the interim.");
-    return undefined;
+    // Node gives each TestContext its own tracker so `t.after` can
+    // restore; the shim is stateless enough that sharing one is fine
+    // for now (nothing to restore when only fn() is implemented).
+    return mock;
   }
 
   runOnly(_value?: boolean) {

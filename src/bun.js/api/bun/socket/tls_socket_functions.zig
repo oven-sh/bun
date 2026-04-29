@@ -495,6 +495,9 @@ pub fn setSession(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *js
         const ssl_ptr = this.socket.ssl();
         var tmp = @as([*c]const u8, @ptrCast(session_slice.ptr));
         const session = BoringSSL.d2i_SSL_SESSION(null, &tmp, @as(c_long, @intCast(session_slice.len))) orelse return .js_undefined;
+        // SSL_set_session takes its own reference ("the caller retains ownership of |session|"),
+        // so we must release the one returned by d2i_SSL_SESSION on every path.
+        defer BoringSSL.SSL_SESSION_free(session);
         if (BoringSSL.SSL_set_session(ssl_ptr, session) != 1) {
             return globalObject.throwValue(getSSLException(globalObject, "SSL_set_session error"));
         }

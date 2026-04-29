@@ -116,10 +116,48 @@ pub fn ip2String(ip: *boring.ASN1_OCTET_STRING, outIP: *[INET6_ADDRSTRLEN + 1]u8
     return outIP[0..size];
 }
 
+/// Matches a DNS name pattern (possibly with a leading `*.` wildcard) against
+/// `hostname`. Mirrors Node.js `check()` in lib/tls.js for a single pattern.
+fn matchDnsName(pattern: []const u8, hostname: []const u8) bool {
+    if (pattern.len == 0) return false;
+    if (!X509.isSafeAltName(pattern, false)) return false;
+
+    if (pattern[0] == '*') {
+        // RFC 6125 Section 6.4.3: Wildcard must match exactly one label.
+        // Enforce "*." prefix (wildcard must be leftmost and followed by a dot).
+        if (pattern.len >= 2 and pattern[1] == '.') {
+            const suffix = pattern[2..];
+            // Disallow "*.tld" (suffix must contain at least one dot for proper domain hierarchy)
+            if (strings.containsChar(suffix, '.')) {
+                // Host must be at least "label.suffix" (suffix_len + 1 for dot + at least 1 char for label)
+                if (hostname.len > suffix.len + 1) {
+                    const dot_index = hostname.len - suffix.len - 1;
+                    // The character before suffix must be a dot, and there must be no other
+                    // dots in the prefix (single-label wildcard only).
+                    if (hostname[dot_index] == '.' and !strings.containsChar(hostname[0..dot_index], '.')) {
+                        const host_suffix = hostname[dot_index + 1 ..];
+                        // RFC 4343: DNS names are case-insensitive
+                        if (strings.eqlCaseInsensitiveASCII(suffix, host_suffix, true)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // RFC 4343: DNS names are case-insensitive
+    return strings.eqlCaseInsensitiveASCII(pattern, hostname, true);
+}
+
 pub fn checkX509ServerIdentity(
     x509: *boring.X509,
     hostname: []const u8,
 ) bool {
+    const host_is_ip = strings.isIPAddress(hostname);
+    // Node.js: CN is consulted only when the certificate carries no
+    // DNS / IP / URI subjectAltName entries. Track whether any were seen.
+    var has_identifier_san = false;
+
     // we check with native code if the cert is valid
     const index = boring.X509_get_ext_by_NID(x509, boring.NID_subject_alt_name, -1);
     if (index >= 0) {
@@ -130,7 +168,7 @@ pub fn checkX509ServerIdentity(
                 return false;
             }
 
-            if (strings.isIPAddress(hostname)) {
+            if (host_is_ip) {
                 // we safely ensure buffer size with max len + 1
                 var canonicalIPBuf: [INET6_ADDRSTRLEN + 1]u8 = undefined;
                 var certIPBuf: [INET6_ADDRSTRLEN + 1]u8 = undefined;
@@ -143,12 +181,17 @@ pub fn checkX509ServerIdentity(
                     for (0..boring.sk_GENERAL_NAME_num(names)) |i| {
                         const gen = boring.sk_GENERAL_NAME_value(names, i);
                         if (gen) |name| {
-                            if (name.name_type == .GEN_IPADD) {
-                                if (ip2String(name.d.ip, &certIPBuf)) |cert_ip| {
-                                    if (strings.eql(host_ip, cert_ip)) {
-                                        return true;
+                            switch (name.name_type) {
+                                .GEN_DNS, .GEN_URI => has_identifier_san = true,
+                                .GEN_IPADD => {
+                                    has_identifier_san = true;
+                                    if (ip2String(name.d.ip, &certIPBuf)) |cert_ip| {
+                                        if (strings.eql(host_ip, cert_ip)) {
+                                            return true;
+                                        }
                                     }
-                                }
+                                },
+                                else => {},
                             }
                         }
                     }
@@ -160,41 +203,17 @@ pub fn checkX509ServerIdentity(
                     for (0..boring.sk_GENERAL_NAME_num(names)) |i| {
                         const gen = boring.sk_GENERAL_NAME_value(names, i);
                         if (gen) |name| {
-                            if (name.name_type == .GEN_DNS) {
-                                const dnsName = name.d.dNSName;
-                                var dnsNameSlice = dnsName.data[0..@as(usize, @intCast(dnsName.length))];
-                                // ignore empty dns names (should never happen)
-                                if (dnsNameSlice.len > 0) {
-                                    if (X509.isSafeAltName(dnsNameSlice, false)) {
-                                        if (dnsNameSlice[0] == '*') {
-                                            // RFC 6125 Section 6.4.3: Wildcard must match exactly one label
-                                            // Enforce "*." prefix (wildcards must be leftmost and followed by a dot)
-                                            if (dnsNameSlice.len >= 2 and dnsNameSlice[1] == '.') {
-                                                const suffix = dnsNameSlice[2..];
-                                                // Disallow "*.tld" (suffix must contain at least one dot for proper domain hierarchy)
-                                                if (std.mem.indexOfScalar(u8, suffix, '.') != null) {
-                                                    // Host must be at least "label.suffix" (suffix_len + 1 for dot + at least 1 char for label)
-                                                    if (hostname.len > suffix.len + 1) {
-                                                        const dot_index = hostname.len - suffix.len - 1;
-                                                        // The character before suffix must be a dot, and there must be no other dots
-                                                        // in the prefix (single-label wildcard only)
-                                                        if (hostname[dot_index] == '.' and std.mem.indexOfScalar(u8, hostname[0..dot_index], '.') == null) {
-                                                            const host_suffix = hostname[dot_index + 1 ..];
-                                                            // RFC 4343: DNS names are case-insensitive
-                                                            if (strings.eqlCaseInsensitiveASCII(suffix, host_suffix, true)) {
-                                                                return true;
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        // RFC 4343: DNS names are case-insensitive
-                                        if (strings.eqlCaseInsensitiveASCII(dnsNameSlice, hostname, true)) {
-                                            return true;
-                                        }
+                            switch (name.name_type) {
+                                .GEN_IPADD, .GEN_URI => has_identifier_san = true,
+                                .GEN_DNS => {
+                                    has_identifier_san = true;
+                                    const dnsName = name.d.dNSName;
+                                    const dnsNameSlice = dnsName.data[0..@as(usize, @intCast(dnsName.length))];
+                                    if (matchDnsName(dnsNameSlice, hostname)) {
+                                        return true;
                                     }
-                                }
+                                },
+                                else => {},
                             }
                         }
                     }
@@ -202,6 +221,30 @@ pub fn checkX509ServerIdentity(
             }
         }
     }
+
+    // Node.js tls.checkServerIdentity: when the certificate has no
+    // DNS/IP/URI subjectAltName entries, fall back to the Subject
+    // Common Name. Never for IP-literal hosts (RFC 2818 §3.1).
+    if (!host_is_ip and !has_identifier_san) {
+        if (boring.X509_get_subject_name(x509)) |subject| {
+            var last: c_int = -1;
+            while (true) {
+                const entry_idx = boring.X509_NAME_get_index_by_NID(subject, boring.NID_commonName, last);
+                if (entry_idx < 0) break;
+                last = entry_idx;
+                const entry = boring.X509_NAME_get_entry(subject, entry_idx) orelse continue;
+                const data = boring.X509_NAME_ENTRY_get_data(entry) orelse continue;
+                const cn_ptr = boring.ASN1_STRING_get0_data(data);
+                const cn_len = boring.ASN1_STRING_length(data);
+                if (cn_ptr == null or cn_len <= 0) continue;
+                const cn = cn_ptr[0..@intCast(cn_len)];
+                if (matchDnsName(cn, hostname)) {
+                    return true;
+                }
+            }
+        }
+    }
+
     return false;
 }
 

@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
+// Spawning a debug/ASAN child plus two synchronous full GCs is slow.
+const timeout = 60_000;
+
 // DOMGuardedObject GC-root cycle leaks every unclosed TransformStream.
 //
 // InternalWritableStream was registering itself in the global object's
@@ -9,13 +12,15 @@ import { bunEnv, bunExe } from "harness";
 // wrapper via @controller.@writeAlgorithm -> TransformStream -> @writable,
 // so JSWritableStream could never be swept, ~InternalWritableStream never
 // ran, and the m_guardedObjects entry was never removed.
-test("dropped TransformStream is collectable", async () => {
-  const src = `
+test(
+  "dropped TransformStream is collectable",
+  async () => {
+    const src = `
     const { heapStats } = require("bun:jsc");
 
     const count = type => heapStats().objectTypeCounts[type] || 0;
 
-    const N = 5000;
+    const N = 1000;
     (function () {
       for (let i = 0; i < N; i++) new TransformStream();
     })();
@@ -34,32 +39,36 @@ test("dropped TransformStream is collectable", async () => {
     }));
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", src],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  const counts = JSON.parse(stdout.trim());
+    expect(stderr).toBe("");
+    const counts = JSON.parse(stdout.trim());
 
-  // Before the fix every one of the 5000 TransformStreams (and their
-  // WritableStreams) survived GC. A handful may be legitimately live
-  // (prototypes, lazily-initialized singletons), so allow small slack.
-  expect(counts.WritableStream).toBeLessThan(50);
-  expect(counts.TransformStream).toBeLessThan(50);
-  expect(exitCode).toBe(0);
-});
+    // Before the fix every one of the 1000 TransformStreams (and their
+    // WritableStreams) survived GC. A handful may be legitimately live
+    // (prototypes, lazily-initialized singletons), so allow small slack.
+    expect(counts.WritableStream).toBeLessThan(50);
+    expect(counts.TransformStream).toBeLessThan(50);
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
 
-test("dropped WritableStream is collectable", async () => {
-  const src = `
+test(
+  "dropped WritableStream is collectable",
+  async () => {
+    const src = `
     const { heapStats } = require("bun:jsc");
 
     const count = type => heapStats().objectTypeCounts[type] || 0;
 
-    const N = 5000;
+    const N = 1000;
     (function () {
       for (let i = 0; i < N; i++) new WritableStream();
     })();
@@ -75,25 +84,29 @@ test("dropped WritableStream is collectable", async () => {
     }));
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", src],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  const counts = JSON.parse(stdout.trim());
-  expect(counts.WritableStream).toBeLessThan(50);
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toBe("");
+    const counts = JSON.parse(stdout.trim());
+    expect(counts.WritableStream).toBeLessThan(50);
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
 
 // Regression guard for the opposite failure mode: now that the global
 // object no longer roots the internal stream, JSWritableStream must keep
 // it alive via visitChildren while the wrapper itself is reachable.
-test("WritableStream internal state survives GC while wrapper is live", async () => {
-  const src = `
+test(
+  "WritableStream internal state survives GC while wrapper is live",
+  async () => {
+    const src = `
     const ws = new WritableStream();
     Bun.gc(true);
     await Bun.sleep(1);
@@ -120,15 +133,17 @@ test("WritableStream internal state survives GC while wrapper is live", async ()
     console.log("ok");
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", src],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("ok");
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

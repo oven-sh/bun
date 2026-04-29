@@ -205,14 +205,197 @@ fn initOnce(opts: *const InitOpts) void {
         .timer = std.time.Timer.start() catch unreachable,
     };
     bun.libdeflate.load();
-    const thread = std.Thread.spawn(
-        .{
-            .stack_size = bun.default_thread_stack_size,
-        },
-        onStart,
-        .{opts.*},
-    ) catch |err| Output.panic("Failed to start HTTP Client thread: {s}", .{@errorName(err)});
-    thread.detach();
+    spawnHttpClientThread(opts.*) catch |err| {
+        // Refs:
+        //   https://github.com/oven-sh/bun/issues/29933
+        //   https://github.com/oven-sh/bun/issues/24878
+        //   https://github.com/oven-sh/bun/issues/22080
+        //   https://github.com/oven-sh/bun/issues/19085
+        //   https://github.com/oven-sh/bun/issues/14424
+        //
+        // On Windows, `spawnHttpClientThread` captures the Win32 error at the
+        // `CreateThread` failure site so the panic message is actionable
+        // (ERROR_NOT_ENOUGH_MEMORY, ERROR_TOO_MANY_THREADS, etc.) instead of
+        // the bare "Unexpected" from std.Thread.spawn.
+        var buf: [256]u8 = undefined;
+        const win32_error_code: u16 = if (comptime Environment.isWindows)
+            @intFromEnum(last_http_thread_spawn_win32_error)
+        else
+            0;
+        const msg = formatSpawnFailurePanic(&buf, @errorName(err), win32_error_code, Environment.isWindows);
+        Output.panic("{s}", .{msg});
+    };
+}
+
+/// Format the panic message for a failed HTTP thread spawn. Pure — takes
+/// a scratch buffer, the Zig error name, the captured Win32 error code,
+/// and whether the caller is running on Windows (so the message is
+/// deterministic regardless of the host platform; callers in the real
+/// panic path pass `Environment.isWindows`).
+///
+/// On Windows the message includes the Win32 error code so crash reports
+/// for #29933 and friends are actionable (ERROR_NOT_ENOUGH_MEMORY,
+/// ERROR_TOO_MANY_THREADS, etc.) rather than the opaque "Unexpected"
+/// that std.Thread.spawn produces.
+///
+/// `win32_error_code` is ignored when `is_windows` is false. The buffer
+/// should be at least 128 bytes; if formatting overflows it, the static
+/// fallback string is returned directly (buf contents are not used).
+pub fn formatSpawnFailurePanic(buf: []u8, err_name: []const u8, win32_error_code: u16, is_windows: bool) []const u8 {
+    // If bufPrint overflows, return the static fallback string directly.
+    // Slicing `buf` itself would expose uninitialized stack memory.
+    const fallback = "Failed to start HTTP Client thread";
+    if (is_windows) {
+        return std.fmt.bufPrint(
+            buf,
+            "Failed to start HTTP Client thread: {s} (Win32 error 0x{x})",
+            .{ err_name, win32_error_code },
+        ) catch fallback;
+    }
+    return std.fmt.bufPrint(
+        buf,
+        "Failed to start HTTP Client thread: {s}",
+        .{err_name},
+    ) catch fallback;
+}
+
+pub const TestingAPIs = struct {
+    /// Exercises `formatSpawnFailurePanic` so tests can verify the
+    /// Windows panic message includes the Win32 error code captured by
+    /// `spawnHttpClientThread` (#29933). The formatter is pure so this
+    /// runs on any platform — the `is_windows` arg selects which branch
+    /// to render.
+    pub fn formatHttpThreadSpawnPanic(
+        globalThis: *bun.jsc.JSGlobalObject,
+        callframe: *bun.jsc.CallFrame,
+    ) bun.JSError!bun.jsc.JSValue {
+        const arguments = callframe.arguments();
+        if (arguments.len < 3 or !arguments[0].isString() or !arguments[1].isNumber() or !arguments[2].isBoolean()) {
+            return globalThis.throw("formatHttpThreadSpawnPanic: expected (err_name: string, win32_error_code: number, is_windows: boolean)", .{});
+        }
+        const err_name_str = try arguments[0].toBunString(globalThis);
+        defer err_name_str.deref();
+        const err_name_slice = err_name_str.toUTF8(bun.default_allocator);
+        defer err_name_slice.deinit();
+
+        const code_i32 = arguments[1].toInt32();
+        const code: u16 = if (code_i32 < 0 or code_i32 > std.math.maxInt(u16))
+            0
+        else
+            @intCast(code_i32);
+        const is_windows = arguments[2].toBoolean();
+
+        var buf: [256]u8 = undefined;
+        const msg = formatSpawnFailurePanic(&buf, err_name_slice.slice(), code, is_windows);
+        return bun.String.createUTF8ForJS(globalThis, msg);
+    }
+};
+
+/// Only written on Windows; read on Windows in the panic path for
+/// `initOnce` when `spawnHttpClientThread` fails. Captures the
+/// `GetLastError()` value right at the `CreateThread` failure site
+/// before any cleanup (HeapFree, etc.) can clobber it.
+var last_http_thread_spawn_win32_error: if (Environment.isWindows)
+    std.os.windows.Win32Error
+else
+    void = if (Environment.isWindows) .SUCCESS else {};
+
+/// Superset of `std.Thread.SpawnError` plus the Windows-only
+/// `SpawnFailed` we return when `CreateThread` fails. We keep every POSIX
+/// variant name so `@errorName` in `formatSpawnFailurePanic` reports
+/// e.g. `ThreadQuotaExceeded` / `SystemResources` verbatim instead of
+/// collapsing to `Unexpected`.
+const HttpThreadSpawnError = std.Thread.SpawnError || error{SpawnFailed};
+
+/// Spawns the HTTP client thread with a detached handle.
+///
+/// On Windows, this is hand-rolled instead of using `std.Thread.spawn` so
+/// we can capture the `GetLastError()` value at the `CreateThread`
+/// failure site. `std.Thread.spawn`'s Windows backend has an
+/// `errdefer HeapFree(...)` that runs between `CreateThread` failing
+/// and the caller's `catch`, which clobbers the thread-local last-error
+/// and turns every failure into a bare `error.Unexpected`. See
+/// `vendor/zig/lib/std/Thread.zig` — WindowsThreadImpl.spawn.
+fn spawnHttpClientThread(opts: InitOpts) HttpThreadSpawnError!void {
+    if (comptime !Environment.isWindows) {
+        const thread = try std.Thread.spawn(
+            .{ .stack_size = bun.default_thread_stack_size },
+            onStart,
+            .{opts},
+        );
+        thread.detach();
+        return;
+    }
+
+    const windows = std.os.windows;
+    const kernel32 = windows.kernel32;
+
+    const Instance = struct {
+        opts: InitOpts,
+
+        fn entryFn(raw_ptr: windows.PVOID) callconv(.winapi) windows.DWORD {
+            const self: *@This() = @ptrCast(@alignCast(raw_ptr));
+            // The spawned thread now owns the allocation; free it once
+            // `onStart` enters so we don't leak on a clean start either.
+            // (onStart doesn't return under normal conditions, but if it
+            // ever did, the allocation would be unreachable anyway.)
+            const heap = kernel32.GetProcessHeap() orelse {
+                onStart(self.opts);
+                return 0;
+            };
+            const captured_opts = self.opts;
+            _ = kernel32.HeapFree(heap, 0, raw_ptr);
+            onStart(captured_opts);
+            return 0;
+        }
+    };
+
+    const heap_handle = kernel32.GetProcessHeap() orelse {
+        last_http_thread_spawn_win32_error = bun.windows.GetLastError();
+        return error.OutOfMemory;
+    };
+    // HeapAlloc does NOT call SetLastError on failure (per MSDN: "An
+    // application cannot call GetLastError for extended error
+    // information"), so reading it here would surface a stale code from
+    // some unrelated prior Win32 call. Leave `last_http_thread_spawn_win32_error`
+    // at its default .SUCCESS — the Zig error name `OutOfMemory` in the
+    // panic message already conveys the cause, and printing 0x0 is less
+    // misleading than printing a red-herring code.
+    const alloc_ptr = kernel32.HeapAlloc(heap_handle, 0, @sizeOf(Instance)) orelse {
+        return error.OutOfMemory;
+    };
+    const instance: *Instance = @ptrCast(@alignCast(alloc_ptr));
+    instance.* = .{ .opts = opts };
+
+    // Mirror std.Thread: Windows treats stack_size as a hint and enforces
+    // a floor of 64KB (SYSTEM_INFO.dwAllocationGranularity on x64/arm64).
+    var stack_size: u32 = std.math.cast(u32, bun.default_thread_stack_size) orelse std.math.maxInt(u32);
+    stack_size = @max(64 * 1024, stack_size);
+
+    // STACK_SIZE_PARAM_IS_A_RESERVATION (0x00010000): treat stack_size
+    // as the *reserve* size; Windows commits the initial guard page and
+    // grows committed memory on demand. Without this flag, stack_size
+    // is the initial *commit* size — with the 4MB default, that's
+    // ~4MB of commit charge per thread upfront, which makes the exact
+    // ERROR_NOT_ENOUGH_MEMORY / ERROR_COMMITMENT_LIMIT case this PR
+    // diagnoses slightly more likely.
+    const STACK_SIZE_PARAM_IS_A_RESERVATION: windows.DWORD = 0x00010000;
+    const thread_handle = kernel32.CreateThread(
+        null,
+        stack_size,
+        Instance.entryFn,
+        instance,
+        STACK_SIZE_PARAM_IS_A_RESERVATION,
+        null,
+    ) orelse {
+        // Capture BEFORE HeapFree runs — HeapFree can clear the last-error
+        // on success, which is what makes the stdlib spawn unhelpful.
+        last_http_thread_spawn_win32_error = bun.windows.GetLastError();
+        _ = kernel32.HeapFree(heap_handle, 0, alloc_ptr);
+        return error.SpawnFailed;
+    };
+    // Detach: the thread owns the allocation and will free it on entry.
+    windows.CloseHandle(thread_handle);
 }
 var init_once = bun.once(initOnce);
 

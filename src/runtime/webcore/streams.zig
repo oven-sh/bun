@@ -1549,8 +1549,9 @@ pub const BufferAction = union(enum) {
         return blob.wrap(.{ .normal = this.swap() }, global, this.*);
     }
 
-    pub fn reject(this: *BufferAction, global: *jsc.JSGlobalObject, err: *Result.StreamError) bun.JSTerminated!void {
-        return this.swap().reject(global, err.toJS(global));
+    pub fn reject(this: *BufferAction, global: *jsc.JSGlobalObject, err: Result.StreamError) bun.JSTerminated!void {
+        var err_ = err;
+        return this.swap().reject(global, err_.toJS(global));
     }
 
     pub fn resolve(this: *BufferAction, global: *jsc.JSGlobalObject, result: jsc.JSValue) bun.JSTerminated!void {

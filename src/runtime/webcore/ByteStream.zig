@@ -117,7 +117,7 @@ pub fn onData(
 
             log("ByteStream.onData err  action.reject()", .{});
 
-            return action.reject(this.parent().globalThis, &stream.err);
+            return action.reject(this.parent().globalThis, stream.err);
         }
 
         if (this.has_received_last_chunk) {
@@ -357,8 +357,7 @@ pub fn onCancel(this: *@This()) void {
 
     if (this.buffer_action) |*action| {
         const global = this.parent().globalThis;
-        var err: streams.Result.StreamError = .{ .AbortReason = .UserAbort };
-        action.reject(global, &err) catch {}; // TODO: properly propagate exception upwards
+        action.reject(global, .{ .AbortReason = .UserAbort }) catch {}; // TODO: properly propagate exception upwards
         this.buffer_action = null;
     }
 }
@@ -373,12 +372,12 @@ pub fn deinit(this: *@This()) void {
     if (this.buffer.capacity > 0) this.buffer.clearAndFree();
 
     this.pending_value.deinit();
+    this.pending.result.deinit();
+    this.pending.result = .{ .done = {} };
     if (!this.done) {
         this.done = true;
 
         this.pending_buffer = &.{};
-        this.pending.result.deinit();
-        this.pending.result = .{ .done = {} };
         if (this.pending.state == .pending and this.pending.future == .promise) {
             // We must never run JavaScript inside of a GC finalizer.
             this.pending.runOnNextTick();

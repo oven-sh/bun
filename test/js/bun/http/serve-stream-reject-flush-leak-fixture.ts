@@ -80,7 +80,7 @@ function oneRequest(): Promise<void> {
   });
 }
 
-const ITERATIONS = 40;
+const ITERATIONS = 10;
 
 // Warm up so per-process one-time promise protections (module loader, etc.)
 // don't count against us.

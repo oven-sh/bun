@@ -889,8 +889,9 @@ if (isDockerEnabled()) {
       const deltaMB = (after - rss) / 1024 / 1024;
       console.log({ after, rss, deltaMB });
       // Without the fix each row leaks ~64KB of cloned strings plus the
-      // SQLDataCell[] buffer; 3000 rows leak well over 200MB.
-      expect(deltaMB).toBeLessThan(100);
+      // SQLDataCell[] buffer; 3000 rows leak well over 200MB. With the fix
+      // the ASAN debug build settles around ~70MB of JSC/ASAN overhead.
+      expect(deltaMB).toBeLessThan(150);
     });
 
     // Last one wins.

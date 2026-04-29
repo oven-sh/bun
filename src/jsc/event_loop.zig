@@ -648,7 +648,11 @@ pub fn enqueueTaskConcurrent(this: *EventLoop, task: *ConcurrentTask) void {
         // `PackedNextPtr.setPtr` which *preserves* the low `auto_delete` bit, so if
         // `.next` was left undefined the preserved bit is garbage and the event loop
         // may call `bun.destroy` on an embedded (interior-pointer) ConcurrentTask.
-        bun.assertf(task.next.getPtr() == null, "ConcurrentTask.next must be initialized (use ConcurrentTask.from or struct init) before enqueueTaskConcurrent; got garbage pointer bits", .{});
+        // Test the raw bits directly rather than calling `getPtr()` — `@ptrFromInt`
+        // on a misaligned address (e.g. 0xAA..AA) would trip Zig's alignment safety
+        // check and panic before this diagnostic ever prints.
+        const next_bits = @intFromEnum(task.next);
+        bun.assertf((next_bits & ~@as(usize, 1)) == 0, "ConcurrentTask.next must be initialized (use ConcurrentTask.from or struct init) before enqueueTaskConcurrent; got 0x{x:0>16}", .{next_bits});
     }
 
     if (comptime Environment.isDebug) {

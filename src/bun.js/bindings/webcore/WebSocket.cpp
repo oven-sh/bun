@@ -191,15 +191,6 @@ WebSocket::WebSocket(ScriptExecutionContext& context)
 
 WebSocket::~WebSocket()
 {
-    // If connect() never reached the point where it transfers m_sslConfig to
-    // the Zig upgrade client (e.g. invalid URL, bad protocol, failed headers),
-    // we still own the heap allocation from Bun__WebSocket__parseSSLConfig and
-    // must free it here to avoid leaking cert/key/CA strings.
-    if (m_sslConfig) {
-        Bun__WebSocket__freeSSLConfig(m_sslConfig);
-        m_sslConfig = nullptr;
-    }
-
     if (m_upgradeClient != nullptr) {
         void* upgradeClient = m_upgradeClient;
         // Use TLS cancel if connection type is TLS or ProxyTLS (either is a TLS socket to the remote)
@@ -346,21 +337,18 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     return socket;
 }
 
-ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, void* sslConfig, bool offerPerMessageDeflate)
+ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate)
 {
-    // We take ownership of sslConfig unconditionally. Park it on the
-    // WebSocket immediately so every failure path below (including connect()
-    // exceptions) frees it via ~WebSocket().
-    auto socket = adoptRef(*new WebSocket(context));
-    socket->m_sslConfig = sslConfig; // Set BEFORE connect() so it's available during connection
-    socket->setOfferPerMessageDeflate(offerPerMessageDeflate);
-
     if (url.isNull())
         return Exception { SyntaxError };
 
     auto proxyConfigResult = setupProxy(proxyUrl, WTF::move(proxyHeaders));
     if (proxyConfigResult.hasException())
         return proxyConfigResult.releaseException();
+
+    auto socket = adoptRef(*new WebSocket(context));
+    socket->m_sslConfig = WTF::move(sslConfig); // Set BEFORE connect() so it's available during connection
+    socket->setOfferPerMessageDeflate(offerPerMessageDeflate);
 
     auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue());
     if (result.hasException())
@@ -369,22 +357,19 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     return socket;
 }
 
-ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, void* sslConfig, bool offerPerMessageDeflate)
+ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate)
 {
-    // We take ownership of sslConfig unconditionally. Park it on the
-    // WebSocket immediately so every failure path below (including connect()
-    // exceptions) frees it via ~WebSocket().
-    auto socket = adoptRef(*new WebSocket(context));
-    socket->setRejectUnauthorized(rejectUnauthorized);
-    socket->m_sslConfig = sslConfig; // Set BEFORE connect() so it's available during connection
-    socket->setOfferPerMessageDeflate(offerPerMessageDeflate);
-
     if (url.isNull())
         return Exception { SyntaxError };
 
     auto proxyConfigResult = setupProxy(proxyUrl, WTF::move(proxyHeaders));
     if (proxyConfigResult.hasException())
         return proxyConfigResult.releaseException();
+
+    auto socket = adoptRef(*new WebSocket(context));
+    socket->setRejectUnauthorized(rejectUnauthorized);
+    socket->m_sslConfig = WTF::move(sslConfig); // Set BEFORE connect() so it's available during connection
+    socket->setOfferPerMessageDeflate(offerPerMessageDeflate);
 
     auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue());
     if (result.hasException())
@@ -711,8 +696,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
 
     // Pass SSLConfig pointer to Zig (ownership transferred - Zig will deinit when connection closes)
     // After this call, m_sslConfig should not be used by C++ anymore
-    void* sslConfig = m_sslConfig;
-    m_sslConfig = nullptr; // Transfer ownership
+    void* sslConfig = m_sslConfig.release();
 
     // Use TLS client based on connection type:
     // - TLS/ProxyTLS: use TLS socket

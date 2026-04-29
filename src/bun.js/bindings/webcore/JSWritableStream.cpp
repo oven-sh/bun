@@ -269,6 +269,40 @@ JSC::GCClient::IsoSubspace* JSWritableStream::subspaceForImpl(JSC::VM& vm)
         [](auto& spaces, auto&& space) { spaces.m_subspaceForWritableStream = std::forward<decltype(space)>(space); });
 }
 
+template<typename Visitor>
+void JSWritableStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSWritableStream>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
+}
+
+DEFINE_VISIT_CHILDREN(JSWritableStream);
+
+template<typename Visitor>
+void JSWritableStream::visitOutputConstraints(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSWritableStream>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitOutputConstraints(thisObject, visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
+}
+
+template void JSWritableStream::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
+template void JSWritableStream::visitOutputConstraints(JSCell*, SlotVisitor&);
+
+template<typename Visitor>
+void JSWritableStream::visitAdditionalChildrenInGCThread(Visitor& visitor)
+{
+    // InternalWritableStream opts out of the global object's m_guardedObjects
+    // root set (see InternalWritableStream ctor), so the JS wrapper is
+    // responsible for keeping the internal stream object reachable.
+    wrapped().internalWritableStream().visitAggregate(visitor);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSWritableStream);
+
 void JSWritableStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     auto* thisObject = uncheckedDowncast<JSWritableStream>(cell);

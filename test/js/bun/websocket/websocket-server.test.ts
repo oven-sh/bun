@@ -1,7 +1,7 @@
 import type { Server, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, forceGuardMalloc } from "harness";
+import { bunEnv, bunExe, forceGuardMalloc, isWindows } from "harness";
 import { isIP } from "node:net";
 import path from "node:path";
 
@@ -1120,8 +1120,11 @@ it("server.upgrade() with Sec-WebSocket-Protocol in options.headers does not use
     env: {
       ...bunEnv,
       // Route bmalloc through the system heap so ASAN can observe the
-      // StringImpl allocation in sanitizer-enabled builds.
-      Malloc: "1",
+      // StringImpl allocation in sanitizer-enabled builds. On Windows
+      // bmalloc's SystemHeap is unimplemented and would RELEASE_BASSERT,
+      // so leave bmalloc in place there — Windows builds have no ASAN
+      // lane anyway.
+      ...(isWindows ? {} : { Malloc: "1" }),
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -1138,4 +1141,4 @@ it("server.upgrade() with Sec-WebSocket-Protocol in options.headers does not use
     stderr: "",
   });
   expect(exitCode).toBe(0);
-}, 30_000);
+});

@@ -544,8 +544,12 @@ pub const FFI = struct {
     const SymbolsMap = struct {
         map: bun.StringArrayHashMapUnmanaged(Function) = .{},
         pub fn deinit(this: *SymbolsMap) void {
-            for (this.map.keys()) |key| {
-                bun.default_allocator.free(@constCast(key));
+            // Each map key aliases the Function's base_name allocation, which
+            // Function.deinit frees along with the per-symbol TCC state,
+            // arg_types, and (on the dlopen/linkSymbols/cc paths) the
+            // protect()ed JSFFIFunction root.
+            for (this.map.values()) |*value| {
+                value.deinitWithoutGlobal();
             }
             this.map.clearAndFree(bun.default_allocator);
         }
@@ -1470,9 +1474,12 @@ pub const FFI = struct {
         extern "c" fn FFICallbackFunctionWrapper_destroy(*anyopaque) void;
         extern "c" fn Bun__FFIFunction_setClosed(JSValue) void;
 
-        pub fn deinit(val: *Function, globalThis: *jsc.JSGlobalObject) void {
+        pub fn deinit(val: *Function, _: *jsc.JSGlobalObject) void {
+            val.deinitWithoutGlobal();
+        }
+
+        pub fn deinitWithoutGlobal(val: *Function) void {
             jsc.markBinding(@src());
-            _ = globalThis;
 
             if (val.base_name) |base_name| {
                 if (bun.asByteSlice(base_name).len > 0) {

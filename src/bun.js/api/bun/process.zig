@@ -2561,6 +2561,11 @@ pub const sync = struct {
             // this wakeup, and any depth of chain that completed between them.
             if (saw_fork) Bun__noOrphans_scan();
             if (child_exited) {
+                // Intentionally don't wait for pipe EOF (unlike the `poll()`
+                // path): a grandchild holding the write end is exactly what
+                // no-orphans exists to kill, and the killTracked()/pgroup-kill
+                // defers can't run until we return. drainFd() loops to EAGAIN,
+                // so everything the script itself wrote is captured.
                 for (out_fds_to_wait_for, out_fds, out) |*fd, *ofd, *bytes| _ = drainFd(fd, ofd, bytes);
                 return .{ .result = reapChild(child) };
             }
@@ -2724,7 +2729,6 @@ pub const sync = struct {
 
     /// Blocking `wait4()` until `Status.from` returns a terminal status.
     /// Shared by the `poll()` path and `waitForChildNoOrphans`.
-    /// Shared by the `poll()` path and `waitForChildKqueueMac`.
     fn reapChild(child: std.c.pid_t) Status {
         while (true) {
             if (Status.from(child, &PosixSpawn.wait4(child, 0, null))) |stat| return stat;

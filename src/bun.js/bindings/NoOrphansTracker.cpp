@@ -168,12 +168,18 @@ public:
     // reused between scan and STOP; SIGCONT and skip.
     void killTracked()
     {
-        // One last sweep to pick up anything spawned since the last NOTE_FORK.
+        // Freeze the tree, then rescan to pick up anything that forked in the
+        // gap between scan() and its SIGSTOP. Iterate until a post-freeze
+        // scan() adds nothing — at that point every tracked pid is stopped and
+        // cannot fork, so the set is closed. `frozen` marks how far through
+        // m_tracked we've already SIGSTOP'd so each pid is stopped once.
+        size_t frozen = 0;
         scan();
-
-        // Freeze first so nothing in the set can fork while we iterate.
-        for (auto& t : m_tracked)
-            kill(t.pid, SIGSTOP);
+        while (frozen < m_tracked.size()) {
+            for (; frozen < m_tracked.size(); ++frozen)
+                kill(m_tracked[frozen].pid, SIGSTOP);
+            scan();
+        }
 
         for (auto& t : m_tracked) {
             ProcUniqIdentifierInfo u;

@@ -252,7 +252,7 @@ describe.each([
 // the supervisor dies would prove `bun run` slept through it.
 //
 // Two macOS code paths under test:
-//   - plain `bun run <script>` → spawnSync → `waitForChildKqueueMac`
+//   - plain `bun run <script>` → spawnSync → `waitForChildNoOrphans`
 //   - `--filter='*'` → MiniEventLoop → `installOnEventLoop`
 // Linux: both covered by PDEATHSIG on `bun run` + linux_pdeathsig on the spawn.
 //

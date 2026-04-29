@@ -96,12 +96,12 @@ private:
     HttpContext<SSL> *httpContext;
     /* Shared SSL_CTX for every accepted socket. nullptr for plain HTTP. Built
      * once in the constructor; the listener up_ref's it; SSL_CTX_free in dtor. */
-    void /* SSL_CTX */ *sslCtx = nullptr;
+    struct ssl_ctx_st *sslCtx = nullptr;
     /* SNI: the tree hangs off the listen socket, but addServerName() is allowed
      * before listen(). Queue them and replay onto each us_listen_socket_t. */
     struct PendingServerName {
         std::string hostname;
-        void /* SSL_CTX */ *ctx;
+        struct ssl_ctx_st *ctx;
         HttpRouter<typename HttpContextData<SSL>::RouterData> *router;
     };
     std::vector<PendingServerName> pendingServerNames;
@@ -121,7 +121,7 @@ public:
         /* Do nothing if not even on SSL */
         if constexpr (SSL) {
             enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
-            void *domainCtx = us_ssl_ctx_from_options(options, /*is_client*/ 0, &err);
+            struct ssl_ctx_st *domainCtx = us_ssl_ctx_from_options(options, /*is_client*/ 0, &err);
             if (!domainCtx) {
                 if (success) *success = false;
                 return std::move(*this);
@@ -642,7 +642,7 @@ private:
         return ls;
     }
 
-    void *sslCtxOrNull() { return SSL ? sslCtx : nullptr; }
+    struct ssl_ctx_st *sslCtxOrNull() { return SSL ? sslCtx : nullptr; }
 
 public:
     /* Host, port, callback */

@@ -130,6 +130,12 @@ struct us_poll_t;
 struct us_udp_socket_t;
 struct us_udp_packet_buffer_t;
 
+/* BoringSSL/OpenSSL forward decls so the API can be typed without dragging in
+ * the OpenSSL headers. These match openssl/base.h's `typedef struct ssl_ctx_st
+ * SSL_CTX` / `typedef struct ssl_st SSL`. */
+struct ssl_ctx_st;
+struct ssl_st;
+
 
 struct us_cert_string_t {
     const char* str;
@@ -296,7 +302,7 @@ struct us_socket_t *us_socket_adopt(us_socket_r s, us_socket_group_r group,
  * for the lifetime of the socket). Used for STARTTLS / Bun.connect upgrade.
  * sni may be NULL. */
 struct us_socket_t *us_socket_adopt_tls(us_socket_r s, us_socket_group_r group,
-    unsigned char kind, void /* SSL_CTX */ *ssl_ctx, const char *sni,
+    unsigned char kind, struct ssl_ctx_st *ssl_ctx, const char *sni,
     int old_ext_size, int ext_size) __attribute__((nonnull(1, 2, 4)));
 /* Send ClientHello after adopt_tls. Separate so the caller can repoint the
  * ext slot before any dispatch can fire. */
@@ -307,11 +313,11 @@ void us_socket_start_tls_handshake(us_socket_r s) nonnull_fn_decl;
  * (borrowed ref, optional), the SNI tree (optional), and the kind to stamp on
  * accepted sockets. */
 struct us_listen_socket_t *us_socket_group_listen(us_socket_group_r group,
-    unsigned char kind, void /* SSL_CTX */ *ssl_ctx,
+    unsigned char kind, struct ssl_ctx_st *ssl_ctx,
     const char *host, int port, int options, int socket_ext_size, int *error)
     __attribute__((nonnull(1, 8)));  /* ssl_ctx, host nullable */
 struct us_listen_socket_t *us_socket_group_listen_unix(us_socket_group_r group,
-    unsigned char kind, void /* SSL_CTX */ *ssl_ctx,
+    unsigned char kind, struct ssl_ctx_st *ssl_ctx,
     const char *path, size_t pathlen, int options, int socket_ext_size, int *error)
     __attribute__((nonnull(1, 4, 8)));  /* ssl_ctx nullable */
 void us_listen_socket_close(struct us_listen_socket_t *ls) nonnull_fn_decl;
@@ -319,7 +325,7 @@ void us_listen_socket_close(struct us_listen_socket_t *ls) nonnull_fn_decl;
 /* SNI: tree hangs off the listen socket. ssl_ctx is up_ref'd; user is opaque
  * (uWS stores a per-domain HttpRouter*). user may be NULL. */
 int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
-    const char *hostname_pattern, void /* SSL_CTX */ *ssl_ctx, void *user)
+    const char *hostname_pattern, struct ssl_ctx_st *ssl_ctx, void *user)
     __attribute__((nonnull(1, 2, 3)));
 void us_listen_socket_remove_server_name(struct us_listen_socket_t *ls,
     const char *hostname_pattern) nonnull_fn_decl;
@@ -334,11 +340,11 @@ void *us_socket_server_name_userdata(us_socket_r s);
  * us_connecting_socket_t* (DNS / happy-eyeballs in flight, *is_connecting=0).
  * ssl_ctx may be NULL for plain TCP. */
 void *us_socket_group_connect(us_socket_group_r group, unsigned char kind,
-    void /* SSL_CTX */ *ssl_ctx, const char *host, int port, int options,
+    struct ssl_ctx_st *ssl_ctx, const char *host, int port, int options,
     int socket_ext_size, int *is_connecting)
     __attribute__((nonnull(1, 4, 8)));  /* ssl_ctx nullable */
 struct us_socket_t *us_socket_group_connect_unix(us_socket_group_r group,
-    unsigned char kind, void /* SSL_CTX */ *ssl_ctx,
+    unsigned char kind, struct ssl_ctx_st *ssl_ctx,
     const char *server_path, size_t pathlen, int options, int socket_ext_size)
     __attribute__((nonnull(1, 4)));  /* ssl_ctx nullable */
 
@@ -402,16 +408,14 @@ enum create_bun_socket_error_t {
  * Policy that BoringSSL doesn't natively store (client renegotiation limits)
  * is attached as SSL_CTX ex_data; verify mode (reject_unauthorized /
  * request_cert) is encoded via SSL_CTX_set_verify() and recoverable from the
- * SSL_CTX itself.
- *
- * All `void *ssl_ctx` parameters elsewhere in this header are raw `SSL_CTX*`. */
-void /* SSL_CTX */ *us_ssl_ctx_from_options(
+ * SSL_CTX itself. */
+struct ssl_ctx_st *us_ssl_ctx_from_options(
     struct us_bun_socket_context_options_t options, int is_client,
     enum create_bun_socket_error_t *err);
 /* SSL_CTX_up_ref / SSL_CTX_free without an OpenSSL include — for C++ callers
- * (uWS App.h) that hold ssl_ctx as void*. */
-void us_internal_ssl_ctx_up_ref(void *ssl_ctx);
-void us_internal_ssl_ctx_unref(void *ssl_ctx);
+ * (uWS App.h) that don't pull in BoringSSL headers. */
+void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
+void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
 long us_ssl_ctx_live_count(void);
 
 /* Public interfaces for loops */
@@ -521,7 +525,7 @@ LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) nonnull_fn_decl;
 
 /* Bun extras */
 struct us_socket_t *us_socket_pair(us_socket_group_r group, unsigned char kind, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR *fds) nonnull_fn_decl;
-struct us_socket_t *us_socket_from_fd(us_socket_group_r group, unsigned char kind, void /* SSL_CTX */ *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc)
+struct us_socket_t *us_socket_from_fd(us_socket_group_r group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc)
     __attribute__((nonnull(1)));  /* ssl_ctx nullable */
 struct us_socket_t *us_socket_open(struct us_socket_t *s, int is_client, char *ip, int ip_length);
 int us_raw_root_certs(struct us_cert_string_t **out);

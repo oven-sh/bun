@@ -558,9 +558,9 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   return ssl_context;
 }
 
-void *us_ssl_ctx_from_options(struct us_bun_socket_context_options_t options,
-                              int is_client,
-                              enum create_bun_socket_error_t *err) {
+SSL_CTX *us_ssl_ctx_from_options(struct us_bun_socket_context_options_t options,
+                                 int is_client,
+                                 enum create_bun_socket_error_t *err) {
   SSL_CTX *ctx = us_ssl_ctx_build_raw(options, err);
   if (!ctx) return NULL;
 
@@ -588,22 +588,21 @@ void *us_ssl_ctx_from_options(struct us_bun_socket_context_options_t options,
   return ctx;
 }
 
-/* Opaque ref/unref for context.c / socket.c (which see ssl_ctx as void*). The
- * SSL_CTX's own refcount IS the refcount; SSL_new() takes one more per socket
- * internally, so a socket outlives its SecureContext without help from us. */
-void us_internal_ssl_ctx_up_ref(void *p) {
-  if (p) SSL_CTX_up_ref((SSL_CTX *)p);
+/* SSL_CTX's own refcount IS the refcount; SSL_new() takes one more per socket
+ * internally, so a socket outlives its SecureContext without help from us.
+ * Exported so context.c / socket.c stay free of OpenSSL headers. */
+void us_internal_ssl_ctx_up_ref(SSL_CTX *p) {
+  if (p) SSL_CTX_up_ref(p);
 }
-void us_internal_ssl_ctx_unref(void *p) {
-  if (p) SSL_CTX_free((SSL_CTX *)p);
+void us_internal_ssl_ctx_unref(SSL_CTX *p) {
+  if (p) SSL_CTX_free(p);
 }
 
 /* ── Per-socket SSL attach/detach ────────────────────────────────────────── */
 
-void us_internal_ssl_attach(struct us_socket_t *s, void *ssl_ctx_opaque,
+void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
                             int is_client, const char *sni,
                             struct us_listen_socket_t *listener) {
-  SSL_CTX *ctx = (SSL_CTX *)ssl_ctx_opaque;
   us_internal_init_loop_ssl_data(s->group->loop);
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
 
@@ -1086,7 +1085,7 @@ void us_internal_ssl_handshake_abort(struct us_socket_t *s) {
 
 struct us_socket_t *us_socket_adopt_tls(struct us_socket_t *s,
                                         struct us_socket_group_t *group,
-                                        unsigned char kind, void *ssl_ctx,
+                                        unsigned char kind, struct ssl_ctx_st *ssl_ctx,
                                         const char *sni, int old_ext_size,
                                         int ext_size) {
   if (us_socket_is_closed(s)) return NULL;
@@ -1147,10 +1146,9 @@ static int sni_cb(SSL *ssl, int *al, void *arg) {
 
 int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
                                      const char *hostname_pattern,
-                                     void *ssl_ctx_opaque, void *user) {
-  SSL_CTX *ctx = (SSL_CTX *)ssl_ctx_opaque;
-  SSL_CTX *default_ctx = (SSL_CTX *)ls->ssl_ctx;
-  if (!default_ctx || !ctx) return -1;
+                                     SSL_CTX *ctx, void *user) {
+  SSL_CTX *default_ctx = ls->ssl_ctx;
+  if (!default_ctx) return -1;
 
   if (!ls->sni) {
     ls->sni = sni_new();

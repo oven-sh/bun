@@ -57,9 +57,7 @@ pub const Flags = packed struct(u8) {
 };
 
 pub const UpgradeCTX = struct {
-    /// uWS `WebSocketContext<SSL,true,UserData>*` — opaque to Zig, only ever
-    /// round-tripped back to `uws_res_upgrade`.
-    context: ?*anyopaque = null,
+    context: ?*uws.WebSocketUpgradeContext = null,
     // request will be detached when go async
     request: ?*uws.Request = null,
 
@@ -278,7 +276,7 @@ pub fn create(
     request: *uws.Request,
     is_ssl: i32,
     response_ptr: *anyopaque,
-    upgrade_ctx: ?*anyopaque,
+    upgrade_ctx: ?*uws.WebSocketUpgradeContext,
     node_response_ptr: *?*NodeHTTPResponse,
 ) callconv(.c) jsc.JSValue {
     const vm = globalObject.bunVM();

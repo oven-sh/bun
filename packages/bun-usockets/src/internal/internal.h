@@ -186,7 +186,7 @@ void us_internal_socket_after_open(us_socket_r s, int error);
  * `listener` is the accepting us_listen_socket_t (server) or NULL (client/
  * adopt) — stashed per-SSL so sni_cb can resolve the right tree without
  * relying on a shared SSL_CTX servername_arg. */
-void us_internal_ssl_attach(us_socket_r s, void /* SSL_CTX */ *ssl_ctx, int is_client, const char *sni, struct us_listen_socket_t *listener);
+void us_internal_ssl_attach(us_socket_r s, struct ssl_ctx_st *ssl_ctx, int is_client, const char *sni, struct us_listen_socket_t *listener);
 /* SSL_free(s->ssl); s->ssl = NULL. Idempotent. */
 void us_internal_ssl_detach(us_socket_r s);
 
@@ -211,8 +211,8 @@ void us_internal_ssl_handshake_abort(us_socket_r s);
 /* SSL_CTX_free(ls->ssl_ctx) + sni_free(ls->sni). Called from us_listen_socket_close. */
 void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls);
 /* Opaque SSL_CTX_up_ref/SSL_CTX_free so context.c needn't include OpenSSL. */
-void us_internal_ssl_ctx_up_ref(void *ssl_ctx);
-void us_internal_ssl_ctx_unref(void *ssl_ctx);
+void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
+void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
 /* TCP-level FIN, bypassing the SSL layer (used by ssl_on_end). */
 void us_internal_socket_raw_shutdown(us_socket_r s);
 
@@ -263,7 +263,7 @@ struct us_socket_t {
   struct us_socket_group_t *group;
   /* NULL for plain TCP. Direct BoringSSL `SSL*`; set by us_internal_ssl_attach
    * in adopt_tls / connect-with-ssl_ctx / accept-with-ssl_ctx. */
-  void /* SSL* */ *ssl;
+  struct ssl_st *ssl;
   struct us_socket_t *prev, *next;
   struct us_socket_t *connect_next;
   struct us_connecting_socket_t *connect_state;
@@ -281,7 +281,7 @@ struct us_connecting_socket_t {
      * storage to find the loop. */
     struct us_loop_t *loop;
     /* SSL_CTX to apply on open (borrowed; up_ref'd while in flight). */
-    void *ssl_ctx;
+    struct ssl_ctx_st *ssl_ctx;
     // this is used to track all dns resolutions in this connection
     struct us_connecting_socket_t *next;
     struct us_socket_t *connecting_head;
@@ -369,7 +369,7 @@ struct us_listen_socket_t {
   struct us_listen_socket_t *next;
   /* SSL_CTX for accepted sockets. Borrowed; up_ref'd on listen, freed on
    * close. NULL → plain TCP. */
-  void *ssl_ctx;
+  struct ssl_ctx_st *ssl_ctx;
   /* SNI hostname → {SSL_CTX*, user*} tree. Owned. */
   void *sni;
   void (*on_server_name)(struct us_listen_socket_t *, const char *hostname);

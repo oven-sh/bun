@@ -51,9 +51,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         flags: NewFlags(debug_mode) = .{},
 
-        /// uWS `WebSocketContext<SSL,true,UserData>*` — opaque, only ever
-        /// round-tripped to `uws_res_upgrade`.
-        upgrade_context: ?*anyopaque = null,
+        upgrade_context: ?*uws.WebSocketUpgradeContext = null,
 
         /// We can only safely free once the request body promise is finalized
         /// and the response is rejected

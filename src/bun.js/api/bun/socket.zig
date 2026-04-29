@@ -1613,7 +1613,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             });
             raw.ref();
             tls.twin = raw;
-            uws.us_socket_t.c.us_socket_set_ssl_raw_tap(new_raw, 1);
+            new_raw.setSslRawTap(true);
 
             const tls_js_value = tls.getThisValue(globalObject);
             const raw_js_value = raw.getThisValue(globalObject);

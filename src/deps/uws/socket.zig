@@ -327,19 +327,10 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             comptime socket_field_name: ?[]const u8,
             is_ipc: bool,
         ) ?ThisSocket {
-            const raw = us_socket_t.c.us_socket_from_fd(
-                g,
-                @intFromEnum(k),
-                null,
-                @sizeOf(*anyopaque),
-                handle.native(),
-                @intFromBool(is_ipc),
-            ) orelse return null;
+            const raw = g.fromFd(k, null, @sizeOf(?*This), handle.native(), is_ipc) orelse return null;
             const socket_ = ThisSocket{ .socket = .{ .connected = raw } };
 
-            if (socket_.ext(*anyopaque)) |holder| {
-                holder.* = this;
-            }
+            raw.ext(?*This).* = this;
             if (comptime socket_field_name) |field| {
                 @field(this, field) = socket_;
             }
@@ -347,17 +338,17 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         }
 
         /// Connect via a `SocketGroup` and stash `owner` in the socket ext.
-        /// Replaces the deleted `connectAnon`/`connectPtr`. Returns `.detached`
-        /// on failure so callers can `try` against the wrapped error.
+        /// Replaces the deleted `connectAnon`/`connectPtr`.
         pub fn connectGroup(
             g: *SocketGroup,
             kind: SocketKind,
-            ssl_ctx: ?*anyopaque,
+            ssl_ctx: ?*uws.SslCtx,
             raw_host: []const u8,
             port: anytype,
             owner: anytype,
             allow_half_open: bool,
         ) !ThisSocket {
+            const Owner = @typeInfo(@TypeOf(owner)).pointer.child;
             const opts: c_int = if (allow_half_open) uws.LIBUS_SOCKET_ALLOW_HALF_OPEN else 0;
             // getaddrinfo doesn't understand bracketed IPv6 literals; URL
             // parsing leaves them in (`[::1]`), so strip here like the old
@@ -375,29 +366,32 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             } else bun.handleOom(bun.default_allocator.dupeZ(u8, host));
             defer if (hostZ.ptr != &stack) bun.default_allocator.free(hostZ);
 
-            var is_connecting: c_int = 0;
-            const ptr = SocketGroup.c.us_socket_group_connect(g, @intFromEnum(kind), ssl_ctx, hostZ.ptr, @intCast(port), opts, @sizeOf(*anyopaque), &is_connecting) orelse return error.FailedToOpenSocket;
-            if (is_connecting != 0) {
-                const s: *us_socket_t = @ptrCast(@alignCast(ptr));
-                s.ext(*anyopaque).* = owner;
-                return .{ .socket = .{ .connected = s } };
-            }
-            const c: *ConnectingSocket = @ptrCast(@alignCast(ptr));
-            c.ext(*anyopaque).* = owner;
-            return .{ .socket = .{ .connecting = c } };
+            return switch (g.connect(kind, ssl_ctx, hostZ, @intCast(port), opts, @sizeOf(?*Owner))) {
+                .failed => error.FailedToOpenSocket,
+                .socket => |s| blk: {
+                    s.ext(?*Owner).* = owner;
+                    break :blk .{ .socket = .{ .connected = s } };
+                },
+                .connecting => |cs| blk: {
+                    cs.ext(?*Owner).* = owner;
+                    break :blk .{ .socket = .{ .connecting = cs } };
+                },
+            };
         }
 
         pub fn connectUnixGroup(
             g: *SocketGroup,
             kind: SocketKind,
-            ssl_ctx: ?*anyopaque,
+            ssl_ctx: ?*uws.SslCtx,
             path: []const u8,
             owner: anytype,
             allow_half_open: bool,
         ) !ThisSocket {
+            const Owner = @typeInfo(@TypeOf(owner)).pointer.child;
             const opts: c_int = if (allow_half_open) uws.LIBUS_SOCKET_ALLOW_HALF_OPEN else 0;
-            const s = SocketGroup.c.us_socket_group_connect_unix(g, @intFromEnum(kind), ssl_ctx, path.ptr, path.len, opts, @sizeOf(*anyopaque)) orelse return error.FailedToOpenSocket;
-            s.ext(*anyopaque).* = owner;
+            const s = g.connectUnix(kind, ssl_ctx, path.ptr, path.len, opts, @sizeOf(?*Owner)) orelse
+                return error.FailedToOpenSocket;
+            s.ext(?*Owner).* = owner;
             return .{ .socket = .{ .connected = s } };
         }
 

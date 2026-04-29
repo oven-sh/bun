@@ -306,7 +306,7 @@ pub fn NewResponse(ssl_flag: i32) type {
             sec_web_socket_key: []const u8,
             sec_web_socket_protocol: []const u8,
             sec_web_socket_extensions: []const u8,
-            ctx: ?*anyopaque, // uWS WebSocketContext<SSL,true,UserData>*
+            ctx: ?*uws.WebSocketUpgradeContext,
         ) *Socket {
             return c.uws_res_upgrade(
                 ssl_flag,
@@ -650,7 +650,7 @@ pub const AnyResponse = union(enum) {
         sec_web_socket_key: []const u8,
         sec_web_socket_protocol: []const u8,
         sec_web_socket_extensions: []const u8,
-        ctx: ?*anyopaque, // uWS WebSocketContext<SSL,true,UserData>*
+        ctx: ?*uws.WebSocketUpgradeContext,
     ) *Socket {
         return switch (this) {
             // server.upgrade() returns false before reaching here for H3
@@ -767,7 +767,7 @@ const c = struct {
         sec_web_socket_protocol_length: usize,
         sec_web_socket_extensions: [*c]const u8,
         sec_web_socket_extensions_length: usize,
-        ws: ?*anyopaque, // uWS WebSocketContext*
+        ws: ?*uws.WebSocketUpgradeContext,
     ) *Socket;
     pub extern fn uws_res_cork(i32, res: *c.uws_res, ctx: *anyopaque, corker: *const (fn (?*anyopaque) callconv(.c) void)) void;
 };

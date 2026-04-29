@@ -63,7 +63,7 @@ fn PtrHandler(comptime T: type, comptime ssl: bool) type {
         pub fn onConnectError(ext: Ext, s: *us_socket_t, code: i32) void {
             // Old configure() path force-closed the half-open connect socket
             // before notifying the owner; preserve that.
-            _ = us_socket_t.c.us_socket_close(s, .normal, null);
+            s.close(.normal);
             const this = ext.* orelse return;
             if (@hasDecl(T, "onConnectError")) swallow(this.onConnectError(wrap(s), code));
         }
@@ -97,9 +97,9 @@ pub fn BunListener(comptime ssl: bool) type {
     const S = uws.NewSocketHandler(ssl);
     const NS = api.NewSocket(ssl);
     return struct {
-        pub const Ext = *anyopaque; // unused — owner comes from group
-        pub fn onOpen(_: Ext, s: *us_socket_t, _: bool, _: []const u8) void {
-            const listener = s.rawGroup().owner(api.Listener);
+        // No `Ext` decl — owner comes from `s.group().owner(Listener)`.
+        pub fn onOpen(s: *us_socket_t, _: bool, _: []const u8) void {
+            const listener = s.group().owner(api.Listener);
             // onCreate allocates the NewSocket, stashes it in ext, and
             // restamps kind → .bun_socket_*. Fire the user `open` handler
             // (markActive, ALPN, JS callback) before returning so the same
@@ -112,22 +112,22 @@ pub fn BunListener(comptime ssl: bool) type {
         // Accepted sockets reach the remaining events as `.bun_socket_*` once
         // onCreate has restamped them; if anything fires before that, route to
         // the freshly stashed NewSocket.
-        pub fn onClose(_: Ext, s: *us_socket_t, code: i32, reason: ?*anyopaque) void {
+        pub fn onClose(s: *us_socket_t, code: i32, reason: ?*anyopaque) void {
             if (s.ext(?*NS).*) |ns| swallow(ns.onClose(S.from(s), code, reason));
         }
-        pub fn onData(_: Ext, s: *us_socket_t, data: []const u8) void {
+        pub fn onData(s: *us_socket_t, data: []const u8) void {
             if (s.ext(?*NS).*) |ns| swallow(ns.onData(S.from(s), data));
         }
-        pub fn onWritable(_: Ext, s: *us_socket_t) void {
+        pub fn onWritable(s: *us_socket_t) void {
             if (s.ext(?*NS).*) |ns| swallow(ns.onWritable(S.from(s)));
         }
-        pub fn onEnd(_: Ext, s: *us_socket_t) void {
+        pub fn onEnd(s: *us_socket_t) void {
             if (s.ext(?*NS).*) |ns| swallow(ns.onEnd(S.from(s)));
         }
-        pub fn onTimeout(_: Ext, s: *us_socket_t) void {
+        pub fn onTimeout(s: *us_socket_t) void {
             if (s.ext(?*NS).*) |ns| swallow(ns.onTimeout(S.from(s)));
         }
-        pub fn onHandshake(_: Ext, s: *us_socket_t, ok: bool, err: uws.us_bun_verify_error_t) void {
+        pub fn onHandshake(s: *us_socket_t, ok: bool, err: uws.us_bun_verify_error_t) void {
             if (s.ext(?*NS).*) |ns| swallow(ns.onHandshake(S.from(s), @intFromBool(ok), err));
         }
     };
@@ -173,7 +173,7 @@ fn NsHandler(comptime Owner: type, comptime H: type, comptime ssl: bool) type {
             if (@hasDecl(H, "onEnd")) swallow(H.onEnd(this, wrap(s)));
         }
         pub fn onConnectError(ext: Ext, s: *us_socket_t, code: i32) void {
-            _ = us_socket_t.c.us_socket_close(s, .normal, null);
+            s.close(.normal);
             const this = ext.* orelse return;
             if (@hasDecl(H, "onConnectError")) swallow(H.onConnectError(this, wrap(s), code));
         }
@@ -191,9 +191,59 @@ fn NsHandler(comptime Owner: type, comptime H: type, comptime ssl: bool) type {
 }
 
 // ── HTTP client thread (fetch) ──────────────────────────────────────────────
-// Ext is the `ActiveSocket` tagged-pointer word; `Handler.on*` take `*anyopaque`.
+//
+// Unlike every other consumer the fetch ext slot does NOT hold a `*Owner`. It
+// holds an `ActiveSocket` — a `bun.TaggedPointerUnion` *value* packed into one
+// word (`.ptr()` → `*anyopaque` with the tag in the high bits). Dereferencing
+// it as a real pointer is UB; `Handler.on*` decode it via `ActiveSocket.from`.
+// This adapter just lifts the word out of the slot, so the `*anyopaque` here
+// is intentional and irreducible — it IS the tagged-pointer encoding, not a
+// type we forgot to name.
 pub fn HTTPClient(comptime ssl: bool) type {
-    return NsHandler(anyopaque, bun.http.NewHTTPContext(ssl).Handler, ssl);
+    const H = bun.http.NewHTTPContext(ssl).Handler;
+    const S = uws.NewSocketHandler(ssl);
+    return struct {
+        pub const Ext = *?*anyopaque;
+        inline fn wrap(s: *us_socket_t) S {
+            return S.from(s);
+        }
+        inline fn fwd(ext: Ext, comptime name: []const u8, args: anytype) void {
+            if (@hasDecl(H, name) and @TypeOf(@field(H, name)) != @TypeOf(null))
+                swallow(@call(.auto, @field(H, name), .{ext.* orelse return} ++ args));
+        }
+        pub fn onOpen(ext: Ext, s: *us_socket_t, _: bool, _: []const u8) void {
+            fwd(ext, "onOpen", .{wrap(s)});
+        }
+        pub fn onData(ext: Ext, s: *us_socket_t, data: []const u8) void {
+            fwd(ext, "onData", .{ wrap(s), data });
+        }
+        pub fn onWritable(ext: Ext, s: *us_socket_t) void {
+            fwd(ext, "onWritable", .{wrap(s)});
+        }
+        pub fn onClose(ext: Ext, s: *us_socket_t, code: i32, reason: ?*anyopaque) void {
+            fwd(ext, "onClose", .{ wrap(s), code, reason });
+        }
+        pub fn onTimeout(ext: Ext, s: *us_socket_t) void {
+            fwd(ext, "onTimeout", .{wrap(s)});
+        }
+        pub fn onLongTimeout(ext: Ext, s: *us_socket_t) void {
+            fwd(ext, "onLongTimeout", .{wrap(s)});
+        }
+        pub fn onEnd(ext: Ext, s: *us_socket_t) void {
+            fwd(ext, "onEnd", .{wrap(s)});
+        }
+        pub fn onConnectError(ext: Ext, s: *us_socket_t, code: i32) void {
+            s.close(.normal);
+            fwd(ext, "onConnectError", .{ wrap(s), code });
+        }
+        pub fn onConnectingError(cs: *ConnectingSocket, code: i32) void {
+            if (@hasDecl(H, "onConnectError"))
+                swallow(H.onConnectError(cs.ext(?*anyopaque).* orelse return, S.fromConnecting(cs), code));
+        }
+        pub fn onHandshake(ext: Ext, s: *us_socket_t, ok: bool, err: uws.us_bun_verify_error_t) void {
+            fwd(ext, "onHandshake", .{ wrap(s), @as(i32, @intFromBool(ok)), err });
+        }
+    };
 }
 
 // ── WebSocket client ────────────────────────────────────────────────────────

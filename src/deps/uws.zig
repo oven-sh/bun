@@ -31,6 +31,11 @@ pub const uws_res = @import("./uws/Response.zig").uws_res;
 pub const RawWebSocket = @import("./uws/WebSocket.zig").RawWebSocket;
 pub const AnyWebSocket = @import("./uws/WebSocket.zig").AnyWebSocket;
 pub const WebSocketBehavior = @import("./uws/WebSocket.zig").WebSocketBehavior;
+/// uWS C++ `WebSocketContext<SSL,true,UserData>*`. Only ever produced by the
+/// upgrade-handler thunk and round-tripped to `uws_res_upgrade`; Zig never
+/// dereferences it. Typed as a named opaque so it can't be confused with the
+/// dozen other handles that flow through the upgrade path.
+pub const WebSocketUpgradeContext = opaque {};
 pub const AnySocket = @import("./uws/socket.zig").AnySocket;
 pub const NewSocketHandler = @import("./uws/socket.zig").NewSocketHandler;
 pub const UpgradedDuplex = @import("./uws/UpgradedDuplex.zig");

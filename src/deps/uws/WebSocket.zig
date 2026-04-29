@@ -291,7 +291,7 @@ pub const WebSocketBehavior = extern struct {
                 });
             }
 
-            pub fn onUpgrade(ptr: *anyopaque, res: *uws_res, req: *Request, context: *anyopaque, id: usize) callconv(.c) void {
+            pub fn onUpgrade(ptr: *anyopaque, res: *uws_res, req: *Request, context: *uws.WebSocketUpgradeContext, id: usize) callconv(.c) void {
                 @call(bun.callmod_inline, Server.onWebSocketUpgrade, .{
                     bun.cast(*Server, ptr),
                     @as(*NewApp(is_ssl).Response, @ptrCast(res)),
@@ -326,7 +326,7 @@ pub const WebSocketBehavior = extern struct {
     const uws_websocket_handler = ?*const fn (*RawWebSocket) callconv(.c) void;
     const uws_websocket_message_handler = ?*const fn (*RawWebSocket, [*c]const u8, usize, Opcode) callconv(.c) void;
     const uws_websocket_close_handler = ?*const fn (*RawWebSocket, i32, [*c]const u8, usize) callconv(.c) void;
-    const uws_websocket_upgrade_handler = ?*const fn (*anyopaque, *uws_res, *Request, *anyopaque, usize) callconv(.c) void;
+    const uws_websocket_upgrade_handler = ?*const fn (*anyopaque, *uws_res, *Request, *uws.WebSocketUpgradeContext, usize) callconv(.c) void;
     const uws_websocket_ping_pong_handler = ?*const fn (*RawWebSocket, [*c]const u8, usize) callconv(.c) void;
 };
 

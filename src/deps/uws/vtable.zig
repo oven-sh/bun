@@ -13,6 +13,10 @@
 //!   pub fn onData(ext, *us_socket_t, data: []const u8) void
 //!   pub fn onWritable(ext, *us_socket_t) void
 //!   pub fn onClose(ext, *us_socket_t, code: i32, reason: ?*anyopaque) void
+//!
+//! `Ext` may be omitted entirely; handlers then take `(*us_socket_t, …)` and
+//! recover their owner from `s.group().owner(T)` instead.
+//!
 //!   pub fn onTimeout(ext, *us_socket_t) void
 //!   pub fn onLongTimeout(ext, *us_socket_t) void
 //!   pub fn onEnd(ext, *us_socket_t) void
@@ -47,60 +51,67 @@ pub fn make(comptime H: type) *const VTable {
 /// The trampolines themselves, exposed so `dispatch.zig` can direct-call them
 /// per-kind without going through the vtable pointer at all.
 pub fn Trampolines(comptime H: type) type {
-    const E = if (@hasDecl(H, "Ext")) H.Ext else *anyopaque;
-    const deref = @typeInfo(E) == .pointer and @typeInfo(E).pointer.size == .one;
+    // `Ext` is optional. Handlers that work entirely from `*us_socket_t` (e.g.
+    // BunListener — owner comes from `s.group().owner(T)`) omit it and take
+    // `(s, …)` instead of `(ext, s, …)`.
+    const has_ext = @hasDecl(H, "Ext");
+    const E = if (has_ext) H.Ext else void;
 
     return struct {
-        inline fn ext(s: *us_socket_t) E {
-            const p = s.ext(if (deref) @typeInfo(E).pointer.child else anyopaque);
-            return if (comptime deref) p else @ptrCast(p);
+        inline fn call(s: *us_socket_t, comptime f: anytype, extra: anytype) void {
+            if (comptime has_ext) {
+                @call(.auto, f, .{s.ext(@typeInfo(E).pointer.child)} ++ .{s} ++ extra);
+            } else {
+                @call(.auto, f, .{s} ++ extra);
+            }
         }
 
         pub fn on_open(s: *us_socket_t, is_client: c_int, ip: [*c]u8, ip_len: c_int) callconv(.c) ?*us_socket_t {
-            H.onOpen(ext(s), s, is_client != 0, if (ip != null) ip[0..@intCast(ip_len)] else &.{});
+            call(s, H.onOpen, .{ is_client != 0, if (ip != null) ip[0..@intCast(ip_len)] else @as([]const u8, &.{}) });
             return s;
         }
         pub fn on_data(s: *us_socket_t, data: [*c]u8, len: c_int) callconv(.c) ?*us_socket_t {
-            H.onData(ext(s), s, data[0..@intCast(len)]);
+            call(s, H.onData, .{data[0..@intCast(len)]});
             return s;
         }
         pub fn on_fd(s: *us_socket_t, fd: c_int) callconv(.c) ?*us_socket_t {
-            H.onFd(ext(s), s, fd);
+            call(s, H.onFd, .{fd});
             return s;
         }
         pub fn on_writable(s: *us_socket_t) callconv(.c) ?*us_socket_t {
-            H.onWritable(ext(s), s);
+            call(s, H.onWritable, .{});
             return s;
         }
         pub fn on_close(s: *us_socket_t, code: c_int, reason: ?*anyopaque) callconv(.c) ?*us_socket_t {
-            H.onClose(ext(s), s, code, reason);
+            call(s, H.onClose, .{ @as(i32, code), reason });
             return s;
         }
         pub fn on_timeout(s: *us_socket_t) callconv(.c) ?*us_socket_t {
-            H.onTimeout(ext(s), s);
+            call(s, H.onTimeout, .{});
             return s;
         }
         pub fn on_long_timeout(s: *us_socket_t) callconv(.c) ?*us_socket_t {
-            H.onLongTimeout(ext(s), s);
+            call(s, H.onLongTimeout, .{});
             return s;
         }
         pub fn on_end(s: *us_socket_t) callconv(.c) ?*us_socket_t {
-            H.onEnd(ext(s), s);
+            call(s, H.onEnd, .{});
             return s;
         }
         pub fn on_connect_error(s: *us_socket_t, code: c_int) callconv(.c) ?*us_socket_t {
-            H.onConnectError(ext(s), s, code);
+            call(s, H.onConnectError, .{@as(i32, code)});
             return s;
         }
-        pub fn on_connecting_error(c: *ConnectingSocket, code: c_int) callconv(.c) ?*ConnectingSocket {
-            H.onConnectingError(c, code);
-            return c;
+        pub fn on_connecting_error(cs: *ConnectingSocket, code: c_int) callconv(.c) ?*ConnectingSocket {
+            H.onConnectingError(cs, code);
+            return cs;
         }
         pub fn on_handshake(s: *us_socket_t, ok: c_int, err: uws.us_bun_verify_error_t, _: ?*anyopaque) callconv(.c) void {
-            H.onHandshake(ext(s), s, ok != 0, err);
+            call(s, H.onHandshake, .{ ok != 0, err });
         }
         pub fn is_low_prio(s: *us_socket_t) callconv(.c) c_int {
-            return @intFromBool(H.isLowPrio(ext(s), s));
+            if (comptime has_ext) return @intFromBool(H.isLowPrio(s.ext(@typeInfo(E).pointer.child), s));
+            return @intFromBool(H.isLowPrio(s));
         }
     };
 }

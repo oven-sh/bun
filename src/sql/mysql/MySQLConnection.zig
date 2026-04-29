@@ -203,16 +203,15 @@ pub fn upgradeToTLS(this: *MySQLConnection) !void {
     if (this.#socket == .SocketTCP) {
         const vm = jsc.VirtualMachine.get();
         const tls_group = vm.rareData().mysqlGroup(vm, true);
-        const new_socket = uws.us_socket_t.c.us_socket_adopt_tls(
-            this.#socket.SocketTCP.socket.connected,
+        const new_socket = this.#socket.SocketTCP.socket.connected.adoptTLS(
             tls_group,
-            @intFromEnum(uws.SocketKind.mysql_tls),
+            .mysql_tls,
             this.#secure.?,
             this.#tls_config.server_name,
-            @sizeOf(*anyopaque),
-            @sizeOf(*anyopaque),
+            @sizeOf(?*JSMySQLConnection),
+            @sizeOf(?*JSMySQLConnection),
         ) orelse return error.AuthenticationFailed;
-        new_socket.ext(*anyopaque).* = this.getJSConnection();
+        new_socket.ext(?*JSMySQLConnection).* = this.getJSConnection();
         this.#socket = .{ .SocketTLS = .{ .socket = .{ .connected = new_socket } } };
         // ext is now repointed; safe to kick the handshake (any dispatch lands here).
         new_socket.startTLSHandshake();

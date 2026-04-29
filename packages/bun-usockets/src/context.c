@@ -294,7 +294,7 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
 
 static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
                                            struct us_socket_group_t *group,
-                                           unsigned char kind, void *ssl_ctx,
+                                           unsigned char kind, struct ssl_ctx_st *ssl_ctx,
                                            int options, int socket_ext_size) {
     struct us_socket_t *s = &ls->s;
     s->group = group;
@@ -329,7 +329,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
 }
 
 struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *group,
-        unsigned char kind, void *ssl_ctx,
+        unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         const char *host, int port, int options, int socket_ext_size, int *error) {
     LIBUS_SOCKET_DESCRIPTOR listen_socket_fd = bsd_create_listen_socket(host, port, options, error);
     if (listen_socket_fd == LIBUS_SOCKET_ERROR) {
@@ -351,7 +351,7 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
 }
 
 struct us_listen_socket_t *us_socket_group_listen_unix(struct us_socket_group_t *group,
-        unsigned char kind, void *ssl_ctx,
+        unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         const char *path, size_t pathlen, int options, int socket_ext_size, int *error) {
     LIBUS_SOCKET_DESCRIPTOR listen_socket_fd = bsd_create_listen_socket_unix(path, pathlen, options, error);
     if (listen_socket_fd == LIBUS_SOCKET_ERROR) {
@@ -431,7 +431,7 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
 }
 
 struct us_socket_t *us_socket_group_connect_resolved_dns(struct us_socket_group_t *group,
-        unsigned char kind, void *ssl_ctx,
+        unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         struct sockaddr_storage *addr, int options, int socket_ext_size) {
     LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(addr, options);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
@@ -496,7 +496,7 @@ static bool try_parse_ip(const char *ip_str, int port, struct sockaddr_storage *
 }
 
 void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kind,
-        void *ssl_ctx, const char *host, int port, int options,
+        struct ssl_ctx_st *ssl_ctx, const char *host, int port, int options,
         int socket_ext_size, int *has_dns_resolved) {
     struct us_loop_t *loop = group->loop;
 
@@ -552,7 +552,7 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
 }
 
 struct us_socket_t *us_socket_group_connect_unix(struct us_socket_group_t *group,
-        unsigned char kind, void *ssl_ctx,
+        unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         const char *server_path, size_t pathlen, int options, int socket_ext_size) {
     LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket_unix(server_path, pathlen, options);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {

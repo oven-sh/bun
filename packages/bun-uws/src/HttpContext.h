@@ -647,7 +647,7 @@ public:
     }
 
     /* Listen to port using this HttpContext. ssl_ctx may be nullptr for plain HTTP. */
-    us_listen_socket_t *listen(void *sslCtx, const char *host, int port, int options) {
+    us_listen_socket_t *listen(struct ssl_ctx_st *sslCtx, const char *host, int port, int options) {
         int error = 0;
         /* HTTP clients always send first (the request, or ClientHello for TLS), so defer
          * accept() until data arrives and dispatch the read immediately after accept. */
@@ -660,7 +660,7 @@ public:
     }
 
     /* Listen to unix domain socket using this HttpContext */
-    us_listen_socket_t *listen_unix(void *sslCtx, const char *path, size_t pathlen, int options) {
+    us_listen_socket_t *listen_unix(struct ssl_ctx_st *sslCtx, const char *path, size_t pathlen, int options) {
         int error = 0;
         auto* socket = us_socket_group_listen_unix(&group, SOCKET_KIND, sslCtx, path, pathlen, options, sizeof(HttpResponseData<SSL>), &error);
         // we dont depend on libuv ref for keeping it alive

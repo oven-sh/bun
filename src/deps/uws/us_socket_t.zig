@@ -9,12 +9,6 @@ const max_i32 = std.math.maxInt(i32);
 /// Higher-level wrappers (`uws.SocketTCP`/`SocketTLS`) cover named pipes,
 /// upgraded duplexes, and async DNS.
 pub const us_socket_t = opaque {
-    /// Raw externs. Prefer the typed methods; this is here so call sites that
-    /// must hit the C ABI directly (spawn IPC handing a raw fd to
-    /// `us_socket_from_fd`, the `handlers.zig` close path) can spell
-    /// `uws.us_socket_t.c.X` without a separate import of this file.
-    pub const c = c_externs;
-
     pub const CloseCode = enum(i32) {
         normal = 0,
         failure = 1,
@@ -116,13 +110,27 @@ pub const us_socket_t = opaque {
         return c.us_socket_keepalive(this, @intFromBool(enabled), delay);
     }
 
-    /// SSL* if TLS, else `(void*)(intptr_t)fd`.
+    /// `SSL*` if TLS, else null. Use `getFd()` for the descriptor.
+    pub fn ssl(this: *us_socket_t) ?*BoringSSL.SSL {
+        if (!this.isTLS()) return null;
+        return @ptrCast(c.us_socket_get_native_handle(this));
+    }
+
+    /// Node-compat `_handle` shape: `SSL*` for TLS sockets, fd-as-pointer for
+    /// plain TCP. Consumers that want one or the other should call `ssl()` /
+    /// `getFd()` directly; this is the round-trip-to-JS form.
     pub fn getNativeHandle(this: *us_socket_t) ?*anyopaque {
         return c.us_socket_get_native_handle(this);
     }
 
     pub fn ext(this: *us_socket_t, comptime T: type) *T {
         @setRuntimeSafety(true);
+        return @ptrCast(@alignCast(c.us_socket_ext(this)));
+    }
+
+    /// Type-erased ext storage — `LIBUS_EXT_ALIGNMENT`-aligned bytes
+    /// immediately after the C struct. Prefer `ext(T)`.
+    pub fn extPtr(this: *us_socket_t) [*]align(16) u8 {
         return @ptrCast(@alignCast(c.us_socket_ext(this)));
     }
 
@@ -170,6 +178,13 @@ pub const us_socket_t = opaque {
     /// repointed before any handshake/close dispatch can fire.
     pub fn startTLSHandshake(this: *us_socket_t) void {
         c.us_socket_start_tls_handshake(this);
+    }
+
+    /// Tee inbound ciphertext to `us_dispatch_ssl_raw_tap` before `SSL_read`
+    /// consumes it, so the `[raw, tls]` pair from `upgradeTLS` can surface
+    /// encrypted bytes to the original net.Socket `data` listener.
+    pub fn setSslRawTap(this: *us_socket_t, enabled: bool) void {
+        c.us_socket_set_ssl_raw_tap(this, @intFromBool(enabled));
     }
 
     pub fn write(this: *us_socket_t, data: []const u8) i32 {
@@ -222,53 +237,52 @@ pub const us_socket_t = opaque {
     }
 };
 
-pub const c_externs = struct {
+/// Raw externs. Private — every operation has a typed method on `us_socket_t`.
+const c = struct {
     // Every C-side decl takes `us_socket_r` (= `us_socket_t* nonnull_arg`), so
     // mirror that here — passing null is UB and the typed methods above never do.
-    pub extern fn us_socket_get_native_handle(s: *us_socket_t) ?*anyopaque;
+    extern fn us_socket_get_native_handle(s: *us_socket_t) ?*anyopaque;
 
-    pub extern fn us_socket_local_port(s: *us_socket_t) i32;
-    pub extern fn us_socket_remote_port(s: *us_socket_t) i32;
-    pub extern fn us_socket_remote_address(s: *us_socket_t, buf: [*]u8, length: *i32) void;
-    pub extern fn us_socket_local_address(s: *us_socket_t, buf: [*]u8, length: *i32) void;
-    pub extern fn us_socket_timeout(s: *us_socket_t, seconds: c_uint) void;
-    pub extern fn us_socket_long_timeout(s: *us_socket_t, minutes: c_uint) void;
-    pub extern fn us_socket_nodelay(s: *us_socket_t, enable: c_int) void;
-    pub extern fn us_socket_keepalive(s: *us_socket_t, enable: c_int, delay: c_uint) c_int;
+    extern fn us_socket_local_port(s: *us_socket_t) i32;
+    extern fn us_socket_remote_port(s: *us_socket_t) i32;
+    extern fn us_socket_remote_address(s: *us_socket_t, buf: [*]u8, length: *i32) void;
+    extern fn us_socket_local_address(s: *us_socket_t, buf: [*]u8, length: *i32) void;
+    extern fn us_socket_timeout(s: *us_socket_t, seconds: c_uint) void;
+    extern fn us_socket_long_timeout(s: *us_socket_t, minutes: c_uint) void;
+    extern fn us_socket_nodelay(s: *us_socket_t, enable: c_int) void;
+    extern fn us_socket_keepalive(s: *us_socket_t, enable: c_int, delay: c_uint) c_int;
 
-    pub extern fn us_socket_ext(s: *us_socket_t) *anyopaque;
-    pub extern fn us_socket_group(s: *us_socket_t) *SocketGroup;
-    pub extern fn us_socket_kind(s: *us_socket_t) u8;
-    pub extern fn us_socket_set_kind(s: *us_socket_t, kind: u8) void;
-    pub extern fn us_socket_set_ssl_raw_tap(s: *us_socket_t, enabled: c_int) void;
-    pub extern fn us_socket_is_tls(s: *us_socket_t) i32;
+    extern fn us_socket_ext(s: *us_socket_t) *anyopaque;
+    extern fn us_socket_group(s: *us_socket_t) *SocketGroup;
+    extern fn us_socket_kind(s: *us_socket_t) u8;
+    extern fn us_socket_set_kind(s: *us_socket_t, kind: u8) void;
+    extern fn us_socket_set_ssl_raw_tap(s: *us_socket_t, enabled: c_int) void;
+    extern fn us_socket_is_tls(s: *us_socket_t) i32;
 
-    pub extern fn us_socket_write(s: *us_socket_t, data: [*]const u8, length: i32) i32;
-    pub extern fn us_socket_ipc_write_fd(s: *us_socket_t, data: [*]const u8, length: i32, fd: i32) i32;
-    pub extern fn us_socket_write2(*us_socket_t, header: ?[*]const u8, len: usize, payload: ?[*]const u8, usize) i32;
-    pub extern fn us_socket_raw_write(s: *us_socket_t, data: [*]const u8, length: i32) i32;
-    pub extern fn us_socket_flush(s: *us_socket_t) void;
+    extern fn us_socket_write(s: *us_socket_t, data: [*]const u8, length: i32) i32;
+    extern fn us_socket_ipc_write_fd(s: *us_socket_t, data: [*]const u8, length: i32, fd: i32) i32;
+    extern fn us_socket_write2(*us_socket_t, header: ?[*]const u8, len: usize, payload: ?[*]const u8, usize) i32;
+    extern fn us_socket_raw_write(s: *us_socket_t, data: [*]const u8, length: i32) i32;
+    extern fn us_socket_flush(s: *us_socket_t) void;
 
-    pub extern fn us_socket_open(s: *us_socket_t, is_client: i32, ip: ?[*]const u8, ip_length: i32) ?*us_socket_t;
-    pub extern fn us_socket_pause(s: *us_socket_t) void;
-    pub extern fn us_socket_resume(s: *us_socket_t) void;
-    pub extern fn us_socket_close(s: *us_socket_t, code: us_socket_t.CloseCode, reason: ?*anyopaque) ?*us_socket_t;
-    pub extern fn us_socket_shutdown(s: *us_socket_t) void;
-    pub extern fn us_socket_is_closed(s: *us_socket_t) i32;
-    pub extern fn us_socket_shutdown_read(s: *us_socket_t) void;
-    pub extern fn us_socket_is_shut_down(s: *us_socket_t) i32;
-    pub extern fn us_socket_sendfile_needs_more(socket: *us_socket_t) void;
-    pub extern fn us_socket_get_fd(s: *us_socket_t) uws.LIBUS_SOCKET_DESCRIPTOR;
-    pub extern fn us_socket_verify_error(s: *us_socket_t) uws.us_bun_verify_error_t;
-    pub extern fn us_socket_get_error(s: *us_socket_t) c_int;
-    pub extern fn us_socket_is_established(s: *us_socket_t) i32;
+    extern fn us_socket_open(s: *us_socket_t, is_client: i32, ip: ?[*]const u8, ip_length: i32) ?*us_socket_t;
+    extern fn us_socket_pause(s: *us_socket_t) void;
+    extern fn us_socket_resume(s: *us_socket_t) void;
+    extern fn us_socket_close(s: *us_socket_t, code: us_socket_t.CloseCode, reason: ?*anyopaque) ?*us_socket_t;
+    extern fn us_socket_shutdown(s: *us_socket_t) void;
+    extern fn us_socket_is_closed(s: *us_socket_t) i32;
+    extern fn us_socket_shutdown_read(s: *us_socket_t) void;
+    extern fn us_socket_is_shut_down(s: *us_socket_t) i32;
+    extern fn us_socket_sendfile_needs_more(socket: *us_socket_t) void;
+    extern fn us_socket_get_fd(s: *us_socket_t) uws.LIBUS_SOCKET_DESCRIPTOR;
+    extern fn us_socket_verify_error(s: *us_socket_t) uws.us_bun_verify_error_t;
+    extern fn us_socket_get_error(s: *us_socket_t) c_int;
+    extern fn us_socket_is_established(s: *us_socket_t) i32;
 
-    pub extern fn us_socket_adopt(s: *us_socket_t, group: *SocketGroup, kind: u8, old_ext_size: i32, ext_size: i32) ?*us_socket_t;
+    extern fn us_socket_adopt(s: *us_socket_t, group: *SocketGroup, kind: u8, old_ext_size: i32, ext_size: i32) ?*us_socket_t;
     /// ssl_ctx is required (the whole point); sni may be null.
-    pub extern fn us_socket_adopt_tls(s: *us_socket_t, group: *SocketGroup, kind: u8, ssl_ctx: *anyopaque, sni: ?[*:0]const u8, old_ext_size: i32, ext_size: i32) ?*us_socket_t;
-    pub extern fn us_socket_start_tls_handshake(s: *us_socket_t) void;
-    pub extern fn us_socket_from_fd(group: *SocketGroup, kind: u8, ssl_ctx: ?*anyopaque, ext_size: c_int, fd: uws.LIBUS_SOCKET_DESCRIPTOR, is_ipc: c_int) ?*us_socket_t;
-    pub extern fn us_socket_pair(group: *SocketGroup, kind: u8, ext_size: c_int, fds: *[2]uws.LIBUS_SOCKET_DESCRIPTOR) ?*us_socket_t;
+    extern fn us_socket_adopt_tls(s: *us_socket_t, group: *SocketGroup, kind: u8, ssl_ctx: *uws.SslCtx, sni: ?[*:0]const u8, old_ext_size: i32, ext_size: i32) ?*us_socket_t;
+    extern fn us_socket_start_tls_handshake(s: *us_socket_t) void;
 
     const us_socket_stream_buffer_t = extern struct {
         list_ptr: ?[*]u8 = null,
@@ -389,3 +403,4 @@ const SocketKind = uws.SocketKind;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
+const BoringSSL = bun.BoringSSL.c;

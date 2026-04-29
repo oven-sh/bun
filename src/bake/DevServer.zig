@@ -3787,7 +3787,7 @@ pub fn onWebSocketUpgrade(
     dev: *DevServer,
     res: anytype,
     req: *Request,
-    upgrade_ctx: *anyopaque, // uWS WebSocketContext<SSL,true,UserData>*
+    upgrade_ctx: *uws.WebSocketUpgradeContext,
     id: usize,
 ) void {
     assert(id == 0);

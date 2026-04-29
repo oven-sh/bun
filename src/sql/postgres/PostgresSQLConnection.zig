@@ -173,19 +173,18 @@ pub fn setOnClose(_: *PostgresSQLConnection, thisValue: jsc.JSValue, globalObjec
 pub fn setupTLS(this: *PostgresSQLConnection) void {
     debug("setupTLS", .{});
     const tls_group = this.vm.rareData().postgresGroup(this.vm, true);
-    const new_socket = uws.us_socket_t.c.us_socket_adopt_tls(
-        this.socket.SocketTCP.socket.connected,
+    const new_socket = this.socket.SocketTCP.socket.connected.adoptTLS(
         tls_group,
-        @intFromEnum(uws.SocketKind.postgres_tls),
+        .postgres_tls,
         this.secure.?,
         this.tls_config.server_name,
-        @sizeOf(*anyopaque),
-        @sizeOf(*anyopaque),
+        @sizeOf(?*PostgresSQLConnection),
+        @sizeOf(?*PostgresSQLConnection),
     ) orelse {
         this.fail("Failed to upgrade to TLS", error.TLSUpgradeFailed);
         return;
     };
-    new_socket.ext(*anyopaque).* = this;
+    new_socket.ext(?*PostgresSQLConnection).* = this;
     this.socket = .{ .SocketTLS = .{ .socket = .{ .connected = new_socket } } };
     // ext is now repointed; safe to kick the handshake (any dispatch lands here).
     new_socket.startTLSHandshake();

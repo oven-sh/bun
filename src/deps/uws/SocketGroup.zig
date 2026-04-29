@@ -11,7 +11,10 @@
 pub const SocketGroup = extern struct {
     loop: ?*Loop = null,
     vtable: ?*const VTable = null,
-    ext: ?*anyopaque = null,
+    /// Embedding owner — typed access via `owner(T)`. `?*anyopaque` only
+    /// because the C ABI slot is heterogenous (Listener / uWS App / RareData /
+    /// null); never read this field directly.
+    #ext: ?*anyopaque = null,
     head_sockets: ?*us_socket_t = null,
     head_connecting_sockets: ?*ConnectingSocket = null,
     head_listen_sockets: ?*uws.ListenSocket = null,
@@ -51,10 +54,17 @@ pub const SocketGroup = extern struct {
             @compileError("VTable layout drifted from us_socket_vtable_t");
     }
 
-    /// Initialise an embedded group. `Ext` is the owner type recovered by
-    /// `group.owner(Ext)` inside handlers.
-    pub fn init(self: *SocketGroup, loop_: *Loop, vt: ?*const VTable, owner_ptr: ?*anyopaque) void {
-        c.us_socket_group_init(self, loop_, vt, owner_ptr);
+    /// Initialise an embedded group. `owner_ptr` (any single-item pointer or
+    /// `null`) is what `group.owner(T)` recovers inside handlers — pass the
+    /// embedding struct so dispatch can find it from a raw `*us_socket_t`.
+    pub fn init(self: *SocketGroup, loop_: *Loop, vt: ?*const VTable, owner_ptr: anytype) void {
+        const P = @TypeOf(owner_ptr);
+        const erased: ?*anyopaque = if (P == @TypeOf(null)) null else switch (@typeInfo(P)) {
+            .pointer => |p| if (p.size == .one) @ptrCast(@constCast(owner_ptr)) else @compileError("SocketGroup.init owner must be a single-item pointer"),
+            .optional => if (owner_ptr) |o| @ptrCast(@constCast(o)) else null,
+            else => @compileError("SocketGroup.init owner must be a pointer or null"),
+        };
+        c.us_socket_group_init(self, loop_, vt, erased);
     }
 
     pub fn deinit(self: *SocketGroup) void {
@@ -73,10 +83,10 @@ pub const SocketGroup = extern struct {
     }
 
     /// Recover the embedding owner. Only valid for groups whose `init` passed a
-    /// non-null `ext` (Listener, uWS App/Context). Per-kind VM groups in
+    /// non-null owner (Listener, uWS App/Context). Per-kind VM groups in
     /// `RareData` pass `null`, so callers must know which they have.
     pub fn owner(self: *const SocketGroup, comptime T: type) *T {
-        return @ptrCast(@alignCast(self.ext.?));
+        return @ptrCast(@alignCast(self.#ext.?));
     }
 
     pub fn isEmpty(self: *const SocketGroup) bool {
@@ -158,21 +168,31 @@ pub const SocketGroup = extern struct {
         return c.us_socket_from_fd(self, @intFromEnum(kind), ssl_ctx, socket_ext_size, fd, @intFromBool(ipc));
     }
 
-    pub const c = struct {
-        pub extern fn us_socket_group_init(*SocketGroup, *Loop, ?*const VTable, ?*anyopaque) void;
-        pub extern fn us_socket_group_deinit(*SocketGroup) void;
-        pub extern fn us_socket_group_close_all(*SocketGroup) void;
-        pub extern fn us_socket_group_timestamp(*SocketGroup) c_ushort;
-        pub extern fn us_socket_group_loop(*SocketGroup) *Loop;
-        pub extern fn us_socket_group_ext(*SocketGroup) ?*anyopaque;
-        pub extern fn us_socket_group_next(*SocketGroup) ?*SocketGroup;
-        pub extern fn us_socket_group_listen(*SocketGroup, u8, ?*anyopaque, ?[*:0]const u8, c_int, c_int, c_int, *c_int) ?*uws.ListenSocket;
-        pub extern fn us_socket_group_listen_unix(*SocketGroup, u8, ?*anyopaque, [*]const u8, usize, c_int, c_int, *c_int) ?*uws.ListenSocket;
-        pub extern fn us_socket_group_connect(*SocketGroup, u8, ?*anyopaque, [*:0]const u8, c_int, c_int, c_int, *c_int) ?*anyopaque;
-        pub extern fn us_socket_group_connect_unix(*SocketGroup, u8, ?*anyopaque, [*]const u8, usize, c_int, c_int) ?*us_socket_t;
-        pub extern fn us_socket_from_fd(*SocketGroup, u8, ?*anyopaque, c_int, uws.LIBUS_SOCKET_DESCRIPTOR, c_int) ?*us_socket_t;
-        pub extern fn us_socket_pair(*SocketGroup, u8, c_int, *[2]uws.LIBUS_SOCKET_DESCRIPTOR) ?*us_socket_t;
-    };
+    pub fn pair(self: *SocketGroup, kind: SocketKind, ext_size: c_int, fds: *[2]uws.LIBUS_SOCKET_DESCRIPTOR) ?*us_socket_t {
+        return c.us_socket_pair(self, @intFromEnum(kind), ext_size, fds);
+    }
+
+    pub fn nextInLoop(self: *SocketGroup) ?*SocketGroup {
+        return c.us_socket_group_next(self);
+    }
+};
+
+const c = struct {
+    extern fn us_socket_group_init(*SocketGroup, *Loop, ?*const SocketGroup.VTable, ?*anyopaque) void;
+    extern fn us_socket_group_deinit(*SocketGroup) void;
+    extern fn us_socket_group_close_all(*SocketGroup) void;
+    extern fn us_socket_group_timestamp(*SocketGroup) c_ushort;
+    extern fn us_socket_group_loop(*SocketGroup) *Loop;
+    extern fn us_socket_group_next(*SocketGroup) ?*SocketGroup;
+    extern fn us_socket_group_listen(*SocketGroup, u8, ?*SslCtx, ?[*:0]const u8, c_int, c_int, c_int, *c_int) ?*uws.ListenSocket;
+    extern fn us_socket_group_listen_unix(*SocketGroup, u8, ?*SslCtx, [*]const u8, usize, c_int, c_int, *c_int) ?*uws.ListenSocket;
+    /// Returns `us_socket_t*` (fast path) OR `us_connecting_socket_t*` (slow
+    /// path), discriminated by `*is_connecting`. The public `connect()` method
+    /// turns this into the typed `ConnectResult` union — call that, not this.
+    extern fn us_socket_group_connect(*SocketGroup, u8, ?*SslCtx, [*:0]const u8, c_int, c_int, c_int, *c_int) ?*anyopaque;
+    extern fn us_socket_group_connect_unix(*SocketGroup, u8, ?*SslCtx, [*]const u8, usize, c_int, c_int) ?*us_socket_t;
+    extern fn us_socket_from_fd(*SocketGroup, u8, ?*SslCtx, c_int, uws.LIBUS_SOCKET_DESCRIPTOR, c_int) ?*us_socket_t;
+    extern fn us_socket_pair(*SocketGroup, u8, c_int, *[2]uws.LIBUS_SOCKET_DESCRIPTOR) ?*us_socket_t;
 };
 
 const bun = @import("bun");

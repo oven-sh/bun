@@ -380,7 +380,7 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
     return written < 0 ? 0 : written;
 }
 
-struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned char kind, void *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc) {
+struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc) {
 #if defined(LIBUS_USE_LIBUV) || defined(WIN32)
     return 0;
 #else

@@ -2249,13 +2249,22 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
         return rejectWithPending();
     }
 
+    // We run the step loop synchronously, so a locked destination would
+    // otherwise busy-spin at 100% CPU forever. Bound the total time spent
+    // waiting on BUSY/LOCKED and back off between retries; budget defaults
+    // to the source database's configured timeout (Node's async variant
+    // yields to the event loop instead, which we can't do here).
+    constexpr int kBusyRetrySleepMs = 25;
+    const int busyBudgetMs = std::max(sourceDb->config().timeout, 5000);
+    int busyWaitedMs = 0;
+
     int totalPages = 0;
     while (true) {
         r = sqlite3_backup_step(backup, rate);
         totalPages = sqlite3_backup_pagecount(backup);
         int remaining = sqlite3_backup_remaining(backup);
 
-        if ((r == SQLITE_OK || r == SQLITE_BUSY || r == SQLITE_LOCKED) && progressFn) {
+        if (r == SQLITE_OK && progressFn) {
             JSObject* payload = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
             payload->putDirect(vm, Identifier::fromString(vm, "totalPages"_s), jsNumber(totalPages), 0);
             payload->putDirect(vm, Identifier::fromString(vm, "remainingPages"_s), jsNumber(remaining), 0);
@@ -2271,7 +2280,22 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
         }
 
         if (r == SQLITE_DONE) break;
-        if (r == SQLITE_OK || r == SQLITE_BUSY || r == SQLITE_LOCKED) continue;
+        if (r == SQLITE_OK) {
+            busyWaitedMs = 0;
+            continue;
+        }
+        if (r == SQLITE_BUSY || r == SQLITE_LOCKED) {
+            if (busyWaitedMs >= busyBudgetMs) {
+                throwSqliteMessage(globalObject, scope, r,
+                    "database is locked"_s);
+                sqlite3_backup_finish(backup);
+                sqlite3_close_v2(dest);
+                return rejectWithPending();
+            }
+            sqlite3_sleep(kBusyRetrySleepMs);
+            busyWaitedMs += kBusyRetrySleepMs;
+            continue;
+        }
 
         throwSqliteError(globalObject, scope, dest);
         sqlite3_backup_finish(backup);

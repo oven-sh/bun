@@ -340,24 +340,38 @@ test.each([
   //
   // Run in a subprocess so the ASAN crash surfaces as a non-zero exit code
   // and the UAF read can't corrupt the test runner's heap on release builds.
+  // Must be a category MimeType.init() heap-allocates for (not text/plain,
+  // text/html, application/json, etc.).
+  const makeBlob = useFetch
+    ? // Serve a streaming body so fetch() resolves while the body is still
+      // .Locked and res.blob() goes through Body.Value.resolve's .getBlob arm
+      // (not the synchronous getBlobWithThisValue path the other case covers).
+      // Keep `await using server` at module scope — wrapping it in a block
+      // adds an async-dispose resume point whose stack frame conservatively
+      // roots the original blob and defeats the GC step below.
+      `await using server = Bun.serve({
+         port: 0,
+         fetch: () =>
+           new Response(
+             new ReadableStream({
+               start(controller) {
+                 controller.enqueue(Buffer.from("hello "));
+               },
+               async pull(controller) {
+                 await Bun.sleep(50);
+                 controller.enqueue(Buffer.from("world"));
+                 controller.close();
+               },
+             }),
+             { headers: { "Content-Type": "image/png" } },
+           ),
+       });
+       let blob = await (await fetch(server.url)).blob();`
+    : `let blob = await new Response("hello world", { headers: { "Content-Type": "image/png" } }).blob();`;
+
   const src = `
-    // Must be a category MimeType.init() heap-allocates for (not text/plain,
-    // text/html, application/json, etc.).
-    const expected = "image/png";
-
-    let res;
-    if (${useFetch}) {
-      await using server = Bun.serve({
-        port: 0,
-        fetch: () => new Response("hello world", { headers: { "Content-Type": expected } }),
-      });
-      res = await fetch(server.url);
-    } else {
-      res = new Response("hello world", { headers: { "Content-Type": expected } });
-    }
-
-    let blob = await res.blob();
-    if (blob.type !== expected) throw new Error("precondition: unexpected type " + blob.type);
+    ${makeBlob}
+    if (blob.type !== "image/png") throw new Error("precondition: unexpected type " + blob.type);
 
     // slice() shares the Store (refcount++) but gets content_type = ""
     // because the parent's content_type is heap-allocated.

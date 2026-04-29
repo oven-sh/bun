@@ -117,6 +117,7 @@ describe.skipIf(isWindows)("Bun.dns.lookup c-ares backend", () => {
       rssMB: [rss0, rss1, rss2].map(v => +(v / 1024 / 1024).toFixed(2)),
       firstHalfGrowthMB: +((rss1 - rss0) / 1024 / 1024).toFixed(2),
       secondHalfGrowthMB: +((rss2 - rss1) / 1024 / 1024).toFixed(2),
+      totalGrowthMB: +((rss2 - rss0) / 1024 / 1024).toFixed(2),
     }));
   `;
 
@@ -155,10 +156,10 @@ describe.skipIf(isWindows)("Bun.dns.lookup c-ares backend", () => {
     expect(result.rounds).toBeGreaterThan(20);
     // On a leaking build each overflow request drops an ares_addrinfo with
     // 30 nodes + 30 sockaddrs + a ~180-byte name dup (~2 KB). With 32
-    // overflows per round this drives RSS up linearly and the second half
-    // grows as much as the first. On a fixed build RSS plateaus during
-    // warmup and the second half stays flat.
-    expect(result.secondHalfGrowthMB).toBeLessThan(10);
+    // overflows per round RSS climbs linearly through both measurement
+    // halves. On a fixed build RSS plateaus during warmup so the combined
+    // growth across both halves stays near zero.
+    expect(result.totalGrowthMB).toBeLessThan(15);
     expect(exitCode).toBe(0);
   }, 180_000);
 

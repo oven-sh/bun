@@ -472,6 +472,10 @@ describe("backup()", () => {
     expect(dst.prepare("SELECT count(*) AS c FROM t").get().c).toBe(3);
     src.close();
     dst.close();
+    // The temporary statement above is not yet GC'd, so sqlite3_close_v2
+    // left dst's connection in zombie mode with the file still open. On
+    // Windows that blocks tempDir's rm with EBUSY; force the finalizer.
+    Bun.gc(true);
   }, 30_000);
 
   test("rejects with ERR_SQLITE_ERROR when the destination is unwritable", async () => {

@@ -15,10 +15,11 @@
 //! closes that gap from Bun's side without requiring the shim to cooperate.
 //!
 //! Linux: `prctl(PR_SET_PDEATHSIG)` — kernel delivers a signal when the
-//! parent thread dies.
-//! macOS: no PDEATHSIG. A detached thread blocks on a kqueue
-//! `EVFILT_PROC`/`NOTE_EXIT` for the original ppid and calls `_exit` when
-//! it fires.
+//! parent thread dies. Single syscall, no thread.
+//! macOS: no PDEATHSIG. A `DISPATCH_SOURCE_TYPE_PROC` / `DISPATCH_PROC_EXIT`
+//! source on the original ppid calls `_exit` when it fires. libdispatch's
+//! manager thread owns the underlying kevent, so Bun does not spawn a thread
+//! of its own.
 
 /// Exit code used when the watchdog fires. 128 + SIGHUP, matching the
 /// convention for "terminated because the controlling end went away".
@@ -37,7 +38,7 @@ pub fn install() void {
     if (comptime Environment.isLinux) {
         installLinux(original_ppid);
     } else if (comptime Environment.isMac) {
-        installKqueue(original_ppid);
+        installDarwin(original_ppid);
     }
 }
 
@@ -47,7 +48,7 @@ fn installLinux(original_ppid: std.c.pid_t) void {
     // us exits. Persists across exec; cleared on fork (which is what we
     // want — Bun's own children should not inherit it). SIGKILL is
     // uncatchable so user code can't swallow it, matching the macOS path
-    // which hard-_exit()s from the watchdog thread.
+    // which hard-_exit()s from the dispatch handler.
     _ = std.posix.prctl(.SET_PDEATHSIG, .{std.posix.SIG.KILL}) catch return;
     // Race: parent may have died between getppid() above and prctl() taking
     // effect. If so we've already been reparented and the kernel will never
@@ -57,56 +58,18 @@ fn installLinux(original_ppid: std.c.pid_t) void {
     }
 }
 
-fn installKqueue(original_ppid: std.c.pid_t) void {
-    // Race: parent may have died between exec and here.
+extern "c" fn Bun__registerParentDeathDispatchSource(ppid: std.c.pid_t, exit_code: c_int) void;
+
+fn installDarwin(original_ppid: std.c.pid_t) void {
+    if (comptime !Environment.isMac) unreachable;
+    Bun__registerParentDeathDispatchSource(original_ppid, exit_code);
+    // Race: parent may have died between getppid() and the dispatch source
+    // arming. dispatch_source_create itself returns NULL for a dead pid (the
+    // C side handles that), but a death in the gap after a successful create
+    // and before resume is not guaranteed to fire — recheck.
     if (std.c.getppid() != original_ppid) {
         std.c._exit(exit_code);
     }
-    var thread = std.Thread.spawn(.{}, kqueueThread, .{original_ppid}) catch return;
-    thread.detach();
-}
-
-fn kqueueThread(original_ppid: std.c.pid_t) void {
-    // Don't let process-directed signals land on this thread and EINTR the
-    // kevent wait; the main thread owns signal handling.
-    var all = std.posix.sigfillset();
-    var old: std.c.sigset_t = undefined;
-    _ = std.c.pthread_sigmask(std.c.SIG.BLOCK, &all, &old);
-
-    bun.Output.Source.configureNamedThread("ParentDeathWatchdog");
-
-    const kq = std.posix.kqueue() catch return;
-    defer std.posix.close(kq);
-
-    var changes = [_]std.posix.Kevent{.{
-        .ident = @intCast(original_ppid),
-        .filter = std.c.EVFILT.PROC,
-        .flags = std.c.EV.ADD | std.c.EV.ONESHOT,
-        .fflags = std.c.NOTE.EXIT,
-        .data = 0,
-        .udata = 0,
-    }};
-    var events: [1]std.posix.Kevent = undefined;
-
-    // Register + block in one call. std.posix.kevent retries EINTR for us.
-    const n = std.posix.kevent(kq, &changes, &events, null) catch |err| switch (err) {
-        // ESRCH at the syscall level: parent already gone before we
-        // registered — treat as fired.
-        error.ProcessNotFound => {
-            std.c._exit(exit_code);
-        },
-        else => return,
-    };
-
-    if (n != 1) return;
-    if (events[0].flags & std.c.EV.ERROR != 0) {
-        // ESRCH delivered via EV_ERROR in the eventlist (kernel had room to
-        // report it inline rather than failing the syscall).
-        const errno: std.posix.E = @enumFromInt(events[0].data);
-        if (errno != .SRCH) return;
-    }
-
-    std.c._exit(exit_code);
 }
 
 const std = @import("std");

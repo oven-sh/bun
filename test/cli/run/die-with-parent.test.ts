@@ -4,7 +4,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 // BUN_DIE_WITH_PARENT: Bun watches its original ppid and exits when that
 // process dies, even if the parent was SIGKILLed and couldn't signal us.
-// macOS uses kqueue NOTE_EXIT; Linux uses prctl(PR_SET_PDEATHSIG).
+// macOS uses a libdispatch DISPATCH_SOURCE_TYPE_PROC source; Linux uses
+// prctl(PR_SET_PDEATHSIG).
 //
 // Tree: test → sh (the "parent" we SIGKILL) → bun-debug.
 // We SIGKILL sh and observe whether bun survives.

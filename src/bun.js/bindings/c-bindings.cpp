@@ -155,6 +155,33 @@ extern "C" void dump_zone_malloc_stats()
 
 #endif
 
+#if OS(DARWIN)
+#include <dispatch/dispatch.h>
+
+// BUN_DIE_WITH_PARENT support: register a libdispatch PROC_EXIT source for
+// `ppid` that calls _exit(exit_code) when it fires. libdispatch's manager
+// thread owns the underlying kevent, so Bun doesn't spawn a thread itself —
+// JSC pulls libdispatch in regardless. The source is intentionally leaked
+// (process-lifetime); there is nothing to cancel.
+extern "C" void Bun__registerParentDeathDispatchSource(pid_t ppid, int exit_code)
+{
+    dispatch_source_t source = dispatch_source_create(
+        DISPATCH_SOURCE_TYPE_PROC,
+        static_cast<uintptr_t>(ppid),
+        DISPATCH_PROC_EXIT,
+        dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
+    if (!source) {
+        // ppid already gone (or not visible) — same outcome as the source
+        // firing immediately.
+        _exit(exit_code);
+    }
+    dispatch_source_set_event_handler(source, ^{
+        _exit(exit_code);
+    });
+    dispatch_resume(source);
+}
+#endif
+
 #if OS(WINDOWS)
 #define MS_PER_SEC 1000ULL // MS = milliseconds
 #define US_PER_MS 1000ULL // US = microseconds

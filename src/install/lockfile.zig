@@ -916,7 +916,22 @@ pub fn filter(
     workspace_filters: []const WorkspaceFilter,
     packages_to_install: ?[]const PackageID,
 ) Tree.SubtreeError!void {
-    return lockfile.hoist(log, .filter, manager, install_root_dependencies, workspace_filters, packages_to_install);
+    _ = log;
+    // Prune the already-resolved tree in `buffers.trees` / `buffers.hoisted_dependencies`
+    // to the subset of dep_ids reachable from the filtered root set. This preserves
+    // the hoist layout the lockfile already records (matching `--frozen-lockfile`'s
+    // contract) instead of re-running hoisting over a smaller workspace set, which
+    // produces a different `node_modules` layout than the lockfile describes.
+    const pruned = try Tree.pruneSavedTree(
+        lockfile,
+        manager,
+        install_root_dependencies,
+        workspace_filters,
+        packages_to_install,
+        lockfile.allocator,
+    );
+    lockfile.buffers.trees = pruned.trees;
+    lockfile.buffers.hoisted_dependencies = pruned.dep_ids;
 }
 
 /// Sets `buffers.trees` and `buffers.hoisted_dependencies`

@@ -7,7 +7,7 @@ expect(process.cwd()).toBe(import.meta.dir);
 
 let promise;
 
-async function run({ closeActiveConnections = false, sendAnyRequests = true, websocket = false }) {
+async function run({ closeActiveConnections = false, sendAnyRequests = true, websocket = 0 }) {
   let lastDevServerDeinitCount = getDevServerDeinitCount();
 
   async function main() {
@@ -25,21 +25,26 @@ async function run({ closeActiveConnections = false, sendAnyRequests = true, web
 
     expect(globalThis.pluginLoaded).toBeUndefined();
 
-    let ws;
-    if (websocket) {
-      const { promise, resolve } = Promise.withResolvers();
-      ws = new WebSocket(server.url.origin + "/_bun/hmr");
-      ws.onopen = () => {
-        console.log("WebSocket opened");
-        resolve();
-      };
-      ws.onerror = e => {
-        e.preventDefault();
-      };
-      ws.onclose = () => {
-        console.log("WebSocket closed");
-      };
-      await promise;
+    let sockets: WebSocket[] = [];
+    if (websocket > 0) {
+      const opens: Promise<void>[] = [];
+      for (let i = 0; i < websocket; i++) {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        const ws = new WebSocket(server.url.origin + "/_bun/hmr");
+        ws.onopen = () => {
+          console.log("WebSocket opened");
+          resolve();
+        };
+        ws.onerror = e => {
+          e.preventDefault();
+        };
+        ws.onclose = () => {
+          console.log("WebSocket closed");
+        };
+        sockets.push(ws);
+        opens.push(promise);
+      }
+      await Promise.all(opens);
     }
 
     globalThis.callback = async () => {
@@ -85,13 +90,19 @@ async function run({ closeActiveConnections = false, sendAnyRequests = true, web
 
 // baseline do nothing
 const cases = [
-  { closeActiveConnections: false, sendAnyRequests: false, websocket: false },
-  { closeActiveConnections: false, sendAnyRequests: false, websocket: true },
-  { closeActiveConnections: true, sendAnyRequests: false, websocket: true },
-  { closeActiveConnections: false, sendAnyRequests: true, websocket: false },
-  { closeActiveConnections: false, sendAnyRequests: true, websocket: true },
-  { closeActiveConnections: true, sendAnyRequests: true, websocket: false },
-  { closeActiveConnections: true, sendAnyRequests: true, websocket: true },
+  { closeActiveConnections: false, sendAnyRequests: false, websocket: 0 },
+  { closeActiveConnections: false, sendAnyRequests: false, websocket: 1 },
+  { closeActiveConnections: true, sendAnyRequests: false, websocket: 1 },
+  { closeActiveConnections: false, sendAnyRequests: true, websocket: 0 },
+  { closeActiveConnections: false, sendAnyRequests: true, websocket: 1 },
+  { closeActiveConnections: true, sendAnyRequests: true, websocket: 0 },
+  { closeActiveConnections: true, sendAnyRequests: true, websocket: 1 },
+  // Multiple HMR sockets still open when DevServer.deinit runs. This exercises
+  // the path where deinit iterates active_websocket_connections and calls
+  // websocket.close() on each, which synchronously re-enters HmrSocket.onClose
+  // (removing from the map + destroying the HmrSocket).
+  { closeActiveConnections: false, sendAnyRequests: false, websocket: 8 },
+  { closeActiveConnections: true, sendAnyRequests: false, websocket: 8 },
 ];
 
 for (const { closeActiveConnections, sendAnyRequests, websocket } of cases) {
@@ -99,7 +110,7 @@ for (const { closeActiveConnections, sendAnyRequests, websocket } of cases) {
     "flags: " +
       Object.entries({ closeActiveConnections, sendAnyRequests, websocket })
         .filter(([key, value]) => value)
-        .map(([key]) => key)
+        .map(([key, value]) => (key === "websocket" ? `websocket=${value}` : key))
         .join(" "),
     async () => {
       await run({ closeActiveConnections, sendAnyRequests, websocket });

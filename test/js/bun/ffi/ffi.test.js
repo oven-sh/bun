@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
-import { isGlibcVersionAtLeast } from "harness";
+import { isArm64, isGlibcVersionAtLeast, isWindows } from "harness";
 import { platform } from "os";
 
 import {
@@ -972,7 +972,8 @@ describe.if(!!libPath)("can open more than 63 symbols via", () => {
   }
 });
 
-describe("calling an FFI symbol after close()", () => {
+// TinyCC (which compiles the FFI trampolines) is disabled on Windows ARM64.
+describe.skipIf(isWindows && isArm64)("calling an FFI symbol after close()", () => {
   // Regression test: calling a captured FFI symbol after its library has been
   // closed must throw instead of jumping into the freed TinyCC JIT pages.
   it("linkSymbols: throws instead of calling freed code", () => {

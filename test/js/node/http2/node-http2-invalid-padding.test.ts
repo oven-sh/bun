@@ -118,7 +118,9 @@ test("should reject DATA frame with Pad Length >= payload length", async () => {
   }
 });
 
-async function receiveBody(write: (socket: net.Socket) => void | Promise<void>): Promise<{ body: Buffer; close: () => void }> {
+async function receiveBody(
+  write: (socket: net.Socket) => void | Promise<void>,
+): Promise<{ body: Buffer; close: () => void }> {
   const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers<void>();
   const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers<void>();
   const server = net.createServer(async socket => {

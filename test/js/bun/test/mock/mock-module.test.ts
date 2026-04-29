@@ -319,3 +319,63 @@ test("auto-mock does not invoke getters on the real module", () => {
   // And we still haven't invoked the real getters.
   expect(real.getterHits()).toBe(hitsBefore);
 });
+
+test("auto-mock handles plain objects with integer-indexed own keys", () => {
+  // Under `bun bd test` / CI's x64-asan lane, `JSObject::putDirect(..., name)`
+  // asserts `!parseIndex(name)` — so an export like `{ 0: fn, 1: fn }` must
+  // route numeric keys through putDirectIndex to avoid tripping the assert
+  // and/or landing them in the wrong storage slot.
+  jest.mock("./auto-mock-fixture-indexed");
+  const mocked = require("./auto-mock-fixture-indexed") as any;
+
+  expect(typeof mocked.handlers[0]).toBe("function");
+  expect(mocked.handlers[0]).toHaveProperty("mock");
+  expect(mocked.handlers[0]()).toBeUndefined();
+
+  expect(typeof mocked.handlers[1]).toBe("function");
+  expect(mocked.handlers[1]()).toBeUndefined();
+
+  expect(typeof mocked.handlers[42]).toBe("function");
+  expect(mocked.handlers[42]()).toBeUndefined();
+
+  // Non-index named keys still work alongside index keys.
+  expect(mocked.handlers.name).toBe("handlers");
+});
+
+test("auto-mock restores the prior factory mock when the require() throws", () => {
+  // Install a factory mock for a virtual specifier that has no real module
+  // on disk. A subsequent `jest.mock(specifier)` (no factory → auto-mock)
+  // would try to `require(specifier)` for real exports — which throws
+  // because the specifier has nothing to resolve to. Without the stash-
+  // and-restore in JSMock__jsModuleMock, that exception would leak out
+  // after silently destroying the original factory mock. With the fix,
+  // the factory mock survives and keeps working.
+  mock.module("auto-mock-virtual-no-disk", () => ({ greet: () => "hi" }));
+  expect(require("auto-mock-virtual-no-disk").greet()).toBe("hi");
+
+  // jest.mock without a factory fails because there's nothing on disk to
+  // load for this specifier. We don't care what message it throws — only
+  // that the prior factory mock is still intact afterwards.
+  expect(() => jest.mock("auto-mock-virtual-no-disk")).toThrow();
+
+  // The factory mock must still resolve the specifier.
+  expect(require("auto-mock-virtual-no-disk").greet()).toBe("hi");
+});
+
+test("jest.restoreAllMocks clears the on-demand requireMock cache", () => {
+  // A subsequent jest.requireMock() for the same specifier, with no
+  // intervening jest.mock(), must not return the previously configured
+  // mock — bun test runs all files in one process, and the cache must
+  // scope per `mock.restore()` boundary the same way `activeSpies` does.
+  const first = jest.requireMock("./auto-mock-fixture-ondemand") as any;
+  first.plainFunction.mockReturnValue("from-before-restore");
+  expect(first.plainFunction()).toBe("from-before-restore");
+
+  jest.restoreAllMocks();
+
+  const second = jest.requireMock("./auto-mock-fixture-ondemand") as any;
+  // Fresh mock — configured return value is gone.
+  expect(second.plainFunction()).toBeUndefined();
+  // And the handles are distinct — cache was cleared, not replaced in place.
+  expect(second).not.toBe(first);
+});

@@ -216,6 +216,9 @@ pub const FSWatcher = struct {
 
         pub fn appendAbort(this: *FSWatchTaskWindows) void {
             const ctx = this.ctx;
+            // Balance the `ctx.unrefTask()` at the end of `run()` (matches
+            // `onPathUpdateWindows` and the posix `enqueue()` path).
+            if (!ctx.refTask()) return;
             const task = bun.new(FSWatchTaskWindows, .{
                 .ctx = ctx,
                 .event = .abort,

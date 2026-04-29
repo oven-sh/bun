@@ -903,6 +903,7 @@ pub fn deinit(this: *@This()) void {
         stmt.deref();
     }
     this.statements.deinit(bun.default_allocator);
+    this.requests.deinit();
     this.write_buffer.deinit(bun.default_allocator);
     this.read_buffer.deinit(bun.default_allocator);
     this.backend_parameters.deinit();

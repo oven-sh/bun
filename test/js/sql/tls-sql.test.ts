@@ -31,7 +31,7 @@ test("TLS Postgres connections do not leak SSL SocketContext on close", async ()
   // With the fix growth is <20 MB on debug-asan and ~0 on release.
   expect(deltaMB).toBeLessThan(30);
   expect(exitCode).toBe(0);
-}, 300_000);
+}, 120_000);
 
 if (!isDockerEnabled()) {
   test.skip("skipping TLS SQL tests - Docker is not available", () => {});

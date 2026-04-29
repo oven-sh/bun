@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { receiveMessageOnPort } from "node:worker_threads";
 
 // Exercises the MessagePortPipe layer that backs MessagePort/MessageChannel:
@@ -60,7 +60,10 @@ describe("MessagePort pipe", () => {
   // worker threads mutated that map simultaneously. Under ASAN this shows
   // up as heap corruption / SEGV inside the HashMap; with the pipe design
   // there is no shared map at all.
-  test("concurrent MessageChannel creation across workers is race-free", async () => {
+  //
+  // Sanitizer-gated: the race being exercised is a memory-safety bug that
+  // only surfaces deterministically under ASAN/UBSan.
+  test.skipIf(!isDebug && !isASAN)("concurrent MessageChannel creation across workers is race-free", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

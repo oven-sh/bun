@@ -221,6 +221,10 @@ let parentPort: MessagePort | null = isMainThread ? null : fakeParentPort();
 // promise stays pending indefinitely unless a timeout is supplied (worker exit closes the port
 // but does not notify already-pending waiters). In practice a node:worker_threads Worker almost
 // always imports the module for parentPort/workerData.
+//
+// Unregistration is driven from the parent's #onClose (matching Node's kOnExit), so terminating
+// an intermediate worker orphans its live grandchildren in the root's threadsPorts map; sending
+// to such a threadId without a timeout likewise stays pending. This matches Node.js behaviour.
 
 const kRegisterMainThreadPort = 0;
 const kUnregisterMainThreadPort = 1;

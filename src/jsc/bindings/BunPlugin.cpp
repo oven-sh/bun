@@ -629,20 +629,11 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
             stashedVirtualEntry = globalObject->onLoadPlugins.virtualModules->take(specifier);
         }
 
-        // Also drop any cached JSCommonJSModule entry whose `.exports` was
-        // previously overwritten by a mock — otherwise require() returns the
-        // patched mock exports instead of re-evaluating the real source.
-        // Stash the taken entry so we can reinstate it if the require fails.
-        auto* requireMap = globalObject->requireMap();
-        JSC::JSValue stashedRequireMapEntry = requireMap->get(globalObject, specifierString);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!stashedRequireMapEntry.isUndefined()) {
-            requireMap->remove(globalObject, specifierString);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-
-        // On any failure path below, put the stashed entries back so a
-        // previously-working mock/plugin isn't silently destroyed.
+        // Declared up front so every failure path below can call it —
+        // including the two `RETURN_IF_EXCEPTION` guards around the
+        // requireMap stash (those can't actually throw for a non-rope
+        // string key, but we keep the structural restore invariant
+        // honoured throughout the block).
         //
         // restoreStash may be called while the VM already has an
         // exception pending (from the caller's failure). We snapshot
@@ -651,6 +642,8 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         // snapshot. If the set itself throws we drop that secondary
         // exception and keep the original one — the caller's failure
         // is what the user needs to see.
+        JSC::JSValue stashedRequireMapEntry;
+        auto* requireMap = globalObject->requireMap();
         auto restoreStash = [&]() {
             if (stashedVirtualEntry) {
                 globalObject->onLoadPlugins.virtualModules->set(specifier, WTF::move(stashedVirtualEntry));
@@ -671,6 +664,23 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                 }
             }
         };
+
+        // Also drop any cached JSCommonJSModule entry whose `.exports` was
+        // previously overwritten by a mock — otherwise require() returns the
+        // patched mock exports instead of re-evaluating the real source.
+        // Stash the taken entry so we can reinstate it if the require fails.
+        stashedRequireMapEntry = requireMap->get(globalObject, specifierString);
+        if (scope.exception()) [[unlikely]] {
+            restoreStash();
+            return {};
+        }
+        if (!stashedRequireMapEntry.isUndefined()) {
+            requireMap->remove(globalObject, specifierString);
+            if (scope.exception()) [[unlikely]] {
+                restoreStash();
+                return {};
+            }
+        }
 
         JSC::JSValue realExports;
         if (boundRequire) {

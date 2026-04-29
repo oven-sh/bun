@@ -28,7 +28,7 @@ JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<E
 EventEmitter* JSEventEmitter::toWrapped(VM& vm, JSValue value)
 {
     if (value.inherits<JSEventEmitter>())
-        return &jsCast<JSEventEmitter*>(asObject(value))->wrapped();
+        return &uncheckedDowncast<JSEventEmitter>(asObject(value))->wrapped();
     return nullptr;
 }
 
@@ -55,13 +55,13 @@ JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGloba
     auto* thisObject = asObject(thisCell);
 
     if (thisObject->inherits<JSEventEmitter>())
-        return jsCast<JSEventEmitter*>(thisObject);
+        return uncheckedDowncast<JSEventEmitter>(thisObject);
 
     auto clientData = WebCore::clientData(vm);
     auto name = clientData->builtinNames()._eventsPublicName();
     if (JSValue _events = thisObject->getIfPropertyExists(lexicalGlobalObject, name)) {
         if (_events.isCell() && _events.inherits<JSEventEmitter>()) {
-            return jsCast<JSEventEmitter*>(asObject(_events));
+            return uncheckedDowncast<JSEventEmitter>(asObject(_events));
         }
     }
     // TODO: properly propagate exception upwards (^ getIfPropertyExists)
@@ -83,7 +83,7 @@ JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGloba
 
     RETURN_IF_EXCEPTION(throwScope, nullptr);
 
-    return jsCast<JSEventEmitter*>(asObject(result));
+    return uncheckedDowncast<JSEventEmitter>(asObject(result));
 }
 
 template<typename Visitor>

@@ -67,7 +67,7 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
 
     RETURN_IF_EXCEPTION(throwScope, {});
     ASSERT(
-        result && result.isCell() && jsDynamicCast<JSObject*>(result),
+        result && result.isCell() && dynamicDowncast<JSObject>(result),
         "Expected \"%s\" to export a JSObject. Bun is going to crash.",
         moduleName.utf8().span().data());
     return result;
@@ -134,7 +134,7 @@ InternalModuleRegistry::InternalModuleRegistry(VM& vm, Structure* structure)
 template<typename Visitor>
 void InternalModuleRegistry::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<InternalModuleRegistry*>(cell);
+    auto* thisObject = uncheckedDowncast<InternalModuleRegistry>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 }
@@ -182,7 +182,7 @@ JSC_DEFINE_HOST_FUNCTION(InternalModuleRegistry::jsCreateInternalModuleById, (JS
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto id = callframe->argument(0).toUInt32(lexicalGlobalObject);
 
-    auto registry = jsCast<Zig::GlobalObject*>(lexicalGlobalObject)->internalModuleRegistry();
+    auto registry = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject)->internalModuleRegistry();
     auto mod = registry->createInternalModuleById(lexicalGlobalObject, vm, static_cast<Field>(id));
     RETURN_IF_EXCEPTION(throwScope, {});
     registry->internalField(static_cast<Field>(id)).set(vm, registry, mod);

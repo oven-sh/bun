@@ -1,7 +1,7 @@
 import type { Server, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, forceGuardMalloc } from "harness";
+import { bunEnv, bunExe, forceGuardMalloc, isWindows } from "harness";
 import { isIP } from "node:net";
 import path from "node:path";
 
@@ -1064,4 +1064,81 @@ it("you can call server.subscriberCount() when its not a websocket server", asyn
     },
   });
   expect(server.subscriberCount("boop")).toBe(0);
+});
+
+// Regression: onUpgrade stored the ZigString returned by FetchHeaders.fastGet()
+// (which borrows directly from the header map entry's WTF::StringImpl) and then
+// called fastRemove(), which frees that StringImpl when the map holds the only
+// reference. The dangling pointer was later read in toSlice() and written to the
+// socket as the Sec-WebSocket-Protocol response header.
+//
+// To make the map entry the sole owner of the StringImpl (so fastRemove actually
+// frees it), we append() twice: the second append causes FetchHeaders to combine
+// the values with ", " via makeString(), producing a fresh StringImpl that no JS
+// string references. `Malloc=1` routes bmalloc through the system allocator so
+// ASAN-enabled builds detect the use-after-free; release builds fall through and
+// validate the header value round-trips correctly.
+it("server.upgrade() with Sec-WebSocket-Protocol in options.headers does not use-after-free the header value", async () => {
+  const part = Buffer.alloc(128, "abcdefghijklmnopqrstuvwxyz0123456789").toString();
+
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const part = ${JSON.stringify(part)};
+        using server = Bun.serve({
+          port: 0,
+          websocket: { message() {} },
+          fetch(req, server) {
+            const h = new Headers();
+            // Double-append so the stored value is a freshly-combined StringImpl
+            // owned solely by the header map.
+            h.append("Sec-WebSocket-Protocol", part);
+            h.append("Sec-WebSocket-Protocol", "tail");
+            h.set("X-Custom", "hello");
+            if (server.upgrade(req, { headers: h })) return;
+            return new Response("no upgrade", { status: 400 });
+          },
+        });
+        const res = await fetch(server.url, {
+          headers: {
+            "Upgrade": "websocket",
+            "Connection": "Upgrade",
+            "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+            "Sec-WebSocket-Version": "13",
+            "Sec-WebSocket-Protocol": "client-offered",
+          },
+        });
+        console.log(JSON.stringify({
+          status: res.status,
+          protocol: res.headers.get("sec-websocket-protocol"),
+          custom: res.headers.get("x-custom"),
+        }));
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      // Route bmalloc through the system heap so ASAN can observe the
+      // StringImpl allocation in sanitizer-enabled builds. On Windows
+      // bmalloc's SystemHeap is unimplemented and would RELEASE_BASSERT,
+      // so leave bmalloc in place there — Windows builds have no ASAN
+      // lane anyway.
+      ...(isWindows ? {} : { Malloc: "1" }),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // uWS selects the first subprotocol (substring before the first comma) from
+  // the value passed to resp.upgrade(), so the expected response protocol is
+  // `part`, not the combined "part, tail".
+  const expected = JSON.stringify({ status: 101, protocol: part, custom: "hello" });
+  expect({ stdout: stdout.trim(), stderr: stderr.split("\n", 3).join("\n").trim() }).toEqual({
+    stdout: expected,
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
 });

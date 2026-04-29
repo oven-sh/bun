@@ -92,7 +92,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceMarkDOMConstruct
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSPerformanceMarkDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSPerformanceMarkDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
@@ -173,14 +173,14 @@ JSObject* JSPerformanceMark::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSPerformanceMark::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSPerformanceMarkDOMConstructor, DOMConstructorID::PerformanceMark>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSPerformanceMarkDOMConstructor, DOMConstructorID::PerformanceMark>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsPerformanceMarkConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSPerformanceMarkPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSPerformanceMarkPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSPerformanceMark::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -193,7 +193,7 @@ static inline JSValue jsPerformanceMark_detailGetter(JSGlobalObject& lexicalGlob
     if (JSValue cachedValue = thisObject.m_detail.get())
         return cachedValue;
     auto& impl = thisObject.wrapped();
-    JSValue result = toJS<IDLAny>(lexicalGlobalObject, throwScope, impl.detail(*jsCast<JSDOMGlobalObject*>(&lexicalGlobalObject)));
+    JSValue result = toJS<IDLAny>(lexicalGlobalObject, throwScope, impl.detail(*uncheckedDowncast<JSDOMGlobalObject>(&lexicalGlobalObject)));
     RETURN_IF_EXCEPTION(throwScope, {});
     thisObject.m_detail.set(JSC::getVM(&lexicalGlobalObject), &thisObject, result);
     return result;
@@ -217,7 +217,7 @@ JSC::GCClient::IsoSubspace* JSPerformanceMark::subspaceForImpl(JSC::VM& vm)
 template<typename Visitor>
 void JSPerformanceMark::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSPerformanceMark*>(cell);
+    auto* thisObject = uncheckedDowncast<JSPerformanceMark>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_detail);
@@ -227,7 +227,7 @@ DEFINE_VISIT_CHILDREN(JSPerformanceMark);
 
 void JSPerformanceMark::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSPerformanceMark*>(cell);
+    auto* thisObject = uncheckedDowncast<JSPerformanceMark>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));

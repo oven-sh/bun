@@ -183,7 +183,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextEncoderDOMConstruc
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSTextEncoderDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSTextEncoderDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
     auto object = TextEncoder::create();
     if constexpr (IsExceptionOr<decltype(object)>)
@@ -340,7 +340,7 @@ JSObject* JSTextEncoder::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSTextEncoder::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSTextEncoderDOMConstructor, DOMConstructorID::TextEncoder>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSTextEncoderDOMConstructor, DOMConstructorID::TextEncoder>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSTextEncoder::destroy(JSC::JSCell* cell)
@@ -353,7 +353,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderConstructor, (JSGlobalObject * lexicalGlob
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSTextEncoderPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSTextEncoderPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSTextEncoder::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -433,7 +433,7 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
     auto source = str->view(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto* destination = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(argument1.value());
+    auto* destination = dynamicDowncast<JSC::JSArrayBufferView>(argument1.value());
     if (!destination) {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
         return {};
@@ -473,7 +473,7 @@ JSC::GCClient::IsoSubspace* JSTextEncoder::subspaceForImpl(JSC::VM& vm)
 
 void JSTextEncoder::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSTextEncoder*>(cell);
+    auto* thisObject = uncheckedDowncast<JSTextEncoder>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -537,7 +537,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 TextEncoder* JSTextEncoder::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSTextEncoder*>(value))
+    if (auto* wrapper = dynamicDowncast<JSTextEncoder>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

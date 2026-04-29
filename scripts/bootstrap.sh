@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 30
+# Version: 34
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -774,6 +774,7 @@ install_common_software() {
 	install_rosetta
 	install_nodejs
 	install_bun
+	install_curl_h3
 	install_tailscale
 	install_buildkite
 }
@@ -956,6 +957,54 @@ bun_version_exact() {
 	print "1.3.13"
 }
 
+curl_h3_version() {
+	# https://github.com/stunnel/static-curl/releases
+	print "8.19.0"
+}
+
+# Installs a fully-static curl built with nghttp3/ngtcp2 as `curl-h3` so the
+# HTTP/3 server tests (test/js/bun/http/serve-http3.test.ts, fetch-h3.ts) can
+# run in CI. Kept separate from the system `curl` so nothing else changes
+# behavior. Tests discover it via $CURL_HTTP3, then `curl-h3` in PATH.
+install_curl_h3() {
+	case "$arch" in
+	x64) curl_h3_arch="x86_64" ;;
+	aarch64) curl_h3_arch="aarch64" ;;
+	*) return ;;
+	esac
+	case "$os" in
+	linux)
+		case "$abi" in
+		musl) curl_h3_asset="curl-linux-$curl_h3_arch-musl" ;;
+		*) curl_h3_asset="curl-linux-$curl_h3_arch-glibc" ;;
+		esac
+		;;
+	darwin)
+		case "$arch" in
+		aarch64) curl_h3_asset="curl-macos-arm64" ;;
+		*) curl_h3_asset="curl-macos-x86_64" ;;
+		esac
+		;;
+	*) return ;;
+	esac
+
+	case "$pm" in
+	apt) install_packages xz-utils ;;
+	apk | dnf | yum | zypper) install_packages xz ;;
+	esac
+
+	curl_h3_url="https://github.com/stunnel/static-curl/releases/download/$(curl_h3_version)/$curl_h3_asset-$(curl_h3_version).tar.xz"
+	curl_h3_tar="$(download_file "$curl_h3_url")"
+	curl_h3_dir="$(dirname "$curl_h3_tar")"
+	execute tar -xJf "$curl_h3_tar" -C "$curl_h3_dir" curl
+	execute mv "$curl_h3_dir/curl" "$curl_h3_dir/curl-h3"
+	move_to_bin "$curl_h3_dir/curl-h3"
+
+	curl_h3_bin="$(which curl-h3)"
+	append_to_profile "export CURL_HTTP3=$curl_h3_bin"
+	execute "$curl_h3_bin" --version | head -n1
+}
+
 install_bun() {
 	install_packages unzip
 
@@ -1091,6 +1140,8 @@ install_build_essentials() {
 	install_osxcross
 	install_gcc
 	install_rust
+	install_android_ndk
+	install_freebsd_sysroot
 	install_ccache
 	install_docker
 }
@@ -1249,6 +1300,99 @@ install_rust() {
 		execute_as_user "$rustup" target add x86_64-apple-darwin
 		;;
 	esac
+
+	case "$os" in
+	linux)
+		rustup="$rust_home/bin/rustup"
+		if ! [ -x "$rustup" ]; then
+			error "rustup not found at $rustup after install"
+		fi
+		execute_as_user "$rustup" target add aarch64-linux-android
+		execute_as_user "$rustup" target add x86_64-linux-android
+		# x86_64-unknown-freebsd is Tier 2 (prebuilt std). aarch64 is Tier 3
+		# (no prebuilt) — lolhtml.ts uses -Zbuild-std for that.
+		execute_as_user "$rustup" target add x86_64-unknown-freebsd
+		# rust-src for -Zbuild-std (Tier 3 targets without prebuilt std).
+		execute_as_user "$rustup" component add rust-src
+		;;
+	esac
+}
+
+android_ndk_version() {
+	print "r27c"
+}
+
+install_android_ndk() {
+	case "$os" in
+	linux) ;;
+	*) return ;;
+	esac
+
+	ndk_version="$(android_ndk_version)"
+	ndk_home="/opt/android-ndk"
+	if ! [ -d "$ndk_home" ]; then
+		ndk_zip=$(download_file "https://dl.google.com/android/repository/android-ndk-${ndk_version}-linux.zip")
+		unzip="$(require unzip)"
+		execute_sudo "$unzip" -q "$ndk_zip" -d /opt
+		execute_sudo mv "/opt/android-ndk-${ndk_version}" "$ndk_home"
+		# Trim ~1.1GB unused (NDK clang/lld, lldb, non-android runtimes).
+		ndk_prebuilt="$ndk_home/toolchains/llvm/prebuilt/linux-x86_64"
+		execute_sudo rm -rf "$ndk_prebuilt/bin" "$ndk_prebuilt/python3" "$ndk_prebuilt/lib/liblldb.so" \
+			"$ndk_home/simpleperf" "$ndk_home/shader-tools" "$ndk_home/sources"
+		append_to_profile "export ANDROID_NDK_ROOT=$ndk_home"
+	fi
+
+	# Symlink NDK compiler-rt builtins + libunwind into host clang's resource
+	# dir. clang's driver hardcodes <resource-dir>/lib/<triple>/libclang_rt.*
+	# with no -L fallback, so the file must exist there for any android link.
+	# Done here (as root) so the build user doesn't need write access to /usr.
+	clang="$(which clang-$(llvm_version) || which clang)"
+	if [ -x "$clang" ]; then
+		res_dir="$("$clang" -print-resource-dir)"
+		ndk_clang_ver="$(ls "$ndk_home/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/" | head -1)"
+		ndk_rt="$ndk_home/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/$ndk_clang_ver/lib/linux"
+		execute_sudo mkdir -p "$res_dir/lib/linux"
+		for ndk_arch in aarch64 x86_64; do
+			# Old-style flat layout (apt.llvm.org clang) AND new-style per-triple.
+			execute_sudo ln -sf "$ndk_rt/libclang_rt.builtins-${ndk_arch}-android.a" "$res_dir/lib/linux/"
+			execute_sudo mkdir -p "$res_dir/lib/linux/${ndk_arch}"
+			execute_sudo ln -sf "$ndk_rt/${ndk_arch}/libunwind.a" "$res_dir/lib/linux/${ndk_arch}/"
+			triple_dir="$res_dir/lib/${ndk_arch}-unknown-linux-android28"
+			execute_sudo mkdir -p "$triple_dir"
+			execute_sudo ln -sf "$ndk_rt/libclang_rt.builtins-${ndk_arch}-android.a" "$triple_dir/libclang_rt.builtins.a"
+			execute_sudo ln -sf "$ndk_rt/${ndk_arch}/libunwind.a" "$triple_dir/libunwind.a"
+		done
+	fi
+}
+
+freebsd_version() {
+	print "14.3"
+}
+
+install_freebsd_sysroot() {
+	case "$os" in
+	linux) ;;
+	*) return ;;
+	esac
+
+	freebsd_ver="$(freebsd_version)"
+	for fbsd_arch in amd64 arm64; do
+		case "$fbsd_arch" in
+		amd64) sysroot="/opt/freebsd-sysroot" ;;
+		arm64) sysroot="/opt/freebsd-sysroot-arm64" ;;
+		esac
+		# Same sentinel detectFreebsdSysroot() uses, plus a /lib file so a
+		# half-extracted (interrupted) sysroot isn't treated as complete.
+		if [ -f "$sysroot/usr/include/sys/param.h" ] && [ -f "$sysroot/lib/libc.so.7" ]; then
+			continue
+		fi
+		execute_sudo rm -rf "$sysroot"
+		execute_sudo mkdir -p "$sysroot"
+		base_txz=$(download_file "https://download.freebsd.org/releases/${fbsd_arch}/${freebsd_ver}-RELEASE/base.txz")
+		execute_sudo tar -C "$sysroot" -xJf "$base_txz" ./usr/include ./usr/lib ./lib
+	done
+	# No FREEBSD_SYSROOT export — detectFreebsdSysroot() picks the
+	# arch-appropriate /opt/freebsd-sysroot{,-arm64} by well-known path.
 }
 
 install_docker() {

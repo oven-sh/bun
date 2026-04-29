@@ -1,12 +1,10 @@
 //! Error type that preserves useful information from the operating system
 const Error = @This();
 
-const retry_errno = if (Environment.isLinux)
-    @as(Int, @intCast(@intFromEnum(E.AGAIN)))
-else if (Environment.isMac)
-    @as(Int, @intCast(@intFromEnum(E.AGAIN)))
+const retry_errno = if (Environment.isWindows)
+    @as(Int, @intCast(@intFromEnum(E.INTR)))
 else
-    @as(Int, @intCast(@intFromEnum(E.INTR)));
+    @as(Int, @intCast(@intFromEnum(E.AGAIN)));
 
 const todo_errno = std.math.maxInt(Int) - 1;
 

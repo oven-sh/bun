@@ -35,14 +35,14 @@ JSC_DEFINE_HOST_FUNCTION(jsKeyObjectPrototype_equals, (JSGlobalObject * globalOb
     VM& vm = globalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
-    JSKeyObject* thisObject = jsDynamicCast<JSKeyObject*>(callFrame->thisValue());
+    JSKeyObject* thisObject = dynamicDowncast<JSKeyObject>(callFrame->thisValue());
     if (!thisObject) {
         throwThisTypeError(*globalObject, scope, "KeyObject"_s, "equals"_s);
         return {};
     }
 
     JSValue otherKeyObjectValue = callFrame->argument(0);
-    JSKeyObject* otherKeyObject = jsDynamicCast<JSKeyObject*>(otherKeyObjectValue);
+    JSKeyObject* otherKeyObject = dynamicDowncast<JSKeyObject>(otherKeyObjectValue);
     if (!otherKeyObject) {
         return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "otherKeyObject"_s, "KeyObject"_s, otherKeyObjectValue);
     }
@@ -63,7 +63,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsKeyObjectPrototype_type, (JSGlobalObject * globalObje
     VM& vm = globalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
-    JSKeyObject* keyObject = jsDynamicCast<JSKeyObject*>(JSValue::decode(thisValue));
+    JSKeyObject* keyObject = dynamicDowncast<JSKeyObject>(JSValue::decode(thisValue));
     if (!keyObject) {
         return JSValue::encode(jsUndefined());
     }

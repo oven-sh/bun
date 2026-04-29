@@ -237,6 +237,25 @@ pub const PathWatcherManager = struct {
                 .directory => {
                     const affected = event.names(changed_files);
 
+                    // kqueue NOTE_WRITE on a directory carries no filenames, so
+                    // `affected` is always empty on FreeBSD (macOS bypasses this
+                    // via FSEvents). Emit a single nameless 'rename' so the JS
+                    // callback fires — matches libuv's FreeBSD behavior, where
+                    // the caller is expected to re-scan.
+                    if (comptime Environment.isFreeBSD) {
+                        if (affected.len == 0 and (event.op.write or event.op.delete or event.op.rename)) {
+                            const dir_hash = Watcher.getHash(file_path);
+                            for (watchers) |w| {
+                                const watcher = w orelse continue;
+                                const entry_point = watcher.path.dirname;
+                                if (watcher.path.is_file or file_path.len < entry_point.len or !bun.strings.startsWith(file_path, entry_point)) {
+                                    continue;
+                                }
+                                watcher.emit((PathWatcher.EventType.rename).toEvent(""), dir_hash, timestamp, false);
+                            }
+                        }
+                    }
+
                     for (affected) |changed_name_| {
                         const changed_name: []const u8 = bun.asByteSlice(changed_name_.?);
                         if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
@@ -776,7 +795,6 @@ pub const PathWatcher = struct {
                     bun.default_allocator.destroy(this);
                     return err;
                 };
-                this.resolved_path = resolved_path;
                 this.* = PathWatcher{
                     .path = path,
                     .callback = callback,
@@ -787,6 +805,7 @@ pub const PathWatcher = struct {
                         updateEndCallback,
                         bun.cast(*anyopaque, ctx),
                     ) catch |err| {
+                        bun.default_allocator.free(resolved_path);
                         bun.default_allocator.destroy(this);
                         return err;
                     },
@@ -796,6 +815,7 @@ pub const PathWatcher = struct {
                     .file_paths = .{},
                     .ctx = ctx,
                     .mutex = .{},
+                    .resolved_path = resolved_path,
                 };
 
                 errdefer this.deinit();

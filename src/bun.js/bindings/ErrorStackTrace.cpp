@@ -46,7 +46,7 @@ bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor)
     ImplementationVisibility implementationVisibility = [&]() -> ImplementationVisibility {
         if (visitor->callee().isCell()) {
             if (auto* callee = visitor->callee().asCell()) {
-                if (auto* jsFunction = jsDynamicCast<JSFunction*>(callee)) {
+                if (auto* jsFunction = dynamicDowncast<JSFunction>(callee)) {
                     if (auto* executable = jsFunction->executable())
                         return executable->implementationVisibility();
                 }
@@ -78,7 +78,7 @@ bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame)
 #endif
 
         if (auto* callee = frame.callee()) {
-            if (auto* jsFunction = jsDynamicCast<JSFunction*>(callee)) {
+            if (auto* jsFunction = dynamicDowncast<JSFunction>(callee)) {
                 if (auto* executable = jsFunction->executable())
                     return executable->implementationVisibility();
             }
@@ -190,7 +190,7 @@ JSCStackTrace JSCStackTrace::getStackTraceForThrownValue(JSC::VM& vm, JSC::JSVal
     if (currentException && currentException->value() == thrownValue) {
         jscStackTrace = &currentException->stack();
     } else {
-        JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(thrownValue);
+        JSC::ErrorInstance* error = dynamicDowncast<JSC::ErrorInstance>(thrownValue);
         if (error) {
             jscStackTrace = error->stackTrace();
         }
@@ -357,7 +357,7 @@ ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
     }
 
     if (m_callee && m_callee->isObject()) {
-        if (auto* jsFunction = jsDynamicCast<JSFunction*>(m_callee)) {
+        if (auto* jsFunction = dynamicDowncast<JSFunction>(m_callee)) {
             WTF::String url = Zig::sourceURL(m_vm, jsFunction);
             if (!url.isEmpty()) {
                 return url;
@@ -409,7 +409,7 @@ ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
 
 ALWAYS_INLINE String JSCStackFrame::retrieveTypeName()
 {
-    JSC::JSObject* calleeObject = JSC::jsCast<JSC::JSObject*>(m_callee);
+    JSC::JSObject* calleeObject = uncheckedDowncast<JSC::JSObject>(m_callee);
     return calleeObject->className();
 }
 
@@ -539,7 +539,7 @@ String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
     }
 
     if (codeType == JSC::FunctionCode) {
-        auto* jsExecutable = jsCast<JSC::FunctionExecutable*>(executable);
+        auto* jsExecutable = uncheckedDowncast<JSC::FunctionExecutable>(executable);
         if (!jsExecutable) {
             return String();
         }
@@ -589,7 +589,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
     {
         if (functionName.isEmpty()) {
             if (jstype == JSC::JSFunctionType) {
-                auto* function = jsCast<JSC::JSFunction*>(object);
+                auto* function = uncheckedDowncast<JSC::JSFunction>(object);
                 if (function) {
                     functionName = function->nameWithoutGC(vm);
                     if (functionName.isEmpty() && !function->isHostFunction()) {
@@ -597,7 +597,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
                     }
                 }
             } else if (jstype == JSC::InternalFunctionType) {
-                auto* function = jsCast<JSC::InternalFunction*>(object);
+                auto* function = uncheckedDowncast<JSC::InternalFunction>(object);
                 if (function) {
                     functionName = function->name();
                 }
@@ -660,7 +660,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
 
                 // Lastly, try type-specific properties.
                 if (jstype == JSC::JSFunctionType) {
-                    auto* function = jsCast<JSC::JSFunction*>(object);
+                    auto* function = uncheckedDowncast<JSC::JSFunction>(object);
                     if (function) {
                         auto str = function->nameWithoutGC(vm);
                         if (str.isEmpty() && !function->isHostFunction()) {
@@ -671,7 +671,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
                         return str;
                     }
                 } else if (jstype == JSC::InternalFunctionType) {
-                    auto* function = jsCast<JSC::InternalFunction*>(object);
+                    auto* function = uncheckedDowncast<JSC::InternalFunction>(object);
                     if (function) {
                         auto str = function->name();
                         setTypeFlagsIfNecessary();

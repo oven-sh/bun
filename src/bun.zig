@@ -239,6 +239,7 @@ pub const md = @import("./md/root.zig");
 
 pub const Output = @import("./output.zig");
 pub const Global = @import("./Global.zig");
+pub const ParentDeathWatchdog = @import("./ParentDeathWatchdog.zig");
 
 pub const FD = @import("./fd.zig").FD;
 pub const MovableIfWindowsFd = @import("./fd.zig").MovableIfWindowsFd;
@@ -1574,7 +1575,7 @@ pub fn reloadProcess(
             },
         }
     } else if (comptime Environment.isPosix) {
-        on_before_reload_process_linux();
+        if (comptime Environment.isLinux or Environment.isFreeBSD) on_before_reload_process_linux();
         const err = std.posix.execveZ(
             exec_path,
             newargv,
@@ -1911,9 +1912,9 @@ const WindowsStat = extern struct {
 
 pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.posix.Stat;
 pub const StatFS = switch (Environment.os) {
-    .mac => bun.c.struct_statfs,
-    .linux => bun.c.struct_statfs,
-    else => windows.libuv.uv_statfs_t,
+    .mac, .linux, .freebsd => bun.c.struct_statfs,
+    .windows => windows.libuv.uv_statfs_t,
+    .wasm => unreachable,
 };
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
@@ -3123,6 +3124,8 @@ pub fn unsafeAssert(condition: bool) callconv(callconv_inline) void {
 
 pub const dns = @import("./dns.zig");
 
+pub const hw_timer = @import("./hw_timer.zig");
+
 pub fn getRoughTickCount(comptime mock_mode: timespec.MockMode) timespec {
     if (mock_mode == .allow_mocked_time) {
         if (bun.jsc.Jest.bun_test.FakeTimers.current_time.getTimespecNow()) |fake_time| {
@@ -3130,89 +3133,21 @@ pub fn getRoughTickCount(comptime mock_mode: timespec.MockMode) timespec {
         }
     }
 
-    if (comptime Environment.isMac) {
-        // https://opensource.apple.com/source/xnu/xnu-2782.30.5/libsyscall/wrappers/mach_approximate_time.c.auto.html
-        // https://opensource.apple.com/source/Libc/Libc-1158.1.2/gen/clock_gettime.c.auto.html
-        var spec = timespec{
-            .nsec = 0,
-            .sec = 0,
-        };
-        const clocky = struct {
-            pub var clock_id: std.c.CLOCK = .REALTIME;
-            pub fn get() void {
-                var res: timespec = undefined;
-                _ = std.c.clock_getres(.MONOTONIC_RAW_APPROX, @ptrCast(&res));
-                if (res.ms() <= 1) {
-                    clock_id = .MONOTONIC_RAW_APPROX;
-                } else {
-                    clock_id = .MONOTONIC_RAW;
-                }
-            }
-
-            pub var once = std.once(get);
-        };
-        clocky.once.call();
-
-        // We use this one because we can avoid reading the mach timebase info ourselves.
-        _ = std.c.clock_gettime(clocky.clock_id, @ptrCast(&spec));
-        return spec;
-    }
-
-    if (comptime Environment.isLinux) {
-        var spec = timespec{
-            .nsec = 0,
-            .sec = 0,
-        };
-        const clocky = struct {
-            pub var clock_id: std.os.linux.CLOCK = .REALTIME;
-            pub fn get() void {
-                var res: timespec = undefined;
-                std.posix.clock_getres(.MONOTONIC_COARSE, @ptrCast(&res)) catch {};
-                if (res.ms() <= 1) {
-                    clock_id = .MONOTONIC_COARSE;
-                } else {
-                    clock_id = .MONOTONIC_RAW;
-                }
-            }
-
-            pub var once = std.once(get);
-        };
-        clocky.once.call();
-        _ = std.os.linux.clock_gettime(clocky.clock_id, @ptrCast(&spec));
-        return spec;
-    }
-
-    if (comptime Environment.isWindows) {
-        const ms = getRoughTickCountMs(mock_mode);
-        return timespec{
-            .sec = @intCast(ms / 1000),
-            .nsec = @intCast((ms % 1000) * 1_000_000),
-        };
-    }
-
-    return 0;
+    const ns_value = hw_timer.nowNs();
+    return timespec{
+        .sec = @intCast(ns_value / std.time.ns_per_s),
+        .nsec = @intCast(ns_value % std.time.ns_per_s),
+    };
 }
 
-/// When you don't need a super accurate timestamp, this is a fast way to get one.
-///
-/// Requesting the current time frequently is somewhat expensive. So we can use a rough timestamp.
-///
-/// This timestamp doesn't easily correlate to a specific time. It's only useful relative to other calls.
+/// Monotonic milliseconds. Values are only meaningful relative to other calls.
 pub fn getRoughTickCountMs(comptime mock_mode: timespec.MockMode) u64 {
-    if (Environment.isWindows) {
-        if (mock_mode == .allow_mocked_time) {
-            if (bun.jsc.Jest.bun_test.FakeTimers.current_time.getTimespecNow()) |fake_time| {
-                return fake_time.ns() / std.time.ns_per_ms;
-            }
+    if (mock_mode == .allow_mocked_time) {
+        if (bun.jsc.Jest.bun_test.FakeTimers.current_time.getTimespecNow()) |fake_time| {
+            return fake_time.ns() / std.time.ns_per_ms;
         }
-        const GetTickCount64 = struct {
-            pub extern "kernel32" fn GetTickCount64() std.os.windows.ULONGLONG;
-        }.GetTickCount64;
-        return GetTickCount64();
     }
-
-    const spec = getRoughTickCount(mock_mode);
-    return spec.ns() / std.time.ns_per_ms;
+    return hw_timer.nowMs();
 }
 
 pub const MaybeMockedTimespec = struct {

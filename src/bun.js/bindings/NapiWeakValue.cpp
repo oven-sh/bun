@@ -55,7 +55,7 @@ void NapiWeakValue::set(JSValue value, WeakHandleOwner& owner, void* context)
     if (value.isCell()) {
         auto* cell = value.asCell();
         if (cell->isString()) {
-            setString(jsCast<JSString*>(cell), owner, context);
+            setString(uncheckedDowncast<JSString>(cell), owner, context);
         } else {
             setCell(cell, owner, context);
         }

@@ -304,7 +304,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDecodeURIComponentSIMD, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(JSC::jsString(vm, output));
     }
 
-    JSC::JSArrayBufferView* view = jsDynamicCast<JSC::JSArrayBufferView*>(input);
+    JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(input);
     if (!view) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }

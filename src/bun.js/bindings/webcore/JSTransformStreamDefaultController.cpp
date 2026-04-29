@@ -151,7 +151,7 @@ JSObject* JSTransformStreamDefaultController::prototype(VM& vm, JSDOMGlobalObjec
 
 JSValue JSTransformStreamDefaultController::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSTransformStreamDefaultControllerDOMConstructor, DOMConstructorID::TransformStreamDefaultController>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSTransformStreamDefaultControllerDOMConstructor, DOMConstructorID::TransformStreamDefaultController>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSTransformStreamDefaultController::destroy(JSC::JSCell* cell)
@@ -164,7 +164,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamDefaultControllerConstructor, (JSGloba
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSTransformStreamDefaultControllerPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSTransformStreamDefaultControllerPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSTransformStreamDefaultController::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));

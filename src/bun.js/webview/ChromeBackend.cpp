@@ -66,7 +66,7 @@ Shm s_shm;
 #define BUN_SHM_OPEN(n, f, m) s_shm.open((n), (f), (m))
 #define BUN_SHM_UNLINK(n) s_shm.unlink((n))
 #define BUN_SHM_LOAD() s_shm.load()
-#elif OS(DARWIN)
+#elif OS(DARWIN) || OS(FREEBSD)
 #define BUN_SHM_OPEN(n, f, m) ::shm_open((n), (f), (m))
 #define BUN_SHM_UNLINK(n) ::shm_unlink((n))
 #define BUN_SHM_LOAD() true

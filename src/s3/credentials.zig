@@ -191,7 +191,7 @@ pub const S3Credentials = struct {
                             .field_name = "queueSize",
                         });
                     } else {
-                        new_credentials.options.queueSize = @intCast(@max(queueSize, std.math.maxInt(u8)));
+                        new_credentials.options.queueSize = @intCast(@min(queueSize, std.math.maxInt(u8)));
                     }
                 }
 

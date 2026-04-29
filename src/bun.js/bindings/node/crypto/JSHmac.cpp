@@ -115,7 +115,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
 
     // Get the HMAC instance
     JSValue thisHmac = callFrame->thisValue();
-    JSHmac* hmac = jsDynamicCast<JSHmac*>(thisHmac);
+    JSHmac* hmac = dynamicDowncast<JSHmac>(thisHmac);
 
     // Check if the HMAC is already finalized
     if (hmac->m_finalized) {
@@ -146,14 +146,14 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         JSValue converted = JSValue::decode(WebCore::constructFromEncoding(globalObject, inputView, encoding));
         RETURN_IF_EXCEPTION(scope, {});
 
-        auto* convertedView = jsDynamicCast<JSC::JSArrayBufferView*>(converted);
+        auto* convertedView = dynamicDowncast<JSC::JSArrayBufferView>(converted);
 
         if (!hmac->update(std::span { reinterpret_cast<const uint8_t*>(convertedView->vector()), convertedView->byteLength() })) {
             return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
         }
 
         return JSValue::encode(wrappedHmac);
-    } else if (auto* view = JSC::jsDynamicCast<JSArrayBufferView*>(inputValue)) {
+    } else if (auto* view = dynamicDowncast<JSArrayBufferView>(inputValue)) {
         if (!hmac->update(std::span { reinterpret_cast<const uint8_t*>(view->vector()), view->byteLength() })) {
             return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
         }
@@ -171,7 +171,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     // Get the HMAC instance
-    JSHmac* hmac = jsDynamicCast<JSHmac*>(callFrame->thisValue());
+    JSHmac* hmac = dynamicDowncast<JSHmac>(callFrame->thisValue());
     if (!hmac) [[unlikely]] {
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "Hmac"_s);
     }

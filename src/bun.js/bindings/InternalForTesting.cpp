@@ -16,7 +16,7 @@ using namespace JSC;
 JSC_DEFINE_HOST_FUNCTION(jsFunction_arrayBufferViewHasBuffer, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto value = callFrame->argument(0);
-    auto view = jsCast<WebCore::JSArrayBufferView*>(value);
+    auto view = uncheckedDowncast<WebCore::JSArrayBufferView>(value);
     return JSValue::encode(jsBoolean(view->hasArrayBuffer()));
 }
 

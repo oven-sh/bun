@@ -17,10 +17,16 @@
 // clang-format off
 #include "libusockets.h"
 #include "internal/internal.h"
+#include "quic.h"
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #ifndef WIN32
 #include <sys/ioctl.h>
+#endif
+#ifdef __linux__
+#include <netinet/in.h>
+#include <linux/errqueue.h>
 #endif
 
 #if __has_include("wtf/Platform.h")
@@ -35,8 +41,6 @@
 
 #if ASSERT_ENABLED
 extern const size_t Bun__lock__size;
-extern void __attribute((__noreturn__)) Bun__panic(const char* message, size_t length);
-#define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
 #endif
 
 extern void Bun__internal_ensureDateHeaderTimerIsEnabled(struct us_loop_t *loop);
@@ -89,6 +93,7 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
     free(loop->data.send_buf);
 
     us_timer_close(loop->data.sweep_timer, 0);
+    if (loop->data.quic_timer) us_timer_close(loop->data.quic_timer, 0);
     us_internal_async_close(loop->data.wakeup_async);
 }
 
@@ -310,10 +315,19 @@ void us_internal_loop_pre(struct us_loop_t *loop) {
     us_internal_handle_dns_results(loop);
     us_internal_handle_low_priority_sockets(loop);
     loop->data.pre_cb(loop);
+#ifdef LIBUS_USE_QUIC
+    /* Flush stream writes that JS tasks made before this tick (timers,
+     * immediates, promise resolutions outside on_read) so they go out
+     * before epoll blocks. loop_post handles what this iteration receives. */
+    if (loop->data.quic_head) us_quic_loop_process(loop);
+#endif
 }
 
 void us_internal_loop_post(struct us_loop_t *loop) {
     us_internal_handle_dns_results(loop);
+#ifdef LIBUS_USE_QUIC
+    if (loop->data.quic_head) us_quic_loop_process(loop);
+#endif
     /* A poll callback may re-enter the loop (e.g. expect().toThrow() →
      * waitForPromise → us_loop_run_bun_tick). The inner tick must not free
      * closed sockets/contexts: the outer tick's dispatch is mid-iteration
@@ -610,25 +624,43 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 #if defined(__linux__)
             /* On Linux with IP_RECVERR, EPOLLERR fires when an ICMP error
              * (port unreachable, host unreachable, TTL exceeded, ...) is
-             * queued on the socket. The kernel may or may not also set
-             * EPOLLIN. Calling recvmmsg on such a socket returns -1 with
-             * the ICMP errno (ECONNREFUSED, EHOSTUNREACH, ENETUNREACH,
-             * EMSGSIZE, ...), which we surface via on_recv_error. The
-             * socket stays open. On other platforms (kqueue's EV_ERROR,
-             * Windows) an error event is a fatal socket condition, not a
-             * drainable error queue — preserve the pre-existing
-             * close-on-error behavior. */
+             * queued on the socket's error queue. For an *unconnected* UDP
+             * socket regular recvmmsg does NOT dequeue these — only
+             * recvmsg(MSG_ERRQUEUE) does — so EPOLLERR stays level-triggered
+             * until we drain it explicitly. Do that here, surfacing each
+             * errno via on_recv_error; the socket stays open. On other
+             * platforms (kqueue EV_ERROR, Windows) an error event is fatal —
+             * preserve close-on-error there. */
             int recv_error_surfaced = 0;
-            /* recv_would_block_only means: we drained the error queue and
-             * the only remaining outcome was EAGAIN, so the residual
-             * EPOLLERR is stale — don't treat it as fatal. */
             int recv_would_block_only = 0;
-            int recv_drain_for_error = error;
-#else
-            int recv_drain_for_error = 0;
+            if (error) {
+                struct msghdr eh; char ectrl[512]; char ebuf[1];
+                struct iovec eiov = { ebuf, sizeof(ebuf) };
+                while (!u->closed) {
+                    memset(&eh, 0, sizeof(eh));
+                    eh.msg_iov = &eiov; eh.msg_iovlen = 1;
+                    eh.msg_control = ectrl; eh.msg_controllen = sizeof(ectrl);
+                    if (recvmsg(us_poll_fd(p), &eh, MSG_ERRQUEUE) < 0) break;
+                    recv_error_surfaced = 1;
+                    if (u->on_recv_error) {
+                        /* The queued ICMP error is in sock_extended_err,
+                         * not errno. */
+                        int ee = 0;
+                        for (struct cmsghdr *cm = CMSG_FIRSTHDR(&eh); cm; cm = CMSG_NXTHDR(&eh, cm)) {
+                            if ((cm->cmsg_level == IPPROTO_IP   && cm->cmsg_type == IP_RECVERR) ||
+                                (cm->cmsg_level == IPPROTO_IPV6 && cm->cmsg_type == IPV6_RECVERR)) {
+                                ee = ((struct sock_extended_err *) CMSG_DATA(cm))->ee_errno;
+                                break;
+                            }
+                        }
+                        u->on_recv_error(u, ee ? ee : ECONNREFUSED);
+                    }
+                }
+            }
 #endif
 
-            if ((events & LIBUS_SOCKET_READABLE) || recv_drain_for_error) {
+            if ((events & LIBUS_SOCKET_READABLE) && !u->closed) {
+
                 do {
                     struct udp_recvbuf recvbuf;
                     bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
@@ -666,14 +698,18 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 } while (!u->closed);
             }
 
-            if (events & LIBUS_SOCKET_WRITABLE && !error && !u->closed) {
+            if (events & LIBUS_SOCKET_WRITABLE && !u->closed) {
+                /* Clear WRITABLE before on_drain so a callback that re-arms it
+                 * (e.g. QUIC packets_out hitting EAGAIN) keeps the re-arm. We
+                 * still default to one-shot drain semantics for callers that
+                 * don't touch the poll mask. Not gated on !error: a queued
+                 * ICMP error must not leave WRITABLE armed (level-triggered
+                 * EPOLLOUT + EPOLLERR would spin the loop). */
+                us_poll_change(&u->p, u->loop, us_poll_events(&u->p) & LIBUS_SOCKET_READABLE);
                 u->on_drain(u);
                 if (u->closed) {
                     break;
                 }
-                // We only poll for writable after a read has failed, and only send one drain notification.
-                // Otherwise we would receive a writable event on every tick of the event loop.
-                us_poll_change(&u->p, u->loop, us_poll_events(&u->p) & LIBUS_SOCKET_READABLE);
             }
 
 #if defined(__linux__)

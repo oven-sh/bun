@@ -41,7 +41,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPublicKeyObjectPrototype_export, (JSGlobalObject * gl
     VM& vm = globalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
-    JSPublicKeyObject* publicKeyObject = jsDynamicCast<JSPublicKeyObject*>(callFrame->thisValue());
+    JSPublicKeyObject* publicKeyObject = dynamicDowncast<JSPublicKeyObject>(callFrame->thisValue());
     if (!publicKeyObject) {
         throwThisTypeError(*globalObject, scope, "PublicKeyObject"_s, "export"_s);
         return {};
@@ -57,7 +57,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPublicKeyObjectPrototype_asymmetricKeyType, (JSGlobal
     VM& vm = globalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
-    JSPublicKeyObject* publicKeyObject = jsDynamicCast<JSPublicKeyObject*>(JSValue::decode(thisValue));
+    JSPublicKeyObject* publicKeyObject = dynamicDowncast<JSPublicKeyObject>(JSValue::decode(thisValue));
     if (!publicKeyObject) {
         return JSValue::encode(jsUndefined());
     }
@@ -71,7 +71,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPublicKeyObjectPrototype_asymmetricKeyDetails, (JSGlo
     VM& vm = globalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
-    JSPublicKeyObject* publicKeyObject = jsDynamicCast<JSPublicKeyObject*>(JSValue::decode(thisValue));
+    JSPublicKeyObject* publicKeyObject = dynamicDowncast<JSPublicKeyObject>(JSValue::decode(thisValue));
     if (!publicKeyObject) {
         return JSValue::encode(jsUndefined());
     }
@@ -94,7 +94,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPublicKeyObjectPrototype_asymmetricKeyDetails, (JSGlo
 //     VM& vm = globalObject->vm();
 //     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
-//     JSPublicKeyObject* publicKeyObject = jsDynamicCast<JSPublicKeyObject*>(callFrame->thisValue());
+//     JSPublicKeyObject* publicKeyObject = dynamicDowncast<JSPublicKeyObject>(callFrame->thisValue());
 //     if (!publicKeyObject) {
 //         throwThisTypeError(*globalObject, scope, "PublicKeyObject"_s, "toCryptoKey"_s);
 //         return {};

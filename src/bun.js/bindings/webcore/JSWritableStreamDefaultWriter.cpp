@@ -154,7 +154,7 @@ JSObject* JSWritableStreamDefaultWriter::prototype(VM& vm, JSDOMGlobalObject& gl
 
 JSValue JSWritableStreamDefaultWriter::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSWritableStreamDefaultWriterDOMConstructor, DOMConstructorID::WritableStreamDefaultWriter>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSWritableStreamDefaultWriterDOMConstructor, DOMConstructorID::WritableStreamDefaultWriter>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSWritableStreamDefaultWriter::destroy(JSC::JSCell* cell)
@@ -167,7 +167,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultWriterConstructor, (JSGlobalObje
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSWritableStreamDefaultWriterPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSWritableStreamDefaultWriterPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSWritableStreamDefaultWriter::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));

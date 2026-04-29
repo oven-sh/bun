@@ -105,6 +105,8 @@ pub const Run = struct {
         vm.is_main_thread = true;
         jsc.VirtualMachine.is_main_thread_vm = true;
 
+        bun.http.experimental_http2_client_from_cli = ctx.runtime_options.experimental_http2_fetch;
+        bun.http.experimental_http3_client_from_cli = ctx.runtime_options.experimental_http3_fetch;
         doPreconnect(ctx.runtime_options.preconnect);
 
         const callback = OpaqueWrap(Run, Run.start);
@@ -290,6 +292,8 @@ pub const Run = struct {
 
         vm.transpiler.env.loadTracy();
 
+        bun.http.experimental_http2_client_from_cli = ctx.runtime_options.experimental_http2_fetch;
+        bun.http.experimental_http3_client_from_cli = ctx.runtime_options.experimental_http3_fetch;
         doPreconnect(ctx.runtime_options.preconnect);
 
         vm.main_is_html_entrypoint = (loader orelse vm.transpiler.options.loader(std.fs.path.extension(entry_path))) == .html;
@@ -396,8 +400,9 @@ pub const Run = struct {
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
             if (promise.status() == .rejected) {
-                const handled = vm.uncaughtException(vm.global, promise.result(), true);
-                promise.setHandled(vm.global.vm());
+                const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
+                promise.setHandled();
+                vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 
                 if (vm.hot_reload != .none or handled) {
                     vm.addMainToWatcherIfNeeded();
@@ -420,7 +425,7 @@ pub const Run = struct {
                 }
             }
 
-            _ = promise.result();
+            _ = promise.result(vm.global.vm());
 
             if (vm.log.msgs.items.len > 0) {
                 dumpBuildError(vm);

@@ -293,7 +293,7 @@ void JSNodeHTTPServerSocket::finishCreation(JSC::VM& vm)
 template<typename Visitor>
 void JSNodeHTTPServerSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSNodeHTTPServerSocket* fn = jsCast<JSNodeHTTPServerSocket*>(cell);
+    JSNodeHTTPServerSocket* fn = uncheckedDowncast<JSNodeHTTPServerSocket>(cell);
     ASSERT_GC_OBJECT_INHERITS(fn, info());
     Base::visitChildren(fn, visitor);
 

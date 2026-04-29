@@ -21,8 +21,9 @@ import { availableParallelism, homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Config } from "./config.ts";
 import { downloadWithRetry, extractZip, tryPrefetchExtracted } from "./download.ts";
-import { assert } from "./error.ts";
+import { BuildError, assert } from "./error.ts";
 import { fetchCliPath } from "./fetch-cli.ts";
+import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
 import { streamPath } from "./stream.ts";
@@ -91,9 +92,65 @@ export function zigTarget(cfg: Config): string {
   const arch = cfg.x64 ? "x86_64" : "aarch64";
   if (cfg.darwin) return `${arch}-macos-none`;
   if (cfg.windows) return `${arch}-windows-msvc`;
+  if (cfg.freebsd) {
+    assert(cfg.freebsdVersion !== undefined, "freebsd build missing version");
+    return `${arch}-freebsd.${cfg.freebsdVersion}-none`;
+  }
   // linux: abi is always set (resolveConfig asserts)
   assert(cfg.abi !== undefined, "linux build missing abi");
+  if (cfg.abi === "android") {
+    assert(cfg.androidApiLevel !== undefined, "android build missing api level");
+    return `${arch}-linux-android.${cfg.androidApiLevel}`;
+  }
   return `${arch}-linux-${cfg.abi}`;
+}
+
+/**
+ * Zig doesn't bundle bionic or FreeBSD libc headers, so cross-compile
+ * targets need an explicit libc file (`--libc`) pointing at the sysroot
+ * for Compile steps, and the sysroot path passed separately for
+ * translate-c. Writes the libc file at configure time (idempotent via
+ * writeIfChanged).
+ */
+function crossLibcArgs(cfg: Config): string[] {
+  if (cfg.abi === "android") {
+    assert(cfg.sysroot !== undefined && cfg.androidApiLevel !== undefined, "android build missing sysroot");
+    const archTriple = cfg.x64 ? "x86_64-linux-android" : "aarch64-linux-android";
+    const libcFile = resolve(cfg.buildDir, "android-libc.txt");
+    writeIfChanged(
+      libcFile,
+      [
+        `include_dir=${cfg.sysroot}/usr/include`,
+        `sys_include_dir=${cfg.sysroot}/usr/include/${archTriple}`,
+        `crt_dir=${cfg.sysroot}/usr/lib/${archTriple}/${cfg.androidApiLevel}`,
+        `msvc_lib_dir=`,
+        `kernel32_lib_dir=`,
+        `gcc_dir=`,
+        ``,
+      ].join("\n"),
+    );
+    return ["--libc", libcFile, `-Dandroid_ndk_sysroot=${cfg.sysroot}`];
+  }
+  if (cfg.freebsd) {
+    // Native FreeBSD host: sysroot is "/". Cross-compile: extracted base.txz.
+    // build.zig requires -Dfreebsd_sysroot for translate-c either way.
+    const root = cfg.sysroot ?? "";
+    const libcFile = resolve(cfg.buildDir, "freebsd-libc.txt");
+    writeIfChanged(
+      libcFile,
+      [
+        `include_dir=${root}/usr/include`,
+        `sys_include_dir=${root}/usr/include`,
+        `crt_dir=${root}/usr/lib`,
+        `msvc_lib_dir=`,
+        `kernel32_lib_dir=`,
+        `gcc_dir=`,
+        ``,
+      ].join("\n"),
+    );
+    return ["--libc", libcFile, `-Dfreebsd_sysroot=${root || "/"}`];
+  }
+  return [];
 }
 
 /**
@@ -219,6 +276,13 @@ export function zigDownloadUrl(cfg: Config, safe: boolean): string {
     osAbi = "macos-none";
   } else if (cfg.host.os === "windows") {
     osAbi = "windows-gnu";
+  } else if (cfg.host.os === "freebsd") {
+    // oven-sh/zig has no FreeBSD-hosted prebuilt; native builds must use a
+    // system zig via $BUN_ZIG_PATH. Cross-compile from Linux is the
+    // expected path (host.os === "linux" → linux-musl below).
+    throw new BuildError(
+      "No prebuilt zig compiler for FreeBSD hosts — set $BUN_ZIG_PATH to a system zig, or cross-compile from Linux",
+    );
   } else {
     // linux: always musl for the compiler binary (static).
     osAbi = "linux-musl";
@@ -434,6 +498,7 @@ function zigBuildArgs(cfg: Config): string[] {
     `-Dtarget=${zigTarget(cfg)}`,
     `-Doptimize=${zigOptimize(cfg)}`,
     `-Dcpu=${zigCpu(cfg)}`,
+    ...crossLibcArgs(cfg),
 
     // Feature flags
     `-Denable_logs=${bool(cfg.logs)}`,

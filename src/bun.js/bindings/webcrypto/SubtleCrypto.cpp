@@ -93,7 +93,7 @@ static ExceptionOr<CryptoAlgorithmIdentifier> toHashIdentifier(JSGlobalObject& s
 static bool isRSAESPKCSWebCryptoDeprecated(JSGlobalObject& state)
 {
     return true;
-    // auto& globalObject = *JSC::jsCast<JSDOMGlobalObject*>(&state);
+    // auto& globalObject = *uncheckedDowncast<JSDOMGlobalObject>(&state);
     // auto* context = globalObject.scriptExecutionContext();
     // return context && context->settingsValues().deprecateRSAESPKCSWebCryptoEnabled;
 }
@@ -101,7 +101,7 @@ static bool isRSAESPKCSWebCryptoDeprecated(JSGlobalObject& state)
 static bool isSafeCurvesEnabled(JSGlobalObject& state)
 {
     return true;
-    // auto& globalObject = *JSC::jsCast<JSDOMGlobalObject*>(&state);
+    // auto& globalObject = *uncheckedDowncast<JSDOMGlobalObject>(&state);
     // auto* context = globalObject.scriptExecutionContext();
     // return context && context->settingsValues().webCryptoSafeCurvesEnabled;
 }
@@ -1239,11 +1239,16 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                     JSLockHolder locker(vm);
                     auto jwkObject = JSONParse(&state, jwkString);
                     if (!jwkObject) {
+                        weakThis->m_pendingPromises.remove(index);
                         promise->reject(DataError, "WrappedKey cannot be converted to a JSON object"_s);
                         return;
                     }
                     auto jwk = convert<IDLDictionary<JsonWebKey>>(state, jwkObject);
-                    RETURN_IF_EXCEPTION(scope, void());
+                    if (scope.exception()) [[unlikely]] {
+                        weakThis->m_pendingPromises.remove(index);
+                        promise->reject(Exception { ExistingExceptionError });
+                        return;
+                    }
                     normalizeJsonWebKey(jwk);
 
                     keyData = jwk;

@@ -259,7 +259,7 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
     MessageWithMessagePorts messageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() };
 
     this->postTaskToWorkerGlobalScope([message = WTF::move(messageWithMessagePorts)](auto& context) mutable {
-        Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(context.jsGlobalObject());
+        Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(context.jsGlobalObject());
 
         auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
         auto event = MessageEvent::create(*globalObject, message.message.releaseNonNull(), nullptr, WTF::move(ports));
@@ -487,10 +487,7 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
 
     {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        auto* esmRegistryMap = globalObject->esmRegistryMap();
-        scope.exception(); // TODO: handle or assert none?
-        esmRegistryMap->clear(globalObject);
-        scope.exception(); // TODO: handle or assert none?
+        globalObject->moduleLoader()->clearAll();
         globalObject->requireMap()->clear(globalObject);
         scope.exception(); // TODO: handle or assert none?
         vm.deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
@@ -570,9 +567,9 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"port\" argument must be a MessagePort instance"_s);
     }
 
-    if (auto* messagePort = jsDynamicCast<JSMessagePort*>(port)) {
+    if (auto* messagePort = dynamicDowncast<JSMessagePort>(port)) {
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(messagePort->wrapped().tryTakeMessage(lexicalGlobalObject)));
-    } else if (jsDynamicCast<JSBroadcastChannel*>(port)) {
+    } else if (dynamicDowncast<JSBroadcastChannel>(port)) {
         // TODO: support broadcast channels
         return JSC::JSValue::encode(jsUndefined());
     }
@@ -596,7 +593,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
         JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTF::move(ports));
         RETURN_IF_EXCEPTION(scope, {});
         // Should always be set to an Array of length 2 in the constructor in JSWorker.cpp
-        auto* pair = jsCast<JSArray*>(deserialized);
+        auto* pair = uncheckedDowncast<JSArray>(deserialized);
         ASSERT(pair->length() == 2);
         ASSERT(pair->canGetIndexQuickly(0u));
         ASSERT(pair->canGetIndexQuickly(1u));
@@ -604,7 +601,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
         RETURN_IF_EXCEPTION(scope, {});
         auto environmentDataValue = pair->getIndexQuickly(1);
         // it might not be a Map if the parent had not set up environmentData yet
-        environmentData = environmentDataValue ? jsDynamicCast<JSMap*>(environmentDataValue) : nullptr;
+        environmentData = environmentDataValue ? dynamicDowncast<JSMap>(environmentDataValue) : nullptr;
         RETURN_IF_EXCEPTION(scope, {});
 
         // Main thread starts at 1
@@ -632,7 +629,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     JSC::VM& vm = leixcalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(leixcalGlobalObject);
+    Zig::GlobalObject* globalObject = dynamicDowncast<Zig::GlobalObject>(leixcalGlobalObject);
     if (!globalObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
@@ -656,7 +653,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
         RETURN_IF_EXCEPTION(scope, {});
         if (transferListValue.isObject()) {
             JSC::JSObject* transferListObject = transferListValue.getObject();
-            if (auto* transferListArray = jsDynamicCast<JSC::JSArray*>(transferListObject)) {
+            if (auto* transferListArray = dynamicDowncast<JSC::JSArray>(transferListObject)) {
                 for (unsigned i = 0; i < transferListArray->length(); i++) {
                     JSC::JSValue transferListValue = transferListArray->get(globalObject, i);
                     RETURN_IF_EXCEPTION(scope, {});
@@ -687,7 +684,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     MessageWithMessagePorts messageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() };
 
     ScriptExecutionContext::postTaskTo(context->identifier(), [message = messageWithMessagePorts, protectedThis = Ref { *worker }, ports](ScriptExecutionContext& context) mutable {
-        Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(context.jsGlobalObject());
+        Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(context.jsGlobalObject());
 
         auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
         auto event = MessageEvent::create(*globalObject, message.message.releaseNonNull(), nullptr, WTF::move(ports));

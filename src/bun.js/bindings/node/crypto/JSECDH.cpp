@@ -24,7 +24,7 @@ void JSECDH::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 template<typename Visitor>
 void JSECDH::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSECDH* thisObject = jsCast<JSECDH*>(cell);
+    JSECDH* thisObject = uncheckedDowncast<JSECDH>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 }

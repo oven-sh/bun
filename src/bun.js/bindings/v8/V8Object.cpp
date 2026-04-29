@@ -24,7 +24,7 @@ static FieldContainer* getInternalFieldsContainer(Object* object)
 
     // TODO(@190n): do we need to unwrap proxies like node-jsc did?
 
-    if (auto ifo = JSC::jsDynamicCast<shim::InternalFieldObject*>(js_object)) {
+    if (auto ifo = dynamicDowncast<shim::InternalFieldObject>(js_object)) {
         return ifo->internalFields();
     }
 
@@ -119,7 +119,7 @@ void Object::SetInternalField(int index, Local<Data> data)
     RELEASE_ASSERT(fields, "object has no internal fields");
     RELEASE_ASSERT(index >= 0 && index < fields->size(), "internal field index is out of bounds");
     JSObject* js_object = localToObjectPointer<JSObject>();
-    auto* globalObject = JSC::jsDynamicCast<Zig::GlobalObject*>(js_object->globalObject());
+    auto* globalObject = dynamicDowncast<Zig::GlobalObject>(js_object->globalObject());
     fields->at(index).set(globalObject->vm(), localToCell(), data->localToJSValue());
 }
 
@@ -132,7 +132,7 @@ Local<Data> Object::SlowGetInternalField(int index)
 {
     auto* fields = getInternalFieldsContainer(this);
     JSObject* js_object = localToObjectPointer<JSObject>();
-    auto* globalObject = JSC::jsDynamicCast<Zig::GlobalObject*>(js_object->globalObject());
+    auto* globalObject = dynamicDowncast<Zig::GlobalObject>(js_object->globalObject());
     HandleScope* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
     if (fields && index >= 0 && index < fields->size()) {
         auto& field = fields->at(index);

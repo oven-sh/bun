@@ -10,6 +10,7 @@ pub const Start = union(Tag) {
     FileSink: FileSink.Options,
     HTTPSResponseSink: void,
     HTTPResponseSink: void,
+    H3ResponseSink: void,
     NetworkSink: void,
     ready: void,
     owned_and_done: bun.ByteList,
@@ -23,6 +24,7 @@ pub const Start = union(Tag) {
         FileSink,
         HTTPSResponseSink,
         HTTPResponseSink,
+        H3ResponseSink,
         NetworkSink,
         ready,
         owned_and_done,
@@ -170,7 +172,7 @@ pub const Start = union(Tag) {
                     },
                 };
             },
-            .NetworkSink, .HTTPSResponseSink, .HTTPResponseSink => {
+            .NetworkSink, .HTTPSResponseSink, .HTTPResponseSink, .H3ResponseSink => {
                 var empty = true;
                 var chunk_size: Blob.SizeType = 2048;
 
@@ -698,9 +700,9 @@ pub const Signal = struct {
     };
 };
 
-pub fn HTTPServerWritable(comptime ssl: bool) type {
+pub fn HTTPServerWritable(comptime ssl: bool, comptime http3: bool) type {
     return struct {
-        const UWSResponse = uws.NewApp(ssl).Response;
+        const UWSResponse = if (http3) uws.H3.Response else uws.NewApp(ssl).Response;
         res: ?*UWSResponse,
         buffer: bun.ByteList,
         pooled_buffer: ?*WebCore.ByteListPool.Node = null,
@@ -1255,6 +1257,13 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         pub fn destroy(this: *@This()) void {
             log("destroy()", .{});
+            // Callers may tear this sink down without routing through
+            // flushPromise() (e.g. handleResolveStream / handleRejectStream).
+            // Drop the GC root so the promise can be collected.
+            if (this.pending_flush) |prom| {
+                prom.toJS().unprotect();
+                this.pending_flush = null;
+            }
             this.buffer.deinit(this.allocator);
             this.unregisterAutoFlusher();
             this.allocator.destroy(this);
@@ -1267,10 +1276,11 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             if (!this.done) {
                 this.unregisterAutoFlusher();
                 if (this.res) |res| {
-                    // make sure we detached the handlers before flushing inside the finalize function
+                    // Detach the handlers this sink registered before flushing.
+                    // onAborted/onData belong to RequestContext, not the sink —
+                    // clearing them here would drop the holder's pointer (and on
+                    // H3, where the stream is freed after FIN, leave it dangling).
                     res.clearOnWritable();
-                    res.clearAborted();
-                    res.clearOnData();
                 }
                 _ = this.flushNoWait();
                 this.done = true;
@@ -1319,12 +1329,13 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
         }
 
-        pub const name = if (ssl) "HTTPSResponseSink" else "HTTPResponseSink";
+        pub const name = if (http3) "H3ResponseSink" else if (ssl) "HTTPSResponseSink" else "HTTPResponseSink";
         pub const JSSink = Sink.JSSink(@This(), name);
     };
 }
-pub const HTTPSResponseSink = HTTPServerWritable(true);
-pub const HTTPResponseSink = HTTPServerWritable(false);
+pub const HTTPSResponseSink = HTTPServerWritable(true, false);
+pub const HTTPResponseSink = HTTPServerWritable(false, false);
+pub const H3ResponseSink = HTTPServerWritable(true, true);
 pub const NetworkSink = struct {
     pub const new = bun.TrivialNew(@This());
     pub const deinit = bun.TrivialDeinit(@This());

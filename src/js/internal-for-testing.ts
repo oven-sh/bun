@@ -252,3 +252,17 @@ export const sysErrorNameFromLibuv: (errno: number) => string | undefined = $new
   "TestingAPIs.sysErrorNameFromLibuv",
   1,
 );
+
+export const fetchH2Internals = {
+  liveCounts: $newZigFunction("http/H2Client.zig", "TestingAPIs.liveCounts", 0) as () => {
+    sessions: number;
+    streams: number;
+  },
+};
+
+export const fetchH3Internals = {
+  liveCounts: $newZigFunction("http/H3Client.zig", "TestingAPIs.quicLiveCounts", 0) as () => {
+    sessions: number;
+    streams: number;
+  },
+};

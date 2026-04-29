@@ -51,6 +51,11 @@ pub const BUN_DEBUG_QUIET_LOGS = New(kind.boolean, "BUN_DEBUG_QUIET_LOGS", .{});
 pub const BUN_DEBUG_TEST_TEXT_LOCKFILE = New(kind.boolean, "BUN_DEBUG_TEST_TEXT_LOCKFILE", .{ .default = false });
 pub const BUN_DEV_SERVER_TEST_RUNNER = New(kind.string, "BUN_DEV_SERVER_TEST_RUNNER", .{});
 pub const BUN_ENABLE_CRASH_REPORTING = New(kind.boolean, "BUN_ENABLE_CRASH_REPORTING", .{});
+/// Opt-in: when truthy, Bun watches its original parent pid and exits as soon
+/// as that process dies (even if the parent was SIGKILLed and couldn't forward
+/// a signal), and on its own clean exit recursively SIGKILLs every descendant
+/// so nothing it spawned outlives it. See `src/ParentDeathWatchdog.zig`.
+pub const BUN_FEATURE_FLAG_DIE_WITH_PARENT = New(kind.boolean, "BUN_FEATURE_FLAG_DIE_WITH_PARENT", .{ .default = false });
 pub const BUN_FEATURE_FLAG_DUMP_CODE = New(kind.string, "BUN_FEATURE_FLAG_DUMP_CODE", .{});
 /// TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior
 /// so we'll keep it for now.
@@ -189,6 +194,15 @@ pub const feature_flag = struct {
     pub const BUN_DUMP_STATE_ON_CRASH = newFeatureFlag("BUN_DUMP_STATE_ON_CRASH", .{});
     pub const BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS = newFeatureFlag("BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS", .{});
     pub const BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE = newFeatureFlag("BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE", .{});
+    /// Offer "h2" in the fetch() TLS ALPN list and speak HTTP/2 when the
+    /// server selects it. Off by default while the client implementation
+    /// matures. `--experimental-http2-fetch` is the CLI equivalent.
+    pub const BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT = newFeatureFlag("BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT", .{});
+    /// Honor `Alt-Svc: h3` from fetch() responses: subsequent requests to the
+    /// same origin go over QUIC/HTTP-3 instead of TCP. Off by default while
+    /// the client implementation matures. `--experimental-http3-fetch` is the
+    /// CLI equivalent.
+    pub const BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT = newFeatureFlag("BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT", .{});
     pub const BUN_FEATURE_FLAG_FORCE_IO_POOL = newFeatureFlag("BUN_FEATURE_FLAG_FORCE_IO_POOL", .{});
     pub const BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS = newFeatureFlag("BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS", .{});
     pub const BUN_INSTRUMENTS = newFeatureFlag("BUN_INSTRUMENTS", .{});

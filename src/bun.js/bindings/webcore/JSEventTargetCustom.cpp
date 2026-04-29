@@ -53,30 +53,30 @@ JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<E
 EventTarget* JSEventTarget::toWrapped(VM& vm, JSValue value)
 {
     // if (value.inherits<JSWindowProxy>())
-    //     return &jsCast<JSWindowProxy*>(asObject(value))->wrapped();
+    //     return &uncheckedDowncast<JSWindowProxy>(asObject(value))->wrapped();
     // if (value.inherits<JSDOMWindow>())
-    //     return &jsCast<JSDOMWindow*>(asObject(value))->wrapped();
+    //     return &uncheckedDowncast<JSDOMWindow>(asObject(value))->wrapped();
     if (value.inherits<JSDOMGlobalObject>())
-        return jsCast<JSDOMGlobalObject*>(asObject(value))->globalEventScope.ptr();
+        return uncheckedDowncast<JSDOMGlobalObject>(asObject(value))->globalEventScope.ptr();
     if (value.inherits<JSEventTarget>())
-        return &jsCast<JSEventTarget*>(asObject(value))->wrapped();
+        return &uncheckedDowncast<JSEventTarget>(asObject(value))->wrapped();
     return nullptr;
 }
 
 JSEventTargetWrapper jsEventTargetCast(VM& vm, JSValue thisValue)
 {
-    if (auto* target = jsDynamicCast<JSEventTarget*>(thisValue))
+    if (auto* target = dynamicDowncast<JSEventTarget>(thisValue))
         return { target->wrapped(), *target };
     if (!thisValue.isObject())
         return {};
 
     JSObject* object = thisValue.getObject();
     if (object->type() == GlobalProxyType) {
-        object = jsCast<JSGlobalProxy*>(object)->target();
+        object = uncheckedDowncast<JSGlobalProxy>(object)->target();
         if (!object)
             return {};
     }
-    if (auto* global = jsDynamicCast<Zig::GlobalObject*>(object))
+    if (auto* global = dynamicDowncast<Zig::GlobalObject>(object))
         return { global->eventTarget(), *global };
 
     return {};

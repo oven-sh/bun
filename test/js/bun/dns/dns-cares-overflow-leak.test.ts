@@ -144,11 +144,7 @@ describe.skipIf(isWindows)("Bun.dns.lookup c-ares backend", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toBe("");
     const result = JSON.parse(stdout.trim().split("\n").at(-1) ?? "");
@@ -162,5 +158,4 @@ describe.skipIf(isWindows)("Bun.dns.lookup c-ares backend", () => {
     expect(result.totalGrowthMB).toBeLessThan(15);
     expect(exitCode).toBe(0);
   }, 180_000);
-
 });

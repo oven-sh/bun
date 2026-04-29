@@ -232,8 +232,8 @@ test.skipIf(!isSupported)("BUN_FEATURE_FLAG_DIE_WITH_PARENT=1: clean exit reaps 
   expect(gcPid).toBeGreaterThan(0);
   const died = await waitUntilDead(gcPid, 10000);
   reap(gcPid);
-  expect(proc.exitCode).toBe(0);
   expect(died).toBe(true);
+  expect(proc.exitCode).toBe(0);
 });
 
 // Same as the clean-exit test but enabled via bunfig.toml instead of the env
@@ -269,6 +269,6 @@ test.skipIf(!isSupported)("bunfig [run] dieWithParent = true: clean exit reaps d
   expect(gcPid).toBeGreaterThan(0);
   const died = await waitUntilDead(gcPid, 10000);
   reap(gcPid);
-  expect(proc.exitCode).toBe(0);
   expect(died).toBe(true);
+  expect(proc.exitCode).toBe(0);
 });

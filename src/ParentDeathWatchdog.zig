@@ -283,15 +283,14 @@ fn listChildPidsLinux(parent: std.c.pid_t, out: []std.c.pid_t) ?usize {
         .err => return null,
     };
     defer task_fd.close();
-    var task_dir = task_fd.stdDir();
 
     var written: usize = 0;
     var read_buf: [4096]u8 = undefined;
-    var it = task_dir.iterate();
-    while (it.next() catch null) |entry| {
+    var it = bun.iterateDir(task_fd);
+    while (it.next().unwrap() catch null) |entry| {
         if (written >= out.len) break;
         // Each entry is a tid (numeric directory).
-        const tid = std.fmt.parseInt(std.c.pid_t, entry.name, 10) catch continue;
+        const tid = std.fmt.parseInt(std.c.pid_t, entry.name.slice(), 10) catch continue;
         const children_path = std.fmt.bufPrintZ(&path_buf, "/proc/{d}/task/{d}/children", .{ parent, tid }) catch continue;
         const data = readFileOnce(children_path, &read_buf) orelse continue;
         var tok = std.mem.tokenizeAny(u8, data, " \n");

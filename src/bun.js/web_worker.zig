@@ -796,15 +796,30 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         loop_.internal_loop_data.jsc_vm = null;
     }
 
-    if (vm_to_deinit) |vm| {
-        // this deinit needs to happen before `Loop.shutdown`
-        // in order to not call uv_close on the gc timer twice.
-        vm.gc_controller.deinit();
+    if (comptime Environment.isWindows) {
+        // On Windows, drain all pending libuv I/O requests before
+        // dispatching the exit. This must happen while the JSC VM is
+        // still alive because pending I/O completion callbacks may access
+        // the VM through JSGlobalObject.bunVM(). WebWorker__dispatchExit
+        // derefs the VM (potentially freeing its ClientData), so if we
+        // drain after that call, those callbacks hit a use-after-free
+        // (issue #27931).
+        //
+        // Loop.shutdown() walks and closes all libuv handles (including
+        // GC timer handles), so we must NOT call gc_controller.deinit()
+        // beforehand — doing so closes the timer handles early, then
+        // callbacks that fire during uv_run try to reschedule them
+        // (uv_timer_start on a closed handle → panic).
+        bun.windows.libuv.Loop.shutdown();
+    } else {
+        // On non-Windows there is no Loop.shutdown(), so close the GC
+        // timer handles here to avoid leaking them.
+        if (vm_to_deinit) |vm| {
+            vm.gc_controller.deinit();
+        }
     }
 
-    if (comptime Environment.isWindows) {
-        bun.windows.libuv.Loop.shutdown();
-    }
+    WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
 
     if (vm_to_deinit) |vm| {
         vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.

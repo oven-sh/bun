@@ -28,7 +28,7 @@ statements: PreparedStatementsMap = .{},
 #password: []const u8 = "",
 #options: []const u8 = "",
 #options_buf: []const u8 = "",
-#tls_ctx: ?*uws.SocketContext = null,
+#secure: ?uws.SslCtx = null,
 #tls_config: jsc.API.ServerConfig.SSLConfig = .{},
 #tls_status: TLSStatus = .none,
 #ssl_mode: SSLMode = .disable,
@@ -41,7 +41,7 @@ pub fn init(
     options: []const u8,
     options_buf: []const u8,
     tls_config: jsc.API.ServerConfig.SSLConfig,
-    tls_ctx: ?*uws.SocketContext,
+    secure: ?uws.SslCtx,
     ssl_mode: SSLMode,
 ) @This() {
     return .{
@@ -54,7 +54,7 @@ pub fn init(
         .queue = MySQLRequestQueue.init(),
         .statements = PreparedStatementsMap{},
         .#tls_config = tls_config,
-        .#tls_ctx = tls_ctx,
+        .#secure = secure,
         .#ssl_mode = ssl_mode,
         .#tls_status = if (ssl_mode != .disable) .pending else .none,
         .#character_set = CharacterSet.default,
@@ -189,9 +189,9 @@ pub fn cleanup(this: *MySQLConnection) void {
 
     tls_config.deinit();
     this.#auth_data.deinit();
-    if (this.#tls_ctx) |ctx| {
-        this.#tls_ctx = null;
-        ctx.deinit(true);
+    if (this.#secure) |*s| {
+        s.deinit();
+        this.#secure = null;
     }
 
     if (options_buf.len > 0) {
@@ -201,16 +201,19 @@ pub fn cleanup(this: *MySQLConnection) void {
 
 pub fn upgradeToTLS(this: *MySQLConnection) !void {
     if (this.#socket == .SocketTCP) {
-        const new_socket = this.#socket.SocketTCP.socket.connected.upgrade(this.#tls_ctx.?, this.#tls_config.server_name) orelse {
-            return error.AuthenticationFailed;
-        };
-        this.#socket = .{
-            .SocketTLS = .{
-                .socket = .{
-                    .connected = new_socket,
-                },
-            },
-        };
+        const vm = this.getJSConnection().vm();
+        const tls_group = vm.rareData().mysqlGroup(vm, true);
+        const new_socket = uws.us_socket_t.c.us_socket_adopt_tls(
+            this.#socket.SocketTCP.socket.connected,
+            tls_group,
+            @intFromEnum(uws.SocketKind.mysql_tls),
+            &this.#secure.?,
+            this.#tls_config.server_name,
+            @sizeOf(*anyopaque),
+            @sizeOf(*anyopaque),
+        ) orelse return error.AuthenticationFailed;
+        new_socket.ext(*anyopaque).* = this.getJSConnection();
+        this.#socket = .{ .SocketTLS = .{ .socket = .{ .connected = new_socket } } };
     }
 }
 

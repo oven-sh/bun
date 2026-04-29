@@ -345,7 +345,7 @@ pub fn createInstance(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
     const tls_object = arguments[6];
 
     var tls_config: jsc.API.ServerConfig.SSLConfig = .{};
-    var tls_ctx: ?*uws.SocketContext = null;
+    var secure: ?uws.SslCtx = null;
     if (ssl_mode != .disable) {
         tls_config = if (tls_object.isBoolean() and tls_object.toBoolean())
             .{}
@@ -360,26 +360,14 @@ pub fn createInstance(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
             return .zero;
         }
 
-        // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match.
-        // We create it right here so we can throw errors early.
-        const context_options = tls_config.asUSocketsForClientVerification();
+        // We always request the cert so we can verify it and also we manually
+        // abort the connection if the hostname doesn't match. Built here so
+        // CA/cert errors throw synchronously, applied later by upgradeToTLS.
         var err: uws.create_bun_socket_error_t = .none;
-        tls_ctx = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*@This()), context_options, &err) orelse {
-            if (err != .none) {
-                return globalObject.throw("failed to create TLS context", .{});
-            } else {
-                return globalObject.throwValue(err.toJS(globalObject));
-            }
-        };
-        if (err != .none) {
+        secure = tls_config.asUSocketsForClientVerification().createSSLContext(true, &err) orelse {
             tls_config.deinit();
-            if (tls_ctx) |ctx| {
-                ctx.deinit(true);
-            }
             return globalObject.throwValue(err.toJS(globalObject));
-        }
-
-        uws.NewSocketHandler(true).configure(tls_ctx.?, true, *@This(), SocketHandler(true));
+        };
     }
 
     var username: []const u8 = "";
@@ -428,9 +416,7 @@ pub fn createInstance(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
         if (entry[0].len > 0 and std.mem.indexOfScalar(u8, entry[0], 0) != null) {
             bun.default_allocator.free(options_buf);
             tls_config.deinit();
-            if (tls_ctx) |tls| {
-                tls.deinit(true);
-            }
+            if (secure) |*s| s.deinit();
             return globalObject.throwInvalidArguments(entry[1] ++ " must not contain null bytes", .{});
         }
     }
@@ -457,7 +443,7 @@ pub fn createInstance(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
             options,
             options_buf,
             tls_config,
-            tls_ctx,
+            secure,
             ssl_mode,
         ),
     });
@@ -466,28 +452,19 @@ pub fn createInstance(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
         const hostname = hostname_str.toUTF8(bun.default_allocator);
         defer hostname.deinit();
 
-        const ctx = vm.rareData().mysql_context.tcp orelse brk: {
-            const ctx_ = uws.SocketContext.createNoSSLContext(vm.uwsLoop(), @sizeOf(*@This())).?;
-            uws.NewSocketHandler(false).configure(ctx_, true, *@This(), SocketHandler(false));
-            vm.rareData().mysql_context.tcp = ctx_;
-            break :brk ctx_;
-        };
-
-        if (path.len > 0) {
-            ptr.#connection.setSocket(.{
-                .SocketTCP = uws.SocketTCP.connectUnixAnon(path, ctx, ptr, false) catch |err| {
-                    ptr.deref();
-                    return globalObject.throwError(err, "failed to connect to postgresql");
-                },
-            });
-        } else {
-            ptr.#connection.setSocket(.{
-                .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
-                    ptr.deref();
-                    return globalObject.throwError(err, "failed to connect to mysql");
-                },
-            });
-        }
+        // MySQL always opens plain TCP first; STARTTLS adopts into the TLS
+        // group after the SSLRequest exchange.
+        const group = vm.rareData().mysqlGroup(vm, false);
+        const result = if (path.len > 0)
+            uws.SocketTCP.connectUnixGroup(group, .mysql, null, path, ptr, false)
+        else
+            uws.SocketTCP.connectGroup(group, .mysql, null, hostname.slice(), port, ptr, false);
+        ptr.#connection.setSocket(.{
+            .SocketTCP = result catch |err| {
+                ptr.deref();
+                return globalObject.throwError(err, "failed to connect to mysql");
+            },
+        });
     }
     ptr.#connection.status = .connecting;
     ptr.resetConnectionTimeout();

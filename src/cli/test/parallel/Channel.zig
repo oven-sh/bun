@@ -40,22 +40,19 @@ pub fn Channel(comptime Owner: type, comptime owner_field: []const u8) type {
             socket: Socket = .detached,
         };
 
-        /// Returns the shared SocketContext for this Owner type, creating it on
-        /// first use. One context per Owner type means all coordinator-side
-        /// worker channels share a context, and the worker-side command channel
-        /// has its own.
-        fn ensurePosixContext(vm: *jsc.VirtualMachine) *uws.SocketContext {
-            const S = struct {
-                var ctx: ?*uws.SocketContext = null;
-            };
-            if (S.ctx) |c| return c;
-            const c = uws.SocketContext.createNoSSLContext(vm.uwsLoop(), @sizeOf(*anyopaque)).?;
-            Socket.configure(c, true, *Self, PosixHandlers);
-            S.ctx = c;
-            // The isolation swap walks every uws context and closes its sockets.
-            // This channel must survive that — it's the coordinator link.
-            vm.rareData().test_parallel_ipc_context = c;
-            return c;
+        /// Shared embedded group for this channel. Uses `.dynamic` kind +
+        /// per-Owner vtable because the test-parallel channel is an
+        /// internal-only one-off whose ext type (`*Self`) varies by Owner —
+        /// not worth a `SocketKind` value of its own. The per-file isolation
+        /// swap skips `rare.test_parallel_ipc_group` so the coordinator link
+        /// survives.
+        fn ensurePosixGroup(vm: *jsc.VirtualMachine) *uws.SocketGroup {
+            const g = vm.rareData().testParallelIPCGroup(vm);
+            // First Owner to call wins the vtable; coordinator and worker run
+            // in separate processes so there's never more than one Owner type
+            // sharing this group.
+            if (g.vtable == null) g.vtable = uws.vtable.make(PosixHandlers);
+            return g;
         }
 
         // -- Windows (uv.Pipe) ---------------------------------------------
@@ -102,8 +99,8 @@ pub fn Channel(comptime Owner: type, comptime owner_field: []const u8) type {
                 }
                 return true;
             }
-            const ctx = ensurePosixContext(vm);
-            const sock = Socket.fromFd(ctx, fd, Self, self, null, true) orelse return false;
+            const g = ensurePosixGroup(vm);
+            const sock = Socket.fromFd(g, .dynamic, fd, Self, self, null, true) orelse return false;
             self.backend.socket = sock;
             sock.setTimeout(0);
             return true;
@@ -284,25 +281,22 @@ pub fn Channel(comptime Owner: type, comptime owner_field: []const u8) type {
 
         // -- platform callbacks --------------------------------------------
 
+        /// `vtable.make()` shape: `(ext: **Self, *us_socket_t, …)`.
         const PosixHandlers = struct {
-            pub fn onOpen(_: *Self, _: Socket) void {}
-            pub fn onData(self: *Self, _: Socket, data: []const u8) void {
-                self.ingest(data);
+            pub const Ext = **Self;
+            pub fn onData(self: Ext, _: *uws.us_socket_t, data: []const u8) void {
+                self.*.ingest(data);
             }
-            pub fn onWritable(self: *Self, _: Socket) void {
-                self.flush();
+            pub fn onWritable(self: Ext, _: *uws.us_socket_t) void {
+                self.*.flush();
             }
-            pub fn onClose(self: *Self, _: Socket, _: c_int, _: ?*anyopaque) void {
-                self.backend.socket = .detached;
-                self.markDone();
+            pub fn onClose(self: Ext, _: *uws.us_socket_t, _: i32, _: ?*anyopaque) void {
+                self.*.backend.socket = .detached;
+                self.*.markDone();
             }
-            pub fn onEnd(_: *Self, sock: Socket) void {
-                sock.close(.normal);
+            pub fn onEnd(_: Ext, s: *uws.us_socket_t) void {
+                _ = s.close(.normal, null);
             }
-            pub fn onTimeout(_: *Self, _: Socket) void {}
-            pub fn onLongTimeout(_: *Self, _: Socket) void {}
-            pub fn onConnectError(_: *Self, _: Socket, _: c_int) void {}
-            pub fn onHandshake(_: *Self, _: Socket, _: i32, _: uws.us_bun_verify_error_t) void {}
         };
 
         const WindowsHandlers = struct {

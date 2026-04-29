@@ -707,7 +707,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         .requests = PostgresRequest.Queue.init(bun.default_allocator),
         .statements = PreparedStatementsMap{},
         .tls_config = tls_config,
-        .tls_ctx = tls_ctx,
+        .secure = secure,
         .ssl_mode = ssl_mode,
         .tls_status = if (ssl_mode != .disable) .pending else .none,
         .idle_timeout_interval_ms = @intCast(idle_timeout),
@@ -722,36 +722,19 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         const hostname = hostname_str.toUTF8(bun.default_allocator);
         defer hostname.deinit();
 
-        const ctx = vm.rareData().postgresql_context.tcp orelse brk: {
-            const ctx_ = uws.SocketContext.createNoSSLContext(vm.uwsLoop(), @sizeOf(*PostgresSQLConnection)).?;
-            uws.NewSocketHandler(false).configure(ctx_, true, *PostgresSQLConnection, SocketHandler(false));
-            vm.rareData().postgresql_context.tcp = ctx_;
-            break :brk ctx_;
-        };
+        // Postgres always opens plain TCP first (SSLRequest happens in-band),
+        // so even `ssl_mode != .disable` lands in the TCP group; `setupTLS()`
+        // adopts into `postgres_tls_group` after the server's `S`.
+        const group = vm.rareData().postgresGroup(vm, false);
+        const result = if (path.len > 0)
+            uws.SocketTCP.connectUnixGroup(group, .postgres, null, path, ptr, false)
+        else
+            uws.SocketTCP.connectGroup(group, .postgres, null, hostname.slice(), port, ptr, false);
 
-        if (path.len > 0) {
-            ptr.socket = .{
-                .SocketTCP = uws.SocketTCP.connectUnixAnon(path, ctx, ptr, false) catch |err| {
-                    tls_config.deinit();
-                    if (tls_ctx) |tls| {
-                        tls.deinit(true);
-                    }
-                    ptr.deinit();
-                    return globalObject.throwError(err, "failed to connect to postgresql");
-                },
-            };
-        } else {
-            ptr.socket = .{
-                .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
-                    tls_config.deinit();
-                    if (tls_ctx) |tls| {
-                        tls.deinit(true);
-                    }
-                    ptr.deinit();
-                    return globalObject.throwError(err, "failed to connect to postgresql");
-                },
-            };
-        }
+        ptr.socket = .{ .SocketTCP = result catch |err| {
+            ptr.deinit();
+            return globalObject.throwError(err, "failed to connect to postgresql");
+        } };
     }
 
     // only call toJS if connectUnixAnon does not fail immediately
@@ -902,6 +885,7 @@ pub fn deinit(this: *@This()) void {
     bun.freeSensitive(bun.default_allocator, this.options_buf);
 
     this.tls_config.deinit();
+    if (this.secure) |*s| s.deinit();
     bun.default_allocator.destroy(this);
 }
 

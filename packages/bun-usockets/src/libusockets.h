@@ -83,6 +83,13 @@
 #define LIBUS_SOCKET_DESCRIPTOR int
 #endif
 
+/* <stdint.h> pulls in glibc's <features.h>, which locks the feature-test
+ * macros for the rest of the TU. bsd.h needs _GNU_SOURCE for mmsghdr/accept4
+ * but is included after us, so set it here before any system header. */
+#if !defined(_WIN32) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
+
 #include "stddef.h"
 #include <stdint.h>
 

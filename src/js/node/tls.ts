@@ -454,29 +454,32 @@ const secureContextCache: Map<string, WeakRef<any>> = new Map();
 let secureContextCacheTrim = 0;
 
 function secureContextCacheKey(o) {
-  // Buffers/arrays are content-hashed by length + first 64 bytes; a false miss
-  // costs one extra SSL_CTX, never a false hit (different lengths can't collide
-  // and same-length-different-tail certs are not a thing in practice).
-  const h = v =>
-    v == null
-      ? ""
-      : typeof v === "string"
-        ? v
-        : $isJSArray(v)
-          ? v.map(h).join("|")
-          : $isTypedArrayView(v)
-            ? `b${v.byteLength}:${Buffer.prototype.hexSlice.$call(v, 0, Math.min(v.byteLength, 64))}`
-            : String(v);
-  return [
-    h(o.key),
-    h(o.cert),
-    h(o.ca),
-    o.passphrase ?? "",
-    o.ciphers ?? "",
-    o.secureOptions ?? 0,
-    o.rejectUnauthorized ?? "",
-    o.requestCert ?? "",
-  ].join("\x00");
+  // A false hit would hand one config's SSL_CTX to another (wrong CA / client
+  // cert), so the key must be collision-free over the full input. We feed every
+  // field into SHA-256 with explicit type+length tags so neither truncation nor
+  // delimiter bytes inside values can alias two configs. A false miss is fine
+  // (just one extra SSL_CTX), so unhashable shapes return null → uncached.
+  const sha = new Bun.CryptoHasher("sha256");
+  const tag = (t, s) => sha.update(t + s.length + ":").update(s);
+  const feed = v => {
+    if (v == null) sha.update("n");
+    else if (typeof v === "string") tag("s", v);
+    else if ($isJSArray(v)) {
+      sha.update("a" + v.length + "[");
+      for (const e of v) feed(e);
+      sha.update("]");
+    } else if ($isTypedArrayView(v)) tag("b", v);
+    else tag("o", String(v));
+  };
+  feed(o.key);
+  feed(o.cert);
+  feed(o.ca);
+  feed(o.passphrase);
+  feed(o.ciphers);
+  feed(o.secureOptions);
+  feed(o.rejectUnauthorized);
+  feed(o.requestCert);
+  return sha.digest("base64");
 }
 
 function createSecureContext(options) {

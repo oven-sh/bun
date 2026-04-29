@@ -3842,7 +3842,9 @@ pub const IPCInstance = struct {
     pub const deinit = bun.TrivialDeinit(@This());
 
     globalThis: *JSGlobalObject,
-    context: if (Environment.isPosix) *uws.SocketContext else void,
+    /// Embedded per-VM group on `RareData.spawn_ipc_group`; this is just a
+    /// borrowed handle so the isolation swap can skip it.
+    group: if (Environment.isPosix) *uws.SocketGroup else void,
     data: IPC.SendQueue,
     has_disconnect_called: bool = false,
 
@@ -3889,9 +3891,8 @@ pub const IPCInstance = struct {
         event_loop.enter();
         Process__emitDisconnectEvent(vm.global);
         event_loop.exit();
-        if (Environment.isPosix) {
-            this.context.deinit(false);
-        }
+        // Group is embedded in RareData and shared with subprocess IPC; nothing
+        // to free here.
         vm.channel_ref.disable();
     }
 
@@ -3920,12 +3921,11 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
 
     const instance = switch (Environment.os) {
         else => instance: {
-            const context = uws.SocketContext.createNoSSLContext(this.event_loop_handle.?, @sizeOf(usize)).?;
-            IPC.Socket.configure(context, true, *IPC.SendQueue, IPC.IPCHandlers.PosixSocket);
+            const group = this.rareData().spawnIPCGroup(this);
 
             var instance = IPCInstance.new(.{
                 .globalThis = this.global,
-                .context = context,
+                .group = group,
                 .data = undefined,
             });
 
@@ -3933,7 +3933,7 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
 
             instance.data = .init(opts.mode, .{ .virtual_machine = instance }, .uninitialized);
 
-            const socket = IPC.Socket.fromFd(context, opts.fd, IPC.SendQueue, &instance.data, null, true) orelse {
+            const socket = IPC.Socket.fromFd(group, .spawn_ipc, opts.fd, IPC.SendQueue, &instance.data, null, true) orelse {
                 instance.deinit();
                 this.ipc = null;
                 Output.warn("Unable to start IPC socket", .{});
@@ -3948,7 +3948,7 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
         .windows => instance: {
             var instance = IPCInstance.new(.{
                 .globalThis = this.global,
-                .context = {},
+                .group = {},
                 .data = undefined,
             });
             instance.data = .init(opts.mode, .{ .virtual_machine = instance }, .uninitialized);

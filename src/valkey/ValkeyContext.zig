@@ -1,26 +1,8 @@
-tcp: ?*uws.SocketContext = null,
-unix: ?*uws.SocketContext = null,
-tls: ?*uws.SocketContext = null,
-tls_unix: ?*uws.SocketContext = null,
+//! Per-VM Valkey state. The four cached `us_socket_context_t`s that used to
+//! live here are gone — connections link into `RareData.valkey_group` /
+//! `valkey_tls_group` instead, and the default-TLS `SSL_CTX` is
+//! `RareData.defaultClientSslCtx()`.
 
-pub fn deinit(this: *@This()) void {
-    if (this.tcp) |ctx| {
-        this.tcp = null;
-        ctx.deinit(false);
-    }
-    if (this.unix) |ctx| {
-        this.unix = null;
-        ctx.deinit(false);
-    }
-    if (this.tls) |ctx| {
-        this.tls = null;
-        ctx.deinit(true);
-    }
-    if (this.tls_unix) |ctx| {
-        this.tls_unix = null;
-        ctx.deinit(true);
-    }
-}
+pub fn deinit(_: *@This()) void {}
 
 const bun = @import("bun");
-const uws = bun.uws;

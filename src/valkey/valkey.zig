@@ -137,30 +137,22 @@ pub const Address = union(enum) {
         };
     }
 
-    pub fn connect(this: *const Address, client: *ValkeyClient, ctx: *bun.uws.SocketContext, is_tls: bool) !uws.AnySocket {
+    pub fn connect(
+        this: *const Address,
+        client: *ValkeyClient,
+        group: *uws.SocketGroup,
+        ssl_ctx: ?*uws.SslCtx,
+        is_tls: bool,
+    ) !uws.AnySocket {
         switch (is_tls) {
             inline else => |tls| {
                 const SocketType = if (tls) uws.SocketTLS else uws.SocketTCP;
                 const union_field = if (tls) "SocketTLS" else "SocketTCP";
-                switch (this.*) {
-                    .unix => |path| {
-                        return @unionInit(uws.AnySocket, union_field, try SocketType.connectUnixAnon(
-                            path,
-                            ctx,
-                            client,
-                            false,
-                        ));
-                    },
-                    .host => |h| {
-                        return @unionInit(uws.AnySocket, union_field, try SocketType.connectAnon(
-                            h.host,
-                            h.port,
-                            ctx,
-                            client,
-                            false,
-                        ));
-                    },
-                }
+                const kind: uws.SocketKind = if (tls) .valkey_tls else .valkey;
+                return @unionInit(uws.AnySocket, union_field, switch (this.*) {
+                    .unix => |path| try SocketType.connectUnixGroup(group, kind, ssl_ctx, path, client, false),
+                    .host => |h| try SocketType.connectGroup(group, kind, ssl_ctx, h.host, h.port, client, false),
+                });
             },
         }
     }

@@ -126,8 +126,35 @@ pub fn Valkey(comptime ssl: bool) type {
     return PtrHandler(bun.api.Valkey.JSValkeyClient, ssl);
 }
 
-// ── Bun.spawn IPC ───────────────────────────────────────────────────────────
-pub const SpawnIPC = PtrHandler(bun.spawn.ipc.Socket, false);
+// ── Bun.spawn IPC / process.send() ──────────────────────────────────────────
+// Ext is `*IPC.SendQueue` for both child-side `process.send` and parent-side
+// `Bun.spawn({ipc})`. Handlers live in `ipc.zig` as free functions, not
+// methods on SendQueue, so we adapt manually instead of via PtrHandler.
+pub const SpawnIPC = struct {
+    const IPC = bun.jsc.IPC;
+    const H = IPC.IPCHandlers.PosixSocket;
+    const S = uws.NewSocketHandler(false);
+    pub const Ext = **IPC.SendQueue;
+    pub fn onOpen(_: Ext, _: *us_socket_t, _: bool, _: []const u8) void {}
+    pub fn onData(this: Ext, s: *us_socket_t, data: []const u8) void {
+        H.onData(this.*, S.from(s), data);
+    }
+    pub fn onFd(this: Ext, s: *us_socket_t, fd: c_int) void {
+        H.onFd(this.*, S.from(s), fd);
+    }
+    pub fn onWritable(this: Ext, s: *us_socket_t) void {
+        H.onWritable(this.*, S.from(s));
+    }
+    pub fn onClose(this: Ext, s: *us_socket_t, code: i32, reason: ?*anyopaque) void {
+        H.onClose(this.*, S.from(s), code, reason);
+    }
+    pub fn onTimeout(this: Ext, s: *us_socket_t) void {
+        H.onTimeout(this.*, S.from(s));
+    }
+    pub fn onEnd(this: Ext, s: *us_socket_t) void {
+        H.onEnd(this.*, S.from(s));
+    }
+};
 
 const bun = @import("bun");
 const uws = bun.uws;

@@ -155,14 +155,17 @@ async function receiveBody(
     req.end();
     allowWrite();
   });
-  const body = await promise;
-  return {
-    body,
-    close: () => {
-      client.destroy();
-      server.close();
-    },
+  const close = () => {
+    client.destroy();
+    server.close();
   };
+  try {
+    const body = await promise;
+    return { body, close };
+  } catch (e) {
+    close();
+    throw e;
+  }
 }
 
 test("should strip Pad Length octet from DATA frame when Pad Length is 0", async () => {

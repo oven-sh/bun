@@ -87,7 +87,14 @@ pub fn BunListener(comptime ssl: bool) type {
         pub const Ext = *anyopaque; // unused — owner comes from group
         pub fn onOpen(_: Ext, s: *us_socket_t, _: bool, _: []const u8) void {
             const listener = s.rawGroup().owner(api.Listener);
-            api.Listener.onCreate(ssl, listener, S.from(s));
+            // onCreate allocates the NewSocket, stashes it in ext, and
+            // restamps kind → .bun_socket_*. Fire the user `open` handler
+            // (markActive, ALPN, JS callback) before returning so the same
+            // dispatch tick that accepted the fd sees an open socket — the
+            // old `configure({onCreate, onOpen})` path did this in one
+            // on_open call.
+            const ns = api.Listener.onCreate(ssl, listener, S.from(s));
+            swallow(ns.onOpen(S.from(s)));
         }
         // Accepted sockets reach the remaining events as `.bun_socket_*` once
         // onCreate has restamped them; if anything fires before that, route to

@@ -1221,9 +1221,6 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         pub fn init(
             outgoing: *CppWebSocket,
             input_socket: *anyopaque,
-            // Legacy slot for the C++-created child `us_socket_context_t`.
-            // Ignored — adoption targets the VM's `ws_client_group` directly.
-            _: ?*anyopaque,
             globalThis: *jsc.JSGlobalObject,
             buffered_data: [*]u8,
             buffered_data_len: usize,

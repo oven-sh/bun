@@ -162,19 +162,27 @@ int us_socket_is_established(struct us_socket_t *s) {
     return us_internal_poll_type((struct us_poll_t *) s) != POLL_TYPE_SEMI_SOCKET;
 }
 
-void us_connecting_socket_free(struct us_connecting_socket_t *c) {
-    // we can't just free c immediately, as it may be enqueued in the dns_ready_head list
-    // instead, we move it to a close list and free it after the iteration
-    struct us_loop_t *loop = c->group->loop;
-    us_internal_socket_group_unlink_connecting_socket(c->group, c);
-
+/* Detach c from its group + drop the borrowed SSL_CTX ref, but leave c
+ * allocated. After this, c->group is NULL and the embedding owner may safely
+ * deinit; the only remaining link is into a loop-owned list. */
+static void us_internal_connecting_socket_detach(struct us_connecting_socket_t *c, struct us_loop_t *loop) {
+    if (c->group) {
+        us_internal_socket_group_unlink_connecting_socket(c->group, c);
+        c->group = NULL;
+    }
     if (c->ssl_ctx) {
         us_internal_ssl_ctx_unref(c->ssl_ctx);
         c->ssl_ctx = NULL;
     }
+    (void)loop;
+}
 
-    c->next = loop->data.closed_connecting_head;
-    loop->data.closed_connecting_head = c;
+void us_connecting_socket_free(struct us_connecting_socket_t *c) {
+    // we can't just free c immediately, as it may be enqueued in the dns_ready_head list
+    // instead, we move it to a close list and free it after the iteration
+    us_internal_connecting_socket_detach(c, c->loop);
+    c->next = c->loop->data.closed_connecting_head;
+    c->loop->data.closed_connecting_head = c;
 }
 
 void us_connecting_socket_close(struct us_connecting_socket_t *c) {
@@ -216,7 +224,18 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
             us_dispatch_connecting_error(c, c->error);
             us_connecting_socket_free(c);
         } else {
+            /* Can't cancel — the resolve callback is already queued. Detach
+             * from the group NOW so the owner can deinit; after_resolve will
+             * see c->closed and only push c to the loop's closed list without
+             * touching the (possibly freed) group. Balance the keep-alive here
+             * for the same reason. */
+#ifdef _WIN32
+            group->loop->uv_loop->active_handles--;
+#else
+            group->loop->num_polls--;
+#endif
             us_dispatch_connecting_error(c, c->error);
+            us_internal_connecting_socket_detach(c, group->loop);
         }
         return;
     }
@@ -243,6 +262,7 @@ struct us_socket_t *us_socket_close(struct us_socket_t *s, int code, void *reaso
             s->prev = 0;
             s->next = 0;
             s->flags.low_prio_state = 0;
+            s->group->low_prio_count--;
         } else {
             us_internal_socket_group_unlink_socket(s->group, s);
         }
@@ -303,6 +323,7 @@ struct us_socket_t *us_socket_detach(struct us_socket_t *s) {
             s->prev = 0;
             s->next = 0;
             s->flags.low_prio_state = 0;
+            s->group->low_prio_count--;
         } else {
             us_internal_socket_group_unlink_socket(s->group, s);
         }
@@ -413,7 +434,12 @@ int us_socket_write(struct us_socket_t *s, const char *data, int length) {
 }
 
 int us_socket_raw_write(struct us_socket_t *s, const char *data, int length) {
-    if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
+    /* Bypass-TLS path: openssl.c uses this to flush close_notify *after*
+     * SSL_shutdown() has marked the SSL layer shut down, so checking
+     * us_socket_is_shut_down() here would deadlock the alert in userspace.
+     * Gate only on fd close and TCP-level FIN. */
+    if (us_socket_is_closed(s) ||
+        us_internal_poll_type(&s->p) == POLL_TYPE_SOCKET_SHUT_DOWN) {
         return 0;
     }
 
@@ -590,7 +616,7 @@ void us_socket_unref(struct us_socket_t *s) {
 }
 
 struct us_loop_t *us_connecting_socket_get_loop(struct us_connecting_socket_t *c) {
-    return c->group->loop;
+    return c->loop;
 }
 
 void us_socket_pause(struct us_socket_t *s) {

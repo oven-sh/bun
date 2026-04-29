@@ -105,6 +105,10 @@ long us_ssl_ctx_live_count(void) {
 static int us_ctx_ex_idx = -1;
 static int us_sni_ex_idx = -1;
 static int us_ssl_reneg_state_idx = -1;
+/* Per-SSL: the accepting us_listen_socket_t*. The SSL_CTX is shared and can
+ * outlive any one listener, so storing ls as the CTX-level servername_arg is a
+ * UAF after listener close (and overwritten on multi-listen). */
+static int us_ssl_listener_ex_idx = -1;
 
 #define US_RENEG_PACK(limit, window) ((void *)(uintptr_t)(((uint64_t)(limit) << 32) | (uint32_t)(window)))
 #define US_RENEG_LIMIT(p)  ((uint32_t)((uint64_t)(uintptr_t)(p) >> 32))
@@ -597,7 +601,8 @@ void us_internal_ssl_ctx_unref(void *p) {
 /* ── Per-socket SSL attach/detach ────────────────────────────────────────── */
 
 void us_internal_ssl_attach(struct us_socket_t *s, void *ssl_ctx_opaque,
-                            int is_client, const char *sni) {
+                            int is_client, const char *sni,
+                            struct us_listen_socket_t *listener) {
   SSL_CTX *ctx = (SSL_CTX *)ssl_ctx_opaque;
   us_internal_init_loop_ssl_data(s->group->loop);
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
@@ -616,6 +621,10 @@ void us_internal_ssl_attach(struct us_socket_t *s, void *ssl_ctx_opaque,
   } else {
     SSL_set_accept_state(ssl);
     SSL_set_renegotiate_mode(ssl, ssl_renegotiate_never);
+    /* sni_cb recovers ls per-SSL — never via the shared SSL_CTX. */
+    if (us_ssl_listener_ex_idx < 0)
+      us_ssl_listener_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+    SSL_set_ex_data(ssl, us_ssl_listener_ex_idx, listener);
   }
 
   s->ssl = ssl;
@@ -1068,9 +1077,19 @@ struct us_socket_t *us_socket_adopt_tls(struct us_socket_t *s,
   struct us_socket_t *new_s = us_socket_adopt(s, group, kind, old_ext_size, ext_size);
   if (!new_s) return NULL;
 
-  us_internal_ssl_attach(new_s, ssl_ctx, /*is_client*/1, sni);
+  us_internal_ssl_attach(new_s, ssl_ctx, /*is_client*/1, sni, NULL);
   us_socket_resume(new_s);
-  return us_internal_ssl_on_open(new_s, 1, NULL, 0);
+  /* Do NOT kick the handshake or dispatch on_open here — the caller hasn't
+   * repointed the ext slot yet, so any dispatch (open/handshake/close) would
+   * land in the old (TCP) owner. Caller stashes ext, sets kind, fires its own
+   * onOpen, then calls us_socket_start_tls_handshake() to send ClientHello. */
+  return new_s;
+}
+
+void us_socket_start_tls_handshake(struct us_socket_t *s) {
+  if (!s->ssl || us_socket_is_closed(s)) return;
+  ssl_set_loop_data(s);
+  ssl_update_handshake(s);
 }
 
 /* ── SNI on listen sockets ───────────────────────────────────────────────── */
@@ -1094,8 +1113,13 @@ static struct sni_node_t *resolve_listener_ctx(struct us_listen_socket_t *ls, co
 }
 
 static int sni_cb(SSL *ssl, int *al, void *arg) {
-  if (!ssl) return SSL_TLSEXT_ERR_NOACK;
-  struct us_listen_socket_t *ls = (struct us_listen_socket_t *)arg;
+  (void)al; (void)arg;
+  if (!ssl || us_ssl_listener_ex_idx < 0) return SSL_TLSEXT_ERR_NOACK;
+  /* The listener is per-SSL (set at accept), not the CTX-level arg — the
+   * SSL_CTX is shared and may outlive any one listener. */
+  struct us_listen_socket_t *ls =
+      (struct us_listen_socket_t *)SSL_get_ex_data(ssl, us_ssl_listener_ex_idx);
+  if (!ls) return SSL_TLSEXT_ERR_OK;
   const char *hostname = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
   if (hostname && hostname[0]) {
     struct sni_node_t *node = resolve_listener_ctx(ls, hostname);
@@ -1113,8 +1137,9 @@ int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
 
   if (!ls->sni) {
     ls->sni = sni_new();
+    /* Idempotent across listeners sharing this SSL_CTX — the callback reads
+     * the listener off the SSL, not the arg. */
     SSL_CTX_set_tlsext_servername_callback(default_ctx, sni_cb);
-    SSL_CTX_set_tlsext_servername_arg(default_ctx, ls);
   }
 
   struct sni_node_t *node = us_malloc(sizeof(struct sni_node_t));

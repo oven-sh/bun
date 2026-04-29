@@ -213,6 +213,7 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
         loop_data->low_prio_head = s->next;
         if (s->next) s->next->prev = 0;
         s->next = 0;
+        s->group->low_prio_count--;
 
         if(us_socket_is_closed(s)) {
             s->flags.low_prio_state = 2;
@@ -230,7 +231,7 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
 // Does not wake up the loop.
 void us_internal_dns_callback(struct us_connecting_socket_t *c, void* addrinfo_req) {
     (void)addrinfo_req; /* already stored on c by us_socket_group_connect */
-    struct us_loop_t *loop = c->group->loop;
+    struct us_loop_t *loop = c->loop;
     Bun__lock(&loop->data.mutex);
     c->next = loop->data.dns_ready_head;
     loop->data.dns_ready_head = c;
@@ -241,7 +242,7 @@ void us_internal_dns_callback(struct us_connecting_socket_t *c, void* addrinfo_r
 // Wakes up the loop.
 // Can be caleld from any thread.
 void us_internal_dns_callback_threadsafe(struct us_connecting_socket_t *c, void* addrinfo_req) {
-    struct us_loop_t *loop = c->group->loop;
+    struct us_loop_t *loop = c->loop;
     us_internal_dns_callback(c, addrinfo_req);
     us_wakeup_loop(loop);
 }
@@ -392,7 +393,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         us_internal_socket_group_link_socket(accept_group, s);
 
                         if (listen_socket->ssl_ctx) {
-                            us_internal_ssl_attach(s, listen_socket->ssl_ctx, /*is_client*/ 0, NULL);
+                            us_internal_ssl_attach(s, listen_socket->ssl_ctx, /*is_client*/ 0, NULL, listen_socket);
                             us_internal_ssl_on_open(s, 0, bsd_addr_get_ip(&addr), bsd_addr_get_ip_length(&addr));
                         } else {
                             us_dispatch_open(s, 0, bsd_addr_get_ip(&addr), bsd_addr_get_ip_length(&addr));
@@ -476,7 +477,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     } else {
                         struct us_poll_t* poll = &s->p;
                         us_poll_change(poll, loop, us_poll_events(poll) & LIBUS_SOCKET_WRITABLE);
-                        us_internal_socket_group_unlink_socket(s->group, s);
+                        struct us_socket_group_t *g = s->group;
+                        /* Queued sockets aren't in head_sockets while parked, so
+                         * the group's emptiness check needs this counter to know
+                         * the owner can't deinit yet. Bump BEFORE unlinking so
+                         * maybe_unlink() inside it still sees the group as
+                         * non-empty. */
+                        g->low_prio_count++;
+                        us_internal_socket_group_unlink_socket(g, s);
 
                         /* Link this socket to the low-priority queue - we use a LIFO queue, to prioritize newer clients that are
                          * maybe not already timeouted - sounds unfair, but works better in real-life with smaller client-timeouts

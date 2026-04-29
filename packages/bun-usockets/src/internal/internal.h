@@ -179,8 +179,11 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *s);
 void us_internal_socket_after_open(us_socket_r s, int error);
 /* SSL_new() + BIO setup + connect/accept state; sets s->ssl and the ssl_*
  * bitfields on us_socket_t. No separate per-socket allocation — `s->ssl` is a
- * direct SSL*, and the 6 state bits live in us_socket_t's pad-to-pointer gap. */
-void us_internal_ssl_attach(us_socket_r s, void /* SSL_CTX */ *ssl_ctx, int is_client, const char *sni);
+ * direct SSL*, and the 6 state bits live in us_socket_t's pad-to-pointer gap.
+ * `listener` is the accepting us_listen_socket_t (server) or NULL (client/
+ * adopt) — stashed per-SSL so sni_cb can resolve the right tree without
+ * relying on a shared SSL_CTX servername_arg. */
+void us_internal_ssl_attach(us_socket_r s, void /* SSL_CTX */ *ssl_ctx, int is_client, const char *sni, struct us_listen_socket_t *listener);
 /* SSL_free(s->ssl); s->ssl = NULL. Idempotent. */
 void us_internal_ssl_detach(us_socket_r s);
 
@@ -265,6 +268,10 @@ _Static_assert(sizeof(struct us_socket_flags) == 1, "us_socket_flags grew");
 struct us_connecting_socket_t {
     alignas(LIBUS_EXT_ALIGNMENT) struct addrinfo_request *addrinfo_req;
     struct us_socket_group_t *group;
+    /* Captured at create — stays valid after `group` is detached so the late
+     * after_resolve / dns_callback / free path never derefs into freed owner
+     * storage to find the loop. */
+    struct us_loop_t *loop;
     /* SSL_CTX to apply on open (borrowed; up_ref'd while in flight). */
     void *ssl_ctx;
     // this is used to track all dns resolutions in this connection
@@ -348,6 +355,10 @@ struct us_listen_socket_t {
   /* Group accepted sockets are linked into. Distinct from s.group (which is
    * the listener's own poll group). Usually the same pointer in practice. */
   struct us_socket_group_t *accept_group;
+  /* Intrusive link into accept_group->head_listen_sockets so close_all() and
+   * the test-isolation sweep can find listeners again (the old per-context
+   * head_listen_sockets list is gone). */
+  struct us_listen_socket_t *next;
   /* SSL_CTX for accepted sockets. Borrowed; up_ref'd on listen, freed on
    * close. NULL → plain TCP. */
   void *ssl_ctx;

@@ -101,10 +101,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         /// Returning null signals to the parent function that the connection failed.
         pub fn connect(
             global: *jsc.JSGlobalObject,
-            // Legacy slot for the shared C++ `us_socket_context_t`; the C++
-            // caller still passes a value but we ignore it — connect joins the
-            // VM's `ws_upgrade_group` directly.
-            _: ?*anyopaque,
             websocket: *CppWebSocket,
             host: *const bun.String,
             port: u16,

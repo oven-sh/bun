@@ -352,13 +352,20 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         pub fn connectGroup(
             g: *SocketGroup,
             kind: SocketKind,
-            ssl_ctx: ?*anyopaque, // *us_ssl_ctx_t
-            host: []const u8,
+            ssl_ctx: ?*anyopaque,
+            raw_host: []const u8,
             port: anytype,
             owner: anytype,
             allow_half_open: bool,
         ) !ThisSocket {
             const opts: c_int = if (allow_half_open) uws.LIBUS_SOCKET_ALLOW_HALF_OPEN else 0;
+            // getaddrinfo doesn't understand bracketed IPv6 literals; URL
+            // parsing leaves them in (`[::1]`), so strip here like the old
+            // connectAnon did.
+            const host = if (raw_host.len > 1 and raw_host[0] == '[' and raw_host[raw_host.len - 1] == ']')
+                raw_host[1 .. raw_host.len - 1]
+            else
+                raw_host;
             // SocketGroup.connect needs a NUL-terminated host.
             var stack: [256]u8 = undefined;
             const hostZ: [:0]const u8 = if (host.len < stack.len) blk: {

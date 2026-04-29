@@ -55,13 +55,16 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             socket.close(.normal);
         }
 
+        /// `ptr` is the *value* stored in the socket ext (the packed
+        /// `ActiveSocket` tagged pointer), already dereferenced by
+        /// `NsHandler` before reaching `Handler.on*`. No second deref.
         fn getTagged(ptr: *anyopaque) ActiveSocket {
-            return ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
+            return ActiveSocket.from(ptr);
         }
 
         pub fn getTaggedFromSocket(socket: HTTPSocket) ActiveSocket {
-            if (socket.ext(anyopaque)) |ctx| {
-                return getTagged(ctx);
+            if (socket.ext(*anyopaque)) |slot| {
+                return getTagged(slot.*);
             }
             return ActiveSocket.init(dead_socket);
         }

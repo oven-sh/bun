@@ -317,7 +317,7 @@ pub fn onNamePipeCreated(comptime ssl: bool, listener: *Listener) *NewSocket(ssl
 /// Allocates the `NewSocket` wrapper, stashes it in the socket ext, then
 /// re-stamps the kind to `.bun_socket_{tcp,tls}` so subsequent events route
 /// straight to `BunSocket` (the listener arm only fires once per accept).
-pub fn onCreate(comptime ssl: bool, listener: *Listener, socket: uws.NewSocketHandler(ssl)) void {
+pub fn onCreate(comptime ssl: bool, listener: *Listener, socket: uws.NewSocketHandler(ssl)) *NewSocket(ssl) {
     jsc.markBinding(@src());
     log("onCreate", .{});
 
@@ -341,6 +341,7 @@ pub fn onCreate(comptime ssl: bool, listener: *Listener, socket: uws.NewSocketHa
     }
     socket.socket.connected.setKind(if (ssl) .bun_socket_tls else .bun_socket_tcp);
     socket.setTimeout(120);
+    return this_socket;
 }
 
 pub fn addServerName(this: *Listener, global: *jsc.JSGlobalObject, hostname: JSValue, tls: JSValue) bun.JSError!JSValue {

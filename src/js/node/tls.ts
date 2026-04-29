@@ -479,6 +479,17 @@ function secureContextCacheKey(o) {
   feed(o.secureOptions);
   feed(o.rejectUnauthorized);
   feed(o.requestCert);
+  // The remaining knobs that feed `us_ssl_ctx_from_options`. Anything that
+  // changes what BoringSSL bakes into the SSL_CTX must be in the key, or two
+  // configs that differ only in (e.g.) minVersion would share one SSL_CTX.
+  feed(o.dhparam);
+  feed(o.secureProtocol);
+  feed(o.minVersion);
+  feed(o.maxVersion);
+  feed(o.honorCipherOrder);
+  feed(o.ecdhCurve);
+  feed(o.sigalgs);
+  feed(o.ALPNProtocols);
   return sha.digest("base64");
 }
 

@@ -254,9 +254,14 @@ struct us_socket_group_t {
     void *ext;
     struct us_socket_t *head_sockets;
     struct us_connecting_socket_t *head_connecting_sockets;
+    struct us_listen_socket_t *head_listen_sockets;
     struct us_socket_t *iterator;
     struct us_socket_group_t *prev, *next;
     uint32_t global_tick;
+    /* Sockets currently parked in loop->data.low_prio_head with s->group == this.
+     * They are NOT in head_sockets while queued, so close_all/deinit must
+     * account for them separately. */
+    uint16_t low_prio_count;
     unsigned char timestamp;
     unsigned char long_timestamp;
     unsigned char linked;
@@ -291,6 +296,9 @@ struct us_socket_t *us_socket_adopt(us_socket_r s, us_socket_group_r group,
 struct us_socket_t *us_socket_adopt_tls(us_socket_r s, us_socket_group_r group,
     unsigned char kind, void /* SSL_CTX */ *ssl_ctx, const char *sni,
     int old_ext_size, int ext_size) nonnull_fn_decl;
+/* Send ClientHello after adopt_tls. Separate so the caller can repoint the
+ * ext slot before any dispatch can fire. */
+void us_socket_start_tls_handshake(us_socket_r s) nonnull_fn_decl;
 
 /* ── Listen ───────────────────────────────────────────────────────────────
  * The listener owns: an embedded group for accepted sockets, the SSL_CTX

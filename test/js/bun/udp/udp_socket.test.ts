@@ -33,7 +33,14 @@ describe("udpSocket()", () => {
 
     test.each([
       ["config validation throws", { port: -1 }],
-      ["user getter throws", { get port() { throw new Error("nope"); } }],
+      [
+        "user getter throws",
+        {
+          get port() {
+            throw new Error("nope");
+          },
+        },
+      ],
       ["bind fails", { hostname: "256.256.256.256", port: 0 }],
     ] as const)("%s", async (_, options) => {
       const iterations = 200;

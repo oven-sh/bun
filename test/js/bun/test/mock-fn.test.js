@@ -794,6 +794,50 @@ describe("mock()", () => {
 
     expect(bar()()).toBe(true);
   });
+  describe("as constructor", () => {
+    test("Reflect.construct on mock wrapping Symbol does not crash", () => {
+      const fn = jest.fn(Symbol);
+      const instance = Reflect.construct(fn, []);
+      expect(typeof instance).toBe("object");
+      expect(typeof fn.mock.results[0].value).toBe("symbol");
+    });
+    test("new on mock wrapping Symbol returns an object", () => {
+      const fn = jest.fn(Symbol);
+      const instance = new fn();
+      expect(typeof instance).toBe("object");
+    });
+    test("construct with mockReturnValue(primitive) returns an object", () => {
+      const fn = jest.fn();
+      fn.mockReturnValue(42);
+      const instance = Reflect.construct(fn, []);
+      expect(typeof instance).toBe("object");
+    });
+    test("construct with no implementation returns an object", () => {
+      const fn = jest.fn();
+      const instance = Reflect.construct(fn, []);
+      expect(typeof instance).toBe("object");
+    });
+    test("construct on mock returning a string returns an object", () => {
+      const fn = jest.fn(() => "hello");
+      const instance = Reflect.construct(fn, []);
+      expect(typeof instance).toBe("object");
+    });
+    test("construct on mock returning an object returns that object", () => {
+      const obj = { foo: "bar" };
+      const fn = jest.fn(() => obj);
+      const instance = Reflect.construct(fn, []);
+      expect(instance).toBe(obj);
+    });
+    test("implementation receives the new instance as this when constructed", () => {
+      let capturedThis;
+      const fn = jest.fn(function () {
+        capturedThis = this;
+      });
+      const instance = new fn();
+      expect(typeof capturedThis).toBe("object");
+      expect(capturedThis).toBe(instance);
+    });
+  });
 });
 
 describe("spyOn", () => {

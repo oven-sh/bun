@@ -8904,8 +8904,12 @@ declare module "bun" {
      * position the cursor.
      *
      * As a standalone hover (no prior {@link mouseDown}), moves cursor
-     * to `(x, y)` firing plain `mousemove`/`pointermove` — works for
-     * `:hover` styles and cursor-CSS assertions.
+     * to `(x, y)`. On the Chrome backend this fires plain
+     * `mousemove`/`pointermove` events, so `:hover` styles apply and
+     * cursor-CSS assertions work. On the WebKit backend (macOS
+     * default) it currently only updates the internal cursor position
+     * without dispatching a DOM event — use the Chrome backend if you
+     * need `:hover` or `mousemove` assertions without a button held.
      *
      * @example
      * ```ts

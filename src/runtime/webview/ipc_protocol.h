@@ -155,15 +155,16 @@ struct MouseUpPayload {
     uint8_t buttonsMask; // bitmask of all pressed buttons AFTER this up
 };
 
-// For N-step moves the parent expands before send: (fromX,fromY) to (x,y)
-// interpolated in `steps` segments. The host fires steps+1 NSEvents total
-// (one per intermediate coord + the final) and Acks after the drain barrier.
+// For N-step moves the parent sends (fromX,fromY) → (x,y) plus a `steps`
+// count; the host interpolates in `steps` segments and fires `steps`
+// NSEvents total ((steps - 1) intermediates + the final) and Acks after
+// the drain barrier.
 struct MouseMovePayload {
     float fromX; // interpolation start
     float fromY;
     float x; // target
     float y;
-    uint32_t steps; // number of intermediate points between fromX/Y and x/y (>=1)
+    uint32_t steps; // total number of move events to dispatch (>=1)
     uint8_t buttonsMask; // pressed-button bitmask (determines move vs dragged event type)
     uint8_t modifiers;
 };

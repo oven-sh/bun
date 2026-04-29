@@ -428,14 +428,18 @@ bool WebViewHost::mouseUpIPC(float x, float y, uint8_t button, uint8_t modifiers
     return true;
 }
 
-// mouseMove: dispatch `steps` intermediate events + one final. When
-// buttonsMask==0 we fire MouseMoved via mouseMoved:. With a button held
-// it's mouseDragged (or right/other variant) — AppKit's responder
-// chain uses a separate selector. If multiple buttons are held we pick
-// the lowest-order set bit for the drag selector; WebKit processes a
-// single drag event per main loop tick, so one NSEvent per intermediate
-// coord is what the handlers see. Each event still lands in
-// mouseEventQueue and the final barrier drains them all.
+// mouseMove: fire `steps` NSEvents total = (steps - 1) intermediate
+// drag events interpolated from (fromX,fromY) → (x,y), then one final
+// event at the target. When buttonsMask==0 we sync-Ack without
+// dispatching any NSEvent (see the hover-path rationale below — the
+// _simulateMouseMove: SPI hangs the barrier on macOS 14/15 aarch64).
+// With a button held it's mouseDragged: (or right/other variant) —
+// AppKit's responder chain uses a separate selector per button. If
+// multiple buttons are held we pick the lowest-order set bit (left >
+// right > middle) for the drag selector. WebKit processes a single
+// drag event per main loop tick, so one NSEvent per intermediate coord
+// is what the handlers see. Each event lands in mouseEventQueue and
+// the final barrier drains them all.
 bool WebViewHost::mouseMoveIPC(float fromX, float fromY, float x, float y, uint32_t steps, uint8_t buttonsMask, uint8_t modifiers)
 {
     using NSEvent = objc::NSEvent;
@@ -482,14 +486,19 @@ bool WebViewHost::mouseMoveIPC(float fromX, float fromY, float x, float y, uint3
 
     // AppKit's responder chain uses a separate selector per button drag
     // (mouseDragged: / rightMouseDragged: / otherMouseDragged:). Pick
-    // the lowest-order set button; multi-button drags are rare enough
-    // that one event per tick is fine.
+    // the lowest-order set button (left wins over right wins over
+    // middle); multi-button drags are rare enough that one event per
+    // tick is fine. Matches the Chrome backend's priority in
+    // ChromeBackend::mouseMove.
     enum class MoveKind { LeftDrag,
         RightDrag,
         OtherDrag };
     unsigned long evtType = NSEvent::LeftMouseDragged;
     MoveKind kind = MoveKind::LeftDrag;
-    if (buttonsMask & 0x2) {
+    if (buttonsMask & 0x1) {
+        // Left — keep LeftDrag default (explicit so 0x3, 0x5, 0x7 all
+        // pick left instead of falling through to right/middle).
+    } else if (buttonsMask & 0x2) {
         evtType = NSEvent::RightMouseDragged;
         kind = MoveKind::RightDrag;
     } else if (buttonsMask & 0x4) {

@@ -459,7 +459,10 @@ bool ObjCRuntime::load()
     //
     // Non-fatal if it fails: event.buttons falls back to 0, drag tests
     // that rely on it break, but the rest of the input API still works.
-    // Logged via m_loadError but we continue.
+    // Failure is silent (no m_loadError) because every AppKit class we
+    // care about has this class method — if it's missing we're on a
+    // compatibility build where a log line wouldn't be actionable
+    // anyway.
     auto pressedMouseButtonsImpl = +[](id, SEL) -> unsigned long {
         return NSEvent::s_trackedButtonsMask;
     };

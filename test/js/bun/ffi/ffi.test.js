@@ -1029,9 +1029,7 @@ describe("calling an FFI symbol after close()", () => {
     lib.close();
 
     expect(() => strlen(Buffer.from("bun\0"))).toThrow(TypeError);
-    expect(() => strlen(Buffer.from("bun\0"))).toThrow(
-      "Cannot call an FFI function after the library has been closed",
-    );
+    expect(() => strlen(Buffer.from("bun\0"))).toThrow("Cannot call an FFI function after the library has been closed");
     expect(() => native(Buffer.from("bun\0"))).toThrow(TypeError);
   });
 });

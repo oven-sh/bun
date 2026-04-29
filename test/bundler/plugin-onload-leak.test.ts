@@ -9,15 +9,26 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // RSS is too noisy for a ~200-byte-per-file leak in debug/ASAN builds, so we
 // use heapStats({dump:true}).mimallocDump to count live blocks in the main
 // mimalloc heap (seq 0) directly — bun.default_allocator allocates there.
-// Each unfreed Load struct is one live block; (moduleCount * iterations)
-// leaked blocks is an unambiguous signal that survives allocator noise.
+//
+// There is a separate pre-existing per-import ParseTask leak in
+// resolveImportRecords; to keep this test independent of that leak's state
+// we measure a control (real-file imports, no onLoad) and a test case
+// (virtual imports with onLoad) that share the same import-resolution work,
+// then assert on the difference — which isolates the Load-struct
+// contribution.
 test("Bun.build onLoad plugin does not leak the Load struct per matched file", async () => {
   const moduleCount = 100;
   const iterations = 20;
-  const imports = Array.from({ length: moduleCount }, (_, i) => `import "virtual:mod${i}";`).join("\n");
 
-  using dir = tempDir("bundler-onload-leak", {
-    "index.ts": imports + "\nexport const ok = 1;\n",
+  const files: Record<string, string> = {
+    // control entry: imports real files so ParseTask allocation matches the
+    // virtual case, but no onLoad is registered -> no Load structs created.
+    "control.ts":
+      Array.from({ length: moduleCount }, (_, i) => `import "./real/m${i}.ts";`).join("\n") +
+      "\nexport const ok = 1;\n",
+    // test entry: imports virtual modules that the onLoad plugin matches.
+    "virtual.ts":
+      Array.from({ length: moduleCount }, (_, i) => `import "virtual:m${i}";`).join("\n") + "\nexport const ok = 1;\n",
     "build.ts": /* ts */ `
         import { heapStats } from "bun:jsc";
 
@@ -28,11 +39,6 @@ test("Bun.build onLoad plugin does not leak the Load struct per matched file", a
             build.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({ contents: "export default 1;", loader: "js" }));
           },
         };
-
-        async function once() {
-          const result = await Bun.build({ entrypoints: ["./index.ts"], plugins: [plugin], target: "bun" });
-          if (!result.success) throw new AggregateError(result.logs, "build failed");
-        }
 
         function liveBlocks(): number {
           Bun.gc(true);
@@ -45,26 +51,40 @@ test("Bun.build onLoad plugin does not leak the Load struct per matched file", a
           return total;
         }
 
-        // Warm up: let per-build heaps and caches reach steady state.
-        for (let i = 0; i < 3; i++) await once();
-        const before = liveBlocks();
+        async function measure(entry: string, plugins: import("bun").BunPlugin[]): Promise<number> {
+          async function once() {
+            const result = await Bun.build({ entrypoints: [entry], plugins, target: "bun" });
+            if (!result.success) throw new AggregateError(result.logs, "build failed");
+          }
+          // Warm up: let per-build heaps and caches reach steady state.
+          for (let i = 0; i < 3; i++) await once();
+          const before = liveBlocks();
+          for (let i = 0; i < ${iterations}; i++) await once();
+          return liveBlocks() - before;
+        }
 
-        for (let i = 0; i < ${iterations}; i++) await once();
-        const after = liveBlocks();
-
-        const delta = after - before;
+        const control = await measure("./control.ts", []);
+        const withOnLoad = await measure("./virtual.ts", [plugin]);
+        const onLoadContribution = withOnLoad - control;
         const perOnLoad = ${moduleCount} * ${iterations};
-        console.error("live block delta:", delta, "over", ${iterations}, "builds (", perOnLoad, "onLoad matches )");
-        // There is a separate pre-existing ParseTask leak of ~perOnLoad blocks
-        // in the import-resolution path that is not addressed here; the
-        // threshold sits between "one per-onLoad leak" and "two per-onLoad
-        // leaks" so the Load-struct leak alone trips it.
-        const threshold = Math.floor(perOnLoad * 1.5);
-        if (delta > threshold) {
-          throw new Error("leaked " + delta + " live mimalloc blocks over " + ${iterations} + " builds (threshold " + threshold + ")");
+
+        console.error("control:", control, " with onLoad:", withOnLoad, " onLoad contribution:", onLoadContribution, "(", perOnLoad, "matches )");
+
+        // With the leak, onLoadContribution is ~perOnLoad (one Load struct per
+        // match). Without the leak it is ~0. Threshold at half gives wide
+        // margin either side and stays correct whether or not the unrelated
+        // ParseTask leak is present.
+        const threshold = Math.floor(perOnLoad * 0.5);
+        if (onLoadContribution > threshold) {
+          throw new Error(
+            "onLoad leaked " + onLoadContribution + " live mimalloc blocks over " + ${iterations} + " builds (threshold " + threshold + ")",
+          );
         }
       `,
-  });
+  };
+  for (let i = 0; i < moduleCount; i++) files[`real/m${i}.ts`] = "export default 1;\n";
+
+  using dir = tempDir("bundler-onload-leak", files);
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--smol", "build.ts"],
@@ -80,5 +100,5 @@ test("Bun.build onLoad plugin does not leak the Load struct per matched file", a
   expect(stderr).not.toContain("build failed");
   expect(stdout).toBe("");
   expect(exitCode).toBe(0);
-  // 23 Bun.build() calls take ~15s under debug ASAN; default 5s is not enough.
-}, 60_000);
+  // 46 Bun.build() calls take ~30s under debug ASAN; default 5s is not enough.
+}, 90_000);

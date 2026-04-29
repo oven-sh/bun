@@ -879,6 +879,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const resp = upgrader.resp.?;
             const ctx = upgrader.upgrade_context.?;
 
+            // Keep the upgrader alive across option getters below, which run
+            // arbitrary user JS. A re-entrant server.upgrade(req) from a getter
+            // would otherwise be able to deref this context out from under us.
+            upgrader.ref();
+            defer upgrader.deref();
+
             var sec_websocket_key_str = ZigString.Empty;
 
             var sec_websocket_protocol = ZigString.Empty;
@@ -1001,6 +1007,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         return error.JSError;
                     }
                 }
+            }
+
+            // Option getters above may have run arbitrary JS, including a
+            // re-entrant server.upgrade(req) on this same request. If that
+            // happened the upgrade has already been consumed and the cached
+            // `resp`/`ctx` locals now point at a socket that has been turned
+            // into a WebSocket — using them again would be UB.
+            if (upgrader.isAbortedOrEnded() or upgrader.didUpgradeWebSocket()) {
+                return .false;
             }
 
             var cookies_to_write: ?*WebCore.CookieMap = null;

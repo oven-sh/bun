@@ -295,15 +295,15 @@ pub const SpawnIPC = struct {
     }
 };
 
+const IPC = @import("../../bun.js/ipc.zig");
+const js_valkey = @import("../../valkey/js_valkey.zig");
+const mysql = @import("../../sql/mysql.zig");
+const websocket_client = @import("../../http/websocket_client.zig");
+const websocket_upgrade_client = @import("../../http/websocket_client/WebSocketUpgradeClient.zig");
+
 const bun = @import("bun");
 const api = bun.jsc.API;
 
 const uws = bun.uws;
 const ConnectingSocket = uws.ConnectingSocket;
 const us_socket_t = uws.us_socket_t;
-
-const websocket_upgrade_client = @import("../../http/websocket_client/WebSocketUpgradeClient.zig");
-const websocket_client = @import("../../http/websocket_client.zig");
-const mysql = @import("../../sql/mysql.zig");
-const js_valkey = @import("../../valkey/js_valkey.zig");
-const IPC = @import("../../bun.js/ipc.zig");

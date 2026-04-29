@@ -387,9 +387,9 @@ pub fn deinit(this: *@This()) void {
     this.parent().deinit();
 }
 
-pub fn drain(this: *@This()) bun.ByteList {
+pub fn drain(this: *@This()) std.ArrayListUnmanaged(u8) {
     if (this.buffer.items.len > 0) {
-        return bun.ByteList.moveFromList(&this.buffer);
+        return this.buffer.moveToUnmanaged();
     }
     return .{};
 }

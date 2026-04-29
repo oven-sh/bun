@@ -160,18 +160,18 @@ fn clearData(this: *ByteBlobLoader) void {
     }
 }
 
-pub fn drain(this: *ByteBlobLoader) bun.ByteList {
+pub fn drain(this: *ByteBlobLoader) std.ArrayListUnmanaged(u8) {
     const store = this.store orelse return .{};
     var temporary = store.sharedView();
     temporary = temporary[this.offset..];
     temporary = temporary[0..@min(16384, @min(temporary.len, this.remain))];
 
-    var byte_list = bun.ByteList.fromBorrowedSliceDangerous(temporary);
-    const cloned = bun.handleOom(byte_list.clone(bun.default_allocator));
-    this.offset +|= @as(Blob.SizeType, cloned.len);
-    this.remain -|= @as(Blob.SizeType, cloned.len);
+    const cloned = bun.default_allocator.alloc(u8, temporary.len) catch bun.outOfMemory();
+    @memcpy(cloned, temporary);
+    this.offset +|= @as(Blob.SizeType, @truncate(temporary.len));
+    this.remain -|= @as(Blob.SizeType, @truncate(temporary.len));
 
-    return cloned;
+    return .{ .items = cloned, .capacity = cloned.len };
 }
 
 pub fn toBufferedValue(this: *ByteBlobLoader, globalThis: *JSGlobalObject, action: streams.BufferAction.Tag) bun.JSError!JSValue {
@@ -192,6 +192,7 @@ pub fn memoryCost(this: *const ByteBlobLoader) usize {
 }
 
 const bun = @import("bun");
+const std = @import("std");
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

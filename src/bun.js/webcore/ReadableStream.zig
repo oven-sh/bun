@@ -418,7 +418,7 @@ pub fn NewSource(
     comptime onCancel: fn (this: *Context) void,
     comptime deinit_fn: fn (this: *Context) void,
     comptime setRefUnrefFn: ?fn (this: *Context, enable: bool) void,
-    comptime drainInternalBuffer: ?fn (this: *Context) bun.ByteList,
+    comptime drainInternalBuffer: ?fn (this: *Context) std.ArrayListUnmanaged(u8),
     comptime memoryCostFn: ?fn (this: *const Context) usize,
     comptime toBufferedValue: ?fn (this: *Context, globalThis: *jsc.JSGlobalObject, action: streams.BufferAction.Tag) bun.JSError!jsc.JSValue,
 ) type {
@@ -534,7 +534,7 @@ pub fn NewSource(
             return null;
         }
 
-        pub fn drain(this: *This) bun.ByteList {
+        pub fn drain(this: *This) std.ArrayListUnmanaged(u8) {
             if (drainInternalBuffer) |drain_fn| {
                 return drain_fn(&this.context);
             }
@@ -770,9 +770,11 @@ pub fn NewSource(
             pub fn drain(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
                 jsc.markBinding(@src());
                 this.this_jsvalue = callFrame.this();
-                var list = this.drain();
-                if (list.len > 0) {
-                    return jsc.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis);
+                const list = this.drain();
+                if (list.items.len > 0) {
+                    // Use JSUint8Array.fromBytes which accepts usize length,
+                    // avoiding the u32 overflow in ArrayBuffer.fromBytes for >4GB buffers.
+                    return jsc.JSUint8Array.fromBytes(globalThis, list.items);
                 }
                 return .js_undefined;
             }
@@ -839,6 +841,8 @@ pub fn NewSource(
         };
     };
 }
+
+const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;

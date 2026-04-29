@@ -1,7 +1,7 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
 import path, { join } from "path";
 import { buildNoThrow } from "./buildNoThrow";
 
@@ -1123,3 +1123,58 @@ export { greeting };`,
     expect(result.success).toBeDefined();
   });
 });
+
+// On release builds mimalloc's large-allocation arenas make RSS growth too
+// non-deterministic to draw a clean line between "leaking" and "not leaking"
+// for this path. Under debug/ASAN the allocator behaviour is stable enough to
+// measure reliably, so we only assert there.
+test.skipIf(!isDebug && !isASAN)(
+  "Bun.build sourcemap: 'inline' with no outdir does not leak sourcemap JSON",
+  async () => {
+    // The in-memory build path used to leak the intermediate sourcemap JSON
+    // buffer: it is base64-encoded into the output and then dropped without a
+    // free. To make the leak observable we make the sourcemap JSON huge —
+    // "sourcesContent" embeds the full input source, so a ~30MB comment in the
+    // entry produces a ~30MB sourcemap JSON while keeping the actual bundle
+    // work trivial. 8 leaked builds ≈ ~240MB that can never be reclaimed.
+    //
+    // RSS is noisy between builds, so we settle with several GC+sleep cycles
+    // before each sample to let JSC collect the output blobs and mimalloc
+    // purge freed pages.
+    const dir = tempDirWithFiles("bun-build-inline-sourcemap-leak", {
+      "entry.ts": "export const a = 1;\n/* " + "x".repeat(30 * 1024 * 1024) + " */\n",
+      "run.ts": `
+        const entry = process.argv[2];
+        async function build() {
+          const res = await Bun.build({ entrypoints: [entry], sourcemap: "inline" });
+          if (!res.success) throw new AggregateError(res.logs, "build failed");
+        }
+        async function settle() {
+          for (let i = 0; i < 4; i++) { Bun.gc(true); await Bun.sleep(10); }
+        }
+        for (let i = 0; i < 2; i++) await build();
+        await settle();
+        const before = process.memoryUsage.rss();
+        for (let i = 0; i < 8; i++) await build();
+        await settle();
+        const after = process.memoryUsage.rss();
+        console.log(JSON.stringify({ before, after, growth: after - before }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", join(dir, "run.ts"), join(dir, "entry.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const { growth } = JSON.parse(stdout.trim());
+    // Observed (2 warmup + 8 measured, settled): ~220-250MB with the free,
+    // ~590-650MB without it.
+    expect(growth).toBeLessThan(400 * 1024 * 1024);
+  },
+  120_000,
+);

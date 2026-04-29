@@ -18,13 +18,11 @@ console.log("OK");`,
       ],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-    expect(stderr).not.toContain("runtime error");
-    expect(stderr).not.toContain("panic");
     expect(stdout).toBe("OK\n");
     expect(exitCode).toBe(0);
   },

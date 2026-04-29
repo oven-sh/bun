@@ -229,6 +229,7 @@ function ClientRequest(input, options, cb) {
     }
 
     // If request is destroyed we abort the current response
+    const hadAbortController = this[kAbortController] != null;
     this[kAbortController]?.abort?.();
     this.socket.destroy(err);
 
@@ -253,6 +254,14 @@ function ClientRequest(input, options, cb) {
       }
     }
     releaseAgentSocket();
+
+    // If there was no AbortController (request was queued behind maxSockets
+    // and never reached send()/flushHeaders(), or was never ended), the
+    // abort() → onAbort → socketCloseListener() path above was a no-op.
+    // Emit 'close' directly so consumers awaiting it don't hang.
+    if (!hadAbortController) {
+      socketCloseListener();
+    }
 
     return this;
   };

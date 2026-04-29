@@ -189,4 +189,43 @@ describe("node:http Agent socket accounting", () => {
       server.close();
     }
   });
+
+  test("destroying a queued request emits 'close' and removes it from agent.requests", async () => {
+    const agent = new http.Agent({ maxSockets: 1 });
+
+    const server = http.createServer(() => {
+      // never respond
+    });
+    server.listen(0);
+    try {
+      await once(server, "listening");
+      const port = (server.address() as AddressInfo).port;
+      const name = agent.getName({ port });
+
+      const r1 = http.get({ port, agent }, () => {});
+      r1.on("error", () => {});
+      const r2 = http.get({ port, agent }, () => {});
+      r2.on("error", () => {});
+
+      // r2 is queued (no socket slot yet, no AbortController created).
+      expect(agent.requests[name]!.length).toBe(1);
+
+      const closed = once(r2, "close");
+      r2.destroy();
+      // Must emit 'close' even though the onAbort path was never set up.
+      await closed;
+
+      expect(r2.destroyed).toBe(true);
+      expect(name in agent.requests).toBe(false);
+      // r1 still holds its slot.
+      expect(agent.totalSocketCount).toBe(1);
+
+      r1.destroy();
+      await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+      expect(agent.totalSocketCount).toBe(0);
+    } finally {
+      agent.destroy();
+      server.close();
+    }
+  });
 });

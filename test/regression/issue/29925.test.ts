@@ -25,8 +25,7 @@ import { existsSync } from "node:fs";
 
 const REDIS_SERVER = "/usr/bin/redis-server";
 const REDIS_CLI = "/usr/bin/redis-cli";
-const redisAvailable =
-  !isWindows && existsSync(REDIS_SERVER) && existsSync(REDIS_CLI);
+const redisAvailable = !isWindows && existsSync(REDIS_SERVER) && existsSync(REDIS_CLI);
 
 // Spawn a fresh redis-server on a random port for this test.
 async function spawnRedis(): Promise<{ port: number; stop: () => void }> {

@@ -105,7 +105,8 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
             },
             opening_brace => {
                 var sub_array_offset: usize = 0;
-                const sub_array = try parseArray(slice, bigint, arrayType, globalObject, &sub_array_offset, is_json_sub_array);
+                var sub_array = try parseArray(slice, bigint, arrayType, globalObject, &sub_array_offset, is_json_sub_array);
+                errdefer sub_array.deinit();
                 try array.append(bun.default_allocator, sub_array);
                 slice = trySlice(slice, sub_array_offset);
                 continue;
@@ -431,7 +432,8 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
                                 if (arrayType == .json_array or arrayType == .jsonb_array) {
                                     if (slice[0] == '[') {
                                         var sub_array_offset: usize = 0;
-                                        const sub_array = try parseArray(slice, bigint, arrayType, globalObject, &sub_array_offset, true);
+                                        var sub_array = try parseArray(slice, bigint, arrayType, globalObject, &sub_array_offset, true);
+                                        errdefer sub_array.deinit();
                                         try array.append(bun.default_allocator, sub_array);
                                         slice = trySlice(slice, sub_array_offset);
                                         continue;

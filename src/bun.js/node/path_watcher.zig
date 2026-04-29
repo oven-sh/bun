@@ -48,7 +48,11 @@ pub const PathWatcherManager = struct {
     platform: Platform = .{},
 
     pub fn get() bun.sys.Maybe(*PathWatcherManager) {
-        if (default_manager) |m| return .{ .result = m };
+        // No unlocked fast path: `default_manager` is a plain global and an unsynchronized
+        // read here would be textbook broken DCLP (a concurrent Worker's first `fs.watch()`
+        // on ARM64 could observe the non-null pointer before `m.* = .{}` is visible and
+        // lock a garbage `m.mutex`). `get()` runs once per `fs.watch()` call; the mutex is
+        // uncontended after initialization.
         default_manager_mutex.lock();
         defer default_manager_mutex.unlock();
         if (default_manager) |m| return .{ .result = m };
@@ -317,11 +321,15 @@ pub fn watch(
     // is scheduled anyway.
     if (comptime !Environment.isMac) {
         if (Platform.addWatch(manager, watcher).asErr()) |err| {
+            // Still under the same lock as the map insertion, so no other thread
+            // can have observed `watcher` yet — unconditional destroy is safe.
             manager.unlinkWatcherLocked(watcher);
             manager.mutex.unlock();
             watcher.manager = null;
             watcher.destroy();
-            return .{ .err = err };
+            // `Linux.addOne` builds the error with `.path = watcher.path`, which we
+            // just freed; strip it like every other return in this function.
+            return .{ .err = err.withoutPath() };
         }
         manager.mutex.unlock();
         return .{ .result = watcher };
@@ -330,12 +338,26 @@ pub fn watch(
     manager.mutex.unlock();
 
     if (Platform.addWatch(manager, watcher).asErr()) |err| {
+        // `watcher` was visible in the dedup map while we were unlocked above; a
+        // concurrent Worker's `fs.watch()` on the same path may have attached a
+        // handler and already returned `watcher` to its caller. Only destroy if
+        // ours was the last handler; otherwise surface the error to the survivors
+        // and leave `watcher.manager` set so their `detach()` takes the locked path
+        // (→ `unlinkWatcherLocked` no-ops, `removeWatch` no-ops on null `fsevents`,
+        // then frees). Never free memory another thread holds.
         manager.mutex.lock();
         manager.unlinkWatcherLocked(watcher);
-        manager.mutex.unlock();
+        _ = watcher.handlers.swapRemove(ctx);
+        if (watcher.handlers.count() > 0) {
+            watcher.emitError(err);
+            watcher.flush();
+            manager.mutex.unlock();
+            return .{ .err = err.withoutPath() };
+        }
         watcher.manager = null;
+        manager.mutex.unlock();
         watcher.destroy();
-        return .{ .err = err };
+        return .{ .err = err.withoutPath() };
     }
     return .{ .result = watcher };
 }

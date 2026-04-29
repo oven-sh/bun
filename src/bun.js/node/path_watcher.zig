@@ -921,8 +921,13 @@ const Kqueue = struct {
 
             for (events[0..@intCast(count)]) |kev| {
                 // Validate via the map — the entry may have been freed by a racing
-                // removeWatch between kevent() returning and us taking the lock.
+                // removeWatch between kevent() returning and us taking the lock. POSIX
+                // recycles the lowest fd on open(), so the ident could also now belong
+                // to an *unrelated* watch registered in that same window; `udata` was
+                // set to the original entry pointer at registration and survives in the
+                // already-delivered event, so use it to reject stale fd-reuse hits.
                 const entry = plat.entries.get(@intCast(kev.ident)) orelse continue;
+                if (@intFromPtr(entry) != kev.udata) continue;
                 const watcher = entry.watcher;
 
                 const event_type: PathWatcher.EventType = if (kev.fflags &

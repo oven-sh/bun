@@ -187,15 +187,17 @@ test.skipIf(isWindows)("fs.watch works without any module-graph watcher state", 
         w.close();
       });
       // Poke the file until the watcher fires. Bounded retry loop; bails out as
-      // soon as the callback flips 'done'.
+      // soon as the callback flips 'done'. 25ms between attempts so macOS (where
+      // file watches now go through FSEvents — async-scheduled stream + ~50ms
+      // coalescing latency) can't exhaust the budget before the first callback.
       let i = 0;
       const tick = () => {
         if (done) return;
         if (i++ > 200) { console.log("MISS"); process.exit(1); }
         fs.writeFileSync(file, String(i));
-        setImmediate(tick);
+        setTimeout(tick, 25);
       };
-      setImmediate(tick);
+      setTimeout(tick, 25);
     `,
   });
 

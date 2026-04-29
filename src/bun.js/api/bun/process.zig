@@ -2343,9 +2343,11 @@ pub const sync = struct {
 
         // no-orphans: replace the blind `poll()`/`wait4()` with a wait loop
         // that also watches our parent (and on macOS, the script's whole spawn
-        // tree via NOTE_FORK + p_puniqueid). Runs on both Linux and macOS so
-        // the pgroup-kill cleanup happens *before* PDEATHSIG can SIGKILL us.
-        if (no_orphans) {
+        // tree via NOTE_FORK + p_puniqueid). Linux/macOS only — other POSIX
+        // (FreeBSD) falls through to the original `poll()`+`wait4()` below so
+        // buffered stdio still drains; the `defer` above still does the
+        // pgroup kill + tcsetpgrp restore there.
+        if (no_orphans and (Environment.isLinux or Environment.isMac)) {
             const ppid = bun.ParentDeathWatchdog.ppidToWatch() orelse 0;
             switch (waitForChildNoOrphans(process.pid, ppid, process.pidfd, &out, &out_fds_to_wait_for, &out_fds)) {
                 .err => |err| return .{ .err = err },
@@ -2427,8 +2429,7 @@ pub const sync = struct {
             return waitMacKqueue(child, ppid, out, out_fds_to_wait_for, out_fds);
         if (comptime Environment.isLinux)
             return waitLinuxSignalfd(child, ppid, out, out_fds_to_wait_for, out_fds);
-        _ = .{ ppid, out, out_fds_to_wait_for, out_fds };
-        return .{ .result = reapChild(child) };
+        comptime unreachable; // gated to Linux/Mac at the call site
     }
 
     fn waitMacKqueue(

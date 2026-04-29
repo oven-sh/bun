@@ -99,6 +99,19 @@ AbortSignal::AbortSignal(ScriptExecutionContext* context, Aborted aborted, JSC::
 
 AbortSignal::~AbortSignal()
 {
+    // Invalidate WeakPtrs to this signal before our members (notably
+    // m_algorithms) are destroyed. A listener registered on this signal
+    // with { signal: this } stores a WeakPtr<AbortSignal> back to us on its
+    // RegisteredEventListener; without this the base ~EventTarget() (which
+    // runs after m_algorithms is freed but before the CanMakeWeakPtr base
+    // destructor revokes the factory) would call markAsRemoved(), resolve
+    // that WeakPtr, ref() a mid-deletion object, and call removeAlgorithm()
+    // on the freed vector. Clearing only the impl's object pointer leaves
+    // the impl itself (and the EventTargetData it hosts) intact so
+    // ~EventTarget()'s eventTargetData() lookup still works.
+    if (auto* impl = weakPtrFactory().impl())
+        impl->clear();
+
     cancelTimer();
 }
 

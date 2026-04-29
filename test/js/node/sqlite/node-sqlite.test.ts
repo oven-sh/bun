@@ -170,6 +170,27 @@ describe("DatabaseSync", () => {
     );
   });
 
+  test("run() does not crash if a parameter getter closes the database", () => {
+    // bindParams() invokes [[Get]] on named-parameter keys, which can
+    // call db.close() before sqlite3_step(). After step, run() reads
+    // sqlite3_changes64 — that must come from sqlite3_db_handle(stmt)
+    // (the zombie connection), not the wrapper's now-null m_db.
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (a)");
+    const stmt = db.prepare("INSERT INTO t VALUES (:a)");
+    const r = stmt.run({
+      get a() {
+        db.close();
+        return 1;
+      },
+    });
+    // Statement ran against the zombied connection; {changes,lastInsertRowid}
+    // still come back since sqlite3_db_handle keeps a valid handle.
+    expect(r).toEqual({ changes: 1, lastInsertRowid: 1 });
+    // But the statement is now finalized from JS's perspective.
+    expect(() => stmt.get()).toThrow(/statement has been finalized/);
+  });
+
   test("statements from a prior connection are finalized across close()/open()", () => {
     const db = new DatabaseSync(":memory:", { open: false });
     db.open();

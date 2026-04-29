@@ -1696,7 +1696,13 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncRun, (JSGlobalObject * globalObject, Cal
         return {};
     }
 
-    sqlite3* db = self->connection();
+    // Don't go through self->connection() here: a named-parameter getter
+    // or UDF callback may have called db.close() since REQUIRE_STMT, in
+    // which case the wrapper's m_db is now null and sqlite3_changes64(NULL)
+    // is a raw db->nChange deref (no SQLITE_ENABLE_API_ARMOR in this build).
+    // sqlite3_db_handle() reads the statement's own back-pointer, which
+    // survives zombification and is what Node's StatementSync::Run uses.
+    sqlite3* db = sqlite3_db_handle(self->statement());
     JSObject* result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
     RETURN_IF_EXCEPTION(scope, {});
     sqlite3_int64 changes = sqlite3_changes64(db);

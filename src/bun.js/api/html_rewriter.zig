@@ -18,12 +18,14 @@ pub const LOLHTMLContext = struct {
 
         for (this.element_handlers.items) |handler| {
             handler.deinit();
+            bun.default_allocator.destroy(handler);
         }
         this.element_handlers.deinit(bun.default_allocator);
         this.element_handlers = .{};
 
         for (this.document_handlers.items) |handler| {
             handler.deinit();
+            bun.default_allocator.destroy(handler);
         }
         this.document_handlers.deinit(bun.default_allocator);
         this.document_handlers = .{};

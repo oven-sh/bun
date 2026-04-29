@@ -164,6 +164,7 @@ pub const FilePoll = struct {
     const Request = bun.api.dns.internal.Request;
     const LifecycleScriptSubprocessOutputReader = bun.install.LifecycleScriptSubprocess.OutputReader;
     const BufferedReader = bun.io.BufferedReader;
+    const ParentDeathWatchdog = bun.ParentDeathWatchdog;
 
     pub const Owner = bun.TaggedPointerUnion(.{
         FileSink,
@@ -192,6 +193,7 @@ pub const FilePoll = struct {
         Process,
         ShellBufferedWriter, // i do not know why, but this has to be here otherwise compiler will complain about dependency loop
         TerminalPoll,
+        ParentDeathWatchdog,
     });
 
     pub const AllocatorType = enum {
@@ -433,6 +435,11 @@ pub const FilePoll = struct {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {f}) Terminal", .{poll.fd});
                 var handler: *TerminalPoll = ptr.as(TerminalPoll);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
+            },
+            @field(Owner.Tag, @typeName(ParentDeathWatchdog)) => {
+                if (comptime !Environment.isMac) unreachable;
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {f}) ParentDeathWatchdog", .{poll.fd});
+                ptr.as(ParentDeathWatchdog).onParentExit();
             },
             else => {
                 const possible_name = Owner.typeNameFromTag(@intFromEnum(ptr.tag()));

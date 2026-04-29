@@ -920,6 +920,58 @@ void WebSocket::sendWebSocketString(const String& message, const Opcode op)
     updateHasPendingActivity();
 }
 
+// Called from close()/terminate() while m_state == CONNECTING.
+//
+// The Zig-side upgrade client's cancel() clears its back-pointer to us
+// without calling didAbruptClose, so none of didConnect /
+// didFailWithErrorCode / didClose will ever fire for this socket. We
+// must therefore finish the close ourselves: cancel the upgrade, queue
+// a task that moves to CLOSED, fires error + close events (spec "fail
+// the WebSocket connection" path — code 1006, wasClean false), and
+// releases the pending-activity ref taken in connect(). Without this
+// the WebSocket stays in CLOSING with m_pendingActivityCount > 0
+// forever and is never garbage-collected.
+void WebSocket::failConnectingWebSocket()
+{
+    ASSERT(m_state == CONNECTING);
+    m_state = CLOSING;
+
+    if (m_upgradeClient != nullptr) {
+        void* upgradeClient = m_upgradeClient;
+        m_upgradeClient = nullptr;
+        bool useTLSClient = (m_connectionType == ConnectionType::TLS || m_connectionType == ConnectionType::ProxyTLS);
+        if (useTLSClient) {
+            Bun__WebSocketHTTPSClient__cancel(upgradeClient);
+        } else {
+            Bun__WebSocketHTTPClient__cancel(upgradeClient);
+        }
+    }
+
+    if (auto* context = scriptExecutionContext()) {
+        context->postTask([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            if (protectedThis->m_state == CLOSED)
+                return;
+            protectedThis->m_state = CLOSED;
+            if (protectedThis->m_native.onClose) {
+                protectedThis->m_native.onClose(protectedThis->m_native.ctx, 1006);
+            } else {
+                // Spec: close() while CONNECTING runs "fail the WebSocket
+                // connection", which requires an error event before the
+                // close event. Matches Chrome/Firefox and npm ws.
+                auto reason = "WebSocket is closed before the connection is established"_s;
+                auto eventInit = createErrorEventInit(protectedThis, reason, context.jsGlobalObject());
+                protectedThis->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
+                protectedThis->dispatchEvent(CloseEvent::create(false, 1006, reason));
+            }
+            protectedThis->disablePendingActivity();
+        });
+    } else {
+        m_state = CLOSED;
+        disablePendingActivity();
+    }
+    updateHasPendingActivity();
+}
+
 ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, const String& reason)
 {
     int code = optionalCode ? optionalCode.value() : static_cast<int>(1000);
@@ -938,18 +990,7 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
     if (m_state == CLOSING || m_state == CLOSED)
         return {};
     if (m_state == CONNECTING) {
-        m_state = CLOSING;
-        if (m_upgradeClient != nullptr) {
-            void* upgradeClient = m_upgradeClient;
-            m_upgradeClient = nullptr;
-            bool useTLSClient = (m_connectionType == ConnectionType::TLS || m_connectionType == ConnectionType::ProxyTLS);
-            if (useTLSClient) {
-                Bun__WebSocketHTTPSClient__cancel(upgradeClient);
-            } else {
-                Bun__WebSocketHTTPClient__cancel(upgradeClient);
-            }
-        }
-        updateHasPendingActivity();
+        failConnectingWebSocket();
         return {};
     }
     m_state = CLOSING;
@@ -994,18 +1035,7 @@ ExceptionOr<void> WebSocket::terminate()
     if (m_state == CLOSING || m_state == CLOSED)
         return {};
     if (m_state == CONNECTING) {
-        m_state = CLOSING;
-        if (m_upgradeClient != nullptr) {
-            void* upgradeClient = m_upgradeClient;
-            m_upgradeClient = nullptr;
-            bool useTLSClient = (m_connectionType == ConnectionType::TLS || m_connectionType == ConnectionType::ProxyTLS);
-            if (useTLSClient) {
-                Bun__WebSocketHTTPSClient__cancel(upgradeClient);
-            } else {
-                Bun__WebSocketHTTPClient__cancel(upgradeClient);
-            }
-        }
-        updateHasPendingActivity();
+        failConnectingWebSocket();
         return {};
     }
     m_state = CLOSING;

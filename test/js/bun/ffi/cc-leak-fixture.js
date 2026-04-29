@@ -27,7 +27,7 @@ const ITERATIONS = 30;
 const WARMUP = 5;
 const BIG_BYTES = 4 * 1024 * 1024;
 
-const bigPadding = " ".repeat(BIG_BYTES);
+const bigPadding = Buffer.alloc(BIG_BYTES, " ").toString();
 
 function once(padding) {
   const lib = cc({

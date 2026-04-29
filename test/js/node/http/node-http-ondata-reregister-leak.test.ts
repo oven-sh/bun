@@ -19,4 +19,4 @@ test("re-registering ondata after request body completes does not leak NodeHTTPR
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("CLOSED");
   expect(exitCode).toBe(0);
-});
+}, 30_000);

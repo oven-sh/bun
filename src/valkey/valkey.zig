@@ -736,6 +736,8 @@ pub const ValkeyClient = struct {
                 if (std.mem.eql(u8, str, "OK")) {
                     this.status = .connected;
                     this.flags.is_authenticated = true;
+                    this.flags.is_reconnecting = false;
+                    this.retry_attempts = 0;
                     try this.onValkeyConnect(value);
                     return;
                 }
@@ -769,6 +771,8 @@ pub const ValkeyClient = struct {
                 // Authentication successful via HELLO
                 this.status = .connected;
                 this.flags.is_authenticated = true;
+                this.flags.is_reconnecting = false;
+                this.retry_attempts = 0;
                 try this.onValkeyConnect(value);
                 return;
             },

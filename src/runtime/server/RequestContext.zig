@@ -1920,6 +1920,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         else => unreachable,
                     }
                 }
+                if (stream_ == .err) stream_.err.deinit();
             }
 
             if (this.isAbortedOrEnded()) {

@@ -280,6 +280,13 @@ pub const DirEntryResolveQueueItem = struct {
     fd: FD = .invalid,
 };
 
+inline fn isPermissionDeniedDirReadError(err: anyerror) bool {
+    return switch (err) {
+        error.AccessDenied, error.PermissionDenied, error.EACCES, error.EPERM => true,
+        else => false,
+    };
+}
+
 pub const DebugLogs = struct {
     what: string = "",
     indent: MutableString,
@@ -2817,6 +2824,12 @@ pub const Resolver = struct {
             }
         }
 
+        const missing_parent_result: allocators.Result = .{
+            .index = allocators.NotFound,
+            .hash = 0,
+            .status = .not_found,
+        };
+
         var queue_slice: []DirEntryResolveQueueItem = bufs(.dir_entry_paths_to_resolve)[0..@as(usize, @intCast(i))];
         if (Environment.allow_assert) assert(queue_slice.len > 0);
         var open_dir_count: usize = 0;
@@ -2845,11 +2858,13 @@ pub const Resolver = struct {
         // - remember
         var _safe_path: ?string = null;
 
+        var parent_result = top_parent;
+
         // Start at the top.
         while (queue_slice.len > 0) {
             var queue_top = queue_slice[queue_slice.len - 1];
-            defer top_parent = queue_top.result;
             queue_slice.len -= 1;
+            const is_target_dir = queue_slice.len == 0;
 
             const open_dir: FD = if (queue_top.fd.isValid())
                 queue_top.fd
@@ -2892,6 +2907,11 @@ pub const Resolver = struct {
                     // ignore them during path resolution.
                     error.ENOTDIR, error.IsDir, error.NotDir => return null,
                     else => {
+                        if (!is_target_dir and isPermissionDeniedDirReadError(err)) {
+                            parent_result = missing_parent_result;
+                            continue;
+                        }
+
                         const cached_dir_entry_result = rfs.entries.getOrPut(queue_top.unsafe_path) catch unreachable;
                         // If we don't properly cache not found, then we repeatedly attempt to open the same directories, which causes a perf trace that looks like this stupidity;
                         //
@@ -3013,11 +3033,13 @@ pub const Resolver = struct {
                 dir_entries_option,
                 queue_top.result,
                 cached_dir_entry_result.index,
-                r.dir_cache.atIndex(top_parent.index),
-                top_parent.index,
+                r.dir_cache.atIndex(parent_result.index),
+                parent_result.index,
                 open_dir,
                 null,
             );
+
+            parent_result = queue_top.result;
 
             if (queue_slice.len == 0) {
                 return dir_info_ptr;

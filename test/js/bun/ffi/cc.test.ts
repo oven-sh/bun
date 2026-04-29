@@ -194,10 +194,11 @@ describe.skip("given a strlen(cstring) function", () => {
 
 // Every successful cc() used to leak all of its option strings (source path,
 // include dirs, define key/values, flags, libraries) because CompileC.deinit()
-// was only called when an exception was pending. The fixture passes a 4 MiB
-// `define` value and measures RSS growth relative to a baseline run with a
-// tiny value so per-call overhead unrelated to the leaked strings (TinyCC
-// internals, ASAN quarantine, JIT) cancels out.
+// was only called when an exception was pending. The fixture pads `flags`
+// with 4 MiB of whitespace — Bun dupes the full string into CompileC.flags
+// (the leak), while TinyCC only parses it and does not retain a copy — and
+// measures RSS growth relative to a baseline run with a tiny padding so
+// per-call overhead unrelated to the leaked strings cancels out.
 //
 // Kept at the end of the file: the fixture subprocess briefly allocates a
 // few hundred MiB, which on slow machines can push adjacent tests with short
@@ -222,7 +223,7 @@ it.skipIf(isFFIUnavailable)(
       throw new Error(`fixture did not produce JSON\nstdout: ${stdout}\nstderr: ${stderr}\nexit: ${exitCode}`);
     }
     const { baselineMB, bigMB, deltaMB } = result;
-    // Without the fix: ~120 MiB on release, ~87 MiB on debug+ASAN.
+    // Without the fix: ~115-120 MiB.
     // With the fix: ≤ 0 MiB (second run reuses first run's high-water mark).
     expect(deltaMB, `baseline ${baselineMB} MiB, big ${bigMB} MiB`).toBeLessThan(40);
     expect(exitCode).toBe(0);

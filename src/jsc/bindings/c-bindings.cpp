@@ -487,7 +487,8 @@ extern "C" __declspec(noreturn) void Bun__exitProcessWindows(UINT code)
         TerminateProcess(GetCurrentProcess(), code);
     }
     // Neither call returns on the current process; satisfy noreturn.
-    for (;;) { }
+    for (;;) {
+    }
 }
 #endif
 

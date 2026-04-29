@@ -1142,7 +1142,7 @@ test.skipIf(!isDebug && !isASAN)(
     // before each sample to let JSC collect the output blobs and mimalloc
     // purge freed pages.
     const dir = tempDirWithFiles("bun-build-inline-sourcemap-leak", {
-      "entry.ts": "export const a = 1;\n/* " + "x".repeat(30 * 1024 * 1024) + " */\n",
+      "entry.ts": "export const a = 1;\n/* " + Buffer.alloc(30 * 1024 * 1024, "x").toString() + " */\n",
       "run.ts": `
         const entry = process.argv[2];
         async function build() {

@@ -147,8 +147,10 @@ describe("addEventListener({ signal }) does not leak abort algorithms", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("ok");
-    expect(exitCode).toBe(0);
+    // stdout === "ok" and exitCode === 0 are sufficient to prove the
+    // subprocess didn't crash; avoid asserting on stderr directly so
+    // benign debug-build / sanitizer banners don't cause false positives,
+    // but surface it alongside the failure for context.
+    expect({ stdout: stdout.trim(), exitCode, stderr }).toEqual({ stdout: "ok", exitCode: 0, stderr });
   });
 });

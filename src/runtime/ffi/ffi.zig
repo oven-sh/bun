@@ -1607,8 +1607,15 @@ pub const FFI = struct {
         ) !void {
             jsc.markBinding(@src());
             var source_code = std.array_list.Managed(u8).init(this.allocator);
+            defer source_code.deinit();
             var source_code_writer = source_code.writer();
+
             const ffi_wrapper = Bun__createFFICallbackFunction(js_context, js_function);
+            // ffi_wrapper owns JSC::Strong roots for the user's callback; on any
+            // failure path below it is never stored into step.compiled and would
+            // otherwise leak along with everything the callback closes over.
+            defer if (this.step != .compiled) FFICallbackFunctionWrapper_destroy(ffi_wrapper);
+
             try this.printCallbackSourceCode(js_context, ffi_wrapper, &source_code_writer);
 
             if (comptime Environment.isDebug and Environment.isPosix) {
@@ -1621,7 +1628,6 @@ pub const FFI = struct {
             }
 
             try source_code.append(0);
-            defer source_code.deinit();
 
             const state = TCC.State.init(Function, .{
                 .options = tcc_options,

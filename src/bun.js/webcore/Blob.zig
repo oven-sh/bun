@@ -127,8 +127,11 @@ pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObje
 
     const Handler = NewReadFileHandler(Function);
 
+    // The callback may read context.content_type (e.g. toFormDataWithBytes),
+    // which is heap-owned by the source JS Blob and freed on finalize(). Take
+    // an owning dupe so the handler outliving the source can't dangle.
     var handler = bun.new(Handler, .{
-        .context = this.*,
+        .context = this.dupe(),
         .globalThis = global,
     });
 
@@ -2261,11 +2264,12 @@ const S3BlobDownloadTask = struct {
     }
 
     pub fn init(globalThis: *jsc.JSGlobalObject, blob: *Blob, handler: S3BlobDownloadTask.S3ReadHandler) bun.JSTerminated!JSValue {
-        blob.store.?.ref();
-
+        // The callback may read this.blob.content_type (e.g. toFormDataWithBytes),
+        // which is heap-owned by the source JS Blob and freed on finalize(). Take
+        // an owning dupe so the task outliving the source can't dangle.
         const this = S3BlobDownloadTask.new(.{
             .globalThis = globalThis,
-            .blob = blob.*,
+            .blob = blob.dupe(),
             .promise = jsc.JSPromise.Strong.init(globalThis),
             .handler = handler,
         });
@@ -2291,7 +2295,7 @@ const S3BlobDownloadTask = struct {
     }
 
     pub fn deinit(this: *S3BlobDownloadTask) void {
-        this.blob.store.?.deref();
+        this.blob.deinit();
         this.poll_ref.unref(this.globalThis.bunVM());
         this.promise.deinit();
         bun.destroy(this);

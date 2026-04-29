@@ -1047,7 +1047,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // See https://github.com/oven-sh/bun/issues/1339
 
             // obviously invalid pointer marks it as used
-            upgrader.upgrade_context = @as(*uws.SocketContext, @ptrFromInt(std.math.maxInt(usize)));
+            upgrader.upgrade_context = @ptrFromInt(std.math.maxInt(usize));
             const signal = upgrader.signal;
             upgrader.signal = null;
             upgrader.resp = null;
@@ -2026,7 +2026,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.pending_requests += 1;
         }
 
-        pub fn onNodeHTTPRequestWithUpgradeCtx(this: *ThisServer, req: *uws.Request, resp: *App.Response, upgrade_ctx: ?*uws.SocketContext) void {
+        pub fn onNodeHTTPRequestWithUpgradeCtx(this: *ThisServer, req: *uws.Request, resp: *App.Response, upgrade_ctx: ?*anyopaque) void {
             this.onPendingRequest();
             if (comptime Environment.isDebug) {
                 this.vm.eventLoop().debug.enter();
@@ -2546,7 +2546,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             };
         }
 
-        fn upgradeWebSocketUserRoute(this: *UserRoute, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.SocketContext, method: ?bun.http.Method) void {
+        fn upgradeWebSocketUserRoute(this: *UserRoute, resp: *App.Response, req: *uws.Request, upgrade_ctx: *anyopaque, method: ?bun.http.Method) void {
             const server = this.server;
             const index = this.id;
 
@@ -2559,7 +2559,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             server.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
 
-        pub fn onWebSocketUpgrade(this: *ThisServer, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.SocketContext, id: usize) void {
+        pub fn onWebSocketUpgrade(this: *ThisServer, resp: *App.Response, req: *uws.Request, upgrade_ctx: *anyopaque, id: usize) void {
             jsc.markBinding(@src());
             if (id == 1) {
                 // This is actually a UserRoute if id is 1 so it's safe to cast
@@ -3719,7 +3719,7 @@ extern fn NodeHTTPServer__onRequest_http(
     methodString: jsc.JSValue,
     request: *uws.Request,
     response: *uws.NewApp(false).Response,
-    upgrade_ctx: ?*uws.SocketContext,
+    upgrade_ctx: ?*anyopaque,
     node_response_ptr: *?*NodeHTTPResponse,
 ) jsc.JSValue;
 
@@ -3731,7 +3731,7 @@ extern fn NodeHTTPServer__onRequest_https(
     methodString: jsc.JSValue,
     request: *uws.Request,
     response: *uws.NewApp(true).Response,
-    upgrade_ctx: ?*uws.SocketContext,
+    upgrade_ctx: ?*anyopaque,
     node_response_ptr: *?*NodeHTTPResponse,
 ) jsc.JSValue;
 

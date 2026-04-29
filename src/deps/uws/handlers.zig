@@ -102,28 +102,78 @@ pub fn BunListener(comptime ssl: bool) type {
     };
 }
 
+/// Like `PtrHandler` but the callbacks live on a separate namespace `H` (the
+/// driver's pre-existing `SocketHandler(ssl)` adapter) rather than as methods
+/// on the owner type itself. Ext stores `*Owner`.
+fn NsHandler(comptime Owner: type, comptime H: type, comptime ssl: bool) type {
+    const S = uws.NewSocketHandler(ssl);
+    return struct {
+        pub const Ext = **Owner;
+        inline fn wrap(s: *us_socket_t) S {
+            return S.from(s);
+        }
+        pub fn onOpen(this: Ext, s: *us_socket_t, _: bool, _: []const u8) void {
+            if (@hasDecl(H, "onOpen")) H.onOpen(this.*, wrap(s));
+        }
+        pub fn onData(this: Ext, s: *us_socket_t, data: []const u8) void {
+            if (@hasDecl(H, "onData")) H.onData(this.*, wrap(s), data);
+        }
+        pub fn onWritable(this: Ext, s: *us_socket_t) void {
+            if (@hasDecl(H, "onWritable")) H.onWritable(this.*, wrap(s));
+        }
+        pub fn onClose(this: Ext, s: *us_socket_t, code: i32, reason: ?*anyopaque) void {
+            if (@hasDecl(H, "onClose")) H.onClose(this.*, wrap(s), code, reason);
+        }
+        pub fn onTimeout(this: Ext, s: *us_socket_t) void {
+            if (@hasDecl(H, "onTimeout")) H.onTimeout(this.*, wrap(s));
+        }
+        pub fn onLongTimeout(this: Ext, s: *us_socket_t) void {
+            if (@hasDecl(H, "onLongTimeout")) H.onLongTimeout(this.*, wrap(s));
+        }
+        pub fn onEnd(this: Ext, s: *us_socket_t) void {
+            if (@hasDecl(H, "onEnd")) H.onEnd(this.*, wrap(s));
+        }
+        pub fn onConnectError(this: Ext, s: *us_socket_t, code: i32) void {
+            _ = us_socket_t.c.us_socket_close(s, 0, null);
+            if (@hasDecl(H, "onConnectError")) H.onConnectError(this.*, wrap(s), code);
+        }
+        pub fn onConnectingError(c: *ConnectingSocket, code: i32) void {
+            if (@hasDecl(H, "onConnectError"))
+                H.onConnectError(c.ext(*Owner).*, S.fromConnecting(c), code);
+        }
+        pub fn onHandshake(this: Ext, s: *us_socket_t, ok: bool, err: uws.us_bun_verify_error_t) void {
+            if (@hasDecl(H, "onHandshake") and @TypeOf(H.onHandshake) != @TypeOf(null))
+                H.onHandshake(this.*, wrap(s), @intFromBool(ok), err);
+        }
+    };
+}
+
 // ── HTTP client thread (fetch) ──────────────────────────────────────────────
+// Ext is the `ActiveSocket` tagged-pointer word; `Handler.on*` take `*anyopaque`.
 pub fn HTTPClient(comptime ssl: bool) type {
-    return PtrHandler(bun.http.NewHTTPContext(ssl).ActiveSocketHandler, ssl);
+    return NsHandler(anyopaque, bun.http.NewHTTPContext(ssl).Handler, ssl);
 }
 
 // ── WebSocket client ────────────────────────────────────────────────────────
 pub fn WSUpgrade(comptime ssl: bool) type {
-    return PtrHandler(bun.http.WebSocketUpgradeClient(ssl), ssl);
+    return PtrHandler(bun.http.NewHTTPUpgradeClient(ssl), ssl);
 }
 pub fn WSClient(comptime ssl: bool) type {
-    return PtrHandler(bun.http.WebSocketClient(ssl), ssl);
+    return PtrHandler(bun.http.NewWebSocketClient(ssl), ssl);
 }
 
 // ── SQL drivers ─────────────────────────────────────────────────────────────
 pub fn Postgres(comptime ssl: bool) type {
-    return PtrHandler(bun.api.Postgres.PostgresSQLConnection, ssl);
+    const C = bun.api.Postgres.PostgresSQLConnection;
+    return NsHandler(C, C.SocketHandler(ssl), ssl);
 }
 pub fn MySQL(comptime ssl: bool) type {
-    return PtrHandler(bun.api.mysql.MySQLConnection, ssl);
+    const C = bun.api.mysql.js.JSMySQLConnection;
+    return NsHandler(C, C.SocketHandler(ssl), ssl);
 }
 pub fn Valkey(comptime ssl: bool) type {
-    return PtrHandler(bun.api.Valkey.JSValkeyClient, ssl);
+    const js = @import("../../valkey/js_valkey.zig");
+    return NsHandler(js.JSValkeyClient, js.SocketHandler(ssl), ssl);
 }
 
 // ── Bun.spawn IPC / process.send() ──────────────────────────────────────────
@@ -131,7 +181,7 @@ pub fn Valkey(comptime ssl: bool) type {
 // `Bun.spawn({ipc})`. Handlers live in `ipc.zig` as free functions, not
 // methods on SendQueue, so we adapt manually instead of via PtrHandler.
 pub const SpawnIPC = struct {
-    const IPC = bun.jsc.IPC;
+    const IPC = @import("../../bun.js/ipc.zig");
     const H = IPC.IPCHandlers.PosixSocket;
     const S = uws.NewSocketHandler(false);
     pub const Ext = **IPC.SendQueue;

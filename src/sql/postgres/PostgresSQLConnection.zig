@@ -750,7 +750,9 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     return js_value;
 }
 
-fn SocketHandler(comptime ssl: bool) type {
+/// Referenced by `dispatch.zig` (kind = `.postgres[_tls]`). Now the only
+/// caller — `configure()` is gone.
+pub fn SocketHandler(comptime ssl: bool) type {
     return struct {
         const SocketType = uws.NewSocketHandler(ssl);
         fn _socket(s: SocketType) Socket {

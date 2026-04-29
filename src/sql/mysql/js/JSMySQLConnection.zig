@@ -209,7 +209,7 @@ pub fn finalize(this: *@This()) void {
 
 fn SocketHandler(comptime ssl: bool) type {
     return struct {
-        const SocketType = uws.NewSocketHandler(ssl);
+        pub const SocketType = uws.NewSocketHandler(ssl);
         fn _socket(s: SocketType) uws.AnySocket {
             if (comptime ssl) {
                 return uws.AnySocket{ .SocketTLS = s };

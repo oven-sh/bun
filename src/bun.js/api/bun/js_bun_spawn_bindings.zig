@@ -815,8 +815,10 @@ pub fn spawnMaybeSync(
     var posix_ipc_info: if (Environment.isPosix) IPC.Socket else void = undefined;
     if (Environment.isPosix and !is_sync) {
         if (maybe_ipc_mode) |mode| {
-            if (uws.us_socket_t.fromFd(
-                jsc_vm.rareData().spawnIPCContext(jsc_vm),
+            if (uws.us_socket_t.c.us_socket_from_fd(
+                jsc_vm.rareData().spawnIPCGroup(jsc_vm),
+                @intFromEnum(uws.SocketKind.spawn_ipc),
+                null,
                 @sizeOf(*IPC.SendQueue),
                 posix_ipc_fd.cast(),
                 1,

@@ -1430,8 +1430,8 @@ pub const JSValkeyClient = struct {
     const fns = @import("./js_valkey_functions.zig");
 };
 
-// Socket handler for the uWebSockets library
-fn SocketHandler(comptime ssl: bool) type {
+/// Referenced by `dispatch.zig` (kind = `.valkey[_tls]`).
+pub fn SocketHandler(comptime ssl: bool) type {
     return struct {
         const SocketType = uws.NewSocketHandler(ssl);
         fn _socket(s: SocketType) Socket {

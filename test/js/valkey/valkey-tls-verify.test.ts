@@ -1,6 +1,6 @@
 import { RedisClient } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir, tls as localhostTls } from "harness";
+import { isWindows, tls as localhostTls, tempDir } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import type { AddressInfo } from "node:net";

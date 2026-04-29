@@ -926,11 +926,11 @@ void WebSocket::sendWebSocketString(const String& message, const Opcode op)
 // without calling didAbruptClose, so none of didConnect /
 // didFailWithErrorCode / didClose will ever fire for this socket. We
 // must therefore finish the close ourselves: cancel the upgrade, queue
-// a task that moves to CLOSED, fires the close event (code 1006 per
-// spec — connection never established), and releases the
-// pending-activity ref taken in connect(). Without this the WebSocket
-// stays in CLOSING with m_pendingActivityCount > 0 forever and is
-// never garbage-collected.
+// a task that moves to CLOSED, fires error + close events (spec "fail
+// the WebSocket connection" path — code 1006, wasClean false), and
+// releases the pending-activity ref taken in connect(). Without this
+// the WebSocket stays in CLOSING with m_pendingActivityCount > 0
+// forever and is never garbage-collected.
 void WebSocket::failConnectingWebSocket()
 {
     ASSERT(m_state == CONNECTING);
@@ -948,14 +948,20 @@ void WebSocket::failConnectingWebSocket()
     }
 
     if (auto* context = scriptExecutionContext()) {
-        context->postTask([protectedThis = Ref { *this }](ScriptExecutionContext&) {
+        context->postTask([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
             if (protectedThis->m_state == CLOSED)
                 return;
             protectedThis->m_state = CLOSED;
             if (protectedThis->m_native.onClose) {
                 protectedThis->m_native.onClose(protectedThis->m_native.ctx, 1006);
             } else {
-                protectedThis->dispatchEvent(CloseEvent::create(false, 1006, emptyString()));
+                // Spec: close() while CONNECTING runs "fail the WebSocket
+                // connection", which requires an error event before the
+                // close event. Matches Chrome/Firefox and npm ws.
+                auto reason = "WebSocket is closed before the connection is established"_s;
+                auto eventInit = createErrorEventInit(protectedThis, reason, context.jsGlobalObject());
+                protectedThis->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
+                protectedThis->dispatchEvent(CloseEvent::create(false, 1006, reason));
             }
             protectedThis->disablePendingActivity();
         });

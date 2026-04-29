@@ -474,6 +474,10 @@ function ClientRequest(input, options, cb) {
                 emitErrorEventNT(self, $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error"));
 
                 res.complete = true;
+                // res is never handed to the user on this path, so the
+                // res 'end'/'close' hooks above won't fire. Release the
+                // agent slot directly so it doesn't leak.
+                releaseAgentSocket();
                 maybeEmitClose();
                 return;
               }

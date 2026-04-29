@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "node:events";
 import http from "node:http";
+import net from "node:net";
 import type { AddressInfo } from "node:net";
 
 describe("node:http Agent socket accounting", () => {
@@ -277,6 +278,36 @@ describe("node:http Agent socket accounting", () => {
       expect(name in agent.requests).toBe(false);
     } finally {
       agent.destroy();
+    }
+  });
+
+  test("a malformed Content-Length response releases the agent slot", async () => {
+    const agent = new http.Agent({ maxSockets: 1 });
+    const server = net.createServer(s => {
+      s.on("data", () => s.end("HTTP/1.1 200 OK\r\nContent-Length: 5, 7\r\n\r\nhello"));
+    });
+    server.listen(0);
+    try {
+      await once(server, "listening");
+      const port = (server.address() as AddressInfo).port;
+      const name = agent.getName({ port });
+
+      const { promise, resolve } = Promise.withResolvers<string>();
+      http
+        .get({ port, agent }, () => resolve("response"))
+        .on("error", (e: any) => resolve(e?.code ?? "error"));
+      const result = await promise;
+      // The response is rejected with a parse error before 'response' fires,
+      // so the res 'end'/'close' hooks never run; the slot must be released
+      // on the error path.
+      expect(result).toBe("HPE_UNEXPECTED_CONTENT_LENGTH");
+
+      await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+      expect(agent.totalSocketCount).toBe(0);
+      expect(name in agent.sockets).toBe(false);
+    } finally {
+      agent.destroy();
+      server.close();
     }
   });
 });

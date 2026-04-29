@@ -666,7 +666,9 @@ static JSValue rowToObjectCached(JSGlobalObject* globalObject, ThrowScope& scope
         JSValue v = columnToJS(globalObject, scope, stmt, i, useBigInts);
         RETURN_IF_EXCEPTION(scope, {});
         int8_t off = offsets[static_cast<size_t>(i)];
-        if (off < 0) continue; // duplicate name; first occurrence already placed
+        // Duplicate names map to the same offset, so a later column
+        // overwrites the earlier one — last-wins, matching Node's
+        // V8 Object::Set() loop and the generic rowToObject() path.
         row->putDirectOffset(vm, static_cast<PropertyOffset>(off), v);
     }
     return row;
@@ -1612,7 +1614,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncDeserialize, (JSGlobalObject * globalObje
     // the connection outlives this call.
     unsigned char* owned = static_cast<unsigned char*>(sqlite3_malloc64(span.size()));
     if (!owned) {
-        return Bun::throwError(globalObject, scope, ErrorCode::ERR_OUT_OF_RANGE,
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_MEMORY_ALLOCATION_FAILED,
             "Failed to allocate memory for SQLite deserialize"_s);
     }
     memcpy(owned, span.data(), span.size());
@@ -2014,9 +2016,13 @@ Structure* JSStatementSync::ensureRowStructure(JSGlobalObject* globalObject)
     }
 
     // First pass: collect distinct names in column order. A join can
-    // produce duplicate column names; Node keeps the first and drops
-    // later occurrences (same as a plain object putDirect would), so
-    // mark those columns with offset -1.
+    // produce duplicate column names; Node's row builder iterates
+    // columns and calls V8 Object::Set()/CreateDataProperty() for each,
+    // which *overwrites* on a duplicate key — so the last occurrence
+    // wins. Mirror that by giving a duplicate column the same slot
+    // offset as the first occurrence; rowToObjectCached() writes
+    // columns in order, so the later putDirectOffset overwrites the
+    // earlier one just as the generic rowToObject()'s putDirect would.
     m_columnOffsets.reserveCapacity(static_cast<size_t>(count));
     WTF::Vector<Identifier, JSFinalObject::maxInlineCapacity> names;
     for (int i = 0; i < count; ++i) {
@@ -2028,14 +2034,13 @@ Structure* JSStatementSync::ensureRowStructure(JSGlobalObject* globalObject)
         }
         auto id = Identifier::fromString(vm, WTF::String::fromUTF8(name));
         int8_t off = -1;
-        bool dup = false;
-        for (const auto& existing : names) {
-            if (existing == id) {
-                dup = true;
+        for (size_t j = 0; j < names.size(); ++j) {
+            if (names[j] == id) {
+                off = static_cast<int8_t>(j);
                 break;
             }
         }
-        if (!dup) {
+        if (off < 0) {
             off = static_cast<int8_t>(names.size());
             names.append(id);
         }
@@ -3033,36 +3038,13 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
     sqlite3_clear_bindings(stmt);
     int paramCount = sqlite3_bind_parameter_count(stmt);
     for (int i = 0; i < static_cast<int>(nParams) && i < paramCount; ++i) {
-        // bindValue is private; reuse bindParams' logic via public path:
-        // call the same conversion directly here (subset of bindValue).
         JSValue v = callFrame->argument(static_cast<size_t>(i) + 1);
-        int br = SQLITE_OK;
-        if (v.isInt32())
-            br = sqlite3_bind_int(stmt, i + 1, v.asInt32());
-        else if (v.isNumber())
-            br = sqlite3_bind_double(stmt, i + 1, v.asNumber());
-        else if (v.isString()) {
-            auto s = v.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-            auto u = s.utf8();
-            br = sqlite3_bind_text(stmt, i + 1, u.data(), static_cast<int>(u.length()), SQLITE_TRANSIENT);
-        } else if (v.isNull() || v.isUndefined()) {
-            br = sqlite3_bind_null(stmt, i + 1);
-        } else if (v.isBigInt()) {
-            int64_t iv = JSBigInt::toBigInt64(v);
-            br = sqlite3_bind_int64(stmt, i + 1, iv);
-        } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(v)) {
-            auto span = view->span();
-            br = sqlite3_bind_blob(stmt, i + 1, span.data(), static_cast<int>(span.size()), SQLITE_TRANSIENT);
-        } else {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
-                makeString("Provided value cannot be bound to SQLite parameter "_s, i + 1));
+        // Reuse StatementSync's canonical JS→SQLite bridge so BigInt
+        // overflow, int32 fast path, and undefined rejection stay in
+        // sync with stmt.run(...) — a hand-rolled copy here previously
+        // drifted and silently truncated 2n**64n to 0.
+        if (!stmtObj->bindValue(globalObject, scope, i + 1, v))
             return nullptr;
-        }
-        if (br != SQLITE_OK) {
-            throwSqliteError(globalObject, scope, db->connection());
-            return nullptr;
-        }
     }
     return stmtObj;
 }

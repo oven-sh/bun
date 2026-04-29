@@ -300,6 +300,11 @@ public:
     // Bind callFrame->argument(anon_start..) to the statement using Node.js
     // semantics. Returns false and throws on failure.
     bool bindParams(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::CallFrame*);
+    // Single-value JS → sqlite3_bind_* conversion with Node's validation
+    // (int32 fast path, BigInt round-trip overflow check, undefined
+    // rejected). Public so SQLTagStore can reuse the one canonical
+    // JS→SQLite bridge instead of maintaining a drifted copy.
+    bool bindValue(JSC::JSGlobalObject*, JSC::ThrowScope&, int index, JSC::JSValue);
 
     JSC::WriteBarrier<JSDatabaseSync> m_database;
     std::optional<WTF::HashMap<WTF::String, WTF::String>> m_bareNamedParams;
@@ -314,8 +319,10 @@ public:
     JSC::Structure* ensureRowStructure(JSC::JSGlobalObject*);
     void invalidateRowStructure();
     JSC::Structure* rowStructure() const { return m_rowStructure.get(); }
-    // Per-result-column index into the structure's inline slots, or -1
-    // for duplicate names (first occurrence wins — Node behaviour).
+    // Per-result-column index into the structure's inline slots.
+    // Duplicate column names share the first occurrence's slot so the
+    // later column overwrites it — last-wins, matching Node's V8
+    // Object::Set() row builder and the generic rowToObject() fallback.
     const WTF::Vector<int8_t>& columnOffsets() const { return m_columnOffsets; }
 
 private:
@@ -324,8 +331,6 @@ private:
     {
     }
     void finishCreation(JSC::VM& vm, JSDatabaseSync* db, sqlite3_stmt* stmt);
-
-    bool bindValue(JSC::JSGlobalObject*, JSC::ThrowScope&, int index, JSC::JSValue);
 
     sqlite3_stmt* m_stmt = nullptr;
     JSC::WriteBarrier<JSC::Structure> m_rowStructure;

@@ -857,15 +857,34 @@ describe("row-shape structure caching", () => {
     }
     expect(rows[0]).toEqual({ a: 0, b: "v0" });
     expect(rows[4]).toEqual({ a: 4, b: "v4" });
-    // Duplicate-name column collapses to a single property (first
-    // occurrence wins — matches Node's plain-object put behaviour)
-    // and the cached-offset path must skip, not overwrite with the
-    // later value.
+    // Duplicate-name column collapses to a single property with
+    // *last*-wins semantics — Node's row builder iterates columns and
+    // calls V8 Object::Set()/CreateDataProperty() each time, which
+    // overwrites on a repeat key. The cached-offset path must agree
+    // with the generic putDirect() fallback, so both yield {x: 2}.
     const dup = db.prepare("SELECT 1 AS x, 2 AS x").get();
     expect(Object.keys(dup)).toEqual(["x"]);
-    expect(dup.x).toBe(1);
+    expect(dup.x).toBe(2);
     db.close();
   });
+});
+
+test("SQLTagStore binds via the same JS→SQLite bridge as StatementSync", () => {
+  // The tag store previously hand-rolled its own bind logic and
+  // drifted: it accepted undefined and silently wrapped oversized
+  // BigInts (2n**64n → 0) where stmt.run(...) throws. Both paths now
+  // share JSStatementSync::bindValue().
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE t(n INTEGER)");
+  const sql = db.createTagStore();
+  expect(() => sql.run`INSERT INTO t VALUES (${2n ** 64n})`).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+  );
+  expect(() => sql.run`INSERT INTO t VALUES (${undefined as any})`).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+  );
+  expect(db.prepare("SELECT COUNT(*) AS c FROM t").get().c).toBe(0);
+  db.close();
 });
 
 test("authorizer constants are exposed on constants", () => {

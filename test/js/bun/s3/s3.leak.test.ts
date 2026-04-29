@@ -71,7 +71,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
         expect(exitCode).toBe(0);
         expect(stderr.toString()).toBe("");
       },
-      60 * 1000,
+      30 * 1000,
     );
     it(
       "s3().writer().write() should not leak",

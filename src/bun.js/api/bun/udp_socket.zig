@@ -590,7 +590,8 @@ pub const UDPSocket = struct {
         }
 
         const ttl = try arguments[0].coerceToInt32(globalThis);
-        const res = function(this.socket.?, ttl);
+        const socket = this.socket orelse return globalThis.throw("Socket is closed", .{});
+        const res = function(socket, ttl);
 
         if (getUSError(res, .setsockopt, true)) |err| {
             return globalThis.throwValue(try err.toJS(globalThis));
@@ -952,7 +953,8 @@ pub const UDPSocket = struct {
         const connect_port = connect_port_js.asInt32();
         const port: u16 = if (connect_port < 1 or connect_port > 0xffff) 0 else @as(u16, @intCast(connect_port));
 
-        if (this.socket.?.connect(connect_host, port) == -1) {
+        const socket = this.socket orelse return globalThis.throw("Socket is closed", .{});
+        if (socket.connect(connect_host, port) == -1) {
             return globalThis.throw("Failed to connect socket", .{});
         }
         this.connect_info = .{

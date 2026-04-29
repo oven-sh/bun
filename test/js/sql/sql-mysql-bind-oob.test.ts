@@ -63,9 +63,15 @@ if (isDockerEnabled()) {
       const { stdout, stderr, exitCode } = await runFixture(url);
       // The fixture prints "CONNECTED" after the priming query succeeds. If
       // it never got that far, there's no MySQL to talk to in this
-      // environment; the docker-gated branch above (and sql-mysql.test.ts)
-      // provide the CI coverage.
+      // environment; the docker-gated branch above provides the CI coverage.
       if (!stdout.startsWith("CONNECTED")) {
+        if (process.env.MYSQL_URL) {
+          // MYSQL_URL was explicitly provided; failing to connect is a real
+          // error, not an environment without MySQL.
+          throw new Error(
+            `sql-mysql-bind-oob: MYSQL_URL was provided but fixture never reached CONNECTED\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+          );
+        }
         console.warn("sql-mysql-bind-oob: no MySQL reachable at " + url + "; skipping assertions");
         return;
       }

@@ -1157,6 +1157,7 @@ pub fn initWithModuleGraph(
     vm.regular_event_loop.global = vm.global;
     vm.jsc_vm = vm.global.vm();
     uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc_vm;
+    bun.ParentDeathWatchdog.installOnEventLoop(jsc.EventLoopHandle.init(vm));
 
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
@@ -1281,6 +1282,7 @@ pub fn init(opts: Options) !*VirtualMachine {
     uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc_vm;
     vm.smol = opts.smol;
     vm.dns_result_order = opts.dns_result_order;
+    if (opts.is_main_thread) bun.ParentDeathWatchdog.installOnEventLoop(jsc.EventLoopHandle.init(vm));
 
     if (opts.smol)
         is_smol_mode = opts.smol;

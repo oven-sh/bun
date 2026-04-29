@@ -886,6 +886,14 @@ pub const Bunfig = struct {
                             try this.addError(bun_flag.loc, "Expected boolean");
                         }
                     }
+
+                    if (run_expr.get("dieWithParent")) |dwp| {
+                        if (dwp.asBool()) |value| {
+                            if (value) bun.ParentDeathWatchdog.enable();
+                        } else {
+                            try this.addError(dwp.loc, "Expected boolean");
+                        }
+                    }
                 }
 
                 if (json.get("console")) |console_expr| {

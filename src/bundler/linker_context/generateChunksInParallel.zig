@@ -557,6 +557,7 @@ pub fn generateChunksInParallel(
                 },
                 .@"inline" => {
                     const output_source_map = chunk.output_source_map.finalize(bun.default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
+                    defer bun.default_allocator.free(output_source_map);
                     const encode_len = base64.encodeLen(output_source_map);
 
                     const source_map_start = "//# sourceMappingURL=data:application/json;base64,";

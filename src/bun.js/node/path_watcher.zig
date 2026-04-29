@@ -73,15 +73,8 @@ pub const PathWatcherManager = struct {
         return buf[0 .. resolved_path.len + 1];
     }
 
-    /// Called from the JS thread. Locks `mutex`.
-    fn removeWatcher(this: *PathWatcherManager, watcher: *PathWatcher) void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
-
-        // Tear down OS watches first — the platform may need entries in its dispatch
-        // maps (which are also guarded by `this.mutex`).
-        Platform.removeWatch(this, watcher);
-
+    /// Remove `watcher` from the dedup map. Caller holds `mutex`.
+    fn unlinkWatcherLocked(this: *PathWatcherManager, watcher: *PathWatcher) void {
         if (std.mem.indexOfScalar(*PathWatcher, this.watchers.values(), watcher)) |i| {
             bun.default_allocator.free(this.watchers.keys()[i]);
             this.watchers.swapRemoveAt(i);
@@ -98,13 +91,11 @@ pub const PathWatcher = struct {
     is_file: bool,
 
     /// JS `FSWatcher` contexts sharing this OS watch. Each gets its own ChangeEvent
-    /// for per-handler duplicate suppression (same as win_watcher.zig).
+    /// for per-handler duplicate suppression (same as win_watcher.zig). Guarded by
+    /// `manager.mutex` on all platforms — every emit path (inotify/kqueue reader
+    /// threads and the Darwin FSEvents callback) holds it while iterating, so
+    /// attach/detach can never race with dispatch.
     handlers: std.AutoArrayHashMapUnmanaged(*anyopaque, ChangeEvent) = .{},
-
-    /// Set while the reader thread is iterating `handlers` so `detach()` defers the
-    /// actual free until the emit finishes.
-    emit_in_progress: bool = false,
-    pending_deinit: bool = false,
 
     /// Per-platform per-watch state (inotify wds, kqueue fds, or the FSEventsWatcher).
     platform: Platform.Watch = .{},
@@ -122,7 +113,14 @@ pub const PathWatcher = struct {
         }
     };
 
-    /// Per-handler duplicate suppression — identical to win_watcher.zig.
+    /// Per-handler duplicate suppression.
+    ///
+    /// The predicate is intentionally identical to `win_watcher.zig` and the old
+    /// `path_watcher.zig` so POSIX and Windows agree on which bursts are coalesced.
+    /// It suppresses only when, within the same millisecond, *both* the hash and
+    /// the event type match the previous emission — arguably too aggressive, but
+    /// changing it here would diverge from Windows; fixing all three together is
+    /// a separate change.
     pub const ChangeEvent = struct {
         hash: u64 = 0,
         event_type: EventType = .change,
@@ -150,7 +148,6 @@ pub const PathWatcher = struct {
     fn emit(this: *PathWatcher, event_type: EventType, rel_path: []const u8, is_file: bool) void {
         const timestamp = std.time.milliTimestamp();
         const hash = bun.hash(rel_path);
-        this.emit_in_progress = true;
         for (this.handlers.keys(), this.handlers.values()) |ctx, *last| {
             if (last.shouldEmit(hash, timestamp, event_type)) {
                 onPathUpdateFn(ctx, event_type.toEvent(rel_path), is_file);
@@ -159,66 +156,59 @@ pub const PathWatcher = struct {
     }
 
     fn emitError(this: *PathWatcher, err: bun.sys.Error) void {
-        this.emit_in_progress = true;
         for (this.handlers.keys()) |ctx| {
             onPathUpdateFn(ctx, .{ .@"error" = err }, false);
         }
     }
 
     /// Signals end-of-batch so `FSWatcher` can flush its queued events to the JS thread.
+    /// Caller holds `manager.mutex`.
     fn flush(this: *PathWatcher) void {
         for (this.handlers.keys()) |ctx| {
             onUpdateEndFn(ctx);
-        }
-        this.emit_in_progress = false;
-        if (this.pending_deinit) {
-            // JS thread already dropped the last handler while we were emitting; it
-            // left `pending_deinit` for us and the manager has already been notified,
-            // so just free.
-            this.destroy();
         }
     }
 
     /// JS-thread entry point from `FSWatcher.detach()`. Removes one handler; if it was
     /// the last, tears down the OS watch and frees.
+    ///
+    /// All bookkeeping (handlers, dedup map, platform dispatch maps) happens under
+    /// `manager.mutex` in one critical section so a concurrent `watch()` from another
+    /// Worker cannot observe a zero-handler PathWatcher still present in the dedup map.
+    ///
+    /// On macOS the FSEvents unregister happens *after* releasing `manager.mutex`:
+    /// `FSEventsWatcher.deinit()` takes the FSEvents loop mutex, and the CF thread's
+    /// `_events_cb` holds that mutex while calling into `onFSEvent` (which takes
+    /// `manager.mutex`). Holding both here would be AB/BA with the CF thread. Once
+    /// `fse.deinit()` returns, `_events_cb` has released the loop mutex and nulled our
+    /// slot, so no further callbacks will fire and `destroy()` is safe.
     pub fn detach(this: *PathWatcher, ctx: *anyopaque) void {
         const manager = this.manager orelse {
-            // Manager already gone (shouldn't happen in practice since we never destroy
-            // it), just drop the handler.
             _ = this.handlers.swapRemove(ctx);
             if (this.handlers.count() == 0) this.destroy();
             return;
         };
 
-        var should_destroy = false;
-        {
-            manager.mutex.lock();
-            defer manager.mutex.unlock();
-            _ = this.handlers.swapRemove(ctx);
-            if (this.handlers.count() > 0) return;
-
-            if (this.emit_in_progress) {
-                // Reader thread is mid-emit on this watcher. It holds `manager.mutex`
-                // too, so we can't be here concurrently with the emit itself — but on
-                // macOS the FSEvents callback calls emit *without* manager.mutex (it
-                // holds the FSEvents loop mutex instead). Defer the free to `flush()`.
-                this.pending_deinit = true;
-                // Still remove from manager so no new handlers attach.
-                Platform.removeWatch(manager, this);
-                if (std.mem.indexOfScalar(*PathWatcher, manager.watchers.values(), this)) |i| {
-                    bun.default_allocator.free(manager.watchers.keys()[i]);
-                    manager.watchers.swapRemoveAt(i);
-                }
-                this.manager = null;
-                return;
-            }
-            should_destroy = true;
+        manager.mutex.lock();
+        _ = this.handlers.swapRemove(ctx);
+        if (this.handlers.count() > 0) {
+            manager.mutex.unlock();
+            return;
         }
 
-        if (should_destroy) {
-            manager.removeWatcher(this);
-            this.destroy();
+        // Last handler gone — make this watcher unreachable before dropping the lock.
+        manager.unlinkWatcherLocked(this);
+        this.manager = null;
+        if (comptime !Environment.isMac) {
+            Platform.removeWatch(manager, this);
         }
+        manager.mutex.unlock();
+
+        if (comptime Environment.isMac) {
+            // Takes fsevents_loop.mutex; must not hold manager.mutex (see doc comment).
+            Platform.removeWatch(manager, this);
+        }
+        this.destroy();
     }
 
     fn destroy(this: *PathWatcher) void {
@@ -296,12 +286,12 @@ pub fn watch(
     const key = PathWatcherManager.makeKey(key_buf, resolved, recursive);
 
     manager.mutex.lock();
-    defer manager.mutex.unlock();
 
     const gop = bun.handleOom(manager.watchers.getOrPut(bun.default_allocator, key));
     if (gop.found_existing) {
         const existing = gop.value_ptr.*;
         bun.handleOom(existing.handlers.put(bun.default_allocator, ctx, .{}));
+        manager.mutex.unlock();
         return .{ .result = existing };
     }
 
@@ -316,15 +306,37 @@ pub fn watch(
     bun.handleOom(watcher.handlers.put(bun.default_allocator, ctx, .{}));
     gop.value_ptr.* = watcher;
 
+    // Linux/FreeBSD: `addWatch` mutates the platform dispatch maps (wd_map/entries)
+    // which live under `manager.mutex`, so call it while still locked.
+    //
+    // macOS: `addWatch` calls `FSEvents.watch()` which takes the FSEvents loop mutex.
+    // The CF thread holds that mutex while calling `onFSEvent`, which in turn takes
+    // `manager.mutex`. To keep lock order one-way (fsevents → manager), release ours
+    // first. Another Worker's `watch()` finding this PathWatcher in the interim is
+    // fine — it just appends a handler; events won't deliver until the FSEventStream
+    // is scheduled anyway.
+    if (comptime !Environment.isMac) {
+        if (Platform.addWatch(manager, watcher).asErr()) |err| {
+            manager.unlinkWatcherLocked(watcher);
+            manager.mutex.unlock();
+            watcher.manager = null;
+            watcher.destroy();
+            return .{ .err = err };
+        }
+        manager.mutex.unlock();
+        return .{ .result = watcher };
+    }
+
+    manager.mutex.unlock();
+
     if (Platform.addWatch(manager, watcher).asErr()) |err| {
-        // Undo.
-        bun.default_allocator.free(gop.key_ptr.*);
-        _ = manager.watchers.swapRemoveAt(gop.index);
+        manager.mutex.lock();
+        manager.unlinkWatcherLocked(watcher);
+        manager.mutex.unlock();
         watcher.manager = null;
         watcher.destroy();
         return .{ .err = err };
     }
-
     return .{ .result = watcher };
 }
 
@@ -360,13 +372,17 @@ const Platform = switch (Environment.os) {
 const Linux = struct {
     fd: bun.FD = bun.invalid_fd,
     running: std.atomic.Value(bool) = .init(true),
-    /// wd → owning entry. Multiple wds can point at the same PathWatcher (recursive).
-    wd_map: std.AutoHashMapUnmanaged(i32, WdEntry) = .{},
+    /// wd → list of owners. `inotify_add_watch` returns the same wd for the same
+    /// inode on a given inotify fd, so two PathWatchers whose roots overlap (e.g.
+    /// a recursive watch on `/a` plus a watch on `/a/sub`) end up sharing a wd. Each
+    /// owner gets its own subpath so the event can be reported relative to the right
+    /// root, and `inotify_rm_watch` is only issued when the last owner detaches.
+    wd_map: std.AutoHashMapUnmanaged(i32, std.ArrayListUnmanaged(WdOwner)) = .{},
 
-    const WdEntry = struct {
+    const WdOwner = struct {
         watcher: *PathWatcher,
-        /// Path of the watched directory/file relative to `watcher.path`. Empty for the
-        /// root. Owned; freed when the wd is removed.
+        /// Path of the watched directory/file relative to `watcher.path`. Empty for
+        /// the root. Owned; freed when this owner is removed from the wd.
         subpath: [:0]const u8,
     };
 
@@ -419,7 +435,7 @@ const Linux = struct {
         return .success;
     }
 
-    /// Add a single inotify watch and record it in both maps. Caller holds `manager.mutex`.
+    /// Add a single inotify watch and record ownership. Caller holds `manager.mutex`.
     fn addOne(
         manager: *PathWatcherManager,
         watcher: *PathWatcher,
@@ -430,27 +446,24 @@ const Linux = struct {
         const mask: u32 = if (watcher.is_file and subpath.len == 0) watch_file_mask else watch_dir_mask;
         const rc = std.posix.system.inotify_add_watch(plat.fd.cast(), abs_path, mask);
         if (bun.sys.Maybe(void).errnoSysP(rc, .watch, abs_path)) |err| {
-            // ENOTDIR during a recursive walk just means we raced with something; skip.
+            // ENOTDIR/ENOENT during a recursive walk just means we raced; skip.
             if (subpath.len > 0) return .success;
             return err;
         }
         const wd: i32 = @intCast(rc);
         const gop = bun.handleOom(plat.wd_map.getOrPut(bun.default_allocator, wd));
-        if (gop.found_existing) {
-            // inotify returns the same wd if the inode is already watched on this fd.
-            // Point it at the most recent watcher — the previous owner's wds list still
-            // contains it so rm_watch will still fire on their detach; we only need one
-            // dispatch target. (Two PathWatchers on literally the same path already
-            // deduped above; this only happens via hardlinks or overlapping recursive
-            // roots.)
-            bun.default_allocator.free(gop.value_ptr.subpath);
+        if (!gop.found_existing) gop.value_ptr.* = .{};
+        // A recursive walk can revisit a directory we already registered (e.g. via
+        // a symlink cycle or an IN_CREATE race); don't add the same owner twice.
+        for (gop.value_ptr.items) |o| {
+            if (o.watcher == watcher) return .success;
         }
-        gop.value_ptr.* = .{
+        bun.handleOom(gop.value_ptr.append(bun.default_allocator, .{
             .watcher = watcher,
             .subpath = bun.handleOom(bun.default_allocator.dupeZ(u8, subpath)),
-        };
+        }));
         bun.handleOom(watcher.platform.wds.append(bun.default_allocator, wd));
-        log("inotify_add_watch({s}) → wd={d} sub='{s}'", .{ abs_path, wd, subpath });
+        log("inotify_add_watch({s}) → wd={d} sub='{s}' owners={d}", .{ abs_path, wd, subpath, gop.value_ptr.items.len });
         return .success;
     }
 
@@ -481,12 +494,22 @@ const Linux = struct {
         }
     }
 
-    /// Caller holds `manager.mutex`.
+    /// Caller holds `manager.mutex`. Drops this watcher's ownership of each of its
+    /// wds; only issues `inotify_rm_watch` once a wd has no remaining owners.
     fn removeWatch(manager: *PathWatcherManager, watcher: *PathWatcher) void {
         const plat = &manager.platform;
         for (watcher.platform.wds.items) |wd| {
-            if (plat.wd_map.fetchRemove(wd)) |kv| {
-                bun.default_allocator.free(kv.value.subpath);
+            const owners = plat.wd_map.getPtr(wd) orelse continue;
+            var j: usize = 0;
+            while (j < owners.items.len) {
+                if (owners.items[j].watcher == watcher) {
+                    bun.default_allocator.free(owners.items[j].subpath);
+                    _ = owners.swapRemove(j);
+                } else j += 1;
+            }
+            if (owners.items.len == 0) {
+                owners.deinit(bun.default_allocator);
+                _ = plat.wd_map.remove(wd);
                 _ = std.posix.system.inotify_rm_watch(plat.fd.cast(), wd);
             }
         }
@@ -540,39 +563,27 @@ const Linux = struct {
                 const ev: *align(1) const InotifyEvent = @ptrCast(buf[i..].ptr);
                 i += @sizeOf(InotifyEvent) + ev.len;
 
-                const entry = plat.wd_map.get(ev.wd) orelse {
-                    // Unknown wd — likely IN_IGNORED for a wd we just rm_watch'd.
-                    continue;
-                };
-                const watcher = entry.watcher;
-
                 // Kernel retired this wd (rm_watch, or the watched inode is gone).
                 if (ev.mask & IN.IGNORED != 0) {
-                    if (plat.wd_map.fetchRemove(ev.wd)) |kv| {
-                        bun.default_allocator.free(kv.value.subpath);
-                    }
-                    if (std.mem.indexOfScalar(i32, watcher.platform.wds.items, ev.wd)) |idx| {
-                        _ = watcher.platform.wds.swapRemove(idx);
+                    if (plat.wd_map.getPtr(ev.wd)) |owners| {
+                        for (owners.items) |o| {
+                            bun.default_allocator.free(o.subpath);
+                            if (std.mem.indexOfScalar(i32, o.watcher.platform.wds.items, ev.wd)) |idx| {
+                                _ = o.watcher.platform.wds.swapRemove(idx);
+                            }
+                        }
+                        owners.deinit(bun.default_allocator);
+                        _ = plat.wd_map.remove(ev.wd);
                     }
                     continue;
                 }
 
-                // Build the path to report, relative to `watcher.path`.
+                const owners = plat.wd_map.getPtr(ev.wd) orelse continue;
+
                 const name: []const u8 = if (ev.len > 0) blk: {
                     const name_ptr: [*:0]const u8 = @ptrCast(buf[i - ev.len ..].ptr);
                     break :blk bun.sliceTo(name_ptr, 0);
                 } else "";
-
-                const rel: []const u8 = if (watcher.is_file) blk: {
-                    // Watching a single file: Node reports the basename.
-                    break :blk std.fs.path.basename(watcher.path);
-                } else if (entry.subpath.len == 0) blk: {
-                    break :blk name;
-                } else if (name.len == 0) blk: {
-                    break :blk entry.subpath;
-                } else blk: {
-                    break :blk std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ entry.subpath, name }) catch entry.subpath;
-                };
 
                 const is_dir_child = ev.mask & IN.ISDIR != 0;
                 const event_type: PathWatcher.EventType = if (ev.mask &
@@ -581,24 +592,42 @@ const Linux = struct {
                 else
                     .change;
 
-                watcher.emit(event_type, rel, !is_dir_child and !(ev.mask & (IN.DELETE_SELF | IN.MOVE_SELF) != 0 and !watcher.is_file));
-                _ = bun.handleOom(touched.getOrPut(bun.default_allocator, watcher));
+                // Dispatch to every owner of this wd. `addOne` may append to `owners`
+                // (when a recursive owner picks up a newly-created subdir that happens
+                // to share this wd), so iterate by index and re-read `.items` each turn.
+                var oi: usize = 0;
+                while (oi < owners.items.len) : (oi += 1) {
+                    const owner = owners.items[oi];
+                    const watcher = owner.watcher;
 
-                // Recursive: a new directory appeared under a watched tree — start
-                // watching it too so future events inside it are delivered. This is what
-                // makes `{recursive: true}` actually track structure changes (fixes
-                // #15939/#15085).
-                if (watcher.recursive and is_dir_child and (ev.mask & (IN.CREATE | IN.MOVED_TO) != 0) and name.len > 0) {
-                    const abs_buf = bun.path_buffer_pool.get();
-                    defer bun.path_buffer_pool.put(abs_buf);
-                    const child_abs = if (entry.subpath.len == 0)
-                        std.fmt.bufPrintZ(abs_buf, "{s}/{s}", .{ watcher.path, name }) catch continue
-                    else
-                        std.fmt.bufPrintZ(abs_buf, "{s}/{s}/{s}", .{ watcher.path, entry.subpath, name }) catch continue;
-                    _ = addOne(manager, watcher, child_abs, rel);
-                    // The new directory may already contain entries created before our
-                    // wd was in place; walk it once to catch up.
-                    walkAndAdd(manager, watcher, child_abs, rel);
+                    // Build the path relative to this owner's root.
+                    const rel: []const u8 = if (watcher.is_file) blk: {
+                        break :blk std.fs.path.basename(watcher.path);
+                    } else if (owner.subpath.len == 0) blk: {
+                        break :blk name;
+                    } else if (name.len == 0) blk: {
+                        break :blk owner.subpath;
+                    } else blk: {
+                        break :blk std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ owner.subpath, name }) catch owner.subpath;
+                    };
+
+                    watcher.emit(event_type, rel, !is_dir_child and !(ev.mask & (IN.DELETE_SELF | IN.MOVE_SELF) != 0 and !watcher.is_file));
+                    _ = bun.handleOom(touched.getOrPut(bun.default_allocator, watcher));
+
+                    // Recursive: a new directory appeared under this owner's tree —
+                    // start watching it so future events inside it are delivered.
+                    // This is what makes `{recursive: true}` track structure changes
+                    // after the initial crawl (#15939/#15085).
+                    if (watcher.recursive and is_dir_child and (ev.mask & (IN.CREATE | IN.MOVED_TO) != 0) and name.len > 0) {
+                        const abs_buf = bun.path_buffer_pool.get();
+                        defer bun.path_buffer_pool.put(abs_buf);
+                        const child_abs = if (owner.subpath.len == 0)
+                            std.fmt.bufPrintZ(abs_buf, "{s}/{s}", .{ watcher.path, name }) catch continue
+                        else
+                            std.fmt.bufPrintZ(abs_buf, "{s}/{s}/{s}", .{ watcher.path, owner.subpath, name }) catch continue;
+                        _ = addOne(manager, watcher, child_abs, rel);
+                        walkAndAdd(manager, watcher, child_abs, rel);
+                    }
                 }
             }
 
@@ -632,7 +661,10 @@ const Darwin = struct {
         return .success;
     }
 
-    /// Caller holds `manager.mutex`; FSEvents has its own mutex so no inversion.
+    /// Caller does NOT hold `manager.mutex` — `FSEvents.watch()` takes the FSEvents
+    /// loop mutex, and the CF thread holds that while calling `onFSEvent` (which
+    /// takes `manager.mutex`). Keeping this call outside `manager.mutex` makes the
+    /// lock order one-way: fsevents_loop.mutex → manager.mutex.
     fn addWatch(_: *PathWatcherManager, watcher: *PathWatcher) bun.sys.Maybe(void) {
         watcher.platform.fsevents = FSEvents.watch(
             watcher.path,
@@ -650,6 +682,10 @@ const Darwin = struct {
         return .success;
     }
 
+    /// Caller does NOT hold `manager.mutex` (same lock-order reasoning as `addWatch`).
+    /// `FSEventsWatcher.deinit()` → `unregisterWatcher()` blocks on the FSEvents loop
+    /// mutex, which `_events_cb` holds for the whole dispatch; once this returns no
+    /// further `onFSEvent` calls will arrive for `watcher`.
     fn removeWatch(_: *PathWatcherManager, watcher: *PathWatcher) void {
         if (watcher.platform.fsevents) |fse| {
             watcher.platform.fsevents = null;
@@ -657,12 +693,22 @@ const Darwin = struct {
         }
     }
 
-    /// Called from the CFRunLoop thread (fs_events.zig's `_events_cb`) with the FSEvents
-    /// loop mutex held. We don't take `manager.mutex` here — the only shared state we
-    /// touch is `watcher.handlers`, and `detach()` defers destruction via
-    /// `emit_in_progress`/`pending_deinit` when it sees a concurrent emit.
+    /// Called from the CFRunLoop thread (`fs_events.zig`'s `_events_cb`) with the
+    /// FSEvents loop mutex held. Take `manager.mutex` so iterating `handlers` can't
+    /// race with `watch()`/`detach()` mutating it. The JS thread never holds
+    /// `manager.mutex` across a call into FSEvents, so this is deadlock-free.
+    ///
+    /// `watcher` itself is kept alive by the FSEvents loop mutex: `detach()` →
+    /// `removeWatch()` → `fse.deinit()` → `unregisterWatcher()` blocks until
+    /// `_events_cb` releases it, so `destroy()` cannot run under us. The
+    /// `watcher.manager == null` check catches the window where detach has already
+    /// unlinked us but hasn't yet called `fse.deinit()`.
     fn onFSEvent(ctx: ?*anyopaque, event: Event, is_file: bool) void {
         const watcher: *PathWatcher = @ptrCast(@alignCast(ctx.?));
+        const manager = default_manager orelse return;
+        manager.mutex.lock();
+        defer manager.mutex.unlock();
+        if (watcher.manager == null) return;
         switch (event) {
             inline .rename, .change => |path, tag| {
                 watcher.emit(@field(PathWatcher.EventType, @tagName(tag)), path, is_file);
@@ -674,6 +720,10 @@ const Darwin = struct {
 
     fn onFSEventFlush(ctx: ?*anyopaque) void {
         const watcher: *PathWatcher = @ptrCast(@alignCast(ctx.?));
+        const manager = default_manager orelse return;
+        manager.mutex.lock();
+        defer manager.mutex.unlock();
+        if (watcher.manager == null) return;
         watcher.flush();
     }
 };

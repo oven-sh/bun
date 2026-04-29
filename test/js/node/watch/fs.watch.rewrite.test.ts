@@ -95,6 +95,39 @@ test("two watchers on the same path both receive events; closing one keeps the o
   }
 });
 
+// Linux shares one inotify fd, and inotify_add_watch returns the same wd for the
+// same inode. A recursive watch on /a and a plain watch on /a/sub therefore share
+// the wd for /a/sub. Closing the inner watch must not rm_watch that wd out from
+// under the recursive parent. (macOS/Windows don't have this aliasing but the test
+// is still a valid behavioural check there.)
+test.skipIf(isFreeBSD)("closing an inner watch does not break an overlapping recursive parent", async () => {
+  using dir = tempDir("fs-watch-overlap", {
+    "sub/seed.txt": "x",
+  });
+  const root = String(dir);
+  const sub = path.join(root, "sub");
+  const target = path.join(sub, "seed.txt");
+
+  let parentHits = 0;
+  const parent = fs.watch(root, { recursive: true }, () => void parentHits++);
+  const inner = fs.watch(sub, () => {});
+  try {
+    await Bun.sleep(100);
+    // Close the inner watch. On Linux this must drop *its* ownership of the shared
+    // wd without issuing inotify_rm_watch (parent still owns it).
+    inner.close();
+
+    for (let i = 0; i < 60 && parentHits === 0; i++) {
+      fs.writeFileSync(target, String(i));
+      await Bun.sleep(50);
+    }
+    expect(parentHits).toBeGreaterThan(0);
+  } finally {
+    inner.close();
+    parent.close();
+  }
+});
+
 // The old PathWatcherManager was created with `vm.transpiler.fs` and wired into
 // bun.Watcher's `top_level_dir`. The new backend has no such dependency — fs.watch()
 // must work even on a completely cold VM that never touched the transpiler. Run a

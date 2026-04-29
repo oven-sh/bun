@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, describeWithContainer, isDockerEnabled } from "harness";
 import path from "path";
 
@@ -59,21 +59,17 @@ if (isDockerEnabled()) {
   const url = process.env.MYSQL_URL || "mysql://bun@127.0.0.1:3306/bun_sql_test";
 
   describe("mysql (local)", () => {
-    test(
-      "bind() does not OOB when the params array grows during binding",
-      async () => {
-        const { stdout, stderr, exitCode } = await runFixture(url);
-        // The fixture prints "CONNECTED" after the priming query succeeds. If
-        // it never got that far, there's no MySQL to talk to in this
-        // environment; the docker-gated branch above (and sql-mysql.test.ts)
-        // provide the CI coverage.
-        if (!stdout.startsWith("CONNECTED")) {
-          console.warn("sql-mysql-bind-oob: no MySQL reachable at " + url + "; skipping assertions");
-          return;
-        }
-        assertFixtureOutput(stdout, stderr, exitCode);
-      },
-      30_000,
-    );
+    test("bind() does not OOB when the params array grows during binding", async () => {
+      const { stdout, stderr, exitCode } = await runFixture(url);
+      // The fixture prints "CONNECTED" after the priming query succeeds. If
+      // it never got that far, there's no MySQL to talk to in this
+      // environment; the docker-gated branch above (and sql-mysql.test.ts)
+      // provide the CI coverage.
+      if (!stdout.startsWith("CONNECTED")) {
+        console.warn("sql-mysql-bind-oob: no MySQL reachable at " + url + "; skipping assertions");
+        return;
+      }
+      assertFixtureOutput(stdout, stderr, exitCode);
+    }, 30_000);
   });
 }

@@ -31,8 +31,8 @@ test("bustDirCache reuses DirInfo and EntriesOption slots across repeated reload
       });
       void router.routes;
 
-      const warmup = 200;
-      const iters = 4000;
+      const warmup = 50;
+      const iters = 1000;
 
       for (let i = 0; i < warmup; i++) router.reload();
       Bun.gc(true);
@@ -60,10 +60,13 @@ test("bustDirCache reuses DirInfo and EntriesOption slots across repeated reload
   expect(stderr).toBe("");
   const { perIter } = JSON.parse(stdout.trim().split("\n").at(-1)!);
   // Without slot reuse, each reload() of this 9-directory tree leaks roughly
-  // 14 KB/iteration in release (9 DirInfo + 9 EntriesOption structs in overflow
-  // blocks, plus DirnameStore duplicates). With the fix, slots are overwritten
-  // in place and growth drops to the low single-digit KB from unrelated
-  // dirname-store appends.
+  // 14 KB/iteration (9 DirInfo + 9 EntriesOption structs in overflow blocks,
+  // plus DirnameStore/FilenameStore duplicates). With the fix, slots are
+  // overwritten in place and growth drops to the low single-digit KB from
+  // unrelated dirname-store appends.
   expect(perIter).toBeLessThan(7 * 1024);
   expect(exitCode).toBe(0);
-});
+  // Spawning a debug+ASAN subprocess has several seconds of startup overhead
+  // before the reload loop even runs; the default 5s per-test budget isn't
+  // enough for that plus ~1s of iterations.
+}, 30_000);

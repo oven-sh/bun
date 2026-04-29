@@ -473,6 +473,13 @@ pub const FSEventsLoop = struct {
         // changes to files from the past.
         //
         const ref = CS.FSEventStreamCreate(null, _events_cb, &ctx, cf_paths, CS.kFSEventStreamEventIdSinceNow, latency, flags);
+        if (ref == null) {
+            // FSEventStreamCreate can fail under rapid stream churn (resource
+            // exhaustion); passing NULL into ScheduleWithRunLoop crashes the CF thread.
+            bun.default_allocator.free(paths);
+            CF.Release(cf_paths);
+            return;
+        }
 
         CS.FSEventStreamScheduleWithRunLoop(ref, this.loop, CF.RunLoopDefaultMode.*);
         if (CS.FSEventStreamStart(ref) == 0) {

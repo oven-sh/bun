@@ -129,6 +129,9 @@ pub fn deinit(this: *Watcher, close_descriptors: bool) void {
                 fd.close();
             }
         }
+        for (this.watchlist.items(.file_path)) |p| {
+            this.allocator.free(p);
+        }
         this.watchlist.deinit(this.allocator);
         const allocator = this.allocator;
         allocator.destroy(this);
@@ -252,6 +255,9 @@ fn threadMain(this: *Watcher) !void {
             fd.close();
         }
     }
+    for (this.watchlist.items(.file_path)) |p| {
+        this.allocator.free(p);
+    }
     this.watchlist.deinit(this.allocator);
 
     // Close trace file if open
@@ -277,6 +283,7 @@ pub fn flushEvictions(this: *Watcher) void {
 
     var slice = this.watchlist.slice();
     const fds = slice.items(.fd);
+    const file_paths = slice.items(.file_path);
     var last_item = no_watch_item;
 
     for (this.evict_list[0..this.evict_list_i]) |item| {
@@ -292,6 +299,10 @@ pub fn flushEvictions(this: *Watcher) void {
                 fds[item].close();
             }
         }
+        // file_path was dupeZ'd in append{File,Directory}AssumeCapacity;
+        // swapRemove in the second pass overwrites the slot, so free here.
+        this.allocator.free(file_paths[item]);
+        file_paths[item] = "";
         last_item = item;
     }
 
@@ -393,12 +404,19 @@ fn appendFileAssumeCapacity(
         }
     }
 
+    _ = clone_file_path;
     const watchlist_id = this.watchlist.len;
 
-    const file_path_: string = if (comptime clone_file_path)
-        bun.asByteSlice(bun.handleOom(this.allocator.dupeZ(u8, file_path)))
-    else
-        file_path;
+    // Always own file_path. Callers that passed `clone_file_path = false`
+    // (path_watcher, DirectoryWatchStore, onMaybeWatchDirectory, bundle_v2
+    // on posix) free their buffer on their own schedule — borrowing left
+    // `watchlist.items(.file_path)` dangling between the caller's free and
+    // `flushEvictions()`, then `onFileUpdate()` on the watcher thread read
+    // freed memory. Owning our own copy decouples the lifetimes and lets
+    // `flushEvictions()` / teardown free it deterministically. Callers that
+    // already passed `true` are unchanged except that the dupe no longer
+    // leaks on eviction.
+    const file_path_: [:0]const u8 = bun.handleOom(this.allocator.dupeZ(u8, file_path));
 
     var item = WatchItem{
         .file_path = file_path_,
@@ -414,14 +432,11 @@ fn appendFileAssumeCapacity(
     if (comptime Environment.isKqueue) {
         this.addFileDescriptorToKQueueWithoutChecks(fd, watchlist_id);
     } else if (comptime Environment.isLinux) {
-        // var file_path_to_use_ = std.mem.trimRight(u8, file_path_, "/");
-        // var buf: [bun.MAX_PATH_BYTES+1]u8 = undefined;
-        // bun.copy(u8, &buf, file_path_to_use_);
-        // buf[file_path_to_use_.len] = 0;
-        var buf = file_path_.ptr;
-        const slice: [:0]const u8 = buf[0..file_path_.len :0];
-        item.eventlist_index = switch (this.platform.watchPath(slice)) {
-            .err => |err| return .{ .err = err },
+        item.eventlist_index = switch (this.platform.watchPath(file_path_)) {
+            .err => |err| {
+                this.allocator.free(file_path_);
+                return .{ .err = err };
+            },
             .result => |r| r,
         };
     }
@@ -453,10 +468,9 @@ fn appendDirectoryAssumeCapacity(
         };
     };
 
-    const file_path_: string = if (comptime clone_file_path)
-        bun.asByteSlice(bun.handleOom(this.allocator.dupeZ(u8, file_path)))
-    else
-        file_path;
+    _ = clone_file_path;
+    // See appendFileAssumeCapacity for why file_path is always owned.
+    const file_path_: [:0]const u8 = bun.handleOom(this.allocator.dupeZ(u8, file_path));
 
     const parent_hash = getHash(bun.fs.PathName.init(file_path_).dirWithTrailingSlash());
 
@@ -510,20 +524,23 @@ fn appendDirectoryAssumeCapacity(
         );
     } else if (Environment.isLinux) {
         const buf = bun.path_buffer_pool.get();
-        defer {
-            bun.path_buffer_pool.put(buf);
-        }
-        const path: [:0]const u8 = if (clone_file_path and file_path_.len > 0 and file_path_[file_path_.len - 1] == 0)
-            file_path_[0 .. file_path_.len - 1 :0]
+        defer bun.path_buffer_pool.put(buf);
+        // file_path_ is our dupeZ so it's NUL-terminated, but callers may
+        // include a trailing slash; trim it for inotify.
+        const trimmed = if (file_path_.len > 1) std.mem.trimRight(u8, file_path_, &.{ 0, '/' }) else file_path_;
+        const path: [:0]const u8 = if (trimmed.len == file_path_.len)
+            file_path_
         else brk: {
-            const trailing_slash = if (file_path_.len > 1) std.mem.trimRight(u8, file_path_, &.{ 0, '/' }) else file_path_;
-            @memcpy(buf[0..trailing_slash.len], trailing_slash);
-            buf[trailing_slash.len] = 0;
-            break :brk buf[0..trailing_slash.len :0];
+            @memcpy(buf[0..trimmed.len], trimmed);
+            buf[trimmed.len] = 0;
+            break :brk buf[0..trimmed.len :0];
         };
 
         item.eventlist_index = switch (this.platform.watchDir(path)) {
-            .err => |err| return .{ .err = err.withPath(file_path) },
+            .err => |err| {
+                this.allocator.free(file_path_);
+                return .{ .err = err.withPath(file_path) };
+            },
             .result => |r| r,
         };
     }

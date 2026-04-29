@@ -621,14 +621,25 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           http_res.end();
           socket.destroy();
         } else if (is_upgrade) {
-          server.emit("upgrade", http_req, socket, kEmptyBuffer);
-          if (!socket._httpMessage) {
+          if (server.listenerCount("upgrade") > 0) {
+            server.emit("upgrade", http_req, socket, kEmptyBuffer);
+            if (!socket._httpMessage) {
+              if (canUseInternalAssignSocket) {
+                // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
+                assignSocketInternal(http_res, socket);
+              } else {
+                http_res.assignSocket(socket);
+              }
+            }
+          } else {
+            // Node.js compatibility: when no 'upgrade' listener exists,
+            // fall back to emitting 'request' (see nodejs/node docs for http.Server 'upgrade' event)
             if (canUseInternalAssignSocket) {
-              // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
               assignSocketInternal(http_res, socket);
             } else {
               http_res.assignSocket(socket);
             }
+            server.emit("request", http_req, http_res);
           }
         } else if (http_req.headers.expect !== undefined) {
           if (http_req.headers.expect === "100-continue") {

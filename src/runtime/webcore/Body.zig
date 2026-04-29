@@ -888,7 +888,21 @@ pub const Value = union(Tag) {
                 }
             },
             // .InlineBlob => .{ .InlineBlob = this.InlineBlob },
-            .Locked => this.Locked.toAnyBlobAllowPromise() orelse AnyBlob{ .Blob = .{} },
+            .Locked => this.Locked.toAnyBlobAllowPromise() orelse brk: {
+                // The readable stream could not be converted to a Blob. We are about to
+                // overwrite the .Locked state with .Used, so release the readable Strong
+                // to avoid leaking it.
+                this.Locked.readable.deinit();
+                break :brk AnyBlob{ .Blob = .{} };
+            },
+            .Error => brk: {
+                // The body previously errored. We are about to overwrite with .Used, so
+                // release the error payload (Strong/JSValue/bun.String/SystemError) first
+                // so it is not leaked. Callers that want to surface the error to JS should
+                // check for .Error before calling this function.
+                this.Error.deinit();
+                break :brk .{ .Blob = Blob.initEmpty(undefined) };
+            },
             else => .{ .Blob = Blob.initEmpty(undefined) },
         };
 
@@ -905,7 +919,21 @@ pub const Value = union(Tag) {
             .InternalBlob => .{ .InternalBlob = this.InternalBlob },
             .WTFStringImpl => .{ .WTFStringImpl = this.WTFStringImpl },
             // .InlineBlob => .{ .InlineBlob = this.InlineBlob },
-            .Locked => this.Locked.toAnyBlobAllowPromise() orelse AnyBlob{ .Blob = .{} },
+            .Locked => this.Locked.toAnyBlobAllowPromise() orelse brk: {
+                // The readable stream could not be converted to a Blob. We are about to
+                // overwrite the .Locked state with .Used, so release the readable Strong
+                // to avoid leaking it.
+                this.Locked.readable.deinit();
+                break :brk AnyBlob{ .Blob = .{} };
+            },
+            .Error => brk: {
+                // The body previously errored. We are about to overwrite with .Used, so
+                // release the error payload (Strong/JSValue/bun.String/SystemError) first
+                // so it is not leaked. Callers that want to surface the error to JS should
+                // check for .Error before calling this function.
+                this.Error.deinit();
+                break :brk .{ .Blob = Blob.initEmpty(undefined) };
+            },
             else => .{ .Blob = Blob.initEmpty(undefined) },
         };
 
@@ -1142,6 +1170,10 @@ pub fn Mixin(comptime Type: type) type {
                 return handleBodyAlreadyUsed(globalObject);
             }
 
+            if (value.* == .Error) {
+                return handleBodyError(value, globalObject);
+            }
+
             if (value.* == .Locked) {
                 if (@hasDecl(Type, "getBodyReadableStream")) {
                     if (this.getBodyReadableStream(globalObject)) |readable| {
@@ -1219,6 +1251,10 @@ pub fn Mixin(comptime Type: type) type {
                 return handleBodyAlreadyUsed(globalObject);
             }
 
+            if (value.* == .Error) {
+                return handleBodyError(value, globalObject);
+            }
+
             if (value.* == .Locked) {
                 if (@hasDecl(Type, "getBodyReadableStream")) {
                     if (this.getBodyReadableStream(globalObject)) |readable| {
@@ -1253,12 +1289,32 @@ pub fn Mixin(comptime Type: type) type {
             return globalObject.ERR(.BODY_ALREADY_USED, "Body already used", .{}).reject();
         }
 
+        /// When the body has already transitioned to the `.Error` state (for
+        /// example, the fetch body download failed after headers were received),
+        /// consuming the body must reject with that error. Previously the
+        /// `.Error` state fell through to `useAsAnyBlob*` which overwrote it
+        /// with `.Used` without releasing the `ValueError` payload, leaking a
+        /// `jsc.Strong`/`bun.String`/`SystemError` and silently returning an
+        /// empty body instead of surfacing the failure.
+        fn handleBodyError(value: *Body.Value, globalObject: *jsc.JSGlobalObject) JSValue {
+            var err = value.Error;
+            value.* = .{ .Used = {} };
+            const js_err = err.toJS(globalObject);
+            js_err.ensureStillAlive();
+            err.deinit();
+            return jsc.JSPromise.rejectedPromise(globalObject, js_err).toJS();
+        }
+
         pub fn getArrayBuffer(this: *Type, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             log("getArrayBuffer", .{});
             var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
+            }
+
+            if (value.* == .Error) {
+                return handleBodyError(value, globalObject);
             }
 
             if (value.* == .Locked) {
@@ -1298,6 +1354,10 @@ pub fn Mixin(comptime Type: type) type {
                 return handleBodyAlreadyUsed(globalObject);
             }
 
+            if (value.* == .Error) {
+                return handleBodyError(value, globalObject);
+            }
+
             if (value.* == .Locked) {
                 if (@hasDecl(Type, "getBodyReadableStream")) {
                     if (this.getBodyReadableStream(globalObject)) |readable| {
@@ -1331,6 +1391,10 @@ pub fn Mixin(comptime Type: type) type {
 
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
+            }
+
+            if (value.* == .Error) {
+                return handleBodyError(value, globalObject);
             }
 
             if (value.* == .Locked) {
@@ -1396,6 +1460,10 @@ pub fn Mixin(comptime Type: type) type {
 
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
+            }
+
+            if (value.* == .Error) {
+                return handleBodyError(value, globalObject);
             }
 
             if (value.* == .Locked) {

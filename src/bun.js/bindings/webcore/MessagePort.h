@@ -61,6 +61,7 @@ public:
 
     void start();
     void close();
+    void closeWithEvent();
     void entangle();
 
     // Returns nullptr if the passed-in vector is empty.
@@ -69,6 +70,7 @@ public:
 
     WEBCORE_EXPORT static bool isMessagePortAliveForTesting(const MessagePortIdentifier&);
     WEBCORE_EXPORT static void notifyMessageAvailable(const MessagePortIdentifier&);
+    WEBCORE_EXPORT static void notifyRemotePortClosed(const MessagePortIdentifier&);
 
     WEBCORE_EXPORT void messageAvailable();
     bool started() const { return m_started; }
@@ -142,6 +144,7 @@ private:
     bool m_hasRef { false };
 
     uint32_t m_messageEventCount { 0 };
+    uint32_t m_closeEventCount { 0 };
     static void onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind);
 };
 

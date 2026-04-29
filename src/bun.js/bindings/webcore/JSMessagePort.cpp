@@ -73,6 +73,8 @@ static JSC_DECLARE_CUSTOM_GETTER(jsMessagePort_onmessage);
 static JSC_DECLARE_CUSTOM_SETTER(setJSMessagePort_onmessage);
 static JSC_DECLARE_CUSTOM_GETTER(jsMessagePort_onmessageerror);
 static JSC_DECLARE_CUSTOM_SETTER(setJSMessagePort_onmessageerror);
+static JSC_DECLARE_CUSTOM_GETTER(jsMessagePort_onclose);
+static JSC_DECLARE_CUSTOM_SETTER(setJSMessagePort_onclose);
 
 class JSMessagePortPrototype final : public JSC::JSNonFinalObject {
 public:
@@ -130,6 +132,7 @@ static const HashTableValue JSMessagePortPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsMessagePortConstructor, 0 } },
     { "onmessage"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsMessagePort_onmessage, setJSMessagePort_onmessage } },
     { "onmessageerror"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsMessagePort_onmessageerror, setJSMessagePort_onmessageerror } },
+    { "onclose"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsMessagePort_onclose, setJSMessagePort_onclose } },
     { "postMessage"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_postMessage, 1 } },
     { "start"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_start, 0 } },
     { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_close, 0 } },
@@ -241,6 +244,33 @@ JSC_DEFINE_CUSTOM_SETTER(setJSMessagePort_onmessageerror, (JSGlobalObject * lexi
     return IDLAttribute<JSMessagePort>::set<setJSMessagePort_onmessageerrorSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
 
+static inline JSValue jsMessagePort_oncloseGetter(JSGlobalObject& lexicalGlobalObject, JSMessagePort& thisObject)
+{
+    UNUSED_PARAM(lexicalGlobalObject);
+    return eventHandlerAttribute(thisObject.wrapped(), eventNames().closeEvent, worldForDOMObject(thisObject));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsMessagePort_onclose, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
+{
+    return IDLAttribute<JSMessagePort>::get<jsMessagePort_oncloseGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
+}
+
+static inline bool setJSMessagePort_oncloseSetter(JSGlobalObject& lexicalGlobalObject, JSMessagePort& thisObject, JSValue value)
+{
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    UNUSED_PARAM(vm);
+    setEventHandlerAttribute<JSEventListener>(thisObject.wrapped(), eventNames().closeEvent, value, thisObject);
+    vm.writeBarrier(&thisObject, value);
+    ensureStillAliveHere(value);
+
+    return true;
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setJSMessagePort_onclose, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName))
+{
+    return IDLAttribute<JSMessagePort>::set<setJSMessagePort_oncloseSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
+}
+
 static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_postMessage1Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSMessagePort>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -329,7 +359,7 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_closeBody(JSC::
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     impl.jsUnref(lexicalGlobalObject);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.close(); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.closeWithEvent(); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_close, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

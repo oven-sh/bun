@@ -323,3 +323,95 @@ test("cloneable and non-transferable equals (net.BlockList)", async () => {
   mc.port2.postMessage(blocklist);
   await promise;
 });
+
+test("close event fires on the port that called close()", done => {
+  const { port1, port2 } = new MessageChannel();
+
+  port1.addEventListener("close", () => {
+    port2.close();
+    done();
+  });
+
+  port1.start();
+  port2.start();
+  port1.close();
+});
+
+test("close event fires on the remote port when the other side closes", done => {
+  const { port1, port2 } = new MessageChannel();
+
+  port2.addEventListener("close", () => {
+    done();
+  });
+
+  port1.start();
+  port2.start();
+  port1.close();
+});
+
+test("close event fires on both ports", async () => {
+  const { port1, port2 } = new MessageChannel();
+
+  const events: string[] = [];
+  const { promise, resolve } = Promise.withResolvers<void>();
+
+  port1.addEventListener("close", () => {
+    events.push("port1");
+    if (events.length === 2) resolve();
+  });
+
+  port2.addEventListener("close", () => {
+    events.push("port2");
+    if (events.length === 2) resolve();
+  });
+
+  port1.start();
+  port2.start();
+  port1.close();
+
+  await promise;
+
+  expect(events).toContain("port1");
+  expect(events).toContain("port2");
+});
+
+test("onclose property works", done => {
+  const { port1, port2 } = new MessageChannel();
+
+  expect(port1.onclose).toBeNull();
+
+  port1.onclose = () => {
+    port2.close();
+    done();
+  };
+
+  port1.start();
+  port2.start();
+  port1.close();
+});
+
+test("close event fires with addEventListener and onclose on remote port", async () => {
+  const { port1, port2 } = new MessageChannel();
+
+  const events: string[] = [];
+  const { promise, resolve } = Promise.withResolvers<void>();
+
+  port2.addEventListener("close", () => {
+    events.push("addEventListener");
+    if (events.length === 2) resolve();
+  });
+
+  port2.onclose = () => {
+    events.push("onclose");
+    if (events.length === 2) resolve();
+  };
+
+  port1.start();
+  port2.start();
+  port1.close();
+
+  await promise;
+
+  expect(events).toContain("addEventListener");
+  expect(events).toContain("onclose");
+});

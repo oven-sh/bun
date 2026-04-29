@@ -101,6 +101,28 @@ void MessagePort::notifyMessageAvailable(const MessagePortIdentifier& identifier
     });
 }
 
+void MessagePort::notifyRemotePortClosed(const MessagePortIdentifier& identifier)
+{
+    std::optional<ScriptExecutionContextIdentifier> scriptExecutionContextIdentifier;
+    ThreadSafeWeakPtr<MessagePort> weakPort;
+    {
+        Locker locker { allMessagePortsLock };
+        scriptExecutionContextIdentifier = portToContextIdentifier().getOptional(identifier);
+        weakPort = allMessagePorts().get(identifier);
+    }
+    if (!scriptExecutionContextIdentifier)
+        return;
+
+    ScriptExecutionContext::ensureOnContextThread(*scriptExecutionContextIdentifier, [weakPort = WTF::move(weakPort)](auto&) {
+        RefPtr port = weakPort.get();
+        if (!port)
+            return;
+        port->m_entangled = false;
+        auto event = Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No);
+        port->dispatchEvent(event);
+    });
+}
+
 Ref<MessagePort> MessagePort::create(ScriptExecutionContext& scriptExecutionContext, const MessagePortIdentifier& local, const MessagePortIdentifier& remote)
 {
     auto messagePort = adoptRef(*new MessagePort(scriptExecutionContext, local, remote));
@@ -130,15 +152,16 @@ MessagePort::MessagePort(ScriptExecutionContext& scriptExecutionContext, const M
 
 MessagePort::~MessagePort()
 {
+    {
+        Locker locker { allMessagePortsLock };
 
-    Locker locker { allMessagePortsLock };
-
-    auto iterator = allMessagePorts().find(m_identifier);
-    if (iterator != allMessagePorts().end()) {
-        // ThreadSafeWeakPtr::get() returns null as soon as the object has started destruction.
-        if (RefPtr messagePort = iterator->value.get(); !messagePort) {
-            allMessagePorts().remove(iterator);
-            portToContextIdentifier().remove(m_identifier);
+        auto iterator = allMessagePorts().find(m_identifier);
+        if (iterator != allMessagePorts().end()) {
+            // ThreadSafeWeakPtr::get() returns null as soon as the object has started destruction.
+            if (RefPtr messagePort = iterator->value.get(); !messagePort) {
+                allMessagePorts().remove(iterator);
+                portToContextIdentifier().remove(m_identifier);
+            }
         }
     }
 
@@ -238,6 +261,28 @@ void MessagePort::close()
         return;
     m_isDetached = true;
 
+    MessagePortChannelProvider::singleton().messagePortClosed(m_identifier);
+
+    removeAllEventListeners();
+}
+
+void MessagePort::closeWithEvent()
+{
+    if (m_isDetached)
+        return;
+    m_isDetached = true;
+
+    // Dispatch the close event on this (closing) port before notifying the remote.
+    // This ensures the closing port's close event fires first, matching Node.js behavior.
+    // We use EventTarget::dispatchEvent directly because our override blocks
+    // dispatching when m_isDetached is true, but the close event is the one
+    // exception that must fire even on the port being closed.
+    if (scriptExecutionContext()) {
+        auto event = Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No);
+        EventTarget::dispatchEvent(event);
+    }
+
+    // Notify the channel (and the remote port) after dispatching the local close event.
     MessagePortChannelProvider::singleton().messagePortClosed(m_identifier);
 
     removeAllEventListeners();
@@ -385,34 +430,42 @@ void MessagePort::contextDestroyed()
 
 void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind)
 {
-    if (eventType == eventNames().messageEvent) {
-        auto& port = static_cast<MessagePort&>(self);
-        switch (kind) {
-        case Add:
-            if (port.m_messageEventCount == 0) {
-                auto* context = port.scriptExecutionContext();
-                if (context)
-                    context->refEventLoop();
-            }
-            port.m_messageEventCount++;
-            break;
-        case Remove:
-            port.m_messageEventCount--;
-            if (port.m_messageEventCount == 0) {
-                auto* context = port.scriptExecutionContext();
-                if (context)
-                    context->unrefEventLoop();
-            }
-            break;
-        case Clear:
-            if (port.m_messageEventCount > 0) {
-                auto* context = port.scriptExecutionContext();
-                if (context)
-                    context->unrefEventLoop();
-            }
-            port.m_messageEventCount = 0;
-            break;
+    auto& port = static_cast<MessagePort&>(self);
+
+    uint32_t* counter = nullptr;
+    if (eventType == eventNames().messageEvent)
+        counter = &port.m_messageEventCount;
+    else if (eventType == eventNames().closeEvent)
+        counter = &port.m_closeEventCount;
+
+    if (!counter)
+        return;
+
+    switch (kind) {
+    case Add:
+        if (*counter == 0) {
+            auto* context = port.scriptExecutionContext();
+            if (context)
+                context->refEventLoop();
         }
+        (*counter)++;
+        break;
+    case Remove:
+        (*counter)--;
+        if (*counter == 0) {
+            auto* context = port.scriptExecutionContext();
+            if (context)
+                context->unrefEventLoop();
+        }
+        break;
+    case Clear:
+        if (*counter > 0) {
+            auto* context = port.scriptExecutionContext();
+            if (context)
+                context->unrefEventLoop();
+        }
+        *counter = 0;
+        break;
     }
 };
 

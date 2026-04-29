@@ -259,3 +259,10 @@ export const fetchH2Internals = {
     streams: number;
   },
 };
+
+export const fetchH3Internals = {
+  liveCounts: $newZigFunction("http/H3Client.zig", "TestingAPIs.quicLiveCounts", 0) as () => {
+    sessions: number;
+    streams: number;
+  },
+};

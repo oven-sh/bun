@@ -55,6 +55,147 @@ describe("MessagePort pipe", () => {
     port2.close();
   });
 
+  test("close() inside onmessage handler stops further deliveries", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const got: number[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    port2.onmessage = e => {
+      got.push(e.data);
+      if (e.data === 2) {
+        port2.close();
+        queueMicrotask(resolve);
+      }
+    };
+    for (let i = 1; i <= 5; i++) port1.postMessage(i);
+    await promise;
+    await Bun.sleep(0);
+    expect(got).toEqual([1, 2]);
+    port1.close();
+  });
+
+  test("messages queued on a port follow it across transfer", async () => {
+    const { port1: A, port2: B } = new MessageChannel();
+    const { port1: C, port2: D } = new MessageChannel();
+    // Queue into C's inbox before and after the transfer; the pipe buffers
+    // while the side is detached and flushes when the new owner start()s.
+    D.postMessage("before-1");
+    D.postMessage("before-2");
+    A.postMessage(null, [C]);
+    D.postMessage("after");
+    const got: string[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    B.onmessage = e => {
+      const newC = e.ports[0];
+      newC.onmessage = ev => {
+        got.push(ev.data);
+        if (got.length === 3) resolve();
+      };
+    };
+    await promise;
+    expect(got).toEqual(["before-1", "before-2", "after"]);
+    A.close();
+    B.close();
+    D.close();
+  });
+
+  test("chained transfer delivers through every hop", async () => {
+    // Pipe X is transferred A→B, then B transfers it onward C→D.
+    const { port1: A, port2: B } = new MessageChannel();
+    const { port1: C, port2: D } = new MessageChannel();
+    const { port1: X1, port2: X2 } = new MessageChannel();
+    const { promise, resolve } = Promise.withResolvers<string>();
+    B.onmessage = e => C.postMessage(null, [e.ports[0]]);
+    D.onmessage = e => {
+      const x = e.ports[0];
+      x.onmessage = ev => resolve(ev.data);
+    };
+    A.postMessage(null, [X1]);
+    X2.postMessage("hello through two hops");
+    expect(await promise).toBe("hello through two hops");
+    for (const p of [A, B, C, D, X2]) p.close();
+  });
+
+  // GC contract: JS wrappers for MessageChannel / MessagePort / BroadcastChannel
+  // should be reclaimed once closed and unreferenced. The listener-side port
+  // is kept alive by hasPendingActivity() while its peer is open, and released
+  // once the peer closes.
+  test("objectTypeCounts drop after close + GC; peer-open pins listening port", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { heapStats } = require("bun:jsc");
+          const count = k => heapStats().objectTypeCounts[k] || 0;
+          async function settle() { for (let i = 0; i < 5; i++) { Bun.gc(true); await Bun.sleep(0); } }
+
+          await settle();
+          const base = { mc: count("MessageChannel"), mp: count("MessagePort"), bc: count("BroadcastChannel") };
+
+          // 1. MessageChannel / BroadcastChannel wrapper counts drop after close+GC.
+          {
+            const chans = [], bcs = [];
+            for (let i = 0; i < 200; i++) {
+              const c = new MessageChannel();
+              c.port1.postMessage(i); // touch ports so wrappers exist
+              c.port2;
+              chans.push(c);
+            }
+            for (let i = 0; i < 100; i++) bcs.push(new BroadcastChannel("t" + i));
+            const peak = { mc: count("MessageChannel"), mp: count("MessagePort"), bc: count("BroadcastChannel") };
+            for (const c of chans) { c.port1.close(); c.port2.close(); }
+            for (const b of bcs) b.close();
+            chans.length = 0; bcs.length = 0;
+            await settle();
+            const after = { mc: count("MessageChannel"), mp: count("MessagePort"), bc: count("BroadcastChannel") };
+            // Peak should be well above baseline; after close+GC should be near baseline.
+            // Allow slack for conservative stack scanning.
+            const ok1 =
+              peak.mc - base.mc >= 150 &&
+              peak.mp - base.mp >= 300 &&
+              peak.bc - base.bc >= 80 &&
+              after.mc - base.mc <= 20 &&
+              after.mp - base.mp <= 20 &&
+              after.bc - base.bc <= 10;
+            if (!ok1) { console.error("part1", JSON.stringify({ base, peak, after })); process.exit(1); }
+          }
+
+          // 2. hasPendingActivity: port with listener is pinned while peer open,
+          //    released once peer closes.
+          await settle();
+          const base2 = count("MessagePort");
+          const senders = [];
+          for (let i = 0; i < 100; i++) {
+            const { port1, port2 } = new MessageChannel();
+            port2.onmessage = () => {}; // listener → kept alive iff peer open
+            senders.push(port1);
+            // port2 is otherwise unreferenced
+          }
+          await settle();
+          const pinned = count("MessagePort") - base2; // expect ≈ 200 (100 held + 100 pinned)
+          for (const p of senders) p.close();
+          await settle();
+          const afterPeerClose = count("MessagePort") - base2; // expect ≈ 100 (held senders only)
+          senders.length = 0;
+          await settle();
+          const afterDropAll = count("MessagePort") - base2; // expect ≈ 0
+          const ok2 = pinned >= 180 && afterPeerClose <= 120 && afterPeerClose >= 80 && afterDropAll <= 20;
+          if (!ok2) { console.error("part2", JSON.stringify({ base2, pinned, afterPeerClose, afterDropAll })); process.exit(1); }
+
+          console.log("OK");
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  });
+
   // A port transferred through a carrier whose destination is already
   // closed never reaches a new owner. The endpoint must be marked Closed
   // when the in-transit struct is dropped, otherwise the peer's

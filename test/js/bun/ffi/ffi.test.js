@@ -1021,6 +1021,30 @@ describe.skipIf(isWindows && isArm64)("calling an FFI symbol after close()", () 
     }
   });
 
+  it("JSCallback.close() does not detach an FFI symbol passed as the callback", () => {
+    // On the JSCallback path, Function.step.compiled.js_function holds the
+    // user's callback (which may itself be a JSFFIFunction from another
+    // still-open library). Closing the JSCallback must not null that
+    // symbol's trampoline.
+    const target = new JSCallback(() => 7, { returns: "i32" });
+    try {
+      const lib = linkSymbols({ seven: { returns: "i32", ptr: target.ptr } });
+      const seven = lib.symbols.seven; // raw JSFFIFunction
+      expect(seven()).toBe(7);
+
+      const wrapper = new JSCallback(seven, { returns: "i32" });
+      wrapper.close();
+
+      // lib is still open; seven must still work.
+      expect(seven()).toBe(7);
+
+      lib.close();
+      expect(() => seven()).toThrow(TypeError);
+    } finally {
+      target.close();
+    }
+  });
+
   it.if(!!libPath)("dlopen: throws instead of calling freed code", () => {
     const lib = _dlopen(libPath, { strlen: { args: ["ptr"], returns: "usize" } });
     const strlen = lib.symbols.strlen;

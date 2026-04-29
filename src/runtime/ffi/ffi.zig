@@ -1474,12 +1474,20 @@ pub const FFI = struct {
             val.arg_types.clearAndFree(val.allocator);
 
             if (val.step == .compiled) {
-                // The JSFFIFunction may still be reachable from JS (e.g. the
-                // cached symbols object or a user-held reference). Detach its
-                // native trampoline before freeing the TCC state so calling
-                // it throws instead of jumping into freed JIT memory.
                 if (val.step.compiled.js_function != .zero) {
-                    Bun__FFIFunction_setClosed(val.step.compiled.js_function);
+                    // On the dlopen/linkSymbols/cc paths, js_function is the
+                    // JSFFIFunction we created for this symbol and whose
+                    // native trampoline lives in the TCC state about to be
+                    // freed. Detach it so calling it throws instead of
+                    // jumping into freed JIT memory.
+                    //
+                    // On the JSCallback path (ffi_callback_function_wrapper
+                    // != null), js_function is the user's callback which we
+                    // merely borrowed; it may itself be an unrelated FFI
+                    // symbol and must not be detached here.
+                    if (val.step.compiled.ffi_callback_function_wrapper == null) {
+                        Bun__FFIFunction_setClosed(val.step.compiled.js_function);
+                    }
                     val.step.compiled.js_function = .zero;
                 }
 

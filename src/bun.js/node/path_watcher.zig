@@ -845,7 +845,7 @@ const Kqueue = struct {
     }
 };
 
-const string = []const u8;
+const FSEvents = if (Environment.isMac) @import("./fs_events.zig") else struct {};
 
 const std = @import("std");
 
@@ -861,5 +861,3 @@ const FSWatcher = bun.jsc.Node.fs.Watcher;
 const Event = FSWatcher.Event;
 const onPathUpdateFn = FSWatcher.onPathUpdate;
 const onUpdateEndFn = FSWatcher.onUpdateEnd;
-
-const FSEvents = if (Environment.isMac) @import("./fs_events.zig") else struct {};

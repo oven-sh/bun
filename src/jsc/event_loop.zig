@@ -643,6 +643,12 @@ pub fn enqueueTaskConcurrent(this: *EventLoop, task: *ConcurrentTask) void {
         if (this.virtual_machine.has_terminated) {
             @panic("EventLoop.enqueueTaskConcurrent: VM has terminated");
         }
+        // A freshly-constructed ConcurrentTask must have `.next` set to `.none` or
+        // `.auto_delete` (pointer bits zero) before being pushed. `pushBatch` calls
+        // `PackedNextPtr.setPtr` which *preserves* the low `auto_delete` bit, so if
+        // `.next` was left undefined the preserved bit is garbage and the event loop
+        // may call `bun.destroy` on an embedded (interior-pointer) ConcurrentTask.
+        bun.assertf(task.next.getPtr() == null, "ConcurrentTask.next must be initialized (use ConcurrentTask.from or struct init) before enqueueTaskConcurrent; got garbage pointer bits", .{});
     }
 
     if (comptime Environment.isDebug) {

@@ -1,8 +1,57 @@
 import { describe, expect, test } from "bun:test";
 
 import { password } from "bun";
+import { bunEnv, bunExe } from "harness";
 
 const placeholder = "hey";
+
+describe("does not leak", () => {
+  async function run(code: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "-e", code],
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // Only fail on a non-zero exit. ASAN builds may emit startup warnings on
+    // stderr that are not errors, so don't require stderr to be empty.
+    if (exitCode !== 0) throw new Error(stderr || `exited with code ${exitCode}`);
+  }
+
+  test("hashSync", async () => {
+    await run(/* js */ `
+        const opts = { algorithm: "argon2id", memoryCost: 4, timeCost: 1 };
+        // Large warm-up so the JSC heap and allocator arenas reach steady state
+        // before we start measuring (debug/ASAN builds especially need this).
+        for (let i = 0; i < 60000; i++) Bun.password.hashSync("hey", opts);
+        Bun.gc(true);
+        const before = process.memoryUsage.rss();
+        for (let i = 0; i < 60000; i++) Bun.password.hashSync("hey", opts);
+        Bun.gc(true);
+        const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+        if (growthMB > 4) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+      `);
+  }, 90_000);
+
+  test("hash", async () => {
+    await run(/* js */ `
+        const opts = { algorithm: "argon2id", memoryCost: 4, timeCost: 1 };
+        async function batch(n) {
+          const promises = [];
+          for (let i = 0; i < n; i++) promises.push(Bun.password.hash("hey", opts));
+          await Promise.all(promises);
+        }
+        for (let i = 0; i < 500; i++) await batch(100);
+        Bun.gc(true);
+        const before = process.memoryUsage.rss();
+        for (let i = 0; i < 2000; i++) await batch(100);
+        Bun.gc(true);
+        const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+        if (growthMB > 20) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+      `);
+  }, 90_000);
+});
 
 describe("hash", () => {
   describe("arguments parsing", () => {

@@ -82,12 +82,10 @@ pub fn ResumableSink(
                     if (byte_stream.has_received_last_chunk) {
                         this.status = .done;
                         const err = brk_err: {
-                            const pending = byte_stream.pending.result;
-                            if (pending == .err) {
-                                const js_err, const was_strong = pending.err.toJSWeak(this.globalThis);
+                            if (byte_stream.pending.result == .err) {
+                                const js_err = byte_stream.pending.result.err.toJS(this.globalThis);
                                 js_err.ensureStillAlive();
-                                if (was_strong == .Strong)
-                                    js_err.unprotect();
+                                byte_stream.pending.result = .{ .done = {} };
                                 break :brk_err js_err;
                             }
                             break :brk_err null;
@@ -306,11 +304,9 @@ pub fn ResumableSink(
 
             if (is_done) {
                 const err: ?jsc.JSValue = brk_err: {
-                    if (stream == .err) {
-                        const js_err, const was_strong = stream.err.toJSWeak(this.globalThis);
+                    if (stream_ == .err) {
+                        const js_err = stream_.err.toJS(this.globalThis);
                         js_err.ensureStillAlive();
-                        if (was_strong == .Strong)
-                            js_err.unprotect();
                         break :brk_err js_err;
                     }
                     break :brk_err null;

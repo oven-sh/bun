@@ -78,15 +78,17 @@ pub fn unpipeWithoutDeref(this: *@This()) void {
 
 pub fn onData(
     this: *@This(),
-    stream: streams.Result,
+    stream_in: streams.Result,
     allocator: std.mem.Allocator,
 ) bun.JSTerminated!void {
     jsc.markBinding(@src());
+    var stream = stream_in;
     if (this.done) {
         if (stream.isDone() and (stream == .owned or stream == .owned_and_done)) {
             if (stream == .owned) allocator.free(stream.owned.slice());
             if (stream == .owned_and_done) allocator.free(stream.owned_and_done.slice());
         }
+        if (stream == .err) stream.err.deinit();
         this.has_received_last_chunk = stream.isDone();
 
         log("ByteStream.onData already done... do nothing", .{});
@@ -115,7 +117,7 @@ pub fn onData(
 
             log("ByteStream.onData err  action.reject()", .{});
 
-            return action.reject(this.parent().globalThis, stream.err);
+            return action.reject(this.parent().globalThis, &stream.err);
         }
 
         if (this.has_received_last_chunk) {
@@ -241,7 +243,7 @@ pub fn append(
                 this.buffer.appendSliceAssumeCapacity(chunk);
             },
             .err => {
-                if (stream.err == .JSValue) stream.err.JSValue.protect();
+                this.pending.result.deinit();
                 this.pending.result = .{ .err = stream.err };
             },
             .done => {},
@@ -263,7 +265,7 @@ pub fn append(
                 @panic("Expected buffer action to be null");
             }
 
-            if (stream.err == .JSValue) stream.err.JSValue.protect();
+            this.pending.result.deinit();
             this.pending.result = .{ .err = stream.err };
         },
         .done => {},
@@ -355,7 +357,8 @@ pub fn onCancel(this: *@This()) void {
 
     if (this.buffer_action) |*action| {
         const global = this.parent().globalThis;
-        action.reject(global, .{ .AbortReason = .UserAbort }) catch {}; // TODO: properly propagate exception upwards
+        var err: streams.Result.StreamError = .{ .AbortReason = .UserAbort };
+        action.reject(global, &err) catch {}; // TODO: properly propagate exception upwards
         this.buffer_action = null;
     }
 }
@@ -423,8 +426,8 @@ pub fn toBufferedValue(this: *@This(), globalThis: *jsc.JSGlobalObject, action: 
     }
 
     if (this.pending.result == .err) {
-        const err, _ = this.pending.result.err.toJSWeak(globalThis);
-        this.pending.result.deinit();
+        const err = this.pending.result.err.toJS(globalThis);
+        this.pending.result = .{ .done = {} };
         this.done = true;
         this.buffer.clearAndFree();
         return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);

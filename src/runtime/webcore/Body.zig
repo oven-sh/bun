@@ -298,7 +298,7 @@ pub const Value = union(Tag) {
                     .AbortReason = this.AbortReason,
                 },
                 else => .{
-                    .JSValue = this.toJS(globalObject),
+                    .JSValue = .create(this.toJS(globalObject), globalObject),
                 },
             };
         }
@@ -1586,6 +1586,7 @@ pub const ValueBufferer = struct {
                     else => unreachable,
                 }
             }
+            if (stream_ == .err) stream_.err.deinit();
         }
 
         const chunk = stream.slice();

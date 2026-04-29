@@ -328,7 +328,7 @@ pub const FetchTasklet = struct {
                     js_err.ensureStillAlive();
                     try readable.ptr.Bytes.onData(
                         .{
-                            .err = .{ .JSValue = js_err },
+                            .err = .{ .JSValue = .create(js_err, globalThis) },
                         },
                         bun.default_allocator,
                     );

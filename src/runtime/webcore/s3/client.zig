@@ -475,12 +475,9 @@ pub fn uploadStream(
         inline .File, .Bytes => |stream| {
             if (stream.pending.result == .err) {
                 // we got an error, fail early
-                const err = stream.pending.result.err;
+                var err = stream.pending.result.err;
                 stream.pending = .{ .result = .{ .done = {} } };
-                const js_err, const was_strong = err.toJSWeak(globalThis);
-                if (was_strong == .Strong) {
-                    js_err.unprotect();
-                }
+                const js_err = err.toJS(globalThis);
                 js_err.ensureStillAlive();
                 return jsc.JSPromise.rejectedPromise(globalThis, js_err).toJS();
             }
@@ -652,7 +649,7 @@ pub fn readableStream(
                 if (readable.ptr == .Bytes) {
                     if (request_err) |err| {
                         try readable.ptr.Bytes.onData(
-                            .{ .err = .{ .JSValue = err.toJS(self.global, self.path) } },
+                            .{ .err = .{ .JSValue = .create(err.toJS(self.global, self.path), self.global) } },
                             bun.default_allocator,
                         );
                         return;

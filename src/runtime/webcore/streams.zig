@@ -211,11 +211,7 @@ pub const Result = union(Tag) {
         switch (this.*) {
             .owned => |*owned| owned.clearAndFree(bun.default_allocator),
             .owned_and_done => |*owned_and_done| owned_and_done.clearAndFree(bun.default_allocator),
-            .err => |err| {
-                if (err == .JSValue) {
-                    err.JSValue.unprotect();
-                }
-            },
+            .err => |*err| err.deinit(),
             else => {},
         }
     }
@@ -223,27 +219,26 @@ pub const Result = union(Tag) {
     pub const StreamError = union(enum) {
         Error: Syscall.Error,
         AbortReason: jsc.CommonAbortReason,
+        JSValue: jsc.Strong.Optional,
 
-        // TODO: use an explicit jsc.Strong.Optional here.
-        JSValue: jsc.JSValue,
-        WeakJSValue: jsc.JSValue,
+        pub fn deinit(this: *StreamError) void {
+            if (this.* == .JSValue) {
+                this.JSValue.deinit();
+            }
+        }
 
-        const WasStrong = enum {
-            Strong,
-            Weak,
-        };
-
-        pub fn toJSWeak(this: *const @This(), globalObject: *jsc.JSGlobalObject) struct { jsc.JSValue, WasStrong } {
+        /// Returns the error as a JSValue. For the `.JSValue` variant this
+        /// releases the strong reference, so the returned value is only
+        /// rooted by the caller's stack. Safe to call `deinit` afterwards.
+        pub fn toJS(this: *StreamError, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
             return switch (this.*) {
-                .Error => |err| {
-                    return .{ err.toJS(globalObject) catch return .{ .zero, WasStrong.Weak }, WasStrong.Weak };
+                .Error => |err| err.toJS(globalObject) catch .zero,
+                .JSValue => |*strong| {
+                    const value = strong.get() orelse .js_undefined;
+                    strong.deinit();
+                    return value;
                 },
-                .JSValue => .{ this.JSValue, WasStrong.Strong },
-                .WeakJSValue => .{ this.WeakJSValue, WasStrong.Weak },
-                .AbortReason => |reason| {
-                    const value = reason.toJS(globalObject);
-                    return .{ value, WasStrong.Weak };
-                },
+                .AbortReason => |reason| reason.toJS(globalObject),
             };
         }
     };
@@ -529,14 +524,8 @@ pub const Result = union(Tag) {
 
         switch (result.*) {
             .err => |*err| {
-                const value = brk: {
-                    const js_err, const was_strong = err.toJSWeak(globalThis);
-                    js_err.ensureStillAlive();
-                    if (was_strong == .Strong)
-                        js_err.unprotect();
-
-                    break :brk js_err;
-                };
+                const value = err.toJS(globalThis);
+                value.ensureStillAlive();
                 result.* = .{ .temporary = .{} };
                 promise.rejectWithAsyncStack(globalThis, value) catch {}; // TODO: properly propagate exception upwards
             },
@@ -598,10 +587,8 @@ pub const Result = union(Tag) {
             },
 
             .err => |err| {
-                const js_err, const was_strong = err.toJSWeak(globalThis);
-                if (was_strong == .Strong) {
-                    js_err.unprotect();
-                }
+                var err_ = err;
+                const js_err = err_.toJS(globalThis);
                 js_err.ensureStillAlive();
                 return jsc.JSPromise.rejectedPromise(globalThis, js_err).toJS();
             },
@@ -1562,8 +1549,8 @@ pub const BufferAction = union(enum) {
         return blob.wrap(.{ .normal = this.swap() }, global, this.*);
     }
 
-    pub fn reject(this: *BufferAction, global: *jsc.JSGlobalObject, err: Result.StreamError) bun.JSTerminated!void {
-        return this.swap().reject(global, err.toJSWeak(global)[0]);
+    pub fn reject(this: *BufferAction, global: *jsc.JSGlobalObject, err: *Result.StreamError) bun.JSTerminated!void {
+        return this.swap().reject(global, err.toJS(global));
     }
 
     pub fn resolve(this: *BufferAction, global: *jsc.JSGlobalObject, result: jsc.JSValue) bun.JSTerminated!void {

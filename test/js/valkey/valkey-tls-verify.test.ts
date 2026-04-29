@@ -1,8 +1,8 @@
 import { RedisClient } from "bun";
 import { describe, expect, test } from "bun:test";
 import { tls as localhostTls } from "harness";
-import fs from "node:fs";
 import { once } from "node:events";
+import fs from "node:fs";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import tls from "node:tls";

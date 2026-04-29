@@ -838,7 +838,11 @@ if (isDockerEnabled()) {
             proc.stderr.text(),
             proc.exited,
           ]);
-          expect(stderr).toBe("");
+          const filteredStderr = stderr
+            .split(/\r?\n/)
+            .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+            .join("\n");
+          expect(filteredStderr).toBe("");
           expect(JSON.parse(stdout.trim())).toEqual({
             result: {
               ok: false,

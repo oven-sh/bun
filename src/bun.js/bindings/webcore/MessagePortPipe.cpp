@@ -68,10 +68,11 @@ void MessagePortPipe::send(uint8_t fromSide, MessageWithMessagePorts&& message)
 void MessagePortPipe::scheduleDrain(uint8_t side, ScriptExecutionContextIdentifier ctxId)
 {
     // The posted task holds a strong ref to the pipe so it can't be destroyed
-    // while a wakeup is in flight. The task runs on the receiver's context
-    // thread and calls back into the attached port to fire events.
-    bool posted = ScriptExecutionContext::postTaskTo(ctxId, [pipe = Ref { *this }, side](ScriptExecutionContext&) {
-        pipe->drainAndDispatch(side);
+    // while a wakeup is in flight. The task captures the ctxId it was posted
+    // to so drainAndDispatch can detect if the side moved to a different
+    // context before the task ran.
+    bool posted = ScriptExecutionContext::postTaskTo(ctxId, [pipe = Ref { *this }, side, ctxId](ScriptExecutionContext&) {
+        pipe->drainAndDispatch(side, ctxId);
     });
     if (!posted) {
         // Context already torn down. Drop DrainScheduled so a future
@@ -81,7 +82,7 @@ void MessagePortPipe::scheduleDrain(uint8_t side, ScriptExecutionContextIdentifi
     }
 }
 
-void MessagePortPipe::drainAndDispatch(uint8_t side)
+void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdentifier expectedCtx)
 {
     // Mirrors Node's MessagePort::OnMessage (src/node_messaging.cc): one
     // drain task processes the whole inbox in a loop, draining microtasks
@@ -100,6 +101,13 @@ void MessagePortPipe::drainAndDispatch(uint8_t side)
     size_t limit;
     {
         Locker locker { s.lock };
+        // This task was posted to `expectedCtx` (and is running there). If
+        // the side has since been detached and re-attached to a different
+        // context, s.port now belongs to a different thread — dispatching
+        // from here would be cross-thread JS. Leave everything alone: the
+        // new owner's attach() has (or will have) scheduled its own drain.
+        if (s.ctxId != expectedCtx)
+            return;
         port = s.port.get();
         uint64_t st = s.state.load(std::memory_order_relaxed);
         if (!port || s.inbox.isEmpty()) {
@@ -122,9 +130,11 @@ void MessagePortPipe::drainAndDispatch(uint8_t side)
         std::optional<MessageWithMessagePorts> message;
         {
             Locker locker { s.lock };
+            // Re-check each iteration: the handler (or a concurrent thread)
+            // may have closed or transferred this port.
+            if (s.ctxId != expectedCtx)
+                break;
             uint64_t st = s.state.load(std::memory_order_relaxed);
-            // Re-check each iteration: the handler may have closed or
-            // transferred this port (detach() clears Attached and s.port).
             if (!(st & Attached) || s.inbox.isEmpty()) {
                 s.state.store(st & ~DrainScheduled, std::memory_order_release);
                 break;
@@ -191,8 +201,11 @@ void MessagePortPipe::detach(uint8_t side)
     Locker locker { s.lock };
     s.ctxId = 0;
     s.port = nullptr;
-    // Drop Attached and DrainScheduled: if a drain task was already posted it
-    // will find no port and no-op; messages remain queued for the next owner.
+    // Drop Attached and DrainScheduled. A drain task already in flight on
+    // the old context can't be recalled, but it captured the old ctxId and
+    // drainAndDispatch()'s s.ctxId != expectedCtx check makes it a no-op —
+    // even if a new owner attach()es to a different context before it runs.
+    // Messages remain queued for the next owner.
     s.state.fetch_and(~uint64_t(Attached | DrainScheduled), std::memory_order_acq_rel);
 }
 

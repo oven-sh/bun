@@ -75,7 +75,7 @@ private:
     MessagePortPipe() = default;
 
     void scheduleDrain(uint8_t side, ScriptExecutionContextIdentifier);
-    void drainAndDispatch(uint8_t side);
+    void drainAndDispatch(uint8_t side, ScriptExecutionContextIdentifier expectedCtx);
 
     struct Side {
         WTF::Lock lock;

@@ -201,6 +201,7 @@ void MessagePort::dispatchEvent(Event& event)
 void MessagePort::contextDestroyed()
 {
     close();
+    ContextDestructionObserver::contextDestroyed();
 }
 
 bool MessagePort::hasPendingActivity() const

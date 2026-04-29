@@ -346,7 +346,7 @@ test.skipIf(!isSupported || !hasPerl)(
             // daemon) before the test can read the pid.
             // record getpgrp() before/after setsid so the test can prove the
             // daemon actually left the script's pgroup.
-            `if(fork){ select undef,undef,undef,0.01 until -e $f; exit } ` +
+            `if(fork){ select undef,undef,undef,0.01 until -s $f; exit } ` +
             `$old=getpgrp(); setsid; ` + // new session+pgroup
             `exit if fork; ` + // session leader exits → daemon fully detached
             `open F,">",$f; print F "$$ $old ".getpgrp(); close F; ` +

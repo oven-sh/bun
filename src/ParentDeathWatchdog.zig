@@ -94,12 +94,10 @@ pub fn killSyncScriptTree() void {
         if (pgid > 1) _ = std.c.kill(-pgid, std.posix.SIG.KILL);
     }
     if (comptime Environment.isMac) Bun__noOrphans_killTracked();
-    // Linux: subreaper-adopted setsid escapees are visible as our direct
-    // children right now — sweep them by ppid==us. Unrelated `Bun.spawn`
-    // children also have ppid==us, so this *only* runs when we know there
-    // are none (spawnSync caller invariant); otherwise the pgroup kill above
-    // is the boundary. Handled by the explicit per-script-pgid walk below
-    // instead of a getpid()-rooted `killDescendants()`.
+    // Linux: subreaper-adopted setsid escapees are visible as ppid==us, but
+    // so are unrelated `Bun.spawn` siblings — sweeping by ppid here would
+    // kill those when spawnSync runs inside a live VM. They're caught by the
+    // getpid()-rooted `killDescendants()` at full-process exit instead.
 }
 
 /// Full-process teardown: pgroups + tracked + getpid()-rooted tree.
@@ -155,8 +153,8 @@ pub fn enable() void {
     // PR_SET_CHILD_SUBREAPER is NOT armed here — it's process-wide and would
     // make every orphaned grandchild reparent to us, but only the spawnSync
     // wait loop has a `wait4(-1, WNOHANG)` to reap them. `bun foo.js` /
-    // `--filter` / `bun test` would accumulate zombies. Subreaper is set per-
-    // script in `waitLinuxSignalfd` and cleared on return.
+    // `--filter` / `bun test` would accumulate zombies. Subreaper is armed
+    // per-script in `spawnPosix` (just before the spawn) and cleared on return.
     // Descendant cleanup runs on every clean exit regardless of whether we end
     // up watching a parent (Bun may have been spawned directly by launchd/init).
     bun.Global.addExitCallback(&onProcessExit);

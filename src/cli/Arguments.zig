@@ -469,7 +469,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         cwd = try bun.getcwdAlloc(allocator);
     }
 
-    if (cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand or cmd == .BunxCommand) {
+    // Not gated on .BunxCommand: bunx skips Arguments.parse entirely
+    // (uses_global_options=false). bunx picks up no-orphans via the
+    // BUN_FEATURE_FLAG_NO_ORPHANS env var in main()→install() instead.
+    if (cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand) {
         if (args.flag("--no-orphans")) bun.ParentDeathWatchdog.enable();
     }
 

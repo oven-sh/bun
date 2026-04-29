@@ -2276,9 +2276,14 @@ pub const sync = struct {
             // reparent its grandchild to init in the gap. Process-wide and
             // only the spawnSync wait loop has a `wait4(-1)` to reap
             // adoptees, so arming it globally from `enable()` would leak
-            // zombies in `bun foo.js` / `--filter` / `bun test`. Cleared in
-            // the `defer if (no_orphans)` below.
+            // zombies in `bun foo.js` / `--filter` / `bun test`. Disarmed by
+            // the defer immediately below — registered here (not in the
+            // post-spawn `defer if (no_orphans)` block) so spawn-failure
+            // early returns don't leave subreaper armed process-wide.
             _ = std.posix.prctl(.SET_CHILD_SUBREAPER, .{1}) catch {};
+        };
+        defer if (comptime Environment.isLinux) if (no_orphans) {
+            _ = std.posix.prctl(.SET_CHILD_SUBREAPER, .{0}) catch {};
         };
 
         Bun__currentSyncPID = 0;
@@ -2316,13 +2321,12 @@ pub const sync = struct {
             bun.ParentDeathWatchdog.killSyncScriptTree();
             if (pgid_pushed) bun.ParentDeathWatchdog.popSyncPgid();
             if (comptime Environment.isLinux) {
-                // One last reap for anything we adopted, then drop subreaper
-                // so post-script orphans go to init like they would normally.
+                // One last reap for anything we adopted as subreaper before
+                // the disarm defer above drops it (LIFO: this runs first).
                 while (true) switch (PosixSpawn.wait4(-1, std.posix.W.NOHANG, null)) {
                     .err => break,
                     .result => |w| if (w.pid <= 0) break,
                 };
-                _ = std.posix.prctl(.SET_CHILD_SUBREAPER, .{0}) catch {};
             }
         };
 
@@ -2440,7 +2444,7 @@ pub const sync = struct {
     ///     (macOS) — `Global.exit(129)` → `kill(-pgid)` + deep walk
     ///   - macOS: every fork in the script's tree triggers a p_puniqueid
     ///     scan so `setsid()`+double-fork escapees are tracked and killed
-    ///   - Linux: subreaper (set in `enable()`) makes those reparent to us,
+    ///   - Linux: subreaper (armed in `spawnPosix`) makes those reparent to us,
     ///     so the procfs walk finds them; this loop just needs to run
     ///     cleanup *before* our own SIGKILL-PDEATHSIG fires
     ///

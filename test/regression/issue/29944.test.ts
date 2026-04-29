@@ -155,11 +155,7 @@ test("#29944 --filter honors saved hoist layout across workspaces", async () => 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [fullStdout, fullStderr, fullExit] = await Promise.all([
-    full.stdout.text(),
-    full.stderr.text(),
-    full.exited,
-  ]);
+  const [fullStdout, fullStderr, fullExit] = await Promise.all([full.stdout.text(), full.stderr.text(), full.exited]);
   expect({ fullStdout, fullStderr, fullExit }).toMatchObject({ fullExit: 0 });
 
   expect({

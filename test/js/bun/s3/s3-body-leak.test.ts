@@ -22,7 +22,8 @@ const fixture = /* js */ `
   const method = process.env.S3_BODY_LEAK_METHOD;
   const payloadSize = 1024 * 1024; // 1 MiB
   const filler = Buffer.alloc(payloadSize - 8, "a").toString("latin1");
-  // Valid as JSON and as application/x-www-form-urlencoded ("x" = '"' + filler + '"').
+  // Valid JSON; also accepted by application/x-www-form-urlencoded parsing
+  // (no '=' present, so the whole body becomes a single key with empty value).
   const body = '{"x":"' + filler + '"}';
 
   const server = Bun.serve({

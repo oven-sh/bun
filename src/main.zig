@@ -61,6 +61,7 @@ pub fn main() void {
     }
 
     _bun.StackCheck.configureThread();
+    _bun.ParentDeathWatchdog.install();
 
     _bun.cli.Cli.start(_bun.default_allocator);
     _bun.Global.exit(0);

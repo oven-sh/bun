@@ -25,8 +25,12 @@
 
 #include "EventListener.h"
 #include <wtf/Ref.h>
+#include <wtf/WeakPtr.h>
 
 namespace WebCore {
+
+class AbortSignal;
+class WeakPtrImplWithEventTargetData;
 
 // https://dom.spec.whatwg.org/#concept-event-listener
 class RegisteredEventListener : public RefCounted<RegisteredEventListener> {
@@ -49,13 +53,23 @@ public:
         return adoptRef(*new RegisteredEventListener(WTF::move(listener), options));
     }
 
+    ~RegisteredEventListener();
+
     EventListener& callback() const { return m_callback; }
     bool useCapture() const { return m_useCapture; }
     bool isPassive() const { return m_isPassive; }
     bool isOnce() const { return m_isOnce; }
     bool wasRemoved() const { return m_wasRemoved; }
 
-    void markAsRemoved() { m_wasRemoved = true; }
+    void markAsRemoved();
+
+    // Associates this listener with the abort algorithm that was registered
+    // on the provided AbortSignal by EventTarget::addEventListener(). When
+    // the listener is removed (via removeEventListener, once:true firing, or
+    // removeAllEventListeners) markAsRemoved() will drop that algorithm from
+    // the signal so m_algorithms doesn't grow unboundedly when the same
+    // signal is reused across many add/remove cycles.
+    void setAbortSignal(WeakPtr<AbortSignal, WeakPtrImplWithEventTargetData>&&, uint32_t algorithmIdentifier);
 
 private:
     RegisteredEventListener(Ref<EventListener>&& listener, const Options& options)
@@ -71,7 +85,9 @@ private:
     bool m_isPassive : 1;
     bool m_isOnce : 1;
     bool m_wasRemoved : 1;
+    uint32_t m_abortAlgorithmIdentifier { 0 };
     Ref<EventListener> m_callback;
+    WeakPtr<AbortSignal, WeakPtrImplWithEventTargetData> m_abortSignal;
 };
 
 } // namespace WebCore

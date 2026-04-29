@@ -239,6 +239,7 @@ pub const md = @import("./md/root.zig");
 
 pub const Output = @import("./output.zig");
 pub const Global = @import("./Global.zig");
+pub const ParentDeathWatchdog = @import("./ParentDeathWatchdog.zig");
 
 pub const FD = @import("./fd.zig").FD;
 pub const MovableIfWindowsFd = @import("./fd.zig").MovableIfWindowsFd;

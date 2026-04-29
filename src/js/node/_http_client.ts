@@ -551,6 +551,7 @@ function ClientRequest(input, options, cb) {
         if (err) {
           if (!!$debug) globalReportError(err);
           process.nextTick((self, err) => self.emit("error", err), this, err);
+          releaseAgentSocket();
           return;
         }
 
@@ -563,6 +564,7 @@ function ClientRequest(input, options, cb) {
           error.syscall = syscall;
           if (!!$debug) globalReportError(error);
           process.nextTick((self, err) => self.emit("error", err), this, error);
+          releaseAgentSocket();
         };
 
         if (candidates.length === 0) {
@@ -603,6 +605,7 @@ function ClientRequest(input, options, cb) {
     } catch (err) {
       if (!!$debug) globalReportError(err);
       process.nextTick((self, err) => self.emit("error", err), this, err);
+      releaseAgentSocket();
       return false;
     }
   };
@@ -993,14 +996,16 @@ function ClientRequest(input, options, cb) {
 
   this.onSocket = function (socket, err) {
     if (this.destroyed || err) {
+      const wasDestroyed = this.destroyed;
       this.destroyed = true;
       socketAssigned = true;
       releaseAgentSocket();
-      const fn = err => {
-        if (this[abortedSymbol] || err == null) return;
-        this.emit("error", err);
-      };
-      if (err) process.nextTick(fn, err);
+      process.nextTick(() => {
+        if (err != null && !this[abortedSymbol]) this.emit("error", err);
+        // Match Node.js: 'close' always follows, even on the destroyed/err
+        // path. destroy() can't do it later because destroyed is now true.
+        if (!wasDestroyed) socketCloseListener();
+      });
       return;
     }
     if (socket) {

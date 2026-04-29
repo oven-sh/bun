@@ -228,4 +228,57 @@ describe("node:http Agent socket accounting", () => {
       server.close();
     }
   });
+
+  test("onSocket(null, err) from a custom agent emits 'error' then 'close'", async () => {
+    class FailingAgent extends http.Agent {
+      addRequest(req: any) {
+        process.nextTick(() => req.onSocket(null, new Error("tunnel failed")));
+      }
+    }
+    const events: string[] = [];
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    const req = http.get({ host: "example.com", port: 80, agent: new FailingAgent() });
+    req.on("error", e => events.push(`error:${(e as Error).message}`));
+    req.on("close", () => {
+      events.push("close");
+      resolve();
+    });
+    await closed;
+    expect(events).toEqual(["error:tunnel failed", "close"]);
+    expect(req.destroyed).toBe(true);
+  });
+
+  test("a failing options.lookup releases the agent slot", async () => {
+    const agent = new http.Agent({ maxSockets: 1 });
+    try {
+      const name = agent.getName({ host: "example.test", port: 80 });
+      const makeReq = (lookup: (...a: any[]) => void) =>
+        http
+          .get({ host: "example.test", port: 80, agent, lookup } as any, () => {})
+          .on("error", () => {});
+
+      // Callback error
+      makeReq((_h, _o, cb) => cb(new Error("boom")));
+      await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+      expect(agent.totalSocketCount).toBe(0);
+      expect(name in agent.sockets).toBe(false);
+
+      // No records (ENOTFOUND)
+      makeReq((_h, _o, cb) => cb(null, []));
+      await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+      expect(agent.totalSocketCount).toBe(0);
+      expect(name in agent.sockets).toBe(false);
+
+      // Synchronous throw
+      makeReq(() => {
+        throw new Error("sync boom");
+      });
+      await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+      expect(agent.totalSocketCount).toBe(0);
+      expect(name in agent.sockets).toBe(false);
+      expect(name in agent.requests).toBe(false);
+    } finally {
+      agent.destroy();
+    }
+  });
 });

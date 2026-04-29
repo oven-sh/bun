@@ -41,7 +41,10 @@ describe("udpSocket()", () => {
           },
         },
       ],
-      ["bind fails", { hostname: "256.256.256.256", port: 0 }],
+      // Use a hostname with invalid label characters so getaddrinfo rejects
+      // it locally (no DNS round-trip). "256.256.256.256" would work too but
+      // is valid DNS syntax and triggers a real resolver query per iteration.
+      ["bind fails", { hostname: "example!!!!!.com", port: 0 }],
     ] as const)("%s", async (_, options) => {
       const iterations = 200;
       let thrown = 0;

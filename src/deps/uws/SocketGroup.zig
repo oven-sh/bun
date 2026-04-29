@@ -137,9 +137,13 @@ pub const SocketGroup = extern struct {
         options: c_int,
         socket_ext_size: c_int,
     ) ConnectResult {
-        var is_connecting: c_int = 0;
-        const ptr = c.us_socket_group_connect(self, @intFromEnum(kind), ssl_ctx, host, port, options, socket_ext_size, &is_connecting) orelse return .failed;
-        return if (is_connecting != 0)
+        // context.c writes 1 here on the synchronous path (DNS already resolved
+        // → real `us_socket_t*` returned), 0 when it hands back a
+        // `us_connecting_socket_t*` placeholder. Named to match the C side so
+        // the branches read the right way round — see PR review #3161005603.
+        var has_dns_resolved: c_int = 0;
+        const ptr = c.us_socket_group_connect(self, @intFromEnum(kind), ssl_ctx, host, port, options, socket_ext_size, &has_dns_resolved) orelse return .failed;
+        return if (has_dns_resolved != 0)
             .{ .socket = @ptrCast(@alignCast(ptr)) }
         else
             .{ .connecting = @ptrCast(@alignCast(ptr)) };

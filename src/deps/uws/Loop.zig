@@ -140,6 +140,13 @@ pub const PosixLoop = extern struct {
         c.us_internal_free_closed_sockets(this);
     }
 
+    /// `us_socket_group_close_all()` on every group currently linked to this
+    /// loop — covers Listener/App-owned groups that `RareData`'s static field
+    /// list doesn't enumerate. Returns whether any group was linked.
+    pub fn closeAllGroups(this: *PosixLoop) bool {
+        return c.us_loop_close_all_groups(this) != 0;
+    }
+
     pub fn nextTick(this: *PosixLoop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
         const Handler = struct {
             pub fn callback(data: *anyopaque) callconv(.c) void {
@@ -285,6 +292,10 @@ pub const WindowsLoop = extern struct {
         c.us_internal_free_closed_sockets(this);
     }
 
+    pub fn closeAllGroups(this: *WindowsLoop) bool {
+        return c.us_loop_close_all_groups(this) != 0;
+    }
+
     pub fn nextTick(this: *Loop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
         const Handler = struct {
             pub fn callback(data: *anyopaque) callconv(.c) void {
@@ -342,6 +353,7 @@ const c = struct {
     pub extern fn uws_loop_removePreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.c) void)) void;
     pub extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: ?*const bun.timespec) void;
     pub extern fn us_internal_free_closed_sockets(loop: *Loop) void;
+    pub extern fn us_loop_close_all_groups(loop: *Loop) c_int;
     pub extern fn uws_get_loop() *Loop;
     pub extern fn uws_get_loop_with_native(*anyopaque) *WindowsLoop;
     pub extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.c) void)) void;

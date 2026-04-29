@@ -1307,12 +1307,13 @@ pub fn NewSocket(comptime ssl: bool) type {
             jsc.markBinding(@src());
             _ = callframe;
             // `_handle.close()` is the net.Socket `_destroy()` path — Node emits close_notify
-            // once and closes the fd without waiting for the peer's reply. Use `.failure` so
-            // `ssl_handle_shutdown` takes the fast-shutdown branch and the raw close runs
-            // synchronously; with `.normal` the SSL layer defers the raw close to wait for the
-            // peer's close_notify, but we detach + unref immediately below, leaking the
-            // `us_socket_t` (never reaches `closed_head`).
-            this.socket.close(.failure);
+            // once and closes the fd without waiting for the peer's reply. `.fast_shutdown`
+            // makes `ssl_handle_shutdown` take the fast branch so the raw close runs
+            // synchronously (with `.normal` the SSL layer defers waiting for the peer, but we
+            // detach + unref immediately below, orphaning the `us_socket_t`). NOT `.failure`:
+            // that arms SO_LINGER{1,0} → RST and drops any data still in the kernel send
+            // buffer, which `destroy()` after `write()` must not do.
+            this.socket.close(.fast_shutdown);
             this.socket.detach();
             this.poll_ref.unref(globalObject.bunVM());
             return .js_undefined;
@@ -1785,7 +1786,13 @@ pub const DuplexUpgradeContext = struct {
     vm: *jsc.VirtualMachine,
     task: jsc.AnyTask,
     task_event: EventState = .StartTLS,
+    /// Config to build a fresh `SSL_CTX` from (legacy `{ca,cert,key}` callers).
+    /// Mutually exclusive with `owned_ctx` — `runEvent` prefers `owned_ctx`.
     ssl_config: ?jsc.API.ServerConfig.SSLConfig,
+    /// One ref on a prebuilt `SSL_CTX` (from `opts.tls.secureContext` — the
+    /// memoised `tls.createSecureContext` path). Adopted by `startTLSWithCTX`
+    /// on success, freed in `deinit` if Close races ahead of StartTLS.
+    owned_ctx: ?*BoringSSL.SSL_CTX = null,
     is_open: bool = false,
     #mode: SocketMode = .client,
 
@@ -1875,29 +1882,35 @@ pub const DuplexUpgradeContext = struct {
     fn runEvent(this: *DuplexUpgradeContext) void {
         switch (this.task_event) {
             .StartTLS => {
-                if (this.ssl_config) |config| {
-                    log("DuplexUpgradeContext.startTLS mode={s}", .{@tagName(this.#mode)});
-                    this.upgrade.startTLS(config, this.#mode == .client) catch |err| {
-                        switch (err) {
-                            error.OutOfMemory => bun.outOfMemory(),
-                            else => {
-                                const errno = @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
-                                if (this.tls) |tls| {
-                                    // `handleConnectError` consumes our +1
-                                    // (its `needs_deref` path) and detaches.
-                                    // Calling `tls.onClose` afterwards (as
-                                    // main did) double-derefs; null `this.tls`
-                                    // so the eventual `deinit` doesn't make it
-                                    // a triple. Pre-existing on main, latent
-                                    // until the leak fix made `deinit`
-                                    // reachable.
-                                    this.tls = null;
-                                    tls.handleConnectError(errno) catch {};
-                                }
-                            },
+                log("DuplexUpgradeContext.startTLS mode={s}", .{@tagName(this.#mode)});
+                const is_client = this.#mode == .client;
+                const started: anyerror!void = if (this.owned_ctx) |ctx| blk: {
+                    // Transfer the ref into SSLWrapper; null first so the
+                    // failure path / deinit don't double-free it.
+                    this.owned_ctx = null;
+                    break :blk this.upgrade.startTLSWithCTX(ctx, is_client);
+                } else if (this.ssl_config) |config|
+                    this.upgrade.startTLS(config, is_client)
+                else {};
+                started catch |err| switch (err) {
+                    error.OutOfMemory => bun.outOfMemory(),
+                    else => {
+                        const errno = @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
+                        if (this.tls) |tls| {
+                            // `handleConnectError` consumes our +1 (its
+                            // `needs_deref` path) and detaches. Calling
+                            // `tls.onClose` afterwards (as main did)
+                            // double-derefs; null `this.tls` so the eventual
+                            // `deinit` doesn't make it a triple. Pre-existing
+                            // on main, latent until the leak fix made `deinit`
+                            // reachable.
+                            this.tls = null;
+                            tls.handleConnectError(errno) catch {};
                         }
-                    };
-                    this.ssl_config.?.deinit();
+                    },
+                };
+                if (this.ssl_config) |*cfg| {
+                    cfg.deinit();
                     this.ssl_config = null;
                 }
             },
@@ -1927,6 +1940,10 @@ pub const DuplexUpgradeContext = struct {
             // Close raced ahead of StartTLS — drop the unconsumed config.
             cfg.deinit();
             this.ssl_config = null;
+        }
+        if (this.owned_ctx) |ctx| {
+            this.owned_ctx = null;
+            BoringSSL.SSL_CTX_free(ctx);
         }
         this.upgrade.deinit();
         bun.destroy(this);
@@ -1963,8 +1980,35 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
     // allocations (not embedded in a Listener). The mode field on Handlers
     // controls lifecycle (markInactive expects a Listener parent when .server).
     // The TLS direction (client vs server) is controlled by DuplexUpgradeContext.mode.
-    const handlers = try Handlers.fromJS(globalObject, socket_obj, false);
+    var handlers = try Handlers.fromJS(globalObject, socket_obj, false);
+    var handlers_consumed = false;
+    errdefer if (!handlers_consumed) handlers.deinit();
 
+    // Resolve the `SSL_CTX*`. Prefer a passed `SecureContext` (the memoised
+    // `tls.createSecureContext` path — what `[buntls]` now returns) so the
+    // duplex/named-pipe path shares one `SSL_CTX_new` with everyone else.
+    // node:net wraps `[buntls]`'s return as `opts.tls.secureContext`; userland
+    // may also pass it top-level. Same lookup as `upgradeTLS` above.
+    var owned_ctx: ?*BoringSSL.SSL_CTX = null;
+    errdefer if (owned_ctx) |c| BoringSSL.SSL_CTX_free(c);
+    const sc_js: JSValue = blk: {
+        if (try opts.getTruthy(globalObject, "secureContext")) |v| break :blk v;
+        if (try opts.getTruthy(globalObject, "tls")) |t| {
+            if (t.isObject()) {
+                if (try t.getTruthy(globalObject, "secureContext")) |v| break :blk v;
+            }
+        }
+        break :blk .zero;
+    };
+    if (sc_js != .zero) {
+        const sc = SecureContext.fromJS(sc_js) orelse {
+            return globalObject.throwInvalidArgumentTypeValue("secureContext", "SecureContext", sc_js);
+        };
+        owned_ctx = sc.borrow();
+    }
+
+    // Still parse SSLConfig for servername/ALPN (those live on the JS-side
+    // wrapper, not the SSL_CTX) and as the build source when no SecureContext.
     var ssl_opts: ?jsc.API.ServerConfig.SSLConfig = null;
     if (try opts.getTruthy(globalObject, "tls")) |tls| {
         if (!tls.isBoolean()) {
@@ -1973,9 +2017,10 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
             ssl_opts = jsc.API.ServerConfig.SSLConfig.zero;
         }
     }
-    const socket_config = &(ssl_opts orelse {
+    if (owned_ctx == null and ssl_opts == null) {
         return globalObject.throw("Expected \"tls\" option", .{});
-    });
+    }
+    const socket_config: ?*jsc.API.ServerConfig.SSLConfig = if (ssl_opts) |*c| c else null;
 
     var default_data = JSValue.zero;
     if (try opts.fastGet(globalObject, .data)) |default_data_value| {
@@ -1985,6 +2030,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
 
     const handlers_ptr = bun.handleOom(handlers.vm.allocator.create(Handlers));
     handlers_ptr.* = handlers;
+    handlers_consumed = true;
     // Set mode to duplex_server so TLSSocket.isServer() returns true for ALPN server mode
     // without affecting markInactive lifecycle (which requires a Listener parent).
     handlers_ptr.mode = if (is_server) .duplex_server else .client;
@@ -1993,14 +2039,14 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
         .handlers = handlers_ptr,
         .socket = TLSSocket.Socket.detached,
         .connection = null,
-        .protos = if (socket_config.protos) |p|
+        .protos = if (socket_config) |cfg| if (cfg.protos) |p|
             bun.handleOom(bun.default_allocator.dupe(u8, std.mem.span(p)))
         else
-            null,
-        .server_name = if (socket_config.server_name) |sn|
+            null else null,
+        .server_name = if (socket_config) |cfg| if (cfg.server_name) |sn|
             bun.handleOom(bun.default_allocator.dupe(u8, std.mem.span(sn)))
         else
-            null,
+            null else null,
     });
     const tls_js_value = tls.getThisValue(globalObject);
     TLSSocket.js.dataSetCached(tls_js_value, globalObject, default_data);
@@ -2010,9 +2056,21 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
         .tls = tls,
         .vm = globalObject.bunVM(),
         .task = undefined,
-        .ssl_config = socket_config.*,
+        // When `owned_ctx` is set, `runEvent` builds from it and ignores
+        // `ssl_config` for SSL_CTX construction; servername/ALPN already
+        // copied onto `tls` above so the config's only remaining use is the
+        // legacy build path.
+        .ssl_config = if (owned_ctx == null) if (socket_config) |c| c.* else null else null,
+        .owned_ctx = owned_ctx,
         .#mode = if (is_server) .duplex_server else .client,
     });
+    // Ownership of the SSL_CTX ref transferred to DuplexUpgradeContext.
+    owned_ctx = null;
+    // ssl_opts is moved into duplexContext.ssl_config when owned_ctx == null;
+    // otherwise it was only used for protos/server_name and is freed here.
+    if (duplexContext.ssl_config == null) {
+        if (socket_config) |c| c.deinit();
+    }
     tls.ref();
 
     duplexContext.task = jsc.AnyTask.New(DuplexUpgradeContext, DuplexUpgradeContext.runEvent).init(duplexContext);

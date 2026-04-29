@@ -19,38 +19,41 @@ test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () 
   await once(server, "listening");
   const { port } = server.address() as import("net").AddressInfo;
 
-  // Warm: first connect allocates the server SSL_CTX + the memoised client one.
-  await connectOnce(port);
-  Bun.gc(true);
-  const ctxBefore = sslCtxLiveCount();
-  const rssBefore = process.memoryUsage.rss();
+  try {
+    // Warm: first connect allocates the server SSL_CTX + the memoised client one.
+    await connectOnce(port);
+    Bun.gc(true);
+    const ctxBefore = sslCtxLiveCount();
+    const rssBefore = process.memoryUsage.rss();
 
-  // 50 is enough to prove O(1): the old code leaked one SSL_CTX per connect,
-  // so the count delta would be ~50 not ≤2. (200 was used originally but
-  // debug+ASAN does ~50 ms per handshake, putting it past the default timeout
-  // for a property that's just as visible at 50.)
-  for (let i = 0; i < 50; i++) await connectOnce(port);
-  // The close-list drains on the next loop tick (us_internal_free_closed_sockets
-  // runs in loop-post). Await a microtask + macrotask boundary instead of time.
-  await new Promise<void>(r => setImmediate(() => queueMicrotask(r)));
-  Bun.gc(true);
+    // 50 is enough to prove O(1): the old code leaked one SSL_CTX per connect,
+    // so the count delta would be ~50 not ≤2. (200 was used originally but
+    // debug+ASAN does ~50 ms per handshake, putting it past the default timeout
+    // for a property that's just as visible at 50.)
+    for (let i = 0; i < 50; i++) await connectOnce(port);
+    // The close-list drains on the next loop tick (us_internal_free_closed_sockets
+    // runs in loop-post). Await a microtask + macrotask boundary instead of time.
+    await new Promise<void>(r => setImmediate(() => queueMicrotask(r)));
+    Bun.gc(true);
 
-  const ctxAfter = sslCtxLiveCount();
-  const rssAfter = process.memoryUsage.rss();
+    const ctxAfter = sslCtxLiveCount();
+    const rssAfter = process.memoryUsage.rss();
 
-  server.close();
+    // The whole point: no per-connection SSL_CTX. Allow a tiny slack for the
+    // close-list / GC race, but 200 connects must not move this by 200.
+    expect(ctxAfter - ctxBefore).toBeLessThanOrEqual(2);
 
-  // The whole point: no per-connection SSL_CTX. Allow a tiny slack for the
-  // close-list / GC race, but 200 connects must not move this by 200.
-  expect(ctxAfter - ctxBefore).toBeLessThanOrEqual(2);
-
-  // RSS is a much weaker signal than the SSL_CTX count above (allocator
-  // fragmentation, JSC heap growth, the one-time root-CA store load on the
-  // first verify all bump it). The original regression was ~50 KB/conn of
-  // SSL_CTX; bound at 16 MB so a return of that leak (50 × 50 KB ≈ 2.5 MB on
-  // top of the noise floor) would still trip without flaking on the noise.
-  const rssBound = isASAN || isDebug ? 64 * 1024 * 1024 : 16 * 1024 * 1024;
-  expect(rssAfter - rssBefore).toBeLessThan(rssBound);
+    // RSS is a much weaker signal than the SSL_CTX count above (allocator
+    // fragmentation, JSC heap growth, the one-time root-CA store load on the
+    // first verify all bump it). The original regression was ~50 KB/conn of
+    // SSL_CTX; bound at 16 MB so a return of that leak (50 × 50 KB ≈ 2.5 MB on
+    // top of the noise floor) would still trip without flaking on the noise.
+    const rssBound = isASAN || isDebug ? 64 * 1024 * 1024 : 16 * 1024 * 1024;
+    expect(rssAfter - rssBefore).toBeLessThan(rssBound);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
   // Debug+ASAN BoringSSL does ~200 ms per full handshake; 50 sequential
   // handshakes can't fit the 5 s default. This is wall-clock cost of the
   // crypto, not a wait-for-condition.

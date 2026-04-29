@@ -68,8 +68,18 @@
 #define LIBUS_EXT_ALIGNMENT 16
 #define ALLOW_SERVER_RENEGOTIATION 0
 
+/* close() codes — two orthogonal bits collapsed into three states:
+ *   0  graceful: TLS sends close_notify and DEFERS the fd close until the
+ *      peer replies; TCP FINs.
+ *   1  reset: TLS fast-shutdown (no wait), TCP arms SO_LINGER{1,0} → RST.
+ *      Drops any unflushed kernel send buffer; only for terminate()/abort.
+ *   2  fast-shutdown: TLS fast-shutdown (no wait), TCP FINs normally. For
+ *      net.Socket._destroy() / _handle.close() where the wrapper detaches
+ *      immediately so (0)'s deferral would orphan the us_socket_t, but data
+ *      already written must still drain (not RST). */
 #define LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN 0
 #define LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET 1
+#define LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN 2
 
 /* Define what a socket descriptor is based on platform */
 #ifdef _WIN32
@@ -286,6 +296,11 @@ void us_socket_group_deinit(us_socket_group_r group) nonnull_fn_decl;
 /* Close every socket in the group (fires on_close for each). Used by server
  * shutdown. The group itself stays valid. */
 void us_socket_group_close_all(us_socket_group_r group) nonnull_fn_decl;
+
+/* Teardown: us_socket_group_close_all() on every group currently linked to the
+ * loop (Listener-, App-, and RareData-owned alike). Returns 1 if any group was
+ * linked, 0 if the loop was already idle. */
+int us_loop_close_all_groups(us_loop_r loop) nonnull_fn_decl;
 
 unsigned short us_socket_group_timestamp(us_socket_group_r group) nonnull_fn_decl;
 struct us_loop_t *us_socket_group_loop(us_socket_group_r group) nonnull_fn_decl __attribute((returns_nonnull));

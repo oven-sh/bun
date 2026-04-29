@@ -880,17 +880,16 @@ pub fn closeAllSocketGroups(this: *RareData, vm: *jsc.VirtualMachine) void {
     // socket, and the cap stops a deliberately-spinning on_close from wedging
     // teardown; the post-close force-drain in close_all handles whatever's
     // left after the cap).
+    // Walk the loop's linked-group list rather than just our 14 embedded
+    // fields: Listener/uWS-App groups own their own SocketGroup, and accepted
+    // sockets land *there*, not in RareData. Iterating only `socket_group_fields`
+    // missed those, leaking one 88-byte us_socket_t per still-open accepted
+    // connection at process.exit() (the LSAN cluster on #29932 build 49245).
+    _ = this;
+    const loop = vm.uwsLoop();
     var rounds: u8 = 0;
     while (rounds < 8) : (rounds += 1) {
-        var any = false;
-        inline for (socket_group_fields) |f| {
-            const g: *uws.SocketGroup = &@field(this, f);
-            if (!g.isEmpty()) {
-                g.closeAll();
-                any = true;
-            }
-        }
-        if (!any) break;
+        if (!loop.closeAllGroups()) break;
     }
     // us_socket_close pushes to loop->data.closed_head; loop_post() normally
     // frees it on the next tick. We're past the last tick, so drain it now —

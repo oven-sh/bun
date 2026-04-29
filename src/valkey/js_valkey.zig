@@ -1131,6 +1131,9 @@ pub const JSValkeyClient = struct {
         };
 
         this.ref();
+        // Balance the ref above if connect() throws — the caller (e.g. send())
+        // only knows to clean up its own state, not the keep-alive ref.
+        errdefer this.deref();
         this.client.status = .connecting;
         this.updatePollRef();
         errdefer {

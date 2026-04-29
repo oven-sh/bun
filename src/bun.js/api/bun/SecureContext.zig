@@ -43,6 +43,15 @@ pub fn create(global: *jsc.JSGlobalObject, config: *const SSLConfig) bun.JSError
     const ctx_opts = config.asUSockets();
     var err: uws.create_bun_socket_error_t = .none;
     const ctx = ctx_opts.createSSLContext(&err) orelse {
+        // `err` is only set for the input-validation paths (bad PEM, missing
+        // file, …). When BoringSSL itself fails (e.g. unsupported curve) the
+        // enum is still `.none`; surface the library error stack instead of
+        // throwing an empty placeholder.
+        if (err == .none) {
+            const code = BoringSSL.ERR_get_error();
+            if (code != 0) return global.throwValue(bun.BoringSSL.ERR_toJS(global, code));
+            return global.throw("Failed to create SSL context", .{});
+        }
         return global.throwValue(err.toJS(global));
     };
     return bun.new(SecureContext, .{

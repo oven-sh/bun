@@ -10,8 +10,15 @@ const max_i32 = std.math.maxInt(i32);
 /// upgraded duplexes, and async DNS.
 pub const us_socket_t = opaque {
     pub const CloseCode = enum(i32) {
+        /// TLS: send close_notify and defer fd close until peer replies. TCP: FIN.
         normal = 0,
+        /// TLS: fast-shutdown (no wait). TCP: SO_LINGER{1,0} → RST, dropping any
+        /// unflushed send buffer. Only for `terminate()` / GC abort.
         failure = 1,
+        /// TLS: fast-shutdown (no wait). TCP: FIN. For `_handle.close()` where
+        /// the JS wrapper detaches immediately so `.normal`'s deferral would
+        /// orphan the `us_socket_t`, but already-written data must still drain.
+        fast_shutdown = 2,
     };
 
     pub fn open(this: *us_socket_t, is_client: bool, ip_addr: ?[]const u8) void {

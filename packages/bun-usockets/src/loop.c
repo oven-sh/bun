@@ -135,6 +135,27 @@ void us_internal_loop_unlink_group(struct us_loop_t *loop, struct us_socket_grou
     }
 }
 
+/* Teardown helper: close every socket in every group currently linked to this
+ * loop. Covers Listener/uWS-App-owned groups that the Zig RareData group list
+ * doesn't know about — without this, an accepted us_socket_t whose group is
+ * embedded in a still-live Listener leaks at process.exit() (LSAN: 88-byte
+ * us_create_poll from loop.c:375). closeAll may unlink the group it's called
+ * on, so cache `next` before each call. Returns 1 if anything was linked. */
+int us_loop_close_all_groups(struct us_loop_t *loop) {
+    struct us_socket_group_t *g = loop->data.head;
+    int any = g != NULL;
+    while (g) {
+        struct us_socket_group_t *next = g->next;
+        us_socket_group_close_all(g);
+        /* close_all → unlink may have spliced our cached `next` out too (an
+         * on_close handler closing a different group's last socket); re-read
+         * from the loop head if `next` is no longer linked. */
+        if (next && !next->linked) next = loop->data.head;
+        g = next;
+    }
+    return any;
+}
+
 /* This functions should never run recursively */
 void us_internal_timer_sweep(struct us_loop_t *loop) {
     struct us_internal_loop_data_t *loop_data = &loop->data;

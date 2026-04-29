@@ -354,6 +354,24 @@ pub fn startTLS(this: *UpgradedDuplex, ssl_options: jsc.API.ServerConfig.SSLConf
     this.wrapper.?.start();
 }
 
+/// Adopts `ctx` (one ref) — freed on both success (via `wrapper.deinit`) and
+/// error. Mirrors `startTLS` but skips the
+/// `SSLConfig.asUSockets() → us_ssl_ctx_from_options()` round-trip so a
+/// memoised `SecureContext` can be reused on the duplex/named-pipe path.
+pub fn startTLSWithCTX(this: *UpgradedDuplex, ctx: *bun.BoringSSL.c.SSL_CTX, is_client: bool) !void {
+    errdefer bun.BoringSSL.c.SSL_CTX_free(ctx);
+    this.wrapper = try WrapperType.initWithCTX(ctx, is_client, .{
+        .ctx = this,
+        .onOpen = UpgradedDuplex.onOpen,
+        .onHandshake = UpgradedDuplex.onHandshake,
+        .onData = UpgradedDuplex.onData,
+        .onClose = UpgradedDuplex.onClose,
+        .write = UpgradedDuplex.internalWrite,
+    });
+
+    this.wrapper.?.start();
+}
+
 pub fn encodeAndWrite(this: *UpgradedDuplex, data: []const u8) i32 {
     log("encodeAndWrite (len: {})", .{data.len});
     if (this.wrapper) |*wrapper| {

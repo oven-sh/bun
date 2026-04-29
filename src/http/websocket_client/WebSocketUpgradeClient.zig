@@ -1056,8 +1056,11 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             // custom `us_ssl_ctx_t` to the connected WebSocket (it must outlive
             // the upgrade client because the socket's SSL* still references the
             // SSL_CTX inside it).
-            const saved_secure = this.secure;
+            var saved_secure = this.secure;
             this.secure = null; // prevent clearData from freeing it
+            // Any arm below that doesn't hand `saved_secure` to didConnect must
+            // drop the ref it took out of `this`; do it once on scope exit.
+            defer if (saved_secure) |s| bun.BoringSSL.c.SSL_CTX_free(s);
             this.clearData();
             jsc.markBinding(@src());
             if (!this.tcp.isClosed() and this.outgoing_websocket != null) {
@@ -1075,6 +1078,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 defer this.deref();
                 if (socket.socket.get()) |native_socket| {
                     ws.didConnect(native_socket, overflow.ptr, overflow.len, if (deflate_result.enabled) &deflate_result.params else null, saved_secure);
+                    saved_secure = null; // ownership transferred; suppress the defer-free above
                 } else {
                     this.terminate(ErrorCode.failed_to_connect);
                 }

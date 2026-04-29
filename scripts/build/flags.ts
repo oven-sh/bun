@@ -1020,13 +1020,16 @@ export const stripFlags: Flag[] = [
   {
     // musl: no eh_frame handling differences, but CMake gates on NOT musl so we do too.
     // Strip only runs on plain release (shouldStrip gates debug/asan/valgrind/assertions)
-    // which in CI always has LTO on — in practice paired with --no-eh-frame-hdr.
+    // which in CI always has LTO on — paired with --no-eh-frame-hdr so no
+    // PT_GNU_EH_FRAME phdr is emitted.
     //
-    // GNU strip does not rewrite the program header table — so any
-    // PT_GNU_EH_FRAME phdr entry also survives as an orphan. See the
-    // --no-eh-frame-hdr rationale in linkFlags above.
+    // GNU strip does not rewrite the program header table. In a non-LTO
+    // release build (local dev / gate harness) we link with --eh-frame-hdr,
+    // so stripping these sections would leave an orphan PT_GNU_EH_FRAME
+    // phdr pointing at an unmapped vaddr — pthread_exit → _Unwind_Find_FDE
+    // then segfaults. Gate on c.lto to keep the sections when the phdr exists.
     flag: ["-R", ".eh_frame", "-R", ".eh_frame_hdr", "-R", ".gcc_except_table"],
-    when: c => c.linux && c.abi === "gnu",
+    when: c => c.linux && c.abi === "gnu" && c.lto,
     desc: "Remove unwind sections (GNU strip required — llvm-strip leaves [LOAD #2 [R]])",
   },
 ];

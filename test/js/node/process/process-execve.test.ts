@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
-describe("process.execve", () => {
+describe.concurrent("process.execve", () => {
   test("is a function", () => {
     expect(typeof process.execve).toBe("function");
   });

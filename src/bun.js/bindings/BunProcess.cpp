@@ -1741,14 +1741,17 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
     posix_spawnattr_init(&attrs);
     posix_spawn_file_actions_init(&actions);
 
+    // Reset the blocked signal mask, but don't touch dispositions:
+    // POSIX_SPAWN_SETEXEC already gives execve(2) semantics (caught handlers
+    // become SIG_DFL; SIG_IGN is preserved), which matches the non-Darwin
+    // path and Node. SETSIGDEF with a full set would additionally force
+    // SIG_IGN dispositions (e.g. Bun's SIGPIPE) back to SIG_DFL, diverging
+    // from Linux.
     sigset_t emptyMask;
     sigemptyset(&emptyMask);
-    sigset_t fullMask;
-    sigfillset(&fullMask);
     posix_spawnattr_setsigmask(&attrs, &emptyMask);
-    posix_spawnattr_setsigdefault(&attrs, &fullMask);
     posix_spawnattr_setflags(&attrs,
-        POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETEXEC | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK);
+        POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETEXEC | POSIX_SPAWN_SETSIGMASK);
 
     posix_spawn_file_actions_addinherit_np(&actions, 0);
     posix_spawn_file_actions_addinherit_np(&actions, 1);

@@ -2042,19 +2042,28 @@ void JSNodeSqliteSession::finishCreation(VM& vm, JSDatabaseSync* db, sqlite3_ses
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
     m_session = session;
+    m_originDb = db->connection();
     m_database.set(vm, this, db);
+}
+
+bool JSNodeSqliteSession::isStale() const
+{
+    auto* db = m_database.get();
+    // closeInternal() frees every tracked sqlite3_session* without touching
+    // the wrappers, so once the originating connection is gone (closed, or
+    // closed-then-reopened to a new handle) m_session is a dangling pointer.
+    return db == nullptr || db->connection() != m_originDb;
 }
 
 void JSNodeSqliteSession::deleteSession()
 {
     if (m_session == nullptr) return;
-    auto* db = m_database.get();
-    if (db && db->isOpen()) {
+    if (!isStale()) {
+        auto* db = m_database.get();
         db->untrackSession(m_session);
         sqlite3session_delete(m_session);
     }
-    // If the db is already closed, closeInternal() has (or will have)
-    // deleted the handle — don't double-free.
+    // If stale, closeInternal() already freed the handle — don't double-free.
     m_session = nullptr;
 }
 
@@ -2100,7 +2109,7 @@ static EncodedJSValue sessionChangesetCommon(JSGlobalObject* globalObject, CallF
 {
     THIS_SESSION();
     JSDatabaseSync* db = self->database();
-    if (!db || !db->isOpen()) {
+    if (self->isStale()) {
         return Bun::ERR::INVALID_STATE(scope, globalObject, "database is not open"_s);
     }
     if (self->session() == nullptr) {
@@ -2137,8 +2146,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSessionPatchset, (JSGlobalObject * globalObject, Call
 JSC_DEFINE_HOST_FUNCTION(jsSessionClose, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_SESSION();
-    JSDatabaseSync* db = self->database();
-    if (!db || !db->isOpen()) {
+    if (self->isStale()) {
         return Bun::ERR::INVALID_STATE(scope, globalObject, "database is not open"_s);
     }
     if (self->session() == nullptr) {

@@ -443,11 +443,28 @@ describe("Session / changeset", () => {
     // Session handle was freed by close(); using it now is an error but not a crash.
     expect(() => session.changeset()).toThrow(/database is not open/);
   });
+
+  test("stale session after close()+open() is rejected, not UAF'd", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+    const session = db.createSession();
+    db.close();
+    db.open();
+    // closeInternal() freed the sqlite3_session* but left the wrapper's
+    // pointer intact; after re-open the db is "open" again, so without the
+    // origin-connection check changeset()/close() would dereference freed
+    // memory (heap-use-after-free / double-free under ASAN).
+    expect(() => session.changeset()).toThrow(/database is not open/);
+    expect(() => session.patchset()).toThrow(/database is not open/);
+    expect(() => session.close()).toThrow(/database is not open/);
+    // Symbol.dispose swallows.
+    expect(() => session[Symbol.dispose]()).not.toThrow();
+    db.close();
+  });
 });
 
-// Each backup_step with rate=1 fsyncs the destination once per page; on slow
-// CI filesystems that can take a couple of seconds per call, so give these
-// tests generous timeouts and keep the page count tiny.
+// Each backup_step with rate=1 fsyncs the destination once per page; keep
+// the page count tiny so the test stays fast on slow-fsync CI filesystems.
 describe("backup()", () => {
   test("copies an in-memory database to a file", async () => {
     using dir = tempDir("node-sqlite-backup", {});
@@ -476,7 +493,7 @@ describe("backup()", () => {
     // left dst's connection in zombie mode with the file still open. On
     // Windows that blocks tempDir's rm with EBUSY; force the finalizer.
     Bun.gc(true);
-  }, 30_000);
+  });
 
   test("rejects with ERR_SQLITE_ERROR when the destination is unwritable", async () => {
     using dir = tempDir("node-sqlite-backup-badpath", {});
@@ -510,7 +527,7 @@ describe("backup()", () => {
       }),
     ).rejects.toThrow("nope");
     src.close();
-  }, 30_000);
+  });
 });
 
 describe("StatementSync.prototype.columns()", () => {

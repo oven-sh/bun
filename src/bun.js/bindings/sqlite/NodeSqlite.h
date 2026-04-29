@@ -444,6 +444,11 @@ public:
 
     sqlite3_session* session() const { return m_session; }
     JSDatabaseSync* database() const { return m_database.get(); }
+    // True once the owning database has been closed (closeInternal()
+    // frees every tracked sqlite3_session* without touching the wrappers)
+    // OR re-opened to a different connection — in either case m_session is
+    // dangling and must not be used.
+    bool isStale() const;
     void deleteSession();
 
     JSC::WriteBarrier<JSDatabaseSync> m_database;
@@ -456,6 +461,8 @@ private:
     void finishCreation(JSC::VM& vm, JSDatabaseSync* db, sqlite3_session* session);
 
     sqlite3_session* m_session = nullptr;
+    // See JSStatementSync::m_originDb — same close()+open() guard.
+    sqlite3* m_originDb = nullptr;
 };
 
 class JSNodeSqliteSessionPrototype final : public JSC::JSNonFinalObject {

@@ -679,6 +679,7 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
     }
 
     m_db = db;
+    ++m_openGeneration;
 
     int v = m_config.enableDoubleQuotedStringLiterals ? 1 : 0;
     sqlite3_db_config(m_db, SQLITE_DBCONFIG_DQS_DML, v, nullptr);
@@ -1453,7 +1454,7 @@ void JSStatementSync::finishCreation(VM& vm, JSDatabaseSync* db, sqlite3_stmt* s
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
     m_stmt = stmt;
-    m_originDb = db->connection();
+    m_originGeneration = db->openGeneration();
     m_database.set(vm, this, db);
 }
 
@@ -1484,11 +1485,12 @@ bool JSStatementSync::isFinalized() const
 {
     if (m_stmt == nullptr) return true;
     auto* db = m_database.get();
-    // The connection() check covers both "database is closed" (nullptr)
-    // and "database was closed then re-opened to a different handle" —
-    // in the latter case the stmt belongs to the zombified old connection
-    // and must not be stepped.
-    return db == nullptr || db->connection() != m_originDb;
+    // The generation check covers both "database is closed" and
+    // "database was closed then re-opened" — the stmt belongs to the
+    // zombified old connection and must not be stepped. A raw sqlite3*
+    // comparison isn't sufficient here: the allocator may hand the new
+    // connection the same address the old one had (ABA).
+    return db == nullptr || !db->isOpen() || db->openGeneration() != m_originGeneration;
 }
 
 template<typename Visitor>
@@ -2042,17 +2044,19 @@ void JSNodeSqliteSession::finishCreation(VM& vm, JSDatabaseSync* db, sqlite3_ses
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
     m_session = session;
-    m_originDb = db->connection();
+    m_originGeneration = db->openGeneration();
     m_database.set(vm, this, db);
 }
 
 bool JSNodeSqliteSession::isStale() const
 {
     auto* db = m_database.get();
-    // closeInternal() frees every tracked sqlite3_session* without touching
-    // the wrappers, so once the originating connection is gone (closed, or
-    // closed-then-reopened to a new handle) m_session is a dangling pointer.
-    return db == nullptr || db->connection() != m_originDb;
+    // closeInternal() frees every tracked sqlite3_session* without
+    // touching the wrappers, so once the originating connection is gone
+    // (closed, or closed-then-reopened) m_session is a dangling pointer.
+    // Compare the open-generation rather than the raw sqlite3* because
+    // the allocator can recycle the same address for the new connection.
+    return db == nullptr || !db->isOpen() || db->openGeneration() != m_originGeneration;
 }
 
 void JSNodeSqliteSession::deleteSession()

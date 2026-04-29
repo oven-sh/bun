@@ -85,6 +85,12 @@ public:
 
     sqlite3* connection() const { return m_db; }
     bool isOpen() const { return m_db != nullptr; }
+    // Bumped on every successful open(). Statements/sessions capture this
+    // at creation and compare instead of the raw sqlite3* — after
+    // close()+open() the allocator may recycle the exact same address for
+    // the new connection (ABA), so pointer equality isn't a sound
+    // "same connection" check.
+    unsigned openGeneration() const { return m_openGeneration; }
     bool allowLoadExtension() const { return m_config.allowExtension; }
     bool enableLoadExtensionIsOn() const { return m_enableLoadExtension; }
     void setEnableLoadExtension(bool v) { m_enableLoadExtension = v; }
@@ -117,6 +123,7 @@ private:
     WTF::String m_location;
     DatabaseSyncOpenConfiguration m_config {};
     sqlite3* m_db = nullptr;
+    unsigned m_openGeneration = 0;
     // Sessions must be deleted before sqlite3_close_v2() to avoid
     // use-after-free inside the preupdate hook; track them by raw handle
     // (not JS object) so close() can sweep regardless of GC ordering.
@@ -255,12 +262,13 @@ private:
     bool bindValue(JSC::JSGlobalObject*, JSC::ThrowScope&, int index, JSC::JSValue);
 
     sqlite3_stmt* m_stmt = nullptr;
-    // Connection this statement was prepared on. After db.close()+db.open()
-    // the JSDatabaseSync holds a *different* sqlite3*, but the stmt still
-    // points into the old (zombified) connection — comparing against this
-    // lets isFinalized() surface that instead of stepping a dead handle and
-    // reporting `errcode: 0 "not an error"` from the new connection.
-    sqlite3* m_originDb = nullptr;
+    // Open-generation this statement was prepared on. After db.close()
+    // + db.open() the JSDatabaseSync may even get the *same* sqlite3*
+    // back (allocator reuse — ABA), so compare the generation counter
+    // rather than the raw handle to let isFinalized() detect a stale
+    // statement instead of stepping a dead handle and reporting
+    // `errcode: 0 "not an error"` from the new connection.
+    unsigned m_originGeneration = 0;
     unsigned m_resetGeneration = 0;
     bool m_useBigInts : 1 = false;
     bool m_returnArrays : 1 = false;
@@ -461,8 +469,8 @@ private:
     void finishCreation(JSC::VM& vm, JSDatabaseSync* db, sqlite3_session* session);
 
     sqlite3_session* m_session = nullptr;
-    // See JSStatementSync::m_originDb — same close()+open() guard.
-    sqlite3* m_originDb = nullptr;
+    // See JSStatementSync::m_originGeneration — same close()+open() guard.
+    unsigned m_originGeneration = 0;
 };
 
 class JSNodeSqliteSessionPrototype final : public JSC::JSNonFinalObject {

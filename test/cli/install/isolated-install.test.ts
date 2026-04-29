@@ -1568,10 +1568,13 @@ describe("global virtual store", () => {
 
     // The canonical path of `node_modules/no-deps` is what bundlers resolve
     // against when walking ancestors for `node_modules/`. Before the fix it
-    // escaped into `<cache>/links/`.
+    // escaped into `<cache>/links/`. Prefix against the project's
+    // `node_modules/` dir (not `packageDir` itself) — the harness puts
+    // `.bun-cache/` inside `packageDir`, so `packageDir` as a prefix would
+    // still be satisfied by `<packageDir>/.bun-cache/links/...`.
     const canonical = realpathSync(join(packageDir, "node_modules", "no-deps"));
-    const projectRoot = realpathSync(packageDir);
-    expect(canonical.startsWith(projectRoot + sep)).toBe(true);
+    const nodeModulesRoot = realpathSync(join(packageDir, "node_modules"));
+    expect(canonical.startsWith(nodeModulesRoot + sep)).toBe(true);
   });
 
   test("can be enabled via BUN_INSTALL_GLOBAL_STORE=1", async () => {

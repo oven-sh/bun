@@ -8,7 +8,7 @@
 // postgres when docker isn't available.
 
 import { SQL } from "bun";
-import { beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { isDockerEnabled } from "harness";
 
 async function resolvePostgresURL(): Promise<string | undefined> {
@@ -19,14 +19,16 @@ async function resolvePostgresURL(): Promise<string | undefined> {
   }
   // Fall back to a directly reachable postgres (e.g. the one started by
   // /opt/start-services.sh in environments without nested docker).
-  for (const url of [process.env.DATABASE_URL, "postgres://postgres@localhost:5432/postgres"]) {
-    if (!url) continue;
+  for (const candidate of [process.env.DATABASE_URL, "postgres://postgres@localhost:5432/postgres"]) {
+    if (!candidate) continue;
+    const probe = new SQL(candidate, { max: 1, idleTimeout: 1, connectionTimeout: 2 });
     try {
-      const probe = new SQL(url, { max: 1, idleTimeout: 1, connectionTimeout: 2 });
       await probe`SELECT 1`;
-      await probe.end();
-      return url;
-    } catch {}
+      return candidate;
+    } catch {
+    } finally {
+      await probe.end().catch(() => {});
+    }
   }
   return undefined;
 }
@@ -37,13 +39,9 @@ if (!url) {
   describe.todo("postgres array column result does not leak decoded cells (no postgres available)");
 } else {
   describe("postgres array column leak", () => {
-    let sql: SQL;
-
-    beforeAll(() => {
-      sql = new SQL(url, { max: 1 });
-    });
-
     test("array column result does not leak decoded cells", async () => {
+      await using sql = new SQL(url, { max: 1 });
+
       // warm up: prepared statement cache, connection buffers, JIT
       for (let i = 0; i < 32; i++) {
         await sql`SELECT array_agg(repeat('x', 1024)) AS tags FROM generate_series(1, 64)`;
@@ -64,8 +62,6 @@ if (!url) {
       // SQLDataCell[] buffer; 3000 rows leak well over 200MB. With the fix
       // the ASAN debug build settles around ~70MB of JSC/ASAN overhead.
       expect(deltaMB).toBeLessThan(150);
-
-      await sql.end();
     }, 120_000);
   });
 }

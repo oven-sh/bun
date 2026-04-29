@@ -110,7 +110,7 @@ declare module "bun:test" {
      * become `jest.fn()` stubs, classes become mock constructors, and
      * nested objects are recursively auto-mocked.
      */
-    function mock(id: string, factory?: () => any): void;
+    function mock(id: string, factory?: () => any): void | Promise<void>;
     /**
      * Return the mocked exports of a module. If `jest.mock(id)` hasn't been
      * called yet, the module is loaded and auto-mocked on demand.

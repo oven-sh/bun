@@ -642,7 +642,12 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         // snapshot. If the set itself throws we drop that secondary
         // exception and keep the original one — the caller's failure
         // is what the user needs to see.
-        JSC::JSValue stashedRequireMapEntry;
+        // Initialise to jsUndefined() — a default-constructed JSValue is
+        // *empty*, which is distinct from `undefined` and makes the
+        // `isUndefined()` guard below evaluate true (we'd call
+        // requireMap->set with an empty JSValue on the "get threw"
+        // restore path).
+        JSC::JSValue stashedRequireMapEntry = JSC::jsUndefined();
         auto* requireMap = globalObject->requireMap();
         auto restoreStash = [&]() {
             if (stashedVirtualEntry) {

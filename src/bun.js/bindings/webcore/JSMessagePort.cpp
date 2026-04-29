@@ -202,7 +202,11 @@ static inline bool setJSMessagePort_onmessageSetter(JSGlobalObject& lexicalGloba
     vm.writeBarrier(&thisObject, value);
     ensureStillAliveHere(value);
 
-    thisObject.wrapped().jsRef(&lexicalGlobalObject);
+    // Node.js's onmessage setter refs when assigning a function and unrefs otherwise.
+    if (value.isCallable())
+        thisObject.wrapped().jsRef(&lexicalGlobalObject);
+    else
+        thisObject.wrapped().jsUnref(&lexicalGlobalObject);
 
     return true;
 }

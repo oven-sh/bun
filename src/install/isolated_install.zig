@@ -1584,7 +1584,13 @@ pub fn installIsolatedPackages(
                     // still detect and detach it, else `existsZ` below would
                     // follow the link into `<cache>/links/` and we'd reuse
                     // the shared entry through a project symlink.
-                    const has_stale_gvs_link = !uses_global_store and stale: {
+                    //
+                    // But skip the probe on cold installs — `is_new_bun_modules`
+                    // means `.bun/` was just mkdir'd this run, so it can't
+                    // contain a leftover symlink. `(is_new_bun_modules and
+                    // !uses_global_store)` below already forces needs_install
+                    // in that case, so the lstat would be pure overhead.
+                    const has_stale_gvs_link = !uses_global_store and !is_new_bun_modules and stale: {
                         var local: bun.Path(.{ .sep = .auto }) = .initTopLevelDir();
                         defer local.deinit();
                         installer.appendLocalStoreEntryPath(&local, entry_id);

@@ -868,21 +868,21 @@ test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvent
 
         // Warm up: let the FSEvents loop thread, mimalloc pools, and the
         // PathWatcherManager fd cache reach steady state.
-        for (let i = 0; i < 200; i++) fs.watch(dir, () => {}).close();
+        for (let i = 0; i < 1000; i++) fs.watch(dir, () => {}).close();
         Bun.gc(true);
         const before = process.memoryUsage.rss();
 
-        // With a ~700-byte resolved path, 2000 leaked dupeZ buffers is
-        // ~1.4 MB of growth on unpatched builds. Keep the iteration count
+        // With a ~700-byte resolved path, 5000 leaked dupeZ buffers is
+        // ~3.5 MB of growth on unpatched builds. Keep the iteration count
         // low enough that rapid FSEventStream recreate doesn't exhaust the
         // kernel queue (FSEventStreamCreate -> NULL).
-        for (let i = 0; i < 2000; i++) fs.watch(dir, () => {}).close();
+        for (let i = 0; i < 5000; i++) fs.watch(dir, () => {}).close();
         Bun.gc(true);
         const after = process.memoryUsage.rss();
 
         const growthMB = (after - before) / 1024 / 1024;
         console.log("RSS growth: " + growthMB.toFixed(2) + " MB");
-        if (growthMB > 1) {
+        if (growthMB > 3) {
           throw new Error("fs.watch(dir) leaked " + growthMB.toFixed(2) + " MB");
         }
       `,
@@ -895,9 +895,8 @@ test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvent
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // Check exit code first so a silent subprocess crash surfaces as a real
-  // signal/code instead of "stdout is empty".
-  expect(exitCode).toBe(0);
+  // stderr first so a leak regression surfaces the thrown growth message.
   expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
   expect(stdout).toContain("RSS growth:");
 });

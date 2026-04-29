@@ -726,6 +726,60 @@ describe("immediately closing", () => {
   });
 });
 
+// FSWatcher.close() set `closed = true` before calling refTask(), so refTask() returned
+// false without incrementing pending_activity_count and the paired unrefTask() ran anyway.
+// For { persistent: false } watchers (count starts at 1), close() did a net -2, wrapping the
+// u32 to MAX. hasPendingActivity() then returned true forever, pinning the native FSWatcher
+// (and via its cached listener closure, the JS FSWatcher) as a GC root — a permanent leak
+// per watcher. Persistent watchers only landed at 0 by accident (start=2, -2).
+describe("closed FSWatcher is collectable", () => {
+  for (const persistent of [false, true]) {
+    test(`persistent: ${persistent}`, async () => {
+      using dir = tempDir("fswatch-gc", { "f.txt": "x" });
+      const watchDir = String(dir);
+
+      const fixture = /* js */ `
+        const fs = require("fs");
+
+        let collected = 0;
+        const registry = new FinalizationRegistry(() => { collected++; });
+
+        const ITERS = 64;
+        (function create() {
+          for (let i = 0; i < ITERS; i++) {
+            const w = fs.watch(${JSON.stringify(watchDir)}, { persistent: ${persistent} }, () => {});
+            registry.register(w);
+            w.close();
+          }
+        })();
+
+        (async () => {
+          for (let i = 0; i < 30 && collected < ITERS; i++) {
+            Bun.gc(true);
+            await Bun.sleep(10);
+          }
+          console.log(JSON.stringify({ collected, iters: ITERS }));
+        })();
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      const { collected, iters } = JSON.parse(stdout.trim());
+      // Before the fix, `collected` is 0 for persistent:false — every watcher leaks.
+      // After the fix, all of them are collectable; allow a little slack for GC timing.
+      expect(collected).toBeGreaterThanOrEqual(Math.floor(iters / 2));
+      expect(exitCode).toBe(0);
+    });
+  }
+});
+
 // On Windows, if fs.watch() fails after getOrPut() inserts into the internal path->watcher
 // map (e.g. uv_fs_event_start fails on a dangling junction, an ACL-protected dir, or a
 // directory deleted mid-watch), an errdefer that was silently broken by a !*T -> Maybe(*T)

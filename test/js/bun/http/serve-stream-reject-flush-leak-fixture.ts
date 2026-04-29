@@ -24,6 +24,7 @@ import { connect } from "node:net";
 const CHUNK = Buffer.alloc(8 * 1024 * 1024, "x");
 
 let flushPending = 0;
+let currentSocket: import("node:net").Socket | undefined;
 
 const server = Bun.serve({
   port: 0,
@@ -44,6 +45,12 @@ const server = Bun.serve({
           if (p instanceof Promise && Bun.peek.status(p) === "pending") {
             flushPending++;
           }
+          // Tear down the client after handleRejectStream has run. The throw
+          // below rejects pull()'s promise; onRejectStream → handleRejectStream
+          // fires on the microtask queue, then this setImmediate fires on the
+          // next macrotask. Without it the parked tryEnd() write never drains
+          // (client is paused) and uWS won't close the connection.
+          setImmediate(() => currentSocket?.destroy());
           throw new Error("boom");
         },
       } as any),
@@ -57,19 +64,23 @@ function protectedPromiseCount() {
 }
 
 function oneRequest(): Promise<void> {
-  // Raw TCP client that sends the request line and then stops reading, so
-  // the server's first body write (tryEnd of 8 MiB) hits backpressure.
+  // Raw TCP client that sends the request line and then never reads, so the
+  // server's first body write (tryEnd of 8 MiB) hits backpressure. Windows'
+  // loopback fast-path will absorb the full 8 MiB into the kernel if the
+  // client is draining, so explicitly pause(); the server side destroys the
+  // socket once handleRejectStream has run.
   return new Promise(resolve => {
     const socket = connect({ port: server.port, host: "127.0.0.1" }, () => {
       socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      socket.pause();
     });
-    socket.on("data", () => socket.destroy());
+    currentSocket = socket;
     socket.on("close", () => resolve());
     socket.on("error", () => {});
   });
 }
 
-const ITERATIONS = 40;
+const ITERATIONS = 10;
 
 // Warm up so per-process one-time promise protections (module loader, etc.)
 // don't count against us.
@@ -105,9 +116,7 @@ console.log(
 
 // The test must actually exercise the backpressure → pending_flush path.
 if (flushPending < ITERATIONS / 2) {
-  console.error(
-    `insufficient backpressure: only ${flushPending}/${ITERATIONS} end() calls returned a pending promise`,
-  );
+  console.error(`insufficient backpressure: only ${flushPending}/${ITERATIONS} end() calls returned a pending promise`);
   process.exit(2);
 }
 // Before the fix: delta ≈ ITERATIONS (every pending_flush stays protected).

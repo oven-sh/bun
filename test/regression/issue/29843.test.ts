@@ -149,7 +149,6 @@ describe.skipIf(!isPosix)("bun:ffi dlopen signal-handler preservation (#29843)",
     // any run that touches WASM, and any warning we care about would
     // already cause the JSON parse below to fail.
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(exitCode).toBe(0);
 
     const changed = JSON.parse(stdout.trim().split("\n").pop()!);
 
@@ -169,6 +168,8 @@ describe.skipIf(!isPosix)("bun:ffi dlopen signal-handler preservation (#29843)",
     const allowedCgtGain = new Set([1, 2, 3, 4, 5, 6, 10, 12, 14, 15, 17, 23]);
     const disallowedCgtGain = changed.cgtGained.filter((s: number) => !allowedCgtGain.has(s));
     expect(disallowedCgtGain).toEqual([]);
+
+    expect(exitCode).toBe(0);
   });
 
   // process.on("SIG…") handlers must also survive dlopen. The compat layer
@@ -262,10 +263,11 @@ describe.skipIf(!isPosix)("bun:ffi dlopen signal-handler preservation (#29843)",
       stdout: "pipe",
     });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(exitCode).toBe(0);
     const report = JSON.parse(stdout.trim().split("\n").pop()!);
     // The regression is SIGPIPE losing its SIG_IGN across the dlopen;
     // with the fix, SigIgn is unchanged.
     expect(report).toEqual({ sigpipeStillIgnored: true, ignChanged: false });
+
+    expect(exitCode).toBe(0);
   });
 });

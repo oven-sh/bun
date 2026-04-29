@@ -179,10 +179,7 @@ test("blob URLs created inside a Worker are revoked when the worker terminates",
 test("blob URLs created inside a Worker are revoked when the worker exits naturally", async () => {
   const worker = new Worker(
     URL.createObjectURL(
-      new Blob(
-        [`self.postMessage(URL.createObjectURL(new Blob(["bye"])));`],
-        { type: "application/javascript" },
-      ),
+      new Blob([`self.postMessage(URL.createObjectURL(new Blob(["bye"])));`], { type: "application/javascript" }),
     ),
   );
 

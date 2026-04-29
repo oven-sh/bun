@@ -585,6 +585,21 @@ describe("postMessageToThread", () => {
       await worker.terminate();
     }
   });
+
+  test("rejects with ERR_WORKER_MESSAGING_FAILED for an exited worker's threadId", async () => {
+    // The worker's port registration must be torn down on exit; previously
+    // #onClose read the native threadId (which is -1 once the worker is
+    // closing) and the stale port stayed in the map, so this would hang
+    // until the timeout instead of failing immediately.
+    const worker = new Worker("require('node:worker_threads')", { eval: true });
+    const id = worker.threadId;
+    await once(worker, "exit");
+    expect(worker.threadId).toBe(-1);
+    await expect(wt.postMessageToThread(id, "hello")).rejects.toMatchObject({
+      name: "Error",
+      code: "ERR_WORKER_MESSAGING_FAILED",
+    });
+  });
 });
 
 test("process.emit returns false when there are no listeners", () => {

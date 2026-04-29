@@ -449,6 +449,12 @@ function moveMessagePortToContext() {
 class Worker extends EventEmitter {
   #worker: WebWorker;
   #performance;
+  // Cached at construction. The native threadId getter returns -1 once the
+  // worker is closing; we need the real id in #onClose to unregister the
+  // postMessageToThread port, and for get threadId() to keep returning the
+  // id after terminate() (Node's getter also does this until [kDispose] nulls
+  // the handle, which happens after its [kOnExit] equivalent).
+  #threadId: number;
 
   // this is used by terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
@@ -482,7 +488,8 @@ class Worker extends EventEmitter {
       }
       throw e;
     }
-    createMainThreadPort(this.#worker.threadId, mainThreadPortToMain);
+    this.#threadId = this.#worker.threadId;
+    createMainThreadPort(this.#threadId, mainThreadPortToMain);
     this.#worker.addEventListener("close", this.#onClose.bind(this), { once: true });
     this.#worker.addEventListener("error", this.#onError.bind(this));
     this.#worker.addEventListener("message", this.#onMessage.bind(this));
@@ -500,7 +507,7 @@ class Worker extends EventEmitter {
   }
 
   get threadId() {
-    return this.#worker.threadId;
+    return this.#threadId;
   }
 
   ref() {
@@ -577,7 +584,8 @@ class Worker extends EventEmitter {
   }
 
   #onClose(e) {
-    destroyMainThreadPort(this.#worker.threadId);
+    destroyMainThreadPort(this.#threadId);
+    this.#threadId = -1;
     this.#onExitPromise = e.code;
     this.emit("exit", e.code);
   }

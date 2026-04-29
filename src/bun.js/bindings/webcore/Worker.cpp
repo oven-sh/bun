@@ -363,6 +363,16 @@ void Worker::drainEvents()
 
 void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
 {
+    // Mark online BEFORE posting the 'open' event to the parent. Otherwise the parent can
+    // receive 'online', call e.g. worker.getHeapSnapshot(), and observe isOnline() == false
+    // → ERR_WORKER_NOT_RUNNING. postTaskToWorkerGlobalScope switches from queueing to direct
+    // posting once this flag is set; fireEarlyMessages (called right after us) drains any
+    // tasks that raced into the queue.
+    {
+        Locker lock(this->m_pendingTasksMutex);
+        m_onlineClosingFlags.fetch_or(OnlineFlag);
+    }
+
     auto* ctx = scriptExecutionContext();
     if (ctx) {
         ScriptExecutionContext::postTaskTo(ctx->identifier(), [protectedThis = Ref { *this }](ScriptExecutionContext& context) -> void {
@@ -373,9 +383,6 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
         });
     }
 
-    Locker lock(this->m_pendingTasksMutex);
-
-    m_onlineClosingFlags.fetch_or(OnlineFlag);
     auto* thisContext = workerGlobalObject->scriptExecutionContext();
     if (!thisContext) {
         return;

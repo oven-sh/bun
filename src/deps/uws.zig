@@ -109,10 +109,11 @@ pub const create_bun_socket_error_t = enum(c_int) {
 
     pub fn toJS(this: create_bun_socket_error_t, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         return switch (this) {
-            .none => brk: {
-                bun.debugAssert(false);
-                break :brk .null;
-            },
+            // us_ssl_ctx_from_options only sets *err for the CA/cipher cases;
+            // bad cert/key/DH return NULL with .none and the detail is on the
+            // BoringSSL error queue. Surfacing it here keeps every
+            // `createSSLContext(...) orelse return err.toJS()` site correct.
+            .none => bun.BoringSSL.ERR_toJS(globalObject, bun.BoringSSL.c.ERR_get_error()),
             .load_ca_file => globalObject.ERR(.BORINGSSL, "Failed to load CA file", .{}).toJS(),
             .invalid_ca_file => globalObject.ERR(.BORINGSSL, "Invalid CA file", .{}).toJS(),
             .invalid_ca => globalObject.ERR(.BORINGSSL, "Invalid CA", .{}).toJS(),

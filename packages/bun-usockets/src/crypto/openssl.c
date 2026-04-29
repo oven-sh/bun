@@ -887,7 +887,14 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
 }
 
 struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *s, char *data, int length) {
-    struct loop_ssl_data *loop_ssl_data = ssl_set_loop_data(s);
+  /* upgradeTLS [raw, _] half observes ciphertext before SSL_read consumes it.
+   * Skip the empty-flush call from on_writable (length==0 → no real wire bytes). */
+  if (s->ssl_raw_tap && length > 0) {
+    s = us_dispatch_ssl_raw_tap(s, data, length);
+    if (!s || us_socket_is_closed(s) || !s->ssl) return s;
+  }
+
+  struct loop_ssl_data *loop_ssl_data = ssl_set_loop_data(s);
 
   loop_ssl_data->ssl_read_input = data;
   loop_ssl_data->ssl_read_input_length = length;

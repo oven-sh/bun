@@ -485,6 +485,7 @@ void *us_connecting_socket_ext(struct us_connecting_socket_t *c) nonnull_fn_decl
 struct us_socket_group_t *us_socket_group(us_socket_r s) nonnull_fn_decl __attribute__((returns_nonnull));
 unsigned char us_socket_kind(us_socket_r s) nonnull_fn_decl;
 void us_socket_set_kind(us_socket_r s, unsigned char kind) nonnull_fn_decl;
+void us_socket_set_ssl_raw_tap(us_socket_r s, int enabled) nonnull_fn_decl;
 
 void us_socket_flush(us_socket_r s) nonnull_fn_decl;
 void us_socket_shutdown(us_socket_r s) nonnull_fn_decl;

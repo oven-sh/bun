@@ -21,6 +21,7 @@ comptime {
     _ = us_dispatch_connecting_error;
     _ = us_dispatch_handshake;
     _ = us_dispatch_is_low_prio;
+    _ = us_dispatch_ssl_raw_tap;
 }
 
 /// kind → vtable. Zig kinds get a comptime-generated `Trampolines(H)` vtable
@@ -118,6 +119,19 @@ export fn us_dispatch_handshake(s: *us_socket_t, ok: c_int, err: uws.us_bun_veri
 }
 export fn us_dispatch_is_low_prio(s: *us_socket_t) c_int {
     return if (vt(s).is_low_prio) |f| f(s) else 0;
+}
+
+/// Ciphertext tap for `socket.upgradeTLS()` — fires on the `[raw, _]` half of
+/// the returned pair before decryption. Only `bun_socket_tls` ever sets the
+/// `ssl_raw_tap` bit, so this isn't part of the per-kind vtable.
+export fn us_dispatch_ssl_raw_tap(s: *us_socket_t, data: [*c]u8, len: c_int) ?*us_socket_t {
+    bun.debugAssert(s.kind() == .bun_socket_tls);
+    const TLSSocket = bun.jsc.API.NewSocket(true);
+    const tls = s.ext(*TLSSocket).*;
+    if (tls.twin) |raw| {
+        raw.onData(TLSSocket.Socket.from(s), data[0..@intCast(len)]);
+    }
+    return s;
 }
 
 const bun = @import("bun");

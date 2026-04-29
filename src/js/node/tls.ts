@@ -495,9 +495,17 @@ function secureContextCacheKey(o) {
 
 function createSecureContext(options) {
   if (options instanceof InternalSecureContext) return options;
-  // Uncacheable shapes — pfx/engine/sessionIdContext bypass us_ssl_ctx_from_options
-  // or carry per-call state.
-  if (!options || options.pfx || options.sessionIdContext || options.clientCertEngine) {
+  // Uncacheable shapes — pfx/engine/sessionIdContext/privateKey* bypass
+  // us_ssl_ctx_from_options or are validation-only (must hit the constructor
+  // to throw, not return a cached entry built from a different call).
+  if (
+    !options ||
+    options.pfx ||
+    options.sessionIdContext ||
+    options.clientCertEngine ||
+    options.privateKeyEngine !== undefined ||
+    options.privateKeyIdentifier !== undefined
+  ) {
     return new SecureContext(options);
   }
   const key = secureContextCacheKey(options);
@@ -777,7 +785,9 @@ function Server(options, secureConnectionListener): void {
       context = createSecureContext(context);
     }
     if (this._handle) {
-      addServerName(this._handle, hostname, context);
+      // Pass the native SSL_CTX wrapper, not the JS InternalSecureContext —
+      // the Zig side detects it via SecureContext.fromJS and up_refs.
+      addServerName(this._handle, hostname, context.context);
     } else {
       if (!contexts) contexts = new Map();
       contexts.set(hostname, context);

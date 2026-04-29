@@ -85,6 +85,10 @@ void us_socket_set_kind(struct us_socket_t *s, unsigned char kind) {
     s->kind = kind;
 }
 
+void us_socket_set_ssl_raw_tap(struct us_socket_t *s, int enabled) {
+    s->ssl_raw_tap = !!enabled;
+}
+
 int us_socket_is_tls(struct us_socket_t *s) {
     return s->ssl != NULL;
 }

@@ -128,6 +128,7 @@ extern struct us_socket_t *us_dispatch_end(us_socket_r s);
 extern struct us_socket_t *us_dispatch_connect_error(us_socket_r s, int code);
 extern struct us_connecting_socket_t *us_dispatch_connecting_error(struct us_connecting_socket_t *c, int code);
 extern void us_dispatch_handshake(us_socket_r s, int success, struct us_bun_verify_error_t err);
+extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
 extern int us_dispatch_is_low_prio(us_socket_r s);
 
 extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);
@@ -251,6 +252,11 @@ struct us_socket_t {
   unsigned char ssl_read_wants_write : 1;
   unsigned char ssl_fatal_error : 1;
   unsigned char ssl_is_server : 1;
+  /* If set, us_internal_ssl_on_data() first dispatches the still-encrypted
+   * bytes via us_dispatch_ssl_raw_tap() before feeding them to SSL_read.
+   * Used by Bun's `socket.upgradeTLS()` so the returned [raw, tls] pair's
+   * `raw` half can observe ciphertext (node:net Duplex.ondata semantics). */
+  unsigned char ssl_raw_tap : 1;
 
   struct us_socket_group_t *group;
   /* NULL for plain TCP. Direct BoringSSL `SSL*`; set by us_internal_ssl_attach

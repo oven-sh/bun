@@ -173,6 +173,10 @@ pub fn NewSocket(comptime ssl: bool) type {
             jsc.markBinding(@src());
             if (this.socket.isDetached()) return .js_undefined;
             log("resume", .{});
+            // The raw half of an upgradeTLS pair is an observation tap; flow
+            // control belongs to the TLS half. Pausing the shared fd here would
+            // wedge the TLS read path (#15438).
+            if (this.flags.bypass_tls) return .js_undefined;
             if (this.flags.is_paused) this.flags.is_paused = !this.socket.resumeStream();
             return .js_undefined;
         }
@@ -181,6 +185,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             jsc.markBinding(@src());
             if (this.socket.isDetached()) return .js_undefined;
             log("pause", .{});
+            if (this.flags.bypass_tls) return .js_undefined;
             if (!this.flags.is_paused) this.flags.is_paused = this.socket.pauseStream();
             return .js_undefined;
         }
@@ -649,22 +654,19 @@ pub fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn onClose(this: *This, _: Socket, err: c_int, _: ?*anyopaque) bun.JSError!void {
+        pub fn onClose(this: *This, socket: Socket, err: c_int, reason: ?*anyopaque) bun.JSError!void {
             jsc.markBinding(@src());
             const handlers = this.getHandlers();
             log("onClose {s}", .{if (handlers.mode == .server) "S" else "C"});
             this.detachNativeCallback();
             this.socket.detach();
-            // Retire the upgradeTLS raw twin alongside us — it shares the same
-            // us_socket_t, so it never gets its own onClose dispatch.
+            // The upgradeTLS raw twin shares the same us_socket_t so it never
+            // gets its own dispatch — fire its (pre-upgrade) close handler
+            // here, then retire it. `raw.twin == null` so this doesn't
+            // recurse, and `onClose` derefs the +1 we took at creation.
             if (this.twin) |raw| {
                 this.twin = null;
-                raw.socket.detach();
-                if (raw.flags.is_active) {
-                    raw.poll_ref.disable();
-                    raw.flags.is_active = false;
-                }
-                raw.deref();
+                raw.onClose(socket, err, reason) catch {};
             }
             defer this.deref();
             defer this.markInactive();
@@ -1507,7 +1509,11 @@ pub fn NewSocket(comptime ssl: bool) type {
                 const cfg = &(ssl_opts orelse return globalObject.throw("Expected \"tls\" option", .{}));
                 var create_err: uws.create_bun_socket_error_t = .none;
                 owned_ctx = cfg.asUSockets().createSSLContext(true, &create_err) orelse {
-                    return globalObject.throwValue(create_err.toJS(globalObject));
+                    // us_ssl_ctx_from_options only sets *err for the CA/cipher
+                    // cases; bad cert/key/DH return NULL with err==.none and the
+                    // detail is on the BoringSSL error queue.
+                    if (create_err != .none) return globalObject.throwValue(create_err.toJS(globalObject));
+                    return globalObject.throwValue(bun.BoringSSL.ERR_toJS(globalObject, BoringSSL.ERR_get_error()));
                 };
             } else {
                 return globalObject.throw("Expected \"tls\" option", .{});
@@ -1564,11 +1570,21 @@ pub fn NewSocket(comptime ssl: bool) type {
             };
 
             // Retire the original TCP wrapper before any TLS dispatch can run
-            // back into JS — it must not see two live owners on one fd.
+            // back into JS — it must not see two live owners on one fd. Its
+            // *Handlers are TRANSFERRED to the raw twin (the `[raw, tls]`
+            // contract is: index 0 keeps the pre-upgrade callbacks and sees
+            // ciphertext, index 1 gets the new ones and sees plaintext).
+            const raw_handlers = this.handlers;
+            this.handlers = null;
+            // Capture before downgrade so the cached `data` (net.ts stores
+            // `{self: net.Socket}` there) survives onto the raw twin.
+            const original_data: JSValue = This.js.dataGetCached(this.getThisValue(globalObject)) orelse .js_undefined;
+            original_data.ensureStillAlive();
             if (this.flags.is_active) {
                 this.poll_ref.disable();
                 this.flags.is_active = false;
-                this.getHandlers().markInactive();
+                // Do NOT markInactive raw_handlers — ownership of the
+                // active_connections=1 it holds is transferring to `raw`.
                 this.this_value.downgrade();
             }
             defer this.deref();
@@ -1580,24 +1596,31 @@ pub fn NewSocket(comptime ssl: bool) type {
             tls.socket = TLSSocket.Socket.from(new_raw);
             tls.ref();
 
-            // The `raw` half node:net expects at index 0 — same `us_socket_t*`,
-            // same `*Handlers`, but writes bypass SSL. Dispatch never targets
-            // it (the ext slot holds `tls`); `tls.twin` retires it on close.
+            // The `raw` half — same `us_socket_t*`, ORIGINAL pre-upgrade
+            // *Handlers, writes bypass SSL. Dispatch reaches it via the
+            // `ssl_raw_tap` ciphertext hook, never via the ext slot.
             var raw = bun.new(TLSSocket, .{
                 .ref_count = .init(),
-                .handlers = handlers_ptr,
+                .handlers = raw_handlers,
                 .socket = TLSSocket.Socket.from(new_raw),
                 .connection = null,
                 .protos = null,
-                .flags = .{ .bypass_tls = true },
+                // is_active so the chained `raw.onClose` → `markInactive` path
+                // tears down `raw_handlers` (client-mode handlers free
+                // themselves there). No poll_ref — `tls` keeps the loop alive.
+                // active_connections=1 was already on raw_handlers from `this`.
+                .flags = .{ .bypass_tls = true, .is_active = true },
             });
             raw.ref();
             tls.twin = raw;
+            uws.us_socket_t.c.us_socket_set_ssl_raw_tap(new_raw, 1);
 
             const tls_js_value = tls.getThisValue(globalObject);
             const raw_js_value = raw.getThisValue(globalObject);
             TLSSocket.js.dataSetCached(tls_js_value, globalObject, default_data);
-            TLSSocket.js.dataSetCached(raw_js_value, globalObject, default_data);
+            // `raw` keeps the pre-upgrade `data` so its callbacks emit on the
+            // original net.Socket, not the TLS one.
+            TLSSocket.js.dataSetCached(raw_js_value, globalObject, original_data);
 
             tls.markActive();
             tls.poll_ref.ref(vm);

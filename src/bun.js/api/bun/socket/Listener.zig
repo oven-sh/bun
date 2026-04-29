@@ -365,18 +365,24 @@ pub fn addServerName(this: *Listener, global: *jsc.JSGlobalObject, hostname: JSV
     if (this.listener != .uws) return .js_undefined;
     const ls = this.listener.uws;
 
-    if (try SSLConfig.fromJS(jsc.VirtualMachine.get(), global, tls)) |ssl_config| {
+    // node:tls passes the native SecureContext (already-built SSL_CTX*) — no
+    // re-parse. Bun.listen({tls}) callers may still pass a raw options dict.
+    const sni_ctx: *BoringSSL.SSL_CTX = if (SecureContext.fromJS(tls)) |sc|
+        sc.borrow()
+    else if (try SSLConfig.fromJS(jsc.VirtualMachine.get(), global, tls)) |ssl_config| brk: {
         var cfg = ssl_config;
         defer cfg.deinit();
         var create_err: uws.create_bun_socket_error_t = .none;
-        const sni_ctx = cfg.asUSockets().createSSLContext(false, &create_err) orelse {
-            return global.throwValue(create_err.toJS(global));
+        break :brk cfg.asUSockets().createSSLContext(false, &create_err) orelse {
+            if (create_err != .none) return global.throwValue(create_err.toJS(global));
+            return global.throwValue(bun.BoringSSL.ERR_toJS(global, BoringSSL.ERR_get_error()));
         };
-        // The C SNI tree SSL_CTX_up_ref()s; drop our build ref once added.
-        ls.removeServerName(server_name);
-        _ = ls.addServerName(server_name, sni_ctx, null);
-        BoringSSL.SSL_CTX_free(sni_ctx);
-    }
+    } else return .js_undefined;
+
+    // The C SNI tree SSL_CTX_up_ref()s; drop our build/borrow ref once added.
+    ls.removeServerName(server_name);
+    _ = ls.addServerName(server_name, sni_ctx, null);
+    BoringSSL.SSL_CTX_free(sni_ctx);
 
     return .js_undefined;
 }

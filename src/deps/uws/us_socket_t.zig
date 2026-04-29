@@ -238,6 +238,7 @@ pub const c_externs = struct {
     pub extern fn us_socket_group(s: ?*us_socket_t) *SocketGroup;
     pub extern fn us_socket_kind(s: ?*us_socket_t) u8;
     pub extern fn us_socket_set_kind(s: ?*us_socket_t, kind: u8) void;
+    pub extern fn us_socket_set_ssl_raw_tap(s: ?*us_socket_t, enabled: c_int) void;
     pub extern fn us_socket_is_tls(s: ?*us_socket_t) i32;
 
     pub extern fn us_socket_write(s: ?*us_socket_t, data: [*c]const u8, length: i32) i32;

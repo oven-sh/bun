@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-// S3 file body methods (.text() / .json() / .arrayBuffer() / .bytes()) must not
-// leak the downloaded body.
+// S3 file body methods (.text() / .json() / .arrayBuffer() / .bytes() /
+// .formData()) must not leak the downloaded body.
 //
 // On a successful download, S3HttpSimpleTask moves ownership of its heap
 // response_buffer into the S3DownloadResult passed to the callback.
@@ -12,7 +12,7 @@ import { bunEnv, bunExe } from "harness";
 // S3 Blob Store only holds path/credentials and cannot free it via `.clone`.
 //
 // With the leak, each call orphaned a buffer the size of the object. Downloading
-// a 1 MiB object 40 times grew RSS by ~40 MiB and never released it.
+// a 1 MiB object 50 times grew RSS by ~50 MiB and never released it.
 //
 // Uses a local Bun.serve as a mock S3 endpoint so this runs without credentials.
 
@@ -21,7 +21,9 @@ const fixture = /* js */ `
 
   const method = process.env.S3_BODY_LEAK_METHOD;
   const payloadSize = 1024 * 1024; // 1 MiB
-  const body = '{"x":"' + Buffer.alloc(payloadSize - 8, "a").toString("latin1") + '"}';
+  const filler = Buffer.alloc(payloadSize - 8, "a").toString("latin1");
+  // Valid as JSON and as application/x-www-form-urlencoded ("x" = '"' + filler + '"').
+  const body = '{"x":"' + filler + '"}';
 
   const server = Bun.serve({
     port: 0,
@@ -41,26 +43,33 @@ const fixture = /* js */ `
   });
 
   async function readOnce() {
-    const f = s3.file("key");
     switch (method) {
       case "arrayBuffer": {
-        const v = await f.arrayBuffer();
+        const v = await s3.file("key").arrayBuffer();
         if (v.byteLength !== body.length) throw new Error("bad arrayBuffer length: " + v.byteLength);
         break;
       }
       case "bytes": {
-        const v = await f.bytes();
+        const v = await s3.file("key").bytes();
         if (v.byteLength !== body.length) throw new Error("bad bytes length: " + v.byteLength);
         break;
       }
       case "text": {
-        const v = await f.text();
+        const v = await s3.file("key").text();
         if (v.length !== body.length) throw new Error("bad text length: " + v.length);
         break;
       }
       case "json": {
-        const v = await f.json();
+        const v = await s3.file("key").json();
         if (v.x.length !== body.length - 8) throw new Error("bad json length");
+        break;
+      }
+      case "formData": {
+        const f = s3.file("key", { type: "application/x-www-form-urlencoded" });
+        const v = await f.formData();
+        // '{"x":"aaa..."}' parsed as urlencoded yields key '{"x":"aaa..."}' with value ''.
+        const [entry] = v.keys();
+        if (entry.length !== body.length) throw new Error("bad formData length: " + entry.length);
         break;
       }
       default:
@@ -93,7 +102,7 @@ const fixture = /* js */ `
   server.stop(true);
 `;
 
-describe("s3 body methods do not leak the downloaded buffer", () => {
+describe.concurrent("s3 body methods do not leak the downloaded buffer", () => {
   const env = {
     ...bunEnv,
     // S3 download picks up HTTP(S)_PROXY from the environment without
@@ -105,24 +114,28 @@ describe("s3 body methods do not leak the downloaded buffer", () => {
     https_proxy: undefined,
   };
 
-  for (const method of ["arrayBuffer", "bytes", "text", "json"] as const) {
-    test(method, async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "--smol", "-e", fixture],
-        env: { ...env, S3_BODY_LEAK_METHOD: method },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+  for (const method of ["arrayBuffer", "bytes", "text", "json", "formData"] as const) {
+    test(
+      method,
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "--smol", "-e", fixture],
+          env: { ...env, S3_BODY_LEAK_METHOD: method },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).toBe("");
-      const { iterations, growthMiB } = JSON.parse(stdout);
-      // When leaking, growth is ~`iterations` MiB (one 1 MiB buffer per call).
-      // When fixed, the buffer is reused by the allocator and growth stays
-      // near zero. Allow generous slack for allocator / GC noise.
-      expect(growthMiB).toBeLessThan(iterations / 2);
-      expect(exitCode).toBe(0);
-    });
+        expect(stderr).toBe("");
+        const { iterations, growthMiB } = JSON.parse(stdout);
+        // When leaking, growth is ~`iterations` MiB (one 1 MiB buffer per call).
+        // When fixed, the buffer is reused by the allocator and growth stays
+        // near zero. Allow generous slack for allocator / GC noise.
+        expect(growthMiB).toBeLessThan(iterations / 2);
+        expect(exitCode).toBe(0);
+      },
+      60_000,
+    );
   }
 });

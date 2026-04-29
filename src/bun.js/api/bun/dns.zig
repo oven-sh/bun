@@ -990,6 +990,10 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
 
         pub fn processResolve(this: *@This(), err_: ?c_ares.Error, _: i32, result: ?*cares_type) void {
             const syscall = comptime "query" ++ &[_]u8{std.ascii.toUpper(type_name[0])} ++ type_name[1..];
+            // This path is reached when the pending cache is full (`.disabled`),
+            // so we own the c-ares result here. The cached path frees it in
+            // `drainPendingCares`; callers from there always pass `null`.
+            defer if (result) |r| r.deinit();
 
             if (err_) |err| {
                 err.toDeferred(syscall, this.name, &this.promise).rejectLater(this.globalThis);
@@ -1080,6 +1084,11 @@ pub const DNSLookup = struct {
 
     pub fn processGetAddrInfo(this: *DNSLookup, err_: ?c_ares.Error, _: i32, result: ?*c_ares.AddrInfo) void {
         log("processGetAddrInfo", .{});
+        // This path is reached when the pending-host cache is full (`.disabled`),
+        // so we own the c-ares result here. The cached path frees it in
+        // `drainPendingHostCares`; callers from there always pass `null`.
+        defer if (result) |r| r.deinit();
+
         if (err_) |err| {
             err.toDeferred("getaddrinfo", null, &this.promise).rejectLater(this.globalThis);
             this.deinit();

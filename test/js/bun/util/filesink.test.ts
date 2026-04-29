@@ -215,7 +215,7 @@ it.skipIf(isWindows)("close() while a write() promise is pending still settles i
     cmd: [process.execPath, "-e", "for await (const _ of process.stdin) {}"],
     stdin: "pipe",
     stdout: "ignore",
-    stderr: "ignore",
+    stderr: "pipe",
   });
   const writer = child.stdin;
   // 1 MiB overflows the default 64 KiB pipe capacity on Linux/macOS, so
@@ -224,7 +224,11 @@ it.skipIf(isWindows)("close() while a write() promise is pending still settles i
   expect(p).toBeInstanceOf(Promise);
   writer.close();
   expect(await p).toBeGreaterThanOrEqual(0);
-  await child.exited;
+  const [stderr, exitCode] = await Promise.all([child.stderr.text(), child.exited]);
+  if (exitCode !== 0) {
+    expect(stderr).toBe("");
+  }
+  expect(exitCode).toBe(0);
 });
 
 if (isWindows) {

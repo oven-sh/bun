@@ -817,7 +817,17 @@ const Kqueue = struct {
             std.c.NOTE.EXTEND | std.c.NOTE.ATTRIB | std.c.NOTE.LINK | std.c.NOTE.REVOKE;
         kev.udata = @intFromPtr(entry);
         var changes = [_]std.c.Kevent{kev};
-        _ = std.posix.system.kevent(plat.kq.native(), &changes, 1, &changes, 0, null);
+        const krc = std.posix.system.kevent(plat.kq.native(), &changes, 1, &changes, 0, null);
+        if (krc < 0) {
+            // Registration failed (ENOMEM/EINVAL on a bad fd, etc.). Don't leave a
+            // dead entry in the map that will never deliver events.
+            const errno = std.posix.errno(krc);
+            fd.close();
+            bun.default_allocator.free(entry.subpath);
+            bun.default_allocator.destroy(entry);
+            if (subpath.len > 0) return .success; // best-effort on children
+            return .{ .err = .{ .errno = @truncate(@intFromEnum(errno)), .syscall = .kevent } };
+        }
 
         bun.handleOom(plat.entries.put(bun.default_allocator, @intCast(fd.native()), entry));
         bun.handleOom(watcher.platform.fds.append(bun.default_allocator, @intCast(fd.native())));

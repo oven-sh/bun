@@ -725,6 +725,16 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
             mockObject->putDirect(vm, vm.propertyNames->defaultKeyword, mockValue, 0);
         }
 
+        // Re-seat the prior entry so that if any of the shared post-block
+        // steps (ESM namespace patching, requireMap remove, etc.) throws
+        // before `addModuleMock()` runs, the previous mock/plugin entry
+        // survives — the stash locals are about to go out of scope here.
+        // `addModuleMock()` unconditionally `set()`s the new mock on the
+        // success path, so this re-insert is a no-op there.
+        if (stashedVirtualEntry) {
+            globalObject->onLoadPlugins.virtualModules->set(specifier, WTF::move(stashedVirtualEntry));
+        }
+
         callback = mockObject;
     } else {
         callback = callbackValue.getObject();

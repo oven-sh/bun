@@ -1142,11 +1142,10 @@ pub const FFI = struct {
             };
             switch (function.step) {
                 .failed => |err| {
-                    defer for (symbols.values()) |*other_function| {
-                        other_function.deinit(global);
-                    };
-
                     const res = ZigString.init(err.msg).toErrorInstance(global);
+                    for (symbols.values()) |*other_function| {
+                        other_function.deinit(global);
+                    }
                     symbols.clearAndFree(bun.default_allocator);
                     dylib.close();
                     return res;

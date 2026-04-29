@@ -223,7 +223,8 @@ static JSValue sqliteValueToJS(JSGlobalObject* globalObject, TopExceptionScope& 
         size_t len = sqlite3_value_bytes(value);
         const void* blob = sqlite3_value_blob(value);
         auto* array = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->m_typedArrayUint8.get(globalObject), len);
-        if (outer.exception()) [[unlikely]] return {};
+        if (outer.exception()) [[unlikely]]
+            return {};
         if (len > 0) memcpy(array->typedVector(), blob, len);
         return array;
     }
@@ -311,22 +312,26 @@ public:
             self->db_->setIgnoreNextSqliteError();
             sqlite3_result_error(ctx, "", 0);
         };
-        if (scope.exception()) [[unlikely]] return abortWithPending();
+        if (scope.exception()) [[unlikely]]
+            return abortWithPending();
 
         MarkedArgumentBuffer args;
         args.ensureCapacity(argc);
         for (int i = 0; i < argc; ++i) {
             JSValue v = sqliteValueToJS(globalObject, scope, argv[i], self->useBigIntArgs_);
-            if (scope.exception()) [[unlikely]] return abortWithPending();
+            if (scope.exception()) [[unlikely]]
+                return abortWithPending();
             args.append(v);
         }
 
         JSValue fn = self->fn_.get();
         auto callData = JSC::getCallData(fn);
         JSValue result = JSC::call(globalObject, fn, callData, jsUndefined(), args);
-        if (scope.exception()) [[unlikely]] return abortWithPending();
+        if (scope.exception()) [[unlikely]]
+            return abortWithPending();
         jsValueToSqliteResult(globalObject, ctx, result);
-        if (scope.exception()) [[unlikely]] return abortWithPending();
+        if (scope.exception()) [[unlikely]]
+            return abortWithPending();
     }
 
     static void xDestroy(void* p) { delete static_cast<NodeSqliteUDF*>(p); }
@@ -419,7 +424,8 @@ public:
             db_->setIgnoreNextSqliteError();
             sqlite3_result_error(ctx, "", 0);
         };
-        if (scope.exception()) [[unlikely]] return;
+        if (scope.exception()) [[unlikely]]
+            return;
         auto* state = getState(ctx, scope);
         if (!state) return;
 
@@ -428,13 +434,15 @@ public:
         args.append(state->value.get());
         for (int i = 0; i < argc; ++i) {
             JSValue v = sqliteValueToJS(globalObject_, scope, argv[i], useBigIntArgs_);
-            if (scope.exception()) [[unlikely]] return abortWithPending();
+            if (scope.exception()) [[unlikely]]
+                return abortWithPending();
             args.append(v);
         }
 
         auto callData = JSC::getCallData(fn);
         JSValue ret = JSC::call(globalObject_, fn, callData, jsUndefined(), args);
-        if (scope.exception()) [[unlikely]] return abortWithPending();
+        if (scope.exception()) [[unlikely]]
+            return abortWithPending();
         state->value.set(vm, ret);
     }
 
@@ -1146,7 +1154,8 @@ static int applyChangesetXConflict(void* pCtx, int eConflict, sqlite3_changeset_
     auto* globalObject = ctx->globalObject;
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    if (scope.exception()) [[unlikely]] return SQLITE_CHANGESET_ABORT;
+    if (scope.exception()) [[unlikely]]
+        return SQLITE_CHANGESET_ABORT;
     MarkedArgumentBuffer args;
     args.append(jsNumber(eConflict));
     auto callData = JSC::getCallData(ctx->onConflict);
@@ -1170,7 +1179,8 @@ static int applyChangesetXFilter(void* pCtx, const char* zTab)
     auto* globalObject = ctx->globalObject;
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    if (scope.exception()) [[unlikely]] return 0;
+    if (scope.exception()) [[unlikely]]
+        return 0;
     MarkedArgumentBuffer args;
     args.append(jsString(vm, WTF::String::fromUTF8(zTab)));
     auto callData = JSC::getCallData(ctx->filter);

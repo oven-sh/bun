@@ -465,6 +465,20 @@ describe("crash testing", () => {
       }
     });
   }
+
+  it("Proxy prototype with throwing getPrototypeOf trap doesn't crash", () => {
+    const obj = { a: 1 };
+    class Foo {}
+    Object.setPrototypeOf(
+      obj,
+      new Proxy(Foo.prototype, {
+        getPrototypeOf() {
+          throw new Error("trap!");
+        },
+      }),
+    );
+    expect(Bun.inspect(obj)).toContain("a: 1");
+  });
 });
 
 it("possibly formatted emojis log", () => {

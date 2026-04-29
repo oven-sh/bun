@@ -989,9 +989,17 @@ test.skipIf(isWindows)("chrome: backend.detached runs the subprocess in its own 
     // Write "<pid>,<pgid>" atomically (tmp + mv) so the poll below never
     // observes a half-written file. Then block on fd 3 (Chrome's CDP read
     // pipe) until the parent kills us.
+    //
+    // pgid lookup: on Linux, read /proc/$$/stat (field 3 after the last ')'
+    // is pgrp) — BusyBox ps on Alpine/musl doesn't support `-o pgid= -p`.
+    // On macOS (no /proc), use ps(1) which does support it.
     "fake-chrome": [
       "#!/bin/sh",
-      'pgid=$(ps -o pgid= -p $$ | tr -d " ")',
+      "if [ -r /proc/$$/stat ]; then",
+      '  pgid=$(sed "s/.*) //" /proc/$$/stat | cut -d" " -f3)',
+      "else",
+      '  pgid=$(ps -o pgid= -p $$ | tr -d " ")',
+      "fi",
       'echo "$$,$pgid" > "$OUT_FILE.tmp"',
       'mv "$OUT_FILE.tmp" "$OUT_FILE"',
       "exec cat <&3 >/dev/null 2>&1",

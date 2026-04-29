@@ -71,10 +71,10 @@ fn bindAndExecute(this: *MySQLQuery, writer: anytype, statement: *MySQLStatement
     // getters / param-count mismatch) doesn't leave a partial packet header in
     // the connection's write buffer.
     try this.bind(&execute, globalObject, binding_value, columns_value);
-    statement.execution_flags.need_to_send_params = false;
     var packet = try writer.start(0);
     try execute.write(writer);
     try packet.end();
+    statement.execution_flags.need_to_send_params = false;
     this.#status = .running;
 }
 

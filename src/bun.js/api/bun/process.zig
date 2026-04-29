@@ -2209,6 +2209,68 @@ pub const sync = struct {
     extern "c" fn Bun__noOrphans_scan() void;
     extern "c" fn Bun__noOrphans_onExit(pid: std.c.pid_t) void;
 
+    /// TTY job-control bridge for `--no-orphans` `bun run`. We put the script
+    /// in its own pgroup so `kill(-pgid)` reaches every descendant on cleanup,
+    /// which makes `bun run` a one-job mini shell on a controlling terminal:
+    /// Ctrl-Z stops only the script's pgroup, so we must observe the stop
+    /// (WUNTRACED / EVFILT_SIGNAL+SIGCHLD), take the terminal back, stop
+    /// *ourselves*, and on `fg` hand the terminal back and SIGCONT the script.
+    /// Inert (`prev <= 0`) when stdin is not a TTY — the supervisor/CI case
+    /// this feature targets — and the wait loops don't ask for stop reports
+    /// then, matching plain `bun run`.
+    const JobControl = struct {
+        /// Foreground pgroup we displaced (i.e. the one the user's shell put
+        /// `bun run` in). 0 when stdin isn't a TTY or `tcgetpgrp` failed.
+        prev: std.c.pid_t = 0,
+        script_pgid: std.c.pid_t = 0,
+
+        extern "c" fn tcgetpgrp(fd: c_int) std.c.pid_t;
+        extern "c" fn tcsetpgrp(fd: c_int, pgrp: std.c.pid_t) c_int;
+        extern "c" fn getpgrp() std.c.pid_t;
+
+        pub fn isActive(self: *const @This()) bool {
+            return self.prev > 0;
+        }
+
+        fn give(self: *@This(), pgid: std.c.pid_t) void {
+            self.script_pgid = pgid;
+            if (std.c.isatty(0) == 0) return;
+            self.prev = tcgetpgrp(0);
+            if (self.prev <= 0) return;
+            ttouBlocked(pgid);
+        }
+        fn restore(self: *@This()) void {
+            if (self.prev <= 0) return;
+            ttouBlocked(self.prev);
+            self.prev = 0;
+        }
+        /// Called from the wait loop when WIFSTOPPED(child). Takes the terminal
+        /// back, stops `bun run` so the user's shell's `waitpid(WUNTRACED)`
+        /// returns, and on resume gives the terminal back to the script (only
+        /// if the shell `fg`'d us — for `bg` the shell keeps foreground and
+        /// the script runs as a background pgroup like any other job).
+        fn onChildStopped(self: *const @This()) void {
+            if (self.prev <= 0) return; // non-TTY: never asked for stop reports
+            ttouBlocked(self.prev);
+            // SIGTSTP is not in `Bun__registerSignalsForForwarding`'s set, so
+            // default disposition (stop) applies and we suspend right here.
+            _ = std.c.raise(std.posix.SIG.TSTP);
+            // — resumed by the shell's SIGCONT —
+            if (tcgetpgrp(0) == getpgrp()) ttouBlocked(self.script_pgid);
+            _ = std.c.kill(-self.script_pgid, std.posix.SIG.CONT);
+        }
+        /// `tcsetpgrp` from a background pgroup raises SIGTTOU (default: stop);
+        /// block it for the call per the standard job-control idiom.
+        fn ttouBlocked(pgid: std.c.pid_t) void {
+            var set = std.posix.sigemptyset();
+            var old = std.posix.sigemptyset();
+            std.posix.sigaddset(&set, std.posix.SIG.TTOU);
+            std.posix.sigprocmask(std.posix.SIG.BLOCK, &set, &old);
+            _ = tcsetpgrp(0, pgid);
+            std.posix.sigprocmask(std.posix.SIG.SETMASK, &old, null);
+        }
+    };
+
     // The PID to forward signals to.
     // Set to 0 when unregistering.
     extern "c" var Bun__currentSyncPID: i64;
@@ -2239,17 +2301,6 @@ pub const sync = struct {
         // on Linux it's a spawn-side no-op so no-orphans must stay armed there.
         const no_orphans = bun.ParentDeathWatchdog.isEnabled() and
             !(Environment.isMac and options.use_execve_on_macos);
-        // The pgroup-kill is split out from `no_orphans` because creating a
-        // separate pgroup on a controlling TTY would make `bun run` a mini
-        // job-control shell: Ctrl-Z stops only the script's pgroup, the wait
-        // loop has no WUNTRACED/NOTE_SIGNAL to observe the stop, and the
-        // user's shell (waitpid(WUNTRACED) on `bun run`) never gets a prompt.
-        // The non-TTY case — supervisors, CI, Electron shims — is exactly what
-        // this feature targets, and there the script staying in our pgroup
-        // would let an `exec`-replaced ancestor's pgroup-kill miss it. On a
-        // TTY the user has Ctrl-C and the subreaper/NoOrphansTracker/PDEATHSIG
-        // layers cover cleanup without needing `kill(-pgid)`.
-        const want_pgroup = no_orphans and std.c.isatty(0) == 0;
 
         if (comptime Environment.isLinux) if (no_orphans) {
             // Subreaper: arm *before* spawn so a fast-daemonizing script can't
@@ -2272,19 +2323,27 @@ pub const sync = struct {
             Bun__unregisterSignalsForForwarding();
             bun.crash_handler.resetOnPosix();
         }
-        const process = switch (try spawnProcessPosix(&options.toSpawnOptions(want_pgroup), argv, envp)) {
+        const process = switch (try spawnProcessPosix(&options.toSpawnOptions(no_orphans), argv, envp)) {
             .err => |err| return .{ .err = err },
             .result => |proces| proces,
         };
         // Negative → kill() in the C++ signal forwarder targets the pgroup, so
         // a SIGTERM/SIGINT delivered to `bun run` reaches every descendant
-        // that hasn't `setsid()`-escaped. Only valid when we actually created
-        // a pgroup; otherwise forward to the pid alone.
-        Bun__currentSyncPID = if (want_pgroup) -@as(i64, @intCast(process.pid)) else @intCast(process.pid);
+        // that hasn't `setsid()`-escaped.
+        Bun__currentSyncPID = if (no_orphans) -@as(i64, @intCast(process.pid)) else @intCast(process.pid);
 
-        const pgid_pushed = want_pgroup and bun.ParentDeathWatchdog.pushSyncPgid(process.pid);
+        var jc: JobControl = .{};
+        const pgid_pushed = no_orphans and bun.ParentDeathWatchdog.pushSyncPgid(process.pid);
+        if (no_orphans) {
+            // Script is now a background pgroup; if stdin is a TTY hand it the
+            // foreground so Ctrl-C / TTY reads behave as before. Ctrl-Z is
+            // bridged by `JobControl.onChildStopped` in the wait loop. No-op on
+            // non-TTY stdin (the supervisor / CI case this feature targets).
+            jc.give(process.pid);
+        }
         defer if (no_orphans) {
-            // pgroup (no-op on TTY) → tracked uniqueids (macOS). Do NOT call the
+            jc.restore();
+            // pgroup → tracked uniqueids (macOS). Do NOT call the
             // getpid()-rooted `killDescendants()` here — `spawnSync` can be
             // reached from inside a live VM (ffi.zig xcrun probe, etc.) and
             // that would SIGKILL the user's unrelated `Bun.spawn` children.
@@ -2359,7 +2418,7 @@ pub const sync = struct {
         // below is required.
         const status: Status = if (no_orphans and (Environment.isLinux or Environment.isMac)) blk: {
             const ppid = bun.ParentDeathWatchdog.ppidToWatch() orelse 0;
-            switch (waitForChildNoOrphans(process.pid, ppid, &out, &out_fds_to_wait_for, &out_fds)) {
+            switch (waitForChildNoOrphans(process.pid, ppid, &jc, &out, &out_fds_to_wait_for, &out_fds)) {
                 .err => |err| return .{ .err = err },
                 .result => |st| break :blk st,
             }
@@ -2425,20 +2484,22 @@ pub const sync = struct {
     fn waitForChildNoOrphans(
         child: std.c.pid_t,
         ppid: std.c.pid_t,
+        jc: *const JobControl,
         out: *[2]std.array_list.Managed(u8),
         out_fds_to_wait_for: *[2]bun.FD,
         out_fds: *[2]bun.FD,
     ) Maybe(Status) {
         if (comptime Environment.isMac)
-            return waitMacKqueue(child, ppid, out, out_fds_to_wait_for, out_fds);
+            return waitMacKqueue(child, ppid, jc, out, out_fds_to_wait_for, out_fds);
         if (comptime Environment.isLinux)
-            return waitLinuxSignalfd(child, ppid, out, out_fds_to_wait_for, out_fds);
+            return waitLinuxSignalfd(child, ppid, jc, out, out_fds_to_wait_for, out_fds);
         comptime unreachable; // gated to Linux/Mac at the call site
     }
 
     fn waitMacKqueue(
         child: std.c.pid_t,
         ppid: std.c.pid_t,
+        jc: *const JobControl,
         out: *[2]std.array_list.Managed(u8),
         out_fds_to_wait_for: *[2]bun.FD,
         out_fds: *[2]bun.FD,
@@ -2462,7 +2523,7 @@ pub const sync = struct {
         // for stdio[0]/stdio[1] on EVFILT_READ.
         const TAG_PPID: usize = 2;
 
-        var changes_buf: [4]std.c.Kevent = undefined;
+        var changes_buf: [5]std.c.Kevent = undefined;
         var changes: []std.c.Kevent = changes_buf[0..0];
         const add = struct {
             fn f(list: *[]std.c.Kevent, ident: usize, filter: i16, fflags: u32, udata: usize) void {
@@ -2483,11 +2544,19 @@ pub const sync = struct {
         // registers descendants) wakes us to rescan. EV_CLEAR so repeated forks
         // keep firing.
         add(&changes, @intCast(child), std.c.EVFILT.PROC, std.c.NOTE.EXIT | NOTE_FORK, 0);
+        // TTY job-control: EVFILT_PROC has no "stopped" note, so wake on
+        // SIGCHLD and `wait4(WUNTRACED|WNOHANG)` to catch Ctrl-Z. Only when
+        // stdin is a TTY — non-TTY callers never see stops, matching plain
+        // `bun run`. EVFILT_SIGNAL coexists with the (default-ignore) SIGCHLD
+        // disposition; only direct children raise SIGCHLD, so this fires for
+        // `child` alone.
+        if (jc.isActive())
+            add(&changes, std.posix.SIG.CHLD, std.c.EVFILT.SIGNAL, 0, 0);
         for (out_fds_to_wait_for, 0..) |fd, i| {
             if (fd != bun.invalid_fd) add(&changes, @intCast(fd.cast()), std.c.EVFILT.READ, 0, i);
         }
 
-        var receipts: [4]std.c.Kevent = undefined;
+        var receipts: [5]std.c.Kevent = undefined;
         switch (bun.sys.kevent(kq_fd, changes, receipts[0..changes.len], null)) {
             .err => |err| return .{ .err = err },
             .result => {},
@@ -2506,6 +2575,7 @@ pub const sync = struct {
 
         var events: [16]std.c.Kevent = undefined;
         var child_exited = false;
+        var child_status: ?Status = null;
         while (true) {
             const got = switch (bun.sys.kevent(kq_fd, &.{}, events[0..], null)) {
                 .err => |err| return .{ .err = err },
@@ -2530,6 +2600,19 @@ pub const sync = struct {
                             child_exited = true;
                     }
                     if (ev.fflags & NOTE_FORK != 0) saw_fork = true;
+                } else if (ev.filter == std.c.EVFILT.SIGNAL) {
+                    // SIGCHLD: probe for a stop. May also observe the exit
+                    // (racing NOTE_EXIT in this batch) — stash the status so
+                    // `reapChild` below doesn't block on an already-reaped pid.
+                    const r = PosixSpawn.wait4(child, std.posix.W.NOHANG | std.posix.W.UNTRACED, null);
+                    if (r == .result and r.result.pid == child) {
+                        if (std.posix.W.IFSTOPPED(r.result.status))
+                            jc.onChildStopped()
+                        else {
+                            child_status = Status.from(child, &r);
+                            child_exited = true;
+                        }
+                    }
                 } else if (ev.filter == std.c.EVFILT.READ) {
                     const i: usize = ev.udata;
                     if (drainFd(&out_fds_to_wait_for[i], &out_fds[i], &out[i])) |err| return .{ .err = err };
@@ -2545,7 +2628,7 @@ pub const sync = struct {
                 // defers can't run until we return. drainFd() loops to EAGAIN,
                 // so everything the script itself wrote is captured.
                 for (out_fds_to_wait_for, out_fds, out) |*fd, *ofd, *bytes| _ = drainFd(fd, ofd, bytes);
-                return .{ .result = reapChild(child) };
+                return .{ .result = child_status orelse reapChild(child) };
             }
         }
     }
@@ -2553,6 +2636,7 @@ pub const sync = struct {
     fn waitLinuxSignalfd(
         child: std.c.pid_t,
         ppid: std.c.pid_t,
+        jc: *const JobControl,
         out: *[2]std.array_list.Managed(u8),
         out_fds_to_wait_for: *[2]bun.FD,
         out_fds: *[2]bun.FD,
@@ -2624,14 +2708,23 @@ pub const sync = struct {
             // here: spawnSync callers (`bun run`, `bunx`, CLI subcommands)
             // have no JS event loop and no other `Process` watchers — every
             // pid we see is either `child` or a subreaper-adopted orphan.
+            //
+            // WUNTRACED only on a TTY: bridges Ctrl-Z via `JobControl`.
+            // Non-TTY callers never see stops, matching plain `bun run`.
+            const wopts = std.posix.W.NOHANG |
+                if (jc.isActive()) std.posix.W.UNTRACED else @as(u32, 0);
             while (true) {
-                const r = PosixSpawn.wait4(-1, std.posix.W.NOHANG, null);
-                const pid = switch (r) {
+                const r = PosixSpawn.wait4(-1, wopts, null);
+                const w = switch (r) {
                     .err => break,
-                    .result => |w| w.pid,
+                    .result => |w| w,
                 };
-                if (pid <= 0) break;
-                if (pid == child) child_status = Status.from(child, &r);
+                if (w.pid <= 0) break;
+                if (w.pid != child) continue; // subreaper-adopted orphan reaped
+                if (std.posix.W.IFSTOPPED(w.status))
+                    jc.onChildStopped()
+                else
+                    child_status = Status.from(child, &r);
             }
             if (child_status != null) break;
 

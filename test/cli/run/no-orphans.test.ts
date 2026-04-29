@@ -1,6 +1,7 @@
+import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
-import { chmodSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
+import { chmodSync, readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
 // --no-orphans / BUN_FEATURE_FLAG_NO_ORPHANS / [run] noOrphans: Bun watches its
@@ -478,4 +479,156 @@ test.skipIf(!isSupported)("bun run --no-orphans <script>: clean exit reaps desce
   reap(gcPid);
   expect(died).toBe(true);
   expect(proc.exitCode).toBe(0);
+});
+
+// Ctrl-Z bridge: with the script in its own pgroup `bun run` is a one-job
+// shell on a controlling TTY. Send SIGTSTP to the script's pgroup; bun run's
+// WUNTRACED wait must observe the stop, take the terminal, and `raise(SIGTSTP)`
+// itself (state 'T'). After SIGCONT, bun must SIGCONT the script. Without the
+// dance bun would spin forever in poll() while the script is stopped and the
+// user's shell never sees a stopped job.
+//
+// Linux-only — needs /proc/<pid>/stat for state polling and login-TTY
+// acquisition via O_NOCTTY-less open. The macOS path (EVFILT_SIGNAL+SIGCHLD →
+// wait4 WUNTRACED → same `JobControl.onChildStopped`) is structurally
+// identical and is type-checked by `zig build check-macos`.
+test.skipIf(!isLinux)("bun run --no-orphans on TTY: Ctrl-Z stop bridges to bun, fg resumes script", async () => {
+  // openpty + ptsname so a setsid wrapper can reopen the slave as its
+  // controlling terminal — Bun.spawn can't acquire a ctty for us.
+  const decls = {
+    openpty: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+    ptsname: { args: [FFIType.i32], returns: FFIType.cstring },
+    close: { args: [FFIType.i32], returns: FFIType.i32 },
+  } as const;
+  const lib = isMusl
+    ? dlopen(process.arch === "arm64" ? "libc.musl-aarch64.so.1" : "libc.musl-x86_64.so.1", decls)
+    : {
+        symbols: {
+          ...dlopen("libutil.so.1", { openpty: decls.openpty }).symbols,
+          ...dlopen("libc.so.6", { ptsname: decls.ptsname, close: decls.close }).symbols,
+        },
+      };
+
+  const m = new Int32Array(1);
+  const s = new Int32Array(1);
+  expect(lib.symbols.openpty(m, s, null, null, null)).toBe(0);
+  const master = m[0];
+  const slave = s[0];
+  const slavePath = String(lib.symbols.ptsname(master));
+  expect(slavePath).toMatch(/^\/dev\/pts\//);
+
+  using dir = tempDir("no-orphans-tty", {
+    "package.json": JSON.stringify({
+      name: "p",
+      // bun run wraps this in `sh -c '<script>'`, so $$ = the sh that
+      // spawnSync/new_process_group put in its own pgroup, $PPID = bun run.
+      scripts: { go: `echo "S $$ $PPID" >"$OUT/ids"; while :; do sleep 1; done` },
+    }),
+    // setsid → reopen the slave as 0/1/2 (acquires it as ctty on Linux when
+    // the session has none) → exec bun run. bun run is now session leader,
+    // foreground pgroup of the PTY, with isatty(0)=true and tcgetpgrp(0) > 0.
+    "wrap.sh": `#!/bin/sh\n` + `exec setsid sh -c 'exec <"$1" >"$1" 2>"$1"; shift; exec "$@"' -- "$@"\n`,
+  });
+  chmodSync(`${dir}/wrap.sh`, 0o755);
+  const env: Record<string, string> = { ...bunEnv, OUT: String(dir) };
+  delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+
+  await using proc = Bun.spawn({
+    cmd: [`${dir}/wrap.sh`, slavePath, bunExe(), "run", "--no-orphans", "--silent", "go"],
+    env,
+    cwd: String(dir),
+    stdio: ["ignore", "ignore", "ignore"],
+  });
+  // The `setsid` re-exec drops `proc.pid` immediately; resolve the real
+  // `bun run` pid as the script's PPID once the script writes its ids.
+  lib.symbols.close(slave);
+
+  const procState = (pid: number) => {
+    try {
+      // /proc/<pid>/stat field 3 is the state char; field 2 (comm) can
+      // contain spaces/parens, so anchor on the closing ')'.
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      return stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3);
+    } catch {
+      return "X";
+    }
+  };
+  const waitState = async (pid: number, want: (s: string) => boolean, ms: number) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (want(procState(pid))) return true;
+      await sleep(10);
+    }
+    return want(procState(pid));
+  };
+
+  // Wait for the script to write its ids (proves bun run + spawn finished).
+  let scriptPid = 0,
+    runPid = 0;
+  {
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline) {
+      try {
+        const t = readFileSync(`${dir}/ids`, "utf8").match(/S (\d+) (\d+)/);
+        if (t) {
+          scriptPid = Number(t[1]);
+          runPid = Number(t[2]);
+          break;
+        }
+      } catch {}
+      await sleep(10);
+    }
+  }
+  try {
+    expect(scriptPid).toBeGreaterThan(0);
+    expect(runPid).toBeGreaterThan(0);
+    // Preconditions: script is in its own pgroup (`\) . ppid pgrp `), and is
+    // the PTY's foreground pgroup (bun's stat field 8 = tpgid = scriptPid),
+    // proving `JobControl.give()` ran with `isatty(0) && tcgetpgrp(0)>0`.
+    expect(readFileSync(`/proc/${scriptPid}/stat`, "utf8")).toMatch(new RegExp(`\\) . ${runPid} ${scriptPid} `));
+    expect(readFileSync(`/proc/${runPid}/stat`, "utf8")).toMatch(
+      new RegExp(`\\) . \\d+ ${runPid} ${runPid} \\d+ ${scriptPid} `),
+    );
+
+    // Ctrl-Z: SIGTSTP to the script's pgroup (what the line discipline would
+    // send to the foreground pgroup on ^Z). bun's WUNTRACED wait observes the
+    // stop and runs the dance: take terminal → raise(SIGTSTP) → SIGCONT
+    // script. Here bun's *own* pgroup is orphaned (its parent — this test
+    // process — is in a different session), so the kernel discards bun's
+    // self-SIGTSTP and the dance falls straight through to SIGCONT'ing the
+    // script. Net effect: script is running again. In a real interactive
+    // shell bun's pgroup is *not* orphaned and bun stops at raise(); the
+    // shell's `fg` then SIGCONTs bun which SIGCONTs the script — same code
+    // path, just with the kernel's orphan rule short-circuiting the middle.
+    //
+    // Without WUNTRACED (the regression): the script stays 'T' forever and
+    // bun spins in poll() — `resumed` is false and the test fails.
+    for (let i = 0; i < 2; i++) {
+      process.kill(-scriptPid, "SIGTSTP");
+      // Don't assert it reached 'T' — the dance is fast enough that we may
+      // only ever observe 'S'. The post-condition is what matters.
+      await waitState(scriptPid, st => st === "T" || st === "t", 200);
+      const resumed = await waitState(scriptPid, st => st === "S" || st === "R", 3000);
+      expect({
+        round: i,
+        resumed,
+        scriptState: procState(scriptPid),
+        runState: procState(runPid),
+      }).toEqual({
+        round: i,
+        resumed: true,
+        scriptState: expect.stringMatching(/[SR]/),
+        runState: "S",
+      });
+    }
+
+    // Foreground pgroup is back on the script after each dance round.
+    expect(readFileSync(`/proc/${runPid}/stat`, "utf8")).toMatch(
+      new RegExp(`\\) . \\d+ ${runPid} ${runPid} \\d+ ${scriptPid} `),
+    );
+  } finally {
+    if (runPid > 0) reap(runPid);
+    if (scriptPid > 0) reap(-scriptPid, scriptPid);
+    lib.symbols.close(master);
+  }
 });

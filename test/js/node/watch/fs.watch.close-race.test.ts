@@ -58,7 +58,7 @@ test.skipIf(isWindows || isMacOS)(
     // unpatched build); run a handful of attempts so an unpatched build fails
     // with overwhelming probability while a patched build stays fast.
     const ATTEMPTS = 4;
-    const results: Array<{ stdout: string; stderr: string; exitCode: number }> = [];
+    const results: Array<{ attempt: number; stdout: string; stderr: string; exitCode: number }> = [];
     for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", fixture, String(dir)],
@@ -67,11 +67,21 @@ test.skipIf(isWindows || isMacOS)(
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      results.push({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode });
+      // ASAN builds emit a benign "WARNING: ASAN interferes with JSC signal
+      // handlers..." line on startup; strip it so it doesn't fail the test.
+      const filteredStderr = stderr
+        .split("\n")
+        .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+        .join("\n");
+      results.push({ attempt, stdout: stdout.trim(), stderr: filteredStderr, exitCode });
     }
 
-    // Every attempt must have completed the full loop cleanly.
-    expect(results).toEqual(Array.from({ length: ATTEMPTS }, () => ({ stdout: "ok 3000", stderr: "", exitCode: 0 })));
+    // Every attempt must have completed the full loop cleanly. Comparing the
+    // whole array at once surfaces every failing attempt's stderr/exitCode
+    // in a single diff instead of stopping at the first.
+    expect(results).toEqual(
+      Array.from({ length: ATTEMPTS }, (_, attempt) => ({ attempt, stdout: "ok 3000", stderr: "", exitCode: 0 })),
+    );
   },
   60000,
 );

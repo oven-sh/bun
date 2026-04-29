@@ -857,18 +857,8 @@ pub const PathWatcher = struct {
         return true;
     }
 
-    pub fn hasPendingDirectories(this: *PathWatcher) callconv(.c) bool {
-        return this.has_pending_directories.load(.acquire);
-    }
-
     pub fn isClosed(this: *PathWatcher) bool {
         return this.closed.load(.acquire);
-    }
-
-    pub fn setClosed(this: *PathWatcher) void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
-        this.closed.store(true, .release);
     }
 
     pub fn unrefPendingDirectory(this: *PathWatcher) void {

@@ -327,23 +327,32 @@ void WebViewHost::doNativeClick(float x, float y, uint8_t button, uint8_t modifi
     // from the pair: pointerdown/mousedown/pointerup/mouseup/click all fire,
     // isTrusted:true, :active CSS applies.
     //
-    // No buttons-bitmap stamping here: click() is down+up at the same
-    // spot and our callers (click(x,y), click(selector)) don't assert on
-    // event.buttons — only event.button / event.detail / event.modifiers.
-    // The low-level mouseDown/Up/Move primitives below DO set
-    // NSEvent::s_trackedButtonsMask because drag test suites observe
-    // event.buttons explicitly.
+    // Stamp NSEvent::s_trackedButtonsMask around each event so WebCore's
+    // PlatformEventFactoryMac reads the correct DOM event.buttons for
+    // this click (pressing bit set for mousedown, cleared for mouseup).
+    // The static is process-wide — without stamping here, a prior
+    // unbalanced mouseDown on this view or a sibling view would leak
+    // its mask into this click's DOM events. Setting it explicitly
+    // also makes click()'s event.buttons spec-correct: mousedown sees
+    // the pressing bit, mouseup sees 0.
+    uint8_t pressBit = 1u << button;
     switch (button) {
     case 1:
+        NSEvent::s_trackedButtonsMask = pressBit;
         m_webview.rightMouseDown(NSEvent::mouseEvent(NSEvent::RightMouseDown, x, wy, mods, ts, win, clickCount));
+        NSEvent::s_trackedButtonsMask = 0;
         m_webview.rightMouseUp(NSEvent::mouseEvent(NSEvent::RightMouseUp, x, wy, mods, ts, win, clickCount));
         break;
     case 2:
+        NSEvent::s_trackedButtonsMask = pressBit;
         m_webview.otherMouseDown(NSEvent::mouseEvent(NSEvent::OtherMouseDown, x, wy, mods, ts, win, clickCount));
+        NSEvent::s_trackedButtonsMask = 0;
         m_webview.otherMouseUp(NSEvent::mouseEvent(NSEvent::OtherMouseUp, x, wy, mods, ts, win, clickCount));
         break;
     default:
+        NSEvent::s_trackedButtonsMask = pressBit;
         m_webview.mouseDown(NSEvent::mouseEvent(NSEvent::LeftMouseDown, x, wy, mods, ts, win, clickCount));
+        NSEvent::s_trackedButtonsMask = 0;
         m_webview.mouseUp(NSEvent::mouseEvent(NSEvent::LeftMouseUp, x, wy, mods, ts, win, clickCount));
     }
 

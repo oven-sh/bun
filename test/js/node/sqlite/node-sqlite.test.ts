@@ -449,34 +449,30 @@ describe("Session / changeset", () => {
 // CI filesystems that can take a couple of seconds per call, so give these
 // tests generous timeouts and keep the page count tiny.
 describe("backup()", () => {
-  test(
-    "copies an in-memory database to a file",
-    async () => {
-      using dir = tempDir("node-sqlite-backup", {});
-      const src = new DatabaseSync(":memory:");
-      src.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, data TEXT)");
-      src.exec("INSERT INTO t (data) VALUES ('a'), ('b'), ('c')");
+  test("copies an in-memory database to a file", async () => {
+    using dir = tempDir("node-sqlite-backup", {});
+    const src = new DatabaseSync(":memory:");
+    src.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, data TEXT)");
+    src.exec("INSERT INTO t (data) VALUES ('a'), ('b'), ('c')");
 
-      const destPath = path.join(String(dir), "dst.db");
-      let progressCalls = 0;
-      const pages = await backup(src, destPath, {
-        rate: 1,
-        progress: ({ totalPages, remainingPages }) => {
-          expect(typeof totalPages).toBe("number");
-          expect(typeof remainingPages).toBe("number");
-          progressCalls++;
-        },
-      });
-      expect(typeof pages).toBe("number");
-      expect(progressCalls).toBeGreaterThan(0);
+    const destPath = path.join(String(dir), "dst.db");
+    let progressCalls = 0;
+    const pages = await backup(src, destPath, {
+      rate: 1,
+      progress: ({ totalPages, remainingPages }) => {
+        expect(typeof totalPages).toBe("number");
+        expect(typeof remainingPages).toBe("number");
+        progressCalls++;
+      },
+    });
+    expect(typeof pages).toBe("number");
+    expect(progressCalls).toBeGreaterThan(0);
 
-      const dst = new DatabaseSync(destPath);
-      expect(dst.prepare("SELECT count(*) AS c FROM t").get().c).toBe(3);
-      src.close();
-      dst.close();
-    },
-    30_000,
-  );
+    const dst = new DatabaseSync(destPath);
+    expect(dst.prepare("SELECT count(*) AS c FROM t").get().c).toBe(3);
+    src.close();
+    dst.close();
+  }, 30_000);
 
   test("rejects with ERR_SQLITE_ERROR when the destination is unwritable", async () => {
     const src = new DatabaseSync(":memory:");
@@ -487,29 +483,25 @@ describe("backup()", () => {
     src.close();
   });
 
-  test(
-    "progress callback exceptions reject the promise",
-    async () => {
-      using dir = tempDir("node-sqlite-backup-err", {});
-      const src = new DatabaseSync(":memory:");
-      // Enough rows to span >1 page so the progress callback fires at least
-      // once before SQLITE_DONE.
-      src.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
-      src.exec("BEGIN");
-      for (let i = 0; i < 1000; i++) src.prepare("INSERT INTO t DEFAULT VALUES").run();
-      src.exec("COMMIT");
-      await expect(
-        backup(src, path.join(String(dir), "dst.db"), {
-          rate: 1,
-          progress: () => {
-            throw new Error("nope");
-          },
-        }),
-      ).rejects.toThrow("nope");
-      src.close();
-    },
-    30_000,
-  );
+  test("progress callback exceptions reject the promise", async () => {
+    using dir = tempDir("node-sqlite-backup-err", {});
+    const src = new DatabaseSync(":memory:");
+    // Enough rows to span >1 page so the progress callback fires at least
+    // once before SQLITE_DONE.
+    src.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+    src.exec("BEGIN");
+    for (let i = 0; i < 1000; i++) src.prepare("INSERT INTO t DEFAULT VALUES").run();
+    src.exec("COMMIT");
+    await expect(
+      backup(src, path.join(String(dir), "dst.db"), {
+        rate: 1,
+        progress: () => {
+          throw new Error("nope");
+        },
+      }),
+    ).rejects.toThrow("nope");
+    src.close();
+  }, 30_000);
 });
 
 describe("StatementSync.prototype.columns()", () => {

@@ -359,7 +359,6 @@ const Platform = switch (Environment.os) {
 /// a wd per directory, then adding new subdirectories as they appear (IN_CREATE|IN_ISDIR).
 const Linux = struct {
     fd: bun.FD = bun.invalid_fd,
-    thread: std.Thread = undefined,
     running: std.atomic.Value(bool) = .init(true),
     /// wd → owning entry. Multiple wds can point at the same PathWatcher (recursive).
     wd_map: std.AutoHashMapUnmanaged(i32, WdEntry) = .{},
@@ -396,10 +395,13 @@ const Linux = struct {
             .syscall = .watch,
         } };
         manager.platform.fd = .fromNative(fd);
-        manager.platform.thread = std.Thread.spawn(.{}, threadMain, .{manager}) catch {
+        // The manager is process-global and never torn down, so the reader thread is
+        // a daemon — detach it instead of stashing a handle we'd never join.
+        var thread = std.Thread.spawn(.{}, threadMain, .{manager}) catch {
             manager.platform.fd.close();
             return .{ .err = .{ .errno = @intFromEnum(bun.sys.E.NOMEM), .syscall = .watch } };
         };
+        thread.detach();
         return .success;
     }
 
@@ -682,7 +684,6 @@ const Darwin = struct {
 /// same behaviour as libuv on FreeBSD; callers are expected to re-scan.
 const Kqueue = struct {
     kq: bun.FD = bun.invalid_fd,
-    thread: std.Thread = undefined,
     running: std.atomic.Value(bool) = .init(true),
     /// ident (fd number) → entry. `udata` on the kevent also carries the *KqEntry so
     /// dispatch is a single pointer chase; the map is for cleanup.
@@ -709,10 +710,12 @@ const Kqueue = struct {
             .err = .{ .errno = @intFromEnum(bun.sys.E.MFILE), .syscall = .kqueue },
         };
         manager.platform.kq = .fromNative(fd);
-        manager.platform.thread = std.Thread.spawn(.{}, threadMain, .{manager}) catch {
+        // Daemon reader — the manager is process-global and never torn down.
+        var thread = std.Thread.spawn(.{}, threadMain, .{manager}) catch {
             manager.platform.kq.close();
             return .{ .err = .{ .errno = @intFromEnum(bun.sys.E.NOMEM), .syscall = .watch } };
         };
+        thread.detach();
         return .success;
     }
 

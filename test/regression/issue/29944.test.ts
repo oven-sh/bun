@@ -9,7 +9,7 @@
 import { expect, test } from "bun:test";
 import { createHash } from "crypto";
 import { existsSync } from "fs";
-import { readFile } from "fs/promises";
+import { readFile, rm } from "fs/promises";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -169,7 +169,6 @@ test("#29944 --filter honors saved hoist layout across workspaces", async () => 
   // Windows CI the eql check occasionally disagrees with itself on a
   // round-tripped text lockfile in this harness, and the fix is observable
   // in the installed `node_modules` tree either way.
-  const { rm } = await import("fs/promises");
   await rm(join(root, "node_modules"), { recursive: true, force: true });
 
   await using filtered = Bun.spawn({

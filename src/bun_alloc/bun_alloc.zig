@@ -617,8 +617,11 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             self.mutex.lock();
             defer self.mutex.unlock();
 
+            // Leave any reclaimable slot in place: getOrPut early-returns on
+            // NotFound before consulting reclaimable, so keeping the entry lets
+            // a delete→recreate→bust cycle reuse the original slot instead of
+            // permanently orphaning it.
             self.index.put(self.allocator, result.hash, NotFound) catch unreachable;
-            _ = self.reclaimable.remove(result.hash);
         }
 
         pub fn atIndex(self: *Self, index: IndexType) ?*ValueType {

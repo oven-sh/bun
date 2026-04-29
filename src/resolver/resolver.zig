@@ -2705,6 +2705,31 @@ pub const Resolver = struct {
         }
 
         if (reuse) |prev| {
+            // Release the previous value's owned heap before overwriting so
+            // each hot-reload doesn't leak the prior file text and map backing
+            // arrays. StringMap.put() dupes values, so main_fields/browser_map
+            // own their value strings; name/version are explicitly duped in
+            // PackageJSON.parse(); dependencies.source_buf aliases
+            // source.contents so is covered by that free. exports/imports tree
+            // nodes and scripts/config are left alone — there is no recursive
+            // deinit for ExportsMap yet and they are uncommon compared to the
+            // per-reload file-contents leak this is primarily closing.
+            const alloc = bun.default_allocator;
+            if (prev.source.contents.len > 0) alloc.free(prev.source.contents);
+            if (prev.name.len > 0) alloc.free(prev.name);
+            if (prev.version.len > 0) alloc.free(prev.version);
+            prev.main_fields.deinit();
+            prev.browser_map.deinit();
+            prev.dependencies.map.deinit(alloc);
+            switch (prev.side_effects) {
+                .unspecified, .false => {},
+                .map => |*m| m.deinit(alloc),
+                .glob => |*g| g.deinit(alloc),
+                .mixed => |*m| {
+                    m.exact.deinit(alloc);
+                    m.globs.deinit(alloc);
+                },
+            }
             prev.* = pkg;
             return prev;
         }

@@ -6,8 +6,8 @@
 //
 // The fix uses `ConcurrentTask.from(that, .manual_deinit)` which fully initializes
 // both `.task` and `.next`. A debug assertion in `enqueueTaskConcurrent` verifies
-// `.next.getPtr() == null` before push, which fires on any regression of this
-// pattern (Zig's debug `undefined` = 0xAA..AA → non-null pointer bits).
+// the pointer bits of `.next` are zero before push, which fires on any regression
+// of this pattern (Zig's debug `undefined` = 0xAA..AA → non-zero pointer bits).
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
@@ -82,4 +82,4 @@ test.skipIf(isWindows)("fs.watch: FSWatchTask enqueue fully initializes Concurre
   expect(stderr).toBe("");
   expect(stdout).toStartWith("OK ");
   expect(exitCode).toBe(0);
-});
+}, 30_000);

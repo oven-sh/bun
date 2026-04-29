@@ -148,7 +148,7 @@ describe("MessagePort pipe", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("burst of postMessage across threads delivers every message in order", async () => {
+  test.skipIf(!isDebug && !isASAN)("burst of postMessage across threads delivers every message in order", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

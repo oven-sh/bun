@@ -872,10 +872,10 @@ pub const PathWatcher = struct {
     }
 
     pub fn unrefPendingDirectory(this: *PathWatcher) void {
-        // deinit() calls setClosed() which re-locks this.mutex, and may then
-        // proceed to destroy(this). Defer it until after unlock so we don't
-        // self-deadlock or unlock() a freed mutex. Zig defers fire LIFO, so
-        // registering this defer before the lock/unlock pair makes it fire last.
+        // deinit() re-locks this.mutex and may proceed to destroy(this).
+        // Defer it until after unlock so we don't self-deadlock or unlock()
+        // a freed mutex. Zig defers fire LIFO, so registering this defer
+        // before the lock/unlock pair makes it fire last.
         var should_deinit = false;
         defer if (should_deinit) this.deinit();
 
@@ -929,10 +929,32 @@ pub const PathWatcher = struct {
     }
 
     pub fn deinit(this: *PathWatcher) void {
-        this.setClosed();
-        if (this.hasPendingDirectories()) {
-            // will be freed on last directory
-            return;
+        // Decide under the mutex whether THIS call owns teardown. Both the
+        // main thread (via FSWatcher.detach) and a worker thread (via
+        // unrefPendingDirectory's deferred deinit) can reach here for the
+        // same watcher. The old sequence
+        //     setClosed();                    // lock; closed=true; unlock
+        //     if (hasPendingDirectories()) return;   // lock-free atomic read
+        // allowed the worker's unrefPendingDirectory() to run in the gap:
+        // it observed closed==true, stored has_pending_directories=false,
+        // and scheduled its own deinit(). Both callers then saw
+        // has_pending_directories==false and both destroyed `this`.
+        //
+        // Merging the store and the check into one critical section closes
+        // the gap: once this call sets closed=true, the worker cannot have
+        // already cleared has_pending_directories (it needs the lock and
+        // closed==true to do so), so this call observes it still true and
+        // returns early; the worker's subsequent deinit() is the sole owner
+        // of teardown. For file watches (no DirectoryRegisterTask, so the
+        // atomic was never set) this call proceeds and destroys as before.
+        {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+            this.closed.store(true, .release);
+            if (this.has_pending_directories.load(.acquire)) {
+                // Last unrefPendingDirectory() will re-enter deinit().
+                return;
+            }
         }
 
         if (this.manager) |manager| {

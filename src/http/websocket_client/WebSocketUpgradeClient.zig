@@ -280,13 +280,21 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             const secure_ptr: ?*uws.SslCtx = if (comptime ssl) brk: {
                 if (ssl_config) |config| if (config.requires_custom_request_ctx) {
                     var err: uws.create_bun_socket_error_t = .none;
-                    if (config.asUSocketsForClientVerification().createSSLContext(&err)) |ctx| {
-                        // Owned ref; transferred to the connected WebSocket on
-                        // upgrade, freed in `deinit` if we never get that far.
-                        client.secure = ctx;
-                        break :brk ctx;
-                    }
-                    log("Failed to create custom SSL context: {s}", .{@tagName(err)});
+                    const ctx = config.asUSocketsForClientVerification().createSSLContext(&err) orelse {
+                        // Do NOT fall through to the default trust store — the
+                        // user passed an explicit CA/cert and BoringSSL
+                        // rejected it. Swapping in system roots would let the
+                        // connection succeed against a host the user didn't
+                        // trust. The C++ caller emits an `error` event on null.
+                        log("createSSLContext failed for WebSocket: {s}", .{@tagName(err)});
+                        client.poll_ref.unref(vm);
+                        client.deref();
+                        return null;
+                    };
+                    // Owned ref; transferred to the connected WebSocket on
+                    // upgrade, freed in `deinit` if we never get that far.
+                    client.secure = ctx;
+                    break :brk ctx;
                 };
                 break :brk vm.rareData().defaultClientSslCtx();
             } else null;

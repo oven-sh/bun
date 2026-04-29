@@ -619,20 +619,44 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         auto* boundRequire = Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, fromPath);
         RETURN_IF_EXCEPTION(scope, {});
 
-        // Stash and drop any prior mock entry so the require() hits the real
-        // module. (We'll re-install below via addModuleMock, which uses
-        // insert-or-replace, so nothing to restore.)
+        // Stash any prior mock/plugin entries for this specifier so the
+        // internal `require()` hits the real module — and so we can put
+        // them back if `require()` throws. Without the restore the
+        // exception path would silently destroy a working
+        // `jest.mock(id, factory)` or `builder.module(id, cb)` entry.
+        JSC::Strong<JSC::JSObject> stashedVirtualEntry;
         if (globalObject->onLoadPlugins.hasVirtualModules()) {
-            globalObject->onLoadPlugins.virtualModules->remove(specifier);
+            stashedVirtualEntry = globalObject->onLoadPlugins.virtualModules->take(specifier);
         }
 
         // Also drop any cached JSCommonJSModule entry whose `.exports` was
         // previously overwritten by a mock — otherwise require() returns the
         // patched mock exports instead of re-evaluating the real source.
-        // JSMap::remove is a no-op when the key isn't present and returns
-        // false in that case — no need to pre-check.
-        globalObject->requireMap()->remove(globalObject, specifierString);
+        // Stash the taken entry so we can reinstate it if the require fails.
+        auto* requireMap = globalObject->requireMap();
+        JSC::JSValue stashedRequireMapEntry = requireMap->get(globalObject, specifierString);
         RETURN_IF_EXCEPTION(scope, {});
+        if (!stashedRequireMapEntry.isUndefined()) {
+            requireMap->remove(globalObject, specifierString);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+
+        // On any failure path below, put the stashed entries back so a
+        // previously-working mock/plugin isn't silently destroyed. The
+        // require-map set call runs under a top-exception scope so any
+        // exception it raises doesn't shadow the original failure.
+        auto restoreStash = [&]() {
+            if (stashedVirtualEntry) {
+                globalObject->onLoadPlugins.virtualModules->set(specifier, WTF::move(stashedVirtualEntry));
+            }
+            if (!stashedRequireMapEntry.isUndefined()) {
+                auto restoreScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+                requireMap->set(globalObject, specifierString, stashedRequireMapEntry);
+                if (restoreScope.exception()) {
+                    (void)restoreScope.tryClearException();
+                }
+            }
+        };
 
         JSC::JSValue realExports;
         if (boundRequire) {
@@ -642,14 +666,21 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
             NakedPtr<JSC::Exception> requireException = nullptr;
             realExports = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, boundRequire, callData, JSC::jsUndefined(), args, requireException);
             if (requireException) {
+                restoreStash();
                 scope.throwException(globalObject, requireException->value());
                 return {};
             }
-            RETURN_IF_EXCEPTION(scope, {});
+            if (scope.exception()) [[unlikely]] {
+                restoreStash();
+                return {};
+            }
         }
 
         JSC::JSValue mockValue = Bun::createAutoMockFromExports(globalObject, realExports);
-        RETURN_IF_EXCEPTION(scope, {});
+        if (scope.exception()) [[unlikely]] {
+            restoreStash();
+            return {};
+        }
 
         JSC::JSObject* mockObject = mockValue.isObject() ? mockValue.getObject() : nullptr;
         if (!mockObject) {
@@ -658,7 +689,10 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
             // `{ default: value }` — consistent with how Jest represents
             // primitive modules, and how a factory mock would encode one.
             mockObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
-            RETURN_IF_EXCEPTION(scope, {});
+            if (scope.exception()) [[unlikely]] {
+                restoreStash();
+                return {};
+            }
             mockObject->putDirect(vm, vm.propertyNames->defaultKeyword, mockValue, 0);
         }
 

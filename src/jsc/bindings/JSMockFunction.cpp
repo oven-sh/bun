@@ -618,6 +618,12 @@ const ClassInfo JSMockFunctionPrototype::s_info = { "Mock"_s, &Base::s_info, nul
 
 extern "C" void JSMock__resetSpies(Zig::GlobalObject* globalObject)
 {
+    // Also drop the on-demand requireMock cache — jest.requireMock() results
+    // are logically per-test-file and should not leak into other files after
+    // `mock.restore()` / `jest.restoreAllMocks()`, matching Jest's
+    // `_mockRegistry` lifecycle.
+    globalObject->mockModule.requireMockCache.clear();
+
     if (!globalObject->mockModule.activeSpies) {
         return;
     }
@@ -1645,6 +1651,21 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsMockFn, (JSC::JSGlobalObject * lexicalGlobalO
 
 namespace Bun {
 
+// Write `value` onto `target` at `name`, picking putDirectIndex when `name`
+// is a canonical integer index string (`"0"`, `"1"`, …). JSC's
+// JSObject::putDirect carries `ASSERT(!parseIndex(propertyName))` and expects
+// the caller to keep index keys in indexed storage — tripping that assert
+// would fire on `bun bd test` for modules exporting `{ 0: fn, 1: fn }`.
+// Same pattern `spyOn` uses a few hundred lines above.
+static ALWAYS_INLINE void putDirectMaybeIndex(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* target, const JSC::PropertyName& name, JSC::JSValue value, unsigned attributes)
+{
+    if (auto index = JSC::parseIndex(name)) {
+        target->putDirectIndex(globalObject, *index, value, attributes, JSC::PutDirectIndexLikePutDirect);
+    } else {
+        target->putDirect(vm, name, value, attributes);
+    }
+}
+
 JSC::JSObject* createAutoMockedFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue originalValue)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -1785,7 +1806,7 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
             // Preserve the source descriptor attributes so that e.g. static
             // class methods (non-enumerable by default) stay non-enumerable
             // on the mock, and `ReadOnly`/`DontDelete` constants survive.
-            mockFn->putDirect(vm, name, mockedProp, slot.attributes());
+            putDirectMaybeIndex(vm, lexicalGlobalObject, mockFn, name, mockedProp, slot.attributes());
             if (scope.exception()) [[unlikely]] {
                 (void)scope.tryClearException();
             }
@@ -1828,7 +1849,7 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
                     }
                     // Prototype methods are non-enumerable in ES2015 classes;
                     // preserve that so `Object.keys(instance)` matches.
-                    mockProto->putDirect(vm, name, mockedProp, slot.attributes());
+                    putDirectMaybeIndex(vm, lexicalGlobalObject, mockProto, name, mockedProp, slot.attributes());
                     if (scope.exception()) [[unlikely]] {
                         (void)scope.tryClearException();
                     }
@@ -1903,7 +1924,7 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
         }
         // Preserve the source descriptor attributes (DontEnum, ReadOnly,
         // DontDelete) so the mock keeps the same property shape.
-        mockObject->putDirect(vm, name, mockedProp, slot.attributes());
+        putDirectMaybeIndex(vm, lexicalGlobalObject, mockObject, name, mockedProp, slot.attributes());
         if (scope.exception()) [[unlikely]] {
             (void)scope.tryClearException();
         }

@@ -1,4 +1,4 @@
-// Fixture for auto-mock.test.ts — covers the property kinds auto-mock needs
+// Fixture for mock-module.test.ts — covers the property kinds auto-mock needs
 // to handle (primitives preserved, functions mocked, classes mocked, nested
 // objects recursed, arrays preserved, cycles survived).
 

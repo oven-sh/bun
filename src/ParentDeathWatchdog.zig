@@ -197,9 +197,10 @@ pub fn killDescendants() void {
 /// parent we expected").
 fn parentPidOf(pid: std.c.pid_t) std.c.pid_t {
     if (comptime Environment.isMac) {
-        var info: bun.darwin.proc_bsdinfo = undefined;
-        const rc = bun.darwin.proc_pidinfo(pid, bun.darwin.PROC_PIDTBSDINFO, 0, &info, bun.darwin.PROC_PIDTBSDINFO_SIZE);
-        if (rc != bun.darwin.PROC_PIDTBSDINFO_SIZE) return 0;
+        var info: bun.c.struct_proc_bsdinfo = undefined;
+        const size: c_int = @sizeOf(bun.c.struct_proc_bsdinfo);
+        const rc = bun.c.proc_pidinfo(pid, bun.c.PROC_PIDTBSDINFO, 0, &info, size);
+        if (rc != size) return 0;
         return @intCast(info.pbi_ppid);
     }
     if (comptime Environment.isLinux) {
@@ -227,7 +228,7 @@ fn listChildPids(parent: std.c.pid_t, out: []std.c.pid_t) ?usize {
         // proc_listchildpids returns the *count* of pids written (libproc.c
         // already divides the kernel's byte count by sizeof(int)); buffersize
         // is in bytes.
-        const rc = bun.darwin.proc_listchildpids(parent, out.ptr, @intCast(out.len * @sizeOf(std.c.pid_t)));
+        const rc = bun.c.proc_listchildpids(parent, out.ptr, @intCast(out.len * @sizeOf(std.c.pid_t)));
         if (rc <= 0) return null;
         return @intCast(@min(@as(usize, @intCast(rc)), out.len));
     }

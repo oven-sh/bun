@@ -131,8 +131,13 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         {
             Locker locker { s.lock };
             // Re-check each iteration: the handler (or a concurrent thread)
-            // may have closed or transferred this port.
-            if (s.ctxId != expectedCtx)
+            // may have closed or transferred this port. A same-context
+            // detach+re-attach restores ctxId but installs a different
+            // MessagePort, so compare port identity too — dispatching to
+            // the stale (now m_isDetached) `port` would silently drop.
+            // The new owner's attach() scheduled its own drain; leave the
+            // inbox for that.
+            if (s.ctxId != expectedCtx || s.port.get() != port)
                 break;
             uint64_t st = s.state.load(std::memory_order_relaxed);
             if (!(st & Attached) || s.inbox.isEmpty()) {

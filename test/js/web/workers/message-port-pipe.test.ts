@@ -98,6 +98,38 @@ describe("MessagePort pipe", () => {
     D.close();
   });
 
+  // A handler that synchronously transfers *this port* through a local
+  // carrier and re-wraps it via receiveMessageOnPort produces a new
+  // MessagePort bound to the same {pipe, side} on the same context. The
+  // drain loop must notice the port identity changed and stop (the new
+  // owner's attach()-scheduled drain delivers the rest) rather than
+  // dispatching to the stale detached wrapper and dropping messages.
+  test("same-context re-attach inside handler: inbox follows new wrapper", async () => {
+    const { port1: A, port2: B } = new MessageChannel();
+    const got: string[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    A.onmessage = e => {
+      got.push("old:" + e.data);
+      if (e.data === 1) {
+        const c = new MessageChannel();
+        c.port1.postMessage(A, [A]);
+        const newA = receiveMessageOnPort(c.port2)!.message as MessagePort;
+        newA.onmessage = ev => {
+          got.push("new:" + ev.data);
+          if (ev.data === 3) resolve();
+        };
+        c.port1.close();
+        c.port2.close();
+      }
+    };
+    B.postMessage(1);
+    B.postMessage(2);
+    B.postMessage(3);
+    await promise;
+    expect(got).toEqual(["old:1", "new:2", "new:3"]);
+    B.close();
+  });
+
   test("chained transfer delivers through every hop", async () => {
     // Pipe X is transferred A→B, then B transfers it onward C→D.
     const { port1: A, port2: B } = new MessageChannel();

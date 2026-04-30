@@ -42,8 +42,6 @@ MessagePortChannel::MessagePortChannel(MessagePortChannelRegistry& registry, con
     : m_ports { port1, port2 }
     , m_registry(registry)
 {
-    relaxAdoptionRequirement();
-
     m_processes[0] = port1.processIdentifier;
     m_entangledToProcessProtectors[0] = this;
     m_processes[1] = port2.processIdentifier;
@@ -92,10 +90,7 @@ void MessagePortChannel::disentanglePort(const MessagePortIdentifier& port)
     ASSERT(m_processes[i] || m_isClosed[i]);
     m_processes[i] = std::nullopt;
     m_pendingMessagePortTransfers[i].add(this);
-
-    // This set of steps is to guarantee that the lock is unlocked before the
-    // last ref to this object is released.
-    auto protectedThis = WTF::move(m_entangledToProcessProtectors[i]);
+    m_entangledToProcessProtectors[i] = nullptr;
 }
 
 void MessagePortChannel::closePort(const MessagePortIdentifier& port)
@@ -105,10 +100,6 @@ void MessagePortChannel::closePort(const MessagePortIdentifier& port)
 
     m_processes[i] = std::nullopt;
     m_isClosed[i] = true;
-
-    // This set of steps is to guarantee that the lock is unlocked before the
-    // last ref to this object is released.
-    Ref protectedThis { *this };
 
     m_pendingMessages[i].clear();
     m_pendingMessagePortTransfers[i].clear();
@@ -136,32 +127,23 @@ bool MessagePortChannel::postMessageToRemote(MessageWithMessagePorts&& message, 
     return false;
 }
 
-void MessagePortChannel::takeAllMessagesForPort(const MessagePortIdentifier& port, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&& callback)
+Vector<MessageWithMessagePorts> MessagePortChannel::takeAllMessagesForPort(const MessagePortIdentifier& port)
 {
     // LOG(MessagePorts, "MessagePortChannel %p taking all messages for port %s", this, port.logString().utf8().data());
 
     ASSERT(port == m_ports[0] || port == m_ports[1]);
     size_t i = port == m_ports[0] ? 0 : 1;
 
-    if (m_pendingMessages[i].isEmpty()) {
-        callback({}, [] {});
-        return;
-    }
+    if (m_pendingMessages[i].isEmpty())
+        return {};
 
     ASSERT(m_pendingMessageProtectors[i]);
 
     Vector<MessageWithMessagePorts> result;
     result.swap(m_pendingMessages[i]);
+    m_pendingMessageProtectors[i] = nullptr;
 
-    ++m_messageBatchesInFlight;
-
-    // LOG(MessagePorts, "There are %zu messages to take for port %s. Taking them now, messages in flight is now %" PRIu64, result.size(), port.logString().utf8().data(), m_messageBatchesInFlight);
-
-    callback(WTF::move(result), [this, port, protectedThis = WTF::move(m_pendingMessageProtectors[i])] {
-        UNUSED_PARAM(port);
-        --m_messageBatchesInFlight;
-        // LOG(MessagePorts, "Message port channel %s was notified that a batch of %zu message port messages targeted for port %s just completed dispatch, in flight is now %" PRIu64, logString().utf8().data(), size, port.logString().utf8().data(), m_messageBatchesInFlight);
-    });
+    return result;
 }
 
 std::optional<MessageWithMessagePorts> MessagePortChannel::tryTakeMessageForPort(const MessagePortIdentifier port)
@@ -174,6 +156,8 @@ std::optional<MessageWithMessagePorts> MessagePortChannel::tryTakeMessageForPort
 
     auto message = m_pendingMessages[i].first();
     m_pendingMessages[i].removeAt(0);
+    if (m_pendingMessages[i].isEmpty())
+        m_pendingMessageProtectors[i] = nullptr;
     return WTF::move(message);
 }
 

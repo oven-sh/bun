@@ -36,11 +36,7 @@ describe.skipIf(!isLinux)("IOWriter.onError with re-entrant enqueue", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr.trim()).toBe("");
     // ECONNRESET errno is 104 on Linux.

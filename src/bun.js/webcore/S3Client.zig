@@ -135,7 +135,6 @@ pub const S3Client = struct {
             }
             return globalThis.throwInvalidArguments("Expected a path", .{});
         };
-        errdefer path.deinit();
         const options = args.nextEat();
         var blob = Blob.new(try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class, ptr.request_payer));
         return blob.toJS(globalThis);
@@ -151,7 +150,6 @@ pub const S3Client = struct {
             }
             return globalThis.throwInvalidArguments("Expected a path to presign", .{});
         };
-        errdefer path.deinit();
 
         const options = args.nextEat();
         var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class, ptr.request_payer);
@@ -169,7 +167,6 @@ pub const S3Client = struct {
             }
             return globalThis.throwInvalidArguments("Expected a path to check if it exists", .{});
         };
-        errdefer path.deinit();
         const options = args.nextEat();
         var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class, ptr.request_payer);
         defer blob.detach();
@@ -186,7 +183,6 @@ pub const S3Client = struct {
             }
             return globalThis.throwInvalidArguments("Expected a path to check the size of", .{});
         };
-        errdefer path.deinit();
         const options = args.nextEat();
         var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class, ptr.request_payer);
         defer blob.detach();
@@ -203,7 +199,6 @@ pub const S3Client = struct {
             }
             return globalThis.throwInvalidArguments("Expected a path to check the stat of", .{});
         };
-        errdefer path.deinit();
         const options = args.nextEat();
         var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class, ptr.request_payer);
         defer blob.detach();
@@ -217,8 +212,8 @@ pub const S3Client = struct {
         const path: jsc.Node.PathLike = try jsc.Node.PathLike.fromJS(globalThis, &args) orelse {
             return globalThis.ERR(.MISSING_ARGS, "Expected a path to write to", .{}).throw();
         };
-        errdefer path.deinit();
         const data = args.nextEat() orelse {
+            path.deinit();
             return globalThis.ERR(.MISSING_ARGS, "Expected a Blob-y thing to write", .{}).throw();
         };
 
@@ -251,7 +246,6 @@ pub const S3Client = struct {
         const path: jsc.Node.PathLike = try jsc.Node.PathLike.fromJS(globalThis, &args) orelse {
             return globalThis.ERR(.MISSING_ARGS, "Expected a path to unlink", .{}).throw();
         };
-        errdefer path.deinit();
         const options = args.nextEat();
         var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class, ptr.request_payer);
         defer blob.detach();

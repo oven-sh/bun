@@ -67,11 +67,6 @@ pub fn presign(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
 
     // accept a path or a blob
     var path_or_blob = try PathOrBlob.fromJSNoCopy(globalThis, &args);
-    errdefer {
-        if (path_or_blob == .path) {
-            path_or_blob.path.deinit();
-        }
-    }
 
     if (path_or_blob == .blob and (path_or_blob.blob.store == null or path_or_blob.blob.store.?.data != .s3)) {
         return globalThis.throwInvalidArguments("Expected a S3 or path to presign", .{});
@@ -97,12 +92,7 @@ pub fn unlink(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     defer args.deinit();
 
     // accept a path or a blob
-    var path_or_blob = try PathOrBlob.fromJSNoCopy(globalThis, &args);
-    errdefer {
-        if (path_or_blob == .path) {
-            path_or_blob.path.deinit();
-        }
-    }
+    const path_or_blob = try PathOrBlob.fromJSNoCopy(globalThis, &args);
     if (path_or_blob == .blob and (path_or_blob.blob.store == null or path_or_blob.blob.store.?.data != .s3)) {
         return globalThis.throwInvalidArguments("Expected a S3 or path to delete", .{});
     }
@@ -130,17 +120,13 @@ pub fn write(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
 
     // accept a path or a blob
     var path_or_blob = try PathOrBlob.fromJSNoCopy(globalThis, &args);
-    errdefer {
-        if (path_or_blob == .path) {
-            path_or_blob.path.deinit();
-        }
-    }
 
     if (path_or_blob == .blob and (path_or_blob.blob.store == null or path_or_blob.blob.store.?.data != .s3)) {
         return globalThis.throwInvalidArguments("Expected a S3 or path to upload", .{});
     }
 
     const data = args.nextEat() orelse {
+        if (path_or_blob == .path) path_or_blob.path.deinit();
         return globalThis.ERR(.MISSING_ARGS, "Expected a Blob-y thing to upload", .{}).throw();
     };
 
@@ -173,11 +159,6 @@ pub fn size(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSEr
 
     // accept a path or a blob
     var path_or_blob = try PathOrBlob.fromJSNoCopy(globalThis, &args);
-    errdefer {
-        if (path_or_blob == .path) {
-            path_or_blob.path.deinit();
-        }
-    }
 
     if (path_or_blob == .blob and (path_or_blob.blob.store == null or path_or_blob.blob.store.?.data != .s3)) {
         return globalThis.throwInvalidArguments("Expected a S3 or path to get size", .{});
@@ -206,11 +187,6 @@ pub fn exists(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
 
     // accept a path or a blob
     var path_or_blob = try PathOrBlob.fromJSNoCopy(globalThis, &args);
-    errdefer {
-        if (path_or_blob == .path) {
-            path_or_blob.path.deinit();
-        }
-    }
 
     if (path_or_blob == .blob and (path_or_blob.blob.store == null or path_or_blob.blob.store.?.data != .s3)) {
         return globalThis.throwInvalidArguments("Expected a S3 or path to check if it exists", .{});
@@ -253,7 +229,12 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
     default_storage_class: ?bun.S3.StorageClass,
     default_request_payer: bool,
 ) bun.JSError!Blob {
-    var aws_options = try S3.S3Credentials.getCredentialsWithOptions(default_credentials.*, default_options, options, default_acl, default_storage_class, default_request_payer, globalObject);
+    // This function always takes ownership of `path`. The store created below consumes it;
+    // if we fail before the store is created, we must release it ourselves.
+    var aws_options = S3.S3Credentials.getCredentialsWithOptions(default_credentials.*, default_options, options, default_acl, default_storage_class, default_request_payer, globalObject) catch |err| {
+        path.deinit();
+        return err;
+    };
     defer aws_options.deinit();
 
     const store = brk: {
@@ -304,7 +285,12 @@ pub fn constructS3FileWithS3Credentials(
     options: ?jsc.JSValue,
     existing_credentials: S3.S3Credentials,
 ) bun.JSError!Blob {
-    var aws_options = try S3.S3Credentials.getCredentialsWithOptions(existing_credentials, .{}, options, null, null, false, globalObject);
+    // This function always takes ownership of `path`. The store created below consumes it;
+    // if we fail before the store is created, we must release it ourselves.
+    var aws_options = S3.S3Credentials.getCredentialsWithOptions(existing_credentials, .{}, options, null, null, false, globalObject) catch |err| {
+        path.deinit();
+        return err;
+    };
     defer aws_options.deinit();
     const store = bun.handleOom(Blob.Store.initS3(path, null, aws_options.credentials, bun.default_allocator));
     errdefer store.deinit();
@@ -557,11 +543,6 @@ pub fn stat(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSEr
 
     // accept a path or a blob
     var path_or_blob = try PathOrBlob.fromJSNoCopy(globalThis, &args);
-    errdefer {
-        if (path_or_blob == .path) {
-            path_or_blob.path.deinit();
-        }
-    }
 
     if (path_or_blob == .blob and (path_or_blob.blob.store == null or path_or_blob.blob.store.?.data != .s3)) {
         return globalThis.throwInvalidArguments("Expected a S3 or path to get size", .{});

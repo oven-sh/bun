@@ -358,6 +358,46 @@ devTest("removing 'use client' from a component with a pending resolution failur
     expect(res).toBeInstanceOf(Response);
   },
 });
+devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    // Import-record order is source order, so trackResolutionFailure is
+    // called for ./sub/a first (dep index 0) and ./sub/b second (dep index 1).
+    "index.ts": `
+      import './sub/a';
+      import './sub/b';
+      export {};
+    `,
+    // sub/ must exist for the directory watch to be opened.
+    "sub/placeholder.ts": `export {};`,
+  },
+  async test(dev) {
+    // Initial bundle: both imports fail and attach deps to the sub/ watch.
+    await dev.fetch("/");
+
+    {
+      await using _ = await dev.batchChanges({ errors: null });
+      // Rewrite index.ts so the rebuild has no failing imports and therefore
+      // does not re-track anything (which would consume the free-list slot).
+      await dev.write("index.ts", `export {};`);
+      // Creating sub/a.ts fires the sub/ directory watch. Walking the dep
+      // chain (LIFO: 1 then 0), dep 1 (./sub/b) still fails and is kept;
+      // dep 0 (./sub/a) now resolves, so freeDependencyIndex(0) frees its
+      // specifier and, because 0 != len-1, pushes index 0 onto
+      // dependencies_free_list.
+      await dev.write("sub/a.ts", `export {};`);
+    }
+
+    // The server should still respond.
+    const res = await dev.fetch("/");
+    expect(res).toBeInstanceOf(Response);
+
+    // Test teardown sends graceful-exit, which calls DevServer.deinit.
+    // Before the fix, deinit iterated every dependencies.items slot and
+    // freed .specifier again for the free-list slot at index 0, tripping
+    // AllocationScope's invalid-free panic.
+  },
+});
 devTest("importing html file", {
   files: {
     "index.html": emptyHtmlFile({

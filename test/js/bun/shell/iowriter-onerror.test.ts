@@ -2,6 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
 import { join } from "node:path";
 
+// Debug ASAN builds print a WebKit Options.cpp banner to stderr at JSC init
+// when ASAN_OPTIONS lacks allow_user_segv_handler=1. bunEnv sets it on the ASAN
+// CI shard (isASAN), but a local `bun bd` run may not have it — filter it out.
+function stripAsanWarning(s: string): string {
+  return s
+    .split("\n")
+    .filter(l => !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+}
+
 // IOWriter.onError iterates the pending writers and drives each callback via the
 // Yield trampoline. A callback can start the next shell state (e.g. the right-hand
 // side of `||`, or the next statement after `;`) which may enqueue on the SAME
@@ -38,7 +48,7 @@ describe.skipIf(!isLinux)("IOWriter.onError with re-entrant enqueue", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr.trim()).toBe("");
+    expect(stripAsanWarning(stderr).trim()).toBe("");
     // ECONNRESET errno is 104 on Linux.
     expect(stdout.trim()).toBe("exit:104\ndone");
     expect(exitCode).toBe(0);
@@ -70,7 +80,7 @@ describe.skipIf(!isLinux)("IOWriter.onError with re-entrant enqueue", () => {
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
     // ENOSPC errno is 28 on Linux.
-    expect(stderr.trim()).toBe("exit:28\ndone");
+    expect(stripAsanWarning(stderr).trim()).toBe("exit:28\ndone");
     expect(exitCode).toBe(0);
   });
 });

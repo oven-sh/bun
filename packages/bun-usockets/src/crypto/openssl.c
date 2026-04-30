@@ -618,6 +618,22 @@ SSL_CTX *us_ssl_ctx_from_options(struct us_bun_socket_context_options_t options,
   return ctx;
 }
 
+/* Mark a CTX as client-only with verify enabled but NO bundled root store.
+ * Used for RareData.defaultClientSslCtx: Bun.connect({tls: true}) on `main`
+ * never ran verification (verify_mode stayed NONE → SSL_get_verify_result()
+ * lied X509_V_OK). 97b6c52193 fixed that by overriding to VERIFY_PEER per-SSL
+ * in ssl_attach plus loading the ~150-cert root store — but the cold-build of
+ * that store is ~150 ms in debug+ASAN, putting the first connect past
+ * node-tls-server.test.ts's 100 ms timeout. Setting VERIFY_PEER on the CTX
+ * here instead means ssl_attach's `verify_mode == NONE` override is skipped:
+ * verify still runs (so the false-OK bug stays fixed), it just runs against
+ * the empty CTX store and reports the truth (UNABLE_TO_VERIFY_LEAF_SIGNATURE
+ * — caller gave no CA). Callers wanting roots pass ca/requestCert and get them
+ * CTX-side in build_raw; node:tls SecureContext goes through that path. */
+void us_ssl_ctx_set_client_verify_no_roots(SSL_CTX *ctx) {
+  SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, us_verify_callback);
+}
+
 /* SSL_CTX's own refcount IS the refcount; SSL_new() takes one more per socket
  * internally, so a socket outlives its SecureContext without help from us.
  * Exported so context.c / socket.c stay free of OpenSSL headers. */

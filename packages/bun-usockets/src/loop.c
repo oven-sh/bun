@@ -143,10 +143,17 @@ void us_internal_loop_unlink_group(struct us_loop_t *loop, struct us_socket_grou
  * on, so cache `next` before each call. Returns 1 if anything was linked. */
 int us_loop_close_all_groups(struct us_loop_t *loop) {
     struct us_socket_group_t *g = loop->data.head;
-    int any = g != NULL;
+    int any = 0;
     while (g) {
         struct us_socket_group_t *next = g->next;
-        us_socket_group_close_all(g);
+        /* Only connecting/connected sockets are stranded — listen sockets are
+         * 1:1 owned by a Zig Listener / uWS App that holds a raw pointer and
+         * closes them in finalize(). Closing them here turns that into a UAF
+         * after drainClosedSockets(). */
+        if (g->head_sockets || g->head_connecting_sockets || g->low_prio_count) {
+            us_socket_group_close_all_ex(g, /* also_listeners */ 0);
+            any = 1;
+        }
         /* close_all → unlink may have spliced our cached `next` out too (an
          * on_close handler closing a different group's last socket); re-read
          * from the loop head if `next` is no longer linked. */
@@ -604,8 +611,17 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         eof = 1; // lets handle EOF in the same place
                         break;
                     } else if (length == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
-                        /* Todo: decide also here what kind of reason we should give */
-                        s = us_socket_close(s, LIBUS_ERR, NULL);
+                        /* Peer-initiated TCP error (RST etc.) — go straight to
+                         * raw-close. us_socket_close() would route through
+                         * us_internal_ssl_close() now that s->ssl is the
+                         * discriminator, and that path fires
+                         * on_handshake(ECONNRESET) for HANDSHAKE_PENDING — fine
+                         * for app-initiated close, wrong here: a Happy-Eyeballs
+                         * loser leg RSTing a server's accepted socket would
+                         * surface as `tlsClientError` → uncaught in node:http2.
+                         * main called us_socket_close(ssl=0, …) at every loop
+                         * close site for exactly this reason. */
+                        s = us_internal_socket_close_raw(s, LIBUS_ERR, NULL);
                         return;
                     }
 
@@ -620,7 +636,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
                 if (us_socket_is_shut_down(s)) {
                     /* We got FIN back after sending it */
-                    s = us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+                    s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;
                 }
                 if(s->flags.allow_half_open) {
@@ -630,14 +646,16 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 } else {
                     /* We dont allow half open just emit end and close the socket */
                     s = s->ssl ? us_internal_ssl_on_end(s) : us_dispatch_end(s);
-                    s = us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+                    s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;
                 }
             }
             /* Such as epollerr or EV_ERROR */
             if (error && s) {
-                /* Todo: decide what code we give here */
-                s = us_socket_close(s, error, NULL);
+                /* Peer-initiated error event — same rationale as the recv-error
+                 * branch above: bypass us_internal_ssl_close so on_handshake
+                 * isn't fired for a passive close. */
+                s = us_internal_socket_close_raw(s, error, NULL);
                 return;
             }
             break;

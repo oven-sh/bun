@@ -73,11 +73,18 @@ void us_socket_group_deinit(struct us_socket_group_t *group) {
     }
 }
 
-void us_socket_group_close_all(struct us_socket_group_t *group) {
-    /* Listeners first — stops new sockets from being accepted into head_sockets
-     * while we're draining it. */
-    while (group->head_listen_sockets) {
-        us_listen_socket_close(group->head_listen_sockets);
+/* Close every connecting/connected socket in the group; if `also_listeners`,
+ * close listen sockets too. Process-exit callers pass 0: a us_listen_socket_t
+ * is 1:1 owned by a Zig Listener / uWS App that holds a raw pointer to it and
+ * closes it in finalize(), so closing+freeing it here turns that into a UAF
+ * (the original LSAN was only the *accepted* sockets, not the listener). */
+void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_listeners) {
+    if (also_listeners) {
+        /* Listeners first — stops new sockets from being accepted into
+         * head_sockets while we're draining it. */
+        while (group->head_listen_sockets) {
+            us_listen_socket_close(group->head_listen_sockets);
+        }
     }
 
     struct us_connecting_socket_t *c = group->head_connecting_sockets;
@@ -137,6 +144,10 @@ void us_socket_group_close_all(struct us_socket_group_t *group) {
         }
         US_ASSERT(group->low_prio_count == 0);
     }
+}
+
+void us_socket_group_close_all(struct us_socket_group_t *group) {
+    us_socket_group_close_all_ex(group, 1);
 }
 
 unsigned short us_socket_group_timestamp(struct us_socket_group_t *group) {

@@ -2041,6 +2041,14 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
 
     // Run tracing
     dev.client_graph.reset();
+    // `current_chunk_parts`/`current_chunk_len` are scratch buffers shared with
+    // the HMR pipeline. `startAsyncBundle` resets them and `finalizeBundle`
+    // expects them to still be empty when it begins appending hot-update
+    // chunks. Because `onJsRequest` can run between those two (the route is
+    // already `.loaded` so it does not go through `ensureRouteIsBundled`),
+    // we must leave the buffers cleared on every exit path so the next
+    // hot-update does not pick up the files we traced here.
+    defer dev.client_graph.reset();
     try dev.traceAllRouteImports(route_bundle, &gts, .find_client_modules);
 
     var react_fast_refresh_id: []const u8 = "";

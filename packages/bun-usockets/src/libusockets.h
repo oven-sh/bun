@@ -296,10 +296,15 @@ void us_socket_group_deinit(us_socket_group_r group) nonnull_fn_decl;
 /* Close every socket in the group (fires on_close for each). Used by server
  * shutdown. The group itself stays valid. */
 void us_socket_group_close_all(us_socket_group_r group) nonnull_fn_decl;
+/* As above; `also_listeners=0` leaves head_listen_sockets alone (process-exit
+ * teardown — listen sockets are owned by a Listener/App that frees them in
+ * finalize, closing here would be a UAF on the owner's raw pointer). */
+void us_socket_group_close_all_ex(us_socket_group_r group, int also_listeners) nonnull_fn_decl;
 
-/* Teardown: us_socket_group_close_all() on every group currently linked to the
- * loop (Listener-, App-, and RareData-owned alike). Returns 1 if any group was
- * linked, 0 if the loop was already idle. */
+/* Teardown: close_all_ex(g, 0) on every group currently linked to the loop
+ * (Listener-, App-, and RareData-owned alike). Returns 1 if any group had open
+ * connections, 0 if the loop was already idle. Listen sockets are NOT closed
+ * (see close_all_ex). */
 int us_loop_close_all_groups(us_loop_r loop) nonnull_fn_decl;
 
 unsigned short us_socket_group_timestamp(us_socket_group_r group) nonnull_fn_decl;

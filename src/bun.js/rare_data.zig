@@ -733,18 +733,27 @@ pub fn defaultClientSslCtx(rare: *RareData) *uws.SslCtx {
     if (rare.default_client_ssl_ctx == null) {
         var err: uws.create_bun_socket_error_t = .none;
         // No request_cert/CA: matches `Bun.connect({tls: true})` on `main`,
-        // which never loaded the system trust store (us_get_default_ca_store
-        // builds a fresh X509_STORE with ~150 roots; the JS layer reads
-        // verify_error and applies rejectUnauthorized itself). The node:tls
-        // path goes through SecureContext, which DOES set request_cert/ca and
-        // gets a verifying ctx.
-        rare.default_client_ssl_ctx = (uws.SocketContext.BunSocketContextOptions{}).createSSLContext(&err) orelse bun.Output.panic(
+        // which never loaded the system trust store. set_client_verify_no_roots
+        // flips verify_mode to PEER on the CTX so ssl_attach's per-SSL
+        // root-store override (which cold-builds ~150 PEM certs, ~150 ms in
+        // debug+ASAN) is skipped — verify runs against the empty store and
+        // truthfully reports "no CA given" instead of main's false-OK, without
+        // the first-connect latency hit that broke node-tls-server.test.ts's
+        // 100 ms budget. node:tls clients go through SecureContext and get
+        // bundled roots there.
+        const ctx = (uws.SocketContext.BunSocketContextOptions{}).createSSLContext(&err) orelse bun.Output.panic(
             "default client SSL_CTX init failed: {s}",
             .{err.message() orelse "unknown"},
         );
+        c.us_ssl_ctx_set_client_verify_no_roots(ctx);
+        rare.default_client_ssl_ctx = ctx;
     }
     return rare.default_client_ssl_ctx.?;
 }
+
+const c = struct {
+    extern fn us_ssl_ctx_set_client_verify_no_roots(ctx: *uws.SslCtx) void;
+};
 
 pub fn globalDNSResolver(rare: *RareData, vm: *jsc.VirtualMachine) *api.dns.Resolver {
     if (rare.global_dns_data == null) {

@@ -205,10 +205,21 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
         .protos = if (ssl) |s| s.takeProtos() else null,
     };
     this.group.init(uws.Loop.get(), null, this);
+    // `Listener` is mimalloc-allocated, so LSAN can't trace `loop->data.head →
+    // this.group → head_sockets → us_socket_t` once the only pointer into the
+    // group lives inside a mimalloc page. `process.exit()` from JS makes
+    // `Zig__GlobalObject__destructOnExit` early-return (vm.entryScope set), so
+    // `finalize()`/`deinit()` never run and the accepted sockets' 88-byte
+    // `us_create_poll` allocations are reported as leaked. Registering the
+    // embedded group as a root region restores the same reachability the old
+    // libc-malloc'd `us_socket_context_t` chain gave LSAN. Paired unregister
+    // in `deinit()` (and the errdefer below).
+    bun.asan.registerRootRegion(&this.group, @sizeOf(uws.SocketGroup));
     var listener_allocated = true;
     errdefer if (listener_allocated) {
         if (this.secure_ctx) |c| BoringSSL.SSL_CTX_free(c);
         if (this.protos) |p| bun.default_allocator.free(p);
+        bun.asan.unregisterRootRegion(&this.group, @sizeOf(uws.SocketGroup));
         this.group.deinit();
         handlers.vm.allocator.destroy(this);
     };
@@ -476,6 +487,7 @@ pub fn deinit(this: *Listener) void {
     if (this.handlers.active_connections > 0) {
         this.group.closeAll();
     }
+    bun.asan.unregisterRootRegion(&this.group, @sizeOf(uws.SocketGroup));
     this.group.deinit();
     if (this.secure_ctx) |ctx| BoringSSL.SSL_CTX_free(ctx);
 

@@ -61,19 +61,25 @@ fn PtrHandler(comptime T: type, comptime ssl: bool) type {
             if (@hasDecl(T, "onEnd")) swallow(this.onEnd(wrap(s)));
         }
         pub fn onConnectError(ext: Ext, s: *us_socket_t, code: i32) void {
-            // Notify FIRST, close AFTER. For a TLS fast-path connect the socket
-            // already has `s->ssl` attached, so close routes through ssl_close
-            // → on_handshake(0, …) → JS, which may destroy `this`/its handlers
-            // before we get to call onConnectError. The C side only requires
-            // that the half-open socket is closed *somewhere* in this dispatch
-            // (us_internal_socket_after_open: "expected close is called by the
-            // caller"); ordering is ours.
-            const this = ext.* orelse {
-                s.close(.failure);
-                return;
-            };
-            if (@hasDecl(T, "onConnectError")) swallow(this.onConnectError(wrap(s), code));
+            // Close FIRST, then notify — same order `main`'s `configure()`
+            // trampoline used. The handler may re-enter `connectInner`
+            // synchronously (node:net `autoSelectFamily` falls back to the
+            // next address from inside the JS `connectError` callback); on
+            // Windows/libuv, starting the next attempt's `uv_poll_t` while
+            // this half-open one is still active and then closing it
+            // *afterwards* leaves the second poll never delivering
+            // writable/error → process hang (Win11-aarch64
+            // double-connect.test, test-net-server-close).
+            //
+            // Safe for TLS too: `us_internal_ssl_close` short-circuits
+            // SEMI_SOCKET straight to `close_raw`, and `close_raw` skips
+            // dispatch for SEMI_SOCKET, so no `on_handshake`/`on_close` lands
+            // in JS before we read `ext`/`this`.
+            const this = ext.*;
             s.close(.failure);
+            if (this) |t| {
+                if (@hasDecl(T, "onConnectError")) swallow(t.onConnectError(wrap(s), code));
+            }
         }
         pub fn onConnectingError(c: *ConnectingSocket, code: i32) void {
             const this = c.ext(?*T).* orelse return;
@@ -181,12 +187,12 @@ fn NsHandler(comptime Owner: type, comptime H: type, comptime ssl: bool) type {
             if (@hasDecl(H, "onEnd")) swallow(H.onEnd(this, wrap(s)));
         }
         pub fn onConnectError(ext: Ext, s: *us_socket_t, code: i32) void {
-            const this = ext.* orelse {
-                s.close(.failure);
-                return;
-            };
-            if (@hasDecl(H, "onConnectError")) swallow(H.onConnectError(this, wrap(s), code));
+            // Close before notify — see PtrHandler.onConnectError.
+            const this = ext.*;
             s.close(.failure);
+            if (this) |t| {
+                if (@hasDecl(H, "onConnectError")) swallow(H.onConnectError(t, wrap(s), code));
+            }
         }
         pub fn onConnectingError(c: *ConnectingSocket, code: i32) void {
             const this = c.ext(?*Owner).* orelse return;
@@ -244,11 +250,12 @@ pub fn HTTPClient(comptime ssl: bool) type {
             fwd(ext, "onEnd", .{wrap(s)});
         }
         pub fn onConnectError(ext: Ext, s: *us_socket_t, code: i32) void {
-            // Notify before close — close() can synchronously fire handshake/
-            // close callbacks that tear down the owner the tagged pointer
-            // resolves to (same ordering PtrHandler/NsHandler use).
-            fwd(ext, "onConnectError", .{ wrap(s), code });
-            s.close(.normal);
+            // Close before notify — see PtrHandler.onConnectError. SEMI_SOCKET
+            // close skips dispatch, so the tagged owner survives the close.
+            const owner = ext.*;
+            s.close(.failure);
+            if (@hasDecl(H, "onConnectError") and @TypeOf(H.onConnectError) != @TypeOf(null))
+                swallow(H.onConnectError(owner orelse return, wrap(s), code));
         }
         pub fn onConnectingError(cs: *ConnectingSocket, code: i32) void {
             if (@hasDecl(H, "onConnectError"))

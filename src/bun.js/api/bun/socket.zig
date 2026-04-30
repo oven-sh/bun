@@ -1897,8 +1897,16 @@ pub const DuplexUpgradeContext = struct {
                 tls.handleError(err_value);
             }
         } else {
-            if (this.tls) |tls| {
-                tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ECONNREFUSED)) catch {};
+            // Pre-open error (e.g. the duplex emitted non-Buffer data before
+            // the queued `.StartTLS` task ran). `handleConnectError` →
+            // `markInactive` frees `tls.handlers`; null `tls` so the
+            // still-queued `.StartTLS` → `onOpen` — and any further duplex
+            // events — skip the TLSSocket instead of calling `getHandlers()`
+            // on the freed allocation.
+            const tls = this.tls;
+            this.tls = null;
+            if (tls) |t| {
+                t.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ECONNREFUSED)) catch {};
             }
         }
     }
@@ -1932,6 +1940,16 @@ pub const DuplexUpgradeContext = struct {
     fn runEvent(this: *DuplexUpgradeContext) void {
         switch (this.task_event) {
             .StartTLS => {
+                // A pre-open error may have already fired the connect-error
+                // callback and nulled `tls` while this task was queued; in
+                // that case there is nothing to open.
+                if (this.tls == null) {
+                    if (this.ssl_config) |*config| {
+                        config.deinit();
+                        this.ssl_config = null;
+                    }
+                    return;
+                }
                 if (this.ssl_config) |config| {
                     log("DuplexUpgradeContext.startTLS mode={s}", .{@tagName(this.#mode)});
                     this.upgrade.startTLS(config, this.#mode == .client) catch |err| {

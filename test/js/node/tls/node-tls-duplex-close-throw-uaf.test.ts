@@ -122,3 +122,56 @@ test.skipIf(!isASAN && !isDebug)(
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
   },
 );
+
+// Third sibling: an error on the duplex before the queued .StartTLS task
+// runs (is_open == false) routed to DuplexUpgradeContext.onError →
+// tls.handleConnectError(), freeing the Handlers. The .StartTLS task then
+// fired onOpen → tls.onOpen → isServer() → getHandlers() on the freed
+// allocation (ASAN use-after-poison at TLSSocket.isServer).
+test.skipIf(!isASAN && !isDebug)(
+  "tls.connect({socket: Duplex}) does not read freed Handlers when a pre-open duplex error races StartTLS",
+  async () => {
+    const script = `
+    const tls = require("node:tls");
+    const { Duplex } = require("node:stream");
+
+    const duplex = new Duplex({
+      read() {},
+      write(chunk, enc, cb) { cb(); },
+      final(cb) { cb(); },
+    });
+
+    const sock = tls.connect({
+      socket: duplex,
+      rejectUnauthorized: false,
+    });
+    sock.on("error", () => {});
+    sock.on("close", () => {});
+
+    // Non-Buffer data triggers UpgradedDuplex.onReceivedData's error branch
+    // → DuplexUpgradeContext.onError with is_open == false, before the
+    // queued .StartTLS task has run.
+    queueMicrotask(() => {
+      duplex.emit("data", "string, not a buffer");
+    });
+
+    setImmediate(() => {
+      setImmediate(() => {
+        console.log("ok");
+        process.exit(0);
+      });
+    });
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, ASAN_OPTIONS: "symbolize=0:abort_on_error=1:allow_user_segv_handler=1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+  },
+);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, hideFromStackTrace } from "harness";
+import { bunEnv, bunExe, hideFromStackTrace, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -3776,5 +3776,142 @@ const Layout = () => {
     const result = transpiler.transformSync(code);
     expect(result).toContain("a: 1");
     expect(result).not.toContain("fn(");
+  });
+});
+
+describe("`declare` and `interface` as ordinary identifiers (not the TS ambient modifier)", () => {
+  const transpiler = new Bun.Transpiler({ loader: "ts" });
+
+  it("keeps `declare()` call statement — oven-sh/bun#30006", () => {
+    const code = `function declare() { console.log("ran"); }
+declare();`;
+
+    const result = transpiler.transformSync(code);
+    // The function body and the call must both survive; the bug erased both.
+    expect(result).toContain("function declare");
+    expect(result).toContain('console.log("ran")');
+    expect(result).toMatch(/declare\s*\(\s*\)/);
+  });
+
+  it("keeps `declare.foo()` member-call statement", () => {
+    const code = `const declare = { foo: () => console.log("foo") };
+declare.foo();
+console.log("after");`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("declare.foo()");
+    expect(result).toContain('"after"');
+  });
+
+  it("keeps `declare[0]()` index-call statement", () => {
+    const code = `const declare = [() => console.log("idx")];
+declare[0]();
+console.log("after");`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("declare[0]()");
+    expect(result).toContain('"after"');
+  });
+
+  it("keeps `declare = value` assignment statement", () => {
+    const code = `let declare: number = 0;
+declare = 42;
+console.log(declare);`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("declare = 42");
+    expect(result).toContain("console.log(declare)");
+  });
+
+  it("treats `declare\\nfoo()` as two statements via ASI", () => {
+    // The identifier `declare` on its own line, followed by a call on the next
+    // line, must not be folded into an ambient declaration that consumes the
+    // call. Before the fix, the `foo()` call was silently erased.
+    const code = `let declare: number = 0;
+declare
+foo();`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("foo()");
+  });
+
+  it("still parses real ambient `declare` forms", () => {
+    const code = `declare const a: number;
+declare let b: string;
+declare var c: boolean;
+declare function fn(): void;
+declare class Cls { m(): void; }
+declare namespace Ns { const y: number; }
+declare module "m" { export const z: number; }
+declare global { interface Window { ext: string; } }
+declare interface Face { a: number; }
+declare enum En { A, B }
+declare abstract class Abst { x: number; }
+export declare const d: number;
+export declare function g(): void;
+export declare class Dcls { m(): void; }
+console.log("ok");`;
+
+    const result = transpiler.transformSync(code);
+    // All the ambient declarations above have no runtime emit.
+    expect(result.trim()).toBe('console.log("ok");');
+  });
+
+  it("runs the bug report snippet end-to-end through the runtime", async () => {
+    using dir = tempDir("declare-ident-", {
+      "repro.ts": `function go() {
+  let scope: Record<string, number> = {};
+  function declare(name: string, mask: number) { scope[name] = mask }
+  declare("foo", 1);
+  declare("bar", 2);
+  return scope;
+}
+console.log(JSON.stringify(go()));`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "repro.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe('{"foo":1,"bar":2}');
+    expect(exitCode).toBe(0);
+  });
+
+  it("bundler preserves `function declare() {...}; declare();`", async () => {
+    using dir = tempDir("declare-bundle-", {
+      "entry.ts": `function declare() { console.log("ran"); }
+declare();`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.ts", "--target=bun"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("function declare");
+    expect(stdout).toMatch(/declare\s*\(\s*\)/);
+  });
+
+  it("preserves `interface()` instead of treating it as an ambient interface decl", () => {
+    // Before the fix, `interface()` was unconditionally fed into the TS
+    // interface parser, producing a misleading "Expected identifier but
+    // found ';'" at the transpile stage. After the fix the transpiler
+    // preserves it as a call expression (whether it's valid runtime JS is
+    // up to the engine — `interface` is a reserved word in strict mode).
+    const result = transpiler.transformSync(`interface();`);
+    expect(result).toContain("interface()");
   });
 });

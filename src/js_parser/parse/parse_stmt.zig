@@ -1235,10 +1235,20 @@ pub fn ParseStmt(
                             },
                             .ts_stmt_interface => {
                                 // "interface Foo {}"
-                                var stmtOpts = ParseStatementOptions{ .is_module_scope = opts.is_module_scope };
+                                //
+                                // Only treat this as an ambient interface if we actually parsed just
+                                // the bare identifier "interface". If `parseExprOrLetStmt` consumed a
+                                // suffix (`interface()`, `interface.x`, etc.) then this is regular JS
+                                // using `interface` as an identifier and we must fall through.
+                                if (expr.data == .e_identifier and
+                                    !p.lexer.has_newline_before and
+                                    p.lexer.token == .t_identifier)
+                                {
+                                    var stmtOpts = ParseStatementOptions{ .is_module_scope = opts.is_module_scope };
 
-                                try p.skipTypeScriptInterfaceStmt(&stmtOpts);
-                                return p.s(S.TypeScript{}, loc);
+                                    try p.skipTypeScriptInterfaceStmt(&stmtOpts);
+                                    return p.s(S.TypeScript{}, loc);
+                                }
                             },
                             .ts_stmt_abstract => {
                                 if (p.lexer.token == .t_class or opts.ts_decorators != null) {
@@ -1255,73 +1265,84 @@ pub fn ParseStmt(
                                 }
                             },
                             .ts_stmt_declare => {
-                                opts.lexical_decl = .allow_all;
-                                opts.is_typescript_declare = true;
+                                // Only treat this as an ambient "declare" modifier if we actually
+                                // parsed just the bare identifier "declare" with no suffix. If
+                                // `parseExprOrLetStmt` already consumed a call (`declare()`), a
+                                // member access (`declare.x`), an index (`declare[0]`), an
+                                // assignment, etc., then this is regular JS using `declare` as an
+                                // ordinary identifier and we must fall through to emit the
+                                // expression statement. Also require no newline before the next
+                                // token: ASI splits `declare\nfoo()` into two statements so the
+                                // `foo()` that follows is not part of an ambient declaration.
+                                if (expr.data == .e_identifier and !p.lexer.has_newline_before) {
+                                    opts.lexical_decl = .allow_all;
+                                    opts.is_typescript_declare = true;
 
-                                // "@decorator declare class Foo {}"
-                                // "@decorator declare abstract class Foo {}"
-                                if (opts.ts_decorators != null and p.lexer.token != .t_class and !p.lexer.isContextualKeyword("abstract")) {
-                                    try p.lexer.expected(.t_class);
-                                }
+                                    // "@decorator declare class Foo {}"
+                                    // "@decorator declare abstract class Foo {}"
+                                    if (opts.ts_decorators != null and p.lexer.token != .t_class and !p.lexer.isContextualKeyword("abstract")) {
+                                        try p.lexer.expected(.t_class);
+                                    }
 
-                                // "declare global { ... }"
-                                if (p.lexer.isContextualKeyword("global")) {
-                                    try p.lexer.next();
-                                    try p.lexer.expect(.t_open_brace);
-                                    _ = try p.parseStmtsUpTo(.t_close_brace, opts);
-                                    try p.lexer.next();
+                                    // "declare global { ... }"
+                                    if (p.lexer.isContextualKeyword("global")) {
+                                        try p.lexer.next();
+                                        try p.lexer.expect(.t_open_brace);
+                                        _ = try p.parseStmtsUpTo(.t_close_brace, opts);
+                                        try p.lexer.next();
+                                        return p.s(S.TypeScript{}, loc);
+                                    }
+
+                                    // "declare const x: any"
+                                    const stmt = try p.parseStmt(opts);
+                                    if (opts.ts_decorators) |decs| {
+                                        p.discardScopesUpTo(decs.scope_index);
+                                    }
+
+                                    // Unlike almost all uses of "declare", statements that use
+                                    // "export declare" with "var/let/const" inside a namespace affect
+                                    // code generation. They cause any declared bindings to be
+                                    // considered exports of the namespace. Identifier references to
+                                    // those names must be converted into property accesses off the
+                                    // namespace object:
+                                    //
+                                    //   namespace ns {
+                                    //     export declare const x
+                                    //     export function y() { return x }
+                                    //   }
+                                    //
+                                    //   (ns as any).x = 1
+                                    //   console.log(ns.y())
+                                    //
+                                    // In this example, "return x" must be replaced with "return ns.x".
+                                    // This is handled by replacing each "export declare" statement
+                                    // inside a namespace with an "export var" statement containing all
+                                    // of the declared bindings. That "export var" statement will later
+                                    // cause identifiers to be transformed into property accesses.
+                                    if (opts.is_namespace_scope and opts.is_export) {
+                                        var decls: G.Decl.List = .{};
+                                        switch (stmt.data) {
+                                            .s_local => |local| {
+                                                var _decls = try ListManaged(G.Decl).initCapacity(p.allocator, local.decls.len);
+                                                for (local.decls.slice()) |decl| {
+                                                    try extractDeclsForBinding(decl.binding, &_decls);
+                                                }
+                                                decls = .moveFromList(&_decls);
+                                            },
+                                            else => {},
+                                        }
+
+                                        if (decls.len > 0) {
+                                            return p.s(S.Local{
+                                                .kind = .k_var,
+                                                .is_export = true,
+                                                .decls = decls,
+                                            }, loc);
+                                        }
+                                    }
+
                                     return p.s(S.TypeScript{}, loc);
                                 }
-
-                                // "declare const x: any"
-                                const stmt = try p.parseStmt(opts);
-                                if (opts.ts_decorators) |decs| {
-                                    p.discardScopesUpTo(decs.scope_index);
-                                }
-
-                                // Unlike almost all uses of "declare", statements that use
-                                // "export declare" with "var/let/const" inside a namespace affect
-                                // code generation. They cause any declared bindings to be
-                                // considered exports of the namespace. Identifier references to
-                                // those names must be converted into property accesses off the
-                                // namespace object:
-                                //
-                                //   namespace ns {
-                                //     export declare const x
-                                //     export function y() { return x }
-                                //   }
-                                //
-                                //   (ns as any).x = 1
-                                //   console.log(ns.y())
-                                //
-                                // In this example, "return x" must be replaced with "return ns.x".
-                                // This is handled by replacing each "export declare" statement
-                                // inside a namespace with an "export var" statement containing all
-                                // of the declared bindings. That "export var" statement will later
-                                // cause identifiers to be transformed into property accesses.
-                                if (opts.is_namespace_scope and opts.is_export) {
-                                    var decls: G.Decl.List = .{};
-                                    switch (stmt.data) {
-                                        .s_local => |local| {
-                                            var _decls = try ListManaged(G.Decl).initCapacity(p.allocator, local.decls.len);
-                                            for (local.decls.slice()) |decl| {
-                                                try extractDeclsForBinding(decl.binding, &_decls);
-                                            }
-                                            decls = .moveFromList(&_decls);
-                                        },
-                                        else => {},
-                                    }
-
-                                    if (decls.len > 0) {
-                                        return p.s(S.Local{
-                                            .kind = .k_var,
-                                            .is_export = true,
-                                            .decls = decls,
-                                        }, loc);
-                                    }
-                                }
-
-                                return p.s(S.TypeScript{}, loc);
                             },
                         }
                     }

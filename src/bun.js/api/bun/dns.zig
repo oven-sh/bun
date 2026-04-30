@@ -84,10 +84,13 @@ const LibInfo = struct {
         const promise_value = request.head.promise.value();
 
         const hints = query.options.toLibC();
-        const errno: i32 = if (bun.feature_flag.BUN_FEATURE_FLAG_FORCE_LIBINFO_ASYNC_START_ERROR.get())
+        const errno: i32 = if (bun.feature_flag.BUN_FEATURE_FLAG_FORCE_LIBINFO_ASYNC_START_ERROR.get()) blk: {
             // Skip the real call so no mach port / callback is registered.
-            -1
-        else
+            // `getErrno(-1)` on Darwin reads the thread-local libc errno, so set
+            // it to something deterministic instead of whatever the last call left.
+            std.c._errno().* = @intFromEnum(std.c.E.NOSYS);
+            break :blk -1;
+        } else
             getaddrinfo_async_start_(
                 &request.backend.libinfo.machport,
                 name_z.ptr,

@@ -46,7 +46,6 @@ it("console.timeEnd / timeLog respect console.group indentation", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(exitCode).toBe(0);
   // Group labels go to stdout; timer output goes to stderr.
   expect(stdout.replaceAll("\r\n", "\n")).toBe("a\n  b\n");
   // Strip the elapsed-time prefix so the stderr check focuses on indentation.
@@ -64,4 +63,6 @@ it("console.timeEnd / timeLog respect console.group indentation", async () => {
       "",
     ].join("\n"),
   );
+  // Assert the exit code last for more useful failure diagnostics.
+  expect(exitCode).toBe(0);
 });

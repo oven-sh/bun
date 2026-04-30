@@ -2557,16 +2557,33 @@ pub const Resolver = struct {
             // c-ares reports the full desired (readable, writable) set for this
             // fd; sync the poll's registration to match. FilePoll now supports
             // both directions on one poll (epoll: combined mask via CTL_MOD;
-            // kqueue: two filters, both EV_DELETEd on unregister).
+            // kqueue: two filters on the same ident, both EV_DELETEd on
+            // unregister).
+            const loop = vm.event_loop_handle.?;
             const have_readable = poll.flags.contains(.poll_readable);
             const have_writable = poll.flags.contains(.poll_writable);
-            if (have_readable != readable or have_writable != writable) {
-                if (have_readable or have_writable)
-                    _ = poll.unregister(vm.event_loop_handle.?, false);
+
+            if ((have_readable and !readable) or (have_writable and !writable)) {
+                // Dropping a direction. FilePoll has no per-direction
+                // unregister (epoll CTL_DEL removes both; a targeted kqueue
+                // EV_DELETE would need a new API), and leaving the unwanted
+                // direction armed would busy-loop on level-triggered writable
+                // once the socket connects. Full resync is the simplest
+                // correct path and c-ares DNS fds are short-lived.
+                _ = poll.unregister(loop, false);
                 if (readable)
-                    _ = poll.register(vm.event_loop_handle.?, .readable, false);
+                    _ = poll.register(loop, .readable, false);
                 if (writable)
-                    _ = poll.register(vm.event_loop_handle.?, .writable, false);
+                    _ = poll.register(loop, .writable, false);
+            } else {
+                // Only adding directions (or no change). register() issues a
+                // single CTL_MOD on epoll that preserves the other direction;
+                // on kqueue EV_ADD creates a separate (ident, filter) knote
+                // without disturbing the existing one.
+                if (readable and !have_readable)
+                    _ = poll.register(loop, .readable, false);
+                if (writable and !have_writable)
+                    _ = poll.register(loop, .writable, false);
             }
         }
     }

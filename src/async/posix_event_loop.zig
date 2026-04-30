@@ -842,10 +842,16 @@ pub const FilePoll = struct {
             };
             // epoll keys on fd alone; if the other direction is already
             // registered on this poll, preserve it in the CTL_MOD mask.
-            if (flag == .readable and this.flags.contains(.poll_writable))
+            // (EPOLLONESHOT disarms the whole fd after the first event in
+            // either direction, so bidirectional one-shot is not supported.)
+            if (flag == .readable and this.flags.contains(.poll_writable)) {
+                bun.debugAssert(!this.flags.contains(.one_shot));
                 flags |= linux.EPOLL.OUT | linux.EPOLL.ERR;
-            if (flag == .writable and this.flags.contains(.poll_readable))
+            }
+            if (flag == .writable and this.flags.contains(.poll_readable)) {
+                bun.debugAssert(!this.flags.contains(.one_shot));
                 flags |= linux.EPOLL.IN;
+            }
 
             var event = linux.epoll_event{ .events = flags, .data = .{ .u64 = @intFromPtr(Pollable.init(this).ptr()) } };
 
@@ -1166,23 +1172,27 @@ pub const FilePoll = struct {
                 KEVENT_FLAG_ERROR_EVENTS,
                 &timeout,
             );
-            // If an error occurs while
-            // processing an element of the changelist and there is enough room
-            // in the eventlist, then the event will be placed in the eventlist
-            // with EV_ERROR set in flags and the system error in data.
-            if (changelist[0].flags == std.c.EV.ERROR) {
-                return bun.sys.Maybe(void).errnoSys(changelist[0].data, .kevent).?;
-                // Otherwise, -1 will be returned, and errno will be set to
-                // indicate the error condition.
-            }
-            if (both_directions and changelist[1].flags == std.c.EV.ERROR) {
-                return bun.sys.Maybe(void).errnoSys(changelist[1].data, .kevent).?;
-            }
 
             const errno = bun.sys.getErrno(rc);
             switch (rc) {
+                // Global failure (e.g. EBADF on the kqueue fd): the eventlist
+                // was not written, so per-entry checks below would read our
+                // own input. Report errno and stop.
                 std.math.minInt(@TypeOf(rc))...-1 => return bun.sys.Maybe(void).errnoSys(@intFromEnum(errno), .kevent).?,
                 else => {},
+            }
+
+            // If an error occurs while processing an element of the changelist
+            // and there is enough room in the eventlist, then the event will be
+            // placed in the eventlist with EV_ERROR set in flags and the system
+            // error in data. With KEVENT_FLAG_ERROR_EVENTS, rc is the count of
+            // such error events; they are packed from index 0 regardless of
+            // which change failed.
+            if (rc >= 1 and changelist[0].flags == std.c.EV.ERROR and changelist[0].data != 0) {
+                return bun.sys.Maybe(void).errnoSys(changelist[0].data, .kevent).?;
+            }
+            if (rc >= 2 and changelist[1].flags == std.c.EV.ERROR and changelist[1].data != 0) {
+                return bun.sys.Maybe(void).errnoSys(changelist[1].data, .kevent).?;
             }
         } else if (comptime Environment.isFreeBSD) {
             var changelist = std.mem.zeroes([2]std.c.Kevent);
@@ -1228,6 +1238,9 @@ pub const FilePoll = struct {
                 nchanges = 2;
             }
 
+            // nevents=0: per-entry errors surface as rc=-1/errno for the
+            // first failing change. For EV_DELETE (typically ENOENT) a silent
+            // miss on the second entry is harmless.
             const rc = std.c.kevent(
                 watcher_fd,
                 &changelist,

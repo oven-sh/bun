@@ -131,8 +131,8 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
     if (group->low_prio_count) {
         /* Don't pre-unlink — leave low_prio_state==1 so us_socket_close takes
          * its low-prio branch (which knows the socket is NOT in head_sockets
-         * and decrements low_prio_count itself). Walking via *pp survives the
-         * close because that branch rewires the list before dispatch. */
+         * and decrements low_prio_count itself). The cached `next` survives
+         * the close because that branch rewires the list before dispatch. */
         struct us_internal_loop_data_t *ld = &group->loop->data;
         struct us_socket_t *q = ld->low_prio_head;
         while (q) {

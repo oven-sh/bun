@@ -2072,6 +2072,10 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
     if (duplexContext.ssl_config == null) {
         if (socket_config) |c| c.deinit();
     }
+    // Disarm the errdefer at L2013 — either moved into duplexContext or just
+    // freed above; both the move-target and the deinit case must not see it
+    // freed again on a later throw.
+    ssl_opts = null;
     tls.ref();
 
     duplexContext.task = jsc.AnyTask.New(DuplexUpgradeContext, DuplexUpgradeContext.runEvent).init(duplexContext);

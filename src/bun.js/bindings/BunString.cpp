@@ -193,19 +193,31 @@ BunString toString(const char* bytes, size_t length)
     return BunString__fromBytes(bytes, length);
 }
 
+// toWTFString can rarely produce a null WTF::String without a pending
+// exception (observed under heavy GC pressure in the fuzzer REPRL loop).
+// Callers of BunString__fromJS (String.fromJS in Zig, host-fn wrappers)
+// require a Dead result to imply a pending exception. This guard
+// synthesizes an OOM error when that invariant would otherwise be
+// violated so downstream asserts never fire and error.JSError never
+// propagates without a real exception behind it.
+//
+// Exposed extern "C" so the test hook in InternalForTesting.cpp can
+// exercise it directly; the null-without-exception state is not
+// reachable from JavaScript.
+extern "C" void BunString__ensureDeadImpliesException(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    if (!vm.exceptionForInspection()) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwOutOfMemoryError(globalObject, scope);
+    }
+}
+
 BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     WTF::String str = value.toWTFString(globalObject);
     if (str.isNull()) [[unlikely]] {
-        // toWTFString can rarely produce a null WTF::String without a pending
-        // exception (observed under heavy GC pressure in the fuzzer REPRL
-        // loop). Callers (String.fromJS) require Dead to imply a pending
-        // exception, so synthesize one instead of returning a phantom error.
-        auto& vm = globalObject->vm();
-        if (!vm.exceptionForInspection()) {
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            throwOutOfMemoryError(globalObject, scope);
-        }
+        BunString__ensureDeadImpliesException(globalObject);
         return { BunStringTag::Dead };
     }
     if (str.length() == 0) [[unlikely]] {
@@ -236,11 +248,7 @@ BunString toStringRef(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     auto str = value.toWTFString(globalObject);
     if (str.isNull()) [[unlikely]] {
-        auto& vm = globalObject->vm();
-        if (!vm.exceptionForInspection()) {
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            throwOutOfMemoryError(globalObject, scope);
-        }
+        BunString__ensureDeadImpliesException(globalObject);
         return { BunStringTag::Dead };
     }
     if (str.length() == 0) [[unlikely]] {

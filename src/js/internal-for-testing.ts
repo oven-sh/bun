@@ -233,6 +233,12 @@ export const structuredCloneAdvanced: (
 
 export const lsanDoLeakCheck = $newCppFunction("InternalForTesting.cpp", "jsFunction_lsanDoLeakCheck", 1);
 
+export const bunStringDeadImpliesException = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_bunStringDeadImpliesException",
+  0,
+);
+
 export const getEventLoopStats: () => { activeTasks: number; concurrentRef: number; numPolls: number } =
   $newZigFunction("event_loop.zig", "getActiveTasks", 0);
 

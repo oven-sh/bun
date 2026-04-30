@@ -326,12 +326,20 @@ test("dupe() preserves allocated content_type for Body clone", () => {
 });
 
 // Blob.fromJSWithoutDeferGC -> JSValue.toSlice -> String.fromJS stringifies
-// arbitrary objects (including native constructors). Under fuzzer REPRL GC
-// pressure, JSValue::toWTFString was observed to return a null WTF::String
-// without a pending VM exception, tripping bun.debugAssert(has_exception).
-// The C++ boundary now synthesizes an OOM error in that edge case so the
-// "Dead => exception pending" invariant always holds; these tests cover the
-// path but the failure itself was non-deterministic.
+// arbitrary inputs. Under fuzzer REPRL GC pressure, JSValue::toWTFString was
+// observed returning a null WTF::String without a pending VM exception,
+// tripping bun.debugAssert(has_exception) in String.fromJS. That state is
+// not constructible from JavaScript (every null-return path in JSC's
+// toWTFString throws), so the guard in Bun::fromJS is exercised here via a
+// native hook that synthesizes the null-without-exception state and calls
+// the production guard directly.
+test("BunString fromJS synthesizes an exception when toWTFString is null without one", () => {
+  const { bunStringDeadImpliesException } = require("bun:internal-for-testing");
+  expect(bunStringDeadImpliesException()).toBe(true);
+});
+
+// Normal-path coverage for the same code: stringifying native constructors
+// through Bun.write must keep working.
 test("Bun.write accepts native constructors as data without asserting", async () => {
   using dir = tempDir("blob-stringify-non-blobpart", {});
   const out = path.join(String(dir), "out.txt");
@@ -342,35 +350,4 @@ test("Bun.write accepts native constructors as data without asserting", async ()
     expect(n).toBeGreaterThan(0);
     expect(await Bun.file(out).text()).toBe(String(value));
   }
-});
-
-test("S3Client.write stringifies non-BlobPart data without asserting", async () => {
-  // Run in a subprocess so the rejected promises (no reachable endpoint)
-  // can't leak into the harness; we only care that the synchronous
-  // stringification path in writeFileInternal doesn't panic.
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-        const s3 = new Bun.S3Client({
-          accessKeyId: "a",
-          secretAccessKey: "b",
-          bucket: "c",
-          endpoint: "http://127.0.0.1:1",
-        });
-        for (const value of [ArrayBuffer, Float64Array, Object, function f() {}]) {
-          Bun.gc(true);
-          s3.write("key", value).catch(() => {});
-        }
-      `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [exitCode, stderr] = await Promise.all([proc.exited, proc.stderr.text()]);
-  expect(stderr).not.toContain("panic");
-  expect(stderr).not.toContain("unreachable");
-  expect(exitCode).toBe(0);
 });

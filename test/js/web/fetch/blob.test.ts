@@ -1,3 +1,4 @@
+import { bunStringDeadImpliesException } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
@@ -334,7 +335,6 @@ test("dupe() preserves allocated content_type for Body clone", () => {
 // native hook that synthesizes the null-without-exception state and calls
 // the production guard directly.
 test("BunString fromJS synthesizes an exception when toWTFString is null without one", () => {
-  const { bunStringDeadImpliesException } = require("bun:internal-for-testing");
   expect(bunStringDeadImpliesException()).toBe(true);
 });
 

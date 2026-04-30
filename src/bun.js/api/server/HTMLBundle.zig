@@ -290,6 +290,7 @@ pub const Route = struct {
 
         if (!is_development) {
             bun.handleOom(config.define.put("process.env.NODE_ENV", "\"production\""));
+            bun.handleOom(config.define.put("Bun.env.NODE_ENV", "\"production\""));
             config.jsx.development = false;
         } else {
             config.force_node_env = .development;

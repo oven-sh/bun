@@ -92,6 +92,56 @@ for (let backend of ["api", "cli"] as const) {
         },
       });
 
+    // Test that Bun.env works the same as process.env with inline mode
+    if (backend === "cli")
+      itBundled("env/inline-bun-env", {
+        env: {
+          FOO: "bar",
+          BAZ: "123",
+        },
+        backend: backend,
+        dotenv: "inline",
+        files: {
+          "/a.js": `
+        console.log(Bun.env.FOO);
+        console.log(Bun.env.BAZ);
+      `,
+        },
+        run: {
+          env: {
+            FOO: "barz",
+            BAZ: "123z",
+          },
+          stdout: "bar\n123\n",
+        },
+      });
+
+    // Test that Bun.env works with pattern matching
+    if (backend === "cli")
+      itBundled("env/pattern-matching-bun-env", {
+        env: {
+          PUBLIC_FOO: "public_value",
+          PUBLIC_BAR: "another_public",
+          PRIVATE_SECRET: "secret_value",
+        },
+        dotenv: "PUBLIC_*",
+        backend: backend,
+        files: {
+          "/a.js": `
+        console.log(Bun.env.PUBLIC_FOO);
+        console.log(Bun.env.PUBLIC_BAR);
+        console.log(Bun.env.PRIVATE_SECRET);
+      `,
+        },
+        run: {
+          env: {
+            PUBLIC_FOO: "BAD_FOO",
+            PUBLIC_BAR: "BAD_BAR",
+          },
+          stdout: "public_value\nanother_public\nundefined\n",
+        },
+      });
+
     if (backend === "cli")
       // Test nested environment variable references
       itBundled("nested-refs", {

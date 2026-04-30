@@ -37,8 +37,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          bun install
-          pushd ./packages/bun-plugin-svelte && bun install
+          bun ci
+          pushd ./packages/bun-plugin-svelte && bun ci
 
       - name: Lint
         run: |

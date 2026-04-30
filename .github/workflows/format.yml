@@ -34,7 +34,7 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
       - name: Setup Dependencies
         run: |
-          bun install
+          bun ci
       - name: Format Code
         run: |
           # Start prettier in background with prefixed output

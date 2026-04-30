@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
 // tests spawn many workers, so scale iteration counts and timeouts down.

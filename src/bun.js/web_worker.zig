@@ -472,8 +472,11 @@ fn spin(this: *WebWorker) void {
 
     this.flushLogs(vm);
     log("[{d}] event loop start", .{this.execution_context_id});
-    // TODO(@190n) call dispatchOnline earlier (basically as soon as spin()
-    // starts, before we start running JS)
+    // dispatchOnline fires the parent-side 'open' event and flips the C++
+    // state to Running (which routes postMessage directly instead of
+    // queuing). It is placed after the entry point has loaded so the parent
+    // observes 'online' only once the worker's top-level code has completed;
+    // moving it earlier would change that observable ordering.
     WebWorker__dispatchOnline(this.cpp_worker, vm.global);
     WebWorker__fireEarlyMessages(this.cpp_worker, vm.global);
     this.setStatus(.running);

@@ -435,65 +435,69 @@ function toV(which, v, def) {
   throw $ERR_TLS_INVALID_PROTOCOL_VERSION(v, which);
 }
 
+// Node.js-compatible type checks for secure-context options. Runs before any
+// native SSL_CTX is built so the correct ERR_INVALID_ARG_TYPE /
+// ERR_TLS_INVALID_PROTOCOL_VERSION is thrown instead of a bindgen-layer error,
+// and so createServer() can validate without eagerly constructing an SSL_CTX.
+function validateSecureContextOptions(options) {
+  if (!options) return;
+
+  const { minVersion, maxVersion } = options;
+  toV("minimum", minVersion, DEFAULT_MIN_VERSION);
+  toV("maximum", maxVersion, DEFAULT_MAX_VERSION);
+
+  const { ciphers } = options;
+  if (ciphers !== undefined && ciphers !== null) validateString(ciphers, "options.ciphers");
+
+  if (options.cert) throwOnInvalidTLSArray("options.cert", options.cert);
+  if (options.key) throwOnInvalidTLSArray("options.key", options.key);
+  if (options.ca) throwOnInvalidTLSArray("options.ca", options.ca);
+  if (options.passphrase != null) validateString(options.passphrase, "options.passphrase");
+  if (options.servername != null && typeof options.servername !== "string")
+    throw $ERR_INVALID_ARG_TYPE("options.servername", "string", options.servername);
+  if (options.secureOptions != null && typeof options.secureOptions !== "number")
+    throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", options.secureOptions);
+  if (!$isUndefinedOrNull(options.privateKeyIdentifier)) {
+    if ($isUndefinedOrNull(options.privateKeyEngine))
+      throw $ERR_INVALID_ARG_VALUE("options.privateKeyEngine", options.privateKeyEngine);
+    if (typeof options.privateKeyEngine !== "string")
+      throw $ERR_INVALID_ARG_TYPE("options.privateKeyEngine", ["string", "null", "undefined"], options.privateKeyEngine);
+    if (typeof options.privateKeyIdentifier !== "string")
+      throw $ERR_INVALID_ARG_TYPE(
+        "options.privateKeyIdentifier",
+        ["string", "null", "undefined"],
+        options.privateKeyIdentifier,
+      );
+  }
+
+  const { ecdhCurve } = options;
+  if (ecdhCurve !== undefined && ecdhCurve !== null) validateString(ecdhCurve, "options.ecdhCurve");
+
+  const { clientCertEngine } = options;
+  if (clientCertEngine !== undefined && clientCertEngine !== null && typeof clientCertEngine !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("options.clientCertEngine", ["string", "null", "undefined"], clientCertEngine);
+  }
+
+  const { ticketKeys } = options;
+  if (ticketKeys !== undefined && ticketKeys !== null) {
+    validateBuffer(ticketKeys, "options.ticketKeys");
+    if (ticketKeys.byteLength !== 48) {
+      throw $ERR_INVALID_ARG_VALUE("options.ticketKeys", ticketKeys.byteLength, "must be exactly 48 bytes");
+    }
+  }
+
+  const { sessionTimeout } = options;
+  if (sessionTimeout !== undefined && sessionTimeout !== null) {
+    validateInt32(sessionTimeout, "options.sessionTimeout", 0);
+  }
+}
+
 var InternalSecureContext = class SecureContext {
   context;
   servername;
 
   constructor(options) {
-    if (options) {
-      const { minVersion, maxVersion } = options;
-      toV("minimum", minVersion, DEFAULT_MIN_VERSION);
-      toV("maximum", maxVersion, DEFAULT_MAX_VERSION);
-
-      const { ciphers } = options;
-      if (ciphers !== undefined && ciphers !== null) validateString(ciphers, "options.ciphers");
-
-      if (options.cert) throwOnInvalidTLSArray("options.cert", options.cert);
-      if (options.key) throwOnInvalidTLSArray("options.key", options.key);
-      if (options.ca) throwOnInvalidTLSArray("options.ca", options.ca);
-      if (options.passphrase != null) validateString(options.passphrase, "options.passphrase");
-      if (options.servername != null && typeof options.servername !== "string")
-        throw $ERR_INVALID_ARG_TYPE("options.servername", "string", options.servername);
-      if (options.secureOptions != null && typeof options.secureOptions !== "number")
-        throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", options.secureOptions);
-      if (!$isUndefinedOrNull(options.privateKeyIdentifier)) {
-        if ($isUndefinedOrNull(options.privateKeyEngine))
-          throw $ERR_INVALID_ARG_VALUE("options.privateKeyEngine", options.privateKeyEngine);
-        if (typeof options.privateKeyEngine !== "string")
-          throw $ERR_INVALID_ARG_TYPE(
-            "options.privateKeyEngine",
-            ["string", "null", "undefined"],
-            options.privateKeyEngine,
-          );
-        if (typeof options.privateKeyIdentifier !== "string")
-          throw $ERR_INVALID_ARG_TYPE(
-            "options.privateKeyIdentifier",
-            ["string", "null", "undefined"],
-            options.privateKeyIdentifier,
-          );
-      }
-
-      const { ecdhCurve } = options;
-      if (ecdhCurve !== undefined && ecdhCurve !== null) validateString(ecdhCurve, "options.ecdhCurve");
-
-      const { clientCertEngine } = options;
-      if (clientCertEngine !== undefined && clientCertEngine !== null && typeof clientCertEngine !== "string") {
-        throw $ERR_INVALID_ARG_TYPE("options.clientCertEngine", ["string", "null", "undefined"], clientCertEngine);
-      }
-
-      const { ticketKeys } = options;
-      if (ticketKeys !== undefined && ticketKeys !== null) {
-        validateBuffer(ticketKeys, "options.ticketKeys");
-        if (ticketKeys.byteLength !== 48) {
-          throw $ERR_INVALID_ARG_VALUE("options.ticketKeys", ticketKeys.byteLength, "must be exactly 48 bytes");
-        }
-      }
-
-      const { sessionTimeout } = options;
-      if (sessionTimeout !== undefined && sessionTimeout !== null) {
-        validateInt32(sessionTimeout, "options.sessionTimeout", 0);
-      }
-    }
+    validateSecureContextOptions(options);
     // The native handle (SSL_CTX wrapper) is what's memoised — not this JS
     // object — so per-call fields like `servername` come from THIS call's
     // options while the expensive SSL_CTX is shared.
@@ -818,8 +822,9 @@ function Server(options, secureConnectionListener): void {
       // Run the full set of secure-context option type checks. This matches
       // node, where Server#setSecureContext builds this._sharedCreds via
       // tls.createSecureContext(), so invalid ciphers/ecdhCurve/ticketKeys/etc.
-      // throw synchronously from createServer().
-      createSecureContext(options);
+      // throw synchronously from createServer(). We don't actually build a
+      // native SSL_CTX here — the server path defers that to listen().
+      validateSecureContextOptions(options);
 
       const { ALPNProtocols } = options;
 

@@ -15,7 +15,7 @@ const indexHtml = /* html */ `<!DOCTYPE html>
 // Exercises ServePlugins.handleOnReject with pending.dev_server set — the request that
 // was deferred while plugins were pending must be released once the DevServer is told
 // the load failed.
-test("DevServer is notified when [serve.static] plugin setup rejects", async () => {
+test.concurrent("DevServer is notified when [serve.static] plugin setup rejects", async () => {
   using dir = tempDir("serve-plugins-devserver-reject", {
     "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
     "plugin.ts": `
@@ -78,12 +78,12 @@ test("DevServer is notified when [serve.static] plugin setup rejects", async () 
   // isn't, the fetch sits until the 10s abort fires and we see "TimeoutError" here.
   expect(result).not.toBe("TimeoutError");
   expect(exitCode).toBe(0);
-}, 30_000);
+});
 
 // DevServer waits on `[serve.static]` plugins and the plugin promise resolves.
 // Exercises ServePlugins.handleOnResolve with pending.dev_server set — the DevServer
 // must be handed the resolved plugin so its bundle actually goes through it.
-test("DevServer is notified when [serve.static] plugin setup resolves", async () => {
+test.concurrent("DevServer is notified when [serve.static] plugin setup resolves", async () => {
   using dir = tempDir("serve-plugins-devserver-resolve", {
     "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
     "plugin.ts": `
@@ -136,4 +136,4 @@ test("DevServer is notified when [serve.static] plugin setup resolves", async ()
   const out = JSON.parse(line!);
   expect(out).toEqual({ status: 200, fromPlugin: true });
   expect(exitCode).toBe(0);
-}, 30_000);
+});

@@ -1,15 +1,15 @@
 // Place source bytes immediately before an unmapped guard page so that an
 // out-of-bounds read past the end of the input faults deterministically,
 // independent of allocator layout or ASAN.
-import { existsSync } from "node:fs";
 import { dlopen, ptr, toArrayBuffer } from "bun:ffi";
 
 const isDarwin = process.platform === "darwin";
-const libcPath = isDarwin
-  ? "/usr/lib/libSystem.B.dylib"
-  : existsSync("/usr/lib/libc.so")
-    ? "/usr/lib/libc.so" // musl
-    : "libc.so.6"; // glibc
+// The test passes libcPathForDlopen() from the harness (which distinguishes
+// glibc from musl via process.report). Probing /usr/lib/libc.so is unreliable
+// because on non-multiarch glibc distros that path is an ld linker script,
+// not an ELF, and dlopen() would reject it.
+const libcPath = process.env.BUN_TEST_LIBC_PATH!;
+if (!libcPath) throw new Error("BUN_TEST_LIBC_PATH not set");
 const MAP_ANON = isDarwin ? 0x1000 : 0x20;
 const MAP_PRIVATE = 0x02;
 const PROT_READ = 1;

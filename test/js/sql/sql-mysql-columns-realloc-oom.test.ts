@@ -180,4 +180,4 @@ test("MySQL: OOM reallocating statement.columns does not leave a dangling slice"
   const result = JSON.parse(stdout.trim());
   expect(typeof result.code === "string" || typeof result.name === "string").toBe(true);
   expect(exitCode).toBe(0);
-}, 30_000);
+});

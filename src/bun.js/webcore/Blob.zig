@@ -204,6 +204,81 @@ const FormDataContext = struct {
     failed: bool = false,
     globalThis: *jsc.JSGlobalObject,
 
+    /// Per the WHATWG multipart/form-data spec, name and filename values in
+    /// Content-Disposition headers must have 0x0A (LF), 0x0D (CR), and 0x22 (")
+    /// percent-encoded to prevent malformed multipart bodies.
+    fn escapeFormDataNameOrFilename(input: []const u8, allocator: std.mem.Allocator) ?[]const u8 {
+        // Fast path: check if any escaping is needed.
+        const needs_escape = brk: {
+            for (input) |c| {
+                if (c == '"' or c == '\r' or c == '\n') break :brk true;
+            }
+            break :brk false;
+        };
+        if (!needs_escape) return null;
+
+        // Count output size: each special char expands from 1 byte to 3 bytes (%XX).
+        var extra: usize = 0;
+        for (input) |c| {
+            if (c == '"' or c == '\r' or c == '\n') extra += 2;
+        }
+        const buf = allocator.alloc(u8, input.len + extra) catch |err| bun.handleOom(err);
+        var i: usize = 0;
+        for (input) |c| {
+            switch (c) {
+                '"' => {
+                    buf[i] = '%';
+                    buf[i + 1] = '2';
+                    buf[i + 2] = '2';
+                    i += 3;
+                },
+                '\r' => {
+                    buf[i] = '%';
+                    buf[i + 1] = '0';
+                    buf[i + 2] = 'D';
+                    i += 3;
+                },
+                '\n' => {
+                    buf[i] = '%';
+                    buf[i + 1] = '0';
+                    buf[i + 2] = 'A';
+                    i += 3;
+                },
+                else => {
+                    buf[i] = c;
+                    i += 1;
+                },
+            }
+        }
+        return buf[0..i];
+    }
+
+    /// Sanitize content_type for use in multipart headers by stripping
+    /// CR and LF characters that could break the header structure.
+    fn sanitizeContentType(content_type: []const u8, allocator: std.mem.Allocator) ?[]const u8 {
+        const needs_sanitize = brk: {
+            for (content_type) |c| {
+                if (c == '\r' or c == '\n') break :brk true;
+            }
+            break :brk false;
+        };
+        if (!needs_sanitize) return null;
+
+        var count: usize = 0;
+        for (content_type) |c| {
+            if (c != '\r' and c != '\n') count += 1;
+        }
+        const buf = allocator.alloc(u8, count) catch |err| bun.handleOom(err);
+        var i: usize = 0;
+        for (content_type) |c| {
+            if (c != '\r' and c != '\n') {
+                buf[i] = c;
+                i += 1;
+            }
+        }
+        return buf[0..i];
+    }
+
     pub fn onEntry(this: *FormDataContext, name: ZigString, entry: jsc.DOMFormData.FormDataEntry) void {
         if (this.failed) return;
         var globalThis = this.globalThis;
@@ -218,7 +293,12 @@ const FormDataContext = struct {
 
         joiner.pushStatic("Content-Disposition: form-data; name=\"");
         const name_slice = name.toSlice(allocator);
-        joiner.push(name_slice.slice(), name_slice.allocator.get());
+        if (escapeFormDataNameOrFilename(name_slice.slice(), allocator)) |escaped| {
+            name_slice.deinit();
+            joiner.push(escaped, allocator);
+        } else {
+            joiner.push(name_slice.slice(), name_slice.allocator.get());
+        }
 
         switch (entry) {
             .string => |value| {
@@ -229,13 +309,27 @@ const FormDataContext = struct {
             .file => |value| {
                 joiner.pushStatic("\"; filename=\"");
                 const filename_slice = value.filename.toSlice(allocator);
-                joiner.push(filename_slice.slice(), filename_slice.allocator.get());
+                if (escapeFormDataNameOrFilename(filename_slice.slice(), allocator)) |escaped| {
+                    filename_slice.deinit();
+                    joiner.push(escaped, allocator);
+                } else {
+                    joiner.push(filename_slice.slice(), filename_slice.allocator.get());
+                }
                 joiner.pushStatic("\"\r\n");
 
                 const blob = value.blob;
-                const content_type = if (blob.content_type.len > 0) blob.content_type else "application/octet-stream";
+                const raw_content_type = if (blob.content_type.len > 0) blob.content_type else "application/octet-stream";
                 joiner.pushStatic("Content-Type: ");
-                joiner.pushStatic(content_type);
+                if (sanitizeContentType(raw_content_type, allocator)) |sanitized| {
+                    if (sanitized.len > 0) {
+                        joiner.push(sanitized, allocator);
+                    } else {
+                        allocator.free(sanitized);
+                        joiner.pushStatic("application/octet-stream");
+                    }
+                } else {
+                    joiner.pushStatic(raw_content_type);
+                }
                 joiner.pushStatic("\r\n\r\n");
 
                 if (blob.store) |store| {

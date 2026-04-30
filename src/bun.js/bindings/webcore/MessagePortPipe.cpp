@@ -217,18 +217,42 @@ void MessagePortPipe::detach(uint8_t side)
 void MessagePortPipe::close(uint8_t side)
 {
     ASSERT(side < 2);
-    auto& s = m_sides[side];
-    Deque<MessageWithMessagePorts> dropped;
-    {
-        Locker locker { s.lock };
-        s.ctxId = 0;
-        s.port = nullptr;
-        // Closed is terminal; queued messages are dropped.
-        s.state.store(Closed, std::memory_order_release);
-        dropped = std::exchange(s.inbox, {});
+
+    // Dropped messages can carry TransferredMessagePorts, whose destructor
+    // calls close() on their pipe. Letting those destruct naturally recurses
+    // (close -> ~Deque -> ~TransferredMessagePort -> close -> ...), so a long
+    // chain of nested transferred ports overflows the native stack. Drain the
+    // cascade iteratively instead: steal transferred pipes from each batch of
+    // dropped messages into a stack-local worklist and close them in a loop.
+    Vector<std::pair<RefPtr<MessagePortPipe>, uint8_t>> worklist;
+    worklist.append({ this, side });
+
+    while (!worklist.isEmpty()) {
+        auto [pipe, sd] = worklist.takeLast();
+        auto& s = pipe->m_sides[sd];
+
+        Deque<MessageWithMessagePorts> dropped;
+        {
+            Locker locker { s.lock };
+            s.ctxId = 0;
+            s.port = nullptr;
+            // Closed is terminal; queued messages are dropped.
+            s.state.store(Closed, std::memory_order_release);
+            dropped = std::exchange(s.inbox, {});
+        }
+
+        // Harvest transferred pipes before `dropped` destructs so their
+        // ~TransferredMessagePort sees pipe == nullptr and is a no-op.
+        for (auto& message : dropped) {
+            for (auto& tp : message.transferredPorts) {
+                if (auto p = std::exchange(tp.pipe, nullptr))
+                    worklist.append({ WTF::move(p), tp.side });
+            }
+        }
+        // `dropped` (and the RefPtr in the structured binding) destruct
+        // outside the lock; they may hold the last ref to pipes whose
+        // destructors also take locks.
     }
-    // `dropped` destructs outside the lock; it may hold the last ref to
-    // transferred pipes whose destructors also take locks.
 }
 
 } // namespace WebCore

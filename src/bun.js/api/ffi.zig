@@ -1223,8 +1223,7 @@ pub const FFI = struct {
             if (function.symbol_from_dynamic_library == null) {
                 const ret = global.toInvalidArguments("Symbol \"{s}\" is missing a \"ptr\" field. When using linkSymbols() or CFunction(), you must provide a \"ptr\" field with the memory address of the native function.", .{bun.asByteSlice(function_name)});
                 for (symbols.values()) |*value| {
-                    allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
-                    value.arg_types.clearAndFree(allocator);
+                    value.deinit(global);
                 }
                 symbols.clearAndFree(allocator);
                 return ret;
@@ -1243,20 +1242,18 @@ pub const FFI = struct {
             };
             switch (function.step) {
                 .failed => |err| {
-                    for (symbols.values()) |*value| {
-                        allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
-                        value.arg_types.clearAndFree(allocator);
-                    }
-
+                    // Build the error before deinit: `err.msg` is owned by `function.step`
+                    // and `function` is one of `symbols.values()`.
                     const res = ZigString.init(err.msg).toErrorInstance(global);
-                    function.deinit(global);
+                    for (symbols.values()) |*value| {
+                        value.deinit(global);
+                    }
                     symbols.clearAndFree(allocator);
                     return res;
                 },
                 .pending => {
                     for (symbols.values()) |*value| {
-                        allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
-                        value.arg_types.clearAndFree(allocator);
+                        value.deinit(global);
                     }
                     symbols.clearAndFree(allocator);
                     return ZigString.static("Failed to compile (nothing happend!)").toErrorInstance(global);

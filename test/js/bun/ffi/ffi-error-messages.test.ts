@@ -1,6 +1,6 @@
 import { dlopen, linkSymbols } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { isArm64, isMusl, isWindows } from "harness";
+import { bunEnv, bunExe, isArm64, isMusl, isWindows } from "harness";
 
 // TinyCC (and all of bun:ffi) is disabled on Windows ARM64
 const isFFIUnavailable = isWindows && isArm64;
@@ -85,5 +85,43 @@ describe.skipIf(isFFIUnavailable)("FFI error messages", () => {
         },
       });
     }).toThrow('you must provide a "ptr" field with the memory address of the native function.');
+  });
+
+  // The symbol name is embedded verbatim into the C source handed to TinyCC. An invalid
+  // C identifier makes compilation fail and takes the `.failed` cleanup path in
+  // `linkSymbols`. That path used to free `base_name` for every symbol and then call
+  // `function.deinit()` on the failing one, freeing its `base_name` a second time.
+  // Run in a subprocess so the heap-corruption abort (debug/ASAN builds) is observable
+  // as a non-zero exit instead of tearing down the test runner.
+  test("linkSymbols cleans up without double-free when TinyCC compilation fails", async () => {
+    const src = /* js */ `
+      const { linkSymbols, JSCallback } = require("bun:ffi");
+      const cb = new JSCallback(() => {}, { returns: "void", args: [] });
+      let threw = false;
+      try {
+        linkSymbols({
+          "not a valid C identifier!": {
+            ptr: cb.ptr,
+            args: [],
+            returns: "void",
+          },
+        });
+      } catch (e) {
+        threw = true;
+      }
+      cb.close();
+      if (!threw) throw new Error("expected linkSymbols to throw");
+      console.log("ok");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
   });
 });

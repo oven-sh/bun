@@ -1519,8 +1519,19 @@ pub fn parseSSLConfig(
     return null;
 }
 
+/// Free an SSLConfig previously returned by `parseSSLConfig`.
+/// Exported for C++ so error/early-return paths in JSWebSocket.cpp and
+/// WebSocket.cpp can release ownership without leaking the heap allocation
+/// (and all duped cert/key/CA strings inside it) when `connect()` never
+/// hands the pointer off to a Zig upgrade client.
+pub fn freeSSLConfig(config: *SSLConfig) callconv(.c) void {
+    config.deinit();
+    bun.default_allocator.destroy(config);
+}
+
 comptime {
     @export(&parseSSLConfig, .{ .name = "Bun__WebSocket__parseSSLConfig" });
+    @export(&freeSSLConfig, .{ .name = "Bun__WebSocket__freeSSLConfig" });
 }
 
 const WebSocketDeflate = @import("./WebSocketDeflate.zig");

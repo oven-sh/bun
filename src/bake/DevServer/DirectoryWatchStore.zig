@@ -190,10 +190,10 @@ fn insert(
 /// Caller must detach the dependency from the linked list it is in.
 pub fn freeDependencyIndex(store: *DirectoryWatchStore, alloc: Allocator, index: Dep.Index) !void {
     alloc.free(store.dependencies.items[index.get()].specifier);
-
-    if (Environment.isDebug) {
-        store.dependencies.items[index.get()] = undefined;
-    }
+    // Zero out the slot so that DevServer.deinit and memoryCost, which
+    // iterate `dependencies.items` without consulting the free list, do
+    // not touch the freed allocation or stale borrowed pointers.
+    store.dependencies.items[index.get()] = .empty;
 
     if (index.get() == (store.dependencies.items.len - 1)) {
         store.dependencies.items.len -= 1;
@@ -291,11 +291,16 @@ pub const Dep = struct {
     /// creating an unrelated file should not re-emit another error. Allocated memory
     specifier: []u8,
 
+    pub const empty: Dep = .{
+        .next = .none,
+        .source_file_path = "",
+        .specifier = &.{},
+    };
+
     pub const Index = bun.GenericIndex(u32, Dep);
 };
 
 const bun = @import("bun");
-const Environment = bun.Environment;
 const Watcher = bun.Watcher;
 const assert = bun.assert;
 const bake = bun.bake;

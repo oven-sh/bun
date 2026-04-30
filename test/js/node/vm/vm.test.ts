@@ -866,8 +866,8 @@ test("ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING is allocated in the vm realm", asyn
   const guestTypeError = runInContext("TypeError", context);
   const guestFunction = runInContext("Function", context);
 
-  // Path 1: moduleLoaderImportModule on the NodeVMGlobalObject itself
-  // (no per-script fetcher involved).
+  // import() from code evaluated via vm.Script (runInContext wraps code in
+  // a Script internally, so the source origin carries a NodeVMScriptFetcher).
   const err1 = await runInContext(`import("x").catch(e => e)`, context);
   expect({
     code: err1.code,
@@ -901,10 +901,10 @@ test("ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING is allocated in the vm realm", asyn
   );
   expect(escaped).toBe("undefined");
 
-  // Path 2: vm.Script with an associated ScriptFetcher running inside a
-  // NodeVM context.
-  const script = new Script(`import("x").catch(e => e)`);
-  const err2 = await script.runInContext(context);
+  // import() from a source origin with no NodeVM script fetcher (indirect
+  // eval discards the outer Script's fetcher), which takes the fallback
+  // path through NodeVMGlobalObject::moduleLoaderImportModule.
+  const err2 = await runInContext(`(0, eval)("import('x')").catch(e => e)`, context);
   expect({
     code: err2.code,
     hostError: err2 instanceof Error,

@@ -404,6 +404,47 @@ test("new Blob() copies ArrayBuffer parts before later parts' toString() can det
   expect(exitCode).toBe(0);
 });
 
+test("new Blob() releases copied ArrayBuffer parts when a later part throws", async () => {
+  // Now that ArrayBuffer parts are heap-duped into the joiner, a later part
+  // throwing from toString() must not leak those copies. Each iteration below
+  // dupes 4MB into the joiner and then throws; without cleanup 128 iterations
+  // would retain ~512MB.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const size = 4 << 20;
+        const u8 = new Uint8Array(size);
+        const thrower = { toString() { throw new Error("nope"); } };
+        // Warm up, then snapshot baseline RSS.
+        for (let i = 0; i < 4; i++) {
+          try { new Blob([u8, thrower]); } catch {}
+        }
+        Bun.gc(true);
+        const before = process.memoryUsage.rss();
+        for (let i = 0; i < 128; i++) {
+          try { new Blob([u8, thrower]); } catch {}
+        }
+        Bun.gc(true);
+        const after = process.memoryUsage.rss();
+        console.log(JSON.stringify({ growthMB: (after - before) / (1 << 20) }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  const { growthMB } = JSON.parse(stdout);
+  // Without the errdefer this grows by ~512MB; with it, a few MB of noise.
+  expect(growthMB).toBeLessThan(64);
+  expect(exitCode).toBe(0);
+});
+
 test("dupe() preserves allocated content_type for Body clone", () => {
   // Body.Value.clone() goes through Blob.dupe() -> dupeWithContentType(false).
   // That path must deep-copy a heap-allocated content_type rather than drop

@@ -860,7 +860,11 @@ class AsyncImportError extends Error {
 /** See `runtime.js`'s `__toCommonJS`. This omits the cache. */
 function toCommonJS(from: any) {
   var desc,
-    entry = Object.defineProperty({}, "__esModule", { value: true });
+    override;
+  if (((from && typeof from === "object") || typeof from === "function") && (override = from["module.exports"]) != null) {
+    return override;
+  }
+  var entry = Object.defineProperty({}, "__esModule", { value: true });
   if ((from && typeof from === "object") || typeof from === "function")
     Object.getOwnPropertyNames(from).map(
       key =>

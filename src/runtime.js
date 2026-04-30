@@ -83,10 +83,19 @@ export var __toESM = (mod, isNodeMode, target) => {
 // Converts the module from ESM to CommonJS. This clones the input module
 // object with the addition of a non-enumerable "__esModule" property set
 // to "true", which overwrites any existing export named "__esModule".
+//
+// If the ESM module has a named export called "module.exports", that value
+// is returned directly instead of a wrapper object. This matches the
+// behavior of Bun's runtime `require(esm)` (see `CommonJS.ts`) and Node.js.
 export var __toCommonJS = from => {
   var entry = (__moduleCache ??= new WeakMap()).get(from),
-    desc;
+    desc,
+    override;
   if (entry) return entry;
+  if (((from && typeof from === "object") || typeof from === "function") && (override = from["module.exports"]) != null) {
+    __moduleCache.set(from, override);
+    return override;
+  }
   entry = __defProp({}, "__esModule", { value: true });
   if ((from && typeof from === "object") || typeof from === "function")
     for (var key of __getOwnPropNames(from))

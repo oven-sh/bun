@@ -1,4 +1,5 @@
 import { $, randomUUIDv7, sql, SQL } from "bun";
+import { heapStats } from "bun:jsc";
 import { afterAll, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
 import * as net from "node:net";
@@ -12399,3 +12400,60 @@ CREATE TABLE ${table_name} (
     });
   }); // Close "PostgreSQL tests" describe
 } // Close if (isDockerEnabled())
+
+// Regression test for #30010 — does not require Docker. Uses a fake TCP
+// server that accepts then immediately closes the connection so the
+// PostgresSQLConnection goes straight to .failed via onClose → fail. Before
+// the fix, updateHasPendingActivity treated .failed as "still pending",
+// which pinned the JS wrapper for the entire process lifetime. With the
+// fix, .failed is terminal (like .disconnected) and the wrapper is
+// collectable once requests are drained.
+test("PostgresSQLConnection JS wrapper is GC'd after connection fails (#30010)", async () => {
+  // Fake Postgres server — accept, close immediately. Every client that
+  // connects gets a socket-closed event, which trips the fail() path.
+  const server = net.createServer(socket => {
+    socket.destroy();
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
+  const { port } = server.address() as net.AddressInfo;
+
+  try {
+    // Create several SQL pools that all hit the fake server. Each round
+    // constructs a max:3 pool and tries one query — the connection fails,
+    // the pool tears down, and the JS wrapper should be eligible for GC.
+    const rounds = 5;
+    const poolMax = 3;
+    for (let round = 0; round < rounds; round++) {
+      try {
+        await using sql = postgres({
+          hostname: "127.0.0.1",
+          port,
+          username: "x",
+          password: "x",
+          database: "x",
+          max: poolMax,
+          idleTimeout: 1,
+          maxLifetime: 1,
+          connectionTimeout: 1,
+        });
+        try {
+          await sql`SELECT 1`;
+        } catch {}
+      } catch {}
+    }
+
+    // Force a few full GCs so anything holding a deferred reference drops it.
+    for (let i = 0; i < 10; i++) {
+      Bun.gc(true);
+      await Bun.sleep(10);
+    }
+
+    const count = heapStats().objectTypeCounts.PostgresSQLConnection ?? 0;
+    // Before the fix this is ~rounds*poolMax (e.g. 15) — one leaked
+    // wrapper per connection attempt. With the fix the count is bounded
+    // by at most a single in-flight wrapper.
+    expect(count).toBeLessThanOrEqual(1);
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});

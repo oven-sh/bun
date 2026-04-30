@@ -239,7 +239,15 @@ pub fn hasPendingActivity(this: *PostgresSQLConnection) bool {
 
 fn updateHasPendingActivity(this: *PostgresSQLConnection) void {
     const a: u32 = if (this.requests.readableLength() > 0) 1 else 0;
-    const b: u32 = if (this.status != .disconnected) 1 else 0;
+    // .failed and .disconnected are both terminal states: the socket is
+    // closed and requests have been cleaned up. Keeping the wrapper pinned
+    // in these states leaks it for the entire process lifetime (issue
+    // #30010). Any non-terminal status (.connecting, .sent_startup_message,
+    // .connected) still has real pending activity.
+    const b: u32 = switch (this.status) {
+        .disconnected, .failed => 0,
+        .connecting, .sent_startup_message, .connected => 1,
+    };
     this.pending_activity_count.store(a + b, .release);
 }
 

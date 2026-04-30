@@ -308,6 +308,52 @@ test("dupeWithContentType does not alias the source's allocated content_type", a
   expect(exitCode).toBe(0);
 });
 
+test("Response.blob() mime type stays valid on slice after original blob is GC'd", async () => {
+  // Response.blob() derives the blob's content_type from the Content-Type header.
+  // For non-builtin types, MimeType.init() heap-allocates the string. That allocation
+  // used to be stored both as the Blob's owned content_type (freed in Blob.deinit) and
+  // aliased into the shared Store's mime_type. A slice keeps the Store alive via
+  // refcount but not the Blob, so once the original Blob was GC'd, slice.type read
+  // freed memory through store.mime_type.value.
+  const expectedType = "application/vnd.bun.store-mime-uaf." + Buffer.alloc(80, "x").toString();
+  const script = `
+    const customType = "application/vnd.bun.store-mime-uaf." + Buffer.alloc(80, "x").toString();
+    async function makeSlice() {
+      const resp = new Response("hello world hello world hello world", {
+        headers: { "content-type": customType },
+      });
+      const blob = await resp.blob();
+      return { slice: blob.slice(), blobType: blob.type };
+    }
+    const { slice, blobType } = await makeSlice();
+    for (let i = 0; i < 5; i++) Bun.gc(true);
+    await Bun.sleep(1);
+    for (let i = 0; i < 5; i++) Bun.gc(true);
+    process.stdout.write(JSON.stringify({ blobType, sliceType: slice.type }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: {
+      ...bunEnv,
+      // Without the fix, ASAN reports use-after-poison here; skip symbolization so the
+      // subprocess exits promptly instead of hanging past the default test timeout.
+      ASAN_OPTIONS: "symbolize=0:allow_user_segv_handler=1:disable_coredump=0",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    blobType: expectedType,
+    sliceType: expectedType,
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("dupe() preserves allocated content_type for Body clone", () => {
   // Body.Value.clone() goes through Blob.dupe() -> dupeWithContentType(false).
   // That path must deep-copy a heap-allocated content_type rather than drop

@@ -746,10 +746,20 @@ pub const Value = union(Tag) {
                                 var allocated = false;
                                 const mimeType = MimeType.init(content_slice.slice(), bun.default_allocator, &allocated);
                                 blob.content_type = mimeType.value;
-                                blob.content_type_allocated = allocated;
                                 blob.content_type_was_set = true;
-                                if (blob.store != null) {
-                                    blob.store.?.mime_type = mimeType;
+                                if (blob.store) |store| {
+                                    // The Store is ref-counted and outlives this Blob (slices keep
+                                    // it alive). Give the Store ownership of any heap-allocated
+                                    // mime string and have the Blob borrow it, so freeing the Blob
+                                    // cannot leave `store.mime_type.value` dangling.
+                                    if (store.mime_type_allocated) {
+                                        bun.default_allocator.free(@constCast(store.mime_type.value));
+                                    }
+                                    store.mime_type = mimeType;
+                                    store.mime_type_allocated = allocated;
+                                    blob.content_type_allocated = false;
+                                } else {
+                                    blob.content_type_allocated = allocated;
                                 }
                             }
                         }
@@ -1422,10 +1432,20 @@ pub fn Mixin(comptime Type: type) type {
                         var allocated = false;
                         const mimeType = MimeType.init(content_slice.slice(), bun.default_allocator, &allocated);
                         blob.content_type = mimeType.value;
-                        blob.content_type_allocated = allocated;
                         blob.content_type_was_set = true;
-                        if (blob.store != null) {
-                            blob.store.?.mime_type = mimeType;
+                        if (blob.store) |store| {
+                            // The Store is ref-counted and outlives this Blob (slices keep
+                            // it alive). Give the Store ownership of any heap-allocated
+                            // mime string and have the Blob borrow it, so freeing the Blob
+                            // cannot leave `store.mime_type.value` dangling.
+                            if (store.mime_type_allocated) {
+                                bun.default_allocator.free(@constCast(store.mime_type.value));
+                            }
+                            store.mime_type = mimeType;
+                            store.mime_type_allocated = allocated;
+                            blob.content_type_allocated = false;
+                        } else {
+                            blob.content_type_allocated = allocated;
                         }
                     }
                 }

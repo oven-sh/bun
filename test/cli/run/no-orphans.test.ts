@@ -254,7 +254,7 @@ describe.each([
 // the supervisor dies would prove `bun run` slept through it.
 //
 // Two macOS code paths under test:
-//   - plain `bun run <script>` → spawnSync → `waitForChildNoOrphans`
+//   - plain `bun run <script>` → spawnSync → `waitMacKqueue`/`waitLinuxSignalfd`
 //   - `--filter='*'` → MiniEventLoop → `installOnEventLoop`
 // Linux: both covered by PDEATHSIG on `bun run` + linux_pdeathsig on the spawn.
 //
@@ -382,6 +382,81 @@ test.skipIf(!isSupported || !hasPerl)(
     reap(daemonPid);
     // ASAN/debug warnings can land on stderr even on success; only surface
     // stderr as a diagnostic when the test is already failing.
+    if (proc.exitCode !== 0) console.error(stderr);
+    expect(died).toBe(true);
+    expect(proc.exitCode).toBe(0);
+  },
+);
+
+// Same daemon shape but the outer and the intermediate exit *immediately* —
+// no spinning on the pidfile (that spin is what made the proc_listallpids
+// scan() pass: it gave the wait loop's NOTE_FORK time to fire and observe
+// each link). With NOTE_TRACK xnu attaches to the intermediate inside fork1()
+// before it's schedulable, recursively, so the daemon is captured even if both
+// ancestors are gone before the wait loop drains a single event. Linux is
+// covered by subreaper (also armed pre-spawn).
+//
+// `bun run` may finish before the daemon writes its pidfile. Poll for the
+// file from the *test*; if it never appears the daemon was reaped before it
+// could write — also a pass. Only fail if the file appears AND the pid lives.
+test.skipIf(!isSupported || !hasPerl)(
+  "bun run --no-orphans (perl): fast-exit intermediate (no pidfile spin) — daemon still reaped",
+  async () => {
+    using dir = tempDir("no-orphans-fast-daemon", {
+      "package.json": JSON.stringify({
+        name: "p",
+        scripts: {
+          dev:
+            `perl -MPOSIX -e '` +
+            `if(fork){exit} ` + // outer exits immediately — bun run sees exit fast
+            `setsid; exit if fork; ` + // intermediate exits immediately
+            `open F,">","$ENV{OUT}/pid"; print F "$$ ".getpgrp(); close F; ` +
+            `sleep 1 while 1'`,
+        },
+      }),
+    });
+    const env: Record<string, string> = { ...bunEnv, OUT: String(dir) };
+    delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--no-orphans", "--silent", "dev"],
+      env,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    await proc.exited;
+    const stderr = await proc.stderr.text();
+
+    // Poll from the test (not from inside the script tree) so the script's
+    // outer doesn't keep `bun run` alive while the daemon writes.
+    let daemonPid = 0,
+      daemonPgid = 0;
+    {
+      const deadline = Date.now() + 2000;
+      while (Date.now() < deadline) {
+        try {
+          const t = (await Bun.file(`${dir}/pid`).text()).match(/^(\d+) (\d+)/);
+          if (t) {
+            daemonPid = Number(t[1]);
+            daemonPgid = Number(t[2]);
+            break;
+          }
+        } catch {}
+        await sleep(10);
+      }
+    }
+    // Reaped before it could write the pidfile — also a pass (cleanup ran).
+    if (daemonPid === 0) {
+      if (proc.exitCode !== 0) console.error(stderr);
+      expect(proc.exitCode).toBe(0);
+      return;
+    }
+    // setsid moved it out of the script's pgroup (pgid == its own pid).
+    expect(daemonPgid).not.toBe(0);
+
+    const died = await waitUntilDead(daemonPid, 3000);
+    reap(daemonPid);
     if (proc.exitCode !== 0) console.error(stderr);
     expect(died).toBe(true);
     expect(proc.exitCode).toBe(0);

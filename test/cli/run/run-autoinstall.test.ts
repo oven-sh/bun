@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync } from "fs";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 
 //   --install=<val>                 Configure auto-install behavior. One of "auto" (default, auto-installs when no node_modules), "fallback" (missing packages only), "force" (always).
@@ -84,3 +84,34 @@ test("--install=fallback to install missing packages", async () => {
   expect(stderr?.toString("utf8")).not.toContain("error: Cannot find package 'is-odd'");
   expect(stdout?.toString("utf8")).toBe("true false\n");
 });
+
+// dirInfoForResolution previously stored DirInfo.abs_path as a slice into the threadlocal
+// bufs(.path_in_global_disk_cache) buffer. After auto-installing a second package, that
+// buffer is overwritten and any cached DirInfo.abs_path from the first package points at
+// stale bytes. Re-importing the first package by a different subpath re-enters the
+// dir_cache and relies on that abs_path. In debug builds an assertion now guards that the
+// stored path is never a threadlocal-buffer slice.
+test("auto-install multiple packages with repeated subpath imports keeps DirInfo.abs_path stable", async () => {
+  using dir = tempDir("autoinstall-abs-path", {
+    "index.js": `
+      const isOdd = require("is-odd");
+      const leftPad = require("left-pad");
+      const isOddPkg = require("is-odd/package.json");
+      console.log(isOdd(3), leftPad("x", 3, "0"), isOddPkg.name);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-i", "index.js"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_INSTALL: join(String(dir), ".bun") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("error:");
+  expect(stdout.trim()).toBe("true 00x is-odd");
+  expect(exitCode).toBe(0);
+}, 30_000);

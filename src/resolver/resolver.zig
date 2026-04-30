@@ -42,7 +42,7 @@ const bufs = struct {
     // bundling 10 copies of Three.js. It may be worthwhile for more complicated
     // packages but we lack a decent module resolution benchmark right now.
     // Potentially revisit after https://github.com/oven-sh/bun/issues/2716
-    pub threadlocal var extension_path: [512]u8 = undefined;
+    pub threadlocal var extension_path: bun.PathBuffer = undefined;
     pub threadlocal var tsconfig_match_full_buf: bun.PathBuffer = undefined;
     pub threadlocal var tsconfig_match_full_buf2: bun.PathBuffer = undefined;
     pub threadlocal var tsconfig_match_full_buf3: bun.PathBuffer = undefined;

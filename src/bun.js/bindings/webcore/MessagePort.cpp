@@ -113,6 +113,20 @@ void MessagePort::close()
     m_pipe->close(m_side);
 
     removeAllEventListeners();
+
+    // Release the self-reference taken by jsRef() (set when .onmessage is
+    // assigned or .ref() is called from JS). The JS .close() binding calls
+    // jsUnref() first, so m_hasRef is already false on that path; we only
+    // reach this branch when close() runs without a preceding jsUnref() —
+    // most importantly from contextDestroyed() during Worker teardown.
+    // Without this, the self-ref pins the MessagePort past the JS wrapper
+    // sweep and it leaks forever.
+    if (m_hasRef) {
+        m_hasRef = false;
+        if (auto* context = scriptExecutionContext())
+            context->unrefEventLoop();
+        deref();
+    }
 }
 
 TransferredMessagePort MessagePort::disentangle()
@@ -124,6 +138,18 @@ TransferredMessagePort MessagePort::disentangle()
     // there would be nothing to unref.
     removeAllEventListeners();
     m_hasMessageEventListener = false;
+
+    // Release the self-reference taken by jsRef() on the sending side. After
+    // transfer this object is inert (the receiving side gets a fresh
+    // MessagePort for the same pipe endpoint) and is no longer a destruction
+    // observer, so nothing else will ever release a ref taken here.
+    // The caller (disentanglePorts) holds a RefPtr, so deref() is safe.
+    if (m_hasRef) {
+        m_hasRef = false;
+        if (auto* context = scriptExecutionContext())
+            context->unrefEventLoop();
+        deref();
+    }
 
     // Hand the pipe endpoint to its next owner. Messages that arrive while
     // in transit buffer in the pipe; the receiving context's entangle()
@@ -200,6 +226,12 @@ void MessagePort::dispatchEvent(Event& event)
 
 void MessagePort::contextDestroyed()
 {
+    // close() releases the jsRef() self-reference, which may be the last
+    // strong ref if the JS wrapper was already swept. Protect across the
+    // call so we can cleanly detach from the dying ScriptExecutionContext
+    // first — otherwise ~ContextDestructionObserver() would call back into
+    // it while it is mid-destruction.
+    Ref protectedThis { *this };
     close();
     ContextDestructionObserver::contextDestroyed();
 }
@@ -299,6 +331,13 @@ WebCoreOpaqueRoot root(MessagePort* port)
 
 void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
 {
+    // A closed or transferred-away port can never receive messages again, so
+    // taking a self-ref (and an event-loop ref) here would only leak:
+    // close()/disentangle() have already run and nothing will ever release a
+    // ref taken afterwards.
+    if (!isEntangled())
+        return;
+
     if (!m_hasRef) {
         m_hasRef = true;
         ref();

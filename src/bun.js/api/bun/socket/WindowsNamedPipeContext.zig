@@ -300,8 +300,8 @@ const bun = @import("bun");
 const Output = bun.Output;
 const jsc = bun.jsc;
 const uws = bun.uws;
+const BoringSSL = bun.BoringSSL.c;
 const uv = bun.windows.libuv;
 
-const BoringSSL = bun.BoringSSL.c;
 const TCPSocket = jsc.API.TCPSocket;
 const TLSSocket = jsc.API.TLSSocket;

@@ -486,5 +486,4 @@ it.skipIf(isWindows)(
     expect(stdout).toContain("42");
     expect(exitCode).toBe(0);
   },
-  30_000,
 );

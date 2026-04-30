@@ -242,7 +242,12 @@ pub const FileSystemRouter = struct {
         bustDirCache(this, globalThis);
 
         const root_dir_info = vm.transpiler.resolver.readDirInfo(this.router.config.dir) catch {
-            return globalThis.throwValue(try log.toJS(globalThis, globalThis.allocator(), "reading root directory"));
+            // Build the JS error before freeing the arena: `log` is backed by the arena allocator.
+            // Capture the error union so cleanup runs even if toJS itself fails.
+            const err_value = log.toJS(globalThis, globalThis.allocator(), "reading root directory");
+            arena.deinit();
+            globalThis.allocator().destroy(arena);
+            return globalThis.throwValue(try err_value);
         } orelse {
             arena.deinit();
             globalThis.allocator().destroy(arena);

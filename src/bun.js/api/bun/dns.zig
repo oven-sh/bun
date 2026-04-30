@@ -2527,7 +2527,7 @@ pub const Resolver = struct {
 
             const poll: *UvDnsPoll = poll_entry.value_ptr.*;
 
-            const uv_events = if (readable) uv.UV_READABLE else 0 | if (writable) uv.UV_WRITABLE else 0;
+            const uv_events = (if (readable) uv.UV_READABLE else 0) | (if (writable) uv.UV_WRITABLE else 0);
             if (uv.uv_poll_start(&poll.poll, uv_events, onDNSPollUv) < 0) {
                 _ = this.polls.swapRemove(fd);
                 uv.uv_close(@ptrCast(&poll.poll), onCloseUv);

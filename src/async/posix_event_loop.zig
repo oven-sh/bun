@@ -948,8 +948,9 @@ pub const FilePoll = struct {
             // If an error occurs while
             // processing an element of the changelist and there is enough room
             // in the eventlist, then the event will be placed in the eventlist
-            // with EV_ERROR set in flags and the system error in data.
-            if (changelist[0].flags == std.c.EV.ERROR and changelist[0].data != 0) {
+            // with EV_ERROR set in flags and the system error in data. xnu ORs
+            // EV_ERROR into the existing action bits, so test the bit.
+            if ((changelist[0].flags & std.c.EV.ERROR) != 0 and changelist[0].data != 0) {
                 return bun.sys.Maybe(void).errnoSys(changelist[0].data, .kevent).?;
                 // Otherwise, -1 will be returned, and errno will be set to
                 // indicate the error condition.
@@ -1187,11 +1188,12 @@ pub const FilePoll = struct {
             // placed in the eventlist with EV_ERROR set in flags and the system
             // error in data. With KEVENT_FLAG_ERROR_EVENTS, rc is the count of
             // such error events; they are packed from index 0 regardless of
-            // which change failed.
-            if (rc >= 1 and changelist[0].flags == std.c.EV.ERROR and changelist[0].data != 0) {
+            // which change failed. xnu ORs EV_ERROR into the existing action
+            // bits (EV_DELETE|EV_ERROR = 0x4002), so test the bit, not equality.
+            if (rc >= 1 and (changelist[0].flags & std.c.EV.ERROR) != 0 and changelist[0].data != 0) {
                 return bun.sys.Maybe(void).errnoSys(changelist[0].data, .kevent).?;
             }
-            if (rc >= 2 and changelist[1].flags == std.c.EV.ERROR and changelist[1].data != 0) {
+            if (rc >= 2 and (changelist[1].flags & std.c.EV.ERROR) != 0 and changelist[1].data != 0) {
                 return bun.sys.Maybe(void).errnoSys(changelist[1].data, .kevent).?;
             }
         } else if (comptime Environment.isFreeBSD) {

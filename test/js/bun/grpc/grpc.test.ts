@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { readFileSync } from "fs";
 import { bunEnv, bunExe, nodeExe } from "harness";
 import { join } from "path";
-import { readFileSync } from "fs";
 
 import { Client, Status, StatusError } from "bun:grpc";
 

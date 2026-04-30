@@ -168,8 +168,7 @@ class Client {
       // Map transport failures to UNAVAILABLE / CANCELLED the way
       // grpc-js does, but keep the underlying message.
       const msg = err instanceof Error ? err.message : String(err);
-      const code =
-        err instanceof DOMException && err.name === "AbortError" ? Status.CANCELLED : Status.UNAVAILABLE;
+      const code = err instanceof DOMException && err.name === "AbortError" ? Status.CANCELLED : Status.UNAVAILABLE;
       const se = new StatusError(code, msg);
       if (err instanceof Error) se.cause = err;
       throw se;

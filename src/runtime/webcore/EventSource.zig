@@ -80,6 +80,10 @@ result_has_more: bool = true,
 result_fail: ?anyerror = null,
 result_status_code: u16 = 0,
 result_content_type_ok: bool = false,
+/// Final post-redirect URL cloned from `metadata.url` on the HTTP thread;
+/// consumed (and applied to `url_href`/`url`/`origin`) on the JS thread so
+/// readers of those fields never race the free/reassign.
+result_final_url: ?[]const u8 = null,
 /// True once the HTTP thread has delivered response metadata.
 got_metadata: bool = false,
 
@@ -195,6 +199,7 @@ fn deinit(this: *EventSource) void {
     this.clearHttp();
     if (this.url_href.len > 0) bun.default_allocator.free(this.url_href);
     if (this.origin.len > 0) bun.default_allocator.free(this.origin);
+    if (this.result_final_url) |u| bun.default_allocator.free(u);
     this.extra_headers.deinit();
     this.request_headers.deinit();
     this.last_event_id.deinit(bun.default_allocator);
@@ -328,6 +333,10 @@ fn resetPerConnectionState(this: *EventSource) void {
     this.result_fail = null;
     this.result_status_code = 0;
     this.result_content_type_ok = false;
+    if (this.result_final_url) |u| {
+        bun.default_allocator.free(u);
+        this.result_final_url = null;
+    }
     this.got_metadata = false;
     this.announced = false;
     this.has_schedule_callback.store(false, .monotonic);
@@ -376,15 +385,12 @@ pub fn httpCallback(this: *EventSource, async_http: *http.AsyncHTTP, result: htt
         }
         // Per spec, MessageEvent.origin must reflect the *final* URL after
         // redirects. AsyncHTTP was created with `.follow`, and `metadata.url`
-        // carries that final URL — pick it up so future events and reconnects
-        // target the right place.
-        if (metadata.url.len > 0 and !strings.eql(metadata.url, this.url_href)) {
-            const new_href = bun.handleOom(bun.default_allocator.dupe(u8, metadata.url));
-            bun.default_allocator.free(this.url_href);
-            this.url_href = new_href;
-            this.url = ZigURL.parse(new_href);
-            bun.default_allocator.free(this.origin);
-            this.origin = bun.handleOom(bun.default_allocator.dupe(u8, this.url.origin));
+        // carries that final URL. We only stash a copy here under the mutex;
+        // the JS thread applies it in `onProgressUpdate` so that the free of
+        // the old `url_href`/`origin` can't race with `getURL()` / event
+        // dispatch / `memoryCost()` which read them unlocked.
+        if (metadata.url.len > 0 and this.result_final_url == null) {
+            this.result_final_url = bun.handleOom(bun.default_allocator.dupe(u8, metadata.url));
         }
         metadata.deinit(bun.default_allocator);
     }
@@ -423,6 +429,8 @@ pub fn onProgressUpdate(this: *EventSource) void {
     const got_metadata = this.got_metadata;
     const status = this.result_status_code;
     const ct_ok = this.result_content_type_ok;
+    const final_url = this.result_final_url;
+    this.result_final_url = null;
 
     // Steal the buffered body bytes; a fresh list replaces the shared buffer so
     // the HTTP thread can keep appending without contending on the parser.
@@ -430,6 +438,21 @@ pub fn onProgressUpdate(this: *EventSource) void {
     this.scheduled_response_buffer = .{ .allocator = bun.default_allocator, .list = .{} };
     this.mutex.unlock();
     defer chunk.deinit();
+
+    // Apply any redirect-updated URL now that we're on the JS thread — the
+    // free+reassign of `url_href`/`origin` must not race with `getURL()` or
+    // `dispatchPendingMessage()` (which borrow these slices unlocked).
+    if (final_url) |new_href| {
+        if (!strings.eql(new_href, this.url_href)) {
+            bun.default_allocator.free(this.url_href);
+            this.url_href = new_href;
+            this.url = ZigURL.parse(new_href);
+            bun.default_allocator.free(this.origin);
+            this.origin = bun.handleOom(bun.default_allocator.dupe(u8, this.url.origin));
+        } else {
+            bun.default_allocator.free(new_href);
+        }
+    }
 
     const is_done = !has_more;
     // Balance the ref taken in `connect()` once the request fully ends.
@@ -739,10 +762,10 @@ fn dispatchToHandlers(this: *EventSource, event_type: []const u8, event: JSValue
     var had_once = false;
     var idx: u32 = 0;
     while (idx < len) : (idx += 1) {
-        const entry = arr.getIndex(global, idx) catch continue;
+        const entry = arr.getIndex(global, idx) catch return;
         if (!entry.isObject()) continue;
-        const cb = entry.getOwn(global, "cb") catch continue orelse continue;
-        const once_val = entry.getOwn(global, "once") catch continue;
+        const cb = entry.getOwn(global, "cb") catch return orelse continue;
+        const once_val = entry.getOwn(global, "once") catch return;
         const is_once = once_val != null and once_val.?.toBoolean();
         if (is_once) {
             had_once = true;
@@ -763,9 +786,9 @@ fn dispatchToHandlers(this: *EventSource, event_type: []const u8, event: JSValue
         const filtered = JSValue.createEmptyArray(global, 0) catch return;
         var j: u32 = 0;
         while (j < live_len) : (j += 1) {
-            const entry = live.getIndex(global, j) catch continue;
+            const entry = live.getIndex(global, j) catch return;
             if (!entry.isObject()) continue;
-            const cb = entry.getOwn(global, "cb") catch continue orelse continue;
+            const cb = entry.getOwn(global, "cb") catch return orelse continue;
             if (cb.isUndefined()) continue;
             filtered.push(global, entry) catch return;
         }

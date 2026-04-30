@@ -114,4 +114,4 @@ test("auto-install multiple packages with repeated subpath imports keeps DirInfo
   expect(stderr).not.toContain("error:");
   expect(stdout.trim()).toBe("true 00x is-odd");
   expect(exitCode).toBe(0);
-}, 30_000);
+});

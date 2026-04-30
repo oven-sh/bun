@@ -45,6 +45,5 @@ if (isMainThread) {
   hammer();
 } else {
   hammer();
-  parentPort.postMessage("done");
   parentPort.close();
 }

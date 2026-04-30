@@ -19,7 +19,10 @@ state: union(enum) {
         in_done: bool = false,
 
         pub fn deinit(this: *@This()) void {
-            if (this.reader) |r| r.deref();
+            if (this.reader) |r| {
+                r.deref();
+                this.reader = null;
+            }
         }
     },
     waiting_write_err,
@@ -245,7 +248,22 @@ pub fn onIOReaderDone(this: *Cat, err: ?jsc.SystemError) Yield {
     return .suspended;
 }
 
-pub fn deinit(_: *Cat) void {}
+pub fn deinit(this: *Cat) void {
+    // The normal completion paths (next(), onIOWriterChunk, onIOReaderDone) call
+    // exec_filepath_args.deinit() before bltn().done(), which then cascades back into
+    // this function via Cmd.deinit → Builtin.deinit. At that point `state` is still
+    // .exec_filepath_args but the reader has already been released; the inner deinit
+    // nulls `reader` so calling it again here is a no-op. This call exists so that if
+    // the parent tears down the Cmd while cat is suspended with a live IOReader (e.g.
+    // a future cancel/teardown path), the reader and its fd are not leaked.
+    switch (this.state) {
+        .exec_filepath_args => |*exec| {
+            if (exec.reader) |r| r.removeReader(this);
+            exec.deinit();
+        },
+        else => {},
+    }
+}
 
 pub inline fn bltn(this: *Cat) *Builtin {
     const impl: *Builtin.Impl = @alignCast(@fieldParentPtr("cat", this));

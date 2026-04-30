@@ -194,6 +194,11 @@ pub fn freeDependencyIndex(store: *DirectoryWatchStore, alloc: Allocator, index:
     if (Environment.isDebug) {
         store.dependencies.items[index.get()] = undefined;
     }
+    // DevServer.deinit and memoryCost iterate `dependencies.items` without
+    // consulting `dependencies_free_list`. Leave an empty slice in free-list
+    // slots so that `alloc.free`/`.len` see a harmless no-op instead of the
+    // already-freed allocation.
+    store.dependencies.items[index.get()].specifier = &.{};
 
     if (index.get() == (store.dependencies.items.len - 1)) {
         store.dependencies.items.len -= 1;

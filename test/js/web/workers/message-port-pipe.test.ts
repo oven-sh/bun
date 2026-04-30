@@ -370,14 +370,12 @@ describe("MessagePort pipe", () => {
 // matches Node: messages arrive in order with a microtask checkpoint between
 // each, for both directions.
 describe("Worker postMessage inbox", () => {
-  test.skipIf(!isDebug && !isASAN)(
-    "round-trip burst delivers in order with microtasks between each",
-    async () => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
+  test.skipIf(!isDebug && !isASAN)("round-trip burst delivers in order with microtasks between each", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
           const { Worker, isMainThread, parentPort } = require("node:worker_threads");
           const N = 200;
           const order = [];
@@ -430,17 +428,16 @@ describe("Worker postMessage inbox", () => {
           await new Promise(r => w.once("online", r));
           for (let i = 0; i < N; i++) w.postMessage(i);
         `,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(stdout.trim()).toBe("OK");
-      expect(exitCode).toBe(0);
-    },
-  );
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  });
 
   test("messages sent before worker online are delivered once it starts", async () => {
     await using proc = Bun.spawn({

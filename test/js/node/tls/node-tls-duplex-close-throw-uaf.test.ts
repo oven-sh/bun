@@ -73,3 +73,52 @@ test.skipIf(!isASAN && !isDebug)(
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
   },
 );
+
+// Sibling of the above: when the SSL context can't be created (malformed
+// cert), DuplexUpgradeContext.runEvent's StartTLS error branch used to call
+// tls.handleConnectError() — which frees the Handlers via markInactive —
+// immediately followed by tls.onClose(), which read handlers.mode on the
+// freed allocation (ASAN use-after-poison at TLSSocket.onClose).
+test.skipIf(!isASAN && !isDebug)(
+  "tls.connect({socket: Duplex}) does not read freed Handlers when SSL context creation fails",
+  async () => {
+    const script = `
+    const tls = require("node:tls");
+    const { Duplex } = require("node:stream");
+
+    const duplex = new Duplex({
+      read() {},
+      write(chunk, enc, cb) { cb(); },
+      final(cb) { cb(); },
+    });
+
+    // A non-PEM string makes createSSLContext() return null →
+    // error.InvalidOptions → runEvent's StartTLS catch → else branch.
+    const sock = tls.connect({
+      socket: duplex,
+      ca: "not a valid PEM certificate",
+      rejectUnauthorized: false,
+    });
+    sock.on("error", () => {});
+    sock.on("close", () => {});
+
+    setImmediate(() => {
+      setImmediate(() => {
+        console.log("ok");
+        process.exit(0);
+      });
+    });
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, ASAN_OPTIONS: "symbolize=0:abort_on_error=1:allow_user_segv_handler=1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+  },
+);

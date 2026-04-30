@@ -1941,11 +1941,21 @@ pub const DuplexUpgradeContext = struct {
                             },
                             else => {
                                 const errno = @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
-                                if (this.tls) |tls| {
-                                    const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
-
-                                    tls.handleConnectError(errno) catch {};
-                                    tls.onClose(socket, errno, null) catch {};
+                                // `handleConnectError` detaches the socket,
+                                // dispatches the JS connect-error callback and
+                                // runs `markInactive`, which frees `tls.handlers`
+                                // once `active_connections` reaches 0. Null `tls`
+                                // first so nothing afterwards (a late duplex
+                                // event routing through onError) touches the
+                                // freed Handlers, and do not call `tls.onClose`
+                                // after — it would read `getHandlers()` on the
+                                // freed allocation, and regular (non-duplex)
+                                // sockets do not fire onClose after a connect
+                                // error either.
+                                const tls = this.tls;
+                                this.tls = null;
+                                if (tls) |t| {
+                                    t.handleConnectError(errno) catch {};
                                 }
                             },
                         }

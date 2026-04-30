@@ -80,8 +80,9 @@ struct WorkerOptions;
 ///                 └────────┘
 ///
 /// m_terminateRequested is orthogonal: set once by terminate(), gates
-/// postMessage()/dispatchEvent(), and is mirrored into the Zig side via
+/// dispatchEvent()/setKeepAlive(), and is mirrored into the Zig side via
 /// WebWorker__notifyNeedTermination so the worker loop can observe it.
+/// postMessage() only gates on Closed to preserve pre-refactor semantics.
 class Worker final : public ThreadSafeRefCounted<Worker>, public EventTargetWithInlineData, private ContextDestructionObserver {
     WTF_MAKE_TZONE_ALLOCATED(Worker);
 
@@ -123,13 +124,13 @@ public:
     bool dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value);
     bool dispatchExit(int32_t exitCode);
 
-private:
-    Worker(ScriptExecutionContext&, WorkerOptions&&);
-
     // Post a task to the parent's ScriptExecutionContext by stable identifier.
     // Returns false if the parent context no longer exists (nested worker whose
     // middle thread has torn down). Callable from any thread.
     bool postTaskToParent(Function<void(ScriptExecutionContext&)>&&);
+
+private:
+    Worker(ScriptExecutionContext&, WorkerOptions&&);
 
     EventTargetInterface eventTargetInterface() const final { return WorkerEventTargetInterfaceType; }
     void refEventTarget() final { ref(); }

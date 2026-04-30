@@ -519,11 +519,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     if (worker == nullptr)
         return JSValue::encode(jsUndefined());
 
-    ScriptExecutionContext* context = worker->scriptExecutionContext();
-
-    if (!context)
-        return JSValue::encode(jsUndefined());
-
     JSC::JSValue value = callFrame->argument(0);
     JSC::JSValue options = callFrame->argument(1);
 
@@ -565,7 +560,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
 
     MessageWithMessagePorts messageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() };
 
-    ScriptExecutionContext::postTaskTo(context->identifier(), [message = messageWithMessagePorts, protectedThis = Ref { *worker }, ports](ScriptExecutionContext& context) mutable {
+    // By stable identifier — this runs on the worker thread, so don't touch
+    // the parent's ScriptExecutionContext pointer directly.
+    worker->postTaskToParent([message = messageWithMessagePorts, protectedThis = Ref { *worker }, ports](ScriptExecutionContext& context) mutable {
         Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(context.jsGlobalObject());
 
         auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));

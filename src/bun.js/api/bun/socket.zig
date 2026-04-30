@@ -1896,19 +1896,14 @@ pub const DuplexUpgradeContext = struct {
                 // A pre-open error (onError's `!is_open` branch) may have
                 // already fired the connect-error callback, freed
                 // `tls.handlers`, and nulled `tls` while this task was
-                // queued. There is nothing to open in that case; drop the
-                // unconsumed ctx/config and bail instead of spinning up an
-                // SSLWrapper that would dispatch `onOpen` into the dead
-                // socket.
+                // queued. There is nothing to open in that case — and
+                // nothing else will reach `deinit()` since the SSLWrapper
+                // (whose close callback normally schedules it) is never
+                // created — so tear everything down here instead of
+                // spinning up a wrapper that would dispatch `onOpen` into
+                // the dead socket.
                 if (this.tls == null) {
-                    if (this.owned_ctx) |ctx| {
-                        this.owned_ctx = null;
-                        BoringSSL.SSL_CTX_free(ctx);
-                    }
-                    if (this.ssl_config) |*cfg| {
-                        cfg.deinit();
-                        this.ssl_config = null;
-                    }
+                    this.deinit();
                     return;
                 }
                 log("DuplexUpgradeContext.startTLS mode={s}", .{@tagName(this.#mode)});

@@ -500,9 +500,12 @@ pub const TransformTask = struct {
         var ast_scope = ast_memory_allocator.enter(allocator);
         defer ast_scope.exit();
 
+        var log = logger.Log.init(allocator);
+        log.level = this.log.level;
+        defer bun.handleOom(log.appendToWithRecycled(&this.log, true));
+
         this.transpiler.setAllocator(allocator);
-        this.transpiler.setLog(&this.log);
-        this.log.msgs.allocator = bun.default_allocator;
+        this.transpiler.setLog(&log);
 
         const jsx = if (this.tsconfig != null)
             this.tsconfig.?.mergeJSX(this.transpiler.options.jsx)

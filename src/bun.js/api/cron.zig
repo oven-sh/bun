@@ -56,6 +56,7 @@ pub const CronRegisterJob = struct {
     abs_path: [:0]const u8,
     schedule: [:0]const u8, // normalized numeric form for crontab/launchd
     title: [:0]const u8,
+    cwd: [:0]const u8, // caller's working directory at registration time
     parsed_cron: CronExpression,
 
     state: State = .reading_crontab,
@@ -191,6 +192,7 @@ pub const CronRegisterJob = struct {
         bun.default_allocator.free(this.abs_path);
         bun.default_allocator.free(this.schedule);
         bun.default_allocator.free(this.title);
+        bun.default_allocator.free(this.cwd);
         bun.default_allocator.destroy(this);
     }
 
@@ -225,8 +227,8 @@ pub const CronRegisterJob = struct {
         };
 
         // Build new entry with single-quoted paths to prevent shell injection
-        const new_entry = std.fmt.allocPrint(bun.default_allocator, "# bun-cron: {s}\n{s} '{s}' run --cron-title={s} --cron-period='{s}' '{s}'\n", .{
-            this.title, this.schedule, this.bun_exe, this.title, this.schedule, this.abs_path,
+        const new_entry = std.fmt.allocPrint(bun.default_allocator, "# bun-cron: {s}\n{s} '{s}' run --cwd='{s}' --cron-title={s} --cron-period='{s}' '{s}'\n", .{
+            this.title, this.schedule, this.bun_exe, this.cwd, this.title, this.schedule, this.abs_path,
         }) catch {
             this.setErr("Out of memory", .{});
             this.finish();
@@ -332,6 +334,12 @@ pub const CronRegisterJob = struct {
             return;
         };
         defer bun.default_allocator.free(xml_sched);
+        const xml_cwd = xmlEscape(this.cwd) catch {
+            this.setErr("Out of memory", .{});
+            this.finish();
+            return;
+        };
+        defer bun.default_allocator.free(xml_cwd);
 
         const plist = std.fmt.allocPrint(bun.default_allocator,
             \\<?xml version="1.0" encoding="UTF-8"?>
@@ -348,6 +356,8 @@ pub const CronRegisterJob = struct {
             \\        <string>--cron-period={s}</string>
             \\        <string>{s}</string>
             \\    </array>
+            \\    <key>WorkingDirectory</key>
+            \\    <string>{s}</string>
             \\    <key>StartCalendarInterval</key>
             \\{s}
             \\    <key>StandardOutPath</key>
@@ -357,7 +367,7 @@ pub const CronRegisterJob = struct {
             \\</dict>
             \\</plist>
             \\
-        , .{ xml_title, xml_bun, xml_title, xml_sched, xml_path, calendar_xml, xml_title, xml_title }) catch {
+        , .{ xml_title, xml_bun, xml_title, xml_sched, xml_path, xml_cwd, calendar_xml, xml_title, xml_title }) catch {
             this.setErr("Out of memory", .{});
             this.finish();
             return;
@@ -452,32 +462,55 @@ pub const CronRegisterJob = struct {
             return globalObject.throwInvalidArguments("Failed to resolve path", .{});
         };
 
-        // Validate path has no single quotes (shell escaping in crontab) or
-        // percent signs (cron interprets % as newline before the shell sees it)
-        for (abs_path) |c| {
-            if (c == '\'') {
-                bun.default_allocator.free(abs_path);
-                return globalObject.throwInvalidArguments("Path must not contain single quotes", .{});
-            }
-            if (c == '%') {
-                bun.default_allocator.free(abs_path);
-                return globalObject.throwInvalidArguments("Path must not contain percent signs (cron interprets % as newline)", .{});
-            }
-        }
-
         const bun_exe = bun.selfExePath() catch {
             bun.default_allocator.free(abs_path);
             return globalObject.throw("Failed to get bun executable path", .{});
         };
-        if (bun.strings.indexOfAny(bun_exe, "'%") != null) {
+
+        // Capture caller's working directory so the cron job runs with the same
+        // cwd as registration time (matching Lambda bootstrap's --cwd pattern).
+        const cwd_owned = bun.getcwdAlloc(bun.default_allocator) catch {
             bun.default_allocator.free(abs_path);
-            return globalObject.throwInvalidArguments("Bun executable path '{s}' contains characters (' or %) that cannot be safely embedded in a crontab entry", .{bun_exe});
+            return globalObject.throw("Failed to get current working directory", .{});
+        };
+
+        // On Linux these values are embedded inside single-quoted shell tokens
+        // on a crontab line, so reject characters that would break out of that
+        // context: single-quote (ends the token), percent (cron turns % into a
+        // newline before the shell sees it), and newline/CR (splits the entry).
+        // macOS and Windows go through XML-escaped native fields and need no
+        // such restriction.
+        if (comptime bun.Environment.isLinux) {
+            const checks = [_]struct { label: []const u8, value: []const u8 }{
+                .{ .label = "Script path", .value = abs_path },
+                .{ .label = "Bun executable path", .value = bun_exe },
+                .{ .label = "Working directory", .value = cwd_owned },
+            };
+            for (checks) |chk| {
+                if (bun.strings.indexOfAny(chk.value, "'%\n\r")) |i| {
+                    const bad = chk.value[i];
+                    defer bun.default_allocator.free(cwd_owned);
+                    defer bun.default_allocator.free(abs_path);
+                    return switch (bad) {
+                        // Double-quote the path so an embedded single-quote
+                        // (the very character we're reporting) can't visually
+                        // terminate the delimiter.
+                        '\'' => globalObject.throwInvalidArguments("{s} \"{s}\" must not contain single quotes", .{ chk.label, chk.value }),
+                        '%' => globalObject.throwInvalidArguments("{s} \"{s}\" must not contain percent signs (cron interprets % as newline)", .{ chk.label, chk.value }),
+                        // Don't embed the raw value here: a literal LF/CR in the
+                        // error text would itself split/garble the message.
+                        else => globalObject.throwInvalidArguments("{s} must not contain newlines or carriage returns", .{chk.label}),
+                    };
+                }
+            }
         }
+
         const job = bun.handleOom(bun.default_allocator.create(CronRegisterJob));
         job.* = .{
             .global = globalObject,
             .bun_exe = bun_exe,
             .abs_path = abs_path,
+            .cwd = cwd_owned,
             .schedule = bun.handleOom(bun.default_allocator.dupeZ(u8, normalized_schedule)),
             .title = bun.handleOom(bun.default_allocator.dupeZ(u8, title_slice.slice())),
             .parsed_cron = parsed,
@@ -509,7 +542,7 @@ pub const CronRegisterJob = struct {
         };
         defer bun.default_allocator.free(task_name);
 
-        const xml = cronToTaskXml(this.parsed_cron, this.bun_exe, this.title, this.schedule, this.abs_path) catch |err| {
+        const xml = cronToTaskXml(this.parsed_cron, this.bun_exe, this.title, this.schedule, this.abs_path, this.cwd) catch |err| {
             if (err == error.TooManyTriggers) {
                 this.setErr("This cron expression requires too many triggers for Windows Task Scheduler (max 48). Simplify the expression or use fewer restricted fields.", .{});
             } else {
@@ -1478,6 +1511,7 @@ fn cronToTaskXml(
     title: []const u8,
     schedule: []const u8,
     abs_path: []const u8,
+    cwd: []const u8,
 ) ![]const u8 {
     const allocator = bun.default_allocator;
     var xml = std.array_list.Managed(u8).init(allocator);
@@ -1609,6 +1643,8 @@ fn cronToTaskXml(
     defer allocator.free(xml_sched);
     const xml_path = try xmlEscape(abs_path);
     defer allocator.free(xml_path);
+    const xml_cwd = try xmlEscape(cwd);
+    defer allocator.free(xml_cwd);
 
     const action_xml = try std.fmt.allocPrint(allocator,
         \\  </Triggers>
@@ -1629,11 +1665,12 @@ fn cronToTaskXml(
         \\    <Exec>
         \\      <Command>{s}</Command>
         \\      <Arguments>run --cron-title={s} --cron-period="{s}" "{s}"</Arguments>
+        \\      <WorkingDirectory>{s}</WorkingDirectory>
         \\    </Exec>
         \\  </Actions>
         \\</Task>
         \\
-    , .{ xml_bun, xml_title, xml_sched, xml_path });
+    , .{ xml_bun, xml_title, xml_sched, xml_path, xml_cwd });
     defer allocator.free(action_xml);
     try xml.appendSlice(action_xml);
 

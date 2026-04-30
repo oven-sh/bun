@@ -146,11 +146,20 @@ describe("Bun.cron API", () => {
     expect(() => Bun.cron("./test.ts", "abc * * * *", "test-bad")).toThrow(/cron expression/i);
   });
 
-  test("throws with percent sign in path", async () => {
+  // Crontab-embedding validation is Linux-only (macOS/Windows XML-escape
+  // these values and impose no such restriction).
+  test.skipIf(!isLinux)("throws with percent sign in path (Linux)", async () => {
     using dir = tempDir("bun-cron-test", {
       "test%file.ts": `export default { scheduled() {} };`,
     });
     expect(() => Bun.cron(`${dir}/test%file.ts`, "* * * * *", "test-bad")).toThrow(/percent/i);
+  });
+
+  test.skipIf(!isLinux)("throws with single quote in path (Linux)", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "test'file.ts": `export default { scheduled() {} };`,
+    });
+    expect(() => Bun.cron(`${dir}/test'file.ts`, "* * * * *", "test-bad")).toThrow(/single quote/i);
   });
 
   test("remove throws with invalid title characters", () => {
@@ -252,20 +261,43 @@ describe.skipIf(!hasAnyCronBackend)("cross-platform API consistency", () => {
           `${process.env.HOME}/Library/LaunchAgents/bun.cron.test-xplat-caller-rel.plist`,
         ).text();
         // On macOS /tmp is a symlink to /private/tmp, so the resolved path may use either.
-        // The important thing: it ends in the caller dir's worker.ts, not the cwd.
+        // The important thing: the script path ends in the caller dir's worker.ts, not the cwd.
         expect(plist).toMatch(/bun-cron-caller-rel[^<]*[\\/]worker\.ts/);
-        expect(plist).not.toContain("bun-cron-other-cwd");
+        // The script path itself must not reference the other-cwd directory.
+        // (WorkingDirectory will correctly contain the registration-time cwd, which is allowed.)
+        const scriptPathMatch = plist.match(/<string>([^<]*worker\.ts)<\/string>/);
+        expect(scriptPathMatch).not.toBeNull();
+        expect(scriptPathMatch![1]).not.toContain("bun-cron-other-cwd");
+        // WorkingDirectory must capture the registration-time cwd
+        const cwdMatch = plist.match(/<key>WorkingDirectory<\/key>\s*<string>([^<]+)<\/string>/);
+        expect(cwdMatch).not.toBeNull();
+        expect(cwdMatch![1]).toContain("bun-cron-other-cwd");
       } else if (hasCrontab) {
         const crontab = Bun.spawnSync({ cmd: [Bun.which("crontab")!, "-l"], stdout: "pipe" }).stdout.toString();
-        expect(crontab).toMatch(/bun-cron-caller-rel[^\n]*[\\/]worker\.ts/);
-        expect(crontab).not.toContain("bun-cron-other-cwd");
+        // Isolate this job's crontab line so unrelated entries can't satisfy the regexes.
+        // Trailing space anchors the title token (crontab format follows it with --cron-period).
+        const entry = crontab.split("\n").find(l => l.includes("--cron-title=test-xplat-caller-rel "));
+        expect(entry).toBeDefined();
+        expect(entry!).toMatch(/bun-cron-caller-rel[^\n]*[\\/]worker\.ts/);
+        // The script path must not reference the other-cwd directory.
+        const scriptPathMatch = entry!.match(/'([^']*worker\.ts)'/);
+        expect(scriptPathMatch).not.toBeNull();
+        expect(scriptPathMatch![1]).not.toContain("bun-cron-other-cwd");
+        // --cwd must capture the registration-time cwd
+        expect(entry!).toMatch(/--cwd='[^']*bun-cron-other-cwd/);
       } else if (hasSchtasks) {
         const query = Bun.spawnSync({
           cmd: ["schtasks", "/query", "/tn", "bun-cron-test-xplat-caller-rel", "/xml"],
           stdout: "pipe",
         }).stdout.toString();
         expect(query).toMatch(/bun-cron-caller-rel[^<]*[\\/]worker\.ts/);
-        expect(query).not.toContain("bun-cron-other-cwd");
+        const scriptPathMatch = query.match(/"([^"]*worker\.ts)"/);
+        expect(scriptPathMatch).not.toBeNull();
+        expect(scriptPathMatch![1]).not.toContain("bun-cron-other-cwd");
+        // WorkingDirectory must capture the registration-time cwd
+        const cwdMatch = query.match(/<WorkingDirectory>([^<]+)<\/WorkingDirectory>/);
+        expect(cwdMatch).not.toBeNull();
+        expect(cwdMatch![1]).toContain("bun-cron-other-cwd");
       }
     } finally {
       await Bun.cron.remove("test-xplat-caller-rel");
@@ -565,6 +597,7 @@ describe.skipIf(!hasCrontab)("cron registration (Linux)", () => {
 
     const commandLine = lines[markerIdx + 1];
     expect(commandLine).toStartWith("15 3 * * 0 ");
+    expect(commandLine).toMatch(/--cwd='[^']+'/);
     expect(commandLine).toContain("--cron-title=test-format");
     expect(commandLine).toContain("--cron-period='15 3 * * 0'");
     expect(commandLine).toContain(`${dir}/job.ts`);
@@ -902,6 +935,7 @@ describe.skipIf(!hasLaunchctl)("cron registration (macOS)", () => {
       expect(plist).toContain("bun.cron.test-mac-reg");
       expect(plist).toContain("StartCalendarInterval");
       expect(plist).toContain("--cron-title=test-mac-reg");
+      expect(plist).toContain("<key>WorkingDirectory</key>");
       expect(queryLaunchdJob("test-mac-reg")).toBe(true);
     } finally {
       removeLaunchdJob("test-mac-reg");

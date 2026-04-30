@@ -175,7 +175,13 @@ pub fn onReaderError(this: *IOReader, err: bun.sys.Error) void {
     log("IOReader(0x{x}.onReaderError({f}) ", .{ @intFromPtr(this), err });
     this.setReading(false);
     this.err = err.toShellSystemError();
-    for (this.readers.slice()) |r| {
+    // `.run()` drives the shell state machine and can call `addReader()` on this
+    // IOReader, which may promote the SmolList from inlined→heap or realloc the heap
+    // buffer. Iterating a captured `slice()` here would dangle; re-read `len()`/`get()`
+    // each iteration like `onReadChunk` does.
+    var i: usize = 0;
+    while (i < this.readers.len()) : (i += 1) {
+        const r = this.readers.get(i).*;
         r.onReaderDone(if (this.err) |*e| brk: {
             e.ref();
             break :brk e.*;
@@ -186,7 +192,13 @@ pub fn onReaderError(this: *IOReader, err: bun.sys.Error) void {
 pub fn onReaderDone(this: *IOReader) void {
     log("IOReader(0x{x}) done", .{@intFromPtr(this)});
     this.setReading(false);
-    for (this.readers.slice()) |r| {
+    // `.run()` drives the shell state machine and can call `addReader()` on this
+    // IOReader, which may promote the SmolList from inlined→heap or realloc the heap
+    // buffer. Iterating a captured `slice()` here would dangle; re-read `len()`/`get()`
+    // each iteration like `onReadChunk` does.
+    var i: usize = 0;
+    while (i < this.readers.len()) : (i += 1) {
+        const r = this.readers.get(i).*;
         r.onReaderDone(if (this.err) |*err| brk: {
             err.ref();
             break :brk err.*;

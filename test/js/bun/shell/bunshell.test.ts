@@ -1211,6 +1211,15 @@ describe("deno_task", () => {
         .stdout("0\n")
         .runAsTest("long pipeline");
 
+      // Every `cat` here shares the subshell's stdin *IOReader. When EOF fires, each
+      // reader's done-handler starts the next `cat` via the Yield trampoline, which calls
+      // addReader() on the same IOReader while onReaderDone is still iterating. The SmolList
+      // backing the readers promotes inlined→heap at 5 entries and reallocs past 8, so
+      // iteration must re-read len()/get() each step instead of capturing slice().
+      TestBuilder.command`echo hi | (cat && cat && cat && cat && cat && cat && cat && cat && cat && cat && cat && cat)`
+        .stdout("hi\n")
+        .runAsTest("many readers on shared stdin IOReader");
+
       // Test pipeline stack consistency with complex nesting
       TestBuilder.command`echo outer | (echo inner1 | echo inner2 | (echo deep1 | echo deep2) | echo inner3) | echo final | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
         .stdout("final\n")

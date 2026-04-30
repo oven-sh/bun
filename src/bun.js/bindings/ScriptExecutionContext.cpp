@@ -68,44 +68,11 @@ ScriptExecutionContext* ScriptExecutionContext::getScriptExecutionContext(Script
     return allScriptExecutionContextsMap().getOptional(identifier).value_or(nullptr);
 }
 
-template<bool SSL, bool isServer>
-static void registerHTTPContextForWebSocket(ScriptExecutionContext* script, us_socket_context_t* ctx, us_loop_t* loop)
-{
-    if constexpr (!isServer) {
-        if constexpr (SSL) {
-            Bun__WebSocketHTTPSClient__register(script->jsGlobalObject(), loop, ctx);
-        } else {
-            Bun__WebSocketHTTPClient__register(script->jsGlobalObject(), loop, ctx);
-        }
-    } else {
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-}
-
 JSGlobalObject* ScriptExecutionContext::globalObject()
 {
     return m_globalObject;
 }
 
-us_socket_context_t* ScriptExecutionContext::webSocketContextSSL()
-{
-    if (!m_ssl_client_websockets_ctx) {
-        us_loop_t* loop = (us_loop_t*)uws_get_loop();
-        us_bun_socket_context_options_t opts;
-        memset(&opts, 0, sizeof(us_bun_socket_context_options_t));
-        // adds root ca
-        opts.request_cert = true;
-        // but do not reject unauthorized
-        opts.reject_unauthorized = false;
-        enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
-        this->m_ssl_client_websockets_ctx = us_create_bun_ssl_socket_context(loop, sizeof(size_t), opts, &err);
-        void** ptr = reinterpret_cast<void**>(us_socket_context_ext(1, m_ssl_client_websockets_ctx));
-        *ptr = this;
-        registerHTTPContextForWebSocket<true, false>(this, m_ssl_client_websockets_ctx, loop);
-    }
-
-    return m_ssl_client_websockets_ctx;
-}
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 
 void ScriptExecutionContext::refEventLoop()
@@ -222,45 +189,6 @@ void ScriptExecutionContext::checkConsistency() const
     for (auto* destructionObserver : m_destructionObservers)
         ASSERT(destructionObserver->scriptExecutionContext() == this);
 #endif // ASSERT_ENABLED
-}
-
-us_socket_context_t* ScriptExecutionContext::webSocketContextNoSSL()
-{
-    if (!m_client_websockets_ctx) {
-        us_loop_t* loop = (us_loop_t*)uws_get_loop();
-        us_socket_context_options_t opts;
-        memset(&opts, 0, sizeof(us_socket_context_options_t));
-        this->m_client_websockets_ctx = us_create_socket_context(0, loop, sizeof(size_t), opts);
-        void** ptr = reinterpret_cast<void**>(us_socket_context_ext(0, m_client_websockets_ctx));
-        *ptr = this;
-        registerHTTPContextForWebSocket<false, false>(this, m_client_websockets_ctx, loop);
-    }
-
-    return m_client_websockets_ctx;
-}
-
-template<bool SSL>
-static us_socket_context_t* registerWebSocketClientContext(ScriptExecutionContext* script, us_socket_context_t* parent)
-{
-    us_loop_t* loop = (us_loop_t*)uws_get_loop();
-    if constexpr (SSL) {
-        us_socket_context_t* child = us_create_child_socket_context(1, parent, sizeof(size_t));
-        Bun__WebSocketClientTLS__register(script->jsGlobalObject(), loop, child);
-        return child;
-    } else {
-        us_socket_context_t* child = us_create_child_socket_context(0, parent, sizeof(size_t));
-        Bun__WebSocketClient__register(script->jsGlobalObject(), loop, child);
-        return child;
-    }
-}
-
-us_socket_context_t* ScriptExecutionContext::connectedWebSocketKindClient()
-{
-    return registerWebSocketClientContext<false>(this, webSocketContextNoSSL());
-}
-us_socket_context_t* ScriptExecutionContext::connectedWebSocketKindClientSSL()
-{
-    return registerWebSocketClientContext<true>(this, webSocketContextSSL());
 }
 
 ScriptExecutionContextIdentifier ScriptExecutionContext::generateIdentifier()

@@ -2409,7 +2409,9 @@ Server.prototype[kRealListen] = function (
 
   if (contexts) {
     for (const [name, context] of contexts) {
-      addServerName(this._handle, name, context);
+      // tls.ts stores the InternalSecureContext wrapper; the Zig side wants
+      // the native SSL_CTX wrapper at `.context`.
+      addServerName(this._handle, name, context.context ?? context);
     }
   }
 

@@ -586,7 +586,7 @@ pub const FSEventsWatcher = struct {
     recursive: bool,
     ctx: ?*anyopaque,
 
-    pub const Callback = PathWatcher.Callback;
+    pub const Callback = *const fn (ctx: ?*anyopaque, event: Event, is_file: bool) void;
     pub const UpdateEndCallback = *const fn (ctx: ?*anyopaque) void;
 
     pub fn init(loop: *FSEventsLoop, path: string, recursive: bool, callback: Callback, updateEnd: UpdateEndCallback, ctx: ?*anyopaque) *FSEventsWatcher {
@@ -650,10 +650,8 @@ pub fn closeAndWait() void {
 const string = []const u8;
 
 const std = @import("std");
+const EventType = @import("./path_watcher.zig").PathWatcher.EventType;
 const Semaphore = std.Thread.Semaphore;
-
-const PathWatcher = @import("./path_watcher.zig").PathWatcher;
-const EventType = PathWatcher.EventType;
 
 const bun = @import("bun");
 const Mutex = bun.Mutex;

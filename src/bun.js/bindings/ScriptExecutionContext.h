@@ -19,7 +19,7 @@ struct WebSocketContext;
 }
 
 struct us_socket_t;
-struct us_socket_context_t;
+struct us_socket_group_t;
 struct us_loop_t;
 
 namespace WebCore {
@@ -54,16 +54,6 @@ public:
     JSC::JSGlobalObject* jsGlobalObject()
     {
         return m_globalObject;
-    }
-
-    template<bool isSSL>
-    us_socket_context_t* webSocketContext()
-    {
-        if constexpr (isSSL) {
-            return this->webSocketContextSSL();
-        } else {
-            return this->webSocketContextNoSSL();
-        }
     }
 
     static ScriptExecutionContext* getScriptExecutionContext(ScriptExecutionContextIdentifier identifier);
@@ -151,36 +141,7 @@ private:
 
     UncheckedKeyHashSet<ContextDestructionObserver*> m_destructionObservers;
 
-    us_socket_context_t* webSocketContextSSL();
-    us_socket_context_t* webSocketContextNoSSL();
-    us_socket_context_t* connectedWebSocketKindClientSSL();
-    us_socket_context_t* connectedWebSocketKindClient();
-
-    us_socket_context_t* m_ssl_client_websockets_ctx = nullptr;
-    us_socket_context_t* m_client_websockets_ctx = nullptr;
-
-    us_socket_context_t* m_connected_ssl_client_websockets_ctx = nullptr;
-    us_socket_context_t* m_connected_client_websockets_ctx = nullptr;
-
 public:
-    template<bool isSSL, bool isServer>
-    us_socket_context_t* connectedWebSocketContext()
-    {
-        if constexpr (isSSL) {
-            if (!m_connected_ssl_client_websockets_ctx) {
-                m_connected_ssl_client_websockets_ctx = connectedWebSocketKindClientSSL();
-            }
-
-            return m_connected_ssl_client_websockets_ctx;
-        } else {
-            if (!m_connected_client_websockets_ctx) {
-                m_connected_client_websockets_ctx = connectedWebSocketKindClient();
-            }
-
-            return m_connected_client_websockets_ctx;
-        }
-    }
-
 #if ASSERT_ENABLED
     bool m_inScriptExecutionContextDestructor = false;
 #endif

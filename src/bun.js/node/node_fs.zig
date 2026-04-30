@@ -867,9 +867,24 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                 },
                 .result => |ent| ent,
             }) |current| : (entry = iterator.next()) {
+                const cname = current.name.slice();
+
+                // The accumulated path for deep directory trees can exceed the fixed
+                // OSPathBuffer. Bail out with ENAMETOOLONG instead of writing past the
+                // end of the buffer and corrupting the stack.
+                if (src_dir_len + 1 + cname.len >= src_buf.len or
+                    dest_dir_len + 1 + cname.len >= dest_buf.len)
+                {
+                    this.finishConcurrently(.{ .err = .{
+                        .errno = @intFromEnum(E.NAMETOOLONG),
+                        .syscall = .copyfile,
+                        .path = nodefs.osPathIntoSyncErrorBuf(src_buf[0..src_dir_len]),
+                    } });
+                    return false;
+                }
+
                 switch (current.kind) {
                     .directory => {
-                        const cname = current.name.slice();
                         @memcpy(src_buf[src_dir_len + 1 .. src_dir_len + 1 + cname.len], cname);
                         src_buf[src_dir_len] = std.fs.path.sep;
                         src_buf[src_dir_len + 1 + cname.len] = 0;
@@ -891,8 +906,6 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                     },
                     else => {
                         _ = this.subtask_count.fetchAdd(1, .monotonic);
-
-                        const cname = current.name.slice();
 
                         // Allocate a path buffer for the path data
                         var path_buf = bun.default_allocator.alloc(
@@ -6264,6 +6277,19 @@ pub const NodeFS = struct {
             .result => |ent| ent,
         }) |current| : (entry = iterator.next()) {
             const name_slice = current.name.slice();
+
+            // The accumulated path for deep directory trees can exceed the fixed
+            // OSPathBuffer. Bail out with ENAMETOOLONG instead of writing past the
+            // end of the buffer and corrupting the stack.
+            if (src_dir_len + 1 + name_slice.len >= src_buf.len or
+                dest_dir_len + 1 + name_slice.len >= dest_buf.len)
+            {
+                return .{ .err = .{
+                    .errno = @intFromEnum(E.NAMETOOLONG),
+                    .syscall = .copyfile,
+                    .path = this.osPathIntoSyncErrorBuf(src_buf[0..src_dir_len]),
+                } };
+            }
 
             @memcpy(src_buf[src_dir_len + 1 .. src_dir_len + 1 + name_slice.len], name_slice);
             src_buf[src_dir_len] = std.fs.path.sep;

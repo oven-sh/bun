@@ -242,48 +242,35 @@ pub fn watch(
         .result => |m| m,
     };
 
-    // Resolve to a canonical path so `fs.watch("./x")` and `fs.watch("/abs/x")` dedup.
-    // On macOS FSEvents also requires a realpath (it reports events by realpath).
+    // Resolve to a canonical path so `fs.watch("./x")` and `fs.watch("/abs/x")` dedup;
+    // FSEvents reports events by realpath so macOS needs this for prefix matching too.
+    //
+    // Open with O_PATH|O_DIRECTORY first and retry without O_DIRECTORY on ENOTDIR —
+    // that tells us file-vs-dir without a separate stat, follows symlinks, and the
+    // resulting fd feeds `getFdPath` for the realpath. One or two syscalls instead
+    // of lstat + open + (stat) in the old code. `O.PATH` is 0 on macOS (degrades to
+    // O_RDONLY, which is what F_GETPATH needs anyway).
     const resolve_buf = bun.path_buffer_pool.get();
     defer bun.path_buffer_pool.put(resolve_buf);
-    const stat = switch (bun.sys.lstat(path)) {
-        .err => |e| return .{ .err = e.withoutPath() },
-        .result => |s| s,
+    var is_file = false;
+    const probe_fd: bun.FD = switch (bun.sys.open(path, bun.O.PATH | bun.O.DIRECTORY | bun.O.CLOEXEC, 0)) {
+        .result => |f| f,
+        .err => |e| if (e.getErrno() == .NOTDIR) retry: {
+            is_file = true;
+            break :retry switch (bun.sys.open(path, bun.O.PATH | bun.O.CLOEXEC, 0)) {
+                .result => |f| f,
+                .err => |e2| return .{ .err = e2.withoutPath() },
+            };
+        } else return .{ .err = e.withoutPath() },
     };
-    var is_file = !bun.S.ISDIR(@intCast(stat.mode));
-    const resolved: [:0]const u8 = if (bun.S.ISLNK(@intCast(stat.mode))) brk: {
-        // fs.watch follows symlinks.
-        const fd = switch (bun.sys.open(path, bun.O.RDONLY, 0)) {
-            .err => |e| return .{ .err = e.withoutPath() },
-            .result => |f| f,
-        };
-        defer fd.close();
-        const real = switch (bun.sys.getFdPath(fd, resolve_buf)) {
-            .err => |e| return .{ .err = e.withoutPath() },
-            .result => |r| r,
-        };
-        resolve_buf[real.len] = 0;
-        const target_stat = switch (bun.sys.stat(resolve_buf[0..real.len :0])) {
-            .err => |e| return .{ .err = e.withoutPath() },
-            .result => |s| s,
-        };
-        is_file = !bun.S.ISDIR(@intCast(target_stat.mode));
-        break :brk resolve_buf[0..real.len :0];
-    } else if (comptime Environment.isMac) brk: {
-        // FSEvents reports realpaths; resolve up-front so prefix matching works even
-        // when the caller passed a path containing a symlinked component.
-        const fd = switch (bun.sys.open(path, bun.O.RDONLY, 0)) {
-            .err => |e| return .{ .err = e.withoutPath() },
-            .result => |f| f,
-        };
-        defer fd.close();
-        const real = switch (bun.sys.getFdPath(fd, resolve_buf)) {
-            .err => break :brk path,
-            .result => |r| r,
-        };
-        resolve_buf[real.len] = 0;
-        break :brk resolve_buf[0..real.len :0];
-    } else path;
+    defer probe_fd.close();
+    const resolved: [:0]const u8 = switch (bun.sys.getFdPath(probe_fd, resolve_buf)) {
+        .err => path, // fall back to the caller's path; best effort
+        .result => |r| brk: {
+            resolve_buf[r.len] = 0;
+            break :brk resolve_buf[0..r.len :0];
+        },
+    };
 
     const key_buf = bun.path_buffer_pool.get();
     defer bun.path_buffer_pool.put(key_buf);
@@ -366,6 +353,47 @@ pub fn watch(
 // Platform backends
 // --------------------------------------------------------------------------------------
 
+/// Shared recursive directory walk for Linux and Kqueue: open `abs_dir`, iterate,
+/// and for every entry call `cb` with (abs, rel, is_file); recurse into
+/// subdirectories. When `dirs_only`, non-directory entries are skipped entirely
+/// (inotify delivers file events on the parent dir's wd so we only need a watch
+/// per directory; kqueue needs an fd per file too). Best-effort — an unreadable
+/// subdirectory just stops that branch (matches Node). Uses `bun.sys` /
+/// `bun.DirIterator` / `bun.path` throughout; no std.fs.
+fn walkSubtree(
+    abs_dir: [:0]const u8,
+    rel_dir: []const u8,
+    comptime dirs_only: bool,
+    ctx: anytype,
+    comptime cb: fn (ctx: @TypeOf(ctx), abs: [:0]const u8, rel: []const u8, is_file: bool) void,
+) void {
+    const dfd = switch (bun.sys.open(abs_dir, bun.O.RDONLY | bun.O.DIRECTORY | bun.O.CLOEXEC, 0)) {
+        .err => return,
+        .result => |f| f,
+    };
+    defer dfd.close();
+    var it = bun.DirIterator.iterate(dfd, .u8);
+    const abs_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(abs_buf);
+    const rel_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(rel_buf);
+    while (switch (it.next()) {
+        .err => return,
+        .result => |r| r,
+    }) |entry| {
+        const child_is_file = entry.kind != .directory;
+        if (dirs_only and child_is_file) continue;
+        const name = entry.name.slice();
+        const child_abs = bun.path.joinZBuf(abs_buf, &[_][]const u8{ abs_dir, name }, .posix);
+        const child_rel: []const u8 = if (rel_dir.len == 0)
+            name
+        else
+            bun.path.joinStringBuf(rel_buf, &[_][]const u8{ rel_dir, name }, .posix);
+        cb(ctx, child_abs, child_rel, child_is_file);
+        if (!child_is_file) walkSubtree(child_abs, child_rel, dirs_only, ctx, cb);
+    }
+}
+
 const Platform = switch (Environment.os) {
     .linux => Linux,
     .mac => Darwin,
@@ -424,15 +452,9 @@ const Linux = struct {
         IN.MOVED_FROM | IN.MOVED_TO | IN.MOVE_SELF | IN.ONLYDIR;
 
     fn init(manager: *PathWatcherManager) bun.sys.Maybe(void) {
-        const fd = std.posix.inotify_init1(IN.CLOEXEC) catch |e| return .{ .err = .{
-            .errno = @intFromEnum(switch (e) {
-                error.ProcessFdQuotaExceeded, error.SystemFdQuotaExceeded => bun.sys.E.MFILE,
-                error.SystemResources => bun.sys.E.NOMEM,
-                error.Unexpected => bun.sys.E.INVAL,
-            }),
-            .syscall = .watch,
-        } };
-        manager.platform.fd = .fromNative(fd);
+        const rc = bun.sys.syscall.inotify_init1(IN.CLOEXEC);
+        if (bun.sys.Maybe(void).errnoSys(rc, .watch)) |err| return err;
+        manager.platform.fd = .fromNative(@intCast(rc));
         // The manager is process-global and never torn down, so the reader thread is
         // a daemon — detach it instead of stashing a handle we'd never join.
         var thread = std.Thread.spawn(.{}, threadMain, .{manager}) catch {
@@ -464,7 +486,7 @@ const Linux = struct {
     ) bun.sys.Maybe(void) {
         const plat = &manager.platform;
         const mask: u32 = if (watcher.is_file and subpath.len == 0) watch_file_mask else watch_dir_mask;
-        const rc = std.posix.system.inotify_add_watch(plat.fd.cast(), abs_path, mask);
+        const rc = bun.sys.syscall.inotify_add_watch(plat.fd.cast(), abs_path, mask);
         if (bun.sys.Maybe(void).errnoSysP(rc, .watch, abs_path)) |err| {
             // ENOTDIR/ENOENT during a recursive walk just means we raced; skip.
             if (subpath.len > 0) return .success;
@@ -499,31 +521,15 @@ const Linux = struct {
         return .success;
     }
 
-    /// Best-effort recursive directory walk. Errors on individual entries are ignored
-    /// (matches Node: an unreadable subdirectory doesn't fail the whole watch).
-    fn walkAndAdd(
-        manager: *PathWatcherManager,
-        watcher: *PathWatcher,
-        abs_dir: [:0]const u8,
-        rel_dir: []const u8,
-    ) void {
-        var dir = std.fs.openDirAbsoluteZ(abs_dir, .{ .iterate = true }) catch return;
-        defer dir.close();
-        var it = dir.iterate();
-        const abs_buf = bun.path_buffer_pool.get();
-        defer bun.path_buffer_pool.put(abs_buf);
-        const rel_buf = bun.path_buffer_pool.get();
-        defer bun.path_buffer_pool.put(rel_buf);
-        while (it.next() catch null) |entry| {
-            if (entry.kind != .directory) continue;
-            const child_abs = std.fmt.bufPrintZ(abs_buf, "{s}/{s}", .{ abs_dir, entry.name }) catch continue;
-            const child_rel = if (rel_dir.len == 0)
-                std.fmt.bufPrint(rel_buf, "{s}", .{entry.name}) catch continue
-            else
-                std.fmt.bufPrint(rel_buf, "{s}/{s}", .{ rel_dir, entry.name }) catch continue;
-            _ = addOne(manager, watcher, child_abs, child_rel);
-            walkAndAdd(manager, watcher, child_abs, child_rel);
-        }
+    /// Best-effort recursive directory walk. inotify watches are per-directory (events
+    /// for files arrive on their parent's wd), so only descend into subdirectories.
+    fn walkAndAdd(manager: *PathWatcherManager, watcher: *PathWatcher, abs_dir: [:0]const u8, rel_dir: []const u8) void {
+        const Ctx = struct { m: *PathWatcherManager, w: *PathWatcher };
+        walkSubtree(abs_dir, rel_dir, true, Ctx{ .m = manager, .w = watcher }, struct {
+            fn f(ctx: Ctx, abs: [:0]const u8, rel: []const u8, _: bool) void {
+                _ = addOne(ctx.m, ctx.w, abs, rel);
+            }
+        }.f);
     }
 
     /// Caller holds `manager.mutex`. Drops this watcher's ownership of each of its
@@ -542,18 +548,15 @@ const Linux = struct {
             if (owners.items.len == 0) {
                 owners.deinit(bun.default_allocator);
                 _ = plat.wd_map.remove(wd);
-                _ = std.posix.system.inotify_rm_watch(plat.fd.cast(), wd);
+                _ = bun.sys.syscall.inotify_rm_watch(plat.fd.cast(), wd);
             }
         }
         watcher.platform.wds.clearRetainingCapacity();
     }
 
-    const InotifyEvent = extern struct {
-        wd: i32,
-        mask: u32,
-        cookie: u32,
-        len: u32,
-    };
+    /// The kernel `struct inotify_event` header. Shared with the bundler watcher;
+    /// field naming there is `watch_descriptor` / `name_len`.
+    const InotifyEvent = @import("../../watcher/INotifyWatcher.zig").Event;
 
     fn threadMain(manager: *PathWatcherManager) void {
         Output.Source.configureNamedThread("fs.watch");
@@ -563,8 +566,8 @@ const Linux = struct {
         var path_buf: bun.PathBuffer = undefined;
 
         while (plat.running.load(.acquire)) {
-            const rc = std.posix.system.read(plat.fd.cast(), &buf, buf.len);
-            switch (std.posix.errno(rc)) {
+            const rc = bun.sys.syscall.read(plat.fd.cast(), &buf, buf.len);
+            switch (bun.sys.getErrno(rc)) {
                 .SUCCESS => {},
                 .AGAIN, .INTR => continue,
                 else => |errno| {
@@ -593,27 +596,28 @@ const Linux = struct {
             var i: usize = 0;
             while (i < n) {
                 const ev: *align(1) const InotifyEvent = @ptrCast(buf[i..].ptr);
-                i += @sizeOf(InotifyEvent) + ev.len;
+                i += @sizeOf(InotifyEvent) + ev.name_len;
+                const wd = ev.watch_descriptor;
 
                 // Kernel retired this wd (rm_watch, or the watched inode is gone).
                 if (ev.mask & IN.IGNORED != 0) {
-                    if (plat.wd_map.getPtr(ev.wd)) |owners| {
+                    if (plat.wd_map.getPtr(wd)) |owners| {
                         for (owners.items) |o| {
                             bun.default_allocator.free(o.subpath);
-                            if (std.mem.indexOfScalar(i32, o.watcher.platform.wds.items, ev.wd)) |idx| {
+                            if (std.mem.indexOfScalar(i32, o.watcher.platform.wds.items, wd)) |idx| {
                                 _ = o.watcher.platform.wds.swapRemove(idx);
                             }
                         }
                         owners.deinit(bun.default_allocator);
-                        _ = plat.wd_map.remove(ev.wd);
+                        _ = plat.wd_map.remove(wd);
                     }
                     continue;
                 }
 
-                if (plat.wd_map.getPtr(ev.wd) == null) continue;
+                if (plat.wd_map.getPtr(wd) == null) continue;
 
-                const name: []const u8 = if (ev.len > 0) blk: {
-                    const name_ptr: [*:0]const u8 = @ptrCast(buf[i - ev.len ..].ptr);
+                const name: []const u8 = if (ev.name_len > 0) blk: {
+                    const name_ptr: [*:0]const u8 = @ptrCast(buf[i - ev.name_len ..].ptr);
                     break :blk bun.sliceTo(name_ptr, 0);
                 } else "";
 
@@ -628,10 +632,10 @@ const Linux = struct {
                 // `addOne`/`walkAndAdd`, which insert into `wd_map` via `getOrPut` and
                 // may rehash — that would invalidate any pointer into the map's value
                 // storage. Re-fetch the owners list by key each iteration rather than
-                // caching `getPtr(ev.wd)` across the loop.
+                // caching `getPtr(wd)` across the loop.
                 var oi: usize = 0;
                 while (true) : (oi += 1) {
-                    const owners = plat.wd_map.getPtr(ev.wd) orelse break;
+                    const owners = plat.wd_map.getPtr(wd) orelse break;
                     if (oi >= owners.items.len) break;
                     const owner = owners.items[oi];
                     const watcher = owner.watcher;
@@ -640,15 +644,14 @@ const Linux = struct {
                     // not required.
 
                     // Build the path relative to this owner's root.
-                    const rel: []const u8 = if (watcher.is_file) blk: {
-                        break :blk std.fs.path.basename(watcher.path);
-                    } else if (owner.subpath.len == 0) blk: {
-                        break :blk name;
-                    } else if (name.len == 0) blk: {
-                        break :blk owner.subpath;
-                    } else blk: {
-                        break :blk std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ owner.subpath, name }) catch owner.subpath;
-                    };
+                    const rel: []const u8 = if (watcher.is_file)
+                        bun.path.basename(watcher.path)
+                    else if (owner.subpath.len == 0)
+                        name
+                    else if (name.len == 0)
+                        owner.subpath
+                    else
+                        bun.path.joinStringBuf(&path_buf, &[_][]const u8{ owner.subpath, name }, .posix);
 
                     watcher.emit(event_type, rel, !is_dir_child and !(ev.mask & (IN.DELETE_SELF | IN.MOVE_SELF) != 0 and !watcher.is_file));
                     _ = bun.handleOom(touched.getOrPut(bun.default_allocator, watcher));
@@ -660,10 +663,7 @@ const Linux = struct {
                     if (watcher.recursive and is_dir_child and (ev.mask & (IN.CREATE | IN.MOVED_TO) != 0) and name.len > 0) {
                         const abs_buf = bun.path_buffer_pool.get();
                         defer bun.path_buffer_pool.put(abs_buf);
-                        const child_abs = if (owner.subpath.len == 0)
-                            std.fmt.bufPrintZ(abs_buf, "{s}/{s}", .{ watcher.path, name }) catch continue
-                        else
-                            std.fmt.bufPrintZ(abs_buf, "{s}/{s}/{s}", .{ watcher.path, owner.subpath, name }) catch continue;
+                        const child_abs = bun.path.joinZBuf(abs_buf, &[_][]const u8{ watcher.path, owner.subpath, name }, .posix);
                         // These may rehash `wd_map`; `owners` is re-fetched next iteration.
                         _ = addOne(manager, watcher, child_abs, rel);
                         walkAndAdd(manager, watcher, child_abs, rel);
@@ -775,15 +775,19 @@ const Darwin = struct {
 const Kqueue = struct {
     kq: bun.FD = bun.invalid_fd,
     running: std.atomic.Value(bool) = .init(true),
-    /// ident (fd number) → entry. `udata` on the kevent also carries the *KqEntry so
-    /// dispatch is a single pointer chase; the map is for cleanup.
-    entries: std.AutoArrayHashMapUnmanaged(i32, *KqEntry) = .{},
+    /// ident (fd number) → entry (by value — avoids a per-entry heap alloc for
+    /// recursive trees). `udata` on the kevent carries a monotonic generation number
+    /// so the reader can reject stale events after the fd is recycled.
+    entries: std.AutoArrayHashMapUnmanaged(i32, KqEntry) = .{},
+    /// Bumped on every `addOne` and stored in both `KqEntry.gen` and `kev.udata`.
+    next_gen: usize = 1,
 
     const KqEntry = struct {
         watcher: *PathWatcher,
         fd: bun.FD,
-        /// Relative to watcher.path; empty for the root.
+        /// Relative to watcher.path; empty for the root. Owned.
         subpath: [:0]const u8,
+        gen: usize,
         is_file: bool,
     };
 
@@ -796,10 +800,9 @@ const Kqueue = struct {
     };
 
     fn init(manager: *PathWatcherManager) bun.sys.Maybe(void) {
-        const fd = std.posix.kqueue() catch return .{
-            .err = .{ .errno = @intFromEnum(bun.sys.E.MFILE), .syscall = .kqueue },
-        };
-        manager.platform.kq = .fromNative(fd);
+        const rc = bun.sys.syscall.kqueue();
+        if (bun.sys.Maybe(void).errnoSys(rc, .kqueue)) |err| return err;
+        manager.platform.kq = .fromNative(rc);
         // Daemon reader — the manager is process-global and never torn down.
         var thread = std.Thread.spawn(.{}, threadMain, .{manager}) catch {
             manager.platform.kq.close();
@@ -816,7 +819,13 @@ const Kqueue = struct {
             .result => {},
         }
         if (watcher.recursive and !watcher.is_file) {
-            walkAndAdd(manager, watcher, watcher.path, "");
+            // kqueue needs an open fd per *file* as well as per directory.
+            const Ctx = struct { m: *PathWatcherManager, w: *PathWatcher };
+            walkSubtree(watcher.path, "", false, Ctx{ .m = manager, .w = watcher }, struct {
+                fn f(ctx: Ctx, abs: [:0]const u8, rel: []const u8, is_file: bool) void {
+                    _ = addOne(ctx.m, ctx.w, abs, rel, is_file);
+                }
+            }.f);
         }
         return .success;
     }
@@ -829,68 +838,46 @@ const Kqueue = struct {
         is_file: bool,
     ) bun.sys.Maybe(void) {
         const plat = &manager.platform;
-        const fd = switch (bun.sys.open(abs_path, bun.O.RDONLY, 0)) {
+        // O_EVTONLY: we only need the fd for kevent registration, never for I/O.
+        // (No-op on FreeBSD where EVTONLY is 0; semantic here for kqueue-on-macOS.)
+        const fd = switch (bun.sys.open(abs_path, bun.O.EVTONLY | bun.O.RDONLY | bun.O.CLOEXEC, 0)) {
             .err => |e| {
                 if (subpath.len > 0) return .success; // best-effort on children
                 return .{ .err = e.withoutPath() };
             },
             .result => |f| f,
         };
-        const entry = bun.handleOom(bun.default_allocator.create(KqEntry));
-        entry.* = .{
-            .watcher = watcher,
-            .fd = fd,
-            .subpath = bun.handleOom(bun.default_allocator.dupeZ(u8, subpath)),
-            .is_file = is_file,
-        };
+
+        const gen = plat.next_gen;
+        plat.next_gen +%= 1;
+
         var kev = std.mem.zeroes(std.c.Kevent);
         kev.ident = @intCast(fd.native());
         kev.filter = std.c.EVFILT.VNODE;
         kev.flags = std.c.EV.ADD | std.c.EV.CLEAR | std.c.EV.ENABLE;
         kev.fflags = std.c.NOTE.WRITE | std.c.NOTE.DELETE | std.c.NOTE.RENAME |
             std.c.NOTE.EXTEND | std.c.NOTE.ATTRIB | std.c.NOTE.LINK | std.c.NOTE.REVOKE;
-        kev.udata = @intFromPtr(entry);
+        kev.udata = gen;
         var changes = [_]std.c.Kevent{kev};
-        const krc = std.posix.system.kevent(plat.kq.native(), &changes, 1, &changes, 0, null);
+        const krc = bun.sys.syscall.kevent(plat.kq.native(), &changes, 1, &changes, 0, null);
         if (krc < 0) {
             // Registration failed (ENOMEM/EINVAL on a bad fd, etc.). Don't leave a
             // dead entry in the map that will never deliver events.
-            const errno = std.posix.errno(krc);
+            const errno = bun.sys.getErrno(krc);
             fd.close();
-            bun.default_allocator.free(entry.subpath);
-            bun.default_allocator.destroy(entry);
             if (subpath.len > 0) return .success; // best-effort on children
             return .{ .err = .{ .errno = @truncate(@intFromEnum(errno)), .syscall = .kevent } };
         }
 
-        bun.handleOom(plat.entries.put(bun.default_allocator, @intCast(fd.native()), entry));
+        bun.handleOom(plat.entries.put(bun.default_allocator, @intCast(fd.native()), .{
+            .watcher = watcher,
+            .fd = fd,
+            .subpath = bun.handleOom(bun.default_allocator.dupeZ(u8, subpath)),
+            .gen = gen,
+            .is_file = is_file,
+        }));
         bun.handleOom(watcher.platform.fds.append(bun.default_allocator, @intCast(fd.native())));
         return .success;
-    }
-
-    fn walkAndAdd(
-        manager: *PathWatcherManager,
-        watcher: *PathWatcher,
-        abs_dir: [:0]const u8,
-        rel_dir: []const u8,
-    ) void {
-        var dir = std.fs.openDirAbsoluteZ(abs_dir, .{ .iterate = true }) catch return;
-        defer dir.close();
-        var it = dir.iterate();
-        const abs_buf = bun.path_buffer_pool.get();
-        defer bun.path_buffer_pool.put(abs_buf);
-        const rel_buf = bun.path_buffer_pool.get();
-        defer bun.path_buffer_pool.put(rel_buf);
-        while (it.next() catch null) |ent| {
-            const child_abs = std.fmt.bufPrintZ(abs_buf, "{s}/{s}", .{ abs_dir, ent.name }) catch continue;
-            const child_rel = if (rel_dir.len == 0)
-                std.fmt.bufPrint(rel_buf, "{s}", .{ent.name}) catch continue
-            else
-                std.fmt.bufPrint(rel_buf, "{s}/{s}", .{ rel_dir, ent.name }) catch continue;
-            const child_is_file = ent.kind != .directory;
-            _ = addOne(manager, watcher, child_abs, child_rel, child_is_file);
-            if (!child_is_file) walkAndAdd(manager, watcher, child_abs, child_rel);
-        }
     }
 
     /// Caller holds `manager.mutex`.
@@ -901,7 +888,6 @@ const Kqueue = struct {
                 // Closing the fd auto-removes the kevent.
                 kv.value.fd.close();
                 bun.default_allocator.free(kv.value.subpath);
-                bun.default_allocator.destroy(kv.value);
             }
         }
         watcher.platform.fds.clearRetainingCapacity();
@@ -912,7 +898,7 @@ const Kqueue = struct {
         const plat = &manager.platform;
         var events: [128]std.c.Kevent = undefined;
         while (plat.running.load(.acquire)) {
-            const count = std.posix.system.kevent(plat.kq.native(), &events, 0, &events, events.len, null);
+            const count = bun.sys.syscall.kevent(plat.kq.native(), &events, 0, &events, events.len, null);
             if (count <= 0) continue;
 
             manager.mutex.lock();
@@ -924,10 +910,11 @@ const Kqueue = struct {
                 // removeWatch between kevent() returning and us taking the lock. POSIX
                 // recycles the lowest fd on open(), so the ident could also now belong
                 // to an *unrelated* watch registered in that same window; `udata` was
-                // set to the original entry pointer at registration and survives in the
-                // already-delivered event, so use it to reject stale fd-reuse hits.
-                const entry = plat.entries.get(@intCast(kev.ident)) orelse continue;
-                if (@intFromPtr(entry) != kev.udata) continue;
+                // set to a monotonic generation at registration and survives in the
+                // already-delivered event, so compare it to the current entry's gen
+                // to reject stale fd-reuse hits.
+                const entry = plat.entries.getPtr(@intCast(kev.ident)) orelse continue;
+                if (entry.gen != kev.udata) continue;
                 const watcher = entry.watcher;
 
                 const event_type: PathWatcher.EventType = if (kev.fflags &
@@ -939,7 +926,7 @@ const Kqueue = struct {
                 // kqueue has no filenames. For a file watch, report the basename; for a
                 // directory, report the subpath (empty for root → caller re-scans).
                 const rel: []const u8 = if (entry.is_file and entry.subpath.len == 0)
-                    std.fs.path.basename(watcher.path)
+                    bun.path.basename(watcher.path)
                 else
                     entry.subpath;
 

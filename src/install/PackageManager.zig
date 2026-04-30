@@ -8,6 +8,7 @@ timestamp_for_manifest_cache_control: u32 = 0,
 extracted_count: u32 = 0,
 default_features: Features = .{},
 summary: Lockfile.Package.Diff.Summary = .{},
+has_loaded_lockfile: bool = false,
 env: *DotEnv.Loader,
 progress: Progress = .{},
 downloads_node: ?*Progress.Node = null,
@@ -730,6 +731,7 @@ pub fn init(
                             &json_source,
                             prop.loc,
                             null,
+                            false,
                         ) catch break;
 
                         for (workspace_names.keys(), workspace_names.values()) |path, entry| {

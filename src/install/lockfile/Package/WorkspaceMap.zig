@@ -105,6 +105,7 @@ pub fn processNamesArray(
     source: *const logger.Source,
     loc: logger.Loc,
     string_builder: ?*StringBuilder,
+    skip_missing_workspaces: bool,
 ) !u32 {
     if (arr.items.len == 0) return 0;
 
@@ -153,7 +154,21 @@ pub fn processNamesArray(
         ) catch |err| {
             bun.handleErrorReturnTrace(err, @errorReturnTrace());
             switch (err) {
-                error.EISNOTDIR, error.EISDIR, error.EACCESS, error.EPERM, error.ENOENT, error.FileNotFound => {
+                error.ENOENT, error.FileNotFound => {
+                    // When --filter is used with --frozen-lockfile (e.g. Docker builds
+                    // that only copy a subset of workspace package.json files), missing
+                    // workspaces that aren't part of the filter target should not be errors.
+                    if (!skip_missing_workspaces) {
+                        log.addErrorFmt(
+                            source,
+                            item.loc,
+                            allocator,
+                            "Workspace not found \"{s}\"",
+                            .{input_path},
+                        ) catch {};
+                    }
+                },
+                error.EISNOTDIR, error.EISDIR, error.EACCESS, error.EPERM => {
                     log.addErrorFmt(
                         source,
                         item.loc,

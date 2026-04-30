@@ -1,7 +1,7 @@
 import { FileSystemRouter } from "bun";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
 import path, { dirname } from "path";
 
 function createTree(basedir: string, paths: string[]) {
@@ -467,6 +467,27 @@ it("origin should be validated", async () => {
       style: "nextjs",
     });
   }).toThrow("Expected origin to be a string");
+});
+
+// POSIX allows arbitrary bytes (except '/' and NUL) in filenames, including 0xFF.
+// The route sorter's lookup table must cover the full u8 range.
+it.skipIf(isWindows)("handles filenames containing byte 0xFF", () => {
+  const dir = tmpdirSync();
+  mkdirSync(dir, { recursive: true });
+  // Two static routes that share a prefix so the sorter must compare the 0xFF byte.
+  for (const name of [[0x61, 0xff], [0x61, 0x62], [0xff]]) {
+    fs.writeFileSync(Buffer.concat([Buffer.from(dir + "/"), Buffer.from(name), Buffer.from(".tsx")]), "export default 1;\n");
+  }
+
+  const router = new FileSystemRouter({
+    dir,
+    fileExtensions: [".tsx"],
+    style: "nextjs",
+  });
+
+  const routes = Object.keys(router.routes);
+  expect(routes.length).toBe(3);
+  expect(routes).toContain("/ab");
 });
 
 it("MatchedRoute.params does not leak", async () => {

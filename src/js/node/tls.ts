@@ -528,6 +528,18 @@ function secureContextCacheKey(o) {
   feed(o.ecdhCurve);
   feed(o.sigalgs);
   feed(o.ALPNProtocols);
+  // Bun-extension fields that `SSLConfig.fromJS` also reads. These aren't in
+  // Node's vocabulary so it's tempting to omit them, but a `tls.connect()`
+  // wrapper that passes `caFile` (not `ca`) would otherwise collide with the
+  // empty-config CTX and silently skip its trust store. (False miss for the
+  // path-variant case is fine; false hit is a security bug.)
+  feed(o.keyFile);
+  feed(o.certFile);
+  feed(o.caFile);
+  feed(o.dhParamsFile);
+  feed(o.lowMemoryMode);
+  feed(o.clientRenegotiationLimit);
+  feed(o.clientRenegotiationWindow);
   if (unhashable) return null;
   return sha.digest("base64");
 }

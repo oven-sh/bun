@@ -148,14 +148,24 @@ pub const ElfFile = struct {
         .{ "ld-musl-aarch64.so.1", "/lib/ld-musl-aarch64.so.1" },
     };
 
-    /// Find the `.bun` section and write `payload` to the end of the ELF file,
-    /// creating a new PT_LOAD segment (from PT_GNU_STACK) to map it. Stores the
-    /// new segment's vaddr at the original BUN_COMPILED location so the runtime
-    /// can dereference it directly.
+    /// Find the `.bun` section and write `payload` so the kernel `mmap`s it at
+    /// exec time alongside the rest of the binary. Stores the data's vaddr at
+    /// the original BUN_COMPILED location so the runtime can dereference it
+    /// directly.
     ///
-    /// We always append rather than writing in-place because .bun is in the middle
-    /// of a PT_LOAD segment — sections like .dynamic, .got, .got.plt come after it,
-    /// and expanding in-place would invalidate their absolute virtual addresses.
+    /// We extend the existing writable `PT_LOAD` to cover the appended payload
+    /// rather than creating a new segment (by repurposing `PT_GNU_STACK`).
+    /// Earlier versions added a late `PT_LOAD`; WSL1's kernel ELF loader
+    /// rejects that shape with `ENOEXEC` at `execve` time before anything in
+    /// the binary runs (#29963). Growing an already-valid `PT_LOAD` — the shape
+    /// a linker would natively produce — keeps compiled binaries loadable on
+    /// WSL1 while preserving the mmap-at-execve contract (no file I/O at
+    /// startup, works with execute-only permissions).
+    ///
+    /// We always append rather than writing in-place because `.bun` is in the
+    /// middle of a `PT_LOAD` segment — sections like `.dynamic`, `.got`,
+    /// `.got.plt` come after it, and expanding in-place would invalidate their
+    /// absolute virtual addresses.
     pub fn writeBunSection(self: *ElfFile, payload: []const u8) !void {
         const ehdr = readEhdr(self.data.items);
         const bun_section = try self.findBunSection(ehdr);
@@ -166,59 +176,114 @@ pub const ElfFile = struct {
         const new_content_size: u64 = header_size + payload.len;
         const aligned_new_size = alignUp(new_content_size, page_size);
 
-        // Find the highest virtual address across all PT_LOAD segments
-        var max_vaddr_end: u64 = 0;
+        // Locate the writable PT_LOAD we'll extend. .bun lives in this
+        // segment already (BlobHeader is `aligned(16K)` + PROGBITS with WA
+        // flags). Growing an existing PT_LOAD is the layout a linker would
+        // naturally produce; WSL1's kernel loader rejects binaries that
+        // instead add a late PT_LOAD by repurposing PT_GNU_STACK (#29963).
         const phdr_size = @sizeOf(Elf64_Phdr);
+        var rw_phdr_index: ?usize = null;
+        var rw_phdr: Elf64_Phdr = undefined;
+        var max_vaddr_end: u64 = 0;
         for (0..ehdr.e_phnum) |i| {
             const phdr_offset = @as(usize, @intCast(ehdr.e_phoff)) + i * phdr_size;
             const phdr = std.mem.bytesAsValue(Elf64_Phdr, self.data.items[phdr_offset..][0..phdr_size]).*;
-            if (phdr.p_type == elf.PT_LOAD) {
-                const vaddr_end = phdr.p_vaddr + phdr.p_memsz;
-                if (vaddr_end > max_vaddr_end) {
-                    max_vaddr_end = vaddr_end;
-                }
+            if (phdr.p_type != elf.PT_LOAD) continue;
+
+            const vaddr_end = phdr.p_vaddr + phdr.p_memsz;
+            if (vaddr_end > max_vaddr_end) max_vaddr_end = vaddr_end;
+
+            if ((phdr.p_flags & elf.PF_W) != 0 and rw_phdr_index == null) {
+                rw_phdr_index = i;
+                rw_phdr = phdr;
             }
         }
 
-        // The new segment's virtual address: after all existing mappings, page-aligned
-        const new_vaddr = alignUp(max_vaddr_end, page_size);
+        const rw_index = rw_phdr_index orelse return error.NoWritableLoadSegment;
 
-        // The new data goes at the end of the file, page-aligned
-        const new_file_offset = alignUp(self.data.items.len, page_size);
+        // Place the new data at the aligned tail of the writable PT_LOAD.
+        //
+        // Using `alignUp(rw_phdr.p_memsz, rw_phdr.p_align)` as the in-segment
+        // offset has two properties we need:
+        //   (a) `new_vaddr - rw.p_vaddr == new_file_offset - rw.p_offset` is
+        //       the same aligned quantity, so ELF's requirement that
+        //       `p_vaddr mod p_align == p_offset mod p_align` is preserved
+        //       when we grow p_filesz/p_memsz.
+        //   (b) `new_vaddr >= rw.p_vaddr + rw.p_memsz`, so nothing in the
+        //       existing segment gets overwritten in memory.
+        //
+        // Other PT_LOAD segments on bun's binary all have vaddrs lower than
+        // the RW segment, so placing past its memsz is collision-free.
+        const seg_align = @max(rw_phdr.p_align, page_size);
+        const offset_in_segment = alignUp(rw_phdr.p_memsz, seg_align);
+        const new_vaddr = rw_phdr.p_vaddr + offset_in_segment;
+        const new_file_offset = rw_phdr.p_offset + offset_in_segment;
 
-        // Grow the buffer to hold the new data + section header table after it
-        const shdr_table_size = @as(u64, ehdr.e_shnum) * @sizeOf(Elf64_Shdr);
-        const new_shdr_offset = new_file_offset + aligned_new_size;
-        const total_new_size = new_shdr_offset + shdr_table_size;
+        // Sanity: if another segment somehow extends past the RW segment in
+        // vaddr space (shouldn't happen with linker-produced binaries), the
+        // new vaddr would collide. Bail out rather than silently produce a
+        // broken ELF.
+        if (new_vaddr < max_vaddr_end) return error.NewVaddrCollides;
 
-        const old_file_size = self.data.items.len;
+        // File layout after this function returns:
+        //
+        //   [0, old_rw_file_end)                      original content, unchanged
+        //                                             (RW segment's file-backed bytes)
+        //   [old_rw_file_end, new_file_offset)        zero fill
+        //                                             (becomes file-backed inside the
+        //                                              extended RW PT_LOAD; must read as
+        //                                              zero to keep BSS semantics)
+        //   [new_file_offset, +aligned_new_size)      [u64 LE size][payload][zero pad]
+        //                                             (new .bun contents — vaddr = new_vaddr)
+        //   [payload_end, +moved_tail_size)           relocated non-ALLOC sections + old
+        //                                             section header table
+        //
+        // Anything past `old_rw_file_end` in the input — non-ALLOC sections
+        // like `.comment`, `.symtab`, `.strtab`, `.shstrtab`, debug info,
+        // plus the section header table — has to be moved out of the way
+        // because that file range now lives inside the extended RW PT_LOAD.
+        // Leaving it in place would mmap it into what was previously BSS
+        // (zero-initialized statics), corrupting the process.
+        const old_rw_file_end = rw_phdr.p_offset + rw_phdr.p_filesz;
+        const old_file_size: u64 = self.data.items.len;
+        if (old_rw_file_end > old_file_size) return error.InvalidElfFile;
+
+        const move_src_start: u64 = old_rw_file_end;
+        const move_src_end: u64 = old_file_size;
+        const moved_tail_size: u64 = move_src_end - move_src_start;
+        const move_dst_start: u64 = new_file_offset + aligned_new_size;
+        const move_dst_end: u64 = move_dst_start + moved_tail_size;
+
+        const total_new_size: u64 = move_dst_end;
+
         try self.data.ensureTotalCapacity(total_new_size);
         self.data.items.len = total_new_size;
 
-        // Zero the gap between old file end and new data (alignment padding).
-        // Without this, uninitialized allocator memory would leak into the output.
-        if (new_file_offset > old_file_size) {
-            @memset(self.data.items[old_file_size..new_file_offset], 0);
+        // Relocate the tail (non-ALLOC sections + old shdr table) past the
+        // payload. Do this BEFORE zero-filling and writing the payload — if
+        // `new_file_offset < old_file_size` (debug binaries with hundreds of
+        // MB of debug info past the RW segment), the destination overlaps
+        // the source, so memmove is required.
+        if (moved_tail_size != 0) {
+            bun.memmove(
+                self.data.items[move_dst_start..move_dst_end],
+                self.data.items[move_src_start..move_src_end],
+            );
         }
 
-        // Copy the section header table to its new location
-        const old_shdr_offset = ehdr.e_shoff;
-        bun.memmove(
-            self.data.items[new_shdr_offset..][0..shdr_table_size],
-            self.data.items[old_shdr_offset..][0..shdr_table_size],
-        );
-
-        // Update e_shoff to the new section header table location
-        self.writeEhdrShoff(new_shdr_offset);
+        // Zero the bytes between the old RW file-content end and the payload
+        // start. This entire range is now inside the extended PT_LOAD's
+        // file-backed region; keeping it zero preserves BSS semantics.
+        @memset(self.data.items[move_src_start..new_file_offset], 0);
 
         // Write the payload at the new location: [u64 LE size][data][zero padding]
         std.mem.writeInt(u64, self.data.items[new_file_offset..][0..8], @intCast(payload.len), .little);
         @memcpy(self.data.items[new_file_offset + header_size ..][0..payload.len], payload);
 
-        // Zero the padding between payload end and section header table
-        const padding_start = new_file_offset + new_content_size;
-        if (new_shdr_offset > padding_start) {
-            @memset(self.data.items[padding_start..new_shdr_offset], 0);
+        // Zero the padding between payload end and the relocated tail
+        const payload_end = new_file_offset + new_content_size;
+        if (move_dst_start > payload_end) {
+            @memset(self.data.items[payload_end..move_dst_start], 0);
         }
 
         // Write the vaddr of the appended data at the ORIGINAL .bun section location
@@ -227,46 +292,62 @@ pub const ElfFile = struct {
         // Non-standalone binaries have BUN_COMPILED.size = 0, so 0 means "no data".
         std.mem.writeInt(u64, self.data.items[bun_section_offset..][0..8], new_vaddr, .little);
 
-        // Update the .bun section header to reflect the new data location and size
-        // so that tools like `readelf -S` show accurate metadata.
-        {
-            const shdr_offset = new_shdr_offset + @as(u64, bun_section.section_index) * @sizeOf(Elf64_Shdr);
-            const shdr_bytes = self.data.items[shdr_offset..][0..@sizeOf(Elf64_Shdr)];
+        // Update every section header whose sh_offset pointed into the moved
+        // tail so tools like `readelf -S`, `objdump`, and `gdb` still find
+        // the right bytes. Special-case the .bun header — it moves to the
+        // payload's new position, not to the shifted tail.
+        //
+        // The section header table itself is part of the moved tail, so we
+        // compute its new location from e_shoff's old value.
+        const old_shdr_offset: u64 = ehdr.e_shoff;
+        const shdr_table_size = @as(u64, ehdr.e_shnum) * @sizeOf(Elf64_Shdr);
+        if (old_shdr_offset < move_src_start or old_shdr_offset + shdr_table_size > move_src_end) {
+            return error.InvalidElfFile;
+        }
+        const new_shdr_offset: u64 = old_shdr_offset + (move_dst_start - move_src_start);
+        self.writeEhdrShoff(new_shdr_offset);
+
+        const shnum = ehdr.e_shnum;
+        for (0..shnum) |i| {
+            const shdr_file_offset: u64 = new_shdr_offset + @as(u64, @intCast(i)) * @sizeOf(Elf64_Shdr);
+            const shdr_bytes = self.data.items[shdr_file_offset..][0..@sizeOf(Elf64_Shdr)];
             var shdr = std.mem.bytesAsValue(Elf64_Shdr, shdr_bytes).*;
-            shdr.sh_offset = new_file_offset;
-            shdr.sh_size = new_content_size;
-            shdr.sh_addr = new_vaddr;
+
+            if (i == bun_section.section_index) {
+                shdr.sh_offset = new_file_offset;
+                shdr.sh_size = new_content_size;
+                shdr.sh_addr = new_vaddr;
+            } else if (shdr.sh_type != elf.SHT_NOBITS and
+                shdr.sh_offset >= move_src_start and
+                shdr.sh_offset < move_src_end)
+            {
+                shdr.sh_offset += move_dst_start - move_src_start;
+            }
+
             @memcpy(shdr_bytes, std.mem.asBytes(&shdr));
         }
 
-        // Find PT_GNU_STACK and convert it to PT_LOAD for the new .bun data.
-        // PT_GNU_STACK only controls stack executability; on modern kernels the
-        // stack defaults to non-executable without it, so repurposing is safe.
-        var found_gnu_stack = false;
-        for (0..ehdr.e_phnum) |i| {
-            const phdr_offset = @as(usize, @intCast(ehdr.e_phoff)) + i * phdr_size;
-            const phdr = std.mem.bytesAsValue(Elf64_Phdr, self.data.items[phdr_offset..][0..phdr_size]).*;
-
-            if (phdr.p_type == elf.PT_GNU_STACK) {
-                // Convert to PT_LOAD
-                const new_phdr: Elf64_Phdr = .{
-                    .p_type = elf.PT_LOAD,
-                    .p_flags = elf.PF_R, // read-only
-                    .p_offset = new_file_offset,
-                    .p_vaddr = new_vaddr,
-                    .p_paddr = new_vaddr,
-                    .p_filesz = aligned_new_size,
-                    .p_memsz = aligned_new_size,
-                    .p_align = page_size,
-                };
-                @memcpy(self.data.items[phdr_offset..][0..phdr_size], std.mem.asBytes(&new_phdr));
-                found_gnu_stack = true;
-                break;
-            }
-        }
-
-        if (!found_gnu_stack) {
-            return error.NoGnuStackSegment;
+        // Extend the existing writable PT_LOAD to cover the appended payload.
+        // Keep p_offset/p_vaddr/p_paddr/p_align unchanged; only grow filesz
+        // and memsz. Equal values are fine — the extension is entirely
+        // file-backed (no new BSS gap).
+        //
+        // PT_GNU_STACK is deliberately left alone; repurposing it into a
+        // separate late PT_LOAD is what breaks WSL1 (#29963).
+        {
+            const new_segment_size = offset_in_segment + aligned_new_size;
+            const extended: Elf64_Phdr = .{
+                .p_type = rw_phdr.p_type,
+                .p_flags = rw_phdr.p_flags,
+                .p_offset = rw_phdr.p_offset,
+                .p_vaddr = rw_phdr.p_vaddr,
+                .p_paddr = rw_phdr.p_paddr,
+                .p_filesz = new_segment_size,
+                .p_memsz = new_segment_size,
+                .p_align = rw_phdr.p_align,
+            };
+            const phdr_offset = @as(usize, @intCast(ehdr.e_phoff)) + rw_index * phdr_size;
+            @memcpy(self.data.items[phdr_offset..][0..phdr_size], std.mem.asBytes(&extended));
         }
     }
 

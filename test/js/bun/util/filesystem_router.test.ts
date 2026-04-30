@@ -476,7 +476,10 @@ it.skipIf(isWindows)("handles filenames containing byte 0xFF", () => {
   mkdirSync(dir, { recursive: true });
   // Two static routes that share a prefix so the sorter must compare the 0xFF byte.
   for (const name of [[0x61, 0xff], [0x61, 0x62], [0xff]]) {
-    fs.writeFileSync(Buffer.concat([Buffer.from(dir + "/"), Buffer.from(name), Buffer.from(".tsx")]), "export default 1;\n");
+    fs.writeFileSync(
+      Buffer.concat([Buffer.from(dir + "/"), Buffer.from(name), Buffer.from(".tsx")]),
+      "export default 1;\n",
+    );
   }
 
   const router = new FileSystemRouter({

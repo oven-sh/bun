@@ -55,10 +55,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         // Track compression state of the entire message (across fragments)
         message_is_compressed: bool = false,
 
-        // Custom SSL context for per-connection TLS options (e.g., custom CA)
-        // This is set when the WebSocket is adopted from a connection that used a custom SSL context.
-        // Must be cleaned up when the WebSocket closes.
-        custom_ssl_ctx: ?*uws.SocketContext = null,
+        /// `us_ssl_ctx_t` inherited from the upgrade client when it was built
+        /// with a custom CA. The socket's `SSL*` references the `SSL_CTX`
+        /// inside, so this must outlive the connection. Null when the upgrade
+        /// used the shared default context.
+        secure: ?*uws.SslCtx = null,
 
         // Proxy tunnel for wss:// through HTTP proxy.
         // When set, all I/O goes through the tunnel (TLS encryption/decryption).
@@ -86,34 +87,16 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             return true;
         }
 
-        pub fn register(global: *jsc.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.c) void {
-            const vm = global.bunVM();
-            const loop = @as(*uws.Loop, @ptrCast(@alignCast(loop_)));
-
-            const ctx: *uws.SocketContext = @as(*uws.SocketContext, @ptrCast(ctx_));
-
-            if (comptime Environment.isPosix) {
-                if (vm.event_loop_handle) |other| {
-                    bun.assert(other == loop);
-                }
-            }
-
-            Socket.configure(
-                ctx,
-                true,
-                *WebSocket,
-                struct {
-                    pub const onClose = handleClose;
-                    pub const onData = handleData;
-                    pub const onWritable = handleWritable;
-                    pub const onTimeout = handleTimeout;
-                    pub const onLongTimeout = handleTimeout;
-                    pub const onConnectError = handleConnectError;
-                    pub const onEnd = handleEnd;
-                    pub const onHandshake = handleHandshake;
-                },
-            );
-        }
+        /// Handler set referenced by `dispatch.zig` (kind = `.ws_client[_tls]`).
+        /// Replaces the C++→`register()`→`us_socket_context_on_*` round-trip.
+        pub const onClose = handleClose;
+        pub const onData = handleData;
+        pub const onWritable = handleWritable;
+        pub const onTimeout = handleTimeout;
+        pub const onLongTimeout = handleTimeout;
+        pub const onConnectError = handleConnectError;
+        pub const onEnd = handleEnd;
+        pub const onHandshake = handleHandshake;
 
         pub fn clearData(this: *WebSocket) void {
             log("clearData", .{});
@@ -129,10 +112,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.message_is_compressed = false;
             if (this.deflate) |d| d.deinit();
             this.deflate = null;
-            // Clean up custom SSL context if we own one
-            if (this.custom_ssl_ctx) |ctx| {
-                ctx.deinit(ssl);
-                this.custom_ssl_ctx = null;
+            if (this.secure) |s| {
+                bun.BoringSSL.c.SSL_CTX_free(s);
+                this.secure = null;
             }
             // Clean up proxy tunnel if we own one
             // Set to null FIRST to prevent re-entrancy (shutdown can trigger callbacks)
@@ -1239,15 +1221,14 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         pub fn init(
             outgoing: *CppWebSocket,
             input_socket: *anyopaque,
-            socket_ctx: *anyopaque,
             globalThis: *jsc.JSGlobalObject,
             buffered_data: [*]u8,
             buffered_data_len: usize,
             deflate_params: ?*const WebSocketDeflate.Params,
-            custom_ssl_ctx_ptr: ?*anyopaque,
+            secure_ptr: ?*anyopaque,
         ) callconv(.c) ?*anyopaque {
             const tcp = @as(*uws.us_socket_t, @ptrCast(input_socket));
-            const ctx = @as(*uws.SocketContext, @ptrCast(socket_ctx));
+            const vm = globalThis.bunVM();
             var ws = bun.new(WebSocket, .{
                 .ref_count = .init(),
                 .tcp = .{ .socket = .{ .detached = {} } },
@@ -1255,23 +1236,22 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 .globalThis = globalThis,
                 .send_buffer = bun.LinearFifo(u8, .Dynamic).init(bun.default_allocator),
                 .receive_buffer = bun.LinearFifo(u8, .Dynamic).init(bun.default_allocator),
-                .event_loop = globalThis.bunVM().eventLoop(),
-                // Take ownership of custom SSL context if provided
-                .custom_ssl_ctx = if (custom_ssl_ctx_ptr) |ptr| @ptrCast(ptr) else null,
+                .event_loop = vm.eventLoop(),
+                .secure = if (secure_ptr) |ptr| @ptrCast(@alignCast(ptr)) else null,
             });
 
             if (deflate_params) |params| {
-                if (WebSocketDeflate.init(bun.default_allocator, params.*, globalThis.bunVM().rareData())) |deflate| {
+                if (WebSocketDeflate.init(bun.default_allocator, params.*, vm.rareData())) |deflate| {
                     ws.deflate = deflate;
                 } else |_| {
-                    // failed to init, silently disable compression
                     ws.deflate = null;
                 }
             }
 
-            if (!Socket.adoptPtr(
+            if (!Socket.adoptGroup(
                 tcp,
-                ctx,
+                vm.rareData().wsClientGroup(vm, ssl),
+                if (ssl) .ws_client_tls else .ws_client,
                 WebSocket,
                 "tcp",
                 ws,
@@ -1424,7 +1404,6 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 @export(&init, .{ .name = "Bun__" ++ name ++ "__init" });
                 @export(&initWithTunnel, .{ .name = "Bun__" ++ name ++ "__initWithTunnel" });
                 @export(&memoryCost, .{ .name = "Bun__" ++ name ++ "__memoryCost" });
-                @export(&register, .{ .name = "Bun__" ++ name ++ "__register" });
                 @export(&writeBinaryData, .{ .name = "Bun__" ++ name ++ "__writeBinaryData" });
                 @export(&writeBlob, .{ .name = "Bun__" ++ name ++ "__writeBlob" });
                 @export(&writeString, .{ .name = "Bun__" ++ name ++ "__writeString" });

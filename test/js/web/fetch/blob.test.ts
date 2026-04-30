@@ -1,4 +1,3 @@
-import { bunStringDeadImpliesException } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
@@ -326,28 +325,26 @@ test("dupe() preserves allocated content_type for Body clone", () => {
   expect(clonedType).toBe(originalType);
 });
 
-// Blob.fromJSWithoutDeferGC -> JSValue.toSlice -> String.fromJS stringifies
-// arbitrary inputs. Under fuzzer REPRL GC pressure, JSValue::toWTFString was
-// observed returning a null WTF::String without a pending VM exception,
-// tripping bun.debugAssert(has_exception) in String.fromJS. That state is
-// not constructible from JavaScript (every null-return path in JSC's
-// toWTFString throws), so the guard in Bun::fromJS is exercised here via a
-// native hook that synthesizes the null-without-exception state and calls
-// the production guard directly.
-test("BunString fromJS synthesizes an exception when toWTFString is null without one", () => {
-  expect(bunStringDeadImpliesException()).toBe(true);
-});
-
-// Normal-path coverage for the same code: stringifying native constructors
-// through Bun.write must keep working.
-test("Bun.write accepts native constructors as data without asserting", async () => {
+// Blob.fromJSWithoutDeferGC -> JSValue.toSlice -> String.fromJS ->
+// BunString__fromJS -> Bun::fromJS(toWTFString) is reached for any input
+// whose JSType falls into the else branch, including native constructors
+// and objects with throwing toString. Bun::fromJS now uses a ThrowScope +
+// RETURN_IF_EXCEPTION so Dead is returned iff an exception is pending.
+test("Bun.write stringifies non-BlobPart inputs via Bun::fromJS", async () => {
   using dir = tempDir("blob-stringify-non-blobpart", {});
   const out = path.join(String(dir), "out.txt");
 
-  for (const value of [ArrayBuffer, Float64Array, Uint8Array, Object, function f() {}]) {
-    Bun.gc(true);
+  for (const value of [ArrayBuffer, Float64Array, Object, function f() {}, {}]) {
     const n = await Bun.write(out, value as any);
     expect(n).toBeGreaterThan(0);
     expect(await Bun.file(out).text()).toBe(String(value));
   }
+
+  await expect(async () => {
+    await Bun.write(out, {
+      toString() {
+        throw new Error("boom");
+      },
+    } as any);
+  }).toThrow("boom");
 });

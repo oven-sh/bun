@@ -42,26 +42,4 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_lsanDoLeakCheck, (JSC::JSGlobalObject * glob
     return encodedJSUndefined();
 }
 
-extern "C" void BunString__ensureDeadImpliesException(JSC::JSGlobalObject*);
-
-// Simulates the state the fuzzer observed (toWTFString returned a null
-// WTF::String while no exception was pending) and verifies the production
-// guard in BunString.cpp synthesizes an exception so String.fromJS never
-// sees a Dead result without one. The null-without-exception state is not
-// reachable from JavaScript, so this hook is the only way to exercise the
-// guard deterministically.
-JSC_DEFINE_HOST_FUNCTION(jsFunction_bunStringDeadImpliesException, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    scope.clearException();
-    RELEASE_ASSERT(!vm.exceptionForInspection());
-
-    BunString__ensureDeadImpliesException(globalObject);
-
-    bool hasException = !!scope.exception();
-    scope.clearException();
-    return JSValue::encode(jsBoolean(hasException));
-}
-
 }

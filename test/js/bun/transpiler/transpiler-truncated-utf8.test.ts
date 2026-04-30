@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS } from "harness";
 import path from "node:path";
 
 // The fixture uses mmap/mprotect via bun:ffi to place source bytes immediately
 // before a PROT_NONE guard page, so any read past the end of the input faults
-// deterministically. That requires POSIX mmap/mprotect.
-describe.skipIf(!isPosix)("Bun.Transpiler.transformSync with truncated UTF-8 at end of buffer", () => {
+// deterministically. The fixture only knows the libc path / mmap flags for
+// Linux (glibc + musl) and macOS.
+describe.skipIf(!(isLinux || isMacOS))("Bun.Transpiler.transformSync with truncated UTF-8 at end of buffer", () => {
   test("does not read past the end of the input buffer", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "transpiler-truncated-utf8-fixture.ts")],

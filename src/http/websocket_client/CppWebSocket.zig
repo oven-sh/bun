@@ -14,7 +14,7 @@ pub const CppWebSocket = opaque {
         buffered_data: ?[*]u8,
         buffered_len: usize,
         deflate_params: ?*const WebSocketDeflate.Params,
-        custom_ssl_ctx: ?*uws.SocketContext,
+        secure: ?*uws.SslCtx,
     ) void;
     extern fn WebSocket__didConnectWithTunnel(
         websocket_context: *CppWebSocket,
@@ -58,11 +58,11 @@ pub const CppWebSocket = opaque {
         defer loop.exit();
         return WebSocket__rejectUnauthorized(this);
     }
-    pub fn didConnect(this: *CppWebSocket, socket: *uws.Socket, buffered_data: ?[*]u8, buffered_len: usize, deflate_params: ?*const WebSocketDeflate.Params, custom_ssl_ctx: ?*uws.SocketContext) void {
+    pub fn didConnect(this: *CppWebSocket, socket: *uws.Socket, buffered_data: ?[*]u8, buffered_len: usize, deflate_params: ?*const WebSocketDeflate.Params, secure: ?*uws.SslCtx) void {
         const loop = jsc.VirtualMachine.get().eventLoop();
         loop.enter();
         defer loop.exit();
-        WebSocket__didConnect(this, socket, buffered_data, buffered_len, deflate_params, custom_ssl_ctx);
+        WebSocket__didConnect(this, socket, buffered_data, buffered_len, deflate_params, secure);
     }
     pub fn didConnectWithTunnel(this: *CppWebSocket, tunnel: *anyopaque, buffered_data: ?[*]u8, buffered_len: usize, deflate_params: ?*const WebSocketDeflate.Params) void {
         const loop = jsc.VirtualMachine.get().eventLoop();

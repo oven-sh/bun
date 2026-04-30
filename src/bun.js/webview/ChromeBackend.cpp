@@ -1,5 +1,6 @@
 #include "root.h"
 #include "ChromeBackend.h"
+#include "bun-uws/src/SocketKinds.h"
 #include "JSWebView.h"
 #include "ipc_protocol.h"
 #include "ZigGlobalObject.h"
@@ -237,12 +238,11 @@ Transport& transport()
     return instance.get();
 }
 
-// One context per process — reused across Chrome respawns. Not a Transport
-// member because there's no reason to reset it; us_socket_context_t holds
-// only the callback table, no per-socket state.
-static us_socket_context_t* s_cdpCtx = nullptr;
+// One group per process — reused across Chrome respawns. Embedded (not
+// heap-alloc'd) and lazily linked into the loop on first socket. The vtable
+// is static-const since the singleton handlers never change.
+static us_socket_group_t s_cdpGroup;
 
-// usockets callbacks — thin trampolines into the singleton.
 static us_socket_t* cdpOnData(us_socket_t* s, char* d, int n)
 {
     transport().onData(d, n);
@@ -264,6 +264,21 @@ static us_socket_t* cdpOnEnd(us_socket_t* s)
     return s;
 }
 static us_socket_t* cdpOnOpen(us_socket_t* s, int, char*, int) { return s; }
+
+static constexpr us_socket_vtable_t s_cdpVTable = {
+    .on_open = cdpOnOpen,
+    .on_data = cdpOnData,
+    .on_fd = nullptr,
+    .on_writable = cdpOnWritable,
+    .on_close = cdpOnClose,
+    .on_timeout = nullptr,
+    .on_long_timeout = nullptr,
+    .on_end = cdpOnEnd,
+    .on_connect_error = nullptr,
+    .on_connecting_error = nullptr,
+    .on_handshake = nullptr,
+    .is_low_prio = nullptr,
+};
 
 bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDataDir,
     const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
@@ -307,23 +322,15 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     // with ENOTSOCK silently misread as EOF).
     m_global = zig;
 
-    if (!s_cdpCtx) {
-        us_loop_t* loop = uws_get_loop();
-        us_socket_context_options_t opts;
-        memset(&opts, 0, sizeof(opts));
-        s_cdpCtx = us_create_socket_context(0, loop, sizeof(void*), opts);
-        us_socket_context_on_data(0, s_cdpCtx, cdpOnData);
-        us_socket_context_on_writable(0, s_cdpCtx, cdpOnWritable);
-        us_socket_context_on_close(0, s_cdpCtx, cdpOnClose);
-        us_socket_context_on_end(0, s_cdpCtx, cdpOnEnd);
-        us_socket_context_on_open(0, s_cdpCtx, cdpOnOpen);
+    if (!s_cdpGroup.loop) {
+        us_socket_group_init(&s_cdpGroup, uws_get_loop(), &s_cdpVTable, nullptr);
     }
 
     // Adopt read fd only. usockets polls it READABLE|WRITABLE but we only
     // care about READABLE — writable events on a read-end pipe fire
     // constantly, but onWritable is a no-op when m_txQueue is empty so
-    // they're harmless.
-    m_readSock = us_socket_from_fd(s_cdpCtx, sizeof(void*), fd, 0);
+    // they're harmless. kind=1 (.dynamic) → dispatch via s_cdpVTable.
+    m_readSock = us_socket_from_fd(&s_cdpGroup, BUN_SOCKET_KIND_DYNAMIC, nullptr, sizeof(void*), fd, 0);
     if (!m_readSock) {
         closefd(fd);
         m_dead = true;
@@ -497,7 +504,7 @@ void Transport::writeRaw(const char* data, size_t len)
     if (m_dead || !m_readSock) return;
 
     if (m_txQueue.isEmpty()) {
-        int w = us_socket_write(0, m_readSock, data, static_cast<int>(len));
+        int w = us_socket_write(m_readSock, data, static_cast<int>(len));
         if (w == static_cast<int>(len)) return;
         // Partial (including 0 on EAGAIN). us_socket_write already set
         // last_write_failed; queue the tail for onWritable.
@@ -512,7 +519,7 @@ void Transport::writeRaw(const char* data, size_t len)
 void Transport::onWritable()
 {
     while (!m_txQueue.isEmpty()) {
-        int w = us_socket_write(0, m_readSock,
+        int w = us_socket_write(m_readSock,
             reinterpret_cast<const char*>(m_txQueue.span().data()),
             static_cast<int>(m_txQueue.size()));
         if (w == 0) return; // EAGAIN — last_write_failed set, next fire retries
@@ -1261,7 +1268,7 @@ void Transport::rejectAllAndMarkDead(const WTF::String& reason)
     // is still polling — close it. us_socket_close fires cdpOnClose
     // synchronously; the m_dead guard above short-circuits that reentrant
     // call so the caller's `reason` survives.
-    if (auto* s = std::exchange(m_readSock, nullptr)) us_socket_close(0, s, 0, nullptr);
+    if (auto* s = std::exchange(m_readSock, nullptr)) us_socket_close(s, 0, nullptr);
     // WebSocket mode: drop our ref. The WS's native onClose calls us
     // (wsOnClose → rejectAllAndMarkDead); that path nulls m_ws after
     // this returns. If WE'RE initiating (closeAll), close() kicks off the

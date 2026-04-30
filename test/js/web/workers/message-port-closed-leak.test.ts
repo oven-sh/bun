@@ -54,8 +54,8 @@ describe("MessagePortChannel closed port", () => {
   }, 60_000);
 
   // A MessagePort transferred via postMessage(_, [port]) that is never received on the other
-  // side (because the carrying message is dropped) must not leak its channel. Previously the
-  // channel took a self-ref in disentanglePort() that was only released on re-entanglement.
+  // side (because the carrying message is dropped) must not leak its pipe. Cleanup relies on
+  // ~TransferredMessagePort calling pipe->close(side) when the carrying message is destroyed.
   for (const closeBeforePost of [false, true]) {
     test(`transferred port dropped ${closeBeforePost ? "after" : "before"} receiver closed does not leak channel`, async () => {
       await using proc = Bun.spawn({
@@ -77,13 +77,14 @@ describe("MessagePortChannel closed port", () => {
                 inner.port2.postMessage(Buffer.alloc(PAYLOAD_SIZE).toString());
 
                 if (closeBeforePost) {
-                  // Drop path: postMessageToRemote sees m_isClosed and drops the message
-                  // along with the transferred port.
+                  // Drop path: MessagePortPipe::send() sees the Closed state-bit on the
+                  // destination side and returns; the moved-in message destructs and
+                  // ~TransferredMessagePort closes the inner pipe side.
                   carrier.port2.close();
                   carrier.port1.postMessage(null, [inner.port1]);
                 } else {
-                  // Drop path: closePort clears pending messages containing the
-                  // transferred port.
+                  // Drop path: MessagePortPipe::close() swaps out the inbox; the dropped
+                  // message's TransferredMessagePort is harvested into the close worklist.
                   carrier.port1.postMessage(null, [inner.port1]);
                   carrier.port2.close();
                 }

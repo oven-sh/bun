@@ -481,6 +481,7 @@ pub fn pruneSavedTree(
 
     var out_dep_ids = try DependencyIDList.initCapacity(allocator, saved_hoisted_deps.len);
 
+    const deps_buf = lockfile.buffers.dependencies.items;
     for (saved_trees, out_trees.items, 0..) |saved, *out, tree_idx| {
         out.* = saved;
         const off: u32 = @intCast(out_dep_ids.items.len);
@@ -489,6 +490,15 @@ pub fn pruneSavedTree(
                 const pkg_id = resolutions[dep_id];
                 if (pkg_id == invalid_package_id or pkg_id >= num_packages) continue;
                 if (!active.isSet(pkg_id)) continue;
+                // Bundled deps are baked into the publisher's tarball — the
+                // installer extracts the tarball and does not separately
+                // download/place the bundled entry. `.resolvable` places
+                // bundled dep_ids anyway (Tree.zig:709), but `.filter` drops
+                // them via `isFilteredDependencyOrWorkspace`. Match that so
+                // pruning doesn't accidentally schedule a registry copy on
+                // top of the bundled bytes when the same pkg_id is reachable
+                // via a non-bundled edge elsewhere in the active set.
+                if (dep_id < deps_buf.len and deps_buf[dep_id].behavior.isBundled()) continue;
                 out_dep_ids.appendAssumeCapacity(dep_id);
             }
         }

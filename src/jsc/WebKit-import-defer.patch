@@ -1,4 +1,4 @@
-From 0b2185d3c250920fee47863fad54d04e6b66873c Mon Sep 17 00:00:00 2001
+From 814ed7f62fb3644b34c12f772aa7ea0fd33e5ab2 Mon Sep 17 00:00:00 2001
 From: robobun <robobun@users.noreply.github.com>
 Date: Thu, 30 Apr 2026 20:25:11 +0000
 Subject: [PATCH] Implement import defer (TC39 Stage 3)
@@ -67,17 +67,17 @@ Options:
  .../parser/NodesAnalyzeModule.cpp             |   4 +-
  Source/JavaScriptCore/parser/Parser.cpp       |  11 +-
  Source/JavaScriptCore/parser/SyntaxChecker.h  |   2 +-
- .../runtime/AbstractModuleRecord.cpp          | 111 ++++++++++++++++--
+ .../runtime/AbstractModuleRecord.cpp          | 119 ++++++++++++++++--
  .../runtime/AbstractModuleRecord.h            |  11 +-
  .../runtime/CyclicModuleRecord.cpp            |  50 +++++++-
  .../runtime/CyclicModuleRecord.h              |   1 +
- .../runtime/JSGlobalObjectFunctions.cpp       |  27 +++++
+ .../runtime/JSGlobalObjectFunctions.cpp       |  27 ++++
  Source/JavaScriptCore/runtime/JSMicrotask.cpp |  31 +++++
- .../runtime/JSModuleNamespaceObject.cpp       | 107 ++++++++++++++++-
+ .../runtime/JSModuleNamespaceObject.cpp       | 107 +++++++++++++++-
  .../runtime/JSModuleNamespaceObject.h         |  11 +-
  Source/JavaScriptCore/runtime/Microtask.h     |   3 +-
  Source/JavaScriptCore/runtime/OptionsList.h   |   2 +-
- 19 files changed, 375 insertions(+), 39 deletions(-)
+ 19 files changed, 383 insertions(+), 39 deletions(-)
 
 diff --git a/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp b/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp
 index 0648035f57..8bca1d3d16 100644
@@ -285,7 +285,7 @@ index 15b2af5b83..6659b8e88c 100644
      ExpressionType createSuperExpr(const JSTokenLocation&) { return SuperExpr; }
      ExpressionType createNewTargetExpr(const JSTokenLocation&) { return NewTargetExpr; }
 diff --git a/Source/JavaScriptCore/runtime/AbstractModuleRecord.cpp b/Source/JavaScriptCore/runtime/AbstractModuleRecord.cpp
-index 4674eb958b..298a7a20b6 100644
+index 4674eb958b..c91a8d0600 100644
 --- a/Source/JavaScriptCore/runtime/AbstractModuleRecord.cpp
 +++ b/Source/JavaScriptCore/runtime/AbstractModuleRecord.cpp
 @@ -93,6 +93,7 @@ void AbstractModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
@@ -346,7 +346,7 @@ index 4674eb958b..298a7a20b6 100644
      // Materialize *namespace* slot with module namespace object unless the module environment is not yet materialized, in which case we'll do it in setModuleEnvironment
      if (m_moduleEnvironment) {
          bool putResult = false;
-@@ -1039,6 +1047,48 @@ static void checkSafeToRecurse(JSGlobalObject* globalObject, ThrowScope& scope)
+@@ -1039,6 +1047,56 @@ static void checkSafeToRecurse(JSGlobalObject* globalObject, ThrowScope& scope)
          throwRangeError(globalObject, scope, "Maximum call stack size exceeded"_s);
  }
  
@@ -358,36 +358,44 @@ index 4674eb958b..298a7a20b6 100644
 +    // Collects the direct post-order list of asynchronous unexecuted transitive
 +    // dependencies, stopping the depth-first search for a branch when an
 +    // asynchronous dependency is found.
++    //
++    // The spec phrases this recursively; we use an explicit stack so that deep
++    // import graphs don't overflow the native stack before reaching
++    // innerModuleEvaluation's guarded recursion. Children are pushed in
++    // reverse so they are visited in source order.
 +
 +    using Status = CyclicModuleRecord::Status;
 +
-+    // 3. If seen contains module, return result.
-+    if (!seen.add(this).isNewEntry)
-+        return;
-+    // 5. If module is not a Cyclic Module Record, return result.
-+    auto* module = dynamicDowncast<CyclicModuleRecord>(this);
-+    if (!module)
-+        return;
-+    // 6. If module.[[Status]] is either evaluating or evaluated, return result.
-+    Status status = module->status();
-+    if (status == Status::Evaluating || status == Status::EvaluatingAsync || status == Status::Evaluated)
-+        return;
-+    // 7. If module.[[HasTLA]] is true, then
-+    if (module->hasTLA()) {
-+        // 7.a. Append module to result.
-+        if (!result.contains(module))
-+            result.append(module);
-+        // 7.b. Return result.
-+        return;
-+    }
-+    // 8. For each ModuleRequest Record request of module.[[RequestedModules]], do
-+    for (const ModuleRequest& request : module->requestedModules()) {
-+        // 8.a. Let requiredModule be GetImportedModule(module, request).
-+        AbstractModuleRecord* requiredModule = JSModuleLoader::getImportedModule(module, request);
-+        // 8.b. Let additionalModules be GatherAsynchronousTransitiveDependencies(requiredModule, seen).
-+        // 8.c. For each Module Record m of additionalModules, do
-+        //        If result does not contain m, append m to result.
-+        requiredModule->gatherAsynchronousTransitiveDependencies(result, seen);
++    Vector<AbstractModuleRecord*, 16> stack;
++    stack.append(this);
++
++    while (!stack.isEmpty()) {
++        AbstractModuleRecord* current = stack.takeLast();
++        // 3. If seen contains module, return result.
++        if (!seen.add(current).isNewEntry)
++            continue;
++        // 5. If module is not a Cyclic Module Record, return result.
++        auto* module = dynamicDowncast<CyclicModuleRecord>(current);
++        if (!module)
++            continue;
++        // 6. If module.[[Status]] is either evaluating or evaluated, return result.
++        Status status = module->status();
++        if (status == Status::Evaluating || status == Status::EvaluatingAsync || status == Status::Evaluated)
++            continue;
++        // 7. If module.[[HasTLA]] is true, then
++        if (module->hasTLA()) {
++            // 7.a. Append module to result.
++            if (!result.contains(module))
++                result.append(module);
++            // 7.b. Return result.
++            continue;
++        }
++        // 8. For each ModuleRequest Record request of module.[[RequestedModules]], do
++        //      a. Let requiredModule be GetImportedModule(module, request).
++        //      b/c. Recurse (here: push to the explicit stack, last-in first-out).
++        const auto& requested = module->requestedModules();
++        for (size_t i = requested.size(); i > 0; --i)
++            stack.append(JSModuleLoader::getImportedModule(module, requested[i - 1]));
 +    }
 +    // 9. Return result.
 +}
@@ -395,7 +403,7 @@ index 4674eb958b..298a7a20b6 100644
  unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Vector<AbstractModuleRecord*, 8>& stack, unsigned index)
  {
      // InnerModuleEvaluation(module, stack, index)
-@@ -1086,10 +1136,51 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
+@@ -1086,10 +1144,51 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
      ++index;
      // 10. Append module to stack.
      stack.append(module);
@@ -450,7 +458,7 @@ index 4674eb958b..298a7a20b6 100644
          checkSafeToRecurse(globalObject, scope);
          RETURN_IF_EXCEPTION(scope, invalid);
  #if USE(BUN_JSC_ADDITIONS)
-@@ -1361,7 +1452,7 @@ void AbstractModuleRecord::dump()
+@@ -1361,7 +1460,7 @@ void AbstractModuleRecord::dump()
  
      dataLog("    Dependencies: ", m_requestedModules.size(), " modules\n");
      for (const auto& request : m_requestedModules)

@@ -445,6 +445,63 @@ test("new Blob() releases copied ArrayBuffer parts when a later part throws", as
   expect(exitCode).toBe(0);
 });
 
+test("new Blob() copies inner Blob parts before later parts' toString() can GC them", async () => {
+  // Same hazard as the ArrayBuffer case: blob.sharedView() borrows store bytes
+  // without bumping its refcount. A later toString() that drops the last JS
+  // reference to the inner Blob and forces GC can free the store before
+  // joiner.done() memcpys from it.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const size = 1 << 20;
+        let inner = new Blob([new Uint8Array(size).fill("A".charCodeAt(0))]);
+        const arr = [
+          inner,
+          {
+            toString() {
+              arr[0] = null;
+              inner = null;
+              Bun.gc(true);
+              return "B";
+            },
+          },
+        ];
+        const blob = new Blob(arr);
+        const text = await blob.text();
+        console.log(JSON.stringify({
+          size: blob.size,
+          first: text.charCodeAt(0),
+          allA: text.slice(0, size) === Buffer.alloc(size, "A").toString(),
+        }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    size: (1 << 20) + 1,
+    first: 65,
+    allA: true,
+  });
+  expect(exitCode).toBe(0);
+});
+
+test("new Blob() stringifies non-Blob DOM wrapper parts once, in order", async () => {
+  // The inline-array .DOMWrapper fast path's else-branch used the enclosing
+  // array (`current`) instead of the element (`item`) when cloning to a
+  // string, and lacked a `continue` so the element was also pushed to the
+  // deferred stack and processed a second time.
+  const text = await new Blob([new Response("body"), "X"]).text();
+  expect(text).toBe("[object Response]X");
+});
+
 test("dupe() preserves allocated content_type for Body clone", () => {
   // Body.Value.clone() goes through Blob.dupe() -> dupeWithContentType(false).
   // That path must deep-copy a heap-allocated content_type rather than drop

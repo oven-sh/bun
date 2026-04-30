@@ -4150,13 +4150,17 @@ fn fromJSWithoutDeferGC(
                             .DOMWrapper => {
                                 if (item.as(Blob)) |blob| {
                                     could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
-                                    joiner.pushStatic(blob.sharedView());
+                                    // Copy now — a later element's toString() can drop the
+                                    // last reference to this Blob and GC its store before
+                                    // joiner.done() reads it.
+                                    joiner.pushCloned(blob.sharedView());
                                     continue;
                                 } else {
-                                    const sliced = try current.toSliceClone(global);
+                                    const sliced = try item.toSliceClone(global);
                                     const allocator = sliced.allocator.get();
                                     could_have_non_ascii = could_have_non_ascii or allocator != null;
                                     joiner.push(sliced.slice(), allocator);
+                                    continue;
                                 }
                             },
                             else => {},
@@ -4170,7 +4174,10 @@ fn fromJSWithoutDeferGC(
             .DOMWrapper => {
                 if (current.as(Blob)) |blob| {
                     could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
-                    joiner.pushStatic(blob.sharedView());
+                    // Copy now — a later element's toString() can drop the last
+                    // reference to this Blob and GC its store before
+                    // joiner.done() reads it.
+                    joiner.pushCloned(blob.sharedView());
                 } else {
                     const sliced = try current.toSliceClone(global);
                     const allocator = sliced.allocator.get();

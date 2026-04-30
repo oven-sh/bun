@@ -197,6 +197,15 @@ BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     WTF::String str = value.toWTFString(globalObject);
     if (str.isNull()) [[unlikely]] {
+        // toWTFString can rarely produce a null WTF::String without a pending
+        // exception (observed under heavy GC pressure in the fuzzer REPRL
+        // loop). Callers (String.fromJS) require Dead to imply a pending
+        // exception, so synthesize one instead of returning a phantom error.
+        auto& vm = globalObject->vm();
+        if (!vm.exceptionForInspection()) {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            throwOutOfMemoryError(globalObject, scope);
+        }
         return { BunStringTag::Dead };
     }
     if (str.length() == 0) [[unlikely]] {
@@ -227,6 +236,11 @@ BunString toStringRef(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     auto str = value.toWTFString(globalObject);
     if (str.isNull()) [[unlikely]] {
+        auto& vm = globalObject->vm();
+        if (!vm.exceptionForInspection()) {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            throwOutOfMemoryError(globalObject, scope);
+        }
         return { BunStringTag::Dead };
     }
     if (str.length() == 0) [[unlikely]] {

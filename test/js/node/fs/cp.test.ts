@@ -335,6 +335,10 @@ describe.skipIf(isWindows).each(["cp", "cpSync"] as const)(
       const src = join(base, "s");
       const dst = join(base, "d");
       fs.mkdirSync(src);
+      // Pre-create dst so macOS clonefile() fails with EEXIST and falls through to the
+      // manual iteration path that contains the bounds check; otherwise clonefile clones
+      // the whole tree at the vnode level without ever building interior path strings.
+      fs.mkdirSync(dst);
 
       // Build a directory tree whose full path exceeds MAX_PATH_BYTES by creating each
       // level with a short relative path from a shell; the kernel never sees the whole

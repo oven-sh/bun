@@ -576,7 +576,7 @@ describe.concurrent("napi", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout.split("\n").filter(Boolean)).toEqual([
+    expect(stdout.split(/\r?\n/).filter(Boolean)).toEqual([
       "register_cb_a",
       "register_cb_b",
       "register_cb_reentrant x 64",

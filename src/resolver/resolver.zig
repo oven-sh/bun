@@ -1054,8 +1054,8 @@ pub const Resolver = struct {
 
             if (dir.enclosing_tsconfig_json) |tsconfig| {
                 result.jsx = tsconfig.mergeJSX(result.jsx);
-                result.flags.emit_decorator_metadata = result.flags.emit_decorator_metadata or tsconfig.emit_decorator_metadata;
-                result.flags.experimental_decorators = result.flags.experimental_decorators or tsconfig.experimental_decorators;
+                result.flags.emit_decorator_metadata = result.flags.emit_decorator_metadata or (tsconfig.emit_decorator_metadata orelse false);
+                result.flags.experimental_decorators = result.flags.experimental_decorators or (tsconfig.experimental_decorators orelse false);
             }
 
             // If you use mjs or mts, then you're using esm
@@ -4036,6 +4036,111 @@ pub const Resolver = struct {
         return null;
     }
 
+    /// Resolve a tsconfig.json "extends" value that is a bare package specifier
+    /// (e.g. "@acme/configuration/tsconfig.base.json") by walking up parent
+    /// directories to find it in node_modules.
+    /// Returns the resolved *TSConfigJSON if found.
+    fn resolvePackagePathForTSConfigExtends(r: *ThisResolver, starting_info: *const DirInfo, extends: string) ?*TSConfigJSON {
+        // Detect whether the extends value points at a subpath inside the
+        // package (e.g. "@scope/pkg/tsconfig.base.json") or is just the
+        // package name (e.g. "@scope/pkg" or "pkg"), in which case TypeScript
+        // resolves "<pkg>/tsconfig.json".
+        const has_subpath = brk: {
+            if (strings.startsWithChar(extends, '@')) {
+                // Scoped: the first '/' separates scope from package name, so a
+                // subpath requires a second '/'.
+                const first_slash = strings.indexOfChar(extends, '/') orelse break :brk false;
+                break :brk strings.indexOfChar(extends[first_slash + 1 ..], '/') != null;
+            }
+            break :brk strings.indexOfChar(extends, '/') != null;
+        };
+        // If the subpath already ends in ".json" we don't need to try the
+        // implicit "<path>.json" fallback. TypeScript allows omitting the
+        // extension (e.g. "extends": "expo/tsconfig.base").
+        const has_json_ext = strings.hasSuffixComptime(extends, ".json");
+
+        const buf = bufs(.tsconfig_path_abs);
+
+        // Walk up the directory tree using the already-populated parent chain.
+        var cur_dir: ?*const DirInfo = starting_info;
+        while (cur_dir) |dir| : (cur_dir = dir.getParent()) {
+            if (!dir.hasNodeModules()) continue;
+
+            // extends is user-controlled and can be arbitrarily long, so use
+            // the checked variant to avoid overflowing the path buffer.
+            const candidate = r.fs.absBufChecked(
+                &.{ dir.abs_path, "node_modules", extends },
+                buf,
+            ) orelse continue;
+            // candidate is a slice of buf starting at offset 0; we can extend
+            // it in place for the implicit-suffix probes below.
+            const base_len = candidate.len;
+
+            if (has_subpath) {
+                // 1. Try the path exactly as written: "<node_modules>/<extends>".
+                //    Skipped for bare package names since those always name a
+                //    directory in node_modules (would always EISDIR).
+                if (r.tryParseTSConfigPath(candidate)) |parent_config| {
+                    return parent_config;
+                }
+                if (!has_json_ext) {
+                    // 2. "<node_modules>/<extends>.json" for extensionless subpaths
+                    {
+                        const suffix = ".json";
+                        if (base_len + suffix.len <= buf.len) {
+                            @memcpy(buf[base_len..][0..suffix.len], suffix);
+                            if (r.tryParseTSConfigPath(buf[0 .. base_len + suffix.len])) |parent_config| {
+                                return parent_config;
+                            }
+                        }
+                    }
+                    // 3. "<node_modules>/<extends>/tsconfig.json" in case the subpath
+                    //    names a directory inside the package. Skipped when the path
+                    //    already ends in ".json" since that is a file, not a directory.
+                    {
+                        const suffix = std.fs.path.sep_str ++ "tsconfig.json";
+                        if (base_len + suffix.len <= buf.len) {
+                            @memcpy(buf[base_len..][0..suffix.len], suffix);
+                            if (r.tryParseTSConfigPath(buf[0 .. base_len + suffix.len])) |parent_config| {
+                                return parent_config;
+                            }
+                        }
+                    }
+                }
+            } else {
+                // "<node_modules>/<extends>/tsconfig.json" when extends is a bare
+                // package name (matches TypeScript's implicit tsconfig.json lookup).
+                const suffix = std.fs.path.sep_str ++ "tsconfig.json";
+                if (base_len + suffix.len <= buf.len) {
+                    @memcpy(buf[base_len..][0..suffix.len], suffix);
+                    if (r.tryParseTSConfigPath(buf[0 .. base_len + suffix.len])) |parent_config| {
+                        return parent_config;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    fn tryParseTSConfigPath(r: *ThisResolver, candidate: string) ?*TSConfigJSON {
+        // parseTSConfig makes its own persistent copy of `candidate` on
+        // success; don't pre-allocate into dirname_store here or every
+        // failed probe leaves an orphaned entry in the append-only store.
+        return r.parseTSConfig(candidate, bun.invalid_fd) catch |err| {
+            switch (err) {
+                // Expected while probing: keep walking quietly.
+                error.ENOENT, error.FileNotFound, error.ENOTDIR, error.NotDir, error.IsDir, error.EISDIR => {},
+                // Unexpected (EACCES, EIO, etc.): surface in debug logs so a
+                // file that exists but can't be read doesn't vanish silently.
+                else => r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {f}", .{
+                    @errorName(err),
+                    bun.fmt.QuotedFormatter{ .text = candidate },
+                }) catch {},
+            }
+            return null;
+        };
+    }
+
     fn dirInfoUncached(
         r: *ThisResolver,
         info: *DirInfo,
@@ -4259,30 +4364,42 @@ pub const Resolver = struct {
                     try parent_configs.append(tsconfig_json);
                     var current = tsconfig_json;
                     while (current.extends.len > 0) {
-                        const ts_dir_name = Dirname.dirname(current.abs_path);
-                        const abs_path = ResolvePath.joinAbsStringBuf(ts_dir_name, bufs(.tsconfig_path_abs), &[_]string{ ts_dir_name, current.extends }, .auto);
-                        const parent_config_maybe = r.parseTSConfig(abs_path, bun.invalid_fd) catch |err| {
-                            r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {f}", .{
-                                @errorName(err),
-                                bun.fmt.QuotedFormatter{
-                                    .text = abs_path,
-                                },
-                            }) catch {};
-                            break;
+                        const parent_config = if (isPackagePath(current.extends))
+                            r.resolvePackagePathForTSConfigExtends(info, current.extends) orelse {
+                                r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "ENOENT loading tsconfig.json extends {f}", .{
+                                    bun.fmt.QuotedFormatter{ .text = current.extends },
+                                }) catch {};
+                                break;
+                            }
+                        else brk: {
+                            const ts_dir_name = Dirname.dirname(current.abs_path);
+                            const abs_path = ResolvePath.joinAbsStringBuf(ts_dir_name, bufs(.tsconfig_path_abs), &[_]string{ ts_dir_name, current.extends }, .auto);
+                            break :brk r.parseTSConfig(abs_path, bun.invalid_fd) catch |err| {
+                                r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {f}", .{
+                                    @errorName(err),
+                                    bun.fmt.QuotedFormatter{
+                                        .text = abs_path,
+                                    },
+                                }) catch {};
+                                break;
+                            } orelse break;
                         };
-                        if (parent_config_maybe) |parent_config| {
-                            try parent_configs.append(parent_config);
-                            current = parent_config;
-                        } else {
-                            break;
-                        }
+                        try parent_configs.append(parent_config);
+                        current = parent_config;
                     }
 
                     var merged_config = parent_configs.pop().?;
                     // starting from the base config (end of the list)
                     // successively apply the inheritable attributes to the next config
                     while (parent_configs.pop()) |parent_config| {
-                        merged_config.emit_decorator_metadata = merged_config.emit_decorator_metadata or parent_config.emit_decorator_metadata;
+                        // Child overrides parent when explicitly set. These are
+                        // popped child-after-parent, so assignment is the override.
+                        if (parent_config.emit_decorator_metadata) |value| {
+                            merged_config.emit_decorator_metadata = value;
+                        }
+                        if (parent_config.experimental_decorators) |value| {
+                            merged_config.experimental_decorators = value;
+                        }
                         if (parent_config.base_url.len > 0) {
                             merged_config.base_url = parent_config.base_url;
                         }

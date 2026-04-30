@@ -470,8 +470,8 @@ pub const Transpiler = struct {
                     if (transpiler.options.transform_options.jsx == null) {
                         transpiler.options.jsx = tsconfig.jsx;
                     }
-                    transpiler.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
-                    transpiler.options.experimental_decorators = tsconfig.experimental_decorators;
+                    transpiler.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata orelse false;
+                    transpiler.options.experimental_decorators = tsconfig.experimental_decorators orelse false;
                 }
             }
         }

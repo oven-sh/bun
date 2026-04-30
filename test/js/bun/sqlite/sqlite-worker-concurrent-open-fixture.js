@@ -17,27 +17,30 @@ function hammer() {
 
 if (isMainThread) {
   const workerCount = 4;
-  let done = 0;
-  const workers = [];
+  let exited = 0;
   for (let i = 0; i < workerCount; i++) {
     const w = new Worker(import.meta.url);
     w.on("error", err => {
       console.error("worker error", err);
-      process.exit(1);
+      process.exitCode = 1;
     });
-    w.on("message", () => {
-      done++;
-      if (done === workerCount) {
-        for (const w of workers) w.terminate();
-        console.log("ok");
-        process.exit(0);
+    // Wait for the worker to fully exit rather than just postMessage so
+    // crashes during teardown are not masked.
+    w.on("exit", code => {
+      if (code !== 0) {
+        console.error("worker exited with code", code);
+        process.exitCode = 1;
+      }
+      exited++;
+      if (exited === workerCount) {
+        if (!process.exitCode) console.log("ok");
       }
     });
-    workers.push(w);
   }
   // Race the workers from the main thread too.
   hammer();
 } else {
   hammer();
   parentPort.postMessage("done");
+  parentPort.close();
 }

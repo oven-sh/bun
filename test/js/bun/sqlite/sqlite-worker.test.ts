@@ -21,4 +21,4 @@ test("bun:sqlite databases opened concurrently from Workers do not race", async 
   expect(stderr).toBe("");
   expect(stdout).toBe("ok\n");
   expect(exitCode).toBe(0);
-});
+}, 60_000);

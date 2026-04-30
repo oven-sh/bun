@@ -97,9 +97,14 @@ event_type_buffer: std.ArrayListUnmanaged(u8) = .{},
 /// Whether the previous byte processed was '\r' (so a following '\n' is the
 /// second half of a CRLF and must be swallowed).
 last_byte_was_cr: bool = false,
-/// Whether we've received any body bytes on the current connection yet;
-/// used to strip one leading UTF-8 BOM per the spec's `stream = [bom] *event`.
+/// Whether we've decided on the leading UTF-8 BOM for the current
+/// connection yet (spec's `stream = [bom] *event`). Stays false until
+/// we've seen three bytes or a non-BOM-prefix byte.
 seen_body_bytes: bool = false,
+/// How many of the 3 BOM bytes (EF BB BF) have matched so far at the very
+/// start of the body. Lets a BOM that's split across transport chunks be
+/// recognized and stripped.
+bom_prefix_len: u8 = 0,
 /// Whether we've announced the connection (fired "open") yet.
 announced: bool = false,
 
@@ -329,6 +334,7 @@ fn resetPerConnectionState(this: *EventSource) void {
     this.event_type_buffer.clearRetainingCapacity();
     this.last_byte_was_cr = false;
     this.seen_body_bytes = false;
+    this.bom_prefix_len = 0;
     this.result_has_more = true;
     this.result_fail = null;
     this.result_status_code = 0;
@@ -565,12 +571,27 @@ fn goIdle(this: *EventSource) void {
 
 fn feed(this: *EventSource, bytes: []const u8) void {
     var i: usize = 0;
-    // Spec ABNF: `stream = [ bom ] *event`. Strip exactly one leading UTF-8
-    // BOM at the start of each connection's body.
+    // Spec ABNF: `stream = [ bom ] *event`. The UTF-8 BOM (EF BB BF) can in
+    // principle be split across transport chunks, so accumulate up to three
+    // leading bytes before deciding. None of the BOM bytes is CR/LF, so if
+    // the prefix turns out not to be a BOM it's safe to replay it straight
+    // into `line_buffer` (it just becomes part of the first line).
     if (!this.seen_body_bytes) {
-        this.seen_body_bytes = true;
-        if (bytes.len >= 3 and bytes[0] == 0xEF and bytes[1] == 0xBB and bytes[2] == 0xBF) {
-            i = 3;
+        const bom: [3]u8 = .{ 0xEF, 0xBB, 0xBF };
+        while (this.bom_prefix_len < 3 and i < bytes.len and bytes[i] == bom[this.bom_prefix_len]) {
+            this.bom_prefix_len += 1;
+            i += 1;
+        }
+        if (this.bom_prefix_len == 3) {
+            this.seen_body_bytes = true; // full BOM — strip it
+        } else if (i < bytes.len) {
+            // Next byte doesn't continue the BOM prefix: the buffered bytes
+            // (if any) are real body content.
+            this.seen_body_bytes = true;
+            bun.handleOom(this.line_buffer.appendSlice(bun.default_allocator, bom[0..this.bom_prefix_len]));
+        } else {
+            // Entire chunk was consumed into the BOM prefix; wait for more.
+            return;
         }
     }
     // Swallow the LF half of a CRLF that straddled the previous chunk.
@@ -742,14 +763,16 @@ fn dispatchToHandlers(this: *EventSource, event_type: []const u8, event: JSValue
         if (handler.isCallable()) {
             _ = handler.call(global, this_js, &.{event}) catch |e|
                 global.reportActiveExceptionAsUnhandled(e);
-            if (this.ready_state == .closed) return;
         }
     }
 
     // addEventListener-registered listeners. Entries are stored as
-    // { cb: <fn|{handleEvent}>, once: <bool> }. Snapshot the list before
-    // invoking so mutations during dispatch don't affect this run (DOM
-    // "inner invoke" semantics).
+    // { cb: <fn|{handleEvent}>, once: <bool>, capture: <bool> }. Snapshot the
+    // list before invoking so mutations during dispatch don't affect this
+    // run (DOM "inner invoke" semantics). We intentionally do *not* bail
+    // out if a listener calls `close()` — per spec, close() only aborts the
+    // fetch and sets readyState; it does not set a stop-immediate-propagation
+    // flag, so every snapshotted listener for this event still fires.
     const listeners_obj = js.listenersGetCached(this_js) orelse return;
     if (!listeners_obj.isObject()) return;
     const maybe_arr = listeners_obj.getOwn(global, event_type) catch return;
@@ -765,6 +788,9 @@ fn dispatchToHandlers(this: *EventSource, event_type: []const u8, event: JSValue
         const entry = arr.getIndex(global, idx) catch return;
         if (!entry.isObject()) continue;
         const cb = entry.getOwn(global, "cb") catch return orelse continue;
+        // Tombstoned by `{once:true}` consumption or a concurrent
+        // `removeEventListener()` during this dispatch — skip.
+        if (cb.isUndefined()) continue;
         const once_val = entry.getOwn(global, "once") catch return;
         const is_once = once_val != null and once_val.?.toBoolean();
         if (is_once) {
@@ -773,7 +799,6 @@ fn dispatchToHandlers(this: *EventSource, event_type: []const u8, event: JSValue
             entry.put(global, bun.String.static("cb"), .js_undefined);
         }
         invokeListener(global, this_js, cb, event);
-        if (this.ready_state == .closed) break;
     }
 
     if (had_once) {
@@ -882,6 +907,19 @@ fn ensureListeners(thisValue: JSValue, global: *JSGlobalObject) JSValue {
     return obj;
 }
 
+/// DOM "flatten" step: a boolean 3rd arg is `capture`; otherwise read
+/// `options.capture`. Capture has no *dispatch* effect on EventSource (no
+/// tree), but it's still part of the listener identity for dedupe/remove.
+fn flattenCapture(global: *JSGlobalObject, args: []const JSValue) bun.JSError!bool {
+    if (args.len <= 2) return false;
+    const opt = args[2];
+    if (opt.isBoolean()) return opt.asBoolean();
+    if (opt.isObject()) {
+        if (try opt.getBooleanLoose(global, "capture")) |c| return c;
+    }
+    return false;
+}
+
 pub fn addEventListener(_: *EventSource, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const args = callframe.arguments();
     if (args.len < 2) return .js_undefined;
@@ -892,9 +930,9 @@ pub fn addEventListener(_: *EventSource, global: *JSGlobalObject, callframe: *js
     if (listener.isUndefinedOrNull() or !(listener.isCallable() or listener.isObject()))
         return .js_undefined;
 
-    // Flatten options: boolean is `capture` (no effect without a tree), or
-    // a dictionary with `once`. Other keys (`signal`, `passive`, `capture`)
-    // are not yet supported here.
+    // Flatten options: boolean → `capture`, or a dictionary with
+    // `once` / `capture`. `signal` and `passive` are not yet supported.
+    const capture = try flattenCapture(global, args);
     var once = false;
     if (args.len > 2 and args[2].isObject()) {
         if (try args[2].getBooleanLoose(global, "once")) |o| once = o;
@@ -910,18 +948,21 @@ pub fn addEventListener(_: *EventSource, global: *JSGlobalObject, callframe: *js
         arr = try JSValue.createEmptyArray(global, 0);
         try listeners.putMayBeIndex(global, &type_str, arr);
     }
-    // Dedupe on callback identity (spec: same type + callback + capture).
+    // Dedupe: per spec the identity is (type, callback, capture).
     const len = try arr.getLength(global);
     var i: u32 = 0;
     while (i < len) : (i += 1) {
         const entry = try arr.getIndex(global, i);
         if (!entry.isObject()) continue;
         const cb = try entry.getOwn(global, "cb") orelse continue;
-        if (cb == listener) return .js_undefined;
+        if (cb != listener) continue;
+        const cap = try entry.getOwn(global, "capture");
+        if ((cap != null and cap.?.toBoolean()) == capture) return .js_undefined;
     }
-    const entry = JSValue.createEmptyObject(global, 2);
+    const entry = JSValue.createEmptyObject(global, 3);
     entry.put(global, bun.String.static("cb"), listener);
     entry.put(global, bun.String.static("once"), JSValue.jsBoolean(once));
+    entry.put(global, bun.String.static("capture"), JSValue.jsBoolean(capture));
     try arr.push(global, entry);
     return .js_undefined;
 }
@@ -930,6 +971,7 @@ pub fn removeEventListener(_: *EventSource, global: *JSGlobalObject, callframe: 
     const args = callframe.arguments();
     if (args.len < 2) return .js_undefined;
     const listener = args[1];
+    const capture = try flattenCapture(global, args);
     const this_js = callframe.this();
     const listeners = js.listenersGetCached(this_js) orelse return .js_undefined;
     if (!listeners.isObject()) return .js_undefined;
@@ -941,12 +983,22 @@ pub fn removeEventListener(_: *EventSource, global: *JSGlobalObject, callframe: 
 
     const len = try arr.getLength(global);
     const new_arr = try JSValue.createEmptyArray(global, 0);
+    var removed = false;
     var i: u32 = 0;
     while (i < len) : (i += 1) {
         const entry = try arr.getIndex(global, i);
-        if (entry.isObject()) {
+        if (!removed and entry.isObject()) {
             const cb = try entry.getOwn(global, "cb") orelse .js_undefined;
-            if (cb == listener) continue;
+            const cap = try entry.getOwn(global, "capture");
+            if (cb == listener and (cap != null and cap.?.toBoolean()) == capture) {
+                // Spec: remove at most one listener per call.
+                removed = true;
+                // Tombstone the entry so any snapshot currently being
+                // iterated by `dispatchToHandlers` skips it without
+                // shifting indices.
+                entry.put(global, bun.String.static("cb"), .js_undefined);
+                continue;
+            }
         }
         try new_arr.push(global, entry);
     }

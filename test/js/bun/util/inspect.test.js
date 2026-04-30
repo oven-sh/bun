@@ -451,6 +451,46 @@ const fixture = [
         },
       },
     ),
+  () => {
+    class Foo {
+      get bar() {
+        throw new Error("bar throws");
+      }
+    }
+    const obj = new Foo();
+    Object.setPrototypeOf(obj, new Proxy(Object.getPrototypeOf(obj), {}));
+    return obj;
+  },
+  () => {
+    const obj = { x: 1 };
+    Object.setPrototypeOf(
+      obj,
+      new Proxy(
+        { y: 2 },
+        {
+          getPrototypeOf() {
+            throw new Error("getPrototypeOf throws");
+          },
+        },
+      ),
+    );
+    return obj;
+  },
+  () => {
+    const obj = {};
+    Object.setPrototypeOf(
+      obj,
+      new Proxy(
+        { y: 2 },
+        {
+          get() {
+            throw new Error("get throws");
+          },
+        },
+      ),
+    );
+    return obj;
+  },
 ];
 
 describe("crash testing", () => {

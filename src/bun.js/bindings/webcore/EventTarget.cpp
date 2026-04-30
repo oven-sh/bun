@@ -131,14 +131,16 @@ bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListene
     return true;
 }
 
-void EventTarget::addEventListenerForBindings(const AtomString& eventType, RefPtr<EventListener>&& listener, AddEventListenerOptionsOrBoolean&& variant)
+bool EventTarget::addEventListenerForBindings(const AtomString& eventType, RefPtr<EventListener>&& listener, AddEventListenerOptionsOrBoolean&& variant)
 {
     if (!listener)
-        return;
+        return false;
 
-    auto visitor = WTF::makeVisitor([&](const AddEventListenerOptions& options) { addEventListener(eventType, listener.releaseNonNull(), options); }, [&](bool capture) { addEventListener(eventType, listener.releaseNonNull(), capture); });
+    bool added = false;
+    auto visitor = WTF::makeVisitor([&](const AddEventListenerOptions& options) { added = addEventListener(eventType, listener.releaseNonNull(), options); }, [&](bool capture) { added = addEventListener(eventType, listener.releaseNonNull(), capture); });
 
     std::visit(visitor, variant);
+    return added;
 }
 
 void EventTarget::removeEventListenerForBindings(const AtomString& eventType, RefPtr<EventListener>&& listener, EventListenerOptionsOrBoolean&& variant)

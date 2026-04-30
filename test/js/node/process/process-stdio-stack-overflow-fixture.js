@@ -1,7 +1,10 @@
 // Exercise lazy process.stdin / process.stdout / process.stderr creation near
 // the stack limit. The property callbacks that create these streams report the
 // exception if stream construction fails with a stack overflow; that reporting
-// path must not observe the exception as still pending.
+// path must not observe the exception as still pending when it re-enters JS
+// to invoke the uncaughtException listener (Interpreter::executeCallImpl
+// asserts no pending exception on entry).
+process.on("uncaughtException", () => {});
 const which = process.argv[2];
 function F(a, ...b) {
   if (!new.target) throw 0;

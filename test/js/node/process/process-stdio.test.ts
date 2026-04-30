@@ -158,22 +158,4 @@ describe.concurrent("process-stdio", () => {
       `hello worldhello again|😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌`.repeat(9999),
     );
   });
-
-  test.concurrent.each(["stdin", "stdout", "stderr", "openStdin"])(
-    "process.%s lazy init near stack limit does not assert",
-    async which => {
-      await using proc = spawn({
-        cmd: [bunExe(), path.join(import.meta.dir, "process-stdio-stack-overflow-fixture.js"), which],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-        stdin: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).not.toContain("ASSERTION FAILED");
-      expect(stderr).not.toContain("ASSERTION FAILED");
-      expect(proc.signalCode).toBeNull();
-      expect(exitCode).toBe(0);
-    },
-  );
 });

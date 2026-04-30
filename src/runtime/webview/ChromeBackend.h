@@ -446,8 +446,8 @@ public:
     bool m_wasAutoDetected = false;
     // Stashed for the wsOnClose fallback spawn. Auto-detect only runs
     // when path/argv are empty (createChrome branches to spawn-mode
-    // otherwise), so userDataDir + stdio are the only carry-over. Set in
-    // ensureConnected when autoDetected=true.
+    // otherwise), so userDataDir + stdio + detached are the only
+    // carry-over. Set in ensureConnected when autoDetected=true.
     WTF::String m_fallbackUserDataDir;
     bool m_fallbackStdoutInherit = false;
     bool m_fallbackStderrInherit = false;

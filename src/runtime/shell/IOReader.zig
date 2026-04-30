@@ -95,7 +95,7 @@ pub fn start(this: *IOReader) Yield {
     // on this same IOReader from inside `onReaderDone`. On Windows the underlying
     // BufferedReader has already nulled its `source` by then, so `startWithCurrentPipe`
     // would unwrap a null optional. There is nothing left to read; the newly-added
-    // reader gets its done notification from the index-based loop in `onReaderDone`.
+    // reader gets its done notification from `drainReaders()`.
     if (this.reader.isDone()) return .suspended;
     this.is_reading = true;
     if (this.reader.startWithCurrentPipe().asErr()) |e| {
@@ -181,33 +181,32 @@ pub fn onReaderError(this: *IOReader, err: bun.sys.Error) void {
     log("IOReader(0x{x}.onReaderError({f}) ", .{ @intFromPtr(this), err });
     this.setReading(false);
     this.err = err.toShellSystemError();
-    // `.run()` drives the shell state machine and can call `addReader()` on this
-    // IOReader, which may promote the SmolList from inlined→heap or realloc the heap
-    // buffer. Iterating a captured `slice()` here would dangle; re-read `len()`/`get()`
-    // each iteration like `onReadChunk` does.
-    var i: usize = 0;
-    while (i < this.readers.len()) : (i += 1) {
-        const r = this.readers.get(i).*;
-        r.onReaderDone(if (this.err) |*e| brk: {
-            e.ref();
-            break :brk e.*;
-        } else null).run();
-    }
+    this.drainReaders();
 }
 
 pub fn onReaderDone(this: *IOReader) void {
     log("IOReader(0x{x}) done", .{@intFromPtr(this)});
     this.setReading(false);
-    // `.run()` drives the shell state machine and can call `addReader()` on this
-    // IOReader, which may promote the SmolList from inlined→heap or realloc the heap
-    // buffer. Iterating a captured `slice()` here would dangle; re-read `len()`/`get()`
-    // each iteration like `onReadChunk` does.
-    var i: usize = 0;
-    while (i < this.readers.len()) : (i += 1) {
-        const r = this.readers.get(i).*;
-        r.onReaderDone(if (this.err) |*err| brk: {
-            err.ref();
-            break :brk err.*;
+    this.drainReaders();
+}
+
+/// Notify every registered reader that this IOReader is finished, including
+/// readers appended while draining.
+///
+/// `.run()` drives the Yield trampoline which can (a) call `addReader()` on
+/// this same IOReader — `SmolList.append()` may promote inlined→heap or
+/// realloc, so a captured `slice()` would dangle — and (b) free the reader
+/// we just notified and allocate the next one at the same address, which
+/// would collide with `addReader`'s pointer-equality dedup if the stale
+/// entry were still in the list. Pop each reader out before dispatching so
+/// neither hazard applies.
+fn drainReaders(this: *IOReader) void {
+    while (this.readers.len() > 0) {
+        const r = this.readers.get(0).*;
+        this.readers.swapRemove(0);
+        r.onReaderDone(if (this.err) |*e| brk: {
+            e.ref();
+            break :brk e.*;
         } else null).run();
     }
 }

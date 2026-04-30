@@ -147,13 +147,13 @@ for (const repo of ["https://github.com/dylan-conway/create-test", "github.com/d
       env,
     });
 
-    const [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
     if (isGithubRateLimited(err)) return;
     expect(err).not.toContain("error:");
     expect(out).toContain("Success! dylan-conway/create-test loaded into create-test");
     expect(await exists(join(x_dir, "create-test", "node_modules", "jquery"))).toBe(true);
 
-    expect(await exited).toBe(0);
+    expect(exitCode).toBe(0);
   }, 20_000);
 }
 

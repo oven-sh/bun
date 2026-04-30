@@ -1,4 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 
 describe("FormData", () => {
@@ -514,6 +515,40 @@ describe("FormData", () => {
       const formData = new FormData();
       formData.append("foo", Bun.file("missing"));
       expect(() => new Response(formData)).toThrow();
+    });
+
+    it("does not leak prior file buffers when a later file read fails", async () => {
+      // Blob.fromDOMFormData pushes each entry's bytes (including full
+      // readFile results for Bun.file entries) into a StringJoiner. If a
+      // subsequent entry's read fails, the failure path used to return an
+      // empty Blob without calling joiner.deinit(), leaking every heap-owned
+      // slice already pushed (file contents + any non-ASCII name/value dups).
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--smol", join(import.meta.dir, "FormData-file-error-leak-fixture.ts")],
+        env: {
+          ...bunEnv,
+          ITERATIONS: "100",
+          WARMUP: "10",
+          FILE_SIZE: String(256 * 1024),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      if (exitCode !== 0) console.error(stderr);
+
+      const result = JSON.parse(stdout.trim());
+      console.log(
+        `FormData file-error leak: ${result.iterations} iterations, growth ${result.growthMB} MB (pre-fix ~${result.expectedLeakMB} MB)`,
+      );
+
+      // Without the fix: ~25 MB growth (256 KiB × 100). With the fix: ~0.
+      // Threshold is well under half the expected leak to leave headroom for
+      // unrelated allocator noise while still catching the regression.
+      expect(result.growthMB).toBeLessThan(10);
+      expect(exitCode).toBe(0);
     });
   });
 

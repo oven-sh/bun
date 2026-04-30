@@ -1914,8 +1914,16 @@ pub const DuplexUpgradeContext = struct {
     fn onClose(this: *DuplexUpgradeContext) void {
         const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
 
-        if (this.tls) |tls| {
-            tls.onClose(socket, 0, null) catch {};
+        // `tls.onClose` → `markInactive` may free `tls.handlers` once
+        // `active_connections` reaches 0. `UpgradedDuplex.onClose` then calls
+        // `duplex.end()` right after this returns; if that JS call throws,
+        // `onError` → `tls.handleError` → `getHandlers()` would dereference
+        // the freed allocation. Null `tls` first so the existing null-check
+        // in `onError` drops the error instead.
+        const tls = this.tls;
+        this.tls = null;
+        if (tls) |t| {
+            t.onClose(socket, 0, null) catch {};
         }
 
         this.deinitInNextTick();

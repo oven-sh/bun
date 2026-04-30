@@ -1879,24 +1879,20 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             if (error_instance == .zero) {
                 switch (this.config.address) {
                     .tcp => |tcp| {
-                        error_set: {
-                            if (comptime Environment.isLinux) {
-                                const rc: i32 = -1;
-                                const code = Sys.getErrno(rc);
-                                if (code == bun.sys.E.ACCES) {
-                                    error_instance = (jsc.SystemError{
-                                        .message = bun.String.init(std.fmt.bufPrint(&output_buf, "permission denied {s}:{d}", .{ tcp.hostname orelse "0.0.0.0", tcp.port }) catch "Failed to start server"),
-                                        .code = bun.String.static("EACCES"),
-                                        .syscall = bun.String.static("listen"),
-                                    }).toErrorInstance(globalThis);
-                                    break :error_set;
-                                }
-                            }
-                            error_instance = (jsc.SystemError{
-                                .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server"),
-                                .code = bun.String.static("EADDRINUSE"),
-                                .syscall = bun.String.static("listen"),
-                            }).toErrorInstance(globalThis);
+                        const errno = Sys.getErrno(@as(i32, -1));
+                        switch (errno) {
+                            .SUCCESS, .ADDRINUSE => {
+                                error_instance = (jsc.SystemError{
+                                    .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server"),
+                                    .code = bun.String.static("EADDRINUSE"),
+                                    .syscall = bun.String.static("listen"),
+                                }).toErrorInstance(globalThis);
+                            },
+                            else => {
+                                var sys_err = bun.sys.Error.fromCode(errno, .listen);
+                                sys_err.path = if (tcp.hostname) |h| std.mem.span(h) else "0.0.0.0";
+                                error_instance = sys_err.toJS(globalThis) catch return;
+                            },
                         }
                     },
                     .unix => |unix| {

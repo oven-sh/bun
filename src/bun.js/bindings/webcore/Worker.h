@@ -27,6 +27,7 @@
 
 #include "ActiveDOMObject.h"
 #include "EventTarget.h"
+#include "MessageWithMessagePorts.h"
 #include "WorkerOptions.h"
 #include <JavaScriptCore/RuntimeFlags.h>
 #include <wtf/Deque.h>
@@ -93,6 +94,20 @@ public:
     ScriptExecutionContextIdentifier clientIdentifier() const { return m_clientIdentifier; }
     WorkerOptions& options() { return m_options; }
 
+    // Coalesced cross-thread inbox for worker↔parent postMessage, mirroring
+    // MessagePortPipe: a burst of N postMessage calls schedules one drain
+    // task on the receiver, which loops dispatching + draining microtasks.
+    // This avoids N× (global-contexts-lock + HashMap lookup + lambda alloc)
+    // per burst.
+    struct MessageInbox {
+        WTF::Lock lock;
+        WTF::Deque<MessageWithMessagePorts> queue WTF_GUARDED_BY_LOCK(lock);
+        std::atomic<bool> drainScheduled { false };
+    };
+
+    void enqueueToParent(MessageWithMessagePorts&&);
+    void drainToWorker(ScriptExecutionContext&);
+
 private:
     Worker(ScriptExecutionContext&, WorkerOptions&&);
 
@@ -102,6 +117,9 @@ private:
     void eventListenersDidChange() final {};
 
     static void networkStateChanged(bool isOnLine);
+
+    void enqueueToWorker(MessageWithMessagePorts&&);
+    void drainToParent(ScriptExecutionContext&);
 
     static constexpr uint8_t OnlineFlag = 1 << 0;
     static constexpr uint8_t ClosingFlag = 1 << 1;
@@ -114,6 +132,8 @@ private:
     Deque<RefPtr<Event>> m_pendingEvents;
     Lock m_pendingTasksMutex;
     Deque<Function<void(ScriptExecutionContext&)>> m_pendingTasks;
+    MessageInbox m_toWorker; // messages parent → worker, drained on the worker thread
+    MessageInbox m_toParent; // messages worker → parent, drained on the parent thread
     // Tracks OnlineFlag and ClosingFlag
     std::atomic<uint8_t> m_onlineClosingFlags { 0 };
     // Tracks TerminateRequestedFlag and TerminatedFlag

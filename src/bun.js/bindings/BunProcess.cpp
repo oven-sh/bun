@@ -76,6 +76,9 @@
 #include <sys/types.h>
 #include <pwd.h>
 #include <grp.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <sys/resource.h>
 #else
 #include <uv.h>
 #include <io.h>
@@ -105,6 +108,7 @@ typedef int mode_t;
 #if defined(__APPLE__)
 #include <mach/mach.h>
 #include <mach/mach_time.h>
+#include <spawn.h>
 #endif
 
 #if defined(__linux__) || defined(__FreeBSD__)
@@ -580,34 +584,46 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #endif
 
     if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {
-        // Module self-registered via static constructor(s)
-        // Save ALL registrations to handle map before executing
+        // Module self-registered via static constructor(s).
+        // Move pending registrations into locals before iterating: an
+        // nm_register_func can itself call napi_module_register(), which
+        // appends to m_pendingNapiModules. Appending to a WTF::Vector while
+        // range-for iterating it reallocates the buffer and leaves the
+        // iterator dangling.
+        auto pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
+        auto pendingV8Modules = std::exchange(globalObject->m_pendingV8Modules, {});
 
         if (handle) {
             // Save all NAPI module registrations
-            for (auto& mod : globalObject->m_pendingNapiModules) {
+            for (auto& mod : pendingNapiModules) {
                 auto* heapModule = new napi_module(mod);
                 Bun::DLHandleMap::singleton().add(handle, heapModule);
             }
 
             // Save all V8 C++ module registrations
-            for (auto* mod : globalObject->m_pendingV8Modules) {
+            for (auto* mod : pendingV8Modules) {
                 Bun::DLHandleMap::singleton().add(handle, mod);
             }
         }
 
-        // Execute all NAPI modules
-        for (auto& mod : globalObject->m_pendingNapiModules) {
-            // Restore dlopen handle for this module before execution
-            // executePendingNapiModule clears it, so we must set it for each module
-            globalObject->m_pendingNapiModuleDlopenHandle = handle;
-            globalObject->m_pendingNapiModule = mod;
-            Napi::executePendingNapiModule(globalObject);
-            globalObject->m_pendingNapiModule = {};
+        // Execute all NAPI modules. If an nm_register_func registers more
+        // modules re-entrantly, they accumulate back in m_pendingNapiModules;
+        // drain those too once the current batch is done.
+        for (;;) {
+            for (auto& mod : pendingNapiModules) {
+                // Restore dlopen handle for this module before execution
+                // executePendingNapiModule clears it, so we must set it for each module
+                globalObject->m_pendingNapiModuleDlopenHandle = handle;
+                globalObject->m_pendingNapiModule = mod;
+                Napi::executePendingNapiModule(globalObject);
+                globalObject->m_pendingNapiModule = {};
+            }
+            if (globalObject->m_pendingNapiModules.isEmpty())
+                break;
+            pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
         }
 
-        // Clear all pending registrations
-        globalObject->m_pendingNapiModules.clear();
+        // Clear any re-entrant V8 registrations (not executed here).
         globalObject->m_pendingV8Modules.clear();
 
         JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
@@ -643,18 +659,22 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
                 registration);
         }
 
-        // Execute all NAPI modules that were just registered
-        for (auto& mod : globalObject->m_pendingNapiModules) {
-            // Restore dlopen handle for this module before execution
-            // executePendingNapiModule clears it, so we must set it for each module
-            globalObject->m_pendingNapiModuleDlopenHandle = handle;
-            globalObject->m_pendingNapiModule = mod;
-            Napi::executePendingNapiModule(globalObject);
-            globalObject->m_pendingNapiModule = {};
+        // Execute all NAPI modules that were just registered. Move to a
+        // local first and drain so re-entrant napi_module_register() calls
+        // from inside nm_register_func can't invalidate our iterator.
+        while (!globalObject->m_pendingNapiModules.isEmpty()) {
+            auto pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
+            for (auto& mod : pendingNapiModules) {
+                // Restore dlopen handle for this module before execution
+                // executePendingNapiModule clears it, so we must set it for each module
+                globalObject->m_pendingNapiModuleDlopenHandle = handle;
+                globalObject->m_pendingNapiModule = mod;
+                Napi::executePendingNapiModule(globalObject);
+                globalObject->m_pendingNapiModule = {};
+            }
         }
 
-        // Clear the vectors (no need to save again since already in DLHandleMap)
-        globalObject->m_pendingNapiModules.clear();
+        // Clear the V8 vector (no need to save again since already in DLHandleMap)
         globalObject->m_pendingV8Modules.clear();
 
         JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
@@ -1583,6 +1603,228 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, 
     _exit(134);
 #endif
     abort();
+}
+
+#if !OS(WINDOWS)
+#if OS(LINUX) || OS(FREEBSD)
+extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags);
+#endif
+
+static int persistStandardStream(int fd)
+{
+    int flags = fcntl(fd, F_GETFD, 0);
+    if (flags < 0) return flags;
+    flags &= ~FD_CLOEXEC;
+    return fcntl(fd, F_SETFD, flags);
+}
+#endif
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Reject workers before doing any other work. The experimental warning is
+    // queued on nextTick; scheduling it on a worker VM that is about to throw
+    // (and likely be torn down by the main thread's process.exit) is a race we
+    // don't need, and a worker call shouldn't consume the process-wide
+    // once_flag anyway.
+    if (!Bun__isMainThreadVM()) {
+        scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_WORKER_UNSUPPORTED_OPERATION, "Calling process.execve is not supported in workers"_s));
+        return {};
+    }
+
+    static std::once_flag experimentalWarningFlag;
+    std::call_once(experimentalWarningFlag, [&] {
+        Process::emitWarning(globalObject,
+            jsString(vm, String("process.execve is an experimental feature and might change at any time"_s)),
+            jsString(vm, String("ExperimentalWarning"_s)), jsUndefined(), jsUndefined());
+    });
+    RETURN_IF_EXCEPTION(scope, {});
+
+#if OS(WINDOWS)
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_FEATURE_UNAVAILABLE_ON_PLATFORM, "The feature process.execve is unavailable on the current platform, which is being used to run Node.js"_s));
+    return {};
+#else
+    JSValue execPathValue = callFrame->argument(0);
+    JSValue argsValue = callFrame->argument(1);
+    JSValue envValue = callFrame->argument(2);
+
+    Bun::V::validateString(scope, globalObject, execPathValue, "execPath"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    Bun::V::validateArray(scope, globalObject, argsValue, "args"_s, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
+
+    WTF::String execPath = execPathValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (execPath.contains(static_cast<char16_t>(0))) {
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "execPath"_s,
+            execPathValue, "must be a string without null bytes"_s);
+    }
+
+    JSObject* argsObject = argsValue.getObject();
+    unsigned argsLength = static_cast<unsigned>(toLength(globalObject, argsObject));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    Vector<CString> argvStorage;
+    argvStorage.reserveInitialCapacity(argsLength);
+
+    for (unsigned i = 0; i < argsLength; i++) {
+        JSValue item = argsObject->getIndex(globalObject, i);
+        RETURN_IF_EXCEPTION(scope, {});
+        bool invalid = !item.isString();
+        WTF::String str;
+        if (!invalid) {
+            str = item.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            invalid = str.contains(static_cast<char16_t>(0));
+        }
+        if (invalid) {
+            return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, makeString("args["_s, i, "]"_s),
+                item, "must be a string without null bytes"_s);
+        }
+        argvStorage.append(str.utf8());
+    }
+
+    Vector<CString> envStorage;
+    if (!envValue.isUndefined()) {
+        Bun::V::validateObject(scope, globalObject, envValue, "env"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        JSObject* envObject = envValue.getObject();
+        JSC::PropertyNameArrayBuilder envNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        envObject->methodTable()->getOwnPropertyNames(envObject, globalObject, envNames, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        envStorage.reserveInitialCapacity(envNames.size());
+
+        for (unsigned i = 0; i < envNames.size(); i++) {
+            JSValue value = envObject->get(globalObject, envNames[i]);
+            RETURN_IF_EXCEPTION(scope, {});
+            const WTF::String& keyStr = envNames[i].string();
+            bool invalid = !value.isString();
+            WTF::String valueStr;
+            if (!invalid) {
+                valueStr = value.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                invalid = keyStr.contains(static_cast<char16_t>(0)) || valueStr.contains(static_cast<char16_t>(0));
+            }
+            if (invalid) {
+                return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "env"_s,
+                    envValue, "must be an object with string keys and values without null bytes"_s);
+            }
+            envStorage.append(makeString(keyStr, '=', valueStr).utf8());
+        }
+    }
+
+    CString execPathUtf8 = execPath.utf8();
+
+    // Build the null-terminated argv/envp pointer arrays only after the
+    // backing storage is fully populated so there is no risk of pointers
+    // becoming stale across any intermediate Vector growth.
+    Vector<char*> argv;
+    argv.reserveInitialCapacity(argvStorage.size() + 1);
+    for (auto& s : argvStorage)
+        argv.append(const_cast<char*>(s.data()));
+    argv.append(nullptr);
+
+    Vector<char*> envp;
+    envp.reserveInitialCapacity(envStorage.size() + 1);
+    for (auto& s : envStorage)
+        envp.append(const_cast<char*>(s.data()));
+    envp.append(nullptr);
+
+    // Set stdin, stdout and stderr to be non-close-on-exec so that the new
+    // process will inherit them.
+    if (persistStandardStream(0) < 0 || persistStandardStream(1) < 0 || persistStandardStream(2) < 0) {
+        throwSystemError(scope, globalObject, "fcntl"_s, errno);
+        return {};
+    }
+
+    int savedErrno;
+
+#if OS(DARWIN)
+    // macOS lacks SOCK_CLOEXEC/close_range, so use posix_spawn with the Apple
+    // extensions: POSIX_SPAWN_SETEXEC makes posix_spawn(2) behave like a more
+    // featureful execve(2) (replace the current image rather than fork), and
+    // POSIX_SPAWN_CLOEXEC_DEFAULT atomically closes every descriptor that
+    // isn't explicitly inherited via file actions. This mirrors
+    // reloadProcess() in src/bun.zig.
+    posix_spawnattr_t attrs;
+    posix_spawn_file_actions_t actions;
+    posix_spawnattr_init(&attrs);
+    posix_spawn_file_actions_init(&actions);
+
+    // Reset the blocked signal mask, but don't touch dispositions:
+    // POSIX_SPAWN_SETEXEC already gives execve(2) semantics (caught handlers
+    // become SIG_DFL; SIG_IGN is preserved), which matches the non-Darwin
+    // path and Node. SETSIGDEF with a full set would additionally force
+    // SIG_IGN dispositions (e.g. Bun's SIGPIPE) back to SIG_DFL, diverging
+    // from Linux.
+    sigset_t emptyMask;
+    sigemptyset(&emptyMask);
+    posix_spawnattr_setsigmask(&attrs, &emptyMask);
+    posix_spawnattr_setflags(&attrs,
+        POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETEXEC | POSIX_SPAWN_SETSIGMASK);
+
+    posix_spawn_file_actions_addinherit_np(&actions, 0);
+    posix_spawn_file_actions_addinherit_np(&actions, 1);
+    posix_spawn_file_actions_addinherit_np(&actions, 2);
+
+    pid_t pid;
+    savedErrno = posix_spawn(&pid, execPathUtf8.data(), &actions, &attrs, argv.begin(), envp.begin());
+    // With POSIX_SPAWN_SETEXEC a successful call never returns; reaching
+    // here means it failed and the return value is the errno.
+    posix_spawn_file_actions_destroy(&actions);
+    posix_spawnattr_destroy(&attrs);
+#else
+    // Ensure all other file descriptors are close-on-exec so they don't leak
+    // into the replacement process. Bun opens descriptors with
+    // O_CLOEXEC/SOCK_CLOEXEC where available, so the loop is a best-effort
+    // fallback for kernels without close_range(2).
+#if OS(LINUX) || OS(FREEBSD)
+    if (bun_close_range(3, ~0U, /* CLOSE_RANGE_CLOEXEC */ (1U << 2)) != 0)
+#endif
+    {
+        int maxfd = static_cast<int>(sysconf(_SC_OPEN_MAX));
+        if (maxfd < 0 || maxfd > 65536) maxfd = 65536;
+        for (int fd = 3; fd < maxfd; fd++) {
+            int flags = fcntl(fd, F_GETFD);
+            if (flags >= 0) fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+        }
+    }
+
+    // Reset the signal mask so the new process starts with defaults. execve(2)
+    // resets handlers for caught signals but preserves the blocked mask.
+    sigset_t emptyMask;
+    sigemptyset(&emptyMask);
+    pthread_sigmask(SIG_SETMASK, &emptyMask, nullptr);
+
+    ::execve(execPathUtf8.data(), argv.begin(), envp.begin());
+    savedErrno = errno;
+#endif
+
+    // If we get here, execve failed. Match Node's behavior: print the error
+    // and abort the process (the original image is no longer in a usable
+    // state to return to JavaScript).
+    const char* errName = Bun__errnoName(savedErrno);
+
+    fprintf(stderr, "process.execve failed with error code %s\n", errName ? errName : "UNKNOWN");
+    fprintf(stderr, "SystemError [process.execve]: execve %s: %s\n", strerror(savedErrno), execPathUtf8.data());
+    fprintf(stderr, "    at execve (node:internal/process/per_thread:0:0)\n");
+    fflush(stderr);
+
+    // Disable core dumps before aborting. Node also calls abort() here, but
+    // Bun's CI treats any core file produced during a test run (including
+    // from an intentionally-aborting child process) as a failure. The error
+    // has already been written to stderr, so a core dump adds no diagnostic
+    // value.
+    struct rlimit noCore = { 0, 0 };
+    setrlimit(RLIMIT_CORE, &noCore);
+    abort();
+#endif
 }
 
 static bool isJSValueEqualToASCIILiteral(JSC::JSGlobalObject* globalObject, JSC::JSValue value, const ASCIILiteral literal)
@@ -4045,6 +4287,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   env                              constructEnv                                        PropertyCallback
   execArgv                         processExecArgv                                     CustomAccessor
   execPath                         constructExecPath                                   PropertyCallback
+  execve                           Process_functionExecve                              Function 3
   exit                             Process_functionExit                                Function 1
   exitCode                         processExitCode                                     CustomAccessor|DontDelete
   features                         constructFeatures                                   PropertyCallback

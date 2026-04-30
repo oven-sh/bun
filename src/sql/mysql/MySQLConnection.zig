@@ -947,7 +947,13 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
             }
             this.#flags.is_ready_for_query = true;
             statement.status = .failed;
+            // err.error_message is a Data{ .temporary = ... } slice into the socket read
+            // buffer which will be overwritten by the next packet. The statement is cached
+            // in this.statements and its error_response may be read later via
+            // stmt.error_response.toJS(), so we must own a copy of the message bytes.
+            statement.error_response.deinit();
             statement.error_response = err;
+            statement.error_response.error_message = bun.handleOom(Data.create(err.error_message.slice(), bun.default_allocator));
             this.queue.markAsReadyForQuery();
             this.queue.markCurrentRequestAsFinished(request);
 

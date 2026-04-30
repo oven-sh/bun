@@ -255,6 +255,18 @@ export const sysErrorNameFromLibuv: (errno: number) => string | undefined = $new
   1,
 );
 
+export const stringsInternals = {
+  /**
+   * Calls `bun.strings.toUTF16AllocForReal(allocator, bytes, false, true)` and
+   * returns the resulting UTF-16 data as a JS string. The `sentinel = true`
+   * path is otherwise only reachable from Windows `bun build --compile`
+   * metadata, so this binding lets us exercise it on all platforms.
+   */
+  toUTF16AllocSentinel: $newZigFunction("string/immutable/unicode.zig", "TestingAPIs.toUTF16AllocSentinel", 1) as (
+    bytes: Uint8Array,
+  ) => string,
+};
+
 export const fetchH2Internals = {
   liveCounts: $newZigFunction("http/H2Client.zig", "TestingAPIs.liveCounts", 0) as () => {
     sessions: number;

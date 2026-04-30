@@ -24,7 +24,6 @@ export default [
     proto: {
       url: {
         getter: "getURL",
-        cache: true,
       },
       readyState: {
         getter: "getReadyState",

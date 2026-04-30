@@ -94,8 +94,10 @@ describe("EventSource", () => {
       c.write(": this is ignored\n");
       // custom event type
       c.write("event: ping\ndata: pong\n\n");
-      // field with no value
+      // field with no value → empty-string data per spec
       c.write("data\n\n");
+      // leading empty data line is significant
+      c.write("data:\ndata: x\n\n");
       await c.flush();
       await new Promise(r => req.signal.addEventListener("abort", r));
     });
@@ -104,7 +106,7 @@ describe("EventSource", () => {
     const received: Array<[string, string]> = [];
     const done = new Promise<void>(resolve => {
       const check = () => {
-        if (received.length === 2) resolve();
+        if (received.length === 4) resolve();
       };
       es.onmessage = e => {
         received.push(["message", e.data]);
@@ -120,6 +122,8 @@ describe("EventSource", () => {
     expect(received).toEqual([
       ["message", "a\nb"],
       ["ping", "pong"],
+      ["message", ""],
+      ["message", "\nx"],
     ]);
     es.close();
   });
@@ -271,16 +275,59 @@ describe("EventSource", () => {
     es.close();
   });
 
-  test("dispatchEvent routes to on-handlers and listeners", () => {
+  test("dispatchEvent routes to on-handlers and listeners and returns !defaultPrevented", () => {
     const es = new EventSource("http://127.0.0.1:1/"); // will error async; fine
     let onmsgHit = 0;
     let listenerHit = 0;
     es.onmessage = () => onmsgHit++;
     es.addEventListener("message", () => listenerHit++);
     const ev = new MessageEvent("message", { data: "synthetic" });
-    es.dispatchEvent(ev);
+    expect(es.dispatchEvent(ev)).toBe(true);
     expect(onmsgHit).toBe(1);
     expect(listenerHit).toBe(1);
+
+    const cancelable = new Event("message", { cancelable: true });
+    es.addEventListener("message", e => e.preventDefault(), { once: true });
+    expect(es.dispatchEvent(cancelable)).toBe(false);
+    es.close();
+  });
+
+  test("addEventListener honours { once: true } and accepts { handleEvent } objects", async () => {
+    await using server = sseServer(async (c, req) => {
+      c.write("data: 1\n\n");
+      c.write("data: 2\n\n");
+      c.write("data: 3\n\n");
+      await c.flush();
+      await new Promise(r => req.signal.addEventListener("abort", r));
+    });
+
+    const es = new EventSource(server.url.href);
+    const onceHits: string[] = [];
+    const objHits: string[] = [];
+    let objThis: unknown;
+
+    es.addEventListener("message", (e: MessageEvent) => onceHits.push(e.data), { once: true });
+    const listenerObj = {
+      handleEvent(this: unknown, e: MessageEvent) {
+        objThis = this;
+        objHits.push(e.data);
+      },
+    };
+    es.addEventListener("message", listenerObj);
+
+    await new Promise<void>(resolve => {
+      es.onmessage = e => {
+        if (e.data === "3") resolve();
+      };
+    });
+
+    expect(onceHits).toEqual(["1"]);
+    expect(objHits).toEqual(["1", "2", "3"]);
+    expect(objThis).toBe(listenerObj);
+
+    es.removeEventListener("message", listenerObj);
+    es.dispatchEvent(new MessageEvent("message", { data: "4" }));
+    expect(objHits).toEqual(["1", "2", "3"]);
     es.close();
   });
 });

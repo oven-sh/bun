@@ -468,8 +468,12 @@ fn failConnectionPermanently(this: *EventSource, status: u16, ct_ok: bool) void 
         "EventSource: connection failed";
 
     this.ready_state = .closed;
-    this.goIdle();
+    // Dispatch the error while `this_value` is still a strong ref and
+    // `has_pending_activity` is still set — `goIdle()` downgrades both, after
+    // which a GC triggered by the ErrorEvent allocation could collect the
+    // wrapper before `dispatchToHandlers` reads it.
     this.dispatchErrorEvent(msg);
+    this.goIdle();
 }
 
 /// Per spec "reestablish the connection": queue an error event, wait the
@@ -566,9 +570,12 @@ fn processLine(this: *EventSource, line: []const u8) void {
     }
 
     if (strings.eqlComptime(field, "data")) {
-        if (this.data_buffer.items.len > 0)
-            bun.handleOom(this.data_buffer.append(bun.default_allocator, '\n'));
+        // Spec: append the field value, then append a single U+000A. Using
+        // the literal form (rather than a "join with \n" shortcut) preserves
+        // leading empty `data:` lines — `data:\ndata: x\n\n` → "\nx" and a
+        // bare `data:\n\n` still dispatches with data === "".
         bun.handleOom(this.data_buffer.appendSlice(bun.default_allocator, value));
+        bun.handleOom(this.data_buffer.append(bun.default_allocator, '\n'));
     } else if (strings.eqlComptime(field, "event")) {
         this.event_type_buffer.clearRetainingCapacity();
         bun.handleOom(this.event_type_buffer.appendSlice(bun.default_allocator, value));
@@ -600,7 +607,16 @@ fn dispatchPendingMessage(this: *EventSource) void {
         this.data_buffer.clearRetainingCapacity();
         this.event_type_buffer.clearRetainingCapacity();
     }
+    // Spec: "if the data buffer is an empty string, set the data buffer and
+    // the event type buffer to the empty string and return." Because every
+    // `data` line appends value+LF, an empty buffer here means no `data`
+    // field was seen at all.
     if (this.data_buffer.items.len == 0) return;
+    // Spec: "if the data buffer's last character is a U+000A LINE FEED (LF)
+    // character, remove the last character from the data buffer." It always
+    // is, given how processLine() appends.
+    bun.assert(this.data_buffer.items[this.data_buffer.items.len - 1] == '\n');
+    this.data_buffer.items.len -= 1;
 
     const event_type = if (this.event_type_buffer.items.len > 0)
         bun.String.cloneUTF8(this.event_type_buffer.items)
@@ -643,6 +659,27 @@ fn dispatchErrorEvent(this: *EventSource, message: []const u8) void {
     this.dispatchToHandlers("error", event);
 }
 
+/// Invoke a listener per the DOM "inner invoke" steps: a function is called
+/// with `thisArg` = the EventSource; an EventListener object has its
+/// `handleEvent` method called with `thisArg` = the listener object.
+fn invokeListener(global: *JSGlobalObject, this_js: JSValue, listener: JSValue, event: JSValue) void {
+    if (listener.isCallable()) {
+        _ = listener.call(global, this_js, &.{event}) catch |e|
+            global.reportActiveExceptionAsUnhandled(e);
+        return;
+    }
+    if (listener.isObject()) {
+        const handle = listener.getTruthy(global, "handleEvent") catch |e| {
+            global.reportActiveExceptionAsUnhandled(e);
+            return;
+        } orelse return;
+        if (handle.isCallable()) {
+            _ = handle.call(global, listener, &.{event}) catch |e|
+                global.reportActiveExceptionAsUnhandled(e);
+        }
+    }
+}
+
 fn dispatchToHandlers(this: *EventSource, event_type: []const u8, event: JSValue) void {
     const this_js = this.this_value.tryGet() orelse return;
     this_js.ensureStillAlive();
@@ -663,24 +700,54 @@ fn dispatchToHandlers(this: *EventSource, event_type: []const u8, event: JSValue
         }
     }
 
-    // addEventListener-registered listeners.
-    if (js.listenersGetCached(this_js)) |listeners_obj| {
-        if (listeners_obj.isObject()) {
-            const maybe_arr = listeners_obj.getOwn(global, event_type) catch return;
-            if (maybe_arr) |arr| {
-                if (arr.jsType().isArray()) {
-                    const len = arr.getLength(global) catch return;
-                    var idx: u32 = 0;
-                    while (idx < len) : (idx += 1) {
-                        const listener = arr.getIndex(global, idx) catch continue;
-                        if (!listener.isCallable()) continue;
-                        _ = listener.call(global, this_js, &.{event}) catch |e|
-                            global.reportActiveExceptionAsUnhandled(e);
-                        if (this.ready_state == .closed) return;
-                    }
-                }
-            }
+    // addEventListener-registered listeners. Entries are stored as
+    // { cb: <fn|{handleEvent}>, once: <bool> }. Snapshot the list before
+    // invoking so mutations during dispatch don't affect this run (DOM
+    // "inner invoke" semantics).
+    const listeners_obj = js.listenersGetCached(this_js) orelse return;
+    if (!listeners_obj.isObject()) return;
+    const maybe_arr = listeners_obj.getOwn(global, event_type) catch return;
+    const arr = maybe_arr orelse return;
+    if (!arr.jsType().isArray()) return;
+
+    const len: u32 = @intCast(arr.getLength(global) catch return);
+    if (len == 0) return;
+
+    var had_once = false;
+    var idx: u32 = 0;
+    while (idx < len) : (idx += 1) {
+        const entry = arr.getIndex(global, idx) catch continue;
+        if (!entry.isObject()) continue;
+        const cb = entry.getOwn(global, "cb") catch continue orelse continue;
+        const once_val = entry.getOwn(global, "once") catch continue;
+        const is_once = once_val != null and once_val.?.toBoolean();
+        if (is_once) {
+            had_once = true;
+            // Mark before invoking so re-entrancy can't fire it again.
+            entry.put(global, bun.String.static("cb"), .js_undefined);
         }
+        invokeListener(global, this_js, cb, event);
+        if (this.ready_state == .closed) break;
+    }
+
+    if (had_once) {
+        // Rebuild the array without the consumed {once:true} entries. We do
+        // this after the loop (rather than splicing in place) so indices
+        // remain stable during iteration.
+        const live = listeners_obj.getOwn(global, event_type) catch return orelse return;
+        if (!live.jsType().isArray()) return;
+        const live_len: u32 = @intCast(live.getLength(global) catch return);
+        const filtered = JSValue.createEmptyArray(global, 0) catch return;
+        var j: u32 = 0;
+        while (j < live_len) : (j += 1) {
+            const entry = live.getIndex(global, j) catch continue;
+            if (!entry.isObject()) continue;
+            const cb = entry.getOwn(global, "cb") catch continue orelse continue;
+            if (cb.isUndefined()) continue;
+            filtered.push(global, entry) catch {};
+        }
+        var key = bun.String.init(event_type);
+        listeners_obj.putMayBeIndex(global, &key, filtered) catch {};
     }
 }
 
@@ -773,7 +840,19 @@ pub fn addEventListener(_: *EventSource, global: *JSGlobalObject, callframe: *js
     const args = callframe.arguments();
     if (args.len < 2) return .js_undefined;
     const listener = args[1];
-    if (!listener.isCallable()) return .js_undefined;
+    // Accept functions and EventListener objects ({ handleEvent }); per spec
+    // the `handleEvent` lookup is deferred to invoke time, so any object is
+    // permitted here. Only null/undefined/primitives are ignored.
+    if (listener.isUndefinedOrNull() or !(listener.isCallable() or listener.isObject()))
+        return .js_undefined;
+
+    // Flatten options: boolean is `capture` (no effect without a tree), or
+    // a dictionary with `once`. Other keys (`signal`, `passive`, `capture`)
+    // are not yet supported here.
+    var once = false;
+    if (args.len > 2 and args[2].isObject()) {
+        if (try args[2].getBooleanLoose(global, "once")) |o| once = o;
+    }
 
     const this_js = callframe.this();
     const type_str = try args[0].toBunString(global);
@@ -785,14 +864,19 @@ pub fn addEventListener(_: *EventSource, global: *JSGlobalObject, callframe: *js
         arr = try JSValue.createEmptyArray(global, 0);
         listeners.putMayBeIndex(global, &type_str, arr) catch {};
     }
-    // Dedupe (spec: registering the same listener twice is a no-op).
+    // Dedupe on callback identity (spec: same type + callback + capture).
     const len = try arr.getLength(global);
     var i: u32 = 0;
     while (i < len) : (i += 1) {
-        const existing = try arr.getIndex(global, i);
-        if (existing == listener) return .js_undefined;
+        const entry = try arr.getIndex(global, i);
+        if (!entry.isObject()) continue;
+        const cb = try entry.getOwn(global, "cb") orelse continue;
+        if (cb == listener) return .js_undefined;
     }
-    try arr.push(global, listener);
+    const entry = JSValue.createEmptyObject(global, 2);
+    entry.put(global, bun.String.static("cb"), listener);
+    entry.put(global, bun.String.static("once"), JSValue.jsBoolean(once));
+    try arr.push(global, entry);
     return .js_undefined;
 }
 
@@ -813,9 +897,12 @@ pub fn removeEventListener(_: *EventSource, global: *JSGlobalObject, callframe: 
     const new_arr = try JSValue.createEmptyArray(global, 0);
     var i: u32 = 0;
     while (i < len) : (i += 1) {
-        const existing = try arr.getIndex(global, i);
-        if (existing == listener) continue;
-        try new_arr.push(global, existing);
+        const entry = try arr.getIndex(global, i);
+        if (entry.isObject()) {
+            const cb = try entry.getOwn(global, "cb") orelse .js_undefined;
+            if (cb == listener) continue;
+        }
+        try new_arr.push(global, entry);
     }
     listeners.putMayBeIndex(global, &type_str, new_arr) catch {};
     return .js_undefined;
@@ -837,7 +924,14 @@ pub fn dispatchEvent(this: *EventSource, global: *JSGlobalObject, callframe: *js
     event_loop.enter();
     defer event_loop.exit();
     this.dispatchToHandlers(type_utf8.slice(), event);
-    return JSValue.jsBoolean(true);
+
+    // Per spec: return false if the event is cancelable and preventDefault()
+    // was called (i.e. defaultPrevented is true); true otherwise.
+    const default_prevented = blk: {
+        const dp = (event.getTruthy(global, "defaultPrevented") catch break :blk false) orelse break :blk false;
+        break :blk dp.toBoolean();
+    };
+    return JSValue.jsBoolean(!default_prevented);
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import { stringsInternals } from "bun:internal-for-testing";
+import { describe, expect, test } from "bun:test";
 
 // `bun.strings.toUTF16AllocForReal(..., sentinel = true)` is only called from
 // Windows-specific code (`bun build --compile` metadata in `src/windows.zig`),

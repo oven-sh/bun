@@ -6,7 +6,18 @@ pub const SocketTCP = @import("./uws/socket.zig").SocketTCP;
 pub const InternalSocket = @import("./uws/socket.zig").InternalSocket;
 pub const Socket = us_socket_t;
 pub const Timer = @import("./uws/Timer.zig").Timer;
-pub const SocketContext = @import("./uws/SocketContext.zig").SocketContext;
+pub const SocketGroup = @import("./uws/SocketGroup.zig").SocketGroup;
+pub const SocketKind = @import("./uws/SocketKind.zig").SocketKind;
+pub const vtable = @import("./uws/vtable.zig");
+pub const dispatch = @import("./uws/dispatch.zig");
+/// The opaque `us_socket_context_t` is gone; this namespace now only carries
+/// the SSL-options extern struct (`SSLConfig.asUSockets()` return type).
+pub const SocketContext = @import("./uws/SocketContext.zig");
+/// Bare BoringSSL `SSL_CTX`. `SSL_CTX_up_ref`/`SSL_CTX_free` is the refcount;
+/// policy (verify mode, reneg limits) is encoded on the SSL_CTX itself via
+/// `us_ssl_ctx_from_options`, so there's no wrapper struct. `?*SslCtx` is what
+/// listen/connect/adopt take.
+pub const SslCtx = bun.BoringSSL.c.SSL_CTX;
 pub const ConnectingSocket = @import("./uws/ConnectingSocket.zig").ConnectingSocket;
 pub const InternalLoopData = @import("./uws/InternalLoopData.zig").InternalLoopData;
 pub const WindowsNamedPipe = @import("./uws/WindowsNamedPipe.zig");
@@ -20,6 +31,11 @@ pub const uws_res = @import("./uws/Response.zig").uws_res;
 pub const RawWebSocket = @import("./uws/WebSocket.zig").RawWebSocket;
 pub const AnyWebSocket = @import("./uws/WebSocket.zig").AnyWebSocket;
 pub const WebSocketBehavior = @import("./uws/WebSocket.zig").WebSocketBehavior;
+/// uWS C++ `WebSocketContext<SSL,true,UserData>*`. Only ever produced by the
+/// upgrade-handler thunk and round-tripped to `uws_res_upgrade`; Zig never
+/// dereferences it. Typed as a named opaque so it can't be confused with the
+/// dozen other handles that flow through the upgrade path.
+pub const WebSocketUpgradeContext = opaque {};
 pub const AnySocket = @import("./uws/socket.zig").AnySocket;
 pub const NewSocketHandler = @import("./uws/socket.zig").NewSocketHandler;
 pub const UpgradedDuplex = @import("./uws/UpgradedDuplex.zig");
@@ -98,10 +114,11 @@ pub const create_bun_socket_error_t = enum(c_int) {
 
     pub fn toJS(this: create_bun_socket_error_t, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         return switch (this) {
-            .none => brk: {
-                bun.debugAssert(false);
-                break :brk .null;
-            },
+            // us_ssl_ctx_from_options only sets *err for the CA/cipher cases;
+            // bad cert/key/DH return NULL with .none and the detail is on the
+            // BoringSSL error queue. Surfacing it here keeps every
+            // `createSSLContext(...) orelse return err.toJS()` site correct.
+            .none => bun.BoringSSL.ERR_toJS(globalObject, bun.BoringSSL.c.ERR_get_error()),
             .load_ca_file => globalObject.ERR(.BORINGSSL, "Failed to load CA file", .{}).toJS(),
             .invalid_ca_file => globalObject.ERR(.BORINGSSL, "Invalid CA file", .{}).toJS(),
             .invalid_ca => globalObject.ERR(.BORINGSSL, "Invalid CA", .{}).toJS(),

@@ -879,6 +879,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const resp = upgrader.resp.?;
             const ctx = upgrader.upgrade_context.?;
 
+            // Keep the upgrader alive across option getters below, which run
+            // arbitrary user JS. A re-entrant server.upgrade(req) from a getter
+            // would otherwise be able to deref this context out from under us.
+            upgrader.ref();
+            defer upgrader.deref();
+
             var sec_websocket_key_str = ZigString.Empty;
 
             var sec_websocket_protocol = ZigString.Empty;
@@ -1003,6 +1009,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
+            // Option getters above may have run arbitrary JS, including a
+            // re-entrant server.upgrade(req) on this same request. If that
+            // happened the upgrade has already been consumed and the cached
+            // `resp`/`ctx` locals now point at a socket that has been turned
+            // into a WebSocket — using them again would be UB.
+            if (upgrader.isAbortedOrEnded() or upgrader.didUpgradeWebSocket()) {
+                return .false;
+            }
+
             var cookies_to_write: ?*WebCore.CookieMap = null;
             if (upgrader.cookies) |cookies| {
                 upgrader.cookies = null;
@@ -1032,7 +1047,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // See https://github.com/oven-sh/bun/issues/1339
 
             // obviously invalid pointer marks it as used
-            upgrader.upgrade_context = @as(*uws.SocketContext, @ptrFromInt(std.math.maxInt(usize)));
+            upgrader.upgrade_context = @ptrFromInt(std.math.maxInt(usize));
             const signal = upgrader.signal;
             upgrader.signal = null;
             upgrader.resp = null;
@@ -1766,7 +1781,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 .config = config.*,
                 .base_url_string_for_joining = base_url,
                 .vm = jsc.VirtualMachine.get(),
-                .allocator = Arena.getThreadLocalDefault(),
+                .allocator = bun.default_allocator,
                 .dev_server = dev_server,
             });
 
@@ -2011,7 +2026,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.pending_requests += 1;
         }
 
-        pub fn onNodeHTTPRequestWithUpgradeCtx(this: *ThisServer, req: *uws.Request, resp: *App.Response, upgrade_ctx: ?*uws.SocketContext) void {
+        pub fn onNodeHTTPRequestWithUpgradeCtx(this: *ThisServer, req: *uws.Request, resp: *App.Response, upgrade_ctx: ?*uws.WebSocketUpgradeContext) void {
             this.onPendingRequest();
             if (comptime Environment.isDebug) {
                 this.vm.eventLoop().debug.enter();
@@ -2531,7 +2546,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             };
         }
 
-        fn upgradeWebSocketUserRoute(this: *UserRoute, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.SocketContext, method: ?bun.http.Method) void {
+        fn upgradeWebSocketUserRoute(this: *UserRoute, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.WebSocketUpgradeContext, method: ?bun.http.Method) void {
             const server = this.server;
             const index = this.id;
 
@@ -2544,7 +2559,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             server.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
 
-        pub fn onWebSocketUpgrade(this: *ThisServer, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.SocketContext, id: usize) void {
+        pub fn onWebSocketUpgrade(this: *ThisServer, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.WebSocketUpgradeContext, id: usize) void {
             jsc.markBinding(@src());
             if (id == 1) {
                 // This is actually a UserRoute if id is 1 so it's safe to cast
@@ -3704,7 +3719,7 @@ extern fn NodeHTTPServer__onRequest_http(
     methodString: jsc.JSValue,
     request: *uws.Request,
     response: *uws.NewApp(false).Response,
-    upgrade_ctx: ?*uws.SocketContext,
+    upgrade_ctx: ?*uws.WebSocketUpgradeContext,
     node_response_ptr: *?*NodeHTTPResponse,
 ) jsc.JSValue;
 
@@ -3716,7 +3731,7 @@ extern fn NodeHTTPServer__onRequest_https(
     methodString: jsc.JSValue,
     request: *uws.Request,
     response: *uws.NewApp(true).Response,
-    upgrade_ctx: ?*uws.SocketContext,
+    upgrade_ctx: ?*uws.WebSocketUpgradeContext,
     node_response_ptr: *?*NodeHTTPResponse,
 ) jsc.JSValue;
 
@@ -3787,7 +3802,6 @@ const js_printer = bun.js_printer;
 const logger = bun.logger;
 const strings = bun.strings;
 const uws = bun.uws;
-const Arena = bun.allocators.MimallocArena;
 const BoringSSL = bun.BoringSSL.c;
 const SocketAddress = bun.api.socket.SocketAddress;
 

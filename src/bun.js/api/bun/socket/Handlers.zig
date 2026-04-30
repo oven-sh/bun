@@ -212,20 +212,6 @@ fn protect(this: *Handlers) void {
     this.onHandshake.protect();
 }
 
-pub fn clone(this: *const Handlers) Handlers {
-    var result: Handlers = .{
-        .vm = this.vm,
-        .globalObject = this.globalObject,
-        .binary_type = this.binary_type,
-        .mode = this.mode,
-    };
-    inline for (callback_fields) |field| {
-        @field(result, field) = @field(this, field);
-    }
-    result.protect();
-    return result;
-}
-
 /// `handlers` is always `protect`ed in this struct.
 pub const SocketConfig = struct {
     hostname_or_unix: jsc.ZigString.Slice,

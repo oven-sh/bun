@@ -274,6 +274,90 @@ devTest("deleting imported file shows error then recovers", {
     });
   },
 });
+// Regression test: DirectoryWatchStore.Dep.source_file_path borrows the key
+// string from IncrementalGraph.bundled_files. When a client-component boundary
+// is demoted (its "use client" directive is removed) the server graph calls
+// client_graph.disconnectAndDeleteFile which frees that key. Previously the
+// Dep was left pointing at freed memory, and the next directory-watch event
+// that re-resolved that Dep read it (use-after-free, caught by ASAN).
+devTest("removing 'use client' from a component with a pending resolution failure", {
+  // separateSSRGraph is required so the "use client" file is parsed with the
+  // browser target; otherwise the resolution failure is attributed to the
+  // server graph and the client-graph key is never borrowed.
+  framework: {
+    ...minimalFramework,
+    serverComponents: {
+      ...minimalFramework.serverComponents!,
+      separateSSRGraph: true,
+    },
+  },
+  files: {
+    "routes/index.ts": `
+      import * as Comp from '../components/Comp';
+      import '../components/Sibling';
+      export default function (req, meta) {
+        return new Response('page: ' + (typeof Comp.marker));
+      }
+    `,
+    "components/Comp.ts": `
+      "use client";
+      export const marker = "initial";
+    `,
+    // Sibling.ts keeps a second, stable client-graph Dep on the
+    // components/ directory watch so the watch survives after the
+    // Comp.ts-owned Dep is cleaned up.
+    "components/Sibling.ts": `
+      "use client";
+      import './sibling-missing';
+      export const sibling = 1;
+    `,
+  },
+  async test(dev) {
+    // Initial bundle: Comp.ts compiles cleanly as a client-component
+    // boundary, so the server graph records is_client_component_boundary
+    // and the client graph owns the key string for Comp.ts. Sibling.ts
+    // fails to resolve './sibling-missing' under the browser target,
+    // leaving a client-graph Dep on the components/ directory watch.
+    await dev.fetch("/");
+
+    // Re-bundle Comp.ts with a failing import while it is still a CCB.
+    // With separateSSRGraph the re-parse runs under the browser target,
+    // so trackResolutionFailure inserts a second Dep whose
+    // source_file_path is the client graph's key for Comp.ts.
+    await dev.write(
+      "components/Comp.ts",
+      `
+        "use client";
+        import { value } from './missing';
+        export const marker = value;
+      `,
+      { errors: null },
+    );
+
+    // Drop the directive and the failing import so the server parse
+    // succeeds. server_graph.receiveChunk now sees scb=false with
+    // was_ccb=true and calls client_graph.disconnectAndDeleteFile, which
+    // frees the key string that the Comp.ts Dep still references.
+    await dev.write(
+      "components/Comp.ts",
+      `
+        export const marker = "no-client";
+      `,
+      { errors: null },
+    );
+
+    // Create the previously-missing file. The components/ directory watch
+    // is still alive (Sibling's Dep), so HotReloadEvent.processFileList
+    // walks every Dep for components/ and dereferences each
+    // source_file_path. Under ASAN the stale Comp.ts client-graph Dep is
+    // a heap-use-after-free here and the dev server aborts.
+    await dev.write("components/missing.ts", `export const value = "ok";`, { errors: null });
+
+    // The server must still be alive and responding.
+    const res = await dev.fetch("/");
+    expect(res).toBeInstanceOf(Response);
+  },
+});
 devTest("importing html file", {
   files: {
     "index.html": emptyHtmlFile({

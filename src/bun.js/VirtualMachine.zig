@@ -838,6 +838,15 @@ pub inline fn rareData(this: *VirtualMachine) *jsc.RareData {
     return this.rare_data orelse brk: {
         this.rare_data = this.allocator.create(jsc.RareData) catch unreachable;
         this.rare_data.?.* = .{};
+        // RareData embeds the per-VM `us_socket_group_t` heads as value fields.
+        // `this.allocator` is mimalloc, whose pages LSAN does not scan, so a
+        // socket still open at exit and reachable only via e.g.
+        // `rare_data.bun_connect_group_tls.head_sockets` would otherwise be
+        // reported as leaked from `us_create_poll`. Registering the allocation
+        // as a root region lets LSAN trace `RareData → group.head_sockets →
+        // us_socket_t` the same way it traced the old malloc-backed
+        // `us_socket_context_t` chain.
+        bun.asan.registerRootRegion(this.rare_data.?, @sizeOf(jsc.RareData));
         break :brk this.rare_data.?;
     };
 }
@@ -956,7 +965,22 @@ pub fn globalExit(this: *VirtualMachine) noreturn {
 
     if (this.shouldDestructMainThreadOnExit()) {
         if (this.eventLoop().forever_timer) |t| t.deinit(true);
+        // Embedded per-VM socket groups must drain while JSC is still alive
+        // (closeAll() fires on_close → JS). After JSC teardown,
+        // RareData.deinit() only deinit()s the groups (asserts empty).
+        // Mirrors web_worker.zig — without this, every still-open Bun.connect
+        // / postgres / etc. socket is an LSAN leak under
+        // BUN_DESTRUCT_VM_ON_EXIT.
+        if (this.rare_data) |rare| rare.closeAllSocketGroups(this);
         Zig__GlobalObject__destructOnExit(this.global);
+        // lastChanceToFinalize() above runs Listener/Server finalize → their
+        // own embedded group.closeAll() → sockets land in loop.closed_head.
+        // The pre-JSC drain in closeAllSocketGroups() can't see those (the
+        // groups aren't on RareData), so drain again now or LSAN reports
+        // every accepted socket that was still open at process.exit().
+        // uws.Loop is the usockets loop on every platform; event_loop_handle
+        // on Windows is the libuv loop, which has no closed_head.
+        uws.Loop.get().drainClosedSockets();
         this.transpiler.deinit();
         this.gc_controller.deinit();
         this.deinit();
@@ -1157,6 +1181,7 @@ pub fn initWithModuleGraph(
     vm.regular_event_loop.global = vm.global;
     vm.jsc_vm = vm.global.vm();
     uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc_vm;
+    bun.ParentDeathWatchdog.installOnEventLoop(jsc.EventLoopHandle.init(vm));
 
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
@@ -1281,6 +1306,7 @@ pub fn init(opts: Options) !*VirtualMachine {
     uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc_vm;
     vm.smol = opts.smol;
     vm.dns_result_order = opts.dns_result_order;
+    if (opts.is_main_thread) bun.ParentDeathWatchdog.installOnEventLoop(jsc.EventLoopHandle.init(vm));
 
     if (opts.smol)
         is_smol_mode = opts.smol;
@@ -2073,6 +2099,11 @@ pub fn deinit(this: *VirtualMachine) void {
     this.source_mappings.deinit();
     if (this.rare_data) |rare_data| {
         jsc.API.cron.CronJob.clearAllForVM(this, .teardown);
+        // Paired with rareData()'s registerRootRegion. Without this, every
+        // terminated Worker leaves a stale LSAN root entry pointing into a
+        // freed arena (harmless to the final leak verdict but accumulates one
+        // dead range per Worker for LSAN to scan).
+        bun.asan.unregisterRootRegion(rare_data, @sizeOf(jsc.RareData));
         rare_data.deinit();
     }
     this.proxy_env_storage.deinit();
@@ -2464,29 +2495,31 @@ pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
     }
 
     {
-        const skip_spawn_ipc = if (this.rare_data) |rare| rare.spawn_ipc_usockets_context else null;
-        const skip_test_parallel_ipc = if (this.rare_data) |rare| rare.test_parallel_ipc_context else null;
-        // When this process is itself a forked child (NODE_CHANNEL_FD set),
-        // its inbound process.send/on('message') channel lives on a separate
-        // uws context that must survive the swap.
-        const skip_process_ipc: ?*uws.SocketContext = if (Environment.isPosix)
+        // Groups that must survive the per-file isolation swap: this process's
+        // own inbound IPC, the spawn-IPC pool, and the test-parallel channel.
+        const skip_spawn_ipc: ?*uws.SocketGroup = if (this.rare_data) |rare| &rare.spawn_ipc_group else null;
+        const skip_test_parallel_ipc: ?*uws.SocketGroup = if (this.rare_data) |rare| &rare.test_parallel_ipc_group else null;
+        const skip_process_ipc: ?*uws.SocketGroup = if (Environment.isPosix)
             if (this.ipc) |ipc| switch (ipc) {
-                .initialized => |inst| inst.context,
+                .initialized => |inst| inst.group,
                 .waiting => null,
             } else null
         else
             null;
-        var maybe_ctx = bun.uws.Loop.get().internal_loop_data.head;
-        while (maybe_ctx) |ctx| {
-            const next_ctx = ctx.next();
-            if (ctx != skip_spawn_ipc and ctx != skip_process_ipc and ctx != skip_test_parallel_ipc) {
-                // ssl=false routes through the base on_close which, for SSL
-                // contexts, is ssl_on_close (SSL_free + user callback). Letting
-                // the real callbacks run lets wrappers drop Strong<> refs so
-                // the old global can be collected.
-                ctx.close(false);
+        const loop = bun.uws.Loop.get();
+        var maybe_group = loop.internal_loop_data.head;
+        while (maybe_group) |group| {
+            const next = group.next;
+            if (group != skip_spawn_ipc and group != skip_process_ipc and group != skip_test_parallel_ipc) {
+                group.closeAll();
             }
-            maybe_ctx = next_ctx;
+            // closeAll → on_close JS may close another group's last socket and
+            // unlink our cached `next` from the loop list. Same guard as
+            // us_loop_close_all_groups (loop.c) — restart from the head if so.
+            maybe_group = if (next != null and next.?.linked == 0)
+                loop.internal_loop_data.head
+            else
+                next;
         }
     }
     if (this.rare_data) |rare| {
@@ -3845,7 +3878,9 @@ pub const IPCInstance = struct {
     pub const deinit = bun.TrivialDeinit(@This());
 
     globalThis: *JSGlobalObject,
-    context: if (Environment.isPosix) *uws.SocketContext else void,
+    /// Embedded per-VM group on `RareData.spawn_ipc_group`; this is just a
+    /// borrowed handle so the isolation swap can skip it.
+    group: if (Environment.isPosix) *uws.SocketGroup else void,
     data: IPC.SendQueue,
     has_disconnect_called: bool = false,
 
@@ -3885,6 +3920,7 @@ pub const IPCInstance = struct {
     }
 
     pub fn handleIPCClose(this: *IPCInstance) void {
+        _ = this;
         IPC.log("IPCInstance#handleIPCClose", .{});
         var vm = VirtualMachine.get();
         const event_loop = vm.eventLoop();
@@ -3892,9 +3928,8 @@ pub const IPCInstance = struct {
         event_loop.enter();
         Process__emitDisconnectEvent(vm.global);
         event_loop.exit();
-        if (Environment.isPosix) {
-            this.context.deinit(false);
-        }
+        // Group is embedded in RareData and shared with subprocess IPC; nothing
+        // to free here.
         vm.channel_ref.disable();
     }
 
@@ -3923,12 +3958,11 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
 
     const instance = switch (Environment.os) {
         else => instance: {
-            const context = uws.SocketContext.createNoSSLContext(this.event_loop_handle.?, @sizeOf(usize)).?;
-            IPC.Socket.configure(context, true, *IPC.SendQueue, IPC.IPCHandlers.PosixSocket);
+            const group = this.rareData().spawnIPCGroup(this);
 
             var instance = IPCInstance.new(.{
                 .globalThis = this.global,
-                .context = context,
+                .group = group,
                 .data = undefined,
             });
 
@@ -3936,7 +3970,7 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
 
             instance.data = .init(opts.mode, .{ .virtual_machine = instance }, .uninitialized);
 
-            const socket = IPC.Socket.fromFd(context, opts.fd, IPC.SendQueue, &instance.data, null, true) orelse {
+            const socket = IPC.Socket.fromFd(group, .spawn_ipc, opts.fd, IPC.SendQueue, &instance.data, null, true) orelse {
                 instance.deinit();
                 this.ipc = null;
                 Output.warn("Unable to start IPC socket", .{});
@@ -3951,7 +3985,7 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
         .windows => instance: {
             var instance = IPCInstance.new(.{
                 .globalThis = this.global,
-                .context = {},
+                .group = {},
                 .data = undefined,
             });
             instance.data = .init(opts.mode, .{ .virtual_machine = instance }, .uninitialized);

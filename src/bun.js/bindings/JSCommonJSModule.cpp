@@ -267,6 +267,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
             // referrer.children.indexOf(moduleObject) === -1 && referrer.children.push(moduleObject)
             returnValue = referrer->m_childrenValue.get();
         } else {
+            WTF::Locker locker { referrer->cellLock() };
             referrer->m_children.append(WriteBarrier<Unknown>());
             referrer->m_children.last().set(vm, referrer, moduleObject);
         }
@@ -532,7 +533,10 @@ JSC_DEFINE_CUSTOM_SETTER(setterChildren,
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
         return false;
-    thisObject->m_children.clear();
+    {
+        WTF::Locker locker { thisObject->cellLock() };
+        thisObject->m_children.clear();
+    }
     thisObject->m_childrenValue.set(globalObject->vm(), thisObject, JSValue::decode(value));
     return true;
 }
@@ -576,7 +580,10 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
         RETURN_IF_EXCEPTION(throwScope, {});
         mod->m_childrenValue.set(globalObject->vm(), mod, array);
 
-        mod->m_children.clear();
+        {
+            WTF::Locker locker { mod->cellLock() };
+            mod->m_children.clear();
+        }
 
         return JSValue::encode(array);
     }
@@ -1168,7 +1175,10 @@ void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendHidden(thisObject->m_overriddenParent);
     visitor.appendHidden(thisObject->m_overriddenCompile);
     visitor.appendHidden(thisObject->m_childrenValue);
-    visitor.appendValues(thisObject->m_children.begin(), thisObject->m_children.size());
+    {
+        WTF::Locker locker { thisObject->cellLock() };
+        visitor.appendValues(thisObject->m_children.begin(), thisObject->m_children.size());
+    }
 }
 
 DEFINE_VISIT_CHILDREN(JSCommonJSModule);

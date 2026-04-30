@@ -641,6 +641,11 @@ allow_retry: bool = false,
 h2_retries: u8 = 0,
 redirect_type: FetchRedirect = FetchRedirect.follow,
 redirect: []u8 = &.{},
+/// The previous hop's `redirect` buffer, parked by `handleResponseMetadata`
+/// when it overwrites `redirect`. `connected_url` may still borrow from it
+/// until `doRedirect` has released the socket, so it is freed there rather
+/// than at the assignment site. Also freed in `deinit` for error paths.
+prev_redirect: []u8 = &.{},
 progress_node: ?*Progress.Node = null,
 
 flags: Flags = Flags{},
@@ -680,6 +685,10 @@ pub fn deinit(this: *HTTPClient) void {
     if (this.redirect.len > 0) {
         bun.default_allocator.free(this.redirect);
         this.redirect = &.{};
+    }
+    if (this.prev_redirect.len > 0) {
+        bun.default_allocator.free(this.prev_redirect);
+        this.prev_redirect = &.{};
     }
     if (this.proxy_authorization) |auth| {
         this.allocator.free(auth);
@@ -1126,6 +1135,12 @@ pub fn doRedirect(
         NewHTTPContext(is_ssl).closeSocket(socket);
     }
     this.connected_url = URL{};
+    // connected_url was the last borrower of the previous hop's URL buffer
+    // (handleResponseMetadata already repointed this.url at the new one).
+    if (this.prev_redirect.len > 0) {
+        bun.default_allocator.free(this.prev_redirect);
+        this.prev_redirect = &.{};
+    }
 
     // TODO: should this check be before decrementing the redirect count?
     // the current logic will allow one less redirect than requested
@@ -2348,6 +2363,10 @@ fn doRedirectMultiplexed(this: *HTTPClient) void {
     assert(this.redirect_type == FetchRedirect.follow);
     this.unregisterAbortTracker();
     this.connected_url = URL{};
+    if (this.prev_redirect.len > 0) {
+        bun.default_allocator.free(this.prev_redirect);
+        this.prev_redirect = &.{};
+    }
     if (this.remaining_redirect_count == 0) {
         this.fail(error.TooManyRedirects);
         return;
@@ -2989,6 +3008,11 @@ pub fn handleResponseMetadata(
                             const new_url = URL.parse(normalized_url_str);
                             is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin), true);
                             this.url = new_url;
+                            // connected_url still borrows from the previous hop's buffer
+                            // until doRedirect releases the socket, so park it in
+                            // prev_redirect for doRedirect to free instead of leaking it.
+                            bun.debugAssert(this.prev_redirect.len == 0);
+                            this.prev_redirect = this.redirect;
                             this.redirect = normalized_url_str;
                         } else if (strings.hasPrefixComptime(location, "//")) {
                             var string_builder = bun.StringBuilder{};
@@ -3029,6 +3053,8 @@ pub fn handleResponseMetadata(
                             const new_url = URL.parse(normalized_url_str);
                             is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin), true);
                             this.url = new_url;
+                            bun.debugAssert(this.prev_redirect.len == 0);
+                            this.prev_redirect = this.redirect;
                             this.redirect = normalized_url_str;
                         } else {
                             const original_url = this.url;
@@ -3048,6 +3074,8 @@ pub fn handleResponseMetadata(
                             };
                             this.url = URL.parse(new_url);
                             is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(this.url.origin), strings.withoutTrailingSlash(original_url.origin), true);
+                            bun.debugAssert(this.prev_redirect.len == 0);
+                            this.prev_redirect = this.redirect;
                             this.redirect = new_url;
                         }
                     }

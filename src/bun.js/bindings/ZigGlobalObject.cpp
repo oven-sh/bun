@@ -66,6 +66,7 @@
 #include "GeneratedBunObject.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"
+#include "ProcessIdentifier.h"
 #include "BunWorkerGlobalScope.h"
 #include "CallSite.h"
 #include "CallSitePrototype.h"
@@ -1011,6 +1012,18 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
 
 GlobalObject::~GlobalObject()
 {
+    // Break the Performance <-> PerformanceObserver reference cycle before the
+    // ScriptExecutionContext is torn down. Performance holds RefPtr<PerformanceObserver>
+    // in its registered-observer list and each PerformanceObserver holds RefPtr<Performance>,
+    // so neither is released unless the cycle is explicitly broken. WebKit does this from
+    // WorkerGlobalScope / LocalDOMWindow on removeAllEventListeners(); Bun has no equivalent
+    // hook, so this is the last point where the context is still fully alive. Doing it in
+    // Performance::contextDestroyed() instead is too late: dropping the last observer ref
+    // there cascades into ~ContextDestructionObserver() unregistering from the context while
+    // the context is already iterating observers in its own destructor.
+    if (m_performance)
+        m_performance->removeAllObservers();
+
     if (auto* ctx = scriptExecutionContext()) {
         ctx->removeFromContextsMap();
         ctx->deref();

@@ -108,6 +108,10 @@ describe("createHash", () => {
       "value": "7706af019148849e516f95ba630307a2018bb7bf03803eca5ed7ed2c3c013513",
       "input": "Hello World",
     },
+    "blake3-256": {
+      "value": "41f8394111eb713a22165c46c90ab8f0fd9399c92028fd6d288944b23ff5bf76",
+      "input": "Hello World",
+    },
     "id-rsassa-pkcs1-v1_5-with-sha3-224": {
       "value": "8e800079a0b311788bf29353f400eff969b650a3597c91efd9aa5b38",
       "input": "Hello World",

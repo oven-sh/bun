@@ -85,4 +85,7 @@ test.skipIf(!isPosix)(
     expect(stderrBuf).toContain("opened writer fd=");
     expect({ stdout: stdout.trim(), exited }).toEqual({ stdout: "OK", exited: 0 });
   },
+  // Debug-bun child startup + the 3s hang-detection race above can approach
+  // the default 5s test timeout on slow CI; give explicit headroom.
+  15000,
 );

@@ -6,8 +6,7 @@ import { bunEnv, bunExe, isWindows } from "harness";
 // path that released it was an explicit .close()/.unref() from JS. When a
 // Worker (or any owning context) is torn down without that, contextDestroyed()
 // → close() ran but never dropped the self-ref, so every such MessagePort
-// leaked for the lifetime of the process — along with its entries in the
-// global allMessagePorts()/portToContextIdentifier() maps.
+// leaked for the lifetime of the process.
 //
 // Skipped on Windows: RSS there does not drop after worker threads exit (the
 // per-thread mimalloc arenas stay committed), so the allocator residue from
@@ -56,7 +55,7 @@ test.skipIf(isWindows)(
 
         const deltaMB = (rssAfter - rssBefore) / 1024 / 1024;
         // 8 workers × 8000 ports: when leaking, each MessagePort plus its
-        // global-map bookkeeping is ~1 KB, so growth is ~60 MB. When fixed,
+        // pipe bookkeeping is ~1 KB, so growth is ~50 MB. When fixed,
         // growth is allocator noise (typically under 15 MB).
         if (deltaMB > 30) {
           console.error("LEAK: RSS grew " + deltaMB.toFixed(2) + " MB across 8 worker cycles");

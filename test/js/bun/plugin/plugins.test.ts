@@ -227,17 +227,20 @@ describe("require", () => {
 });
 
 describe("module", () => {
-  it("async module works with require() by pumping the event loop", () => {
-    // @ts-expect-error
-    const { hello } = require("my-virtual-module-async");
-    expect(hello).toBe("world");
-    delete require.cache["my-virtual-module-async"];
-  });
-
+  // Keep the `await import()` case first so it runs against a fresh registry —
+  // a regression in the import path shouldn't be masked by the registry entry
+  // the require() test below leaves behind.
   it("async module works with async import", async () => {
     // @ts-expect-error
     const { hello } = await import("my-virtual-module-async");
 
+    expect(hello).toBe("world");
+    delete require.cache["my-virtual-module-async"];
+  });
+
+  it("async module works with require() by pumping the event loop", () => {
+    // @ts-expect-error
+    const { hello } = require("my-virtual-module-async");
     expect(hello).toBe("world");
     delete require.cache["my-virtual-module-async"];
   });

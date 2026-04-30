@@ -67,6 +67,21 @@ pub fn SSLWrapper(comptime T: type) type {
                 // BoringSSL: Renegotiation is only supported as a client in TLS and the HelloRequest must be received at a quiet point in the application protocol. This is sufficient to support the common use of requesting a new client certificate between an HTTP request and response in (unpipelined) HTTP/1.1.
                 BoringSSL.SSL_set_renegotiate_mode(ssl, BoringSSL.ssl_renegotiate_explicit);
                 BoringSSL.SSL_set_connect_state(ssl);
+                // Mirror `us_internal_ssl_attach`: a SecureContext is mode-
+                // neutral, so a `tls.connect()` without `ca`/`requestCert`
+                // hands us a CTX with VERIFY_NONE and no trust store. Clients
+                // must always run verification so `verify_error` is real for
+                // the JS-side `rejectUnauthorized` decision; load the shared
+                // system roots per-SSL so a server using the same CTX never
+                // sees CertificateRequest. (Pre-redesign this happened by
+                // accident: net.ts forced `requestCert: true` after `[buntls]`
+                // and `SSLConfig.fromJS` rebuilt the CTX with roots from that.)
+                if (BoringSSL.SSL_CTX_get_verify_mode(ctx) == BoringSSL.SSL_VERIFY_NONE) {
+                    BoringSSL.SSL_set_verify(ssl, BoringSSL.SSL_VERIFY_PEER, alwaysContinueVerify);
+                    if (us_get_shared_default_ca_store()) |roots| {
+                        _ = BoringSSL.SSL_set0_verify_cert_store(ssl, roots);
+                    }
+                }
             } else {
                 // Set the renegotiation mode to never so that we can't renegotiate on the server side (security reasons)
                 // BoringSSL: There is no support for renegotiation as a server. (Attempts by clients will result in a fatal alert so that ClientHello messages cannot be used to flood a server and escape higher-level limits.)
@@ -95,10 +110,12 @@ pub fn SSLWrapper(comptime T: type) type {
 
             const ctx_opts: uws.SocketContext.BunSocketContextOptions = ssl_options.asUSockets();
             var err: uws.create_bun_socket_error_t = .none;
-            // Create SSL context using uSockets to match behavior of node.js
-            const ctx = ctx_opts.createSSLContext(&err) orelse return error.InvalidOptions; // invalid options
-            errdefer BoringSSL.SSL_CTX_free(ctx);
-            return try This.initWithCTX(ctx, is_client, handlers);
+            const ssl_ctx = ctx_opts.createSSLContext(&err) orelse return error.InvalidOptions;
+            // initWithCTX adopts the SSL_CTX* (one ref). The passphrase was
+            // already freed inside createSSLContext, so SSL_CTX_free is
+            // sufficient on the error path.
+            errdefer BoringSSL.SSL_CTX_free(ssl_ctx);
+            return try This.initWithCTX(ssl_ctx, is_client, handlers);
         }
 
         pub fn start(this: *This) void {
@@ -506,6 +523,18 @@ pub fn SSLWrapper(comptime T: type) type {
         }
     };
 }
+
+/// `us_verify_callback` equivalent — let the handshake complete regardless of
+/// verify result so JS reads `authorizationError` and `rejectUnauthorized`
+/// decides, instead of BoringSSL aborting mid-flight.
+fn alwaysContinueVerify(_: c_int, _: ?*BoringSSL.X509_STORE_CTX) callconv(.c) c_int {
+    return 1;
+}
+
+/// Process-wide bundled root store from `root_certs.cpp` — built once and
+/// up_ref'd per consumer so the ~150-cert load happens once total, not per
+/// CTX. Returns null if root loading fails (treated as "no roots").
+extern fn us_get_shared_default_ca_store() ?*BoringSSL.X509_STORE;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

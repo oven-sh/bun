@@ -66,6 +66,7 @@
 #include "GeneratedBunObject.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"
+#include "ProcessIdentifier.h"
 #include "BunWorkerGlobalScope.h"
 #include "CallSite.h"
 #include "CallSitePrototype.h"

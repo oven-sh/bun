@@ -33,7 +33,9 @@ options_buf: []const u8 = "",
 
 authentication_state: AuthenticationState = .{ .pending = {} },
 
-tls_ctx: ?*uws.SocketContext = null,
+/// `us_ssl_ctx_t` built from `tls_config` at construct time. Applied via
+/// `us_socket_adopt_tls` when the server replies `S` to the SSLRequest.
+secure: ?*uws.SslCtx = null,
 tls_config: jsc.API.ServerConfig.SSLConfig = .{},
 tls_status: TLSStatus = .none,
 ssl_mode: SSLMode = .disable,
@@ -170,18 +172,22 @@ pub fn setOnClose(_: *PostgresSQLConnection, thisValue: jsc.JSValue, globalObjec
 
 pub fn setupTLS(this: *PostgresSQLConnection) void {
     debug("setupTLS", .{});
-    const new_socket = this.socket.SocketTCP.socket.connected.upgrade(this.tls_ctx.?, this.tls_config.server_name) orelse {
+    const tls_group = this.vm.rareData().postgresGroup(this.vm, true);
+    const new_socket = this.socket.SocketTCP.socket.connected.adoptTLS(
+        tls_group,
+        .postgres_tls,
+        this.secure.?,
+        this.tls_config.server_name,
+        @sizeOf(?*PostgresSQLConnection),
+        @sizeOf(?*PostgresSQLConnection),
+    ) orelse {
         this.fail("Failed to upgrade to TLS", error.TLSUpgradeFailed);
         return;
     };
-    this.socket = .{
-        .SocketTLS = .{
-            .socket = .{
-                .connected = new_socket,
-            },
-        },
-    };
-
+    new_socket.ext(?*PostgresSQLConnection).* = this;
+    this.socket = .{ .SocketTLS = .{ .socket = .{ .connected = new_socket } } };
+    // ext is now repointed; safe to kick the handshake (any dispatch lands here).
+    new_socket.startTLSHandshake();
     this.start();
 }
 fn setupMaxLifetimeTimerIfNecessary(this: *PostgresSQLConnection) void {
@@ -603,7 +609,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     const tls_object = arguments[6];
 
     var tls_config: jsc.API.ServerConfig.SSLConfig = .{};
-    var tls_ctx: ?*uws.SocketContext = null;
+    var secure: ?*uws.SslCtx = null;
     if (ssl_mode != .disable) {
         tls_config = if (tls_object.isBoolean() and tls_object.toBoolean())
             .{}
@@ -618,26 +624,14 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             return .zero;
         }
 
-        // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match.
-        // We create it right here so we can throw errors early.
-        const context_options = tls_config.asUSocketsForClientVerification();
+        // We always request the cert so we can verify it and also we manually
+        // abort the connection if the hostname doesn't match. Built here (not
+        // at STARTTLS time) so cert/CA errors throw synchronously.
         var err: uws.create_bun_socket_error_t = .none;
-        tls_ctx = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*PostgresSQLConnection), context_options, &err) orelse {
-            if (err != .none) {
-                return globalObject.throw("failed to create TLS context", .{});
-            } else {
-                return globalObject.throwValue(err.toJS(globalObject));
-            }
-        };
-        if (err != .none) {
+        secure = tls_config.asUSocketsForClientVerification().createSSLContext(&err) orelse {
             tls_config.deinit();
-            if (tls_ctx) |ctx| {
-                ctx.deinit(true);
-            }
             return globalObject.throwValue(err.toJS(globalObject));
-        }
-
-        uws.NewSocketHandler(true).configure(tls_ctx.?, true, *PostgresSQLConnection, SocketHandler(true));
+        };
     }
 
     var username: []const u8 = "";
@@ -687,9 +681,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         if (entry[0].len > 0 and std.mem.indexOfScalar(u8, entry[0], 0) != null) {
             bun.default_allocator.free(options_buf);
             tls_config.deinit();
-            if (tls_ctx) |tls| {
-                tls.deinit(true);
-            }
+            if (secure) |s| bun.BoringSSL.c.SSL_CTX_free(s);
             return globalObject.throwInvalidArguments(entry[1] ++ " must not contain null bytes", .{});
         }
     }
@@ -716,7 +708,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         .requests = PostgresRequest.Queue.init(bun.default_allocator),
         .statements = PreparedStatementsMap{},
         .tls_config = tls_config,
-        .tls_ctx = tls_ctx,
+        .secure = secure,
         .ssl_mode = ssl_mode,
         .tls_status = if (ssl_mode != .disable) .pending else .none,
         .idle_timeout_interval_ms = @intCast(idle_timeout),
@@ -731,36 +723,19 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         const hostname = hostname_str.toUTF8(bun.default_allocator);
         defer hostname.deinit();
 
-        const ctx = vm.rareData().postgresql_context.tcp orelse brk: {
-            const ctx_ = uws.SocketContext.createNoSSLContext(vm.uwsLoop(), @sizeOf(*PostgresSQLConnection)).?;
-            uws.NewSocketHandler(false).configure(ctx_, true, *PostgresSQLConnection, SocketHandler(false));
-            vm.rareData().postgresql_context.tcp = ctx_;
-            break :brk ctx_;
-        };
+        // Postgres always opens plain TCP first (SSLRequest happens in-band),
+        // so even `ssl_mode != .disable` lands in the TCP group; `setupTLS()`
+        // adopts into `postgres_tls_group` after the server's `S`.
+        const group = vm.rareData().postgresGroup(vm, false);
+        const result = if (path.len > 0)
+            uws.SocketTCP.connectUnixGroup(group, .postgres, null, path, ptr, false)
+        else
+            uws.SocketTCP.connectGroup(group, .postgres, null, hostname.slice(), port, ptr, false);
 
-        if (path.len > 0) {
-            ptr.socket = .{
-                .SocketTCP = uws.SocketTCP.connectUnixAnon(path, ctx, ptr, false) catch |err| {
-                    tls_config.deinit();
-                    if (tls_ctx) |tls| {
-                        tls.deinit(true);
-                    }
-                    ptr.deinit();
-                    return globalObject.throwError(err, "failed to connect to postgresql");
-                },
-            };
-        } else {
-            ptr.socket = .{
-                .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
-                    tls_config.deinit();
-                    if (tls_ctx) |tls| {
-                        tls.deinit(true);
-                    }
-                    ptr.deinit();
-                    return globalObject.throwError(err, "failed to connect to postgresql");
-                },
-            };
-        }
+        ptr.socket = .{ .SocketTCP = result catch |err| {
+            ptr.deinit();
+            return globalObject.throwError(err, "failed to connect to postgresql");
+        } };
     }
 
     // only call toJS if connectUnixAnon does not fail immediately
@@ -776,7 +751,9 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     return js_value;
 }
 
-fn SocketHandler(comptime ssl: bool) type {
+/// Referenced by `dispatch.zig` (kind = `.postgres[_tls]`). Now the only
+/// caller — `configure()` is gone.
+pub fn SocketHandler(comptime ssl: bool) type {
     return struct {
         const SocketType = uws.NewSocketHandler(ssl);
         fn _socket(s: SocketType) Socket {
@@ -911,6 +888,7 @@ pub fn deinit(this: *@This()) void {
     bun.freeSensitive(bun.default_allocator, this.options_buf);
 
     this.tls_config.deinit();
+    if (this.secure) |s| bun.BoringSSL.c.SSL_CTX_free(s);
     bun.default_allocator.destroy(this);
 }
 

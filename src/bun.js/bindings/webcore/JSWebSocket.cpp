@@ -213,7 +213,9 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
 
     Vector<String> protocols;
     int rejectUnauthorized = -1;
-    void* sslConfig = nullptr; // SSLConfig pointer from Zig
+    // Zig heap SSLConfig. RAII — freed on any early return, moved into
+    // WebSocket::create() on success.
+    WebSocketSSLConfigPtr sslConfig;
     auto headersInit = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>();
     // Default true — matches Bun's existing behavior of always offering permessage-deflate.
     // ws.WebSocket passes `perMessageDeflate: false` to opt out.
@@ -266,7 +268,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
             }
 
             // Parse full TLS options using Zig's SSLConfig.fromJS
-            sslConfig = Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(tlsOptionsValue));
+            sslConfig = WebSocketSSLConfigPtr { Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(tlsOptionsValue)) };
             RETURN_IF_EXCEPTION(throwScope, {});
         }
 
@@ -325,8 +327,8 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
     }
 
     auto object = (rejectUnauthorized == -1)
-        ? WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), WTF::move(proxyUrl), WTF::move(proxyHeadersInit), sslConfig, offerPerMessageDeflate)
-        : WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), rejectUnauthorized ? true : false, WTF::move(proxyUrl), WTF::move(proxyHeadersInit), sslConfig, offerPerMessageDeflate);
+        ? WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), WTF::move(proxyUrl), WTF::move(proxyHeadersInit), WTF::move(sslConfig), offerPerMessageDeflate)
+        : WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), rejectUnauthorized ? true : false, WTF::move(proxyUrl), WTF::move(proxyHeadersInit), WTF::move(sslConfig), offerPerMessageDeflate);
 
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});

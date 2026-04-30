@@ -1,6 +1,6 @@
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 const impls = [
@@ -331,11 +331,10 @@ describe.skipIf(isWindows).each(["cp", "cpSync"] as const)(
   "fs.%s recursive returns ENAMETOOLONG instead of overflowing path buffer",
   which => {
     test(which, async () => {
-      const base = tmpdirSync();
+      using dir = tempDir("cp-enametoolong", { s: {}, d: {} });
+      const base = String(dir);
       const src = join(base, "s");
       const dst = join(base, "d");
-      fs.mkdirSync(src);
-      fs.mkdirSync(dst);
 
       // Build a directory tree whose full path exceeds MAX_PATH_BYTES by creating each
       // level with a short relative path from a shell; the kernel never sees the whole

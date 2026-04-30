@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 function sseServer(handler: (controller: ReadableStreamDirectController, req: Request) => void | Promise<void>) {
   return Bun.serve({

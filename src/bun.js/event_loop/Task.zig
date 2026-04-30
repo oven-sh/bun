@@ -563,9 +563,10 @@ const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.process.Waite
 
 const log = bun.Output.scoped(.Task, .hidden);
 
+const EventSource = @import("../webcore/EventSource.zig");
+
 const Fetch = @import("../webcore/fetch.zig");
 const FetchTasklet = Fetch.FetchTasklet;
-const EventSource = @import("../webcore/EventSource.zig");
 
 const JSCScheduler = @import("./JSCScheduler.zig");
 const JSCDeferredWorkTask = JSCScheduler.JSCDeferredWorkTask;

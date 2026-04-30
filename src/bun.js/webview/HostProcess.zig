@@ -61,7 +61,7 @@ pub fn onProcessExit(this: *HostProcess, _: *bun.spawn.Process, status: bun.spaw
     instance = null;
 }
 
-fn spawn(vm: *jsc.VirtualMachine, stdoutInherit: bool, stderrInherit: bool) !bun.FileDescriptor {
+fn spawn(vm: *jsc.VirtualMachine, stdoutInherit: bool, stderrInherit: bool) !bun.FD {
     if (comptime !bun.Environment.isMac) return error.Unsupported;
 
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);

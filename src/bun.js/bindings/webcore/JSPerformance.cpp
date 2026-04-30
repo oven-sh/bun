@@ -258,7 +258,7 @@ JSPerformance::JSPerformance(Structure* structure, JSDOMGlobalObject& globalObje
 
 size_t JSPerformance::estimatedSize(JSCell* cell, VM& vm)
 {
-    JSPerformance* thisObject = jsCast<JSPerformance*>(cell);
+    JSPerformance* thisObject = uncheckedDowncast<JSPerformance>(cell);
     return Base::estimatedSize(cell, vm) + thisObject->wrapped().memoryCost();
 }
 
@@ -303,14 +303,14 @@ JSObject* JSPerformance::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSPerformance::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSPerformanceDOMConstructor, DOMConstructorID::Performance>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSPerformanceDOMConstructor, DOMConstructorID::Performance>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsPerformanceConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSPerformancePrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSPerformancePrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSPerformance::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -533,7 +533,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_markBody(JSC::J
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto markOptions = convert<IDLDictionary<PerformanceMarkOptions>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<PerformanceMark>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.mark(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTF::move(markName), WTF::move(markOptions)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<PerformanceMark>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.mark(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(markName), WTF::move(markOptions)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_mark, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -577,7 +577,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_measureBody(JSC
     EnsureStillAliveScope argument2 = callFrame->argument(2);
     auto endMark = argument2.value().isUndefined() ? String() : convert<IDLDOMString>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<PerformanceMeasure>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.measure(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTF::move(measureName), WTF::move(startOrMeasureOptions), WTF::move(endMark)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<PerformanceMeasure>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.measure(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(measureName), WTF::move(startOrMeasureOptions), WTF::move(endMark)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_measure, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -615,7 +615,7 @@ JSC::GCClient::IsoSubspace* JSPerformance::subspaceForImpl(JSC::VM& vm)
 
 void JSPerformance::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSPerformance*>(cell);
+    auto* thisObject = uncheckedDowncast<JSPerformance>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -624,7 +624,7 @@ void JSPerformance::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 
 bool JSPerformanceOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
-    auto* jsPerformance = jsCast<JSPerformance*>(handle.slot()->asCell());
+    auto* jsPerformance = uncheckedDowncast<JSPerformance>(handle.slot()->asCell());
     ScriptExecutionContext* owner = WTF::getPtr(jsPerformance->wrapped().scriptExecutionContext());
     if (!owner)
         return false;
@@ -682,7 +682,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 Performance* JSPerformance::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSPerformance*>(value))
+    if (auto* wrapper = dynamicDowncast<JSPerformance>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

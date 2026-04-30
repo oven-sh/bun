@@ -216,6 +216,9 @@ pub const FSWatcher = struct {
 
         pub fn appendAbort(this: *FSWatchTaskWindows) void {
             const ctx = this.ctx;
+            // Balance the `ctx.unrefTask()` at the end of `run()` (matches
+            // `onPathUpdateWindows` and the posix `enqueue()` path).
+            if (!ctx.refTask()) return;
             const task = bun.new(FSWatchTaskWindows, .{
                 .ctx = ctx,
                 .event = .abort,
@@ -420,7 +423,6 @@ pub const FSWatcher = struct {
     pub fn initJS(this: *FSWatcher, listener: jsc.JSValue) void {
         if (this.persistent) {
             this.poll_ref.ref(this.ctx);
-            _ = this.pending_activity_count.fetchAdd(1, .monotonic);
         }
 
         const js_this = this.toJS(this.globalThis);
@@ -575,7 +577,8 @@ pub const FSWatcher = struct {
         this.mutex.lock();
         defer this.mutex.unlock();
         // JSC eventually will free it
-        _ = this.pending_activity_count.fetchSub(1, .monotonic);
+        const prev = this.pending_activity_count.fetchSub(1, .monotonic);
+        bun.debugAssert(prev > 0);
     }
 
     pub fn close(this: *FSWatcher) void {
@@ -588,7 +591,10 @@ pub const FSWatcher = struct {
 
             if (js_this != .zero) {
                 if (FSWatcher.js.listenerGetCached(js_this)) |listener| {
-                    _ = this.refTask();
+                    // `closed` is already true so `refTask()` would return false without
+                    // incrementing; bump the counter directly so the `unrefTask()` below is
+                    // balanced and the count stays > 0 while the close event is emitted.
+                    _ = this.pending_activity_count.fetchAdd(1, .monotonic);
                     log("emit('close')", .{});
                     emitJS(listener, this.globalThis, .js_undefined, .close);
                     this.unrefTask();
@@ -603,6 +609,8 @@ pub const FSWatcher = struct {
 
     // this can be called multiple times
     pub fn detach(this: *FSWatcher) void {
+        if (this.ctx.test_isolation_enabled) this.ctx.rareData().removeFSWatcherForIsolation(this);
+
         if (this.path_watcher) |path_watcher| {
             this.path_watcher = null;
             path_watcher.detach(this);
@@ -680,6 +688,7 @@ pub const FSWatcher = struct {
         else
             null;
         ctx.initJS(args.listener.withAsyncContextIfNeeded(args.global_this));
+        if (vm.test_isolation_enabled) vm.rareData().addFSWatcherForIsolation(ctx);
         return .{ .result = ctx };
     }
 };

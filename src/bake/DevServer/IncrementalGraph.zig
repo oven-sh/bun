@@ -1924,8 +1924,13 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             }
 
             const keys = g.bundled_files.keys();
+            const key = keys[file_index.get()];
 
-            g.allocator().free(keys[file_index.get()]);
+            // DirectoryWatchStore.Dep.source_file_path borrows this key; remove
+            // any such dependencies before freeing it so they do not dangle.
+            g.owner().directory_watchers.removeDependenciesForFile(g.allocator(), key);
+
+            g.allocator().free(key);
             keys[file_index.get()] = ""; // cannot be `undefined` as it may be read by hashmap logic
 
             assert_eql(g.first_dep.items[file_index.get()], .none);

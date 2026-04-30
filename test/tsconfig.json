@@ -29,6 +29,8 @@
     "**/*.mts",
     "**/*.cts",
     "../src/js/internal-for-testing.ts",
+    "../scripts/glob-sources.ts",
+    "../scripts/build/error.ts",
     "bake/exit-code-map.mjs",
     "../src/bake/client/**.ts"
   ],

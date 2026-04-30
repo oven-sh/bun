@@ -416,7 +416,13 @@ pub fn generateChunksInParallel(
         for (chunks, 0..) |*chunk_item, ci| {
             if (chunk_item.content == .html) continue;
             var ds: usize = 0;
-            scc[ci] = (chunk_item.intermediate_output.code(
+            // Pass `scc` so that `.asset` pieces (e.g. `import logo from "./logo.svg"` with
+            // the file loader) are resolved to data: URIs from `url_for_css` instead of
+            // being written as paths to sidecar files that don't exist in standalone mode.
+            // Sibling JS/CSS chunks may still be null at this point; `.chunk` pieces fall
+            // back to file paths when their entry in `scc` is null, matching the previous
+            // behavior for inter-chunk imports.
+            scc[ci] = (chunk_item.intermediate_output.codeStandalone(
                 null,
                 c.parse_graph,
                 &c.graph,
@@ -426,6 +432,7 @@ pub fn generateChunksInParallel(
                 &ds,
                 false,
                 false,
+                scc,
             ) catch |err| bun.handleOom(err)).buffer;
         }
     }
@@ -550,6 +557,7 @@ pub fn generateChunksInParallel(
                 },
                 .@"inline" => {
                     const output_source_map = chunk.output_source_map.finalize(bun.default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
+                    defer bun.default_allocator.free(output_source_map);
                     const encode_len = base64.encodeLen(output_source_map);
 
                     const source_map_start = "//# sourceMappingURL=data:application/json;base64,";

@@ -69,8 +69,8 @@ public:
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized);
     // With proxy support
-    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, void* sslConfig);
-    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, void* sslConfig);
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, void* sslConfig, bool offerPerMessageDeflate);
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, void* sslConfig, bool offerPerMessageDeflate);
     ~WebSocket();
 
     enum State {
@@ -168,6 +168,20 @@ public:
         m_rejectUnauthorized = rejectUnauthorized;
     }
 
+    // Controls the upgrade client's `Sec-WebSocket-Extensions:
+    // permessage-deflate; client_max_window_bits` offer. Disabling this (via
+    // `perMessageDeflate: false` in ws options) matches the behavior of the
+    // npm `ws` package and prevents compression being negotiated at all.
+    void setOfferPerMessageDeflate(bool offer)
+    {
+        m_offerPerMessageDeflate = offer;
+    }
+
+    bool offerPerMessageDeflate() const
+    {
+        return m_offerPerMessageDeflate;
+    }
+
     // C++-only callback mode. When set, didConnect/didReceiveMessage/
     // didClose call these function pointers directly instead of building
     // Event objects and going through dispatchEvent. Fires synchronously
@@ -257,6 +271,7 @@ private:
     void didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError = false);
     void didUpdateBufferedAmount(unsigned bufferedAmount);
     void didStartClosingHandshake();
+    void failConnectingWebSocket();
 
     void sendWebSocketString(const String& message, const Opcode opcode);
     void sendWebSocketData(const char* data, size_t length, const Opcode opcode);
@@ -282,6 +297,9 @@ private:
     void* m_upgradeClient { nullptr };
     ConnectionType m_connectionType { ConnectionType::Plain };
     bool m_rejectUnauthorized { false };
+    // Default matches pre-existing behavior: advertise permessage-deflate in the upgrade
+    // request. Set to false by ws.WebSocket callers passing `perMessageDeflate: false`.
+    bool m_offerPerMessageDeflate { true };
     AnyWebSocket m_connectedWebSocket { nullptr };
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
     size_t m_pendingActivityCount { 0 };

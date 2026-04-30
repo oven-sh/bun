@@ -1,7 +1,7 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
 import path, { join } from "path";
 import { buildNoThrow } from "./buildNoThrow";
 
@@ -191,25 +191,6 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
-  test("rebuilding busts the directory entries cache", () => {
-    Bun.gc(true);
-    const tmpdir = tempDirWithFiles("rebuild-bust-dirent-cache", {
-      "package.json": `{}`,
-    });
-
-    const { exitCode, stderr } = Bun.spawnSync({
-      cmd: [bunExe(), join(import.meta.dir, "fixtures", "bundler-reloader-script.ts")],
-      env: { ...bunEnv, BUNDLER_RELOADER_SCRIPT_TMP_DIR: tmpdir },
-      stderr: "pipe",
-      stdout: "inherit",
-    });
-    if (stderr.byteLength > 0) {
-      throw new Error(stderr.toString());
-    }
-    expect(exitCode).toBe(0);
-    Bun.gc(true);
-  });
-
   test("outdir + reading out blobs works", async () => {
     Bun.gc(true);
     const fixture = tempDirWithFiles("build-outdir", {
@@ -376,7 +357,27 @@ describe("Bun.build", () => {
   //   throw new Error("test was not fully written");
   // });
 
-  test("errors are returned as an array", async () => {
+  test.concurrent("rebuilding busts the directory entries cache", async () => {
+    Bun.gc(true);
+    const tmpdir = tempDirWithFiles("rebuild-bust-dirent-cache", {
+      "package.json": `{}`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "fixtures", "bundler-reloader-script.ts")],
+      env: { ...bunEnv, BUNDLER_RELOADER_SCRIPT_TMP_DIR: tmpdir },
+      stderr: "pipe",
+      stdout: "inherit",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    if (stderr.length > 0) {
+      throw new Error(stderr);
+    }
+    expect(exitCode).toBe(0);
+    Bun.gc(true);
+  });
+
+  test.concurrent("errors are returned as an array", async () => {
     const x = await buildNoThrow({
       entrypoints: [join(import.meta.dir, "does-not-exist.ts")],
       outdir: tempDirWithFiles("errors-are-returned-as-an-array", {}),
@@ -388,7 +389,7 @@ describe("Bun.build", () => {
     expect(x.logs[0].position).toEqual(null);
   });
 
-  test("warnings do not fail a build", async () => {
+  test.concurrent("warnings do not fail a build", async () => {
     const x = await Bun.build({
       entrypoints: [join(import.meta.dir, "./fixtures/jsx-warning/index.jsx")],
       outdir: tempDirWithFiles("warnings-do-not-fail-a-build", {}),
@@ -402,7 +403,7 @@ describe("Bun.build", () => {
     expect(x.logs[0].position).toBeTruthy();
   });
 
-  test("module() throws error", async () => {
+  test.concurrent("module() throws error", async () => {
     expect(() =>
       Bun.build({
         entrypoints: [join(import.meta.dir, "./fixtures/trivial/bundle-ws.ts")],
@@ -425,7 +426,7 @@ describe("Bun.build", () => {
     ).toThrow();
   });
 
-  test("non-object plugins throw invalid argument errors", () => {
+  test.concurrent("non-object plugins throw invalid argument errors", () => {
     for (const plugin of [null, undefined, 1, "hello", true, false, Symbol.for("hello")]) {
       expect(() => {
         Bun.build({
@@ -439,7 +440,7 @@ describe("Bun.build", () => {
     }
   });
 
-  test("hash considers cross chunk imports", async () => {
+  test.concurrent("hash considers cross chunk imports", async () => {
     Bun.gc(true);
     const fixture = tempDirWithFiles("build-hash-cross-chunk-imports", {
       "entry1.ts": `
@@ -503,7 +504,7 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
-  test("ignoreDCEAnnotations works", async () => {
+  test.concurrent("ignoreDCEAnnotations works", async () => {
     const fixture = tempDirWithFiles("build-ignore-dce-annotations", {
       "package.json": `{}`,
       "entry.ts": `
@@ -522,7 +523,7 @@ describe("Bun.build", () => {
     expect(await bundle.outputs[0].text()).toBe("console.log(1);\n");
   });
 
-  test("emitDCEAnnotations works", async () => {
+  test.concurrent("emitDCEAnnotations works", async () => {
     const fixture = tempDirWithFiles("build-emit-dce-annotations", {
       "package.json": `{}`,
       "entry.ts": `
@@ -541,9 +542,11 @@ describe("Bun.build", () => {
     expect(await bundle.outputs[0].text()).toBe("var o=/*@__PURE__*/console.log(1);export{o as OUT};\n");
   });
 
-  test("you can write onLoad and onResolve plugins using the 'html' loader, and it includes script and link tags as bundled entrypoints", async () => {
-    const fixture = tempDirWithFiles("build-html-plugins", {
-      "index.html": `
+  test.concurrent(
+    "you can write onLoad and onResolve plugins using the 'html' loader, and it includes script and link tags as bundled entrypoints",
+    async () => {
+      const fixture = tempDirWithFiles("build-html-plugins", {
+        "index.html": `
         <!DOCTYPE html>
         <html>
           <head>
@@ -552,69 +555,70 @@ describe("Bun.build", () => {
           </head>
         </html>
       `,
-      "style.css": ".foo { color: red; }",
+        "style.css": ".foo { color: red; }",
 
-      // Check we actually do bundle the script
-      "script.js": "console.log(1 + 2)",
-    });
+        // Check we actually do bundle the script
+        "script.js": "console.log(1 + 2)",
+      });
 
-    let onLoadCalled = false;
-    let onResolveCalled = false;
+      let onLoadCalled = false;
+      let onResolveCalled = false;
 
-    const build = await Bun.build({
-      entrypoints: [join(fixture, "index.html")],
-      minify: {
-        syntax: true,
-      },
-      plugins: [
-        {
-          name: "test-plugin",
-          setup(build) {
-            build.onLoad({ filter: /\.html$/ }, async args => {
-              onLoadCalled = true;
-              const contents = await Bun.file(args.path).text();
-              return {
-                contents: contents.replace("</head>", "<meta name='injected-by-plugin' content='true'></head>"),
-                loader: "html",
-              };
-            });
-
-            build.onResolve({ filter: /\.(js|css)$/ }, args => {
-              onResolveCalled = true;
-              return {
-                path: join(fixture, args.path),
-                namespace: "file",
-              };
-            });
-          },
+      const build = await Bun.build({
+        entrypoints: [join(fixture, "index.html")],
+        minify: {
+          syntax: true,
         },
-      ],
-    });
+        plugins: [
+          {
+            name: "test-plugin",
+            setup(build) {
+              build.onLoad({ filter: /\.html$/ }, async args => {
+                onLoadCalled = true;
+                const contents = await Bun.file(args.path).text();
+                return {
+                  contents: contents.replace("</head>", "<meta name='injected-by-plugin' content='true'></head>"),
+                  loader: "html",
+                };
+              });
 
-    expect(build.success).toBe(true);
-    expect(onLoadCalled).toBe(true);
-    expect(onResolveCalled).toBe(true);
+              build.onResolve({ filter: /\.(js|css)$/ }, args => {
+                onResolveCalled = true;
+                return {
+                  path: join(fixture, args.path),
+                  namespace: "file",
+                };
+              });
+            },
+          },
+        ],
+      });
 
-    // Should have 3 outputs - HTML, JS and CSS
-    expect(build.outputs).toHaveLength(3);
+      expect(build.success).toBe(true);
+      expect(onLoadCalled).toBe(true);
+      expect(onResolveCalled).toBe(true);
 
-    // Verify we have one of each type
-    const types = build.outputs.map(o => o.type);
-    expect(types).toContain("text/html;charset=utf-8");
-    expect(types).toContain("text/javascript;charset=utf-8");
-    expect(types).toContain("text/css;charset=utf-8");
+      // Should have 3 outputs - HTML, JS and CSS
+      expect(build.outputs).toHaveLength(3);
 
-    // Verify the JS output contains the __dirname
-    const js = build.outputs.find(o => o.type === "text/javascript;charset=utf-8");
-    expect(await js?.text()).toContain("console.log(3)");
+      // Verify we have one of each type
+      const types = build.outputs.map(o => o.type);
+      expect(types).toContain("text/html;charset=utf-8");
+      expect(types).toContain("text/javascript;charset=utf-8");
+      expect(types).toContain("text/css;charset=utf-8");
 
-    // Verify our plugin modified the HTML
-    const html = build.outputs.find(o => o.type === "text/html;charset=utf-8");
-    expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
-  });
+      // Verify the JS output contains the __dirname
+      const js = build.outputs.find(o => o.type === "text/javascript;charset=utf-8");
+      expect(await js?.text()).toContain("console.log(3)");
+
+      // Verify our plugin modified the HTML
+      const html = build.outputs.find(o => o.type === "text/html;charset=utf-8");
+      expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
+    },
+  );
 });
 
-test("macro with nested object", async () => {
+test.concurrent("macro with nested object", async () => {
   const dir = tempDirWithFilesAnon({
     "index.ts": `
 import { testMacro } from "./macro" assert { type: "macro" };
@@ -646,7 +650,7 @@ export function testMacro(val: any) {
 });
 
 // Since NODE_PATH has to be set, we need to run this test outside the bundler tests.
-test("regression/NODE_PATHBuild api", async () => {
+test.concurrent("regression/NODE_PATHBuild api", async () => {
   const dir = tempDirWithFiles("node-path-build", {
     "entry.js": `
       import MyClass from 'MyClass';
@@ -709,7 +713,7 @@ test("regression/NODE_PATHBuild api", async () => {
   expect(output.trim()).toBe("MyClass");
 });
 
-test("regression/GlobalThis", async () => {
+test.concurrent("regression/GlobalThis", async () => {
   const dir = tempDirWithFiles("global-this-regression", {
     "entry.js": `
       function identity(x) {
@@ -774,7 +778,7 @@ identity(mod23);
   expect(text).toContain(" globalThis.");
 });
 
-describe("sourcemap boolean values", () => {
+describe.concurrent("sourcemap boolean values", () => {
   test("sourcemap: true should work (boolean)", async () => {
     const dir = tempDirWithFiles("sourcemap-true-boolean", {
       "index.js": `console.log("hello");`,
@@ -1119,3 +1123,58 @@ export { greeting };`,
     expect(result.success).toBeDefined();
   });
 });
+
+// On release builds mimalloc's large-allocation arenas make RSS growth too
+// non-deterministic to draw a clean line between "leaking" and "not leaking"
+// for this path. Under debug/ASAN the allocator behaviour is stable enough to
+// measure reliably, so we only assert there.
+test.skipIf(!isDebug && !isASAN)(
+  "Bun.build sourcemap: 'inline' with no outdir does not leak sourcemap JSON",
+  async () => {
+    // The in-memory build path used to leak the intermediate sourcemap JSON
+    // buffer: it is base64-encoded into the output and then dropped without a
+    // free. To make the leak observable we make the sourcemap JSON huge —
+    // "sourcesContent" embeds the full input source, so a ~30MB comment in the
+    // entry produces a ~30MB sourcemap JSON while keeping the actual bundle
+    // work trivial. 8 leaked builds ≈ ~240MB that can never be reclaimed.
+    //
+    // RSS is noisy between builds, so we settle with several GC+sleep cycles
+    // before each sample to let JSC collect the output blobs and mimalloc
+    // purge freed pages.
+    const dir = tempDirWithFiles("bun-build-inline-sourcemap-leak", {
+      "entry.ts": "export const a = 1;\n/* " + Buffer.alloc(30 * 1024 * 1024, "x").toString() + " */\n",
+      "run.ts": `
+        const entry = process.argv[2];
+        async function build() {
+          const res = await Bun.build({ entrypoints: [entry], sourcemap: "inline" });
+          if (!res.success) throw new AggregateError(res.logs, "build failed");
+        }
+        async function settle() {
+          for (let i = 0; i < 4; i++) { Bun.gc(true); await Bun.sleep(10); }
+        }
+        for (let i = 0; i < 2; i++) await build();
+        await settle();
+        const before = process.memoryUsage.rss();
+        for (let i = 0; i < 8; i++) await build();
+        await settle();
+        const after = process.memoryUsage.rss();
+        console.log(JSON.stringify({ before, after, growth: after - before }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", join(dir, "run.ts"), join(dir, "entry.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const { growth } = JSON.parse(stdout.trim());
+    // Observed (2 warmup + 8 measured, settled): ~220-250MB with the free,
+    // ~590-650MB without it.
+    expect(growth).toBeLessThan(400 * 1024 * 1024);
+  },
+  120_000,
+);

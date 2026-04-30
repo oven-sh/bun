@@ -232,6 +232,11 @@ template<typename... T> struct Converter<IDLUnion<T...>> : DefaultConverter<IDLU
                     return ConditionalReturner<ReturnType, hasArrayBufferType>::get(WTF::move(arrayBuffer)).value();
                 RELEASE_AND_RETURN(scope, (ConditionalConverter<ReturnType, ObjectType, hasObjectType>::convert(lexicalGlobalObject, value).value()));
             }
+            // toWrapped() returns null for resizable buffers; throw instead of falling through to the next union member.
+            if (auto* jsArrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(value); jsArrayBuffer && jsArrayBuffer->isResizableOrGrowableShared()) {
+                throwTypeError(&lexicalGlobalObject, scope, "ArrayBuffer cannot be resizable"_s);
+                return ReturnType();
+            }
         }
 
         constexpr bool hasArrayBufferViewType = brigand::any<TypeList, IsIDLArrayBufferView<brigand::_1>>::value;
@@ -241,6 +246,10 @@ template<typename... T> struct Converter<IDLUnion<T...>> : DefaultConverter<IDLU
                 if (hasArrayBufferViewType)
                     return ConditionalReturner<ReturnType, hasArrayBufferViewType>::get(WTF::move(arrayBufferView)).value();
                 RELEASE_AND_RETURN(scope, (ConditionalConverter<ReturnType, ObjectType, hasObjectType>::convert(lexicalGlobalObject, value).value()));
+            }
+            if (auto* jsView = dynamicDowncast<JSC::JSArrayBufferView>(value); jsView && jsView->isResizableOrGrowableShared()) {
+                throwTypeError(&lexicalGlobalObject, scope, "ArrayBufferView cannot be resizable"_s);
+                return ReturnType();
             }
         }
 

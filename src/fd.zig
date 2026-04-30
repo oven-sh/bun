@@ -152,6 +152,15 @@ pub const FD = packed struct(backing_int) {
             else => fd.value.as_system,
             .windows => switch (fd.decodeWindows()) {
                 .windows => |handle| {
+                    // `.stdin()`/`.stdout()`/`.stderr()` hand out the cached
+                    // `windows_cached_std{in,out,err}` (snapshotted at startup),
+                    // so round-trip against those first. Comparing only against
+                    // the live `GetStdHandle` result panics if the process std
+                    // handle was swapped after startup via `SetStdHandle`,
+                    // `AllocConsole`, `AttachConsole`, etc.
+                    if (fd == windows_cached_stdin) return 0;
+                    if (fd == windows_cached_stdout) return 1;
+                    if (fd == windows_cached_stderr) return 2;
                     if (isStdioHandle(std.os.windows.STD_INPUT_HANDLE, handle)) return 0;
                     if (isStdioHandle(std.os.windows.STD_OUTPUT_HANDLE, handle)) return 1;
                     if (isStdioHandle(std.os.windows.STD_ERROR_HANDLE, handle)) return 2;
@@ -191,10 +200,10 @@ pub const FD = packed struct(backing_int) {
         };
     }
     pub fn makeLibUVOwnedForSyscall(
-        maybe_windows_fd: bun.FileDescriptor,
+        maybe_windows_fd: bun.FD,
         comptime syscall_tag: bun.sys.Tag,
         comptime error_case: enum { close_on_fail, leak_fd_on_fail },
-    ) bun.sys.Maybe(bun.FileDescriptor) {
+    ) bun.sys.Maybe(bun.FD) {
         if (os != .windows) {
             return .{ .result = maybe_windows_fd };
         }
@@ -252,7 +261,7 @@ pub const FD = packed struct(backing_int) {
         const fd_fmt = if (Environment.isDebug) std.fmt.bufPrint(&buf, "{f}", .{fd}) catch buf[0..];
 
         const result: ?bun.sys.Error = switch (os) {
-            .linux => result: {
+            .linux, .freebsd => result: {
                 bun.assert(fd.native() >= 0);
                 break :result switch (bun.sys.getErrno(bun.sys.syscall.close(fd.native()))) {
                     .BADF => .{ .errno = @intFromEnum(E.BADF), .syscall = .close, .fd = fd },
@@ -312,14 +321,11 @@ pub const FD = packed struct(backing_int) {
             return null;
         }
         const fd: i32 = @intCast(fd64);
-        if (os == .windows) {
-            return switch (fd) {
-                0 => .stdin(),
-                1 => .stdout(),
-                2 => .stderr(),
-                else => .fromUV(fd),
-            };
-        }
+        // On Windows, JS-visible fds are libuv/CRT fds (see `toJS`). libuv fd
+        // 0/1/2 already map to stdio, so there is no need to substitute the
+        // cached `.system` HANDLE here — doing so forces every `sys_uv` call to
+        // round-trip through `FD.uv()`'s stdio-handle comparison, which panics
+        // if the process std handle was swapped after startup.
         return .fromUV(fd);
     }
     // If a non-number is given, returns null.
@@ -336,11 +342,8 @@ pub const FD = packed struct(backing_int) {
         }
         const int: i64 = @intFromFloat(float);
         const fd: c_int = @intCast(int);
-        if (os == .windows) {
-            if (Stdio.fromInt(fd)) |stdio| {
-                return stdio.fd();
-            }
-        }
+        // See `fromJS` above for why stdio fds are not remapped to the cached
+        // `.system` HANDLE on Windows.
         return .fromUV(fd);
     }
     /// After calling, the input file descriptor is no longer valid and must not be used.

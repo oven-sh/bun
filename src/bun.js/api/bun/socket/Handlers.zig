@@ -230,7 +230,7 @@ pub fn clone(this: *const Handlers) Handlers {
 pub const SocketConfig = struct {
     hostname_or_unix: jsc.ZigString.Slice,
     port: ?u16 = null,
-    fd: ?bun.FileDescriptor = null,
+    fd: ?bun.FD = null,
     ssl: ?SSLConfig = null,
     handlers: Handlers,
     default_data: jsc.JSValue = .zero,

@@ -26,8 +26,6 @@
     // We have custom thenables. This is not a bug.
     "no-thenable": "off",
 
-    "no-undef-init": "error",
-
     // We use this in some cases. The ordering is deliberate.
     "no-unsafe-finally": "off",
 

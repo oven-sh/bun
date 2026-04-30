@@ -51,8 +51,9 @@ public:
         static_cast<JSStringDecoder*>(thisObject)->~JSStringDecoder();
     }
 
-    JSC::JSValue write(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t);
-    JSC::JSValue end(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t);
+    // These return nullptr with an exception pending on failure.
+    JSC::JSString* write(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t);
+    JSC::JSString* end(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t);
 
     uint8_t m_lastNeed = 0;
     uint8_t m_lastTotal = 0;
@@ -60,8 +61,8 @@ public:
     BufferEncodingType m_encoding = BufferEncodingType::utf8;
 
 private:
-    JSC::JSValue fillLast(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t);
-    JSC::JSValue text(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t, uint32_t);
+    JSC::JSString* fillLast(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t);
+    JSC::JSString* text(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t, uint32_t);
     uint8_t utf8CheckIncomplete(uint8_t*, uint32_t, uint32_t);
 };
 

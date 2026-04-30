@@ -337,7 +337,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     return socket;
 }
 
-ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, void* sslConfig)
+ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, void* sslConfig, bool offerPerMessageDeflate)
 {
     if (url.isNull())
         return Exception { SyntaxError };
@@ -348,6 +348,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
 
     auto socket = adoptRef(*new WebSocket(context));
     socket->m_sslConfig = sslConfig; // Set BEFORE connect() so it's available during connection
+    socket->setOfferPerMessageDeflate(offerPerMessageDeflate);
 
     auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue());
     if (result.hasException())
@@ -356,7 +357,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     return socket;
 }
 
-ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, void* sslConfig)
+ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, void* sslConfig, bool offerPerMessageDeflate)
 {
     if (url.isNull())
         return Exception { SyntaxError };
@@ -368,6 +369,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     auto socket = adoptRef(*new WebSocket(context));
     socket->setRejectUnauthorized(rejectUnauthorized);
     socket->m_sslConfig = sslConfig; // Set BEFORE connect() so it's available during connection
+    socket->setOfferPerMessageDeflate(offerPerMessageDeflate);
 
     auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue());
     if (result.hasException())
@@ -378,7 +380,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
 
 ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const String& protocol)
 {
-    return create(context, url, Vector<String> { 1, protocol });
+    return create(context, url, Vector<String> { protocol });
 }
 
 ExceptionOr<void> WebSocket::connect(const String& url)
@@ -388,7 +390,7 @@ ExceptionOr<void> WebSocket::connect(const String& url)
 
 ExceptionOr<void> WebSocket::connect(const String& url, const String& protocol)
 {
-    return connect(url, Vector<String> { 1, protocol }, std::nullopt);
+    return connect(url, Vector<String> { protocol }, std::nullopt);
 }
 
 static String resourceName(const URL& url)
@@ -462,9 +464,10 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength()) };
     }
 
-    bool is_secure = m_url.protocolIs("wss"_s) || m_url.protocolIs("https"_s);
+    bool is_unix = m_url.protocolIs("ws+unix"_s) || m_url.protocolIs("wss+unix"_s);
+    bool is_secure = m_url.protocolIs("wss"_s) || m_url.protocolIs("https"_s) || m_url.protocolIs("wss+unix"_s);
 
-    if (!m_url.protocolIs("http"_s) && !m_url.protocolIs("ws"_s) && !is_secure) {
+    if (!m_url.protocolIs("http"_s) && !m_url.protocolIs("ws"_s) && !is_secure && !is_unix) {
         // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
         updateHasPendingActivity();
@@ -544,17 +547,67 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     if (!protocols.isEmpty())
         protocolString = joinStrings(protocols, subprotocolSeparator());
 
-    ZigString host = Zig::toZigString(m_url.host());
+    // Materialize host/path as WTF::String so the BunString wrappers hold a
+    // stable WTFStringImpl backing (preserving 8-bit vs UTF-16 encoding).
+    // ZigString wrappers over non-ASCII Latin1/UTF-16 data lose the encoding
+    // tag and corrupt the HTTP upgrade request build in Zig.
+    String hostString = m_url.host().toString();
     auto resource = resourceName(m_url);
-    ZigString path = Zig::toZigString(resource);
-    ZigString clientProtocolString = Zig::toZigString(protocolString);
+    String unixSocketPathString;
+    if (is_unix) {
+        // ws+unix:///path/to/sock.sock[:/request/path][?query]
+        // The URL pathname is "/path/to/sock.sock:/request/path". Split on the
+        // first ':' into the socket path and the HTTP request path, matching
+        // the npm `ws` package's ws+unix: handling. Anything after the first
+        // colon becomes the request path; if there is no colon the request
+        // path is "/" (plus any query string).
+        auto pathname = m_url.path();
+        if (pathname.isEmpty()) {
+            m_state = CLOSED;
+            updateHasPendingActivity();
+            return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength(), " (missing unix socket path)"_s) };
+        }
+        size_t colon = pathname.find(':');
+        if (colon == notFound) {
+            unixSocketPathString = pathname.toString();
+            resource = makeString('/', m_url.queryWithLeadingQuestionMark());
+        } else {
+            unixSocketPathString = pathname.left(colon).toString();
+            auto requestPath = pathname.substring(colon + 1);
+            // Ensure origin-form per RFC 7230 §5.3.1 (leading '/').
+            if (requestPath.isEmpty()) {
+                resource = makeString('/', m_url.queryWithLeadingQuestionMark());
+            } else if (requestPath.startsWith('/')) {
+                resource = makeString(requestPath, m_url.queryWithLeadingQuestionMark());
+            } else {
+                resource = makeString('/', requestPath, m_url.queryWithLeadingQuestionMark());
+            }
+        }
+        if (unixSocketPathString.isEmpty()) {
+            m_state = CLOSED;
+            updateHasPendingActivity();
+            return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength(), " (missing unix socket path)"_s) };
+        }
+        // Host header defaults to "localhost" over a unix socket, matching
+        // Node's http.request({ socketPath }) and the npm `ws` package.
+        if (hostString.isEmpty()) {
+            hostString = "localhost"_s;
+        }
+    }
+    BunString host = Bun::toString(hostString);
+    BunString path = Bun::toString(resource);
+    BunString unixSocketPath = Bun::toString(unixSocketPathString);
+    BunString clientProtocolString = Bun::toString(protocolString);
     uint16_t port = is_secure ? 443 : 80;
     if (auto userPort = m_url.port()) {
         port = userPort.value();
     }
 
-    Vector<ZigString, 8> headerNames;
-    Vector<ZigString, 8> headerValues;
+    // Hold WTF::Strings so the BunString wrappers stay valid for the Zig call.
+    Vector<String, 8> headerNameStrings;
+    Vector<String, 8> headerValueStrings;
+    Vector<BunString, 8> headerNames;
+    Vector<BunString, 8> headerValues;
 
     auto headersOrException = FetchHeaders::create(WTF::move(headersInit));
     if (headersOrException.hasException()) [[unlikely]] {
@@ -564,17 +617,29 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     }
 
     auto headers = headersOrException.releaseReturnValue();
+    headerNameStrings.reserveInitialCapacity(headers.get().internalHeaders().size());
+    headerValueStrings.reserveInitialCapacity(headers.get().internalHeaders().size());
     headerNames.reserveInitialCapacity(headers.get().internalHeaders().size());
     headerValues.reserveInitialCapacity(headers.get().internalHeaders().size());
     // lowerCaseKeys = false so we dont touch the keys casing
     auto iterator = headers.get().createIterator(false);
     while (auto value = iterator.next()) {
-        headerNames.unsafeAppendWithoutCapacityCheck(Zig::toZigString(value->key));
-        headerValues.unsafeAppendWithoutCapacityCheck(Zig::toZigString(value->value));
+        headerNameStrings.append(value->key);
+        headerValueStrings.append(value->value);
+    }
+    for (size_t i = 0; i < headerNameStrings.size(); ++i) {
+        headerNames.unsafeAppendWithoutCapacityCheck(Bun::toString(headerNameStrings[i]));
+        headerValues.unsafeAppendWithoutCapacityCheck(Bun::toString(headerValueStrings[i]));
     }
 
     // Determine connection type based on proxy usage and TLS requirements
     bool hasProxy = proxyConfig.has_value();
+
+    // Unix domain sockets are local; proxies do not apply.
+    if (is_unix) {
+        proxyConfig = std::nullopt;
+        hasProxy = false;
+    }
 
     // Check NO_PROXY even for explicitly-provided proxies
     if (hasProxy) {
@@ -601,19 +666,21 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
 
     this->incPendingActivityCount();
 
-    // Prepare proxy parameters (use local variables, not member fields)
-    ZigString proxyHost = hasProxy ? Zig::toZigString(proxyConfig->host) : ZigString {};
-    ZigString proxyAuth = hasProxy ? Zig::toZigString(proxyConfig->authorization) : ZigString {};
+    // Prepare proxy parameters (use local variables, not member fields).
+    // The BunString wrappers reference the underlying WTF::Strings in proxyConfig
+    // and remain valid for the duration of the connect() call.
+    BunString proxyHost = hasProxy ? Bun::toString(proxyConfig->host) : BunString { BunStringTag::Empty };
+    BunString proxyAuth = hasProxy ? Bun::toString(proxyConfig->authorization) : BunString { BunStringTag::Empty };
     uint16_t proxyPort = hasProxy ? proxyConfig->port : 0;
 
-    Vector<ZigString, 8> proxyHeaderNames;
-    Vector<ZigString, 8> proxyHeaderValues;
+    Vector<BunString, 8> proxyHeaderNames;
+    Vector<BunString, 8> proxyHeaderValues;
     if (hasProxy) {
         proxyHeaderNames.reserveInitialCapacity(proxyConfig->headers.size());
         proxyHeaderValues.reserveInitialCapacity(proxyConfig->headers.size());
         for (const auto& header : proxyConfig->headers) {
-            proxyHeaderNames.unsafeAppendWithoutCapacityCheck(Zig::toZigString(header.first));
-            proxyHeaderValues.unsafeAppendWithoutCapacityCheck(Zig::toZigString(header.second));
+            proxyHeaderNames.unsafeAppendWithoutCapacityCheck(Bun::toString(header.first));
+            proxyHeaderValues.unsafeAppendWithoutCapacityCheck(Bun::toString(header.second));
         }
     }
 
@@ -625,7 +692,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         auto encoded = base64EncodeToString(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length()));
         targetAuthorization = makeString("Basic "_s, encoded);
     }
-    ZigString targetAuth = Zig::toZigString(targetAuthorization);
+    BunString targetAuth = Bun::toString(targetAuthorization);
 
     // Pass SSLConfig pointer to Zig (ownership transferred - Zig will deinit when connection closes)
     // After this call, m_sslConfig should not be used by C++ anymore
@@ -648,7 +715,9 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
             (hasProxy && !proxyConfig->authorization.isEmpty()) ? &proxyAuth : nullptr,
             proxyHeaderNames.begin(), proxyHeaderValues.begin(), proxyHeaderNames.size(),
             sslConfig, is_secure,
-            targetAuthorization.isEmpty() ? nullptr : &targetAuth);
+            targetAuthorization.isEmpty() ? nullptr : &targetAuth,
+            is_unix ? &unixSocketPath : nullptr,
+            m_offerPerMessageDeflate);
     } else {
         us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<false>();
         RELEASE_ASSERT(ctx);
@@ -660,7 +729,9 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
             (hasProxy && !proxyConfig->authorization.isEmpty()) ? &proxyAuth : nullptr,
             proxyHeaderNames.begin(), proxyHeaderValues.begin(), proxyHeaderNames.size(),
             sslConfig, is_secure,
-            targetAuthorization.isEmpty() ? nullptr : &targetAuth);
+            targetAuthorization.isEmpty() ? nullptr : &targetAuth,
+            is_unix ? &unixSocketPath : nullptr,
+            m_offerPerMessageDeflate);
     }
 
     proxyHeaderValues.clear();
@@ -849,6 +920,58 @@ void WebSocket::sendWebSocketString(const String& message, const Opcode op)
     updateHasPendingActivity();
 }
 
+// Called from close()/terminate() while m_state == CONNECTING.
+//
+// The Zig-side upgrade client's cancel() clears its back-pointer to us
+// without calling didAbruptClose, so none of didConnect /
+// didFailWithErrorCode / didClose will ever fire for this socket. We
+// must therefore finish the close ourselves: cancel the upgrade, queue
+// a task that moves to CLOSED, fires error + close events (spec "fail
+// the WebSocket connection" path — code 1006, wasClean false), and
+// releases the pending-activity ref taken in connect(). Without this
+// the WebSocket stays in CLOSING with m_pendingActivityCount > 0
+// forever and is never garbage-collected.
+void WebSocket::failConnectingWebSocket()
+{
+    ASSERT(m_state == CONNECTING);
+    m_state = CLOSING;
+
+    if (m_upgradeClient != nullptr) {
+        void* upgradeClient = m_upgradeClient;
+        m_upgradeClient = nullptr;
+        bool useTLSClient = (m_connectionType == ConnectionType::TLS || m_connectionType == ConnectionType::ProxyTLS);
+        if (useTLSClient) {
+            Bun__WebSocketHTTPSClient__cancel(upgradeClient);
+        } else {
+            Bun__WebSocketHTTPClient__cancel(upgradeClient);
+        }
+    }
+
+    if (auto* context = scriptExecutionContext()) {
+        context->postTask([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            if (protectedThis->m_state == CLOSED)
+                return;
+            protectedThis->m_state = CLOSED;
+            if (protectedThis->m_native.onClose) {
+                protectedThis->m_native.onClose(protectedThis->m_native.ctx, 1006);
+            } else {
+                // Spec: close() while CONNECTING runs "fail the WebSocket
+                // connection", which requires an error event before the
+                // close event. Matches Chrome/Firefox and npm ws.
+                auto reason = "WebSocket is closed before the connection is established"_s;
+                auto eventInit = createErrorEventInit(protectedThis, reason, context.jsGlobalObject());
+                protectedThis->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
+                protectedThis->dispatchEvent(CloseEvent::create(false, 1006, reason));
+            }
+            protectedThis->disablePendingActivity();
+        });
+    } else {
+        m_state = CLOSED;
+        disablePendingActivity();
+    }
+    updateHasPendingActivity();
+}
+
 ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, const String& reason)
 {
     int code = optionalCode ? optionalCode.value() : static_cast<int>(1000);
@@ -867,18 +990,7 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
     if (m_state == CLOSING || m_state == CLOSED)
         return {};
     if (m_state == CONNECTING) {
-        m_state = CLOSING;
-        if (m_upgradeClient != nullptr) {
-            void* upgradeClient = m_upgradeClient;
-            m_upgradeClient = nullptr;
-            bool useTLSClient = (m_connectionType == ConnectionType::TLS || m_connectionType == ConnectionType::ProxyTLS);
-            if (useTLSClient) {
-                Bun__WebSocketHTTPSClient__cancel(upgradeClient);
-            } else {
-                Bun__WebSocketHTTPClient__cancel(upgradeClient);
-            }
-        }
-        updateHasPendingActivity();
+        failConnectingWebSocket();
         return {};
     }
     m_state = CLOSING;
@@ -923,18 +1035,7 @@ ExceptionOr<void> WebSocket::terminate()
     if (m_state == CLOSING || m_state == CLOSED)
         return {};
     if (m_state == CONNECTING) {
-        m_state = CLOSING;
-        if (m_upgradeClient != nullptr) {
-            void* upgradeClient = m_upgradeClient;
-            m_upgradeClient = nullptr;
-            bool useTLSClient = (m_connectionType == ConnectionType::TLS || m_connectionType == ConnectionType::ProxyTLS);
-            if (useTLSClient) {
-                Bun__WebSocketHTTPSClient__cancel(upgradeClient);
-            } else {
-                Bun__WebSocketHTTPClient__cancel(upgradeClient);
-            }
-        }
-        updateHasPendingActivity();
+        failConnectingWebSocket();
         return {};
     }
     m_state = CLOSING;

@@ -127,8 +127,11 @@ pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObje
 
     const Handler = NewReadFileHandler(Function);
 
+    // The callback may read context.content_type (e.g. toFormDataWithBytes),
+    // which is heap-owned by the source JS Blob and freed on finalize(). Take
+    // an owning dupe so the handler outliving the source can't dangle.
     var handler = bun.new(Handler, .{
-        .context = this.*,
+        .context = this.dupe(),
         .globalThis = global,
     });
 
@@ -585,7 +588,7 @@ pub fn fromDOMFormData(
     var hex_buf: [70]u8 = undefined;
     const boundary = brk: {
         var random = globalThis.bunVM().rareData().nextUUID().bytes;
-        break :brk std.fmt.bufPrint(&hex_buf, "-WebkitFormBoundary{x}", .{&random}) catch unreachable;
+        break :brk std.fmt.bufPrint(&hex_buf, "----WebKitFormBoundary{x}", .{&random}) catch unreachable;
     };
 
     var context = FormDataContext{
@@ -606,7 +609,10 @@ pub fn fromDOMFormData(
 
     const store = Blob.Store.init(bun.handleOom(context.joiner.done(allocator)), allocator);
     var blob = Blob.initWithStore(store, globalThis);
-    blob.content_type = std.fmt.allocPrint(allocator, "multipart/form-data; boundary={s}", .{boundary}) catch |err| bun.handleOom(err);
+    // Always allocate content_type with the default allocator so deinit() can
+    // free it unconditionally; the only caller passes bun.default_allocator
+    // anyway, but don't rely on that.
+    blob.content_type = std.fmt.allocPrint(bun.default_allocator, "multipart/form-data; boundary={s}", .{boundary}) catch |err| bun.handleOom(err);
     blob.content_type_allocated = true;
     blob.content_type_was_set = true;
 
@@ -677,15 +683,21 @@ pub fn writeFormat(this: *Blob, comptime Formatter: type, formatter: *Formatter,
     const Writer = @TypeOf(writer);
 
     if (this.isDetached()) {
-        if (this.is_jsdom_file) {
-            try writer.writeAll(comptime Output.prettyFmt("<d>[<r>File<r> detached<d>]<r>", enable_ansi_colors));
-        } else {
-            try writer.writeAll(comptime Output.prettyFmt("<d>[<r>Blob<r> detached<d>]<r>", enable_ansi_colors));
+        // A blob with no store and size > 0 was genuinely detached (e.g. after
+        // transferring its contents). An empty `new Blob([])` or `new File([])`
+        // also has no store but is a valid zero-byte blob — render it like a
+        // normal zero-sized blob instead of calling it "detached".
+        if (this.size > 0) {
+            if (this.is_jsdom_file) {
+                try writer.writeAll(comptime Output.prettyFmt("<d>[<r>File<r> detached<d>]<r>", enable_ansi_colors));
+            } else {
+                try writer.writeAll(comptime Output.prettyFmt("<d>[<r>Blob<r> detached<d>]<r>", enable_ansi_colors));
+            }
+            return;
         }
-        return;
-    }
 
-    {
+        try writeFormatForSize(this.is_jsdom_file, 0, writer, enable_ansi_colors);
+    } else {
         const store = this.store.?;
         switch (store.data) {
             .s3 => |*s3| {
@@ -947,7 +959,9 @@ fn writeFileWithEmptySourceToDestination(ctx: *jsc.JSGlobalObject, destination_b
                     defer this.deinit();
                     switch (result) {
                         .success => try this.promise.resolve(this.global, .jsNumber(0)),
-                        .failure => |err| try this.promise.reject(this.global, err.toJS(this.global, this.store.getPath())),
+                        .failure => |err| {
+                            try this.promise.reject(this.global, err.toJSWithAsyncStack(this.global, this.store.getPath(), this.promise.get()));
+                        },
                     }
                 }
 
@@ -1144,7 +1158,9 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                             defer this.deinit();
                             switch (result) {
                                 .success => try this.promise.resolve(this.global, .jsNumber(this.store.data.bytes.len)),
-                                .failure => |err| try this.promise.reject(this.global, err.toJS(this.global, this.store.getPath())),
+                                .failure => |err| {
+                                    try this.promise.reject(this.global, err.toJSWithAsyncStack(this.global, this.store.getPath(), this.promise.get()));
+                                },
                             }
                         }
 
@@ -1593,7 +1609,7 @@ fn writeStringToFileFast(
     needs_async: *bool,
     comptime needs_open: bool,
 ) jsc.JSValue {
-    const fd: bun.FileDescriptor = if (comptime !needs_open) pathlike.fd else brk: {
+    const fd: bun.FD = if (comptime !needs_open) pathlike.fd else brk: {
         var file_path: bun.PathBuffer = undefined;
         switch (bun.sys.open(
             pathlike.path.sliceZ(&file_path),
@@ -1675,7 +1691,7 @@ fn writeBytesToFileFast(
     needs_async: *bool,
     comptime needs_open: bool,
 ) jsc.JSValue {
-    const fd: bun.FileDescriptor = if (comptime !needs_open) pathlike.fd else brk: {
+    const fd: bun.FD = if (comptime !needs_open) pathlike.fd else brk: {
         var file_path: bun.PathBuffer = undefined;
         switch (bun.sys.open(
             pathlike.path.sliceZ(&file_path),
@@ -2242,17 +2258,18 @@ const S3BlobDownloadTask = struct {
                 try jsc.AnyPromise.wrap(.{ .normal = this.promise.get() }, this.globalThis, S3BlobDownloadTask.callHandler, .{ this, bytes });
             },
             inline .not_found, .failure => |err| {
-                try this.promise.reject(this.globalThis, err.toJS(this.globalThis, this.blob.store.?.getPath()));
+                try this.promise.reject(this.globalThis, err.toJSWithAsyncStack(this.globalThis, this.blob.store.?.getPath(), this.promise.get()));
             },
         }
     }
 
     pub fn init(globalThis: *jsc.JSGlobalObject, blob: *Blob, handler: S3BlobDownloadTask.S3ReadHandler) bun.JSTerminated!JSValue {
-        blob.store.?.ref();
-
+        // The callback may read this.blob.content_type (e.g. toFormDataWithBytes),
+        // which is heap-owned by the source JS Blob and freed on finalize(). Take
+        // an owning dupe so the task outliving the source can't dangle.
         const this = S3BlobDownloadTask.new(.{
             .globalThis = globalThis,
-            .blob = blob.*,
+            .blob = blob.dupe(),
             .promise = jsc.JSPromise.Strong.init(globalThis),
             .handler = handler,
         });
@@ -2278,7 +2295,7 @@ const S3BlobDownloadTask = struct {
     }
 
     pub fn deinit(this: *S3BlobDownloadTask) void {
-        this.blob.store.?.deref();
+        this.blob.deinit();
         this.poll_ref.unref(this.globalThis.bunVM());
         this.promise.deinit();
         bun.destroy(this);
@@ -2319,6 +2336,7 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
                 if (strings.isAllASCII(slice)) {
                     if (this.content_type_allocated) {
                         bun.default_allocator.free(this.content_type);
+                        this.content_type_allocated = false;
                     }
                     this.content_type_was_set = true;
 
@@ -2460,7 +2478,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
     const file_sink = brk_sink: {
         if (Environment.isWindows) {
             const pathlike = store.data.file.pathlike;
-            const fd: bun.FileDescriptor = if (pathlike == .fd) pathlike.fd else brk: {
+            const fd: bun.FD = if (pathlike == .fd) pathlike.fd else brk: {
                 var file_path: bun.PathBuffer = undefined;
                 const path = pathlike.path.sliceZ(&file_path);
                 switch (bun.sys.open(
@@ -2662,6 +2680,7 @@ pub fn getWriter(
                     if (strings.isAllASCII(slice)) {
                         if (this.content_type_allocated) {
                             bun.default_allocator.free(this.content_type);
+                            this.content_type_allocated = false;
                         }
                         this.content_type_was_set = true;
 
@@ -2723,7 +2742,7 @@ pub fn getWriter(
     if (Environment.isWindows) {
         const pathlike = store.data.file.pathlike;
         const vm = globalThis.bunVM();
-        const fd: bun.FileDescriptor = if (pathlike == .fd) pathlike.fd else brk: {
+        const fd: bun.FD = if (pathlike == .fd) pathlike.fd else brk: {
             var file_path: bun.PathBuffer = undefined;
             switch (bun.sys.open(
                 pathlike.path.sliceZ(&file_path),
@@ -2831,6 +2850,12 @@ pub fn getSliceFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, relativeStart:
     var blob = this.dupe();
     blob.offset = offset;
     blob.size = len;
+
+    // dupe() deep-copies an allocated content_type; we're about to replace it,
+    // so release that copy first to avoid leaking it.
+    if (blob.content_type_allocated) {
+        bun.default_allocator.free(blob.content_type);
+    }
 
     // infer the content type if it was not specified
     if (content_type.len == 0 and this.content_type.len > 0 and !this.content_type_allocated) {
@@ -3513,27 +3538,19 @@ pub fn dupe(this: *const Blob) Blob {
 }
 
 pub fn dupeWithContentType(this: *const Blob, include_content_type: bool) Blob {
+    _ = include_content_type;
     if (this.store != null) this.store.?.ref();
     var duped = this.*;
     duped.setNotHeapAllocated();
-    if (duped.content_type_allocated and duped.isHeapAllocated() and !include_content_type) {
-
-        // for now, we just want to avoid a use-after-free here
-        if (jsc.VirtualMachine.get().mimeType(duped.content_type)) |mime| {
-            duped.content_type = mime.value;
-        } else {
-            // TODO: fix this
-            // this is a bug.
-            // it means whenever
-            duped.content_type = "";
-        }
-
-        duped.content_type_allocated = false;
-        duped.content_type_was_set = false;
-        if (this.content_type_was_set) {
-            duped.content_type_was_set = duped.content_type.len > 0;
-        }
-    } else if (duped.content_type_allocated and duped.isHeapAllocated() and include_content_type) {
+    // If the source's content_type is heap-allocated, the bitwise copy above aliases
+    // the same allocation with content_type_allocated == true. Take our own copy so
+    // that freeing one side does not leave the other with a dangling pointer.
+    //
+    // Historically the !include_content_type path tried to avoid this allocation by
+    // resolving to a static mime string and falling back to "" on a miss. That miss
+    // case drops user-supplied types with parameters (e.g. the multipart boundary for
+    // FormData bodies), so both paths now deep-copy and the parameter is ignored.
+    if (duped.content_type_allocated) {
         duped.content_type = bun.handleOom(bun.default_allocator.dupe(u8, this.content_type));
     }
     duped.name = duped.name.dupeRef();
@@ -3557,6 +3574,12 @@ pub fn deinit(this: *Blob) void {
     this.detach();
     this.name.deref();
     this.name = .dead;
+
+    if (this.content_type_allocated) {
+        bun.default_allocator.free(this.content_type);
+        this.content_type = "";
+        this.content_type_allocated = false;
+    }
 
     if (this.isHeapAllocated()) {
         bun.destroy(this);
@@ -3996,22 +4019,26 @@ fn fromJSWithoutDeferGC(
                 if (!fail_if_top_value_is_not_typed_array_like) {
                     if (top_value.as(Blob)) |blob| {
                         if (comptime move) {
+                            // Move the store without bumping its refcount, but take
+                            // independent ownership of name/content_type so the
+                            // source's eventual finalize() doesn't double-free them.
                             var _blob = blob.*;
                             _blob.setNotHeapAllocated();
+                            _blob.name = blob.name.dupeRef();
+                            if (blob.content_type_allocated) {
+                                _blob.content_type = bun.handleOom(bun.default_allocator.dupe(u8, blob.content_type));
+                            }
                             blob.transfer();
                             return _blob;
                         } else {
                             return blob.dupe();
                         }
                     } else if (top_value.as(jsc.API.BuildArtifact)) |build| {
-                        if (comptime move) {
-                            // I don't think this case should happen?
-                            var blob = build.blob;
-                            blob.transfer();
-                            return blob;
-                        } else {
-                            return build.blob.dupe();
-                        }
+                        // The previous "move" path here only nulled the store on a
+                        // local copy and left `build.blob` fully intact, so it was
+                        // never a real move. Share the store and deep-copy owned
+                        // buffers instead.
+                        return build.blob.dupe();
                     } else {
                         const sliced = try current.toSliceClone(global);
                         if (sliced.allocator.get()) |allocator| {
@@ -4803,7 +4830,7 @@ pub fn FileOpener(comptime This: type) type {
             Callback(this, this.opened_fd);
         }
 
-        const OpenCallback = *const fn (*This, bun.FileDescriptor) void;
+        const OpenCallback = *const fn (*This, bun.FD) void;
 
         pub fn getFd(this: *This, comptime Callback: OpenCallback) void {
             if (this.opened_fd != invalid_fd) {

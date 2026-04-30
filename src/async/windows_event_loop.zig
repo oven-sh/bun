@@ -113,7 +113,7 @@ pub const KeepAlive = struct {
 };
 
 pub const FilePoll = struct {
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     owner: Owner = undefined,
     flags: Flags.Set = Flags.Set{},
     next_to_free: ?*FilePoll = null,
@@ -151,11 +151,11 @@ pub const FilePoll = struct {
         // vm.event_loop_handle.?.active_handles -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
     }
 
-    pub fn init(vm: *jsc.VirtualMachine, fd: bun.FileDescriptor, flags: Flags.Struct, comptime Type: type, owner: *Type) *FilePoll {
+    pub fn init(vm: *jsc.VirtualMachine, fd: bun.FD, flags: Flags.Struct, comptime Type: type, owner: *Type) *FilePoll {
         return initWithOwner(vm, fd, flags, Owner.init(owner));
     }
 
-    pub fn initWithOwner(vm: *jsc.VirtualMachine, fd: bun.FileDescriptor, flags: Flags.Struct, owner: Owner) *FilePoll {
+    pub fn initWithOwner(vm: *jsc.VirtualMachine, fd: bun.FD, flags: Flags.Struct, owner: Owner) *FilePoll {
         var poll = vm.rareData().filePolls(vm).get();
         poll.fd = fd;
         poll.flags = Flags.Set.init(flags);
@@ -170,7 +170,7 @@ pub const FilePoll = struct {
         this.deinitWithVM(vm);
     }
 
-    pub inline fn fileDescriptor(this: *FilePoll) bun.FileDescriptor {
+    pub inline fn fileDescriptor(this: *FilePoll) bun.FD {
         return this.fd;
     }
 
@@ -246,14 +246,14 @@ pub const FilePoll = struct {
     /// Only intended to be used from EventLoop.Pollable
     pub fn deactivate(this: *FilePoll, loop: *Loop) void {
         bun.assert(this.flags.contains(.has_incremented_poll_count));
-        loop.active_handles -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
+        loop.subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count))));
         log("deactivate - {d}", .{loop.active_handles});
         this.flags.remove(.has_incremented_poll_count);
     }
 
     /// Only intended to be used from EventLoop.Pollable
     pub fn activate(this: *FilePoll, loop: *Loop) void {
-        loop.active_handles += @as(u32, @intFromBool(!this.flags.contains(.closed) and !this.flags.contains(.has_incremented_poll_count)));
+        loop.addActive(@as(u32, @intFromBool(!this.flags.contains(.closed) and !this.flags.contains(.has_incremented_poll_count))));
         log("activate - {d}", .{loop.active_handles});
         this.flags.insert(.has_incremented_poll_count);
     }
@@ -365,11 +365,11 @@ pub const Waker = struct {
         return .{ .loop = bun.uws.WindowsLoop.get() };
     }
 
-    pub fn getFd(_: *const Waker) bun.FileDescriptor {
+    pub fn getFd(_: *const Waker) bun.FD {
         @compileError("Waker.getFd is unsupported on Windows");
     }
 
-    pub fn initWithFileDescriptor(_: bun.FileDescriptor) Waker {
+    pub fn initWithFileDescriptor(_: bun.FD) Waker {
         @compileError("Waker.initWithFileDescriptor is unsupported on Windows");
     }
 
@@ -385,7 +385,7 @@ pub const Waker = struct {
 pub const Closer = struct {
     io_request: uv.fs_t,
 
-    pub fn close(fd: bun.FileDescriptor, loop: *uv.Loop) void {
+    pub fn close(fd: bun.FD, loop: *uv.Loop) void {
         const closer = bun.new(Closer, .{ .io_request = std.mem.zeroes(uv.fs_t) });
         // data is not overridden by libuv when calling uv_fs_close, its ok to set it here
         closer.io_request.data = closer;

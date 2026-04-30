@@ -49,7 +49,7 @@ void JSWrappingFunction::finishCreation(VM& vm, NativeExecutable* executable, un
 template<typename Visitor>
 void JSWrappingFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSWrappingFunction* thisObject = jsCast<JSWrappingFunction*>(cell);
+    JSWrappingFunction* thisObject = uncheckedDowncast<JSWrappingFunction>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
@@ -75,7 +75,7 @@ extern "C" JSC::EncodedJSValue Bun__JSWrappingFunction__getWrappedFunction(
     Zig::GlobalObject* globalObject)
 {
     JSC::JSValue thisValue = JSC::JSValue::decode(thisValueEncoded);
-    JSWrappingFunction* thisObject = jsDynamicCast<JSWrappingFunction*>(thisValue.asCell());
+    JSWrappingFunction* thisObject = dynamicDowncast<JSWrappingFunction>(thisValue.asCell());
     if (thisObject != nullptr) {
         JSC::JSObject* wrappedFn = thisObject->m_wrappedFn.get();
         return JSC::JSValue::encode(wrappedFn);

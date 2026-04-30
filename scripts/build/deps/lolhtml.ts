@@ -8,7 +8,7 @@
 
 import type { CargoBuild, Dependency } from "../source.ts";
 
-const LOLHTML_COMMIT = "e3aa54798602dd27250fafde1b5a66f080046252";
+const LOLHTML_COMMIT = "77127cd2b8545998756e8d64e36ee2313c4bb312";
 
 export const lolhtml: Dependency = {
   name: "lolhtml",
@@ -43,6 +43,23 @@ export const lolhtml: Dependency = {
     // (x64-windows doesn't need this — host IS target.)
     if (cfg.windows && cfg.arm64) {
       spec.rustTarget = "aarch64-pc-windows-msvc";
+    }
+
+    // Android: always a cross-compile. Static lib only, so cargo needs ar
+    // (any llvm-ar works) but no linker.
+    if (cfg.abi === "android") {
+      spec.rustTarget = cfg.arm64 ? "aarch64-linux-android" : "x86_64-linux-android";
+    }
+
+    // FreeBSD: x86_64 is Tier 2 (prebuilt std). aarch64 is Tier 3 — no
+    // prebuilt, so build std from source via -Zbuild-std (requires nightly
+    // + rust-src) whether cross-compiling or native. rustTarget is only
+    // set when crossTarget is set (native uses cargo's host triple).
+    if (cfg.freebsd) {
+      if (cfg.crossTarget !== undefined) {
+        spec.rustTarget = cfg.arm64 ? "aarch64-unknown-freebsd" : "x86_64-unknown-freebsd";
+      }
+      spec.buildStd = cfg.arm64;
     }
 
     return spec;

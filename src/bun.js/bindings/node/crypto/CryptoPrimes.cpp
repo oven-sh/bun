@@ -350,7 +350,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGeneratePrime, (JSC::JSGlobalObject * lexicalGlobalOb
             addValue = unsignedBigIntToBuffer(lexicalGlobalObject, scope, addValue, "options.add"_s);
             RETURN_IF_EXCEPTION(scope, {});
         }
-        auto* addView = jsDynamicCast<JSC::JSArrayBufferView*>(addValue);
+        auto* addView = dynamicDowncast<JSC::JSArrayBufferView>(addValue);
         if (!addView) {
             return ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "options.add"_s, "ArrayBuffer, Buffer, TypedArray, DataView, or bigint"_s, addValue);
         }
@@ -366,7 +366,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGeneratePrime, (JSC::JSGlobalObject * lexicalGlobalOb
             remValue = unsignedBigIntToBuffer(lexicalGlobalObject, scope, remValue, "options.rem"_s);
             RETURN_IF_EXCEPTION(scope, {});
         }
-        auto* remView = jsDynamicCast<JSC::JSArrayBufferView*>(remValue);
+        auto* remView = dynamicDowncast<JSC::JSArrayBufferView>(remValue);
         if (!remView) {
             return ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "options.rem"_s, "ArrayBuffer, Buffer, TypedArray, DataView, or bigint"_s, remValue);
         }
@@ -451,7 +451,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGeneratePrimeSync, (JSC::JSGlobalObject * lexicalGlob
             addValue = unsignedBigIntToBuffer(lexicalGlobalObject, scope, addValue, "options.add"_s);
             RETURN_IF_EXCEPTION(scope, {});
         }
-        auto* addView = jsDynamicCast<JSC::JSArrayBufferView*>(addValue);
+        auto* addView = dynamicDowncast<JSC::JSArrayBufferView>(addValue);
         if (!addView) {
             return ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "options.add"_s, "ArrayBuffer, Buffer, TypedArray, DataView, or bigint"_s, addValue);
         }
@@ -467,7 +467,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGeneratePrimeSync, (JSC::JSGlobalObject * lexicalGlob
             remValue = unsignedBigIntToBuffer(lexicalGlobalObject, scope, remValue, "options.rem"_s);
             RETURN_IF_EXCEPTION(scope, {});
         }
-        auto* remView = jsDynamicCast<JSC::JSArrayBufferView*>(remValue);
+        auto* remView = dynamicDowncast<JSC::JSArrayBufferView>(remValue);
         if (!remView) {
             return ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "options.rem"_s, "ArrayBuffer, Buffer, TypedArray, DataView, or bigint"_s, remValue);
         }

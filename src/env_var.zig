@@ -42,11 +42,20 @@ pub const BUN_DEBUG = New(kind.string, "BUN_DEBUG", .{});
 pub const BUN_DEBUG_ALL = New(kind.boolean, "BUN_DEBUG_ALL", .{});
 pub const BUN_DEBUG_CSS_ORDER = New(kind.boolean, "BUN_DEBUG_CSS_ORDER", .{ .default = false });
 pub const BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE = New(kind.boolean, "BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE", .{ .default = false });
+/// Testing hook for `bun build --compile`: force `hostUsesNixStoreInterpreter()`
+/// to return true without mutating `/etc/NIXOS` on the shared rootfs. Used by
+/// `test/regression/issue/29290.test.ts` to exercise the Nix-host branch.
+pub const BUN_DEBUG_FORCE_NIX_HOST = New(kind.boolean, "BUN_DEBUG_FORCE_NIX_HOST", .{ .default = false });
 pub const BUN_DEBUG_HASH_RANDOM_SEED = New(kind.unsigned, "BUN_DEBUG_HASH_RANDOM_SEED", .{ .deser = .{ .error_handling = .not_set } });
 pub const BUN_DEBUG_QUIET_LOGS = New(kind.boolean, "BUN_DEBUG_QUIET_LOGS", .{});
 pub const BUN_DEBUG_TEST_TEXT_LOCKFILE = New(kind.boolean, "BUN_DEBUG_TEST_TEXT_LOCKFILE", .{ .default = false });
 pub const BUN_DEV_SERVER_TEST_RUNNER = New(kind.string, "BUN_DEV_SERVER_TEST_RUNNER", .{});
 pub const BUN_ENABLE_CRASH_REPORTING = New(kind.boolean, "BUN_ENABLE_CRASH_REPORTING", .{});
+/// Opt-in: when truthy, Bun watches its original parent pid and exits as soon
+/// as that process dies (even if the parent was SIGKILLed and couldn't forward
+/// a signal), and on its own clean exit recursively SIGKILLs every descendant
+/// so nothing it spawned outlives it. See `src/ParentDeathWatchdog.zig`.
+pub const BUN_FEATURE_FLAG_DIE_WITH_PARENT = New(kind.boolean, "BUN_FEATURE_FLAG_DIE_WITH_PARENT", .{ .default = false });
 pub const BUN_FEATURE_FLAG_DUMP_CODE = New(kind.string, "BUN_FEATURE_FLAG_DUMP_CODE", .{});
 /// TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior
 /// so we'll keep it for now.
@@ -57,6 +66,11 @@ pub const BUN_INSPECT_PRELOAD = New(kind.string, "BUN_INSPECT_PRELOAD", .{});
 pub const BUN_INSTALL = New(kind.string, "BUN_INSTALL", .{});
 pub const BUN_INSTALL_BIN = New(kind.string, "BUN_INSTALL_BIN", .{});
 pub const BUN_INSTALL_GLOBAL_DIR = New(kind.string, "BUN_INSTALL_GLOBAL_DIR", .{});
+/// Minimum response `Content-Length` (in bytes) for `bun install` to
+/// stream a tarball directly into libarchive instead of buffering the
+/// whole body first. Smaller tarballs stay on the buffered path where
+/// the fixed overhead of the resumable state machine isn't worth it.
+pub const BUN_INSTALL_STREAMING_MIN_SIZE = New(kind.unsigned, "BUN_INSTALL_STREAMING_MIN_SIZE", .{ .default = 2 * 1024 * 1024 });
 pub const BUN_NEEDS_PROC_SELF_WORKAROUND = New(kind.boolean, "BUN_NEEDS_PROC_SELF_WORKAROUND", .{ .default = false });
 pub const BUN_OPTIONS = New(kind.string, "BUN_OPTIONS", .{});
 pub const BUN_POSTGRES_SOCKET_MONITOR = New(kind.string, "BUN_POSTGRES_SOCKET_MONITOR", .{});
@@ -155,12 +169,18 @@ pub const feature_flag = struct {
 
     pub const BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER", .{});
+    pub const BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_DNS_CACHE = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_DNS_CACHE", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX", .{});
+    /// Disable streaming tarball extraction in `bun install`. When disabled,
+    /// the whole .tgz is buffered in memory before being decompressed and
+    /// extracted. Useful for bisecting streaming-specific bugs.
+    pub const BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_IO_POOL = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IO_POOL", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_IPV4 = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IPV4", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_IPV6 = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IPV6", .{});
+    pub const BUN_FEATURE_FLAG_DISABLE_MEMFD = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_MEMFD", .{});
     /// The RedisClient supports auto-pipelining by default. This flag disables that behavior.
     pub const BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK", .{});
@@ -174,6 +194,15 @@ pub const feature_flag = struct {
     pub const BUN_DUMP_STATE_ON_CRASH = newFeatureFlag("BUN_DUMP_STATE_ON_CRASH", .{});
     pub const BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS = newFeatureFlag("BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS", .{});
     pub const BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE = newFeatureFlag("BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE", .{});
+    /// Offer "h2" in the fetch() TLS ALPN list and speak HTTP/2 when the
+    /// server selects it. Off by default while the client implementation
+    /// matures. `--experimental-http2-fetch` is the CLI equivalent.
+    pub const BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT = newFeatureFlag("BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT", .{});
+    /// Honor `Alt-Svc: h3` from fetch() responses: subsequent requests to the
+    /// same origin go over QUIC/HTTP-3 instead of TCP. Off by default while
+    /// the client implementation matures. `--experimental-http3-fetch` is the
+    /// CLI equivalent.
+    pub const BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT = newFeatureFlag("BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT", .{});
     pub const BUN_FEATURE_FLAG_FORCE_IO_POOL = newFeatureFlag("BUN_FEATURE_FLAG_FORCE_IO_POOL", .{});
     pub const BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS = newFeatureFlag("BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS", .{});
     pub const BUN_INSTRUMENTS = newFeatureFlag("BUN_INSTRUMENTS", .{});

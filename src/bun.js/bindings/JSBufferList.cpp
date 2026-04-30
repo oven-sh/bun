@@ -17,7 +17,7 @@ static JSC_DEFINE_CUSTOM_GETTER(JSBufferList_getLength, (JSC::JSGlobalObject * g
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSBufferList* bufferList = JSC::jsDynamicCast<JSBufferList*>(JSValue::decode(thisValue));
+    JSBufferList* bufferList = dynamicDowncast<JSBufferList>(JSValue::decode(thisValue));
     if (!bufferList) [[unlikely]] {
         JSC::throwTypeError(globalObject, scope, "not calling on JSBufferList"_s);
         return {};
@@ -42,7 +42,7 @@ JSC::JSValue JSBufferList::concat(JSC::VM& vm, JSC::JSGlobalObject* lexicalGloba
 
     auto iter = m_deque.begin();
     if (len == 1) {
-        auto array = JSC::jsDynamicCast<JSC::JSUint8Array*>(iter->get());
+        auto array = dynamicDowncast<JSC::JSUint8Array>(iter->get());
         if (!array) [[unlikely]] {
             return throwTypeError(lexicalGlobalObject, throwScope, "concat can only be called when all buffers are Uint8Array"_s);
         }
@@ -61,7 +61,7 @@ JSC::JSValue JSBufferList::concat(JSC::VM& vm, JSC::JSGlobalObject* lexicalGloba
 
     size_t i = 0;
     for (const auto end = m_deque.end(); iter != end; ++iter) {
-        auto array = JSC::jsDynamicCast<JSC::JSUint8Array*>(iter->get());
+        auto array = dynamicDowncast<JSC::JSUint8Array>(iter->get());
         if (!array) [[unlikely]] {
             return throwTypeError(lexicalGlobalObject, throwScope, "concat can only be called when all buffers are Uint8Array"_s);
         }
@@ -118,7 +118,7 @@ JSC::JSValue JSBufferList::_getString(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
         RELEASE_AND_RETURN(throwScope, JSC::jsEmptyString(vm));
     }
 
-    JSC::JSString* str = JSC::jsDynamicCast<JSC::JSString*>(m_deque.first().get());
+    JSC::JSString* str = dynamicDowncast<JSC::JSString>(m_deque.first().get());
     if (!str) [[unlikely]] {
         return throwTypeError(lexicalGlobalObject, throwScope, "_getString can only be called when all buffers are string"_s);
     }
@@ -138,7 +138,7 @@ JSC::JSValue JSBufferList::_getString(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
     JSRopeString::RopeBuilder<RecordOverflow> ropeBuilder(vm);
     while (m_deque.size() > 0) {
         auto& element = m_deque.first();
-        JSC::JSString* str = JSC::jsDynamicCast<JSC::JSString*>(element.get());
+        JSC::JSString* str = dynamicDowncast<JSC::JSString>(element.get());
         if (!str) [[unlikely]] {
             return throwTypeError(lexicalGlobalObject, throwScope, "_getString can only be called when all buffers are string"_s);
         }
@@ -170,7 +170,7 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
         RELEASE_AND_RETURN(throwScope, createEmptyBuffer(lexicalGlobalObject));
     }
 
-    JSC::JSUint8Array* array = JSC::jsDynamicCast<JSC::JSUint8Array*>(m_deque.first().get());
+    JSC::JSUint8Array* array = dynamicDowncast<JSC::JSUint8Array>(m_deque.first().get());
     if (!array) [[unlikely]] {
         return throwTypeError(lexicalGlobalObject, throwScope, "_getBuffer can only be called when all buffers are Uint8Array"_s);
     }
@@ -202,7 +202,7 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
     size_t offset = 0;
     while (m_deque.size() > 0) {
         auto& element = m_deque.first();
-        JSC::JSUint8Array* array = JSC::jsDynamicCast<JSC::JSUint8Array*>(element.get());
+        JSC::JSUint8Array* array = dynamicDowncast<JSC::JSUint8Array>(element.get());
         if (!array) [[unlikely]] {
             return throwTypeError(lexicalGlobalObject, throwScope, "_getBuffer can only be called when all buffers are Uint8Array"_s);
         }
@@ -253,7 +253,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBufferListPrototype, JSBufferListPrototype
 template<typename Visitor>
 void JSBufferList::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSBufferList* buffer = jsCast<JSBufferList*>(cell);
+    JSBufferList* buffer = uncheckedDowncast<JSBufferList>(cell);
     ASSERT_GC_OBJECT_INHERITS(buffer, info());
     Base::visitChildren(buffer, visitor);
     buffer->lock();

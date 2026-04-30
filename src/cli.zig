@@ -357,6 +357,28 @@ pub const Command = struct {
         test_filter_pattern: ?[]const u8 = null,
         test_filter_regex: ?*RegularExpression = null,
         max_concurrency: u32 = 20,
+        /// `bun test --isolate`: run each test file in a fresh `JSGlobalObject`
+        /// on the same JSC::VM, force-closing leaked handles between files.
+        isolate: bool = false,
+        /// `bun test --parallel[=N]`: run test files across N worker
+        /// processes. 0 means not requested. Implies `isolate` in workers.
+        parallel: u32 = 0,
+        /// `bun test --parallel-delay=MS`: how long the first worker must be
+        /// busy before spawning the rest. null = use the built-in default.
+        parallel_delay_ms: ?u32 = null,
+        /// Internal: this process is a `--parallel` worker. Files arrive over
+        /// fd 3, results are written back over fd 3; no discovery, no header.
+        test_worker: bool = false,
+        /// `bun test --changed[=<since>]`. When set, only test files whose
+        /// module graph reaches a file changed according to git are run.
+        /// null = flag not passed. "" = compare against uncommitted changes.
+        /// Otherwise the value is a git ref (commit, branch, tag) to diff
+        /// against.
+        changed: ?[]const u8 = null,
+        /// `bun test --shard=M/N`. When set, test files are sorted by path
+        /// and only every Nth file (starting from M-1) is run. index is
+        /// 1-based; both are validated at parse time so `1 <= index <= count`.
+        shard: ?struct { index: u32, count: u32 } = null,
 
         reporters: struct {
             dots: bool = false,
@@ -386,6 +408,8 @@ pub const Command = struct {
             eval_and_print: bool = false,
         } = .{},
         preconnect: []const []const u8 = &[_][]const u8{},
+        experimental_http2_fetch: bool = false,
+        experimental_http3_fetch: bool = false,
         dns_result_order: []const u8 = "verbatim",
         /// `--expose-gc` makes `globalThis.gc()` available. Added for Node
         /// compatibility.

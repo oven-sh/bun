@@ -46,6 +46,8 @@
 #include "JSDOMConvertBase.h"
 #include "ZigSourceProvider.h"
 #include "mimalloc.h"
+extern "C" char* mi_stats_get_json(size_t, char*);
+extern "C" char* mi_heap_dump_json(bool include_blocks, bool hash_addresses);
 
 #include <JavaScriptCore/ControlFlowProfiler.h>
 
@@ -149,7 +151,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDescribeArray, (JSGlobalObject * globalObject, 
     if (callFrame->argumentCount() < 1)
         return JSValue::encode(jsUndefined());
     VM& vm = globalObject->vm();
-    JSObject* object = jsDynamicCast<JSObject*>(callFrame->argument(0));
+    JSObject* object = dynamicDowncast<JSObject>(callFrame->argument(0));
     if (!object)
         return JSValue::encode(jsNontrivialString(vm, "<not object>"_s));
     return JSValue::encode(jsNontrivialString(
@@ -219,7 +221,7 @@ createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 
 JSC_DECLARE_HOST_FUNCTION(functionMemoryUsageStatistics);
 JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
-    (JSGlobalObject * globalObject, CallFrame*))
+    (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
 
     auto& vm = JSC::getVM(globalObject);
@@ -356,6 +358,34 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
 #endif
 #endif
 
+    mi_collect(false);
+    if (char* json = mi_stats_get_json(0, nullptr)) {
+        JSValue parsed = JSONParse(globalObject, String::fromUTF8(json));
+        mi_free(json);
+        object->putDirect(vm, Identifier::fromString(vm, "mimalloc"_s),
+            parsed.isEmpty() ? jsNull() : parsed);
+    }
+
+    // heapStats({ dump: true | "blocks" }) -> per-heap/per-page (and per-block) live snapshot.
+    JSValue arg0 = callFrame->argument(0);
+    if (arg0.isObject()) {
+        JSValue dump = arg0.getObject()->get(globalObject, Identifier::fromString(vm, "dump"_s));
+        if (dump.toBoolean(globalObject)) {
+            const bool includeBlocks = dump.isString() && dump.toWTFString(globalObject) == "blocks"_s;
+#if BUN_DEBUG
+            const bool hashAddresses = false;
+#else
+            const bool hashAddresses = true;
+#endif
+            if (char* json = mi_heap_dump_json(includeBlocks, hashAddresses)) {
+                JSValue parsed = JSONParse(globalObject, String::fromUTF8(json));
+                mi_free(json);
+                object->putDirect(vm, Identifier::fromString(vm, "mimallocDump"_s),
+                    parsed.isEmpty() ? jsNull() : parsed);
+            }
+        }
+    }
+
     return JSValue::encode(object);
 }
 
@@ -381,7 +411,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateMemoryFootprint,
 
     VM& vm = globalObject->vm();
     JSC::JSObject* object = JSC::constructEmptyObject(
-        vm, JSC::jsCast<Zig::GlobalObject*>(globalObject)->memoryFootprintStructure());
+        vm, uncheckedDowncast<Zig::GlobalObject>(globalObject)->memoryFootprintStructure());
 
     object->putDirectOffset(vm, 0, jsNumber(current_rss));
     object->putDirectOffset(vm, 1, jsNumber(peak_rss));
@@ -652,7 +682,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         return JSValue::encode(JSValue {});
     }
 
-    JSC::JSFunction* function = jsCast<JSC::JSFunction*>(callbackValue);
+    JSC::JSFunction* function = uncheckedDowncast<JSC::JSFunction>(callbackValue);
 
     if (sampleValue.isNumber()) {
         unsigned sampleInterval = sampleValue.toUInt32(globalObject);
@@ -714,7 +744,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         return JSValue::encode(reportFailure(vm));
     }
 
-    if (auto* promise = jsDynamicCast<JSPromise*>(returnValue)) {
+    if (auto* promise = dynamicDowncast<JSPromise>(returnValue)) {
         auto afterOngoingPromiseCapability = JSC::JSPromise::create(vm, globalObject->promiseStructure());
         RETURN_IF_EXCEPTION(throwScope, {});
 
@@ -776,7 +806,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
     (JSGlobalObject * lexicalGlobalObject,
         CallFrame* callFrame))
 {
-    auto* globalObject = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
@@ -832,9 +862,9 @@ JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject, Ca
 
     JSValue result;
 
-    if (auto* jsArrayBuffer = jsDynamicCast<JSArrayBuffer*>(value)) {
+    if (auto* jsArrayBuffer = dynamicDowncast<JSArrayBuffer>(value)) {
         result = SerializedScriptValue::fromArrayBuffer(*globalObject, globalObject, jsArrayBuffer->impl(), 0, jsArrayBuffer->impl()->byteLength());
-    } else if (auto* view = jsDynamicCast<JSArrayBufferView*>(value)) {
+    } else if (auto* view = dynamicDowncast<JSArrayBufferView>(value)) {
         auto arrayBuffer = view->possiblySharedImpl()->possiblySharedBuffer();
         result = SerializedScriptValue::fromArrayBuffer(*globalObject, globalObject, arrayBuffer.get(), view->byteOffset(), view->byteLength());
     } else {

@@ -661,6 +661,12 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (install_obj.get("globalStore")) |global_store_expr| {
+                        if (global_store_expr.asBool()) |global_store| {
+                            install.global_store = global_store;
+                        }
+                    }
+
                     if (install_obj.get("lockfile")) |lockfile_expr| {
                         if (lockfile_expr.get("print")) |lockfile| {
                             try this.expectString(lockfile);
@@ -878,6 +884,14 @@ pub const Bunfig = struct {
                             this.ctx.debug.run_in_bun = value;
                         } else {
                             try this.addError(bun_flag.loc, "Expected boolean");
+                        }
+                    }
+
+                    if (run_expr.get("dieWithParent")) |dwp| {
+                        if (dwp.asBool()) |value| {
+                            if (value) bun.ParentDeathWatchdog.enable();
+                        } else {
+                            try this.addError(dwp.loc, "Expected boolean");
                         }
                     }
                 }

@@ -94,7 +94,7 @@ pub const LifecycleScriptSubprocess = struct {
         this.handleExit(process.status);
     }
 
-    fn resetOutputFlags(output: *OutputReader, fd: bun.FileDescriptor) void {
+    fn resetOutputFlags(output: *OutputReader, fd: bun.FD) void {
         output.flags.nonblocking = true;
         output.flags.socket = true;
         output.flags.memfd = false;

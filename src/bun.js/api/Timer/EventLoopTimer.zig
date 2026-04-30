@@ -70,6 +70,7 @@ pub const Tag = enum {
     DateHeaderTimer,
     BunTest,
     EventLoopDelayMonitor,
+    CronJob,
 
     pub fn Type(comptime T: Tag) type {
         return switch (T) {
@@ -95,6 +96,7 @@ pub const Tag = enum {
             .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
             .BunTest => jsc.Jest.bun_test.BunTest,
             .EventLoopDelayMonitor => jsc.API.Timer.EventLoopDelayMonitor,
+            .CronJob => bun.api.cron.CronJob,
         };
     }
 
@@ -104,6 +106,7 @@ pub const Tag = enum {
             .BunTest, // for test timeouts
             .EventLoopDelayMonitor, // probably important
             .StatWatcherScheduler,
+            .CronJob, // calendar-anchored to real wall clock
             => false,
             else => true,
         };
@@ -190,6 +193,10 @@ pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) void {
         .EventLoopDelayMonitor => {
             const monitor = @as(*jsc.API.Timer.EventLoopDelayMonitor, @fieldParentPtr("event_loop_timer", self));
             monitor.onFire(vm, now);
+        },
+        .CronJob => {
+            const job = @as(*bun.api.cron.CronJob, @fieldParentPtr("event_loop_timer", self));
+            job.onTimerFire(vm);
         },
         inline else => |t| {
             if (@FieldType(t.Type(), "event_loop_timer") != Self) {

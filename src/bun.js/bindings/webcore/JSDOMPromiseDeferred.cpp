@@ -38,6 +38,7 @@
 #include <JavaScriptCore/JSONObject.h>
 #include <JavaScriptCore/JSPromiseConstructor.h>
 #include <JavaScriptCore/Strong.h>
+#include <wtf/Scope.h>
 #include "ErrorCode.h"
 #include "JavaScriptCore/ErrorInstance.h"
 
@@ -72,9 +73,12 @@ void DeferredPromise::callFunction(JSGlobalObject& lexicalGlobalObject, ResolveM
     //     return;
     // }
 
-    // FIXME: We could have error since any JS call can throw stack-overflow errors.
-    // https://bugs.webkit.org/show_bug.cgi?id=203402
     auto& vm = lexicalGlobalObject.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto handleExceptionOnExit = makeScopeExit([&] {
+        if (scope.exception()) [[unlikely]]
+            handleUncaughtException(scope, *uncheckedDowncast<JSDOMGlobalObject>(&lexicalGlobalObject));
+    });
     switch (mode) {
     case ResolveMode::Resolve:
         deferred()->resolve(&lexicalGlobalObject, vm, resolution);
@@ -229,6 +233,9 @@ void rejectPromiseWithExceptionIfAny(JSC::JSGlobalObject& lexicalGlobalObject, J
     if (!topExceptionScope.exception()) [[likely]]
         return;
 
+    if (globalObject.vm().hasPendingTerminationException())
+        return;
+
     JSValue error = topExceptionScope.exception()->value();
     (void)topExceptionScope.tryClearException();
 
@@ -265,6 +272,7 @@ void fulfillPromiseWithJSON(Ref<DeferredPromise>&& promise, const String& data)
 void fulfillPromiseWithArrayBuffer(Ref<DeferredPromise>&& promise, ArrayBuffer* arrayBuffer)
 {
     if (!arrayBuffer) {
+        JSC::JSLockHolder lock(promise->globalObject());
         promise->reject<IDLAny>(createOutOfMemoryError(promise->globalObject()));
         return;
     }

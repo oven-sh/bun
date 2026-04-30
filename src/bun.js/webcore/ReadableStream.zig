@@ -143,6 +143,16 @@ pub fn cancel(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
     this.done(globalThis);
 }
 
+/// Cancel the stream and forward `reason` verbatim to the underlying source's
+/// cancel algorithm (the spec's ReadableStreamCancel). Unlike `cancel()`,
+/// this does not synthesize a DOMException — fetch() uses it to surface
+/// `AbortSignal.reason` to the request body's cancel callback.
+pub fn cancelWithReason(this: *const ReadableStream, globalThis: *JSGlobalObject, reason: jsc.JSValue) void {
+    jsc.markBinding(@src());
+    ReadableStream__cancelWithReason(this.value, globalThis, reason);
+    this.done(globalThis);
+}
+
 pub fn abort(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
     jsc.markBinding(@src());
     // for now we are just calling cancel should be fine
@@ -210,6 +220,7 @@ extern fn ReadableStream__isLocked(possibleReadableStream: JSValue, globalObject
 extern fn ReadableStream__empty(*JSGlobalObject) jsc.JSValue;
 extern fn ReadableStream__used(*JSGlobalObject) jsc.JSValue;
 extern fn ReadableStream__cancel(stream: JSValue, *JSGlobalObject) void;
+extern fn ReadableStream__cancelWithReason(stream: JSValue, *JSGlobalObject, reason: JSValue) void;
 extern fn ReadableStream__abort(stream: JSValue, *JSGlobalObject) void;
 extern fn ReadableStream__detach(stream: JSValue, *JSGlobalObject) void;
 extern fn ReadableStream__fromBlob(
@@ -398,29 +409,6 @@ pub fn used(globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
     jsc.markBinding(@src());
     return bun.cpp.ReadableStream__used(globalThis);
 }
-
-pub const StreamTag = enum(usize) {
-    invalid = 0,
-    _,
-
-    pub fn init(filedes: bun.FileDescriptor) StreamTag {
-        var bytes = [8]u8{ 1, 0, 0, 0, 0, 0, 0, 0 };
-        const filedes_ = @as([8]u8, @bitCast(@as(usize, @as(u56, @truncate(@as(usize, @intCast(filedes)))))));
-        bytes[1..8].* = filedes_[0..7].*;
-
-        return @as(StreamTag, @enumFromInt(@as(u64, @bitCast(bytes))));
-    }
-
-    pub fn fd(this: StreamTag) bun.FileDescriptor {
-        var bytes = @as([8]u8, @bitCast(@intFromEnum(this)));
-        if (bytes[0] != 1) {
-            return bun.invalid_fd;
-        }
-        const out: u64 = 0;
-        @as([8]u8, @bitCast(out))[0..7].* = bytes[1..8].*;
-        return @as(bun.FileDescriptor, @intCast(out));
-    }
-};
 
 pub fn NewSource(
     comptime Context: type,

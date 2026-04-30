@@ -2283,6 +2283,20 @@ export async function getBuildMetadata(name) {
 }
 
 /**
+ * @param {string} name
+ * @param {string} value
+ * @returns {Promise<void>}
+ */
+export async function setBuildMetadata(name, value) {
+  if (isBuildkite) {
+    const { error } = await spawn(["buildkite-agent", "meta-data", "set", name, value]);
+    if (error) {
+      console.error(`Failed to set build meta-data '${name}':`, error);
+    }
+  }
+}
+
+/**
  * @typedef ConnectOptions
  * @property {string} hostname
  * @property {number} port
@@ -2745,30 +2759,21 @@ export function reportAnnotationToBuildKite({ context, label, content, style = "
       input: content,
       stdio: ["pipe", "ignore", "pipe"],
       encoding: "utf-8",
-      timeout: 5_000,
+      timeout: 30_000,
     },
   );
   if (status === 0) {
     return;
   }
-  if (attempt > 0) {
-    const cause = error ?? signal ?? `code ${status}`;
-    throw new Error(`Failed to create annotation: ${label}`, { cause });
+  const cause = error?.message || signal || (status == null ? "timed out" : `exit code ${status}`);
+  if (attempt === 0) {
+    console.error(`buildkite-agent annotate failed for '${label}' (${cause}), retrying...`);
+    return reportAnnotationToBuildKite({ context, label, content, style, priority, attempt: attempt + 1 });
   }
-  const errorContent = formatAnnotationToHtml({
-    title: "annotation error",
-    content: stderr || "",
-    source: "buildkite",
-    level: "error",
-  });
-  reportAnnotationToBuildKite({
-    context,
-    label: `${label}-error`,
-    content: errorContent,
-    style,
-    priority,
-    attempt: attempt + 1,
-  });
+  // Annotations are best-effort: log and move on rather than throwing, which
+  // would abort the test runner mid-suite over a cosmetic failure.
+  console.error(`buildkite-agent annotate failed for '${label}' after retry (${cause}), giving up`);
+  if (stderr) console.error(stderr);
 }
 
 /**
@@ -3056,9 +3061,11 @@ const emojiMap = {
   release: ["🏆", "trophy"],
   gear: ["⚙️", "gear"],
   clipboard: ["📋", "clipboard"],
+  package: ["📦", "package"],
   rocket: ["🚀", "rocket"],
   openbsd: ["🐡", "openbsd"],
   netbsd: ["🚩", "netbsd"],
+  freebsd: ["😈", "freebsd"],
 };
 
 /**

@@ -41,7 +41,7 @@ pub const UnixOrHost = union(enum) {
         host: []const u8,
         port: u16,
     },
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
 
     pub fn clone(this: UnixOrHost) UnixOrHost {
         switch (this) {
@@ -92,8 +92,14 @@ pub fn reload(this: *Listener, globalObject: *jsc.JSGlobalObject, callframe: *js
     };
 
     const handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.mode == .server);
+    // Preserve the live connection count across the struct assignment. `Handlers.fromJS`
+    // returns `active_connections = 0`, but existing accepted sockets each hold a +1 via
+    // `markActive`. Without this, closing any of them after reload would underflow the
+    // counter (panic in safe builds, wrap in release).
+    const active_connections = this.handlers.active_connections;
     this.handlers.deinit();
     this.handlers = handlers;
+    this.handlers.active_connections = active_connections;
 
     return .js_undefined;
 }
@@ -147,22 +153,31 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
             this.* = socket;
             // TODO: server_name is not supported on named pipes, I belive its , lets wait for
             // someone to ask for it
-            errdefer this.deinit();
 
-            this.listener = .{
-                // we need to add support for the backlog parameter on listen here we use the
-                // default value of nodejs
-                .namedPipe = WindowsNamedPipeListeningContext.listen(
-                    globalObject,
-                    pipe_name,
-                    511,
-                    ssl,
-                    this,
-                ) catch return globalObject.throwInvalidArguments(
-                    "Failed to listen at {s}",
-                    .{pipe_name},
-                ),
-            };
+            // On error, clean up everything `this` owns *except* `this.handlers`: the outer
+            // `errdefer handlers.deinit()` already unprotects those JSValues, and `this.handlers`
+            // is a by-value copy of the same struct, so calling `this.deinit()` here would
+            // unprotect the same callbacks a second time.
+            errdefer {
+                this.strong_data.deinit();
+                this.connection.deinit();
+                if (this.protos) |protos| bun.default_allocator.free(protos);
+                handlers.vm.allocator.destroy(this);
+            }
+
+            // we need to add support for the backlog parameter on listen here we use the
+            // default value of nodejs
+            const named_pipe = WindowsNamedPipeListeningContext.listen(
+                globalObject,
+                pipe_name,
+                511,
+                ssl,
+                this,
+            ) catch return globalObject.throwInvalidArguments(
+                "Failed to listen at {s}",
+                .{pipe_name},
+            );
+            this.listener = .{ .namedPipe = named_pipe };
 
             const this_value = this.toJS(globalObject);
             this.strong_self.set(globalObject, this_value);
@@ -339,7 +354,6 @@ pub fn onNamePipeCreated(comptime ssl: bool, listener: *Listener) *NewSocket(ssl
     var this_socket = Socket.new(.{
         .ref_count = .init(),
         .handlers = &listener.handlers,
-        .this_value = .zero,
         // here we start with a detached socket and attach it later after accept
         .socket = Socket.Socket.detached,
         .protos = listener.protos,
@@ -366,7 +380,6 @@ pub fn onCreate(comptime ssl: bool, socket: uws.NewSocketHandler(ssl)) void {
     const this_socket = bun.new(Socket, .{
         .ref_count = .init(),
         .handlers = &listener.handlers,
-        .this_value = .zero,
         .socket = socket,
         .protos = listener.protos,
         .flags = .{ .owned_protos = false },
@@ -430,6 +443,9 @@ fn doStop(this: *Listener, force_close: bool) void {
     if (this.listener == .none) return;
     const listener = this.listener;
 
+    // Unlink before any close path (including ctx.deinit below) can release the fd.
+    if (listener == .uws) this.unlinkUnixSocketPath();
+
     defer switch (listener) {
         .uws => |socket| socket.close(this.ssl),
         .namedPipe => |namedPipe| if (Environment.isWindows) namedPipe.closePipeAndDeinit(),
@@ -463,11 +479,26 @@ pub fn finalize(this: *Listener) callconv(.c) void {
     const listener = this.listener;
     this.listener = .none;
     switch (listener) {
-        .uws => |socket| socket.close(this.ssl),
+        .uws => |socket| {
+            this.unlinkUnixSocketPath();
+            socket.close(this.ssl);
+        },
         .namedPipe => |namedPipe| if (Environment.isWindows) namedPipe.closePipeAndDeinit(),
         .none => {},
     }
     this.deinit();
+}
+
+/// Match Node.js/libuv: unlink the unix socket file before closing the listening fd.
+/// Unlinking after close would race with another process creating a socket at the same path.
+fn unlinkUnixSocketPath(this: *const Listener) void {
+    if (this.connection != .unix) return;
+    const path = this.connection.unix;
+    // Abstract sockets (Linux) start with a NUL byte and have no filesystem entry.
+    if (path.len == 0 or path[0] == 0) return;
+    const buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(buf);
+    _ = bun.sys.unlink(bun.path.z(path, buf));
 }
 
 pub fn deinit(this: *Listener) void {
@@ -527,11 +558,7 @@ pub fn getPort(this: *Listener, _: *jsc.JSGlobalObject) JSValue {
 pub fn getFD(this: *Listener, _: *jsc.JSGlobalObject) JSValue {
     switch (this.listener) {
         .uws => |uws_listener| {
-            switch (this.ssl) {
-                inline else => |ssl| {
-                    return uws_listener.socket(ssl).fd().toJSWithoutMakingLibUVOwned();
-                },
-            }
+            return uws_listener.socket(false).fd().toJSWithoutMakingLibUVOwned();
         },
         else => return JSValue.jsNumber(-1),
     }
@@ -641,7 +668,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                         prev_handlers.deinit();
                         handlers.vm.allocator.destroy(prev_handlers);
                     }
-                    bun.assert(prev.this_value != .zero);
+                    bun.assert(prev.this_value.isNotEmpty());
                     prev.handlers = handlers_ptr;
                     bun.assert(prev.socket.socket == .detached);
                     // Free old resources before reassignment to prevent memory leaks
@@ -668,7 +695,6 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 } else TLSSocket.new(.{
                     .ref_count = .init(),
                     .handlers = handlers_ptr,
-                    .this_value = .zero,
                     .socket = TLSSocket.Socket.detached,
                     .connection = connection,
                     .protos = if (ssl) |s| s.takeProtos() else null,
@@ -698,7 +724,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 tls.socket = TLSSocket.Socket.fromNamedPipe(named_pipe);
             } else {
                 var tcp = if (prev_maybe_tcp) |prev| blk: {
-                    bun.assert(prev.this_value != .zero);
+                    bun.assert(prev.this_value.isNotEmpty());
                     if (prev.handlers) |prev_handlers| {
                         prev_handlers.deinit();
                         handlers.vm.allocator.destroy(prev_handlers);
@@ -713,7 +739,6 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 } else TCPSocket.new(.{
                     .ref_count = .init(),
                     .handlers = handlers_ptr,
-                    .this_value = .zero,
                     .socket = TCPSocket.Socket.detached,
                     .connection = null,
                     .protos = null,
@@ -788,7 +813,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 prev_maybe_tcp;
 
             const socket = if (maybe_previous) |prev| blk: {
-                bun.assert(prev.this_value != .zero);
+                bun.assert(prev.this_value.isNotEmpty());
                 if (prev.handlers) |prev_handlers| {
                     prev_handlers.deinit();
                     handlers.vm.allocator.destroy(prev_handlers);
@@ -819,7 +844,6 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
             } else bun.new(SocketType, .{
                 .ref_count = .init(),
                 .handlers = handlers_ptr,
-                .this_value = .zero,
                 .socket = SocketType.Socket.detached,
                 .connection = connection,
                 .protos = if (ssl) |s| s.takeProtos() else null,
@@ -980,6 +1004,13 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
             .vm = globalThis.bunVM(),
             .listener = listener,
         });
+        var pipe_initialized = false;
+        errdefer {
+            // Once the uv pipe handle is registered with the loop it must be closed via
+            // uv_close; before that point we can free the struct directly. `deinit()` also
+            // frees the SSL context if one was created.
+            if (pipe_initialized) this.closePipeAndDeinit() else this.deinit();
+        }
 
         if (ssl_config) |ssl_options| {
             bun.BoringSSL.load();
@@ -995,6 +1026,7 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
         if (initResult == .err) {
             return error.FailedToInitPipe;
         }
+        pipe_initialized = true;
         if (path[path.len - 1] == 0) {
             // is already null terminated
             const slice_z = path[0 .. path.len - 1 :0];

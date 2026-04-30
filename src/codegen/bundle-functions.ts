@@ -419,6 +419,7 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
     #include "config.h"
     #include "JSDOMGlobalObject.h"
     #include "WebCoreJSClientData.h"
+    #include "WebCoreJSBuiltins.h"
     #include <JavaScriptCore/JSObjectInlines.h>
     #include "BunBuiltinNames.h"
 
@@ -518,7 +519,17 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 
     template void JSBuiltinInternalFunctions::visit(AbstractSlotVisitor&);
     template void JSBuiltinInternalFunctions::visit(SlotVisitor&);
+    `;
 
+  for (const { basename, internal } of files) {
+    if (internal) {
+      bundledCPP += `    template void ${basename}BuiltinFunctions::visit(JSC::AbstractSlotVisitor&);
+    template void ${basename}BuiltinFunctions::visit(JSC::SlotVisitor&);
+`;
+    }
+  }
+
+  bundledCPP += `
     SUPPRESS_ASAN void JSBuiltinInternalFunctions::initialize(Zig::GlobalObject& globalObject)
     {
         UNUSED_PARAM(globalObject);
@@ -694,12 +705,13 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     #undef VISIT_FUNCTION
     }
 
-    template void ${basename}BuiltinFunctions::visit(JSC::AbstractSlotVisitor&);
-    template void ${basename}BuiltinFunctions::visit(JSC::SlotVisitor&);
+    extern template void ${basename}BuiltinFunctions::visit(JSC::AbstractSlotVisitor&);
+    extern template void ${basename}BuiltinFunctions::visit(JSC::SlotVisitor&);
         `;
     }
   }
   bundledHeader += `class JSBuiltinFunctions {
+        WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSBuiltinFunctions);
     public:
         explicit JSBuiltinFunctions(JSC::VM& vm, RefPtr<JSC::SourceProvider> provider, BunBuiltinNames &builtinNames);
         void exportNames();
@@ -725,6 +737,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     };
 
     class JSBuiltinInternalFunctions {
+        WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSBuiltinInternalFunctions);
     public:
         explicit JSBuiltinInternalFunctions(JSC::VM&);
 

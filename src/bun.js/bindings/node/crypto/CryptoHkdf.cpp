@@ -133,7 +133,7 @@ void HkdfJob::createAndSchedule(JSGlobalObject* globalObject, HkdfJobCtx&& ctx, 
 // similar to prepareSecretKey
 KeyObject prepareKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue key)
 {
-    if (JSKeyObject* keyObject = jsDynamicCast<JSKeyObject*>(key)) {
+    if (JSKeyObject* keyObject = dynamicDowncast<JSKeyObject>(key)) {
         // Node doesn't check for CryptoKeyType::Secret, so we don't either
         return keyObject->handle();
     }
@@ -147,7 +147,7 @@ KeyObject prepareKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue ke
 
         BufferEncodingType encoding = BufferEncodingType::utf8;
         JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, keyView, encoding));
-        auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
+        auto* view = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
 
         Vector<uint8_t> copy;
         copy.append(view->span());
@@ -155,13 +155,13 @@ KeyObject prepareKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue ke
     }
 
     // Handle ArrayBuffer types
-    if (auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(key)) {
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(key)) {
         Vector<uint8_t> copy;
         copy.append(view->span());
         return KeyObject::create(WTF::move(copy));
     }
 
-    if (auto* buf = jsDynamicCast<JSC::JSArrayBuffer*>(key)) {
+    if (auto* buf = dynamicDowncast<JSC::JSArrayBuffer>(key)) {
         auto* impl = buf->impl();
         Vector<uint8_t> copy;
         copy.append(impl->span());
@@ -181,9 +181,9 @@ void copyBufferOrString(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, 
         RETURN_IF_EXCEPTION(scope, );
         UTF8View utf8(view);
         buffer.append(utf8.span());
-    } else if (auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(value)) {
+    } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
         buffer.append(view->span());
-    } else if (auto* buf = jsDynamicCast<JSArrayBuffer*>(value)) {
+    } else if (auto* buf = dynamicDowncast<JSArrayBuffer>(value)) {
         buffer.append(buf->impl()->span());
     } else {
         ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, name, "string, ArrayBuffer, TypedArray, Buffer"_s, value);

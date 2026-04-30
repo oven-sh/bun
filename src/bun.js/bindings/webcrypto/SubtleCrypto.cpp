@@ -93,7 +93,7 @@ static ExceptionOr<CryptoAlgorithmIdentifier> toHashIdentifier(JSGlobalObject& s
 static bool isRSAESPKCSWebCryptoDeprecated(JSGlobalObject& state)
 {
     return true;
-    // auto& globalObject = *JSC::jsCast<JSDOMGlobalObject*>(&state);
+    // auto& globalObject = *uncheckedDowncast<JSDOMGlobalObject>(&state);
     // auto* context = globalObject.scriptExecutionContext();
     // return context && context->settingsValues().deprecateRSAESPKCSWebCryptoEnabled;
 }
@@ -101,7 +101,7 @@ static bool isRSAESPKCSWebCryptoDeprecated(JSGlobalObject& state)
 static bool isSafeCurvesEnabled(JSGlobalObject& state)
 {
     return true;
-    // auto& globalObject = *JSC::jsCast<JSDOMGlobalObject*>(&state);
+    // auto& globalObject = *uncheckedDowncast<JSDOMGlobalObject>(&state);
     // auto* context = globalObject.scriptExecutionContext();
     // return context && context->settingsValues().webCryptoSafeCurvesEnabled;
 }
@@ -204,6 +204,9 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::SHA_256:
         case CryptoAlgorithmIdentifier::SHA_384:
         case CryptoAlgorithmIdentifier::SHA_512:
+        case CryptoAlgorithmIdentifier::SHA3_256:
+        case CryptoAlgorithmIdentifier::SHA3_384:
+        case CryptoAlgorithmIdentifier::SHA3_512:
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         default:
@@ -274,8 +277,11 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::ECDH: {
             // Remove this hack once https://bugs.webkit.org/show_bug.cgi?id=169333 is fixed.
             JSValue nameValue = value.get()->get(&state, vm.propertyNames->name);
+            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             JSValue publicValue = value.get()->get(&state, Identifier::fromString(vm, "public"_s));
+            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             JSObject* newValue = constructEmptyObject(&state);
+            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             newValue->putDirect(vm, vm.propertyNames->name, nameValue);
             newValue->putDirect(vm, Identifier::fromString(vm, "publicKey"_s), publicValue);
 
@@ -287,8 +293,11 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::X25519: {
             // Remove this hack once https://bugs.webkit.org/show_bug.cgi?id=169333 is fixed.
             JSValue nameValue = value.get()->get(&state, vm.propertyNames->name);
+            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             JSValue publicValue = value.get()->get(&state, vm.propertyNames->publicKeyword);
+            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             JSObject* newValue = constructEmptyObject(&state);
+            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             newValue->putDirect(vm, vm.propertyNames->name, nameValue);
             newValue->putDirect(vm, Identifier::fromString(vm, "publicKey"_s), publicValue);
 
@@ -375,6 +384,9 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::SHA_256:
         case CryptoAlgorithmIdentifier::SHA_384:
         case CryptoAlgorithmIdentifier::SHA_512:
+        case CryptoAlgorithmIdentifier::SHA3_256:
+        case CryptoAlgorithmIdentifier::SHA3_384:
+        case CryptoAlgorithmIdentifier::SHA3_512:
             return Exception { NotSupportedError };
         case CryptoAlgorithmIdentifier::None:
             return Exception { NotSupportedError };
@@ -772,6 +784,7 @@ void SubtleCrypto::digest(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
     auto& vm = state.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTF::move(algorithmIdentifier), Operations::Digest);
+    RETURN_IF_EXCEPTION(scope, void());
     if (paramsOrException.hasException()) {
         promise->reject(paramsOrException.releaseException().code(), "Unrecognized algorithm name"_s);
         return;
@@ -806,6 +819,7 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
         promise->reject(paramsOrException.releaseException());
         return;
     }
+    RETURN_IF_EXCEPTION(scope, void());
     auto params = paramsOrException.releaseReturnValue();
 
     auto keyUsagesBitmap = toCryptoKeyUsageBitmap(keyUsages);
@@ -849,11 +863,14 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
 
 void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& baseKey, AlgorithmIdentifier&& derivedKeyType, bool extractable, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)
 {
+    auto& vm = state.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTF::move(algorithmIdentifier), Operations::DeriveBits);
     if (paramsOrException.hasException()) {
         promise->reject(paramsOrException.releaseException());
         return;
     }
+    RETURN_IF_EXCEPTION(scope, void());
     auto params = paramsOrException.releaseReturnValue();
 
     auto importParamsOrException = normalizeCryptoAlgorithmParameters(state, derivedKeyType, Operations::ImportKey);
@@ -861,6 +878,7 @@ void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& a
         promise->reject(importParamsOrException.releaseException());
         return;
     }
+    RETURN_IF_EXCEPTION(scope, void());
     auto importParams = importParamsOrException.releaseReturnValue();
 
     auto getLengthParamsOrException = normalizeCryptoAlgorithmParameters(state, derivedKeyType, Operations::GetKeyLength);
@@ -868,6 +886,7 @@ void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& a
         promise->reject(getLengthParamsOrException.releaseException());
         return;
     }
+    RETURN_IF_EXCEPTION(scope, void());
     auto getLengthParams = getLengthParamsOrException.releaseReturnValue();
 
     auto keyUsagesBitmap = toCryptoKeyUsageBitmap(keyUsages);
@@ -921,16 +940,19 @@ void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& a
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
-    algorithm->deriveBits(*params, baseKey, length, WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue);
+    RELEASE_AND_RETURN(scope, algorithm->deriveBits(*params, baseKey, length, WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
 }
 
 void SubtleCrypto::deriveBits(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& baseKey, unsigned length, Ref<DeferredPromise>&& promise)
 {
+    auto& vm = state.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTF::move(algorithmIdentifier), Operations::DeriveBits);
     if (paramsOrException.hasException()) {
         promise->reject(paramsOrException.releaseException());
         return;
     }
+    RETURN_IF_EXCEPTION(scope, void());
     auto params = paramsOrException.releaseReturnValue();
 
     if (params->identifier != baseKey.algorithmIdentifier()) {
@@ -957,7 +979,7 @@ void SubtleCrypto::deriveBits(JSC::JSGlobalObject& state, AlgorithmIdentifier&& 
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
-    algorithm->deriveBits(*params, baseKey, length, WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue);
+    RELEASE_AND_RETURN(scope, algorithm->deriveBits(*params, baseKey, length, WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
 }
 
 void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDataVariant&& keyDataVariant, AlgorithmIdentifier&& algorithmIdentifier, bool extractable, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)
@@ -969,6 +991,7 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
         promise->reject(paramsOrException.releaseException());
         return;
     }
+    RETURN_IF_EXCEPTION(scope, void());
     auto params = paramsOrException.releaseReturnValue();
 
     auto keyDataOrNull = toKeyData(format, WTF::move(keyDataVariant), promise);
@@ -1216,11 +1239,16 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                     JSLockHolder locker(vm);
                     auto jwkObject = JSONParse(&state, jwkString);
                     if (!jwkObject) {
+                        weakThis->m_pendingPromises.remove(index);
                         promise->reject(DataError, "WrappedKey cannot be converted to a JSON object"_s);
                         return;
                     }
                     auto jwk = convert<IDLDictionary<JsonWebKey>>(state, jwkObject);
-                    RETURN_IF_EXCEPTION(scope, void());
+                    if (scope.exception()) [[unlikely]] {
+                        weakThis->m_pendingPromises.remove(index);
+                        promise->reject(Exception { ExistingExceptionError });
+                        return;
+                    }
                     normalizeJsonWebKey(jwk);
 
                     keyData = jwk;

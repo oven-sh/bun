@@ -17,10 +17,16 @@
 // clang-format off
 #include "libusockets.h"
 #include "internal/internal.h"
+#include "quic.h"
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #ifndef WIN32
 #include <sys/ioctl.h>
+#endif
+#ifdef __linux__
+#include <netinet/in.h>
+#include <linux/errqueue.h>
 #endif
 
 #if __has_include("wtf/Platform.h")
@@ -35,8 +41,6 @@
 
 #if ASSERT_ENABLED
 extern const size_t Bun__lock__size;
-extern void __attribute((__noreturn__)) Bun__panic(const char* message, size_t length);
-#define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
 #endif
 
 extern void Bun__internal_ensureDateHeaderTimerIsEnabled(struct us_loop_t *loop);
@@ -89,6 +93,7 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
     free(loop->data.send_buf);
 
     us_timer_close(loop->data.sweep_timer, 0);
+    if (loop->data.quic_timer) us_timer_close(loop->data.quic_timer, 0);
     us_internal_async_close(loop->data.wakeup_async);
 }
 
@@ -111,6 +116,12 @@ void us_internal_loop_link(struct us_loop_t *loop, struct us_socket_context_t *c
 
 /* Unlink is called before free */
 void us_internal_loop_unlink(struct us_loop_t *loop, struct us_socket_context_t *context) {
+    /* If a timeout callback in us_internal_timer_sweep frees the current context,
+     * advance the sweep iterator before context->next is repointed into the closed
+     * list — otherwise the sweep walks into freed contexts and skips active ones. */
+    if (context == loop->data.iterator) {
+        loop->data.iterator = context->next;
+    }
     if (loop->data.head == context) {
         loop->data.head = context->next;
         if (loop->data.head) {
@@ -128,7 +139,8 @@ void us_internal_loop_unlink(struct us_loop_t *loop, struct us_socket_context_t 
 void us_internal_timer_sweep(struct us_loop_t *loop) {
     struct us_internal_loop_data_t *loop_data = &loop->data;
     /* For all socket contexts in this loop */
-    for (loop_data->iterator = loop_data->head; loop_data->iterator; loop_data->iterator = loop_data->iterator->next) {
+    loop_data->iterator = loop_data->head;
+    while (loop_data->iterator) {
 
         struct us_socket_context_t *context = loop_data->iterator;
 
@@ -177,6 +189,11 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
         /* We always store a 0 to context->iterator here since we are no longer iterating this context */
         next_context:
         context->iterator = 0;
+        /* Advance, accounting for us_internal_loop_unlink having moved the iterator
+         * if a timeout callback freed this context. */
+        if (loop_data->iterator == context) {
+            loop_data->iterator = context->next;
+        }
     }
 }
 
@@ -215,9 +232,9 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
 // Called when DNS resolution completes
 // Does not wake up the loop.
 void us_internal_dns_callback(struct us_connecting_socket_t *c, void* addrinfo_req) {
+    (void)addrinfo_req; /* already stored on c by us_socket_context_connect */
     struct us_loop_t *loop = c->context->loop;
     Bun__lock(&loop->data.mutex);
-    c->addrinfo_req = addrinfo_req;
     c->next = loop->data.dns_ready_head;
     loop->data.dns_ready_head = c;
     Bun__unlock(&loop->data.mutex);
@@ -298,12 +315,28 @@ void us_internal_loop_pre(struct us_loop_t *loop) {
     us_internal_handle_dns_results(loop);
     us_internal_handle_low_priority_sockets(loop);
     loop->data.pre_cb(loop);
+#ifdef LIBUS_USE_QUIC
+    /* Flush stream writes that JS tasks made before this tick (timers,
+     * immediates, promise resolutions outside on_read) so they go out
+     * before epoll blocks. loop_post handles what this iteration receives. */
+    if (loop->data.quic_head) us_quic_loop_process(loop);
+#endif
 }
 
 void us_internal_loop_post(struct us_loop_t *loop) {
     us_internal_handle_dns_results(loop);
-    us_internal_free_closed_sockets(loop);
-    us_internal_free_closed_contexts(loop);
+#ifdef LIBUS_USE_QUIC
+    if (loop->data.quic_head) us_quic_loop_process(loop);
+#endif
+    /* A poll callback may re-enter the loop (e.g. expect().toThrow() →
+     * waitForPromise → us_loop_run_bun_tick). The inner tick must not free
+     * closed sockets/contexts: the outer tick's dispatch is mid-iteration
+     * and may still hold a pointer to one (it reads s->flags right after
+     * on_data returns). Defer to the outermost tick's loop_post. */
+    if (loop->data.tick_depth <= 1) {
+        us_internal_free_closed_sockets(loop);
+        us_internal_free_closed_contexts(loop);
+    }
     loop->data.post_cb(loop);
 }
 
@@ -373,7 +406,17 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         if(s && s->flags.adopted && s->prev) {
                             s = s->prev;
                         }
-                        /* Exit accept loop if listen socket was closed in on_open handler */
+
+                        /* When the kernel deferred the accept until data arrived (TCP_DEFER_ACCEPT
+                         * on Linux, SO_ACCEPTFILTER on FreeBSD), the request/ClientHello is already
+                         * in the buffer. Dispatch readable now instead of returning to epoll just to
+                         * learn what we already know. The POLL_TYPE_SOCKET handler tolerates
+                         * EWOULDBLOCK for the rare case where the defer timed out with no data. */
+                        if (listen_socket->deferred_accept && s && !us_socket_is_closed(0, s)) {
+                            us_internal_dispatch_ready_poll((struct us_poll_t *) s, 0, 0, LIBUS_SOCKET_READABLE);
+                        }
+
+                        /* Exit accept loop if listen socket was closed in on_open or the request handler */
                         if (us_socket_is_closed(0, &listen_socket->s)) {
                             break;
                         }
@@ -578,7 +621,46 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 break;
             }
 
-            if (events & LIBUS_SOCKET_READABLE) {
+#if defined(__linux__)
+            /* On Linux with IP_RECVERR, EPOLLERR fires when an ICMP error
+             * (port unreachable, host unreachable, TTL exceeded, ...) is
+             * queued on the socket's error queue. For an *unconnected* UDP
+             * socket regular recvmmsg does NOT dequeue these — only
+             * recvmsg(MSG_ERRQUEUE) does — so EPOLLERR stays level-triggered
+             * until we drain it explicitly. Do that here, surfacing each
+             * errno via on_recv_error; the socket stays open. On other
+             * platforms (kqueue EV_ERROR, Windows) an error event is fatal —
+             * preserve close-on-error there. */
+            int recv_error_surfaced = 0;
+            int recv_would_block_only = 0;
+            if (error) {
+                struct msghdr eh; char ectrl[512]; char ebuf[1];
+                struct iovec eiov = { ebuf, sizeof(ebuf) };
+                while (!u->closed) {
+                    memset(&eh, 0, sizeof(eh));
+                    eh.msg_iov = &eiov; eh.msg_iovlen = 1;
+                    eh.msg_control = ectrl; eh.msg_controllen = sizeof(ectrl);
+                    if (recvmsg(us_poll_fd(p), &eh, MSG_ERRQUEUE) < 0) break;
+                    recv_error_surfaced = 1;
+                    if (u->on_recv_error) {
+                        /* The queued ICMP error is in sock_extended_err,
+                         * not errno. */
+                        int ee = 0;
+                        for (struct cmsghdr *cm = CMSG_FIRSTHDR(&eh); cm; cm = CMSG_NXTHDR(&eh, cm)) {
+                            if ((cm->cmsg_level == IPPROTO_IP   && cm->cmsg_type == IP_RECVERR) ||
+                                (cm->cmsg_level == IPPROTO_IPV6 && cm->cmsg_type == IPV6_RECVERR)) {
+                                ee = ((struct sock_extended_err *) CMSG_DATA(cm))->ee_errno;
+                                break;
+                            }
+                        }
+                        u->on_recv_error(u, ee ? ee : ECONNREFUSED);
+                    }
+                }
+            }
+#endif
+
+            if ((events & LIBUS_SOCKET_READABLE) && !u->closed) {
+
                 do {
                     struct udp_recvbuf recvbuf;
                     bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
@@ -587,10 +669,23 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         u->on_data(u, &recvbuf, npackets);
                     } else {
                         if (npackets == LIBUS_SOCKET_ERROR) {
-                            // If the error was not EAGAIN, mark the error
                             if (!bsd_would_block()) {
+#if defined(__linux__)
+                                int recv_err = errno;
+                                recv_error_surfaced = 1;
+                                if (u->on_recv_error) {
+                                    u->on_recv_error(u, recv_err);
+                                }
+#else
+                                /* non-Linux: fall through and close below */
                                 error = 1;
+#endif
                             }
+#if defined(__linux__)
+                            else {
+                                recv_would_block_only = 1;
+                            }
+#endif
                         } else {
                             // 0 messages received, we are done
                             // this case can happen if either:
@@ -603,19 +698,35 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 } while (!u->closed);
             }
 
-            if (events & LIBUS_SOCKET_WRITABLE && !error && !u->closed) {
+            if (events & LIBUS_SOCKET_WRITABLE && !u->closed) {
+                /* Clear WRITABLE before on_drain so a callback that re-arms it
+                 * (e.g. QUIC packets_out hitting EAGAIN) keeps the re-arm. We
+                 * still default to one-shot drain semantics for callers that
+                 * don't touch the poll mask. Not gated on !error: a queued
+                 * ICMP error must not leave WRITABLE armed (level-triggered
+                 * EPOLLOUT + EPOLLERR would spin the loop). */
+                us_poll_change(&u->p, u->loop, us_poll_events(&u->p) & LIBUS_SOCKET_READABLE);
                 u->on_drain(u);
                 if (u->closed) {
                     break;
                 }
-                // We only poll for writable after a read has failed, and only send one drain notification.
-                // Otherwise we would receive a writable event on every tick of the event loop.
-                us_poll_change(&u->p, u->loop, us_poll_events(&u->p) & LIBUS_SOCKET_READABLE);
             }
 
+#if defined(__linux__)
+            /* Only close on EPOLLERR if we didn't surface the real errno
+             * via recvmmsg + on_recv_error above AND recv wasn't just
+             * EAGAIN (which means the error queue is already drained,
+             * leaving a residual EPOLLERR). Otherwise the socket stays
+             * open so the user can keep sending/receiving after a
+             * transient ICMP error. */
+            if (error && !recv_error_surfaced && !recv_would_block_only && !u->closed) {
+                us_udp_socket_close(u);
+            }
+#else
             if (error && !u->closed) {
                 us_udp_socket_close(u);
             }
+#endif
             break;
         }
     }

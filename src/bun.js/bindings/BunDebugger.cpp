@@ -6,6 +6,7 @@
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectDebugger.h>
 #include <JavaScriptCore/Debugger.h>
+#include <wtf/Condition.h>
 #include "ScriptExecutionContext.h"
 #include "debug-helpers.h"
 #include "BunInjectedScriptHost.h"
@@ -28,6 +29,22 @@ class BunInspectorConnection;
 static WebCore::ScriptExecutionContext* debuggerScriptExecutionContext = nullptr;
 static WTF::Lock inspectorConnectionsLock = WTF::Lock();
 static WTF::UncheckedKeyHashMap<ScriptExecutionContextIdentifier, Vector<BunInspectorConnection*, 8>>* inspectorConnections = nullptr;
+
+// When the inspected JS thread is paused at a breakpoint (inside runWhilePaused),
+// it waits on this condition for the debugger thread to deliver new messages or
+// for a connection status change. This replaces a busy spin loop that would pin
+// one core at 100% CPU while paused. Wrapped in a function-local static so it
+// doesn't add a static initializer to the binary.
+struct PausedWait {
+    WTF::Lock lock;
+    WTF::Condition condition;
+};
+
+static PausedWait& pausedWait()
+{
+    static PausedWait instance;
+    return instance;
+}
 
 static bool waitingForConnection = false;
 extern "C" void Debugger__didConnect();
@@ -144,8 +161,7 @@ public:
         }
         }
 
-        if (this->jsWaitForMessageFromInspectorLock.isLocked())
-            this->jsWaitForMessageFromInspectorLock.unlockFairly();
+        notifyPausedThread();
 
         ScriptExecutionContext::ensureOnContextThread(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
             switch (connection->status) {
@@ -162,8 +178,7 @@ public:
 
     void disconnect()
     {
-        if (jsWaitForMessageFromInspectorLock.isLocked())
-            jsWaitForMessageFromInspectorLock.unlockFairly();
+        notifyPausedThread();
 
         switch (this->status) {
         case ConnectionStatus::Disconnected: {
@@ -225,39 +240,73 @@ public:
             }
         }
 
-        // for (auto* connection : connections) {
-        //     if (connection->status == ConnectionStatus::Connected) {
-        //         connection->jsWaitForMessageFromInspectorLock.lock();
-        //     }
-        // }
-
-        if (connections.size() == 1) {
-            while (!isDoneProcessingEvents) {
-                auto* connection = connections[0];
-                if (connection->status == ConnectionStatus::Disconnected || connection->status == ConnectionStatus::Disconnecting) {
-                    if (global->debugger() && global->debugger()->isPaused()) {
-                        global->debugger()->continueProgram();
-                    }
-                    break;
+        while (!isDoneProcessingEvents) {
+            size_t closedCount = 0;
+            for (auto* connection : connections) {
+                ConnectionStatus status = connection->status.load();
+                if (status == ConnectionStatus::Disconnected || status == ConnectionStatus::Disconnecting) {
+                    closedCount++;
+                    continue;
                 }
                 connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global, true);
+                if (isDoneProcessingEvents)
+                    break;
             }
-        } else {
-            while (!isDoneProcessingEvents) {
-                size_t closedCount = 0;
-                for (auto* connection : connections) {
-                    closedCount += connection->status == ConnectionStatus::Disconnected || connection->status == ConnectionStatus::Disconnecting;
-                    connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global, true);
-                    if (isDoneProcessingEvents)
-                        break;
-                }
 
-                if (closedCount == connections.size() && global->debugger() && !isDoneProcessingEvents) {
+            if (isDoneProcessingEvents)
+                break;
+
+            if (closedCount == connections.size()) {
+                if (global->debugger() && global->debugger()->isPaused()) {
                     global->debugger()->continueProgram();
-                    continue;
+                }
+                break;
+            }
+
+            // Block until the debugger thread delivers a new message or a
+            // connection disconnects. Use a timeout as a safety net so that a
+            // missed wakeup cannot leave the process stuck forever; with no
+            // messages we'll simply re-check once per second instead of
+            // spinning at 100% CPU.
+            {
+                auto& wait = pausedWait();
+                Locker<Lock> waitLocker(wait.lock);
+                if (!isDoneProcessingEvents && !anyConnectionHasPendingWork(connections, closedCount)) {
+                    wait.condition.waitFor(wait.lock, Seconds(1));
                 }
             }
         }
+    }
+
+    static bool anyConnectionHasPendingWork(const Vector<BunInspectorConnection*, 8>& connections, size_t previousClosedCount)
+    {
+        size_t closedCount = 0;
+        for (auto* connection : connections) {
+            ConnectionStatus status = connection->status.load();
+            if (status == ConnectionStatus::Disconnected || status == ConnectionStatus::Disconnecting) {
+                closedCount++;
+                continue;
+            }
+
+            Locker<Lock> locker(connection->jsThreadMessagesLock);
+            if (!connection->jsThreadMessages.isEmpty())
+                return true;
+        }
+        // A connection that was already counted as closed by the caller is
+        // not new work and must not keep us from sleeping (otherwise one
+        // closed connection among several would cause us to spin). Only
+        // treat a *change* in the closed count as pending work so the outer
+        // loop re-evaluates whether every connection is gone.
+        return closedCount != previousClosedCount;
+    }
+
+    // Wake the inspected thread if it is blocked inside runWhilePaused.
+    // Safe to call from any thread; cheap when nobody is waiting.
+    static void notifyPausedThread()
+    {
+        auto& wait = pausedWait();
+        Locker<Lock> locker(wait.lock);
+        wait.condition.notifyAll();
     }
 
     void receiveMessagesOnInspectorThread(ScriptExecutionContext& context, Zig::GlobalObject* globalObject, bool connectIfNeeded)
@@ -310,7 +359,7 @@ public:
             this->debuggerThreadMessages.swap(messages);
         }
 
-        JSFunction* onMessageFn = jsCast<JSFunction*>(jsBunDebuggerOnMessageFunction.get());
+        JSFunction* onMessageFn = uncheckedDowncast<JSFunction>(jsBunDebuggerOnMessageFunction.get());
         MarkedArgumentBuffer arguments;
         arguments.ensureCapacity(messages.size());
         auto& vm = debuggerGlobalObject->vm();
@@ -345,9 +394,9 @@ public:
             jsThreadMessages.appendVector(inputMessages);
         }
 
-        if (this->jsWaitForMessageFromInspectorLock.isLocked()) {
-            this->jsWaitForMessageFromInspectorLock.unlock();
-        } else if (this->jsThreadMessageScheduledCount++ == 0) {
+        notifyPausedThread();
+
+        if (this->jsThreadMessageScheduledCount++ == 0) {
             ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
                 connection->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()), true);
             });
@@ -361,9 +410,9 @@ public:
             jsThreadMessages.append(inputMessage);
         }
 
-        if (this->jsWaitForMessageFromInspectorLock.isLocked()) {
-            this->jsWaitForMessageFromInspectorLock.unlock();
-        } else if (this->jsThreadMessageScheduledCount++ == 0) {
+        notifyPausedThread();
+
+        if (this->jsThreadMessageScheduledCount++ == 0) {
             ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
                 connection->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()), true);
             });
@@ -382,7 +431,6 @@ public:
     ScriptExecutionContextIdentifier scriptExecutionContextIdentifier;
     JSC::Strong<JSC::Unknown> jsBunDebuggerOnMessageFunction {};
 
-    WTF::Lock jsWaitForMessageFromInspectorLock;
     std::atomic<ConnectionStatus> status = ConnectionStatus::Pending;
 
     bool unrefOnDisconnect = false;
@@ -446,7 +494,7 @@ private:
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSend, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto* jsConnection = jsDynamicCast<JSBunInspectorConnection*>(callFrame->thisValue());
+    auto* jsConnection = dynamicDowncast<JSBunInspectorConnection>(callFrame->thisValue());
     auto message = callFrame->uncheckedArgument(0);
 
     if (!jsConnection)
@@ -455,7 +503,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSend, (JSC::JSGlobalObject * globalObject, JS
     if (message.isString()) {
         jsConnection->connection()->sendMessageToInspectorFromDebuggerThread(message.toWTFString(globalObject).isolatedCopy());
     } else if (message.isCell()) {
-        auto* array = jsCast<JSArray*>(message.asCell());
+        auto* array = uncheckedDowncast<JSArray>(message.asCell());
         Vector<WTF::String, 12> messages;
         JSC::forEachInArrayLike(globalObject, array, [&](JSC::JSValue value) -> bool {
             messages.append(value.toWTFString(globalObject).isolatedCopy());
@@ -469,7 +517,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSend, (JSC::JSGlobalObject * globalObject, JS
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionDisconnect, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto* jsConnection = jsDynamicCast<JSBunInspectorConnection*>(callFrame->thisValue());
+    auto* jsConnection = dynamicDowncast<JSBunInspectorConnection>(callFrame->thisValue());
     if (!jsConnection)
         return JSValue::encode(jsUndefined());
 
@@ -478,8 +526,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDisconnect, (JSC::JSGlobalObject * globalObje
     if (connection.status == ConnectionStatus::Connected || connection.status == ConnectionStatus::Pending) {
         connection.status = ConnectionStatus::Disconnecting;
         connection.disconnect();
-        if (connection.jsWaitForMessageFromInspectorLock.isLocked())
-            connection.jsWaitForMessageFromInspectorLock.unlockFairly();
     }
 
     return JSValue::encode(jsUndefined());
@@ -544,13 +590,13 @@ extern "C" void BunDebugger__willHotReload()
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto* debuggerGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject);
+    auto* debuggerGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject);
     if (!debuggerGlobalObject)
         return JSValue::encode(jsUndefined());
 
     ScriptExecutionContext* targetContext = ScriptExecutionContext::getScriptExecutionContext(static_cast<ScriptExecutionContextIdentifier>(callFrame->argument(0).toUInt32(globalObject)));
     bool shouldRef = !callFrame->argument(1).toBoolean(globalObject);
-    JSFunction* onMessageFn = jsCast<JSFunction*>(callFrame->argument(2).toObject(globalObject));
+    JSFunction* onMessageFn = uncheckedDowncast<JSFunction>(callFrame->argument(2).toObject(globalObject));
 
     if (!targetContext || !onMessageFn)
         return JSValue::encode(jsUndefined());
@@ -581,7 +627,7 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue defaultValue = debuggerGlobalObject->internalModuleRegistry()->requireId(debuggerGlobalObject, vm, InternalModuleRegistry::Field::InternalDebugger);
     scope.assertNoException();
-    JSFunction* debuggerDefaultFn = jsCast<JSFunction*>(defaultValue.asCell());
+    JSFunction* debuggerDefaultFn = uncheckedDowncast<JSFunction>(defaultValue.asCell());
 
     MarkedArgumentBuffer arguments;
 

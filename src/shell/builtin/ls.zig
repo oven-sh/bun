@@ -219,7 +219,7 @@ pub const ShellLsTask = struct {
     owned_string: bool,
     task_count: *std.atomic.Value(usize),
 
-    cwd: bun.FileDescriptor,
+    cwd: bun.FD,
     path: [:0]const u8 = &[0:0]u8{},
     output: std.array_list.Managed(u8),
     is_absolute: bool = false,
@@ -241,7 +241,7 @@ pub const ShellLsTask = struct {
         ls: *Ls,
         opts: Opts,
         task_count: *std.atomic.Value(usize),
-        cwd: bun.FileDescriptor,
+        cwd: bun.FD,
         path: [:0]const u8,
         owned_string: bool,
         event_loop: jsc.EventLoopHandle,
@@ -375,7 +375,7 @@ pub const ShellLsTask = struct {
     }
 
     // TODO more complex output like multi-column
-    fn addEntry(this: *@This(), name: [:0]const u8, dir_fd: bun.FileDescriptor) void {
+    fn addEntry(this: *@This(), name: [:0]const u8, dir_fd: bun.FD) void {
         const skip = this.shouldSkipEntry(name);
         debug("Entry: (skip={}) {s} :: {s}", .{ skip, this.path, name });
         if (skip) return;
@@ -389,7 +389,7 @@ pub const ShellLsTask = struct {
         }
     }
 
-    fn addEntryLong(this: *@This(), name: [:0]const u8, dir_fd: bun.FileDescriptor) void {
+    fn addEntryLong(this: *@This(), name: [:0]const u8, dir_fd: bun.FD) void {
         // Use lstatat to not follow symlinks (so symlinks show as 'l' type)
         const stat_result = Syscall.lstatat(dir_fd, name);
         const stat = switch (stat_result) {
@@ -531,7 +531,7 @@ pub const ShellLsTask = struct {
         return buf;
     }
 
-    fn addDotEntriesIfNeeded(this: *@This(), dir_fd: bun.FileDescriptor) void {
+    fn addDotEntriesIfNeeded(this: *@This(), dir_fd: bun.FD) void {
         // `.addEntry()` already checks will check if we can add "." and ".." to
         // the result
         this.addEntry(".", dir_fd);

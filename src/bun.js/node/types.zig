@@ -36,8 +36,14 @@ pub const BlobOrStringOrBuffer = union(enum) {
             .string_or_buffer => |*sob| {
                 sob.deinitAndUnprotect();
             },
-            .blob => |*blob| {
-                blob.deinit();
+            .blob => |blob| {
+                // `.blob` is populated via a raw bitwise copy of a live JS Blob
+                // (see fromJSMaybeFileMaybeAsync / fromJSWithEncodingValueAllowRequestResponse),
+                // so it does not own `content_type` or `name`. Only release the
+                // store reference, matching `deinit()` above.
+                if (blob.store) |store| {
+                    store.deref();
+                }
             },
         }
     }
@@ -895,7 +901,7 @@ pub fn modeFromJS(ctx: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!?Mod
 }
 
 pub const PathOrFileDescriptor = union(Tag) {
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     path: PathLike,
 
     pub const Tag = enum { fd, path };

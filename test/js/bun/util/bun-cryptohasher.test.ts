@@ -29,6 +29,12 @@ describe("HMAC", () => {
     "sha224": "d34c3a2647d4f82a4e6baeaa7d94379eafd931e0c16cbc44b4ba4d1e",
     "sha512-224": "af398c7f21f58e1377580227a89590d3ab8be52b31182fad9ec4d667",
     "sha512-256": "0ed15b2750a2a7281e96af006ab79e82ed54a7a2081bdb49e70a70d8c6bfeff0",
+    "sha3-224": "3dd0595758af01c6a9d662326acc3bc0c7e49b94573f74f800b6c114",
+    "sha3-256": "5b246f6c8b41fbd23b7aa3a73c0c93c6a35d4973bc727b24ad65f538d51ff3b6",
+    "sha3-384": "f0af5d4479dc409e11c6e23014893c42a51fbd3435c93452f6154a87128174e2492a6b31994b1436ae681b3f1d838613",
+    "sha3-512":
+      "b15ed8373f1b493ccd417a7591745fdefbb4aa7b85c6937284de678e1a7b73b31e4da07561d358fefa30c6b1cf1a4b19a4c0d2f4f6e90ddfadc3a12367cb1a3c",
+    "ripemd160": "5291464ec22d15e61190b00b81b87c1a9dcb966f",
   };
   for (let key of ["key", Buffer.from("key"), Buffer.from("key").buffer]) {
     test.each(Object.entries(hashes))("%s (key: " + key.constructor.name + ")", (algorithm, expected) => {
@@ -58,15 +64,7 @@ describe("HMAC", () => {
     });
   }
 
-  const unsupported = [
-    ["sha3-224"],
-    ["sha3-256"],
-    ["sha3-384"],
-    ["sha3-512"],
-    ["shake128"],
-    ["shake256"],
-    ["ripemd160"],
-  ] as const;
+  const unsupported = [["shake128"], ["shake256"]] as const;
   test.each(unsupported)("%s is not supported", algorithm => {
     expect(() => new Bun.CryptoHasher(algorithm, "key")).toThrow();
     expect(() => new Bun.CryptoHasher(algorithm)).not.toThrow();

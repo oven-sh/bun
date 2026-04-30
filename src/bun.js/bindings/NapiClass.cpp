@@ -7,7 +7,7 @@ namespace Zig {
 template<typename Visitor>
 void NapiClass::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    NapiClass* thisObject = jsCast<NapiClass*>(cell);
+    NapiClass* thisObject = uncheckedDowncast<NapiClass>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 }
@@ -20,10 +20,10 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
     JSC::VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* constructorTarget = asObject(callFrame->jsCallee());
-    NapiClass* napi = jsDynamicCast<NapiClass*>(constructorTarget);
+    NapiClass* napi = dynamicDowncast<NapiClass>(constructorTarget);
     while (!napi && constructorTarget) {
         constructorTarget = constructorTarget->getPrototypeDirect().getObject();
-        napi = jsDynamicCast<NapiClass*>(constructorTarget);
+        napi = dynamicDowncast<NapiClass>(constructorTarget);
     }
 
     if (!napi) [[unlikely]] {
@@ -37,7 +37,7 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
         // Use ::get instead of ::getIfPropertyExists here so that DontEnum is ignored.
         auto prototypeValue = napi->get(globalObject, vm.propertyNames->prototype);
         RETURN_IF_EXCEPTION(scope, {});
-        NapiPrototype* prototype = JSC::jsDynamicCast<NapiPrototype*>(prototypeValue);
+        NapiPrototype* prototype = dynamicDowncast<NapiPrototype>(prototypeValue);
 
         if (!prototype) {
             JSC::throwVMError(globalObject, scope, JSC::createTypeError(globalObject, "NapiClass constructor is missing the prototype"_s));
@@ -63,7 +63,7 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
     }
 
     NAPICallFrame frame(globalObject, callFrame, napi->dataPtr(), newTarget);
-    Bun::NapiHandleScope handleScope(jsCast<Zig::GlobalObject*>(globalObject));
+    Bun::NapiHandleScope handleScope(uncheckedDowncast<Zig::GlobalObject>(globalObject));
 
     JSValue ret = toJS(napi->constructor()(napi->env(), frame.toNapi()));
     napi_set_last_error(napi->env(), napi_ok);

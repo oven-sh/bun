@@ -335,6 +335,15 @@ pub const FSEventsLoop = struct {
         var loop = bun.cast(*FSEventsLoop, info);
         const event_flags = bun.cast([*]FSEventStreamEventFlags, eventFlags);
 
+        // Hold the mutex for the whole iteration. `unregisterWatcher` on the
+        // main thread nulls the entry under this same mutex and then the
+        // caller immediately frees the FSEventsWatcher (and its path buffer),
+        // so without this lock we can read `handle.path` / call `handle.emit`
+        // on freed memory. Holding the lock also prevents `registerWatcher`
+        // from reallocating the `watchers` buffer mid-iteration.
+        loop.mutex.lock();
+        defer loop.mutex.unlock();
+
         for (loop.watchers.slice()) |watcher| {
             if (watcher) |handle| {
                 const handle_path = handle.path;
@@ -416,6 +425,7 @@ pub const FSEventsLoop = struct {
         // clean old paths
         if (this.paths) |p| {
             this.paths = null;
+            for (p) |s| if (s) |str| CF.Release(str);
             bun.default_allocator.free(p);
         }
         if (this.cf_paths) |cf| {
@@ -464,10 +474,19 @@ pub const FSEventsLoop = struct {
         // changes to files from the past.
         //
         const ref = CS.FSEventStreamCreate(null, _events_cb, &ctx, cf_paths, CS.kFSEventStreamEventIdSinceNow, latency, flags);
+        if (ref == null) {
+            // FSEventStreamCreate can fail under rapid stream churn (resource
+            // exhaustion); passing NULL into ScheduleWithRunLoop crashes the CF thread.
+            for (paths[0..count]) |s| if (s) |str| CF.Release(str);
+            bun.default_allocator.free(paths);
+            CF.Release(cf_paths);
+            return;
+        }
 
         CS.FSEventStreamScheduleWithRunLoop(ref, this.loop, CF.RunLoopDefaultMode.*);
         if (CS.FSEventStreamStart(ref) == 0) {
             //clean in case of failure
+            for (paths[0..count]) |s| if (s) |str| CF.Release(str);
             bun.default_allocator.free(paths);
             CF.Release(cf_paths);
             CS.FSEventStreamInvalidate(ref);
@@ -518,6 +537,16 @@ pub const FSEventsLoop = struct {
                     break;
                 }
             }
+        }
+
+        // Rebuild the FSEventStream on the CF thread so it stops firing for
+        // the path we just removed. Without this the stream keeps delivering
+        // events for freed paths until another register happens to
+        // reschedule. `_events_cb` tolerates the interim (it sees `null` and
+        // skips) because both sides hold `this.mutex`.
+        if (!this.has_scheduled_watchers) {
+            this.has_scheduled_watchers = true;
+            this.enqueueTaskConcurrent(Task.New(FSEventsLoop, _schedule).init(this));
         }
     }
 

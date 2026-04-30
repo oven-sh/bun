@@ -64,8 +64,10 @@ describe("glob.match", async () => {
       async () => {
         const pattern = "**/node_modules/**/*.js";
         const glob = new Glob(pattern);
-        const filepaths = prepareEntries(await Array.fromAsync(glob.scan(bunGlobOpts)));
-        const fgFilepths = await fg.glob(pattern, fgOpts);
+        const [filepaths, fgFilepths] = await Promise.all([
+          Array.fromAsync(glob.scan(bunGlobOpts)).then(prepareEntries),
+          fg.glob(pattern, fgOpts),
+        ]);
 
         // console.error(filepaths);
         expect(filepaths.length).toEqual(fgFilepths.length);
@@ -84,8 +86,10 @@ describe("glob.match", async () => {
       async () => {
         const pattern = "**/*.js";
         const glob = new Glob(pattern);
-        const filepaths = prepareEntries(await Array.fromAsync(glob.scan(bunGlobOpts)));
-        const fgFilepths = await fg.glob(pattern, fgOpts);
+        const [filepaths, fgFilepths] = await Promise.all([
+          Array.fromAsync(glob.scan(bunGlobOpts)).then(prepareEntries),
+          fg.glob(pattern, fgOpts),
+        ]);
 
         expect(filepaths.length).toEqual(fgFilepths.length);
 
@@ -103,8 +107,10 @@ describe("glob.match", async () => {
       async () => {
         const pattern = "**/*.ts";
         const glob = new Glob(pattern);
-        const filepaths = prepareEntries(await Array.fromAsync(glob.scan(bunGlobOpts)));
-        const fgFilepths = await fg.glob(pattern, fgOpts);
+        const [filepaths, fgFilepths] = await Promise.all([
+          Array.fromAsync(glob.scan(bunGlobOpts)).then(prepareEntries),
+          fg.glob(pattern, fgOpts),
+        ]);
 
         expect(filepaths.length).toEqual(fgFilepths.length);
 

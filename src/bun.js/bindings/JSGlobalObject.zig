@@ -24,12 +24,12 @@ pub const JSGlobalObject = opaque {
     }
     pub fn gregorianDateTimeToMS(this: *jsc.JSGlobalObject, year: i32, month: i32, day: i32, hour: i32, minute: i32, second: i32, millisecond: i32) bun.JSError!f64 {
         jsc.markBinding(@src());
-        return bun.cpp.Bun__gregorianDateTimeToMS(this, year, month, day, hour, minute, second, millisecond);
+        return bun.cpp.Bun__gregorianDateTimeToMS(this, year, month, day, hour, minute, second, millisecond, true);
     }
 
     pub fn gregorianDateTimeToMSUTC(this: *jsc.JSGlobalObject, year: i32, month: i32, day: i32, hour: i32, minute: i32, second: i32, millisecond: i32) bun.JSError!f64 {
         jsc.markBinding(@src());
-        return bun.cpp.Bun__gregorianDateTimeToMSUTC(this, year, month, day, hour, minute, second, millisecond);
+        return bun.cpp.Bun__gregorianDateTimeToMS(this, year, month, day, hour, minute, second, millisecond, false);
     }
 
     pub const GregorianDateTime = struct {
@@ -45,7 +45,7 @@ pub const JSGlobalObject = opaque {
     pub fn msToGregorianDateTimeUTC(this: *jsc.JSGlobalObject, ms: f64) GregorianDateTime {
         jsc.markBinding(@src());
         var dt: GregorianDateTime = undefined;
-        bun.cpp.Bun__msToGregorianDateTimeUTC(this, ms, &dt.year, &dt.month, &dt.day, &dt.hour, &dt.minute, &dt.second, &dt.weekday);
+        bun.cpp.Bun__msToGregorianDateTime(this, ms, false, &dt.year, &dt.month, &dt.day, &dt.hour, &dt.minute, &dt.second, &dt.weekday);
         return dt;
     }
 
@@ -658,7 +658,11 @@ pub const JSGlobalObject = opaque {
 
     extern fn JSC__JSGlobalObject__handleRejectedPromises(*JSGlobalObject) void;
     pub fn handleRejectedPromises(this: *JSGlobalObject) void {
-        return bun.jsc.fromJSHostCallGeneric(this, @src(), JSC__JSGlobalObject__handleRejectedPromises, .{this}) catch @panic("unreachable");
+        // JSC__JSGlobalObject__handleRejectedPromises catches and reports its
+        // own exceptions; the only thing that escapes is a TerminationException
+        // (worker terminate() or process.exit()), and the request flag may
+        // already be cleared by the time we observe it. Nothing actionable here.
+        return bun.jsc.fromJSHostCallGeneric(this, @src(), JSC__JSGlobalObject__handleRejectedPromises, .{this}) catch return;
     }
 
     extern fn ZigGlobalObject__readableStreamToArrayBuffer(*JSGlobalObject, JSValue) JSValue;
@@ -875,6 +879,11 @@ pub const JSGlobalObject = opaque {
         bun.StackCheck.configureThread();
 
         return global;
+    }
+
+    extern fn Zig__GlobalObject__createForTestIsolation(old_global: *JSGlobalObject, console: *anyopaque) *JSGlobalObject;
+    pub fn createForTestIsolation(old_global: *JSGlobalObject, console: *anyopaque) *JSGlobalObject {
+        return Zig__GlobalObject__createForTestIsolation(old_global, console);
     }
 
     extern fn Zig__GlobalObject__getModuleRegistryMap(*JSGlobalObject) *anyopaque;

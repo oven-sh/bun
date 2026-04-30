@@ -362,7 +362,7 @@ pub export fn Bun__suppressCrashOnProcessKillSelfIfDesired() void {
 
 pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;
 pub export const Bun__version_with_sha: [*:0]const u8 = "v" ++ bun.Global.package_json_version_with_sha;
-// Version exports removed - now handled by CMake-generated header (bun_dependency_versions.h)
+// Version exports removed - now handled by build-generated header (bun_dependency_versions.h)
 // The C++ code in BunProcess.cpp uses the generated header directly
 pub export const Bun__versions_uws: [*:0]const u8 = bun.Environment.git_sha;
 pub export const Bun__versions_usockets: [*:0]const u8 = bun.Environment.git_sha;

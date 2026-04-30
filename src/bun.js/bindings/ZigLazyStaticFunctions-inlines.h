@@ -7,7 +7,7 @@ namespace Zig {
 
 static void DOMCall__FFI__ptr__put(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
 {
-    JSC::JSObject* thisObject = JSC::jsCast<JSC::JSObject*>(JSC::JSValue::decode(value));
+    JSC::JSObject* thisObject = uncheckedDowncast<JSC::JSObject>(JSC::JSValue::decode(value));
     static const JSC::DOMJIT::Signature DOMJIT_ptr_signature(
         FFI__ptr__fastpath,
         thisObject->classInfo(),

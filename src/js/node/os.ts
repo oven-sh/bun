@@ -12,7 +12,8 @@ var tmpdir = function () {
       }
       return path;
     }
-    var path = env["TMPDIR"] || env["TMP"] || env["TEMP"] || "/tmp";
+    var path =
+      env["TMPDIR"] || env["TMP"] || env["TEMP"] || (process.platform === "android" ? "/data/local/tmp" : "/tmp");
     const length = path.length;
     if (length > 1 && path[length - 1] === "/") path = path.slice(0, -1);
     return path;
@@ -28,9 +29,9 @@ var tmpdir = function () {
 // Some packages like FastGlob only bother to read the length of the array
 // so instead of actually populating the entire object
 // we turn them into getters
-function lazyCpus({ cpus }) {
+function lazyCpus({ cpus, hostCpuCount }) {
   return () => {
-    const array = new Array(navigator.hardwareConcurrency);
+    const array = new Array(hostCpuCount);
     function populate() {
       const results = cpus();
       const length = results.length;
@@ -120,18 +121,27 @@ function bound(binding) {
         ? "Windows_NT"
         : process.platform === "darwin"
           ? "Darwin"
-          : process.platform === "linux"
+          : process.platform === "linux" || process.platform === "android"
             ? "Linux"
-            : $bundleError("TODO: type");
+            : process.platform === "freebsd"
+              ? "FreeBSD"
+              : $bundleError("TODO: type");
     },
     uptime: binding.uptime,
     userInfo: binding.userInfo,
     version: binding.version,
     machine: function () {
-      return process.arch === "arm64" //
-        ? "arm64"
+      // TODO: linux arm64 should also return "aarch64" (Node/uname compat) —
+      // separate PR to avoid behavior change in the Android port.
+      // FreeBSD: uname -m returns MACHINE ("arm64"/"amd64"), not MACHINE_ARCH.
+      return process.arch === "arm64"
+        ? process.platform === "android"
+          ? "aarch64"
+          : "arm64"
         : process.arch === "x64"
-          ? "x86_64"
+          ? process.platform === "freebsd"
+            ? "amd64"
+            : "x86_64"
           : $bundleError("TODO: machine");
     },
     devNull: process.platform === "win32" ? "\\\\.\\nul" : "/dev/null",

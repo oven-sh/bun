@@ -37,7 +37,7 @@
 #include <wtf/FixedVector.h>
 #include <wtf/Forward.h>
 #include <wtf/Function.h>
-#include <wtf/Gigacage.h>
+#include <wtf/FastMalloc.h>
 #include <wtf/text/WTFString.h>
 #include "JavaScriptCore/WasmModule.h"
 

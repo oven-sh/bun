@@ -27,6 +27,7 @@
 
 #include "ActiveDOMObject.h"
 #include "EventTarget.h"
+#include "MessageWithMessagePorts.h"
 #include "WorkerOptions.h"
 #include <JavaScriptCore/RuntimeFlags.h>
 #include <wtf/Deque.h>
@@ -134,6 +135,20 @@ public:
     // middle thread has torn down). Callable from any thread.
     bool postTaskToParent(Function<void(ScriptExecutionContext&)>&&);
 
+    // Coalesced cross-thread inbox for worker↔parent postMessage, mirroring
+    // MessagePortPipe: a burst of N postMessage calls schedules one drain
+    // task on the receiver, which loops dispatching + draining microtasks.
+    // This avoids N× (global-contexts-lock + HashMap lookup + lambda alloc)
+    // per burst.
+    struct MessageInbox {
+        WTF::Lock lock;
+        WTF::Deque<MessageWithMessagePorts> queue WTF_GUARDED_BY_LOCK(lock);
+        std::atomic<bool> drainScheduled { false };
+    };
+
+    void enqueueToParent(MessageWithMessagePorts&&);
+    void drainToWorker(ScriptExecutionContext&);
+
 private:
     Worker(ScriptExecutionContext&, WorkerOptions&&);
 
@@ -142,6 +157,9 @@ private:
     void derefEventTarget() final { deref(); }
     void eventListenersDidChange() final {};
 
+    void enqueueToWorker(MessageWithMessagePorts&&);
+    void drainToParent(ScriptExecutionContext&);
+
     WorkerOptions m_options;
 
     // Messages posted before the worker reaches Running are queued here and
@@ -149,6 +167,9 @@ private:
     // under this lock so postTaskToWorkerGlobalScope never loses a task.
     Lock m_pendingTasksMutex;
     Deque<Function<void(ScriptExecutionContext&)>> m_pendingTasks WTF_GUARDED_BY_LOCK(m_pendingTasksMutex);
+
+    MessageInbox m_toWorker; // messages parent → worker, drained on the worker thread
+    MessageInbox m_toParent; // messages worker → parent, drained on the parent thread
 
     std::atomic<State> m_state { State::Pending };
     std::atomic<bool> m_terminateRequested { false };

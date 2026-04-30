@@ -3626,12 +3626,12 @@ threadlocal var pending_time_logs_loaded = false;
 /// Writes `indent` levels (2 spaces each) to the same stderr stream used by
 /// Output.printElapsed, so timer output nests inside the active console.group().
 fn printTimerIndent(indent: u16) void {
-    const spaces_buf = [_]u8{' '} ** 64;
-    var remaining: u32 = indent;
+    const spaces_chunk = " " ** 64;
+    var remaining: usize = @as(usize, indent) * 2;
     while (remaining > 0) {
-        const chunk: u8 = @min(32, remaining);
-        Output.printError("{s}", .{spaces_buf[0 .. chunk * 2]});
-        remaining -|= chunk;
+        const n = @min(spaces_chunk.len, remaining);
+        Output.printError("{s}", .{spaces_chunk[0..n]});
+        remaining -= n;
     }
 }
 

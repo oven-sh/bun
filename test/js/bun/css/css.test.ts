@@ -2825,6 +2825,40 @@ describe("css tests", () => {
     `,
     );
 
+    // A prefixed background-clip followed by a background shorthand
+    // whose implied clip values differ must flush the prefixed clip
+    // first rather than merging its vendor prefix into the shorthand's
+    // (different) clip values.
+    cssTest(
+      `
+      .foo {
+        -webkit-background-clip: text;
+        background: green content-box;
+      }
+    `,
+      indoc`
+      .foo {
+        -webkit-background-clip: text;
+        background: green content-box content-box;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-background-clip: text, text;
+        background: none, green none;
+      }
+    `,
+      indoc`
+      .foo {
+        -webkit-background-clip: text, text;
+        background: none, green;
+      }
+    `,
+    );
+
     cssTest(
       `
       .foo {

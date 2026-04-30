@@ -690,7 +690,7 @@ pub const BackgroundHandler = struct {
                 }
                 var clips_vp = VendorPrefix{ .none = true };
                 if (this.clips) |*clips_and_vp| {
-                    if (clips_vp != clips_and_vp.*[1] and !clips_and_vp.*[0].eql(&clips_and_vp[0])) {
+                    if (clips_vp != clips_and_vp.*[1] and !clips.eql(&clips_and_vp.*[0])) {
                         this.flush(allocator, dest, context);
                     } else {
                         bun.bits.insert(VendorPrefix, &clips_vp, clips_and_vp.*[1]);

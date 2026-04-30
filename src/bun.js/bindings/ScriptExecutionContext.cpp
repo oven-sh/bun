@@ -1,14 +1,12 @@
 #include "root.h"
 #include "headers.h"
 #include "ScriptExecutionContext.h"
-#include "MessagePort.h"
+#include "ContextDestructionObserver.h"
 
 #include "libusockets.h"
 #include "_libusockets.h"
 #include "BunClientData.h"
 #include "EventLoopTask.h"
-#include "BunBroadcastChannelRegistry.h"
-#include <wtf/LazyRef.h>
 extern "C" void Bun__startLoop(us_loop_t* loop);
 
 namespace WebCore {
@@ -39,9 +37,6 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject*
     : m_vm(vm)
     , m_globalObject(globalObject)
     , m_identifier(initialIdentifier())
-    , m_broadcastChannelRegistry([](auto& owner, auto& lazyRef) {
-        lazyRef.set(BunBroadcastChannelRegistry::create());
-    })
 {
     relaxAdoptionRequirement();
     addToContextsMap();
@@ -51,9 +46,6 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject*
     : m_vm(vm)
     , m_globalObject(globalObject)
     , m_identifier(identifier == std::numeric_limits<int32_t>::max() ? ++lastUniqueIdentifier : identifier)
-    , m_broadcastChannelRegistry([](auto& owner, auto& lazyRef) {
-        lazyRef.set(BunBroadcastChannelRegistry::create());
-    })
 {
     relaxAdoptionRequirement();
     addToContextsMap();
@@ -136,10 +128,6 @@ ScriptExecutionContext::~ScriptExecutionContext()
     }
     m_inScriptExecutionContextDestructor = true;
 #endif // ASSERT_ENABLED
-
-    auto postMessageCompletionHandlers = WTF::move(m_processMessageWithMessagePortsSoonHandlers);
-    for (auto& completionHandler : postMessageCompletionHandlers)
-        completionHandler();
 
     while (auto* destructionObserver = m_destructionObservers.takeAny())
         destructionObserver->contextDestroyed();
@@ -228,69 +216,12 @@ ScriptExecutionContext* ScriptExecutionContext::getMainThreadScriptExecutionCont
     return allScriptExecutionContextsMap().get(1);
 }
 
-void ScriptExecutionContext::processMessageWithMessagePortsSoon(CompletionHandler<void()>&& completionHandler)
-{
-    ASSERT(isContextThread());
-    m_processMessageWithMessagePortsSoonHandlers.append(WTF::move(completionHandler));
-
-    if (m_willProcessMessageWithMessagePortsSoon) {
-        return;
-    }
-
-    m_willProcessMessageWithMessagePortsSoon = true;
-
-    postTask([](ScriptExecutionContext& context) {
-        context.dispatchMessagePortEvents();
-    });
-}
-
-void ScriptExecutionContext::dispatchMessagePortEvents()
-{
-    ASSERT(isContextThread());
-    checkConsistency();
-
-    ASSERT(m_willProcessMessageWithMessagePortsSoon);
-    m_willProcessMessageWithMessagePortsSoon = false;
-
-    auto completionHandlers = std::exchange(m_processMessageWithMessagePortsSoonHandlers, Vector<CompletionHandler<void()>> {});
-
-    // Make a frozen copy of the ports so we can iterate while new ones might be added or destroyed.
-    for (auto* messagePort : copyToVector(m_messagePorts)) {
-        // The port may be destroyed, and another one created at the same address,
-        // but this is harmless. The worst that can happen as a result is that
-        // dispatchMessages() will be called needlessly.
-        if (m_messagePorts.contains(messagePort) && messagePort->started())
-            messagePort->dispatchMessages();
-    }
-
-    for (auto& completionHandler : completionHandlers)
-        completionHandler();
-}
-
 void ScriptExecutionContext::checkConsistency() const
 {
 #if ASSERT_ENABLED
-    for (auto* messagePort : m_messagePorts)
-        ASSERT(messagePort->scriptExecutionContext() == this);
-
     for (auto* destructionObserver : m_destructionObservers)
         ASSERT(destructionObserver->scriptExecutionContext() == this);
-
 #endif // ASSERT_ENABLED
-}
-
-void ScriptExecutionContext::createdMessagePort(MessagePort& messagePort)
-{
-    ASSERT(isContextThread());
-
-    m_messagePorts.add(&messagePort);
-}
-
-void ScriptExecutionContext::destroyedMessagePort(MessagePort& messagePort)
-{
-    ASSERT(isContextThread());
-
-    m_messagePorts.remove(&messagePort);
 }
 
 us_socket_context_t* ScriptExecutionContext::webSocketContextNoSSL()

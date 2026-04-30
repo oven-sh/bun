@@ -140,6 +140,28 @@ describe("EventSource", () => {
     es.close();
   });
 
+  test("strips a leading BOM even when its bytes span multiple chunks", async () => {
+    // Flush each BOM byte separately so the parser's chunk-boundary BOM
+    // buffering is exercised. If the transport happens to coalesce them
+    // the single-chunk BOM path is taken instead — either way the final
+    // assertion holds, so this test cannot flake false-positive.
+    await using server = sseServer(async (c, req) => {
+      c.write(new Uint8Array([0xef]));
+      await c.flush();
+      c.write(new Uint8Array([0xbb]));
+      await c.flush();
+      c.write(new Uint8Array([0xbf]));
+      await c.flush();
+      c.write("data: split-bom\n\n");
+      await c.flush();
+      await new Promise(r => req.signal.addEventListener("abort", r));
+    });
+    const es = new EventSource(server.url.href);
+    const msg = await new Promise<MessageEvent>(r => (es.onmessage = r));
+    expect(msg.data).toBe("split-bom");
+    es.close();
+  });
+
   test("reconnects after the stream ends and sends Last-Event-ID", async () => {
     let connections = 0;
     let sawLastEventId: string | null = null;
@@ -340,6 +362,81 @@ describe("EventSource", () => {
     es.removeEventListener("message", listenerObj);
     es.dispatchEvent(new MessageEvent("message", { data: "4" }));
     expect(objHits).toEqual(["1", "2", "3"]);
+    es.close();
+  });
+
+  test("close() inside a listener still delivers the in-flight event to remaining listeners", async () => {
+    await using server = sseServer(async (c, req) => {
+      c.write("data: x\n\n");
+      await c.flush();
+      await new Promise(r => req.signal.addEventListener("abort", r));
+    });
+
+    const es = new EventSource(server.url.href);
+    const hits: string[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    // Per spec, EventSource#close() only aborts the fetch and sets
+    // readyState — it does not set the stop-immediate-propagation flag,
+    // so every listener snapshotted for this event must still fire.
+    es.onmessage = () => {
+      hits.push("onmessage");
+      es.close();
+    };
+    es.addEventListener("message", () => {
+      hits.push("listener-1");
+      expect(es.readyState).toBe(EventSource.CLOSED);
+    });
+    es.addEventListener("message", () => {
+      hits.push("listener-2");
+      resolve();
+    });
+    await promise;
+    expect(hits).toEqual(["onmessage", "listener-1", "listener-2"]);
+    expect(es.readyState).toBe(EventSource.CLOSED);
+  });
+
+  test("listener identity includes the capture flag for dedupe and removal", () => {
+    const es = new EventSource("http://127.0.0.1:1/");
+    let hits = 0;
+    const fn = () => hits++;
+    // Same callback, different capture → two distinct registrations.
+    es.addEventListener("ping", fn, true);
+    es.addEventListener("ping", fn, false);
+    // Duplicate of the bubble registration → ignored.
+    es.addEventListener("ping", fn, { capture: false });
+    es.dispatchEvent(new Event("ping"));
+    expect(hits).toBe(2);
+
+    // Remove only the bubble one; the capture one remains.
+    es.removeEventListener("ping", fn, false);
+    es.dispatchEvent(new Event("ping"));
+    expect(hits).toBe(3);
+
+    // Removing with the wrong capture is a no-op.
+    es.removeEventListener("ping", fn, false);
+    es.dispatchEvent(new Event("ping"));
+    expect(hits).toBe(4);
+
+    // Removing with matching capture finally drops it.
+    es.removeEventListener("ping", fn, { capture: true });
+    es.dispatchEvent(new Event("ping"));
+    expect(hits).toBe(4);
+    es.close();
+  });
+
+  test("removeEventListener during dispatch skips the removed listener", () => {
+    const es = new EventSource("http://127.0.0.1:1/");
+    const hits: string[] = [];
+    const b = () => hits.push("b");
+    es.addEventListener("tick", () => {
+      hits.push("a");
+      es.removeEventListener("tick", b);
+    });
+    es.addEventListener("tick", b);
+    es.addEventListener("tick", () => hits.push("c"));
+    es.dispatchEvent(new Event("tick"));
+    // b was removed before its turn in the snapshot → skipped.
+    expect(hits).toEqual(["a", "c"]);
     es.close();
   });
 });

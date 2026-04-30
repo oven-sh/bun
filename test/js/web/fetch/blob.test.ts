@@ -308,6 +308,102 @@ test("dupeWithContentType does not alias the source's allocated content_type", a
   expect(exitCode).toBe(0);
 });
 
+test("new Blob() copies ArrayBuffer parts before later parts' toString() can resize them", async () => {
+  // The Blob constructor joins parts via a StringJoiner that used to borrow
+  // ArrayBuffer backings (pushStatic) and only memcpy them at the end. A later
+  // part's toString() runs arbitrary JS, which can resize a resizable
+  // ArrayBuffer and unmap the borrowed backing before the final memcpy reads
+  // it. Run in a subprocess so an ASAN/SEGV crash shows up as a test failure
+  // instead of killing the runner.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const size = 1 << 20;
+        const ab = new ArrayBuffer(size, { maxByteLength: size });
+        new Uint8Array(ab).fill("A".charCodeAt(0));
+        const blob = new Blob([
+          new Uint8Array(ab),
+          {
+            toString() {
+              ab.resize(0);
+              Bun.gc(true);
+              return "B";
+            },
+          },
+        ]);
+        const text = await blob.text();
+        console.log(JSON.stringify({
+          size: blob.size,
+          first: text.charCodeAt(0),
+          last: text.charCodeAt(text.length - 1),
+          allA: text.slice(0, size) === Buffer.alloc(size, "A").toString(),
+        }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    size: (1 << 20) + 1,
+    first: 65,
+    last: 66,
+    allA: true,
+  });
+  expect(exitCode).toBe(0);
+});
+
+test("new Blob() copies ArrayBuffer parts before later parts' toString() can detach them", async () => {
+  // Same as above but detach via transfer() instead of resize(). The bytes
+  // must be captured at the time the part is processed, not after toString()
+  // has had a chance to move the backing.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const size = 1 << 20;
+        const u8 = new Uint8Array(size).fill("A".charCodeAt(0));
+        const blob = new Blob([
+          u8,
+          {
+            toString() {
+              const moved = u8.buffer.transfer();
+              new Uint8Array(moved).fill("Z".charCodeAt(0));
+              return "B";
+            },
+          },
+        ]);
+        const text = await blob.text();
+        console.log(JSON.stringify({
+          size: blob.size,
+          first: text.charCodeAt(0),
+          allA: text.slice(0, size) === Buffer.alloc(size, "A").toString(),
+        }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    size: (1 << 20) + 1,
+    first: 65,
+    allA: true,
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("dupe() preserves allocated content_type for Body clone", () => {
   // Body.Value.clone() goes through Blob.dupe() -> dupeWithContentType(false).
   // That path must deep-copy a heap-allocated content_type rather than drop

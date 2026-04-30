@@ -67,26 +67,29 @@ test.skipIf(!isDebug && !isASAN)(
 
       const sql = new SQL({ url: \`mysql://root@127.0.0.1:\${port}/db\`, max: 1 });
 
-      // Obtain the native MySQLConnection by shadowing the first query handle's
+      // Obtain the native MySQLConnection (and observe when every query has
+      // actually been enqueued natively) by shadowing each query handle's
       // .run(connection, query) with an own-property before the pool invokes it.
       let nativeConnection;
-      const q0 = sql\`select 0\`;
-      q0.values(); // force lazy creation of the native MySQLQuery handle
-      const handleSym = Object.getOwnPropertySymbols(q0).find(s => s.description === "handle");
-      const handle = q0[handleSym];
-      const protoRun = Object.getPrototypeOf(handle).run;
-      Object.defineProperty(handle, "run", {
-        configurable: true,
-        writable: true,
-        value(connection, query) {
-          nativeConnection = connection;
-          return protoRun.call(this, connection, query);
-        },
-      });
+      let runCount = 0;
+      let protoRun;
+      const queries = [sql\`select 0\`, sql\`select 1\`, sql\`select 2\`, sql\`select 3\`, sql\`select 4\`];
+      for (const q of queries) {
+        q.values(); // force lazy creation of the native MySQLQuery handle
+        const handleSym = Object.getOwnPropertySymbols(q).find(s => s.description === "handle");
+        const handle = q[handleSym];
+        protoRun ??= Object.getPrototypeOf(handle).run;
+        Object.defineProperty(handle, "run", {
+          configurable: true,
+          writable: true,
+          value(connection, query) {
+            nativeConnection = connection;
+            runCount++;
+            return protoRun.call(this, connection, query);
+          },
+        });
+      }
 
-      // Queue several more queries on the same (max: 1) connection so the native
-      // request queue has multiple entries when clean() runs.
-      const queries = [q0, sql\`select 1\`, sql\`select 2\`, sql\`select 3\`, sql\`select 4\`];
       const settled = queries.map(q =>
         q.catch(err => {
           // Re-enter clean() synchronously: this runs in the microtask drain that
@@ -96,11 +99,9 @@ test.skipIf(!isDebug && !isASAN)(
         })
       );
 
-      // Wait until the pool has actually handed the native connection to q0
+      // Wait until the pool has handed the native connection to every query
       // (requires real event-loop ticks, not just microtasks).
-      while (nativeConnection == null) await new Promise(r => setImmediate(r));
-      // Let the remaining queries flow into the native queue.
-      for (let i = 0; i < 10; i++) await new Promise(r => setImmediate(r));
+      while (runCount < queries.length) await new Promise(r => setImmediate(r));
 
       // Replace the pool's JS onclose handler with a no-op so it does not
       // pre-emptively reject the queries before native clean() runs. That leaves
@@ -127,7 +128,13 @@ test.skipIf(!isDebug && !isASAN)(
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "fixture.js"],
-      env: bunEnv,
+      env: {
+        ...bunEnv,
+        // A crash here writes a multi-GB core dump that outlives the default
+        // test timeout; the stderr panic trace is the useful signal.
+        ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1",
+        BUN_ENABLE_CRASH_REPORTING: "0",
+      },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
@@ -148,5 +155,4 @@ test.skipIf(!isDebug && !isASAN)(
     ]);
     expect(exitCode).toBe(0);
   },
-  30_000,
 );

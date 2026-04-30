@@ -102,7 +102,13 @@ describe.skipIf(!isPosix)("parallel hoisted install", () => {
 
   beforeAll(async () => {
     fixture = await makeTarballFixture();
-    env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(fixture.dir, ".bun-cache") };
+    env = {
+      ...bunEnv,
+      BUN_INSTALL_CACHE_DIR: join(fixture.dir, ".bun-cache"),
+      // Enable the "[ParallelHoistedInstall] N tasks" stderr marker
+      // emitted by completeParallelInstalls() — see parallelTaskCount().
+      BUN_INTERNAL_PARALLEL_HOISTED_MARKER: "1",
+    };
     await write(
       join(fixture.dir, "package.json"),
       JSON.stringify({ name: "parallel-hoisted-fixture", version: "1.0.0", dependencies: fixture.deps }),
@@ -116,6 +122,17 @@ describe.skipIf(!isPosix)("parallel hoisted install", () => {
   afterAll(async () => {
     if (fixture) await rm(fixture.dir, { recursive: true, force: true });
   });
+
+  /**
+   * Parse the test-only "[ParallelHoistedInstall] N tasks" marker that
+   * completeParallelInstalls() emits under
+   * BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING. Returns 0 if the marker is
+   * absent (i.e. the parallel path was not taken, or doesn't exist).
+   */
+  function parallelTaskCount(stderr: string): number {
+    const m = stderr.match(/\[ParallelHoistedInstall\]\s+(\d+)\s+tasks/);
+    return m ? Number(m[1]) : 0;
+  }
 
   test("produces identical node_modules to the serial installer", async () => {
     // Warm the cache + generate the lockfile.
@@ -136,6 +153,14 @@ describe.skipIf(!isPosix)("parallel hoisted install", () => {
     expect(serial.stderr).not.toContain("error:");
     expect(serial.exitCode).toBe(0);
     const serialLayout = await fingerprintNodeModules(fixture.dir);
+
+    // Deterministic signal that the parallel path was actually
+    // exercised: completeParallelInstalls() emits a task count under
+    // BUN_INTERNAL_PARALLEL_HOISTED_MARKER (set in env above). Without
+    // the parallel installer, this marker is never printed. The
+    // serial-env run must NOT take the parallel path.
+    expect(parallelTaskCount(parallel.stderr)).toBe(fixture.count);
+    expect(parallelTaskCount(serial.stderr)).toBe(0);
 
     // every package dir, file and bin link must match exactly.
     expect(parallelLayout.length).toBeGreaterThan(fixture.count * 5);

@@ -762,6 +762,20 @@ pub const PackageInstaller = struct {
 
         this.parallel_wait_group.wait();
 
+        // Test hook: emit a deterministic marker so the
+        // parallel-hoisted-install.test.ts suite can verify that
+        // packages actually went through the parallel path without
+        // relying on timing-sensitive CPU/wall ratios (which are too
+        // noisy under ASAN). Without this codepath existing, the
+        // marker is never printed and the assertion fails. Gated on
+        // a dedicated env var (not the general INTERNAL_FOR_TESTING
+        // flag from bunEnv) so other install tests' stderr snapshots
+        // are unaffected.
+        if (bun.getenvZ("BUN_INTERNAL_PARALLEL_HOISTED_MARKER") != null) {
+            Output.prettyErrorln("[ParallelHoistedInstall] {d} tasks", .{this.parallel_tasks.items.len});
+            Output.flush();
+        }
+
         var had_missing = false;
         const prev_node_modules = this.node_modules;
         defer this.node_modules = prev_node_modules;

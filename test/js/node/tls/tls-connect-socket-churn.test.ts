@@ -73,6 +73,46 @@ test("createSecureContext memoises the native SSL_CTX (not the wrapper) by confi
   expect(c.context).not.toBe(a.context);
 });
 
+// The shared `defaultClientSslCtx` (used by `Bun.connect({tls:true})` AND
+// `new WebSocket("wss://…")` with no custom CA) must let `ssl_attach` inject
+// the bundled root store per-SSL. A regression once set VERIFY_PEER on the CTX
+// to skip the cold root-load — that left wss:// with no roots and broke every
+// public host (masked as `[pre-existing]` because the suite test hits
+// postman-echo.com, which is in the network-flake list). We can't depend on a
+// public host here, so assert the verify outcome shape instead: against a
+// self-signed local server, "roots loaded" → DEPTH_ZERO_SELF_SIGNED_CERT (18);
+// "no roots" → UNABLE_TO_VERIFY_LEAF_SIGNATURE (21). Seeing 18 proves the
+// bundled store was consulted.
+test("defaultClientSslCtx attaches bundled roots (verify error proves store was consulted)", async () => {
+  await using server = Bun.listen({
+    port: 0,
+    hostname: "127.0.0.1",
+    tls: tlsCerts,
+    socket: { data() {}, open() {} },
+  });
+  const { promise, resolve, reject } = Promise.withResolvers<number>();
+  const sock = await Bun.connect({
+    port: server.port,
+    hostname: "127.0.0.1",
+    tls: true, // ← no ca/cert: this is the defaultClientSslCtx path
+    socket: {
+      handshake(_s, _ok, err) {
+        resolve(
+          err?.code === "DEPTH_ZERO_SELF_SIGNED_CERT" ? 18 : err?.code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE" ? 21 : -1,
+        );
+      },
+      data() {},
+      close() {},
+      connectError: reject,
+    },
+  });
+  const code = await promise;
+  sock.end();
+  // 18 = roots were loaded and the leaf is correctly identified as self-signed.
+  // 21 would mean no trust store at all — the regression this guards against.
+  expect(code).toBe(18);
+});
+
 async function connectOnce(port: number) {
   await new Promise<void>((resolve, reject) => {
     const sock = tls.connect({ port, host: "127.0.0.1", ca: tlsCerts.ca, rejectUnauthorized: false }, () => {

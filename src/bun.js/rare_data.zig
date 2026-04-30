@@ -732,28 +732,23 @@ pub fn wsClientGroup(rare: *RareData, vm: *jsc.VirtualMachine, comptime ssl: boo
 pub fn defaultClientSslCtx(rare: *RareData) *uws.SslCtx {
     if (rare.default_client_ssl_ctx == null) {
         var err: uws.create_bun_socket_error_t = .none;
-        // No request_cert/CA: matches `Bun.connect({tls: true})` on `main`,
-        // which never loaded the system trust store. set_client_verify_no_roots
-        // flips verify_mode to PEER on the CTX so ssl_attach's per-SSL
-        // root-store override (which cold-builds ~150 PEM certs, ~150 ms in
-        // debug+ASAN) is skipped — verify runs against the empty store and
-        // truthfully reports "no CA given" instead of main's false-OK, without
-        // the first-connect latency hit that broke node-tls-server.test.ts's
-        // 100 ms budget. node:tls clients go through SecureContext and get
-        // bundled roots there.
-        const ctx = (uws.SocketContext.BunSocketContextOptions{}).createSSLContext(&err) orelse bun.Output.panic(
+        // Mode-neutral CTX (VERIFY_NONE). `us_internal_ssl_attach` overrides
+        // each client SSL to VERIFY_PEER + the shared bundled-root store, so
+        // `new WebSocket("wss://…")` (which shares this CTX and defaults to
+        // rejectUnauthorized:true) verifies real servers. The store is built
+        // once via `std::call_once` and only up_ref'd thereafter — the
+        // ~150-cert cost is paid on the first TLS connect of the process, not
+        // per-connect. (An earlier attempt set VERIFY_PEER on the CTX to skip
+        // that cold load for `Bun.connect({tls:true})`; wrong: it left wss://
+        // with no roots and `rejectUnauthorized` failed every public host.
+        // The cold-load is a one-time debug-build cost; correctness wins.)
+        rare.default_client_ssl_ctx = (uws.SocketContext.BunSocketContextOptions{}).createSSLContext(&err) orelse bun.Output.panic(
             "default client SSL_CTX init failed: {s}",
             .{err.message() orelse "unknown"},
         );
-        c.us_ssl_ctx_set_client_verify_no_roots(ctx);
-        rare.default_client_ssl_ctx = ctx;
     }
     return rare.default_client_ssl_ctx.?;
 }
-
-const c = struct {
-    extern fn us_ssl_ctx_set_client_verify_no_roots(ctx: *uws.SslCtx) void;
-};
 
 pub fn globalDNSResolver(rare: *RareData, vm: *jsc.VirtualMachine) *api.dns.Resolver {
     if (rare.global_dns_data == null) {

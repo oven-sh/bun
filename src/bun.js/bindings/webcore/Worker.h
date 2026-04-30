@@ -75,14 +75,18 @@ struct WorkerOptions;
 ///         └────────────┬───────────────┘
 ///                      │ close task (parent thread)
 ///                      ▼
-///                 ┌────────┐
-///                 │ Closed │
-///                 └────────┘
+///                 ┌────────┐  'close' event   ┌────────┐
+///                 │Closing │ ───────────────► │ Closed │
+///                 └────────┘  dispatched      └────────┘
+///
+/// Closing exists so that inside the 'close'/'exit' handler threadId reads
+/// -1 and isOnline() is false (old ClosingFlag behaviour) while postMessage()
+/// — which only gates on Closed (old TerminatedFlag behaviour) — still
+/// accepts and silently drops the message, matching browser/Node semantics.
 ///
 /// m_terminateRequested is orthogonal: set once by terminate(), gates
 /// dispatchEvent()/setKeepAlive(), and is mirrored into the Zig side via
 /// WebWorker__notifyNeedTermination so the worker loop can observe it.
-/// postMessage() only gates on Closed to preserve pre-refactor semantics.
 class Worker final : public ThreadSafeRefCounted<Worker>, public EventTargetWithInlineData, private ContextDestructionObserver {
     WTF_MAKE_TZONE_ALLOCATED(Worker);
 
@@ -90,6 +94,7 @@ public:
     enum class State : uint8_t {
         Pending, // created; worker thread starting up
         Running, // dispatchOnline has fired; worker event loop is spinning
+        Closing, // worker thread has exited; close task is dispatching the 'close' event
         Closed, // close event dispatched on the parent; worker is fully done
     };
 
@@ -108,7 +113,7 @@ public:
     void postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&&);
 
     // -- State queries (safe from any thread; all loads are atomic) ----------
-    bool wasTerminated() const { return m_state.load() == State::Closed; }
+    bool wasTerminated() const { return m_state.load() >= State::Closing; }
     bool hasPendingActivity() const { return m_state.load() != State::Closed; }
     bool isOnline() const { return m_state.load() == State::Running; }
 

@@ -233,10 +233,10 @@ void Worker::terminate()
 
 void Worker::setKeepAlive(bool keepAlive)
 {
-    // Once terminate() has been called or the close task has run, the worker
-    // no longer participates in the parent's liveness — the close task is the
-    // last thing to touch parent_poll_ref.
-    if (m_terminateRequested.load() || m_state.load() == State::Closed)
+    // Once terminate() has been called or the close task has started, the
+    // worker no longer participates in the parent's liveness — the close
+    // task is the last thing to touch parent_poll_ref.
+    if (m_terminateRequested.load() || m_state.load() >= State::Closing)
         return;
     WebWorker__setRef(impl_, keepAlive);
 }
@@ -357,12 +357,18 @@ bool Worker::dispatchExit(int32_t exitCode)
     // leak), so this is bounded. The proper fix is for a worker to stop+join
     // its sub-workers before tearing down its own context.
     return postTaskToParent([exitCode, protectedThis = Ref { *this }](ScriptExecutionContext&) {
-        protectedThis->m_state.store(State::Closed);
+        // Closing → dispatch 'close' → Closed. The split lets 'close'/'exit'
+        // handlers observe threadId == -1 and isOnline() == false while
+        // postMessage() (gated only on Closed) still accepts and drops the
+        // message, matching browser/Node and pre-refactor behaviour.
+        protectedThis->m_state.store(State::Closing);
 
         if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
             auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
             protectedThis->EventTargetWithInlineData::dispatchEvent(event);
         }
+
+        protectedThis->m_state.store(State::Closed);
         WebWorker__releaseParentPollRef(protectedThis->impl_);
         // Drop the ref taken in create(). protectedThis keeps us alive across
         // this line; its own deref happens at lambda destruction on the parent
@@ -553,7 +559,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
 
     ExceptionOr<Vector<TransferredMessagePort>> disentangledPorts = MessagePort::disentanglePorts(WTF::move(ports));
     if (disentangledPorts.hasException()) {
-        WebCore::propagateException(*globalObject, scope, serialized.releaseException());
+        WebCore::propagateException(*globalObject, scope, disentangledPorts.releaseException());
         RELEASE_AND_RETURN(scope, {});
     }
     scope.assertNoException();

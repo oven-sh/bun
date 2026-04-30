@@ -1,11 +1,14 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isDebug, isASAN } from "harness";
 
-// Worker VM startup/teardown is ~10× slower under debug+ASAN; these tests
-// spawn many workers, so scale iteration counts and timeouts accordingly.
-const rounds = isDebug ? 4 : 8;
-const perRound = isDebug ? 12 : 32;
-const timeout = isDebug ? 60_000 : 20_000;
+// Worker VM startup/teardown is much slower under debug and/or ASAN; these
+// tests spawn many workers, so scale iteration counts and timeouts down.
+// ASAN catches the underlying UAF deterministically, so fewer iterations
+// are still sufficient regression coverage.
+const slow = isDebug || isASAN;
+const rounds = slow ? 4 : 8;
+const perRound = slow ? 12 : 32;
+const timeout = slow ? 60_000 : 20_000;
 
 // Regression: `new Worker(url, { ref: false })` was silently ignored — the
 // Zig-side `user_keep_alive` field was set from it but never read, and the

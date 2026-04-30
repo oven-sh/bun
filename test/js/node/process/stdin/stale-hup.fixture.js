@@ -38,7 +38,7 @@ process.stdin.on("end", () => {
   process.stderr.write("end\n");
 });
 
-// If the event loop is alive, this fires ~200ms after the data handler ran.
+// If the event loop is alive, this timer fires and we print OK.
 // If readBlockingPipe is stuck (spinning or blocked), it never does.
 setTimeout(() => {
   if (writeFd !== -1) fs.closeSync(writeFd);

@@ -30,7 +30,7 @@ pub fn ParseImportExport(
                     phase = .source;
                     try p.lexer.next();
                 } else {
-                    try p.lexer.expectedString("\"meta\"");
+                    try p.lexer.expectedString("\"meta\", \"defer\", or \"source\"");
                 }
             }
 

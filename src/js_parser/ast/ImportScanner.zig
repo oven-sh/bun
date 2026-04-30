@@ -120,8 +120,16 @@ pub fn scan(
                             is_unused_in_typescript = false;
                         }
 
+                        // Deferred phase imports keep the namespace binding even when
+                        // it appears unused: the deferred subgraph is still loaded and
+                        // linked (and TLA dependencies are eagerly evaluated), so the
+                        // statement has observable effects independent of `ns` access.
+                        if (record.phase != .evaluation) {
+                            is_unused_in_typescript = false;
+                        }
+
                         // Remove the symbol if it's never used outside a dead code region
-                        if (symbol.use_count_estimate == 0) {
+                        if (symbol.use_count_estimate == 0 and record.phase == .evaluation) {
                             // Make sure we don't remove this if it was used for a property
                             // access while bundling
                             var has_any = false;

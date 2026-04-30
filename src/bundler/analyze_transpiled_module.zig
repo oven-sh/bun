@@ -180,6 +180,7 @@ pub const ModuleInfo = struct {
     strings_buf: std.ArrayListUnmanaged(u8),
     strings_lens: std.ArrayListUnmanaged(u32),
     requested_modules: std.AutoArrayHashMap(StringID, FetchParameters),
+    requested_modules_defer: std.AutoArrayHashMapUnmanaged(StringID, void),
     buffer: std.ArrayListUnmanaged(StringID),
     record_kinds: std.ArrayListUnmanaged(RecordKind),
     flags: Flags,
@@ -235,6 +236,11 @@ pub const ModuleInfo = struct {
         try self._addRecord(.import_info_namespace_defer, &.{ module_name, .star_namespace, local_name });
     }
     pub fn addRequestedModuleDefer(self: *ModuleInfo, module_name: StringID) !void {
+        // JSC's ModuleAnalyzer dedups per (specifier, phase); mirror that here
+        // so the debug fallbackParse() diff in BunAnalyzeTranspiledModule.cpp
+        // agrees when the same specifier is deferred more than once.
+        const gop = try self.requested_modules_defer.getOrPut(self.gpa, module_name);
+        if (gop.found_existing) return;
         try self._addRecord(.requested_module_defer, &.{module_name});
     }
     pub fn addExportInfoIndirect(self: *ModuleInfo, export_name: StringID, import_name: StringID, module_name: StringID) !void {
@@ -271,6 +277,7 @@ pub const ModuleInfo = struct {
             .strings_lens = .{},
             .exported_names = .{},
             .requested_modules = std.AutoArrayHashMap(StringID, FetchParameters).init(allocator),
+            .requested_modules_defer = .{},
             .buffer = .empty,
             .record_kinds = .empty,
             .flags = .{ .contains_import_meta = false, .is_typescript = is_typescript },
@@ -283,6 +290,7 @@ pub const ModuleInfo = struct {
         self.strings_lens.deinit(self.gpa);
         self.exported_names.deinit(self.gpa);
         self.requested_modules.deinit();
+        self.requested_modules_defer.deinit(self.gpa);
         self.buffer.deinit(self.gpa);
         self.record_kinds.deinit(self.gpa);
     }

@@ -17,10 +17,10 @@ async function run(files: Record<string, string>, entry = "main.mjs") {
 }
 
 // The runtime semantics live in JavaScriptCore. Until the oven-sh/WebKit
-// revision that adds ModulePhase (see src/bun.js/WebKit-import-defer.patch)
-// is picked up by the prebuilt WebKit used in CI, probe for it by running a
-// minimal deferred import and skip the runtime suites if it doesn't parse.
-// The transpiler-only tests below are unconditional.
+// revision that adds ModulePhase (oven-sh/WebKit#206) is picked up by the
+// prebuilt WebKit used in CI, probe for it by running a minimal deferred
+// import and skip the runtime suites if it doesn't parse. The
+// transpiler-only tests below are unconditional.
 const runtimeSupported = await (async () => {
   const { exitCode } = await run({
     "main.mjs": `import defer * as x from "./empty.mjs"; void x;`,
@@ -97,6 +97,31 @@ describeRuntime("import defer (static)", () => {
     });
     expect(stderr).toBe("");
     expect(stdout).toBe("dep,main");
+    expect(exitCode).toBe(0);
+  });
+
+  test("same specifier deferred twice produces a single requested-module entry", async () => {
+    // ModuleInfo must dedup defer-phase requests per specifier to match
+    // JSC's ModuleAnalyzer; in debug builds a mismatch fails the
+    // fallbackParse() diff in BunAnalyzeTranspiledModule.cpp.
+    const { stdout, stderr, exitCode } = await run({
+      "main.mjs": `
+        globalThis.order = [];
+        import defer * as a from "./dep.mjs";
+        import defer * as b from "./dep.mjs";
+        order.push("main");
+        console.log(a === b);
+        console.log(order.join(","));
+        void a.value;
+        console.log(order.join(","));
+      `,
+      "dep.mjs": `
+        globalThis.order.push("dep");
+        export const value = 42;
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(stdout).toBe(["true", "main", "main,dep"].join("\n"));
     expect(exitCode).toBe(0);
   });
 

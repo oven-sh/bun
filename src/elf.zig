@@ -201,29 +201,28 @@ pub const ElfFile = struct {
 
         const rw_index = rw_phdr_index orelse return error.NoWritableLoadSegment;
 
-        // Place the new data at the aligned tail of the writable PT_LOAD.
+        // Place the new data at a page-aligned virtual address past every
+        // existing mapping. page_size is ≥ 128 so this also guarantees the
+        // 128-byte alignment that JSC's bytecode cache requires — see
+        // `target_mod = 120` in StandaloneModuleGraph.zig, which assumes the
+        // payload starts on a 128-byte boundary so bytecode at payload-offset
+        // 120 lands 128-aligned once the 8-byte `[u64 size]` header is
+        // accounted for. A non-page-aligned `new_vaddr` (e.g. one inheriting
+        // `rw_phdr.p_vaddr`'s residue mod 128) would SIGSEGV in JSC bytecode
+        // deserialization on aarch64.
         //
-        // Using `alignUp(rw_phdr.p_memsz, rw_phdr.p_align)` as the in-segment
-        // offset has two properties we need:
-        //   (a) `new_vaddr - rw.p_vaddr == new_file_offset - rw.p_offset` is
-        //       the same aligned quantity, so ELF's requirement that
-        //       `p_vaddr mod p_align == p_offset mod p_align` is preserved
-        //       when we grow p_filesz/p_memsz.
-        //   (b) `new_vaddr >= rw.p_vaddr + rw.p_memsz`, so nothing in the
-        //       existing segment gets overwritten in memory.
-        //
-        // Other PT_LOAD segments on bun's binary all have vaddrs lower than
-        // the RW segment, so placing past its memsz is collision-free.
-        const seg_align = @max(rw_phdr.p_align, page_size);
-        const offset_in_segment = alignUp(rw_phdr.p_memsz, seg_align);
-        const new_vaddr = rw_phdr.p_vaddr + offset_in_segment;
+        // `new_file_offset` follows the segment's existing (vaddr - offset)
+        // delta, so the kernel's mmap at `rw_phdr.p_offset → rw_phdr.p_vaddr`
+        // covers our new payload continuously once we grow p_filesz.
+        const new_vaddr = alignUp(max_vaddr_end, page_size);
+        const offset_in_segment = new_vaddr - rw_phdr.p_vaddr;
         const new_file_offset = rw_phdr.p_offset + offset_in_segment;
 
-        // Sanity: if another segment somehow extends past the RW segment in
-        // vaddr space (shouldn't happen with linker-produced binaries), the
-        // new vaddr would collide. Bail out rather than silently produce a
-        // broken ELF.
-        if (new_vaddr < max_vaddr_end) return error.NewVaddrCollides;
+        // Sanity: `max_vaddr_end` already reflects the RW segment's full
+        // memsz range (the loop above folds every PT_LOAD), so new_vaddr is
+        // past it by construction. This guard catches pathological inputs
+        // (e.g. corrupt ELF with rw_phdr.p_vaddr past max_vaddr_end).
+        if (new_vaddr < rw_phdr.p_vaddr + rw_phdr.p_memsz) return error.NewVaddrCollides;
 
         // File layout after this function returns:
         //

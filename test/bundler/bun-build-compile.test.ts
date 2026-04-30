@@ -223,7 +223,8 @@ if (isLinux) {
     test("compiled binary with large payload runs correctly", async () => {
       // Generate a string payload >16KB to exceed the initial .bun section allocation
       // (BUN_COMPILED is aligned to 16KB). This forces the expansion path in elf.zig
-      // which appends data to the end of the file and converts PT_GNU_STACK to PT_LOAD.
+      // which appends data to the end of the file and extends the writable PT_LOAD
+      // to cover it.
       const largeString = Buffer.alloc(20000, "x").toString();
       using dir = tempDir("build-compile-large-payload", {
         "app.js": `const data = "${largeString}"; console.log("large-payload-" + data.length);`,
@@ -442,6 +443,12 @@ if (isLinux) {
       expect(writableLoadCoversBun).toBe(true);
       // A stock bun has 3 PT_LOAD segments; the fix must not add a 4th.
       expect(loadCount).toBe(3);
+      // JSC bytecode cache requires 128-byte-aligned deserialization input.
+      // StandaloneModuleGraph writes bytecode at payload offset 120 assuming
+      // the `[u64 size]` header sits at a 128-byte-aligned vaddr (so bytecode
+      // lands at vaddr + 8 + 120, which is 128-aligned). A new_vaddr that
+      // inherits the RW segment's non-128 residue SIGSEGVs JSC on aarch64.
+      expect(bunAddr % 128n).toBe(0n);
 
       // Sanity: the binary still runs and produces the expected output.
       // (Ignore stderr — a debug-ASAN bun may log `hintSourcePagesDontNeed`

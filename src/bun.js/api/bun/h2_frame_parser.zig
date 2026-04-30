@@ -2831,6 +2831,14 @@ pub const H2FrameParser = struct {
             }
         }
 
+        if (try options.get(globalObject, "enableConnectProtocol")) |enableConnectProtocol| {
+            if (enableConnectProtocol.isBoolean()) {
+                this.localSettings.enableConnectProtocol = if (enableConnectProtocol.asBoolean()) 1 else 0;
+            } else if (!enableConnectProtocol.isUndefined()) {
+                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected enableConnectProtocol to be a boolean", .{}).throw();
+            }
+        }
+
         // Validate customSettings
         if (try options.get(globalObject, "customSettings")) |customSettings| {
             if (!customSettings.isUndefined()) {

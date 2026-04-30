@@ -4278,7 +4278,10 @@ fn fromJSWithoutDeferGC(
                             => {
                                 could_have_non_ascii = true;
                                 var buf = item.asArrayBuffer(global).?;
-                                joiner.pushStatic(buf.byteSlice());
+                                // Copy the bytes now. A later element's toString() can run
+                                // arbitrary JS that detaches/resizes this buffer before
+                                // joiner.done() reads it.
+                                joiner.pushCloned(buf.byteSlice());
                                 continue;
                             },
                             .Array, .DerivedArray => {
@@ -4335,7 +4338,10 @@ fn fromJSWithoutDeferGC(
             .DataView,
             => {
                 var buf = current.asArrayBuffer(global).?;
-                joiner.pushStatic(buf.slice());
+                // Copy the bytes now. A later element's toString() can run
+                // arbitrary JS that detaches/resizes this buffer before
+                // joiner.done() reads it.
+                joiner.pushCloned(buf.slice());
                 could_have_non_ascii = true;
             },
 

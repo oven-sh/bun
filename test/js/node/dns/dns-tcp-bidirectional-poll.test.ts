@@ -13,20 +13,17 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "node:path";
 
-test.skipIf(isWindows)(
-  "c-ares TCP DNS fd registers readable+writable on one FilePoll without asserting",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "dns-tcp-bidirectional-poll-fixture.ts")],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+test.skipIf(isWindows)("c-ares TCP DNS fd registers readable+writable on one FilePoll without asserting", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "dns-tcp-bidirectional-poll-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr.trim()).toBe("");
-    expect(stdout.trim()).toBe('[["hello"]]');
-    expect(exitCode).toBe(0);
-  },
-);
+  expect(stderr.trim()).toBe("");
+  expect(stdout.trim()).toBe('[["hello"]]');
+  expect(exitCode).toBe(0);
+});

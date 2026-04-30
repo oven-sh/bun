@@ -600,6 +600,15 @@ pub fn fromDOMFormData(
 
     form_data.forEach(FormDataContext, &context, FormDataContext.onEntry);
     if (context.failed) {
+        // The joiner's Node structs are owned by the arena (freed by the
+        // `defer arena.deinit()` above), but each node's data carries its own
+        // owner allocator — `bun.default_allocator` for non-ASCII name/value
+        // slices and the NodeFS readFile result buffer for file entries that
+        // succeeded before the failing one. Those owners are only invoked from
+        // `StringJoiner.done` (success path) or `StringJoiner.deinit`, so we
+        // must call deinit() here or every heap-owned slice already pushed is
+        // leaked.
+        context.joiner.deinit();
         return Blob.initEmpty(globalThis);
     }
 

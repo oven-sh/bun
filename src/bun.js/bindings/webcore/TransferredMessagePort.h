@@ -23,14 +23,44 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// A MessagePort endpoint in transit between contexts. Carried alongside
+// SerializedScriptValue (not encoded into the byte stream), so holding a
+// live RefPtr to the shared pipe is fine — this never leaves the process.
+//
+// The struct is move-only and owns its pipe side: if it is dropped without
+// ever reaching entangle() (e.g. the carrying message lands on a closed
+// port, or the destination's inbox is discarded on close()), the
+// destructor marks that side Closed so the peer port's hasPendingActivity
+// can fall to false and the peer becomes collectable. entangle() takes the
+// pipe via releaseNonNull(), so on the happy path the destructor is a no-op.
+
 #pragma once
 
-#include "MessagePortIdentifier.h"
+#include <wtf/RefPtr.h>
 
 namespace WebCore {
 
-// When a message port is transferred, it is represented by a pair of identifiers.
-// The first identifier is the port being transferred and the second is its remote port.
-using TransferredMessagePort = std::pair<MessagePortIdentifier, MessagePortIdentifier>;
+class MessagePortPipe;
+
+struct TransferredMessagePort {
+    RefPtr<MessagePortPipe> pipe;
+    uint8_t side { 0 };
+
+    TransferredMessagePort() = default;
+    TransferredMessagePort(RefPtr<MessagePortPipe>&& p, uint8_t s)
+        : pipe(WTF::move(p))
+        , side(s)
+    {
+    }
+
+    // Out-of-line in MessagePortPipe.cpp to avoid a header cycle
+    // (MessagePortPipe.h → MessageWithMessagePorts.h → this file).
+    ~TransferredMessagePort();
+
+    TransferredMessagePort(TransferredMessagePort&&) = default;
+    TransferredMessagePort& operator=(TransferredMessagePort&&);
+    TransferredMessagePort(const TransferredMessagePort&) = delete;
+    TransferredMessagePort& operator=(const TransferredMessagePort&) = delete;
+};
 
 } // namespace WebCore

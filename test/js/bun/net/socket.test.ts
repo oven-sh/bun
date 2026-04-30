@@ -158,8 +158,11 @@ describe.concurrent("socket", () => {
       env: bunEnv,
     });
 
-    expect(await exited).toBe(0);
-    expect(await stderr.text()).toBe("");
+    const [stderrText, stdoutText, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+    // stderr first so an ASAN/LSAN report isn't swallowed behind a bare "exit 134".
+    expect(stderrText).toBe("");
+    expect(stdoutText).toContain("CLIENT RECEIVED");
+    expect(exitCode).toBe(0);
   });
 
   it("listen() should throw connection error for invalid host", () => {

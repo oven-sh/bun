@@ -584,34 +584,46 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #endif
 
     if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {
-        // Module self-registered via static constructor(s)
-        // Save ALL registrations to handle map before executing
+        // Module self-registered via static constructor(s).
+        // Move pending registrations into locals before iterating: an
+        // nm_register_func can itself call napi_module_register(), which
+        // appends to m_pendingNapiModules. Appending to a WTF::Vector while
+        // range-for iterating it reallocates the buffer and leaves the
+        // iterator dangling.
+        auto pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
+        auto pendingV8Modules = std::exchange(globalObject->m_pendingV8Modules, {});
 
         if (handle) {
             // Save all NAPI module registrations
-            for (auto& mod : globalObject->m_pendingNapiModules) {
+            for (auto& mod : pendingNapiModules) {
                 auto* heapModule = new napi_module(mod);
                 Bun::DLHandleMap::singleton().add(handle, heapModule);
             }
 
             // Save all V8 C++ module registrations
-            for (auto* mod : globalObject->m_pendingV8Modules) {
+            for (auto* mod : pendingV8Modules) {
                 Bun::DLHandleMap::singleton().add(handle, mod);
             }
         }
 
-        // Execute all NAPI modules
-        for (auto& mod : globalObject->m_pendingNapiModules) {
-            // Restore dlopen handle for this module before execution
-            // executePendingNapiModule clears it, so we must set it for each module
-            globalObject->m_pendingNapiModuleDlopenHandle = handle;
-            globalObject->m_pendingNapiModule = mod;
-            Napi::executePendingNapiModule(globalObject);
-            globalObject->m_pendingNapiModule = {};
+        // Execute all NAPI modules. If an nm_register_func registers more
+        // modules re-entrantly, they accumulate back in m_pendingNapiModules;
+        // drain those too once the current batch is done.
+        for (;;) {
+            for (auto& mod : pendingNapiModules) {
+                // Restore dlopen handle for this module before execution
+                // executePendingNapiModule clears it, so we must set it for each module
+                globalObject->m_pendingNapiModuleDlopenHandle = handle;
+                globalObject->m_pendingNapiModule = mod;
+                Napi::executePendingNapiModule(globalObject);
+                globalObject->m_pendingNapiModule = {};
+            }
+            if (globalObject->m_pendingNapiModules.isEmpty())
+                break;
+            pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
         }
 
-        // Clear all pending registrations
-        globalObject->m_pendingNapiModules.clear();
+        // Clear any re-entrant V8 registrations (not executed here).
         globalObject->m_pendingV8Modules.clear();
 
         JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
@@ -647,18 +659,22 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
                 registration);
         }
 
-        // Execute all NAPI modules that were just registered
-        for (auto& mod : globalObject->m_pendingNapiModules) {
-            // Restore dlopen handle for this module before execution
-            // executePendingNapiModule clears it, so we must set it for each module
-            globalObject->m_pendingNapiModuleDlopenHandle = handle;
-            globalObject->m_pendingNapiModule = mod;
-            Napi::executePendingNapiModule(globalObject);
-            globalObject->m_pendingNapiModule = {};
+        // Execute all NAPI modules that were just registered. Move to a
+        // local first and drain so re-entrant napi_module_register() calls
+        // from inside nm_register_func can't invalidate our iterator.
+        while (!globalObject->m_pendingNapiModules.isEmpty()) {
+            auto pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
+            for (auto& mod : pendingNapiModules) {
+                // Restore dlopen handle for this module before execution
+                // executePendingNapiModule clears it, so we must set it for each module
+                globalObject->m_pendingNapiModuleDlopenHandle = handle;
+                globalObject->m_pendingNapiModule = mod;
+                Napi::executePendingNapiModule(globalObject);
+                globalObject->m_pendingNapiModule = {};
+            }
         }
 
-        // Clear the vectors (no need to save again since already in DLHandleMap)
-        globalObject->m_pendingNapiModules.clear();
+        // Clear the V8 vector (no need to save again since already in DLHandleMap)
         globalObject->m_pendingV8Modules.clear();
 
         JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
@@ -2582,8 +2598,8 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdioWriteStream, callData, globalObject->globalThis(), args);
     if (auto* exception = scope.exception()) {
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
         (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
         return jsUndefined();
     }
 
@@ -2643,8 +2659,8 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdinStream, callData, globalObject, args);
     if (auto* exception = scope.exception()) {
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
         (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
         return jsUndefined();
     }
     return result;

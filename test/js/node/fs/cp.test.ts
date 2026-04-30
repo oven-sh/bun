@@ -335,30 +335,35 @@ describe.skipIf(isWindows).each(["cp", "cpSync"] as const)(
       const src = join(base, "s");
       const dst = join(base, "d");
       fs.mkdirSync(src);
-      // Pre-create dst so macOS clonefile() fails with EEXIST and falls through to the
-      // manual iteration path that contains the bounds check; otherwise clonefile clones
-      // the whole tree at the vnode level without ever building interior path strings.
       fs.mkdirSync(dst);
 
       // Build a directory tree whose full path exceeds MAX_PATH_BYTES by creating each
       // level with a short relative path from a shell; the kernel never sees the whole
       // path so it never rejects it. We do this in /bin/sh rather than via process.chdir
       // so the test process's cwd is unaffected.
+      //
+      // The same tree is mirrored under dst so that on macOS — where both cpSyncInner and
+      // _cpAsyncDirectory retry clonefile() at every recursion level — clonefile hits
+      // EEXIST at every level and falls through to the manual iteration path containing
+      // the bounds check (clonefile would otherwise clone the whole subtree at the vnode
+      // level without ever building interior path strings).
       const seg = Buffer.alloc(200, "a").toString();
-      await using mktree = Bun.spawn({
-        cmd: [
-          "/bin/sh",
-          "-c",
-          `cd "$1" && i=0 && while [ $i -lt 64 ]; do mkdir "$2" && cd "$2" || exit 0; i=$((i+1)); done`,
-          "sh",
-          src,
-          seg,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      await mktree.exited;
+      for (const root of [src, dst]) {
+        await using mktree = Bun.spawn({
+          cmd: [
+            "/bin/sh",
+            "-c",
+            `cd "$1" && i=0 && while [ $i -lt 64 ]; do mkdir "$2" && cd "$2" || exit 0; i=$((i+1)); done`,
+            "sh",
+            root,
+            seg,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        await mktree.exited;
+      }
 
       // Run the cp in a subprocess: before the fix this corrupts the stack and segfaults.
       const script = `

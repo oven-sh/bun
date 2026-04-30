@@ -27,7 +27,10 @@ if (PAGE <= 0) throw new Error("getpagesize() failed");
 
 const base = libc.symbols.mmap(null, PAGE * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0n);
 const baseNum = Number(base);
-if (baseNum <= 0 || baseNum === -1) throw new Error("mmap failed");
+// MAP_FAILED = (void*)-1 marshals through bun:ffi's `ptr` return as
+// (double)(uintptr_t)-1 ≈ 1.8e19, which is not a safe integer; valid
+// user-space addresses always are.
+if (base === null || !Number.isSafeInteger(baseNum)) throw new Error("mmap failed");
 if (libc.symbols.mprotect(baseNum + PAGE, PAGE, PROT_NONE) !== 0) throw new Error("mprotect failed");
 
 function atGuard(bytes: number[]): Uint8Array {

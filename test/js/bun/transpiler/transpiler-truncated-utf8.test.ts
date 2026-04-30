@@ -38,8 +38,5 @@ describe.skipIf(!(isLinux || isMacOS))("Bun.Transpiler.transformSync with trunca
       exitCode: 0,
       signalCode: null,
     });
-    // ASAN symbolization of the crash in an unfixed debug build is slow;
-    // give the subprocess enough headroom so the failure surfaces as a
-    // proper assertion diff rather than a timeout.
-  }, 30_000);
+  });
 });

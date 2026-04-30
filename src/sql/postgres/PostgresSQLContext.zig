@@ -1,4 +1,6 @@
-tcp: ?*uws.SocketContext = null,
+//! Per-VM Postgres state that isn't per-connection. The shared
+//! `us_socket_context_t` that used to live here is gone — connections link
+//! into `RareData.postgres_group`/`postgres_tls_group` instead.
 
 onQueryResolveFn: jsc.Strong.Optional = .empty,
 onQueryRejectFn: jsc.Strong.Optional = .empty,
@@ -18,4 +20,3 @@ comptime {
 
 const bun = @import("bun");
 const jsc = bun.jsc;
-const uws = bun.uws;

@@ -215,7 +215,12 @@ pub fn create(globalThis: *jsc.JSGlobalObject, socket: SocketType) *WindowsNamed
     return this;
 }
 
-pub fn open(globalThis: *jsc.JSGlobalObject, fd: bun.FD, ssl_config: ?jsc.API.ServerConfig.SSLConfig, socket: SocketType) !*uws.WindowsNamedPipe {
+/// `owned_ctx` is one `SSL_CTX_up_ref` ADOPTED by `named_pipe.open` (kept on
+/// success, freed by it on failure). Prefer it over `ssl_config` so a memoised
+/// `tls.createSecureContext` reaches this path with its trust store intact —
+/// on this branch `[buntls]` returns `{secureContext}` only, so `ssl_config`
+/// alone would be empty.
+pub fn open(globalThis: *jsc.JSGlobalObject, fd: bun.FD, ssl_config: ?jsc.API.ServerConfig.SSLConfig, owned_ctx: ?*BoringSSL.SSL_CTX, socket: SocketType) !*uws.WindowsNamedPipe {
     // TODO: reuse the same context for multiple connections when possibles
 
     const this = WindowsNamedPipeContext.create(globalThis, socket);
@@ -232,11 +237,12 @@ pub fn open(globalThis: *jsc.JSGlobalObject, fd: bun.FD, ssl_config: ?jsc.API.Se
         }
         this.deref();
     }
-    try this.named_pipe.open(fd, ssl_config).unwrap();
+    try this.named_pipe.open(fd, ssl_config, owned_ctx).unwrap();
     return &this.named_pipe;
 }
 
-pub fn connect(globalThis: *jsc.JSGlobalObject, path: []const u8, ssl_config: ?jsc.API.ServerConfig.SSLConfig, socket: SocketType) !*uws.WindowsNamedPipe {
+/// See `open` for `owned_ctx` ownership.
+pub fn connect(globalThis: *jsc.JSGlobalObject, path: []const u8, ssl_config: ?jsc.API.ServerConfig.SSLConfig, owned_ctx: ?*BoringSSL.SSL_CTX, socket: SocketType) !*uws.WindowsNamedPipe {
     // TODO: reuse the same context for multiple connections when possibles
 
     const this = WindowsNamedPipeContext.create(globalThis, socket);
@@ -256,7 +262,7 @@ pub fn connect(globalThis: *jsc.JSGlobalObject, path: []const u8, ssl_config: ?j
     if (path[path.len - 1] == 0) {
         // is already null terminated
         const slice_z = path[0 .. path.len - 1 :0];
-        try this.named_pipe.connect(slice_z, ssl_config).unwrap();
+        try this.named_pipe.connect(slice_z, ssl_config, owned_ctx).unwrap();
     } else {
         var path_buf: bun.PathBuffer = undefined;
         // we need to null terminate the path
@@ -265,7 +271,7 @@ pub fn connect(globalThis: *jsc.JSGlobalObject, path: []const u8, ssl_config: ?j
         @memcpy(path_buf[0..len], path[0..len]);
         path_buf[len] = 0;
         const slice_z = path_buf[0..len :0];
-        try this.named_pipe.connect(slice_z, ssl_config).unwrap();
+        try this.named_pipe.connect(slice_z, ssl_config, owned_ctx).unwrap();
     }
     return &this.named_pipe;
 }
@@ -294,6 +300,7 @@ const bun = @import("bun");
 const Output = bun.Output;
 const jsc = bun.jsc;
 const uws = bun.uws;
+const BoringSSL = bun.BoringSSL.c;
 const uv = bun.windows.libuv;
 
 const TCPSocket = jsc.API.TCPSocket;

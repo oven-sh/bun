@@ -195,10 +195,8 @@ pub const Subcommand = enum {
 
     // TODO: make all subcommands find root and chdir
     pub fn shouldChdirToRoot(this: Subcommand) bool {
-        return switch (this) {
-            .link => false,
-            else => true,
-        };
+        _ = this;
+        return true;
     }
 };
 

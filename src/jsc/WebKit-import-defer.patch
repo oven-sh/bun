@@ -1,4 +1,4 @@
-From 44154ea8e5c2737b4f1f6f295ccd47988fdc6efa Mon Sep 17 00:00:00 2001
+From ca7ba6ec4a3b60352b655dd2086c90bef0f42361 Mon Sep 17 00:00:00 2001
 From: robobun <robobun@users.noreply.github.com>
 Date: Thu, 30 Apr 2026 20:25:11 +0000
 Subject: [PATCH] Implement import defer (TC39 Stage 3)
@@ -53,8 +53,7 @@ Runtime:
   InternalMicrotask::ImportDeferModuleNamespace that swaps the result
   to the deferred namespace for the same module record. Lazy
   evaluation for the dynamic form (skipping Evaluate() entirely) still
-  requires threading phase through ContinueDynamicImport; noted in a
-  FIXME.
+  requires threading phase through ContinueDynamicImport.
 
 Options:
 - useImportDefer flipped to true.
@@ -72,13 +71,13 @@ Options:
  .../runtime/AbstractModuleRecord.h            |  10 +-
  .../runtime/CyclicModuleRecord.cpp            |  50 +++++++-
  .../runtime/CyclicModuleRecord.h              |   1 +
- .../runtime/JSGlobalObjectFunctions.cpp       |  24 ++++
+ .../runtime/JSGlobalObjectFunctions.cpp       |  27 +++++
  Source/JavaScriptCore/runtime/JSMicrotask.cpp |  31 +++++
  .../runtime/JSModuleNamespaceObject.cpp       | 107 ++++++++++++++++-
  .../runtime/JSModuleNamespaceObject.h         |  11 +-
  Source/JavaScriptCore/runtime/Microtask.h     |   3 +-
  Source/JavaScriptCore/runtime/OptionsList.h   |   2 +-
- 19 files changed, 371 insertions(+), 39 deletions(-)
+ 19 files changed, 374 insertions(+), 39 deletions(-)
 
 diff --git a/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp b/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp
 index 0648035f57..8bca1d3d16 100644
@@ -595,7 +594,7 @@ index 27f8f77a61..534f0890e8 100644
      void executeAsync(JSGlobalObject*);
      void asyncExecutionFulfilled(JSGlobalObject*);
 diff --git a/Source/JavaScriptCore/runtime/JSGlobalObjectFunctions.cpp b/Source/JavaScriptCore/runtime/JSGlobalObjectFunctions.cpp
-index b1c5bafaca..79db198036 100644
+index b1c5bafaca..d56081b293 100644
 --- a/Source/JavaScriptCore/runtime/JSGlobalObjectFunctions.cpp
 +++ b/Source/JavaScriptCore/runtime/JSGlobalObjectFunctions.cpp
 @@ -34,6 +34,7 @@
@@ -606,7 +605,7 @@ index b1c5bafaca..79db198036 100644
  #include "JSPromise.h"
  #include "JSSet.h"
  #include "Lexer.h"
-@@ -809,9 +810,32 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject,
+@@ -809,9 +810,35 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject,
      // We always specify parameters as undefined. Once dynamic import() starts accepting fetching parameters,
      // we should retrieve this from the arguments.
      JSValue parameters = callFrame->argument(1);
@@ -627,9 +626,12 @@ index b1c5bafaca..79db198036 100644
 +        // (Symbol.toStringTag = "Deferred Module", hidden "then", evaluation
 +        // error rethrows on access).
 +        //
-+        // FIXME: per spec the module should NOT be evaluated here; only async
-+        // transitive dependencies should be. Threading ModulePhase through
-+        // ContinueDynamicImport is required for full lazy-evaluation.
++        // Per spec the module body itself should not run here — only its
++        // async transitive dependencies. Reaching full lazy-evaluation for
++        // the dynamic form requires threading ModulePhase through
++        // ContinueDynamicImport and the moduleLoaderImportModule hook; until
++        // then the module is evaluated as a side effect of the normal
++        // pipeline and the returned namespace is the deferred one.
 +        auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
 +        scope.release();
 +        importPromise->performPromiseThenWithInternalMicrotask(vm, globalObject, InternalMicrotask::ImportDeferModuleNamespace, promise, jsUndefined());

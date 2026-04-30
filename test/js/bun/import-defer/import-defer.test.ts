@@ -226,9 +226,10 @@ describe("import.defer() (dynamic)", () => {
     expect(exitCode).toBe(0);
   });
 
-  // FIXME: Currently import.defer() eagerly evaluates the module; the spec
-  // says only async transitive dependencies should be evaluated eagerly.
-  // This requires threading ModulePhase through ContinueDynamicImport.
+  // The dynamic form currently evaluates the module body eagerly; per spec
+  // only async transitive dependencies should run during the import.defer()
+  // call. Full lazy evaluation requires threading ModulePhase through
+  // ContinueDynamicImport and the moduleLoaderImportModule embedder hook.
   test.todo("module is not evaluated until a property is accessed (dynamic)", async () => {
     const { stdout, stderr, exitCode } = await run({
       "main.mjs": `

@@ -93,6 +93,9 @@ event_type_buffer: std.ArrayListUnmanaged(u8) = .{},
 /// Whether the previous byte processed was '\r' (so a following '\n' is the
 /// second half of a CRLF and must be swallowed).
 last_byte_was_cr: bool = false,
+/// Whether we've received any body bytes on the current connection yet;
+/// used to strip one leading UTF-8 BOM per the spec's `stream = [bom] *event`.
+seen_body_bytes: bool = false,
 /// Whether we've announced the connection (fired "open") yet.
 announced: bool = false,
 
@@ -320,6 +323,7 @@ fn resetPerConnectionState(this: *EventSource) void {
     this.data_buffer.clearRetainingCapacity();
     this.event_type_buffer.clearRetainingCapacity();
     this.last_byte_was_cr = false;
+    this.seen_body_bytes = false;
     this.result_has_more = true;
     this.result_fail = null;
     this.result_status_code = 0;
@@ -538,6 +542,14 @@ fn goIdle(this: *EventSource) void {
 
 fn feed(this: *EventSource, bytes: []const u8) void {
     var i: usize = 0;
+    // Spec ABNF: `stream = [ bom ] *event`. Strip exactly one leading UTF-8
+    // BOM at the start of each connection's body.
+    if (!this.seen_body_bytes) {
+        this.seen_body_bytes = true;
+        if (bytes.len >= 3 and bytes[0] == 0xEF and bytes[1] == 0xBB and bytes[2] == 0xBF) {
+            i = 3;
+        }
+    }
     // Swallow the LF half of a CRLF that straddled the previous chunk.
     if (this.last_byte_was_cr and i < bytes.len and bytes[i] == '\n') i += 1;
     this.last_byte_was_cr = false;
@@ -755,10 +767,10 @@ fn dispatchToHandlers(this: *EventSource, event_type: []const u8, event: JSValue
             if (!entry.isObject()) continue;
             const cb = entry.getOwn(global, "cb") catch continue orelse continue;
             if (cb.isUndefined()) continue;
-            filtered.push(global, entry) catch {};
+            filtered.push(global, entry) catch return;
         }
         var key = bun.String.init(event_type);
-        listeners_obj.putMayBeIndex(global, &key, filtered) catch {};
+        listeners_obj.putMayBeIndex(global, &key, filtered) catch return;
     }
 }
 
@@ -873,7 +885,7 @@ pub fn addEventListener(_: *EventSource, global: *JSGlobalObject, callframe: *js
     var arr = try listeners.getOwn(global, type_str) orelse JSValue.zero;
     if (arr == .zero or !arr.jsType().isArray()) {
         arr = try JSValue.createEmptyArray(global, 0);
-        listeners.putMayBeIndex(global, &type_str, arr) catch {};
+        try listeners.putMayBeIndex(global, &type_str, arr);
     }
     // Dedupe on callback identity (spec: same type + callback + capture).
     const len = try arr.getLength(global);
@@ -915,7 +927,7 @@ pub fn removeEventListener(_: *EventSource, global: *JSGlobalObject, callframe: 
         }
         try new_arr.push(global, entry);
     }
-    listeners.putMayBeIndex(global, &type_str, new_arr) catch {};
+    try listeners.putMayBeIndex(global, &type_str, new_arr);
     return .js_undefined;
 }
 

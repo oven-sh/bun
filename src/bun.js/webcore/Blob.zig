@@ -4049,7 +4049,7 @@ fn fromJSWithoutDeferGC(
                         // buffers instead.
                         return build.blob.dupe();
                     } else {
-                        const sliced = try current.toSliceClone(global);
+                        const sliced = try top_value.toSliceClone(global);
                         if (sliced.allocator.get()) |allocator| {
                             return Blob.initWithAllASCII(@constCast(sliced.slice()), allocator, global, false);
                         }

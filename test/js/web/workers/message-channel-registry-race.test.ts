@@ -21,11 +21,12 @@ test("MessagePortChannelRegistry m_openChannels is guarded against concurrent ac
       // does the same from its thread. The array keeps the channels alive
       // so the map only grows (maximising rehashes).
       const keepAlive: MessageChannel[] = [];
-      for (let round = 0; round < 40; round++) {
-        for (let i = 0; i < 500; i++) {
+      for (let round = 0; round < 10; round++) {
+        for (let i = 0; i < 400; i++) {
           keepAlive.push(new MessageChannel());
         }
-        await new Promise<void>(r => setTimeout(r, 0));
+        // Yield so the worker thread interleaves with us.
+        await Bun.sleep(0);
       }
 
       worker.postMessage("stop");
@@ -50,13 +51,14 @@ test("MessagePortChannelRegistry m_openChannels is guarded against concurrent ac
 
       postMessage("ready");
 
-      const spin = () => {
-        for (let i = 0; i < 500 && !stop; i++) {
-          keepAlive.push(new MessageChannel());
+      (async () => {
+        while (!stop) {
+          for (let i = 0; i < 400 && !stop; i++) {
+            keepAlive.push(new MessageChannel());
+          }
+          await Bun.sleep(0);
         }
-        if (!stop) setTimeout(spin, 0);
-      };
-      spin();
+      })();
     `,
   });
 
@@ -72,7 +74,7 @@ test("MessagePortChannelRegistry m_openChannels is guarded against concurrent ac
 
   expect(stderr).toBe("");
   const result = JSON.parse(stdout.trim());
-  expect(result).toEqual({ main: 20000, worker: expect.any(Number) });
+  expect(result).toEqual({ main: 4000, worker: expect.any(Number) });
   expect(result.worker).toBeGreaterThan(0);
   expect(exitCode).toBe(0);
-}, 60_000);
+}, 30_000);

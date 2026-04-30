@@ -184,10 +184,4 @@ std::optional<MessageWithMessagePorts> MessagePortChannelRegistry::tryTakeMessag
     return channel->tryTakeMessageForPort(port);
 }
 
-MessagePortChannel* MessagePortChannelRegistry::existingChannelContainingPort(const MessagePortIdentifier& port)
-{
-    Locker locker { m_openChannelsLock };
-    return m_openChannels.get(port);
-}
-
 } // namespace WebCore

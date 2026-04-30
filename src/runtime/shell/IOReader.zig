@@ -91,6 +91,12 @@ pub fn start(this: *IOReader) Yield {
     }
 
     if (this.is_reading) return .suspended;
+    // A reader's done-handler can start a new command that calls `addReader`+`start()`
+    // on this same IOReader from inside `onReaderDone`. On Windows the underlying
+    // BufferedReader has already nulled its `source` by then, so `startWithCurrentPipe`
+    // would unwrap a null optional. There is nothing left to read; the newly-added
+    // reader gets its done notification from the index-based loop in `onReaderDone`.
+    if (this.reader.isDone()) return .suspended;
     this.is_reading = true;
     if (this.reader.startWithCurrentPipe().asErr()) |e| {
         this.onReaderError(e);

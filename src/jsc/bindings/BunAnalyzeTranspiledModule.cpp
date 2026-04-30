@@ -148,18 +148,29 @@ extern "C" void JSC_JSModuleRecord__addImportEntryNamespace(JSModuleRecord* modu
 }
 extern "C" void JSC_JSModuleRecord__addImportEntryNamespaceDefer(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName)
 {
+    // JSC_HAS_IMPORT_DEFER is defined by the WebKit revision that adds
+    // ModulePhase. Until the prebuilt WebKit is bumped to include it, fall
+    // back to an evaluation-phase namespace entry so this translation unit
+    // still compiles; the printer will still emit "import defer * as ..."
+    // and JSC's own parser will set the phase when re-analyzing.
     moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
         .type = JSModuleRecord::ImportEntryType::Namespace,
         .moduleRequest = getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName),
         .importName = getFromIdentifierArray(moduleRecord->vm(), identifierArray, importName),
         .localName = getFromIdentifierArray(moduleRecord->vm(), identifierArray, localName),
+#ifdef JSC_HAS_IMPORT_DEFER
         .phase = JSModuleRecord::ModulePhase::Defer,
+#endif
     });
 }
 extern "C" void JSC_JSModuleRecord__addRequestedModuleDefer(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName)
 {
     RefPtr<ScriptFetchParameters> attributes = RefPtr<ScriptFetchParameters> {};
+#ifdef JSC_HAS_IMPORT_DEFER
     moduleRecord->appendRequestedModule(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), std::move(attributes), JSModuleRecord::ModulePhase::Defer);
+#else
+    moduleRecord->appendRequestedModule(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), std::move(attributes));
+#endif
 }
 
 static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise, JSModuleRecord* resultValue = nullptr);
@@ -287,7 +298,11 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord)
         Vector<String> sortedDeps;
         for (const auto& request : moduleRecord->requestedModules()) {
             WTF::StringPrintStream line;
+#ifdef JSC_HAS_IMPORT_DEFER
             const char* phase = request.m_phase == AbstractModuleRecord::ModulePhase::Defer ? "defer" : "evaluation";
+#else
+            const char* phase = "evaluation";
+#endif
             if (request.m_attributes == nullptr)
                 line.print("      module(", request.m_specifier, "),phase(", phase, ")\n");
             else
@@ -307,7 +322,11 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord)
         for (const auto& pair : moduleRecord->importEntries()) {
             WTF::StringPrintStream line;
             auto& importEntry = pair.value;
+#ifdef JSC_HAS_IMPORT_DEFER
             const char* phase = importEntry.phase == AbstractModuleRecord::ModulePhase::Defer ? "defer" : "evaluation";
+#else
+            const char* phase = "evaluation";
+#endif
             line.print("      import(", importEntry.importName, "), local(", importEntry.localName, "), module(", importEntry.moduleRequest, "), phase(", phase, ")\n");
             sortedImports.append(line.toString());
         }

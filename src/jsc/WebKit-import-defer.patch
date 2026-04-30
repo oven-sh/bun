@@ -1,4 +1,4 @@
-From ca7ba6ec4a3b60352b655dd2086c90bef0f42361 Mon Sep 17 00:00:00 2001
+From 0b2185d3c250920fee47863fad54d04e6b66873c Mon Sep 17 00:00:00 2001
 From: robobun <robobun@users.noreply.github.com>
 Date: Thu, 30 Apr 2026 20:25:11 +0000
 Subject: [PATCH] Implement import defer (TC39 Stage 3)
@@ -68,7 +68,7 @@ Options:
  Source/JavaScriptCore/parser/Parser.cpp       |  11 +-
  Source/JavaScriptCore/parser/SyntaxChecker.h  |   2 +-
  .../runtime/AbstractModuleRecord.cpp          | 111 ++++++++++++++++--
- .../runtime/AbstractModuleRecord.h            |  10 +-
+ .../runtime/AbstractModuleRecord.h            |  11 +-
  .../runtime/CyclicModuleRecord.cpp            |  50 +++++++-
  .../runtime/CyclicModuleRecord.h              |   1 +
  .../runtime/JSGlobalObjectFunctions.cpp       |  27 +++++
@@ -77,7 +77,7 @@ Options:
  .../runtime/JSModuleNamespaceObject.h         |  11 +-
  Source/JavaScriptCore/runtime/Microtask.h     |   3 +-
  Source/JavaScriptCore/runtime/OptionsList.h   |   2 +-
- 19 files changed, 374 insertions(+), 39 deletions(-)
+ 19 files changed, 375 insertions(+), 39 deletions(-)
 
 diff --git a/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp b/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp
 index 0648035f57..8bca1d3d16 100644
@@ -460,14 +460,15 @@ index 4674eb958b..298a7a20b6 100644
      dataLog("    Import: ", m_importEntries.size(), " entries\n");
      for (const auto& pair : m_importEntries) {
 diff --git a/Source/JavaScriptCore/runtime/AbstractModuleRecord.h b/Source/JavaScriptCore/runtime/AbstractModuleRecord.h
-index fa9b745357..3d4592a967 100644
+index fa9b745357..2ffc36f627 100644
 --- a/Source/JavaScriptCore/runtime/AbstractModuleRecord.h
 +++ b/Source/JavaScriptCore/runtime/AbstractModuleRecord.h
-@@ -102,11 +102,14 @@ public:
+@@ -102,11 +102,15 @@ public:
  #endif
          Namespace,
      };
 +    // https://tc39.es/proposal-defer-import-eval/
++#define JSC_HAS_IMPORT_DEFER 1
 +    enum class ModulePhase : uint8_t { Evaluation, Defer };
      struct ImportEntry {
          ImportEntryType type;
@@ -478,7 +479,7 @@ index fa9b745357..3d4592a967 100644
      };
  
      typedef WTF::ListHashSet<RefPtr<UniquedStringImpl>, IdentifierRepHash> OrderedIdentifierSet;
-@@ -116,6 +119,7 @@ public:
+@@ -116,6 +120,7 @@ public:
      struct ModuleRequest {
          Identifier m_specifier;
          RefPtr<ScriptFetchParameters> m_attributes;
@@ -486,7 +487,7 @@ index fa9b745357..3d4592a967 100644
  
          ScriptFetchParameters::Type type(ScriptFetchParameters::Type fallback = ScriptFetchParameters::Type::JavaScript) const;
          bool operator==(const ModuleRequest&) const;
-@@ -129,7 +133,7 @@ public:
+@@ -129,7 +134,7 @@ public:
  
      DECLARE_EXPORT_INFO;
  
@@ -495,7 +496,7 @@ index fa9b745357..3d4592a967 100644
      void addStarExportEntry(const Identifier&);
      void addImportEntry(const ImportEntry&);
      void addExportEntry(const ExportEntry&);
-@@ -203,7 +207,8 @@ public:
+@@ -203,7 +208,8 @@ public:
      AbstractModuleRecord* hostResolveImportedModule(JSGlobalObject*, const Identifier& moduleName);
      void setImportedModule(JSGlobalObject*, const ModuleRequest&, AbstractModuleRecord*);
  
@@ -505,7 +506,7 @@ index fa9b745357..3d4592a967 100644
  
      JSPromise* asyncCapability() const;
      void asyncCapability(VM&, JSPromise*);
-@@ -278,6 +283,7 @@ private:
+@@ -278,6 +284,7 @@ private:
      Vector<ModuleRequest> m_requestedModules;
  
      WriteBarrier<JSModuleNamespaceObject> m_moduleNamespaceObject;

@@ -594,6 +594,32 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
     };
     errdefer connection.deinit();
 
+    // Resolve the prebuilt SSL_CTX before the platform branches so the Windows
+    // named-pipe path can adopt it. node:tls passes the native SecureContext as
+    // `tls.secureContext` so we share its already-built SSL_CTX (CA bundle,
+    // cert chain, ciphers) instead of rebuilding ~50 KB of BoringSSL state per
+    // connect. SSL_new() up_ref()s again per socket, so the SecureContext can
+    // be GC'd while the connection is alive.
+    //
+    // Hoisted from below `isNamedPipe`: on this branch `[buntls]` no longer
+    // spreads `{ca,cert,key}` into the `tls` object, so the `SSLConfig` parsed
+    // from it is empty and the named-pipe SSLWrapper would build a fresh CTX
+    // with no trust store → DEPTH_ZERO_SELF_SIGNED_CERT. The SSLConfig fallback
+    // (defaultClientSslCtx / createSSLContext) stays after the named-pipe
+    // early-return — that path uses uSockets and threads the CTX through
+    // `socket.owned_ssl_ctx`, which has nothing to share with named-pipe.
+    var owned_ssl_ctx: ?*BoringSSL.SSL_CTX = null;
+    if (ssl_enabled) {
+        const native_sc: ?*SecureContext = blk: {
+            const tls_js = (try opts.getTruthy(globalObject, "tls")) orelse break :blk null;
+            if (!tls_js.isObject()) break :blk null;
+            const sc_js = (try tls_js.getTruthy(globalObject, "secureContext")) orelse break :blk null;
+            break :blk SecureContext.fromJS(sc_js);
+        };
+        if (native_sc) |sc| owned_ssl_ctx = sc.borrow();
+    }
+    errdefer if (owned_ssl_ctx) |c| BoringSSL.SSL_CTX_free(c);
+
     if (Environment.isWindows) {
         var buf: bun.PathBuffer = undefined;
         var pipe_name: ?[]const u8 = null;
@@ -672,17 +698,25 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 tls.poll_ref.ref(handlers.vm);
                 tls.ref();
 
+                // Transfer the borrowed CTX into the pipe's SSLWrapper. From
+                // here it owns the ref on every path (initWithCTX adopts on
+                // success, initTLSWrapper frees on failure), so null our local
+                // before the call so the errdefer above can't double-free.
+                const ctx_for_pipe = owned_ssl_ctx;
+                owned_ssl_ctx = null;
                 const named_pipe = switch (connection) {
                     .unix => WindowsNamedPipeContext.connect(
                         globalObject,
                         pipe_name.?,
                         if (ssl) |s| s.* else null,
+                        ctx_for_pipe,
                         .{ .tls = tls },
                     ) catch return promise_value,
                     .fd => |fd| WindowsNamedPipeContext.open(
                         globalObject,
                         fd,
                         if (ssl) |s| s.* else null,
+                        ctx_for_pipe,
                         .{ .tls = tls },
                     ) catch return promise_value,
                     else => unreachable,
@@ -718,11 +752,13 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                         globalObject,
                         pipe_name.?,
                         null,
+                        null,
                         .{ .tcp = tcp },
                     ) catch return promise_value,
                     .fd => |fd| WindowsNamedPipeContext.open(
                         globalObject,
                         fd,
+                        null,
                         null,
                         .{ .tcp = tcp },
                     ) catch return promise_value,
@@ -734,24 +770,11 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
         }
     }
 
-    // Build the SSL_CTX once here (or borrow from a passed SecureContext);
-    // doConnect hands `socket.owned_ssl_ctx` to the per-VM connect group.
-    var owned_ssl_ctx: ?*BoringSSL.SSL_CTX = null;
-    if (ssl_enabled) {
-        // node:tls passes the native SecureContext as `tls.secureContext` so
-        // we share its already-built SSL_CTX (CA bundle, cert chain, ciphers)
-        // instead of rebuilding ~50 KB of BoringSSL state per connect.
-        // SSL_new() up_ref()s again per socket, so the SecureContext can be
-        // GC'd while the connection is alive.
-        const native_sc: ?*SecureContext = blk: {
-            const tls_js = (try opts.getTruthy(globalObject, "tls")) orelse break :blk null;
-            if (!tls_js.isObject()) break :blk null;
-            const sc_js = (try tls_js.getTruthy(globalObject, "secureContext")) orelse break :blk null;
-            break :blk SecureContext.fromJS(sc_js);
-        };
-        if (native_sc) |sc| {
-            owned_ssl_ctx = sc.borrow();
-        } else if (ssl) |ssl_cfg| {
+    // SecureContext was already borrowed above; build the SSL_CTX from
+    // SSLConfig only if no SecureContext was passed. doConnect hands
+    // `socket.owned_ssl_ctx` to the per-VM connect group.
+    if (ssl_enabled and owned_ssl_ctx == null) {
+        if (ssl) |ssl_cfg| {
             // `Bun.connect({tls: true})` and other no-cert/no-CA configs are
             // the common case for clients (default trust store, default
             // ciphers). Building a fresh SSL_CTX for those is ~70 ms of cert
@@ -771,7 +794,8 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
             }
         }
     }
-    errdefer if (owned_ssl_ctx) |c| BoringSSL.SSL_CTX_free(c);
+    // (errdefer for owned_ssl_ctx already armed at the earlier lookup site;
+    // duplicating it here would double-free on error.)
 
     default_data.ensureStillAlive();
 

@@ -2010,6 +2010,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
     // Still parse SSLConfig for servername/ALPN (those live on the JS-side
     // wrapper, not the SSL_CTX) and as the build source when no SecureContext.
     var ssl_opts: ?jsc.API.ServerConfig.SSLConfig = null;
+    errdefer if (ssl_opts) |*c| c.deinit();
     if (try opts.getTruthy(globalObject, "tls")) |tls| {
         if (!tls.isBoolean()) {
             ssl_opts = try jsc.API.ServerConfig.SSLConfig.fromJS(jsc.VirtualMachine.get(), globalObject, tls);

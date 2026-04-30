@@ -2506,13 +2506,20 @@ pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
             } else null
         else
             null;
-        var maybe_group = bun.uws.Loop.get().internal_loop_data.head;
+        const loop = bun.uws.Loop.get();
+        var maybe_group = loop.internal_loop_data.head;
         while (maybe_group) |group| {
             const next = group.next;
             if (group != skip_spawn_ipc and group != skip_process_ipc and group != skip_test_parallel_ipc) {
                 group.closeAll();
             }
-            maybe_group = next;
+            // closeAll → on_close JS may close another group's last socket and
+            // unlink our cached `next` from the loop list. Same guard as
+            // us_loop_close_all_groups (loop.c) — restart from the head if so.
+            maybe_group = if (next != null and next.?.linked == 0)
+                loop.internal_loop_data.head
+            else
+                next;
         }
     }
     if (this.rare_data) |rare| {

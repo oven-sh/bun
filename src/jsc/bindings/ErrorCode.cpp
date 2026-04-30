@@ -229,7 +229,16 @@ JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, const Str
 
 JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
 {
-    return createError(vm, defaultGlobalObject(globalObject), code, message);
+    if (auto* zigGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject))
+        return createError(vm, zigGlobalObject, code, message);
+
+    // The provided global object is not a Zig::GlobalObject (e.g. it is a
+    // node:vm context). Allocate the error in the given realm so that
+    // `instanceof Error` works inside that realm and host-realm intrinsics are
+    // not exposed via the error's prototype chain.
+    const auto& data = errors[static_cast<size_t>(code)];
+    auto* structure = createErrorStructure(vm, globalObject, data.type, data.name, data.code);
+    return JSC::ErrorInstance::create(globalObject, structure, jsString(vm, message), jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
 }
 
 JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, JSValue message)

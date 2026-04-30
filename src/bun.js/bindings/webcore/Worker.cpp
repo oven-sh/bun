@@ -256,11 +256,17 @@ void Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>
 {
     {
         Locker lock(m_pendingTasksMutex);
-        if (m_state.load() != State::Running) {
-            // Worker VM not up yet (Pending) or already gone (Closed). In the
-            // Closed case these tasks are dropped with the Worker; callers
-            // that care (postMessage, getHeapSnapshot) check state first.
+        switch (m_state.load()) {
+        case State::Pending:
+            // Worker VM not up yet; queue for fireEarlyMessages().
             m_pendingTasks.append(WTF::move(task));
+            return;
+        case State::Running:
+            break;
+        case State::Closing:
+        case State::Closed:
+            // Worker VM is gone; drop immediately. postMessage() from a
+            // 'close'/'exit' handler lands here (silent no-op per spec).
             return;
         }
     }

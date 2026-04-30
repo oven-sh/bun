@@ -128,6 +128,18 @@ describe("EventSource", () => {
     es.close();
   });
 
+  test("strips one leading UTF-8 BOM from the stream", async () => {
+    await using server = sseServer(async (c, req) => {
+      c.write("\uFEFFdata: bom\n\n");
+      await c.flush();
+      await new Promise(r => req.signal.addEventListener("abort", r));
+    });
+    const es = new EventSource(server.url.href);
+    const msg = await new Promise<MessageEvent>(r => (es.onmessage = r));
+    expect(msg.data).toBe("bom");
+    es.close();
+  });
+
   test("reconnects after the stream ends and sends Last-Event-ID", async () => {
     let connections = 0;
     let sawLastEventId: string | null = null;

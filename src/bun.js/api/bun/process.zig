@@ -2367,7 +2367,15 @@ pub const sync = struct {
             }};
             var ts = std.c.timespec{ .sec = 0, .nsec = 0 };
             // eventlist must be a non-null `[*]Kevent`; nevents=0 ⇒ not written.
-            _ = std.c.kevent(kq, &ch, 1, &ch, 0, &ts);
+            // ENOMEM here means no auto-knote on the script ⇒ waitMacKqueue
+            // would have nothing to fire NOTE_EXIT and (non-TTY, .inherit
+            // stdio) block forever. Same policy as `kqueue()` above and the
+            // EV_RECEIPT loop in waitMacKqueue: invalidate so the caller
+            // falls through to the plain `poll()`+`wait4()` loop.
+            if (std.c.kevent(kq, &ch, 1, &ch, 0, &ts) < 0) {
+                no_orphans_kq.close();
+                no_orphans_kq = bun.invalid_fd;
+            }
         };
         // LIFO: this runs LAST — after killSyncScriptTree() (which drains
         // m_kq) and releaseKq().

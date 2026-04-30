@@ -11,6 +11,7 @@ pub fn ParseImportExport(
         /// Note: The caller has already parsed the "import" keyword
         pub fn parseImportExpr(noalias p: *P, loc: logger.Loc, level: Level) anyerror!Expr {
             // Parse an "import.meta" expression
+            var phase: bun.ImportPhase = .evaluation;
             if (p.lexer.token == .t_dot) {
                 p.esm_import_keyword = js_lexer.rangeOfIdentifier(p.source, loc);
                 try p.lexer.next();
@@ -18,6 +19,16 @@ pub fn ParseImportExport(
                     try p.lexer.next();
                     p.has_import_meta = true;
                     return p.newExpr(E.ImportMeta{}, loc);
+                } else if (p.lexer.isContextualKeyword("defer")) {
+                    // "import.defer('path')"
+                    // https://github.com/tc39/proposal-defer-import-eval
+                    phase = .defer_;
+                    try p.lexer.next();
+                } else if (p.lexer.isContextualKeyword("source")) {
+                    // "import.source('path')"
+                    // https://github.com/tc39/proposal-source-phase-imports
+                    phase = .source;
+                    try p.lexer.next();
                 } else {
                     try p.lexer.expectedString("\"meta\"");
                 }
@@ -65,12 +76,14 @@ pub fn ParseImportExport(
             if (comptime only_scan_imports_and_do_not_visit) {
                 if (value.data == .e_string and value.data.e_string.isUTF8() and value.data.e_string.isPresent()) {
                     const import_record_index = p.addImportRecord(.dynamic, value.loc, value.data.e_string.slice(p.allocator));
+                    p.import_records.items[import_record_index].phase = phase;
 
                     return p.newExpr(E.Import{
                         .expr = value,
                         // .leading_interior_comments = comments,
                         .import_record_index = import_record_index,
                         .options = import_options,
+                        .phase = phase,
                     }, loc);
                 }
             }
@@ -82,6 +95,7 @@ pub fn ParseImportExport(
                 // .leading_interior_comments = comments,
                 .import_record_index = std.math.maxInt(u32),
                 .options = import_options,
+                .phase = phase,
             }, loc);
         }
 

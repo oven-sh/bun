@@ -1399,6 +1399,9 @@ pub const Import = struct {
     expr: ExprNodeIndex,
     options: ExprNodeIndex = Expr.empty,
     import_record_index: u32,
+    // https://github.com/tc39/proposal-defer-import-eval
+    // https://github.com/tc39/proposal-source-phase-imports
+    phase: bun.ImportPhase = .evaluation,
 
     /// TODO:
     /// Comments inside "import()" expressions have special meaning for Webpack.

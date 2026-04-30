@@ -198,7 +198,10 @@ pub fn scan(
                 }
 
                 const namespace_ref = st.namespace_ref;
-                const convert_star_to_clause = !p.options.bundle and (p.symbols.items[namespace_ref.innerIndex()].use_count_estimate == 0);
+                // Deferred imports always keep the namespace binding even if it
+                // appears unused; evaluating the module is a side effect that the
+                // user may be relying on via later property access.
+                const convert_star_to_clause = !p.options.bundle and record.phase == .evaluation and (p.symbols.items[namespace_ref.innerIndex()].use_count_estimate == 0);
 
                 if (convert_star_to_clause and !keep_unused_imports) {
                     st.star_name_loc = null;

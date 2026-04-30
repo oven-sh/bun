@@ -1176,6 +1176,7 @@ pub fn VisitExpr(
 
                         .loc = e_.expr.loc,
                         .import_loader = e_.importRecordLoader(),
+                        .phase = e_.phase,
                     };
 
                     return p.import_transposer.maybeTransposeIf(e_.expr, &state);

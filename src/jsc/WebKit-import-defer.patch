@@ -1,0 +1,947 @@
+From 44154ea8e5c2737b4f1f6f295ccd47988fdc6efa Mon Sep 17 00:00:00 2001
+From: robobun <robobun@users.noreply.github.com>
+Date: Thu, 30 Apr 2026 20:25:11 +0000
+Subject: [PATCH] Implement import defer (TC39 Stage 3)
+
+Adds runtime semantics for the deferred module evaluation proposal
+(https://tc39.es/proposal-defer-import-eval/) on top of the existing
+parser support for 'import defer * as ns from ...'.
+
+AbstractModuleRecord:
+- ModulePhase enum (Evaluation / Defer), carried on ModuleRequest and
+  ImportEntry.
+- Separate m_moduleDeferredNamespaceObject cache; getModuleNamespace()
+  takes a phase and returns the appropriate object.
+- gatherAsynchronousTransitiveDependencies(): post-order DFS that
+  collects unexecuted TLA modules in a deferred subgraph.
+- innerModuleEvaluation() builds an evaluationList per the proposed
+  algorithm: defer-phase requests contribute only their async
+  transitive deps; evaluation-phase requests are recursed as before.
+  No overhead when the module has no deferred imports.
+
+CyclicModuleRecord:
+- readyForSyncExecution(): iterative DFS that mirrors the spec's
+  ReadyForSyncExecution(module, seen).
+- initializeEnvironment() passes ImportEntry.phase to
+  getModuleNamespace() so 'import defer * as ns' binds a deferred
+  namespace.
+
+JSModuleNamespaceObject:
+- m_isDeferred flag; deferred instances get @@toStringTag =
+  'Deferred Module' and hide 'then' (IsSymbolLikeNamespaceKey).
+- ensureDeferredNamespaceEvaluation() implements EvaluateModuleSync:
+  checks readyForSyncExecution(), calls module.Evaluate(), and throws
+  the promise's rejection value synchronously.
+- Hooked into getOwnPropertySlotCommon / deleteProperty /
+  getOwnPropertyNames / defineOwnProperty so any string-key access
+  triggers evaluation.
+
+ModuleAnalyzer / NodesAnalyzeModule:
+- Thread ImportDeclarationNode::ImportType::Deferred through to a
+  defer-phase requested-module + namespace ImportEntry.
+- Requested-module dedup is now per (specifier, phase).
+
+Parser:
+- Recognise 'import.defer(' alongside 'import.meta'; createImportExpr
+  gains an isDeferred argument.
+- ImportNode carries m_isDeferred; when set, emitBytecode passes the
+  phase as a third argument to @importModule.
+
+Runtime:
+- globalFuncImportModule reads the optional phase argument; when
+  Defer, chains the import promise through a new
+  InternalMicrotask::ImportDeferModuleNamespace that swaps the result
+  to the deferred namespace for the same module record. Lazy
+  evaluation for the dynamic form (skipping Evaluate() entirely) still
+  requires threading phase through ContinueDynamicImport; noted in a
+  FIXME.
+
+Options:
+- useImportDefer flipped to true.
+---
+ .../bytecompiler/NodesCodegen.cpp             |  16 ++-
+ Source/JavaScriptCore/parser/ASTBuilder.h     |   4 +-
+ .../JavaScriptCore/parser/ModuleAnalyzer.cpp  |  14 ++-
+ Source/JavaScriptCore/parser/ModuleAnalyzer.h |   3 +-
+ .../JavaScriptCore/parser/NodeConstructors.h  |   3 +-
+ Source/JavaScriptCore/parser/Nodes.h          |   3 +-
+ .../parser/NodesAnalyzeModule.cpp             |   4 +-
+ Source/JavaScriptCore/parser/Parser.cpp       |  11 +-
+ Source/JavaScriptCore/parser/SyntaxChecker.h  |   2 +-
+ .../runtime/AbstractModuleRecord.cpp          | 111 ++++++++++++++++--
+ .../runtime/AbstractModuleRecord.h            |  10 +-
+ .../runtime/CyclicModuleRecord.cpp            |  50 +++++++-
+ .../runtime/CyclicModuleRecord.h              |   1 +
+ .../runtime/JSGlobalObjectFunctions.cpp       |  24 ++++
+ Source/JavaScriptCore/runtime/JSMicrotask.cpp |  31 +++++
+ .../runtime/JSModuleNamespaceObject.cpp       | 107 ++++++++++++++++-
+ .../runtime/JSModuleNamespaceObject.h         |  11 +-
+ Source/JavaScriptCore/runtime/Microtask.h     |   3 +-
+ Source/JavaScriptCore/runtime/OptionsList.h   |   2 +-
+ 19 files changed, 371 insertions(+), 39 deletions(-)
+
+diff --git a/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp b/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp
+index 0648035f57..8bca1d3d16 100644
+--- a/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp
++++ b/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp
+@@ -231,11 +231,21 @@ RegisterID* SuperNode::emitBytecode(BytecodeGenerator& generator, RegisterID* ds
+ RegisterID* ImportNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
+ {
+     RefPtr<RegisterID> importModule = generator.moveLinkTimeConstant(nullptr, LinkTimeConstant::importModule);
+-    CallArguments arguments(generator, nullptr, m_option ? 2 : 1);
++    // import.defer() passes a third argument (the phase) to @importModule so
++    // the runtime can return a deferred namespace. Plain import() keeps the
++    // historical two-argument shape to avoid perturbing existing call sites.
++    unsigned argCount = m_isDeferred ? 3 : (m_option ? 2 : 1);
++    CallArguments arguments(generator, nullptr, argCount);
+     generator.emitLoad(arguments.thisRegister(), jsUndefined());
+     generator.emitNode(arguments.argumentRegister(0), m_expr);
+-    if (m_option)
+-        generator.emitNode(arguments.argumentRegister(1), m_option);
++    if (argCount >= 2) {
++        if (m_option)
++            generator.emitNode(arguments.argumentRegister(1), m_option);
++        else
++            generator.emitLoad(arguments.argumentRegister(1), jsUndefined());
++    }
++    if (m_isDeferred)
++        generator.emitLoad(arguments.argumentRegister(2), jsNumber(static_cast<unsigned>(AbstractModuleRecord::ModulePhase::Defer)));
+     return generator.emitCall(generator.finalDestination(dst, importModule.get()), importModule.get(), NoExpectedFunction, arguments, divot(), divotStart(), divotEnd(), DebuggableCall::No);
+ }
+ 
+diff --git a/Source/JavaScriptCore/parser/ASTBuilder.h b/Source/JavaScriptCore/parser/ASTBuilder.h
+index 141fea2424..ddc6c29da0 100644
+--- a/Source/JavaScriptCore/parser/ASTBuilder.h
++++ b/Source/JavaScriptCore/parser/ASTBuilder.h
+@@ -182,9 +182,9 @@ public:
+     {
+         return new (m_parserArena) SuperNode(location);
+     }
+-    ExpressionNode* createImportExpr(const JSTokenLocation& location, ExpressionNode* expr, ExpressionNode* option, const JSTextPosition& start, const JSTextPosition& divot, const JSTextPosition& end)
++    ExpressionNode* createImportExpr(const JSTokenLocation& location, ExpressionNode* expr, ExpressionNode* option, bool isDeferred, const JSTextPosition& start, const JSTextPosition& divot, const JSTextPosition& end)
+     {
+-        auto* node = new (m_parserArena) ImportNode(location, expr, option);
++        auto* node = new (m_parserArena) ImportNode(location, expr, option, isDeferred);
+         setExceptionLocation(node, start, divot, end);
+         return node;
+     }
+diff --git a/Source/JavaScriptCore/parser/ModuleAnalyzer.cpp b/Source/JavaScriptCore/parser/ModuleAnalyzer.cpp
+index 3a3f605de3..53a11fecd2 100644
+--- a/Source/JavaScriptCore/parser/ModuleAnalyzer.cpp
++++ b/Source/JavaScriptCore/parser/ModuleAnalyzer.cpp
+@@ -41,11 +41,19 @@ ModuleAnalyzer::ModuleAnalyzer(JSGlobalObject* globalObject, const Identifier& m
+ {
+ }
+ 
+-void ModuleAnalyzer::appendRequestedModule(const Identifier& specifier, RefPtr<ScriptFetchParameters>&& attributes)
++void ModuleAnalyzer::appendRequestedModule(const Identifier& specifier, RefPtr<ScriptFetchParameters>&& attributes, JSModuleRecord::ModulePhase phase)
+ {
+-    auto result = m_requestedModules.add(specifier.impl());
++    // Per https://tc39.es/proposal-defer-import-eval/#sec-modulerequests, if
++    // the same specifier is requested with both ~defer~ and ~evaluation~
++    // phases, both requests are kept. The evaluation-phase request will drive
++    // eager InnerModuleEvaluation; the defer-phase one becomes a no-op since
++    // the module will already be evaluated.
++    //
++    // We keep at most one request per (specifier, phase) pair.
++    auto& set = phase == JSModuleRecord::ModulePhase::Defer ? m_requestedModulesDefer : m_requestedModules;
++    auto result = set.add(specifier.impl());
+     if (result.isNewEntry)
+-        moduleRecord()->appendRequestedModule(specifier, WTF::move(attributes));
++        moduleRecord()->appendRequestedModule(specifier, WTF::move(attributes), phase);
+ }
+ 
+ void ModuleAnalyzer::exportVariable(ModuleProgramNode& moduleProgramNode, const RefPtr<UniquedStringImpl>& localName, const VariableEnvironmentEntry& variable)
+diff --git a/Source/JavaScriptCore/parser/ModuleAnalyzer.h b/Source/JavaScriptCore/parser/ModuleAnalyzer.h
+index 4886fc775d..9b12d58d6f 100644
+--- a/Source/JavaScriptCore/parser/ModuleAnalyzer.h
++++ b/Source/JavaScriptCore/parser/ModuleAnalyzer.h
+@@ -47,7 +47,7 @@ public:
+ 
+     JSModuleRecord* moduleRecord() { return m_moduleRecord; }
+ 
+-    void appendRequestedModule(const Identifier&, RefPtr<ScriptFetchParameters>&&);
++    void appendRequestedModule(const Identifier&, RefPtr<ScriptFetchParameters>&&, JSModuleRecord::ModulePhase = JSModuleRecord::ModulePhase::Evaluation);
+ 
+     void fail(std::tuple<ErrorType, String>&& errorMessage) { m_errorMessage = errorMessage; }
+ 
+@@ -57,6 +57,7 @@ private:
+     VM& m_vm;
+     JSModuleRecord* m_moduleRecord;
+     IdentifierSet m_requestedModules;
++    IdentifierSet m_requestedModulesDefer;
+     std::tuple<ErrorType, String> m_errorMessage;
+ };
+ 
+diff --git a/Source/JavaScriptCore/parser/NodeConstructors.h b/Source/JavaScriptCore/parser/NodeConstructors.h
+index 8eca635d38..feb0163d1b 100644
+--- a/Source/JavaScriptCore/parser/NodeConstructors.h
++++ b/Source/JavaScriptCore/parser/NodeConstructors.h
+@@ -179,10 +179,11 @@ namespace JSC {
+     {
+     }
+ 
+-    inline ImportNode::ImportNode(const JSTokenLocation& location, ExpressionNode* expr, ExpressionNode* option)
++    inline ImportNode::ImportNode(const JSTokenLocation& location, ExpressionNode* expr, ExpressionNode* option, bool isDeferred)
+         : ExpressionNode(location)
+         , m_expr(expr)
+         , m_option(option)
++        , m_isDeferred(isDeferred)
+     {
+     }
+ 
+diff --git a/Source/JavaScriptCore/parser/Nodes.h b/Source/JavaScriptCore/parser/Nodes.h
+index 946ac2c664..a486a074ac 100644
+--- a/Source/JavaScriptCore/parser/Nodes.h
++++ b/Source/JavaScriptCore/parser/Nodes.h
+@@ -634,7 +634,7 @@ namespace JSC {
+ 
+     class ImportNode final : public ExpressionNode, public ThrowableExpressionData {
+     public:
+-        ImportNode(const JSTokenLocation&, ExpressionNode*, ExpressionNode*);
++        ImportNode(const JSTokenLocation&, ExpressionNode*, ExpressionNode*, bool isDeferred = false);
+ 
+     private:
+         bool isImportNode() const final { return true; }
+@@ -642,6 +642,7 @@ namespace JSC {
+ 
+         ExpressionNode* m_expr;
+         ExpressionNode* m_option;
++        bool m_isDeferred { false };
+     };
+ 
+     class MetaPropertyNode : public ExpressionNode {
+diff --git a/Source/JavaScriptCore/parser/NodesAnalyzeModule.cpp b/Source/JavaScriptCore/parser/NodesAnalyzeModule.cpp
+index a05e1f4cc2..e31e36a120 100644
+--- a/Source/JavaScriptCore/parser/NodesAnalyzeModule.cpp
++++ b/Source/JavaScriptCore/parser/NodesAnalyzeModule.cpp
+@@ -102,7 +102,8 @@ bool ImportDeclarationNode::analyzeModule(ModuleAnalyzer& analyzer)
+         return false;
+     }
+ 
+-    analyzer.appendRequestedModule(m_moduleName->moduleName(), WTF::move(result.value()));
++    auto phase = m_type == ImportType::Deferred ? JSModuleRecord::ModulePhase::Defer : JSModuleRecord::ModulePhase::Evaluation;
++    analyzer.appendRequestedModule(m_moduleName->moduleName(), WTF::move(result.value()), phase);
+     for (auto* specifier : m_specifierList->specifiers()) {
+         analyzer.moduleRecord()->addImportEntry(JSModuleRecord::ImportEntry {
+             specifier->importedName() == analyzer.vm().propertyNames->starNamespacePrivateName
+@@ -110,6 +111,7 @@ bool ImportDeclarationNode::analyzeModule(ModuleAnalyzer& analyzer)
+             m_moduleName->moduleName(),
+             specifier->importedName(),
+             specifier->localName(),
++            phase,
+         });
+     }
+     return true;
+diff --git a/Source/JavaScriptCore/parser/Parser.cpp b/Source/JavaScriptCore/parser/Parser.cpp
+index 7cd7dec797..b31eb2016e 100644
+--- a/Source/JavaScriptCore/parser/Parser.cpp
++++ b/Source/JavaScriptCore/parser/Parser.cpp
+@@ -5470,17 +5470,24 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
+     } else if (baseIsImport) {
+         next();
+         JSTextPosition expressionEnd = lastTokenEndPosition();
++        bool hasImportDefer = false;
+         if (consume(DOT)) {
+             if (matchContextualKeyword(m_vm.propertyNames->builtinNames().metaPublicName())) [[likely]] {
+                 semanticFailIfFalse(m_scriptMode == JSParserScriptMode::Module, "import.meta is only valid inside modules");
+                 base = context.createImportMetaExpr(location, createResolveAndUseVariable(context, &m_vm.propertyNames->metaPrivateName, false, expressionStart, location));
+                 currentScope()->setUsesImportMeta();
+                 next();
++            } else if (Options::useImportDefer() && matchContextualKeyword(m_vm.propertyNames->deferKeyword)) {
++                // "import.defer(...)"
++                // https://tc39.es/proposal-defer-import-eval/
++                next();
++                hasImportDefer = true;
+             } else {
+                 failIfTrue(match(IDENT), "\"import.\" can only be followed with meta");
+                 failDueToUnexpectedToken();
+             }
+-        } else {
++        }
++        if (!base) {
+             semanticFailIfTrue(newCount, "Cannot use new with import");
+             consumeOrFail(OPENPAREN, "import call expects one or two arguments");
+             SetForScope nonLHSCountScope(m_parserState.nonLHSCount);
+@@ -5495,7 +5502,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
+                 }
+             }
+             consumeOrFail(CLOSEPAREN, "import call expects one or two arguments");
+-            base = context.createImportExpr(location, expr, optionExpression, expressionStart, expressionEnd, lastTokenEndPosition());
++            base = context.createImportExpr(location, expr, optionExpression, hasImportDefer, expressionStart, expressionEnd, lastTokenEndPosition());
+         }
+     } else {
+         const bool isAsync = matchContextualKeyword(m_vm.propertyNames->async);
+diff --git a/Source/JavaScriptCore/parser/SyntaxChecker.h b/Source/JavaScriptCore/parser/SyntaxChecker.h
+index 15b2af5b83..6659b8e88c 100644
+--- a/Source/JavaScriptCore/parser/SyntaxChecker.h
++++ b/Source/JavaScriptCore/parser/SyntaxChecker.h
+@@ -164,7 +164,7 @@ public:
+     ExpressionType createLogicalNot(const JSTokenLocation&, ExpressionType) { return UnaryExpr; }
+     ExpressionType createUnaryPlus(const JSTokenLocation&, ExpressionType) { return UnaryExpr; }
+     ExpressionType createVoid(const JSTokenLocation&, ExpressionType) { return UnaryExpr; }
+-    ExpressionType createImportExpr(const JSTokenLocation&, ExpressionType, ExpressionType, int, int, int) { return ImportExpr; }
++    ExpressionType createImportExpr(const JSTokenLocation&, ExpressionType, ExpressionType, bool, int, int, int) { return ImportExpr; }
+     ExpressionType createThisExpr(const JSTokenLocation&) { return ThisExpr; }
+     ExpressionType createSuperExpr(const JSTokenLocation&) { return SuperExpr; }
+     ExpressionType createNewTargetExpr(const JSTokenLocation&) { return NewTargetExpr; }
+diff --git a/Source/JavaScriptCore/runtime/AbstractModuleRecord.cpp b/Source/JavaScriptCore/runtime/AbstractModuleRecord.cpp
+index 4674eb958b..298a7a20b6 100644
+--- a/Source/JavaScriptCore/runtime/AbstractModuleRecord.cpp
++++ b/Source/JavaScriptCore/runtime/AbstractModuleRecord.cpp
+@@ -93,6 +93,7 @@ void AbstractModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+     Base::visitChildren(thisObject, visitor);
+     visitor.append(thisObject->m_moduleEnvironment);
+     visitor.append(thisObject->m_moduleNamespaceObject);
++    visitor.append(thisObject->m_moduleDeferredNamespaceObject);
+     visitor.append(thisObject->m_cycleRoot);
+     visitor.append(thisObject->m_topLevelCapability);
+     visitor.append(thisObject->m_asyncCapability);
+@@ -147,9 +148,9 @@ bool AbstractModuleRecord::ModuleRequest::operator==(const ModuleRequest& other)
+     return true;
+ }
+ 
+-void AbstractModuleRecord::appendRequestedModule(const Identifier& moduleName, RefPtr<ScriptFetchParameters>&& attributes)
++void AbstractModuleRecord::appendRequestedModule(const Identifier& moduleName, RefPtr<ScriptFetchParameters>&& attributes, ModulePhase phase)
+ {
+-    m_requestedModules.append({ moduleName, WTF::move(attributes) });
++    m_requestedModules.append({ moduleName, WTF::move(attributes), phase });
+ }
+ 
+ void AbstractModuleRecord::addStarExportEntry(const Identifier& moduleName)
+@@ -802,7 +803,7 @@ auto AbstractModuleRecord::resolveExport(JSGlobalObject* globalObject, const Ide
+     return resolveExportImpl(globalObject, ResolveQuery(this, exportName.impl()));
+ }
+ 
+-JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject* globalObject, bool shouldPreventExtensions)
++JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject* globalObject, bool shouldPreventExtensions, ModulePhase phase)
+ {
+     VM& vm = globalObject->vm();
+     auto scope = DECLARE_THROW_SCOPE(vm);
+@@ -813,8 +814,10 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
+ #endif
+ 
+     // http://www.ecma-international.org/ecma-262/6.0/#sec-getmodulenamespace
+-    if (m_moduleNamespaceObject)
++    if (phase == ModulePhase::Evaluation && m_moduleNamespaceObject)
+         return m_moduleNamespaceObject.get();
++    if (phase == ModulePhase::Defer && m_moduleDeferredNamespaceObject)
++        return m_moduleDeferredNamespaceObject.get();
+ 
+     // GetModuleNamespace = GetExportedNames + ResolveExport per name. The naive
+     // implementation walks the star-export graph once per name. With N names and
+@@ -918,9 +921,14 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
+         }
+     }
+ 
+-    JSModuleNamespaceObject* moduleNamespaceObject = JSModuleNamespaceObject::create(globalObject, globalObject->moduleNamespaceObjectStructure(), this, WTF::move(resolutions), shouldPreventExtensions);
++    JSModuleNamespaceObject* moduleNamespaceObject = JSModuleNamespaceObject::create(globalObject, globalObject->moduleNamespaceObjectStructure(), this, WTF::move(resolutions), shouldPreventExtensions, phase == ModulePhase::Defer);
+     RETURN_IF_EXCEPTION(scope, nullptr);
+- 
++
++    if (phase == ModulePhase::Defer) {
++        m_moduleDeferredNamespaceObject.set(vm, this, moduleNamespaceObject);
++        return moduleNamespaceObject;
++    }
++
+     // Materialize *namespace* slot with module namespace object unless the module environment is not yet materialized, in which case we'll do it in setModuleEnvironment
+     if (m_moduleEnvironment) {
+         bool putResult = false;
+@@ -1039,6 +1047,48 @@ static void checkSafeToRecurse(JSGlobalObject* globalObject, ThrowScope& scope)
+         throwRangeError(globalObject, scope, "Maximum call stack size exceeded"_s);
+ }
+ 
++void AbstractModuleRecord::gatherAsynchronousTransitiveDependencies(Vector<AbstractModuleRecord*, 8>& result, UncheckedKeyHashSet<AbstractModuleRecord*>& seen)
++{
++    // GatherAsynchronousTransitiveDependencies(module, seen)
++    // https://tc39.es/proposal-defer-import-eval/#sec-GatherAsynchronousTransitiveDependencies
++    //
++    // Collects the direct post-order list of asynchronous unexecuted transitive
++    // dependencies, stopping the depth-first search for a branch when an
++    // asynchronous dependency is found.
++
++    using Status = CyclicModuleRecord::Status;
++
++    // 3. If seen contains module, return result.
++    if (!seen.add(this).isNewEntry)
++        return;
++    // 5. If module is not a Cyclic Module Record, return result.
++    auto* module = dynamicDowncast<CyclicModuleRecord>(this);
++    if (!module)
++        return;
++    // 6. If module.[[Status]] is either evaluating or evaluated, return result.
++    Status status = module->status();
++    if (status == Status::Evaluating || status == Status::EvaluatingAsync || status == Status::Evaluated)
++        return;
++    // 7. If module.[[HasTLA]] is true, then
++    if (module->hasTLA()) {
++        // 7.a. Append module to result.
++        if (!result.contains(module))
++            result.append(module);
++        // 7.b. Return result.
++        return;
++    }
++    // 8. For each ModuleRequest Record request of module.[[RequestedModules]], do
++    for (const ModuleRequest& request : module->requestedModules()) {
++        // 8.a. Let requiredModule be GetImportedModule(module, request).
++        AbstractModuleRecord* requiredModule = JSModuleLoader::getImportedModule(module, request);
++        // 8.b. Let additionalModules be GatherAsynchronousTransitiveDependencies(requiredModule, seen).
++        // 8.c. For each Module Record m of additionalModules, do
++        //        If result does not contain m, append m to result.
++        requiredModule->gatherAsynchronousTransitiveDependencies(result, seen);
++    }
++    // 9. Return result.
++}
++
+ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Vector<AbstractModuleRecord*, 8>& stack, unsigned index)
+ {
+     // InnerModuleEvaluation(module, stack, index)
+@@ -1086,10 +1136,51 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
+     ++index;
+     // 10. Append module to stack.
+     stack.append(module);
+-    // 11. For each ModuleRequest Record request of module.[[RequestedModules]], do
++    // https://tc39.es/proposal-defer-import-eval/#sec-innermoduleevaluation
++    // Let evaluationList be a new empty List.
++    // For each ModuleRequest Record request of module.[[RequestedModules]], do
++    //   a. Let requiredModule be GetImportedModule(module, request).
++    //   b. If request.[[Phase]] is defer, then
++    //        i. Let additionalModules be GatherAsynchronousTransitiveDependencies(requiredModule).
++    //        ii. For each Module Record additionalModule of additionalModules, do
++    //              1. If evaluationList does not contain additionalModule, then
++    //                   a. Append additionalModule to evaluationList.
++    //   c. Else if evaluationList does not contain requiredModule, then
++    //        i. Append requiredModule to evaluationList.
++    //
++    // The spec dedups evaluationList, but InnerModuleEvaluation already
++    // early-returns for modules that have started evaluating, so in the
++    // no-defer case we skip the O(n²) contains() and match the pre-defer
++    // behavior exactly. Only when a defer request is present do we build a
++    // deduplicated list (so GatherAsynchronousTransitiveDependencies'
++    // results interleave correctly with evaluation-phase requests).
++    Vector<AbstractModuleRecord*, 8> evaluationList;
++    bool anyDeferred = false;
+     for (const ModuleRequest& request : module->requestedModules()) {
+-        // 11.a. Let requiredModule be GetImportedModule(module, request).
+-        AbstractModuleRecord* requiredModule = JSModuleLoader::getImportedModule(module, request);
++        if (request.m_phase == ModulePhase::Defer) [[unlikely]] {
++            anyDeferred = true;
++            break;
++        }
++    }
++    if (anyDeferred) [[unlikely]] {
++        UncheckedKeyHashSet<AbstractModuleRecord*> seen;
++        UncheckedKeyHashSet<AbstractModuleRecord*> inList;
++        for (const ModuleRequest& request : module->requestedModules()) {
++            AbstractModuleRecord* requiredModule = JSModuleLoader::getImportedModule(module, request);
++            if (request.m_phase == ModulePhase::Defer) {
++                size_t before = evaluationList.size();
++                requiredModule->gatherAsynchronousTransitiveDependencies(evaluationList, seen);
++                for (size_t i = before; i < evaluationList.size(); ++i)
++                    inList.add(evaluationList[i]);
++            } else if (inList.add(requiredModule).isNewEntry)
++                evaluationList.append(requiredModule);
++        }
++    } else {
++        for (const ModuleRequest& request : module->requestedModules())
++            evaluationList.append(JSModuleLoader::getImportedModule(module, request));
++    }
++    // 11. For each Module Record requiredModule of evaluationList, do
++    for (AbstractModuleRecord* requiredModule : evaluationList) {
+         checkSafeToRecurse(globalObject, scope);
+         RETURN_IF_EXCEPTION(scope, invalid);
+ #if USE(BUN_JSC_ADDITIONS)
+@@ -1361,7 +1452,7 @@ void AbstractModuleRecord::dump()
+ 
+     dataLog("    Dependencies: ", m_requestedModules.size(), " modules\n");
+     for (const auto& request : m_requestedModules)
+-        dataLogLn("      module(", printableName(request.m_specifier), "),attributes(", RawPointer(request.m_attributes.get()), ")");
++        dataLogLn("      module(", printableName(request.m_specifier), "),phase(", request.m_phase == ModulePhase::Defer ? "defer" : "evaluation", "),attributes(", RawPointer(request.m_attributes.get()), ")");
+ 
+     dataLog("    Import: ", m_importEntries.size(), " entries\n");
+     for (const auto& pair : m_importEntries) {
+diff --git a/Source/JavaScriptCore/runtime/AbstractModuleRecord.h b/Source/JavaScriptCore/runtime/AbstractModuleRecord.h
+index fa9b745357..3d4592a967 100644
+--- a/Source/JavaScriptCore/runtime/AbstractModuleRecord.h
++++ b/Source/JavaScriptCore/runtime/AbstractModuleRecord.h
+@@ -102,11 +102,14 @@ public:
+ #endif
+         Namespace,
+     };
++    // https://tc39.es/proposal-defer-import-eval/
++    enum class ModulePhase : uint8_t { Evaluation, Defer };
+     struct ImportEntry {
+         ImportEntryType type;
+         Identifier moduleRequest;
+         Identifier importName;
+         Identifier localName;
++        ModulePhase phase { ModulePhase::Evaluation };
+     };
+ 
+     typedef WTF::ListHashSet<RefPtr<UniquedStringImpl>, IdentifierRepHash> OrderedIdentifierSet;
+@@ -116,6 +119,7 @@ public:
+     struct ModuleRequest {
+         Identifier m_specifier;
+         RefPtr<ScriptFetchParameters> m_attributes;
++        ModulePhase m_phase { ModulePhase::Evaluation };
+ 
+         ScriptFetchParameters::Type type(ScriptFetchParameters::Type fallback = ScriptFetchParameters::Type::JavaScript) const;
+         bool operator==(const ModuleRequest&) const;
+@@ -129,7 +133,7 @@ public:
+ 
+     DECLARE_EXPORT_INFO;
+ 
+-    void appendRequestedModule(const Identifier&, RefPtr<ScriptFetchParameters>&&);
++    void appendRequestedModule(const Identifier&, RefPtr<ScriptFetchParameters>&&, ModulePhase = ModulePhase::Evaluation);
+     void addStarExportEntry(const Identifier&);
+     void addImportEntry(const ImportEntry&);
+     void addExportEntry(const ExportEntry&);
+@@ -203,7 +207,8 @@ public:
+     AbstractModuleRecord* hostResolveImportedModule(JSGlobalObject*, const Identifier& moduleName);
+     void setImportedModule(JSGlobalObject*, const ModuleRequest&, AbstractModuleRecord*);
+ 
+-    JSModuleNamespaceObject* getModuleNamespace(JSGlobalObject*, bool shouldPreventExtensions = true);
++    JSModuleNamespaceObject* getModuleNamespace(JSGlobalObject*, bool shouldPreventExtensions = true, ModulePhase = ModulePhase::Evaluation);
++    void gatherAsynchronousTransitiveDependencies(Vector<AbstractModuleRecord*, 8>& result, UncheckedKeyHashSet<AbstractModuleRecord*>& seen);
+ 
+     JSPromise* asyncCapability() const;
+     void asyncCapability(VM&, JSPromise*);
+@@ -278,6 +283,7 @@ private:
+     Vector<ModuleRequest> m_requestedModules;
+ 
+     WriteBarrier<JSModuleNamespaceObject> m_moduleNamespaceObject;
++    WriteBarrier<JSModuleNamespaceObject> m_moduleDeferredNamespaceObject;
+ 
+     WriteBarrier<JSPromise> m_asyncCapability;
+ 
+diff --git a/Source/JavaScriptCore/runtime/CyclicModuleRecord.cpp b/Source/JavaScriptCore/runtime/CyclicModuleRecord.cpp
+index bd03d49598..d240e56de3 100644
+--- a/Source/JavaScriptCore/runtime/CyclicModuleRecord.cpp
++++ b/Source/JavaScriptCore/runtime/CyclicModuleRecord.cpp
+@@ -180,8 +180,9 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
+ #endif
+             // 7.b. If in.[[ImportName]] is NAMESPACE-OBJECT, then
+             if (in.type == ImportEntryType::Namespace) {
+-                // 7.b.i. Let namespace be GetModuleNamespace(importedModule).
+-                JSModuleNamespaceObject* ns = importedModule->getModuleNamespace(globalObject);
++                // 7.b.i. Let namespace be GetModuleNamespace(importedModule, in.[[ModuleRequest]].[[Phase]]).
++                // https://tc39.es/proposal-defer-import-eval/#sec-source-text-module-record-initialize-environment
++                JSModuleNamespaceObject* ns = importedModule->getModuleNamespace(globalObject, true, in.phase);
+                 RETURN_IF_EXCEPTION(scope, void());
+                 // 7.b.ii. Perform ! env.CreateImmutableBinding(in.[[LocalName]], true).
+                 // 7.b.iii. Perform ! env.InitializeBinding(in.[[LocalName]], namespace).
+@@ -408,6 +409,51 @@ void CyclicModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetcher
+     // 7. Return UNUSED.
+ }
+ 
++bool CyclicModuleRecord::readyForSyncExecution()
++{
++    // ReadyForSyncExecution(module, seen)
++    // https://tc39.es/proposal-defer-import-eval/#sec-ReadyForSyncExecution
++    //
++    // Iterative DFS over the module graph. Returns false if any module in the
++    // subgraph would require async evaluation (is EVALUATING/EVALUATING-ASYNC,
++    // or has TLA and hasn't evaluated yet).
++
++    UncheckedKeyHashSet<AbstractModuleRecord*> seen;
++    Vector<AbstractModuleRecord*, 8> stack;
++    stack.append(this);
++
++    while (!stack.isEmpty()) {
++        AbstractModuleRecord* current = stack.takeLast();
++        if (!seen.add(current).isNewEntry)
++            continue;
++
++        // 1. If module is not a Cyclic Module Record, return true.
++        auto* cyclic = dynamicDowncast<CyclicModuleRecord>(current);
++        if (!cyclic)
++            continue;
++        // 5. If module.[[Status]] is evaluated, return true.
++        if (cyclic->status() == Status::Evaluated)
++            continue;
++        // 6. If module.[[Status]] is evaluating or evaluating-async, return false.
++        if (cyclic->status() == Status::Evaluating || cyclic->status() == Status::EvaluatingAsync)
++            return false;
++        // 7. Assert: module.[[Status]] is linked.
++        ASSERT(cyclic->status() == Status::Linked);
++        // 8. If module.[[HasTLA]] is true, return false.
++        if (cyclic->hasTLA())
++            return false;
++        // 9. For each ModuleRequest Record request of module.[[RequestedModules]], do
++        //      a. Let requiredModule be GetImportedModule(module, request).
++        //      b. If ReadyForSyncExecution(requiredModule, seen) is false, then return false.
++        for (const ModuleRequest& request : cyclic->requestedModules()) {
++            AbstractModuleRecord* requiredModule = JSModuleLoader::getImportedModule(cyclic, request);
++            stack.append(requiredModule);
++        }
++    }
++    // 10. Return true.
++    return true;
++}
++
+ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
+ {
+     // https://tc39.es/ecma262/#sec-moduleevaluation
+diff --git a/Source/JavaScriptCore/runtime/CyclicModuleRecord.h b/Source/JavaScriptCore/runtime/CyclicModuleRecord.h
+index 27f8f77a61..534f0890e8 100644
+--- a/Source/JavaScriptCore/runtime/CyclicModuleRecord.h
++++ b/Source/JavaScriptCore/runtime/CyclicModuleRecord.h
+@@ -58,6 +58,7 @@ public:
+     void initializeEnvironment(JSGlobalObject*, RefPtr<ScriptFetcher>);
+     void link(JSGlobalObject*, RefPtr<ScriptFetcher>);
+     JSPromise* evaluate(JSGlobalObject*);
++    bool readyForSyncExecution();
+     void execute(JSGlobalObject*, JSPromise* = nullptr);
+     void executeAsync(JSGlobalObject*);
+     void asyncExecutionFulfilled(JSGlobalObject*);
+diff --git a/Source/JavaScriptCore/runtime/JSGlobalObjectFunctions.cpp b/Source/JavaScriptCore/runtime/JSGlobalObjectFunctions.cpp
+index b1c5bafaca..79db198036 100644
+--- a/Source/JavaScriptCore/runtime/JSGlobalObjectFunctions.cpp
++++ b/Source/JavaScriptCore/runtime/JSGlobalObjectFunctions.cpp
+@@ -34,6 +34,7 @@
+ #include "IntlDateTimeFormat.h"
+ #include "JSCInlines.h"
+ #include "JSModuleLoader.h"
++#include "JSModuleNamespaceObject.h"
+ #include "JSPromise.h"
+ #include "JSSet.h"
+ #include "Lexer.h"
+@@ -809,9 +810,32 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject,
+     // We always specify parameters as undefined. Once dynamic import() starts accepting fetching parameters,
+     // we should retrieve this from the arguments.
+     JSValue parameters = callFrame->argument(1);
++
++    // https://tc39.es/proposal-defer-import-eval/
++    // import.defer() passes AbstractModuleRecord::ModulePhase::Defer as the third argument.
++    bool isDeferred = false;
++    if (JSValue phaseValue = callFrame->argument(2); phaseValue.isInt32())
++        isDeferred = static_cast<AbstractModuleRecord::ModulePhase>(phaseValue.asInt32()) == AbstractModuleRecord::ModulePhase::Defer;
++
+     auto* importPromise = globalObject->moduleLoader()->importModule(globalObject, specifier, parameters, sourceOrigin);
+     RETURN_IF_EXCEPTION(scope, JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(globalObject, scope)));
+ 
++    if (isDeferred) [[unlikely]] {
++        // The normal import pipeline has loaded, linked, and (currently)
++        // evaluated the module graph. Swap the result to the deferred
++        // namespace object so the user sees [[Deferred]] semantics
++        // (Symbol.toStringTag = "Deferred Module", hidden "then", evaluation
++        // error rethrows on access).
++        //
++        // FIXME: per spec the module should NOT be evaluated here; only async
++        // transitive dependencies should be. Threading ModulePhase through
++        // ContinueDynamicImport is required for full lazy-evaluation.
++        auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
++        scope.release();
++        importPromise->performPromiseThenWithInternalMicrotask(vm, globalObject, InternalMicrotask::ImportDeferModuleNamespace, promise, jsUndefined());
++        return JSValue::encode(promise);
++    }
++
+     scope.release();
+ 
+ #if USE(BUN_JSC_ADDITIONS)
+diff --git a/Source/JavaScriptCore/runtime/JSMicrotask.cpp b/Source/JavaScriptCore/runtime/JSMicrotask.cpp
+index 6bdb91329b..ca141547bb 100644
+--- a/Source/JavaScriptCore/runtime/JSMicrotask.cpp
++++ b/Source/JavaScriptCore/runtime/JSMicrotask.cpp
+@@ -2094,6 +2094,37 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
+         return;
+     }
+ 
++    case InternalMicrotask::ImportDeferModuleNamespace: {
++        // import.defer(): the normal import pipeline has resolved to the
++        // evaluation-phase namespace. Swap to the deferred namespace object
++        // for the same module record.
++        // https://tc39.es/proposal-defer-import-eval/
++        // arguments[0] = resultPromise
++        // arguments[1] = JSModuleNamespaceObject or error
++        auto* resultPromise = uncheckedDowncast<JSPromise>(arguments[0]);
++        if (static_cast<JSPromise::Status>(payload) == JSPromise::Status::Fulfilled) {
++            auto* ns = dynamicDowncast<JSModuleNamespaceObject>(arguments[1]);
++            if (ns) {
++                auto* deferred = ns->moduleRecord()->getModuleNamespace(globalObject, true, AbstractModuleRecord::ModulePhase::Defer);
++                if (scope.exception()) {
++                    resultPromise->rejectWithCaughtException(globalObject, scope);
++                    return;
++                }
++                // The deferred namespace hides "then", so fulfill (not resolve) is
++                // correct here and avoids treating it as a thenable.
++                scope.release();
++                resultPromise->fulfill(vm, globalObject, deferred);
++                return;
++            }
++            scope.release();
++            resultPromise->fulfill(vm, globalObject, arguments[1]);
++        } else {
++            scope.release();
++            resultPromise->reject(vm, globalObject, arguments[1]);
++        }
++        return;
++    }
++
+     case InternalMicrotask::Opaque: {
+         RELEASE_ASSERT_NOT_REACHED();
+         return;
+diff --git a/Source/JavaScriptCore/runtime/JSModuleNamespaceObject.cpp b/Source/JavaScriptCore/runtime/JSModuleNamespaceObject.cpp
+index ed07142f13..5d07cd5ee4 100644
+--- a/Source/JavaScriptCore/runtime/JSModuleNamespaceObject.cpp
++++ b/Source/JavaScriptCore/runtime/JSModuleNamespaceObject.cpp
+@@ -27,17 +27,21 @@
+ #include "JSModuleNamespaceObject.h"
+ 
+ #include "AbstractModuleRecord.h"
++#include "BuiltinNames.h"
++#include "CyclicModuleRecord.h"
+ #include "JSCInlines.h"
+ #include "JSModuleEnvironment.h"
+ #include "JSModuleRecord.h"
++#include "JSPromise.h"
+ 
+ namespace JSC {
+ 
+ const ClassInfo JSModuleNamespaceObject::s_info = { "ModuleNamespaceObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSModuleNamespaceObject) };
+ 
+-JSModuleNamespaceObject::JSModuleNamespaceObject(VM& vm, Structure* structure)
++JSModuleNamespaceObject::JSModuleNamespaceObject(VM& vm, Structure* structure, bool isDeferred)
+     : Base(vm, structure)
+     , m_exports()
++    , m_isDeferred(isDeferred)
+ {
+ }
+ 
+@@ -72,7 +76,7 @@ void JSModuleNamespaceObject::finishCreation(JSGlobalObject* globalObject, Abstr
+         }
+     }
+ 
+-    putDirect(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, "Module"_s), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
++    putDirect(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, m_isDeferred ? "Deferred Module"_s : "Module"_s), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+ 
+ #if USE(BUN_JSC_ADDITIONS)
+     if (shouldPreventExtensions)
+@@ -108,6 +112,70 @@ void JSModuleNamespaceObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+ 
+ DEFINE_VISIT_CHILDREN(JSModuleNamespaceObject);
+ 
++bool JSModuleNamespaceObject::isSymbolLikeNamespaceKey(VM& vm, PropertyName propertyName)
++{
++    // IsSymbolLikeNamespaceKey(P, ns)
++    // https://tc39.es/proposal-defer-import-eval/#sec-IsSymbolLikeNamespaceKey
++    // 1. If P is a Symbol, return true.
++    // 2. If ns.[[Deferred]] is true and P is "then", return true.
++    // 3. Return false.
++    if (propertyName.isSymbol())
++        return true;
++    return m_isDeferred && propertyName == vm.propertyNames->then;
++}
++
++void JSModuleNamespaceObject::ensureDeferredNamespaceEvaluation(JSGlobalObject* globalObject)
++{
++    // GetModuleExportsList(O)
++    // https://tc39.es/proposal-defer-import-eval/#sec-GetModuleExportsList
++    // 1. If O.[[Deferred]] is true, then
++    //    a. Let m be O.[[Module]].
++    //    b. Perform ? EvaluateModuleSync(m).
++    // 2. Return O.[[Exports]].
++    //
++    // EvaluateModuleSync(module)
++    // https://tc39.es/proposal-defer-import-eval/#sec-EvaluateModuleSync
++    // 1. If ReadyForSyncExecution(module) is false, throw a TypeError exception.
++    // 2. Let promise be module.Evaluate().
++    // 3. Assert: promise.[[PromiseState]] is either fulfilled or rejected.
++    // 4. If promise.[[PromiseState]] is rejected, then ...
++
++    ASSERT(m_isDeferred);
++    VM& vm = globalObject->vm();
++    auto scope = DECLARE_THROW_SCOPE(vm);
++
++    auto* module = dynamicDowncast<CyclicModuleRecord>(moduleRecord());
++    if (!module) {
++        scope.release();
++        moduleRecord()->evaluateModuleSync(globalObject);
++        return;
++    }
++
++    if (module->status() == CyclicModuleRecord::Status::Evaluated) {
++        if (JSValue error = module->evaluationError()) {
++            scope.throwException(globalObject, error);
++            return;
++        }
++        return;
++    }
++
++    if (!module->readyForSyncExecution()) {
++        throwTypeError(globalObject, scope, "Cannot access deferred module: it is not ready for synchronous evaluation yet"_s);
++        return;
++    }
++
++    JSPromise* promise = module->evaluate(globalObject);
++    RETURN_IF_EXCEPTION(scope, void());
++    ASSERT(promise);
++    // "Assert: promise.[[PromiseState]] is either fulfilled or rejected."
++    // readyForSyncExecution() guaranteed no async deps remain, so Evaluate()
++    // must complete synchronously.
++    if (promise->status() == JSPromise::Status::Rejected) {
++        promise->markAsHandled();
++        scope.throwException(globalObject, promise->result());
++    }
++}
++
+ static JSValue getValue(JSModuleEnvironment* environment, PropertyName localName, ScopeOffset& scopeOffset)
+ {
+     SymbolTable* symbolTable = environment->symbolTable();
+@@ -132,11 +200,18 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
+     // step 1.
+     // If the property name is a symbol, we don't look into the imported bindings.
+     // It may return the descriptor with writable: true, but namespace objects does not allow it in [[Set]] / [[DefineOwnProperty]] side.
+-    if (propertyName.isSymbol())
++    if (isSymbolLikeNamespaceKey(vm, propertyName))
+         return Base::getOwnPropertySlot(this, globalObject, propertyName, slot);
+ 
+     slot.setIsTaintedByOpaqueObject();
+ 
++    if (m_isDeferred) [[unlikely]] {
++        // https://tc39.es/proposal-defer-import-eval/#sec-module-namespace-exotic-objects-get-p-receiver
++        // Let exports be ? GetModuleExportsList(O).
++        ensureDeferredNamespaceEvaluation(globalObject);
++        RETURN_IF_EXCEPTION(scope, false);
++    }
++
+     auto iterator = m_exports.find(propertyName.uid());
+     if (iterator == m_exports.end()) {
+ #if USE(BUN_JSC_ADDITIONS)
+@@ -236,18 +311,31 @@ bool JSModuleNamespaceObject::putByIndex(JSCell*, JSGlobalObject* globalObject,
+ 
+ bool JSModuleNamespaceObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
+ {
++    VM& vm = globalObject->vm();
++    auto scope = DECLARE_THROW_SCOPE(vm);
++
+     // https://tc39.es/ecma262/#sec-module-namespace-exotic-objects-delete-p
+     JSModuleNamespaceObject* thisObject = uncheckedDowncast<JSModuleNamespaceObject>(cell);
+-    if (propertyName.isSymbol())
++    if (thisObject->isSymbolLikeNamespaceKey(vm, propertyName))
+         return Base::deleteProperty(thisObject, globalObject, propertyName, slot);
+ 
++    if (thisObject->m_isDeferred) [[unlikely]] {
++        thisObject->ensureDeferredNamespaceEvaluation(globalObject);
++        RETURN_IF_EXCEPTION(scope, false);
++    }
++
+     return !thisObject->m_exports.contains(propertyName.uid());
+ }
+ 
+ bool JSModuleNamespaceObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned propertyName)
+ {
+     VM& vm = globalObject->vm();
++    auto scope = DECLARE_THROW_SCOPE(vm);
+     JSModuleNamespaceObject* thisObject = uncheckedDowncast<JSModuleNamespaceObject>(cell);
++    if (thisObject->m_isDeferred) [[unlikely]] {
++        thisObject->ensureDeferredNamespaceEvaluation(globalObject);
++        RETURN_IF_EXCEPTION(scope, false);
++    }
+     return !thisObject->m_exports.contains(Identifier::from(vm, propertyName).impl());
+ }
+ 
+@@ -258,7 +346,16 @@ void JSModuleNamespaceObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject
+ 
+     // https://tc39.es/ecma262/#sec-module-namespace-exotic-objects-ownpropertykeys
+     JSModuleNamespaceObject* thisObject = uncheckedDowncast<JSModuleNamespaceObject>(cell);
++    if (thisObject->m_isDeferred) [[unlikely]] {
++        thisObject->ensureDeferredNamespaceEvaluation(globalObject);
++        RETURN_IF_EXCEPTION(scope, void());
++    }
+     for (const auto& name : thisObject->m_names) {
++        // Deferred namespace objects do not expose "then" to avoid issues
++        // with promises treating the namespace as a thenable.
++        // https://tc39.es/proposal-defer-import-eval/#sec-module-namespace-exotic-objects-ownpropertykeys
++        if (thisObject->m_isDeferred && name == vm.propertyNames->then) [[unlikely]]
++            continue;
+         if (mode == DontEnumPropertiesMode::Exclude) {
+             // Perform [[GetOwnProperty]] to throw ReferenceError if binding is uninitialized.
+             PropertySlot slot(cell, PropertySlot::InternalMethodType::GetOwnProperty);
+@@ -283,7 +380,7 @@ bool JSModuleNamespaceObject::defineOwnProperty(JSObject* cell, JSGlobalObject*
+     JSModuleNamespaceObject* thisObject = uncheckedDowncast<JSModuleNamespaceObject>(cell);
+ 
+     // 1. If Type(P) is Symbol, return OrdinaryDefineOwnProperty(O, P, Desc).
+-    if (propertyName.isSymbol())
++    if (thisObject->isSymbolLikeNamespaceKey(vm, propertyName))
+         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(thisObject, globalObject, propertyName, descriptor, shouldThrow));
+ 
+     // 2. Let current be ? O.[[GetOwnProperty]](P).
+diff --git a/Source/JavaScriptCore/runtime/JSModuleNamespaceObject.h b/Source/JavaScriptCore/runtime/JSModuleNamespaceObject.h
+index 5e492cc25f..3ed48ebec5 100644
+--- a/Source/JavaScriptCore/runtime/JSModuleNamespaceObject.h
++++ b/Source/JavaScriptCore/runtime/JSModuleNamespaceObject.h
+@@ -45,10 +45,10 @@ public:
+         return vm.moduleNamespaceObjectSpace<mode>();
+     }
+ 
+-    static JSModuleNamespaceObject* create(JSGlobalObject* globalObject, Structure* structure, AbstractModuleRecord* moduleRecord, Vector<std::pair<Identifier, AbstractModuleRecord::Resolution>>&& resolutions, bool shouldPreventExtensions = true)
++    static JSModuleNamespaceObject* create(JSGlobalObject* globalObject, Structure* structure, AbstractModuleRecord* moduleRecord, Vector<std::pair<Identifier, AbstractModuleRecord::Resolution>>&& resolutions, bool shouldPreventExtensions = true, bool isDeferred = false)
+     {
+         VM& vm = getVM(globalObject);
+-        JSModuleNamespaceObject* object = new (NotNull, allocateCell<JSModuleNamespaceObject>(vm)) JSModuleNamespaceObject(vm, structure);
++        JSModuleNamespaceObject* object = new (NotNull, allocateCell<JSModuleNamespaceObject>(vm)) JSModuleNamespaceObject(vm, structure, isDeferred);
+         object->finishCreation(globalObject, moduleRecord, WTF::move(resolutions), shouldPreventExtensions);
+         return object;
+     }
+@@ -78,10 +78,14 @@ public:
+     WTF::TriState m_hasESModuleMarker = WTF::TriState::Indeterminate;
+ #endif
+ 
++    bool isDeferred() const { return m_isDeferred; }
++
+ private:
+-    JS_EXPORT_PRIVATE JSModuleNamespaceObject(VM&, Structure*);
++    JS_EXPORT_PRIVATE JSModuleNamespaceObject(VM&, Structure*, bool isDeferred = false);
+     JS_EXPORT_PRIVATE void finishCreation(JSGlobalObject*, AbstractModuleRecord*, Vector<std::pair<Identifier, AbstractModuleRecord::Resolution>>&&, bool shouldPreventExtensions);
+     bool getOwnPropertySlotCommon(JSGlobalObject*, PropertyName, PropertySlot&);
++    void ensureDeferredNamespaceEvaluation(JSGlobalObject*);
++    bool isSymbolLikeNamespaceKey(VM&, PropertyName);
+ 
+     struct ExportEntry {
+         Identifier localName;
+@@ -93,6 +97,7 @@ private:
+     ExportMap m_exports;
+     FixedVector<Identifier> m_names;
+     WriteBarrier<AbstractModuleRecord> m_moduleRecord;
++    bool m_isDeferred { false };
+ #if USE(BUN_JSC_ADDITIONS)
+     bool m_isOverridingValue = false;
+ #endif
+diff --git a/Source/JavaScriptCore/runtime/Microtask.h b/Source/JavaScriptCore/runtime/Microtask.h
+index 5a689cb964..b62396da1e 100644
+--- a/Source/JavaScriptCore/runtime/Microtask.h
++++ b/Source/JavaScriptCore/runtime/Microtask.h
+@@ -78,6 +78,7 @@ enum class InternalMicrotask : uint8_t {
+     DynamicImportLoadSettled,
+     DynamicImportEvaluateSettled,
+     ImportModuleNamespace,
++    ImportDeferModuleNamespace,
+     Opaque, // Dispatch must handle everything.
+ #if USE(BUN_JSC_ADDITIONS)
+     BunPerformMicrotaskJob, // Bun's performMicrotask function with async context
+@@ -100,7 +101,7 @@ constexpr bool isModuleLoaderInternalMicrotask(InternalMicrotask task)
+     if (task == InternalMicrotask::PromiseFulfillWithoutHandlerJob)
+         return true;
+     return static_cast<uint8_t>(task) >= static_cast<uint8_t>(InternalMicrotask::AsyncModuleExecutionResume)
+-        && static_cast<uint8_t>(task) <= static_cast<uint8_t>(InternalMicrotask::ImportModuleNamespace);
++        && static_cast<uint8_t>(task) <= static_cast<uint8_t>(InternalMicrotask::ImportDeferModuleNamespace);
+ }
+ #else
+ constexpr unsigned maxMicrotaskArguments = 3;
+diff --git a/Source/JavaScriptCore/runtime/OptionsList.h b/Source/JavaScriptCore/runtime/OptionsList.h
+index 6315717570..cca17cec98 100644
+--- a/Source/JavaScriptCore/runtime/OptionsList.h
++++ b/Source/JavaScriptCore/runtime/OptionsList.h
+@@ -662,7 +662,7 @@ bool hasCapacityToUseLargeGigacage();
+     v(Bool, useAsyncStackTrace, true, Normal, "Enable async stack traces") \
+     v(Bool, disallowMixedWasmExceptions, true, Restricted, "Disallow using both legacy and modern (try_table) wasm exception specs in the same module."_s) \
+     v(Bool, useExplicitResourceManagement, false, Normal, "Enable explicit resource management builtins and syntax."_s) \
+-    v(Bool, useImportDefer, false, Normal, "Enable deferred module import."_s) \
++    v(Bool, useImportDefer, true, Normal, "Enable deferred module import."_s) \
+     v(Bool, useIteratorChunking, false, Normal, "Expose the Iterator.prototype.chunks and Iterator.prototype.windows methods."_s) \
+     v(Bool, useIteratorSequencing, true, Normal, "Expose the Iterator.concat method."_s) \
+     v(Bool, useIteratorIncludes, false, Normal, "Expose the Iterator.includes method."_s) \
+-- 
+2.47.3
+

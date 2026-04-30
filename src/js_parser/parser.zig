@@ -217,6 +217,7 @@ pub const TransposeState = struct {
     import_record_tag: ?ImportRecord.Tag = null,
     import_loader: ?bun.options.Loader = null,
     import_options: Expr = Expr.empty,
+    phase: bun.ImportPhase = .evaluation,
 };
 
 pub const JSXTag = struct {

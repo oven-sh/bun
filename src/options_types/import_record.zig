@@ -97,6 +97,22 @@ pub const ImportKind = enum(u8) {
     }
 };
 
+/// https://github.com/tc39/proposal-defer-import-eval
+/// https://github.com/tc39/proposal-source-phase-imports
+pub const ImportPhase = enum(u2) {
+    evaluation = 0,
+    defer_ = 1,
+    source = 2,
+
+    pub fn keyword(this: ImportPhase) []const u8 {
+        return switch (this) {
+            .evaluation => "",
+            .defer_ => "defer",
+            .source => "source",
+        };
+    }
+};
+
 pub const ImportRecord = struct {
     pub const Index = bun.GenericIndex(u32, ImportRecord);
 
@@ -104,6 +120,7 @@ pub const ImportRecord = struct {
     path: fs.Path,
     kind: ImportKind,
     tag: Tag = .none,
+    phase: ImportPhase = .evaluation,
     loader: ?bun.options.Loader = null,
 
     source_index: bun.ast.Index = .invalid,

@@ -1857,7 +1857,11 @@ fn NewPrinter(
 
             // Allow it to fail at runtime, if it should
             if (module_type != .internal_bake_dev) {
-                p.print("import(");
+                switch (record.phase) {
+                    .evaluation => p.print("import("),
+                    .defer_ => p.print("import.defer("),
+                    .source => p.print("import.source("),
+                }
                 p.printImportRecordPath(record);
             } else {
                 p.printSymbol(p.options.hmr_ref);
@@ -2425,7 +2429,11 @@ fn NewPrinter(
                             p.printSymbol(p.options.hmr_ref);
                             p.print(".dynamicImport(");
                         } else {
-                            p.print("import(");
+                            switch (e.phase) {
+                                .evaluation => p.print("import("),
+                                .defer_ => p.print("import.defer("),
+                                .source => p.print("import.source("),
+                            }
                         }
                         // TODO:
                         // if (e.leading_interior_comments.len > 0) {
@@ -4588,6 +4596,11 @@ fn NewPrinter(
                     }
 
                     p.print("import");
+                    switch (record.phase) {
+                        .evaluation => {},
+                        .defer_ => p.print(" defer"),
+                        .source => p.print(" source"),
+                    }
 
                     var item_count: usize = 0;
 
@@ -4711,7 +4724,15 @@ fn NewPrinter(
                                 .json5 => analyze_transpiled_module.ModuleInfo.FetchParameters.hostDefined(bun.handleOom(mi.str("json5"))),
                                 .md => analyze_transpiled_module.ModuleInfo.FetchParameters.hostDefined(bun.handleOom(mi.str("md"))),
                             } else .none) else .none;
-                            bun.handleOom(mi.requestModule(irp_id, fetch_parameters));
+                            if (record.phase == .defer_) {
+                                // Deferred imports are only namespace imports and carry no
+                                // loader attribute today. Keep the requested-module list in
+                                // sync with JSC's ModuleAnalyzer, which records a separate
+                                // defer-phase request.
+                                bun.handleOom(mi.addRequestedModuleDefer(irp_id));
+                            } else {
+                                bun.handleOom(mi.requestModule(irp_id, fetch_parameters));
+                            }
 
                             if (s.default_name) |name| {
                                 const local_name = p.renamer.nameForSymbol(name.ref.?);
@@ -4733,7 +4754,11 @@ fn NewPrinter(
                             if (record.flags.contains_import_star) {
                                 const local_name = p.renamer.nameForSymbol(s.namespace_ref);
                                 bun.handleOom(mi.addVar(bun.handleOom(mi.str(local_name)), .lexical));
-                                bun.handleOom(mi.addImportInfoNamespace(irp_id, bun.handleOom(mi.str(local_name))));
+                                if (record.phase == .defer_) {
+                                    bun.handleOom(mi.addImportInfoNamespaceDefer(irp_id, bun.handleOom(mi.str(local_name))));
+                                } else {
+                                    bun.handleOom(mi.addImportInfoNamespace(irp_id, bun.handleOom(mi.str(local_name))));
+                                }
                             }
                         }
                     }

@@ -17,6 +17,10 @@ pub const RecordKind = enum(u8) {
     export_info_namespace,
     /// module_name
     export_info_star,
+    /// module_name, import_name = '*', local_name (import defer * as x from "...")
+    import_info_namespace_defer,
+    /// module_name (import defer requested-module entry)
+    requested_module_defer,
     _,
 
     pub fn len(record: RecordKind) !usize {
@@ -25,10 +29,12 @@ pub const RecordKind = enum(u8) {
             .import_info_single => 3,
             .import_info_single_type_script => 3,
             .import_info_namespace => 3,
+            .import_info_namespace_defer => 3,
             .export_info_indirect => 3,
             .export_info_local => 3,
             .export_info_namespace => 2,
             .export_info_star => 1,
+            .requested_module_defer => 1,
             else => return error.InvalidRecordKind,
         };
     }
@@ -224,6 +230,12 @@ pub const ModuleInfo = struct {
     }
     pub fn addImportInfoNamespace(self: *ModuleInfo, module_name: StringID, local_name: StringID) !void {
         try self._addRecord(.import_info_namespace, &.{ module_name, .star_namespace, local_name });
+    }
+    pub fn addImportInfoNamespaceDefer(self: *ModuleInfo, module_name: StringID, local_name: StringID) !void {
+        try self._addRecord(.import_info_namespace_defer, &.{ module_name, .star_namespace, local_name });
+    }
+    pub fn addRequestedModuleDefer(self: *ModuleInfo, module_name: StringID) !void {
+        try self._addRecord(.requested_module_defer, &.{module_name});
     }
     pub fn addExportInfoIndirect(self: *ModuleInfo, export_name: StringID, import_name: StringID, module_name: StringID) !void {
         if (try self._hasOrAddExportedName(export_name)) return; // a syntax error will be emitted later in this case

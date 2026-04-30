@@ -1,11 +1,5 @@
 pub const SocketAddress = @import("./socket/SocketAddress.zig");
 
-const WrappedType = enum {
-    none,
-    tls,
-    tcp,
-};
-
 fn JSSocketType(comptime ssl: bool) type {
     if (!ssl) {
         return jsc.Codegen.JSTCPSocket;
@@ -58,12 +52,13 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub const Socket = uws.NewSocketHandler(ssl);
         socket: Socket,
-        // if the socket owns a context it will be here
-        socket_context: ?*uws.SocketContext,
+        /// `SSL_CTX*` this client connection was opened with. One owned ref —
+        /// `SSL_CTX_free` on deinit. Server-accepted sockets and plain TCP
+        /// leave this null (the Listener / SecureContext owns the ref there).
+        owned_ssl_ctx: ?*BoringSSL.SSL_CTX = null,
 
         flags: Flags = .{},
         ref_count: RefCount,
-        wrapped: WrappedType = .none,
         handlers: ?*Handlers,
         /// Reference to the JS wrapper. Held strong while the socket is active so the
         /// wrapper cannot be garbage-collected out from under in-flight callbacks, and
@@ -78,9 +73,20 @@ pub fn NewSocket(comptime ssl: bool) type {
         bytes_written: u64 = 0,
 
         native_callback: NativeCallbacks = .none,
+        /// `upgradeTLS` produces two `TLSSocket` wrappers over one
+        /// `us_socket_t` (the encrypted view + the raw-bytes view node:net
+        /// expects at index 0). The encrypted half holds a ref on the raw half
+        /// here so a single `onClose` can retire both — no `Handlers.clone()`,
+        /// no second context.
+        twin: ?*This = null,
 
         pub fn memoryCost(this: *This) usize {
-            return @sizeOf(This) + this.buffered_data_for_node_net.cap;
+            // Per-socket SSL state (SSL*, BIO pair, handshake buffers) is ~40 KB
+            // off-heap. Reporting it lets the GC apply pressure when JS churns
+            // through short-lived TLS connections. The raw `[raw, tls]` upgrade
+            // twin shares the same SSL* — only the encrypted half reports it.
+            const ssl_cost: usize = if (ssl and !this.flags.bypass_tls) 40 * 1024 else 0;
+            return @sizeOf(This) + this.buffered_data_for_node_net.cap + ssl_cost;
         }
 
         pub fn attachNativeCallback(this: *This, callback: NativeCallbacks) bool {
@@ -108,31 +114,54 @@ pub fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn doConnect(this: *This, connection: Listener.UnixOrHost) !void {
-            bun.assert(this.socket_context != null);
             this.ref();
             defer this.deref();
 
+            const vm = this.getHandlers().vm;
+            const group = vm.rareData().bunConnectGroup(vm, ssl);
+            const kind: uws.SocketKind = if (ssl) .bun_socket_tls else .bun_socket_tcp;
+            const flags: i32 = if (this.flags.allow_half_open) uws.LIBUS_SOCKET_ALLOW_HALF_OPEN else 0;
+            const ssl_ctx: ?*uws.SslCtx = if (ssl) this.owned_ssl_ctx else null;
+
             switch (connection) {
-                .host => |c| {
-                    this.socket = try This.Socket.connectAnon(
-                        c.host,
-                        c.port,
-                        this.socket_context.?,
-                        this,
-                        this.flags.allow_half_open,
-                    );
+                .host => |host| {
+                    var sf = std.heap.stackFallback(1024, bun.default_allocator);
+                    const alloc = sf.get();
+                    // getaddrinfo doesn't accept bracketed IPv6.
+                    const raw = host.host;
+                    const clean = if (raw.len > 1 and raw[0] == '[' and raw[raw.len - 1] == ']') raw[1 .. raw.len - 1] else raw;
+                    const hostz = bun.handleOom(alloc.dupeZ(u8, clean));
+                    defer alloc.free(hostz);
+
+                    this.socket = switch (group.connect(kind, ssl_ctx, hostz, host.port, flags, @sizeOf(*anyopaque))) {
+                        .failed => return error.FailedToOpenSocket,
+                        .socket => |s| blk: {
+                            s.ext(*This).* = this;
+                            break :blk Socket.from(s);
+                        },
+                        .connecting => |c| blk: {
+                            c.ext(*This).* = this;
+                            break :blk Socket.fromConnecting(c);
+                        },
+                    };
                 },
                 .unix => |u| {
-                    this.socket = try This.Socket.connectUnixAnon(
-                        u,
-                        this.socket_context.?,
-                        this,
-                        this.flags.allow_half_open,
-                    );
+                    var sf = std.heap.stackFallback(1024, bun.default_allocator);
+                    const alloc = sf.get();
+                    const pathz = bun.handleOom(alloc.dupeZ(u8, u));
+                    defer alloc.free(pathz);
+
+                    const s = group.connectUnix(kind, ssl_ctx, pathz.ptr, pathz.len, flags, @sizeOf(*anyopaque)) orelse
+                        return error.FailedToOpenSocket;
+                    s.ext(*This).* = this;
+                    this.socket = Socket.from(s);
                 },
                 .fd => |f| {
-                    const socket = This.Socket.fromFd(this.socket_context.?, f, This, this, null, false) orelse return error.ConnectionFailed;
-                    this.onOpen(socket);
+                    const s = group.fromFd(kind, ssl_ctx, @sizeOf(*anyopaque), f.native(), false) orelse
+                        return error.ConnectionFailed;
+                    s.ext(*This).* = this;
+                    this.socket = Socket.from(s);
+                    this.onOpen(this.socket);
                 },
             }
         }
@@ -144,25 +173,21 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn resumeFromJS(this: *This, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
             jsc.markBinding(@src());
             if (this.socket.isDetached()) return .js_undefined;
-
             log("resume", .{});
-            // we should not allow pausing/resuming a wrapped socket because a wrapped socket is 2 sockets and this can cause issues
-            if (this.wrapped == .none and this.flags.is_paused) {
-                this.flags.is_paused = !this.socket.resumeStream();
-            }
+            // The raw half of an upgradeTLS pair is an observation tap; flow
+            // control belongs to the TLS half. Pausing the shared fd here would
+            // wedge the TLS read path (#15438).
+            if (this.flags.bypass_tls) return .js_undefined;
+            if (this.flags.is_paused) this.flags.is_paused = !this.socket.resumeStream();
             return .js_undefined;
         }
 
         pub fn pauseFromJS(this: *This, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
             jsc.markBinding(@src());
             if (this.socket.isDetached()) return .js_undefined;
-
             log("pause", .{});
-            // we should not allow pausing/resuming a wrapped socket because a wrapped socket is 2 sockets and this can cause issues
-            if (this.wrapped == .none and !this.flags.is_paused) {
-                this.flags.is_paused = this.socket.pauseStream();
-            }
-
+            if (this.flags.bypass_tls) return .js_undefined;
+            if (!this.flags.is_paused) this.flags.is_paused = this.socket.pauseStream();
             return .js_undefined;
         }
 
@@ -475,10 +500,8 @@ pub fn NewSocket(comptime ssl: bool) type {
                 }
             }
 
-            if (this.wrapped == .none) {
-                if (socket.ext(**anyopaque)) |ctx| {
-                    ctx.* = bun.cast(**anyopaque, this);
-                }
+            if (socket.ext(**anyopaque)) |ctx| {
+                ctx.* = bun.cast(**anyopaque, this);
             }
 
             const handlers = this.getHandlers();
@@ -632,12 +655,20 @@ pub fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn onClose(this: *This, _: Socket, err: c_int, _: ?*anyopaque) bun.JSError!void {
+        pub fn onClose(this: *This, socket: Socket, err: c_int, reason: ?*anyopaque) bun.JSError!void {
             jsc.markBinding(@src());
             const handlers = this.getHandlers();
             log("onClose {s}", .{if (handlers.mode == .server) "S" else "C"});
             this.detachNativeCallback();
             this.socket.detach();
+            // The upgradeTLS raw twin shares the same us_socket_t so it never
+            // gets its own dispatch — fire its (pre-upgrade) close handler
+            // here, then retire it. `raw.twin == null` so this doesn't
+            // recurse, and `onClose` derefs the +1 we took at creation.
+            if (this.twin) |raw| {
+                this.twin = null;
+                raw.onClose(socket, err, reason) catch {};
+            }
             defer this.deref();
             defer this.markInactive();
 
@@ -894,24 +925,19 @@ pub fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsNumber(this.socket.remotePort());
         }
 
+        inline fn doSocketWrite(this: *This, buffer: []const u8) i32 {
+            return if (this.flags.bypass_tls)
+                this.socket.rawWrite(buffer)
+            else
+                this.socket.write(buffer);
+        }
+
         pub fn writeMaybeCorked(this: *This, buffer: []const u8) i32 {
             if (this.socket.isShutdown() or this.socket.isClosed()) {
                 return -1;
             }
 
-            // we don't cork yet but we might later
-            if (comptime ssl) {
-                // TLS wrapped but in TCP mode
-                if (this.wrapped == .tcp) {
-                    const res = this.socket.rawWrite(buffer);
-                    const uwrote: usize = @intCast(@max(res, 0));
-                    this.bytes_written += uwrote;
-                    log("write({d}) = {d}", .{ buffer.len, res });
-                    return res;
-                }
-            }
-
-            const res = this.socket.write(buffer);
+            const res = this.doSocketWrite(buffer);
             const uwrote: usize = @intCast(@max(res, 0));
             this.bytes_written += uwrote;
             log("write({d}) = {d}", .{ buffer.len, res });
@@ -1013,7 +1039,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 if (comptime !ssl and Environment.isPosix) {
                     // fast-ish path: use writev() to avoid cloning to another buffer.
                     if (this.socket.socket == .connected and buffer.slice().len > 0) {
-                        const rc = this.socket.socket.connected.write2(ssl, this.buffered_data_for_node_net.slice(), buffer.slice());
+                        const rc = this.socket.socket.connected.write2(this.buffered_data_for_node_net.slice(), buffer.slice());
                         const written: usize = @intCast(@max(rc, 0));
                         const leftover = total_to_write -| written;
                         if (leftover == 0) {
@@ -1232,7 +1258,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         fn internalFlush(this: *This) void {
             if (this.buffered_data_for_node_net.len > 0) {
-                const written: usize = @intCast(@max(this.socket.write(this.buffered_data_for_node_net.slice()), 0));
+                const written: usize = @intCast(@max(this.doSocketWrite(this.buffered_data_for_node_net.slice()), 0));
                 this.bytes_written += written;
                 if (written > 0) {
                     if (this.buffered_data_for_node_net.len > written) {
@@ -1280,7 +1306,14 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn close(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
             jsc.markBinding(@src());
             _ = callframe;
-            this.socket.close(.normal);
+            // `_handle.close()` is the net.Socket `_destroy()` path — Node emits close_notify
+            // once and closes the fd without waiting for the peer's reply. `.fast_shutdown`
+            // makes `ssl_handle_shutdown` take the fast branch so the raw close runs
+            // synchronously (with `.normal` the SSL layer defers waiting for the peer, but we
+            // detach + unref immediately below, orphaning the `us_socket_t`). NOT `.failure`:
+            // that arms SO_LINGER{1,0} → RST and drops any data still in the kernel send
+            // buffer, which `destroy()` after `write()` must not do.
+            this.socket.close(.fast_shutdown);
             this.socket.detach();
             this.poll_ref.unref(globalObject.bunVM());
             return .js_undefined;
@@ -1350,15 +1383,15 @@ pub fn NewSocket(comptime ssl: bool) type {
                 this.connection = null;
                 connection.deinit();
             }
-            if (this.socket_context) |socket_context| {
-                this.socket_context = null;
-                socket_context.deinit(ssl);
+            if (this.owned_ssl_ctx) |ctx| {
+                BoringSSL.SSL_CTX_free(ctx);
+                this.owned_ssl_ctx = null;
             }
             bun.destroy(this);
         }
 
         pub fn finalize(this: *This) void {
-            log("finalize() {d} {}", .{ @intFromPtr(this), this.socket_context != null });
+            log("finalize() {d}", .{@intFromPtr(this)});
             this.flags.finalizing = true;
             this.this_value.finalize();
             if (!this.socket.isClosed()) {
@@ -1415,30 +1448,31 @@ pub fn NewSocket(comptime ssl: bool) type {
             return jsc.JSValue.jsNumber(this.bytes_written + this.buffered_data_for_node_net.len);
         }
 
-        // this invalidates the current socket returning 2 new sockets
-        // one for non-TLS and another for TLS
-        // handlers for non-TLS are preserved
+        /// In-place TCP→TLS upgrade. The underlying `us_socket_t` is
+        /// `adoptTLS`'d into the per-VM TLS group with a fresh (or
+        /// SecureContext-shared) `SSL_CTX*`. Returns `[raw, tls]` — two
+        /// `TLSSocket` wrappers over one fd: `tls` is the encrypted view that
+        /// owns dispatch; `raw` has `bypass_tls` set so node:net's
+        /// `socket._handle` can pipe pre-handshake/tunnelled bytes via
+        /// `us_socket_raw_write`. No second context, no `Handlers.clone()`.
         pub fn upgradeTLS(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
             jsc.markBinding(@src());
-            const this_js = callframe.this();
 
-            if (comptime ssl) {
-                return .js_undefined;
-            }
-            if (this.socket.isDetached() or this.socket.isNamedPipe()) {
-                return .js_undefined;
-            }
+            if (comptime ssl) return .js_undefined;
+            // adoptTLS needs a real `*us_socket_t`. `.connecting` (DNS /
+            // happy-eyeballs in flight) and `.upgradedDuplex` have no fd to
+            // adopt; the old `isDetached()/isNamedPipe()` guard let those
+            // through and the `.connected` payload read below would then be
+            // illegal-union-access on a `.connecting` socket.
+            const raw_socket = this.socket.socket.get() orelse {
+                return globalObject.throwInvalidArguments("upgradeTLS requires an established socket", .{});
+            };
             if (this.isServer()) {
                 return globalObject.throw("Server-side upgradeTLS is not supported. Use upgradeDuplexToTLS with isServer: true instead.", .{});
             }
+
             const args = callframe.arguments_old(1);
-
-            if (args.len < 1) {
-                return globalObject.throw("Expected 1 arguments", .{});
-            }
-
-            var success = false;
-
+            if (args.len < 1) return globalObject.throw("Expected 1 arguments", .{});
             const opts = args.ptr[0];
             if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
                 return globalObject.throw("Expected options object", .{});
@@ -1447,183 +1481,186 @@ pub fn NewSocket(comptime ssl: bool) type {
             const socket_obj = try opts.get(globalObject, "socket") orelse {
                 return globalObject.throw("Expected \"socket\" option", .{});
             };
-            if (globalObject.hasException()) {
-                return .zero;
-            }
+            if (globalObject.hasException()) return .zero;
+            var handlers = try Handlers.fromJS(globalObject, socket_obj, false);
+            if (globalObject.hasException()) return .zero;
+            // 9 .protect()'d JS callbacks live in `handlers`; every error/throw
+            // from here until they're moved into `tls.handlers` would leak them.
+            // The flag flips once ownership transfers so the errdefer is a no-op
+            // on success.
+            var handlers_consumed = false;
+            errdefer if (!handlers_consumed) handlers.deinit();
 
-            const handlers = try Handlers.fromJS(globalObject, socket_obj, this.isServer());
-
-            if (globalObject.hasException()) {
-                return .zero;
-            }
-
+            // Resolve the `SSL_CTX*`. Prefer a passed `SecureContext` (the
+            // memoised `tls.createSecureContext` path) so 10k upgrades share
+            // one `SSL_CTX_new`; otherwise build an owned one from inline
+            // `tls:` options. Either way `owned_ctx` holds one ref we drop in
+            // deinit; SSL_new() takes its own.
+            var owned_ctx: ?*BoringSSL.SSL_CTX = null;
+            // Dropped once `tls.owned_ssl_ctx` takes ownership; covers throws
+            // between sc.borrow()/createSSLContext() and `bun.new(TLSSocket, …)`.
+            errdefer if (owned_ctx) |c| BoringSSL.SSL_CTX_free(c);
             var ssl_opts: ?jsc.API.ServerConfig.SSLConfig = null;
+            defer if (ssl_opts) |*cfg| cfg.deinit();
 
-            if (try opts.getTruthy(globalObject, "tls")) |tls| {
-                if (!tls.isBoolean()) {
-                    ssl_opts = try jsc.API.ServerConfig.SSLConfig.fromJS(jsc.VirtualMachine.get(), globalObject, tls);
-                } else if (tls.toBoolean()) {
+            // node:net wraps the result of `[buntls]` as `opts.tls`, so the
+            // SecureContext arrives as `opts.tls.secureContext`. Bun.connect
+            // userland may also pass it top-level. Check both.
+            const sc_js: JSValue = blk: {
+                if (try opts.getTruthy(globalObject, "secureContext")) |v| break :blk v;
+                if (try opts.getTruthy(globalObject, "tls")) |t| {
+                    if (t.isObject()) {
+                        if (try t.getTruthy(globalObject, "secureContext")) |v| break :blk v;
+                    }
+                }
+                break :blk .zero;
+            };
+            if (sc_js != .zero) {
+                const sc = SecureContext.fromJS(sc_js) orelse {
+                    return globalObject.throwInvalidArgumentTypeValue("secureContext", "SecureContext", sc_js);
+                };
+                owned_ctx = sc.borrow();
+                // servername / ALPN still come from the surrounding tls config.
+                if (try opts.getTruthy(globalObject, "tls")) |t| {
+                    if (!t.isBoolean()) ssl_opts = try jsc.API.ServerConfig.SSLConfig.fromJS(jsc.VirtualMachine.get(), globalObject, t);
+                }
+            } else if (try opts.getTruthy(globalObject, "tls")) |tls_js| {
+                if (!tls_js.isBoolean()) {
+                    ssl_opts = try jsc.API.ServerConfig.SSLConfig.fromJS(jsc.VirtualMachine.get(), globalObject, tls_js);
+                } else if (tls_js.toBoolean()) {
                     ssl_opts = jsc.API.ServerConfig.SSLConfig.zero;
                 }
-            }
-
-            if (globalObject.hasException()) {
-                return .zero;
-            }
-
-            const socket_config = &(ssl_opts orelse {
+                const cfg = &(ssl_opts orelse return globalObject.throw("Expected \"tls\" option", .{}));
+                var create_err: uws.create_bun_socket_error_t = .none;
+                owned_ctx = cfg.asUSockets().createSSLContext(&create_err) orelse {
+                    // us_ssl_ctx_from_options only sets *err for the CA/cipher
+                    // cases; bad cert/key/DH return NULL with err==.none and the
+                    // detail is on the BoringSSL error queue.
+                    if (create_err != .none) return globalObject.throwValue(create_err.toJS(globalObject));
+                    return globalObject.throwValue(bun.BoringSSL.ERR_toJS(globalObject, BoringSSL.ERR_get_error()));
+                };
+            } else {
                 return globalObject.throw("Expected \"tls\" option", .{});
-            });
-            defer socket_config.deinit();
+            }
+            if (globalObject.hasException()) return error.JSError;
 
             var default_data = JSValue.zero;
-            if (try opts.fastGet(globalObject, .data)) |default_data_value| {
-                default_data = default_data_value;
+            if (try opts.fastGet(globalObject, .data)) |v| {
+                default_data = v;
                 default_data.ensureStillAlive();
             }
-            if (globalObject.hasException()) {
-                return .zero;
-            }
 
-            const options = socket_config.asUSockets();
-
-            const handlers_ptr = bun.handleOom(handlers.vm.allocator.create(Handlers));
+            const vm = handlers.vm;
+            const handlers_ptr = bun.handleOom(vm.allocator.create(Handlers));
             handlers_ptr.* = handlers;
+            handlers_consumed = true;
+
+            const cfg = if (ssl_opts) |*c| c else null;
             var tls = bun.new(TLSSocket, .{
                 .ref_count = .init(),
                 .handlers = handlers_ptr,
                 .socket = TLSSocket.Socket.detached,
                 .connection = if (this.connection) |c| c.clone() else null,
-                .wrapped = .tls,
-                .protos = if (socket_config.protos) |p|
+                .protos = if (cfg) |c| if (c.protos) |p|
                     bun.handleOom(bun.default_allocator.dupe(u8, std.mem.span(p)))
                 else
-                    null,
-                .server_name = if (socket_config.server_name) |sn|
+                    null else null,
+                .server_name = if (cfg) |c| if (c.server_name) |sn|
                     bun.handleOom(bun.default_allocator.dupe(u8, std.mem.span(sn)))
                 else
-                    null,
-                .socket_context = null, // only set after the wrapTLS
-                .flags = .{
-                    .is_active = false,
-                },
+                    null else null,
+                .owned_ssl_ctx = owned_ctx,
             });
+            // tls.deinit() now drops the ref; clear so errdefer doesn't double-free.
+            owned_ctx = null;
 
-            const TCPHandler = NewWrappedHandler(false);
-
-            // reconfigure context to use the new wrapper handlers
-            Socket.unsafeConfigure(this.socket.context().?, true, true, WrappedSocket, TCPHandler);
-            const TLSHandler = NewWrappedHandler(true);
-            const new_socket = this.socket.wrapTLS(options, @sizeOf(*anyopaque), @sizeOf(WrappedSocket), true, WrappedSocket, TLSHandler) orelse {
+            const sni: ?[*:0]const u8 = if (cfg) |c| c.server_name else null;
+            const group = vm.rareData().bunConnectGroup(vm, true);
+            const new_raw = raw_socket.adoptTLS(group, .bun_socket_tls, tls.owned_ssl_ctx.?, sni, @sizeOf(*anyopaque), @sizeOf(*anyopaque)) orelse {
                 const err = BoringSSL.ERR_get_error();
                 defer if (err != 0) BoringSSL.ERR_clear_error();
-                tls.wrapped = .none;
-
-                // Reset config to TCP
-                uws.NewSocketHandler(false).configure(
-                    this.socket.context().?,
-                    true,
-                    *TCPSocket,
-                    struct {
-                        pub const onOpen = NewSocket(false).onOpen;
-                        pub const onClose = NewSocket(false).onClose;
-                        pub const onData = NewSocket(false).onData;
-                        pub const onWritable = NewSocket(false).onWritable;
-                        pub const onTimeout = NewSocket(false).onTimeout;
-                        pub const onConnectError = NewSocket(false).onConnectError;
-                        pub const onEnd = NewSocket(false).onEnd;
-                        pub const onHandshake = NewSocket(false).onHandshake;
-                    },
-                );
-
+                // tls.deinit drops the owned_ctx ref
                 tls.deref();
-
                 handlers_ptr.deinit();
-                bun.default_allocator.destroy(handlers_ptr);
-
-                // If BoringSSL gave us an error code, let's use it.
+                vm.allocator.destroy(handlers_ptr);
                 if (err != 0 and !globalObject.hasException()) {
                     return globalObject.throwValue(bun.BoringSSL.ERR_toJS(globalObject, err));
                 }
-
-                // If BoringSSL did not give us an error code, let's throw a generic error.
                 if (!globalObject.hasException()) {
                     return globalObject.throw("Failed to upgrade socket from TCP -> TLS. Is the TLS config correct?", .{});
                 }
-
                 return .js_undefined;
             };
 
-            // Do not create the JS Wrapper object until _after_ we've validated the TLS config.
-            // Otherwise, JSC will GC it and the lifetime gets very complicated.
-            const tls_js_value = tls.getThisValue(globalObject);
-            TLSSocket.js.dataSetCached(tls_js_value, globalObject, default_data);
-
-            tls.socket = new_socket;
-            const new_context = new_socket.context().?;
-            tls.socket_context = new_context; // owns the new tls context that have a ref from the old one
-            tls.ref();
-
-            const this_handlers = this.getHandlers();
-            const raw_handlers_ptr = bun.handleOom(this_handlers.vm.allocator.create(Handlers));
-            raw_handlers_ptr.* = this_handlers.clone();
-
-            const raw = bun.new(TLSSocket, .{
-                .ref_count = .init(),
-                .handlers = raw_handlers_ptr,
-                .socket = new_socket,
-                .connection = if (this.connection) |c| c.clone() else null,
-                .wrapped = .tcp,
-                .protos = null,
-                .socket_context = new_context.ref(true),
-            });
-            raw.ref();
-
-            const raw_js_value = raw.getThisValue(globalObject);
-            if (JSSocketType(ssl).dataGetCached(this_js)) |raw_default_data| {
-                raw_default_data.ensureStillAlive();
-                TLSSocket.js.dataSetCached(raw_js_value, globalObject, raw_default_data);
-            }
-
-            // marks both as active
-            raw.markActive();
-            // this will keep tls alive until socket.open() is called to start TLS certificate and the handshake process
-            // open is not immediately called because we need to set bunSocketInternal
-            tls.markActive();
-
-            // we're unrefing the original instance and refing the TLS instance
-            tls.poll_ref.ref(this_handlers.vm);
-
-            // mark both instances on socket data
-            if (new_socket.ext(WrappedSocket)) |ctx| {
-                ctx.* = .{ .tcp = raw, .tls = tls };
-            }
-
+            // Retire the original TCP wrapper before any TLS dispatch can run
+            // back into JS — it must not see two live owners on one fd. Its
+            // *Handlers are TRANSFERRED to the raw twin (the `[raw, tls]`
+            // contract is: index 0 keeps the pre-upgrade callbacks and sees
+            // ciphertext, index 1 gets the new ones and sees plaintext).
+            const raw_handlers = this.handlers;
+            this.handlers = null;
+            // Preserve `socket.unref()` across the upgrade — node:tls callers
+            // that unref the underlying TCP socket before upgrading must not
+            // suddenly hold the loop open via the TLS wrapper.
+            const was_reffed = this.poll_ref.isActive();
+            // Capture before downgrade so the cached `data` (net.ts stores
+            // `{self: net.Socket}` there) survives onto the raw twin.
+            const original_data: JSValue = This.js.dataGetCached(this.getThisValue(globalObject)) orelse .js_undefined;
+            original_data.ensureStillAlive();
             if (this.flags.is_active) {
                 this.poll_ref.disable();
                 this.flags.is_active = false;
-                // will free handlers when hits 0 active connections
-                // the connection can be upgraded inside a handler call so we need to guarantee that it will be still alive
-                this.getHandlers().markInactive();
-
-                // The old socket is now superseded by the upgraded pair; allow GC.
+                // Do NOT markInactive raw_handlers — ownership of the
+                // active_connections=1 it holds is transferring to `raw`.
                 this.this_value.downgrade();
             }
+            defer this.deref();
+            this.detachNativeCallback();
+            this.socket.detach();
+
+            // Only NOW is it safe for dispatch to fire: ext + kind point at `tls`.
+            new_raw.ext(*TLSSocket).* = tls;
+            tls.socket = TLSSocket.Socket.from(new_raw);
+            tls.ref();
+
+            // The `raw` half — same `us_socket_t*`, ORIGINAL pre-upgrade
+            // *Handlers, writes bypass SSL. Dispatch reaches it via the
+            // `ssl_raw_tap` ciphertext hook, never via the ext slot.
+            var raw = bun.new(TLSSocket, .{
+                .ref_count = .init(),
+                .handlers = raw_handlers,
+                .socket = TLSSocket.Socket.from(new_raw),
+                .connection = null,
+                .protos = null,
+                // is_active so the chained `raw.onClose` → `markInactive` path
+                // tears down `raw_handlers` (client-mode handlers free
+                // themselves there). No poll_ref — `tls` keeps the loop alive.
+                // active_connections=1 was already on raw_handlers from `this`.
+                .flags = .{ .bypass_tls = true, .is_active = true },
+            });
+            raw.ref();
+            tls.twin = raw;
+            new_raw.setSslRawTap(true);
+
+            const tls_js_value = tls.getThisValue(globalObject);
+            const raw_js_value = raw.getThisValue(globalObject);
+            TLSSocket.js.dataSetCached(tls_js_value, globalObject, default_data);
+            // `raw` keeps the pre-upgrade `data` so its callbacks emit on the
+            // original net.Socket, not the TLS one.
+            TLSSocket.js.dataSetCached(raw_js_value, globalObject, original_data);
+
+            tls.markActive();
+            if (was_reffed) tls.poll_ref.ref(vm);
+
+            // Fire onOpen with the right `this`, then send ClientHello. Doing
+            // it before ext was repointed would have ALPN/onOpen land in the
+            // dead TCPSocket.
+            tls.onOpen(tls.socket);
+            new_raw.startTLSHandshake();
 
             const array = try jsc.JSValue.createEmptyArray(globalObject, 2);
             try array.putIndex(globalObject, 0, raw_js_value);
             try array.putIndex(globalObject, 1, tls_js_value);
-
-            defer this.deref();
-
-            // detach and invalidate the old instance
-            this.detachNativeCallback();
-            this.socket.detach();
-
-            // start TLS handshake after we set extension on the socket
-            new_socket.startTLS(handlers_ptr.mode != .server);
-
-            success = true;
             return array;
         }
 
@@ -1717,103 +1754,12 @@ const Flags = packed struct(u16) {
     owned_protos: bool = true,
     is_paused: bool = false,
     allow_half_open: bool = false,
-    _: u7 = 0,
+    /// Set on the `raw` half of an `upgradeTLS` pair. Writes route through
+    /// `us_socket_raw_write` (bypassing the SSL layer) so node:net can pipe
+    /// pre-handshake bytes / read the underlying TCP stream.
+    bypass_tls: bool = false,
+    _: u6 = 0,
 };
-
-pub const WrappedSocket = extern struct {
-    // both shares the same socket but one behaves as TLS and the other as TCP
-    tls: *TLSSocket,
-    tcp: *TLSSocket,
-};
-
-pub fn NewWrappedHandler(comptime tls: bool) type {
-    const Socket = uws.NewSocketHandler(true);
-    return struct {
-        pub fn onOpen(this: WrappedSocket, socket: Socket) void {
-            // only TLS will call onOpen
-            if (comptime tls) {
-                TLSSocket.onOpen(this.tls, socket);
-            }
-        }
-
-        pub fn onEnd(this: WrappedSocket, socket: Socket) void {
-            if (comptime tls) {
-                TLSSocket.onEnd(this.tls, socket);
-            } else {
-                TLSSocket.onEnd(this.tcp, socket);
-            }
-        }
-
-        pub fn onHandshake(this: WrappedSocket, socket: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) bun.JSError!void {
-            // only TLS will call onHandshake
-            if (comptime tls) {
-                try TLSSocket.onHandshake(this.tls, socket, success, ssl_error);
-            }
-        }
-
-        pub fn onClose(this: WrappedSocket, socket: Socket, err: c_int, data: ?*anyopaque) bun.JSError!void {
-            if (comptime tls) {
-                // Clean up the raw TCP socket from upgradeTLS() — its onClose
-                // never fires because uws closes through the TLS context only.
-                defer {
-                    if (!this.tcp.socket.isDetached()) {
-                        this.tcp.socket.detach();
-                        if (this.tcp.this_value != .finalized) {
-                            this.tcp.this_value.downgrade();
-                        }
-                        this.tcp.deref();
-                    }
-                }
-                try TLSSocket.onClose(this.tls, socket, err, data);
-            } else {
-                try TLSSocket.onClose(this.tcp, socket, err, data);
-            }
-        }
-
-        pub fn onData(this: WrappedSocket, socket: Socket, data: []const u8) void {
-            if (comptime tls) {
-                TLSSocket.onData(this.tls, socket, data);
-            } else {
-                // tedius use this (tedius is a pure-javascript implementation of TDS protocol used to interact with instances of Microsoft's SQL Server)
-                TLSSocket.onData(this.tcp, socket, data);
-            }
-        }
-
-        pub const onFd = null;
-
-        pub fn onWritable(this: WrappedSocket, socket: Socket) void {
-            if (comptime tls) {
-                TLSSocket.onWritable(this.tls, socket);
-            } else {
-                TLSSocket.onWritable(this.tcp, socket);
-            }
-        }
-
-        pub fn onTimeout(this: WrappedSocket, socket: Socket) void {
-            if (comptime tls) {
-                TLSSocket.onTimeout(this.tls, socket);
-            } else {
-                TLSSocket.onTimeout(this.tcp, socket);
-            }
-        }
-
-        pub fn onLongTimeout(this: WrappedSocket, socket: Socket) void {
-            if (comptime tls) {
-                TLSSocket.onTimeout(this.tls, socket);
-            } else {
-                TLSSocket.onTimeout(this.tcp, socket);
-            }
-        }
-
-        pub fn onConnectError(this: WrappedSocket, socket: Socket, errno: c_int) bun.JSError!void {
-            if (comptime tls) {
-                try TLSSocket.onConnectError(this.tls, socket, errno);
-            } else {
-                try TLSSocket.onConnectError(this.tcp, socket, errno);
-            }
-        }
-    };
-}
 
 /// Unified socket mode replacing the old is_server bool + TLSMode pair.
 pub const SocketMode = enum {
@@ -1840,7 +1786,13 @@ pub const DuplexUpgradeContext = struct {
     vm: *jsc.VirtualMachine,
     task: jsc.AnyTask,
     task_event: EventState = .StartTLS,
+    /// Config to build a fresh `SSL_CTX` from (legacy `{ca,cert,key}` callers).
+    /// Mutually exclusive with `owned_ctx` — `runEvent` prefers `owned_ctx`.
     ssl_config: ?jsc.API.ServerConfig.SSLConfig,
+    /// One ref on a prebuilt `SSL_CTX` (from `opts.tls.secureContext` — the
+    /// memoised `tls.createSecureContext` path). Adopted by `startTLSWithCTX`
+    /// on success, freed in `deinit` if Close races ahead of StartTLS.
+    owned_ctx: ?*BoringSSL.SSL_CTX = null,
     is_open: bool = false,
     #mode: SocketMode = .client,
 
@@ -1915,6 +1867,12 @@ pub const DuplexUpgradeContext = struct {
         const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
 
         if (this.tls) |tls| {
+            // `tls.onClose` consumes the +1 we hold (its `defer this.deref()`
+            // is the ext-slot/owner pin). Null our pointer first so the
+            // `deinitInNextTick` → `deinit` path doesn't deref it a second
+            // time — that's the over-deref behind the cross-file
+            // `TLSSocket.finalize` use-after-poison.
+            this.tls = null;
             tls.onClose(socket, 0, null) catch {};
         }
 
@@ -1924,31 +1882,42 @@ pub const DuplexUpgradeContext = struct {
     fn runEvent(this: *DuplexUpgradeContext) void {
         switch (this.task_event) {
             .StartTLS => {
-                if (this.ssl_config) |config| {
-                    log("DuplexUpgradeContext.startTLS mode={s}", .{@tagName(this.#mode)});
-                    this.upgrade.startTLS(config, this.#mode == .client) catch |err| {
-                        switch (err) {
-                            error.OutOfMemory => {
-                                bun.outOfMemory();
-                            },
-                            else => {
-                                const errno = @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
-                                if (this.tls) |tls| {
-                                    const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
-
-                                    tls.handleConnectError(errno) catch {};
-                                    tls.onClose(socket, errno, null) catch {};
-                                }
-                            },
+                log("DuplexUpgradeContext.startTLS mode={s}", .{@tagName(this.#mode)});
+                const is_client = this.#mode == .client;
+                const started: anyerror!void = if (this.owned_ctx) |ctx| blk: {
+                    // Transfer the ref into SSLWrapper; null first so the
+                    // failure path / deinit don't double-free it.
+                    this.owned_ctx = null;
+                    break :blk this.upgrade.startTLSWithCTX(ctx, is_client);
+                } else if (this.ssl_config) |config|
+                    this.upgrade.startTLS(config, is_client)
+                else {};
+                started catch |err| switch (err) {
+                    error.OutOfMemory => bun.outOfMemory(),
+                    else => {
+                        const errno = @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
+                        if (this.tls) |tls| {
+                            // `handleConnectError` consumes our +1 (its
+                            // `needs_deref` path) and detaches. Calling
+                            // `tls.onClose` afterwards (as main did)
+                            // double-derefs; null `this.tls` so the eventual
+                            // `deinit` doesn't make it a triple. Pre-existing
+                            // on main, latent until the leak fix made `deinit`
+                            // reachable.
+                            this.tls = null;
+                            tls.handleConnectError(errno) catch {};
                         }
-                    };
-                    this.ssl_config.?.deinit();
+                    },
+                };
+                if (this.ssl_config) |*cfg| {
+                    cfg.deinit();
                     this.ssl_config = null;
                 }
             },
-            .Close => {
-                this.upgrade.close();
-            },
+            // Previously this only called `upgrade.close()` and never `deinit`,
+            // leaking the SSLWrapper, the strong refs, and this struct itself
+            // for every duplex-upgraded TLS socket.
+            .Close => this.deinit(),
         }
     }
 
@@ -1967,8 +1936,17 @@ pub const DuplexUpgradeContext = struct {
             this.tls = null;
             tls.deref();
         }
+        if (this.ssl_config) |*cfg| {
+            // Close raced ahead of StartTLS — drop the unconsumed config.
+            cfg.deinit();
+            this.ssl_config = null;
+        }
+        if (this.owned_ctx) |ctx| {
+            this.owned_ctx = null;
+            BoringSSL.SSL_CTX_free(ctx);
+        }
         this.upgrade.deinit();
-        this.destroy();
+        bun.destroy(this);
     }
 };
 
@@ -2002,9 +1980,37 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
     // allocations (not embedded in a Listener). The mode field on Handlers
     // controls lifecycle (markInactive expects a Listener parent when .server).
     // The TLS direction (client vs server) is controlled by DuplexUpgradeContext.mode.
-    const handlers = try Handlers.fromJS(globalObject, socket_obj, false);
+    var handlers = try Handlers.fromJS(globalObject, socket_obj, false);
+    var handlers_consumed = false;
+    errdefer if (!handlers_consumed) handlers.deinit();
 
+    // Resolve the `SSL_CTX*`. Prefer a passed `SecureContext` (the memoised
+    // `tls.createSecureContext` path — what `[buntls]` now returns) so the
+    // duplex/named-pipe path shares one `SSL_CTX_new` with everyone else.
+    // node:net wraps `[buntls]`'s return as `opts.tls.secureContext`; userland
+    // may also pass it top-level. Same lookup as `upgradeTLS` above.
+    var owned_ctx: ?*BoringSSL.SSL_CTX = null;
+    errdefer if (owned_ctx) |c| BoringSSL.SSL_CTX_free(c);
+    const sc_js: JSValue = blk: {
+        if (try opts.getTruthy(globalObject, "secureContext")) |v| break :blk v;
+        if (try opts.getTruthy(globalObject, "tls")) |t| {
+            if (t.isObject()) {
+                if (try t.getTruthy(globalObject, "secureContext")) |v| break :blk v;
+            }
+        }
+        break :blk .zero;
+    };
+    if (sc_js != .zero) {
+        const sc = SecureContext.fromJS(sc_js) orelse {
+            return globalObject.throwInvalidArgumentTypeValue("secureContext", "SecureContext", sc_js);
+        };
+        owned_ctx = sc.borrow();
+    }
+
+    // Still parse SSLConfig for servername/ALPN (those live on the JS-side
+    // wrapper, not the SSL_CTX) and as the build source when no SecureContext.
     var ssl_opts: ?jsc.API.ServerConfig.SSLConfig = null;
+    errdefer if (ssl_opts) |*c| c.deinit();
     if (try opts.getTruthy(globalObject, "tls")) |tls| {
         if (!tls.isBoolean()) {
             ssl_opts = try jsc.API.ServerConfig.SSLConfig.fromJS(jsc.VirtualMachine.get(), globalObject, tls);
@@ -2012,9 +2018,10 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
             ssl_opts = jsc.API.ServerConfig.SSLConfig.zero;
         }
     }
-    const socket_config = &(ssl_opts orelse {
+    if (owned_ctx == null and ssl_opts == null) {
         return globalObject.throw("Expected \"tls\" option", .{});
-    });
+    }
+    const socket_config: ?*jsc.API.ServerConfig.SSLConfig = if (ssl_opts) |*c| c else null;
 
     var default_data = JSValue.zero;
     if (try opts.fastGet(globalObject, .data)) |default_data_value| {
@@ -2024,6 +2031,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
 
     const handlers_ptr = bun.handleOom(handlers.vm.allocator.create(Handlers));
     handlers_ptr.* = handlers;
+    handlers_consumed = true;
     // Set mode to duplex_server so TLSSocket.isServer() returns true for ALPN server mode
     // without affecting markInactive lifecycle (which requires a Listener parent).
     handlers_ptr.mode = if (is_server) .duplex_server else .client;
@@ -2032,16 +2040,14 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
         .handlers = handlers_ptr,
         .socket = TLSSocket.Socket.detached,
         .connection = null,
-        .wrapped = .tls,
-        .protos = if (socket_config.protos) |p|
+        .protos = if (socket_config) |cfg| if (cfg.protos) |p|
             bun.handleOom(bun.default_allocator.dupe(u8, std.mem.span(p)))
         else
-            null,
-        .server_name = if (socket_config.server_name) |sn|
+            null else null,
+        .server_name = if (socket_config) |cfg| if (cfg.server_name) |sn|
             bun.handleOom(bun.default_allocator.dupe(u8, std.mem.span(sn)))
         else
-            null,
-        .socket_context = null, // only set after the wrapTLS
+            null else null,
     });
     const tls_js_value = tls.getThisValue(globalObject);
     TLSSocket.js.dataSetCached(tls_js_value, globalObject, default_data);
@@ -2051,9 +2057,25 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
         .tls = tls,
         .vm = globalObject.bunVM(),
         .task = undefined,
-        .ssl_config = socket_config.*,
+        // When `owned_ctx` is set, `runEvent` builds from it and ignores
+        // `ssl_config` for SSL_CTX construction; servername/ALPN already
+        // copied onto `tls` above so the config's only remaining use is the
+        // legacy build path.
+        .ssl_config = if (owned_ctx == null) if (socket_config) |c| c.* else null else null,
+        .owned_ctx = owned_ctx,
         .#mode = if (is_server) .duplex_server else .client,
     });
+    // Ownership of the SSL_CTX ref transferred to DuplexUpgradeContext.
+    owned_ctx = null;
+    // ssl_opts is moved into duplexContext.ssl_config when owned_ctx == null;
+    // otherwise it was only used for protos/server_name and is freed here.
+    if (duplexContext.ssl_config == null) {
+        if (socket_config) |c| c.deinit();
+    }
+    // Disarm the errdefer at L2013 — either moved into duplexContext or just
+    // freed above; both the move-target and the deinit case must not see it
+    // freed again on a later throw.
+    ssl_opts = null;
     tls.ref();
 
     duplexContext.task = jsc.AnyTask.New(DuplexUpgradeContext, DuplexUpgradeContext.runEvent).init(duplexContext);
@@ -2189,3 +2211,4 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const ZigString = jsc.ZigString;
+const SecureContext = jsc.API.SecureContext;

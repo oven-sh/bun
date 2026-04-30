@@ -26,26 +26,12 @@
 #include "config.h"
 #include "BroadcastChannel.h"
 
-#include "BunClientData.h"
-#include "BroadcastChannelRegistry.h"
 #include "BunBroadcastChannelRegistry.h"
+#include "BunClientData.h"
 #include "EventNames.h"
-#include "EventTarget.h"
 #include "MessageEvent.h"
-// #include "Page.h"
-// #include "PartitionedSecurityOrigin.h"
-// #include "SecurityOrigin.h"
 #include "SerializedScriptValue.h"
-// #include "WorkerGlobalScope.h"
-#include "BunWorkerGlobalScope.h"
-// #include "WorkerLoaderProxy.h"
-// #include "WorkerThread.h"
-#include <wtf/CallbackAggregator.h>
-#include <wtf/Identified.h>
-#include <wtf/HashMap.h>
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/MainThread.h>
-#include <wtf/Scope.h>
 
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 
@@ -53,269 +39,93 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BroadcastChannel);
 
-static Lock allBroadcastChannelsLock;
-static UncheckedKeyHashMap<BroadcastChannelIdentifier, ThreadSafeWeakPtr<BroadcastChannel>>& allBroadcastChannels() WTF_REQUIRES_LOCK(allBroadcastChannelsLock)
-{
-    static NeverDestroyed<UncheckedKeyHashMap<BroadcastChannelIdentifier, ThreadSafeWeakPtr<BroadcastChannel>>> map;
-    return map;
-}
-
-static Lock channelToContextIdentifierLock;
-static UncheckedKeyHashMap<BroadcastChannelIdentifier, ScriptExecutionContextIdentifier>& channelToContextIdentifier() WTF_REQUIRES_LOCK(channelToContextIdentifierLock)
-{
-    static NeverDestroyed<UncheckedKeyHashMap<BroadcastChannelIdentifier, ScriptExecutionContextIdentifier>> map;
-    return map;
-}
-
-// static PartitionedSecurityOrigin partitionedSecurityOriginFromContext(ScriptExecutionContext& context)
-// {
-//     Ref securityOrigin { *context.securityOrigin() };
-//     Ref topOrigin { context.settingsValues().broadcastChannelOriginPartitioningEnabled ? context.topOrigin() : securityOrigin.get() };
-//     return { WTF::move(topOrigin), WTF::move(securityOrigin) };
-// }
-
-class BroadcastChannel::MainThreadBridge : public ThreadSafeRefCounted<MainThreadBridge, WTF::DestructionThread::Main>, public Identified<BroadcastChannelIdentifier> {
-public:
-    static Ref<MainThreadBridge> create(BroadcastChannel& channel, const String& name, ScriptExecutionContext& context)
-    {
-        return adoptRef(*new MainThreadBridge(channel, name, context));
-    }
-
-    void registerChannel(ScriptExecutionContext&);
-    void unregisterChannel();
-    void postMessage(Ref<SerializedScriptValue>&&);
-    void detach() { m_broadcastChannel = nullptr; };
-
-    String name() const { return m_name.isolatedCopy(); }
-    ScriptExecutionContextIdentifier contextId() const { return m_contextId; }
-
-    virtual ~MainThreadBridge() = default;
-
-private:
-    MainThreadBridge(BroadcastChannel&, const String& name, ScriptExecutionContext&);
-
-    void ensureOnMainThread(Function<void(void*)>&&);
-
-    WeakPtr<BroadcastChannel, WeakPtrImplWithEventTargetData> m_broadcastChannel;
-    const String m_name; // Main thread only.
-    ScriptExecutionContextIdentifier m_contextId;
-    // PartitionedSecurityOrigin m_origin; // Main thread only.
-};
-
-BroadcastChannel::MainThreadBridge::MainThreadBridge(BroadcastChannel& channel, const String& name, ScriptExecutionContext& context)
-    : m_broadcastChannel(channel)
+BroadcastChannel::BroadcastChannel(ScriptExecutionContext& context, const String& name)
+    : ContextDestructionObserver(&context)
     , m_name(name.isolatedCopy())
     , m_contextId(context.identifier())
-// , m_origin(partitionedSecurityOriginFromContext(*channel.scriptExecutionContext()).isolatedCopy())
 {
-}
-
-void BroadcastChannel::MainThreadBridge::ensureOnMainThread(Function<void(void*)>&& task)
-{
-    ASSERT(m_broadcastChannel);
-    if (!m_broadcastChannel)
-        return;
-
-    auto* context = m_broadcastChannel->scriptExecutionContext();
-    if (!context)
-        return;
-    ASSERT(context->isContextThread());
-
-    Ref protectedThis { *this };
-
-    ScriptExecutionContext::ensureOnMainThread([protectedThis = WTF::move(protectedThis), task = WTF::move(task)](auto& context) {
-        task(nullptr);
-    });
-}
-
-void BroadcastChannel::MainThreadBridge::registerChannel(ScriptExecutionContext& context)
-{
-    Ref protectedThis { *this };
-
-    ScriptExecutionContext::ensureOnMainThread([protectedThis = WTF::move(protectedThis), contextId = context.identifier()](auto& context) mutable {
-        context.broadcastChannelRegistry().registerChannel(protectedThis->m_name, protectedThis->identifier());
-        Locker locker { channelToContextIdentifierLock };
-        channelToContextIdentifier().add(protectedThis->identifier(), contextId);
-    });
-}
-
-void BroadcastChannel::MainThreadBridge::unregisterChannel()
-{
-    Ref protectedThis { *this };
-
-    ScriptExecutionContext::ensureOnMainThread([protectedThis = WTF::move(protectedThis)](auto& context) {
-        context.broadcastChannelRegistry().unregisterChannel(protectedThis->m_name, protectedThis->identifier());
-        Locker locker { channelToContextIdentifierLock };
-        channelToContextIdentifier().remove(protectedThis->identifier());
-    });
-}
-
-void BroadcastChannel::MainThreadBridge::postMessage(Ref<SerializedScriptValue>&& message)
-{
-    Ref protectedThis { *this };
-
-    ScriptExecutionContext::ensureOnMainThread([protectedThis = WTF::move(protectedThis), message = WTF::move(message)](auto& context) mutable {
-        context.broadcastChannelRegistry().postMessage(protectedThis->m_name, protectedThis->identifier(), WTF::move(message));
-    });
-}
-
-BroadcastChannel::BroadcastChannel(ScriptExecutionContext& context, const String& name)
-    // : ActiveDOMObject(&context)
-    : ContextDestructionObserver(&context)
-    , m_mainThreadBridge(MainThreadBridge::create(*this, name, context))
-    , m_contextId(context.identifier())
-{
-    {
-        Locker locker { allBroadcastChannelsLock };
-        allBroadcastChannels().add(m_mainThreadBridge->identifier(), *this);
-    }
-    m_mainThreadBridge->registerChannel(context);
+    initializeWeakPtrFactory();
+    BunBroadcastChannelRegistry::singleton().subscribe(m_name, m_contextId, *this);
     jsRef(context.jsGlobalObject());
 }
 
 BroadcastChannel::~BroadcastChannel()
 {
     close();
-    m_mainThreadBridge->detach();
-    {
-        Locker locker { allBroadcastChannelsLock };
-        allBroadcastChannels().remove(m_mainThreadBridge->identifier());
-    }
 }
 
-BroadcastChannelIdentifier BroadcastChannel::identifier() const
+ExceptionOr<void> BroadcastChannel::postMessage(JSC::JSGlobalObject& globalObject, JSC::JSValue messageValue)
 {
-    return m_mainThreadBridge->identifier();
-}
-
-String BroadcastChannel::name() const
-{
-    return m_mainThreadBridge->name();
-}
-
-ScriptExecutionContextIdentifier BroadcastChannel::contextIdForBroadcastChannelId(BroadcastChannelIdentifier identifier)
-{
-    Locker locker { channelToContextIdentifierLock };
-    return channelToContextIdentifier().get(identifier);
-}
-
-ScriptExecutionContext* BroadcastChannel::scriptExecutionContext() const
-{
-    return ScriptExecutionContext::getScriptExecutionContext(m_mainThreadBridge->contextId());
-}
-
-ExceptionOr<void> BroadcastChannel::postMessage(JSC::JSGlobalObject& globalObject, JSC::JSValue message)
-{
-    if (!isEligibleForMessaging())
-        return {};
-
-    if (m_isClosed)
+    if (isClosed())
         return Exception { InvalidStateError, "This BroadcastChannel is closed"_s };
 
-    Vector<RefPtr<MessagePort>> ports;
-    auto messageData = SerializedScriptValue::create(globalObject, message, {}, ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
-    if (messageData.hasException())
-        return messageData.releaseException();
-    ASSERT(ports.isEmpty());
+    Vector<RefPtr<MessagePort>> dummyPorts;
+    auto serialized = SerializedScriptValue::create(globalObject, messageValue, {}, dummyPorts, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
+    if (serialized.hasException())
+        return serialized.releaseException();
+    ASSERT(dummyPorts.isEmpty());
 
-    m_mainThreadBridge->postMessage(messageData.releaseReturnValue());
+    BunBroadcastChannelRegistry::singleton().post(m_name, *this, serialized.releaseReturnValue());
     return {};
-}
-
-void BroadcastChannel::close()
-{
-    if (m_isClosed)
-        return;
-
-    m_isClosed = true;
-    m_mainThreadBridge->unregisterChannel();
-}
-
-void BroadcastChannel::dispatchMessageTo(BroadcastChannelIdentifier channelIdentifier, Ref<SerializedScriptValue>&& message)
-{
-    ASSERT(isMainThread());
-
-    ScriptExecutionContextIdentifier contextIdentifier;
-    {
-        Locker locker { channelToContextIdentifierLock };
-        contextIdentifier = channelToContextIdentifier().get(channelIdentifier);
-    }
-    if (!contextIdentifier)
-        return;
-
-    ScriptExecutionContext::ensureOnContextThread(contextIdentifier, [channelIdentifier, message = WTF::move(message)](auto&) mutable {
-        RefPtr<BroadcastChannel> channel;
-        {
-            Locker locker { allBroadcastChannelsLock };
-            channel = allBroadcastChannels().get(channelIdentifier).get();
-        }
-        if (channel)
-            channel->dispatchMessage(WTF::move(message));
-    });
 }
 
 void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
 {
-    if (!isEligibleForMessaging())
+    // Balance the queued count bumped by the registry at post time; do it
+    // first so that if we bail (closed / no context) the channel can still
+    // become collectable.
+    m_state.fetch_sub(QueuedOne, std::memory_order_acq_rel);
+
+    if (isClosed())
         return;
 
-    if (m_isClosed)
+    auto* context = scriptExecutionContext();
+    if (!context || !context->globalObject())
         return;
+    ASSERT(context->isContextThread());
 
-    ScriptExecutionContext::postTaskTo(contextIdForBroadcastChannelId(m_mainThreadBridge->identifier()), [this, protectedThis = Ref { *this }, message = WTF::move(message)](ScriptExecutionContext& context) mutable {
-        if (m_isClosed)
-            return;
+    auto* globalObject = context->jsGlobalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-        auto* globalObject = context.jsGlobalObject();
-        if (!globalObject)
-            return;
-
-        auto& vm = JSC::getVM(globalObject);
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        Vector<RefPtr<MessagePort>> dummyPorts;
-        auto event = MessageEvent::create(*globalObject, WTF::move(message), {}, {}, nullptr, WTF::move(dummyPorts));
-        if (scope.exception()) [[unlikely]] {
-            // Currently, we assume that the only way we can get here is if we have a termination.
-            RELEASE_ASSERT(vm.hasPendingTerminationException());
-            return;
-        }
-
-        dispatchEvent(event.event);
-    });
+    Vector<RefPtr<MessagePort>> dummyPorts;
+    auto event = MessageEvent::create(*globalObject, WTF::move(message), {}, {}, nullptr, WTF::move(dummyPorts));
+    if (scope.exception()) [[unlikely]] {
+        RELEASE_ASSERT(vm.hasPendingTerminationException());
+        return;
+    }
+    dispatchEvent(event.event);
 }
 
-// const char* BroadcastChannel::activeDOMObjectName() const
-// {
-//     return "BroadcastChannel";
-// }
+void BroadcastChannel::close()
+{
+    uint64_t prev = m_state.fetch_or(Closed, std::memory_order_acq_rel);
+    if (prev & Closed)
+        return;
+    BunBroadcastChannelRegistry::singleton().unsubscribe(m_name, *this);
+}
+
+void BroadcastChannel::contextDestroyed()
+{
+    close();
+    ContextDestructionObserver::contextDestroyed();
+}
 
 void BroadcastChannel::eventListenersDidChange()
 {
-    m_hasRelevantEventListener = hasEventListeners(eventNames().messageEvent);
+    if (hasEventListeners(eventNames().messageEvent))
+        m_state.fetch_or(HasMessageListener, std::memory_order_acq_rel);
+    else
+        m_state.fetch_and(~uint64_t(HasMessageListener), std::memory_order_acq_rel);
 }
-
-// bool BroadcastChannel::virtualHasPendingActivity() const
-// {
-//     return !m_isClosed && m_hasRelevantEventListener;
-// }
 
 bool BroadcastChannel::hasPendingActivity() const
 {
-    return !m_isClosed && m_hasRelevantEventListener;
-}
-
-// https://html.spec.whatwg.org/#eligible-for-messaging
-bool BroadcastChannel::isEligibleForMessaging() const
-{
-    auto* context = scriptExecutionContext();
-    if (!context)
+    // Called from the GC thread; a single atomic load covers everything.
+    uint64_t s = m_state.load(std::memory_order_acquire);
+    if (s & Closed)
         return false;
-
-    // if (auto document = dynamicDowncast<Document>(*context))
-    //     return document->isFullyActive();
-
-    return true;
-    // return !downcast<GlobalScope>(*context).isClosing();
+    return (s & HasMessageListener) || (s >> QueuedShift) > 0;
 }
 
 void BroadcastChannel::jsRef(JSGlobalObject* lexicalGlobalObject)

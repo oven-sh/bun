@@ -1,14 +1,12 @@
 #include "root.h"
 #include "headers.h"
 #include "ScriptExecutionContext.h"
-#include "MessagePort.h"
+#include "ContextDestructionObserver.h"
 
 #include "libusockets.h"
 #include "_libusockets.h"
 #include "BunClientData.h"
 #include "EventLoopTask.h"
-#include "BunBroadcastChannelRegistry.h"
-#include <wtf/LazyRef.h>
 extern "C" void Bun__startLoop(us_loop_t* loop);
 
 namespace WebCore {
@@ -39,9 +37,6 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject*
     : m_vm(vm)
     , m_globalObject(globalObject)
     , m_identifier(initialIdentifier())
-    , m_broadcastChannelRegistry([](auto& owner, auto& lazyRef) {
-        lazyRef.set(BunBroadcastChannelRegistry::create());
-    })
 {
     relaxAdoptionRequirement();
     addToContextsMap();
@@ -51,9 +46,6 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject*
     : m_vm(vm)
     , m_globalObject(globalObject)
     , m_identifier(identifier == std::numeric_limits<int32_t>::max() ? ++lastUniqueIdentifier : identifier)
-    , m_broadcastChannelRegistry([](auto& owner, auto& lazyRef) {
-        lazyRef.set(BunBroadcastChannelRegistry::create());
-    })
 {
     relaxAdoptionRequirement();
     addToContextsMap();
@@ -76,44 +68,11 @@ ScriptExecutionContext* ScriptExecutionContext::getScriptExecutionContext(Script
     return allScriptExecutionContextsMap().getOptional(identifier).value_or(nullptr);
 }
 
-template<bool SSL, bool isServer>
-static void registerHTTPContextForWebSocket(ScriptExecutionContext* script, us_socket_context_t* ctx, us_loop_t* loop)
-{
-    if constexpr (!isServer) {
-        if constexpr (SSL) {
-            Bun__WebSocketHTTPSClient__register(script->jsGlobalObject(), loop, ctx);
-        } else {
-            Bun__WebSocketHTTPClient__register(script->jsGlobalObject(), loop, ctx);
-        }
-    } else {
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-}
-
 JSGlobalObject* ScriptExecutionContext::globalObject()
 {
     return m_globalObject;
 }
 
-us_socket_context_t* ScriptExecutionContext::webSocketContextSSL()
-{
-    if (!m_ssl_client_websockets_ctx) {
-        us_loop_t* loop = (us_loop_t*)uws_get_loop();
-        us_bun_socket_context_options_t opts;
-        memset(&opts, 0, sizeof(us_bun_socket_context_options_t));
-        // adds root ca
-        opts.request_cert = true;
-        // but do not reject unauthorized
-        opts.reject_unauthorized = false;
-        enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
-        this->m_ssl_client_websockets_ctx = us_create_bun_ssl_socket_context(loop, sizeof(size_t), opts, &err);
-        void** ptr = reinterpret_cast<void**>(us_socket_context_ext(1, m_ssl_client_websockets_ctx));
-        *ptr = this;
-        registerHTTPContextForWebSocket<true, false>(this, m_ssl_client_websockets_ctx, loop);
-    }
-
-    return m_ssl_client_websockets_ctx;
-}
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 
 void ScriptExecutionContext::refEventLoop()
@@ -136,10 +95,6 @@ ScriptExecutionContext::~ScriptExecutionContext()
     }
     m_inScriptExecutionContextDestructor = true;
 #endif // ASSERT_ENABLED
-
-    auto postMessageCompletionHandlers = WTF::move(m_processMessageWithMessagePortsSoonHandlers);
-    for (auto& completionHandler : postMessageCompletionHandlers)
-        completionHandler();
 
     while (auto* destructionObserver = m_destructionObservers.takeAny())
         destructionObserver->contextDestroyed();
@@ -228,108 +183,12 @@ ScriptExecutionContext* ScriptExecutionContext::getMainThreadScriptExecutionCont
     return allScriptExecutionContextsMap().get(1);
 }
 
-void ScriptExecutionContext::processMessageWithMessagePortsSoon(CompletionHandler<void()>&& completionHandler)
-{
-    ASSERT(isContextThread());
-    m_processMessageWithMessagePortsSoonHandlers.append(WTF::move(completionHandler));
-
-    if (m_willProcessMessageWithMessagePortsSoon) {
-        return;
-    }
-
-    m_willProcessMessageWithMessagePortsSoon = true;
-
-    postTask([](ScriptExecutionContext& context) {
-        context.dispatchMessagePortEvents();
-    });
-}
-
-void ScriptExecutionContext::dispatchMessagePortEvents()
-{
-    ASSERT(isContextThread());
-    checkConsistency();
-
-    ASSERT(m_willProcessMessageWithMessagePortsSoon);
-    m_willProcessMessageWithMessagePortsSoon = false;
-
-    auto completionHandlers = std::exchange(m_processMessageWithMessagePortsSoonHandlers, Vector<CompletionHandler<void()>> {});
-
-    // Make a frozen copy of the ports so we can iterate while new ones might be added or destroyed.
-    for (auto* messagePort : copyToVector(m_messagePorts)) {
-        // The port may be destroyed, and another one created at the same address,
-        // but this is harmless. The worst that can happen as a result is that
-        // dispatchMessages() will be called needlessly.
-        if (m_messagePorts.contains(messagePort) && messagePort->started())
-            messagePort->dispatchMessages();
-    }
-
-    for (auto& completionHandler : completionHandlers)
-        completionHandler();
-}
-
 void ScriptExecutionContext::checkConsistency() const
 {
 #if ASSERT_ENABLED
-    for (auto* messagePort : m_messagePorts)
-        ASSERT(messagePort->scriptExecutionContext() == this);
-
     for (auto* destructionObserver : m_destructionObservers)
         ASSERT(destructionObserver->scriptExecutionContext() == this);
-
 #endif // ASSERT_ENABLED
-}
-
-void ScriptExecutionContext::createdMessagePort(MessagePort& messagePort)
-{
-    ASSERT(isContextThread());
-
-    m_messagePorts.add(&messagePort);
-}
-
-void ScriptExecutionContext::destroyedMessagePort(MessagePort& messagePort)
-{
-    ASSERT(isContextThread());
-
-    m_messagePorts.remove(&messagePort);
-}
-
-us_socket_context_t* ScriptExecutionContext::webSocketContextNoSSL()
-{
-    if (!m_client_websockets_ctx) {
-        us_loop_t* loop = (us_loop_t*)uws_get_loop();
-        us_socket_context_options_t opts;
-        memset(&opts, 0, sizeof(us_socket_context_options_t));
-        this->m_client_websockets_ctx = us_create_socket_context(0, loop, sizeof(size_t), opts);
-        void** ptr = reinterpret_cast<void**>(us_socket_context_ext(0, m_client_websockets_ctx));
-        *ptr = this;
-        registerHTTPContextForWebSocket<false, false>(this, m_client_websockets_ctx, loop);
-    }
-
-    return m_client_websockets_ctx;
-}
-
-template<bool SSL>
-static us_socket_context_t* registerWebSocketClientContext(ScriptExecutionContext* script, us_socket_context_t* parent)
-{
-    us_loop_t* loop = (us_loop_t*)uws_get_loop();
-    if constexpr (SSL) {
-        us_socket_context_t* child = us_create_child_socket_context(1, parent, sizeof(size_t));
-        Bun__WebSocketClientTLS__register(script->jsGlobalObject(), loop, child);
-        return child;
-    } else {
-        us_socket_context_t* child = us_create_child_socket_context(0, parent, sizeof(size_t));
-        Bun__WebSocketClient__register(script->jsGlobalObject(), loop, child);
-        return child;
-    }
-}
-
-us_socket_context_t* ScriptExecutionContext::connectedWebSocketKindClient()
-{
-    return registerWebSocketClientContext<false>(this, webSocketContextNoSSL());
-}
-us_socket_context_t* ScriptExecutionContext::connectedWebSocketKindClientSSL()
-{
-    return registerWebSocketClientContext<true>(this, webSocketContextSSL());
 }
 
 ScriptExecutionContextIdentifier ScriptExecutionContext::generateIdentifier()

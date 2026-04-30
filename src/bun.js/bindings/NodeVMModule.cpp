@@ -509,6 +509,12 @@ void NodeVMModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(vmModule->m_evaluationResult);
     visitor.append(vmModule->m_moduleWrapper);
 
+    // m_resolveCache is mutated on the mutator thread by
+    // NodeVMSourceTextModule::link() via m_resolveCache.set(), which can
+    // rehash and free the old bucket array while a concurrent marker is
+    // iterating values() here. Both sides take cellLock() (same pattern as
+    // AbstractModuleRecord::visitChildrenImpl / setImportedModule).
+    WTF::Locker locker { vmModule->cellLock() };
     auto moduleNatives = vmModule->m_resolveCache.values();
     visitor.append(moduleNatives.begin(), moduleNatives.end());
 }

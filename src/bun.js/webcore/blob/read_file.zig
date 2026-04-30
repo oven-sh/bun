@@ -11,6 +11,9 @@ pub fn NewReadFileHandler(comptime Function: anytype) type {
         pub fn run(handler: *@This(), maybe_bytes: ReadFileResultType) bun.JSTerminated!void {
             var promise = handler.promise.swap();
             var blob = handler.context.takeOwnership();
+            // `context` was populated via `this.dupe()` in doReadFile(), so it
+            // owns a store ref, a name ref, and possibly a content_type copy.
+            defer blob.deinit();
             const globalThis = handler.globalThis;
             bun.destroy(handler);
             switch (maybe_bytes) {

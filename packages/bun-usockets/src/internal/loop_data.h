@@ -39,7 +39,7 @@ struct us_internal_loop_data_t {
     struct us_timer_t *sweep_timer;
     int sweep_timer_count;
     struct us_internal_async *wakeup_async;
-    struct us_socket_context_t *head;
+    struct us_socket_group_t *head;
     /* QUIC engines on this loop. us_quic_loop_process walks the list from
      * loop_post / drainMicrotasks; the lazy fallthrough timer only wakes the
      * loop for lsquic's time-driven state (RTO, ACK delay) — its callback
@@ -57,8 +57,7 @@ struct us_internal_loop_data_t {
      * into the epoll_pwait2 timeout via getTimeout() instead, so this stays
      * NULL there. */
     struct us_timer_t *quic_timer;
-    struct us_socket_context_t *iterator;
-    struct us_socket_context_t *closed_context_head;
+    struct us_socket_group_t *iterator;
     char *recv_buf;
     char *send_buf;
     void *ssl_data;

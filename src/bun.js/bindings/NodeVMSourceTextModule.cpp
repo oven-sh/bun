@@ -364,7 +364,13 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
             else
                 record->setImportedModule(globalObject, JSC::AbstractModuleRecord::ModuleRequest { Identifier::fromString(vm, specifier), nullptr }, resolvedRecord);
             RETURN_IF_EXCEPTION(scope, {});
-            m_resolveCache.set(WTF::move(specifier), WriteBarrier<JSObject> { vm, this, moduleNative });
+            {
+                // NodeVMModule::visitChildrenImpl iterates m_resolveCache.values()
+                // on the GC thread under cellLock(); take the same lock here so a
+                // set()-triggered rehash can't free the bucket array mid-iteration.
+                WTF::Locker locker { cellLock() };
+                m_resolveCache.set(WTF::move(specifier), WriteBarrier<JSObject> { vm, this, moduleNative });
+            }
             RETURN_IF_EXCEPTION(scope, {});
         }
     }

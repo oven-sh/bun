@@ -190,10 +190,10 @@ fn insert(
 /// Caller must detach the dependency from the linked list it is in.
 pub fn freeDependencyIndex(store: *DirectoryWatchStore, alloc: Allocator, index: Dep.Index) !void {
     alloc.free(store.dependencies.items[index.get()].specifier);
-
-    if (Environment.isDebug) {
-        store.dependencies.items[index.get()] = undefined;
-    }
+    // Zero out the slot so that DevServer.deinit and memoryCost, which
+    // iterate `dependencies.items` without consulting the free list, do
+    // not touch the freed allocation or stale borrowed pointers.
+    store.dependencies.items[index.get()] = .empty;
 
     if (index.get() == (store.dependencies.items.len - 1)) {
         store.dependencies.items.len -= 1;
@@ -219,8 +219,46 @@ pub fn freeEntry(store: *DirectoryWatchStore, alloc: Allocator, entry_index: usi
     store.watches.swapRemoveAt(entry_index);
 
     if (store.watches.entries.len == 0) {
-        assert(store.dependencies.items.len == 0);
+        // Every remaining dependency slot must be in the free list.
+        assert(store.dependencies.items.len == store.dependencies_free_list.items.len);
+        store.dependencies.clearRetainingCapacity();
         store.dependencies_free_list.clearRetainingCapacity();
+    }
+}
+
+/// Removes all dependencies whose `source_file_path` is the exact slice
+/// `file_path`, compared by pointer identity since the slice is shared with
+/// IncrementalGraph.bundled_files. Called before IncrementalGraph frees a
+/// file's key string so that no `Dep` is left holding a dangling pointer.
+pub fn removeDependenciesForFile(store: *DirectoryWatchStore, alloc: Allocator, file_path: []const u8) void {
+    if (store.watches.count() == 0) return;
+
+    debug.log("DirectoryWatchStore.removeDependenciesForFile({f})", .{
+        bun.fmt.quote(file_path),
+    });
+
+    // Iterate in reverse since `freeEntry` uses swapRemoveAt.
+    var watch_index = store.watches.count();
+    while (watch_index > 0) {
+        watch_index -= 1;
+        const entry = &store.watches.values()[watch_index];
+        var new_chain: Dep.Index.Optional = .none;
+        var it: ?Dep.Index = entry.first_dep;
+        while (it) |index| {
+            const dep = &store.dependencies.items[index.get()];
+            it = dep.next.unwrap();
+            if (dep.source_file_path.ptr == file_path.ptr) {
+                bun.handleOom(store.freeDependencyIndex(alloc, index));
+            } else {
+                dep.next = new_chain;
+                new_chain = index.toOptional();
+            }
+        }
+        if (new_chain.unwrap()) |new_first_dep| {
+            entry.first_dep = new_first_dep;
+        } else {
+            store.freeEntry(alloc, watch_index);
+        }
     }
 }
 
@@ -253,11 +291,16 @@ pub const Dep = struct {
     /// creating an unrelated file should not re-emit another error. Allocated memory
     specifier: []u8,
 
+    pub const empty: Dep = .{
+        .next = .none,
+        .source_file_path = "",
+        .specifier = &.{},
+    };
+
     pub const Index = bun.GenericIndex(u32, Dep);
 };
 
 const bun = @import("bun");
-const Environment = bun.Environment;
 const Watcher = bun.Watcher;
 const assert = bun.assert;
 const bake = bun.bake;

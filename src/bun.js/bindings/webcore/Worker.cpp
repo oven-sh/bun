@@ -256,17 +256,153 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
         return disentangledPorts.releaseException();
     }
 
-    MessageWithMessagePorts messageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() };
-
-    this->postTaskToWorkerGlobalScope([message = WTF::move(messageWithMessagePorts)](auto& context) mutable {
-        Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(context.jsGlobalObject());
-
-        auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
-        auto event = MessageEvent::create(*globalObject, message.message.releaseNonNull(), nullptr, WTF::move(ports));
-
-        globalObject->globalEventScope->dispatchEvent(event.event);
-    });
+    enqueueToWorker(MessageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() });
     return {};
+}
+
+void Worker::enqueueToWorker(MessageWithMessagePorts&& message)
+{
+    {
+        Locker locker { m_toWorker.lock };
+        m_toWorker.queue.append(WTF::move(message));
+        // If the worker isn't online yet, just buffer. fireEarlyMessages()
+        // drains the inbox on the worker thread once it is. If a drain is
+        // already scheduled, don't double-schedule — it will see this
+        // message. drainScheduled is only set/cleared under the lock so
+        // the load/store pair is not a race.
+        if (!(m_onlineClosingFlags & OnlineFlag) || m_toWorker.drainScheduled.load(std::memory_order_relaxed))
+            return;
+        m_toWorker.drainScheduled.store(true, std::memory_order_relaxed);
+    }
+    bool posted = ScriptExecutionContext::postTaskTo(m_clientIdentifier, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+        protectedThis->drainToWorker(context);
+    });
+    if (!posted) {
+        Locker locker { m_toWorker.lock };
+        m_toWorker.drainScheduled.store(false, std::memory_order_relaxed);
+    }
+}
+
+void Worker::enqueueToParent(MessageWithMessagePorts&& message)
+{
+    auto* context = scriptExecutionContext();
+    if (!context)
+        return;
+    {
+        Locker locker { m_toParent.lock };
+        m_toParent.queue.append(WTF::move(message));
+        if (m_toParent.drainScheduled.load(std::memory_order_relaxed))
+            return;
+        m_toParent.drainScheduled.store(true, std::memory_order_relaxed);
+    }
+    bool posted = ScriptExecutionContext::postTaskTo(context->identifier(), [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+        protectedThis->drainToParent(context);
+    });
+    if (!posted) {
+        Locker locker { m_toParent.lock };
+        m_toParent.drainScheduled.store(false, std::memory_order_relaxed);
+    }
+}
+
+// Shared drain loop for the two inboxes. Mirrors MessagePortPipe's
+// drainAndDispatch (and Node's MessagePort::OnMessage): one task drains up to
+// max(initial queue size, 1000) messages, running microtasks between each so
+// queueMicrotask/Promise callbacks observe messages one at a time, then
+// yields and reschedules if more remain.
+//
+// Unlike MessagePortPipe, Worker sides never transfer, so we don't need to
+// re-check port identity each iteration — which lets us swap the whole inbox
+// into a local deque under the lock and dispatch without contending with the
+// sender. A sustained producer (e.g. a tight postMessage loop) would otherwise
+// make every per-message pop a contended acquire.
+template<typename Dispatch>
+static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* globalObject, ScriptExecutionContext& context, Dispatch&& dispatch)
+{
+    size_t limit;
+    Deque<MessageWithMessagePorts> batch;
+    {
+        Locker locker { inbox.lock };
+        if (inbox.queue.isEmpty()) {
+            inbox.drainScheduled.store(false, std::memory_order_relaxed);
+            return false;
+        }
+        limit = std::max<size_t>(inbox.queue.size(), 1000);
+        batch = std::exchange(inbox.queue, {});
+    }
+
+    while (true) {
+        while (!batch.isEmpty()) {
+            if (limit-- == 0) {
+                // Yield to the rest of the event loop. Return the undrained
+                // tail to the front of the inbox so it stays ahead of
+                // anything enqueued concurrently; caller reschedules.
+                Locker locker { inbox.lock };
+                while (!batch.isEmpty())
+                    inbox.queue.prepend(batch.takeLast());
+                return true;
+            }
+            auto message = batch.takeFirst();
+
+            auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
+            auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), nullptr, WTF::move(ports));
+            dispatch(event.event);
+
+            if (globalObject->drainMicrotasks()) {
+                // Termination pending. Drop the rest — dispatch is a no-op
+                // once m_terminationFlags is set (drainToParent), and the
+                // worker thread is tearing down (drainToWorker).
+                return false;
+            }
+        }
+
+        // Batch exhausted — see if more arrived while we were dispatching.
+        Locker locker { inbox.lock };
+        if (inbox.queue.isEmpty()) {
+            inbox.drainScheduled.store(false, std::memory_order_relaxed);
+            return false;
+        }
+        if (limit == 0)
+            return true; // budget spent; caller reschedules
+        batch = std::exchange(inbox.queue, {});
+    }
+}
+
+void Worker::drainToWorker(ScriptExecutionContext& context)
+{
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(context.jsGlobalObject());
+    if (!globalObject) {
+        Locker locker { m_toWorker.lock };
+        m_toWorker.drainScheduled.store(false, std::memory_order_relaxed);
+        return;
+    }
+    bool reschedule = drainInbox(m_toWorker, globalObject, context, [&](Event& event) {
+        globalObject->globalEventScope->dispatchEvent(event);
+    });
+    if (reschedule) {
+        ScriptExecutionContext::postTaskTo(m_clientIdentifier, [protectedThis = Ref { *this }](ScriptExecutionContext& ctx) {
+            protectedThis->drainToWorker(ctx);
+        });
+    }
+}
+
+void Worker::drainToParent(ScriptExecutionContext& context)
+{
+    auto* globalObject = defaultGlobalObject(context.jsGlobalObject());
+    if (!globalObject) {
+        Locker locker { m_toParent.lock };
+        m_toParent.drainScheduled.store(false, std::memory_order_relaxed);
+        return;
+    }
+    bool reschedule = drainInbox(m_toParent, globalObject, context, [&](Event& event) {
+        dispatchEvent(event);
+    });
+    if (reschedule) {
+        if (auto* ctx = scriptExecutionContext()) {
+            ScriptExecutionContext::postTaskTo(ctx->identifier(), [protectedThis = Ref { *this }](ScriptExecutionContext& c) {
+                protectedThis->drainToParent(c);
+            });
+        }
+    }
 }
 
 void Worker::terminate()
@@ -384,6 +520,21 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
     RELEASE_ASSERT(thisContext == workerGlobalObject->globalEventScope->scriptExecutionContext());
 }
 
+// Kick off the first drain of messages that arrived before the worker was
+// online. A parent enqueue that observed OnlineFlag (set in dispatchOnline,
+// which runs just before fireEarlyMessages) may have already scheduled one —
+// drainScheduled, set under the inbox lock, arbitrates.
+static inline void workerScheduleInitialDrain(Worker& worker, Worker::MessageInbox& inbox, ScriptExecutionContext& ctx)
+{
+    {
+        Locker locker { inbox.lock };
+        if (inbox.queue.isEmpty() || inbox.drainScheduled.load(std::memory_order_relaxed))
+            return;
+        inbox.drainScheduled.store(true, std::memory_order_relaxed);
+    }
+    worker.drainToWorker(ctx);
+}
+
 void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
 {
     auto tasks = [&]() {
@@ -391,15 +542,18 @@ void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
         return std::exchange(this->m_pendingTasks, {});
     }();
     auto* thisContext = workerGlobalObject->scriptExecutionContext();
+
     if (workerGlobalObject->globalEventScope->hasActiveEventListeners(eventNames().messageEvent)) {
         for (auto& task : tasks) {
             task(*thisContext);
         }
+        workerScheduleInitialDrain(*this, m_toWorker, *thisContext);
     } else {
-        thisContext->postTask([tasks = WTF::move(tasks)](auto& ctx) mutable {
+        thisContext->postTask([tasks = WTF::move(tasks), protectedThis = Ref { *this }](auto& ctx) mutable {
             for (auto& task : tasks) {
                 task(ctx);
             }
+            workerScheduleInitialDrain(protectedThis.get(), protectedThis->m_toWorker, ctx);
         });
     }
 }
@@ -676,21 +830,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
 
     ExceptionOr<Vector<TransferredMessagePort>> disentangledPorts = MessagePort::disentanglePorts(WTF::move(ports));
     if (disentangledPorts.hasException()) {
-        WebCore::propagateException(*globalObject, scope, serialized.releaseException());
+        WebCore::propagateException(*globalObject, scope, disentangledPorts.releaseException());
         RELEASE_AND_RETURN(scope, {});
     }
     scope.assertNoException();
 
-    MessageWithMessagePorts messageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() };
-
-    ScriptExecutionContext::postTaskTo(context->identifier(), [message = messageWithMessagePorts, protectedThis = Ref { *worker }, ports](ScriptExecutionContext& context) mutable {
-        Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(context.jsGlobalObject());
-
-        auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
-        auto event = MessageEvent::create(*globalObject, message.message.releaseNonNull(), nullptr, WTF::move(ports));
-
-        protectedThis->dispatchEvent(event.event);
-    });
+    worker->enqueueToParent(MessageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() });
 
     return JSValue::encode(jsUndefined());
 }

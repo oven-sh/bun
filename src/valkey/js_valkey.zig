@@ -226,7 +226,9 @@ pub const JSValkeyClient = struct {
     poll_ref: bun.Async.KeepAlive = .{},
 
     _subscription_ctx: SubscriptionCtx,
-    _socket_ctx: ?*uws.SocketContext = null,
+    /// `us_ssl_ctx_t` for `tls: { …custom CA… }`. `tls: true` borrows
+    /// `RareData.defaultClientSslCtx()` instead; `tls: false` leaves this null.
+    _secure: ?*uws.SslCtx = null,
 
     timer: Timer.EventLoopTimer = .{
         .tag = .ValkeyConnectionTimeout,
@@ -652,6 +654,11 @@ pub const JSValkeyClient = struct {
 
         // If was manually closed, reset that flag
         this.client.flags.is_manually_closed = false;
+        // Explicit connect() should also clear the sticky `failed` flag so the
+        // client can recover after prior connection attempts exhausted retries.
+        // Without this, every subsequent command rejects with "Connection has
+        // failed" forever — see https://github.com/oven-sh/bun/issues/29925.
+        this.client.flags.failed = false;
         defer this.updatePollRef();
 
         if (this.client.flags.needs_to_open_socket) {
@@ -1099,81 +1106,46 @@ pub const JSValkeyClient = struct {
         }
     }
 
-    fn failWithInvalidSocketContext(this: *JSValkeyClient) bun.JSTerminated!void {
-        // if the context is invalid is not worth retrying
-        this.client.flags.enable_auto_reconnect = false;
-        try this.clientFail(if (this.client.tls == .none) "Failed to create TCP context" else "Failed to create TLS context", protocol.RedisError.ConnectionClosed);
-        try this.client.onValkeyClose();
-    }
-
     fn connect(this: *JSValkeyClient) !void {
         this.client.flags.needs_to_open_socket = false;
         const vm = this.client.vm;
 
         this.ref();
         defer this.deref();
-        const ctx: *uws.SocketContext, const own_ctx: bool =
-            switch (this.client.tls) {
-                .none => .{
-                    vm.rareData().valkey_context.tcp orelse brk_ctx: {
-                        // TCP socket
-                        const ctx_ = uws.SocketContext.createNoSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient)) orelse {
-                            try this.failWithInvalidSocketContext();
-                            this.client.status = .disconnected;
-                            return;
-                        };
-                        uws.NewSocketHandler(false).configure(ctx_, true, *JSValkeyClient, SocketHandler(false));
-                        vm.rareData().valkey_context.tcp = ctx_;
-                        break :brk_ctx ctx_;
-                    },
-                    false,
-                },
-                .enabled => .{
-                    vm.rareData().valkey_context.tls orelse brk_ctx: {
-                        // TLS socket, default config
-                        var err: uws.create_bun_socket_error_t = .none;
-                        const ctx_ = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient), uws.SocketContext.BunSocketContextOptions{}, &err) orelse {
-                            try this.failWithInvalidSocketContext();
-                            this.client.status = .disconnected;
-                            return;
-                        };
-                        uws.NewSocketHandler(true).configure(ctx_, true, *JSValkeyClient, SocketHandler(true));
-                        vm.rareData().valkey_context.tls = ctx_;
-                        break :brk_ctx ctx_;
-                    },
-                    false,
-                },
-                .custom => |*custom| brk_ctx: {
-                    if (this._socket_ctx) |ctx| {
-                        break :brk_ctx .{ ctx, true };
-                    }
-                    // TLS socket, custom config
-                    var err: uws.create_bun_socket_error_t = .none;
-                    const options = custom.asUSockets();
 
-                    const ctx_ = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient), options, &err) orelse {
-                        try this.failWithInvalidSocketContext();
+        const is_tls = this.client.tls != .none;
+        const group = if (is_tls) vm.rareData().valkeyGroup(vm, true) else vm.rareData().valkeyGroup(vm, false);
+        const ssl_ctx: ?*uws.SslCtx = switch (this.client.tls) {
+            .none => null,
+            .enabled => vm.rareData().defaultClientSslCtx(),
+            .custom => |*custom| brk: {
+                // Reuse across reconnect — the SSL_CTX is the only thing the
+                // old `_socket_ctx` cache existed to preserve.
+                if (this._secure == null) {
+                    var err: uws.create_bun_socket_error_t = .none;
+                    this._secure = custom.asUSockets().createSSLContext(&err) orelse {
+                        this.client.flags.enable_auto_reconnect = false;
+                        try this.clientFail("Failed to create TLS context", protocol.RedisError.ConnectionClosed);
+                        try this.client.onValkeyClose();
                         this.client.status = .disconnected;
                         return;
                     };
-                    uws.NewSocketHandler(true).configure(ctx_, true, *JSValkeyClient, SocketHandler(true));
-                    break :brk_ctx .{ ctx_, true };
-                },
-            };
-        this.ref();
+                }
+                break :brk this._secure.?;
+            },
+        };
 
-        if (own_ctx) {
-            // save the context so we deinit it later (if we reconnect we can reuse the same context)
-            this._socket_ctx = ctx;
-        }
+        this.ref();
+        // Balance the ref above if connect() throws — the caller (e.g. send())
+        // only knows to clean up its own state, not the keep-alive ref.
+        errdefer this.deref();
         this.client.status = .connecting;
         this.updatePollRef();
-
         errdefer {
             this.client.status = .disconnected;
             this.updatePollRef();
         }
-        this.client.socket = try this.client.address.connect(&this.client, ctx, this.client.tls != .none);
+        this.client.socket = try this.client.address.connect(&this.client, group, ssl_ctx, is_tls);
     }
 
     pub fn send(this: *JSValkeyClient, globalThis: *jsc.JSGlobalObject, _: JSValue, command: *const Command) !*jsc.JSPromise {
@@ -1215,33 +1187,9 @@ pub const JSValkeyClient = struct {
         return memory_cost;
     }
 
-    fn deinitSocketContextNextTick(this: *JSValkeyClient) void {
-        const ctx = this._socket_ctx orelse return;
-        this._socket_ctx = null;
-        // socket close can potentially call JS so we need to enqueue the deinit
-        // this should only be the case tls socket with custom config
-        const Holder = struct {
-            ctx: *uws.SocketContext,
-            task: jsc.AnyTask,
-
-            pub fn run(self: *@This()) void {
-                defer bun.default_allocator.destroy(self);
-                self.ctx.deinit(true);
-            }
-        };
-        var holder = bun.handleOom(bun.default_allocator.create(Holder));
-        holder.* = .{
-            .ctx = ctx,
-            .task = undefined,
-        };
-        holder.task = jsc.AnyTask.New(Holder, Holder.run).init(holder);
-
-        this.client.vm.enqueueTask(jsc.Task.init(&holder.task));
-    }
-
     fn deinit(this: *JSValkeyClient) void {
         bun.debugAssert(this.client.socket.isClosed());
-        this.deinitSocketContextNextTick();
+        if (this._secure) |s| bun.BoringSSL.c.SSL_CTX_free(s);
         this.client.deinit(null);
         this.poll_ref.disable();
         this.stopTimers();
@@ -1490,8 +1438,8 @@ pub const JSValkeyClient = struct {
     const fns = @import("./js_valkey_functions.zig");
 };
 
-// Socket handler for the uWebSockets library
-fn SocketHandler(comptime ssl: bool) type {
+/// Referenced by `dispatch.zig` (kind = `.valkey[_tls]`).
+pub fn SocketHandler(comptime ssl: bool) type {
     return struct {
         const SocketType = uws.NewSocketHandler(ssl);
         fn _socket(s: SocketType) Socket {

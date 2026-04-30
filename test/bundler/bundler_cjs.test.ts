@@ -587,4 +587,29 @@ describe("bundler", () => {
       stdout: "1 null true",
     },
   });
+
+  // Test 29: `--format=cjs` on an ESM entry emits
+  // `module.exports = __toCommonJS(exports_entry)` BEFORE the module body.
+  // When "module.exports" is a class binding, eagerly calling the export
+  // getter would hit the class's temporal dead zone and throw. The
+  // try/catch in `__toCommonJS` must fall through to the lazy wrapper so
+  // the bundle loads without crashing (same as pre-feature behavior).
+  itBundled("cjs/__toCommonJS_module_exports_class_tdz_safe", {
+    files: {
+      "/entry.mjs": /* js */ `
+        class MyClass { static v = 42; }
+        export const c = 3;
+        export { MyClass as "module.exports" };
+        // Access the class after declaration so the getter, called lazily
+        // through the wrapper from outside, returns the real value.
+        globalThis.__got = typeof MyClass;
+        console.log(globalThis.__got);
+      `,
+    },
+    format: "cjs",
+    run: {
+      runtime: "node",
+      stdout: "function",
+    },
+  });
 });

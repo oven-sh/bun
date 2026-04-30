@@ -862,9 +862,14 @@ function toCommonJS(from: any) {
   var desc, override;
   if (
     ((from && typeof from === "object") || typeof from === "function") &&
-    (override = from["module.exports"]) != null
+    Object.prototype.hasOwnProperty.call(from, "module.exports")
   ) {
-    return override;
+    try {
+      override = from["module.exports"];
+    } catch {}
+    if (override != null) {
+      return override;
+    }
   }
   var entry = Object.defineProperty({}, "__esModule", { value: true });
   if ((from && typeof from === "object") || typeof from === "function")

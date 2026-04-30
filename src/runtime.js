@@ -84,20 +84,31 @@ export var __toESM = (mod, isNodeMode, target) => {
 // object with the addition of a non-enumerable "__esModule" property set
 // to "true", which overwrites any existing export named "__esModule".
 //
-// If the ESM module has a named export called "module.exports", that value
-// is returned directly instead of a wrapper object. This matches the
-// behavior of Bun's runtime `require(esm)` (see `CommonJS.ts`) and Node.js.
+// If the ESM module has a named export called "module.exports" whose value
+// is neither null nor undefined, that value is returned directly instead of
+// a wrapper object — matching Bun's runtime `require(esm)` (see
+// `CommonJS.ts`), which uses `?? namespace`. Node's own-property check is
+// slightly stricter (it returns null/undefined verbatim); we follow the
+// runtime for consistency so `bun build` output matches `bun run`.
+//
+// The lookup is guarded by a try/catch so that reading the binding in the
+// temporal dead zone (e.g. for `--format=cjs` entry points where
+// `module.exports = __toCommonJS(exports_entry)` is emitted before the
+// module body initializes a class binding) falls through to the lazy
+// wrapper instead of crashing.
 export var __toCommonJS = from => {
   var entry = (__moduleCache ??= new WeakMap()).get(from),
     desc,
     override;
-  if (entry) return entry;
-  if (
-    ((from && typeof from === "object") || typeof from === "function") &&
-    (override = from["module.exports"]) != null
-  ) {
-    __moduleCache.set(from, override);
-    return override;
+  if (entry !== undefined) return entry;
+  if (((from && typeof from === "object") || typeof from === "function") && __hasOwnProp.call(from, "module.exports")) {
+    try {
+      override = from["module.exports"];
+    } catch {}
+    if (override != null) {
+      __moduleCache.set(from, override);
+      return override;
+    }
   }
   entry = __defProp({}, "__esModule", { value: true });
   if ((from && typeof from === "object") || typeof from === "function")

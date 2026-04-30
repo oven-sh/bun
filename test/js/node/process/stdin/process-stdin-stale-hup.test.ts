@@ -14,9 +14,9 @@
 // poll on EAGAIN, so the event loop stays live.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 
 const fixture = path.join(import.meta.dir, "stale-hup.fixture.js");
 
@@ -65,10 +65,7 @@ test.skipIf(!isPosix)(
     // prints OK and never exits; the race resolves via the timeout path.
     // The fixture's own setTimeout fires at 500ms, so in the passing case
     // the child exits well under a second after we closed the writer.
-    const exited = await Promise.race([
-      proc.exited,
-      Bun.sleep(3000).then(() => "timeout" as const),
-    ]);
+    const exited = await Promise.race([proc.exited, Bun.sleep(3000).then(() => "timeout" as const)]);
 
     if (exited === "timeout") {
       proc.kill(9);

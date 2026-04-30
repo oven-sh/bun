@@ -1265,6 +1265,15 @@ pub fn ParseStmt(
                                 }
                             },
                             .ts_stmt_declare => {
+                                // Decorators only apply to classes. "@dec declare" was already
+                                // admitted by `t_at` because it might be "@dec declare class".
+                                // Reject here if what follows isn't a class/abstract — regardless
+                                // of whether `declare` survived as a bare identifier or was
+                                // swallowed by a call/member/assignment suffix.
+                                if (opts.ts_decorators != null and p.lexer.token != .t_class and !p.lexer.isContextualKeyword("abstract")) {
+                                    try p.lexer.expected(.t_class);
+                                }
+
                                 // Only treat this as an ambient "declare" modifier if we actually
                                 // parsed just the bare identifier "declare" with no suffix. If
                                 // `parseExprOrLetStmt` already consumed a call (`declare()`), a
@@ -1277,12 +1286,6 @@ pub fn ParseStmt(
                                 if (expr.data == .e_identifier and !p.lexer.has_newline_before) {
                                     opts.lexical_decl = .allow_all;
                                     opts.is_typescript_declare = true;
-
-                                    // "@decorator declare class Foo {}"
-                                    // "@decorator declare abstract class Foo {}"
-                                    if (opts.ts_decorators != null and p.lexer.token != .t_class and !p.lexer.isContextualKeyword("abstract")) {
-                                        try p.lexer.expected(.t_class);
-                                    }
 
                                     // "declare global { ... }"
                                     if (p.lexer.isContextualKeyword("global")) {

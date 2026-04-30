@@ -3914,4 +3914,19 @@ declare();`,
     const result = transpiler.transformSync(`interface();`);
     expect(result).toContain("interface()");
   });
+
+  it("still rejects `@dec declare()` — decorators require a class", () => {
+    // `t_at` admits `declare` after a decorator because it might be
+    // `@dec declare class`. When it turns out to be `@dec declare();` (a
+    // regular call) we must still throw, not silently emit an expression
+    // statement that drops the decorator.
+    expect(() => transpiler.transformSync(`@dec declare();`)).toThrow();
+    expect(() => transpiler.transformSync(`@dec declare.foo();`)).toThrow();
+  });
+
+  it("accepts `@dec declare class Foo {}` / `@dec declare abstract class Foo {}`", () => {
+    // Ambient class declarations with decorators remain valid.
+    expect(() => transpiler.transformSync(`@dec declare class Foo {}`)).not.toThrow();
+    expect(() => transpiler.transformSync(`@dec declare abstract class Foo {}`)).not.toThrow();
+  });
 });

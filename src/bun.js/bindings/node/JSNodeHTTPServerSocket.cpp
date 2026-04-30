@@ -192,8 +192,9 @@ void JSNodeHTTPServerSocket::onDrain()
         auto* globalObject = defaultGlobalObject(this->globalObject());
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
         us_socket_buffered_js_write(this->socket, this->is_ssl, this->ended, &this->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
-        if (scope.exception()) {
-            globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
+        if (auto* exception = scope.exception()) {
+            (void)scope.tryClearException();
+            globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
             return;
         }
         bufferedSize = this->streamBuffer.bufferedSize();
@@ -244,8 +245,9 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
         JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(data), length));
         auto chunk = JSC::JSValue(buffer);
-        if (scope.exception()) {
-            globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
+        if (auto* exception = scope.exception()) {
+            (void)scope.tryClearException();
+            globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
             return;
         }
         gcProtect(chunk);

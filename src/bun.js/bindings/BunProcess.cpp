@@ -2598,8 +2598,8 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdioWriteStream, callData, globalObject->globalThis(), args);
     if (auto* exception = scope.exception()) {
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
         (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
         return jsUndefined();
     }
 
@@ -2659,8 +2659,8 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdinStream, callData, globalObject, args);
     if (auto* exception = scope.exception()) {
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
         (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
         return jsUndefined();
     }
     return result;

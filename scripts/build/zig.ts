@@ -541,6 +541,9 @@ function zigBuildImplicitInputs(cfg: Config, inputs: ZigBuildInputs): string[] {
   // Extra embed: scanner-entry.ts is @embedFile'd by the zig code directly.
   // A genuinely odd cross-language embed; there's no cleaner way.
   const scannerEntry = resolve(cfg.cwd, "src", "install", "PackageManager", "scanner-entry.ts");
+  // Extra embed: runtime.js is @embedFile'd by src/bundler/ParseTask.zig.
+  // It isn't a .zig file and isn't a codegen output, so the glob misses it.
+  const runtimeJs = resolve(cfg.cwd, "src", "runtime.js");
   return [
     // Compiler itself — rebuild on zig version bump.
     zigExecutable(cfg),
@@ -550,8 +553,9 @@ function zigBuildImplicitInputs(cfg: Config, inputs: ZigBuildInputs): string[] {
     ...inputs.zigSources,
     // Codegen outputs zig imports/embeds.
     ...inputs.codegenInputs,
-    // The odd cross-language embed.
+    // The odd cross-language embeds.
     scannerEntry,
+    runtimeJs,
   ];
 }
 

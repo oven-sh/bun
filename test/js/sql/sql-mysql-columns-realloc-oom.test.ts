@@ -161,27 +161,23 @@ server.listen(0, "127.0.0.1", async () => {
 });
 `;
 
-test(
-  "MySQL: OOM reallocating statement.columns does not leave a dangling slice",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+test("MySQL: OOM reallocating statement.columns does not leave a dangling slice", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // On the unfixed build the subprocess aborts inside MySQLStatement.deinit
-    // before it can print the JSON result line, so stdout is empty. With the
-    // fix the query is rejected cleanly and the JSON result line is printed.
-    expect({ stderr, stdout: stdout.trim() }).toEqual({
-      stderr: expect.not.stringContaining("AddressSanitizer"),
-      stdout: expect.stringMatching(/^\{.*\}$/),
-    });
-    const result = JSON.parse(stdout.trim());
-    expect(typeof result.code === "string" || typeof result.name === "string").toBe(true);
-    expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+  // On the unfixed build the subprocess aborts inside MySQLStatement.deinit
+  // before it can print the JSON result line, so stdout is empty. With the
+  // fix the query is rejected cleanly and the JSON result line is printed.
+  expect({ stderr, stdout: stdout.trim() }).toEqual({
+    stderr: expect.not.stringContaining("AddressSanitizer"),
+    stdout: expect.stringMatching(/^\{.*\}$/),
+  });
+  const result = JSON.parse(stdout.trim());
+  expect(typeof result.code === "string" || typeof result.name === "string").toBe(true);
+  expect(exitCode).toBe(0);
+}, 30_000);

@@ -1,5 +1,17 @@
 import { join } from "path";
-import { symbols, test_skipped } from "./generate_uv_posix_stubs_constants";
+import { symbols as all_symbols, test_skipped, polyfilled } from "./generate_uv_posix_stubs_constants";
+
+// Validate: every name in `polyfilled` must exist in all_symbols to prevent silent stub drift
+const missing = polyfilled.filter(p => !all_symbols.includes(p));
+if (missing.length > 0) {
+  throw new Error(
+    `polyfilled contains symbols not found in all_symbols: ${missing.join(", ")}\n` +
+    `Either add them to the symbols array or remove them from polyfilled.`
+  );
+}
+
+// Filter out functions that have real implementations in uv-posix-polyfills.c
+const symbols = all_symbols.filter(s => !polyfilled.includes(s));
 
 import Parser from "tree-sitter";
 import C from "tree-sitter-c";

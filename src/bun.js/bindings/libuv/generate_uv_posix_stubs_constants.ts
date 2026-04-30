@@ -12,6 +12,20 @@ export const test_skipped = [
   "uv_thread_setpriority",
 ];
 
+// Functions implemented in uv-posix-polyfills.c — excluded from stub generation
+export const polyfilled = [
+  "uv_async_init",
+  "uv_async_send",
+  "uv_close",
+  "uv_default_loop",
+  "uv_poll_init",
+  "uv_poll_init_socket",
+  "uv_poll_start",
+  "uv_poll_stop",
+  "uv_strerror",
+  "uv_unref",
+];
+
 export const symbols = [
   "uv_accept",
   "uv_async_init",

@@ -85,24 +85,38 @@ test("--install=fallback to install missing packages", async () => {
   expect(stdout?.toString("utf8")).toBe("true false\n");
 });
 
-// dirInfoForResolution previously stored DirInfo.abs_path as a slice into the threadlocal
+// dirInfoForResolution stored DirInfo.abs_path as a slice into the threadlocal
 // bufs(.path_in_global_disk_cache) buffer. After auto-installing a second package, that
-// buffer is overwritten and any cached DirInfo.abs_path from the first package points at
-// stale bytes. Re-importing the first package by a different subpath re-enters the
-// dir_cache and relies on that abs_path. In debug builds an assertion now guards that the
-// stored path is never a threadlocal-buffer slice.
-test("auto-install multiple packages with repeated subpath imports keeps DirInfo.abs_path stable", async () => {
+// buffer is overwritten and the first package's cached DirInfo.abs_path points at stale
+// bytes. When a module inside the first package then resolves its own name (package
+// self-reference), loadNodeModules reads dir_info.abs_path directly and looks up a
+// garbage path. With global_cache=.auto the auto-install fallback is skipped because
+// any_node_modules_folder was set by the self-reference branch, so resolution fails with
+// "Cannot find module". With the fix, abs_path is interned in DirnameStore and stays
+// valid. A debug assertion in dirInfoUncached additionally guards the invariant.
+test("auto-install: DirInfo.abs_path survives threadlocal buffer reuse across resolutions", async () => {
   using dir = tempDir("autoinstall-abs-path", {
+    // No package.json / node_modules so global_cache defaults to .auto (line 4414 canUse).
+    // nanoid has `exports` with a `./non-secure` subpath, enabling the self-reference
+    // branch at resolver.zig:1807. left-pad's cache folder name is longer than nanoid's,
+    // so nanoid's cached abs_path slice becomes a truncated prefix of left-pad's path.
     "index.js": `
-      const isOdd = require("is-odd");
-      const leftPad = require("left-pad");
-      const isOddPkg = require("is-odd/package.json");
-      console.log(isOdd(3), leftPad("x", 3, "0"), isOddPkg.name);
+      const path = require("path");
+      const { createRequire } = require("module");
+
+      const nanoidPath = require.resolve("nanoid");
+      require.resolve("left-pad");
+
+      const innerRequire = createRequire(nanoidPath);
+      const nonSecure = innerRequire.resolve("nanoid/non-secure");
+      console.log("non-secure:" + path.basename(path.dirname(nonSecure)));
     `,
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-i", "index.js"],
+    // Deliberately no -i / --install flag: default .auto prevents the auto-install
+    // fallback from masking the corrupted abs_path.
+    cmd: [bunExe(), "index.js"],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
@@ -111,7 +125,7 @@ test("auto-install multiple packages with repeated subpath imports keeps DirInfo
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).not.toContain("error:");
-  expect(stdout.trim()).toBe("true 00x is-odd");
+  expect(stderr).not.toContain("Cannot find module");
+  expect(stdout.trim()).toBe("non-secure:non-secure");
   expect(exitCode).toBe(0);
 });

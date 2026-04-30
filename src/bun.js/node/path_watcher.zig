@@ -384,6 +384,12 @@ fn walkSubtree(
         const child_is_file = entry.kind != .directory;
         if (dirs_only and child_is_file) continue;
         const name = entry.name.slice();
+        // joinZBuf has no bounds check: when abs_dir is near PATH_MAX and
+        // name is near NAME_MAX, the normalized result overflows abs_buf.
+        // The resulting absolute path is unrepresentable (inotify_add_watch
+        // / open would return ENAMETOOLONG), so skip the entry. rel_dir is a
+        // strict suffix of abs_dir, so this bound covers rel_buf too.
+        if (abs_dir.len + 1 + name.len + 1 > abs_buf.len) continue;
         const child_abs = bun.path.joinZBuf(abs_buf, &[_][]const u8{ abs_dir, name }, .posix);
         const child_rel: []const u8 = if (rel_dir.len == 0)
             name
@@ -650,6 +656,10 @@ const Linux = struct {
                         name
                     else if (name.len == 0)
                         owner.subpath
+                    else if (owner.subpath.len + 1 + name.len > path_buf.len)
+                        // joinStringBuf has no bounds check; fall back to the bare
+                        // filename rather than overflowing path_buf.
+                        name
                     else
                         bun.path.joinStringBuf(&path_buf, &[_][]const u8{ owner.subpath, name }, .posix);
 
@@ -663,10 +673,18 @@ const Linux = struct {
                     if (watcher.recursive and is_dir_child and (ev.mask & (IN.CREATE | IN.MOVED_TO) != 0) and name.len > 0) {
                         const abs_buf = bun.path_buffer_pool.get();
                         defer bun.path_buffer_pool.put(abs_buf);
-                        const child_abs = bun.path.joinZBuf(abs_buf, &[_][]const u8{ watcher.path, owner.subpath, name }, .posix);
-                        // These may rehash `wd_map`; `owners` is re-fetched next iteration.
-                        _ = addOne(manager, watcher, child_abs, rel);
-                        walkAndAdd(manager, watcher, child_abs, rel);
+                        // joinZBuf has no bounds check: when watcher.path is near
+                        // PATH_MAX the joined absolute path overflows abs_buf.
+                        // inotify_add_watch would return ENAMETOOLONG for such a
+                        // path anyway, so don't attempt to register it. joinZBuf
+                        // skips empty parts, so this upper bound is conservative
+                        // when subpath is empty.
+                        if (watcher.path.len + 1 + owner.subpath.len + 1 + name.len + 1 <= abs_buf.len) {
+                            const child_abs = bun.path.joinZBuf(abs_buf, &[_][]const u8{ watcher.path, owner.subpath, name }, .posix);
+                            // These may rehash `wd_map`; `owners` is re-fetched next iteration.
+                            _ = addOne(manager, watcher, child_abs, rel);
+                            walkAndAdd(manager, watcher, child_abs, rel);
+                        }
                     }
                 }
             }

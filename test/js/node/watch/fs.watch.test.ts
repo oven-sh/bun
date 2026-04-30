@@ -1,5 +1,15 @@
 import { pathToFileURL } from "bun";
-import { bunEnv, bunExe, bunRun, bunRunAsScript, isMacOS, isWindows, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  bunRunAsScript,
+  isLinux,
+  isMacOS,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
 
@@ -900,3 +910,89 @@ test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvent
   expect(exitCode).toBe(0);
   expect(stdout).toContain("RSS growth:");
 });
+
+// The Linux backend joins the watched directory's absolute path with child
+// names into a bun.PathBuffer (4096 bytes) via joinZBuf/joinStringBuf with no
+// bounds check. A watched directory whose absolute path is near PATH_MAX plus
+// a NAME_MAX (255) entry overflows the buffer — a safety panic in debug/ASAN,
+// silent corruption in release. Linux-only: macOS uses FSEvents and Windows
+// uses win_watcher.zig. Exercises four code paths:
+//   - non-recursive watch + create long-named file (inotify dispatch)
+//   - recursive watch + pre-existing long-named subdir (walkSubtree at
+//     registration time)
+//   - recursive watch + create long-named subdir (new-directory handling in
+//     the inotify reader thread, which rebuilds the absolute path to register
+//     a watch on it)
+//   - recursive watch + create long-named file
+test.skipIf(!isLinux)(
+  "fs.watch on a near-PATH_MAX directory does not overflow when a long-named entry is created inside",
+  async () => {
+    using dir = tempDir("fs-watch-pathmax-overflow", {});
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* ts */ `
+          const fs = require("fs");
+          const path = require("path");
+          const base = process.argv[1];
+
+          // Build a directory tree whose absolute path exceeds 3840 bytes so
+          // abs + sep + 255-byte name is guaranteed > 4096 regardless of the
+          // TMPDIR base length. Create each segment via a relative mkdir so
+          // the per-call path stays well under PATH_MAX.
+          const seg = Buffer.alloc(200, "d").toString();
+          process.chdir(base);
+          let abs = base;
+          let rel = ".";
+          while (abs.length + 1 + seg.length < 4050) {
+            rel = path.join(rel, seg);
+            abs = path.join(abs, seg);
+            fs.mkdirSync(rel);
+          }
+          // abs.length is now in [3849, 4049]; abs + "/" + 255-byte name > 4096.
+          process.chdir(rel);
+
+          // Pre-existing NAME_MAX-length subdirectory so the recursive watch's
+          // initial walkSubtree sees an entry whose absolute path won't fit.
+          const longSub = Buffer.alloc(255, "s").toString();
+          fs.mkdirSync(longSub);
+
+          const wN = fs.watch(abs, () => {});
+          const wR = fs.watch(abs, { recursive: true }, () => {});
+          for (const w of [wN, wR]) w.on("error", () => {});
+
+          // Create a NAME_MAX-length file and a second NAME_MAX-length
+          // subdirectory inside the watched directory. Relative paths (cwd =
+          // deep dir) keep each syscall under PATH_MAX. The subdirectory
+          // IN_CREATE|IN_ISDIR event makes the recursive watcher rebuild the
+          // absolute child path to register a new inotify watch on it.
+          const longFile = Buffer.alloc(255, "f").toString();
+          const longSub2 = Buffer.alloc(254, "S").toString() + "2";
+          let i = 0;
+          const timer = setInterval(() => {
+            fs.writeFileSync(longFile, "x");
+            try { fs.mkdirSync(longSub2); } catch {}
+            if (++i > 10) {
+              clearInterval(timer);
+              wN.close();
+              wR.close();
+              console.log("OK " + abs.length);
+            }
+          }, 20);
+        `,
+        String(dir),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toStartWith("OK ");
+    expect(exitCode).toBe(0);
+  },
+);

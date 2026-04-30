@@ -569,10 +569,6 @@ fn fetchImpl(
                     }
                     break :extract_grpc;
                 }
-                if (globalThis.hasException()) {
-                    is_error = true;
-                    return .zero;
-                }
             }
         }
     }

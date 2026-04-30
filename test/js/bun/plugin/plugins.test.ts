@@ -227,8 +227,11 @@ describe("require", () => {
 });
 
 describe("module", () => {
-  it("throws with require()", () => {
-    expect(() => require("my-virtual-module-async")).toThrow();
+  it("async module works with require() by pumping the event loop", () => {
+    // @ts-expect-error
+    const { hello } = require("my-virtual-module-async");
+    expect(hello).toBe("world");
+    delete require.cache["my-virtual-module-async"];
   });
 
   it("async module works with async import", async () => {

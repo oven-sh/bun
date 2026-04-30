@@ -3623,6 +3623,18 @@ const PendingTimers = std.AutoHashMap(u64, ?std.time.Timer);
 threadlocal var pending_time_logs: PendingTimers = undefined;
 threadlocal var pending_time_logs_loaded = false;
 
+/// Writes `indent` levels (2 spaces each) to the same stderr stream used by
+/// Output.printElapsed, so timer output nests inside the active console.group().
+fn printTimerIndent(indent: u16) void {
+    const spaces_buf = [_]u8{' '} ** 64;
+    var remaining: u32 = indent;
+    while (remaining > 0) {
+        const chunk: u8 = @min(32, remaining);
+        Output.printError("{s}", .{spaces_buf[0 .. chunk * 2]});
+        remaining -|= chunk;
+    }
+}
+
 pub fn time(
     // console
     _: *ConsoleObject,
@@ -3647,7 +3659,7 @@ pub fn timeEnd(
     // console
     _: *ConsoleObject,
     // global
-    _: *JSGlobalObject,
+    global: *JSGlobalObject,
     chars: [*]const u8,
     len: usize,
 ) callconv(jsc.conv) void {
@@ -3658,6 +3670,9 @@ pub fn timeEnd(
     const id = bun.hash(chars[0..len]);
     const result = (pending_time_logs.fetchPut(id, null) catch null) orelse return;
     var value: std.time.Timer = result.value orelse return;
+    // Match console.group() indentation so output nests inside the active group,
+    // per the WHATWG Console spec.
+    printTimerIndent(global.bunVM().console.default_indent);
     // get the duration in microseconds
     // then display it in milliseconds
     Output.printElapsed(@as(f64, @floatFromInt(value.read() / std.time.ns_per_us)) / std.time.us_per_ms);
@@ -3688,6 +3703,9 @@ pub fn timeLog(
 
     const id = bun.hash(chars[0..len]);
     var value: std.time.Timer = (pending_time_logs.get(id) orelse return) orelse return;
+    // Match console.group() indentation so output nests inside the active group,
+    // per the WHATWG Console spec.
+    printTimerIndent(global.bunVM().console.default_indent);
     // get the duration in microseconds
     // then display it in milliseconds
     Output.printElapsed(@as(f64, @floatFromInt(value.read() / std.time.ns_per_us)) / std.time.us_per_ms);
@@ -3697,6 +3715,7 @@ pub fn timeLog(
     }
     Output.flush();
 
+    const console = global.bunVM().console;
     // print the arguments
     var fmt = ConsoleObject.Formatter{
         .remaining_values = &[_]JSValue{},
@@ -3707,10 +3726,10 @@ pub fn timeLog(
             const cli_context = CLI.get();
             break :blk cli_context.runtime_options.console_depth orelse DEFAULT_CONSOLE_LOG_DEPTH;
         },
+        .indent = console.default_indent,
         .stack_check = bun.StackCheck.init(),
         .can_throw_stack_overflow = true,
     };
-    const console = global.bunVM().console;
     const writer = console.error_writer;
     const Writer = @TypeOf(writer);
     for (args[0..args_len]) |arg| {

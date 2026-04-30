@@ -81,7 +81,7 @@ pub fn mysqlErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8, e
             return globalObject.createOutOfMemoryError();
         },
         error.ShortRead => {
-            bun.unreachablePanic("Assertion failed: ShortRead should be handled by the caller in postgres", .{});
+            bun.unreachablePanic("Assertion failed: ShortRead should be handled by the caller in mysql", .{});
         },
     };
 

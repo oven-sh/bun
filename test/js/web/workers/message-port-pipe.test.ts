@@ -364,3 +364,121 @@ describe("MessagePort pipe", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// worker.postMessage / parentPort.postMessage go through the same coalesced
+// inbox+batch-drain path as MessagePortPipe. Verify the observable ordering
+// matches Node: messages arrive in order with a microtask checkpoint between
+// each, for both directions.
+describe("Worker postMessage inbox", () => {
+  test.skipIf(!isDebug && !isASAN)(
+    "round-trip burst delivers in order with microtasks between each",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const { Worker, isMainThread, parentPort } = require("node:worker_threads");
+          const N = 200;
+          const order = [];
+          const w = new Worker(
+            \`
+              const { parentPort } = require("node:worker_threads");
+              const order = [];
+              let n = 0;
+              parentPort.on("message", d => {
+                order.push("m" + d);
+                queueMicrotask(() => order.push("u" + d));
+                parentPort.postMessage(d);
+                if (++n === ${"${N}"}) {
+                  queueMicrotask(() => parentPort.postMessage({ done: order }));
+                }
+              });
+            \`,
+            { eval: true },
+          );
+          let echoed = 0;
+          w.on("message", v => {
+            if (typeof v === "object" && v.done) {
+              // Worker-side ordering: m0,u0,m1,u1,...
+              for (let i = 0; i < N; i++) {
+                if (v.done[2*i] !== "m"+i || v.done[2*i+1] !== "u"+i) {
+                  console.error("worker order wrong at", i, v.done.slice(2*i, 2*i+4));
+                  process.exit(1);
+                }
+              }
+              if (echoed !== N) { console.error("echoed", echoed, "expected", N); process.exit(1); }
+              console.log("OK");
+              w.terminate();
+              return;
+            }
+            order.push("m" + v);
+            queueMicrotask(() => order.push("u" + v));
+            if (v !== echoed) { console.error("parent out of order", v, echoed); process.exit(1); }
+            echoed++;
+            if (echoed === N) {
+              queueMicrotask(() => {
+                for (let i = 0; i < N; i++) {
+                  if (order[2*i] !== "m"+i || order[2*i+1] !== "u"+i) {
+                    console.error("parent order wrong at", i, order.slice(2*i, 2*i+4));
+                    process.exit(1);
+                  }
+                }
+              });
+            }
+          });
+          await new Promise(r => w.once("online", r));
+          for (let i = 0; i < N; i++) w.postMessage(i);
+        `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("OK");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("messages sent before worker online are delivered once it starts", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const w = new Worker(
+          \`
+            const { parentPort } = require("node:worker_threads");
+            const got = [];
+            parentPort.on("message", d => {
+              got.push(d);
+              if (got.length === 5) parentPort.postMessage(got);
+            });
+          \`,
+          { eval: true },
+        );
+        // Post before the worker can possibly be online.
+        for (let i = 0; i < 5; i++) w.postMessage(i);
+        w.on("message", got => {
+          if (JSON.stringify(got) !== JSON.stringify([0,1,2,3,4])) {
+            console.error("wrong", got);
+            process.exit(1);
+          }
+          console.log("OK");
+          w.terminate();
+        });
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  });
+});

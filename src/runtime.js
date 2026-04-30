@@ -92,7 +92,10 @@ export var __toCommonJS = from => {
     desc,
     override;
   if (entry) return entry;
-  if (((from && typeof from === "object") || typeof from === "function") && (override = from["module.exports"]) != null) {
+  if (
+    ((from && typeof from === "object") || typeof from === "function") &&
+    (override = from["module.exports"]) != null
+  ) {
     __moduleCache.set(from, override);
     return override;
   }

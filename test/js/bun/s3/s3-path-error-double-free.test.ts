@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import { S3Client } from "bun";
+import { describe, expect, test } from "bun:test";
 
 // Regression test: S3Client methods would double-free the path string when an
 // error was thrown after the internal S3 blob store had already taken ownership

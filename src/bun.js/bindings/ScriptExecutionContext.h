@@ -12,7 +12,6 @@
 #include "CachedScript.h"
 #include "wtf/ThreadSafeWeakPtr.h"
 #include <wtf/URL.h>
-#include <wtf/LazyRef.h>
 
 namespace uWS {
 template<bool isServer, bool isClient, typename UserData>
@@ -20,14 +19,12 @@ struct WebSocketContext;
 }
 
 struct us_socket_t;
-struct us_socket_context_t;
+struct us_socket_group_t;
 struct us_loop_t;
 
 namespace WebCore {
 
 class WebSocket;
-class BunBroadcastChannelRegistry;
-class MessagePort;
 
 class ScriptExecutionContext;
 class EventLoopTask;
@@ -57,16 +54,6 @@ public:
     JSC::JSGlobalObject* jsGlobalObject()
     {
         return m_globalObject;
-    }
-
-    template<bool isSSL>
-    us_socket_context_t* webSocketContext()
-    {
-        if constexpr (isSSL) {
-            return this->webSocketContextSSL();
-        } else {
-            return this->webSocketContextNoSSL();
-        }
     }
 
     static ScriptExecutionContext* getScriptExecutionContext(ScriptExecutionContextIdentifier identifier);
@@ -114,11 +101,6 @@ public:
     void didCreateDestructionObserver(ContextDestructionObserver&);
     void willDestroyDestructionObserver(ContextDestructionObserver&);
 
-    void processMessageWithMessagePortsSoon(CompletionHandler<void()>&&);
-    void createdMessagePort(MessagePort&);
-    void destroyedMessagePort(MessagePort&);
-
-    void dispatchMessagePortEvents();
     void checkConsistency() const;
 
     void regenerateIdentifier();
@@ -149,8 +131,6 @@ public:
         m_vm = &globalObject->vm();
     }
 
-    BunBroadcastChannelRegistry& broadcastChannelRegistry() { return m_broadcastChannelRegistry.get(*this); }
-
     static ScriptExecutionContext* getMainThreadScriptExecutionContext();
 
 private:
@@ -159,43 +139,9 @@ private:
     WTF::URL m_url = WTF::URL();
     ScriptExecutionContextIdentifier m_identifier;
 
-    UncheckedKeyHashSet<MessagePort*> m_messagePorts;
     UncheckedKeyHashSet<ContextDestructionObserver*> m_destructionObservers;
-    Vector<CompletionHandler<void()>> m_processMessageWithMessagePortsSoonHandlers;
-    LazyRef<ScriptExecutionContext, BunBroadcastChannelRegistry> m_broadcastChannelRegistry;
-
-    bool m_willProcessMessageWithMessagePortsSoon { false };
-
-    us_socket_context_t* webSocketContextSSL();
-    us_socket_context_t* webSocketContextNoSSL();
-    us_socket_context_t* connectedWebSocketKindClientSSL();
-    us_socket_context_t* connectedWebSocketKindClient();
-
-    us_socket_context_t* m_ssl_client_websockets_ctx = nullptr;
-    us_socket_context_t* m_client_websockets_ctx = nullptr;
-
-    us_socket_context_t* m_connected_ssl_client_websockets_ctx = nullptr;
-    us_socket_context_t* m_connected_client_websockets_ctx = nullptr;
 
 public:
-    template<bool isSSL, bool isServer>
-    us_socket_context_t* connectedWebSocketContext()
-    {
-        if constexpr (isSSL) {
-            if (!m_connected_ssl_client_websockets_ctx) {
-                m_connected_ssl_client_websockets_ctx = connectedWebSocketKindClientSSL();
-            }
-
-            return m_connected_ssl_client_websockets_ctx;
-        } else {
-            if (!m_connected_client_websockets_ctx) {
-                m_connected_client_websockets_ctx = connectedWebSocketKindClient();
-            }
-
-            return m_connected_client_websockets_ctx;
-        }
-    }
-
 #if ASSERT_ENABLED
     bool m_inScriptExecutionContextDestructor = false;
 #endif

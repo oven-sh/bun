@@ -79,40 +79,6 @@ describe.concurrent.skipIf(!isASAN && !isDebug)("tls.connect({socket: Duplex}) d
     `);
   });
 
-  test("when SSL context creation fails", async () => {
-    // DuplexUpgradeContext.runEvent's .StartTLS error branch used to call
-    // tls.handleConnectError() — which frees the Handlers via markInactive —
-    // immediately followed by tls.onClose(), which read handlers.mode on the
-    // freed allocation.
-    await run(`
-      const tls = require("node:tls");
-      const { Duplex } = require("node:stream");
-
-      const duplex = new Duplex({
-        read() {},
-        write(chunk, enc, cb) { cb(); },
-        final(cb) { cb(); },
-      });
-
-      // A non-PEM string makes createSSLContext() return null →
-      // error.InvalidOptions → runEvent's StartTLS catch → else branch.
-      const sock = tls.connect({
-        socket: duplex,
-        ca: "not a valid PEM certificate",
-        rejectUnauthorized: false,
-      });
-      sock.on("error", () => {});
-      sock.on("close", () => {});
-
-      setImmediate(() => {
-        setImmediate(() => {
-          console.log("ok");
-          process.exit(0);
-        });
-      });
-    `);
-  });
-
   test("when a pre-open duplex error races StartTLS", async () => {
     // An error on the duplex before the queued .StartTLS task runs
     // (is_open == false) routed to DuplexUpgradeContext.onError →

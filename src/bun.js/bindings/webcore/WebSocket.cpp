@@ -705,10 +705,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     bool useTLSClient = (m_connectionType == ConnectionType::TLS || m_connectionType == ConnectionType::ProxyTLS);
 
     if (useTLSClient) {
-        us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<true>();
-        RELEASE_ASSERT(ctx);
         this->m_upgradeClient = Bun__WebSocketHTTPSClient__connect(
-            scriptExecutionContext()->jsGlobalObject(), ctx, reinterpret_cast<CppWebSocket*>(this),
+            scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<CppWebSocket*>(this),
             &host, port, &path, &clientProtocolString,
             headerNames.begin(), headerValues.begin(), headerNames.size(),
             hasProxy ? &proxyHost : nullptr, proxyPort,
@@ -719,10 +717,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
             is_unix ? &unixSocketPath : nullptr,
             m_offerPerMessageDeflate);
     } else {
-        us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<false>();
-        RELEASE_ASSERT(ctx);
         this->m_upgradeClient = Bun__WebSocketHTTPClient__connect(
-            scriptExecutionContext()->jsGlobalObject(), ctx, reinterpret_cast<CppWebSocket*>(this),
+            scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<CppWebSocket*>(this),
             &host, port, &path, &clientProtocolString,
             headerNames.begin(), headerValues.begin(), headerNames.size(),
             hasProxy ? &proxyHost : nullptr, proxyPort,
@@ -1648,12 +1644,10 @@ void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t buffe
     bool useTLSSocket = (m_connectionType == ConnectionType::TLS || m_connectionType == ConnectionType::ProxyTLS);
 
     if (useTLSSocket) {
-        us_socket_context_t* ctx = (us_socket_context_t*)this->scriptExecutionContext()->connectedWebSocketContext<true, false>();
-        this->m_connectedWebSocket.clientSSL = Bun__WebSocketClientTLS__init(reinterpret_cast<CppWebSocket*>(this), socket, ctx, this->scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<unsigned char*>(bufferedData), bufferedDataSize, deflate_params, customSSLCtx);
+        this->m_connectedWebSocket.clientSSL = Bun__WebSocketClientTLS__init(reinterpret_cast<CppWebSocket*>(this), socket, this->scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<unsigned char*>(bufferedData), bufferedDataSize, deflate_params, customSSLCtx);
         this->m_connectedWebSocketKind = ConnectedWebSocketKind::ClientSSL;
     } else {
-        us_socket_context_t* ctx = (us_socket_context_t*)this->scriptExecutionContext()->connectedWebSocketContext<false, false>();
-        this->m_connectedWebSocket.client = Bun__WebSocketClient__init(reinterpret_cast<CppWebSocket*>(this), socket, ctx, this->scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<unsigned char*>(bufferedData), bufferedDataSize, deflate_params, customSSLCtx);
+        this->m_connectedWebSocket.client = Bun__WebSocketClient__init(reinterpret_cast<CppWebSocket*>(this), socket, this->scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<unsigned char*>(bufferedData), bufferedDataSize, deflate_params, customSSLCtx);
         this->m_connectedWebSocketKind = ConnectedWebSocketKind::Client;
     }
 

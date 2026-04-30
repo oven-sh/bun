@@ -372,15 +372,7 @@ const util = {
   },
 };
 
-class EventSource extends EventTarget {
-  static CONNECTING = 0;
-  static OPEN = 1;
-  static CLOSED = 2;
-
-  constructor() {
-    super();
-  }
-}
+const EventSource = globalThis.EventSource;
 
 // Add missing cookie functions
 function deleteCookie() {

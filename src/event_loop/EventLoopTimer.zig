@@ -71,6 +71,7 @@ pub const Tag = enum {
     BunTest,
     EventLoopDelayMonitor,
     CronJob,
+    EventSourceReconnect,
 
     pub fn Type(comptime T: Tag) type {
         return switch (T) {
@@ -97,6 +98,7 @@ pub const Tag = enum {
             .BunTest => jsc.Jest.bun_test.BunTest,
             .EventLoopDelayMonitor => jsc.API.Timer.EventLoopDelayMonitor,
             .CronJob => bun.api.cron.CronJob,
+            .EventSourceReconnect => bun.webcore.EventSource,
         };
     }
 
@@ -197,6 +199,10 @@ pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) void {
         .CronJob => {
             const job = @as(*bun.api.cron.CronJob, @fieldParentPtr("event_loop_timer", self));
             job.onTimerFire(vm);
+        },
+        .EventSourceReconnect => {
+            const es = @as(*bun.webcore.EventSource, @alignCast(@fieldParentPtr("reconnect_timer", self)));
+            es.onReconnectTimer();
         },
         inline else => |t| {
             if (@FieldType(t.Type(), "event_loop_timer") != Self) {

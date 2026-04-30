@@ -42,7 +42,7 @@ describe.skipIf(!isLinux)("IOWriter.onError with re-entrant enqueue", () => {
     // ECONNRESET errno is 104 on Linux.
     expect(stdout.trim()).toBe("exit:104\ndone");
     expect(exitCode).toBe(0);
-  }, 30000);
+  });
 
   test("non-pollable stdout (/dev/full, ENOSPC): callback chain does not recurse", async () => {
     // With stdout = /dev/full every write fails with ENOSPC. Each echo's
@@ -72,5 +72,5 @@ describe.skipIf(!isLinux)("IOWriter.onError with re-entrant enqueue", () => {
     // ENOSPC errno is 28 on Linux.
     expect(stderr.trim()).toBe("exit:28\ndone");
     expect(exitCode).toBe(0);
-  }, 30000);
+  });
 });

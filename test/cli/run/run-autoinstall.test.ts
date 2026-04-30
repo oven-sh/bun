@@ -96,20 +96,25 @@ test("--install=fallback to install missing packages", async () => {
 // valid. A debug assertion in dirInfoUncached additionally guards the invariant.
 test("auto-install: DirInfo.abs_path survives threadlocal buffer reuse across resolutions", async () => {
   using dir = tempDir("autoinstall-abs-path", {
-    // No package.json / node_modules so global_cache defaults to .auto (line 4414 canUse).
+    // No package.json / node_modules so global_cache defaults to .auto (resolver.zig canUse).
     // nanoid has `exports` with a `./non-secure` subpath, enabling the self-reference
     // branch at resolver.zig:1807. left-pad's cache folder name is longer than nanoid's,
-    // so nanoid's cached abs_path slice becomes a truncated prefix of left-pad's path.
+    // so nanoid's cached abs_path slice becomes a truncated prefix of left-pad's path
+    // once left-pad is resolved. left-pad is archived so its version string is stable.
     "index.js": `
       const path = require("path");
       const { createRequire } = require("module");
 
       const nanoidPath = require.resolve("nanoid");
+      const nanoidDir = path.dirname(nanoidPath);
       require.resolve("left-pad");
 
       const innerRequire = createRequire(nanoidPath);
       const nonSecure = innerRequire.resolve("nanoid/non-secure");
-      console.log("non-secure:" + path.basename(path.dirname(nonSecure)));
+      if (!nonSecure.startsWith(nanoidDir)) {
+        throw new Error("self-reference resolved outside package dir: " + nonSecure + " vs " + nanoidDir);
+      }
+      console.log("resolved");
     `,
   });
 
@@ -118,7 +123,9 @@ test("auto-install: DirInfo.abs_path survives threadlocal buffer reuse across re
     // fallback from masking the corrupted abs_path.
     cmd: [bunExe(), "index.js"],
     cwd: String(dir),
-    env: bunEnv,
+    // The earlier describe("basic autoinstall") block mutates the shared bunEnv in place
+    // (env.BUN_INSTALL = install), so spread-copy and clear it to keep this test isolated.
+    env: { ...bunEnv, BUN_INSTALL: undefined },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -126,6 +133,6 @@ test("auto-install: DirInfo.abs_path survives threadlocal buffer reuse across re
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("Cannot find module");
-  expect(stdout.trim()).toBe("non-secure:non-secure");
+  expect(stdout.trim()).toBe("resolved");
   expect(exitCode).toBe(0);
 });

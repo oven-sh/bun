@@ -137,30 +137,22 @@ pub const Address = union(enum) {
         };
     }
 
-    pub fn connect(this: *const Address, client: *ValkeyClient, ctx: *bun.uws.SocketContext, is_tls: bool) !uws.AnySocket {
+    pub fn connect(
+        this: *const Address,
+        client: *ValkeyClient,
+        group: *uws.SocketGroup,
+        ssl_ctx: ?*uws.SslCtx,
+        is_tls: bool,
+    ) !uws.AnySocket {
         switch (is_tls) {
             inline else => |tls| {
                 const SocketType = if (tls) uws.SocketTLS else uws.SocketTCP;
                 const union_field = if (tls) "SocketTLS" else "SocketTCP";
-                switch (this.*) {
-                    .unix => |path| {
-                        return @unionInit(uws.AnySocket, union_field, try SocketType.connectUnixAnon(
-                            path,
-                            ctx,
-                            client,
-                            false,
-                        ));
-                    },
-                    .host => |h| {
-                        return @unionInit(uws.AnySocket, union_field, try SocketType.connectAnon(
-                            h.host,
-                            h.port,
-                            ctx,
-                            client,
-                            false,
-                        ));
-                    },
-                }
+                const kind: uws.SocketKind = if (tls) .valkey_tls else .valkey;
+                return @unionInit(uws.AnySocket, union_field, switch (this.*) {
+                    .unix => |path| try SocketType.connectUnixGroup(group, kind, ssl_ctx, path, client, false),
+                    .host => |h| try SocketType.connectGroup(group, kind, ssl_ctx, h.host, h.port, client, false),
+                });
             },
         }
     }
@@ -736,6 +728,8 @@ pub const ValkeyClient = struct {
                 if (std.mem.eql(u8, str, "OK")) {
                     this.status = .connected;
                     this.flags.is_authenticated = true;
+                    this.flags.is_reconnecting = false;
+                    this.retry_attempts = 0;
                     try this.onValkeyConnect(value);
                     return;
                 }
@@ -769,6 +763,8 @@ pub const ValkeyClient = struct {
                 // Authentication successful via HELLO
                 this.status = .connected;
                 this.flags.is_authenticated = true;
+                this.flags.is_reconnecting = false;
+                this.retry_attempts = 0;
                 try this.onValkeyConnect(value);
                 return;
             },
@@ -975,6 +971,15 @@ pub const ValkeyClient = struct {
         this.socket = socket;
         this.write_buffer.clearAndFree(this.allocator);
         this.read_buffer.clearAndFree(this.allocator);
+        // A fresh socket has opened, so reset per-connection state. Without
+        // this, `send()` would permanently reject with "Connection has failed"
+        // after a previous connection exhausted retries (#29925), and the
+        // new HELLO response would be dropped because `is_authenticated` was
+        // still set from a prior successful handshake — blocking the client
+        // from ever transitioning back to `.connected`.
+        this.flags.failed = false;
+        this.flags.is_authenticated = false;
+        this.flags.is_selecting_db_internal = false;
         if (this.socket == .SocketTCP) {
             // if is tcp, we need to start the connection process
             // if is tls, we need to wait for the handshake to complete

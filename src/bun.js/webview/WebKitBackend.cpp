@@ -8,6 +8,7 @@
 
 #if OS(DARWIN)
 
+#include "bun-uws/src/SocketKinds.h"
 #include "ipc_protocol.h"
 #include "ZigGlobalObject.h"
 #include "BunClientData.h"
@@ -72,9 +73,10 @@ HostClient& client()
     return instance.get();
 }
 
-// One context per process — reused across host respawns. Holds only the
-// callback table, no per-socket state.
-static us_socket_context_t* s_hostCtx = nullptr;
+// One group per process — reused across host respawns. Embedded (not
+// heap-alloc'd) and lazily linked into the loop on first socket. The vtable
+// is static-const since the singleton handlers never change.
+static us_socket_group_t s_hostGroup;
 
 static us_socket_t* hostOnData(us_socket_t* s, char* data, int length)
 {
@@ -97,6 +99,21 @@ static us_socket_t* hostOnEnd(us_socket_t* s)
     return s;
 }
 static us_socket_t* hostOnOpen(us_socket_t* s, int, char*, int) { return s; }
+
+static constexpr us_socket_vtable_t s_hostVTable = {
+    .on_open = hostOnOpen,
+    .on_data = hostOnData,
+    .on_fd = nullptr,
+    .on_writable = hostOnWritable,
+    .on_close = hostOnClose,
+    .on_timeout = nullptr,
+    .on_long_timeout = nullptr,
+    .on_end = hostOnEnd,
+    .on_connect_error = nullptr,
+    .on_connecting_error = nullptr,
+    .on_handshake = nullptr,
+    .is_low_prio = nullptr,
+};
 
 // us_socket_ref/unref are no-ops on kqueue, and us_poll_start_rc doesn't
 // touch loop.active. Track our own ref against view count. A view with
@@ -133,26 +150,18 @@ bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool 
     }
     global = zig;
 
-    // Socket context — once. usockets needs all callbacks set even for
-    // adopted fds; on_open won't fire (us_socket_from_fd doesn't call it)
-    // but leaving it null segfaults on a misrouted event.
-    if (!s_hostCtx) {
-        us_loop_t* loop = uws_get_loop();
-        us_socket_context_options_t opts;
-        memset(&opts, 0, sizeof(opts));
-        s_hostCtx = us_create_socket_context(0, loop, sizeof(void*), opts);
-        us_socket_context_on_data(0, s_hostCtx, hostOnData);
-        us_socket_context_on_writable(0, s_hostCtx, hostOnWritable);
-        us_socket_context_on_close(0, s_hostCtx, hostOnClose);
-        us_socket_context_on_end(0, s_hostCtx, hostOnEnd);
-        us_socket_context_on_open(0, s_hostCtx, hostOnOpen);
+    // Socket group — once. Embedded; lazily linked into the loop on first
+    // socket. on_open won't fire (us_socket_from_fd doesn't call it) but a
+    // null vtable entry is fine — dispatch skips nulls.
+    if (!s_hostGroup.loop) {
+        us_socket_group_init(&s_hostGroup, uws_get_loop(), &s_hostVTable, nullptr);
     }
 
     // us_socket_from_fd sets nonblocking/nodelay/no-sigpipe and polls
     // READABLE|WRITABLE. ipc=0 — we're not doing SCM_RIGHTS fd passing.
     // us_poll_start_rc doesn't touch loop.active; updateKeepAlive is the
-    // sole ref manager.
-    sock = us_socket_from_fd(s_hostCtx, sizeof(void*), fd, 0);
+    // sole ref manager. kind=1 (.dynamic) → dispatch via s_hostVTable.
+    sock = us_socket_from_fd(&s_hostGroup, BUN_SOCKET_KIND_DYNAMIC, nullptr, sizeof(void*), fd, 0);
     if (!sock) {
         // us_socket_from_fd calls us_poll_free on failure but doesn't close
         // the fd (ownership was ours). Leak it and the child stays alive
@@ -166,13 +175,13 @@ bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool 
 
 void HostClient::writeFrame(Op op, uint32_t viewId, const uint8_t* payload, uint32_t len)
 {
-    if (!sock || dead || us_socket_is_closed(0, sock)) return;
+    if (!sock || dead || us_socket_is_closed(sock)) return;
     Frame h = { len, viewId, static_cast<uint8_t>(op) };
     const auto* hbytes = reinterpret_cast<const uint8_t*>(&h);
     if (txQueue.isEmpty()) {
         // us_socket_write2 does writev(header, payload) and auto-enables the
         // writable poll on short write. Returns bytes written (≥0, never -1).
-        int w = us_socket_write2(0, sock,
+        int w = us_socket_write2(sock,
             reinterpret_cast<const char*>(hbytes), sizeof(h),
             reinterpret_cast<const char*>(payload), static_cast<int>(len));
         size_t total = sizeof(h) + len;
@@ -194,7 +203,7 @@ void HostClient::writeFrame(Op op, uint32_t viewId, const uint8_t* payload, uint
 void HostClient::onWritable()
 {
     while (!txQueue.isEmpty()) {
-        int w = us_socket_write(0, sock,
+        int w = us_socket_write(sock,
             reinterpret_cast<const char*>(txQueue.span().data()),
             static_cast<int>(txQueue.size()));
         if (w <= 0) return; // usockets re-enables writable poll on short write
@@ -454,7 +463,7 @@ void HostClient::rejectAllAndMarkDead(const WTF::String& reason)
     // this runs via Bun__WebViewHost__childDied (EVFILT_PROC won the race
     // against EOF) the socket is still polling — close it. The dead guard
     // above short-circuits the reentrant onClose.
-    if (auto* s = std::exchange(sock, nullptr)) us_socket_close(0, s, 0, nullptr);
+    if (auto* s = std::exchange(sock, nullptr)) us_socket_close(s, 0, nullptr);
     if (!global) return;
     auto* g = global;
     JSValue err = createError(g, reason);
@@ -531,7 +540,7 @@ static JSPromise* sendOp(JSGlobalObject* g, JSWebView* view, WriteBarrier<JSProm
     auto& vm = g->vm();
     auto* promise = JSPromise::create(vm, g->promiseStructure());
     auto& c = client();
-    if (!c.sock || c.dead || us_socket_is_closed(0, c.sock)) {
+    if (!c.sock || c.dead || us_socket_is_closed(c.sock)) {
         promise->reject(vm, g, createError(g, "WebView host process is not running"_s));
         return promise;
     }

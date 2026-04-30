@@ -219,8 +219,46 @@ pub fn freeEntry(store: *DirectoryWatchStore, alloc: Allocator, entry_index: usi
     store.watches.swapRemoveAt(entry_index);
 
     if (store.watches.entries.len == 0) {
-        assert(store.dependencies.items.len == 0);
+        // Every remaining dependency slot must be in the free list.
+        assert(store.dependencies.items.len == store.dependencies_free_list.items.len);
+        store.dependencies.clearRetainingCapacity();
         store.dependencies_free_list.clearRetainingCapacity();
+    }
+}
+
+/// Removes all dependencies whose `source_file_path` is the exact slice
+/// `file_path`, compared by pointer identity since the slice is shared with
+/// IncrementalGraph.bundled_files. Called before IncrementalGraph frees a
+/// file's key string so that no `Dep` is left holding a dangling pointer.
+pub fn removeDependenciesForFile(store: *DirectoryWatchStore, alloc: Allocator, file_path: []const u8) void {
+    if (store.watches.count() == 0) return;
+
+    debug.log("DirectoryWatchStore.removeDependenciesForFile({f})", .{
+        bun.fmt.quote(file_path),
+    });
+
+    // Iterate in reverse since `freeEntry` uses swapRemoveAt.
+    var watch_index = store.watches.count();
+    while (watch_index > 0) {
+        watch_index -= 1;
+        const entry = &store.watches.values()[watch_index];
+        var new_chain: Dep.Index.Optional = .none;
+        var it: ?Dep.Index = entry.first_dep;
+        while (it) |index| {
+            const dep = &store.dependencies.items[index.get()];
+            it = dep.next.unwrap();
+            if (dep.source_file_path.ptr == file_path.ptr) {
+                bun.handleOom(store.freeDependencyIndex(alloc, index));
+            } else {
+                dep.next = new_chain;
+                new_chain = index.toOptional();
+            }
+        }
+        if (new_chain.unwrap()) |new_first_dep| {
+            entry.first_dep = new_first_dep;
+        } else {
+            store.freeEntry(alloc, watch_index);
+        }
     }
 }
 

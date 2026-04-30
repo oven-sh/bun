@@ -295,8 +295,12 @@ pub const UDPSocket = struct {
                 this.socket = null;
                 socket.close();
             }
-
-            // Do not deinit, rely on GC to free it.
+            // Release the strong reference so the JS wrapper can be garbage
+            // collected, which will in turn call finalize() to free this struct.
+            // Without this, failed config parsing or bind would leave the wrapper
+            // pinned forever by the Strong handle and leak. This is idempotent, so
+            // it is safe even if onClose() already downgraded via socket.close().
+            this.this_value.downgrade();
         }
         const thisValue = this.toJS(globalThis);
         thisValue.ensureStillAlive();
@@ -586,7 +590,8 @@ pub const UDPSocket = struct {
         }
 
         const ttl = try arguments[0].coerceToInt32(globalThis);
-        const res = function(this.socket.?, ttl);
+        const socket = this.socket orelse return globalThis.throw("Socket is closed", .{});
+        const res = function(socket, ttl);
 
         if (getUSError(res, .setsockopt, true)) |err| {
             return globalThis.throwValue(try err.toJS(globalThis));
@@ -948,7 +953,8 @@ pub const UDPSocket = struct {
         const connect_port = connect_port_js.asInt32();
         const port: u16 = if (connect_port < 1 or connect_port > 0xffff) 0 else @as(u16, @intCast(connect_port));
 
-        if (this.socket.?.connect(connect_host, port) == -1) {
+        const socket = this.socket orelse return globalThis.throw("Socket is closed", .{});
+        if (socket.connect(connect_host, port) == -1) {
             return globalThis.throw("Failed to connect socket", .{});
         }
         this.connect_info = .{

@@ -67,8 +67,11 @@ fn readFromBlob(
         .result => |result| result,
         .err => |err| return global.throwValue(try err.toJS(global)),
     };
+    // `readFileWithOptions(.null_terminated)` transfers ownership of the
+    // returned buffer (allocated with `bun.default_allocator`) to the caller,
+    // so we can return it directly without duplicating.
     if (result.null_terminated.len == 0) return error.EmptyFile;
-    return bun.default_allocator.dupeZ(u8, result.null_terminated);
+    return result.null_terminated;
 }
 
 pub fn asUSockets(this: *const SSLConfig) uws.SocketContext.BunSocketContextOptions {

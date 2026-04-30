@@ -306,7 +306,7 @@ pub fn NewResponse(ssl_flag: i32) type {
             sec_web_socket_key: []const u8,
             sec_web_socket_protocol: []const u8,
             sec_web_socket_extensions: []const u8,
-            ctx: ?*uws.SocketContext,
+            ctx: ?*uws.WebSocketUpgradeContext,
         ) *Socket {
             return c.uws_res_upgrade(
                 ssl_flag,
@@ -519,8 +519,8 @@ pub const AnyResponse = union(enum) {
 
     pub fn forceClose(this: AnyResponse) void {
         switch (this) {
-            .SSL => |resp| resp.downcastSocket().close(true, .failure),
-            .TCP => |resp| resp.downcastSocket().close(false, .failure),
+            .SSL => |resp| resp.downcastSocket().close(.failure),
+            .TCP => |resp| resp.downcastSocket().close(.failure),
             .H3 => |resp| resp.forceClose(),
         }
     }
@@ -650,7 +650,7 @@ pub const AnyResponse = union(enum) {
         sec_web_socket_key: []const u8,
         sec_web_socket_protocol: []const u8,
         sec_web_socket_extensions: []const u8,
-        ctx: ?*uws.SocketContext,
+        ctx: ?*uws.WebSocketUpgradeContext,
     ) *Socket {
         return switch (this) {
             // server.upgrade() returns false before reaching here for H3
@@ -767,7 +767,7 @@ const c = struct {
         sec_web_socket_protocol_length: usize,
         sec_web_socket_extensions: [*c]const u8,
         sec_web_socket_extensions_length: usize,
-        ws: ?*uws.SocketContext,
+        ws: ?*uws.WebSocketUpgradeContext,
     ) *Socket;
     pub extern fn uws_res_cork(i32, res: *c.uws_res, ctx: *anyopaque, corker: *const (fn (?*anyopaque) callconv(.c) void)) void;
 };
@@ -780,4 +780,3 @@ const Environment = bun.Environment;
 const uws = bun.uws;
 const Socket = uws.Socket;
 const SocketAddress = uws.SocketAddress;
-const SocketContext = uws.SocketContext;

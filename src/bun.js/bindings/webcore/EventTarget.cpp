@@ -103,14 +103,19 @@ bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListene
     // if (!passive.has_value() && Quirks::shouldMakeEventListenerPassive(*this, eventType, listener.get()))
     //     passive = true;
 
-    if (!ensureEventTargetData().eventListenerMap.add(eventType, listener.copyRef(), { options.capture, passive.value_or(false), options.once }))
+    auto* registeredListener = ensureEventTargetData().eventListenerMap.add(eventType, listener.copyRef(), { options.capture, passive.value_or(false), options.once });
+    if (!registeredListener)
         return false;
 
     if (options.signal) {
-        options.signal->addAlgorithm([weakThis = WeakPtr { *this }, eventType, listener = WeakPtr { listener }, capture = options.capture](JSC::JSValue) {
+        uint32_t algorithmIdentifier = options.signal->addAlgorithm([weakThis = WeakPtr { *this }, eventType, listener = WeakPtr { listener }, capture = options.capture](JSC::JSValue) {
             if (weakThis && listener)
                 Ref { *weakThis }->removeEventListener(eventType, *listener, capture);
         });
+        // Remember which abort algorithm belongs to this listener so that
+        // removeEventListener / once:true / removeAllEventListeners can
+        // drop it from the signal via RegisteredEventListener::markAsRemoved().
+        registeredListener->setAbortSignal(WeakPtr { *options.signal }, algorithmIdentifier);
     }
 
     // if (listenerCreatedFromScript)

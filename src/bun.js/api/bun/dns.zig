@@ -90,15 +90,14 @@ const LibInfo = struct {
             // it to something deterministic instead of whatever the last call left.
             std.c._errno().* = @intFromEnum(std.c.E.NOSYS);
             break :blk -1;
-        } else
-            getaddrinfo_async_start_(
-                &request.backend.libinfo.machport,
-                name_z.ptr,
-                null,
-                if (hints != null) &hints.? else null,
-                GetAddrInfoRequest.getAddrInfoAsyncCallback,
-                request,
-            );
+        } else getaddrinfo_async_start_(
+            &request.backend.libinfo.machport,
+            name_z.ptr,
+            null,
+            if (hints != null) &hints.? else null,
+            GetAddrInfoRequest.getAddrInfoAsyncCallback,
+            request,
+        );
 
         if (errno != 0) {
             request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(bun.sys.getErrno(errno))})) catch {}; // TODO: properly propagate exception upwards

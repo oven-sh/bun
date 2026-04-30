@@ -143,6 +143,53 @@ it("should be able to grab the JSStreamSocket constructor", () => {
   //@ts-ignore
   expect(socket._handle._parentWrap.constructor).toBeFunction();
 });
+
+// DuplexUpgradeContext.onError's pre-open branch (is_open == false) routes
+// through handleConnectError, whose markInactive() destroys the heap-allocated
+// Handlers. Without clearing `this.tls`, the StartTLS task that runs on the
+// next tick still forwards onOpen/onClose into the TLSSocket and dereferences
+// the dangling `handlers` pointer (ASAN: use-after-poison in
+// NewSocket.isServer ← onOpen ← SSLWrapper.start ← startTLSWithCTX ←
+// DuplexUpgradeContext.runEvent). Run in a child so the ASAN abort can't take
+// the test runner down with it.
+it("tls.connect over a Duplex drops forwarded events after a pre-open connect error", async () => {
+  const src = `
+    const { PassThrough } = require("stream");
+    const tls = require("tls");
+
+    const duplex = new PassThrough({ objectMode: true });
+    const socket = tls.connect({ socket: duplex, rejectUnauthorized: false });
+    socket.on("error", err => {
+      process.stdout.write("error:" + (err.code || "unknown") + "\\n");
+    });
+    socket.on("close", () => {
+      process.stdout.write("close\\n");
+    });
+    // Synchronously push a non-buffer chunk before the enqueued StartTLS task
+    // runs: UpgradedDuplex.onReceivedData rejects it with ERR_STREAM_WRAP and
+    // routes through DuplexUpgradeContext.onError while is_open is still
+    // false, which tears down the TLSSocket's Handlers via handleConnectError.
+    duplex.push({ not: "a buffer" });
+    // After StartTLS has run (and must have seen this.tls == null), close the
+    // underlying duplex so DuplexUpgradeContext.onClose / deinit also observe
+    // the cleared pointer.
+    setImmediate(() => duplex.destroy());
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: {
+      ...bunEnv,
+      // If a regression reintroduces the UAF, skip llvm-symbolizer so the
+      // child aborts promptly instead of stalling past the test timeout.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect({ stdout, exitCode }).toEqual({ stdout: "error:ECONNREFUSED\nclose\n", exitCode: 0 });
+});
 for (const { name, connect } of tests) {
   describe(name, () => {
     it("should work with alpnProtocols", done => {

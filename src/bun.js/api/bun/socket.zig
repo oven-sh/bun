@@ -1849,10 +1849,23 @@ pub const DuplexUpgradeContext = struct {
                 tls.handleError(err_value);
             }
         } else {
-            if (this.tls) |tls| {
-                tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ECONNREFUSED)) catch {};
-            }
+            this.failConnect(@intFromEnum(bun.sys.SystemErrno.ECONNREFUSED));
         }
+    }
+
+    /// Report a pre-open connection failure to the wrapped TLSSocket and
+    /// stop forwarding duplex events to it.
+    ///
+    /// `handleConnectError` detaches the socket and drops the ref taken in
+    /// `jsUpgradeDuplexToTLS` via its `needs_deref` path, then `markInactive`
+    /// frees the heap-allocated `Handlers`. Any later duplex event forwarded
+    /// to the TLSSocket (`onClose`, `onData`, ...) would read through a
+    /// dangling `tls.handlers` pointer, so clear `this.tls` first to make
+    /// those forwards no-ops.
+    fn failConnect(this: *DuplexUpgradeContext, errno: c_int) void {
+        const tls = this.tls orelse return;
+        this.tls = null;
+        tls.handleConnectError(errno) catch {};
     }
 
     fn onTimeout(this: *DuplexUpgradeContext) void {
@@ -1894,20 +1907,7 @@ pub const DuplexUpgradeContext = struct {
                 else {};
                 started catch |err| switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
-                    else => {
-                        const errno = @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
-                        if (this.tls) |tls| {
-                            // `handleConnectError` consumes our +1 (its
-                            // `needs_deref` path) and detaches. Calling
-                            // `tls.onClose` afterwards (as main did)
-                            // double-derefs; null `this.tls` so the eventual
-                            // `deinit` doesn't make it a triple. Pre-existing
-                            // on main, latent until the leak fix made `deinit`
-                            // reachable.
-                            this.tls = null;
-                            tls.handleConnectError(errno) catch {};
-                        }
-                    },
+                    else => this.failConnect(@intFromEnum(bun.sys.SystemErrno.ECONNREFUSED)),
                 };
                 if (this.ssl_config) |*cfg| {
                     cfg.deinit();

@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
+
+// Worker VM startup/teardown is ~10× slower under debug+ASAN; these tests
+// spawn many workers, so scale iteration counts and timeouts accordingly.
+const rounds = isDebug ? 4 : 8;
+const perRound = isDebug ? 12 : 32;
+const timeout = isDebug ? 60_000 : 20_000;
 
 // Regression: `new Worker(url, { ref: false })` was silently ignored — the
 // Zig-side `user_keep_alive` field was set from it but never read, and the
@@ -32,15 +38,17 @@ test("new Worker with { ref: false } does not keep the parent alive", async () =
 // exitAndDeinit while the C++ Worker still held a raw impl_ pointer, so a
 // terminate()/ref()/unref() that landed after natural exit dereferenced freed
 // memory (ASAN use-after-poison in setRefInternal).
-test("terminate/ref/unref after worker exits naturally does not UAF", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-        for (let round = 0; round < 8; round++) {
+test(
+  "terminate/ref/unref after worker exits naturally does not UAF",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        for (let round = 0; round < ${rounds}; round++) {
           const workers = [];
-          for (let i = 0; i < 32; i++) {
+          for (let i = 0; i < ${perRound}; i++) {
             // Empty body: worker thread exits as soon as the event loop drains.
             workers.push(new Worker("data:text/javascript,"));
           }
@@ -57,29 +65,33 @@ test("terminate/ref/unref after worker exits naturally does not UAF", async () =
           }
         }
       `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout).toBe("");
-  expect(exitCode).toBe(0);
-});
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
 
 // Regression: WebWorker__dispatchExit deref'd the C++ Worker on the worker
 // thread; if that was the last ref, ~Worker → ~EventTarget ran there and
 // EventListenerMap::releaseAssertOrSetThreadUID tripped because the listener
 // map was populated on the parent thread.
-test("nested worker whose grandchild outlives the middle worker's JSWorker does not assert", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-        for (let i = 0; i < 16; i++) {
+test(
+  "nested worker whose grandchild outlives the middle worker's JSWorker does not assert",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        for (let i = 0; i < ${rounds}; i++) {
           const middle = new Worker(
             'data:text/javascript,' +
             // Middle worker creates an inner worker, registers a listener (so the
@@ -91,14 +103,16 @@ test("nested worker whose grandchild outlives the middle worker's JSWorker does 
           await new Promise(r => middle.addEventListener("close", r, { once: true }));
         }
       `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout).toBe("");
-  expect(exitCode).toBe(0);
-});
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

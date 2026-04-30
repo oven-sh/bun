@@ -431,9 +431,10 @@ fn spin(this: *WebWorker) void {
     vm.preload = this.preloads;
 
     // Resolve the entry point on the worker thread (the parent only stored the
-    // raw specifier).
+    // raw specifier). The returned slice is BORROWED — every exit from spin()
+    // goes through shutdown() which is noreturn, so a `defer free` here would
+    // never run anyway.
     var resolve_error = bun.String.empty;
-    defer resolve_error.deref();
     const path = resolveEntryPointSpecifier(vm, this.unresolved_specifier, &resolve_error, vm.log) orelse {
         vm.exit_handler.exit_code = 1;
         if (vm.log.errors == 0 and !resolve_error.isEmpty()) {
@@ -441,10 +442,11 @@ fn spin(this: *WebWorker) void {
             defer err.deinit();
             bun.handleOom(vm.log.addError(null, .Empty, err.slice()));
         }
+        resolve_error.deref();
         this.flushLogs(vm);
         this.shutdown();
     };
-    defer bun.default_allocator.free(path);
+    resolve_error.deref();
 
     // Terminated while resolving — exit code 0, no error.
     if (this.hasRequestedTerminate()) {
@@ -681,6 +683,9 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
     worker.shutdown();
 }
 
+/// Resolve a worker entry-point specifier to a path the module loader can
+/// consume. The returned slice is BORROWED — it aliases `str`, the standalone
+/// module graph, or the resolver's arena; the caller must NOT free it.
 fn resolveEntryPointSpecifier(
     parent: *jsc.VirtualMachine,
     str: []const u8,

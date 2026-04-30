@@ -425,6 +425,7 @@ pub const FSEventsLoop = struct {
         // clean old paths
         if (this.paths) |p| {
             this.paths = null;
+            for (p) |s| if (s) |str| CF.Release(str);
             bun.default_allocator.free(p);
         }
         if (this.cf_paths) |cf| {
@@ -473,10 +474,19 @@ pub const FSEventsLoop = struct {
         // changes to files from the past.
         //
         const ref = CS.FSEventStreamCreate(null, _events_cb, &ctx, cf_paths, CS.kFSEventStreamEventIdSinceNow, latency, flags);
+        if (ref == null) {
+            // FSEventStreamCreate can fail under rapid stream churn (resource
+            // exhaustion); passing NULL into ScheduleWithRunLoop crashes the CF thread.
+            for (paths[0..count]) |s| if (s) |str| CF.Release(str);
+            bun.default_allocator.free(paths);
+            CF.Release(cf_paths);
+            return;
+        }
 
         CS.FSEventStreamScheduleWithRunLoop(ref, this.loop, CF.RunLoopDefaultMode.*);
         if (CS.FSEventStreamStart(ref) == 0) {
             //clean in case of failure
+            for (paths[0..count]) |s| if (s) |str| CF.Release(str);
             bun.default_allocator.free(paths);
             CF.Release(cf_paths);
             CS.FSEventStreamInvalidate(ref);

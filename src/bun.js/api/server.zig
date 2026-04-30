@@ -445,6 +445,7 @@ const ServePlugins = struct {
         bun.assert(this.state == .pending);
         const pending = &this.state.pending;
         const plugin = pending.plugin;
+        const dev_server = pending.dev_server;
         var html_bundle_routes = pending.html_bundle_routes;
         pending.html_bundle_routes = .empty;
         defer html_bundle_routes.deinit(bun.default_allocator);
@@ -457,7 +458,7 @@ const ServePlugins = struct {
             bun.handleOom(route.onPluginsResolved(plugin));
             route.deref();
         }
-        if (pending.dev_server) |server| {
+        if (dev_server) |server| {
             bun.handleOom(server.onPluginsResolved(plugin));
         }
     }
@@ -475,6 +476,7 @@ const ServePlugins = struct {
     pub fn handleOnReject(this: *ServePlugins, global: *jsc.JSGlobalObject, err: JSValue) void {
         bun.assert(this.state == .pending);
         const pending = &this.state.pending;
+        const dev_server = pending.dev_server;
         var html_bundle_routes = pending.html_bundle_routes;
         pending.html_bundle_routes = .empty;
         defer html_bundle_routes.deinit(bun.default_allocator);
@@ -487,7 +489,7 @@ const ServePlugins = struct {
             bun.handleOom(route.onPluginsRejected());
             route.deref();
         }
-        if (pending.dev_server) |server| {
+        if (dev_server) |server| {
             bun.handleOom(server.onPluginsRejected());
         }
 

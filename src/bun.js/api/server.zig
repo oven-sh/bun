@@ -468,6 +468,7 @@ const ServePlugins = struct {
 
         const error_js, const plugin_js = callframe.argumentsAsArray(2);
         const plugins = plugin_js.asPromisePtr(ServePlugins);
+        defer plugins.deref();
         handleOnReject(plugins, globalThis, error_js);
 
         return .js_undefined;

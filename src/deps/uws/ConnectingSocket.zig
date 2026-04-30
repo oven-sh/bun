@@ -1,85 +1,80 @@
-/// A ConnectingSocket represents a socket that is in the process of establishing a connection.
-/// Corresponds to `us_connecting_socket_t` in uSockets.
-///
-/// This is an intermediate state between initiating a connection and having a fully connected socket.
-/// The socket may be in one of several states:
-/// - Performing DNS resolution to resolve the hostname to an IP address
-/// - Establishing a TCP connection (non-blocking connect() in progress)
-/// - Performing TLS/SSL handshake if this is an SSL connection
-/// - Waiting for the connection to be accepted by the remote peer
-///
-/// Unlike a connected socket, you cannot read from or write to a ConnectingSocket.
-/// Once the connection is successfully established, it will be converted to a regular
-/// Socket and the appropriate callback (onOpen) will be triggered. If the connection
-/// fails, the onConnectError callback will be called instead.
-///
-/// This design allows for non-blocking connection establishment while maintaining
-/// a clear separation between sockets that are connecting vs. those that are ready
-/// for I/O operations.
+/// `us_connecting_socket_t` — a connect in flight (DNS / non-blocking
+/// `connect()` / happy-eyeballs). No I/O is possible yet; on success the loop
+/// promotes it to a `us_socket_t` and fires `onOpen`, on failure
+/// `onConnectingError`.
 pub const ConnectingSocket = opaque {
-    pub fn close(this: *ConnectingSocket, ssl: bool) void {
-        c.us_connecting_socket_close(@intFromBool(ssl), this);
+    pub fn close(this: *ConnectingSocket) void {
+        c.us_connecting_socket_close(this);
     }
 
-    pub fn context(this: *ConnectingSocket, ssl: bool) ?*uws.SocketContext {
-        return c.us_connecting_socket_context(@intFromBool(ssl), this);
+    pub fn group(this: *ConnectingSocket) *SocketGroup {
+        return c.us_connecting_socket_group(this);
+    }
+    pub const rawGroup = group;
+
+    pub fn kind(this: *ConnectingSocket) SocketKind {
+        return @enumFromInt(c.us_connecting_socket_kind(this));
     }
 
     pub fn loop(this: *ConnectingSocket) *uws.Loop {
         return c.us_connecting_socket_get_loop(this);
     }
 
-    pub fn ext(this: *ConnectingSocket, ssl: bool) *anyopaque {
-        return c.us_connecting_socket_ext(@intFromBool(ssl), this);
+    pub fn ext(this: *ConnectingSocket, comptime T: type) *T {
+        return @ptrCast(@alignCast(c.us_connecting_socket_ext(this)));
     }
 
-    pub fn getError(this: *ConnectingSocket, ssl: bool) i32 {
-        return c.us_connecting_socket_get_error(@intFromBool(ssl), this);
+    pub fn getError(this: *ConnectingSocket) i32 {
+        return c.us_connecting_socket_get_error(this);
     }
 
-    pub fn getNativeHandle(this: *ConnectingSocket, ssl: bool) ?*anyopaque {
-        return c.us_connecting_socket_get_native_handle(@intFromBool(ssl), this);
+    pub fn getNativeHandle(this: *ConnectingSocket) ?*anyopaque {
+        return c.us_connecting_socket_get_native_handle(this);
     }
 
-    pub fn isClosed(this: *ConnectingSocket, ssl: bool) bool {
-        return c.us_connecting_socket_is_closed(@intFromBool(ssl), this) == 1;
+    pub fn isClosed(this: *ConnectingSocket) bool {
+        return c.us_connecting_socket_is_closed(this) == 1;
     }
 
-    pub fn isShutdown(this: *ConnectingSocket, ssl: bool) bool {
-        return c.us_connecting_socket_is_shut_down(@intFromBool(ssl), this) == 1;
+    pub fn isShutdown(this: *ConnectingSocket) bool {
+        return c.us_connecting_socket_is_shut_down(this) == 1;
     }
 
-    pub fn longTimeout(this: *ConnectingSocket, ssl: bool, seconds: c_uint) void {
-        c.us_connecting_socket_long_timeout(@intFromBool(ssl), this, seconds);
+    pub fn longTimeout(this: *ConnectingSocket, seconds: c_uint) void {
+        c.us_connecting_socket_long_timeout(this, seconds);
     }
 
-    pub fn shutdown(this: *ConnectingSocket, ssl: bool) void {
-        c.us_connecting_socket_shutdown(@intFromBool(ssl), this);
+    pub fn shutdown(this: *ConnectingSocket) void {
+        c.us_connecting_socket_shutdown(this);
     }
 
-    pub fn shutdownRead(this: *ConnectingSocket, ssl: bool) void {
-        c.us_connecting_socket_shutdown_read(@intFromBool(ssl), this);
+    pub fn shutdownRead(this: *ConnectingSocket) void {
+        c.us_connecting_socket_shutdown_read(this);
     }
 
-    pub fn timeout(this: *ConnectingSocket, ssl: bool, seconds: c_uint) void {
-        c.us_connecting_socket_timeout(@intFromBool(ssl), this, seconds);
+    pub fn timeout(this: *ConnectingSocket, seconds: c_uint) void {
+        c.us_connecting_socket_timeout(this, seconds);
     }
 };
 
 const c = struct {
-    pub extern fn us_connecting_socket_close(ssl: i32, s: *ConnectingSocket) void;
-    pub extern fn us_connecting_socket_context(ssl: i32, s: *ConnectingSocket) ?*uws.SocketContext;
-    pub extern fn us_connecting_socket_ext(ssl: i32, s: *ConnectingSocket) *anyopaque;
-    pub extern fn us_connecting_socket_get_error(ssl: i32, s: *ConnectingSocket) i32;
-    pub extern fn us_connecting_socket_get_native_handle(ssl: i32, s: *ConnectingSocket) ?*anyopaque;
-    pub extern fn us_connecting_socket_is_closed(ssl: i32, s: *ConnectingSocket) i32;
-    pub extern fn us_connecting_socket_is_shut_down(ssl: i32, s: *ConnectingSocket) i32;
-    pub extern fn us_connecting_socket_long_timeout(ssl: i32, s: *ConnectingSocket, seconds: c_uint) void;
-    pub extern fn us_connecting_socket_shutdown(ssl: i32, s: *ConnectingSocket) void;
-    pub extern fn us_connecting_socket_shutdown_read(ssl: i32, s: *ConnectingSocket) void;
-    pub extern fn us_connecting_socket_timeout(ssl: i32, s: *ConnectingSocket, seconds: c_uint) void;
+    pub extern fn us_connecting_socket_close(s: *ConnectingSocket) void;
+    pub extern fn us_connecting_socket_group(s: *ConnectingSocket) *SocketGroup;
+    pub extern fn us_connecting_socket_kind(s: *ConnectingSocket) u8;
+    pub extern fn us_connecting_socket_ext(s: *ConnectingSocket) *anyopaque;
+    pub extern fn us_connecting_socket_get_error(s: *ConnectingSocket) i32;
+    pub extern fn us_connecting_socket_get_native_handle(s: *ConnectingSocket) ?*anyopaque;
+    pub extern fn us_connecting_socket_is_closed(s: *ConnectingSocket) i32;
+    pub extern fn us_connecting_socket_is_shut_down(s: *ConnectingSocket) i32;
+    pub extern fn us_connecting_socket_long_timeout(s: *ConnectingSocket, seconds: c_uint) void;
+    pub extern fn us_connecting_socket_shutdown(s: *ConnectingSocket) void;
+    pub extern fn us_connecting_socket_shutdown_read(s: *ConnectingSocket) void;
+    pub extern fn us_connecting_socket_timeout(s: *ConnectingSocket, seconds: c_uint) void;
     pub extern fn us_connecting_socket_get_loop(s: *ConnectingSocket) *uws.Loop;
 };
 
 const bun = @import("bun");
+
 const uws = bun.uws;
+const SocketGroup = uws.SocketGroup;
+const SocketKind = uws.SocketKind;

@@ -55,13 +55,16 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             socket.close(.normal);
         }
 
+        /// `ptr` is the *value* stored in the socket ext (the packed
+        /// `ActiveSocket` tagged pointer), already dereferenced by
+        /// `NsHandler` before reaching `Handler.on*`. No second deref.
         fn getTagged(ptr: *anyopaque) ActiveSocket {
-            return ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
+            return ActiveSocket.from(ptr);
         }
 
         pub fn getTaggedFromSocket(socket: HTTPSocket) ActiveSocket {
-            if (socket.ext(anyopaque)) |ctx| {
-                return getTagged(ctx);
+            if (socket.ext(*anyopaque)) |slot| {
+                return getTagged(slot.*);
             }
             return ActiveSocket.init(dead_socket);
         }
@@ -80,7 +83,15 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
 
         ref_count: RefCount,
         pending_sockets: PooledSocketHiveAllocator,
-        us_socket_context: *uws.SocketContext,
+        /// Embedded sweep/iteration list-head for every socket this context
+        /// owns (active clients + pooled keepalive). Address-stable: this
+        /// struct is either a `http_thread.{http,https}_context` static or a
+        /// `bun.default_allocator.create()` for custom-SSL entries.
+        group: uws.SocketGroup = .{},
+        /// `SSL_CTX*` built from this context's SSLConfig (or the default
+        /// `request_cert=1` opts). One owned ref; `SSL_CTX_free` on deinit.
+        /// Only meaningful when `comptime ssl`.
+        secure: ?*BoringSSL.SSL_CTX = null,
         /// HTTP/2 sessions with at least one active stream, available for
         /// concurrent attachment if `hasHeadroom()`.
         active_h2_sessions: std.ArrayListUnmanaged(*H2.ClientSession) = .{},
@@ -107,7 +118,13 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             PooledSocket,
             H2.ClientSession,
         });
-        const ssl_int = @as(c_int, @intFromBool(ssl));
+
+        const kind: uws.SocketKind = if (ssl) .http_client_tls else .http_client;
+
+        /// `dispatch.zig` reaches `Handler` via this name. The ext stores
+        /// `*anyopaque` (the `ActiveSocket` tagged pointer), so dispatch reads
+        /// it as `**anyopaque` and `Handler` decodes the tag.
+        pub const ActiveSocketHandler = Handler;
 
         const MAX_KEEPALIVE_HOSTNAME = 128;
 
@@ -159,14 +176,10 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             if (comptime !ssl) {
                 unreachable;
             }
-
-            return @as(*BoringSSL.SSL_CTX, @ptrCast(this.us_socket_context.getNativeHandle(true)));
+            return this.secure.?;
         }
 
         fn deinit(this: *@This()) void {
-            // Replace callbacks with no-ops first to avoid UAF when closing sockets.
-            this.us_socket_context.cleanCallbacks(ssl);
-
             // Drain pooled keepalive sockets: deref their ssl_config and force-close.
             // Must force-close (code != 0) because SSL clean shutdown (code=0) requires a
             // shutdown handshake with the peer, which won't complete during eviction.
@@ -206,82 +219,58 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             for (this.pending_h2_connects.items) |pc| pc.deinit();
             this.pending_h2_connects.deinit(bun.default_allocator);
 
-            // Use deferred free pattern (via nextTick) to avoid freeing the uSockets
-            // context while close callbacks may still reference it.
-            this.us_socket_context.deinit(ssl);
+            // Force-close any remaining sockets before unlinking the group so
+            // the loop never dereferences a freed `*Context` via `group->ext`.
+            this.group.closeAll();
+            this.group.deinit();
+            if (comptime ssl) {
+                if (this.secure) |c| BoringSSL.SSL_CTX_free(c);
+            }
             bun.default_allocator.destroy(this);
         }
 
         pub fn initWithClientConfig(this: *@This(), client: *HTTPClient) InitError!void {
-            if (!comptime ssl) {
-                @compileError("ssl only");
-            }
+            if (!comptime ssl) @compileError("ssl only");
             const opts = client.tls_props.?.get().asUSocketsForClientVerification();
             try this.initWithOpts(&opts);
         }
 
         fn initWithOpts(this: *@This(), opts: *const uws.SocketContext.BunSocketContextOptions) InitError!void {
-            if (!comptime ssl) {
-                @compileError("ssl only");
-            }
-
+            if (!comptime ssl) @compileError("ssl only");
             var err: uws.create_bun_socket_error_t = .none;
-            const socket = uws.SocketContext.createSSLContext(bun.http.http_thread.loop.loop, @sizeOf(usize), opts.*, &err);
-            if (socket == null) {
-                return switch (err) {
-                    .load_ca_file => error.LoadCAFile,
-                    .invalid_ca_file => error.InvalidCAFile,
-                    .invalid_ca => error.InvalidCA,
-                    else => error.FailedToOpenSocket,
-                };
-            }
-            this.us_socket_context = socket.?;
+            this.secure = opts.createSSLContext(&err) orelse return switch (err) {
+                .load_ca_file => error.LoadCAFile,
+                .invalid_ca_file => error.InvalidCAFile,
+                .invalid_ca => error.InvalidCA,
+                else => error.FailedToOpenSocket,
+            };
             this.sslCtx().setup();
-
-            HTTPSocket.configure(
-                this.us_socket_context,
-                false,
-                anyopaque,
-                Handler,
-            );
+            this.group.init(bun.http.http_thread.loop.loop, null, this);
         }
 
         pub fn initWithThreadOpts(this: *@This(), init_opts: *const HTTPThread.InitOpts) InitError!void {
-            if (!comptime ssl) {
-                @compileError("ssl only");
-            }
+            if (!comptime ssl) @compileError("ssl only");
             var opts: uws.SocketContext.BunSocketContextOptions = .{
                 .ca = if (init_opts.ca.len > 0) @ptrCast(init_opts.ca) else null,
                 .ca_count = @intCast(init_opts.ca.len),
                 .ca_file_name = if (init_opts.abs_ca_file_name.len > 0) init_opts.abs_ca_file_name else null,
                 .request_cert = 1,
             };
-
             try this.initWithOpts(&opts);
         }
 
         pub fn init(this: *@This()) void {
+            this.group.init(bun.http.http_thread.loop.loop, null, this);
             if (comptime ssl) {
-                const opts: uws.SocketContext.BunSocketContextOptions = .{
+                var err: uws.create_bun_socket_error_t = .none;
+                this.secure = (uws.SocketContext.BunSocketContextOptions{
                     // we request the cert so we load root certs and can verify it
                     .request_cert = 1,
                     // we manually abort the connection if the hostname doesn't match
                     .reject_unauthorized = 0,
-                };
-                var err: uws.create_bun_socket_error_t = .none;
-                this.us_socket_context = uws.SocketContext.createSSLContext(bun.http.http_thread.loop.loop, @sizeOf(usize), opts, &err).?;
-
+                }).createSSLContext(&err).?;
                 this.sslCtx().setup();
-            } else {
-                this.us_socket_context = uws.SocketContext.createNoSSLContext(bun.http.http_thread.loop.loop, @sizeOf(usize)).?;
             }
-
-            HTTPSocket.configure(
-                this.us_socket_context,
-                false,
-                anyopaque,
-                Handler,
-            );
         }
 
         /// Attempt to keep the socket alive by reusing it for another request.
@@ -369,6 +358,8 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             closeSocket(socket);
         }
 
+        /// Named so `dispatch.zig` can `vtable.make` it. Ext is the
+        /// `ActiveSocket` tagged-pointer word.
         pub const Handler = struct {
             pub fn onOpen(
                 ptr: *anyopaque,
@@ -722,9 +713,11 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
 
         pub fn connectSocket(this: *@This(), client: *HTTPClient, socket_path: []const u8) !?HTTPSocket {
             client.connected_url = if (client.http_proxy) |proxy| proxy else client.url;
-            const socket = try HTTPSocket.connectUnixAnon(
+            const socket = try HTTPSocket.connectUnixGroup(
+                &this.group,
+                kind,
+                if (comptime ssl) this.secure else null,
                 socket_path,
-                this.us_socket_context,
                 ActiveSocket.init(client).ptr(),
                 false, // dont allow half-open sockets
             );
@@ -810,10 +803,12 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 }
             }
 
-            const socket = try HTTPSocket.connectAnon(
+            const socket = try HTTPSocket.connectGroup(
+                &this.group,
+                kind,
+                if (comptime ssl) this.secure else null,
                 hostname,
                 port,
-                this.us_socket_context,
                 ActiveSocket.init(client).ptr(),
                 false,
             );

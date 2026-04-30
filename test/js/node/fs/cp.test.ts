@@ -1,6 +1,6 @@
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
-import { tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 const impls = [
@@ -323,3 +323,77 @@ test("cp with missing callback throws", () => {
     fs.cp("a", "b" as any);
   }).toThrow(/"cb"/);
 });
+
+// On Windows the OS path buffer is 32768 wide chars, which is impractical to exceed
+// with on-disk directories, so this test targets POSIX where MAX_PATH_BYTES is small
+// enough to reach via relative mkdir + chdir.
+describe.skipIf(isWindows).each(["cp", "cpSync"] as const)(
+  "fs.%s recursive returns ENAMETOOLONG instead of overflowing path buffer",
+  which => {
+    test(which, async () => {
+      using dir = tempDir("cp-enametoolong", { s: {}, d: {} });
+      const base = String(dir);
+      const src = join(base, "s");
+      const dst = join(base, "d");
+
+      // Build a directory tree whose full path exceeds MAX_PATH_BYTES by creating each
+      // level with a short relative path from a shell; the kernel never sees the whole
+      // path so it never rejects it. We do this in /bin/sh rather than via process.chdir
+      // so the test process's cwd is unaffected.
+      //
+      // The same tree is mirrored under dst so that on macOS — where both cpSyncInner and
+      // _cpAsyncDirectory retry clonefile() at every recursion level — clonefile hits
+      // EEXIST at every level and falls through to the manual iteration path containing
+      // the bounds check (clonefile would otherwise clone the whole subtree at the vnode
+      // level without ever building interior path strings).
+      const seg = Buffer.alloc(200, "a").toString();
+      for (const root of [src, dst]) {
+        await using mktree = Bun.spawn({
+          cmd: [
+            "/bin/sh",
+            "-c",
+            `cd "$1" && i=0 && while [ $i -lt 64 ]; do mkdir "$2" && cd "$2" || exit 0; i=$((i+1)); done`,
+            "sh",
+            root,
+            seg,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        await mktree.exited;
+      }
+
+      // Run the cp in a subprocess: before the fix this corrupts the stack and segfaults.
+      const script = `
+        const fs = require("fs");
+        const src = ${JSON.stringify(src)};
+        const dst = ${JSON.stringify(dst)};
+        const done = e => {
+          if (e && e.code === "ENAMETOOLONG") {
+            console.log("ENAMETOOLONG");
+          } else if (e) {
+            console.log("ERR:" + (e.code || e.message));
+          } else {
+            console.log("OK");
+          }
+        };
+        if (${JSON.stringify(which)} === "cpSync") {
+          try { fs.cpSync(src, dst, { recursive: true }); done(); } catch (e) { done(e); }
+        } else {
+          fs.promises.cp(src, dst, { recursive: true }).then(() => done(), done);
+        }
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("ENAMETOOLONG");
+      expect(exitCode).toBe(0);
+    });
+  },
+);

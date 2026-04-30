@@ -169,7 +169,8 @@ describe.concurrent("process-stdio", () => {
         stderr: "pipe",
         stdin: "pipe",
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).not.toContain("ASSERTION FAILED");
       expect(stderr).not.toContain("ASSERTION FAILED");
       expect(proc.signalCode).toBeNull();
       expect(exitCode).toBe(0);

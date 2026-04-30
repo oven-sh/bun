@@ -1178,8 +1178,9 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
         }
 
         if (comptime sentinel) {
-            output.items[output.items.len] = 0;
-            return output.items[0 .. output.items.len + 1 :0];
+            try output.ensureUnusedCapacity(1);
+            output.appendAssumeCapacity(0);
+            return output.items[0 .. output.items.len - 1 :0];
         }
 
         return output.items;
@@ -1187,6 +1188,35 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
 
     return null;
 }
+
+pub const TestingAPIs = struct {
+    /// Used in JS tests, see `internal-for-testing.ts`.
+    /// Exercises the `sentinel = true` path of `toUTF16AllocForReal`, which is
+    /// otherwise only reachable from Windows-only code (`bun build --compile`
+    /// metadata in `src/windows.zig`).
+    pub fn toUTF16AllocSentinel(globalThis: *bun.jsc.JSGlobalObject, callframe: *bun.jsc.CallFrame) bun.JSError!bun.jsc.JSValue {
+        const arguments = callframe.arguments();
+        if (arguments.len < 1) {
+            return globalThis.throw("toUTF16AllocSentinel: expected 1 argument", .{});
+        }
+        const array_buffer = arguments[0].asArrayBuffer(globalThis) orelse {
+            return globalThis.throw("toUTF16AllocSentinel: expected a Uint8Array", .{});
+        };
+        const bytes = array_buffer.byteSlice();
+
+        const allocator = bun.default_allocator;
+        const result = strings.toUTF16AllocForReal(allocator, bytes, false, true) catch |err| {
+            return globalThis.throwError(err, "toUTF16AllocForReal failed");
+        };
+        defer allocator.free(result);
+
+        bun.assert(result.ptr[result.len] == 0);
+
+        var out = bun.String.cloneUTF16(result);
+        defer out.deref();
+        return out.toJS(globalThis);
+    }
+};
 
 // this one does the thing it's named after
 pub fn toUTF16AllocForReal(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool, comptime sentinel: bool) !if (sentinel) [:0]u16 else []u16 {

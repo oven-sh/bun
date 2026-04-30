@@ -499,6 +499,14 @@ pub const ValkeyClient = struct {
 
         debug("reconnect in {d}ms (attempt {d}/{d})", .{ delay_ms, this.retry_attempts, this.max_retries });
 
+        // Clear in-flight commands to prevent response mismatch after reconnect
+        // These commands failed to complete and will not receive responses from the new connection
+        if (this.in_flight.count > 0) {
+            const globalThis = this.globalObject();
+            const error = protocol.valkeyErrorToJS(globalThis, "Connection lost during command execution, reconnecting...", protocol.RedisError.ConnectionClosed);
+            _ = rejectAllPendingCommands(&this.in_flight, null, globalThis, this.allocator, error);
+        }
+
         this.flags.is_reconnecting = true;
         this.flags.is_authenticated = false;
         this.flags.is_selecting_db_internal = false;

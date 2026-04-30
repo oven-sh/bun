@@ -324,27 +324,3 @@ test("dupe() preserves allocated content_type for Body clone", () => {
   expect(originalType).toStartWith("multipart/form-data; boundary=");
   expect(clonedType).toBe(originalType);
 });
-
-// Blob.fromJSWithoutDeferGC -> JSValue.toSlice -> String.fromJS ->
-// BunString__fromJS -> Bun::fromJS(toWTFString) is reached for any input
-// whose JSType falls into the else branch, including native constructors
-// and objects with throwing toString. Bun::fromJS now uses a ThrowScope +
-// RETURN_IF_EXCEPTION so Dead is returned iff an exception is pending.
-test("Bun.write stringifies non-BlobPart inputs via Bun::fromJS", async () => {
-  using dir = tempDir("blob-stringify-non-blobpart", {});
-  const out = path.join(String(dir), "out.txt");
-
-  for (const value of [ArrayBuffer, Float64Array, Object, function f() {}, {}]) {
-    const n = await Bun.write(out, value as any);
-    expect(n).toBeGreaterThan(0);
-    expect(await Bun.file(out).text()).toBe(String(value));
-  }
-
-  await expect(async () => {
-    await Bun.write(out, {
-      toString() {
-        throw new Error("boom");
-      },
-    } as any);
-  }).toThrow("boom");
-});

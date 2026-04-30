@@ -1061,6 +1061,10 @@ fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: NewRe
                             column.deinit();
                         }
                         bun.default_allocator.free(statement.columns);
+                        // Clear the slice before the fallible alloc below. If the alloc
+                        // fails, MySQLStatement.deinit() would otherwise iterate and free
+                        // the already-freed columns again (use-after-free / double-free).
+                        statement.columns = &.{};
                     }
                     statement.columns = try bun.default_allocator.alloc(ColumnDefinition41, header.field_count);
                     for (statement.columns) |*col| col.* = .{};

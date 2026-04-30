@@ -445,11 +445,13 @@ test("new Blob() releases copied ArrayBuffer parts when a later part throws", as
   expect(exitCode).toBe(0);
 });
 
-test("new Blob() copies inner Blob parts before later parts' toString() can GC them", async () => {
-  // Same hazard as the ArrayBuffer case: blob.sharedView() borrows store bytes
-  // without bumping its refcount. A later toString() that drops the last JS
-  // reference to the inner Blob and forces GC can free the store before
-  // joiner.done() memcpys from it.
+test("new Blob() keeps inner Blob parts alive while a later part's toString() forces GC", async () => {
+  // blob.sharedView() borrows store bytes without bumping its refcount. A
+  // later toString() that drops the last JS reference to the inner Blob and
+  // forces GC could free the store before joiner.done() memcpys from it. The
+  // constructor roots each inner Blob in a MarkedArgumentBuffer for the
+  // duration of the join so the borrowed view stays valid without an extra
+  // copy of the bytes.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

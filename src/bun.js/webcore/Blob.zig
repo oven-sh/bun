@@ -4067,6 +4067,31 @@ fn fromJSWithoutDeferGC(
         }
     }
 
+    // Multi-part path. A later part's toString() can run arbitrary JS that
+    // drops the last reference to an earlier inner Blob and forces GC, so we
+    // root each borrowed part in a MarkedArgumentBuffer for the duration of
+    // the join. That lets Blob parts use pushStatic (no extra copy) safely.
+    const JoinCtx = struct {
+        global: *JSGlobalObject,
+        top: JSValue,
+        result: bun.JSError!Blob,
+
+        pub fn run(ctx: *@This(), marked: *jsc.MarkedArgumentBuffer) callconv(.c) void {
+            ctx.result = fromJSJoinParts(ctx.global, ctx.top, marked);
+        }
+    };
+    var ctx = JoinCtx{ .global = global, .top = current, .result = undefined };
+    jsc.MarkedArgumentBuffer.run(JoinCtx, &ctx, &JoinCtx.run);
+    return ctx.result;
+}
+
+fn fromJSJoinParts(
+    global: *JSGlobalObject,
+    top: JSValue,
+    marked: *jsc.MarkedArgumentBuffer,
+) bun.JSError!Blob {
+    var current = top;
+
     var stack_allocator = std.heap.stackFallback(1024, bun.default_allocator);
     const stack_mem_all = stack_allocator.get();
     var stack: std.array_list.Managed(JSValue) = std.array_list.Managed(JSValue).init(stack_mem_all);
@@ -4135,9 +4160,12 @@ fn fromJSWithoutDeferGC(
                             => {
                                 could_have_non_ascii = true;
                                 var buf = item.asArrayBuffer(global).?;
-                                // Copy the bytes now. A later element's toString() can run
-                                // arbitrary JS that detaches/resizes this buffer before
-                                // joiner.done() reads it.
+                                // Copy the bytes now. Rooting the JSValue is not enough
+                                // here: a later element's toString() can resize() a
+                                // resizable ArrayBuffer (unmapping the backing) or
+                                // transfer() it to an unrooted new owner regardless of
+                                // whether this JSValue is GC-reachable. The File API
+                                // spec says "get a copy of the bytes" at this step.
                                 joiner.pushCloned(buf.byteSlice());
                                 continue;
                             },
@@ -4150,10 +4178,12 @@ fn fromJSWithoutDeferGC(
                             .DOMWrapper => {
                                 if (item.as(Blob)) |blob| {
                                     could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
-                                    // Copy now — a later element's toString() can drop the
-                                    // last reference to this Blob and GC its store before
-                                    // joiner.done() reads it.
-                                    joiner.pushCloned(blob.sharedView());
+                                    // Root the Blob so a later element's toString() can't
+                                    // drop its last reference and GC the store before
+                                    // joiner.done() reads it. Blobs are immutable, so a
+                                    // borrowed view stays valid as long as the store lives.
+                                    marked.append(item);
+                                    joiner.pushStatic(blob.sharedView());
                                     continue;
                                 } else {
                                     const sliced = try item.toSliceClone(global);
@@ -4174,10 +4204,12 @@ fn fromJSWithoutDeferGC(
             .DOMWrapper => {
                 if (current.as(Blob)) |blob| {
                     could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
-                    // Copy now — a later element's toString() can drop the last
-                    // reference to this Blob and GC its store before
-                    // joiner.done() reads it.
-                    joiner.pushCloned(blob.sharedView());
+                    // Root the Blob so a later element's toString() can't drop
+                    // its last reference and GC the store before joiner.done()
+                    // reads it. Blobs are immutable, so a borrowed view stays
+                    // valid as long as the store lives.
+                    marked.append(current);
+                    joiner.pushStatic(blob.sharedView());
                 } else {
                     const sliced = try current.toSliceClone(global);
                     const allocator = sliced.allocator.get();
@@ -4202,9 +4234,12 @@ fn fromJSWithoutDeferGC(
             .DataView,
             => {
                 var buf = current.asArrayBuffer(global).?;
-                // Copy the bytes now. A later element's toString() can run
-                // arbitrary JS that detaches/resizes this buffer before
-                // joiner.done() reads it.
+                // Copy the bytes now. Rooting the JSValue is not enough here:
+                // a later element's toString() can resize() a resizable
+                // ArrayBuffer (unmapping the backing) or transfer() it to an
+                // unrooted new owner regardless of whether this JSValue is
+                // GC-reachable. The File API spec says "get a copy of the
+                // bytes" at this step.
                 joiner.pushCloned(buf.slice());
                 could_have_non_ascii = true;
             },

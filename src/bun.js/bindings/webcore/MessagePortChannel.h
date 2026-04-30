@@ -29,16 +29,17 @@
 #include "MessagePortIdentifier.h"
 #include "MessageWithMessagePorts.h"
 #include "ProcessIdentifier.h"
+#include <wtf/CanMakeWeakPtr.h>
 #include <wtf/HashSet.h>
-#include <wtf/RefCounted.h>
+#include <wtf/Lock.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/text/WTFString.h>
-#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 
 namespace WebCore {
 
 class MessagePortChannelRegistry;
 
-class MessagePortChannel : public RefCountedAndCanMakeWeakPtr<MessagePortChannel> {
+class MessagePortChannel : public ThreadSafeRefCounted<MessagePortChannel>, public CanMakeWeakPtr<MessagePortChannel> {
 public:
     static Ref<MessagePortChannel> create(MessagePortChannelRegistry&, const MessagePortIdentifier& port1, const MessagePortIdentifier& port2);
 
@@ -70,6 +71,11 @@ public:
 
 private:
     MessagePortChannel(MessagePortChannelRegistry&, const MessagePortIdentifier& port1, const MessagePortIdentifier& port2);
+
+    // Upstream WebKit serializes all access to this class onto the main thread. Bun calls into
+    // it from both the main thread and worker threads (see MessagePortChannelRegistry.cpp), so
+    // all mutable state below must be guarded by m_lock.
+    mutable Lock m_lock;
 
     MessagePortIdentifier m_ports[2];
     bool m_isClosed[2] { false, false };

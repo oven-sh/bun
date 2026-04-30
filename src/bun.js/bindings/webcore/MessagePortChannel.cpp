@@ -29,6 +29,7 @@
 // #include "Logging.h"
 #include "MessagePortChannelRegistry.h"
 #include <wtf/CompletionHandler.h>
+#include <wtf/Locker.h>
 #include <wtf/MainThread.h>
 
 namespace WebCore {
@@ -42,12 +43,13 @@ MessagePortChannel::MessagePortChannel(MessagePortChannelRegistry& registry, con
     : m_ports { port1, port2 }
     , m_registry(registry)
 {
-    relaxAdoptionRequirement();
-
-    m_processes[0] = port1.processIdentifier;
-    m_entangledToProcessProtectors[0] = this;
-    m_processes[1] = port2.processIdentifier;
-    m_entangledToProcessProtectors[1] = this;
+    {
+        Locker locker { m_lock };
+        m_processes[0] = port1.processIdentifier;
+        m_entangledToProcessProtectors[0] = this;
+        m_processes[1] = port2.processIdentifier;
+        m_entangledToProcessProtectors[1] = this;
+    }
 
     m_registry.messagePortChannelCreated(*this);
 }
@@ -61,6 +63,8 @@ std::optional<ProcessIdentifier> MessagePortChannel::processForPort(const Messag
 {
     ASSERT(port == m_ports[0] || port == m_ports[1]);
     size_t i = port == m_ports[0] ? 0 : 1;
+
+    Locker locker { m_lock };
     return m_processes[i];
 }
 
@@ -76,6 +80,7 @@ void MessagePortChannel::entanglePortWithProcess(const MessagePortIdentifier& po
 
     // LOG(MessagePorts, "MessagePortChannel %s (%p) entangling port %s (that port has %zu messages available)", logString().utf8().data(), this, port.logString().utf8().data(), m_pendingMessages[i].size());
 
+    Locker locker { m_lock };
     ASSERT(!m_processes[i] || *m_processes[i] == process);
     m_processes[i] = process;
     m_entangledToProcessProtectors[i] = this;
@@ -89,13 +94,16 @@ void MessagePortChannel::disentanglePort(const MessagePortIdentifier& port)
     ASSERT(port == m_ports[0] || port == m_ports[1]);
     size_t i = port == m_ports[0] ? 0 : 1;
 
-    ASSERT(m_processes[i] || m_isClosed[i]);
-    m_processes[i] = std::nullopt;
-    m_pendingMessagePortTransfers[i].add(this);
-
     // This set of steps is to guarantee that the lock is unlocked before the
     // last ref to this object is released.
-    auto protectedThis = WTF::move(m_entangledToProcessProtectors[i]);
+    RefPtr<MessagePortChannel> protectedThis;
+    {
+        Locker locker { m_lock };
+        ASSERT(m_processes[i] || m_isClosed[i]);
+        m_processes[i] = std::nullopt;
+        m_pendingMessagePortTransfers[i].add(this);
+        protectedThis = WTF::move(m_entangledToProcessProtectors[i]);
+    }
 }
 
 void MessagePortChannel::closePort(const MessagePortIdentifier& port)
@@ -103,23 +111,31 @@ void MessagePortChannel::closePort(const MessagePortIdentifier& port)
     ASSERT(port == m_ports[0] || port == m_ports[1]);
     size_t i = port == m_ports[0] ? 0 : 1;
 
-    m_processes[i] = std::nullopt;
-    m_isClosed[i] = true;
-
     // This set of steps is to guarantee that the lock is unlocked before the
     // last ref to this object is released.
     Ref protectedThis { *this };
+    Vector<MessageWithMessagePorts> pendingMessages;
+    UncheckedKeyHashSet<RefPtr<MessagePortChannel>> pendingMessagePortTransfers;
+    RefPtr<MessagePortChannel> pendingMessageProtector;
+    RefPtr<MessagePortChannel> entangledToProcessProtector;
+    {
+        Locker locker { m_lock };
+        m_processes[i] = std::nullopt;
+        m_isClosed[i] = true;
 
-    m_pendingMessages[i].clear();
-    m_pendingMessagePortTransfers[i].clear();
-    m_pendingMessageProtectors[i] = nullptr;
-    m_entangledToProcessProtectors[i] = nullptr;
+        pendingMessages = WTF::move(m_pendingMessages[i]);
+        pendingMessagePortTransfers = WTF::move(m_pendingMessagePortTransfers[i]);
+        pendingMessageProtector = WTF::move(m_pendingMessageProtectors[i]);
+        entangledToProcessProtector = WTF::move(m_entangledToProcessProtectors[i]);
+    }
 }
 
 bool MessagePortChannel::postMessageToRemote(MessageWithMessagePorts&& message, const MessagePortIdentifier& remoteTarget)
 {
     ASSERT(remoteTarget == m_ports[0] || remoteTarget == m_ports[1]);
     size_t i = remoteTarget == m_ports[0] ? 0 : 1;
+
+    Locker locker { m_lock };
 
     if (m_isClosed[i])
         return false;
@@ -143,22 +159,30 @@ void MessagePortChannel::takeAllMessagesForPort(const MessagePortIdentifier& por
     ASSERT(port == m_ports[0] || port == m_ports[1]);
     size_t i = port == m_ports[0] ? 0 : 1;
 
-    if (m_pendingMessages[i].isEmpty()) {
-        callback({}, [] {});
-        return;
-    }
-
-    ASSERT(m_pendingMessageProtectors[i]);
-
     Vector<MessageWithMessagePorts> result;
-    result.swap(m_pendingMessages[i]);
+    RefPtr<MessagePortChannel> protectedThis;
+    {
+        Locker locker { m_lock };
 
-    ++m_messageBatchesInFlight;
+        if (m_pendingMessages[i].isEmpty()) {
+            locker.unlockEarly();
+            callback({}, [] {});
+            return;
+        }
+
+        ASSERT(m_pendingMessageProtectors[i]);
+
+        result.swap(m_pendingMessages[i]);
+        protectedThis = WTF::move(m_pendingMessageProtectors[i]);
+
+        ++m_messageBatchesInFlight;
+    }
 
     // LOG(MessagePorts, "There are %zu messages to take for port %s. Taking them now, messages in flight is now %" PRIu64, result.size(), port.logString().utf8().data(), m_messageBatchesInFlight);
 
-    callback(WTF::move(result), [this, port, protectedThis = WTF::move(m_pendingMessageProtectors[i])] {
+    callback(WTF::move(result), [this, port, protectedThis = WTF::move(protectedThis)] {
         UNUSED_PARAM(port);
+        Locker locker { m_lock };
         --m_messageBatchesInFlight;
         // LOG(MessagePorts, "Message port channel %s was notified that a batch of %zu message port messages targeted for port %s just completed dispatch, in flight is now %" PRIu64, logString().utf8().data(), size, port.logString().utf8().data(), m_messageBatchesInFlight);
     });
@@ -168,6 +192,8 @@ std::optional<MessageWithMessagePorts> MessagePortChannel::tryTakeMessageForPort
 {
     ASSERT(port == m_ports[0] || port == m_ports[1]);
     size_t i = port == m_ports[0] ? 0 : 1;
+
+    Locker locker { m_lock };
 
     if (m_pendingMessages[i].isEmpty())
         return std::nullopt;

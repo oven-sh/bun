@@ -1,3 +1,5 @@
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+
 test("simple usage", done => {
   const channel = new MessageChannel();
   const port1 = channel.port1;
@@ -323,3 +325,79 @@ test("cloneable and non-transferable equals (net.BlockList)", async () => {
   mc.port2.postMessage(blocklist);
   await promise;
 });
+
+// MessagePortChannel::m_pendingMessages is appended on the sender thread (postMessageToRemote)
+// and swapped/drained on the receiver thread (takeAllMessagesForPort). Without a per-channel
+// lock, Vector::append can reallocate the backing buffer while the other thread is reading it,
+// which ASAN reports as container-overflow / heap-use-after-free and the non-atomic RefCounted
+// refcount is corrupted. This test hammers that path from both directions.
+// Debug builds have ASAN enabled; release builds race silently, so skip there.
+test.skipIf(!(isDebug || isASAN))(
+  "concurrent MessagePort postMessage/onmessage across threads does not race",
+  async () => {
+    using dir = tempDir("message-port-race", {
+      "worker.js": `
+        self.onmessage = (e) => {
+          const port = e.data;
+          let got = 0;
+          port.onmessage = (ev) => {
+            if (ev.data === "done") {
+              port.postMessage("worker-done");
+              port.close();
+            } else {
+              got++;
+            }
+          };
+          for (let i = 0; i < 20000; i++) port.postMessage(i);
+          port.postMessage("flood-done");
+        };
+      `,
+      "main.js": `
+        const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+        const { port1, port2 } = new MessageChannel();
+
+        let received = 0;
+
+        port1.onmessage = (e) => {
+          if (e.data === "flood-done") {
+            port1.postMessage("done");
+          } else if (e.data === "worker-done") {
+            console.log("received=" + received);
+            worker.terminate();
+            port1.close();
+          } else {
+            received++;
+            // Echo back while the worker is still flooding us so both threads are appending
+            // to and draining from the shared MessagePortChannel concurrently.
+            port1.postMessage(e.data);
+          }
+        };
+
+        worker.onerror = (e) => {
+          console.error("worker error", e.message);
+          process.exit(1);
+        };
+
+        worker.postMessage(port2, [port2]);
+      `,
+    });
+
+    // The race is probabilistic; three attempts brings the false-pass rate from ~10% to ~0.1%.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("received=20000");
+      expect(exitCode).toBe(0);
+    }
+  },
+  120_000,
+);

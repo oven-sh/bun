@@ -307,6 +307,264 @@ function ClientRequest(input, options, cb) {
     };
 
     const go = (url, proxy, softFail = false) => {
+      // HTTP Upgrade support: when the request has an Upgrade header and the
+      // caller is listening for the 'upgrade' event, use a raw TCP socket
+      // instead of fetch. Fetch doesn't support protocol upgrades (101
+      // Switching Protocols), which breaks libraries like ws/Playwright that
+      // rely on the Node.js http 'upgrade' event for WebSocket connections.
+      // See: https://github.com/oven-sh/bun/issues/9911
+      const upgradeHeader = this.getHeader("upgrade");
+      if (upgradeHeader && this.listenerCount("upgrade") > 0) {
+        // Proxy and Unix socket paths are not supported for upgrade connections.
+        // Detect early and throw a clear error rather than silently ignoring.
+        if (proxy) {
+          throw new Error("HTTP upgrade through a proxy is not supported");
+        }
+        if (this[kSocketPath]) {
+          throw new Error("HTTP upgrade over a Unix socket path is not supported");
+        }
+
+        const parsedUrl = new URL(url);
+        const connectHost = parsedUrl.hostname;
+        const connectPort = parseInt(parsedUrl.port || (protocol === "https:" ? "443" : "80"), 10);
+        // Use original host for Host header and SNI — connectHost may be a
+        // resolved IP when the caller iterates over DNS results.
+        const originalHost = this.getHeader("host") || this[kHost] || connectHost;
+        const headerSizeLimit = this[kMaxHeaderSize] || 16384; // Node.js default: 16 KiB
+
+        // Return a Promise so the happy-eyeballs iterator can .catch(iterate)
+        // on connection failures and fall back to the next address.
+        return new Promise((resolve, reject) => {
+          const onSocketConnect = () => {
+            const reqPath = (parsedUrl.pathname || "/") + (parsedUrl.search || "");
+            const headers = this.getHeaders();
+            let raw = `${method} ${reqPath} HTTP/1.1\r\n`;
+            // Only add Host if not already in user-provided headers
+            if (!headers["host"] && !headers["Host"]) {
+              raw += `Host: ${originalHost}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}\r\n`;
+            }
+            for (const key in headers) {
+              const val = headers[key];
+              if ($isJSArray(val)) {
+                for (const v of val) raw += `${key}: ${v}\r\n`;
+              } else if (val != null) {
+                raw += `${key}: ${val}\r\n`;
+              }
+            }
+            raw += "\r\n";
+            upgradeSocket.write(raw);
+
+            // Flush any buffered body chunks queued via req.write() / req.end()
+            // before the upgrade socket connected (e.g. CONNECT tunnels with payloads).
+            if (this[kBodyChunks]?.length > 0) {
+              for (const chunk of this[kBodyChunks]) {
+                upgradeSocket.write(chunk);
+              }
+              this[kBodyChunks].length = 0;
+            }
+          };
+
+          let upgradeSocket;
+          if (protocol === "https:") {
+            const tls = require("tls");
+            // Use originalHost for SNI (servername), connectHost for TCP target
+            const tlsOpts = this[kTls]
+              ? { ...this[kTls], servername: this[kTls].servername || originalHost }
+              : { servername: originalHost };
+            upgradeSocket = tls.connect({ host: connectHost, port: connectPort, ...tlsOpts }, onSocketConnect);
+          } else {
+            const net = require("net");
+            upgradeSocket = net.createConnection({ host: connectHost, port: connectPort }, onSocketConnect);
+          }
+
+          // Wire upgradeSocket into the request's abort/destroy lifecycle so
+          // that req.destroy() / req.abort() tears down the real TCP connection.
+          this[kAbortController] ??= new AbortController();
+          const abortSignal = this[kAbortController].signal;
+          const onAbortUpgrade = () => {
+            detachListeners();
+            upgradeSocket.destroy();
+            this[kClearTimeout]();
+            resolve();
+          };
+          abortSignal.addEventListener("abort", onAbortUpgrade, { once: true });
+          const cleanupAbortListener = () => {
+            abortSignal.removeEventListener("abort", onAbortUpgrade);
+          };
+
+          let buf = Buffer.alloc(0);
+          const detachListeners = () => {
+            upgradeSocket.removeListener("data", onData);
+            upgradeSocket.removeListener("error", onError);
+            upgradeSocket.removeListener("close", onClose);
+            cleanupAbortListener();
+          };
+          const onError = (err) => {
+            detachListeners();
+            upgradeSocket.destroy();
+            this[kClearTimeout]();
+            if (softFail) {
+              // Let the happy-eyeballs iterator try the next address
+              reject(err);
+            } else if (!this.destroyed) {
+              this.emit("error", err);
+              resolve();
+            } else {
+              resolve();
+            }
+          };
+          const onClose = () => {
+            // Server closed before sending complete headers
+            if (buf.indexOf("\r\n\r\n") === -1) {
+              detachListeners();
+              this[kClearTimeout]();
+              const err = new Error("Connection closed before upgrade response received");
+              if (softFail) {
+                reject(err);
+              } else if (!this.destroyed) {
+                this.emit("error", err);
+                resolve();
+              } else {
+                resolve();
+              }
+            }
+          };
+          const onData = (chunk: Buffer) => {
+            buf = Buffer.concat([buf, chunk]);
+
+            // Enforce header size limit to prevent unbounded allocation
+            if (buf.length > headerSizeLimit) {
+              detachListeners();
+              upgradeSocket.destroy();
+              this[kClearTimeout]();
+              const err = new Error(`Parse Error: Header size exceeds ${headerSizeLimit} bytes`);
+              if (softFail) {
+                reject(err);
+              } else if (!this.destroyed) {
+                this.emit("error", err);
+                resolve();
+              } else {
+                resolve();
+              }
+              return;
+            }
+
+            const headerEnd = buf.indexOf("\r\n\r\n");
+            if (headerEnd === -1) return; // incomplete headers
+
+            // Detach all internal listeners before handing socket to user code
+            detachListeners();
+
+            const headerPart = buf.subarray(0, headerEnd).toString();
+            const head = buf.subarray(headerEnd + 4);
+            const [statusLine, ...headerLines] = headerPart.split("\r\n");
+            const statusMatch = statusLine.match(/^HTTP\/(\d+\.\d+)\s+(\d+)\s*(.*)/);
+            const statusCode = statusMatch ? parseInt(statusMatch[2], 10) : 0;
+
+            // Guard against unparseable status lines — emit error rather
+            // than letting the Response constructor throw on invalid codes.
+            if (!statusCode) {
+              upgradeSocket.destroy();
+              this[kClearTimeout]();
+              const err = new Error(`Parse Error: Invalid HTTP status line: ${statusLine}`);
+              if (softFail) {
+                reject(err);
+              } else if (!this.destroyed) {
+                this.emit("error", err);
+                resolve();
+              } else {
+                resolve();
+              }
+              return;
+            }
+
+            // Parse response headers (preserve originals in rawHeaders)
+            const responseHeaders: Record<string, string | string[]> = {};
+            const rawHeaders: string[] = [];
+            for (const line of headerLines) {
+              const colonIdx = line.indexOf(":");
+              if (colonIdx === -1) continue;
+              const key = line.substring(0, colonIdx).trim();
+              const value = line.substring(colonIdx + 1).trim();
+              const lowerKey = key.toLowerCase();
+              rawHeaders.push(key, value);
+              // Preserve duplicate headers (e.g. set-cookie) as arrays
+              const existing = responseHeaders[lowerKey];
+              if (existing !== undefined) {
+                responseHeaders[lowerKey] = $isJSArray(existing) ? [...existing, value] : [existing, value];
+              } else {
+                responseHeaders[lowerKey] = value;
+              }
+            }
+
+            if (statusCode === 101) {
+              // Build IncomingMessage directly — cannot use new Response() for
+              // 101 because the Fetch spec rejects 1xx in synthetic Responses.
+              // Use IncomingMessage constructor with null to get proper
+              // EventEmitter/Readable initialization, then override fields.
+              const res = new IncomingMessage(null);
+              res.statusCode = statusCode;
+              res.statusMessage = statusMatch?.[3] || "Switching Protocols";
+              res.headers = responseHeaders;
+              res.rawHeaders = rawHeaders;
+              res.httpVersion = statusMatch?.[1] || "1.1";
+              res.complete = true;
+              res.socket = upgradeSocket;
+              res.req = this;
+
+              this[kUpgradeOrConnect] = true;
+              this[kClearTimeout]();
+              this.emit("upgrade", res, upgradeSocket, head);
+              resolve();
+            } else if (statusCode >= 100 && statusCode < 200) {
+              // Other 1xx informational responses (100 Continue, 102 Processing,
+              // 103 Early Hints) — the Fetch Response constructor rejects 1xx,
+              // and these are unexpected during an upgrade handshake.
+              upgradeSocket.destroy();
+              this[kClearTimeout]();
+              this.emit("error", new Error(`Unexpected informational response ${statusCode} during upgrade`));
+              resolve();
+            } else {
+              // Non-101 response: emit as regular 'response' per Node.js
+              // semantics — servers may legitimately decline upgrades with
+              // normal HTTP status codes (200, 401, 426, etc.).
+              const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
+              setIsNextIncomingMessageHTTPS(protocol === "https:");
+              const res = new IncomingMessage(new Response(null, {
+                status: statusCode,
+                statusText: statusMatch?.[3] || "",
+              }), {
+                [typeSymbol]: NodeHTTPIncomingRequestType.FetchResponse,
+                [reqSymbol]: this,
+              });
+              setIsNextIncomingMessageHTTPS(prevIsHTTPS);
+              res.headers = responseHeaders;
+              res.rawHeaders = rawHeaders;
+              res.httpVersion = statusMatch?.[1] || "1.1";
+              res.socket = upgradeSocket;
+              this.res = res;
+              this[kClearTimeout]();
+              // Push any remaining body data and pipe the rest of the
+              // socket into res so the full response body is available.
+              if (head.length > 0) res.push(head);
+              upgradeSocket.on("data", (chunk) => res.push(chunk));
+              upgradeSocket.on("end", () => res.push(null));
+              upgradeSocket.on("error", (err) => res.destroy(err));
+              process.nextTick(() => {
+                if (!this.aborted && !this.emit("response", res)) {
+                  res._dump();
+                }
+              });
+              resolve();
+            }
+          };
+
+          upgradeSocket.on("data", onData);
+          upgradeSocket.on("error", onError);
+          upgradeSocket.once("close", onClose);
+        });
+      }
+
       const tls =
         protocol === "https:" && this[kTls] ? { ...this[kTls], serverName: this[kTls].servername } : undefined;
 

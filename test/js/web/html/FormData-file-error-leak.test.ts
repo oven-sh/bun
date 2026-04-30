@@ -49,4 +49,4 @@ test("FormData serialization does not leak prior file buffers when a later file 
   // unrelated allocator noise while still catching the regression.
   expect(result.growthMB).toBeLessThan(10);
   expect(exitCode).toBe(0);
-}, 60_000);
+});

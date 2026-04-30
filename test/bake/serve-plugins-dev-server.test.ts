@@ -93,13 +93,13 @@ test("DevServer is notified when [serve.static] plugin setup resolves", async ()
           await Promise.resolve();
           build.onLoad({ filter: /entry\\.ts$/ }, () => ({
             loader: "ts",
-            contents: "console.log('from-plugin');",
+            contents: "console.log('PLUGIN_MARKER');",
           }));
         },
       };
     `,
     "index.html": indexHtml,
-    "entry.ts": `console.log("not-from-plugin");`,
+    "entry.ts": `console.log("ORIGINAL_MARKER");`,
     "server.ts": `
       import html from "./index.html";
       const server = Bun.serve({
@@ -115,7 +115,10 @@ test("DevServer is notified when [serve.static] plugin setup resolves", async ()
         ? await fetch(new URL(m[1], server.url), { signal: AbortSignal.timeout(10_000) }).then(r => r.text())
         : "";
       await server.stop(true);
-      console.log(JSON.stringify({ status: res.status, fromPlugin: js.includes("from-plugin") }));
+      console.log(JSON.stringify({
+        status: res.status,
+        fromPlugin: js.includes("PLUGIN_MARKER") && !js.includes("ORIGINAL_MARKER"),
+      }));
     `,
   });
 

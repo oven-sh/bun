@@ -108,7 +108,24 @@ pub fn NewCodePointIterator(comptime CodePointType_: type, comptime zeroValue: c
                 switch (cp_len) {
                     0 => return false,
                     1 => it.bytes[pos],
-                    else => decodeWTF8RuneTMultibyte(it.bytes[pos..].ptr[0..4], cp_len, CodePointType, error_char),
+                    else => blk: {
+                        // Copy into a zero-padded stack buffer so we never read past
+                        // the end of `it.bytes` when a multi-byte lead appears near
+                        // EOF without enough continuation bytes. The zero padding is
+                        // rejected by decodeWTF8RuneTMultibyte (0x00 is not a valid
+                        // continuation byte), so truncated sequences become U+FFFD.
+                        const remaining = it.bytes[pos..];
+                        const cp_bytes: [4]u8 = switch (@min(remaining.len, 4)) {
+                            inline 1, 2, 3, 4 => |n| .{
+                                remaining[0],
+                                if (comptime n > 1) remaining[1] else 0,
+                                if (comptime n > 2) remaining[2] else 0,
+                                if (comptime n > 3) remaining[3] else 0,
+                            },
+                            else => unreachable,
+                        };
+                        break :blk decodeWTF8RuneTMultibyte(&cp_bytes, cp_len, CodePointType, error_char);
+                    },
                 },
             );
 
@@ -134,7 +151,7 @@ pub fn NewCodePointIterator(comptime CodePointType_: type, comptime zeroValue: c
             it.next_width = cp_len;
             it.i = @min(next_, bytes.len);
 
-            const slice = bytes[prev..][0..cp_len];
+            const slice = bytes[prev..][0..@min(@as(usize, cp_len), bytes.len - prev)];
             it.width = @as(u3_fast, @intCast(slice.len));
             return slice;
         }

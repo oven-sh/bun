@@ -16,6 +16,10 @@ function hammer() {
 }
 
 if (isMainThread) {
+  // Pre-populate the macOS lazy dlsym table single-threaded so this test is
+  // independent of the separate lazyLoadSQLite() race (#29277).
+  new Database(":memory:").close();
+
   const workerCount = 4;
   let exited = 0;
   for (let i = 0; i < workerCount; i++) {

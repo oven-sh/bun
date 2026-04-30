@@ -94,10 +94,9 @@ pub fn killSyncScriptTree() void {
         if (pgid > 1) _ = std.c.kill(-pgid, std.posix.SIG.KILL);
     }
     if (comptime Environment.isMac) Bun__noOrphans_killTracked();
-    // Linux: subreaper-adopted setsid escapees are visible as ppid==us, but
-    // so are unrelated `Bun.spawn` siblings — sweeping by ppid here would
-    // kill those when spawnSync runs inside a live VM. They're caught by the
-    // getpid()-rooted `killDescendants()` at full-process exit instead.
+    // Linux: subreaper-adopted setsid escapees are killed by
+    // `killSubreaperAdoptees()` in `spawnPosix`'s disarm defer (which can
+    // tell them apart from `Bun.spawn` siblings via the pre-arm snapshot).
 }
 
 /// Full-process teardown: pgroups + tracked + getpid()-rooted tree.
@@ -250,6 +249,106 @@ fn onProcessExit() callconv(.c) void {
 /// (so its child set is stable while we recurse), which is what makes the
 /// verify step sufficient. The only forking process is `self`, and we're in
 /// the exit handler — not forking.
+/// Linux-only: enumerate our direct children into `out`. Used by `spawnPosix`
+/// to snapshot pre-existing siblings before arming subreaper, so the post-wait
+/// `killSubreaperAdoptees` can tell adopted orphans apart from `Bun.spawn`
+/// siblings (both have ppid==us). Returns the slice written; empty on
+/// non-Linux or enumeration failure.
+pub fn snapshotChildren(out: []std.c.pid_t) []const std.c.pid_t {
+    if (comptime !Environment.isLinux) return out[0..0];
+    return out[0 .. listChildPids(std.c.getpid(), out) orelse 0];
+}
+
+/// Linux-only: SIGKILL every direct child of ours that isn't in `siblings`,
+/// plus its entire subtree. Called from `spawnPosix`'s defer *before*
+/// disarming subreaper, so subreaper-adopted setsid daemons (ppid==us) are
+/// killed while we can still find them — closing the window where the
+/// daemon's intermediate parent exits between disarm and `onProcessExit` →
+/// `killDescendants()` and the daemon escapes to init.
+///
+/// `siblings` is the pre-arm `snapshotChildren()` set; anything not in it was
+/// either the script (already reaped) or adopted via subreaper during this
+/// spawnSync. A `Bun.spawn` from a Worker thread *during* spawnSync would
+/// also land here and be killed — `--no-orphans` is opt-in aggressive cleanup
+/// and would kill it at process-exit via `killDescendants()` anyway.
+pub fn killSubreaperAdoptees(siblings: []const std.c.pid_t) void {
+    if (comptime !Environment.isLinux) return;
+
+    const self_pid = std.c.getpid();
+    var buf: [4096]std.c.pid_t = undefined;
+
+    // Iterate: kill non-sibling direct children's subtrees, reap, re-read.
+    // After we kill an adoptee's subtree, anything that raced (forked between
+    // enumerate and STOP) reparents to us and shows up next pass. Bounded by
+    // tree depth; 64 is far past any sane chain.
+    var rounds: u8 = 64;
+    while (rounds > 0) : (rounds -= 1) {
+        const n = listChildPids(self_pid, &buf) orelse return;
+        var killed_any = false;
+        for (buf[0..n]) |child| {
+            if (child <= 1 or child == self_pid) continue;
+            if (std.mem.indexOfScalar(std.c.pid_t, siblings, child) != null) continue;
+            killTreeRootedAt(child, self_pid);
+            killed_any = true;
+        }
+        // Reap what we just killed so their children (if any raced) reparent.
+        while (true) {
+            var st: c_int = undefined;
+            if (std.c.waitpid(-1, &st, std.posix.W.NOHANG) <= 0) break;
+        }
+        if (!killed_any) return;
+    }
+}
+
+/// Freeze-walk-kill the subtree rooted at `root` (inclusive). Same SIGSTOP +
+/// ppid-verify + leaves-first-SIGKILL discipline as `killDescendants()`, just
+/// not rooted at ourselves. `expected_ppid_of_root` lets the caller verify
+/// `root` itself before recursing (ppid==us for subreaper adoptees).
+fn killTreeRootedAt(root: std.c.pid_t, expected_ppid_of_root: std.c.pid_t) void {
+    if (comptime !Environment.isPosix) return;
+
+    var to_visit: std.ArrayListUnmanaged(std.c.pid_t) = .{};
+    defer to_visit.deinit(bun.default_allocator);
+    var to_kill: std.ArrayListUnmanaged(std.c.pid_t) = .{};
+    defer to_kill.deinit(bun.default_allocator);
+
+    if (std.c.kill(root, std.posix.SIG.STOP) != 0) return;
+    if (parentPidOf(root) != expected_ppid_of_root) {
+        _ = std.c.kill(root, std.posix.SIG.CONT);
+        return;
+    }
+    to_kill.append(bun.default_allocator, root) catch {
+        _ = std.c.kill(root, std.posix.SIG.KILL);
+        return;
+    };
+    to_visit.append(bun.default_allocator, root) catch {};
+
+    var buf: [4096]std.c.pid_t = undefined;
+    while (to_visit.items.len > 0 and to_kill.items.len < 4096) {
+        const parent = to_visit.swapRemove(to_visit.items.len - 1);
+        const n = listChildPids(parent, &buf) orelse continue;
+        for (buf[0..n]) |child| {
+            if (child <= 1) continue;
+            if (std.c.kill(child, std.posix.SIG.STOP) != 0) continue;
+            if (parentPidOf(child) != parent) {
+                _ = std.c.kill(child, std.posix.SIG.CONT);
+                continue;
+            }
+            to_kill.append(bun.default_allocator, child) catch {
+                _ = std.c.kill(child, std.posix.SIG.KILL);
+                break;
+            };
+            to_visit.append(bun.default_allocator, child) catch break;
+        }
+    }
+
+    var i = to_kill.items.len;
+    while (i > 0) {
+        i -= 1;
+        _ = std.c.kill(to_kill.items[i], std.posix.SIG.KILL);
+    }
+}
+
 pub fn killDescendants() void {
     if (comptime !Environment.isPosix) return;
 

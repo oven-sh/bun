@@ -393,20 +393,16 @@ test.skipIf(!isSupported || !hasPerl)(
 // scan() pass: it gave the wait loop's NOTE_FORK time to fire and observe
 // each link). With NOTE_TRACK xnu attaches to the intermediate inside fork1()
 // before it's schedulable, recursively, so the daemon is captured even if both
-// ancestors are gone before the wait loop drains a single event.
-//
-// macOS-only: on Linux subreaper is also armed pre-spawn so the daemon does
-// reparent to bun, but `spawnPosix` disarms subreaper in a defer that runs
-// before `onProcessExit`→`killDescendants()`, and with the outer exiting
-// immediately the intermediate's exit can land in that window ~40% of the
-// time → daemon goes to init. That's a separate (pre-existing) gap not in
-// scope for the NOTE_TRACK rewrite; the spinning-outer test above covers the
-// non-racy Linux shape.
+// ancestors are gone before the wait loop drains a single event. Linux:
+// subreaper is also armed pre-spawn, and `killSubreaperAdoptees()` in the
+// disarm defer kills any ppid==bun adoptee that wasn't a pre-arm sibling
+// before subreaper drops, so the daemon can't escape in the disarm →
+// `onProcessExit` window.
 //
 // `bun run` may finish before the daemon writes its pidfile. Poll for the
 // file from the *test*; if it never appears the daemon was reaped before it
 // could write — also a pass. Only fail if the file appears AND the pid lives.
-test.skipIf(process.platform !== "darwin" || !hasPerl)(
+test.skipIf(!isSupported || !hasPerl)(
   "bun run --no-orphans (perl): fast-exit intermediate (no pidfile spin) — daemon still reaped",
   async () => {
     using dir = tempDir("no-orphans-fast-daemon", {

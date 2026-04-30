@@ -2325,6 +2325,15 @@ pub const sync = struct {
         const no_orphans = bun.ParentDeathWatchdog.isEnabled() and
             !(Environment.isMac and options.use_execve_on_macos);
 
+        // Snapshot pre-existing direct children so the disarm defer can tell
+        // subreaper-adopted orphans (ppid==us) apart from `Bun.spawn` siblings
+        // (also ppid==us). Typically empty — `bun run`/`bunx` have no JS VM —
+        // but spawnSync can run inside a live VM (ffi.zig xcrun probe).
+        var siblings_buf: [64]std.c.pid_t = undefined;
+        const siblings = if (Environment.isLinux and no_orphans)
+            bun.ParentDeathWatchdog.snapshotChildren(&siblings_buf)
+        else
+            siblings_buf[0..0];
         if (comptime Environment.isLinux) if (no_orphans) {
             // Subreaper: arm *before* spawn so a fast-daemonizing script can't
             // reparent its grandchild to init in the gap. Process-wide and
@@ -2337,6 +2346,12 @@ pub const sync = struct {
             _ = std.posix.prctl(.SET_CHILD_SUBREAPER, .{1}) catch {};
         };
         defer if (comptime Environment.isLinux) if (no_orphans) {
+            // Kill subreaper-adopted setsid daemons (ppid==us, not in the
+            // pre-arm snapshot) *before* disarming, while we can still find
+            // them. Without this, a daemon whose intermediate parent exits
+            // between disarm and `onProcessExit`→`killDescendants()` escapes
+            // to init.
+            bun.ParentDeathWatchdog.killSubreaperAdoptees(siblings);
             _ = std.posix.prctl(.SET_CHILD_SUBREAPER, .{0}) catch {};
         };
 

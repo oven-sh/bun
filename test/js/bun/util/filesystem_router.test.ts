@@ -1,7 +1,7 @@
 import { FileSystemRouter } from "bun";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import path, { dirname } from "path";
 
 function createTree(basedir: string, paths: string[]) {
@@ -471,19 +471,20 @@ it("origin should be validated", async () => {
 
 // POSIX allows arbitrary bytes (except '/' and NUL) in filenames, including 0xFF.
 // The route sorter's lookup table must cover the full u8 range.
-it.skipIf(isWindows)("handles filenames containing byte 0xFF", () => {
-  const dir = tmpdirSync();
-  mkdirSync(dir, { recursive: true });
-  // Two static routes that share a prefix so the sorter must compare the 0xFF byte.
+// Windows and macOS (APFS/HFS+) require filenames to be valid Unicode, so skip there.
+it.skipIf(isWindows || isMacOS)("handles filenames containing byte 0xFF", () => {
+  using dir = tempDir("fsr-byte-ff", {});
+  // Static routes sharing a prefix so the sorter must compare the 0xFF byte.
+  // tempDir's string-keyed map can't express raw 0xFF, so write via Buffer paths.
   for (const name of [[0x61, 0xff], [0x61, 0x62], [0xff]]) {
     fs.writeFileSync(
-      Buffer.concat([Buffer.from(dir + "/"), Buffer.from(name), Buffer.from(".tsx")]),
+      Buffer.concat([Buffer.from(String(dir) + "/"), Buffer.from(name), Buffer.from(".tsx")]),
       "export default 1;\n",
     );
   }
 
   const router = new FileSystemRouter({
-    dir,
+    dir: String(dir),
     fileExtensions: [".tsx"],
     style: "nextjs",
   });

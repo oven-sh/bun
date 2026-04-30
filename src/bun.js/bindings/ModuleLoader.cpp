@@ -402,6 +402,21 @@ static JSValue handleVirtualModuleResult(
     case OnLoadResultTypeObject: {
         JSC::JSObject* object = onLoadResult.value.object.getObject();
         if (commonJSModule) {
+            // For module mocks loaded via require(), directly assign the mock
+            // object as CJS exports. Going through the ESM pipeline (returning
+            // -1 from fetchCommonJSModule) would cause $loadEsmIntoCjs to
+            // synchronously parse/link/evaluate the module via JSC's module
+            // loader. If a dynamic import() for the same mocked module is
+            // already in flight (microtasks queued but not yet run), this leads
+            // to a double-fulfill of JSC's internal module loading promise,
+            // causing a segfault (or an assertion failure in debug builds).
+            // See: https://github.com/oven-sh/bun/issues/22877
+            if (wasModuleMock) {
+                commonJSModule->setExportsObject(onLoadResult.value.object);
+                commonJSModule->hasEvaluated = true;
+                return commonJSModule;
+            }
+
             const auto& __esModuleIdentifier = vm.propertyNames->__esModule;
             auto esModuleValue = object->getIfPropertyExists(globalObject, __esModuleIdentifier);
             if (scope.exception()) [[unlikely]] {

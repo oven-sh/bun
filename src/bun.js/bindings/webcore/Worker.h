@@ -30,7 +30,6 @@
 #include "WorkerOptions.h"
 #include <JavaScriptCore/RuntimeFlags.h>
 #include <wtf/Deque.h>
-#include <wtf/MonotonicTime.h>
 #include <wtf/text/AtomStringHash.h>
 #include "ContextDestructionObserver.h"
 #include "Event.h"
@@ -43,18 +42,56 @@ class JSValue;
 
 namespace WebCore {
 
-class RTCRtpScriptTransform;
-class RTCRtpScriptTransformer;
 class ScriptExecutionContext;
-class WorkerGlobalScopeProxy;
-
 struct StructuredSerializeOptions;
 struct WorkerOptions;
 
+/// Parent-side handle for a Web or Node worker thread.
+///
+/// Lifetime / ownership (see also the header comment in web_worker.zig):
+///
+///   JSWorker (GC'd JSCell)  ──Ref──►  Worker  ──owns──►  Zig WebWorker
+///     parent thread                   ThreadSafeRefCounted   default_allocator
+///
+/// Refs held on this object:
+///   - JSWorker wrapper       from construct() until GC finalize
+///   - worker thread          taken in create() before the thread is spawned;
+///                            dropped on the PARENT thread inside dispatchExit()'s
+///                            posted close task, so ~Worker never runs on the
+///                            worker thread (EventListenerMap is single-threaded)
+///   - transient Ref{*this} captured by posted tasks
+///
+/// impl_ (Zig WebWorker*) is owned by this object and freed in ~Worker(), so
+/// terminate()/ref()/unref() can never see a dangling pointer while JS holds
+/// the wrapper.
+///
+/// State machine:
+///
+///     ┌────────┐  dispatchOnline   ┌────────┐
+///     │Pending │ ────────────────► │Running │
+///     └───┬────┘  (worker thread,  └───┬────┘
+///         │        under lock)         │
+///         │                            │
+///         └────────────┬───────────────┘
+///                      │ close task (parent thread)
+///                      ▼
+///                 ┌────────┐
+///                 │ Closed │
+///                 └────────┘
+///
+/// m_terminateRequested is orthogonal: set once by terminate(), gates
+/// postMessage()/dispatchEvent(), and is mirrored into the Zig side via
+/// WebWorker__notifyNeedTermination so the worker loop can observe it.
 class Worker final : public ThreadSafeRefCounted<Worker>, public EventTargetWithInlineData, private ContextDestructionObserver {
     WTF_MAKE_TZONE_ALLOCATED(Worker);
 
 public:
+    enum class State : uint8_t {
+        Pending, // created; worker thread starting up
+        Running, // dispatchOnline has fired; worker event loop is spinning
+        Closed, // close event dispatched on the parent; worker is fully done
+    };
+
     static ExceptionOr<Ref<Worker>> create(ScriptExecutionContext&, const String& url, WorkerOptions&&);
     ~Worker();
 
@@ -63,62 +100,64 @@ public:
     using ThreadSafeRefCounted::deref;
     using ThreadSafeRefCounted::ref;
 
+    // -- Parent-thread API (called from JS on the owning thread) -------------
     void terminate();
-    bool wasTerminated() const;
-    bool hasPendingActivity() const;
-    bool isClosingOrTerminated() const;
-    bool isOnline() const;
-    bool updatePtr();
-
-    String identifier() const { return m_identifier; }
-    const String& name() const { return m_options.name; }
-
-    void dispatchEvent(Event&);
-    void dispatchCloseEvent(Event&);
     void setKeepAlive(bool);
-
+    void dispatchEvent(Event&);
     void postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&&);
 
-    static void forEachWorker(const Function<Function<void(ScriptExecutionContext&)>()>&);
+    // -- State queries (safe from any thread; all loads are atomic) ----------
+    bool wasTerminated() const { return m_state.load() == State::Closed; }
+    bool hasPendingActivity() const { return m_state.load() != State::Closed; }
+    bool isOnline() const { return m_state.load() == State::Running; }
 
-    void drainEvents();
-    void dispatchOnline(Zig::GlobalObject* workerGlobalObject);
-    // Fire a 'message' event in the Worker for messages that were sent before the Worker started running
-    void fireEarlyMessages(Zig::GlobalObject* workerGlobalObject);
-    void dispatchErrorWithMessage(WTF::String message);
-    // true if successful
-    bool dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value);
-    bool dispatchExit(int32_t exitCode);
+    const String& name() const { return m_options.name; }
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
     ScriptExecutionContextIdentifier clientIdentifier() const { return m_clientIdentifier; }
     WorkerOptions& options() { return m_options; }
 
+    // -- Worker-thread entry points (each posts to m_parentContextId) --------
+    void dispatchOnline(Zig::GlobalObject* workerGlobalObject);
+    void fireEarlyMessages(Zig::GlobalObject* workerGlobalObject);
+    void dispatchErrorWithMessage(WTF::String message);
+    bool dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value);
+    bool dispatchExit(int32_t exitCode);
+
 private:
     Worker(ScriptExecutionContext&, WorkerOptions&&);
+
+    // Post a task to the parent's ScriptExecutionContext by stable identifier.
+    // Returns false if the parent context no longer exists (nested worker whose
+    // middle thread has torn down). Callable from any thread.
+    bool postTaskToParent(Function<void(ScriptExecutionContext&)>&&);
 
     EventTargetInterface eventTargetInterface() const final { return WorkerEventTargetInterfaceType; }
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
     void eventListenersDidChange() final {};
 
-    static void networkStateChanged(bool isOnLine);
-
-    static constexpr uint8_t OnlineFlag = 1 << 0;
-    static constexpr uint8_t ClosingFlag = 1 << 1;
-    static constexpr uint8_t TerminateRequestedFlag = 1 << 0;
-    static constexpr uint8_t TerminatedFlag = 1 << 1;
-
     WorkerOptions m_options;
-    String m_identifier;
-    MonotonicTime m_workerCreationTime;
-    Deque<RefPtr<Event>> m_pendingEvents;
+
+    // Messages posted before the worker reaches Running are queued here and
+    // flushed by fireEarlyMessages(). The Pending→Running transition happens
+    // under this lock so postTaskToWorkerGlobalScope never loses a task.
     Lock m_pendingTasksMutex;
-    Deque<Function<void(ScriptExecutionContext&)>> m_pendingTasks;
-    // Tracks OnlineFlag and ClosingFlag
-    std::atomic<uint8_t> m_onlineClosingFlags { 0 };
-    // Tracks TerminateRequestedFlag and TerminatedFlag
-    std::atomic<uint8_t> m_terminationFlags { 0 };
+    Deque<Function<void(ScriptExecutionContext&)>> m_pendingTasks WTF_GUARDED_BY_LOCK(m_pendingTasksMutex);
+
+    std::atomic<State> m_state { State::Pending };
+    std::atomic<bool> m_terminateRequested { false };
+
+    // Stable for the process lifetime; used with ScriptExecutionContext::
+    // postTaskTo() so the worker thread never dereferences the parent context
+    // pointer (which could be freed concurrently).
+    const ScriptExecutionContextIdentifier m_parentContextId;
+    // This worker's own context identifier (allocated at construction, bound
+    // once the worker VM is up).
     const ScriptExecutionContextIdentifier m_clientIdentifier;
+
+    // Owned Zig WebWorker*. Written once in create(), read only on the parent
+    // thread (terminate/setKeepAlive) or in the close task (also parent thread).
+    // Freed in ~Worker(). Never null once create() returns successfully.
     void* impl_ { nullptr };
 };
 

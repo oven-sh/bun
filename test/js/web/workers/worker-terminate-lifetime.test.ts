@@ -1,6 +1,33 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
+// Regression: `new Worker(url, { ref: false })` was silently ignored — the
+// Zig-side `user_keep_alive` field was set from it but never read, and the
+// parent keep-alive was taken unconditionally in `create()`. `.unref()` after
+// construction worked; the constructor option did not.
+test("new Worker with { ref: false } does not keep the parent alive", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        // The worker never exits on its own; if ref:false is honoured the
+        // parent process exits immediately after spawning it.
+        new Worker("data:text/javascript,setInterval(() => {}, 100000)", { ref: false });
+        console.log("spawned");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("spawned\n");
+  expect(exitCode).toBe(0);
+});
+
 // Regression: the Zig WebWorker struct was freed by the worker thread in
 // exitAndDeinit while the C++ Worker still held a raw impl_ pointer, so a
 // terminate()/ref()/unref() that landed after natural exit dereferenced freed

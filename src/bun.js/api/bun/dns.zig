@@ -84,18 +84,32 @@ const LibInfo = struct {
         const promise_value = request.head.promise.value();
 
         const hints = query.options.toLibC();
-        const errno = getaddrinfo_async_start_(
-            &request.backend.libinfo.machport,
-            name_z.ptr,
-            null,
-            if (hints != null) &hints.? else null,
-            GetAddrInfoRequest.getAddrInfoAsyncCallback,
-            request,
-        );
+        const errno: i32 = if (bun.feature_flag.BUN_FEATURE_FLAG_FORCE_LIBINFO_ASYNC_START_ERROR.get())
+            // Skip the real call so no mach port / callback is registered.
+            -1
+        else
+            getaddrinfo_async_start_(
+                &request.backend.libinfo.machport,
+                name_z.ptr,
+                null,
+                if (hints != null) &hints.? else null,
+                GetAddrInfoRequest.getAddrInfoAsyncCallback,
+                request,
+            );
 
         if (errno != 0) {
             request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(bun.sys.getErrno(errno))})) catch {}; // TODO: properly propagate exception upwards
-            if (request.cache.pending_cache) this.pending_host_cache_native.used.set(request.cache.pos_in_pending);
+            if (request.cache.pending_cache) {
+                // Release the pending-cache slot. `getOrPutIntoPendingCache` already
+                // set the `used` bit via `HiveArray.get`, so failing to unset it here
+                // permanently orphans the slot and leaves `buffer[pos].lookup` pointing
+                // at the request we are about to free (UAF on the next `.inflight` hit).
+                const pos = request.cache.pos_in_pending;
+                this.pending_host_cache_native.buffer[pos] = undefined;
+                this.pending_host_cache_native.used.unset(pos);
+            }
+            // Drop the KeepAlive + resolver ref that `GetAddrInfoRequest.init` took.
+            request.head.deinit();
             this.vm.allocator.destroy(request);
 
             return promise_value;

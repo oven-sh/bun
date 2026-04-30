@@ -204,6 +204,10 @@ pub const feature_flag = struct {
     /// CLI equivalent.
     pub const BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT = newFeatureFlag("BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT", .{});
     pub const BUN_FEATURE_FLAG_FORCE_IO_POOL = newFeatureFlag("BUN_FEATURE_FLAG_FORCE_IO_POOL", .{});
+    /// Test-only: force macOS `getaddrinfo_async_start` to fail synchronously so
+    /// the pending-cache error cleanup in `LibInfo.lookup` is exercised without
+    /// needing to exhaust mach ports.
+    pub const BUN_FEATURE_FLAG_FORCE_LIBINFO_ASYNC_START_ERROR = newFeatureFlag("BUN_FEATURE_FLAG_FORCE_LIBINFO_ASYNC_START_ERROR", .{});
     pub const BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS = newFeatureFlag("BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS", .{});
     pub const BUN_INSTRUMENTS = newFeatureFlag("BUN_INSTRUMENTS", .{});
     pub const BUN_INTERNAL_BUNX_INSTALL = newFeatureFlag("BUN_INTERNAL_BUNX_INSTALL", .{});

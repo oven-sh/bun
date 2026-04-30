@@ -469,11 +469,10 @@ pub fn onError(this: *IOWriter, err__: bun.sys.Error) void {
     log("IOWriter(0x{x}, fd={f}) onError errno={s} errmsg={f} errsyscall={f}", .{ @intFromPtr(this), this.fd, @tagName(ee.getErrno()), ee.message, ee.syscall });
 
     // Move the pending writers out before iterating: the onIOWriterChunk callbacks below
-    // drive the Yield trampoline, which can re-enter enqueue() → this.writers.append().
-    // SmolList promote/realloc would free the backing of any slice captured from
-    // this.writers, so we iterate a moved-out local instead. Re-entrant enqueues land in
-    // the now-empty this.writers and start a fresh write cycle rather than being dropped
-    // by a trailing clearRetainingCapacity().
+    // drive the Yield trampoline, which can re-enter enqueue(). Re-entrant enqueues are
+    // short-circuited by handleBrokenPipe via the stored this.err, but iterating a
+    // moved-out local guarantees slice stability regardless — SmolList promote/realloc
+    // would otherwise free the backing of any slice captured from this.writers.
     const writer_idx = this.writer_idx;
     var writers = this.writers;
     this.writers = .{ .inlined = .{} };

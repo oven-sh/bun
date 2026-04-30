@@ -14,7 +14,11 @@ import { execFileSync } from "node:child_process";
 
 const bunExe = process.argv[2];
 
-const libc = dlopen("libc.so.6", {
+const isMusl = !(process.report.getReport() as { header: { glibcVersionRuntime?: string } }).header
+  .glibcVersionRuntime;
+const libcPath = isMusl ? "/usr/lib/libc.so" : "libc.so.6";
+
+const libc = dlopen(libcPath, {
   socket: { args: ["int", "int", "int"], returns: "int" },
   bind: { args: ["int", "ptr", "int"], returns: "int" },
   listen: { args: ["int", "int"], returns: "int" },

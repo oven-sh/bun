@@ -129,11 +129,10 @@ it("should not mention cd prompt when created in current directory", async () =>
     env,
   });
 
-  await exited;
-
-  const [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+  const [out, err] = await Promise.all([stdout.text(), stderr.text(), exited]);
   if (isGithubRateLimited(err)) return;
 
+  expect(err).not.toContain("error:");
   expect(out).toContain("bun dev");
   expect(out).not.toContain("\n\n  cd \n  bun dev\n\n");
 }, 20_000);
@@ -148,10 +147,9 @@ for (const repo of ["https://github.com/dylan-conway/create-test", "github.com/d
       env,
     });
 
-    const err = await stderr.text();
+    const [out, err] = await Promise.all([stdout.text(), stderr.text()]);
     if (isGithubRateLimited(err)) return;
     expect(err).not.toContain("error:");
-    const out = await stdout.text();
     expect(out).toContain("Success! dylan-conway/create-test loaded into create-test");
     expect(await exists(join(x_dir, "create-test", "node_modules", "jquery"))).toBe(true);
 

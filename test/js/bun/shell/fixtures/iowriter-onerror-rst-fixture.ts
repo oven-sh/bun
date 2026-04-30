@@ -100,7 +100,15 @@ try {
     ],
     {
       stdio: [0, "pipe", cli],
-      env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" },
+      env: {
+        ...process.env,
+        BUN_DEBUG_QUIET_LOGS: "1",
+        // Suppress the WebKit ASAN banner at JSC init — the grandchild's
+        // stderr is the RST'd socket, so a banner write there would consume
+        // the one-shot ECONNRESET (Linux xchg's sk_err to 0 on the first
+        // failing send) and the shell's IOWriter would see EPIPE instead.
+        ASAN_OPTIONS: process.env.ASAN_OPTIONS ?? "allow_user_segv_handler=1:disable_coredump=0",
+      },
       timeout: 10000,
       encoding: "utf8",
     },

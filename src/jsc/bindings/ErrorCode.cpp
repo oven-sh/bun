@@ -217,6 +217,25 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     return created_error;
 }
 
+// Slow path for createError() when the lexical global object is not a
+// Zig::GlobalObject (e.g. it is a node:vm context). Allocates the error in
+// the given realm so that `instanceof Error` works inside that realm and
+// host-realm intrinsics are not exposed via the error's prototype chain.
+// Mirrors the exception handling in ErrorCodeCache::createError above so
+// callers can pass the result directly to throwException().
+static JSObject* createErrorWithoutCache(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, JSValue message)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    const auto& data = errors[static_cast<size_t>(code)];
+    auto* structure = createErrorStructure(vm, globalObject, data.type, data.name, data.code);
+    auto* created_error = JSC::ErrorInstance::create(globalObject, structure, message, jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
+    if (auto* thrown_exception = scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return uncheckedDowncast<JSObject>(thrown_exception->value());
+    }
+    return created_error;
+}
+
 JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
 {
     return errorCache(globalObject)->createError(vm, globalObject, code, jsString(vm, message), jsUndefined());
@@ -232,13 +251,7 @@ JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code,
     if (auto* zigGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject))
         return createError(vm, zigGlobalObject, code, message);
 
-    // The provided global object is not a Zig::GlobalObject (e.g. it is a
-    // node:vm context). Allocate the error in the given realm so that
-    // `instanceof Error` works inside that realm and host-realm intrinsics are
-    // not exposed via the error's prototype chain.
-    const auto& data = errors[static_cast<size_t>(code)];
-    auto* structure = createErrorStructure(vm, globalObject, data.type, data.name, data.code);
-    return JSC::ErrorInstance::create(globalObject, structure, jsString(vm, message), jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
+    return createErrorWithoutCache(vm, globalObject, code, jsString(vm, message));
 }
 
 JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, JSValue message)
@@ -246,8 +259,7 @@ JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code,
     if (auto* zigGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject))
         return createError(vm, zigGlobalObject, code, message, jsUndefined());
 
-    auto* structure = createErrorStructure(vm, globalObject, errors[static_cast<size_t>(code)].type, errors[static_cast<size_t>(code)].name, errors[static_cast<size_t>(code)].code);
-    return JSC::ErrorInstance::create(globalObject, structure, message, jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, errors[static_cast<size_t>(code)].type, true);
+    return createErrorWithoutCache(vm, globalObject, code, message);
 }
 
 JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)

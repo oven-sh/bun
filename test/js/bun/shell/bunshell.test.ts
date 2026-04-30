@@ -1213,9 +1213,10 @@ describe("deno_task", () => {
 
       // Every `cat` here shares the subshell's stdin *IOReader. When EOF fires, each
       // reader's done-handler starts the next `cat` via the Yield trampoline, which calls
-      // addReader() on the same IOReader while onReaderDone is still iterating. The SmolList
-      // backing the readers promotes inlined→heap at 5 entries and reallocs past 8, so
-      // iteration must re-read len()/get() each step instead of capturing slice().
+      // addReader()+start() on the same already-done IOReader. drainReaders() must pop
+      // each entry before dispatching (so the SmolList can mutate safely and addReader's
+      // dedup never matches a freed pointer) and start() must drain late-registered
+      // readers rather than restarting the finished pipe.
       TestBuilder.command`echo hi | (cat && cat && cat && cat && cat && cat && cat && cat && cat && cat && cat && cat)`
         .stdout("hi\n")
         .runAsTest("many readers on shared stdin IOReader");

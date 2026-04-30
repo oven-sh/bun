@@ -20,6 +20,10 @@ concurrent_task: jsc.EventLoopTask,
 async_deinit: AsyncDeinitReader,
 is_reading: if (bun.Environment.isWindows) bool else u0 = if (bun.Environment.isWindows) false else 0,
 started: bool = false,
+/// Re-entrancy guard for `drainReaders()`. `start()` can be reached from
+/// inside a drain (via the Yield trampoline) and must not recurse; the outer
+/// drain loop will pick up any reader appended in the meantime.
+draining: bool = false,
 
 pub const ChildPtr = IOReaderChildPtr;
 pub const ReaderImpl = bun.io.BufferedReader;
@@ -92,11 +96,16 @@ pub fn start(this: *IOReader) Yield {
 
     if (this.is_reading) return .suspended;
     // A reader's done-handler can start a new command that calls `addReader`+`start()`
-    // on this same IOReader from inside `onReaderDone`. On Windows the underlying
+    // on this same IOReader after the pipe has reached EOF. On Windows the underlying
     // BufferedReader has already nulled its `source` by then, so `startWithCurrentPipe`
-    // would unwrap a null optional. There is nothing left to read; the newly-added
-    // reader gets its done notification from `drainReaders()`.
-    if (this.reader.isDone()) return .suspended;
+    // would unwrap a null optional. There is nothing left to read; drain the
+    // newly-registered reader(s) now so they don't hang. `drainReaders()` is
+    // re-entrancy-guarded so calling it from inside an existing drain (via the
+    // Yield trampoline) is a no-op — the outer loop handles the new entry.
+    if (this.reader.isDone()) {
+        this.drainReaders();
+        return .suspended;
+    }
     this.is_reading = true;
     if (this.reader.startWithCurrentPipe().asErr()) |e| {
         this.onReaderError(e);
@@ -200,7 +209,14 @@ pub fn onReaderDone(this: *IOReader) void {
 /// would collide with `addReader`'s pointer-equality dedup if the stale
 /// entry were still in the list. Pop each reader out before dispatching so
 /// neither hazard applies.
+///
+/// Re-entrant calls (reached via `start()` from inside the trampoline) are
+/// no-ops; the outermost loop owns the drain and will pick up anything
+/// appended in the meantime. This keeps the Yield `.run()` nesting bounded.
 fn drainReaders(this: *IOReader) void {
+    if (this.draining) return;
+    this.draining = true;
+    defer this.draining = false;
     while (this.readers.len() > 0) {
         const r = this.readers.get(0).*;
         this.readers.swapRemove(0);

@@ -1,5 +1,3 @@
-tcp: ?*uws.SocketContext = null,
-
 onQueryResolveFn: JSC.Strong.Optional = .empty,
 onQueryRejectFn: JSC.Strong.Optional = .empty,
 
@@ -16,7 +14,6 @@ comptime {
 }
 
 const bun = @import("bun");
-const uws = bun.uws;
 
 const JSC = bun.jsc;
 const JSValue = JSC.JSValue;

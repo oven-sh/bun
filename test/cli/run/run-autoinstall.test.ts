@@ -104,7 +104,7 @@ test("auto-install multiple packages with repeated subpath imports keeps DirInfo
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-i", "index.js"],
     cwd: String(dir),
-    env: { ...bunEnv, BUN_INSTALL: join(String(dir), ".bun") },
+    env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });

@@ -373,6 +373,7 @@
               "/guides/ecosystem/elysia",
               "/guides/ecosystem/express",
               "/guides/ecosystem/hono",
+              "/guides/ecosystem/mcp-server",
               "/guides/ecosystem/mongoose",
               "/guides/ecosystem/neon-drizzle",
               "/guides/ecosystem/neon-serverless-postgres",

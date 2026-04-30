@@ -21,7 +21,9 @@ describe.concurrent("napi", () => {
       process.exit(1);
     }
     console.timeEnd("Building node-gyp");
-  });
+    // node-gyp rebuild can take a while under a debug/ASAN binary; default
+    // 5s hook timeout kills the install subprocess mid-build.
+  }, 120_000);
 
   describe.each(["esm", "cjs"])("bundle .node files to %s via", format => {
     describe.each(["node", "bun"])("target %s", target => {
@@ -556,6 +558,30 @@ describe.concurrent("napi", () => {
 
   it("runs the napi_module_register callback after dlopen finishes", async () => {
     await checkSameOutput("test_constructor_order", []);
+  });
+
+  it("handles napi_module_register called re-entrantly from nm_register_func", async () => {
+    // The init callback of the first static-constructor-registered module
+    // calls napi_module_register() 64 more times. Before the fix, that
+    // appended to the same WTF::Vector the execute loop was range-for
+    // iterating, reallocating it and leaving a dangling iterator for the
+    // second static-constructor-registered module (heap-use-after-free
+    // under ASAN, garbage nm_register_func pointer otherwise).
+    const addonPath = join(__dirname, "napi-app", "build", "Debug", "reentrant_register_addon.node");
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", `require(${JSON.stringify(addonPath)});`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(Boolean)).toEqual([
+      "register_cb_a",
+      "register_cb_b",
+      "register_cb_reentrant x 64",
+    ]);
+    expect(exitCode).toBe(0);
   });
 
   it("behaves as expected when performing operations with an exception pending", async () => {

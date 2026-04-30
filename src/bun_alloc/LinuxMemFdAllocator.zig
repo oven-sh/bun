@@ -170,6 +170,15 @@ pub fn create(bytes: []const u8) bun.sys.Maybe(bun.webcore.Blob.Store.Bytes) {
         }
     }
 
+    // Seal the memfd against shrinking. The backing store is mmap'd
+    // MAP_SHARED; if userspace later ftruncate()s this fd (e.g. via
+    // Bun.file(fd).write() after guessing the descriptor number), writes
+    // to the now-unbacked pages — including std.mem.Allocator.free's
+    // `@memset(ptr, undefined)` in safe builds — would SIGBUS. Ignore
+    // errors: older kernels that reached here via the retry path may
+    // not have MFD_ALLOW_SEALING set, and the store still works.
+    _ = bun.sys.fcntl(fd, F_ADD_SEALS, F_SEAL_SHRINK);
+
     var linux_memfd_allocator = Self.new(.{
         .fd = fd,
         .ref_count = .init(),
@@ -190,6 +199,9 @@ pub fn create(bytes: []const u8) bun.sys.Maybe(bun.webcore.Blob.Store.Bytes) {
 pub fn isInstance(allocator_: std.mem.Allocator) bool {
     return allocator_.vtable == AllocatorInterface.VTable;
 }
+
+const F_ADD_SEALS: i32 = 1033;
+const F_SEAL_SHRINK = 0x0002;
 
 const bun = @import("bun");
 const std = @import("std");

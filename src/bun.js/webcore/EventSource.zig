@@ -370,6 +370,18 @@ pub fn httpCallback(this: *EventSource, async_http: *http.AsyncHTTP, result: htt
                 break;
             }
         }
+        // Per spec, MessageEvent.origin must reflect the *final* URL after
+        // redirects. AsyncHTTP was created with `.follow`, and `metadata.url`
+        // carries that final URL — pick it up so future events and reconnects
+        // target the right place.
+        if (metadata.url.len > 0 and !strings.eql(metadata.url, this.url_href)) {
+            const new_href = bun.handleOom(bun.default_allocator.dupe(u8, metadata.url));
+            bun.default_allocator.free(this.url_href);
+            this.url_href = new_href;
+            this.url = ZigURL.parse(new_href);
+            bun.default_allocator.free(this.origin);
+            this.origin = bun.handleOom(bun.default_allocator.dupe(u8, this.url.origin));
+        }
         metadata.deinit(bun.default_allocator);
     }
 
@@ -532,8 +544,7 @@ fn feed(this: *EventSource, bytes: []const u8) void {
 
     while (i < bytes.len) {
         const slice = bytes[i..];
-        const nl = std.mem.indexOfAny(u8, slice, "\r\n");
-        if (nl) |pos| {
+        if (strings.indexOfAny(slice, "\r\n")) |pos| {
             bun.handleOom(this.line_buffer.appendSlice(bun.default_allocator, slice[0..pos]));
             const line = this.line_buffer.items;
             this.processLine(line);
@@ -914,15 +925,15 @@ pub fn dispatchEvent(this: *EventSource, global: *JSGlobalObject, callframe: *js
         return global.throwInvalidArguments("dispatchEvent requires an Event", .{});
     }
     const event = args[0];
-    const type_val = try event.getTruthy(global, "type") orelse return JSValue.jsBoolean(true);
+    const type_val = try event.getTruthy(global, "type") orelse return .true;
     const type_str = try type_val.toBunString(global);
     defer type_str.deref();
     const type_utf8 = type_str.toUTF8(bun.default_allocator);
     defer type_utf8.deinit();
 
-    const event_loop = this.vm.eventLoop();
-    event_loop.enter();
-    defer event_loop.exit();
+    // This is a JS-callable prototype method, so we're already inside a JS
+    // frame — no event_loop.enter()/exit() here (that pair is for native→JS
+    // entry points like onProgressUpdate).
     this.dispatchToHandlers(type_utf8.slice(), event);
 
     // Per spec: return false if the event is cancelable and preventDefault()

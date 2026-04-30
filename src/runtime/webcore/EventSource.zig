@@ -847,16 +847,15 @@ pub fn dispatchEvent(this: *EventSource, global: *JSGlobalObject, callframe: *js
 const std = @import("std");
 
 const bun = @import("bun");
-const Output = bun.Output;
-const strings = bun.strings;
 const MutableString = bun.MutableString;
-const http = bun.http;
+const Output = bun.Output;
 const ZigURL = bun.URL;
+const http = bun.http;
+const strings = bun.strings;
+const FetchHeaders = bun.webcore.FetchHeaders;
+const EventLoopTimer = bun.api.Timer.EventLoopTimer;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
-const FetchHeaders = bun.webcore.FetchHeaders;
-
-const EventLoopTimer = bun.api.Timer.EventLoopTimer;

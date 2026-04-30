@@ -4071,6 +4071,10 @@ fn fromJSWithoutDeferGC(
     const stack_mem_all = stack_allocator.get();
     var stack: std.array_list.Managed(JSValue) = std.array_list.Managed(JSValue).init(stack_mem_all);
     var joiner = StringJoiner{ .allocator = stack_mem_all };
+    // ArrayBuffer parts are pushCloned into the joiner (heap-duped for anything
+    // past the 1KB stack buffer), and string parts hand their allocator to it.
+    // If a later part's toString()/getter throws, we must release those.
+    errdefer joiner.deinit();
     var could_have_non_ascii = false;
 
     defer if (stack_allocator.fixed_buffer_allocator.end_index >= 1024) stack.deinit();
@@ -4201,8 +4205,8 @@ fn fromJSWithoutDeferGC(
             else => {
                 var sliced = try current.toSlice(global, bun.default_allocator);
                 if (global.hasException()) {
-                    const end_result = try joiner.done(bun.default_allocator);
-                    bun.default_allocator.free(end_result);
+                    // errdefer joiner.deinit() above releases already-joined parts.
+                    sliced.deinit();
                     return error.JSError;
                 }
                 could_have_non_ascii = could_have_non_ascii or !sliced.allocator.isWTFAllocator();

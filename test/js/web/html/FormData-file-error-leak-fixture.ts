@@ -9,24 +9,20 @@
 // This fixture appends one real on-disk file (so its contents are pushed to
 // the joiner via readFile) followed by a Bun.file() pointing at a
 // nonexistent path, then serializes the FormData via `new Response(fd)`.
-// Without the fix, each iteration leaks ~FILE_SIZE bytes.
-
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { writeFileSync, unlinkSync } from "node:fs";
+// Without the fix, each iteration leaks ~<file size> bytes.
+//
+// The scratch file is created and cleaned up by the parent test via
+// `using tempDir(...)` so cleanup is guaranteed even if this process is
+// killed by signal.
 
 const iterations = parseInt(process.env.ITERATIONS || "100", 10);
 const warmup = parseInt(process.env.WARMUP || "10", 10);
-const fileSize = parseInt(process.env.FILE_SIZE || String(256 * 1024), 10);
+const realPath = process.env.REAL_PATH;
+const missingPath = process.env.MISSING_PATH;
 
-const realPath = join(tmpdir(), `formdata-leak-real-${process.pid}.bin`);
-const missingPath = join(tmpdir(), `formdata-leak-missing-${process.pid}.bin`);
-writeFileSync(realPath, Buffer.alloc(fileSize, "a"));
-process.on("exit", () => {
-  try {
-    unlinkSync(realPath);
-  } catch {}
-});
+if (!realPath || !missingPath) {
+  throw new Error("REAL_PATH and MISSING_PATH env vars required");
+}
 
 function iterate() {
   const fd = new FormData();
@@ -55,7 +51,6 @@ Bun.gc(true);
 const finalRss = process.memoryUsage.rss();
 
 const growthMB = (finalRss - baselineRss) / (1024 * 1024);
-const leakedPerIterMB = fileSize / (1024 * 1024);
 
 console.log(
   JSON.stringify({
@@ -63,6 +58,5 @@ console.log(
     finalRss,
     growthMB: Math.round(growthMB * 100) / 100,
     iterations,
-    expectedLeakMB: Math.round(leakedPerIterMB * iterations * 100) / 100,
   }),
 );

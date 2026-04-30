@@ -22,6 +22,7 @@ pub const Task = TaggedPointerUnion(.{
     CopyFilePromiseTask,
     CppTask,
     Exists,
+    EventSource,
     Fchmod,
     FChown,
     Fdatasync,
@@ -219,6 +220,10 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, co
             @field(Task.Tag, @typeName(FetchTasklet)) => {
                 var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
                 try fetch_task.onProgressUpdate();
+            },
+            @field(Task.Tag, @typeName(EventSource)) => {
+                var es: *EventSource = task.get(EventSource).?;
+                es.onProgressUpdate();
             },
             @field(Task.Tag, @typeName(S3HttpSimpleTask)) => {
                 var s3_task: *S3HttpSimpleTask = task.get(S3HttpSimpleTask).?;
@@ -560,6 +565,7 @@ const log = bun.Output.scoped(.Task, .hidden);
 
 const Fetch = @import("../webcore/fetch.zig");
 const FetchTasklet = Fetch.FetchTasklet;
+const EventSource = @import("../webcore/EventSource.zig");
 
 const JSCScheduler = @import("./JSCScheduler.zig");
 const JSCDeferredWorkTask = JSCScheduler.JSCDeferredWorkTask;

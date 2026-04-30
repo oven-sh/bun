@@ -17,6 +17,7 @@ pub const AbortSignal = @import("./bindings/AbortSignal.zig").AbortSignal;
 pub const WebWorker = @import("./web_worker.zig");
 pub const AutoFlusher = @import("./webcore/AutoFlusher.zig");
 pub const EncodingLabel = @import("./webcore/EncodingLabel.zig").EncodingLabel;
+pub const EventSource = @import("./webcore/EventSource.zig");
 pub const Fetch = @import("./webcore/fetch.zig");
 pub const Response = @import("./webcore/Response.zig");
 pub const BakeResponse = @import("./webcore/BakeResponse.zig");

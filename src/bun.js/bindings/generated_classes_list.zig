@@ -58,6 +58,7 @@ pub const Classes = struct {
     pub const UDPSocket = api.UDPSocket;
     pub const SocketAddress = api.SocketAddress;
     pub const TextDecoder = webcore.TextDecoder;
+    pub const EventSource = webcore.EventSource;
     pub const Timeout = api.Timer.TimeoutObject;
     pub const Immediate = api.Timer.ImmediateObject;
     pub const BuildArtifact = api.BuildArtifact;

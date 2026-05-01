@@ -1,7 +1,7 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isWindows, joinP, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -443,4 +443,44 @@ describe("When CJS and ESM are mixed", () => {
     const { stderr } = bunRun(fixturePath);
     expect(stderr).toBeEmpty();
   });
+});
+
+// The "browser" map resolver copied the normalized input path into a 512-byte
+// threadlocal buffer without a bounds check. Paths inside deep directory trees
+// can easily exceed 512 bytes while still being well under MAX_PATH_BYTES.
+it.skipIf(isWindows)("browser map resolution handles relative paths longer than 512 bytes", async () => {
+  // Build a nested relative path longer than 512 bytes. Each component stays
+  // well under NAME_MAX and the absolute path stays well under MAX_PATH_BYTES.
+  const segments: string[] = [];
+  let len = 0;
+  while (len <= 520) {
+    const seg = "nested-directory-" + segments.length;
+    segments.push(seg);
+    len += seg.length + 1;
+  }
+  const deep = segments.join("/");
+  expect(deep.length).toBeGreaterThan(512);
+
+  using dir = tempDir("resolver-browser-long-path", {
+    "package.json": JSON.stringify({
+      name: "pkg",
+      browser: { "./unused.js": "./unused.js" },
+    }),
+    "entry.js": `import {x} from "./${deep}/target.js"; console.log(x);`,
+    [`${deep}/target.js`]: `export const x = 42;`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--target=browser", "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toContain("42");
+  expect(exitCode).toBe(0);
 });

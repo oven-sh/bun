@@ -1,8 +1,8 @@
 //! Opt-in self-termination when our parent goes away, plus recursive
 //! descendant cleanup on exit.
 //!
-//! Enabled via env var `BUN_FEATURE_FLAG_DIE_WITH_PARENT` or
-//! `bunfig.toml` `[run] dieWithParent = true`. When set, Bun:
+//! Enabled via env var `BUN_FEATURE_FLAG_NO_ORPHANS`, `--no-orphans`, or
+//! `bunfig.toml` `[run] noOrphans = true`. When set, Bun:
 //!
 //!   1. Captures its original parent pid at startup and exits as soon as that
 //!      parent is gone — even if the parent was SIGKILLed and never got a
@@ -36,17 +36,78 @@ pub const ParentDeathWatchdog = @This();
 
 /// Exit code used when the watchdog fires. 128 + SIGHUP, matching the
 /// convention for "terminated because the controlling end went away".
-const exit_code: u8 = 128 + 1;
+pub const exit_code: u8 = 128 + 1;
 
 var enabled: bool = false;
 var original_ppid: std.c.pid_t = 0;
 var install_thread_id: std.Thread.Id = 0;
 
-/// Whether `BUN_FEATURE_FLAG_DIE_WITH_PARENT` was set at startup. Read by the spawn path to
+/// Whether no-orphans mode was enabled at startup. Read by the spawn path to
 /// decide whether to default `linux_pdeathsig` on children.
 pub fn isEnabled() bool {
     return enabled;
 }
+
+/// The original parent pid to watch from contexts that have no event loop
+/// (`bun run` blocking in `spawnSync`, etc.). Returns null when no-orphans
+/// isn't enabled or there is no parent worth watching. Both Linux and macOS
+/// use this from `spawnSync` so the pgroup-kill cleanup path runs even though
+/// Linux already has a SIGKILL PDEATHSIG backstop.
+pub fn ppidToWatch() ?std.c.pid_t {
+    if (comptime !Environment.isPosix) return null;
+    if (!enabled or original_ppid <= 1) return null;
+    return original_ppid;
+}
+
+/// `bun run`/`bunx` set this to the script's pgid (= script pid, since we
+/// `setpgid(0,0)` in the child) so the exit callback can `kill(-pgid, KILL)`.
+/// Process-group membership survives reparenting to launchd/init, so this
+/// reaches grandchildren that the libproc/procfs walk would miss once the
+/// script itself has exited. Stack-disciplined for nested `spawnSync` (e.g.
+/// `pre`/`post` lifecycle scripts) — though in practice depth is 1.
+var sync_pgids_buf: [4]std.c.pid_t = .{0} ** 4;
+var sync_pgids: []std.c.pid_t = sync_pgids_buf[0..0];
+
+/// Returns true if the push was recorded; caller must pop iff true. Depth >4
+/// would lose stack discipline if push were a silent no-op while pop wasn't.
+pub fn pushSyncPgid(pgid: std.c.pid_t) bool {
+    if (comptime !Environment.isPosix) return false;
+    if (sync_pgids.len >= sync_pgids_buf.len) return false;
+    sync_pgids.len += 1;
+    sync_pgids[sync_pgids.len - 1] = pgid;
+    return true;
+}
+
+pub fn popSyncPgid() void {
+    if (comptime !Environment.isPosix) return;
+    if (sync_pgids.len > 0) sync_pgids.len -= 1;
+}
+
+/// SIGKILL every registered script pgroup + the macOS uniqueid-tracked set.
+/// Scoped to the `spawnSync` script(s) — does NOT call `killDescendants()`,
+/// which is rooted at `getpid()` and would take out unrelated `Bun.spawn`
+/// siblings when `spawnSync` is reached from inside a live VM (e.g.
+/// `ffi.zig:getSystemRootDirOnce` shelling out to `xcrun`).
+pub fn killSyncScriptTree() void {
+    if (comptime !Environment.isPosix) return;
+    for (sync_pgids) |pgid| {
+        if (pgid > 1) _ = std.c.kill(-pgid, std.posix.SIG.KILL);
+    }
+    if (comptime Environment.isMac) Bun__noOrphans_killTracked();
+    // Linux: subreaper-adopted setsid escapees are killed by
+    // `killSubreaperAdoptees()` in `spawnPosix`'s disarm defer (which can
+    // tell them apart from `Bun.spawn` siblings via the pre-arm snapshot).
+}
+
+/// Full-process teardown: pgroups + tracked + getpid()-rooted tree.
+/// Only safe to call when the whole Bun process is exiting.
+fn killSyncPgroupsAndDescendants() void {
+    if (comptime !Environment.isPosix) return;
+    killSyncScriptTree();
+    killDescendants();
+}
+
+extern "c" fn Bun__noOrphans_killTracked() void;
 
 /// Whether the spawn-side `linux_pdeathsig` default should apply to a child
 /// being spawned *right now*. `PR_SET_PDEATHSIG` is thread-scoped: it fires
@@ -66,23 +127,33 @@ var instance: ParentDeathWatchdog = .{};
 
 /// Called from `main()` before the CLI starts. Checks the env var and enables
 /// the watchdog as early as possible so the Linux `prctl` window is minimal.
-/// `bunfig.toml`'s `[run] dieWithParent` calls `enable()` directly later in
-/// startup if the env var wasn't set.
+/// `bunfig.toml`'s `[run] noOrphans` and the `--no-orphans` flag call
+/// `enable()` directly later in startup if the env var wasn't set.
 pub fn install() void {
     if (comptime !Environment.isPosix) return;
-    if (!bun.env_var.BUN_FEATURE_FLAG_DIE_WITH_PARENT.get()) return;
+    if (!bun.env_var.BUN_FEATURE_FLAG_NO_ORPHANS.get()) return;
     enable();
 }
 
 /// Idempotent. Arms the watchdog: Linux `prctl(PR_SET_PDEATHSIG)`, exit-time
 /// descendant reaper, and (lazily) the macOS kqueue parent watch. Safe to call
-/// from `main()` (env-var path) and again from bunfig parsing.
+/// from `main()` (env-var path) and again from bunfig / CLI flag parsing.
 pub fn enable() void {
     if (comptime !Environment.isPosix) return;
     if (enabled) return;
 
     enabled = true;
     install_thread_id = std.Thread.getCurrentId();
+    // Export the env var so any Bun child we spawn (e.g. `bun run` → script →
+    // nested bun) inherits no-orphans mode without the parent having to thread
+    // the flag through. No-op if we got here via the env var.
+    _ = setenv("BUN_FEATURE_FLAG_NO_ORPHANS", "1", 1);
+
+    // PR_SET_CHILD_SUBREAPER is NOT armed here — it's process-wide and would
+    // make every orphaned grandchild reparent to us, but only the spawnSync
+    // wait loop has a `wait4(-1, WNOHANG)` to reap them. `bun foo.js` /
+    // `--filter` / `bun test` would accumulate zombies. Subreaper is armed
+    // per-script in `spawnPosix` (just before the spawn) and cleared on return.
     // Descendant cleanup runs on every clean exit regardless of whether we end
     // up watching a parent (Bun may have been spawned directly by launchd/init).
     bun.Global.addExitCallback(&onProcessExit);
@@ -157,7 +228,7 @@ pub fn onParentExit(_: *ParentDeathWatchdog) void {
 /// (atexit on macOS, at_quick_exit on Linux, and the explicit `Global.exit`
 /// path). C calling convention because that's the exit-callback ABI.
 fn onProcessExit() callconv(.c) void {
-    killDescendants();
+    killSyncPgroupsAndDescendants();
 }
 
 /// Walk the process tree rooted at `getpid()` and SIGKILL every descendant.
@@ -215,6 +286,106 @@ pub fn killDescendants() void {
     }
 
     // Reverse: leaves first. SIGKILL terminates stopped processes directly.
+    var i = to_kill.items.len;
+    while (i > 0) {
+        i -= 1;
+        _ = std.c.kill(to_kill.items[i], std.posix.SIG.KILL);
+    }
+}
+
+/// Linux-only: enumerate our direct children into `out`. Used by `spawnPosix`
+/// to snapshot pre-existing siblings before arming subreaper, so the post-wait
+/// `killSubreaperAdoptees` can tell adopted orphans apart from `Bun.spawn`
+/// siblings (both have ppid==us). Returns the slice written; empty on
+/// non-Linux or enumeration failure.
+pub fn snapshotChildren(out: []std.c.pid_t) []const std.c.pid_t {
+    if (comptime !Environment.isLinux) return out[0..0];
+    return out[0 .. listChildPids(std.c.getpid(), out) orelse 0];
+}
+
+/// Linux-only: SIGKILL every direct child of ours that isn't in `siblings`,
+/// plus its entire subtree. Called from `spawnPosix`'s defer *before*
+/// disarming subreaper, so subreaper-adopted setsid daemons (ppid==us) are
+/// killed while we can still find them — closing the window where the
+/// daemon's intermediate parent exits between disarm and `onProcessExit` →
+/// `killDescendants()` and the daemon escapes to init.
+///
+/// `siblings` is the pre-arm `snapshotChildren()` set; anything not in it was
+/// either the script (already reaped) or adopted via subreaper during this
+/// spawnSync. A `Bun.spawn` from a Worker thread *during* spawnSync would
+/// also land here and be killed — `--no-orphans` is opt-in aggressive cleanup
+/// and would kill it at process-exit via `killDescendants()` anyway.
+pub fn killSubreaperAdoptees(siblings: []const std.c.pid_t) void {
+    if (comptime !Environment.isLinux) return;
+
+    const self_pid = std.c.getpid();
+    var buf: [4096]std.c.pid_t = undefined;
+
+    // Iterate: kill non-sibling direct children's subtrees, reap, re-read.
+    // After we kill an adoptee's subtree, anything that raced (forked between
+    // enumerate and STOP) reparents to us and shows up next pass. Bounded by
+    // tree depth; 64 is far past any sane chain.
+    var rounds: u8 = 64;
+    while (rounds > 0) : (rounds -= 1) {
+        const n = listChildPids(self_pid, &buf) orelse return;
+        var killed_any = false;
+        for (buf[0..n]) |child| {
+            if (child <= 1 or child == self_pid) continue;
+            if (std.mem.indexOfScalar(std.c.pid_t, siblings, child) != null) continue;
+            killTreeRootedAt(child, self_pid);
+            killed_any = true;
+        }
+        // Reap what we just killed so their children (if any raced) reparent.
+        while (true) {
+            var st: c_int = undefined;
+            if (std.c.waitpid(-1, &st, std.posix.W.NOHANG) <= 0) break;
+        }
+        if (!killed_any) return;
+    }
+}
+
+/// Freeze-walk-kill the subtree rooted at `root` (inclusive). Same SIGSTOP +
+/// ppid-verify + leaves-first-SIGKILL discipline as `killDescendants()`, just
+/// not rooted at ourselves. `expected_ppid_of_root` lets the caller verify
+/// `root` itself before recursing (ppid==us for subreaper adoptees).
+fn killTreeRootedAt(root: std.c.pid_t, expected_ppid_of_root: std.c.pid_t) void {
+    if (comptime !Environment.isPosix) return;
+
+    var to_visit: std.ArrayListUnmanaged(std.c.pid_t) = .{};
+    defer to_visit.deinit(bun.default_allocator);
+    var to_kill: std.ArrayListUnmanaged(std.c.pid_t) = .{};
+    defer to_kill.deinit(bun.default_allocator);
+
+    if (std.c.kill(root, std.posix.SIG.STOP) != 0) return;
+    if (parentPidOf(root) != expected_ppid_of_root) {
+        _ = std.c.kill(root, std.posix.SIG.CONT);
+        return;
+    }
+    to_kill.append(bun.default_allocator, root) catch {
+        _ = std.c.kill(root, std.posix.SIG.KILL);
+        return;
+    };
+    to_visit.append(bun.default_allocator, root) catch {};
+
+    var buf: [4096]std.c.pid_t = undefined;
+    while (to_visit.items.len > 0 and to_kill.items.len < 4096) {
+        const parent = to_visit.swapRemove(to_visit.items.len - 1);
+        const n = listChildPids(parent, &buf) orelse continue;
+        for (buf[0..n]) |child| {
+            if (child <= 1) continue;
+            if (std.c.kill(child, std.posix.SIG.STOP) != 0) continue;
+            if (parentPidOf(child) != parent) {
+                _ = std.c.kill(child, std.posix.SIG.CONT);
+                continue;
+            }
+            to_kill.append(bun.default_allocator, child) catch {
+                _ = std.c.kill(child, std.posix.SIG.KILL);
+                break;
+            };
+            to_visit.append(bun.default_allocator, child) catch break;
+        }
+    }
+
     var i = to_kill.items.len;
     while (i > 0) {
         i -= 1;
@@ -320,6 +491,8 @@ fn readFileOnce(path: [:0]const u8, buf: []u8) ?[]const u8 {
         .err => null,
     };
 }
+
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
 
 const std = @import("std");
 

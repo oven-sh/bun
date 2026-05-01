@@ -47,9 +47,14 @@ ws_upgrade_group: uws.SocketGroup = .{},
 ws_upgrade_tls_group: uws.SocketGroup = .{},
 ws_client_group: uws.SocketGroup = .{},
 ws_client_tls_group: uws.SocketGroup = .{},
-/// Default `SSL_CTX*` for the WS client / Valkey TLS path when no custom CA
-/// is supplied. Built once on first use; replaces the `valkey_context.tls` /
-/// shared C++ WS context.
+/// Weak digest→`SSL_CTX*` cache. Every JS-thread consumer that turns an
+/// `SSLConfig` into an `SSL_CTX*` goes through here so identical configs
+/// share one CTX (Postgres pool, Valkey, `Bun.connect`, `tls.connect`, …).
+ssl_ctx_cache: api.SSLContextCache = .{},
+
+/// `ssl_ctx_cache.getOrCreate(&.{})` — i.e. the default-trust-store client
+/// CTX. Cached separately so the hot `tls:true` / `wss://` path skips even the
+/// SHA-256 + map lookup. Ref owned here.
 default_client_ssl_ctx: ?*uws.SslCtx = null,
 
 mime_types: ?bun.http.MimeType.Map = null,
@@ -725,6 +730,10 @@ pub fn wsClientGroup(rare: *RareData, vm: *jsc.VirtualMachine, comptime ssl: boo
     return rare.lazyGroup(vm, if (ssl) "ws_client_tls_group" else "ws_client_group");
 }
 
+pub fn sslCtxCache(rare: *RareData) *api.SSLContextCache {
+    return &rare.ssl_ctx_cache;
+}
+
 /// Shared `SSL_CTX*` for client connects that didn't supply a custom CA
 /// (`Valkey({tls: true})`, `new WebSocket("wss://…")`). The old code allocated
 /// a fresh `us_socket_context_t` per such case and cached the pointer; now
@@ -735,14 +744,12 @@ pub fn defaultClientSslCtx(rare: *RareData) *uws.SslCtx {
         // Mode-neutral CTX (VERIFY_NONE). `us_internal_ssl_attach` overrides
         // each client SSL to VERIFY_PEER + the shared bundled-root store, so
         // `new WebSocket("wss://…")` (which shares this CTX and defaults to
-        // rejectUnauthorized:true) verifies real servers. The store is built
-        // once via `std::call_once` and only up_ref'd thereafter — the
-        // ~150-cert cost is paid on the first TLS connect of the process, not
-        // per-connect. (An earlier attempt set VERIFY_PEER on the CTX to skip
-        // that cold load for `Bun.connect({tls:true})`; wrong: it left wss://
-        // with no roots and `rejectUnauthorized` failed every public host.
-        // The cold-load is a one-time debug-build cost; correctness wins.)
-        rare.default_client_ssl_ctx = (uws.SocketContext.BunSocketContextOptions{}).createSSLContext(&err) orelse bun.Output.panic(
+        // rejectUnauthorized:true) verifies real servers. Route through the
+        // weak cache so a `tls.connect()` with default options later resolves
+        // to the same CTX rather than building a second one with the same
+        // digest. The +1 ref returned here is held for the VM's lifetime, so
+        // the entry never tombstones.
+        rare.default_client_ssl_ctx = rare.ssl_ctx_cache.getOrCreateOpts(.{}, &err) orelse bun.Output.panic(
             "default client SSL_CTX init failed: {s}",
             .{err.message() orelse "unknown"},
         );
@@ -857,6 +864,11 @@ pub fn deinit(this: *RareData) void {
     this.valkey_context.deinit();
 
     if (this.default_client_ssl_ctx) |s| bun.BoringSSL.c.SSL_CTX_free(s);
+    // After the default-ctx free so the tombstone callback still finds a live
+    // map; deinit then clears every remaining entry's ex_data so any later
+    // SSL_CTX_free (from sockets that survive RareData) doesn't deref freed
+    // Entries.
+    this.ssl_ctx_cache.deinit();
     // closeAllSocketGroups() must have already run (before JSC teardown) so
     // these are empty; deinit() asserts that in debug.
     inline for (socket_group_fields) |f| @field(this, f).deinit();

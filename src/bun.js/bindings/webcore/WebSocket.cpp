@@ -337,7 +337,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     return socket;
 }
 
-ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, void* sslConfig, bool offerPerMessageDeflate)
+ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate)
 {
     if (url.isNull())
         return Exception { SyntaxError };
@@ -347,7 +347,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
         return proxyConfigResult.releaseException();
 
     auto socket = adoptRef(*new WebSocket(context));
-    socket->m_sslConfig = sslConfig; // Set BEFORE connect() so it's available during connection
+    socket->m_sslConfig = WTF::move(sslConfig); // Set BEFORE connect() so it's available during connection
     socket->setOfferPerMessageDeflate(offerPerMessageDeflate);
 
     auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue());
@@ -357,7 +357,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     return socket;
 }
 
-ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, void* sslConfig, bool offerPerMessageDeflate)
+ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate)
 {
     if (url.isNull())
         return Exception { SyntaxError };
@@ -368,7 +368,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
 
     auto socket = adoptRef(*new WebSocket(context));
     socket->setRejectUnauthorized(rejectUnauthorized);
-    socket->m_sslConfig = sslConfig; // Set BEFORE connect() so it's available during connection
+    socket->m_sslConfig = WTF::move(sslConfig); // Set BEFORE connect() so it's available during connection
     socket->setOfferPerMessageDeflate(offerPerMessageDeflate);
 
     auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue());
@@ -696,8 +696,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
 
     // Pass SSLConfig pointer to Zig (ownership transferred - Zig will deinit when connection closes)
     // After this call, m_sslConfig should not be used by C++ anymore
-    void* sslConfig = m_sslConfig;
-    m_sslConfig = nullptr; // Transfer ownership
+    void* sslConfig = m_sslConfig.release();
 
     // Use TLS client based on connection type:
     // - TLS/ProxyTLS: use TLS socket

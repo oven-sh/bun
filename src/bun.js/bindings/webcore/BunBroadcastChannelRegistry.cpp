@@ -36,13 +36,18 @@ void BunBroadcastChannelRegistry::unsubscribe(const String& name, BroadcastChann
 
 void BunBroadcastChannelRegistry::post(const String& name, BroadcastChannel& source, Ref<SerializedScriptValue>&& message)
 {
-    // Resolve subscribers to strong refs under the lock, then fan out
-    // without holding it — postTaskTo takes the contexts-map lock and we
-    // don't want to nest. Collecting straight into strong refs (rather
-    // than copying the Subscriber vector and its ThreadSafeWeakPtrs) keeps
-    // this to one CAS per target; inline capacity covers the common small
-    // subscriber count without a heap allocation.
-    Vector<std::pair<ScriptExecutionContextIdentifier, Ref<BroadcastChannel>>, 4> targets;
+    // Snapshot subscribers under the lock, then fan out without holding it
+    // — postTaskTo takes the contexts-map lock and we don't want to nest.
+    //
+    // We deliberately carry ThreadSafeWeakPtr (not Ref) across the fan-out
+    // and resolve it INSIDE the posted task on the target thread. Holding a
+    // strong ref here can make this thread the last owner if the target is
+    // a worker that tears down concurrently (its JS wrapper's deref + its
+    // queued task's deref both happen on the worker thread, leaving our
+    // local ref as the last), and ~BroadcastChannel → ~EventTarget →
+    // EventListenerMap::clear() would then fire on the wrong thread and
+    // trip releaseAssertOrSetThreadUID.
+    Vector<std::pair<ScriptExecutionContextIdentifier, ThreadSafeWeakPtr<BroadcastChannel>>, 4> targets;
     {
         Locker locker { m_lock };
         auto it = m_subscribers.find(name);
@@ -55,25 +60,19 @@ void BunBroadcastChannelRegistry::post(const String& name, BroadcastChannel& sou
         for (auto& sub : it->value) {
             if (sub.identity == &source)
                 continue;
-            if (RefPtr channel = sub.channel.get())
-                targets.append({ sub.ctxId, channel.releaseNonNull() });
+            targets.append({ sub.ctxId, sub.channel });
         }
     }
 
     // One task per (message, subscriber), queued in subscription order.
     // Same-context subscribers share a task queue, so this preserves the
     // spec-mandated (message-major, creation-minor) delivery order.
-    for (auto& [ctxId, channel] : targets) {
-        // Keep the channel alive for GC until the task runs.
-        channel->m_state.fetch_add(BroadcastChannel::QueuedOne, std::memory_order_acq_rel);
-        bool posted = ScriptExecutionContext::postTaskTo(ctxId, [channel = channel.copyRef(), message = message.copyRef()](ScriptExecutionContext&) mutable {
-            channel->dispatchMessage(WTF::move(message));
+    for (auto& [ctxId, weakChannel] : targets) {
+        ScriptExecutionContext::postTaskTo(ctxId, [weakChannel, message = message.copyRef()](ScriptExecutionContext&) mutable {
+            // Resolve on the target thread so any last deref happens here.
+            if (RefPtr channel = weakChannel.get())
+                channel->dispatchMessage(WTF::move(message));
         });
-        if (!posted) {
-            // Context is already gone; balance the count so a subsequent
-            // close() doesn't leave the channel looking busy forever.
-            channel->m_state.fetch_sub(BroadcastChannel::QueuedOne, std::memory_order_acq_rel);
-        }
     }
 }
 

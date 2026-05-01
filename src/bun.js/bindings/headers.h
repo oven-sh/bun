@@ -633,6 +633,8 @@ ZIG_DECL size_t Bun__WebSocketHTTPSClient__memoryCost(WebSocketHTTPSClient* arg0
 
 // Parse TLS options from JavaScript object using SSLConfig.fromJS
 ZIG_DECL void* Bun__WebSocket__parseSSLConfig(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue tlsValue);
+// Free an SSLConfig previously returned by Bun__WebSocket__parseSSLConfig
+ZIG_DECL void Bun__WebSocket__freeSSLConfig(void* sslConfig);
 #endif
 
 #ifdef __cplusplus

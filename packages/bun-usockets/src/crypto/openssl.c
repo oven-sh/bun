@@ -115,6 +115,7 @@ long us_ssl_ctx_live_count(void) {
  * the same via std::call_once.) */
 static int us_ctx_ex_idx = -1;
 static int us_sni_ex_idx = -1;
+static int us_ctx_cache_ex_idx = -1;
 static int us_ssl_reneg_state_idx = -1;
 static int us_ssl_listener_ex_idx = -1;
 #ifdef _WIN32
@@ -144,9 +145,16 @@ static void us_ssl_reneg_state_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
   us_free(ptr);
 }
 
+/* Defined in Zig (`SSLContextCache.zig`): tombstones the cache entry on
+ * SSL_CTX refcount→0 so the per-VM weak SSL_CTX cache learns the pointer is
+ * dead without holding a ref of its own. */
+extern void bun_ssl_ctx_cache_on_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                                      int index, long argl, void *argp);
+
 static void us_ex_idx_init(void) {
   us_ctx_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, us_ctx_ex_free);
   us_sni_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ctx_cache_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, bun_ssl_ctx_cache_on_free);
   us_ssl_reneg_state_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_reneg_state_free);
   us_ssl_listener_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
 }
@@ -170,6 +178,11 @@ static inline void us_ex_idx_ensure(void) {
 static inline int us_ssl_ctx_ex_idx(void) {
   us_ex_idx_ensure();
   return us_ctx_ex_idx;
+}
+
+int us_ssl_ctx_cache_ex_idx(void) {
+  us_ex_idx_ensure();
+  return us_ctx_cache_ex_idx;
 }
 
 static inline void us_reneg_policy(SSL *ssl, uint32_t *limit, uint32_t *window) {
@@ -1247,7 +1260,10 @@ int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
   SSL_CTX_set_ex_data(ctx, us_sni_ex_idx, user);
 
   if (sni_add(ls->sni, hostname_pattern, node)) {
+    /* Duplicate hostname — propagate so App.h's `if (result != 0)` rollback
+     * (which frees the per-domain HttpRouter it just built) actually fires. */
     sni_node_destructor(node);
+    return 1;
   }
   return 0;
 }

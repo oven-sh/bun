@@ -280,7 +280,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             const secure_ptr: ?*uws.SslCtx = if (comptime ssl) brk: {
                 if (ssl_config) |config| if (config.requires_custom_request_ctx) {
                     var err: uws.create_bun_socket_error_t = .none;
-                    const ctx = config.asUSocketsForClientVerification().createSSLContext(&err) orelse {
+                    // Per-VM weak cache: every `new WebSocket(wss://, {tls:{ca}})`
+                    // with the same CA shares one CTX with each other and with
+                    // any `Bun.connect`/Postgres/etc. that named it.
+                    const ctx = vm.rareData().sslCtxCache().getOrCreateOpts(config.asUSocketsForClientVerification(), &err) orelse {
                         // Do NOT fall through to the default trust store — the
                         // user passed an explicit CA/cert and BoringSSL
                         // rejected it. Swapping in system roots would let the
@@ -1519,8 +1522,19 @@ pub fn parseSSLConfig(
     return null;
 }
 
+/// Free an SSLConfig previously returned by `parseSSLConfig`.
+/// Exported for C++ so error/early-return paths in JSWebSocket.cpp and
+/// WebSocket.cpp can release ownership without leaking the heap allocation
+/// (and all duped cert/key/CA strings inside it) when `connect()` never
+/// hands the pointer off to a Zig upgrade client.
+pub fn freeSSLConfig(config: *SSLConfig) callconv(.c) void {
+    config.deinit();
+    bun.default_allocator.destroy(config);
+}
+
 comptime {
     @export(&parseSSLConfig, .{ .name = "Bun__WebSocket__parseSSLConfig" });
+    @export(&freeSSLConfig, .{ .name = "Bun__WebSocket__freeSSLConfig" });
 }
 
 const WebSocketDeflate = @import("./WebSocketDeflate.zig");

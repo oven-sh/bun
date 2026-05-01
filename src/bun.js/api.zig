@@ -25,6 +25,7 @@ pub const TLSSocket = @import("./api/bun/socket.zig").TLSSocket;
 pub const SocketHandlers = @import("./api/bun/socket.zig").Handlers;
 pub const NewSocket = @import("./api/bun/socket.zig").NewSocket;
 pub const SecureContext = @import("./api/bun/SecureContext.zig");
+pub const SSLContextCache = @import("./api/bun/SSLContextCache.zig");
 
 pub const Subprocess = @import("./api/bun/subprocess.zig");
 pub const cron = @import("./api/cron.zig");

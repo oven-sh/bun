@@ -95,7 +95,17 @@ const LibInfo = struct {
 
         if (errno != 0) {
             request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(bun.sys.getErrno(errno))})) catch {}; // TODO: properly propagate exception upwards
-            if (request.cache.pending_cache) this.pending_host_cache_native.used.set(request.cache.pos_in_pending);
+            if (request.cache.pending_cache) {
+                // Release the pending-cache slot. `getOrPutIntoPendingCache` already
+                // set the `used` bit via `HiveArray.get`, so failing to unset it here
+                // permanently orphans the slot and leaves `buffer[pos].lookup` pointing
+                // at the request we are about to free (UAF on the next `.inflight` hit).
+                const pos = request.cache.pos_in_pending;
+                this.pending_host_cache_native.buffer[pos] = undefined;
+                this.pending_host_cache_native.used.unset(pos);
+            }
+            // Drop the KeepAlive + resolver ref that `GetAddrInfoRequest.init` took.
+            request.head.deinit();
             this.vm.allocator.destroy(request);
 
             return promise_value;
@@ -2527,7 +2537,7 @@ pub const Resolver = struct {
 
             const poll: *UvDnsPoll = poll_entry.value_ptr.*;
 
-            const uv_events = if (readable) uv.UV_READABLE else 0 | if (writable) uv.UV_WRITABLE else 0;
+            const uv_events = (if (readable) uv.UV_READABLE else 0) | (if (writable) uv.UV_WRITABLE else 0);
             if (uv.uv_poll_start(&poll.poll, uv_events, onDNSPollUv) < 0) {
                 _ = this.polls.swapRemove(fd);
                 uv.uv_close(@ptrCast(&poll.poll), onCloseUv);
@@ -2554,11 +2564,37 @@ pub const Resolver = struct {
 
             var poll = poll_entry.value_ptr.*;
 
-            if (readable and !poll.flags.contains(.poll_readable))
-                _ = poll.register(vm.event_loop_handle.?, .readable, false);
+            // c-ares reports the full desired (readable, writable) set for this
+            // fd; sync the poll's registration to match. FilePoll now supports
+            // both directions on one poll (epoll: combined mask via CTL_MOD;
+            // kqueue: two filters on the same ident, both EV_DELETEd on
+            // unregister).
+            const loop = vm.event_loop_handle.?;
+            const have_readable = poll.flags.contains(.poll_readable);
+            const have_writable = poll.flags.contains(.poll_writable);
 
-            if (writable and !poll.flags.contains(.poll_writable))
-                _ = poll.register(vm.event_loop_handle.?, .writable, false);
+            if ((have_readable and !readable) or (have_writable and !writable)) {
+                // Dropping a direction. FilePoll has no per-direction
+                // unregister (epoll CTL_DEL removes both; a targeted kqueue
+                // EV_DELETE would need a new API), and leaving the unwanted
+                // direction armed would busy-loop on level-triggered writable
+                // once the socket connects. Full resync is the simplest
+                // correct path and c-ares DNS fds are short-lived.
+                _ = poll.unregister(loop, false);
+                if (readable)
+                    _ = poll.register(loop, .readable, false);
+                if (writable)
+                    _ = poll.register(loop, .writable, false);
+            } else {
+                // Only adding directions (or no change). register() issues a
+                // single CTL_MOD on epoll that preserves the other direction;
+                // on kqueue EV_ADD creates a separate (ident, filter) knote
+                // without disturbing the existing one.
+                if (readable and !have_readable)
+                    _ = poll.register(loop, .readable, false);
+                if (writable and !have_writable)
+                    _ = poll.register(loop, .writable, false);
+            }
         }
     }
 

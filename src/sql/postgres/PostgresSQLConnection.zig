@@ -245,7 +245,17 @@ pub fn hasPendingActivity(this: *PostgresSQLConnection) bool {
 
 fn updateHasPendingActivity(this: *PostgresSQLConnection) void {
     const a: u32 = if (this.requests.readableLength() > 0) 1 else 0;
-    const b: u32 = if (this.status != .disconnected) 1 else 0;
+    const b: u32 = switch (this.status) {
+        // Terminal states: nothing more will happen on this connection, so
+        // allow GC to collect the JS wrapper (and ultimately call deinit()).
+        // We must still outlive the socket's onClose callback — for SSL
+        // sockets `close(.normal)` defers the actual close until the peer's
+        // close_notify arrives, so the struct must stay alive until then.
+        // The socket's onClose re-enters here (via failWithJSValue's defer)
+        // with isClosed() == true, at which point GC can proceed.
+        .disconnected, .failed => @intFromBool(!this.socket.isClosed()),
+        else => 1,
+    };
     this.pending_activity_count.store(a + b, .release);
 }
 
@@ -626,12 +636,22 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
 
         // We always request the cert so we can verify it and also we manually
         // abort the connection if the hostname doesn't match. Built here (not
-        // at STARTTLS time) so cert/CA errors throw synchronously.
+        // at STARTTLS time) so cert/CA errors throw synchronously. Goes
+        // through the per-VM weak `SSLContextCache` so every connection in the
+        // pool — and every reconnect — shares one `SSL_CTX*` per distinct
+        // config instead of building a fresh one per `PostgresSQLConnection`.
         var err: uws.create_bun_socket_error_t = .none;
-        secure = tls_config.asUSocketsForClientVerification().createSSLContext(&err) orelse {
+        secure = vm.rareData().sslCtxCache().getOrCreateOpts(tls_config.asUSocketsForClientVerification(), &err) orelse {
             tls_config.deinit();
             return globalObject.throwValue(err.toJS(globalObject));
         };
+    }
+    // Covers `try arguments[7/8].toBunString()` and the null-byte rejection
+    // below. Ownership passes into `ptr.*` once allocated — locals are nulled
+    // there so the connect-fail path's `ptr.deinit()` is the sole cleanup.
+    errdefer {
+        if (secure) |s| bun.BoringSSL.c.SSL_CTX_free(s);
+        tls_config.deinit();
     }
 
     var username: []const u8 = "";
@@ -680,8 +700,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     inline for (.{ .{ username, "username" }, .{ password, "password" }, .{ database, "database" }, .{ path, "path" } }) |entry| {
         if (entry[0].len > 0 and std.mem.indexOfScalar(u8, entry[0], 0) != null) {
             bun.default_allocator.free(options_buf);
-            tls_config.deinit();
-            if (secure) |s| bun.BoringSSL.c.SSL_CTX_free(s);
+            // tls_config / secure released by the errdefer above.
             return globalObject.throwInvalidArguments(entry[1] ++ " must not contain null bytes", .{});
         }
     }
@@ -718,6 +737,9 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             .use_unnamed_prepared_statements = use_unnamed_prepared_statements,
         },
     };
+    // Ownership transferred into `ptr`; disarm the errdefer.
+    secure = null;
+    tls_config = .{};
 
     {
         const hostname = hostname_str.toUTF8(bun.default_allocator);
@@ -881,6 +903,7 @@ pub fn deinit(this: *@This()) void {
         stmt.deref();
     }
     this.statements.deinit(bun.default_allocator);
+    this.requests.deinit();
     this.write_buffer.deinit(bun.default_allocator);
     this.read_buffer.deinit(bun.default_allocator);
     this.backend_parameters.deinit();

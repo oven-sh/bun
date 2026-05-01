@@ -91,6 +91,7 @@
 #include "wtf/text/StringView.h"
 #include "wtf/text/WTFString.h"
 #include "wtf/GregorianDateTime.h"
+#include "wtf/HashSet.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JSFetchHeaders.h"
@@ -6369,11 +6370,18 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
     JSC::JSArray* completions = JSC::constructEmptyArray(globalObject, nullptr, 0);
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
 
+    // Use a set to track already added property names and avoid duplicates
+    // This fixes the issue where properties that appear multiple times in the prototype chain
+    // (e.g., toString appearing in both Function.prototype and Object.prototype)
+    // would be listed multiple times in completions
+    WTF::HashSet<WTF::String> addedNames;
+
     unsigned completionIndex = 0;
     for (const auto& propertyName : propertyNames) {
         WTF::String name = propertyName.string();
-        if (prefix.isEmpty() || name.startsWith(prefix)) {
+        if ((prefix.isEmpty() || name.startsWith(prefix)) && !addedNames.contains(name)) {
             completions->putDirectIndex(globalObject, completionIndex++, JSC::jsString(vm, name));
+            addedNames.add(name);
             RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
         }
     }
@@ -6390,8 +6398,9 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
 
         for (const auto& propertyName : protoNames) {
             WTF::String name = propertyName.string();
-            if (prefix.isEmpty() || name.startsWith(prefix)) {
+            if ((prefix.isEmpty() || name.startsWith(prefix)) && !addedNames.contains(name)) {
                 completions->putDirectIndex(globalObject, completionIndex++, JSC::jsString(vm, name));
+                addedNames.add(name);
                 RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
             }
         }

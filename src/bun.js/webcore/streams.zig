@@ -831,11 +831,27 @@ pub fn HTTPServerWritable(comptime ssl: bool, comptime http3: bool) type {
                 this.finalize();
                 return false;
             }
+
+            // Buffer is empty — data was sent to uWS directly via the
+            // fast path in write(). Resolve any pending flush promise
+            // so the JS consumer can resume reading.
+            if (this.buffer.len == 0) {
+                this.flushPromise() catch {};
+                if (this.done) {
+                    if (this.res) |res| {
+                        res.clearOnWritable();
+                    }
+                    this.signal.close(null);
+                    this.finalize();
+                    return false;
+                }
+                return true;
+            }
+
             var total_written: u64 = 0;
 
             // do not write more than available
             // if we do, it will cause this to be delayed until the next call, each time
-            // TODO: should we break it in smaller chunks?
             const to_write = @min(@as(Blob.SizeType, @truncate(write_offset)), @as(Blob.SizeType, this.buffer.len - 1));
             const chunk = this.readableSlice()[to_write..];
             // if we have nothing to write, we are done

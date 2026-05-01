@@ -43,7 +43,9 @@ describe("JSArrayIterator butterfly fast path", () => {
     arr[0] = "first";
     arr[100] = "last";
     const blob = new Blob(arr);
-    expect(await blob.text()).toBe("firstlast");
+    // Holes read back as undefined and are coerced via the USVString branch,
+    // same as Node/browsers.
+    expect(await blob.text()).toBe("first" + Buffer.alloc(9 * 99, "undefined").toString() + "last");
   });
 
   test("hole + Array.prototype indexed getter consults prototype (slow path)", async () => {

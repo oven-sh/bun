@@ -334,8 +334,10 @@ describe("udpSocket()", () => {
   // then run user JS (port `valueOf()`, address `toString()`, and for
   // sendMany also array index getters on later iterations). That JS can
   // detach the ArrayBuffer via `transfer(n)` and free the bytes before the
-  // native send path reads them. sendMany copies payloads into its arena;
-  // send resolves the destination before capturing the payload.
+  // native send path reads them. sendMany roots each payload JSValue in a
+  // MarkedArgumentBuffer and defers borrowing byte slices until after all
+  // user JS has run; send resolves the destination before capturing the
+  // payload.
   describe("detaching an ArrayBuffer during port/address coercion does not use-after-free", () => {
     for (const mode of ["sendMany", "send"] as const) {
       test(

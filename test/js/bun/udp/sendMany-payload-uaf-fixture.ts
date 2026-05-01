@@ -67,17 +67,15 @@ try {
   };
 
   // Unconnected socket: the port is coerced via `valueOf()` after the payload
-  // pointer has already been captured, so by the time the native send path
-  // runs the payload pointer refers to freed memory.
-  //
-  // sendMany copies the bytes into its arena before coercion, so the original
-  // 4096-byte packet is sent. send() resolves the destination first and then
-  // captures the payload from the now-detached view, which is length 0; on
-  // Linux that surfaces as EFAULT (the same pre-existing behavior as
-  // `send(detachedView, ...)`), on Windows it sends a 0-byte packet. Either
-  // outcome is fine — the regression this fixture guards is the ASAN
-  // heap-use-after-free, which aborts the process before this catch ever
-  // runs.
+  // JSValue has been captured, so by the time the native send path borrows a
+  // raw pointer the buffer is already detached. Both send() and sendMany()
+  // now observe the detached (length-0) view rather than the freed 4096-byte
+  // region. sendMany substitutes a valid empty pointer and sends a 0-byte
+  // packet; send()'s detached-view path may surface as EFAULT on Linux (the
+  // same pre-existing behavior as `send(detachedView, ...)`) or send a 0-byte
+  // packet on Windows. Either outcome is fine — the regression this fixture
+  // guards is the ASAN heap-use-after-free, which aborts the process before
+  // this catch ever runs.
   try {
     if (mode === "sendMany") {
       client.sendMany([payload, evilPort, "127.0.0.1"]);

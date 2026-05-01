@@ -42,7 +42,7 @@ async function runRoundTrip(url: string) {
     // path encodes the Date's UTC components regardless of `utcDate`, so the
     // stored value is fixed.
     await using local = new SQL({ url, max: 1 });
-    await using utc = new SQL({ url, max: 1, utcDate: true } as any);
+    await using utc = new SQL({ url, max: 1, utcDate: true });
     await local`DROP TABLE IF EXISTS ${local(tableName)}`;
     await local`CREATE TABLE ${local(tableName)} (id INT PRIMARY KEY, ts DATETIME(3), tstz TIMESTAMP(3))`;
 
@@ -83,7 +83,7 @@ async function runRoundTrip(url: string) {
 
       // ── utcDate: false (explicit) behaves identically to omitting it.
       {
-        await using explicitFalse = new SQL({ url, max: 1, utcDate: false } as any);
+        await using explicitFalse = new SQL({ url, max: 1, utcDate: false });
         expect(await read(explicitFalse)).toEqual({
           binaryDatetime: LOCAL_ISO,
           binaryTimestamp: LOCAL_ISO,

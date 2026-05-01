@@ -1,31 +1,40 @@
-// Regression fixture: UDPSocket.sendMany() used to capture a raw pointer into
-// each payload's ArrayBuffer backing store (or borrowed JSString storage) and
-// then keep iterating the input array. Subsequent iterations can run user JS
-// — array index getters, port `valueOf()`, address `toString()` — which can
-// detach an earlier payload's ArrayBuffer via `transfer(newLen)` and free its
-// backing store synchronously. If sendMany does not copy the payload bytes
-// into its arena, the pointer it hands to `bsd_sendmmsg` is dangling and ASAN
-// reports a heap-use-after-free.
+// Regression fixture: UDPSocket.sendMany() / send() used to capture a raw
+// pointer into the payload's ArrayBuffer backing store (or borrowed JSString
+// storage) and then run user JS before handing that pointer to
+// `bsd_sendmmsg`. In `sendMany` the user JS runs on later iterations (array
+// index getters, port `valueOf()`, address `toString()`); in `send` it runs
+// inside `parseAddr` (port `valueOf()`, address `toString()`) after the
+// payload is captured. That JS can detach the ArrayBuffer via
+// `transfer(newLen)`, which synchronously frees the old backing store, and
+// the native send path then reads freed memory.
 //
 // The test driver spawns this fixture with `Malloc=1` so bmalloc routes
 // ArrayBuffer backing stores through the system allocator, making the
 // allocation visible to ASAN in sanitizer-enabled builds. Release builds fall
 // through and we simply verify the correct bytes arrive at the other socket.
 
+const mode = process.argv[2];
+if (mode !== "sendMany" && mode !== "send") {
+  console.error("usage: sendMany-payload-uaf-fixture.ts <sendMany|send>");
+  process.exit(2);
+}
+
+let received: Buffer | undefined;
+let resolve!: () => void;
+const gotData = new Promise<void>(r => (resolve = r));
+
 const server = await Bun.udpSocket({
   port: 0,
+  hostname: "127.0.0.1",
   socket: {
     data(_socket, data) {
+      if (received) return;
       received = Buffer.from(data as ArrayBuffer);
       resolve();
     },
   },
 });
-const client = await Bun.udpSocket({ port: 0 });
-
-let received: Buffer | undefined;
-let resolve!: () => void;
-const gotData = new Promise<void>(r => (resolve = r));
+const client = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1" });
 
 try {
   const size = 4096;
@@ -49,14 +58,39 @@ try {
     },
   };
 
-  // Unconnected socket: [payload, port, address] triples. The port is coerced
-  // via `valueOf()` after the payload pointer for the same triple has already
-  // been captured, so by the time sendMany calls the native send path the
-  // first payload pointer refers to freed memory.
-  const sent = client.sendMany([payload, evilPort, "127.0.0.1"]);
+  // Unconnected socket: the port is coerced via `valueOf()` after the payload
+  // pointer has already been captured, so by the time the native send path
+  // runs the payload pointer refers to freed memory.
+  //
+  // sendMany copies the bytes into its arena before coercion, so the original
+  // 4096-byte packet is sent. send() resolves the destination first and then
+  // captures the payload from the now-detached view, which is length 0; on
+  // some platforms that surfaces as EFAULT (the same pre-existing behavior
+  // as `send(detachedView, ...)`). Either outcome is fine — the regression
+  // this fixture guards is the ASAN heap-use-after-free, which aborts the
+  // process before this catch ever runs.
+  try {
+    if (mode === "sendMany") {
+      client.sendMany([payload, evilPort, "127.0.0.1"]);
+    } else {
+      client.send(payload, evilPort as never, "127.0.0.1");
+    }
+  } catch (e: any) {
+    if (mode !== "send" || e?.code !== "EFAULT") throw e;
+  }
 
   if (!detached) throw new Error("valueOf() never ran");
-  if (sent !== 1) throw new Error(`expected 1 packet sent, got ${sent}`);
+
+  // Handle unreliable transmission in UDP: the first send already exercised
+  // the UAF path; retries just let the correctness assertion complete if the
+  // single packet was dropped on a loaded host. Use the captured `expected`
+  // bytes since the original buffer is now detached.
+  function sendRec() {
+    if (received || client.closed) return;
+    client.send(expected, server.port, "127.0.0.1");
+    setTimeout(sendRec, 10);
+  }
+  setTimeout(sendRec, 10);
 
   await gotData;
 

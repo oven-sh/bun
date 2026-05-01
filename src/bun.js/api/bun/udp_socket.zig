@@ -732,6 +732,25 @@ pub const UDPSocket = struct {
             }
         };
 
+        // Resolve the destination before touching the payload. `parseAddr`
+        // calls `port.coerceToInt32()` / `address.toBunString()` which can
+        // run user JS that detaches the payload's ArrayBuffer
+        // (`.transfer(n)`) or closes this socket. Doing this first means no
+        // JSC safepoint sits between capturing `payload.ptr` and handing it
+        // to `socket.send`, so a borrowed pointer cannot be freed out from
+        // under us. `payload_arg` itself stays rooted in the callframe.
+        var addr: std.posix.sockaddr.storage = std.mem.zeroes(std.posix.sockaddr.storage);
+        const addr_ptr = brk: {
+            if (dst) |dest| {
+                if (!try this.parseAddr(globalThis, dest.port, dest.address, &addr)) {
+                    return globalThis.throwInvalidArguments("Invalid address", .{});
+                }
+                break :brk &addr;
+            } else {
+                break :brk null;
+            }
+        };
+
         const payload_arg = arguments.ptr[0];
         var payload_str = jsc.ZigString.Slice.empty;
         defer payload_str.deinit();
@@ -743,18 +762,6 @@ pub const UDPSocket = struct {
                 break :brk payload_str.slice();
             } else {
                 return globalThis.throwInvalidArguments("Expected ArrayBufferView or string as first argument", .{});
-            }
-        };
-
-        var addr: std.posix.sockaddr.storage = std.mem.zeroes(std.posix.sockaddr.storage);
-        const addr_ptr = brk: {
-            if (dst) |dest| {
-                if (!try this.parseAddr(globalThis, dest.port, dest.address, &addr)) {
-                    return globalThis.throwInvalidArguments("Invalid address", .{});
-                }
-                break :brk &addr;
-            } else {
-                break :brk null;
             }
         };
 

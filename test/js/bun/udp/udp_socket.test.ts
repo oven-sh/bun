@@ -330,35 +330,48 @@ describe("udpSocket()", () => {
     }
   }
 
-  // sendMany() captures a pointer into each payload's backing store and then
-  // keeps iterating, which can run user JS (port `valueOf()`, address
-  // `toString()`, array index getters). That JS can detach the ArrayBuffer
-  // via `transfer(n)` and free the bytes before the native send path reads
-  // them. sendMany must copy payloads into its arena so they survive.
-  test("sendMany copies payloads so detaching an ArrayBuffer during iteration does not use-after-free", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "sendMany-payload-uaf-fixture.ts")],
-      env: {
-        ...bunEnv,
-        // Route bmalloc through the system heap so ASAN can observe the
-        // ArrayBuffer backing-store free in sanitizer-enabled builds. On
-        // Windows bmalloc's SystemHeap is unimplemented and would
-        // RELEASE_BASSERT, so leave bmalloc in place there — Windows has
-        // no ASAN lane anyway, and the fixture still checks correctness.
-        ...(isWindows ? {} : { Malloc: "1" }),
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const stderr = rawStderr
-      .split("\n")
-      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-      .join("\n");
-    expect(stderr).toBe("");
-    expect(stdout).toBe("OK\n");
-    expect(exitCode).toBe(0);
-  }, 30_000);
+  // send()/sendMany() capture a pointer into the payload's backing store and
+  // then run user JS (port `valueOf()`, address `toString()`, and for
+  // sendMany also array index getters on later iterations). That JS can
+  // detach the ArrayBuffer via `transfer(n)` and free the bytes before the
+  // native send path reads them. sendMany copies payloads into its arena;
+  // send resolves the destination before capturing the payload.
+  describe("detaching an ArrayBuffer during port/address coercion does not use-after-free", () => {
+    for (const mode of ["sendMany", "send"] as const) {
+      test(
+        mode,
+        async () => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), path.join(import.meta.dir, "sendMany-payload-uaf-fixture.ts"), mode],
+            env: {
+              ...bunEnv,
+              // Route bmalloc through the system heap so ASAN can observe the
+              // ArrayBuffer backing-store free in sanitizer-enabled builds. On
+              // Windows bmalloc's SystemHeap is unimplemented and would
+              // RELEASE_BASSERT, so leave bmalloc in place there — Windows has
+              // no ASAN lane anyway, and the fixture still checks correctness.
+              ...(isWindows ? {} : { Malloc: "1" }),
+            },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, rawStderr, exitCode] = await Promise.all([
+            proc.stdout.text(),
+            proc.stderr.text(),
+            proc.exited,
+          ]);
+          const stderr = rawStderr
+            .split("\n")
+            .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+            .join("\n");
+          expect(stderr).toBe("");
+          expect(stdout).toBe("OK\n");
+          expect(exitCode).toBe(0);
+        },
+        30_000,
+      );
+    }
+  });
 
   // sendMany() iterates the input array and may run user JS (array index
   // getters, port `valueOf()`, address `toString()`). That user JS can

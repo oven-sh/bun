@@ -178,7 +178,7 @@ describe.concurrent("napi", () => {
               }),
             });
 
-            const exe = join(dir, "main" + (process.platform === "win32" ? ".exe" : ""));
+            const exe = join(dir, "main.exe");
             const build = spawnSync({
               cmd: [
                 bunExe(),
@@ -197,10 +197,8 @@ describe.concurrent("napi", () => {
               stderr: "inherit",
             });
             expect(build.success).toBeTrue();
-            if (process.platform === "win32") {
-              expect(peHasSection(exe, ".bunL")).toBeFalse();
-            }
-            const tmpdir = tempDirWithFiles("should-be-empty-except", {});
+            expect(peHasSection(exe, ".bunL")).toBeFalse();
+            const tmpdir = tempDirWithFiles("napi-app-no-link-tmp", {});
             const result = spawnSync({
               cmd: [exe, "self"],
               // Disable at run time too, in case a future change makes
@@ -213,9 +211,9 @@ describe.concurrent("napi", () => {
             const stdout = result.stdout.toString().trim();
             expect(stdout).toBe("hello world!");
             expect(result.success).toBeTrue();
-            if (process.platform !== "win32") {
-              expect(readdirSync(tmpdir), "bun should clean up .node files").toBeEmpty();
-            }
+            // With the merge disabled, every addon takes the tempfile
+            // fallback — complements the .bunL-absent assertion above.
+            expect(readdirSync(tmpdir).filter(f => f.endsWith(".node")).length).toBeGreaterThan(0);
           },
           10 * 1000,
         );

@@ -198,20 +198,16 @@ describe("TextDecoder", () => {
       });
     }
 
-    it(
-      "DOMJIT call",
-      () => {
-        const array = new Uint8Array(bytes.buffer);
-        withoutAggressiveGC(() => {
-          for (let i = 0; i < 100_000; i++) {
-            const decoded = decoder.decode(array);
-            expect(decoded).toBe(text);
-          }
-        });
-      },
-      // 100k iterations under ASAN instrumentation takes ~13s.
-      30_000,
-    );
+    it("DOMJIT call", () => {
+      const array = new Uint8Array(bytes.buffer);
+      withoutAggressiveGC(() => {
+        for (let i = 0; i < 100_000; i++) {
+          const decoded = decoder.decode(array);
+          expect(decoded).toBe(text);
+        }
+      });
+    }, // 100k iterations under ASAN instrumentation takes ~13s.
+    30_000);
   });
 
   it("should decode unicode text with multiple consecutive emoji", () => {

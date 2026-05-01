@@ -120,6 +120,19 @@ if (isDockerEnabled()) {
             expect(result.statement.string).toBe("select CAST(1 AS SIGNED) as x");
             expect(result.statement.columns).toBe(result.columns);
           });
+
+          test("long column names (>15 bytes) are owned, not aliased", async () => {
+            // ColumnDefinition41 stores name via Data.create (.owned for >15 bytes)
+            // and separately passes the .temporary reader slice to ColumnIdentifier.init
+            // so the two don't alias the same heap buffer and double-free on deinit.
+            await using db = new SQL({ ...getOptions(), max: 1 });
+            for (let i = 0; i < 5; i++) {
+              const r =
+                await db`select CAST(1 AS SIGNED) as this_is_a_long_column_name_over_fifteen_bytes`.simple();
+              expect(r.columns[0].name).toBe("this_is_a_long_column_name_over_fifteen_bytes");
+              Bun.gc(true);
+            }
+          });
         });
         describe("should work with more than the max inline capacity", () => {
           for (let size of [50, 60, 62, 64, 70, 100]) {

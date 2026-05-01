@@ -96,7 +96,10 @@ pub fn decodeInternal(this: *ColumnDefinition41, comptime Context: type, reader:
     this.decimals = try reader.int(u8);
 
     this.name_or_index.deinit();
-    this.name_or_index = try ColumnIdentifier.init(this.name);
+    // Pass the .temporary `name` (not `this.name`): Data.toOwned() on .owned
+    // returns the same ByteList without duplicating, which would alias
+    // `this.name` and double-free in deinit().
+    this.name_or_index = try ColumnIdentifier.init(name);
 
     // https://mariadb.com/kb/en/result-set-packets/#column-definition-packet
     // According to mariadb, there seem to be extra 2 bytes at the end that is not being used

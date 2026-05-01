@@ -358,6 +358,13 @@ pub fn ptrWithoutTypeChecks(
     _: *anyopaque,
     array: *jsc.JSUint8Array,
 ) callconv(jsc.conv) JSValue {
+    // Ensure the typed array's backing store is external (not inline in the GC heap)
+    // before exposing its pointer to FFI. This prevents buffer overflows from
+    // corrupting JSC's GC metadata.
+    const ensured = Bun__FFI__ensureExternalBackingStore(JSValue.fromCell(array));
+    if (ensured) |external_ptr| {
+        return JSValue.fromPtrAddress(@intFromPtr(external_ptr));
+    }
     return JSValue.fromPtrAddress(@intFromPtr(array.ptr()));
 }
 
@@ -369,6 +376,10 @@ fn ptr_(
     if (value == .zero) {
         return jsc.JSValue.jsNull();
     }
+
+    // Ensure the typed array's backing store is external (not inline in the GC heap)
+    // before exposing its pointer to FFI.
+    _ = Bun__FFI__ensureExternalBackingStore(value);
 
     const array_buffer = value.asArrayBuffer(globalThis) orelse {
         return globalThis.toInvalidArguments("Expected ArrayBufferView but received {s}", .{@tagName(value.jsType())});
@@ -632,6 +643,8 @@ const fields = .{
     .CString = jsc.host_fn.wrapStaticMethod(bun.api.FFIObject, "newCString", false),
 };
 const max_addressable_memory = std.math.maxInt(u56);
+
+extern "c" fn Bun__FFI__ensureExternalBackingStore(val: JSValue) ?*anyopaque;
 
 const std = @import("std");
 

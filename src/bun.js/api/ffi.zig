@@ -45,6 +45,7 @@ const Offsets = extern struct {
 
     extern "c" var Bun__FFI__offsets: Offsets;
     extern "c" fn Bun__FFI__ensureOffsetsAreLoaded() void;
+    extern "c" fn Bun__FFI__ensureExternalBackingStore(val: jsc.JSValue) ?*anyopaque;
     fn loadOnce() void {
         Bun__FFI__ensureOffsetsAreLoaded();
     }
@@ -2423,6 +2424,7 @@ const CompilerRT = struct {
         state.addSymbol("JSVALUE_TO_UINT64_SLOW", workaround.JSVALUE_TO_UINT64) catch unreachable;
         state.addSymbol("INT64_TO_JSVALUE_SLOW", workaround.INT64_TO_JSVALUE) catch unreachable;
         state.addSymbol("UINT64_TO_JSVALUE_SLOW", workaround.UINT64_TO_JSVALUE) catch unreachable;
+        state.addSymbol("Bun__FFI__ensureExternalBackingStore", &Offsets.Bun__FFI__ensureExternalBackingStore) catch unreachable;
     }
 };
 

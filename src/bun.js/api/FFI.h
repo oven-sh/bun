@@ -180,7 +180,6 @@ static bool JSVALUE_TO_BOOL(EncodedJSValue val) __attribute__((__always_inline__
 static uint8_t GET_JSTYPE(EncodedJSValue val) __attribute__((__always_inline__));
 static bool JSTYPE_IS_TYPED_ARRAY(uint8_t type) __attribute__((__always_inline__));
 static bool JSCELL_IS_TYPED_ARRAY(EncodedJSValue val) __attribute__((__always_inline__));
-static void* JSVALUE_TO_TYPED_ARRAY_VECTOR(EncodedJSValue val) __attribute__((__always_inline__));
 static uint64_t JSVALUE_TO_TYPED_ARRAY_LENGTH(EncodedJSValue val) __attribute__((__always_inline__));
 
 static bool JSVALUE_IS_CELL(EncodedJSValue val) {
@@ -207,8 +206,13 @@ static bool JSCELL_IS_TYPED_ARRAY(EncodedJSValue val) {
   return JSVALUE_IS_CELL(val) && JSTYPE_IS_TYPED_ARRAY(GET_JSTYPE(val));
 }
 
+// Ensure the typed array's backing store is external (not inline in the GC heap)
+// before returning the vector pointer. This prevents FFI buffer overflows from
+// corrupting JSC's garbage collector metadata.
+BUN_FFI_IMPORT void* Bun__FFI__ensureExternalBackingStore(EncodedJSValue val);
+
 static void* JSVALUE_TO_TYPED_ARRAY_VECTOR(EncodedJSValue val) {
-  return *(void**)((char*)val.asPtr + JSArrayBufferView__offsetOfVector);
+  return Bun__FFI__ensureExternalBackingStore(val);
 }
 
 static uint64_t JSVALUE_TO_TYPED_ARRAY_LENGTH(EncodedJSValue val) {

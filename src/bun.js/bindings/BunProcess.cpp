@@ -509,6 +509,18 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
             auto utf8_probe = filename.tryGetUTF8(ConversionMode::LenientConversion);
             if (utf8_probe) {
                 usedLinkedAddon = Bun__initLinkedNodeModule(utf8_probe->data(), utf8_probe->length(), &linkedResolved);
+                // A bind can fail *after* DllMain ran (e.g. the addon's
+                // static ctor called napi_module_register and then
+                // DllMain returned FALSE). The tempfile fallback is
+                // about to LoadLibrary a fresh copy whose DllMain will
+                // register again; discard whatever the failed attempt
+                // queued so those registrations are not replayed
+                // against the fallback's handle.
+                if (!usedLinkedAddon && callCountAtStart != globalObject->napiModuleRegisterCallCount) {
+                    globalObject->napiModuleRegisterCallCount = callCountAtStart;
+                    globalObject->m_pendingNapiModules.clear();
+                    globalObject->m_pendingV8Modules.clear();
+                }
             }
         }
         if (!usedLinkedAddon)
@@ -832,8 +844,22 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
         // as we are going to call `dlsym()` on it later to get the plugin implementation.
         const char** pointer_to_plugin_name = (const char**)dlsym(handle, "BUN_PLUGIN_NAME");
 #elif OS(WINDOWS)
+        // NapiModuleMeta stores the dlopen handle so JSBundlerPlugin
+        // can later `GetProcAddress` the user-supplied onBeforeParse
+        // symbol out of it. A linked addon's `handle` is a per-addon
+        // identity token, not something GetProcAddress can walk (no
+        // DOS/PE header at that address, and the addon is not in the
+        // loader's module list). Capturing the addon's full export
+        // table at build time so JSBundlerPlugin can look the symbol
+        // up without GetProcAddress is a reasonable follow-up; for
+        // now, decline to mark a linked addon as a native bundler
+        // plugin so build.onBeforeParse fails with a clear "not a
+        // napi module" error rather than a confusing missing-symbol
+        // one. Native bundler plugins inside a --compile exe are a
+        // niche enough intersection that the tempfile fallback
+        // (BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK=1) remains available.
         const char** pointer_to_plugin_name = usedLinkedAddon
-            ? (const char**)linkedResolved.bun_plugin_name
+            ? nullptr
             : (const char**)GetProcAddress(handle, "BUN_PLUGIN_NAME");
 #endif
         if (pointer_to_plugin_name) {

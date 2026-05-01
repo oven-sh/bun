@@ -258,7 +258,7 @@ fn bind(entry: *Entry) !Resolved {
     // loader actually put us at `base_addr`, so every DIR64 slot is off by
     // exactly this much. Section is RW so these are plain stores.
     const delta: i64 = @as(i64, @intCast(base_addr)) - @as(i64, @bitCast(entry.preferred_base));
-    if (delta != 0) try applyRelocs(base, entry.relocs, delta);
+    if (delta != 0) try applyRelocs(base, entry, delta);
 
     // Bind imports. Host imports resolve against our own export table —
     // bun.exe already exports the full napi_* / uv_* surface via
@@ -328,7 +328,16 @@ fn bind(entry: *Entry) !Resolved {
     };
 }
 
-fn applyRelocs(base: [*]u8, blocks: []const u8, delta: i64) !void {
+fn applyRelocs(base: [*]u8, entry: *const Entry, delta: i64) !void {
+    const blocks = entry.relocs;
+    // The blob was produced by the same bun build that emitted this
+    // exe, so in a well-formed image every page RVA already lies in
+    // [rva_base, rva_base + image_size). Verifying it here costs
+    // nothing and means a truncated/corrupted .bunL section cannot
+    // make us scribble over unrelated bun.exe memory before falling
+    // back to the tempfile path.
+    const lo: u64 = entry.rva_base;
+    const hi: u64 = lo + entry.image_size;
     var off: usize = 0;
     while (off + 8 <= blocks.len) {
         const page_rva = std.mem.readInt(u32, blocks[off..][0..4], .little);
@@ -341,8 +350,10 @@ fn applyRelocs(base: [*]u8, blocks: []const u8, delta: i64) !void {
             const typ = e >> 12;
             if (typ == 0) continue; // IMAGE_REL_BASED_ABSOLUTE padding
             if (typ != 10) return error.BadReloc; // only DIR64 on PE32+
-            const slot: *align(1) u64 = @ptrCast(base + page_rva + (e & 0x0FFF));
-            slot.* = @bitCast(@as(i64, @bitCast(slot.*)) + delta);
+            const slot_rva: u64 = @as(u64, page_rva) + (e & 0x0FFF);
+            if (slot_rva < lo or slot_rva + 8 > hi) return error.BadReloc;
+            const slot: *align(1) u64 = @ptrCast(base + @as(usize, @intCast(slot_rva)));
+            slot.* = @bitCast(@as(i64, @bitCast(slot.*)) +% delta);
         }
         off += block_size;
     }

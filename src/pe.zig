@@ -1240,8 +1240,13 @@ pub const PEFile = struct {
                         .name = "",
                     });
                 } else {
-                    // IMAGE_IMPORT_BY_NAME: u16 hint then zero-terminated name
-                    const hint_rva: u32 = @truncate(thunk & 0x7FFFFFFF);
+                    // IMAGE_IMPORT_BY_NAME: u16 hint then NUL-terminated
+                    // name. The PE spec reserves bits 62:31 of a
+                    // by-name thunk as zero; anything there is
+                    // malformed and truncating it would resolve the
+                    // wrong symbol instead of falling back.
+                    if (thunk >> 31 != 0) return true;
+                    const hint_rva: u32 = @intCast(thunk);
                     const name = addon.cstrAtRva(hint_rva +| 2) catch return true;
                     try entries.append(.{
                         .iat_rva = rva_base + slot_rva,
@@ -1256,7 +1261,7 @@ pub const PEFile = struct {
                 .is_host = isHostImport(dll_name),
                 .entries = try entries.toOwnedSlice(),
             });
-        }
+        } else return true; // dir.size under-reports: no terminator
         return false;
     }
 

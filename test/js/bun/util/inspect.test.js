@@ -772,3 +772,34 @@ it("CustomEvent", () => {
     }"
   `);
 });
+
+describe("JSX circular references", () => {
+  it("does not crash when key is a circular reference", () => {
+    const el = { $$typeof: Symbol.for("react.element"), type: "div", props: {}, key: null };
+    el.key = el;
+    expect(Bun.inspect(el)).toBe("<div key=[Circular] />");
+  });
+
+  it("does not crash when a prop is a circular reference", () => {
+    const el = { $$typeof: Symbol.for("react.element"), type: "div", props: {}, key: null };
+    el.props.foo = el;
+    expect(Bun.inspect(el)).toBe("<div foo=[Circular] />");
+  });
+
+  it("does not crash when children is a circular reference", () => {
+    const el = { $$typeof: Symbol.for("react.element"), type: "div", props: {}, key: null };
+    el.props.children = el;
+    expect(Bun.inspect(el)).toBe("<div>\n  [Circular]\n</div>");
+  });
+
+  it("does not mark repeated non-circular children as circular", () => {
+    const child = { $$typeof: Symbol.for("react.element"), type: "span", props: {}, key: null };
+    const parent = {
+      $$typeof: Symbol.for("react.element"),
+      type: "div",
+      props: { children: [child, child] },
+      key: null,
+    };
+    expect(Bun.inspect(parent)).toBe("<div>\n  <span />\n  <span />\n</div>");
+  });
+});

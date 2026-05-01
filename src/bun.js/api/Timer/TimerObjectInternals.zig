@@ -331,7 +331,11 @@ pub fn doRef(this: *TimerObjectInternals, _: *jsc.JSGlobalObject, this_value: JS
     // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L256
     // and
     // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L685-L687
-    if (!did_have_js_ref and !this.flags.has_cleared_timer) {
+    // Node only re-enables the keep-alive ref when `!this._destroyed`. Checking
+    // `has_cleared_timer` alone is not sufficient: a one-shot timer that has already fired
+    // has `has_cleared_timer == false` but is still destroyed. Calling `.unref(); .ref()`
+    // on such a timer would otherwise leak an event-loop ref and hang the process.
+    if (!did_have_js_ref and !this.getDestroyed()) {
         this.setEnableKeepingEventLoopAlive(jsc.VirtualMachine.get(), true);
     }
 

@@ -649,14 +649,34 @@ pub const UDPSocket = struct {
             }
             const slice_idx = if (connected) i else i / 3;
             if (connected or i % 3 == 0) {
-                const slice = brk: {
-                    if (val.asArrayBuffer(globalThis)) |arrayBuffer| {
-                        break :brk arrayBuffer.slice();
-                    } else if (val.isString()) {
-                        break :brk (try val.toJSString(globalThis)).toSlice(globalThis, alloc).slice();
-                    } else {
-                        return globalThis.throwInvalidArguments("Expected ArrayBufferView or string as payload", .{});
-                    }
+                // Copy each payload into the arena. Subsequent iterations hit
+                // JSC safepoints (`iter.next()`'s slow path, `coerceToInt32`,
+                // `toBunString`) that can run user JS which may detach this
+                // ArrayBuffer (`.transfer()`) or drop the last reference to
+                // this JSString and GC it, freeing the backing store before
+                // we reach `socket.send`. Owning the bytes in the arena makes
+                // the captured pointers independent of JS heap lifetimes.
+                const slice: []const u8 = brk: {
+                    const borrowed: []const u8 = blk: {
+                        if (val.asArrayBuffer(globalThis)) |arrayBuffer| {
+                            break :blk arrayBuffer.slice();
+                        } else if (val.isString()) {
+                            const str = (try val.toJSString(globalThis)).toSlice(globalThis, alloc);
+                            // `toSlice` allocates into the arena when conversion
+                            // is required (UTF-16 / non-ASCII Latin-1); for ASCII
+                            // it borrows the WTFStringImpl's bytes. In the
+                            // allocated case the arena already owns the copy.
+                            if (str.isAllocated()) break :brk str.slice();
+                            break :blk str.slice();
+                        } else {
+                            return globalThis.throwInvalidArguments("Expected ArrayBufferView or string as payload", .{});
+                        }
+                    };
+                    // `alloc.dupe(u8, <empty>)` returns Zig's zero-length
+                    // sentinel (a deliberately invalid address) which the
+                    // kernel rejects with EFAULT even though `iov_len == 0`.
+                    // Use a valid static pointer for the empty case.
+                    break :brk if (borrowed.len == 0) "" else bun.handleOom(alloc.dupe(u8, borrowed));
                 };
                 payloads[slice_idx] = slice.ptr;
                 lens[slice_idx] = slice.len;

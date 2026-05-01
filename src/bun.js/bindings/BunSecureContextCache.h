@@ -2,7 +2,8 @@
 
 // Thin wrapper around `WeakGCMap<uint64_t, JSObject>` so ZigGlobalObject.h
 // can hold a `std::unique_ptr<SecureContextCache>` without pulling in
-// WeakGCMap.h (this header is included from one .cpp file only).
+// WeakGCMap.h. The full type is needed in BunSecureContextCache.cpp and in
+// ZigGlobalObject.cpp (for the unique_ptr destructor).
 //
 // Backs the JS-side dedup of `tls.createSecureContext()`: same config digest
 // → same `JSSecureContext` cell while it's alive. The native `SSL_CTX*` cache

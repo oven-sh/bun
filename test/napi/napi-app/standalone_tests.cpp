@@ -2023,6 +2023,78 @@ test_external_arraybuffer_finalizer(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// Regression test: napi_create_external_arraybuffer while a napi exception
+// is pending (via napi_throw_error). Whatever status is returned, the
+// function must not adopt external_data and then leave the destructor
+// disarmed (which would leak the caller's buffer forever or leave a
+// dangling pointer in an orphaned JSArrayBuffer if the caller frees on
+// failure per the Node-API contract).
+static napi_value test_external_arraybuffer_with_pending_exception(
+    const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  external_arraybuffer_finalize_count = 0;
+
+  const size_t data_size = 8;
+  uint8_t *ext_data = (uint8_t *)malloc(data_size);
+  memset(ext_data, 0x5A, data_size);
+
+  // Stash a napi-level pending exception (no VM exception is raised yet).
+  NODE_API_CALL(env,
+                napi_throw_error(env, nullptr, "stashed before create"));
+
+  napi_value arraybuffer = nullptr;
+  napi_status status = napi_create_external_arraybuffer(
+      env, ext_data, data_size,
+      +[](napi_env, void *data, void *) {
+        external_arraybuffer_finalize_count++;
+        free(data);
+      },
+      nullptr, &arraybuffer);
+
+  // Clear the pending exception so the rest of the test can run cleanly.
+  napi_value exc;
+  napi_get_and_clear_last_exception(env, &exc);
+
+  printf("napi_create_external_arraybuffer with pending exception: "
+         "status=%d\n",
+         (int)status);
+
+  if (status == napi_ok) {
+    // Ownership transferred: the ArrayBuffer must wrap our pointer and the
+    // finalizer must eventually free ext_data. It must not have fired yet.
+    if (external_arraybuffer_finalize_count != 0) {
+      printf("FAIL: finalizer ran before ArrayBuffer was collected\n");
+      return ok(env);
+    }
+    void *ab_data;
+    size_t ab_len;
+    NODE_API_CALL(env, napi_get_arraybuffer_info(env, arraybuffer, &ab_data,
+                                                 &ab_len));
+    if (ab_data == ext_data && ab_len == data_size) {
+      printf("PASS: ownership transferred on napi_ok with pending "
+             "exception\n");
+    } else {
+      printf("FAIL: napi_ok but arraybuffer does not wrap caller data\n");
+    }
+  } else {
+    // Caller retains ownership on failure. The finalizer must not have
+    // run (that would be the double-free the armable destructor guards
+    // against).
+    if (external_arraybuffer_finalize_count == 0) {
+      printf("PASS: caller retains ownership on failure with pending "
+             "exception\n");
+    } else {
+      printf("FAIL: finalizer ran %d time(s) even though the call "
+             "failed\n",
+             external_arraybuffer_finalize_count);
+    }
+    free(ext_data);
+  }
+
+  return ok(env);
+}
+
 // Regression test: PROPERTY_NAME_FROM_UTF8 must copy string data.
 // Previously it used StringImpl::createWithoutCopying for ASCII strings,
 // which could leave dangling pointers in JSC's atom string table.
@@ -2250,6 +2322,8 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, napi_get_typeof);
   REGISTER_FUNCTION(env, exports, test_external_buffer_data_lifetime);
   REGISTER_FUNCTION(env, exports, test_external_arraybuffer_finalizer);
+  REGISTER_FUNCTION(env, exports,
+                    test_external_arraybuffer_with_pending_exception);
   REGISTER_FUNCTION(env, exports, test_napi_get_named_property_copied_string);
   REGISTER_FUNCTION(env, exports, test_issue_25933);
   REGISTER_FUNCTION(env, exports, test_napi_make_callback_async_context_frame);

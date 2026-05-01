@@ -1,12 +1,12 @@
-// Regression: calling clearTimeout(t) or t.refresh() inside t's own setTimeout callback
-// leaked the native TimeoutObject. In fire(), state is set to .FIRED before the callback
-// runs, so cancel() skipped its deref (it only derefs when state was .ACTIVE), and the
-// post-callback cleanup only released the heap ref when state was still .FIRED — the
-// .CANCELLED and .ACTIVE transitions inside the callback fell through without a deref.
+// Regression: calling clearTimeout(t), t.refresh(), or setting t._repeat inside t's own
+// setTimeout callback leaked the native TimeoutObject. In fire(), state is set to .FIRED
+// before the callback runs; any transition away from .FIRED during the callback
+// (cancel() -> .CANCELLED, or reschedule() -> .ACTIVE via refresh/convertToInterval) left
+// the heap ref unreleased because the post-callback cleanup only checked for .FIRED.
 
 const mode = process.argv[2];
-if (mode !== "clear" && mode !== "refresh") {
-  throw new Error("usage: <clear|refresh>");
+if (mode !== "clear" && mode !== "refresh" && mode !== "repeat") {
+  throw new Error("usage: <clear|refresh|repeat>");
 }
 
 const BATCH = 2_000;
@@ -25,13 +25,25 @@ async function runBatch() {
         clearTimeout(t);
         if (--remaining === 0) resolve();
       }, 0);
-    } else {
+    } else if (mode === "refresh") {
       let fired = false;
       const t = setTimeout(() => {
         if (!fired) {
           fired = true;
           t.refresh();
         } else {
+          if (--remaining === 0) resolve();
+        }
+      }, 0);
+    } else {
+      // "repeat": convert the timeout to an interval via t._repeat inside the callback
+      let fired = false;
+      const t = setTimeout(() => {
+        if (!fired) {
+          fired = true;
+          t._repeat = 1;
+        } else {
+          clearInterval(t);
           if (--remaining === 0) resolve();
         }
       }, 0);

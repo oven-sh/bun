@@ -228,8 +228,10 @@ pub fn fire(this: *TimerObjectInternals, _: *const timespec, vm: *jsc.VirtualMac
                 if (kind == .setTimeout and !repeat.isNull()) {
                     if (idle_timeout.getNumber()) |num| {
                         if (num != -1) {
+                            // reschedule() inside convertToInterval will see state == .FIRED
+                            // and add a ref; fall through to the switch below so the .ACTIVE
+                            // arm can balance it.
                             this.convertToInterval(globalThis, this_object, repeat);
-                            break :is_timer_done false;
                         }
                     }
                 }
@@ -239,9 +241,10 @@ pub fn fire(this: *TimerObjectInternals, _: *const timespec, vm: *jsc.VirtualMac
                         break :is_timer_done true;
                     },
                     .ACTIVE => {
-                        // The developer called timer.refresh() synchronously in the callback.
-                        // Balance out the ref count.
-                        // the transition from "FIRED" -> "ACTIVE" caused it to increment.
+                        // The developer called timer.refresh() synchronously in the callback,
+                        // or the timer was converted to an interval via t._repeat. Balance out
+                        // the ref count: the transition from "FIRED" -> "ACTIVE" via
+                        // reschedule() caused it to increment.
                         this.deref();
                     },
                     else => {

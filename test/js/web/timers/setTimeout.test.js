@@ -367,7 +367,7 @@ it("setTimeout canceling with unref, close, _idleTimeout, and _onTimeout", () =>
   expect([path.join(import.meta.dir, "timers-fixture-unref.js"), "setTimeout"]).toRun();
 });
 
-for (const mode of ["clear", "refresh"]) {
+for (const mode of ["clear", "refresh", "repeat"]) {
   it(`setTimeout doesn't leak when ${mode} is called inside its own callback`, async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-clear-in-callback-leak-fixture.js"), mode],

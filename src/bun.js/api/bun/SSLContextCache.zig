@@ -77,17 +77,37 @@ pub fn getOrCreateDigest(
     d: Digest,
     err: *uws.create_bun_socket_error_t,
 ) ?*BoringSSL.SSL_CTX {
+    {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.map.get(d)) |entry| {
+            if (entry.ctx) |ctx| {
+                _ = BoringSSL.SSL_CTX_up_ref(ctx);
+                return ctx;
+            }
+        }
+    }
+
+    // Miss (or tombstoned): build outside the lock. `createSSLContext` does
+    // file I/O / cert parsing and on Windows the system-CA load — none of
+    // which has a reason to serialize, and holding a non-reentrant SRWLock
+    // across an SSL_CTX_free that *did* tombstone would self-deadlock.
+    const ctx = opts.createSSLContext(err) orelse return null;
+
     self.mutex.lock();
     defer self.mutex.unlock();
 
-    if (self.map.getPtr(d)) |slot| {
-        const entry = slot.*;
-        if (entry.ctx) |ctx| {
-            _ = BoringSSL.SSL_CTX_up_ref(ctx);
-            return ctx;
+    // Re-check: another caller may have inserted while we were building.
+    // Prefer the already-cached one and drop ours so callers converge.
+    const gop = bun.handleOom(self.map.getOrPut(bun.default_allocator, d));
+    if (gop.found_existing) {
+        const entry = gop.value_ptr.*;
+        if (entry.ctx) |existing| {
+            _ = BoringSSL.SSL_CTX_up_ref(existing);
+            BoringSSL.SSL_CTX_free(ctx);
+            return existing;
         }
-        // Tombstoned — rebuild and reuse the slot.
-        const ctx = opts.createSSLContext(err) orelse return null;
+        // Tombstone — adopt the rebuilt CTX into the existing slot.
         // SSL_CTX_set_ex_data only fails on OOM (Bun crashes anyway), but if
         // it did, the entry would never tombstone and `entry.ctx` would dangle
         // after the CTX is freed. Don't cache it; caller still owns the ref.
@@ -96,13 +116,13 @@ pub fn getOrCreateDigest(
         return ctx;
     }
 
-    const ctx = opts.createSSLContext(err) orelse return null;
     const entry = bun.new(Entry, .{ .ctx = ctx, .owner = self });
+    gop.value_ptr.* = entry;
     if (BoringSSL.SSL_CTX_set_ex_data(ctx, c.us_ssl_ctx_cache_ex_idx(), entry) != 1) {
+        _ = self.map.swapRemove(d);
         bun.destroy(entry);
         return ctx;
     }
-    bun.handleOom(self.map.put(bun.default_allocator, d, entry));
 
     self.ops_since_compact += 1;
     if (self.ops_since_compact > 16) {

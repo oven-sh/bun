@@ -1006,6 +1006,11 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphELFVaddr()
 
 static uint64_t* pe_section_size = nullptr;
 static uint8_t* pe_section_data = nullptr;
+// .bunL — statically-merged `.node` addon metadata (see pe.zig
+// LinkedAddon). Absent in a non-compiled bun or when no addons were
+// merged; callers treat missing as "fall back to tmpfile LoadLibrary".
+static uint64_t* pe_linked_size = nullptr;
+static uint8_t* pe_linked_data = nullptr;
 
 // Helper function to find and map the .bun section
 static bool initializePESection()
@@ -1024,18 +1029,22 @@ static bool initializePESection()
     PIMAGE_SECTION_HEADER sectionHeader = IMAGE_FIRST_SECTION(ntHeaders);
 
     for (int i = 0; i < ntHeaders->FileHeader.NumberOfSections; i++) {
-        if (strncmp((char*)sectionHeader->Name, ".bun", 4) == 0) {
-            // Found the .bun section
+        // Exact 8-byte compare so ".bun\0\0\0\0" does not match ".bunL\0\0\0"
+        // or the per-addon ".bnN" sections.
+        if (memcmp(sectionHeader->Name, ".bun\0\0\0\0", IMAGE_SIZEOF_SHORT_NAME) == 0) {
             // Section format: 8 bytes size (uint64_t) + data
             BYTE* sectionData = (BYTE*)hModule + sectionHeader->VirtualAddress;
             pe_section_size = (uint64_t*)sectionData;
             pe_section_data = sectionData + sizeof(uint64_t); // Skip size (8)
-            return true;
+        } else if (memcmp(sectionHeader->Name, ".bunL\0\0\0", IMAGE_SIZEOF_SHORT_NAME) == 0) {
+            BYTE* sectionData = (BYTE*)hModule + sectionHeader->VirtualAddress;
+            pe_linked_size = (uint64_t*)sectionData;
+            pe_linked_data = sectionData + sizeof(uint64_t);
         }
         sectionHeader++;
     }
 
-    return false;
+    return pe_section_size != nullptr;
 }
 
 extern "C" uint64_t Bun__getStandaloneModuleGraphPELength()
@@ -1048,6 +1057,18 @@ extern "C" uint8_t* Bun__getStandaloneModuleGraphPEData()
 {
     if (!initializePESection()) return nullptr;
     return pe_section_data;
+}
+
+extern "C" uint64_t Bun__getLinkedAddonsPELength()
+{
+    if (!initializePESection()) return 0;
+    return pe_linked_size ? *pe_linked_size : 0;
+}
+
+extern "C" uint8_t* Bun__getLinkedAddonsPEData()
+{
+    if (!initializePESection()) return nullptr;
+    return pe_linked_data;
 }
 
 #endif

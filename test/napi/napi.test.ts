@@ -1,8 +1,29 @@
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { readdirSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import { bunEnv, bunExe, isCI, isMacOS, isMusl, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
+
+// A compiled Windows exe that had its .node addons statically merged
+// carries them in per-addon `.bnN` sections plus a `.bunL` metadata
+// section. Presence of `.bunL` is how we tell the merge happened rather
+// than silently falling back to tmpfile extraction.
+function peHasSection(exePath: string, name: string): boolean {
+  const buf = readFileSync(exePath);
+  if (buf.readUInt16LE(0) !== 0x5a4d /* MZ */) return false;
+  const peOff = buf.readUInt32LE(0x3c);
+  if (buf.readUInt32LE(peOff) !== 0x4550 /* PE\0\0 */) return false;
+  const nSect = buf.readUInt16LE(peOff + 6);
+  const optSize = buf.readUInt16LE(peOff + 20);
+  const shOff = peOff + 24 + optSize;
+  for (let i = 0; i < nSect; i++) {
+    const off = shOff + i * 40;
+    const raw = buf.subarray(off, off + 8);
+    const s = raw.subarray(0, raw.indexOf(0) === -1 ? 8 : raw.indexOf(0)).toString("latin1");
+    if (s === name) return true;
+  }
+  return false;
+}
 
 describe.concurrent("napi", () => {
   beforeAll(() => {
@@ -109,8 +130,73 @@ describe.concurrent("napi", () => {
             if (process.platform !== "win32") {
               expect(readdirSync(tmpdir), "bun should clean up .node files").toBeEmpty();
             } else {
-              // On Windows, we have to mark it for deletion on reboot.
-              // Not clear how to test for that.
+              // On Windows the addon is statically merged into the exe,
+              // so process.dlopen never touches the filesystem at all.
+              expect(
+                peHasSection(exe, ".bunL"),
+                ".node addon should be statically linked into the compiled exe",
+              ).toBeTrue();
+              expect(peHasSection(exe, ".bn0")).toBeTrue();
+              expect(
+                readdirSync(tmpdir),
+                "statically-linked addon should not extract to a temp file",
+              ).toBeEmpty();
+            }
+          },
+          10 * 1000,
+        );
+
+        it(
+          "should work with --compile when static addon linking is disabled",
+          async () => {
+            // Exercises the fallback used when an addon cannot be merged
+            // (static TLS, malformed PE, or this env var): extract to a
+            // temp file and LoadLibraryExW it.
+            const dir = tempDirWithFiles("napi-app-compile-no-link-" + format, {
+              "package.json": JSON.stringify({
+                name: "napi-app",
+                version: "1.0.0",
+                type: format === "esm" ? "module" : "commonjs",
+              }),
+            });
+
+            const exe = join(dir, "main" + (process.platform === "win32" ? ".exe" : ""));
+            const build = spawnSync({
+              cmd: [
+                bunExe(),
+                "build",
+                "--target=" + target,
+                "--format=" + format,
+                "--compile",
+                join(__dirname, "napi-app", "main.js"),
+              ],
+              cwd: dir,
+              // Disable at build time so the exe carries no .bunL section
+              // (and hence has nothing to bind even if the runtime flag
+              // were clear).
+              env: { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK: "1" },
+              stdout: "inherit",
+              stderr: "inherit",
+            });
+            expect(build.success).toBeTrue();
+            if (process.platform === "win32") {
+              expect(peHasSection(exe, ".bunL")).toBeFalse();
+            }
+            const tmpdir = tempDirWithFiles("should-be-empty-except", {});
+            const result = spawnSync({
+              cmd: [exe, "self"],
+              // Disable at run time too, in case a future change makes
+              // the build-time flag not imply the run-time behaviour.
+              env: { ...bunEnv, BUN_TMPDIR: tmpdir, BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK: "1" },
+              stdin: "inherit",
+              stderr: "inherit",
+              stdout: "pipe",
+            });
+            const stdout = result.stdout.toString().trim();
+            expect(stdout).toBe("hello world!");
+            expect(result.success).toBeTrue();
+            if (process.platform !== "win32") {
+              expect(readdirSync(tmpdir), "bun should clean up .node files").toBeEmpty();
             }
           },
           10 * 1000,

@@ -181,6 +181,12 @@ pub const feature_flag = struct {
     pub const BUN_FEATURE_FLAG_DISABLE_IPV4 = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IPV4", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_IPV6 = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IPV6", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_MEMFD = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_MEMFD", .{});
+    /// Disable static-merging of `.node` addons into the compiled
+    /// Windows executable (build-time in `bun build --compile`) and
+    /// disable initialising already-merged addons (run-time in the
+    /// compiled exe). Either way the behaviour falls back to extracting
+    /// the addon to a temp file and `LoadLibraryExW`ing it.
+    pub const BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK", .{});
     /// The RedisClient supports auto-pipelining by default. This flag disables that behavior.
     pub const BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK", .{});

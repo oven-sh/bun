@@ -96,6 +96,7 @@ pub const Debugger = @import("./Debugger.zig");
 pub const SavedSourceMap = @import("./SavedSourceMap.zig");
 pub const VirtualMachine = @import("./VirtualMachine.zig");
 pub const ModuleLoader = @import("./ModuleLoader.zig");
+pub const LinkedNodeModule = @import("./LinkedNodeModule.zig");
 pub const RareData = @import("./rare_data.zig");
 pub const EventType = @import("./bindings/EventType.zig").EventType;
 pub const JSRuntimeType = @import("./bindings/JSRuntimeType.zig").JSRuntimeType;

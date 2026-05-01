@@ -314,6 +314,20 @@ JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObj
 extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*);
 #if OS(WINDOWS)
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
+
+// Export pointers returned by Bun__initLinkedNodeModule for a `.node`
+// addon that was statically merged into the exe at `bun build --compile`
+// time. Any field may be null if the addon did not export that symbol.
+struct Bun__LinkedNodeModuleResolved {
+    void* napi_register_module_v1;
+    void* node_api_module_get_api_version_v1;
+    void* bun_plugin_name;
+};
+// Finish linking a statically-merged addon (relocs, IAT, VirtualProtect,
+// RtlAddFunctionTable, DllMain) and hand back its export pointers. Returns
+// false if the path was not merged or the bind failed; caller then falls
+// through to the extract-to-tempfile + LoadLibraryExW path.
+extern "C" bool Bun__initLinkedNodeModule(const char* path, size_t path_len, Bun__LinkedNodeModuleResolved* out);
 #endif
 
 /// Returns a pointer that needs to be freed with `delete[]`.
@@ -458,11 +472,30 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #define StandaloneModuleGraph__base_path "/$bunfs/"_s
 #endif
     bool deleteAfter = false;
+#if OS(WINDOWS)
+    // If `bun build --compile` statically merged this addon into the exe
+    // as a real PE section, bind and initialise it in place — no temp
+    // file, no LoadLibrary. On any failure fall through to the
+    // extract-to-tempfile path below so behaviour never regresses.
+    Bun__LinkedNodeModuleResolved linkedResolved {};
+    bool usedLinkedAddon = false;
+#endif
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
-        BunString bunStr = Bun::toString(filename);
-        if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
-            filename = bunStr.transferToWTFString();
-            deleteAfter = !filename.startsWith("/proc/"_s);
+#if OS(WINDOWS)
+        {
+            auto utf8_probe = filename.tryGetUTF8(ConversionMode::LenientConversion);
+            if (utf8_probe) {
+                usedLinkedAddon = Bun__initLinkedNodeModule(utf8_probe->data(), utf8_probe->length(), &linkedResolved);
+            }
+        }
+        if (!usedLinkedAddon)
+#endif
+        {
+            BunString bunStr = Bun::toString(filename);
+            if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
+                filename = bunStr.transferToWTFString();
+                deleteAfter = !filename.startsWith("/proc/"_s);
+            }
         }
     }
 
@@ -526,8 +559,19 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     Bun__process_dlopen_count++;
 
 #if OS(WINDOWS)
-    BunString filename_str = Bun::toString(filename);
-    HMODULE handle = Bun__LoadLibraryBunString(&filename_str);
+    HMODULE handle;
+    if (usedLinkedAddon) {
+        // The addon's code lives in bun.exe's own image; there is no
+        // separate module. Use the exe's HMODULE so the `handle` passed
+        // around (DLHandleMap, napiDlopenHandle) is at least valid, even
+        // though GetProcAddress(handle, ...) would resolve bun's exports
+        // rather than the addon's — which is why we bypass GetProcAddress
+        // below and use the precomputed export RVAs instead.
+        handle = GetModuleHandleW(nullptr);
+    } else {
+        BunString filename_str = Bun::toString(filename);
+        handle = Bun__LoadLibraryBunString(&filename_str);
+    }
 
 // On Windows, we use GetLastError() for error messages, so we can only delete after checking for errors
 #else
@@ -700,9 +744,21 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
     // TODO(@190n) look for node_register_module_vXYZ according to BuildOptions.reported_nodejs_version
     // (bun/src/env.zig:36) and the table at https://github.com/nodejs/node/blob/main/doc/abi_version_registry.json
-    auto napi_register_module_v1 = reinterpret_cast<napi_value (*)(napi_env, napi_value)>(dlsym(handle, "napi_register_module_v1"));
-
-    auto node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(dlsym(handle, "node_api_module_get_api_version_v1"));
+    napi_value (*napi_register_module_v1)(napi_env, napi_value);
+    int32_t (*node_api_module_get_api_version_v1)();
+#if OS(WINDOWS)
+    if (usedLinkedAddon) {
+        // GetProcAddress(handle, ...) would resolve bun.exe's own exports,
+        // not the addon's — the addon has no entry in the loader's module
+        // list. Use the build-time-captured RVAs instead.
+        napi_register_module_v1 = reinterpret_cast<napi_value (*)(napi_env, napi_value)>(linkedResolved.napi_register_module_v1);
+        node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(linkedResolved.node_api_module_get_api_version_v1);
+    } else
+#endif
+    {
+        napi_register_module_v1 = reinterpret_cast<napi_value (*)(napi_env, napi_value)>(dlsym(handle, "napi_register_module_v1"));
+        node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(dlsym(handle, "node_api_module_get_api_version_v1"));
+    }
 
 #if OS(WINDOWS)
 #undef dlsym
@@ -710,7 +766,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
     if (!napi_register_module_v1) {
 #if OS(WINDOWS)
-        FreeLibrary(handle);
+        // Don't FreeLibrary the exe itself.
+        if (!usedLinkedAddon) FreeLibrary(handle);
 #else
         dlclose(handle);
 #endif
@@ -761,7 +818,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
         // as we are going to call `dlsym()` on it later to get the plugin implementation.
         const char** pointer_to_plugin_name = (const char**)dlsym(handle, "BUN_PLUGIN_NAME");
 #elif OS(WINDOWS)
-        const char** pointer_to_plugin_name = (const char**)GetProcAddress(handle, "BUN_PLUGIN_NAME");
+        const char** pointer_to_plugin_name = usedLinkedAddon
+            ? (const char**)linkedResolved.bun_plugin_name
+            : (const char**)GetProcAddress(handle, "BUN_PLUGIN_NAME");
 #endif
         if (pointer_to_plugin_name) {
             // TODO: think about the finalizer here

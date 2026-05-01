@@ -668,7 +668,66 @@ pub const StandaloneModuleGraph = struct {
         }
     };
 
-    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions, target: *const CompileTarget) bun.FD {
+    /// For each napi `.node` in `output_files` that is a valid PE image,
+    /// merge its sections into `pe_file` via `PEFile.addLinkedAddon` and
+    /// then append a `.bunL` section carrying the runtime metadata.
+    ///
+    /// Any addon that cannot be merged safely (static TLS, malformed
+    /// headers, not a PE at all) is silently skipped; its raw bytes remain
+    /// in the `.bun` module graph so `process.dlopen` can fall back to the
+    /// extract-to-tempfile path.  This keeps `--compile` behaviourally
+    /// identical whether or not the merge succeeds.
+    fn linkNativeAddonsForWindows(
+        pe_file: *bun.pe.PEFile,
+        output_files: []const bun.options.OutputFile,
+        module_prefix: []const u8,
+    ) !void {
+        if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK.get()) return;
+
+        var arena = bun.ArenaAllocator.init(bun.default_allocator);
+        defer arena.deinit();
+        const alloc = arena.allocator();
+
+        var addons = std.array_list.Managed(bun.pe.PEFile.LinkedAddon).init(alloc);
+        var idx: u32 = 0;
+        for (output_files) |*of| {
+            if (of.loader != .napi) continue;
+            if (of.value != .buffer) continue;
+            if (!of.output_kind.isFileInStandaloneMode()) continue;
+            const contents = of.value.buffer.bytes;
+            if (!bun.pe.utils.isPE(contents)) continue;
+
+            // Must match `toBytes` exactly so the runtime lookup key
+            // (the `$bunfs/...` virtual path passed to `process.dlopen`)
+            // lines up with `LinkedAddon.name`.
+            const dest_path = bun.strings.removeLeadingDotSlash(of.dest_path);
+            const vpath = try std.fmt.allocPrint(alloc, "{s}{s}", .{ module_prefix, dest_path });
+
+            const linked = pe_file.addLinkedAddon(alloc, contents, idx, vpath) catch |err| switch (err) {
+                // Running out of header slots for more sections is not a
+                // build failure — the remaining addons just use the
+                // tempfile fallback at runtime.
+                error.InsufficientHeaderSpace => break,
+                else => return err,
+            } orelse continue;
+            try addons.append(linked);
+            idx += 1;
+        }
+
+        if (addons.items.len == 0) return;
+
+        const blob = try bun.pe.PEFile.serializeLinkedAddons(alloc, addons.items);
+        try pe_file.addLinkedAddonSection(blob);
+    }
+
+    pub fn inject(
+        bytes: []const u8,
+        self_exe: [:0]const u8,
+        inject_options: InjectOptions,
+        target: *const CompileTarget,
+        output_files: []const bun.options.OutputFile,
+        module_prefix: []const u8,
+    ) bun.FD {
         var buf: bun.PathBuffer = undefined;
         var zname: [:0]const u8 = bun.fs.FileSystem.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
@@ -871,6 +930,31 @@ pub const StandaloneModuleGraph = struct {
                     return bun.invalid_fd;
                 };
                 defer pe_file.deinit();
+
+                // The Authenticode signature sits in an overlay past the
+                // last section. Appending addon sections there first would
+                // overwrite it and then make addBunSection's later strip
+                // trip SecurityDirInsideImage, so strip up-front.
+                // (addBunSection below strips again, which is a no-op on
+                // an already-unsigned image.)
+                pe_file.stripAuthenticode(.{ .require_overlay = true, .recompute_checksum = false }) catch |err| {
+                    Output.prettyErrorln("Error stripping PE signature: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    return bun.invalid_fd;
+                };
+
+                // Statically merge embedded .node addons so the compiled
+                // exe can `process.dlopen` them without writing a temp
+                // file and calling `LoadLibraryExW`. Must happen before
+                // `addBunSection` so the section order is
+                // [.bnN ...][.bunL][.bun] and the checksum is computed
+                // over the final image.
+                linkNativeAddonsForWindows(pe_file, output_files, module_prefix) catch |err| {
+                    Output.prettyErrorln("Error linking native addon into PE file: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    return bun.invalid_fd;
+                };
+
                 // Always strip authenticode when adding .bun section for --compile
                 pe_file.addBunSection(bytes, .strip_always) catch |err| {
                     Output.prettyErrorln("Error adding Bun section to PE file: {}", .{err});
@@ -1178,6 +1262,8 @@ pub const StandaloneModuleGraph = struct {
             self_exe,
             windows_options,
             target,
+            output_files,
+            module_prefix,
         );
         defer if (fd != bun.invalid_fd) fd.close();
         bun.debugAssert(fd.kind == .system);

@@ -210,6 +210,17 @@ This will cause the worker's to exit as soon as possible.
 
 A worker can terminate itself with `process.exit()`. This does not terminate the main process. Like in Node.js, `process.on('beforeExit', callback)` and `process.on('exit', callback)` are emitted on the worker thread (and not on the main thread), and the exit code is passed to the `"close"` event.
 
+### `self.close()`
+
+A Web Worker can request its own cooperative shutdown with `self.close()` (the WHATWG [`DedicatedWorkerGlobalScope#close`](https://html.spec.whatwg.org/multipage/workers.html#dom-dedicatedworkerglobalscope-close) API). Unlike `process.exit()`, the task that called `close()` runs to completion, so any `postMessage` in the same synchronous block still reaches the parent. Tasks already queued on the worker's event loop (buffered `"message"` events, pending `setTimeout(fn, 0)`, etc.) are discarded per the spec. The parent sees a clean `CloseEvent` with `code: 0`, `wasClean: true`.
+
+```ts worker.ts icon="/icons/typescript.svg"
+self.postMessage("goodbye");
+self.close();
+```
+
+`self.close()` is only defined on Web Workers (`new Worker(url)`); it is not a global inside `node:worker_threads` workers, matching Node.js. On the main thread it is a no-op.
+
 ### `"close"`
 
 The `"close"` event is emitted when a worker has been terminated. It can take some time for the worker to actually terminate, so this event is emitted when the worker has been marked as terminated. The `CloseEvent` will contain the exit code passed to `process.exit()`, or 0 if closed for other reasons.

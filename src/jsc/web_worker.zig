@@ -99,8 +99,16 @@ name: [:0]const u8,
 live_node: std.DoublyLinkedList.Node = .{},
 
 /// Set by the parent (`notifyNeedTermination`) or by the worker itself
-/// (`exit`). The worker loop polls this between ticks.
+/// (`exit`). Means "arm the JSC termination trap and stop the loop" — abrupt
+/// shutdown. The worker loop polls this between ticks.
 requested_terminate: std.atomic.Value(bool) = .init(false),
+
+/// Set by the worker itself via `self.close()` (WHATWG DedicatedWorkerGlobalScope#close).
+/// Means "stop the loop cooperatively" — current task runs to completion,
+/// no trap fired. Kept separate from `requested_terminate` so that a
+/// subsequent parent-side `worker.terminate()` still arms the trap and
+/// interrupts any long-running synchronous work after close().
+requested_close: std.atomic.Value(bool) = .init(false),
 
 /// The worker's `jsc.VirtualMachine`, or null before `startVM()` / after
 /// `shutdown()` nulls it. Lives inside `arena`. `vm_lock` must be held for any
@@ -245,12 +253,25 @@ export fn WebWorker__getParentWorker(vm: *jsc.VirtualMachine) ?*anyopaque {
     return worker.cpp_worker;
 }
 
+/// True if the loop should exit — either abrupt (`requested_terminate`) or
+/// cooperative (`requested_close`). Every `spin()` loop check uses this so
+/// that either signal breaks out.
 pub fn hasRequestedTerminate(this: *const WebWorker) bool {
-    return this.requested_terminate.load(.acquire);
+    return this.requested_terminate.load(.acquire) or this.requested_close.load(.acquire);
 }
 
+/// Swap the abrupt-termination flag to true; returns the old value so callers
+/// can dedupe. Used by `notifyNeedTermination` / `terminateAllAndWait` /
+/// `exit()` — the paths that also arm the JSC trap.
 fn setRequestedTerminate(this: *WebWorker) bool {
     return this.requested_terminate.swap(true, .release);
+}
+
+/// Swap the cooperative-close flag to true; returns the old value so callers
+/// can dedupe. Used only by `self.close()`. Setting this does NOT arm the
+/// JSC trap — the task that called `close()` runs to completion.
+fn setRequestedClose(this: *WebWorker) bool {
+    return this.requested_close.swap(true, .release);
 }
 
 // =============================================================================
@@ -406,26 +427,6 @@ pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
 /// thread from the close task posted by `dispatchExit`.
 pub fn releaseParentPollRef(this: *WebWorker) callconv(.c) void {
     this.parent_poll_ref.unref(this.parent);
-}
-
-/// `self.close()` from inside the worker (WHATWG DedicatedWorkerGlobalScope#close).
-/// Called on the worker thread.
-///
-/// Unlike `notifyNeedTermination`, this does NOT arm the JSC NeedTermination
-/// trap — the WHATWG spec requires the task that called `close()` to run to
-/// completion, only discarding tasks already queued on the worker's event
-/// loop. Setting `requested_terminate` and waking the loop is enough:
-/// `spin()` polls the flag at the top of each tick and between
-/// `autoTickActive()` calls, so it exits on the next loop iteration after the
-/// current task returns.
-///
-/// We take the worker's own `*VirtualMachine` so we never touch the parent-
-/// owned `cpp_worker`/`impl_` pointer from the worker thread.
-export fn WebWorker__requestClose(vm: *jsc.VirtualMachine) void {
-    const worker = vm.worker orelse return;
-    if (worker.setRequestedTerminate()) return;
-    log("[{d}] requestClose (self.close)", .{worker.execution_context_id});
-    vm.eventLoop().wakeup();
 }
 
 // =============================================================================
@@ -653,6 +654,18 @@ fn spin(this: *WebWorker) void {
 
     this.flushLogs(vm);
     log("[{d}] event loop start", .{this.execution_context_id});
+
+    // If top-level eval called `self.close()` or `process.exit()` or a
+    // parent-side `worker.terminate()` fired during load, skip `dispatchOnline`
+    // and `fireEarlyMessages` and the unconditional first tick: per WHATWG
+    // "close a worker" those buffered tasks (the 'message' events sitting in
+    // the inbox, any `setTimeout(fn, 0)` queued before close()) must be
+    // discarded. Jumping straight to shutdown also keeps the parent from
+    // observing an 'open' event for a worker that is already closed.
+    if (this.hasRequestedTerminate()) {
+        this.shutdown();
+    }
+
     // dispatchOnline fires the parent-side 'open' event and flips the C++
     // state to Running (which routes postMessage directly instead of
     // queuing). It is placed after the entry point has loaded so the parent
@@ -672,14 +685,19 @@ fn spin(this: *WebWorker) void {
     }
 
     // Always do a first tick so we call CppTask without delay after
-    // dispatchOnline.
-    vm.tick();
+    // dispatchOnline — unless the 'message' handler that just ran inside
+    // `fireEarlyMessages` called `close()` or `process.exit()`. In that
+    // case there is nothing more to run.
+    if (!this.hasRequestedTerminate()) {
+        vm.tick();
+    }
 
-    while (vm.isEventLoopAlive()) {
+    // Check the flag BEFORE each tick so a `close()` observed at the top of
+    // the loop doesn't let one more batch of queued tasks run.
+    while (!this.hasRequestedTerminate() and vm.isEventLoopAlive()) {
         vm.tick();
         if (this.hasRequestedTerminate()) break;
         vm.eventLoop().autoTickActive();
-        if (this.hasRequestedTerminate()) break;
     }
 
     log("[{d}] before exit {s}", .{ this.execution_context_id, if (this.hasRequestedTerminate()) "(terminated)" else "(event loop dead)" });
@@ -801,6 +819,26 @@ pub fn exit(this: *WebWorker) void {
     if (this.vm) |vm| {
         vm.jsc_vm.notifyNeedTermination();
     }
+}
+
+/// `self.close()` from inside the worker (WHATWG DedicatedWorkerGlobalScope#close).
+/// Worker-thread only.
+///
+/// Cooperative shutdown: sets `requested_close` (not `requested_terminate`)
+/// and wakes the loop. The task that called `close()` runs to completion
+/// because we do NOT call `vm.jsc_vm.notifyNeedTermination()` — the WHATWG
+/// spec requires this. A subsequent parent-side `worker.terminate()` is
+/// still effective: it goes through `notifyNeedTermination`, which sets the
+/// *separate* `requested_terminate` flag and arms the trap, interrupting
+/// any long synchronous work queued after close().
+///
+/// We take the worker's own `*VirtualMachine` so we never touch the parent-
+/// owned `cpp_worker`/`impl_` pointer from the worker thread.
+export fn WebWorker__requestClose(vm: *jsc.VirtualMachine) void {
+    const worker = vm.worker orelse return;
+    if (worker.setRequestedClose()) return;
+    log("[{d}] requestClose (self.close)", .{worker.execution_context_id});
+    vm.eventLoop().wakeup();
 }
 
 // =============================================================================

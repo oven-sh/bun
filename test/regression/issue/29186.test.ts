@@ -143,6 +143,97 @@ test.concurrent("close is NOT defined on node:worker_threads Workers (matches No
   });
 });
 
+test.concurrent("self.close() discards queued tasks (setTimeout scheduled before close never fires)", async () => {
+  // Per https://html.spec.whatwg.org/multipage/workers.html#close-a-worker step
+  // 1, `close()` discards tasks already queued on the worker's event loop.
+  // A `setTimeout(fn, 0)` scheduled before close() must not fire. Browsers
+  // (Chrome/Firefox/Safari) all match this; Bun used to run one extra tick
+  // of queued work after close().
+  using dir = tempDir("issue-29186-discard", {
+    "worker.mjs": `
+      setTimeout(() => { self.postMessage("timer-fired"); }, 0);
+      self.postMessage("before-close");
+      self.close();
+    `,
+    "main.mjs": `
+      const worker = new Worker(new URL("./worker.mjs", import.meta.url).href, { type: "module" });
+      const events = [];
+      const { promise, resolve, reject } = Promise.withResolvers();
+
+      worker.onmessage = ({ data }) => { events.push(data); };
+      worker.onerror = (e) => reject(new Error("worker error: " + (e.message || e)));
+      worker.addEventListener("close", () => resolve());
+
+      await promise;
+      console.log(JSON.stringify(events));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
+  // Only "before-close" — the queued setTimeout must be discarded.
+  expect(JSON.parse(stdout.trim())).toEqual(["before-close"]);
+});
+
+test.concurrent("worker.terminate() still interrupts JS even after self.close() was called", async () => {
+  // 30s guard: the worker spins for 60s if the trap is not armed. A successful
+  // terminate() interrupts within ~50ms, so 30s is plenty of margin.
+  // `self.close()` sets a cooperative-close flag — but a follow-up
+  // parent-side `worker.terminate()` must still arm the JSC termination
+  // trap and interrupt any long-running synchronous work the worker got
+  // stuck in after close(). Otherwise `worker.terminate()` would be a
+  // silent no-op for closed-but-busy workers.
+  using dir = tempDir("issue-29186-terminate-after-close", {
+    "worker.mjs": `
+      self.close();
+      // Heavy synchronous work — would run forever without the trap.
+      const start = performance.now();
+      while (performance.now() - start < 60_000) {}
+      self.postMessage("should-not-reach");
+    `,
+    "main.mjs": `
+      const worker = new Worker(new URL("./worker.mjs", import.meta.url).href, { type: "module" });
+      const { promise, resolve, reject } = Promise.withResolvers();
+      let sawUnexpected = false;
+
+      worker.onmessage = () => { sawUnexpected = true; };
+      worker.addEventListener("close", () => resolve());
+      worker.onerror = (e) => reject(new Error("worker error: " + (e.message || e)));
+
+      // Give the worker a moment to enter the infinite loop, then force
+      // termination.
+      await new Promise(r => setTimeout(r, 50));
+      worker.terminate();
+
+      // Bound the wait so a regression hangs the test visibly instead of
+      // silently running for 60s.
+      const guard = new Promise((_, r) => setTimeout(() => r(new Error("worker.terminate() did not interrupt the worker in time")), 10_000));
+      await Promise.race([promise, guard]);
+      console.log(sawUnexpected ? "UNEXPECTED" : "OK");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
+  expect(stdout.trim()).toBe("OK");
+}, 30_000);
+
 test.concurrent("close() on the main thread is a no-op", async () => {
   // On main (non-window) contexts, `close()` should silently do nothing —
   // matching how `postMessage` is a no-op there today.

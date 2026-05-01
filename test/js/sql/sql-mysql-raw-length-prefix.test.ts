@@ -62,15 +62,24 @@ function assertFixtureOutput(stdout: string, stderr: string, exitCode: number) {
   expect(exitCode).toBe(0);
 }
 
+// The fixture does CREATE TABLE / INSERT / two SELECT / DROP — under ASAN
+// that easily crosses the bun:test default 5s timeout, especially if the
+// server is remote. 30s gives plenty of headroom without masking hangs.
+const TEST_TIMEOUT_MS = 30_000;
+
 if (isDockerEnabled()) {
   // CI: run against the docker-compose MySQL service.
   describeWithContainer("mysql", { image: "mysql_plain" }, container => {
-    test(".raw() on json / varchar returns only the payload (#30039)", async () => {
-      await container.ready;
-      const url = `mysql://root@${container.host}:${container.port}/bun_sql_test`;
-      const { stdout, stderr, exitCode } = await runFixture(url);
-      assertFixtureOutput(stdout, stderr, exitCode);
-    });
+    test(
+      ".raw() on json / varchar returns only the payload (#30039)",
+      async () => {
+        await container.ready;
+        const url = `mysql://root@${container.host}:${container.port}/bun_sql_test`;
+        const { stdout, stderr, exitCode } = await runFixture(url);
+        assertFixtureOutput(stdout, stderr, exitCode);
+      },
+      TEST_TIMEOUT_MS,
+    );
   });
 } else {
   // No docker daemon (e.g. local/sandboxed environments). If a MySQL server
@@ -79,23 +88,27 @@ if (isDockerEnabled()) {
   const url = process.env.MYSQL_URL || "mysql://bun@127.0.0.1:3306/bun_sql_test";
 
   describe("mysql (local)", () => {
-    test(".raw() on json / varchar returns only the payload (#30039)", async () => {
-      const { stdout, stderr, exitCode } = await runFixture(url);
-      // The fixture prints "CONNECTED" after the priming query succeeds. If
-      // it never got that far, there's no MySQL to talk to in this
-      // environment; the docker-gated branch above provides the CI coverage.
-      if (!stdout.startsWith("CONNECTED")) {
-        if (process.env.MYSQL_URL) {
-          // MYSQL_URL was explicitly provided; failing to connect is a real
-          // error, not an environment without MySQL.
-          throw new Error(
-            `sql-mysql-raw-length-prefix: MYSQL_URL was provided but fixture never reached CONNECTED\nstdout:\n${stdout}\nstderr:\n${stderr}`,
-          );
+    test(
+      ".raw() on json / varchar returns only the payload (#30039)",
+      async () => {
+        const { stdout, stderr, exitCode } = await runFixture(url);
+        // The fixture prints "CONNECTED" after the priming query succeeds. If
+        // it never got that far, there's no MySQL to talk to in this
+        // environment; the docker-gated branch above provides the CI coverage.
+        if (!stdout.startsWith("CONNECTED")) {
+          if (process.env.MYSQL_URL) {
+            // MYSQL_URL was explicitly provided; failing to connect is a real
+            // error, not an environment without MySQL.
+            throw new Error(
+              `sql-mysql-raw-length-prefix: MYSQL_URL was provided but fixture never reached CONNECTED\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+            );
+          }
+          console.warn("sql-mysql-raw-length-prefix: no MySQL reachable at " + url + "; skipping assertions");
+          return;
         }
-        console.warn("sql-mysql-raw-length-prefix: no MySQL reachable at " + url + "; skipping assertions");
-        return;
-      }
-      assertFixtureOutput(stdout, stderr, exitCode);
-    });
+        assertFixtureOutput(stdout, stderr, exitCode);
+      },
+      TEST_TIMEOUT_MS,
+    );
   });
 }

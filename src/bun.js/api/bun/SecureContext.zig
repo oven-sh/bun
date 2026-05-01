@@ -96,6 +96,10 @@ pub fn intern(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSErro
     }
 
     const sc = try create(global, &config);
+    // intern() and create() both derive the digest via asUSockets().digest();
+    // if those paths ever drift, identical configs would silently stop
+    // interning. Debug-assert they agree.
+    bun.assert(bun.strings.eqlLong(&sc.digest, &d, false));
     const value = sc.toJS(global);
     cpp.Bun__SecureContextCache__set(global, key, value);
     return value;

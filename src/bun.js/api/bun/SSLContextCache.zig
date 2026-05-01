@@ -64,14 +64,20 @@ pub fn getOrCreateOpts(
         }
         // Tombstoned — rebuild and reuse the slot.
         const ctx = opts.createSSLContext(err) orelse return null;
+        // SSL_CTX_set_ex_data only fails on OOM (Bun crashes anyway), but if
+        // it did, the entry would never tombstone and `entry.ctx` would dangle
+        // after the CTX is freed. Don't cache it; caller still owns the ref.
+        if (BoringSSL.SSL_CTX_set_ex_data(ctx, c.us_ssl_ctx_cache_ex_idx(), entry) != 1) return ctx;
         entry.ctx = ctx;
-        _ = BoringSSL.SSL_CTX_set_ex_data(ctx, c.us_ssl_ctx_cache_ex_idx(), entry);
         return ctx;
     }
 
     const ctx = opts.createSSLContext(err) orelse return null;
     const entry = bun.new(Entry, .{ .ctx = ctx, .owner = self });
-    _ = BoringSSL.SSL_CTX_set_ex_data(ctx, c.us_ssl_ctx_cache_ex_idx(), entry);
+    if (BoringSSL.SSL_CTX_set_ex_data(ctx, c.us_ssl_ctx_cache_ex_idx(), entry) != 1) {
+        bun.destroy(entry);
+        return ctx;
+    }
     bun.handleOom(self.map.put(bun.default_allocator, d, entry));
 
     self.ops_since_compact += 1;

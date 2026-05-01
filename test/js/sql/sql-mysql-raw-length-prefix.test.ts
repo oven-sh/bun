@@ -73,9 +73,7 @@ function assertFixtureOutput(stdout: string, stderr: string, exitCode: number) {
 // socket (the sandboxed gate container has MariaDB running as root via
 // /run/mysqld/mysqld.sock but no pre-existing TCP user).
 async function discoverMysqlUrl(): Promise<string | null> {
-  const candidates = [process.env.MYSQL_URL, "mysql://bun@127.0.0.1:3306/bun_sql_test"].filter(
-    (u): u is string => !!u,
-  );
+  const candidates = [process.env.MYSQL_URL, "mysql://bun@127.0.0.1:3306/bun_sql_test"].filter((u): u is string => !!u);
   for (const url of candidates) {
     try {
       await using sql = new SQL({ url, max: 1 });

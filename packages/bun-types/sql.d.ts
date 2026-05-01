@@ -374,6 +374,21 @@ declare module "bun" {
       bigint?: boolean | undefined;
 
       /**
+       * Interpret MySQL `DATE`/`DATETIME`/`TIMESTAMP` values as UTC when
+       * decoding them into JavaScript `Date` objects.
+       *
+       * MySQL's wire protocol carries no timezone information for these
+       * types. By default (`false`) Bun matches its historical behaviour and
+       * interprets the components in the client's local timezone. Set this to
+       * `true` to interpret them as UTC so a value round-trips to the same
+       * `Date` regardless of `process.env.TZ`.
+       *
+       * Currently only affects the MySQL / MariaDB adapter.
+       * @default false
+       */
+      utcDate?: boolean | undefined;
+
+      /**
        * Automatic creation of prepared statements
        * @default true
        */

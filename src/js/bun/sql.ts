@@ -47,6 +47,12 @@ const SQL: typeof Bun.SQL = function SQL(
 ): Bun.SQL {
   const connectionInfo = parseOptions(stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty);
   const pool = adapterFromOptions(connectionInfo);
+  // Per-connection decode flags (bigint, utcDate) are copied onto every query
+  // so the native per-query entry point doesn't need to reach back into the
+  // connection object.
+  const decodeFlags =
+    (connectionInfo.bigint ? SQLQueryFlags.bigint : SQLQueryFlags.none) |
+    (connectionInfo.utcDate ? SQLQueryFlags.utcDate : SQLQueryFlags.none);
 
   function onQueryDisconnected(this: Query<any, any>, err: Error) {
     // connection closed mid query this will not be called if the query finishes first
@@ -113,13 +119,7 @@ const SQL: typeof Bun.SQL = function SQL(
     values: any[],
   ) {
     try {
-      return new Query(
-        strings,
-        values,
-        connectionInfo.bigint ? SQLQueryFlags.bigint : SQLQueryFlags.none,
-        queryFromPoolHandler,
-        pool,
-      );
+      return new Query(strings, values, decodeFlags, queryFromPoolHandler, pool);
     } catch (err) {
       return Promise.$reject(err);
     }
@@ -130,7 +130,7 @@ const SQL: typeof Bun.SQL = function SQL(
     values: any[],
   ) {
     try {
-      let flags = connectionInfo.bigint ? SQLQueryFlags.bigint | SQLQueryFlags.unsafe : SQLQueryFlags.unsafe;
+      let flags = decodeFlags | SQLQueryFlags.unsafe;
       if ((values?.length ?? 0) === 0) {
         flags |= SQLQueryFlags.simple;
       }
@@ -182,9 +182,7 @@ const SQL: typeof Bun.SQL = function SQL(
       const query = new Query(
         strings,
         values,
-        connectionInfo.bigint
-          ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.bigint
-          : SQLQueryFlags.allowUnsafeTransaction,
+        decodeFlags | SQLQueryFlags.allowUnsafeTransaction,
         queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
         pool,
       );
@@ -203,9 +201,7 @@ const SQL: typeof Bun.SQL = function SQL(
     transactionQueries: Set<Query<any, any>>,
   ) {
     try {
-      let flags = connectionInfo.bigint
-        ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe | SQLQueryFlags.bigint
-        : SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe;
+      let flags = decodeFlags | SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe;
 
       if ((values?.length ?? 0) === 0) {
         flags |= SQLQueryFlags.simple;

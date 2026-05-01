@@ -110,6 +110,7 @@ export interface MySQLDotZig {
     columns: string[] | undefined,
     bigint: boolean,
     simple: boolean,
+    utcDate: boolean,
   ) => $ZigGeneratedClasses.MySQLQuery;
 }
 
@@ -588,6 +589,7 @@ class MySQLAdapter
       undefined,
       !!(flags & SQLQueryFlags.bigint),
       !!(flags & SQLQueryFlags.simple),
+      !!(flags & SQLQueryFlags.utcDate),
     );
   }
 

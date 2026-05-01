@@ -3,7 +3,7 @@
 /// with binary collations (e.g., utf8mb4_bin) which have different character_set values.
 pub const binary_charset: u16 = 63;
 
-pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.FieldType, column_length: u32, raw: bool, bigint: bool, unsigned: bool, binary: bool, character_set: u16, comptime Context: type, reader: NewReader(Context)) !SQLDataCell {
+pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.FieldType, column_length: u32, raw: bool, bigint: bool, utc_date: bool, unsigned: bool, binary: bool, character_set: u16, comptime Context: type, reader: NewReader(Context)) !SQLDataCell {
     debug("decodeBinaryValue: {s}", .{@tagName(field_type)});
     return switch (field_type) {
         .MYSQL_TYPE_TINY => {
@@ -125,13 +125,19 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
         },
         .MYSQL_TYPE_DATE, .MYSQL_TYPE_TIMESTAMP, .MYSQL_TYPE_DATETIME => switch (try reader.byte()) {
             0 => {
-                return SQLDataCell{ .tag = .date, .value = .{ .date = 0 } };
+                // MySQL's binary protocol sends a zero-length payload for
+                // zero-date sentinels like '0000-00-00'. In `utcDate: true`
+                // mode return NaN so the JS side sees an Invalid Date,
+                // matching the text-protocol path. Default (local-time)
+                // mode keeps Bun's historical behaviour of returning the
+                // Unix epoch.
+                return SQLDataCell{ .tag = .date, .value = .{ .date = if (utc_date) std.math.nan(f64) else 0 } };
             },
             11, 7, 4 => |l| {
                 var data = try reader.read(l);
                 defer data.deinit();
                 const time = try DateTime.fromData(&data);
-                return SQLDataCell{ .tag = .date, .value = .{ .date = try time.toJSTimestamp(globalObject) } };
+                return SQLDataCell{ .tag = .date, .value = .{ .date = try time.toJSTimestamp(globalObject, utc_date) } };
             },
             else => error.InvalidBinaryValue,
         },

@@ -63,12 +63,25 @@ pub fn start(this: *PipeReader, process: *Subprocess, event_loop: *jsc.EventLoop
         return this.reader.startWithCurrentPipe();
     }
 
+    // PosixBufferedReader.start() always returns .result, but if poll
+    // registration fails it synchronously invokes onReaderError() first,
+    // which drops both the Readable.pipe ref (via onCloseIO) and the ref we
+    // just took above. Hold one more ref so `this` survives long enough to
+    // check state after start() returns.
+    this.ref();
+    defer this.deref();
+
     switch (this.reader.start(this.stdio_result.?, true)) {
         .err => |err| {
             return .{ .err = err };
         },
         .result => {
             if (comptime Environment.isPosix) {
+                if (this.state == .err) {
+                    // onReaderError already ran and tore everything down;
+                    // the handle is closed and the poll is gone.
+                    return .success;
+                }
                 const poll = this.reader.handle.poll;
                 poll.flags.insert(.socket);
                 this.reader.flags.socket = true;

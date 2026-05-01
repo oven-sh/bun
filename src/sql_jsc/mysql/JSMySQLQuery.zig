@@ -205,8 +205,12 @@ pub fn resolve(
 
     // Capture column metadata for this result set before MySQLStatement.reset()
     // zeroes columns_received and the next header overwrites the definitions.
+    // If building the metadata fails (e.g. JS-heap OOM), swallow the exception
+    // and resolve without it: the query itself succeeded, and by this point
+    // #query.result() has already set status to .success so rejectWithJSValue
+    // would be a no-op and the promise would hang.
     const statement_js: JSValue = this.buildStatementJS(this.#globalObject) catch brk: {
-        if (this.#globalObject.tryTakeException()) |e| return this.rejectWithJSValue(queries_array, e);
+        _ = this.#globalObject.tryTakeException();
         break :brk .js_undefined;
     };
     statement_js.ensureStillAlive();

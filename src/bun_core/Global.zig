@@ -108,9 +108,22 @@ pub fn isExiting() bool {
     return is_exiting.load(.monotonic);
 }
 
+extern "c" fn Bun__resetProcessSignalHandlers() void;
+
 /// Flushes stdout and stderr (in exit/quick_exit callback) and exits with the given code.
 pub fn exit(code: u32) noreturn {
     is_exiting.store(true, .monotonic);
+
+    // The JS event loop will not run again. Any process.on('SIG...')
+    // handlers (forwardSignal) would only queue signals that are never
+    // drained and then return — which, for SIGABRT on macOS, makes __abort
+    // re-raise forever at 100% CPU while the main thread is blocked in
+    // Bun__onExit's pthread_join on the FSEvents thread. Restore SIG_DFL now
+    // so faults during teardown terminate instead of livelocking.
+    if (Environment.isPosix) {
+        Bun__resetProcessSignalHandlers();
+    }
+
     _ = @atomicRmw(usize, &bun.analytics.Features.exited, .Add, 1, .monotonic);
 
     // If we are crashing, allow the crash handler to finish it's work.
@@ -217,6 +230,13 @@ comptime {
 }
 
 pub export fn Bun__onExit() void {
+    // Usually already done by Global.exit(), but a native addon that calls
+    // libc exit() directly bypasses that path and still reaches us via
+    // atexit(). Idempotent — the map is cleared on first call.
+    if (Environment.isPosix) {
+        Bun__resetProcessSignalHandlers();
+    }
+
     bun.jsc.Node.FSEvents.closeAndWait();
 
     runExitCallbacks();

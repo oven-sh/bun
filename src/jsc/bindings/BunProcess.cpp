@@ -1560,6 +1560,33 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
     }
 }
 
+// Called from Global.exit() once the process has committed to exiting and the
+// JS event loop will not run again. Any `process.on('SIG...')` handlers we
+// installed (forwardSignal) can no longer deliver events to JS — they just
+// queue into a ring buffer that is never drained and return. For synchronous
+// fatal signals that expect the handler not to return (notably SIGABRT on
+// macOS, where __abort re-raises in a loop), a returning handler livelocks the
+// process at 100% CPU instead of terminating. Reset every signal we installed
+// back to SIG_DFL so faults during teardown (FSEvents thread join, native
+// addon destructors, etc.) terminate the process instead of spinning.
+extern "C" void Bun__resetProcessSignalHandlers()
+{
+#if !OS(WINDOWS)
+    if (!signalToContextIdsMap) {
+        return;
+    }
+    for (auto& entry : *signalToContextIdsMap) {
+        int signalNumber = entry.key;
+        if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal && oldHandler != SIG_ERR) {
+            // Something else (e.g. a native addon) replaced our handler after
+            // we installed it; leave that handler in place.
+            signal(signalNumber, oldHandler);
+        }
+    }
+    signalToContextIdsMap->clear();
+#endif
+}
+
 Process::~Process()
 {
 }

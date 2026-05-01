@@ -16,6 +16,7 @@ namespace Bun {
 
 class SecureContextCache {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SecureContextCache);
+
 public:
     explicit SecureContextCache(JSC::VM& vm)
         : m_map(vm)

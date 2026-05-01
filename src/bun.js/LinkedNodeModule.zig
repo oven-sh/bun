@@ -242,11 +242,15 @@ fn bind(entry: *Entry) !Resolved {
     }
     _ = FlushInstructionCache(k32.GetCurrentProcess(), base + entry.rva_base, entry.image_size);
 
-    // .pdata was already rebased at build time; register it so the OS
-    // unwinder can walk frames inside the addon.
+    // Register the addon's exception tables with its *own* image base.
+    // RUNTIME_FUNCTION and the UNWIND_INFO structures they reference keep
+    // the addon-relative RVAs they were built with, so BaseAddress has to
+    // be where the addon's RVA 0 actually landed — not the exe's base —
+    // or chained unwinds and language-specific handlers resolve to the
+    // wrong place.
     if (entry.pdata_count > 0) {
         const rfn: [*]RUNTIME_FUNCTION = @ptrCast(@alignCast(base + entry.pdata_rva));
-        _ = RtlAddFunctionTable(rfn, entry.pdata_count, @intFromPtr(base));
+        _ = RtlAddFunctionTable(rfn, entry.pdata_count, base_addr + entry.rva_base);
     }
 
     // Run CRT init + static constructors. Passing the exe's HMODULE as

@@ -729,6 +729,7 @@ pub const PEFile = struct {
     /// access goes through `rvaToOff`.
     const AddonView = struct {
         bytes: []const u8,
+        pe: *align(1) const PEHeader,
         opt: *align(1) const OptionalHeader64,
         sections: []align(1) const SectionHeader,
 
@@ -748,7 +749,7 @@ pub const PEFile = struct {
             const n: usize = pe.number_of_sections;
             if (sh_off + n * @sizeOf(SectionHeader) > bytes.len) return error.InvalidPEFile;
             const sh: [*]align(1) const SectionHeader = @ptrCast(bytes[sh_off..].ptr);
-            return .{ .bytes = bytes, .opt = opt, .sections = sh[0..n] };
+            return .{ .bytes = bytes, .pe = pe, .opt = opt, .sections = sh[0..n] };
         }
 
         /// Translate an addon-relative RVA to a file offset.
@@ -831,6 +832,12 @@ pub const PEFile = struct {
         // Refuse anything we would get wrong. The extract-to-tempfile path
         // stays as the behavioural fallback.
         if (addon.dir(IMAGE_DIRECTORY_ENTRY_TLS).size != 0) return null;
+        // Without base relocations we cannot rebase the addon's absolute
+        // addresses into bun.exe's image. A DLL built with /FIXED would
+        // also fail LoadLibrary unless its preferred base happened to be
+        // free, so falling back is no loss of functionality.
+        const IMAGE_FILE_RELOCS_STRIPPED: u16 = 0x0001;
+        if (addon.pe.characteristics & IMAGE_FILE_RELOCS_STRIPPED != 0) return null;
 
         const host_opt = try self.getOptionalHeader();
         const sect_align = host_opt.section_alignment;
@@ -959,22 +966,19 @@ pub const PEFile = struct {
         if (try self.collectImports(allocator, &addon, &imports, image, rva_base, false)) return null;
         if (try self.collectImports(allocator, &addon, &imports, image, rva_base, true)) return null;
 
-        // Exception table: rewrite the RUNTIME_FUNCTION array in place so
-        // RtlAddFunctionTable can consume it directly with imageBase =
-        // GetModuleHandle(NULL).
+        // Exception table. The RUNTIME_FUNCTION array and every RVA inside
+        // the UNWIND_INFO structures it points at (chained unwind entries,
+        // language-specific handler RVAs) are all interpreted relative to
+        // the single BaseAddress passed to RtlAddFunctionTable. Rebasing
+        // only the outer array would leave the inner RVAs wrong, so keep
+        // the whole thing addon-relative and have the runtime pass
+        // `exe_base + rva_base` as BaseAddress instead.
         var pdata_rva: u32 = 0;
         var pdata_count: u32 = 0;
         const pdata_dir = addon.dir(IMAGE_DIRECTORY_ENTRY_EXCEPTION);
         if (pdata_dir.size >= @sizeOf(RuntimeFunction) and pdata_dir.virtual_address + pdata_dir.size <= addon_image) {
             pdata_rva = rva_base + pdata_dir.virtual_address;
             pdata_count = pdata_dir.size / @sizeOf(RuntimeFunction);
-            const rfns: [*]align(1) RuntimeFunction = @ptrCast(image[pdata_dir.virtual_address..].ptr);
-            var i: u32 = 0;
-            while (i < pdata_count) : (i += 1) {
-                rfns[i].begin_address += rva_base;
-                rfns[i].end_address += rva_base;
-                rfns[i].unwind_info += rva_base;
-            }
         }
 
         // Exports we care about.

@@ -1649,25 +1649,34 @@ pub const internal = struct {
     }
 
     fn libinfoCallback(
-        status: i32,
-        addr_info: ?*std.c.addrinfo,
+        status_: i32,
+        addr_info_: ?*std.c.addrinfo,
         arg: ?*anyopaque,
     ) callconv(.c) void {
         const req: *Request = bun.cast(*Request, arg);
+        var status = status_;
+        var addr_info = addr_info_;
+        // Test hook: force the ADDRCONFIG fallback path so it can be exercised
+        // in CI without a loopback-only network configuration.
+        if (req.can_retry_for_addrconfig and bun.feature_flag.BUN_INTERNAL_DNS_FORCE_ADDRCONFIG_RETRY.get()) {
+            if (addr_info) |info| std.c.freeaddrinfo(info);
+            addr_info = null;
+            status = @intFromEnum(std.c.EAI.NONAME);
+        }
         const status_int: c_int = @intCast(status);
-        if (status == @intFromEnum(std.c.EAI.NONAME) and req.can_retry_for_addrconfig) {
+        if (status == @intFromEnum(std.c.EAI.NONAME) and req.can_retry_for_addrconfig) retry: {
             req.can_retry_for_addrconfig = false;
             var service_buf: [bun.fmt.fastDigitCount(std.math.maxInt(u16)) + 2]u8 = undefined;
             const service: ?[*:0]const u8 = if (req.key.port > 0)
                 (std.fmt.bufPrintZ(&service_buf, "{d}", .{req.key.port}) catch unreachable).ptr
             else
                 null;
-            const getaddrinfo_async_start_ = LibInfo.getaddrinfo_async_start() orelse return;
+            const getaddrinfo_async_start_ = LibInfo.getaddrinfo_async_start() orelse break :retry;
             var machport: bun.mach_port = 0;
             var hints = getHints();
             hints.flags.ADDRCONFIG = false;
 
-            _ = getaddrinfo_async_start_(
+            const errno = getaddrinfo_async_start_(
                 &machport,
                 if (req.key.host) |host| host.ptr else null,
                 service,
@@ -1676,11 +1685,23 @@ pub const internal = struct {
                 req,
             );
 
-            switch (req.libinfo.file_poll.?.register(bun.uws.Loop.get(), .machport, true)) {
-                .err => log("libinfoCallback: failed to register poll", .{}),
-                .result => {
-                    return;
+            if (errno != 0 or machport == 0) {
+                log("libinfoCallback: getaddrinfo_async_start retry failed (errno={d})", .{errno});
+                break :retry;
+            }
+
+            // The retry allocates a new reply port. Store it and re-register the
+            // poll on it — otherwise we'd keep polling the first request's port
+            // and the retry's reply would never be received.
+            req.libinfo.machport = machport;
+            const poll = req.libinfo.file_poll.?;
+            poll.fd = .fromNative(@bitCast(machport));
+            switch (poll.register(bun.uws.Loop.get(), .machport, true)) {
+                .err => {
+                    log("libinfoCallback: failed to register poll", .{});
+                    break :retry;
                 },
+                .result => return,
             }
         }
         afterResult(req, addr_info, @intCast(status_int));

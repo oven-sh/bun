@@ -1,6 +1,6 @@
 import { SystemError, dns } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isWindows, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, withoutAggressiveGC } from "harness";
 import { isIP, isIPv4, isIPv6 } from "node:net";
 
 const backends = ["system", "libc", "c-ares"];
@@ -143,4 +143,37 @@ describe("dns", () => {
       expect(() => dns.setServers([[4, "8.8.8.8", 53]])).not.toThrow();
     });
   });
+});
+
+// The internal DNS resolver used by fetch()/Bun.connect() on macOS goes through
+// libinfo's getaddrinfo_async_start. When the first attempt (with AI_ADDRCONFIG)
+// comes back as EAI_NONAME it retries without ADDRCONFIG, which allocates a new
+// mach reply port. The retry must re-register the kqueue poll on that new port
+// and store it on the request; previously the local machport was discarded and
+// the poll was re-armed on the stale first port, so the retry's reply was never
+// received and the request hung indefinitely.
+test.skipIf(!isMacOS)("internal DNS: libinfo ADDRCONFIG retry re-registers on the new mach port", async () => {
+  const src = /* js */ `
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response("ok"),
+    });
+    const res = await fetch("http://localhost:" + server.port + "/");
+    process.stdout.write(await res.text());
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: {
+      ...bunEnv,
+      // Force the first libinfo callback to behave as EAI_NONAME so the
+      // retry path runs without needing a loopback-only network config.
+      BUN_INTERNAL_DNS_FORCE_ADDRCONFIG_RETRY: "1",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ok");
+  expect(exitCode).toBe(0);
 });

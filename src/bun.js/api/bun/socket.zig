@@ -1922,15 +1922,18 @@ pub const DuplexUpgradeContext = struct {
                         const errno = @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
                         if (this.tls) |tls| {
                             // `handleConnectError` consumes our +1 (its
-                            // `needs_deref` path) and detaches. Calling
-                            // `tls.onClose` afterwards (as main did)
-                            // double-derefs; null `this.tls` so the eventual
-                            // `deinit` doesn't make it a triple. Pre-existing
-                            // on main, latent until the leak fix made `deinit`
-                            // reachable.
+                            // `needs_deref` path) and detaches. Null
+                            // `this.tls` so `deinit` doesn't deref again.
                             this.tls = null;
                             tls.handleConnectError(errno) catch {};
                         }
+                        // `startTLS`/`startTLSWithCTX` failed before the
+                        // SSLWrapper was assigned, so its close callback
+                        // was never registered and nothing will schedule
+                        // `.Close`. Same as the `tls == null` early-return
+                        // above: tear down here.
+                        this.deinit();
+                        return;
                     },
                 };
                 if (this.ssl_config) |*cfg| {

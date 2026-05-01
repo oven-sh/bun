@@ -397,14 +397,14 @@ export const globalFlags: Flag[] = [
 
   // ─── LTO (compile-side) ───
   {
-    flag: "-flto=full",
+    flag: "-flto=thin",
     when: c => c.unix && c.lto,
-    desc: "Full link-time optimization (not thin)",
+    desc: "ThinLTO (parallel, summary-based; matches WebKit prebuilt bitcode)",
   },
   {
-    flag: "-flto",
+    flag: "-flto=thin",
     when: c => c.windows && c.lto,
-    desc: "Link-time optimization",
+    desc: "ThinLTO (clang-cl)",
   },
   {
     flag: ["-fforce-emit-vtables", "-fwhole-program-vtables"],
@@ -712,9 +712,9 @@ export const linkerFlags: Flag[] = [
 
   // ─── LTO (link-side) ───
   {
-    flag: ["-flto=full", "-fwhole-program-vtables", "-fforce-emit-vtables"],
+    flag: ["-flto=thin", "-fwhole-program-vtables", "-fforce-emit-vtables"],
     when: c => c.unix && c.lto,
-    desc: "LTO at link time (matches compile-side -flto=full)",
+    desc: "ThinLTO at link time (matches compile-side -flto=thin)",
   },
   {
     // Without -O at link time, clang's driver defaults LTO codegen to -O2.

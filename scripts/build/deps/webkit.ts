@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "137c59666cfb02c45d04dcfd4b3852e27f78cffc";
+export const WEBKIT_VERSION = "autobuild-preview-pr-208-83aff7a6";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -227,7 +227,7 @@ export const webkit: Dependency = {
     // (macOS: Homebrew headers + system libs; Linux: libicu-dev) — cmake
     // auto-detects.
     const optFlags: string[] = computeCpuTargetFlags(cfg);
-    if (cfg.lto) optFlags.push("-flto=full");
+    if (cfg.lto) optFlags.push("-flto=thin");
     if (cfg.pgoGenerate) optFlags.push(`-fprofile-generate=${cfg.pgoGenerate}`);
     if (cfg.pgoUse) {
       optFlags.push(

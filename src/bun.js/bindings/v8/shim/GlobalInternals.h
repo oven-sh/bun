@@ -72,7 +72,7 @@ public:
     friend class ::v8::Context;
 
 private:
-    Zig::GlobalObject* m_globalObject;
+    JSC::WriteBarrier<Zig::GlobalObject> m_globalObject;
     JSC::LazyClassStructure m_objectTemplateStructure;
     JSC::LazyClassStructure m_handleScopeBufferStructure;
     JSC::LazyClassStructure m_functionTemplateStructure;
@@ -95,8 +95,8 @@ private:
         , m_nullValue(Oddball::Kind::kNull)
         , m_trueValue(Oddball::Kind::kTrue)
         , m_falseValue(Oddball::Kind::kFalse)
+        , m_globalObject(globalObject, JSC::WriteBarrierEarlyInit)
         , m_isolate(this)
-        , m_globalObject(globalObject)
     {
     }
 };

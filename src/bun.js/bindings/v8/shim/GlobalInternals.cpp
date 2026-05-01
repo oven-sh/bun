@@ -48,7 +48,7 @@ void GlobalInternals::finishCreation(VM& vm)
     });
     m_globalHandles.initLater([](const LazyProperty<GlobalInternals, HandleScopeBuffer>::Initializer& init) {
         init.set(HandleScopeBuffer::create(init.vm,
-            init.owner->handleScopeBufferStructure(init.owner->m_globalObject)));
+            init.owner->handleScopeBufferStructure(init.owner->m_globalObject.get())));
     });
 }
 
@@ -59,6 +59,7 @@ void GlobalInternals::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
+    visitor.append(thisObject->m_globalObject);
     thisObject->m_objectTemplateStructure.visit(visitor);
     thisObject->m_handleScopeBufferStructure.visit(visitor);
     thisObject->m_functionTemplateStructure.visit(visitor);

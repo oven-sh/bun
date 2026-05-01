@@ -261,8 +261,10 @@ describe.skipIf(!isWindows)("bun build --compile native addon static link", () =
       const nameLen = bunL.readUInt32LE(20);
       const name = bunL.subarray(24, 24 + nameLen).toString("utf8");
       // toBytes() prefixes with the public $bunfs path so process.dlopen's
-      // argument matches the key.
-      expect(name).toBe("B:/~BUN/root/addon.node");
+      // argument matches the key. The bundler may append a content hash
+      // to the asset basename (default --asset-naming), so match the
+      // shape rather than the exact string.
+      expect(name).toMatch(/^B:\/~BUN\/root\/addon(-[0-9a-z]+)?\.node$/);
 
       let p = 24 + nameLen;
       const rvaBase = bunL.readUInt32LE(p);

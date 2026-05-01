@@ -41,16 +41,23 @@ function assertFixtureOutput(stdout: string, stderr: string, exitCode: number) {
   const { expected, binary, text } = parsed;
 
   // The defining assertion: the raw Buffer starts with the payload's first
-  // byte ('{' for JSON, 't' for "testname") rather than a length-prefix byte
-  // (0xfc/0x08 respectively). Length and full text round-trip exactly.
+  // byte ('{' for JSON — 0x7b; 't' for "testname" — 0x74), not the MySQL
+  // length-encoded-integer prefix (0xfc for 3-byte prefix, 0x08 for the
+  // 1-byte 'testname' length). Before the fix, postFirstByte was 0xfc and
+  // postLength was 3 bytes longer than the payload.
   for (const [label, got] of [
     ["binary", binary],
     ["text", text],
   ] as const) {
     expect(got.postIsUint8Array, `${label}: post is Uint8Array`).toBe(true);
-    expect(got.postLength, `${label}: post length`).toBe(expected.jsonTextLength);
     expect(got.postFirstByte, `${label}: post first byte`).toBe(expected.jsonFirstByte);
-    expect(got.postText, `${label}: post text`).toBe(expected.jsonText);
+    // Parse-equality rather than byte-equality: real MySQL (8.4/9) stores
+    // JSON in a native binary format and re-serializes on SELECT with
+    // spaces after `:`/`,` and reordered object keys, so the returned text
+    // won't match JSON.stringify() of the input. MariaDB stores JSON as
+    // LONGTEXT and preserves the literal bytes. Both must parse back to
+    // the original object.
+    expect(JSON.parse(got.postText), `${label}: post JSON`).toEqual(expected.jsonPayload);
     expect(got.nameLength, `${label}: name length`).toBe(expected.shortTextLength);
     expect(got.nameFirstByte, `${label}: name first byte`).toBe(expected.shortFirstByte);
     expect(got.nameText, `${label}: name text`).toBe(expected.shortText);

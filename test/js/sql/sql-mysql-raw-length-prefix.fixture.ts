@@ -3,12 +3,14 @@
 // `.raw()` on length-encoded column types (json / varchar / text / blob / ...)
 // returned the MySQL length-encoded-integer prefix bytes concatenated with the
 // payload instead of just the payload. For an 8-byte VARCHAR the Buffer was
-// [0x08, ...bytes]; for a ~167-byte JSON column it was [0xa7, '{', ...] which
-// decodes as "\uFFFD{..." under UTF-8.
+// [0x08, ...bytes]; the issue reporter saw a 167-byte JSON column start with
+// [0xa7, '{', ...] which decodes as "\uFFFD{..." under UTF-8.
 //
 // This fixture runs against the MySQL at MYSQL_URL, exercises both the binary
 // protocol (default) and the text protocol (`.simple()`), and prints one JSON
-// line per case so the test harness can assert on exact payload round-trips.
+// line of observations. The test harness checks that each Buffer's first byte
+// is the payload's first byte (not a length prefix) and that the JSON parses
+// back to the original object.
 
 import { SQL } from "bun";
 
@@ -27,10 +29,10 @@ try {
   // Unique table name so concurrent runs don't collide on the same server.
   const table = "bun_raw_len_" + Math.random().toString(36).slice(2, 10);
 
-  // 167 bytes is past the 0xfb threshold that switches length encoding from a
-  // 1-byte prefix to a 3-byte prefix. The short VARCHAR exercises the 1-byte
-  // case. The explicit padding makes the JSON long enough that the corrupted
-  // first byte used to be 0xa7 — a leading UTF-8 continuation byte.
+  // This payload stringifies to ~866 bytes, which is past the 0xfb threshold
+  // that switches MySQL length encoding from a 1-byte prefix to a 3-byte
+  // prefix (0xfc marker + 2-byte little-endian length). The short VARCHAR
+  // exercises the 1-byte prefix case (0x08 for "testname").
   const jsonPayload = {
     type: "doc",
     content: Array.from({ length: 20 }, () => ({ type: "paragraph", text: "hello world" })),
@@ -62,6 +64,7 @@ try {
     console.log(
       JSON.stringify({
         expected: {
+          jsonPayload,
           jsonText,
           jsonTextLength: jsonText.length,
           jsonFirstByte: jsonText.charCodeAt(0),

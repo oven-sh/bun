@@ -138,15 +138,16 @@ pub fn tickConcurrentWithCount(this: *MiniEventLoop) usize {
         this.tasks.head = 0;
     }
 
+    // See the matching comment in `EventLoop.tickConcurrentWithCount`:
+    // `writableSlice(0)` is only the contiguous tail and can be shorter than
+    // `count` when `head > 0`, which would drop tasks. `writeItemAssumeCapacity`
+    // handles ring-buffer wraparound correctly.
     this.tasks.ensureUnusedCapacity(count) catch unreachable;
-    var writable = this.tasks.writableSlice(0);
     while (iter.next()) |task| {
-        writable[0] = task;
-        writable = writable[1..];
-        this.tasks.count += 1;
-        if (writable.len == 0) break;
+        this.tasks.writeItemAssumeCapacity(task);
     }
 
+    bun.debugAssert(this.tasks.count - start_count == count);
     return this.tasks.count - start_count;
 }
 

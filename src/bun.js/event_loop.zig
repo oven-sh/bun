@@ -327,8 +327,13 @@ pub fn tickConcurrentWithCount(this: *EventLoop) usize {
         this.tasks.head = 0;
     }
 
+    // `ensureUnusedCapacity` guarantees `writableLength() >= count` (total free
+    // space across the ring), but `writableSlice(0)` only returns the contiguous
+    // tail segment — which can be shorter when `head > 0`. Writing via the slice
+    // and breaking on `len == 0` would silently drop the remaining ConcurrentTasks
+    // (and leak their auto_delete wrappers). `writeItemAssumeCapacity` wraps the
+    // tail index correctly, so every popped task is transferred.
     this.tasks.ensureUnusedCapacity(count) catch unreachable;
-    var writable = this.tasks.writableSlice(0);
 
     // Defer destruction of the ConcurrentTask to avoid issues with pointer aliasing
     var to_destroy: ?*ConcurrentTask = null;
@@ -343,16 +348,14 @@ pub fn tickConcurrentWithCount(this: *EventLoop) usize {
             to_destroy = task;
         }
 
-        writable[0] = task.task;
-        writable = writable[1..];
-        this.tasks.count += 1;
-        if (writable.len == 0) break;
+        this.tasks.writeItemAssumeCapacity(task.task);
     }
 
     if (to_destroy) |dest| {
         dest.deinit();
     }
 
+    bun.debugAssert(this.tasks.count - start_count == count);
     return this.tasks.count - start_count;
 }
 

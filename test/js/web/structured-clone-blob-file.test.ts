@@ -364,7 +364,7 @@ describe("structuredClone with Blob and File", () => {
       }
     `;
 
-    test.each([
+    test.concurrent.each([
       ["just past end", 5n],
       ["small", 64n],
       ["page", 4096n],

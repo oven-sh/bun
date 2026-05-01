@@ -38,7 +38,8 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
     }
 
     // Field name (null-terminated string)
-    const field_name = try ColumnIdentifier.init(name);
+    var field_name = try ColumnIdentifier.init(name);
+    errdefer field_name.deinit();
     // Table OID (4 bytes)
     // If the field can be identified as a column of a specific table, the object ID of the table; otherwise zero.
     const table_oid = try reader.int4();

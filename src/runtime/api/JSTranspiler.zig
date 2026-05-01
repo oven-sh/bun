@@ -452,6 +452,8 @@ pub const TransformTask = struct {
     transpiler: bun.Transpiler = undefined,
     js_instance: *JSTranspiler,
     log: logger.Log,
+    log_string_buf: []u8 = &.{},
+    log_notes_buf: []logger.Data = &.{},
     err: ?anyerror = null,
     macro_map: MacroMap = MacroMap{},
     tsconfig: ?*TSConfigJSON = null,
@@ -502,7 +504,7 @@ pub const TransformTask = struct {
 
         var log = logger.Log.init(allocator);
         log.level = this.log.level;
-        defer bun.handleOom(log.appendToWithRecycled(&this.log, true));
+        defer this.cloneArenaLog(&log);
 
         this.transpiler.setAllocator(allocator);
         this.transpiler.setLog(&log);
@@ -589,8 +591,36 @@ pub const TransformTask = struct {
         return promise.resolve(this.global, value);
     }
 
+    /// Clone `src` (whose message strings live in the per-run arena) into
+    /// `this.log` before the arena is destroyed. The backing buffers are
+    /// tracked on `this` so `deinit()` can free them.
+    fn cloneArenaLog(this: *TransformTask, src: *logger.Log) void {
+        this.log.warnings += src.warnings;
+        this.log.errors += src.errors;
+        if (src.msgs.items.len == 0) return;
+
+        var string_builder = bun.StringBuilder{};
+        var notes_count: usize = 0;
+        for (src.msgs.items) |msg| {
+            msg.count(&string_builder);
+            notes_count += msg.notes.len;
+        }
+        bun.handleOom(string_builder.allocate(bun.default_allocator));
+        this.log_string_buf = if (string_builder.cap > 0) string_builder.ptr.?[0..string_builder.cap] else &.{};
+        this.log_notes_buf = bun.handleOom(bun.default_allocator.alloc(logger.Data, notes_count));
+
+        bun.handleOom(this.log.msgs.ensureUnusedCapacity(src.msgs.items.len));
+        var note_i: usize = 0;
+        for (src.msgs.items) |msg| {
+            this.log.msgs.appendAssumeCapacity(msg.cloneWithBuilder(this.log_notes_buf[note_i..], &string_builder));
+            note_i += msg.notes.len;
+        }
+    }
+
     pub fn deinit(this: *TransformTask) void {
         this.log.deinit();
+        bun.default_allocator.free(this.log_string_buf);
+        bun.default_allocator.free(this.log_notes_buf);
         this.input_code.deinitAndUnprotect();
         this.output_code.deref();
         // tsconfig is owned by JSTranspiler, not by TransformTask.

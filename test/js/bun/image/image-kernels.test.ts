@@ -4,7 +4,7 @@
 // width, ringing vs. softness, dither error distribution) rather than the
 // pipeline glue. Kept separate so a kernel regression points straight here.
 
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import zlib from "node:zlib";
 
 // ─── plumbing (PNG build/read; same shape as image.test.ts) ─────────────────

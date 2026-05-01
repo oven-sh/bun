@@ -13,7 +13,13 @@
 /// written one for) so the dispatch in `decode`/`encode` compiles away. The
 /// backend module is only `@import`ed inside the matching arm so non-target
 /// platforms never see its symbols.
-const system_backend: ?type = if (bun.Environment.isMac)
+///
+/// CoreGraphics is arm64-only for now: on x86_64 macOS the by-value `CGRect`
+/// argument to `CGContextDrawImage` (32-byte struct → SysV MEMORY class,
+/// caller-pushed) segfaults through the dlsym'd function pointer, while arm64
+/// (4-double HFA → v0-v3) is fine. Passes on every macOS arm64 CI runner; the
+/// x64 case needs root-causing on real hardware before re-enabling.
+const system_backend: ?type = if (bun.Environment.isMac and bun.Environment.isAarch64)
     @import("./backend_coregraphics.zig")
 else if (bun.Environment.isWindows)
     @import("./backend_wic.zig")

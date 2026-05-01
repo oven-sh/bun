@@ -132,3 +132,16 @@ uw_update_context_1  [SVE]
 # (1 symbols)
 # ----------------------------------------------------------------------------
 adler32_arm_neon_dotprod  [DotProd]
+
+
+# ----------------------------------------------------------------------------
+# Bun.Image highway kernels (image_resize.cpp). Gate: HWY_DYNAMIC_DISPATCH ->
+# hwy::SupportedTargets() via getauxval(AT_HWCAP). Same gate as the
+# highway_strings.cpp block above.
+# (5 symbols)
+# ----------------------------------------------------------------------------
+_ZN9bun_image10N_SVE2_128L12ModulateImplEPhmff                                [SVE]
+_ZN9bun_image10N_SVE2_128L13Rotate180ImplEPKhiiPh                             [SVE]
+_ZN9bun_image10N_SVE2_128L8VertPassEPKhiiPhiPKNS_4SpanEPKfi                   [SVE]
+_ZN9bun_image10N_SVE2_128L9FlipHImplEPKhiiPh                                  [SVE]
+_ZN9bun_image10N_SVE2_128L9HorizPassEPKhiiPhiPKNS_4SpanEPKfi                  [SVE]

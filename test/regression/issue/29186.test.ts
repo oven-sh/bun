@@ -13,13 +13,18 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-test("self.close() terminates the worker after the current task finishes", async () => {
+test.concurrent("self.close() lets the current task finish before terminating", async () => {
+  // Per https://html.spec.whatwg.org/multipage/workers.html#close-a-worker,
+  // close() sets the "closing" flag and discards tasks already queued on the
+  // worker's event loop. The task that called close() runs to completion —
+  // so postMessage calls BEFORE *and* AFTER close() within the same task
+  // must still reach the parent. Browsers (Chrome/Firefox/Safari) all
+  // deliver "after".
   using dir = tempDir("issue-29186", {
     "worker.mjs": `
-      self.postMessage("message");
-      // Closing immediately after postMessage should just terminate the worker;
-      // the queued postMessage above must still reach the parent.
+      self.postMessage("before");
       self.close();
+      self.postMessage("after");
     `,
     "main.mjs": `
       const worker = new Worker(new URL("./worker.mjs", import.meta.url).href, { type: "module" });
@@ -50,10 +55,14 @@ test("self.close() terminates the worker after the current task finishes", async
   // Check exit code first — if the worker threw (pre-fix), stdout is empty and
   // the parse below would mask the real failure with a confusing JSON error.
   expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
-  expect(JSON.parse(stdout.trim())).toEqual([{ type: "message", data: "message" }, { type: "close" }]);
+  expect(JSON.parse(stdout.trim())).toEqual([
+    { type: "message", data: "before" },
+    { type: "message", data: "after" },
+    { type: "close" },
+  ]);
 });
 
-test("close and self.close exist on the Web Worker global scope", async () => {
+test.concurrent("close and self.close exist on the Web Worker global scope", async () => {
   using dir = tempDir("issue-29186-typeof", {
     "worker.mjs": `
       self.postMessage({
@@ -87,7 +96,7 @@ test("close and self.close exist on the Web Worker global scope", async () => {
   });
 });
 
-test("close is NOT defined on node:worker_threads Workers (matches Node.js)", async () => {
+test.concurrent("close is NOT defined on node:worker_threads Workers (matches Node.js)", async () => {
   // In Node.js, `typeof close` is `"undefined"` inside a worker_threads Worker
   // and calling `close()` throws `ReferenceError: close is not defined`.
   // Bun must match — otherwise a stray `close()` would silently terminate
@@ -134,7 +143,7 @@ test("close is NOT defined on node:worker_threads Workers (matches Node.js)", as
   });
 });
 
-test("close() on the main thread is a no-op", async () => {
+test.concurrent("close() on the main thread is a no-op", async () => {
   // On main (non-window) contexts, `close()` should silently do nothing —
   // matching how `postMessage` is a no-op there today.
   await using proc = Bun.spawn({

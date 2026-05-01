@@ -408,6 +408,26 @@ pub fn releaseParentPollRef(this: *WebWorker) callconv(.c) void {
     this.parent_poll_ref.unref(this.parent);
 }
 
+/// `self.close()` from inside the worker (WHATWG DedicatedWorkerGlobalScope#close).
+/// Called on the worker thread.
+///
+/// Unlike `notifyNeedTermination`, this does NOT arm the JSC NeedTermination
+/// trap — the WHATWG spec requires the task that called `close()` to run to
+/// completion, only discarding tasks already queued on the worker's event
+/// loop. Setting `requested_terminate` and waking the loop is enough:
+/// `spin()` polls the flag at the top of each tick and between
+/// `autoTickActive()` calls, so it exits on the next loop iteration after the
+/// current task returns.
+///
+/// We take the worker's own `*VirtualMachine` so we never touch the parent-
+/// owned `cpp_worker`/`impl_` pointer from the worker thread.
+export fn WebWorker__requestClose(vm: *jsc.VirtualMachine) void {
+    const worker = vm.worker orelse return;
+    if (worker.setRequestedTerminate()) return;
+    log("[{d}] requestClose (self.close)", .{worker.execution_context_id});
+    vm.eventLoop().wakeup();
+}
+
 // =============================================================================
 // Worker thread
 // =============================================================================

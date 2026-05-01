@@ -367,11 +367,6 @@ void Worker::terminate()
     WebWorker__notifyNeedTermination(impl_);
 }
 
-void Worker::notifyNeedTermination()
-{
-    WebWorker__notifyNeedTermination(impl_);
-}
-
 void Worker::setKeepAlive(bool keepAlive)
 {
     // Once terminate() has been called or the close task has started, the
@@ -740,10 +735,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
 }
 
 // DedicatedWorkerGlobalScope#close() — https://html.spec.whatwg.org/multipage/workers.html#dom-dedicatedworkerglobalscope-close
-// Inside a Worker this requests termination of the worker: any task already
-// queued (e.g. an immediately-preceding postMessage) still runs to completion,
-// but no further JS is scheduled on the worker thread. On the main thread it
-// is a no-op, matching how we handle `postMessage` in that context.
+// Inside a Worker this requests cooperative termination: the task currently
+// running (which called `close()`) finishes normally, then the worker event
+// loop exits on its next tick. On the main thread it is a no-op, matching
+// how we handle `postMessage` in that context.
+//
+// We route straight through the worker's own Zig VM and do NOT go via the
+// parent-thread-owned C++ Worker object — that would (a) be a cross-thread
+// read of the parent's `impl_` pointer and (b) share the `terminate()`
+// machinery which arms a JSC NeedTermination trap, killing any JS following
+// `self.close()` in the same task. The spec says the current task must run
+// to completion.
+extern "C" void WebWorker__requestClose(void* workerVM);
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSelfClose,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
@@ -751,15 +755,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSelfClose,
     if (!globalObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    Worker* worker = WebWorker__getParentWorker(globalObject->bunVM());
-    if (worker == nullptr)
-        return JSValue::encode(jsUndefined());
-
-    // Tell the worker event loop to stop on its next tick. The task currently
-    // running on the worker (which called `close()`) still finishes normally;
-    // the closing flag is set from the main thread inside `dispatchExit` as
-    // the worker tears down.
-    worker->notifyNeedTermination();
+    // On the main thread (or any VM with no attached worker) this is a no-op.
+    // `WebWorker__requestClose` checks `vm.worker` and returns early there.
+    WebWorker__requestClose(globalObject->bunVM());
 
     return JSValue::encode(jsUndefined());
 }

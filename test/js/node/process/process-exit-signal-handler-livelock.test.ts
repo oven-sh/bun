@@ -22,7 +22,8 @@ test.skipIf(!isPosix)("process.on('SIGABRT') does not livelock when a thread abo
 
   const fixture = /* ts */ `
       import { dlopen } from "bun:ffi";
-      const { symbols } = dlopen(${JSON.stringify(lib)}, {
+      import path from "node:path";
+      const { symbols } = dlopen(path.join(import.meta.dirname, ${JSON.stringify(lib)}), {
         setup_exit_abort: { args: [], returns: "void" },
       });
 

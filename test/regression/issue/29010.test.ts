@@ -141,4 +141,41 @@ describe("issue #29010 — Date parameters serialize as ISO 8601", async () => {
       expect(second).toEqual(t);
     });
   });
+
+  // Invalid `Date` objects (`new Date(NaN)`, `new Date("bad")`) are real
+  // `DateInstance`s whose internal value is NaN. Both serialization paths
+  // must reject them cleanly rather than crashing or sending garbage:
+  // - text path: `toISOString()` returns "" for non-finite dates →
+  //   `error.InvalidQueryBinding` in the new `writeBind` `else` branch.
+  // - binary path: `types.date.fromJS` previously did an unguarded
+  //   `@intFromFloat(NaN)` (Illegal Behavior — panic in safe builds,
+  //   silent UB in release). Now guarded with `std.math.isFinite`.
+  describe("invalid Date (NaN internal value)", () => {
+    const invalid = new Date("this is not a date");
+
+    test("prepare: false rejects with a bind error, not a server parse error", async () => {
+      await using db = new SQL({ ...baseOptions, prepare: false });
+      expect(invalid.getTime()).toBeNaN();
+      // `.execute()` returns a real Promise; the bare tagged-template
+      // query is a lazy thenable that `expect().rejects` won't drive.
+      await expect(db`SELECT ${invalid}::timestamptz AS x`.execute()).rejects.toThrow(
+        expect.objectContaining({ code: "ERR_POSTGRES_INVALID_QUERY_BINDING" }),
+      );
+    });
+
+    test("prepare: true binary path rejects without crashing", async () => {
+      await using db = new SQL({ ...baseOptions, prepare: true });
+      // Prime the statement so `statement.parameters` is populated with
+      // OID 1184 and the second execution takes the binary path.
+      const good = new Date("2024-01-15T12:30:45.000Z");
+      const [{ x }] = await db`SELECT ${good}::timestamptz AS x`;
+      expect(x).toEqual(good);
+      // Second execution with an invalid Date reaches `types.date.fromJS`,
+      // which must reject the non-finite timestamp rather than hitting
+      // `@intFromFloat(NaN)`.
+      await expect(db`SELECT ${invalid}::timestamptz AS x`.execute()).rejects.toThrow(
+        expect.objectContaining({ code: "ERR_POSTGRES_INVALID_QUERY_BINDING" }),
+      );
+    });
+  });
 });

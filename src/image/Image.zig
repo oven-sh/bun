@@ -270,6 +270,9 @@ pub fn doToBuffer(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.Cal
             if (q.isNumber()) enc.quality = @intFromFloat(@min(@max(q.asNumber(), 1), 100));
         }
         if (try opt.get(global, "lossless")) |l| enc.lossless = l.toBoolean();
+        if (try opt.get(global, "compressionLevel")) |c| if (c.isNumber()) {
+            enc.compression_level = @intFromFloat(@min(@max(c.asNumber(), 0), 9));
+        };
     }
     return this.schedule(global, .{ .encode = enc }, .uint8array);
 }

@@ -24,6 +24,12 @@
 //! `node_api_module_get_api_version_v1` / `BUN_PLUGIN_NAME` pointers back to
 //! `BunProcess.cpp` so the rest of the dlopen flow is unchanged.
 //!
+//! Addons with an `IMAGE_TLS_DIRECTORY` are never merged: reserving a slot
+//! in the loader's private `LdrpTlsBitmap` and growing every existing
+//! thread's `ThreadLocalStoragePointer` array has no userspace API, and
+//! faking it risks index collisions with later `LoadLibrary` calls. Those
+//! addons go through the tempfile fallback where the real loader handles it.
+//!
 //! Any failure (bad blob, missing import, `DllMain` returning FALSE)
 //! returns false and the caller falls back to writing a temp file and
 //! `LoadLibraryExW`ing it, so behaviour never regresses.
@@ -99,7 +105,6 @@ const Entry = struct {
     preferred_base: u64,
     pdata_rva: u32,
     pdata_count: u32,
-    tls_dir_rva: u32,
     export_register: u32,
     export_api_version: u32,
     export_plugin_name: u32,
@@ -159,7 +164,6 @@ fn parseBlob(blob: []const u8) !void {
             .preferred_base = try r.u64_(),
             .pdata_rva = try r.u32_(),
             .pdata_count = try r.u32_(),
-            .tls_dir_rva = try r.u32_(),
             .export_register = try r.u32_(),
             .export_api_version = try r.u32_(),
             .export_plugin_name = try r.u32_(),
@@ -291,18 +295,6 @@ fn bind(entry: *Entry) !Resolved {
         }
     }
 
-    // Implicit (__declspec(thread)) TLS. The loader's LdrpHandleTlsData
-    // never saw this addon, so we do its job: pick a free implicit-TLS
-    // index, publish it at *AddressOfIndex, install a per-thread copy
-    // of the template in TEB->ThreadLocalStoragePointer[index], and run
-    // the addon's TLS callbacks. The CRT TLS callback we register at
-    // link time (Bun__linkedAddonTlsCallback) repeats the per-thread
-    // part for every future DLL_THREAD_ATTACH so addon-spawned threads
-    // work too.
-    if (entry.tls_dir_rva != 0) {
-        try tls.registerForProcess(base_addr, entry);
-    }
-
     // Run CRT init + static constructors. Passing the exe's HMODULE as
     // hinstDLL is a deliberate lie: there's no separate module for the
     // addon in the loader's list, and `_DllMainCRTStartup` only uses it
@@ -402,276 +394,6 @@ fn bindImports(base: [*]u8, entry: *const Entry, self_h: w.HMODULE) !void {
     }
 }
 
-/// Implicit-TLS (`__declspec(thread)` / Rust `thread_local!`) support
-/// for merged addons.
-///
-/// A loaded module's TLS variables live at
-/// `TEB->ThreadLocalStoragePointer[*AddressOfIndex] + var_offset`. The
-/// Windows loader assigns the index and, for every thread, allocates a
-/// copy of the module's TLS template and stores its address in that
-/// per-thread array slot. Our addon is not in the loader's module list,
-/// so we do that work ourselves:
-///
-///   - pick a free index (max over every loaded module's index, +1,
-///     then one more per merged addon so multiple addons each get
-///     their own) and write it to the addon's `*AddressOfIndex`
-///   - for the binding thread, and again from the CRT TLS callback
-///     that c-bindings.cpp registers in `.CRT$XLB` for every future
-///     `DLL_THREAD_ATTACH`: grow the thread's `ThreadLocalStoragePointer`
-///     array out to `index+1`, heap-allocate a copy of the addon's
-///     template (RawData span + SizeOfZeroFill), store it in
-///     `[index]`, and walk the addon's TLS callback array
-///
-/// The addon's compiled code computes the TLS address as
-/// `gs:[0x58][index*8] + var_offset` with `var_offset` baked in at
-/// addon compile time, so as long as `[index]` points at a correctly-
-/// laid-out copy of that addon's own template the accesses are right.
-///
-/// We intentionally leak the per-thread template copies and any grown
-/// `ThreadLocalStoragePointer` arrays on `DLL_THREAD_DETACH`: bounded
-/// per thread, and freeing the TLS block while `atexit`-registered
-/// destructors may still touch it (the MSVCRT calls them *after* TLS
-/// callbacks on some paths) is the wrong trade.
-const tls = struct {
-    /// `IMAGE_TLS_DIRECTORY64` — VA fields, not RVAs. These are covered
-    /// by the addon's `.reloc` so by the time we read them (after
-    /// `applyRelocs`) they are valid absolute pointers into the merged
-    /// section.
-    const Dir = extern struct {
-        start_of_raw_data: u64,
-        end_of_raw_data: u64,
-        address_of_index: u64,
-        address_of_callbacks: u64,
-        size_of_zero_fill: u32,
-        characteristics: u32,
-    };
-
-    const Callback = *const fn (?*anyopaque, w.DWORD, ?*anyopaque) callconv(.winapi) void;
-
-    /// What `Bun__linkedAddonTlsCallback` needs to set up TLS on a new
-    /// thread. Populated once per addon at bind time; read under
-    /// `LinkedNodeModule.lock` from the callback.
-    const Bound = struct {
-        index: u32,
-        template: []const u8,
-        zero_fill: u32,
-        /// Null-terminated. Points into the merged section so stable
-        /// for the process lifetime.
-        callbacks: ?[*]const ?Callback,
-        /// Passed as the `hinstDLL` argument to the callbacks (and
-        /// matches what `DllMain` gets).
-        module: w.HINSTANCE,
-    };
-
-    var bound: std.ArrayListUnmanaged(Bound) = .{};
-    /// First index we hand out. Computed lazily as max(loader-assigned
-    /// indices) + 1 so a real DLL loaded later cannot collide: the
-    /// loader only reuses an index after the owning module unloads,
-    /// and it never goes above the count of loaded TLS modules.
-    var first_index: ?u32 = null;
-
-    // TEB fields we need. Only offsets are stable; the full struct is
-    // enormous and version-dependent so we touch just these two.
-    const TEB_TLS_PTR_OFF: usize = 0x58; // PVOID* ThreadLocalStoragePointer
-    const TEB_PEB_OFF: usize = 0x60; // PPEB ProcessEnvironmentBlock
-
-    inline fn teb() [*]u8 {
-        return @ptrCast(w.teb());
-    }
-    inline fn tlsArrayPtr() *?[*]?*anyopaque {
-        return @ptrCast(@alignCast(teb() + TEB_TLS_PTR_OFF));
-    }
-
-    /// Max implicit-TLS index currently in use by any module the
-    /// loader knows about. Walks `PEB->Ldr->InLoadOrderModuleList`,
-    /// reads each module's `IMAGE_TLS_DIRECTORY64.AddressOfIndex`.
-    fn loaderMaxTlsIndex() u32 {
-        const peb: [*]u8 = @ptrFromInt(
-            @as(*align(1) const usize, @ptrCast(teb() + TEB_PEB_OFF)).*,
-        );
-        // PEB->Ldr at 0x18, PEB_LDR_DATA.InLoadOrderModuleList at 0x10.
-        const ldr: [*]u8 = @ptrFromInt(@as(*align(1) const usize, @ptrCast(peb + 0x18)).*);
-        const head: *align(1) const w.LIST_ENTRY = @ptrCast(ldr + 0x10);
-
-        var max: u32 = 0;
-        var it = head.Flink;
-        while (@intFromPtr(it) != @intFromPtr(head)) : (it = it.Flink) {
-            // LDR_DATA_TABLE_ENTRY: InLoadOrderLinks at +0, DllBase at +0x30.
-            const dll_base: usize = @as(*align(1) const usize, @ptrCast(@as([*]const u8, @ptrCast(it)) + 0x30)).*;
-            if (dll_base == 0) continue;
-            const idx = readModuleTlsIndex(dll_base) orelse continue;
-            if (idx > max) max = idx;
-        }
-        return max;
-    }
-
-    fn readModuleTlsIndex(dll_base: usize) ?u32 {
-        const base: [*]const u8 = @ptrFromInt(dll_base);
-        if (@as(*align(1) const u16, @ptrCast(base)).* != 0x5A4D) return null;
-        const lfanew = @as(*align(1) const u32, @ptrCast(base + 0x3C)).*;
-        const nt = base + lfanew;
-        if (@as(*align(1) const u32, @ptrCast(nt)).* != 0x4550) return null;
-        // OptionalHeader at nt+24; NumberOfRvaAndSizes at +108; dirs at +112.
-        const opt = nt + 24;
-        if (@as(*align(1) const u16, @ptrCast(opt)).* != 0x020B) return null; // PE32+
-        const ndirs = @as(*align(1) const u32, @ptrCast(opt + 108)).*;
-        if (ndirs <= 9) return null;
-        const tls_rva = @as(*align(1) const u32, @ptrCast(opt + 112 + 9 * 8)).*;
-        const tls_sz = @as(*align(1) const u32, @ptrCast(opt + 112 + 9 * 8 + 4)).*;
-        if (tls_rva == 0 or tls_sz < @sizeOf(Dir)) return null;
-        const dir: *align(1) const Dir = @ptrCast(base + tls_rva);
-        if (dir.address_of_index == 0) return null;
-        return @as(*align(1) const u32, @ptrFromInt(dir.address_of_index)).*;
-    }
-
-    /// Install the addon's TLS block for the *current* thread at
-    /// `index`, growing `ThreadLocalStoragePointer` if necessary.
-    fn installForCurrentThread(b: *const Bound) !void {
-        const heap = k32.GetProcessHeap() orelse return error.NoProcessHeap;
-
-        // Per-thread template copy. Zero-initialise so SizeOfZeroFill
-        // bytes past the template are already clear, then copy the
-        // initialised prefix over it.
-        const total = b.template.len + b.zero_fill;
-        const block: [*]u8 = @ptrCast(k32.HeapAlloc(heap, HEAP_ZERO_MEMORY, total) orelse
-            return error.OutOfMemory);
-        if (b.template.len > 0) @memcpy(block[0..b.template.len], b.template);
-
-        const slot_ptr = tlsArrayPtr();
-        const need = b.index + 1;
-        // The loader-allocated array is exactly as long as it needed
-        // for the modules it knows about. Our index is past that, so
-        // grow it. We have no reliable way to learn the current length,
-        // so allocate `need` pointers and copy as many old entries as
-        // the loader must have produced (first_index of them — one per
-        // module with TLS that the loader saw). Anything between
-        // first_index and our indices is for other merged addons and
-        // carried forward on subsequent calls (they all share the
-        // largest array any one of them produced).
-        const old = slot_ptr.*;
-        const new: [*]?*anyopaque = @ptrCast(@alignCast(
-            k32.HeapAlloc(heap, HEAP_ZERO_MEMORY, need * @sizeOf(?*anyopaque)) orelse {
-                _ = k32.HeapFree(heap, 0, block);
-                return error.OutOfMemory;
-            },
-        ));
-        if (old) |o| {
-            // Copy loader-owned entries plus any earlier merged-addon
-            // entries that a previous installForCurrentThread on this
-            // same thread already placed. `b.index` is the *highest*
-            // index being written now, so everything below it that was
-            // set is worth preserving.
-            var i: u32 = 0;
-            while (i < b.index) : (i += 1) new[i] = o[i];
-        }
-        new[b.index] = block;
-        // Publish. The old array is deliberately leaked: the loader
-        // owns it (or we allocated it on an earlier call) and freeing
-        // would race with any code that captured the pointer. This is
-        // at most one small array per (addon, thread), same as what
-        // the loader itself does when a late-loaded DLL forces a grow.
-        slot_ptr.* = new;
-    }
-
-    /// Bind-time: compute an index, publish it to `*AddressOfIndex`,
-    /// install for the binding thread, run the addon's TLS callbacks
-    /// with `DLL_PROCESS_ATTACH`, and register the addon so the CRT
-    /// TLS callback can repeat the per-thread work for future threads.
-    /// Caller holds `LinkedNodeModule.lock`.
-    fn registerForProcess(base_addr: usize, entry: *const Entry) !void {
-        const dir: *align(1) const Dir = @ptrFromInt(base_addr + entry.tls_dir_rva);
-
-        // All four VA fields must resolve into the merged addon (they
-        // are relocated absolutes, so compare against the addon span).
-        const lo = base_addr + entry.rva_base;
-        const hi = lo + entry.image_size;
-        inline for (.{ dir.start_of_raw_data, dir.end_of_raw_data, dir.address_of_index }) |va| {
-            if (va < lo or va > hi) return error.TlsDirectoryOutOfRange;
-        }
-        if (dir.end_of_raw_data < dir.start_of_raw_data) return error.TlsDirectoryOutOfRange;
-        if (dir.address_of_callbacks != 0 and
-            (dir.address_of_callbacks < lo or dir.address_of_callbacks >= hi))
-        {
-            return error.TlsDirectoryOutOfRange;
-        }
-
-        if (first_index == null) first_index = loaderMaxTlsIndex() + 1;
-        const index: u32 = first_index.? + @as(u32, @intCast(bound.items.len));
-
-        // Publish the index where the addon's compiled code will read
-        // it. This slot is in the merged RW section and has already had
-        // the build-time + ASLR reloc deltas applied.
-        @as(*align(1) u32, @ptrFromInt(dir.address_of_index)).* = index;
-
-        const b = Bound{
-            .index = index,
-            .template = @as([*]const u8, @ptrFromInt(dir.start_of_raw_data))[0..@intCast(dir.end_of_raw_data - dir.start_of_raw_data)],
-            .zero_fill = dir.size_of_zero_fill,
-            .callbacks = if (dir.address_of_callbacks != 0)
-                @ptrFromInt(dir.address_of_callbacks)
-            else
-                null,
-            .module = @ptrFromInt(base_addr),
-        };
-
-        try installForCurrentThread(&b);
-        runCallbacks(&b, DLL_PROCESS_ATTACH);
-
-        // Only now make it visible to the per-thread callback: a
-        // thread starting concurrently must not see a half-initialised
-        // entry (the lock already serialises, this is belt-and-braces
-        // for the ordering relative to installForCurrentThread).
-        try bound.append(bun.default_allocator, b);
-    }
-
-    fn runCallbacks(b: *const Bound, reason: w.DWORD) void {
-        const cbs = b.callbacks orelse return;
-        var i: usize = 0;
-        while (cbs[i]) |cb| : (i += 1) {
-            cb(@ptrCast(b.module), reason, null);
-        }
-    }
-
-    /// Invoked by the loader via the `.CRT$XLB` TLS callback registered
-    /// in c-bindings.cpp, once per thread per reason. Cheap no-op in
-    /// the common case (no merged addons / not a compiled exe).
-    fn onThread(reason: w.DWORD) void {
-        // DLL_PROCESS_ATTACH arrives here too (for the startup thread),
-        // but bind() handles that case explicitly so we only act on
-        // per-thread events.
-        if (reason != DLL_THREAD_ATTACH and reason != DLL_THREAD_DETACH) return;
-        if (bound.items.len == 0) return;
-
-        lock.lock();
-        defer lock.unlock();
-
-        for (bound.items) |*b| {
-            if (reason == DLL_THREAD_ATTACH) {
-                installForCurrentThread(b) catch |err| {
-                    log("linked-addon TLS attach failed (index {d}): {s}", .{ b.index, @errorName(err) });
-                    continue;
-                };
-            }
-            runCallbacks(b, reason);
-        }
-    }
-
-    const HEAP_ZERO_MEMORY: w.DWORD = 0x00000008;
-};
-
-/// C ABI entry for the CRT TLS callback registered in c-bindings.cpp.
-/// The loader calls this for every thread in the process, which is how
-/// merged addons get their implicit-TLS block on addon-spawned and
-/// Worker threads without us having to hook thread creation.
-pub fn Bun__linkedAddonTlsCallback(
-    _: ?*anyopaque,
-    reason: w.DWORD,
-    _: ?*anyopaque,
-) callconv(.winapi) void {
-    if (!enabled) return;
-    tls.onThread(reason);
-}
-
 /// C ABI entry for `BunProcess.cpp`. `path_ptr[0..path_len]` is the
 /// WTF-string the user passed to `process.dlopen`, already stripped of any
 /// `file://` prefix.
@@ -688,13 +410,10 @@ pub fn Bun__initLinkedNodeModule(
 comptime {
     if (enabled) {
         @export(&Bun__initLinkedNodeModule, .{ .name = "Bun__initLinkedNodeModule" });
-        @export(&Bun__linkedAddonTlsCallback, .{ .name = "Bun__linkedAddonTlsCallback" });
     }
 }
 
 const DLL_PROCESS_ATTACH: w.DWORD = 1;
-const DLL_THREAD_ATTACH: w.DWORD = 2;
-const DLL_THREAD_DETACH: w.DWORD = 3;
 
 const RUNTIME_FUNCTION = extern struct {
     BeginAddress: u32,

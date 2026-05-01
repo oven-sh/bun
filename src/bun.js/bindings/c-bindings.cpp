@@ -1071,32 +1071,4 @@ extern "C" uint8_t* Bun__getLinkedAddonsPEData()
     return pe_linked_data;
 }
 
-// Per-thread implicit-TLS setup for statically-merged .node addons.
-//
-// A merged addon is not in the Windows loader's module list, so the
-// loader never assigns it a TLS index or allocates a per-thread copy
-// of its TLS template. We do that ourselves in LinkedNodeModule.zig at
-// bind time for the thread that calls process.dlopen(); for every
-// *other* thread we need a hook the loader will call on
-// DLL_THREAD_ATTACH. Registering a PIMAGE_TLS_CALLBACK in .CRT$XLB is
-// that hook — the CRT's TLS directory (.CRT$XLA..XLZ) picks it up at
-// link time, and the loader walks bun.exe's callback array for every
-// thread created in the process, including ones the addon itself
-// spawns via CreateThread/_beginthreadex.
-//
-// Zero cost when no addons are bound: the Zig side returns immediately
-// if its bound list is empty (the common case — non-compiled bun, or a
-// compiled exe with no TLS-using addons).
-extern "C" void Bun__linkedAddonTlsCallback(PVOID, DWORD, PVOID);
-
-#if defined(__clang__) || defined(_MSC_VER)
-#pragma section(".CRT$XLB", long, read)
-extern "C" __declspec(allocate(".CRT$XLB")) const PIMAGE_TLS_CALLBACK
-    __bun_linked_addon_tls_cb
-    = (PIMAGE_TLS_CALLBACK)&Bun__linkedAddonTlsCallback;
-// Without /INCLUDE the linker dead-strips the unreferenced section
-// entry and the callback never fires.
-#pragma comment(linker, "/INCLUDE:__bun_linked_addon_tls_cb")
-#endif
-
 #endif

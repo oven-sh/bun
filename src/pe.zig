@@ -678,17 +678,6 @@ pub const PEFile = struct {
         /// unwind correctly.
         pdata_rva: u32,
         pdata_count: u32,
-        /// bun-relative RVA of the addon's `IMAGE_TLS_DIRECTORY64`, or 0
-        /// when the addon has no static TLS. The directory's VA fields
-        /// (`StartAddressOfRawData`, `AddressOfIndex`, `AddressOfCallBacks`,
-        /// …) are absolute addresses covered by `.reloc`, so by the time
-        /// the runtime reads them they already point at the right places
-        /// inside the merged section. The runtime assigns a fresh
-        /// implicit-TLS index, writes it to `*AddressOfIndex`, installs a
-        /// per-thread template copy in `TEB->ThreadLocalStoragePointer`,
-        /// and runs the callback array — the same work the loader's
-        /// `LdrpHandleTlsData` would have done for a real DLL.
-        tls_dir_rva: u32,
         /// bun-relative RVAs of the symbols `process.dlopen` needs.  Zero
         /// means "not exported by this addon".
         export_register: u32, // napi_register_module_v1
@@ -847,6 +836,18 @@ pub const PEFile = struct {
         // Refuse anything we would get wrong. The extract-to-tempfile
         // path stays as the behavioural fallback.
         //
+        // Implicit TLS (`__declspec(thread)`, Rust `thread_local!`) needs
+        // an index reserved in the loader's private `LdrpTlsBitmap` and a
+        // template installed in every existing thread's
+        // `ThreadLocalStoragePointer` array. Neither has a userspace API;
+        // faking it invites index collisions with later `LoadLibrary`
+        // calls and misses threads that already exist. Let `LoadLibraryExW`
+        // handle these via the fallback.
+        if (addon.dir(IMAGE_DIRECTORY_ENTRY_TLS).size != 0 or
+            addon.dir(IMAGE_DIRECTORY_ENTRY_TLS).virtual_address != 0)
+        {
+            return null;
+        }
         // Without base relocations we cannot rebase the addon's absolute
         // addresses into bun.exe's image. A DLL built with /FIXED would
         // also fail LoadLibrary unless its preferred base happened to be
@@ -876,14 +877,18 @@ pub const PEFile = struct {
         // If we consumed a slot that `.bunL`/`.bun` will need later the
         // build would hard-fail in addLinkedAddonSection/addBunSection
         // instead of falling back, so refuse *here* while the caller
-        // can still skip this addon and keep going.
+        // can still skip this addon and keep going. `addBunSection`
+        // later rounds `SizeOfHeaders` up to `file_align`, so apply the
+        // same rounding here or a host with partial slack in that last
+        // alignment bucket would pass this gate and then hard-fail.
         const want_sections: u32 = self.num_sections + 3;
         const new_headers_end = self.section_headers_offset + @sizeOf(SectionHeader) * want_sections;
+        const reserved_headers = try alignUpU32(@intCast(new_headers_end), file_align);
         var first_raw: u32 = @intCast(self.data.items.len);
         for (host_sections) |s| if (s.size_of_raw_data > 0 and s.pointer_to_raw_data < first_raw) {
             first_raw = s.pointer_to_raw_data;
         };
-        if (new_headers_end > first_raw) return error.InsufficientHeaderSpace;
+        if (reserved_headers > first_raw) return error.InsufficientHeaderSpace;
 
         // The addon's RVA 0 maps to this RVA in bun.exe.
         const rva_base = try alignUpU32(last_va_end, sect_align);
@@ -1046,25 +1051,6 @@ pub const PEFile = struct {
             pdata_count = pdata_dir.size / @sizeOf(RuntimeFunction);
         }
 
-        // Implicit TLS. We only need to remember where the
-        // IMAGE_TLS_DIRECTORY64 lives: its VA fields (template span,
-        // AddressOfIndex, AddressOfCallBacks) are absolute addresses
-        // covered by the addon's .reloc, so after the build-time delta
-        // above and the runtime ASLR delta they already resolve into
-        // the merged section. Any malformed directory (past the image,
-        // or smaller than the struct) falls back to tempfile.
-        var tls_dir_rva: u32 = 0;
-        const tls_dir = addon.dir(IMAGE_DIRECTORY_ENTRY_TLS);
-        if (tls_dir.size != 0 or tls_dir.virtual_address != 0) {
-            const TLS_DIR64_SIZE: u32 = 40; // IMAGE_TLS_DIRECTORY64
-            if (tls_dir.size < TLS_DIR64_SIZE or
-                @as(u64, tls_dir.virtual_address) + TLS_DIR64_SIZE > addon_image)
-            {
-                return null;
-            }
-            tls_dir_rva = rva_base + tls_dir.virtual_address;
-        }
-
         // Exports we care about.
         var export_register: u32 = 0;
         var export_api_version: u32 = 0;
@@ -1149,7 +1135,6 @@ pub const PEFile = struct {
             .imports = try imports.toOwnedSlice(),
             .pdata_rva = pdata_rva,
             .pdata_count = pdata_count,
-            .tls_dir_rva = tls_dir_rva,
             .export_register = export_register,
             .export_api_version = export_api_version,
             .export_plugin_name = export_plugin_name,
@@ -1274,7 +1259,7 @@ pub const PEFile = struct {
     /// extraction), so there is no attempt at forward compatibility beyond
     /// the magic+version gate.
     pub const linked_magic: u32 = 0x4B4E4C42; // 'BLNK'
-    pub const linked_version: u32 = 2;
+    pub const linked_version: u32 = 1;
 
     pub fn serializeLinkedAddons(allocator: Allocator, addons: []const LinkedAddon) ![]u8 {
         var buf = std.array_list.Managed(u8).init(allocator);
@@ -1302,7 +1287,6 @@ pub const PEFile = struct {
             try W.u64_(&buf, a.preferred_base);
             try W.u32_(&buf, a.pdata_rva);
             try W.u32_(&buf, a.pdata_count);
-            try W.u32_(&buf, a.tls_dir_rva);
             try W.u32_(&buf, a.export_register);
             try W.u32_(&buf, a.export_api_version);
             try W.u32_(&buf, a.export_plugin_name);
@@ -1351,8 +1335,11 @@ pub const PEFile = struct {
         // Reserve room for this section *and* the `.bun` section that
         // `addBunSection` will append next. Taking the last slot here
         // would turn a skippable merge into a hard build failure.
+        // `addBunSection` rounds `SizeOfHeaders` up to `file_align`, so
+        // the same rounding applies here.
         const new_headers_end = self.section_headers_offset + @sizeOf(SectionHeader) * (self.num_sections + 2);
-        if (new_headers_end > first_raw) return error.InsufficientHeaderSpace;
+        const reserved_headers = try alignUpU32(@intCast(new_headers_end), file_align);
+        if (reserved_headers > first_raw) return error.InsufficientHeaderSpace;
 
         if (blob.len > std.math.maxInt(u32) - 8) return error.Overflow;
         const payload: u32 = @intCast(blob.len + 8);

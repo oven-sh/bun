@@ -49,33 +49,6 @@ namespace HWY_NAMESPACE {
 namespace hn = hwy::HWY_NAMESPACE;
 using bun_image::Span;
 
-// Vectorised inner product: dst_rgba += Σ src[k]_rgba * w[k]. src points at the
-// first contributing pixel (RGBA8), w at its weight; n is small (≤ 2*radius+1
-// for upscale, ≤ ceil(scale)+2*radius for downscale).
-static HWY_INLINE void AccumulateRGBA(const uint8_t* HWY_RESTRICT src,
-    const float* HWY_RESTRICT w, int32_t n, float* HWY_RESTRICT out4)
-{
-    const hn::ScalableTag<float> df;
-    auto r = hn::Zero(df);
-    auto g = hn::Zero(df);
-    auto b = hn::Zero(df);
-    auto a = hn::Zero(df);
-    // Scalar over taps — n is tiny and the per-tap body is one broadcast +
-    // 4 FMAs; vectorising across taps would need a gather. The win is the
-    // f32×4 channel math staying in registers.
-    for (int32_t k = 0; k < n; k++) {
-        const float wk = w[k];
-        r = hn::MulAdd(hn::Set(df, static_cast<float>(src[k * 4 + 0])), hn::Set(df, wk), r);
-        g = hn::MulAdd(hn::Set(df, static_cast<float>(src[k * 4 + 1])), hn::Set(df, wk), g);
-        b = hn::MulAdd(hn::Set(df, static_cast<float>(src[k * 4 + 2])), hn::Set(df, wk), b);
-        a = hn::MulAdd(hn::Set(df, static_cast<float>(src[k * 4 + 3])), hn::Set(df, wk), a);
-    }
-    out4[0] = hn::GetLane(r);
-    out4[1] = hn::GetLane(g);
-    out4[2] = hn::GetLane(b);
-    out4[3] = hn::GetLane(a);
-}
-
 static HWY_INLINE uint8_t ClampU8(float v)
 {
     // +0.5 for round-to-nearest before truncation.
@@ -85,23 +58,44 @@ static HWY_INLINE uint8_t ClampU8(float v)
 }
 
 // Horizontal pass: src_w×src_h → dst_w×src_h. spans/weights index by dst x.
+//
+// One output pixel's RGBA is a 4-lane f32 accumulator; each tap is a 4-byte
+// load → u8×4 → i32×4 → f32×4 → FMA(broadcast wk). Fixed to a 4-lane tag so
+// the channel vector fits one SSE/NEON register and isn't 12-lanes-wasted on
+// AVX-512. (The previous version broadcast each channel into a full vector
+// then read lane 0 — effectively scalar with overhead; bughunt flagged it.)
+// Vectorising across OUTPUT pixels would need a gather (each x has its own
+// span.start); the per-pixel 4-lane body keeps loads contiguous and is the
+// same shape libvips' `reduceh` uses.
 static void HorizPass(const uint8_t* HWY_RESTRICT src, int32_t src_w, int32_t src_h,
     uint8_t* HWY_RESTRICT dst, int32_t dst_w,
     const Span* HWY_RESTRICT spans, const float* HWY_RESTRICT weights, int32_t wstride)
 {
+    using D = hn::FixedTag<float, 4>;
+    const D df;
+    const hn::Rebind<int32_t, D> di32;
+    const hn::Rebind<uint8_t, D> du8;
+    const auto half = hn::Set(df, 0.5f);
+    const auto lo = hn::Zero(df);
+    const auto hi = hn::Set(df, 255.0f);
+
     for (int32_t y = 0; y < src_h; y++) {
         const uint8_t* srow = src + static_cast<size_t>(y) * src_w * 4;
         uint8_t* drow = dst + static_cast<size_t>(y) * dst_w * 4;
         for (int32_t x = 0; x < dst_w; x++) {
-            float acc[4];
             const Span s = spans[x];
-            AccumulateRGBA(srow + s.start * 4, weights + static_cast<size_t>(x) * wstride, s.n, acc);
-            drow[x * 4 + 0] = ClampU8(acc[0]);
-            drow[x * 4 + 1] = ClampU8(acc[1]);
-            drow[x * 4 + 2] = ClampU8(acc[2]);
-            drow[x * 4 + 3] = ClampU8(acc[3]);
+            const float* w = weights + static_cast<size_t>(x) * wstride;
+            const uint8_t* sp = srow + static_cast<size_t>(s.start) * 4;
+            auto acc = hn::Zero(df);
+            for (int32_t k = 0; k < s.n; k++) {
+                auto v = hn::ConvertTo(df, hn::PromoteTo(di32, hn::LoadU(du8, sp + k * 4)));
+                acc = hn::MulAdd(v, hn::Set(df, w[k]), acc);
+            }
+            acc = hn::Min(hn::Max(hn::Add(acc, half), lo), hi);
+            hn::StoreU(hn::DemoteTo(du8, hn::ConvertTo(di32, acc)), du8, drow + x * 4);
         }
     }
+    (void)src_w;
 }
 
 // Vertical pass: dst_w×src_h → dst_w×dst_h. SIMD across x (contiguous RGBA
@@ -373,6 +367,25 @@ int buildWeights(int kind, int32_t src_len, int32_t dst_len,
     return max_n;
 }
 
+// Stack-with-heap-fallback for the small per-axis tables. spans + weights for
+// a typical thumbnail (≤ 800 px, lanczos3 at 4× downscale ≈ 26 taps) fits in
+// well under 32 KB; only very large or extreme-ratio outputs spill to malloc.
+template <typename T, size_t N>
+struct StackOr {
+    alignas(16) T stack[N];
+    T* p;
+    bool heap;
+    explicit StackOr(size_t n)
+        : p(n <= N ? stack : static_cast<T*>(std::malloc(sizeof(T) * n)))
+        , heap(n > N)
+    {
+    }
+    ~StackOr()
+    {
+        if (heap) std::free(p);
+    }
+};
+
 } // namespace
 
 extern "C" {
@@ -389,30 +402,24 @@ int bun_image_resize_rgba8(const uint8_t* src, int32_t src_w, int32_t src_h,
     const int wsx = static_cast<int>(std::ceil(radius(filter_kind) / (xs < 1.0 ? xs : 1.0))) * 2 + 2;
     const int wsy = static_cast<int>(std::ceil(radius(filter_kind) / (ys < 1.0 ? ys : 1.0))) * 2 + 2;
 
-    auto* xspans = static_cast<Span*>(std::malloc(sizeof(Span) * dst_w));
-    auto* yspans = static_cast<Span*>(std::malloc(sizeof(Span) * dst_h));
-    auto* xw = static_cast<float*>(std::malloc(sizeof(float) * dst_w * wsx));
-    auto* yw = static_cast<float*>(std::malloc(sizeof(float) * dst_h * wsy));
+    StackOr<Span, 1024> xspans(dst_w);
+    StackOr<Span, 1024> yspans(dst_h);
+    StackOr<float, 4096> xw(static_cast<size_t>(dst_w) * wsx);
+    StackOr<float, 4096> yw(static_cast<size_t>(dst_h) * wsy);
+    // The intermediate row buffer is dst_w × src_h × 4 — usually too big for
+    // stack (e.g. 400×1080×4 ≈ 1.7 MB), so this stays on the heap.
     auto* tmp = static_cast<uint8_t*>(std::malloc(static_cast<size_t>(dst_w) * src_h * 4));
-    if (!xspans || !yspans || !xw || !yw || !tmp) {
-        std::free(xspans);
-        std::free(yspans);
-        std::free(xw);
-        std::free(yw);
+    if (!xspans.p || !yspans.p || !xw.p || !yw.p || !tmp) {
         std::free(tmp);
         return -1;
     }
 
-    buildWeights(filter_kind, src_w, dst_w, xspans, xw, wsx);
-    buildWeights(filter_kind, src_h, dst_h, yspans, yw, wsy);
+    buildWeights(filter_kind, src_w, dst_w, xspans.p, xw.p, wsx);
+    buildWeights(filter_kind, src_h, dst_h, yspans.p, yw.p, wsy);
 
-    HWY_DYNAMIC_DISPATCH(HorizPass)(src, src_w, src_h, tmp, dst_w, xspans, xw, wsx);
-    HWY_DYNAMIC_DISPATCH(VertPass)(tmp, src_h, dst_w, dst, dst_h, yspans, yw, wsy);
+    HWY_DYNAMIC_DISPATCH(HorizPass)(src, src_w, src_h, tmp, dst_w, xspans.p, xw.p, wsx);
+    HWY_DYNAMIC_DISPATCH(VertPass)(tmp, src_h, dst_w, dst, dst_h, yspans.p, yw.p, wsy);
 
-    std::free(xspans);
-    std::free(yspans);
-    std::free(xw);
-    std::free(yw);
     std::free(tmp);
     return 0;
 }

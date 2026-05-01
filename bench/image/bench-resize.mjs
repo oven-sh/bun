@@ -58,8 +58,12 @@ function makePng(w, h) {
 const W = 1920,
   H = 1080;
 process.stderr.write(`building ${W}×${H} fixture… `);
-const fixture = makePng(W, H);
-process.stderr.write(`${(fixture.length / 1024).toFixed(0)} KB\n`);
+const pngFixture = makePng(W, H);
+process.stderr.write(`${(pngFixture.length / 1024).toFixed(0)} KB PNG, `);
+// JPEG-input case shows DCT-domain scaling (the "phone photo → thumbnail"
+// path); both engines exploit it so it's apples-to-apples.
+const jpegFixture = await new Bun.Image(pngFixture).jpeg({ quality: 92 }).bytes();
+process.stderr.write(`${(jpegFixture.length / 1024).toFixed(0)} KB JPEG\n`);
 
 // ─── runners ────────────────────────────────────────────────────────────────
 
@@ -79,21 +83,40 @@ if (wantSharp) {
 }
 
 const ops = {
-  "metadata()": {
+  "metadata() [PNG]": {
+    fixture: pngFixture,
     bun: buf => new Bun.Image(buf).metadata(),
     sharp: buf => sharp(buf).metadata(),
   },
-  "resize 400×400 inside → jpeg q80": {
+  "PNG resize 400×400 inside → jpeg q80": {
+    fixture: pngFixture,
     bun: buf => new Bun.Image(buf).resize(400, 400, { fit: "inside" }).jpeg({ quality: 80 }).bytes(),
     sharp: buf => sharp(buf).resize(400, 400, { fit: "inside" }).jpeg({ quality: 80 }).toBuffer(),
   },
-  "resize 800×600 → webp q80": {
+  "PNG resize 800×600 → webp q80": {
+    fixture: pngFixture,
     bun: buf => new Bun.Image(buf).resize(800, 600).webp({ quality: 80 }).bytes(),
     sharp: buf => sharp(buf).resize(800, 600).webp({ quality: 80 }).toBuffer(),
   },
-  "png → jpeg q80 (no resize)": {
+  "PNG → jpeg q80 (no resize)": {
+    fixture: pngFixture,
     bun: buf => new Bun.Image(buf).jpeg({ quality: 80 }).bytes(),
     sharp: buf => sharp(buf).jpeg({ quality: 80 }).toBuffer(),
+  },
+  "JPEG resize 400×400 inside → jpeg q80": {
+    fixture: jpegFixture,
+    bun: buf => new Bun.Image(buf).resize(400, 400, { fit: "inside" }).jpeg({ quality: 80 }).bytes(),
+    sharp: buf => sharp(buf).resize(400, 400, { fit: "inside" }).jpeg({ quality: 80 }).toBuffer(),
+  },
+  "JPEG resize 200×200 inside → webp q80": {
+    fixture: jpegFixture,
+    bun: buf => new Bun.Image(buf).resize(200, 200, { fit: "inside" }).webp({ quality: 80 }).bytes(),
+    sharp: buf => sharp(buf).resize(200, 200, { fit: "inside" }).webp({ quality: 80 }).toBuffer(),
+  },
+  "JPEG → webp q80 (no resize)": {
+    fixture: jpegFixture,
+    bun: buf => new Bun.Image(buf).webp({ quality: 80 }).bytes(),
+    sharp: buf => sharp(buf).webp({ quality: 80 }).toBuffer(),
   },
 };
 
@@ -107,7 +130,7 @@ function quantile(sorted, q) {
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
 }
 
-async function bench(fn) {
+async function bench(fn, fixture) {
   for (let i = 0; i < WARM; i++) await fn(fixture);
   if (globalThis.Bun) Bun.gc(true);
   const rss0 = process.memoryUsage().rss;
@@ -133,12 +156,12 @@ async function bench(fn) {
 const rows = [];
 for (const [name, impl] of Object.entries(ops)) {
   process.stderr.write(`  ${name} … bun `);
-  const b = await bench(impl.bun);
+  const b = await bench(impl.bun, impl.fixture);
   process.stderr.write(`${b.median.toFixed(1)}ms`);
   let s = null;
   if (sharp) {
     process.stderr.write(` … sharp `);
-    s = await bench(impl.sharp);
+    s = await bench(impl.sharp, impl.fixture);
     process.stderr.write(`${s.median.toFixed(1)}ms`);
   }
   process.stderr.write(`\n`);

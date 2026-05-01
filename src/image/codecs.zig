@@ -92,20 +92,34 @@ pub const Error = error{
 /// cap is ~1 GiB, which is already past where you'd want to be.
 pub const default_max_pixels: u64 = 0x3FFF * 0x3FFF;
 
-pub fn decode(bytes: []const u8, max_pixels: u64) Error!Decoded {
+/// Hint from the pipeline about the eventual output size. JPEG can do M/8
+/// IDCT scaling for free, so when we know the resize target up front we
+/// decode at the smallest factor that still ≥ the target — skipping most of
+/// the IDCT work AND shrinking the RGBA buffer the resize pass touches. This
+/// is the same trick Sharp/libvips use and is where most of the perf gap was.
+pub const DecodeHint = struct {
+    /// Final output dims (after rotate). 0 = "no resize, full decode".
+    target_w: u32 = 0,
+    target_h: u32 = 0,
+};
+
+pub fn decode(bytes: []const u8, max_pixels: u64, hint: DecodeHint) Error!Decoded {
     const fmt = Format.sniff(bytes) orelse return error.UnknownFormat;
     // Try the OS codec first; the static path is the correctness baseline so
     // BackendUnavailable AND DecodeFailed fall through — the system codec may
     // be stricter or simply not recognise a sub-variant the static codec does
     // (e.g. ImageIO without WebP). TooManyPixels and OOM are authoritative.
-    if (system_backend) |b| {
+    // Skip the system path for JPEG when we have a downscale hint — only
+    // libjpeg-turbo gives us DCT-domain scaling.
+    const want_dct_scale = fmt == .jpeg and hint.target_w != 0;
+    if (!want_dct_scale) if (system_backend) |b| {
         if (b.decode(bytes, max_pixels)) |d| return d else |e| switch (e) {
             error.BackendUnavailable, error.DecodeFailed => {},
             else => |narrowed| return narrowed,
         }
-    }
+    };
     return switch (fmt) {
-        .jpeg => jpeg.decode(bytes, max_pixels),
+        .jpeg => jpeg.decode(bytes, max_pixels, hint),
         .png => png.decode(bytes, max_pixels),
         .webp => webp.decode(bytes, max_pixels),
         // No static codec — system backend was the only path.
@@ -291,8 +305,16 @@ pub const jpeg = struct {
     extern fn tj3DecompressHeader(h: tjhandle, buf: [*]const u8, len: usize) c_int;
     extern fn tj3Decompress8(h: tjhandle, buf: [*]const u8, len: usize, dst: [*]u8, pitch: c_int, pf: c_int) c_int;
     extern fn tj3Compress8(h: tjhandle, src: [*]const u8, w: c_int, pitch: c_int, height: c_int, pf: c_int, out: *?[*]u8, out_len: *usize) c_int;
+    extern fn tj3SetScalingFactor(h: tjhandle, sf: ScalingFactor) c_int;
+    extern fn tj3GetScalingFactors(n: *c_int) ?[*]const ScalingFactor;
     pub extern fn tj3Free(ptr: ?*anyopaque) void;
     extern fn tj3GetErrorStr(h: tjhandle) [*:0]const u8;
+
+    const ScalingFactor = extern struct { num: c_int, denom: c_int };
+    /// TJSCALED: ceil(dim * num / denom).
+    inline fn scaled(dim: u32, sf: ScalingFactor) u32 {
+        return @intCast(@divFloor(@as(i64, dim) * sf.num + sf.denom - 1, sf.denom));
+    }
 
     // tjparam / tjpf enum values from turbojpeg.h.
     const TJPARAM_QUALITY = 3;
@@ -302,7 +324,7 @@ pub const jpeg = struct {
     const TJPF_RGBA = 7;
     const TJSAMP_420 = 2;
 
-    pub fn decode(bytes: []const u8, max_pixels: u64) Error!Decoded {
+    pub fn decode(bytes: []const u8, max_pixels: u64, hint: DecodeHint) Error!Decoded {
         const h = tj3Init(1) orelse return error.OutOfMemory;
         defer tj3Destroy(h);
         if (tj3DecompressHeader(h, bytes.ptr, bytes.len) != 0) return error.DecodeFailed;
@@ -311,9 +333,43 @@ pub const jpeg = struct {
         // tj3Get returns -1 on error; treat any non-positive dim as a decode
         // failure rather than letting @intCast trap on hostile input.
         if (rw <= 0 or rh <= 0) return error.DecodeFailed;
-        const w: u32 = @intCast(rw);
-        const ht: u32 = @intCast(rh);
-        try guard(w, ht, max_pixels);
+        const src_w: u32 = @intCast(rw);
+        const src_h: u32 = @intCast(rh);
+        try guard(src_w, src_h, max_pixels);
+
+        var w = src_w;
+        var ht = src_h;
+        // DCT-domain scaling: if the pipeline will downscale, ask libjpeg-turbo
+        // for the smallest M/8 IDCT that still ≥ target. The IDCT is where the
+        // decode time goes, so this is roughly (8/M)² faster AND the RGBA
+        // buffer shrinks by the same factor — both speed and RSS win in one
+        // place. The subsequent resize pass takes it the rest of the way.
+        if (hint.target_w != 0 and hint.target_h != 0 and
+            (hint.target_w < src_w or hint.target_h < src_h))
+        {
+            var n: c_int = 0;
+            if (tj3GetScalingFactors(&n)) |sfs| {
+                var best: ScalingFactor = .{ .num = 1, .denom = 1 };
+                for (sfs[0..@intCast(n)]) |sf| {
+                    // Only consider downscale factors.
+                    if (sf.num >= sf.denom) continue;
+                    const sw = scaled(src_w, sf);
+                    const sh = scaled(src_h, sf);
+                    // Never go BELOW target — that would force upscale and
+                    // throw away detail the user asked for.
+                    if (sw < hint.target_w or sh < hint.target_h) continue;
+                    // Pick the smallest output (= largest reduction).
+                    if (@as(u64, sw) * sh < @as(u64, scaled(src_w, best)) * scaled(src_h, best))
+                        best = sf;
+                }
+                if (best.num != best.denom) {
+                    _ = tj3SetScalingFactor(h, best);
+                    w = scaled(src_w, best);
+                    ht = scaled(src_h, best);
+                }
+            }
+        }
+
         const out = try bun.default_allocator.alloc(u8, @as(usize, w) * ht * 4);
         errdefer bun.default_allocator.free(out);
         if (tj3Decompress8(h, bytes.ptr, bytes.len, out.ptr, 0, TJPF_RGBA) != 0)

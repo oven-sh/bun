@@ -260,6 +260,17 @@ pub fn doFormatAvif(this: *Image, g: *jsc.JSGlobalObject, cf: *jsc.CallFrame) bu
     return this.setFormat(g, cf, .avif);
 }
 
+fn errorMessage(e: codecs.Error) [:0]const u8 {
+    return switch (e) {
+        error.UnknownFormat => "Image: unrecognised format (expected JPEG, PNG or WebP)",
+        error.DecodeFailed => "Image: decode failed",
+        error.EncodeFailed => "Image: encode failed",
+        error.TooManyPixels => "Image: input exceeds maxPixels limit",
+        error.UnsupportedOnPlatform => "Image: format not supported on this platform (HEIC/AVIF require macOS or Windows)",
+        error.OutOfMemory => "Image: out of memory",
+    };
+}
+
 fn parseFilter(s: bun.String) ?codecs.Filter {
     inline for (@typeInfo(codecs.Filter).@"enum".fields) |f|
         if (s.eqlComptime(f.name)) return @enumFromInt(f.value);
@@ -280,6 +291,33 @@ pub fn getHeight(this: *Image, _: *jsc.JSGlobalObject) jsc.JSValue {
 // ───────────────────────────── async terminals ──────────────────────────────
 
 pub fn doMetadata(this: *Image, global: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    // Header-only probe is a few dozen byte reads — when the bytes are already
+    // in memory it's cheaper to do it inline than to bounce off the WorkPool
+    // (~0.4 ms roundtrip). Path-backed sources still go async for the file I/O.
+    if (this.source == .bytes) {
+        if (codecs.probe(this.source.bytes, this.max_pixels)) |p| {
+            var w = p.width;
+            var h = p.height;
+            if (this.auto_orient and p.format == .jpeg) {
+                const t = exif.readJpeg(this.source.bytes).transform();
+                if (t.rotate == 90 or t.rotate == 270) std.mem.swap(u32, &w, &h);
+            }
+            this.last_width = @intCast(w);
+            this.last_height = @intCast(h);
+            const obj = jsc.JSValue.createEmptyObject(global, 3);
+            obj.put(global, jsc.ZigString.static("width"), jsc.JSValue.jsNumber(w));
+            obj.put(global, jsc.ZigString.static("height"), jsc.JSValue.jsNumber(h));
+            obj.put(global, jsc.ZigString.static("format"), jsc.ZigString.init(@tagName(p.format)).toJS(global));
+            return jsc.JSPromise.resolvedPromiseValue(global, obj);
+        } else |e| switch (e) {
+            // HEIC/AVIF need the system backend → fall through to async.
+            error.UnsupportedOnPlatform => {},
+            else => return jsc.JSPromise.rejectedPromise(
+                global,
+                global.createErrorInstance("{s}", .{errorMessage(e)}),
+            ).asValue(global),
+        }
+    }
     return this.schedule(global, .metadata, .uint8array);
 }
 
@@ -425,7 +463,21 @@ pub const PipelineTask = struct {
             }
         }
 
-        var decoded = codecs.decode(input, this.max_pixels) catch |e| {
+        // Decode-time downscale hint. Only safe to feed JPEG's IDCT scaler
+        // when nothing BEFORE the resize stage cares about full-res pixels —
+        // i.e. no rotate/flip (rotate runs first; a 90° rotate would make the
+        // hint axes wrong, and rotate is cheap enough on the pre-scaled buffer
+        // anyway). For `fit:inside` the hint is the bounding box, which is
+        // exactly what the IDCT picker needs.
+        const hint: codecs.DecodeHint = if (this.pipeline.resize) |r| blk: {
+            if (this.pipeline.rotate != 0 or this.pipeline.flip or this.pipeline.flop)
+                break :blk .{};
+            // r.h==0 means "preserve aspect" — omit the hint's h so the picker
+            // only constrains on width.
+            break :blk .{ .target_w = r.w, .target_h = if (r.h != 0) r.h else r.w };
+        } else .{};
+
+        var decoded = codecs.decode(input, this.max_pixels, hint) catch |e| {
             this.result = .{ .err = e };
             return;
         };
@@ -514,17 +566,7 @@ pub const PipelineTask = struct {
                 obj.put(global, jsc.ZigString.static("format"), jsc.ZigString.init(@tagName(m.format)).toJS(global));
                 try promise.resolve(global, obj);
             },
-            .err => |e| {
-                const msg = switch (e) {
-                    error.UnknownFormat => "Image: unrecognised format (expected JPEG, PNG or WebP)",
-                    error.DecodeFailed => "Image: decode failed",
-                    error.EncodeFailed => "Image: encode failed",
-                    error.TooManyPixels => "Image: input exceeds maxPixels limit",
-                    error.UnsupportedOnPlatform => "Image: format not supported on this platform (HEIC/AVIF require macOS or Windows)",
-                    error.OutOfMemory => "Image: out of memory",
-                };
-                try promise.reject(global, global.createErrorInstance("{s}", .{msg}));
-            },
+            .err => |e| try promise.reject(global, global.createErrorInstance("{s}", .{errorMessage(e)})),
             .io_err => |e| try promise.reject(global, e.toJS(global)),
         }
     }

@@ -286,9 +286,7 @@ test.concurrent("self.close() followed by top-level await doesn't fire discarded
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
   // Neither the timer nor the after-await postMessage should fire.
-  expect(JSON.parse(stdout.trim())).toEqual([
-    { type: "close", code: 0, wasClean: true },
-  ]);
+  expect(JSON.parse(stdout.trim())).toEqual([{ type: "close", code: 0, wasClean: true }]);
 });
 
 test.concurrent("self.close() inside an onmessage handler discards the rest of the batch", async () => {

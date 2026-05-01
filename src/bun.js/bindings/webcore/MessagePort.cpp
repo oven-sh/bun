@@ -224,9 +224,14 @@ bool MessagePort::hasPendingActivity() const
         return false;
 
     uint64_t s = m_pipe->state(m_side);
-    // Keep alive if there are messages already queued for us, or the peer
-    // is still open and could send more.
-    return MessagePortPipe::queuedCount(s) > 0 || m_pipe->isOtherSideOpen(m_side);
+    // Keep alive if there are messages already queued for us, a drain is in
+    // progress (a message has been popped from the inbox but not yet
+    // dispatched — queuedCount is already decremented in that window), or the
+    // peer is still open and could send more. Without the DrainScheduled
+    // check, a port whose peer has closed can have its JS wrapper collected
+    // between drainAndDispatch's pop and dispatch → ASSERT(m_wrapper) in
+    // JSEventListener (debug) or a silently dropped event (release).
+    return MessagePortPipe::queuedCount(s) > 0 || (s & MessagePortPipe::DrainScheduled) || m_pipe->isOtherSideOpen(m_side);
 }
 
 ExceptionOr<Vector<TransferredMessagePort>> MessagePort::disentanglePorts(Vector<RefPtr<MessagePort>>&& ports)

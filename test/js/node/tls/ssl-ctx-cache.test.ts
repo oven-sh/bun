@@ -104,10 +104,13 @@ test("SSL_CTX is freed once no owners remain (weak cache, not strong)", async ()
 
   // Weak<> handles are reclaimed on full GC; SecureContext.finalize then
   // SSL_CTX_free()s, which fires the ex_data tombstone. A strong cache would
-  // pin the count at before+1.
-  Bun.gc(true);
-  await new Promise<void>(r => setImmediate(r));
-  Bun.gc(true);
+  // pin the count at before+1. JSC's conservative stack scan and finalizer
+  // scheduling don't guarantee N passes is enough — await the condition.
+  for (let i = 0; i < 50; i++) {
+    Bun.gc(true);
+    await new Promise<void>(r => setImmediate(r));
+    if (sslCtxLiveCount() <= before) break;
+  }
   expect(sslCtxLiveCount()).toBeLessThanOrEqual(before);
 });
 

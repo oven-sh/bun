@@ -423,7 +423,7 @@ var InternalSecureContext = class SecureContext {
   context;
   servername;
 
-  constructor(options, native?) {
+  constructor(options) {
     if (options) {
       if (options.cert) throwOnInvalidTLSArray("options.cert", options.cert);
       if (options.key) throwOnInvalidTLSArray("options.key", options.key);
@@ -454,7 +454,7 @@ var InternalSecureContext = class SecureContext {
     // The native handle (SSL_CTX wrapper) is what's memoised — not this JS
     // object — so per-call fields like `servername` come from THIS call's
     // options while the expensive SSL_CTX is shared.
-    this.context = native ?? newNativeSecureContext(options);
+    this.context = newNativeSecureContext(options);
     this.servername = options?.servername;
   }
 };

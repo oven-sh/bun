@@ -46,13 +46,20 @@ pub const BunSocketContextOptions = extern struct {
         var h = bun.sha.Hashers.SHA256.init();
         const feedZ = struct {
             fn f(hp: *bun.sha.Hashers.SHA256, s: [*c]const u8) void {
+                // Presence byte so null ≠ "" — both would otherwise feed only
+                // the trailing 0. In practice "" usually fails createSSLContext
+                // and never caches, but injectivity is cheap to guarantee.
+                hp.update(&.{@intFromBool(s != null)});
                 if (s) |p| hp.update(bun.sliceTo(p, 0));
                 hp.update(&.{0}); // terminator so {a:"xy"} ≠ {a:"x",b:"y"}
             }
         }.f;
         const feedArr = struct {
             fn f(hp: *bun.sha.Hashers.SHA256, arr: ?[*]const ?[*:0]const u8, n: u32) void {
+                hp.update(&.{@intFromBool(arr != null)});
+                hp.update(std.mem.asBytes(&n));
                 if (arr) |a| for (a[0..n]) |s| {
+                    hp.update(&.{@intFromBool(s != null)});
                     if (s) |p| hp.update(bun.sliceTo(p, 0));
                     hp.update(&.{0});
                 };

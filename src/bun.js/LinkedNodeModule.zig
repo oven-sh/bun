@@ -176,7 +176,10 @@ fn parseBlob(blob: []const u8) !void {
             .imports_pos = 0,
         };
         const nsect = try r.u32_();
-        const sect_bytes = @sizeOf(SectionInfo) * nsect;
+        // Widen before multiplying so a hostile nsect cannot wrap the
+        // u32 product past the bounds check and leave e.sections
+        // pointing at a huge slice that bind() then walks.
+        const sect_bytes = @as(usize, @sizeOf(SectionInfo)) * @as(usize, nsect);
         if (r.pos + sect_bytes > blob.len) return error.Truncated;
         e.sections = @as([*]align(1) const SectionInfo, @ptrCast(blob[r.pos..].ptr))[0..nsect];
         try r.skip(sect_bytes);

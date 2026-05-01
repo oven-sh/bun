@@ -101,11 +101,15 @@ function makeTinyPEDll(): Buffer {
   const e_lfanew = 0x80;
   buf.writeUInt32LE(e_lfanew, 0x3c);
 
-  // PE header
+  // PE header. The machine type must match the running bun.exe
+  // (which compileForWindows uses as the PE template with no
+  // --target override) or addLinkedAddon's wrong-arch gate skips
+  // the addon and the test never sees .bunL/.bn0 on the
+  // Windows-aarch64 lane.
   let o = e_lfanew;
   buf.writeUInt32LE(0x4550, o); // PE\0\0
   o += 4;
-  buf.writeUInt16LE(0x8664, o); // machine x64
+  buf.writeUInt16LE(process.arch === "arm64" ? 0xaa64 : 0x8664, o);
   buf.writeUInt16LE(1, o + 2); // number_of_sections
   buf.writeUInt16LE(240, o + 16); // size_of_optional_header (PE32+ with 16 dirs)
   buf.writeUInt16LE(0x2022, o + 18); // characteristics: EXECUTABLE | LARGE_ADDRESS | DLL

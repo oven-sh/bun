@@ -115,6 +115,18 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
   }
 }
 
+/* Like us_poll_change, but always calls uv_poll_start even if events haven't changed.
+ * This is needed on Windows where WSAPoll may not reliably re-trigger writable events
+ * after a partial write without an explicit poll restart. */
+void us_poll_change_force(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+  if(!p->uv_p) return;
+  p->poll_type =
+      us_internal_poll_type(p) |
+      ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) |
+      ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
+  uv_poll_start(p->uv_p, events, poll_cb);
+}
+
 void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
   if(!p->uv_p) return;
   uv_poll_stop(p->uv_p);

@@ -507,6 +507,9 @@ pub const SendQueue = struct {
         self.internal_msg_queue.deinit();
         self.incoming.deinit();
         if (self.waiting_for_ack) |*waiting| waiting.deinit();
+        // An SCM_RIGHTS fd can be stashed by `onFd` and not yet consumed by
+        // the `NODE_HANDLE` decoder when the socket closes.
+        if (bun.take(&self.incoming_fd)) |fd| fd.close();
 
         // if there is a close next tick task, cancel it so it doesn't get called and then UAF
         if (self.close_next_tick) |close_next_tick_task| {
@@ -1502,7 +1505,11 @@ pub const IPCHandlers = struct {
 
         pub fn onClose(send_queue: *SendQueue) void {
             log("NewNamedPipeIPCHandler#onClose\n", .{});
-            send_queue.getGlobalThis().bunVM().enqueueTask(jsc.ManagedTask.New(SendQueue, SendQueue._onAfterIPCClosed).init(send_queue));
+            // Currently unreferenced (only onReadAlloc/onReadError/onRead are
+            // wired into readStart), but route through `_socketClosed` so any
+            // future wiring tracks the `_onAfterIPCClosed` task for `deinit`
+            // to cancel, matching every other close path.
+            send_queue._socketClosed();
         }
     };
 };

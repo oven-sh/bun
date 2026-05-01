@@ -322,6 +322,10 @@ struct Bun__LinkedNodeModuleResolved {
     void* napi_register_module_v1;
     void* node_api_module_get_api_version_v1;
     void* bun_plugin_name;
+    // Unique per-addon identity (exe_base + rva_base). Used as the
+    // DLHandleMap / napiDlopenHandle key so two merged addons do not
+    // collide. Not a real HMODULE — never pass it to Win32.
+    void* handle_token;
 };
 // Finish linking a statically-merged addon (relocs, IAT, VirtualProtect,
 // RtlAddFunctionTable, DllMain) and hand back its export pointers. Returns
@@ -562,12 +566,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     HMODULE handle;
     if (usedLinkedAddon) {
         // The addon's code lives in bun.exe's own image; there is no
-        // separate module. Use the exe's HMODULE so the `handle` passed
-        // around (DLHandleMap, napiDlopenHandle) is at least valid, even
-        // though GetProcAddress(handle, ...) would resolve bun's exports
-        // rather than the addon's — which is why we bypass GetProcAddress
-        // below and use the precomputed export RVAs instead.
-        handle = GetModuleHandleW(nullptr);
+        // separate module in the loader's list. Use a per-addon token
+        // (exe_base + rva_base) as the `handle` that flows into
+        // DLHandleMap / napiDlopenHandle so two merged addons do not
+        // collide on the same key. It is never given to a Win32 API
+        // that expects a real HMODULE — GetProcAddress is bypassed
+        // below in favour of the precomputed export RVAs.
+        handle = reinterpret_cast<HMODULE>(linkedResolved.handle_token);
     } else {
         BunString filename_str = Bun::toString(filename);
         handle = Bun__LoadLibraryBunString(&filename_str);

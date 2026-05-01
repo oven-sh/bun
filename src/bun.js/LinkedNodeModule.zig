@@ -39,6 +39,13 @@ pub const Resolved = extern struct {
     napi_register_module_v1: ?*anyopaque = null,
     node_api_module_get_api_version_v1: ?*anyopaque = null,
     bun_plugin_name: ?*anyopaque = null,
+    /// A per-addon identity for the C++ side's `DLHandleMap` /
+    /// `napiDlopenHandle` bookkeeping. There is no real `HMODULE` for a
+    /// merged addon (it is not in the loader's module list), so we use
+    /// the address where its RVA 0 landed — unique per addon, stable for
+    /// the process, and a valid in-image pointer. Never passed to a
+    /// Win32 API that expects an actual module handle.
+    handle_token: ?*anyopaque = null,
 };
 
 const Reader = struct {
@@ -100,13 +107,23 @@ const Entry = struct {
     /// Offset into the blob where this addon's import list begins, so we
     /// can stream it during bind instead of materialising a nested array.
     imports_pos: usize,
-    /// Set on first successful bind so repeated `require()` / `dlopen`
-    /// calls are idempotent (relocs and DllMain must run exactly once).
-    resolved: ?Resolved = null,
+    /// `bind()` irreversibly mutates the merged section (relocs, IAT,
+    /// page protections, `RtlAddFunctionTable`, `DllMain`). It must run
+    /// at most once: a second attempt would double-apply the ASLR delta
+    /// or fault writing to a page that has already been flipped to RX.
+    /// `.failed` is therefore terminal — later calls go straight to the
+    /// tempfile fallback.
+    state: union(enum) { unbound, bound: Resolved, failed } = .unbound,
 };
 
 var table: bun.StringHashMapUnmanaged(Entry) = .{};
 var loaded = false;
+
+/// `process.dlopen` is reachable from Workers on separate OS threads.
+/// The previous tempfile path serialised on the Windows loader lock; this
+/// path has no such lock, so we take our own around the lazy blob parse
+/// and the check-and-bind. Uncontended after first load.
+var lock: bun.Mutex = .{};
 
 extern "c" fn Bun__getLinkedAddonsPEData() ?[*]u8;
 extern "c" fn Bun__getLinkedAddonsPELength() u64;
@@ -182,18 +199,31 @@ fn parseBlob(blob: []const u8) !void {
 pub fn init(path: []const u8, out: *Resolved) bool {
     if (!enabled) return false;
     if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK.get()) return false;
+
+    lock.lock();
+    defer lock.unlock();
+
     ensureLoaded();
 
     const entry = lookup(path) orelse return false;
-    if (entry.resolved) |r| {
-        out.* = r;
-        return true;
+    switch (entry.state) {
+        .bound => |r| {
+            out.* = r;
+            return true;
+        },
+        // A previous attempt already mutated the section; do not touch
+        // it again. The tempfile fallback uses the pristine raw bytes
+        // from `.bun`, so behaviour is exactly as if the merge had
+        // never happened.
+        .failed => return false,
+        .unbound => {},
     }
     const resolved = bind(entry) catch |err| {
         log("linked-addon bind failed for {s}: {s}; falling back to temp-file LoadLibrary", .{ path, @errorName(err) });
+        entry.state = .failed;
         return false;
     };
-    entry.resolved = resolved;
+    entry.state = .{ .bound = resolved };
     out.* = resolved;
     return true;
 }
@@ -250,7 +280,13 @@ fn bind(entry: *Entry) !Resolved {
     // wrong place.
     if (entry.pdata_count > 0) {
         const rfn: [*]RUNTIME_FUNCTION = @ptrCast(@alignCast(base + entry.pdata_rva));
-        _ = RtlAddFunctionTable(rfn, entry.pdata_count, base_addr + entry.rva_base);
+        if (RtlAddFunctionTable(rfn, entry.pdata_count, base_addr + entry.rva_base) == 0) {
+            // Without .pdata registered, any SEH / C++ exception inside
+            // the addon would unwind through frames the OS cannot
+            // describe. The tempfile path gets it via the loader, so
+            // fall back rather than run with broken unwinding.
+            return error.RtlAddFunctionTableFailed;
+        }
     }
 
     // Run CRT init + static constructors. Passing the exe's HMODULE as
@@ -274,6 +310,7 @@ fn bind(entry: *Entry) !Resolved {
         .napi_register_module_v1 = if (entry.export_register != 0) base + entry.export_register else null,
         .node_api_module_get_api_version_v1 = if (entry.export_api_version != 0) base + entry.export_api_version else null,
         .bun_plugin_name = if (entry.export_plugin_name != 0) base + entry.export_plugin_name else null,
+        .handle_token = base + entry.rva_base,
     };
 }
 

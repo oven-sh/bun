@@ -860,9 +860,13 @@ pub const PEFile = struct {
             if (vend > last_va_end) last_va_end = vend;
         }
 
-        // Header slack for one more section. addBunSection will check again
-        // for the .bun/.bunL sections that follow.
-        const want_sections: u32 = self.num_sections + 1;
+        // Header slack: this addon's section, the trailing `.bunL`
+        // metadata section, and the final `.bun` module-graph section.
+        // If we consumed a slot that `.bunL`/`.bun` will need later the
+        // build would hard-fail in addLinkedAddonSection/addBunSection
+        // instead of falling back, so refuse *here* while the caller
+        // can still skip this addon and keep going.
+        const want_sections: u32 = self.num_sections + 3;
         const new_headers_end = self.section_headers_offset + @sizeOf(SectionHeader) * want_sections;
         var first_raw: u32 = @intCast(self.data.items.len);
         for (host_sections) |s| if (s.size_of_raw_data > 0 and s.pointer_to_raw_data < first_raw) {
@@ -893,10 +897,17 @@ pub const PEFile = struct {
 
         for (addon.sections) |s| {
             if (s.virtual_address >= addon_image) return null;
-            const copy_len = @min(s.size_of_raw_data, addon_image - s.virtual_address);
-            if (copy_len > 0 and
-                @as(u64, s.pointer_to_raw_data) + copy_len <= addon_bytes.len)
+            // A section whose raw bytes lie past EOF is malformed. Do
+            // not merge a zeroed stand-in and then trust the rest of
+            // the metadata — fail closed so the tempfile path handles
+            // it (where LoadLibrary will also reject it, but loudly).
+            if (s.size_of_raw_data > 0 and
+                @as(u64, s.pointer_to_raw_data) + s.size_of_raw_data > addon_bytes.len)
             {
+                return null;
+            }
+            const copy_len = @min(s.size_of_raw_data, addon_image - s.virtual_address);
+            if (copy_len > 0) {
                 @memcpy(
                     image[s.virtual_address..][0..copy_len],
                     addon_bytes[s.pointer_to_raw_data..][0..copy_len],
@@ -1284,7 +1295,10 @@ pub const PEFile = struct {
             if (vend > last_va_end) last_va_end = vend;
         }
 
-        const new_headers_end = self.section_headers_offset + @sizeOf(SectionHeader) * (self.num_sections + 1);
+        // Reserve room for this section *and* the `.bun` section that
+        // `addBunSection` will append next. Taking the last slot here
+        // would turn a skippable merge into a hard build failure.
+        const new_headers_end = self.section_headers_offset + @sizeOf(SectionHeader) * (self.num_sections + 2);
         if (new_headers_end > first_raw) return error.InsufficientHeaderSpace;
 
         if (blob.len > std.math.maxInt(u32) - 8) return error.Overflow;

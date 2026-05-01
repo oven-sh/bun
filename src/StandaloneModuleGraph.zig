@@ -717,7 +717,14 @@ pub const StandaloneModuleGraph = struct {
         if (addons.items.len == 0) return;
 
         const blob = try bun.pe.PEFile.serializeLinkedAddons(alloc, addons.items);
-        try pe_file.addLinkedAddonSection(blob);
+        pe_file.addLinkedAddonSection(blob) catch |err| switch (err) {
+            // Same reasoning as above: without `.bunL` the runtime has
+            // nothing to look up and every addon takes the tempfile
+            // fallback, which is fine. Without `.bun` the build is
+            // useless, so leave the last slot for it.
+            error.InsufficientHeaderSpace => return,
+            else => return err,
+        };
     }
 
     pub fn inject(

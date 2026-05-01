@@ -9,8 +9,8 @@
 // bind produces a working addon without a temp file.
 
 import { describe, expect, test } from "bun:test";
-import { readFileSync, readdirSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { readFileSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 type Section = { name: string; virtualSize: number; virtualAddress: number; rawSize: number; characteristics: number };
@@ -344,34 +344,12 @@ describe.skipIf(!isWindows)("bun build --compile native addon static link", () =
     timeout,
   );
 
-  test(
-    "runs the compiled exe without extracting the addon to a temp file",
-    async () => {
-      // End-to-end: the synthetic DLL's `napi_register_module_v1` is a
-      // single `ret`, so calling it returns whatever happens to be in
-      // rax — we don't care, we only want the exe to (a) bind and call
-      // it without crashing, and (b) never touch BUN_TMPDIR. The real
-      // napi round-trip is covered by test/napi/napi.test.ts with a
-      // node-gyp-built addon.
-      using dir = tempDir("pe-linked-addon-run", projectFiles(makeTinyPEDll()));
-      const exe = await compileForWindows(String(dir));
-      expect(findSection(exe, ".bunL")).toBeDefined();
-
-      const tmp = tempDirWithFiles("pe-linked-addon-run-tmp", {});
-      await using proc = Bun.spawn({
-        cmd: [exe],
-        env: { ...bunEnv, BUN_TMPDIR: tmp },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr.trim()).toBe("");
-      expect(stdout.trim()).toBe("ok");
-      expect(code).toBe(0);
-      expect(readdirSync(tmp), "statically-linked addon must not extract to disk").toBeEmpty();
-    },
-    timeout,
-  );
+  // The end-to-end "bind a real addon and run it without a temp file"
+  // case is covered by test/napi/napi.test.ts, which compiles a
+  // node-gyp-built addon, runs it, and asserts BUN_TMPDIR stayed empty.
+  // A synthetic DLL whose napi_register_module_v1 is a bare `ret`
+  // cannot safely be called (rax is garbage), so that test lives where
+  // a real addon is available.
 
   test(
     "an addon with a TLS directory is skipped and falls back to opaque bytes",

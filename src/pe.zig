@@ -877,6 +877,13 @@ pub const PEFile = struct {
         // The addon's RVA 0 maps to this RVA in bun.exe.
         const rva_base = try alignUpU32(last_va_end, sect_align);
         const addon_image = addon.opt.size_of_image;
+        // AddressOfEntryPoint is attacker-controlled. A value outside
+        // the image we are about to copy would make the runtime jump
+        // into unrelated bun.exe code or unmapped memory. Check here,
+        // before any host mutation, so a skip leaves the host image
+        // untouched.
+        const entry_rva = addon.opt.address_of_entry_point;
+        if (entry_rva != 0 and entry_rva >= addon_image) return null;
         // SizeOfImage is attacker-controlled. Refuse anything that would
         // either blow the build-time allocation or push bun.exe's own
         // SizeOfImage past 2 GiB (RVAs are signed in several Windows
@@ -943,7 +950,17 @@ pub const PEFile = struct {
             while (off + @sizeOf(ImageBaseRelocation) <= reloc_bytes.len) {
                 const block: *align(1) const ImageBaseRelocation = @ptrCast(reloc_bytes[off..].ptr);
                 const block_size = block.size_of_block;
-                if (block_size < @sizeOf(ImageBaseRelocation) or off + block_size > reloc_bytes.len) break;
+                // A zero-sized (terminator) or malformed block mid-stream
+                // means we cannot know whether more relocations follow,
+                // and stopping here would leave a half-relocated image
+                // that looks valid. Some linkers emit a single zero block
+                // as the terminator, which this also covers.
+                if (block_size == 0 and block.virtual_address == 0) break;
+                if (block_size < @sizeOf(ImageBaseRelocation) or
+                    off + @as(usize, block_size) > reloc_bytes.len)
+                {
+                    return null;
+                }
                 const page_rva = block.virtual_address;
                 const n_entries = (block_size - @sizeOf(ImageBaseRelocation)) / 2;
                 const entries: [*]align(1) const u16 = @ptrCast(reloc_bytes[off + @sizeOf(ImageBaseRelocation) ..].ptr);
@@ -1011,7 +1028,9 @@ pub const PEFile = struct {
         var pdata_rva: u32 = 0;
         var pdata_count: u32 = 0;
         const pdata_dir = addon.dir(IMAGE_DIRECTORY_ENTRY_EXCEPTION);
-        if (pdata_dir.size >= @sizeOf(RuntimeFunction) and pdata_dir.virtual_address + pdata_dir.size <= addon_image) {
+        if (pdata_dir.size >= @sizeOf(RuntimeFunction) and
+            @as(u64, pdata_dir.virtual_address) + pdata_dir.size <= addon_image)
+        {
             pdata_rva = rva_base + pdata_dir.virtual_address;
             pdata_count = pdata_dir.size / @sizeOf(RuntimeFunction);
         }
@@ -1093,10 +1112,7 @@ pub const PEFile = struct {
             .name = virtual_path,
             .rva_base = rva_base,
             .image_size = addon_image,
-            .entry_point = if (addon.opt.address_of_entry_point != 0)
-                rva_base + addon.opt.address_of_entry_point
-            else
-                0,
+            .entry_point = if (entry_rva != 0) rva_base + entry_rva else 0,
             .preferred_base = preferred_base,
             .sections = try section_infos.toOwnedSlice(),
             .relocs = try relocs_out.toOwnedSlice(),

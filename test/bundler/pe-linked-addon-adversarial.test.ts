@@ -219,9 +219,26 @@ describe("pe.addLinkedAddon adversarial input", () => {
   });
 
   test("non-PE junk is skipped without touching the host", () => {
-    const r = peLinkAddon(makeHost(), Buffer.from("not a pe file at all"), "x");
+    // The hook rejects before any host mutation; a separate merge of
+    // a *valid* addon against the same host bytes must then produce
+    // exactly the baseline output, proving the first call left the
+    // host unchanged.
+    const host = makeHost();
+    const r = peLinkAddon(host, Buffer.from("not a pe file at all"), "x");
     expect(r.skipped).toBe(true);
     expect(r.output).toBeUndefined();
+    const again = peLinkAddon(host, makeAddon(), "B:/~BUN/root/addon.node");
+    expect(expectSafe(again)).toBe("merged");
+  });
+
+  test("addon with AddressOfEntryPoint past SizeOfImage is skipped", () => {
+    // Runtime would otherwise jump to exe_base + rva_base + bogus_rva.
+    const r = peLinkAddon(
+      makeHost(),
+      makeAddon(b => b.writeUInt32LE(0x7fffffff, OPTOFF + 16)),
+      "x",
+    );
+    expect(r.skipped).toBe(true);
   });
 
   test("PE32 (not PE32+) is skipped", () => {
@@ -276,15 +293,15 @@ describe("pe.addLinkedAddon adversarial input", () => {
   // Relocation-block attacks — these are the easiest way to get the parser
   // to loop forever or write out of bounds if it is not careful.
 
-  test("reloc block with size_of_block = 0 terminates without looping", () => {
+  test("reloc block with size_of_block = 0 (non-terminator) is rejected", () => {
+    // page_rva is nonzero so this is not the {0,0} terminator block;
+    // stopping here would leave any following blocks unapplied.
     const r = peLinkAddon(
       makeHost(),
       makeAddon(b => b.writeUInt32LE(0, FILE_ALIGN + 0x0a0 + 4)),
       "x",
     );
-    // The walker must either stop (merged with empty relocs) or skip; the
-    // hook has already returned, so it did not hang.
-    expect(["merged", "skipped"]).toContain(expectSafe(r));
+    expect(expectSafe(r)).toBe("skipped");
   });
 
   test("reloc block claiming more bytes than the directory has is rejected", () => {
@@ -293,7 +310,7 @@ describe("pe.addLinkedAddon adversarial input", () => {
       makeAddon(b => b.writeUInt32LE(0x10000, FILE_ALIGN + 0x0a0 + 4)),
       "x",
     );
-    expect(["merged", "skipped"]).toContain(expectSafe(r));
+    expect(expectSafe(r)).toBe("skipped");
   });
 
   test("DIR64 reloc pointing past SizeOfImage is rejected", () => {

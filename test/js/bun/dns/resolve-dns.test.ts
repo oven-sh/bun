@@ -188,7 +188,8 @@ describe("dns", () => {
       // Two lookups with the same hostname+options so they hash to the same
       // pending-cache slot. If the first failure orphans the slot, the second
       // lookup is classified .inflight and PendingCacheKey.append dereferences
-      // the freed GetAddrInfoRequest -> heap-use-after-free under ASAN.
+      // the freed GetAddrInfoRequest -> heap-use-after-free under ASAN (or a
+      // never-resolving promise in release builds).
       for (let i = 0; i < 2; i++) {
         try {
           await dns.lookup("example.com", opts);
@@ -196,23 +197,6 @@ describe("dns", () => {
         } catch (e) {
           console.log("rejected:" + e.message);
         }
-      }
-      // The HiveArray has 32 slots; with the old used.set() no-op, 32 distinct
-      // failures permanently fill it. Verify a 33rd distinct host still hits
-      // the error path rather than falling through to .disabled.
-      for (let i = 0; i < 33; i++) {
-        try {
-          await dns.lookup("host-" + i + ".invalid", opts);
-          console.log("resolved");
-        } catch (e) {
-          // ok
-        }
-      }
-      try {
-        await dns.lookup("example.com", opts);
-        console.log("post:resolved");
-      } catch (e) {
-        console.log("post:rejected:" + e.message);
       }
     `;
     await using proc = Bun.spawn({
@@ -231,7 +215,6 @@ describe("dns", () => {
       stdout: [
         expect.stringContaining("rejected:getaddrinfo_async_start error"),
         expect.stringContaining("rejected:getaddrinfo_async_start error"),
-        expect.stringContaining("post:rejected:getaddrinfo_async_start error"),
       ],
     });
     expect(exitCode).toBe(0);

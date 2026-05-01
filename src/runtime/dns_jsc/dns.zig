@@ -87,8 +87,11 @@ const LibInfo = struct {
         const errno: i32 = if (bun.feature_flag.BUN_INTERNAL_DNS_FORCE_LIBINFO_START_ERROR.get())
             // Testing hook: exercise the synchronous error path below without
             // needing mach-port exhaustion. The real getaddrinfo_async_start is
-            // skipped so no mach port is allocated.
-            @intFromEnum(std.c.E.PERM)
+            // skipped so no mach port is allocated. Any nonzero value works;
+            // the reject path calls bun.sys.getErrno(rc) which on darwin only
+            // inspects thread errno when rc == -1, so the specific value here
+            // is not surfaced in the error message.
+            1
         else
             getaddrinfo_async_start_(
                 &request.backend.libinfo.machport,

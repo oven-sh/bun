@@ -245,7 +245,17 @@ pub fn hasPendingActivity(this: *PostgresSQLConnection) bool {
 
 fn updateHasPendingActivity(this: *PostgresSQLConnection) void {
     const a: u32 = if (this.requests.readableLength() > 0) 1 else 0;
-    const b: u32 = if (this.status != .disconnected) 1 else 0;
+    const b: u32 = switch (this.status) {
+        // Terminal states: nothing more will happen on this connection, so
+        // allow GC to collect the JS wrapper (and ultimately call deinit()).
+        // We must still outlive the socket's onClose callback — for SSL
+        // sockets `close(.normal)` defers the actual close until the peer's
+        // close_notify arrives, so the struct must stay alive until then.
+        // The socket's onClose re-enters here (via failWithJSValue's defer)
+        // with isClosed() == true, at which point GC can proceed.
+        .disconnected, .failed => @intFromBool(!this.socket.isClosed()),
+        else => 1,
+    };
     this.pending_activity_count.store(a + b, .release);
 }
 
@@ -893,6 +903,7 @@ pub fn deinit(this: *@This()) void {
         stmt.deref();
     }
     this.statements.deinit(bun.default_allocator);
+    this.requests.deinit();
     this.write_buffer.deinit(bun.default_allocator);
     this.read_buffer.deinit(bun.default_allocator);
     this.backend_parameters.deinit();

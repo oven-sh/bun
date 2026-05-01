@@ -237,6 +237,14 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
         }
     }
 
+    // A getter invoked by getIndex() during the first pass can detach or shrink
+    // an earlier buffer. The copy loop re-reads byteLength(), so it may copy fewer
+    // bytes than we allocated with tryCreateUninitialized(). Zero the tail so we
+    // never return uninitialized heap memory to JS.
+    if (remain > 0) [[unlikely]] {
+        memset(head, 0, remain);
+    }
+
     if (asUint8Array) {
         auto uint8array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), WTF::move(buffer), 0, byteLength);
         RETURN_IF_EXCEPTION(throwScope, {});

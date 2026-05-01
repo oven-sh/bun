@@ -77,12 +77,14 @@ pub const EncodeOptions = struct {
     quality: u8 = 80,
     /// WebP only: emit lossless VP8L instead of lossy VP8.
     lossless: bool = false,
+    /// PNG only: zlib level 0–9. -1 = libspng default.
+    compression_level: i8 = -1,
 };
 
 pub fn encode(rgba: []const u8, width: u32, height: u32, opts: EncodeOptions) Error![]u8 {
     return switch (opts.format) {
         .jpeg => jpeg.encode(rgba, width, height, opts.quality),
-        .png => png.encode(rgba, width, height),
+        .png => png.encode(rgba, width, height, opts.compression_level),
         .webp => webp.encode(rgba, width, height, opts.quality, opts.lossless),
     };
 }
@@ -102,6 +104,14 @@ extern fn bun_image_resize_rgba8(
 ) c_int;
 extern fn bun_image_rotate_rgba8(src: [*]const u8, w: i32, h: i32, dst: [*]u8, deg: i32) void;
 extern fn bun_image_flip_rgba8(src: [*]const u8, w: i32, h: i32, dst: [*]u8, horiz: i32) void;
+extern fn bun_image_modulate_rgba8(buf: [*]u8, len: usize, brightness: f32, saturation: f32) void;
+
+/// In-place brightness/saturation. brightness multiplies V (so 1.0 is
+/// identity); saturation linearly interpolates each channel toward the pixel's
+/// luma (0 = greyscale, 1 = identity, >1 = boost).
+pub fn modulate(rgba: []u8, brightness: f32, saturation: f32) void {
+    bun_image_modulate_rgba8(rgba.ptr, rgba.len, brightness, saturation);
+}
 
 pub fn resize(src: []const u8, sw: u32, sh: u32, dw: u32, dh: u32, f: Filter) Error![]u8 {
     const out = try bun.default_allocator.alloc(u8, @as(usize, dw) * dh * 4);
@@ -213,7 +223,9 @@ pub const png = struct {
     const SPNG_FMT_PNG = 256;
     const SPNG_DECODE_TRNS = 1; // apply tRNS chunk so paletted/grey get real alpha
     const SPNG_ENCODE_FINALIZE = 2;
-    const SPNG_ENCODE_TO_BUFFER = 12; // spng_option
+    // spng_option enum
+    const SPNG_IMG_COMPRESSION_LEVEL = 2;
+    const SPNG_ENCODE_TO_BUFFER = 12;
     const SPNG_COLOR_TYPE_TRUECOLOR_ALPHA = 6;
 
     pub fn decode(bytes: []const u8, max_pixels: u64) Error!Decoded {
@@ -232,10 +244,11 @@ pub const png = struct {
         return .{ .rgba = out, .width = ihdr.width, .height = ihdr.height };
     }
 
-    pub fn encode(rgba: []const u8, w: u32, h: u32) Error![]u8 {
+    pub fn encode(rgba: []const u8, w: u32, h: u32, level: i8) Error![]u8 {
         const ctx = spng_ctx_new(SPNG_CTX_ENCODER) orelse return error.OutOfMemory;
         defer spng_ctx_free(ctx);
         _ = spng_set_option(ctx, SPNG_ENCODE_TO_BUFFER, 1);
+        if (level >= 0) _ = spng_set_option(ctx, SPNG_IMG_COMPRESSION_LEVEL, @min(level, 9));
         var ihdr: Ihdr = .{
             .width = w,
             .height = h,

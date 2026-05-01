@@ -62,16 +62,25 @@ pub const Resize = struct {
 /// the worker snapshot is a plain struct copy with a fixed execution order
 /// (`run()` below), no allocation, no "too many ops" edge.
 ///
-/// Execution order matches Sharp: (autoOrient) → rotate → flip/flop → resize.
-/// Rotate precedes resize so the target box is interpreted in upright space.
+/// Execution order matches Sharp: (autoOrient) → rotate → flip/flop → resize
+/// → modulate. Rotate precedes resize so the target box is interpreted in
+/// upright space; modulate runs last so it operates on the fewest pixels.
 pub const Pipeline = struct {
     rotate: u16 = 0, // 0/90/180/270
     flip: bool = false, // vertical
     flop: bool = false, // horizontal
     resize: ?Resize = null,
+    modulate: ?Modulate = null,
     /// Output settings from `.jpeg()/.png()/.webp()`. `null` ⇒ re-encode in
     /// source format.
     output: ?codecs.EncodeOptions = null,
+};
+
+pub const Modulate = struct {
+    /// Multiplier; 1.0 = identity.
+    brightness: f32 = 1.0,
+    /// 0 = greyscale, 1 = identity, >1 = boost.
+    saturation: f32 = 1.0,
 };
 
 // ───────────────────────────── lifecycle ────────────────────────────────────
@@ -182,6 +191,22 @@ pub fn doFlop(this: *Image, _: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     return callframe.this();
 }
 
+pub fn doModulate(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const args = callframe.arguments();
+    var m: Modulate = this.pipeline.modulate orelse .{};
+    if (args.len > 0 and args[0].isObject()) {
+        const opt = args[0];
+        if (try opt.get(global, "brightness")) |v| if (v.isNumber()) {
+            m.brightness = @floatCast(@max(0, v.asNumber()));
+        };
+        if (try opt.get(global, "saturation")) |v| if (v.isNumber()) {
+            m.saturation = @floatCast(@max(0, v.asNumber()));
+        };
+    }
+    this.pipeline.modulate = m;
+    return callframe.this();
+}
+
 fn setFormat(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, fmt: codecs.Format) bun.JSError!jsc.JSValue {
     var enc: codecs.EncodeOptions = this.pipeline.output orelse .{ .format = fmt };
     enc.format = fmt;
@@ -192,6 +217,9 @@ fn setFormat(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallFram
             if (q.isNumber()) enc.quality = @intFromFloat(@min(@max(q.asNumber(), 1), 100));
         }
         if (try opt.get(global, "lossless")) |l| enc.lossless = l.toBoolean();
+        if (try opt.get(global, "compressionLevel")) |c| if (c.isNumber()) {
+            enc.compression_level = @intFromFloat(@min(@max(c.asNumber(), 0), 9));
+        };
     }
     this.pipeline.output = enc;
     return callframe.this();
@@ -451,6 +479,7 @@ pub const PipelineTask = struct {
                 d.* = .{ .rgba = next, .width = t.w, .height = t.h };
             }
         }
+        if (p.modulate) |m| codecs.modulate(d.rgba, m.brightness, m.saturation);
     }
 
     /// Map a resize spec to concrete output dims given the current dims.

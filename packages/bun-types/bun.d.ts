@@ -8163,6 +8163,126 @@ declare module "bun" {
     match(str: string): boolean;
   }
 
+  namespace Image {
+    type Format = "jpeg" | "png" | "webp";
+    type Filter = "box" | "bilinear" | "lanczos3";
+
+    interface ConstructorOptions {
+      /**
+       * Reject inputs whose `width × height` exceeds this many pixels. The
+       * check runs after the header is read but before any pixel buffer is
+       * allocated, so a tiny file claiming a huge canvas is refused cheaply.
+       * @default 268402689 // 0x3FFF * 0x3FFF, same as Sharp
+       */
+      maxPixels?: number;
+      /**
+       * Apply EXIF Orientation (JPEG) before any other operation.
+       * @default true
+       */
+      autoOrient?: boolean;
+    }
+
+    interface ResizeOptions {
+      /** Resampling kernel. @default "lanczos3" */
+      filter?: Filter;
+      /**
+       * `"fill"` stretches to exactly width×height. `"inside"` preserves
+       * aspect ratio so the result fits *within* width×height.
+       * @default "fill"
+       */
+      fit?: "fill" | "inside";
+      /** Never upscale — if the source is already smaller, leave it. */
+      withoutEnlargement?: boolean;
+    }
+
+    interface ModulateOptions {
+      /** Multiplier; `1` leaves brightness unchanged. */
+      brightness?: number;
+      /** `0` = greyscale, `1` = unchanged, `>1` = more saturated. */
+      saturation?: number;
+    }
+
+    interface OutputOptions {
+      format?: Format | "jpg";
+      /** 1–100 for JPEG / lossy WebP. Ignored for PNG. @default 80 */
+      quality?: number;
+      /** WebP only: emit lossless VP8L. */
+      lossless?: boolean;
+      /** PNG only: zlib level 0–9. */
+      compressionLevel?: number;
+    }
+
+    interface Metadata {
+      width: number;
+      height: number;
+      format: Format;
+    }
+  }
+
+  /**
+   * Decode, transform and re-encode images. Ships JPEG, PNG and WebP via
+   * statically-linked libjpeg-turbo / libspng / libwebp; resize and rotate
+   * are SIMD kernels — no native module install, no `sharp`.
+   *
+   * The constructor and every chainable method only *record* settings; the
+   * decode → transform → encode pipeline runs on a worker thread when a
+   * terminal (`bytes`, `blob`, `toBuffer`, `toBase64`, `metadata`) is awaited.
+   *
+   * Chainables overwrite (calling `.resize()` twice keeps the second). Order
+   * of execution is fixed regardless of call order:
+   * `autoOrient → rotate → flip/flop → resize → modulate`.
+   *
+   * @example
+   * ```ts
+   * const thumb = await new Bun.Image("photo.jpg")
+   *   .resize(400, 400, { fit: "inside", withoutEnlargement: true })
+   *   .webp({ quality: 80 })
+   *   .bytes();
+   * ```
+   */
+  export class Image {
+    constructor(
+      input: string | ArrayBuffer | SharedArrayBuffer | NodeJS.TypedArray | Blob,
+      options?: Image.ConstructorOptions,
+    );
+
+    /** Set target dimensions. Omit `height` to keep the source aspect ratio. */
+    resize(width: number, height?: number, options?: Image.ResizeOptions): this;
+    /** Rotate by a multiple of 90°. */
+    rotate(degrees: number): this;
+    /** Mirror about the x-axis (vertical). */
+    flip(): this;
+    /** Mirror about the y-axis (horizontal). */
+    flop(): this;
+    /** Adjust brightness/saturation. */
+    modulate(options: Image.ModulateOptions): this;
+
+    /** Set output format to JPEG. */
+    jpeg(options?: { quality?: number }): this;
+    /** Set output format to PNG. */
+    png(options?: { compressionLevel?: number }): this;
+    /** Set output format to WebP. */
+    webp(options?: { quality?: number; lossless?: boolean }): this;
+
+    /**
+     * Run the pipeline and return the encoded bytes. If no format setter was
+     * called, re-encodes in the source format.
+     */
+    bytes(): Promise<Uint8Array>;
+    /** Run the pipeline and return a `Blob` with the matching `type`. */
+    blob(): Promise<Blob>;
+    /** Run the pipeline and return base64-encoded output. */
+    toBase64(): Promise<string>;
+    /** Like {@link bytes} but with per-call output overrides. */
+    toBuffer(options?: Image.OutputOptions): Promise<Uint8Array>;
+    /** Decode just enough to read width/height/format. */
+    metadata(): Promise<Image.Metadata>;
+
+    /** Populated after the first awaited terminal; `-1` before. */
+    readonly width: number;
+    readonly height: number;
+  }
+
   namespace WebView {
     type Modifier = "Shift" | "Control" | "Alt" | "Meta";
 

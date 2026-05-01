@@ -189,6 +189,41 @@ static void FlipVImpl(const uint8_t* HWY_RESTRICT src, int32_t w, int32_t h, uin
         std::memcpy(dst + static_cast<size_t>(y) * row, src + static_cast<size_t>(h - 1 - y) * row, row);
 }
 
+// In-place brightness × saturation on RGBA8. saturation lerps each channel
+// toward the pixel's Rec.601 luma (0 → greyscale, 1 → identity, >1 → boost);
+// brightness is a straight multiply on the result. Alpha untouched. This is
+// the same model Sharp's `modulate` uses (linear, no gamma correction —
+// matching is more useful than correctness here).
+static void ModulateImpl(uint8_t* HWY_RESTRICT buf, size_t len, float brightness, float saturation)
+{
+    const hn::ScalableTag<float> df;
+    // Rec.601 luma weights.
+    const auto wr = hn::Set(df, 0.299f);
+    const auto wg = hn::Set(df, 0.587f);
+    const auto wb = hn::Set(df, 0.114f);
+    const auto sat = hn::Set(df, saturation);
+    const auto bri = hn::Set(df, brightness);
+    const auto half = hn::Set(df, 0.5f);
+    const auto lo = hn::Zero(df);
+    const auto hi = hn::Set(df, 255.0f);
+    // Scalar over pixels — len is bytes, 4 per pixel. SIMD across the four
+    // channel lanes wouldn't help (alpha is masked) so this stays simple and
+    // lets the compiler vectorise the FMAs.
+    for (size_t i = 0; i + 4 <= len; i += 4) {
+        const float r = static_cast<float>(buf[i + 0]);
+        const float g = static_cast<float>(buf[i + 1]);
+        const float b = static_cast<float>(buf[i + 2]);
+        const auto y = hn::MulAdd(hn::Set(df, r), wr, hn::MulAdd(hn::Set(df, g), wg, hn::Mul(hn::Set(df, b), wb)));
+        auto cr = hn::Mul(hn::MulAdd(hn::Sub(hn::Set(df, r), y), sat, y), bri);
+        auto cg = hn::Mul(hn::MulAdd(hn::Sub(hn::Set(df, g), y), sat, y), bri);
+        auto cb = hn::Mul(hn::MulAdd(hn::Sub(hn::Set(df, b), y), sat, y), bri);
+        buf[i + 0] = static_cast<uint8_t>(hn::GetLane(hn::Min(hn::Max(hn::Add(cr, half), lo), hi)));
+        buf[i + 1] = static_cast<uint8_t>(hn::GetLane(hn::Min(hn::Max(hn::Add(cg, half), lo), hi)));
+        buf[i + 2] = static_cast<uint8_t>(hn::GetLane(hn::Min(hn::Max(hn::Add(cb, half), lo), hi)));
+        // alpha unchanged
+    }
+}
+
 } // namespace HWY_NAMESPACE
 } // namespace bun_image
 HWY_AFTER_NAMESPACE();
@@ -203,6 +238,7 @@ HWY_EXPORT(Rotate180Impl);
 HWY_EXPORT(Rotate270Impl);
 HWY_EXPORT(FlipHImpl);
 HWY_EXPORT(FlipVImpl);
+HWY_EXPORT(ModulateImpl);
 
 namespace {
 
@@ -340,6 +376,11 @@ void bun_image_flip_rgba8(const uint8_t* src, int32_t w, int32_t h, uint8_t* dst
         HWY_DYNAMIC_DISPATCH(FlipHImpl)(src, w, h, dst);
     else
         HWY_DYNAMIC_DISPATCH(FlipVImpl)(src, w, h, dst);
+}
+
+void bun_image_modulate_rgba8(uint8_t* buf, size_t len, float brightness, float saturation)
+{
+    HWY_DYNAMIC_DISPATCH(ModulateImpl)(buf, len, brightness, saturation);
 }
 
 } // extern "C"

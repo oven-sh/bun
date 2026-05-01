@@ -413,6 +413,33 @@ describe("Bun.Image", () => {
       expect(h).toBe(8);
     });
 
+    test("modulate({saturation:0}) greyscales: R=G=B per pixel", async () => {
+      const out = await new Bun.Image(cornersPng).modulate({ saturation: 0 }).png().bytes();
+      const { data } = decodePngRaw(out);
+      for (let i = 0; i < data.length; i += 4) {
+        expect(data[i]).toBe(data[i + 1]);
+        expect(data[i + 1]).toBe(data[i + 2]);
+      }
+      // Red corner's luma ≈ 0.299*255 ≈ 76.
+      const tl = rgbaAt(data, 4, 0, 0);
+      expect(tl[0]).toBeGreaterThan(70);
+      expect(tl[0]).toBeLessThan(82);
+    });
+
+    test("modulate({brightness}) scales values", async () => {
+      const flat = makePng(2, 2, () => [100, 100, 100, 255]);
+      const out = await new Bun.Image(flat).modulate({ brightness: 0.5 }).png().bytes();
+      const { data } = decodePngRaw(out);
+      expect(data[0]).toBe(50);
+    });
+
+    test("png({compressionLevel:0}) is larger than level 9", async () => {
+      const big = makePng(32, 32, (x, y) => [(x * 8) & 255, (y * 8) & 255, ((x + y) * 4) & 255, 255]);
+      const fast = await new Bun.Image(big).png({ compressionLevel: 0 }).bytes();
+      const small = await new Bun.Image(big).png({ compressionLevel: 9 }).bytes();
+      expect(small.length).toBeLessThan(fast.length);
+    });
+
     test("withoutEnlargement leaves a smaller source untouched", async () => {
       const out = await new Bun.Image(cornersPng) // 4×3
         .resize(100, 100, { fit: "inside", withoutEnlargement: true })

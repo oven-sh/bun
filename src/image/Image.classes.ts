@@ -15,6 +15,7 @@ export default [
       rotate: { fn: "doRotate", length: 1 },
       flip: { fn: "doFlip", length: 0 },
       flop: { fn: "doFlop", length: 0 },
+      modulate: { fn: "doModulate", length: 1 },
       // Chainable output-format setters (Sharp-style); the encode happens
       // when a terminal below is awaited.
       jpeg: { fn: "doFormatJpeg", length: 1 },

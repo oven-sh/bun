@@ -96,20 +96,20 @@ pub fn napiLinkSlots(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSE
 /// resulting binary resolves to it. Writes the result to `outPath` (which
 /// may equal `exePath`). Mach-O only for now.
 pub fn linkNapiModule(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const args = callframe.arguments_old(4).slice();
-    if (args.len < 4) {
+    if (callframe.argumentsCount() < 4) {
         return globalThis.throwInvalidArguments("linkNapiModule(exePath, addonPath, virtualPath, outPath) requires 4 arguments", .{});
     }
+    const exe_arg, const addon_arg, const vpath_arg, const out_arg = callframe.argumentsAsArray(4);
 
     const allocator = bun.default_allocator;
 
-    var exe_path = try args[0].toSliceOrNull(globalThis);
+    var exe_path = try exe_arg.toSliceOrNull(globalThis);
     defer exe_path.deinit();
-    var addon_path = try args[1].toSliceOrNull(globalThis);
+    var addon_path = try addon_arg.toSliceOrNull(globalThis);
     defer addon_path.deinit();
-    var virtual_path = try args[2].toSliceOrNull(globalThis);
+    var virtual_path = try vpath_arg.toSliceOrNull(globalThis);
     defer virtual_path.deinit();
-    var out_path = try args[3].toSliceOrNull(globalThis);
+    var out_path = try out_arg.toSliceOrNull(globalThis);
     defer out_path.deinit();
 
     const exe_bytes = switch (bun.sys.File.readFrom(bun.FD.cwd(), exe_path.slice(), allocator)) {

@@ -490,6 +490,14 @@ pub const TransformTask = struct {
 
         var arena = MimallocArena.init();
         defer arena.deinit();
+        defer {
+            if (this.log.msgs.items.len > 0) {
+                var new_log = logger.Log.init(bun.default_allocator);
+                new_log.level = this.log.level;
+                bun.handleOom(this.log.appendToWithRecycled(&new_log, true));
+                this.log = new_log;
+            }
+        }
 
         const allocator = arena.allocator();
         var ast_memory_allocator = bun.handleOom(allocator.create(JSAst.ASTMemoryAllocator));

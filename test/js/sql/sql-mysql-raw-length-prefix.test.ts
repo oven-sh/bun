@@ -158,17 +158,23 @@ if (isDockerEnabled()) {
   });
 } else {
   describe("mysql (local)", () => {
-    test(".raw() on json / varchar returns only the payload (#30039)", async () => {
-      const url = await discoverMysqlUrl();
-      if (!url) {
-        if (process.env.MYSQL_URL) {
-          throw new Error(`sql-mysql-raw-length-prefix: MYSQL_URL=${process.env.MYSQL_URL} is not reachable`);
+    test(
+      ".raw() on json / varchar returns only the payload (#30039)",
+      async () => {
+        // discoverMysqlUrl() can spend ~20s starting a cold MariaDB + running
+        // the root-socket bootstrap, so the default 5s bun:test timeout would
+        // fire mid-poll and hide the regression the gate is checking for.
+        const url = await discoverMysqlUrl();
+        if (!url) {
+          // discoverMysqlUrl returns MYSQL_URL as-is when set, so getting null
+          // here means MYSQL_URL is unset — nothing to diagnose, just skip.
+          console.warn("sql-mysql-raw-length-prefix: no MySQL reachable (no MYSQL_URL, no socket); skipping");
+          return;
         }
-        console.warn("sql-mysql-raw-length-prefix: no MySQL reachable (no MYSQL_URL, no socket); skipping");
-        return;
-      }
-      const { stdout, stderr, exitCode } = await runFixture(url);
-      assertFixtureOutput(stdout, stderr, exitCode);
-    });
+        const { stdout, stderr, exitCode } = await runFixture(url);
+        assertFixtureOutput(stdout, stderr, exitCode);
+      },
+      60_000,
+    );
   });
 }

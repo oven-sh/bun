@@ -476,6 +476,25 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #define StandaloneModuleGraph__base_path "/$bunfs/"_s
 #endif
     bool deleteAfter = false;
+
+    // Handle known yet-to-be-working in Bun.
+    //
+    // Checked before any embedded-file handling so it covers every load
+    // path: a direct filesystem path, an extract-to-tempfile embedded
+    // file (whose name is rewritten to a hash and would not match below
+    // this point), and a statically-merged embedded file (whose in-place
+    // bind would otherwise run DllMain — and with it better_sqlite3's
+    // static node_module_register ctor — before we throw, leaving a
+    // stale entry in m_pendingV8Modules for the next dlopen to pick up).
+    {
+        static constexpr ASCIILiteral better_sqlite3_node = "better_sqlite3.node"_s;
+        static constexpr ASCIILiteral better_sqlite3_message = "'better-sqlite3' is not yet supported in Bun.\nTrack the status in https://github.com/oven-sh/bun/issues/4290\nIn the meantime, you could try bun:sqlite which has a similar API."_s;
+        if (filename.endsWith(better_sqlite3_node)) {
+            return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
+                better_sqlite3_message);
+        }
+    }
+
 #if OS(WINDOWS)
     // If `bun build --compile` statically merged this addon into the exe
     // as a real PE section, bind and initialise it in place — no temp
@@ -540,16 +559,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
         }
 #endif
     };
-
-    // Handle known yet-to-be-working in Bun
-    {
-        static constexpr ASCIILiteral better_sqlite3_node = "better_sqlite3.node"_s;
-        static constexpr ASCIILiteral better_sqlite3_message = "'better-sqlite3' is not yet supported in Bun.\nTrack the status in https://github.com/oven-sh/bun/issues/4290\nIn the meantime, you could try bun:sqlite which has a similar API."_s;
-        if (filename.endsWith(better_sqlite3_node)) {
-            return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
-                better_sqlite3_message);
-        }
-    }
 
     {
         auto utf8_filename = filename.tryGetUTF8(ConversionMode::LenientConversion);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 
 // transformSync caches its print buffer on the Transpiler instance and reuses
 // it across calls. BufferPrinter.init copies that BufferWriter *by value* into
@@ -19,10 +19,10 @@ describe("Transpiler transformSync buffer reuse", () => {
   //
   // Requires an ASAN-instrumented mimalloc (MI_TRACK_ASAN) to observe the UAF;
   // release builds keep freed large segments mapped so the stale write is
-  // silent there. Windows mimalloc reserve semantics differ enough that we
-  // skip it.
-  const hasASAN = isDebug || isASAN;
-  test.skipIf(!hasASAN || isWindows)(
+  // silent there. Gated to the debug build specifically: the reserved-arena
+  // size below is tuned against its memory footprint, and it is what the
+  // fail-before gate runs. Windows mimalloc reserve semantics differ.
+  test.skipIf(!isDebug || isWindows)(
     "does not cache a freed print buffer after transformSync throws",
     async () => {
       const fixture = /* js */ `
@@ -66,16 +66,14 @@ describe("Transpiler transformSync buffer reuse", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      if (stdout.includes("NO_OOM")) {
-        // Could not drive the allocator to fail mid-print (e.g. mimalloc tuning
-        // changed). The bug is not exercised, but the buffer-reuse path below
-        // still is.
-        console.warn("transformSync OOM repro: allocator did not fail mid-print; skipping UAF assertion");
-      } else {
-        expect(stderr).not.toContain("AddressSanitizer");
-        expect(stdout.trim()).toBe("RECOVERED_OK");
-        expect(exitCode).toBe(0);
-      }
+      // Fail loudly if the allocator never returned OOM mid-print; otherwise
+      // this test would silently stop covering the regression when mimalloc
+      // tuning shifts. Adjust MIMALLOC_RESERVE_OS_MEMORY / the statement count
+      // above if this fires.
+      expect(stdout).not.toContain("NO_OOM");
+      expect(stderr).not.toContain("AddressSanitizer");
+      expect(stdout.trim()).toBe("RECOVERED_OK");
+      expect(exitCode).toBe(0);
     },
     30_000,
   );
@@ -108,13 +106,14 @@ describe("Transpiler transformSync buffer reuse", () => {
     transpiler.transformSync(";");
 
     // Monotonically growing output so every call reallocates past the
-    // previous capacity. Verify the tail of each result so a stale buffer
-    // (truncated or garbage bytes) would fail the assertion, not just crash.
+    // previous capacity. Compare the full output each time so any prefix
+    // corruption from a stale buffer shows up, not just the tail.
     let body = "";
+    let expected = "";
     for (let i = 0; i < 128; i++) {
       body += `export const v${i}: number = ${i};\n`;
-      const out = transpiler.transformSync(body);
-      expect(out.endsWith(`export const v${i} = ${i};\n`)).toBe(true);
+      expected += `export const v${i} = ${i};\n`;
+      expect(transpiler.transformSync(body)).toBe(expected);
     }
   });
 });

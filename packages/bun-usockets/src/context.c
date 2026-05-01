@@ -774,7 +774,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
          * WANT_READ — that costs one harmless on_writable tick and then the
          * regular loop.c writable-disarm clears it. */
         if (!us_socket_is_closed(s)) {
-            us_poll_change_force(&s->p, s->group->loop,
+            us_poll_change(&s->p, s->group->loop,
                 LIBUS_SOCKET_READABLE | (s->flags.last_write_failed ? LIBUS_SOCKET_WRITABLE : 0));
         }
 #endif

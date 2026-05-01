@@ -930,10 +930,20 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalO
         auto source = bufferView->span();
         size_t length = std::min(output.size(), source.size());
 
-        ASSERT_WITH_MESSAGE(length > 0, "length should be greater than 0. This should be checked before appending to the MarkedArgumentBuffer.");
+        // `length` can be 0 here if a user getter detached this view's
+        // ArrayBuffer after we measured it in the first loop above.
+        if (length > 0) {
+            WTF::memcpySpan(output.first(length), source.first(length));
+            output = output.subspan(length);
+        }
+    }
 
-        WTF::memcpySpan(output.first(length), source.first(length));
-        output = output.subspan(length);
+    // If any input was detached between the sizing loop and the copy loop
+    // (e.g. via a user-defined getter calling ArrayBuffer.prototype.transfer),
+    // the tail of `outBuffer` was never written. Zero it so we don't leak
+    // uninitialized heap memory to JavaScript.
+    if (!output.empty()) [[unlikely]] {
+        memset(output.data(), 0, output.size());
     }
 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(outBuffer));

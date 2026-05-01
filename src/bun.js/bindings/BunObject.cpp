@@ -237,6 +237,14 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
         }
     }
 
+    // If any input was detached between the sizing loop and the copy loop
+    // (e.g. via a user-defined getter calling ArrayBuffer.prototype.transfer),
+    // the tail of `buffer` was never written. Zero it so we don't leak
+    // uninitialized heap memory to JavaScript.
+    if (remain > 0) [[unlikely]] {
+        memset(head, 0, remain);
+    }
+
     if (asUint8Array) {
         auto uint8array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), WTF::move(buffer), 0, byteLength);
         RETURN_IF_EXCEPTION(throwScope, {});

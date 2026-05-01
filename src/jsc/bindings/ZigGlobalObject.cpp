@@ -585,13 +585,15 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         if (auto* worker = static_cast<WebCore::Worker*>(worker_ptr)) {
             initializeWorker(*worker);
         } else {
-            // No parent worker → main thread (or a test-isolation VM).
-            // Install `close` as a no-op equivalent of the
-            // DedicatedWorkerGlobalScope#close API. `jsFunctionSelfClose`
-            // early-returns when there is no parent Worker, so the function
-            // itself does the right thing — we just need it to exist so
-            // `typeof close === "function"` and shared code that works on
-            // both the main thread and inside a Web Worker doesn't throw.
+            // No parent worker → main thread. (Test-isolation VMs bypass
+            // this entry point entirely — see
+            // `Zig__GlobalObject__createForTestIsolation` for its own
+            // install.) `close` is a no-op here; `jsFunctionSelfClose`
+            // early-returns when there is no parent Worker, so the
+            // function itself does the right thing — we just need it to
+            // exist so `typeof close === "function"` and shared code that
+            // works on both the main thread and inside a Web Worker
+            // doesn't throw.
             globalObject->putDirectNativeFunction(
                 vm, globalObject,
                 JSC::Identifier::fromString(vm, "close"_s),
@@ -652,6 +654,17 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     // into the dead cell via NapiHandleScope::open. Point those envs at the
     // new global and adopt the refs before unprotecting the old one.
     globalObject->adoptNapiEnvsForTestIsolation(oldGlobal);
+
+    // Install `close` as a no-op — same rationale as the main-thread branch
+    // in `Zig__GlobalObject__create`. Without this, `bun test --isolate`
+    // would see `typeof close === "function"` on the first test file
+    // (created via `Zig__GlobalObject__create`) and `typeof close === "undefined"`
+    // on every subsequent file (created here).
+    globalObject->putDirectNativeFunction(
+        vm, globalObject,
+        JSC::Identifier::fromString(vm, "close"_s),
+        0, WebCore::jsFunctionSelfClose,
+        JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
 
     // Drop the permanent root on the previous global so its module registry,
     // require.cache, and user objects become collectable. JSC's CodeCache and

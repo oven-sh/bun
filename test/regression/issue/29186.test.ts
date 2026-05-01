@@ -348,3 +348,34 @@ test.concurrent("close() on the main thread is a no-op", async () => {
   expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
   expect(stdout).toBe("ok\n");
 });
+
+test.concurrent("close is defined on every bun test --isolate file's fresh global", async () => {
+  // Test-isolation VMs are built by a separate factory
+  // (`Zig__GlobalObject__createForTestIsolation`) that bypasses the
+  // main-thread install. Without an explicit install there, the first
+  // file in a `bun test --isolate` run would see `typeof close === "function"`
+  // and every subsequent file would see `"undefined"`.
+  using dir = tempDir("issue-29186-isolate", {
+    "a.test.ts": `
+      import { test, expect } from "bun:test";
+      test("a", () => { expect(typeof close).toBe("function"); });
+    `,
+    "b.test.ts": `
+      import { test, expect } from "bun:test";
+      test("b", () => { expect(typeof close).toBe("function"); });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(exitCode).toBe(0);
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+});

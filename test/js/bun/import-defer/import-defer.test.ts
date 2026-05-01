@@ -213,6 +213,37 @@ describeRuntime("import defer (static)", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("re-exporting a deferred namespace preserves deferred semantics", async () => {
+    // `import defer * as ns; export { ns }` must export the DEFERRED namespace
+    // object (a Local export per proposal ParseModule 11.a.ii), not a regular
+    // namespace re-export of the target module.
+    const { stdout, stderr, exitCode } = await run({
+      "setup.mjs": `globalThis.order = [];`,
+      "main.mjs": `
+        import "./setup.mjs";
+        import { ns } from "./reexport.mjs";
+        order.push("main");
+        console.log(ns[Symbol.toStringTag]);
+        console.log(order.join(","));
+        void ns.value;
+        console.log(order.join(","));
+      `,
+      "reexport.mjs": `
+        import "./setup.mjs";
+        import defer * as ns from "./dep.mjs";
+        globalThis.order.push("reexport");
+        export { ns };
+      `,
+      "dep.mjs": `
+        globalThis.order.push("dep");
+        export const value = 42;
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(stdout).toBe(["Deferred Module", "reexport,main", "reexport,main,dep"].join("\n"));
+    expect(exitCode).toBe(0);
+  });
+
   test("'import defer from' is a default import named 'defer' (back-compat)", async () => {
     const { stdout, stderr, exitCode } = await run({
       "main.mjs": `
@@ -302,5 +333,17 @@ describe("transpiler", () => {
     const transpiler = new Bun.Transpiler({ loader: "js" });
     const out = await transpiler.transform(`const m = import.source("./x.wasm");`);
     expect(out).toContain("import.source(");
+  });
+
+  test("unused 'import defer * as ns' is not stripped (TypeScript)", async () => {
+    const transpiler = new Bun.Transpiler({ loader: "ts" });
+    const out = await transpiler.transform(`import defer * as ns from "./x.js";\nexport const y = 1;`);
+    expect(out).toContain("import defer");
+  });
+
+  test("unused 'import source x' is not stripped (TypeScript)", async () => {
+    const transpiler = new Bun.Transpiler({ loader: "ts" });
+    const out = await transpiler.transform(`import source x from "./x.wasm";\nexport const y = 1;`);
+    expect(out).toContain("import source");
   });
 });

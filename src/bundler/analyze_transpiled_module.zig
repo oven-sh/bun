@@ -345,7 +345,11 @@ pub const ModuleInfo = struct {
             for (self.record_kinds.items, 0..) |k, idx| {
                 if (k == .import_info_single or k == .import_info_single_type_script) {
                     try local_name_to_module_name.put(self.buffer.items[i + 2], .{ .module_name = self.buffer.items[i], .import_name = self.buffer.items[i + 1], .record_kinds_idx = idx, .is_namespace = false });
-                } else if (k == .import_info_namespace or k == .import_info_namespace_defer) {
+                } else if (k == .import_info_namespace) {
+                    // Deliberately excludes .import_info_namespace_defer: a deferred
+                    // namespace object lives in THIS module's environment, so
+                    // `export { ns }` must stay a Local export (proposal ParseModule
+                    // 11.a.ii). JSC's ModuleAnalyzer::exportVariable does the same.
                     try local_name_to_module_name.put(self.buffer.items[i + 2], .{ .module_name = self.buffer.items[i], .import_name = .star_namespace, .record_kinds_idx = idx, .is_namespace = true });
                 }
                 i += k.len() catch unreachable;

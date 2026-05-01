@@ -203,12 +203,6 @@ pub const PEFile = struct {
         size_of_block: u32, // includes this header
     };
 
-    const RuntimeFunction = extern struct {
-        begin_address: u32,
-        end_address: u32,
-        unwind_info: u32,
-    };
-
     // Section name constant for exact comparison
     const BUN_SECTION_NAME = [_]u8{ '.', 'b', 'u', 'n', 0, 0, 0, 0 };
     const BUNL_SECTION_NAME = [_]u8{ '.', 'b', 'u', 'n', 'L', 0, 0, 0 };
@@ -942,8 +936,14 @@ pub const PEFile = struct {
         defer allocator.free(image);
         @memset(image, 0);
 
+        // The three intermediate lists are `defer`-deinit'd (not
+        // `errdefer`) so every `return null` path below cleans up the
+        // same as an error return; `toOwnedSlice()` on the success
+        // path empties each list first, so the trailing `deinit()` is
+        // a no-op there. Both current callers pass an arena
+        // allocator, so this is belt-and-braces.
         var section_infos = std.array_list.Managed(LinkedAddon.SectionInfo).init(allocator);
-        errdefer section_infos.deinit();
+        defer section_infos.deinit();
 
         for (addon.sections) |s| {
             if (s.virtual_address >= addon_image) return null;
@@ -984,7 +984,7 @@ pub const PEFile = struct {
         const build_delta: i64 = @as(i64, @bitCast(preferred_base + rva_base)) - @as(i64, @bitCast(addon_base));
 
         var relocs_out = std.array_list.Managed(u8).init(allocator);
-        errdefer relocs_out.deinit();
+        defer relocs_out.deinit();
 
         const reloc_dir = addon.dir(IMAGE_DIRECTORY_ENTRY_BASERELOC);
         if (reloc_dir.size > 0) {
@@ -1029,8 +1029,6 @@ pub const PEFile = struct {
                     if (typ == IMAGE_REL_BASED_ABSOLUTE) continue; // padding
                     if (typ != IMAGE_REL_BASED_DIR64) {
                         // Unknown fixup kind on PE32+ — do not risk it.
-                        relocs_out.deinit();
-                        section_infos.deinit();
                         return null;
                     }
                     const in_page: u32 = entry & 0x0FFF;
@@ -1049,7 +1047,9 @@ pub const PEFile = struct {
         // Imports: record what the runtime needs to bind, and zero the IAT
         // slots in the image so it is obvious if binding is skipped.
         var imports = std.array_list.Managed(LinkedAddon.ImportLib).init(allocator);
-        errdefer {
+        defer {
+            // Empty after toOwnedSlice() on success, so this only
+            // does work on a `return null` / error path.
             for (imports.items) |*lib| {
                 for (lib.entries) |*e| if (e.name.len > 0) allocator.free(e.name);
                 allocator.free(lib.entries);

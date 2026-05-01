@@ -279,8 +279,15 @@ fn bind(entry: *Entry) !Resolved {
     // `src/symbols.def` — so the addon's delay-load hook is unnecessary.
     try bindImports(base, entry, base_h);
 
-    // Now that code bytes are final, restore real protections.
+    // Now that code bytes are final, restore real protections. Same
+    // corrupted-.bunL defence as applyRelocs/bindImports: s.rva and
+    // s.size come straight from the blob, so bound them to the merged
+    // addon before handing them to VirtualProtect against the live
+    // bun.exe image.
+    const lo: u64 = entry.rva_base;
+    const hi: u64 = lo + entry.image_size;
     for (entry.sections) |s| {
+        if (s.rva < lo or @as(u64, s.rva) + s.size > hi) return error.BadSection;
         var old: w.DWORD = undefined;
         if (VirtualProtect(base + s.rva, s.size, s.final_protect, &old) == 0) {
             return error.VirtualProtectFailed;

@@ -367,6 +367,25 @@ it("setTimeout canceling with unref, close, _idleTimeout, and _onTimeout", () =>
   expect([path.join(import.meta.dir, "timers-fixture-unref.js"), "setTimeout"]).toRun();
 });
 
+for (const mode of ["clear", "refresh"]) {
+  it(
+    `setTimeout doesn't leak when ${mode} is called inside its own callback`,
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-clear-in-callback-leak-fixture.js"), mode],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("delta:");
+      expect(exitCode).toBe(0);
+    },
+    90_000,
+  );
+}
+
 it("setTimeout does not leak a pending exception when emitting a timeout warning throws", async () => {
   // The out-of-range timeout warning queues a process.nextTick, which reads process._exiting.
   // If that read throws, the exception must not be left pending on the VM when setTimeout

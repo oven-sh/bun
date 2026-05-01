@@ -234,8 +234,22 @@ pub fn fire(this: *TimerObjectInternals, _: *const timespec, vm: *jsc.VirtualMac
                     }
                 }
 
-                if (this.eventLoopTimer().state == .FIRED) {
-                    break :is_timer_done true;
+                switch (this.eventLoopTimer().state) {
+                    .FIRED => {
+                        break :is_timer_done true;
+                    },
+                    .ACTIVE => {
+                        // The developer called timer.refresh() synchronously in the callback.
+                        // Balance out the ref count.
+                        // the transition from "FIRED" -> "ACTIVE" caused it to increment.
+                        this.deref();
+                    },
+                    else => {
+                        // The developer called clearTimeout() synchronously in the callback.
+                        // cancel() saw state == .FIRED and skipped its deref, so release the
+                        // heap ref here.
+                        break :is_timer_done true;
+                    },
                 }
             }
 

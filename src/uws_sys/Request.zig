@@ -1,9 +1,10 @@
 /// Transport-agnostic request handle. Static/file routes (and RangeRequest)
-/// take this so the same handler body serves HTTP/1.1 and HTTP/3 without
-/// `anytype` — `inline else` keeps dispatch monomorphic.
+/// take this so the same handler body serves HTTP/1.1, HTTP/2 and HTTP/3
+/// without `anytype` — `inline else` keeps dispatch monomorphic.
 pub const AnyRequest = union(enum) {
     h1: *Request,
     h3: *uws.H3.Request,
+    h2: *uws.H2.Request,
 
     pub fn header(this: AnyRequest, name: []const u8) ?[]const u8 {
         return switch (this) {

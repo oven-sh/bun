@@ -41,6 +41,11 @@ struct alignas(16) HttpContextData {
     template <bool> friend struct HttpContext;
     template <bool> friend struct HttpResponse;
     template <bool> friend struct TemplatedApp;
+    friend struct H2App;
+public:
+    /* Read by the ALPN select cb (a plain C function pointer, so it
+     * can't be a friend) to gate offering "h2". */
+    bool hasH2() const { return h2Context != nullptr; }
 private:
     std::vector<MoveOnlyFunction<void(HttpResponse<SSL> *, int)>> filterHandlers;
     using OnSocketDataCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket, const char *data, int length, bool last);
@@ -68,6 +73,11 @@ private:
     OnSocketDataCallback onSocketData = nullptr;
     OnSocketUpgradedCallback onSocketUpgraded = nullptr;
     OnClientErrorCallback onClientError = nullptr;
+    /* Populated by H2App::create(). When set, HttpContext::onData
+     * checks ALPN and hands sockets that negotiated "h2" to this
+     * context (an Http2Context*; held as void* to avoid the include)
+     * instead of the HTTP/1 parser. */
+    void *h2Context = nullptr;
 
     uint64_t maxHeaderSize = 0; // 0 means no limit
 

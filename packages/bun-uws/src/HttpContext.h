@@ -37,8 +37,65 @@
 #include <array>
 #include <mutex>
 
+/* Defined in libuwsockets_h2.cpp; called from the SSL on_data hook when
+ * h2Context is set. Takes the Http2Context* as void* so this header
+ * doesn't include Http2App.h. Declared out here (C linkage, global)
+ * rather than inside the function body so the name isn't mangled. */
+extern "C" us_socket_t *uws_internal_h2_adopt(
+    void *h2Context, us_socket_t *s, int oldExtSize,
+    char *data, int length);
+extern "C" void uws_internal_h2_close_all(void *h2Context);
+
+/* Forward decl; SSL_CTX_set_alpn_select_cb signature is stable across
+ * OpenSSL/BoringSSL so avoid pulling the full openssl headers here. */
+extern "C" void SSL_CTX_set_alpn_select_cb(
+    struct ssl_ctx_st *ctx,
+    int (*cb)(struct ssl_st *ssl, const unsigned char **out, unsigned char *outlen,
+              const unsigned char *in, unsigned int inlen, void *arg),
+    void *arg);
 
 namespace uWS {
+
+/* ALPN select cb for the h2: true path. Walks the client's wire-format
+ * list by hand (SSL_select_next_proto isn't available on every BoringSSL
+ * build we ship). Gated on parentData->h2Context being live so
+ * connections that race ~H2App fall back to http/1.1 instead of
+ * negotiating h2 with nowhere to adopt into. Declared here (not in
+ * Http2App.h) so TemplatedApp can install it on the root SSL_CTX and on
+ * each per-SNI SSL_CTX — sni_cb swaps ssl->ctx before BoringSSL reads
+ * alpn_select_cb, so every context that can serve a connection needs a
+ * copy. */
+template <bool SSL>
+inline void installH2Alpn(struct ssl_ctx_st *sslCtx, HttpContextData<SSL> *parentData) {
+    if constexpr (SSL) {
+        if (!sslCtx) return;
+        SSL_CTX_set_alpn_select_cb(sslCtx,
+            [](struct ssl_st *, const unsigned char **out, unsigned char *outlen,
+               const unsigned char *in, unsigned int inlen, void *arg) -> int {
+                auto *pd = (HttpContextData<true> *) arg;
+                bool offerH2 = pd && pd->hasH2();
+                if (offerH2) for (unsigned int i = 0; i + 1 <= inlen;) {
+                    unsigned int l = in[i];
+                    if (i + 1 + l > inlen) break;
+                    if (l == 2 && in[i+1] == 'h' && in[i+2] == '2') {
+                        *out = in + i + 1; *outlen = 2;
+                        return 0; /* SSL_TLSEXT_ERR_OK */
+                    }
+                    i += 1 + l;
+                }
+                for (unsigned int i = 0; i + 1 <= inlen;) {
+                    unsigned int l = in[i];
+                    if (i + 1 + l > inlen) break;
+                    if (l == 8 && memcmp(in + i + 1, "http/1.1", 8) == 0) {
+                        *out = in + i + 1; *outlen = 8;
+                        return 0; /* SSL_TLSEXT_ERR_OK */
+                    }
+                    i += 1 + l;
+                }
+                return 3; /* SSL_TLSEXT_ERR_NOACK */
+            }, parentData);
+    }
+}
 
 namespace detail {
 
@@ -240,6 +297,30 @@ private:
     }
 
     static us_socket_t *onData(us_socket_t *s, char *data, int length) {
+        if constexpr (SSL) {
+            /* If an H2App attached to us and the client picked "h2"
+             * via ALPN, hand the socket to the H2 group before the
+             * HTTP/1 parser ever sees the preface. on_handshake
+             * isn't a reliable hook (openssl.c defers it behind the
+             * first app-data read for servers, so a TLS 1.3 flight
+             * that bundles Finished + preface delivers here first),
+             * so check at the top of on_data instead. The adopter
+             * does its own ALPN check and returns null when the
+             * socket isn't h2 — a two-pointer read from the SSL
+             * object, so taking it on every on_data for http/1.1
+             * sockets is negligible. When it does adopt, it
+             * destructs our ext in place and returns the (possibly
+             * relocated) socket, whose own on_data takes over for
+             * subsequent reads. */
+            HttpContextData<SSL> *hcd = getSocketContextDataS(s);
+            if (hcd->h2Context && !us_socket_is_shut_down(s)) {
+                us_socket_t *ns = uws_internal_h2_adopt(
+                    hcd->h2Context, s, sizeof(HttpResponseData<SSL>),
+                    data, length);
+                if (ns) return ns;
+            }
+        }
+
         // ref the socket to make sure we process it entirely before it is closed
         us_socket_ref(s);
 

@@ -10,6 +10,8 @@ pub const Pointer = bun.TaggedPointerUnion(.{
     DebugHTTPSServer.RequestContext,
     HTTPSServer.H3RequestContext,
     DebugHTTPSServer.H3RequestContext,
+    HTTPSServer.H2RequestContext,
+    DebugHTTPSServer.H2RequestContext,
 });
 
 tagged_pointer: Pointer,
@@ -99,7 +101,7 @@ pub fn detachRequest(self: AnyRequestContext) void {
 pub fn setRequest(self: AnyRequestContext, req: *uws.Request) void {
     self.dispatch(void, {}, struct {
         fn f(comptime T: type, ctx: anytype, r: *uws.Request) void {
-            if (comptime T.is_h3) return; // H3 populates url/headers eagerly
+            if (comptime T.is_stream) return; // H2/H3 populate url/headers eagerly
             ctx.req = r;
         }
     }.f, .{req});
@@ -108,7 +110,7 @@ pub fn setRequest(self: AnyRequestContext, req: *uws.Request) void {
 pub fn getRequest(self: AnyRequestContext) ?*uws.Request {
     return self.dispatch(?*uws.Request, null, struct {
         fn f(comptime T: type, ctx: anytype) ?*uws.Request {
-            if (comptime T.is_h3) return null; // url/headers already on the Request
+            if (comptime T.is_stream) return null; // url/headers already on the Request
             return ctx.req;
         }
     }.f, .{});

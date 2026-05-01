@@ -53,6 +53,7 @@ id: []const u8 = "",
 allow_hot: bool = true,
 ipv6_only: bool = false,
 http3: bool = false,
+http2: bool = false,
 http1: bool = true,
 
 is_node_http: bool = false,
@@ -253,6 +254,26 @@ pub fn applyStaticRouteH3(server: AnyServer, app: *uws.H3.App, comptime T: type,
         }
         pub fn HEAD(route: T, req: *uws.H3.Request, resp: *uws.H3.Response) void {
             route.onHEADRequest(.{ .h3 = req }, .{ .H3 = resp });
+        }
+    };
+    app.head(path, T, entry, handler_wrap.HEAD);
+    switch (method) {
+        .any => app.any(path, T, entry, handler_wrap.handler),
+        .method => |*m| {
+            var iter = m.iterator();
+            while (iter.next()) |method_| app.method(method_, path, T, entry, handler_wrap.handler);
+        },
+    }
+}
+
+pub fn applyStaticRouteH2(server: AnyServer, app: *uws.H2.App, comptime T: type, entry: T, path: []const u8, method: HTTP.Method.Optional) void {
+    entry.server = server;
+    const handler_wrap = struct {
+        pub fn handler(route: T, req: *uws.H2.Request, resp: *uws.H2.Response) void {
+            route.onRequest(.{ .h2 = req }, .{ .H2 = resp });
+        }
+        pub fn HEAD(route: T, req: *uws.H2.Request, resp: *uws.H2.Response) void {
+            route.onHEADRequest(.{ .h2 = req }, .{ .H2 = resp });
         }
     };
     app.head(path, T, entry, handler_wrap.HEAD);
@@ -867,6 +888,11 @@ pub fn fromJS(
         }
         if (global.hasException()) return error.JSError;
 
+        if (try arg.get(global, "http2")) |v| {
+            args.http2 = v.toBoolean();
+        }
+        if (global.hasException()) return error.JSError;
+
         if (try arg.get(global, "http1")) |v| {
             args.http1 = v.toBoolean();
         }
@@ -989,6 +1015,16 @@ pub fn fromJS(
             }
         } else if (!args.http1) {
             return global.throwInvalidArguments("Cannot disable http1 without enabling http3", .{});
+        }
+        if (args.http2) {
+            if (args.ssl_config == null) {
+                return global.throwInvalidArguments("HTTP/2 requires 'tls' to be set (h2c is not supported)", .{});
+            }
+            // http2 shares the http1 TLS listener via ALPN; one without the
+            // other has no socket to adopt from.
+            if (!args.http1) {
+                return global.throwInvalidArguments("http2 requires http1: it shares the HTTP/1.1 TLS listener via ALPN", .{});
+            }
         }
         if (!args.http1 and args.address == .unix) {
             return global.throwInvalidArguments("Cannot disable http1 with a unix socket — HTTP/3 over AF_UNIX is not supported", .{});

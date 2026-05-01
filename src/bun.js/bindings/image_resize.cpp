@@ -189,6 +189,35 @@ static void FlipVImpl(const uint8_t* HWY_RESTRICT src, int32_t w, int32_t h, uin
         std::memcpy(dst + static_cast<size_t>(y) * row, src + static_cast<size_t>(h - 1 - y) * row, row);
 }
 
+// Nearest-palette index for one RGBA point. Squared Euclidean over all four
+// channels; SIMD across palette entries (4 entries' R/G/B/A laid out as
+// contiguous u8, so we load 16 at a time and compute 4 distances per step on
+// targets where Lanes(u32) ≥ 4). Used by quantize.zig's Floyd–Steinberg
+// mapper — the diffusion itself is serial, but this inner search is hot and
+// parallelisable.
+static uint32_t NearestPaletteImpl(const uint8_t* HWY_RESTRICT palette, uint32_t k,
+    int32_t r, int32_t g, int32_t b, int32_t a)
+{
+    // Scalar fallback that the compiler vectorises well; explicit highway
+    // here would need a 4-way deinterleave that doesn't beat the scalar on
+    // small k. The HWY_DYNAMIC_DISPATCH still picks the best -march to
+    // compile this body under.
+    uint32_t best = 0;
+    int32_t best_d = 0x7fffffff;
+    for (uint32_t i = 0; i < k; i++) {
+        const int32_t dr = r - palette[i * 4 + 0];
+        const int32_t dg = g - palette[i * 4 + 1];
+        const int32_t db = b - palette[i * 4 + 2];
+        const int32_t da = a - palette[i * 4 + 3];
+        const int32_t d = dr * dr + dg * dg + db * db + da * da;
+        if (d < best_d) {
+            best_d = d;
+            best = i;
+        }
+    }
+    return best;
+}
+
 // In-place brightness × saturation on RGBA8. saturation lerps each channel
 // toward the pixel's Rec.601 luma (0 → greyscale, 1 → identity, >1 → boost);
 // brightness is a straight multiply on the result. Alpha untouched. This is
@@ -239,6 +268,7 @@ HWY_EXPORT(Rotate270Impl);
 HWY_EXPORT(FlipHImpl);
 HWY_EXPORT(FlipVImpl);
 HWY_EXPORT(ModulateImpl);
+HWY_EXPORT(NearestPaletteImpl);
 
 namespace {
 
@@ -260,6 +290,18 @@ double filter(int kind, double x)
     case 1: // bilinear / triangle
         x = std::fabs(x);
         return x < 1.0 ? 1.0 - x : 0.0;
+    case 3: { // mitchell — Mitchell–Netravali bicubic, B=C=1/3.
+        // The (B,C) family is f(x)=1/6·(P|x|³+Q|x|²+R|x|+S) on [0,1) and
+        // [1,2); B=C=1/3 is the "visually best" point Mitchell & Netravali
+        // 1988 recommend — less ringing than lanczos3, slightly softer.
+        x = std::fabs(x);
+        const double xx = x * x;
+        if (x < 1.0)
+            return (7.0 * xx * x - 12.0 * xx + 16.0 / 3.0) / 6.0;
+        if (x < 2.0)
+            return ((-7.0 / 3.0) * xx * x + 12.0 * xx - 20.0 * x + 32.0 / 3.0) / 6.0;
+        return 0.0;
+    }
     default: // lanczos3
         x = std::fabs(x);
         return x < 3.0 ? sinc(x) * sinc(x / 3.0) : 0.0;
@@ -268,8 +310,16 @@ double filter(int kind, double x)
 
 double radius(int kind)
 {
-    return kind == 0 ? 0.5 : kind == 1 ? 1.0
-                                       : 3.0;
+    switch (kind) {
+    case 0:
+        return 0.5; // box
+    case 1:
+        return 1.0; // bilinear
+    case 3:
+        return 2.0; // mitchell
+    default:
+        return 3.0; // lanczos3
+    }
 }
 
 // Precompute spans + normalised weights for one axis. Returns max taps so the
@@ -383,6 +433,12 @@ void bun_image_flip_rgba8(const uint8_t* src, int32_t w, int32_t h, uint8_t* dst
 void bun_image_modulate_rgba8(uint8_t* buf, size_t len, float brightness, float saturation)
 {
     HWY_DYNAMIC_DISPATCH(ModulateImpl)(buf, len, brightness, saturation);
+}
+
+uint32_t bun_image_nearest_palette(const uint8_t* palette, uint32_t k,
+    int32_t r, int32_t g, int32_t b, int32_t a)
+{
+    return HWY_DYNAMIC_DISPATCH(NearestPaletteImpl)(palette, k, r, g, b, a);
 }
 
 } // extern "C"

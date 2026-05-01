@@ -168,7 +168,8 @@ pub fn doResize(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallF
             if (s.eqlComptime("box")) r.filter = .box //
             else if (s.eqlComptime("bilinear")) r.filter = .bilinear //
             else if (s.eqlComptime("lanczos3")) r.filter = .lanczos3 //
-            else return global.throwInvalidArguments("resize: filter must be 'box' | 'bilinear' | 'lanczos3'", .{});
+            else if (s.eqlComptime("mitchell")) r.filter = .mitchell //
+            else return global.throwInvalidArguments("resize: filter must be 'box' | 'bilinear' | 'lanczos3' | 'mitchell'", .{});
         };
         if (try opt.get(global, "fit")) |f| if (f.isString()) {
             const s = try f.toBunString(global);
@@ -240,6 +241,7 @@ fn setFormat(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallFram
         if (try opt.get(global, "colors")) |c| if (c.isNumber()) {
             enc.colors = coerceInt(u16, c.asNumber(), 2, 256);
         };
+        if (try opt.get(global, "dither")) |d| enc.dither = d.toBoolean();
     }
     this.pipeline.output = enc;
     return callframe.this();

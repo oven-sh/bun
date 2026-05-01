@@ -100,6 +100,8 @@ pub const EncodeOptions = struct {
     /// PNG only: quantize to ≤ `colors` and emit an indexed PNG.
     palette: bool = false,
     colors: u16 = 256,
+    /// PNG palette only: Floyd–Steinberg error-diffusion dither.
+    dither: bool = false,
 };
 
 /// Encoded output paired with the free function for its allocator. The C
@@ -143,7 +145,7 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: EncodeOptions) Er
     return switch (opts.format) {
         .jpeg => jpeg.encode(rgba, width, height, opts.quality),
         .png => if (opts.palette)
-            png.encodeIndexed(rgba, width, height, opts.compression_level, opts.colors)
+            png.encodeIndexed(rgba, width, height, opts.compression_level, opts.colors, opts.dither)
         else
             png.encode(rgba, width, height, opts.compression_level),
         .webp => webp.encode(rgba, width, height, opts.quality, opts.lossless),
@@ -152,7 +154,7 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: EncodeOptions) Er
 
 // ───────────────────────────── highway kernels ──────────────────────────────
 
-pub const Filter = enum(i32) { box = 0, bilinear = 1, lanczos3 = 2 };
+pub const Filter = enum(i32) { box = 0, bilinear = 1, lanczos3 = 2, mitchell = 3 };
 
 extern fn bun_image_resize_rgba8(
     src: [*]const u8,
@@ -344,8 +346,8 @@ pub const png = struct {
     /// Quantize RGBA to ≤ `colors` and emit an indexed (colour-type 3) PNG
     /// with PLTE + tRNS. The quantizer is a small median-cut — see
     /// quantize.zig.
-    pub fn encodeIndexed(rgba: []const u8, w: u32, h: u32, level: i8, colors: u16) Error!Encoded {
-        var q = try quantize.quantize(rgba, colors);
+    pub fn encodeIndexed(rgba: []const u8, w: u32, h: u32, level: i8, colors: u16, dither: bool) Error!Encoded {
+        var q = try quantize.quantize(rgba, w, h, .{ .max_colors = colors, .dither = dither });
         defer q.deinit();
 
         const ctx = spng_ctx_new(SPNG_CTX_ENCODER) orelse return error.OutOfMemory;

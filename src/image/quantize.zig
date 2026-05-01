@@ -48,7 +48,18 @@ const Box = struct {
     }
 };
 
-pub fn quantize(rgba: []const u8, max_colors: u16) error{OutOfMemory}!Result {
+extern fn bun_image_nearest_palette(palette: [*]const u8, k: u32, r: i32, g: i32, b: i32, a: i32) u32;
+
+pub const Options = struct {
+    max_colors: u16,
+    /// Floyd–Steinberg error diffusion. Hides banding on gradients at the
+    /// cost of grain on flat areas; off by default to match Sharp's
+    /// `palette:true` default.
+    dither: bool = false,
+};
+
+pub fn quantize(rgba: []const u8, w: u32, h: u32, opts: Options) error{OutOfMemory}!Result {
+    const max_colors = opts.max_colors;
     const n: u32 = @intCast(rgba.len / 4);
     const want: u16 = @max(1, @min(max_colors, 256));
 
@@ -101,30 +112,97 @@ pub fn quantize(rgba: []const u8, max_colors: u16) error{OutOfMemory}!Result {
         if (palette[i * 4 + 3] < 255) has_alpha = true;
     }
 
-    // Map every source pixel to its nearest palette entry. k ≤ 256 so the
-    // brute-force inner loop is fine; for big images this is the hot loop but
-    // the whole point of palette mode is the *output* size, not encode speed.
     var indices = try bun.default_allocator.alloc(u8, n);
-    for (0..n) |px| {
-        var best_i: u8 = 0;
-        var best_d: u32 = std.math.maxInt(u32);
-        inline for (0..4) |_| {} // (keep the optimizer honest about the 4-wide body below)
-        var i: u16 = 0;
-        while (i < k) : (i += 1) {
-            var d: u32 = 0;
-            inline for (0..4) |c| {
-                const diff: i32 = @as(i32, rgba[px * 4 + c]) - @as(i32, palette[i * 4 + c]);
-                d += @intCast(diff * diff);
-            }
-            if (d < best_d) {
-                best_d = d;
-                best_i = @intCast(i);
-            }
+    if (opts.dither) {
+        try mapFloydSteinberg(rgba, w, h, palette, k, indices);
+    } else {
+        // Direct nearest-entry mapping. k ≤ 256; the inner search is the
+        // highway-dispatched kernel so it runs under the best -march.
+        for (0..n) |px| {
+            const p = rgba[px * 4 ..][0..4];
+            indices[px] = @intCast(bun_image_nearest_palette(palette.ptr, k, p[0], p[1], p[2], p[3]));
         }
-        indices[px] = best_i;
     }
 
     return .{ .palette = palette, .indices = indices, .colors = k, .has_alpha = has_alpha };
+}
+
+/// Floyd–Steinberg error diffusion. Serial in raster order — each pixel's
+/// quantisation error is pushed to its yet-unvisited neighbours with the
+/// classic 7/3/5/1 ÷16 kernel:
+///
+///         ·   X   7
+///         3   5   1
+///
+/// Serpentine scan (alternate L→R / R→L per row) so the diffusion direction
+/// flips each row, avoiding the directional artefacts a fixed scan produces.
+/// The diffusion itself can't be vectorised (data dependence on the previous
+/// pixel), but the per-pixel palette search goes through the highway kernel.
+fn mapFloydSteinberg(
+    rgba: []const u8,
+    w: u32,
+    h: u32,
+    palette: []const u8,
+    k: u16,
+    indices: []u8,
+) error{OutOfMemory}!void {
+    // Two rows of accumulated error, ×4 channels, in i16 (range fits: max
+    // |err| per channel per step is 255, weights sum to 1 so it stays bounded
+    // across the row). `cur` carries error pushed *into* the current row from
+    // the row above; `nxt` collects error for the row below.
+    const stride: usize = @as(usize, w) * 4;
+    var cur = try bun.default_allocator.alloc(i16, stride);
+    defer bun.default_allocator.free(cur);
+    var nxt = try bun.default_allocator.alloc(i16, stride);
+    defer bun.default_allocator.free(nxt);
+    @memset(cur, 0);
+    @memset(nxt, 0);
+
+    var y: u32 = 0;
+    while (y < h) : (y += 1) {
+        const ltr = (y & 1) == 0;
+        const step: i64 = if (ltr) 1 else -1;
+        var x: i64 = if (ltr) 0 else @as(i64, w) - 1;
+        while (x >= 0 and x < w) : (x += step) {
+            const px: usize = @as(usize, y) * w + @as(usize, @intCast(x));
+            const off: usize = @as(usize, @intCast(x)) * 4;
+
+            // Candidate colour = source + accumulated error (clamped for the
+            // search; the *unclamped* error is what propagates so rounding
+            // doesn't accumulate bias).
+            var cand: [4]i32 = undefined;
+            inline for (0..4) |c| cand[c] = @as(i32, rgba[px * 4 + c]) + cur[off + c];
+
+            const idx: u8 = @intCast(bun_image_nearest_palette(
+                palette.ptr,
+                k,
+                clamp255(cand[0]),
+                clamp255(cand[1]),
+                clamp255(cand[2]),
+                clamp255(cand[3]),
+            ));
+            indices[px] = idx;
+
+            inline for (0..4) |c| {
+                const err: i32 = cand[c] - @as(i32, palette[@as(usize, idx) * 4 + c]);
+                // Push to the four neighbours. `dir` is +1 for L→R, −1 for R→L.
+                const dir = step;
+                const xr = x + dir;
+                const xl = x - dir;
+                if (xr >= 0 and xr < w) cur[@as(usize, @intCast(xr)) * 4 + c] += @intCast((err * 7) >> 4);
+                if (xl >= 0 and xl < w) nxt[@as(usize, @intCast(xl)) * 4 + c] += @intCast((err * 3) >> 4);
+                nxt[off + c] += @intCast((err * 5) >> 4);
+                if (xr >= 0 and xr < w) nxt[@as(usize, @intCast(xr)) * 4 + c] += @intCast(err >> 4);
+            }
+        }
+        // Slide: next row's error becomes current; clear next.
+        std.mem.swap([]i16, &cur, &nxt);
+        @memset(nxt, 0);
+    }
+}
+
+inline fn clamp255(v: i32) i32 {
+    return @min(@max(v, 0), 255);
 }
 
 const SortCtx = struct {

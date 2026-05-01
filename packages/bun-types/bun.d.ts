@@ -8165,7 +8165,7 @@ declare module "bun" {
 
   namespace Image {
     type Format = "jpeg" | "png" | "webp";
-    type Filter = "box" | "bilinear" | "lanczos3";
+    type Filter = "box" | "bilinear" | "lanczos3" | "mitchell";
 
     interface ConstructorOptions {
       /**
@@ -8257,6 +8257,8 @@ declare module "bun" {
       palette?: boolean;
       /** Max palette size when `palette: true`. 2–256. @default 256 */
       colors?: number;
+      /** Floyd–Steinberg error-diffusion dither (only with `palette: true`). */
+      dither?: boolean;
     }): this;
     /** Set output format to WebP. */
     webp(options?: { quality?: number; lossless?: boolean }): this;

@@ -74,7 +74,12 @@ pub fn decodeInternal(this: *ColumnDefinition41, comptime Context: type, reader:
     // The reader returns `Data{ .temporary = ... }` slices into the socket
     // read buffer which will have been overwritten or realloc'd by then, so
     // own a copy now. The other string fields are never read post-decode.
+    // deinit() first: decodeInternal runs on already-populated slots when a
+    // prepared statement is re-executed (reset() zeroes columns_received but
+    // leaves columns[] intact, and handleResultSet skips realloc when the
+    // column count is unchanged).
     const table = try reader.encodeLenString();
+    this.table.deinit();
     this.table = try Data.create(table.slice(), bun.default_allocator);
     debug("table: {s}", .{this.table.slice()});
 
@@ -82,6 +87,7 @@ pub fn decodeInternal(this: *ColumnDefinition41, comptime Context: type, reader:
     debug("org_table: {s}", .{this.org_table.slice()});
 
     const name = try reader.encodeLenString();
+    this.name.deinit();
     this.name = try Data.create(name.slice(), bun.default_allocator);
     debug("name: {s}", .{this.name.slice()});
 

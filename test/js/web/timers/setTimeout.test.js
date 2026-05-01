@@ -376,7 +376,11 @@ for (const mode of ["clear", "refresh"]) {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    const filteredStderr = stderr
+      .split("\n")
+      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
+    expect(filteredStderr).toBe("");
     expect(stdout).toContain("delta:");
     expect(exitCode).toBe(0);
   }, 90_000);

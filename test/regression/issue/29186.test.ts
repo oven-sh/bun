@@ -379,3 +379,44 @@ test.concurrent("close is defined on every bun test --isolate file's fresh globa
   expect(stderr).toContain("2 pass");
   expect(stderr).toContain("0 fail");
 });
+
+test.concurrent("self.close() followed by throw reports the exception to the parent", async () => {
+  // Per WHATWG "close a worker", the task that called close() runs to
+  // completion. If that task ends in an uncaught exception, the normal
+  // "report an exception" algorithm runs — firing `worker.onerror` on the
+  // parent. This is a regression guard for a past bug where
+  // `self.close(); throw …` unconditionally returned `error.WorkerClosed`
+  // from `loadEntryPointForWebWorker` and silently dropped the rejected
+  // module promise without dispatching an error event.
+  using dir = tempDir("issue-29186-close-then-throw", {
+    "worker.mjs": `
+      self.close();
+      throw new Error("oops");
+    `,
+    "main.mjs": `
+      const worker = new Worker(new URL("./worker.mjs", import.meta.url).href, { type: "module" });
+      const events = [];
+      const { promise, resolve } = Promise.withResolvers();
+
+      worker.onerror = (e) => { events.push({ type: "error", message: e.message }); };
+      worker.addEventListener("close", () => resolve());
+      await promise;
+      console.log(JSON.stringify(events));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(exitCode).toBe(0);
+  const events = JSON.parse(stdout.trim());
+  expect(events).toHaveLength(1);
+  expect(events[0].type).toBe("error");
+  expect(events[0].message).toContain("oops");
+});

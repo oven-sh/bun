@@ -2419,11 +2419,15 @@ pub fn loadEntryPointForWebWorker(this: *VirtualMachine, entry_path: string) any
         if (worker.hasRequestedTerminate()) {
             return error.WorkerTerminated;
         }
-        // Cooperative: self.close() during top-level eval/await. The module
-        // promise may still be pending (e.g. `self.close(); await …`) — we
-        // must not touch it. Caller treats this as a clean shutdown
-        // (exit_code = 0, wasClean = true).
-        if (worker.hasRequestedClose()) {
+        // Cooperative: self.close() during top-level eval/await. Only fire
+        // this early-return when the module promise is still pending —
+        // e.g. `self.close(); await neverResolves`. If the promise has
+        // settled (rejected from a throw after close, or fulfilled), fall
+        // through and let spin()'s promise-result path run so an uncaught
+        // top-level exception still reaches the parent's 'error' event per
+        // WHATWG "report an exception". spin()'s shouldExitLoop() guard
+        // after that block will still produce a clean close.
+        if (worker.hasRequestedClose() and promise.status() == .pending) {
             return error.WorkerClosed;
         }
     }

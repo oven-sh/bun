@@ -1,5 +1,5 @@
+import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { serialize, deserialize } from "bun:jsc";
 
 describe("structuredClone with Blob and File", () => {
   describe("Blob structured clone", () => {
@@ -315,9 +315,7 @@ describe("structuredClone with Blob and File", () => {
       // Locate the offset field by serializing a sliced blob with a sentinel
       // offset and diffing; this keeps the test robust against wire-format
       // header changes.
-      const sentinel = new Uint8Array(
-        serialize(new Blob([Buffer.alloc(8, marker)]).slice(4)),
-      );
+      const sentinel = new Uint8Array(serialize(new Blob([Buffer.alloc(8, marker)]).slice(4)));
       let at = -1;
       for (let i = 0; i + 8 <= sentinel.length; i++) {
         if (

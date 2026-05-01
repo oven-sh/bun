@@ -65,4 +65,5 @@ if (isMainThread) {
 
   expect(stdout).toContain("WORKER_RESULT:ok");
   expect(stdout).toContain("MAIN_RESULT:ok");
+  expect(result.exitCode).toBe(0);
 }, 15_000);

@@ -257,3 +257,47 @@ describe("globalThis.gc", () => {
     });
   });
 });
+
+// https://github.com/oven-sh/bun/issues/30023
+describe("non-global regexp TypeError wording", () => {
+  const EXPECTED_MATCH_ALL = "String.prototype.matchAll argument must contain the global (g) flag";
+  const EXPECTED_REPLACE_ALL = "String.prototype.replaceAll argument must contain the global (g) flag";
+
+  it("String.prototype.matchAll rejects a non-global RegExp", () => {
+    expect(() => "abc".matchAll(/a/)).toThrow(
+      expect.objectContaining({ name: "TypeError", message: EXPECTED_MATCH_ALL }),
+    );
+  });
+
+  it("String.prototype.replaceAll rejects a non-global RegExp", () => {
+    expect(() => "abc".replaceAll(/a/, "x")).toThrow(
+      expect.objectContaining({ name: "TypeError", message: EXPECTED_REPLACE_ALL }),
+    );
+  });
+
+  it("String.prototype.replaceAll rejects a RegExp-like object whose flags lack 'g'", () => {
+    const fake = { [Symbol.match]: true, flags: "i", [Symbol.replace]: undefined };
+    expect(() => String.prototype.replaceAll.call("abc", fake, "x")).toThrow(
+      expect.objectContaining({ name: "TypeError", message: EXPECTED_REPLACE_ALL }),
+    );
+  });
+
+  // Exercises the DFG JIT paths in DFGOperations.cpp by forcing the operation to be
+  // called many times. Both the empty-replacement and string-replacement paths live there.
+  it("DFG-tier replaceAll reports the same wording", () => {
+    const re = /a/;
+    const stringReplace = () => "aaa".replaceAll(re, "b");
+    const emptyReplace = () => "aaa".replaceAll(re, "");
+    for (const fn of [stringReplace, emptyReplace]) {
+      let last;
+      for (let i = 0; i < 20_000; i++) {
+        try {
+          fn();
+        } catch (e) {
+          last = e;
+        }
+      }
+      expect(last).toEqual(expect.objectContaining({ name: "TypeError", message: EXPECTED_REPLACE_ALL }));
+    }
+  });
+});

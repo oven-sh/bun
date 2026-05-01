@@ -1532,7 +1532,10 @@ pub fn NewSocket(comptime ssl: bool) type {
                 }
                 const cfg = &(ssl_opts orelse return globalObject.throw("Expected \"tls\" option", .{}));
                 var create_err: uws.create_bun_socket_error_t = .none;
-                owned_ctx = cfg.asUSockets().createSSLContext(&create_err) orelse {
+                // Per-VM weak cache: `tls:true` and `{servername}`-only hit
+                // the same CTX as `Bun.connect`; an inline CA dedupes across
+                // every upgradeTLS that names it.
+                owned_ctx = jsc.VirtualMachine.get().rareData().sslCtxCache().getOrCreate(cfg, &create_err) orelse {
                     // us_ssl_ctx_from_options only sets *err for the CA/cipher
                     // cases; bad cert/key/DH return NULL with err==.none and the
                     // detail is on the BoringSSL error queue.
@@ -1850,6 +1853,13 @@ pub const DuplexUpgradeContext = struct {
             }
         } else {
             if (this.tls) |tls| {
+                // Pre-open error (e.g. the duplex emitted non-Buffer data
+                // before the queued `.StartTLS` task ran). `handleConnectError`
+                // → `markInactive` frees `tls.handlers`; null `tls` so the
+                // still-queued `.StartTLS` → `onOpen` — and any further
+                // duplex events — skip the TLSSocket instead of calling
+                // `getHandlers()` on the freed allocation.
+                this.tls = null;
                 tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ECONNREFUSED)) catch {};
             }
         }
@@ -1871,7 +1881,11 @@ pub const DuplexUpgradeContext = struct {
             // is the ext-slot/owner pin). Null our pointer first so the
             // `deinitInNextTick` → `deinit` path doesn't deref it a second
             // time — that's the over-deref behind the cross-file
-            // `TLSSocket.finalize` use-after-poison.
+            // `TLSSocket.finalize` use-after-poison. It also means a throw
+            // from `duplex.end()` (called right after this returns via
+            // `UpgradedDuplex.onClose` → `callWriteOrEnd`) hits the null-check
+            // in `onError` instead of reading the Handlers that `tls.onClose`
+            // → `markInactive` just freed.
             this.tls = null;
             tls.onClose(socket, 0, null) catch {};
         }
@@ -1882,6 +1896,19 @@ pub const DuplexUpgradeContext = struct {
     fn runEvent(this: *DuplexUpgradeContext) void {
         switch (this.task_event) {
             .StartTLS => {
+                // A pre-open error (onError's `!is_open` branch) may have
+                // already fired the connect-error callback, freed
+                // `tls.handlers`, and nulled `tls` while this task was
+                // queued. There is nothing to open in that case — and
+                // nothing else will reach `deinit()` since the SSLWrapper
+                // (whose close callback normally schedules it) is never
+                // created — so tear everything down here instead of
+                // spinning up a wrapper that would dispatch `onOpen` into
+                // the dead socket.
+                if (this.tls == null) {
+                    this.deinit();
+                    return;
+                }
                 log("DuplexUpgradeContext.startTLS mode={s}", .{@tagName(this.#mode)});
                 const is_client = this.#mode == .client;
                 const started: anyerror!void = if (this.owned_ctx) |ctx| blk: {
@@ -1898,15 +1925,18 @@ pub const DuplexUpgradeContext = struct {
                         const errno = @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
                         if (this.tls) |tls| {
                             // `handleConnectError` consumes our +1 (its
-                            // `needs_deref` path) and detaches. Calling
-                            // `tls.onClose` afterwards (as main did)
-                            // double-derefs; null `this.tls` so the eventual
-                            // `deinit` doesn't make it a triple. Pre-existing
-                            // on main, latent until the leak fix made `deinit`
-                            // reachable.
+                            // `needs_deref` path) and detaches. Null
+                            // `this.tls` so `deinit` doesn't deref again.
                             this.tls = null;
                             tls.handleConnectError(errno) catch {};
                         }
+                        // `startTLS`/`startTLSWithCTX` failed before the
+                        // SSLWrapper was assigned, so its close callback
+                        // was never registered and nothing will schedule
+                        // `.Close`. Same as the `tls == null` early-return
+                        // above: tear down here.
+                        this.deinit();
+                        return;
                     },
                 };
                 if (this.ssl_config) |*cfg| {

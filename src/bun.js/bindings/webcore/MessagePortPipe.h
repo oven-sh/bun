@@ -44,11 +44,21 @@ public:
         Closed = 1ull << 0, // close() was called on this side; drops further deliveries.
         DrainScheduled = 1ull << 1, // a drain task for this side is in flight.
         Attached = 1ull << 2, // ctxId/port are valid; ok to schedule drains.
+        // Mirror of the peer's Closed bit. Lets hasPendingActivity() read a
+        // consistent snapshot from a single atomic load — otherwise the GC
+        // could observe {queuedCount=0, !DrainScheduled} from our side before
+        // the peer's send, then observe Closed from the peer's side after its
+        // close, and collect the wrapper with a message in flight.
+        PeerClosed = 1ull << 3,
 
         QueuedShift = 8,
         QueuedOne = 1ull << QueuedShift,
     };
     static constexpr uint64_t queuedCount(uint64_t s) { return s >> QueuedShift; }
+    // True while the port attached to this side should be kept alive by the
+    // GC: there is a message queued for it, a drain task is in the
+    // pop→dispatch window, or the peer could still send more.
+    static constexpr bool isActivityPending(uint64_t s) { return queuedCount(s) > 0 || (s & DrainScheduled) || !(s & PeerClosed); }
 
     // Sender-thread operations.
     // `fromSide` is the sender's side; the message lands in the *other* side's inbox.
@@ -66,7 +76,6 @@ public:
 
     // Lockless snapshot for the GC visitor / hasPendingActivity.
     uint64_t state(uint8_t side) const { return m_sides[side].state.load(std::memory_order_acquire); }
-    bool isOtherSideOpen(uint8_t side) const { return !(state(1 - side) & Closed); }
 
     // Equality is by identity; used to reject "port posted through itself".
     bool operator==(const MessagePortPipe& other) const { return this == &other; }

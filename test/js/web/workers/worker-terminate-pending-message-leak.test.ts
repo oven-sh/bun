@@ -3,53 +3,63 @@ import { bunEnv, bunExe, isWindows } from "harness";
 
 // ScriptExecutionContext::postTaskConcurrently heap-allocates an EventLoopTask
 // and Bun__queueTaskConcurrently wraps it in a heap-allocated ConcurrentTask.
-// The only free path for both is the target event loop actually running the
-// task (tickConcurrentWithCount → performTask → delete this). If the parent
-// posts messages that land in the worker's concurrent_tasks queue after the
-// worker has left its spin loop but before ~GlobalObject removes the worker's
-// ScriptExecutionContext from the global map, both allocations — and the
-// captured SerializedScriptValue — leaked until process exit.
+// The only free path for both is the target event loop actually ticking the
+// task (tickConcurrentWithCount → performTask → delete this). When a
+// cross-thread task (e.g. Worker.postMessage's drain task, which captures a
+// Ref<Worker> and therefore the entire m_toWorker.queue of buffered
+// messages) lands in a worker's concurrent_tasks after the worker has left
+// its event loop but before ~GlobalObject removes the worker's context from
+// the global map, the task — and everything it transitively references —
+// leaked until process exit.
 //
-// Skipped on Windows: the test widens the teardown window via a busy-wait in
-// the worker's process.on('exit') handler, and measures the leak via RSS.
-// On Windows the exit-handler stall does not hold (the teardown window
-// collapses to near-zero so nothing lands in the queue) and working-set size
-// does not shrink back after the parent-side serialization buffers are
-// freed, so the RSS check cannot distinguish fixed from unfixed. The drain
-// itself (EventLoop.drainCancelledTasks) is platform-independent.
+// Skipped on Windows: Atomics.wait on the main thread + RSS-based
+// measurement are not reliable there.
 test.skipIf(isWindows)(
-  "postMessage to a terminating Worker does not leak EventLoopTask/ConcurrentTask",
+  "postMessage to a Worker past its event loop does not leak the queued drain task",
   async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-        // Stall inside process.on('exit') so the teardown window (between
-        // the worker leaving its event loop and removeFromContextsMap())
-        // is wide enough for the parent's postMessage flood to land in the
-        // worker's concurrent task queue.
-        const workerSrc = "data:text/javascript," + encodeURIComponent(\`
-          self.onmessage = () => {};
-          process.on('exit', () => { const t = Date.now(); while (Date.now() - t < 100) {} });
-        \`);
+        import { Worker } from "worker_threads";
+
+        // The worker signals via SharedArrayBuffer when it has entered
+        // process.on('beforeExit') — at that point it has left its event
+        // loop and will next run shutdown() without ticking again. Messages
+        // posted during that window allocate an EventLoopTask + ConcurrentTask
+        // (the drain task, holding Ref<Worker> and thus the whole buffered
+        // queue) that the worker will never run.
+        const workerBody = \`
+          const { workerData } = require("worker_threads");
+          const arr = new Int32Array(workerData);
+          process.on("beforeExit", () => {
+            Atomics.store(arr, 0, 1);
+            Atomics.notify(arr, 0);
+            const t = Date.now();
+            while (Date.now() - t < 100) {}
+          });
+        \`;
 
         async function round() {
-          const w = new Worker(workerSrc);
-          await new Promise(r => w.addEventListener("open", r, { once: true }));
-          const closed = new Promise(r => w.addEventListener("close", r, { once: true }));
-          w.terminate();
-          // Worker is now tearing down (exit handler busy-waits ~100 ms).
-          // Every postMessage here allocates an EventLoopTask + ConcurrentTask
-          // that the worker will never tick.
+          const sab = new SharedArrayBuffer(8);
+          const arr = new Int32Array(sab);
+          const w = new Worker(workerBody, { eval: true, workerData: sab });
+          const closed = new Promise(r => w.once("exit", r));
+          // Block until the worker is inside beforeExit (past its event
+          // loop, before JSC teardown removes its ScriptExecutionContext).
+          Atomics.wait(arr, 0, 0);
+          // First postMessage posts one drain task (EventLoopTask +
+          // ConcurrentTask capturing Ref<Worker>) into the worker's
+          // concurrent queue; the rest buffer in m_toWorker.queue held by
+          // that Ref. None will ever be drained.
           for (let i = 0; i < 300; i++) {
             try { w.postMessage(new ArrayBuffer(128 * 1024)); } catch {}
           }
           await closed;
         }
 
-        // Warm-up: establish allocator high-water mark so measured rounds can
-        // reuse freed pages once the tasks are drained on termination.
+        // Warm-up: establish allocator high-water mark.
         for (let i = 0; i < 4; i++) await round();
         Bun.gc(true);
         Bun.gc(true);
@@ -61,11 +71,12 @@ test.skipIf(isWindows)(
         const rssAfter = process.memoryUsage().rss;
         const deltaMB = (rssAfter - rssBefore) / 1024 / 1024;
 
-        // Without the fix: ~20 rounds * 300 msgs * 128 KB ≈ 750 MB of
-        // SerializedScriptValue retained in undrained concurrent_tasks
-        // (observed ~215-300 MB depending on scheduling).
-        // With the fix: queue is drained in exitAndDeinit, observed ~20-40 MB
-        // of allocator noise.
+        // Without the fix: ~20 * 300 * 128 KB ≈ 750 MB of SerializedScriptValue
+        // retained via the leaked Ref<Worker> → m_toWorker.queue (observed
+        // ~900 MB with overhead).
+        // With the fix: drainCancelledTasks frees the drain task in
+        // shutdown(), the Ref is dropped, and the allocator reuses pages
+        // (observed near-zero or slightly negative).
         if (deltaMB > 100) {
           console.error("FAIL: RSS grew by", deltaMB.toFixed(2), "MB across measured rounds");
           process.exit(1);

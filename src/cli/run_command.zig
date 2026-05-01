@@ -822,6 +822,14 @@ pub const RunCommand = struct {
 
         this_transpiler.env.map.putDefault("npm_config_local_prefix", this_transpiler.fs.top_level_dir) catch unreachable;
 
+        // Propagate --no-orphans / [run] noOrphans to the script's env so any
+        // Bun process the script spawns enables its own watchdog. The env
+        // loader snapshots `environ` before flag parsing runs, so the
+        // `setenv()` in `enable()` isn't reflected here.
+        if (bun.ParentDeathWatchdog.isEnabled()) {
+            this_transpiler.env.map.put("BUN_FEATURE_FLAG_NO_ORPHANS", "1") catch unreachable;
+        }
+
         // we have no way of knowing what version they're expecting without running the node executable
         // running the node executable is too slow
         // so we will just hardcode it to LTS

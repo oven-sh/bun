@@ -887,11 +887,11 @@ pub const Bunfig = struct {
                         }
                     }
 
-                    if (run_expr.get("dieWithParent")) |dwp| {
-                        if (dwp.asBool()) |value| {
+                    if (run_expr.get("noOrphans")) |no_orphans| {
+                        if (no_orphans.asBool()) |value| {
                             if (value) bun.ParentDeathWatchdog.enable();
                         } else {
-                            try this.addError(dwp.loc, "Expected boolean");
+                            try this.addError(no_orphans.loc, "Expected boolean");
                         }
                     }
                 }

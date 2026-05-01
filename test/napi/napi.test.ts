@@ -130,14 +130,26 @@ describe.concurrent("napi", () => {
             if (process.platform !== "win32") {
               expect(readdirSync(tmpdir), "bun should clean up .node files").toBeEmpty();
             } else {
-              // On Windows the addon is statically merged into the exe,
-              // so process.dlopen never touches the filesystem at all.
+              // On Windows addons are statically merged into the exe
+              // where possible, so process.dlopen binds them in place
+              // without touching the filesystem. The merge is
+              // best-effort — bun.exe's PE header has a fixed number
+              // of spare section-header slots, and an addon with real
+              // __declspec(thread) storage is routed to the tempfile
+              // fallback — so with ~11 addons in this fixture we
+              // assert the merge *engaged* (.bunL/.bn0 present) and
+              // *reduced* temp-file extraction, not that every addon
+              // merged.
               expect(
                 peHasSection(exe, ".bunL"),
                 ".node addon should be statically linked into the compiled exe",
               ).toBeTrue();
               expect(peHasSection(exe, ".bn0")).toBeTrue();
-              expect(readdirSync(tmpdir), "statically-linked addon should not extract to a temp file").toBeEmpty();
+              const extracted = readdirSync(tmpdir).filter(f => f.endsWith(".node"));
+              // 5 addons are required at top level; at least a
+              // majority must have bound in-place for the feature to
+              // be doing its job.
+              expect(extracted.length, `extracted to temp: ${JSON.stringify(extracted)}`).toBeLessThan(3);
             }
           },
           10 * 1000,

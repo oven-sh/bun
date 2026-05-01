@@ -38,6 +38,47 @@ pub const BunSocketContextOptions = extern struct {
         return c.us_ssl_ctx_from_options(options, err);
     }
 
+    /// SHA-256 over every field this struct carries, dereferencing string
+    /// pointers so the digest is content-addressed (not pointer-addressed).
+    /// Two option structs that build the same `SSL_CTX*` produce the same
+    /// digest. Used as the key for `SSLContextCache`.
+    pub fn digest(self: BunSocketContextOptions) [32]u8 {
+        var h = bun.sha.Hashers.SHA256.init();
+        const feedZ = struct {
+            fn f(hp: *bun.sha.Hashers.SHA256, s: [*c]const u8) void {
+                if (s) |p| hp.update(bun.sliceTo(p, 0));
+                hp.update(&.{0}); // terminator so {a:"xy"} ≠ {a:"x",b:"y"}
+            }
+        }.f;
+        const feedArr = struct {
+            fn f(hp: *bun.sha.Hashers.SHA256, arr: ?[*]const ?[*:0]const u8, n: u32) void {
+                if (arr) |a| for (a[0..n]) |s| {
+                    if (s) |p| hp.update(bun.sliceTo(p, 0));
+                    hp.update(&.{0});
+                };
+                hp.update(&.{0});
+            }
+        }.f;
+        feedZ(&h, self.key_file_name);
+        feedZ(&h, self.cert_file_name);
+        feedZ(&h, self.passphrase);
+        feedZ(&h, self.dh_params_file_name);
+        feedZ(&h, self.ca_file_name);
+        feedZ(&h, self.ssl_ciphers);
+        h.update(std.mem.asBytes(&self.ssl_prefer_low_memory_usage));
+        feedArr(&h, self.key, self.key_count);
+        feedArr(&h, self.cert, self.cert_count);
+        feedArr(&h, self.ca, self.ca_count);
+        h.update(std.mem.asBytes(&self.secure_options));
+        h.update(std.mem.asBytes(&self.reject_unauthorized));
+        h.update(std.mem.asBytes(&self.request_cert));
+        h.update(std.mem.asBytes(&self.client_renegotiation_limit));
+        h.update(std.mem.asBytes(&self.client_renegotiation_window));
+        var out: [32]u8 = undefined;
+        h.final(&out);
+        return out;
+    }
+
     /// Best-effort byte count of cert/key/CA material — fed into
     /// `SecureContext.memoryCost` so the GC sees the off-heap allocation.
     pub fn approxCertBytes(self: BunSocketContextOptions) usize {
@@ -60,6 +101,7 @@ pub const c = struct {
     pub extern fn us_ssl_ctx_live_count() c_long;
 };
 
+const std = @import("std");
 const bun = @import("bun");
 const uws = bun.uws;
 const BoringSSL = bun.BoringSSL.c;

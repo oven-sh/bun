@@ -391,7 +391,7 @@ pub fn addServerName(this: *Listener, global: *jsc.JSGlobalObject, hostname: JSV
         var cfg = ssl_config;
         defer cfg.deinit();
         var create_err: uws.create_bun_socket_error_t = .none;
-        break :brk cfg.asUSockets().createSSLContext(&create_err) orelse {
+        break :brk jsc.VirtualMachine.get().rareData().sslCtxCache().getOrCreate(&cfg, &create_err) orelse {
             if (create_err != .none) return global.throwValue(create_err.toJS(global));
             return global.throwValue(bun.BoringSSL.ERR_toJS(global, BoringSSL.ERR_get_error()));
         };
@@ -775,23 +775,16 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
     // `socket.owned_ssl_ctx` to the per-VM connect group.
     if (ssl_enabled and owned_ssl_ctx == null) {
         if (ssl) |ssl_cfg| {
-            // `Bun.connect({tls: true})` and other no-cert/no-CA configs are
-            // the common case for clients (default trust store, default
-            // ciphers). Building a fresh SSL_CTX for those is ~70 ms of cert
-            // parsing and ex-data registration on debug+ASAN — measurable
-            // first-connect latency and exactly the per-connection cost this
-            // PR exists to remove. Reuse the per-VM default; only fall through
-            // to a fresh build when the config actually customises something.
-            if (!ssl_cfg.requires_custom_request_ctx) {
-                const shared = vm.rareData().defaultClientSslCtx();
-                _ = BoringSSL.SSL_CTX_up_ref(shared);
-                owned_ssl_ctx = shared;
-            } else {
-                var create_err: uws.create_bun_socket_error_t = .none;
-                owned_ssl_ctx = ssl_cfg.asUSockets().createSSLContext(&create_err) orelse {
-                    return globalObject.throwValue(create_err.toJS(globalObject));
-                };
-            }
+            // Per-VM weak `SSLContextCache`: identical configs (including the
+            // common `tls:true` / `{servername}`-only / `{ALPNProtocols}`-only
+            // cases — those fields aren't in the digest because they're
+            // applied per-SSL, not per-CTX) share one `SSL_CTX*`. The
+            // `requires_custom_request_ctx` gate is gone; the cache makes the
+            // default-vs-custom distinction by content.
+            var create_err: uws.create_bun_socket_error_t = .none;
+            owned_ssl_ctx = vm.rareData().sslCtxCache().getOrCreate(ssl_cfg, &create_err) orelse {
+                return globalObject.throwValue(create_err.toJS(globalObject));
+            };
         }
     }
     // (errdefer for owned_ssl_ctx already armed at the earlier lookup site;

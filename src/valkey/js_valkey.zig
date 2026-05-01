@@ -1123,7 +1123,10 @@ pub const JSValkeyClient = struct {
                 // old `_socket_ctx` cache existed to preserve.
                 if (this._secure == null) {
                     var err: uws.create_bun_socket_error_t = .none;
-                    this._secure = custom.asUSockets().createSSLContext(&err) orelse {
+                    // Per-VM weak cache: a `duplicate()`'d client (or any
+                    // other client with the same config) hits the same
+                    // `SSL_CTX*` instead of rebuilding.
+                    this._secure = vm.rareData().sslCtxCache().getOrCreate(custom, &err) orelse {
                         this.client.flags.enable_auto_reconnect = false;
                         try this.clientFail("Failed to create TLS context", protocol.RedisError.ConnectionClosed);
                         try this.client.onValkeyClose();

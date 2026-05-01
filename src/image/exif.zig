@@ -38,9 +38,12 @@ pub const Orientation = enum(u8) {
             .flop => .{ .flop = true, .flip = false, .rotate = 0 },
             .rotate180 => .{ .flop = false, .flip = false, .rotate = 180 },
             .flip => .{ .flop = false, .flip = true, .rotate = 0 },
-            .flop_rotate90 => .{ .flop = true, .flip = false, .rotate = 90 },
+            // 5 = transpose, 7 = transverse. With flop applied BEFORE a CW
+            // rotate (Image.applyOrientation order), flop∘rot270 = transpose
+            // and flop∘rot90 = transverse.
+            .flop_rotate90 => .{ .flop = true, .flip = false, .rotate = 270 },
             .rotate90 => .{ .flop = false, .flip = false, .rotate = 90 },
-            .flop_rotate270 => .{ .flop = true, .flip = false, .rotate = 270 },
+            .flop_rotate270 => .{ .flop = true, .flip = false, .rotate = 90 },
             .rotate270 => .{ .flop = false, .flip = false, .rotate = 270 },
         };
     }

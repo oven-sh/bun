@@ -15,7 +15,8 @@
 //!          → CGContextDrawImage   (CG does the colourspace + format convert)
 //!          → memcpy bitmap → bun.default_allocator slice
 //!
-//! Encode:  CGBitmapContextCreate around our RGBA8 buffer
+//! Encode:  pre-multiply straight-alpha RGBA8 into a scratch buffer
+//!          → CGBitmapContextCreate(premultipliedLast) around that
 //!          → CGBitmapContextCreateImage
 //!          → CFDataCreateMutable + CGImageDestinationCreateWithData(uti)
 //!          → CGImageDestinationAddImage(+ kCGImageDestinationLossyCompressionQuality)
@@ -87,9 +88,22 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOpti
     const cs = s.CGColorSpaceCreateDeviceRGB() orelse return error.BackendUnavailable;
     defer s.CGColorSpaceRelease(cs);
 
-    // Wrap the caller's buffer directly — CGBitmapContextCreate doesn't copy.
-    // constCast is safe: we never draw into this context, only snapshot it.
-    const ctx = s.CGBitmapContextCreate(@constCast(rgba.ptr), width, height, 8, @as(usize, width) * 4, cs, kCGImageAlphaPremultipliedLast) orelse
+    // CG bitmap contexts only render to/from premultiplied; pipeline carries
+    // straight alpha, so pre-multiply into a scratch buffer and let ImageIO
+    // un-premultiply on write. (Wrapping the caller's straight-alpha buffer
+    // with kCGImageAlphaPremultipliedLast would mislabel it and corrupt every
+    // translucent pixel; kCGImageAlphaLast is rejected by CGBitmapContextCreate.)
+    const premul = try bun.default_allocator.alloc(u8, rgba.len);
+    defer bun.default_allocator.free(premul);
+    var i: usize = 0;
+    while (i + 4 <= rgba.len) : (i += 4) {
+        const a: u32 = rgba[i + 3];
+        // round(c * a / 255) — a==255 is identity, a==0 zeroes RGB.
+        inline for (0..3) |c| premul[i + c] = @intCast((@as(u32, rgba[i + c]) * a + 127) / 255);
+        premul[i + 3] = @intCast(a);
+    }
+
+    const ctx = s.CGBitmapContextCreate(premul.ptr, width, height, 8, @as(usize, width) * 4, cs, kCGImageAlphaPremultipliedLast) orelse
         return error.EncodeFailed;
     defer s.CGContextRelease(ctx);
 

@@ -312,6 +312,71 @@ describe("Bun.Image", () => {
     }
   });
 
+  // These exercise the system-backend paths on macOS (CoreGraphics) and
+  // Windows (WIC) where they're active; on Linux they hit the static codecs.
+  // Either way the assertions are the contract.
+  describe("cross-backend correctness", () => {
+    test("translucent alpha survives PNG→PNG (catches premultiplied-alpha mislabel)", async () => {
+      // 50% alpha red — the case CoreGraphics gets wrong if it interprets the
+      // straight-alpha input buffer as premultiplied.
+      const src = makePng(4, 4, () => [200, 60, 30, 128]);
+      const out = await new Bun.Image(src).png().bytes();
+      const back = decodePngRaw(out);
+      const px = rgbaAt(back.data, 4, 1, 1);
+      expect(px[3]).toBe(128);
+      // Allow ±2 for any backend's internal rounding.
+      expect(Math.abs(px[0] - 200)).toBeLessThanOrEqual(2);
+      expect(Math.abs(px[1] - 60)).toBeLessThanOrEqual(2);
+      expect(Math.abs(px[2] - 30)).toBeLessThanOrEqual(2);
+    });
+
+    test("PNG output has nothing after IEND (catches WIC GlobalSize over-read)", async () => {
+      const out = await new Bun.Image(gradientPng).png().bytes();
+      // Walk chunks to find where IEND ends; the buffer must end exactly there.
+      const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
+      let off = 8;
+      let iendEnd = -1;
+      while (off + 8 <= out.length) {
+        const len = dv.getUint32(off);
+        const type = String.fromCharCode(out[off + 4], out[off + 5], out[off + 6], out[off + 7]);
+        const chunkEnd = off + 12 + len;
+        if (type === "IEND") {
+          iendEnd = chunkEnd;
+          break;
+        }
+        off = chunkEnd;
+      }
+      expect(iendEnd).toBe(out.length);
+    });
+
+    test("PNG encode is deterministic across two calls", async () => {
+      const a = await new Bun.Image(gradientPng).png().bytes();
+      const b = await new Bun.Image(gradientPng).png().bytes();
+      expect(Buffer.compare(Buffer.from(a), Buffer.from(b))).toBe(0);
+    });
+
+    test("64×48 lanczos3 downscale → upscale stays close to source", async () => {
+      const src = makePng(64, 48, (x, y) => [(x * 4) & 255, (y * 5) & 255, ((x ^ y) * 3) & 255, 255]);
+      const half = await new Bun.Image(src).resize(32, 24).png().bytes();
+      expect(decodePngRaw(half).w).toBe(32);
+      // Round-tripping through a 2× downscale loses high-frequency detail but
+      // mean error should stay bounded regardless of which backend resized.
+      const back = decodePngRaw(await new Bun.Image(half).resize(64, 48).png().bytes());
+      const ref = decodePngRaw(src).data;
+      let sum = 0;
+      for (let i = 0; i < ref.length; i += 4)
+        for (let c = 0; c < 3; c++) sum += Math.abs(ref[i + c] - back.data[i + c]);
+      expect(sum / ((ref.length / 4) * 3)).toBeLessThan(25);
+    });
+
+    test("JPEG encode respects quality (lower quality → smaller file)", async () => {
+      const big = makePng(64, 64, (x, y) => [(x * 4) & 255, (y * 4) & 255, ((x * y) >> 2) & 255, 255]);
+      const q90 = await new Bun.Image(big).jpeg({ quality: 90 }).bytes();
+      const q20 = await new Bun.Image(big).jpeg({ quality: 20 }).bytes();
+      expect(q20.length).toBeLessThan(q90.length);
+    });
+  });
+
   // EXIF: build a minimal JPEG via Bun.Image, then splice in an APP1 segment
   // carrying Orientation=6 (90° CW). A 4×2 source should report 2×4 after
   // auto-orient.
@@ -347,6 +412,32 @@ describe("Bun.Image", () => {
 
   test("rotate rejects non-90° multiples", () => {
     expect(() => new Bun.Image(cornersPng).rotate(45)).toThrow();
+  });
+
+  // @intFromFloat on NaN/Inf is UB; these used to abort the process.
+  test("non-finite numeric inputs throw or clamp instead of panicking", async () => {
+    expect(() => new Bun.Image(cornersPng).rotate(Infinity)).toThrow(/finite/);
+    expect(() => new Bun.Image(cornersPng).rotate(NaN)).toThrow(/finite/);
+    // resize/quality/maxPixels clamp; NaN→lo bound, ±Inf→matching bound.
+    const out = await new Bun.Image(cornersPng).resize(NaN, NaN).jpeg({ quality: NaN }).bytes();
+    expect(out[0]).toBe(0xff);
+    expect((await new Bun.Image(gradientPng, { maxPixels: Infinity }).metadata()).width).toBe(16);
+    // Infinity width clamps to the per-side cap; output then exceeds maxPixels
+    // and rejects cleanly — the contract is "doesn't abort", not "succeeds".
+    expect(new Bun.Image(cornersPng).resize(Infinity).png().bytes()).rejects.toThrow(/maxPixels/);
+  });
+
+  test("constructor cleans up on throwing options getter", () => {
+    // Just asserts no crash/leak path; the actual leak would only show under
+    // a sanitizer, but the throw must surface.
+    expect(
+      () =>
+        new Bun.Image(cornersPng, {
+          get maxPixels() {
+            throw new Error("boom");
+          },
+        }),
+    ).toThrow("boom");
   });
 
   // Sharp semantics: rotate runs BEFORE resize regardless of call order, and a

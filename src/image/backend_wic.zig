@@ -22,7 +22,8 @@
 //!          → encoder.CreateNewFrame → frame.Initialize/SetSize/SetPixelFormat
 //!          → frame.WritePixels(rgba)
 //!          → frame.Commit → encoder.Commit
-//!          → GetHGlobalFromStream → GlobalLock/Size → dupe to default_allocator
+//!          → IStream::Seek(0,CUR) for the logical length
+//!          → GetHGlobalFromStream → GlobalLock → dupe to default_allocator
 //!
 //! Thread-safety: WIC requires COM to be initialised on the calling thread.
 //! Bun's image work runs on `WorkPool` threads with no prior COM init, so we
@@ -123,12 +124,21 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOpti
     if (frame.?.vt.Commit(frame.?) < 0) return error.EncodeFailed;
     if (enc.?.vt.Commit(enc.?) < 0) return error.EncodeFailed;
 
+    // Logical length, not allocation size: GlobalSize() returns the HGLOBAL's
+    // rounded-up allocation, which is ≥ what the encoder actually wrote and
+    // would tack uninitialised heap bytes onto every output. The encoder writes
+    // sequentially from offset 0 and never seeks back, so the stream's current
+    // position IS the byte count. (MSDN GetHGlobalFromStream: "use IStream::Stat
+    // to obtain the actual size".)
+    const istream: *IStream = @ptrCast(@alignCast(stream.?));
+    var pos: u64 = 0;
+    if (istream.vt.Seek(istream, 0, STREAM_SEEK_CUR, &pos) < 0) return error.EncodeFailed;
+
     var hg: ?*anyopaque = null;
     if (GetHGlobalFromStream(stream.?, &hg) < 0 or hg == null) return error.EncodeFailed;
-    const len = GlobalSize(hg.?);
     const ptr: [*]const u8 = @ptrCast(GlobalLock(hg.?) orelse return error.EncodeFailed);
     defer _ = GlobalUnlock(hg.?);
-    return try bun.default_allocator.dupe(u8, ptr[0..len]);
+    return try bun.default_allocator.dupe(u8, ptr[0..@intCast(pos)]);
 }
 
 // ───────────────────────────── COM scaffolding ──────────────────────────────
@@ -147,6 +157,21 @@ const IUnknownVTable = extern struct {
     Release: *const fn (*IUnknown) callconv(.winapi) u32,
 };
 const IUnknown = extern struct { vt: *const IUnknownVTable };
+
+/// Only `Seek` is typed — used to read the encoder stream's logical write
+/// position (== bytes emitted) instead of the rounded-up `GlobalSize()`.
+const IStream = extern struct {
+    vt: *const VTable,
+    // IStream : ISequentialStream(Read,Write) : IUnknown.
+    const VTable = extern struct {
+        unk: IUnknownVTable,
+        Read: *const anyopaque,
+        Write: *const anyopaque,
+        Seek: *const fn (*IStream, dlibMove: i64, dwOrigin: u32, plibNewPosition: ?*u64) callconv(.winapi) HRESULT,
+        // SetSize..Clone unused.
+    };
+};
+const STREAM_SEEK_CUR: u32 = 1;
 
 /// Generic Release through the IUnknown slots — every COM pointer is
 /// layout-compatible with `*IUnknown`.
@@ -283,7 +308,6 @@ extern "ole32" fn CreateStreamOnHGlobal(hglobal: ?*anyopaque, delete_on_release:
 extern "ole32" fn GetHGlobalFromStream(stream: *IUnknown, out: *?*anyopaque) callconv(.winapi) HRESULT;
 extern "kernel32" fn GlobalLock(h: *anyopaque) callconv(.winapi) ?*anyopaque;
 extern "kernel32" fn GlobalUnlock(h: *anyopaque) callconv(.winapi) c_int;
-extern "kernel32" fn GlobalSize(h: *anyopaque) callconv(.winapi) usize;
 
 /// `WICConvertBitmapSource` is the one flat export from windowscodecs.dll we
 /// need. Loaded lazily (LoadLibraryA inside `loadFactory`) so the binary

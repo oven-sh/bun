@@ -68,12 +68,12 @@ pub const default_max_pixels: u64 = 0x3FFF * 0x3FFF;
 pub fn decode(bytes: []const u8, max_pixels: u64) Error!Decoded {
     const fmt = Format.sniff(bytes) orelse return error.UnknownFormat;
     // Try the OS codec first; the static path is the correctness baseline so
-    // BackendUnavailable falls through silently. Any *other* error from the
-    // system backend (DecodeFailed/TooManyPixels/OOM) is authoritative — the
-    // static codec wouldn't do better on the same bytes.
+    // BackendUnavailable AND DecodeFailed fall through — the system codec may
+    // be stricter or simply not recognise a sub-variant the static codec does
+    // (e.g. ImageIO without WebP). TooManyPixels and OOM are authoritative.
     if (system_backend) |b| {
         if (b.decode(bytes, max_pixels)) |d| return d else |e| switch (e) {
-            error.BackendUnavailable => {},
+            error.BackendUnavailable, error.DecodeFailed => {},
             else => |narrowed| return narrowed,
         }
     }

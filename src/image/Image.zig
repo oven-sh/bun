@@ -83,6 +83,15 @@ pub const Modulate = struct {
     saturation: f32 = 1.0,
 };
 
+/// `@intFromFloat` is safety-checked UB on NaN/±Inf/out-of-range; every
+/// number we read from JS goes through this so hostile input throws/clamps
+/// instead of aborting. NaN → lo, ±Inf → the matching bound; bounds are f64
+/// so the clamp stays in float space.
+inline fn coerceInt(comptime T: type, x: f64, lo: f64, hi: f64) T {
+    if (std.math.isNan(x)) return @intFromFloat(lo);
+    return @intFromFloat(@min(@max(x, lo), hi));
+}
+
 // ───────────────────────────── lifecycle ────────────────────────────────────
 
 pub fn constructor(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Image {
@@ -92,11 +101,14 @@ pub fn constructor(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
 
     const src = try sourceFromJS(global, args[0]);
     var img = Image.new(.{ .source = src });
+    // `opt.get` can throw (Proxy/getter); without this the heap-allocated
+    // *Image and the duplicated source bytes leak.
+    errdefer img.finalize();
 
     if (args.len > 1 and args[1].isObject()) {
         const opt = args[1];
         if (try opt.get(global, "maxPixels")) |v| if (v.isNumber()) {
-            img.max_pixels = @intFromFloat(@max(0, v.asNumber()));
+            img.max_pixels = coerceInt(u64, v.asNumber(), 0, 1e15);
         };
         if (try opt.get(global, "autoOrient")) |v| img.auto_orient = v.toBoolean();
     }
@@ -140,11 +152,13 @@ pub fn doResize(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallF
     const args = callframe.arguments();
     if (args.len < 1 or !args[0].isNumber())
         return global.throwInvalidArguments("resize(width, height?, options?)", .{});
+    // 0x3FFF² is the max_pixels default; capping each side at 0x3FFFF (≈262k)
+    // keeps every downstream u32 product in range without a per-stage check.
     var r: Resize = .{
-        .w = @intFromFloat(@max(1, args[0].asNumber())),
+        .w = coerceInt(u32, args[0].asNumber(), 1, 0x3FFFF),
         // 0 height = preserve aspect ratio (resolved at execute time once the
         // source dimensions are known).
-        .h = if (args.len > 1 and args[1].isNumber()) @intFromFloat(@max(1, args[1].asNumber())) else 0,
+        .h = if (args.len > 1 and args[1].isNumber()) coerceInt(u32, args[1].asNumber(), 1, 0x3FFFF) else 0,
     };
     if (args.len > 2 and args[2].isObject()) {
         const opt = args[2];
@@ -173,8 +187,10 @@ pub fn doRotate(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallF
     const args = callframe.arguments();
     if (args.len < 1 or !args[0].isNumber())
         return global.throwInvalidArguments("rotate(degrees) expects 90, 180 or 270", .{});
-    const raw: i32 = @intFromFloat(args[0].asNumber());
-    const deg: u32 = @intCast(@mod(@mod(raw, 360) + 360, 360));
+    const n = args[0].asNumber();
+    if (!std.math.isFinite(n))
+        return global.throwInvalidArguments("rotate(degrees) must be a finite number", .{});
+    const deg: u32 = @intCast(@mod(@mod(@as(i64, @intFromFloat(n)), 360) + 360, 360));
     if (deg != 0 and deg != 90 and deg != 180 and deg != 270)
         return global.throwInvalidArguments("rotate: only multiples of 90 are supported", .{});
     this.pipeline.rotate = @intCast(deg);
@@ -214,15 +230,15 @@ fn setFormat(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallFram
     if (args.len > 0 and args[0].isObject()) {
         const opt = args[0];
         if (try opt.get(global, "quality")) |q| {
-            if (q.isNumber()) enc.quality = @intFromFloat(@min(@max(q.asNumber(), 1), 100));
+            if (q.isNumber()) enc.quality = coerceInt(u8, q.asNumber(), 1, 100);
         }
         if (try opt.get(global, "lossless")) |l| enc.lossless = l.toBoolean();
         if (try opt.get(global, "compressionLevel")) |c| if (c.isNumber()) {
-            enc.compression_level = @intFromFloat(@min(@max(c.asNumber(), 0), 9));
+            enc.compression_level = coerceInt(i8, c.asNumber(), 0, 9);
         };
         if (try opt.get(global, "palette")) |p| enc.palette = p.toBoolean();
         if (try opt.get(global, "colors")) |c| if (c.isNumber()) {
-            enc.colors = @intFromFloat(@min(@max(c.asNumber(), 2), 256));
+            enc.colors = coerceInt(u16, c.asNumber(), 2, 256);
         };
     }
     this.pipeline.output = enc;
@@ -298,10 +314,10 @@ fn schedule(this: *Image, global: *jsc.JSGlobalObject, kind: PipelineTask.Kind, 
 ///
 /// A later refinement is to return a `.Locked` body and resolve it from the
 /// worker pool; this is the simple, correct first cut.
-pub fn encodeForBody(this: *Image) !struct { bytes: []u8, mime: [:0]const u8 } {
+pub fn encodeForBody(this: *Image, global: *jsc.JSGlobalObject) bun.JSError!struct { bytes: []u8, mime: [:0]const u8 } {
     var task: PipelineTask = .{
         .image = this,
-        .global = undefined, // not touched by run()
+        .global = global,
         .pipeline = this.pipeline,
         .source = this.snapshotSource(),
         .kind = .{ .encode = this.pipeline.output },
@@ -313,8 +329,9 @@ pub fn encodeForBody(this: *Image) !struct { bytes: []u8, mime: [:0]const u8 } {
     task.run();
     return switch (task.result) {
         .encoded => |e| .{ .bytes = e.bytes, .mime = e.format.mime() },
-        .err => |e| e,
-        .io_err => error.DecodeFailed,
+        .err => |e| global.throw("Image: {s}", .{@errorName(e)}),
+        // Preserve errno/path/syscall instead of flattening to DecodeFailed.
+        .io_err => |e| global.throwValue(try e.toJS(global)),
         .meta => unreachable,
     };
 }
@@ -323,8 +340,8 @@ pub fn encodeForBody(this: *Image) !struct { bytes: []u8, mime: [:0]const u8 } {
 /// path-backed source needs reading. Either way the worker gets an owned copy.
 fn snapshotSource(this: *Image) Source {
     return switch (this.source) {
-        .bytes => |b| .{ .bytes = bun.default_allocator.dupe(u8, b) catch bun.outOfMemory() },
-        .path => |p| .{ .path = bun.default_allocator.dupeZ(u8, p) catch bun.outOfMemory() },
+        .bytes => |b| .{ .bytes = bun.handleOom(bun.default_allocator.dupe(u8, b)) },
+        .path => |p| .{ .path = bun.handleOom(bun.default_allocator.dupeZ(u8, p)) },
     };
 }
 
@@ -354,7 +371,7 @@ pub const PipelineTask = struct {
     };
 
     pub const Result = union(enum) {
-        encoded: struct { bytes: []u8, format: codecs.Format },
+        encoded: struct { bytes: []u8, format: codecs.Format, w: u32, h: u32 },
         meta: struct { w: u32, h: u32, format: codecs.Format },
         err: codecs.Error,
         io_err: bun.sys.Error,
@@ -412,16 +429,26 @@ pub const PipelineTask = struct {
             this.result = .{ .err = e };
             return;
         };
-        // Stash final dims so the synchronous getters can answer post-await.
-        this.image.last_width = @intCast(decoded.width);
-        this.image.last_height = @intCast(decoded.height);
-        this.result = .{ .encoded = .{ .bytes = out, .format = enc.format } };
+        this.result = .{ .encoded = .{ .bytes = out, .format = enc.format, .w = decoded.width, .h = decoded.height } };
     }
 
     /// Back on the JS thread.
     pub fn then(this: *PipelineTask, promise: *jsc.JSPromise) bun.JSTerminated!void {
         defer this.deinit();
         const global = this.global;
+        // Stash final dims here (JS thread) — `run()` is on a WorkPool thread
+        // so writing `this.image.*` there would race the synchronous getters.
+        switch (this.result) {
+            .encoded => |e| {
+                this.image.last_width = @intCast(e.w);
+                this.image.last_height = @intCast(e.h);
+            },
+            .meta => |m| {
+                this.image.last_width = @intCast(m.w);
+                this.image.last_height = @intCast(m.h);
+            },
+            else => {},
+        }
         switch (this.result) {
             .encoded => |enc| switch (this.deliver) {
                 .uint8array => try promise.resolve(global, jsc.JSUint8Array.fromBytes(global, enc.bytes)),
@@ -444,8 +471,6 @@ pub const PipelineTask = struct {
                 },
             },
             .meta => |m| {
-                this.image.last_width = @intCast(m.w);
-                this.image.last_height = @intCast(m.h);
                 const obj = jsc.JSValue.createEmptyObject(global, 3);
                 obj.put(global, jsc.ZigString.static("width"), jsc.JSValue.jsNumber(m.w));
                 obj.put(global, jsc.ZigString.static("height"), jsc.JSValue.jsNumber(m.h));
@@ -488,6 +513,10 @@ pub const PipelineTask = struct {
         }
         if (p.resize) |r| {
             const t = resolveResize(r, d.width, d.height);
+            // Same guard as decode: cap output canvas so a clamped-but-huge
+            // target (e.g. `resize(Infinity)` → 262k×196k) rejects instead of
+            // attempting a multi-GB allocation.
+            if (@as(u64, t.w) * t.h > this.max_pixels) return error.TooManyPixels;
             if (t.w != d.width or t.h != d.height) {
                 const next = try codecs.resize(d.rgba, d.width, d.height, t.w, t.h, r.filter);
                 bun.default_allocator.free(d.rgba);
@@ -500,7 +529,9 @@ pub const PipelineTask = struct {
     /// Map a resize spec to concrete output dims given the current dims.
     fn resolveResize(r: Resize, sw: u32, sh: u32) struct { w: u32, h: u32 } {
         var w = r.w;
-        var h = if (r.h != 0) r.h else @max(1, r.w * sh / sw);
+        // Widen before multiplying — `r.w` is user-controlled and `sh` is
+        // bounded only by `max_pixels`, so the u32 product can wrap.
+        var h: u32 = if (r.h != 0) r.h else @intCast(@max(1, @as(u64, r.w) * sh / sw));
         if (r.fit == .inside) {
             // Shrink the box so the source's aspect ratio is preserved and
             // both sides fit. (Sharp's `fit:'inside'` — the only mode the

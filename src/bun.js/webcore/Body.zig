@@ -623,9 +623,7 @@ pub const Value = union(Tag) {
                 // Body init is synchronous, so encode now and wrap as a Blob
                 // with the right MIME type. The off-thread path is still
                 // available via `await image.blob()`.
-                const out = image.encodeForBody() catch |err| {
-                    return globalThis.throw("Image: {s}", .{@errorName(err)});
-                };
+                const out = try image.encodeForBody(globalThis);
                 var blob = Blob.init(out.bytes, bun.default_allocator, globalThis);
                 blob.content_type = out.mime;
                 blob.content_type_was_set = true;

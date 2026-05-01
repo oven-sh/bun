@@ -453,6 +453,44 @@ const fixture = [
     ),
 ];
 
+describe("Proxy prototype with throwing traps", () => {
+  it("getPrototypeOf trap that throws", () => {
+    const obj = {};
+    Object.setPrototypeOf(
+      obj,
+      new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            throw new Error("nope");
+          },
+        },
+      ),
+    );
+    expect(Bun.inspect(obj)).toBe("{}");
+  });
+
+  it("get trap that throws", () => {
+    const obj = {};
+    const proto = {};
+    Object.defineProperty(proto, "x", {
+      get() {
+        throw new Error("getter throw");
+      },
+      enumerable: true,
+    });
+    Object.setPrototypeOf(
+      obj,
+      new Proxy(proto, {
+        get(t, k, r) {
+          return Reflect.get(t, k, r);
+        },
+      }),
+    );
+    expect(Bun.inspect(obj)).toBe("{}");
+  });
+});
+
 describe("crash testing", () => {
   for (let input of fixture) {
     it(`inspecting "${input.toString().slice(0, 20).replaceAll("\n", "\\n")}" doesn't crash`, async () => {

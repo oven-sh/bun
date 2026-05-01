@@ -78,8 +78,8 @@ pub fn start(this: *PipeReader, process: *Subprocess, event_loop: *jsc.EventLoop
         .result => {
             if (comptime Environment.isPosix) {
                 if (this.state == .err) {
-                    // onReaderError already ran and tore everything down;
-                    // the handle is closed and the poll is gone.
+                    // onReaderError already ran; the guard deref on return
+                    // will drop the last ref and deinit() closes the handle.
                     return .success;
                 }
                 const poll = this.reader.handle.poll;

@@ -1218,16 +1218,40 @@ pub threadlocal var join_buf: [4096]u8 = undefined;
 pub fn join(_parts: anytype, comptime platform: Platform) []const u8 {
     return joinStringBuf(&join_buf, _parts, platform);
 }
-pub fn joinZ(_parts: anytype, comptime platform: Platform) [:0]const u8 {
+pub fn joinZ(_parts: anytype, comptime platform: Platform) error{NameTooLong}![:0]const u8 {
     return joinZBuf(&join_buf, _parts, platform);
 }
 
-pub fn joinZBuf(buf: []u8, _parts: anytype, comptime platform: Platform) [:0]const u8 {
-    const joined = joinStringBuf(buf[0 .. buf.len - 1], _parts, platform);
-    assert(bun.isSliceInBuffer(joined, buf));
-    const start_offset = @intFromPtr(joined.ptr) - @intFromPtr(buf.ptr);
-    buf[joined.len + start_offset] = 0;
-    return buf[start_offset..][0..joined.len :0];
+/// Join path `_parts` into `buf` as a null-terminated string. Returns
+/// `error.NameTooLong` if the *normalized* result (plus null terminator) does
+/// not fit in `buf`. `..` segments are accounted for: a path whose
+/// unnormalized length exceeds `buf.len` but normalizes down will succeed.
+pub fn joinZBuf(buf: []u8, _parts: anytype, comptime platform: Platform) error{NameTooLong}![:0]const u8 {
+    // Upper-bound the unnormalized joined length. Normalization never grows
+    // the string beyond this (it only collapses `.`/`..`/separators), so this
+    // bounds the output too.
+    var upper: usize = 2; // covers null terminator + minimum "." output
+    for (_parts) |part| upper += part.len + 1;
+
+    // Fast path: the upper bound fits in buf, so joinStringBuf cannot overflow it.
+    if (upper <= buf.len) {
+        const joined = joinStringBuf(buf[0 .. buf.len - 1], _parts, platform);
+        assert(bun.isSliceInBuffer(joined, buf));
+        const start_offset = @intFromPtr(joined.ptr) - @intFromPtr(buf.ptr);
+        buf[joined.len + start_offset] = 0;
+        return buf[start_offset..][0..joined.len :0];
+    }
+
+    // Slow path: parts may overflow buf as-is, but normalization may shrink
+    // them enough to fit. Join into a heap scratch, then check the normalized
+    // length against buf.
+    const scratch = bun.handleOom(bun.default_allocator.alloc(u8, upper));
+    defer bun.default_allocator.free(scratch);
+    const joined = joinStringBuf(scratch, _parts, platform);
+    if (joined.len + 1 > buf.len) return error.NameTooLong;
+    bun.copy(u8, buf, joined);
+    buf[joined.len] = 0;
+    return buf[0..joined.len :0];
 }
 pub fn joinStringBuf(buf: []u8, parts: anytype, comptime platform: Platform) []const u8 {
     return joinStringBufT(u8, buf, parts, platform);

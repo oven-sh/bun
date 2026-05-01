@@ -448,7 +448,8 @@ pub const ShellCpTask = struct {
                 this.cwd_path[0..],
                 this.src[0..],
             };
-            break :brk ResolvePath.joinZ(parts, .auto);
+            break :brk ResolvePath.joinZ(parts, .auto) catch
+                return bun.shell.ShellErr.newSys(Syscall.Error.fromCode(.NAMETOOLONG, .copyfile).withPath(this.src));
         };
         var tgt: [:0]const u8 = brk: {
             if (ResolvePath.Platform.auto.isAbsolute(this.tgt)) break :brk this.tgt;
@@ -456,7 +457,8 @@ pub const ShellCpTask = struct {
                 this.cwd_path[0..],
                 this.tgt[0..],
             };
-            break :brk ResolvePath.joinZBuf(buf2[0..bun.MAX_PATH_BYTES], parts, .auto);
+            break :brk ResolvePath.joinZBuf(buf2[0..bun.MAX_PATH_BYTES], parts, .auto) catch
+                return bun.shell.ShellErr.newSys(Syscall.Error.fromCode(.NAMETOOLONG, .copyfile).withPath(this.tgt));
         };
 
         // Cases:
@@ -514,7 +516,8 @@ pub const ShellCpTask = struct {
                     tgt[0..tgt.len],
                     basename,
                 };
-                tgt = ResolvePath.joinZBuf(buf3[0..bun.MAX_PATH_BYTES], parts, .auto);
+                tgt = ResolvePath.joinZBuf(buf3[0..bun.MAX_PATH_BYTES], parts, .auto) catch
+                    return bun.shell.ShellErr.newSys(Syscall.Error.fromCode(.NAMETOOLONG, .copyfile).withPath(this.tgt));
             } else if (this.operands == 2) {
                 // source_dir -> new_target_dir
             } else {
@@ -532,7 +535,8 @@ pub const ShellCpTask = struct {
                 tgt[0..tgt.len],
                 basename,
             };
-            tgt = ResolvePath.joinZBuf(buf3[0..bun.MAX_PATH_BYTES], parts, .auto);
+            tgt = ResolvePath.joinZBuf(buf3[0..bun.MAX_PATH_BYTES], parts, .auto) catch
+                return bun.shell.ShellErr.newSys(Syscall.Error.fromCode(.NAMETOOLONG, .copyfile).withPath(this.tgt));
             copying_many = true;
         }
 

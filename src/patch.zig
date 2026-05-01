@@ -76,7 +76,7 @@ pub const PatchFile = struct {
                         const path_to_make = bun.path.joinZ(&[_][]const u8{
                             abs_patch_dir,
                             todir,
-                        }, .auto);
+                        }, .auto) catch return bun.sys.Error.fromCode(.NAMETOOLONG, .mkdir).withoutPath();
                         var nodefs = bun.api.node.fs.NodeFS{};
                         if (nodefs.mkdirRecursive(.{
                             .path = .{ .string = bun.PathString.init(path_to_make) },
@@ -179,7 +179,8 @@ pub const PatchFile = struct {
                             .err => |e| return e.withoutPath(),
                         };
                         var buf: bun.PathBuffer = undefined;
-                        const joined_absfilepath = bun.path.joinZBuf(&buf, &[_][]const u8{ absfilepath, filepath }, .auto);
+                        const joined_absfilepath = bun.path.joinZBuf(&buf, &[_][]const u8{ absfilepath, filepath }, .auto) catch
+                            return bun.sys.Error.fromCode(.NAMETOOLONG, .open).withoutPath();
                         const fd = switch (bun.sys.open(joined_absfilepath, bun.O.RDWR, 0)) {
                             .err => |e| return e.withoutPath(),
                             .result => |f| f,
@@ -219,7 +220,8 @@ pub const PatchFile = struct {
         else
             bun.sys.stat(
                 switch (state.patchDirAbsPath(patch_dir)) {
-                    .result => |p| bun.path.joinZ(&[_][]const u8{ p, file_path }, .auto),
+                    .result => |p| bun.path.joinZ(&[_][]const u8{ p, file_path }, .auto) catch
+                        return .{ .err = bun.sys.Error.fromCode(.NAMETOOLONG, .stat).withPath(file_path) },
                     .err => |e| return .{ .err = e },
                 },
             )) {

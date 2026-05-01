@@ -219,7 +219,16 @@ pub const ShellTouchTask = struct {
     fn runFromThreadPool(task: *jsc.WorkPoolTask) void {
         var this: *ShellTouchTask = @fieldParentPtr("task", task);
         debug("{f} runFromThreadPool", .{this});
+        this.runFromThreadPoolImpl();
 
+        if (this.event_loop == .js) {
+            this.event_loop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
+        } else {
+            this.event_loop.mini.enqueueTaskConcurrent(this.concurrent_task.mini.from(this, "runFromMainThreadMini"));
+        }
+    }
+
+    fn runFromThreadPoolImpl(this: *ShellTouchTask) void {
         // We have to give an absolute path
         const filepath: [:0]const u8 = brk: {
             if (ResolvePath.Platform.auto.isAbsolute(this.filepath)) break :brk this.filepath;
@@ -227,7 +236,10 @@ pub const ShellTouchTask = struct {
                 this.cwd_path[0..],
                 this.filepath[0..],
             };
-            break :brk ResolvePath.joinZ(parts, .auto);
+            break :brk ResolvePath.joinZ(parts, .auto) catch {
+                this.err = Syscall.Error.fromCode(.NAMETOOLONG, .open).withPath(this.filepath).toShellSystemError();
+                return;
+            };
         };
 
         var node_fs = jsc.Node.fs.NodeFS{};
@@ -257,12 +269,6 @@ pub const ShellTouchTask = struct {
                 }
             }
             this.err = err.withPath(filepath).toShellSystemError();
-        }
-
-        if (this.event_loop == .js) {
-            this.event_loop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
-        } else {
-            this.event_loop.mini.enqueueTaskConcurrent(this.concurrent_task.mini.from(this, "runFromMainThreadMini"));
         }
     }
 };

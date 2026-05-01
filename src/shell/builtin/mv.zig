@@ -122,7 +122,11 @@ pub const ShellMvBatchedTask = struct {
                 const target_path = ResolvePath.joinZ(&[_][]const u8{
                     this.target,
                     ResolvePath.basename(src),
-                }, .auto);
+                }, .auto) catch {
+                    this.err = e.withPath(bun.handleOom(bun.default_allocator.dupeZ(u8, this.target)));
+                    this.err_path_owned = true;
+                    return false;
+                };
 
                 this.err = e.withPath(bun.handleOom(bun.default_allocator.dupeZ(u8, target_path[0..])));
                 this.err_path_owned = true;

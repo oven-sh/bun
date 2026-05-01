@@ -16,6 +16,9 @@ import { bunEnv, bunExe, describeWithContainer, isDockerEnabled } from "harness"
 import { existsSync } from "node:fs";
 import path from "path";
 
+// Paths where a UNIX-socket-accessible MySQL/MariaDB might listen.
+const SOCKET_CANDIDATES = ["/run/mysqld/mysqld.sock", "/var/run/mysqld/mysqld.sock", "/tmp/mysql.sock"];
+
 const fixture = path.join(import.meta.dir, "sql-mysql-raw-length-prefix.fixture.ts");
 
 async function runFixture(url: string, caPath = process.env.CA_PATH ?? "") {
@@ -68,10 +71,38 @@ function assertFixtureOutput(stdout: string, stderr: string, exitCode: number) {
   expect(exitCode).toBe(0);
 }
 
+// If a MariaDB/MySQL daemon is installed but not running (the case in the
+// sandboxed gate container that has /var/lib/mysql populated but no active
+// daemon), start it as a detached background process and wait for the socket
+// to appear. Returns the path to the socket on success, or null otherwise.
+async function startLocalMariadb(): Promise<string | null> {
+  const mysqldSafe = ["/usr/bin/mysqld_safe", "/usr/local/bin/mysqld_safe"].find(p => existsSync(p));
+  if (!mysqldSafe) return null;
+  if (!existsSync("/var/lib/mysql")) return null;
+
+  // Detach stdout/stderr so mysqld_safe keeps running after this test exits.
+  const proc = Bun.spawn({
+    cmd: [mysqldSafe, "--user=mysql", "--datadir=/var/lib/mysql"],
+    stdout: "ignore",
+    stderr: "ignore",
+    stdin: "ignore",
+  });
+  proc.unref();
+
+  // Poll up to 20 seconds for the socket to appear.
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    const socket = SOCKET_CANDIDATES.find(p => existsSync(p));
+    if (socket) return socket;
+    await Bun.sleep(250);
+  }
+  return null;
+}
+
 // Return a working MYSQL_URL string, or null if no MySQL is reachable at all.
 // Tries MYSQL_URL, the sibling-test convention, then bootstraps via a UNIX
-// socket (the sandboxed gate container has MariaDB running as root via
-// /run/mysqld/mysqld.sock but no pre-existing TCP user).
+// socket — starting a local MariaDB if its binary and datadir are present
+// but not running (the case in the sandboxed gate container).
 async function discoverMysqlUrl(): Promise<string | null> {
   // If MYSQL_URL is set, trust it and hand it to runFixture — the subprocess
   // picks up CA_PATH for TLS URLs, which a plain `new SQL({ url })` probe here
@@ -87,10 +118,12 @@ async function discoverMysqlUrl(): Promise<string | null> {
     return url;
   } catch {}
 
-  // Last resort: bootstrap bun@%/bun_sql_test via root over UNIX socket.
-  const sockets = ["/run/mysqld/mysqld.sock", "/var/run/mysqld/mysqld.sock", "/tmp/mysql.sock"];
-  const socket = sockets.find(p => existsSync(p));
+  // Find an existing socket, or start MariaDB ourselves if its binary/datadir
+  // is installed but not running.
+  let socket = SOCKET_CANDIDATES.find(p => existsSync(p)) ?? (await startLocalMariadb());
   if (!socket) return null;
+
+  // Bootstrap bun@%/bun_sql_test via root over UNIX socket.
   try {
     await using root = new SQL({ adapter: "mysql", path: socket, user: "root", database: "mysql", max: 1 });
     await root.unsafe("CREATE DATABASE IF NOT EXISTS bun_sql_test");

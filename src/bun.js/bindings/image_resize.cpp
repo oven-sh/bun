@@ -370,7 +370,7 @@ int buildWeights(int kind, int32_t src_len, int32_t dst_len,
 // Stack-with-heap-fallback for the small per-axis tables. spans + weights for
 // a typical thumbnail (≤ 800 px, lanczos3 at 4× downscale ≈ 26 taps) fits in
 // well under 32 KB; only very large or extreme-ratio outputs spill to malloc.
-template <typename T, size_t N>
+template<typename T, size_t N>
 struct StackOr {
     alignas(16) T stack[N];
     T* p;

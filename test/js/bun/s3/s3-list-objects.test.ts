@@ -1073,6 +1073,15 @@ describe.concurrent("S3 - List Objects", () => {
       expect(error.code).toBe("ERR_S3_MISSING_CREDENTIALS");
     }
   });
+
+  it.each(["prefix", "delimiter", "continuationToken", "startAfter"])(
+    "should not panic when %s is longer than 1024 bytes when encoded",
+    async key => {
+      // S3 keys may be up to 1024 bytes; percent-encoding can triple that.
+      const value = Buffer.alloc(1024, " ").toString();
+      await expect(new S3Client().list({ [key]: value })).rejects.toThrow();
+    },
+  );
 });
 
 const optionsFromEnv: S3Options = {

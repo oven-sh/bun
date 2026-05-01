@@ -10,8 +10,10 @@
 // (docker-compose MySQL) and in sandboxed environments that have a MySQL
 // reachable on localhost but no docker daemon.
 
+import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, describeWithContainer, isDockerEnabled } from "harness";
+import { existsSync } from "node:fs";
 import path from "path";
 
 const fixture = path.join(import.meta.dir, "sql-mysql-raw-length-prefix.fixture.ts");
@@ -66,6 +68,48 @@ function assertFixtureOutput(stdout: string, stderr: string, exitCode: number) {
   expect(exitCode).toBe(0);
 }
 
+// Return a working MYSQL_URL string, or null if no MySQL is reachable at all.
+// Tries MYSQL_URL, the sibling-test convention, then bootstraps via a UNIX
+// socket (the sandboxed gate container has MariaDB running as root via
+// /run/mysqld/mysqld.sock but no pre-existing TCP user).
+async function discoverMysqlUrl(): Promise<string | null> {
+  const candidates = [process.env.MYSQL_URL, "mysql://bun@127.0.0.1:3306/bun_sql_test"].filter(
+    (u): u is string => !!u,
+  );
+  for (const url of candidates) {
+    try {
+      await using sql = new SQL({ url, max: 1 });
+      await sql`SELECT 1`;
+      return url;
+    } catch {}
+  }
+  // Last resort: bootstrap bun@%/bun_sql_test via root over UNIX socket.
+  const sockets = ["/run/mysqld/mysqld.sock", "/var/run/mysqld/mysqld.sock", "/tmp/mysql.sock"];
+  const socket = sockets.find(p => existsSync(p));
+  if (!socket) return null;
+  try {
+    await using root = new SQL({ adapter: "mysql", path: socket, user: "root", database: "mysql", max: 1 });
+    await root.unsafe("CREATE DATABASE IF NOT EXISTS bun_sql_test");
+    await root.unsafe("CREATE USER IF NOT EXISTS 'bun'@'%'");
+    await root.unsafe("CREATE USER IF NOT EXISTS 'bun'@'localhost'");
+    await root.unsafe("CREATE USER IF NOT EXISTS 'bun'@'127.0.0.1'");
+    await root.unsafe("GRANT ALL PRIVILEGES ON bun_sql_test.* TO 'bun'@'%'");
+    await root.unsafe("GRANT ALL PRIVILEGES ON bun_sql_test.* TO 'bun'@'localhost'");
+    await root.unsafe("GRANT ALL PRIVILEGES ON bun_sql_test.* TO 'bun'@'127.0.0.1'");
+    await root.unsafe("FLUSH PRIVILEGES");
+  } catch {
+    return null;
+  }
+  const url = "mysql://bun@127.0.0.1:3306/bun_sql_test";
+  try {
+    await using sql = new SQL({ url, max: 1 });
+    await sql`SELECT 1`;
+  } catch {
+    return null;
+  }
+  return url;
+}
+
 if (isDockerEnabled()) {
   describeWithContainer("mysql", { image: "mysql_plain" }, container => {
     test(".raw() on json / varchar returns only the payload (#30039)", async () => {
@@ -76,25 +120,17 @@ if (isDockerEnabled()) {
     });
   });
 } else {
-  // No docker daemon (local sandbox). If a MySQL server is reachable at
-  // MYSQL_URL, exercise the fixture there so the regression is still
-  // covered; otherwise silently skip — the docker branch above owns CI.
-  // Default matches the convention used by sql-mysql-bind-oob.test.ts so
-  // one local-MySQL setup exercises both regressions.
-  const url = process.env.MYSQL_URL || "mysql://bun@127.0.0.1:3306/bun_sql_test";
-
   describe("mysql (local)", () => {
     test(".raw() on json / varchar returns only the payload (#30039)", async () => {
-      const { stdout, stderr, exitCode } = await runFixture(url);
-      if (!stdout.startsWith("CONNECTED")) {
+      const url = await discoverMysqlUrl();
+      if (!url) {
         if (process.env.MYSQL_URL) {
-          throw new Error(
-            `sql-mysql-raw-length-prefix: MYSQL_URL was provided but fixture never reached CONNECTED\nstdout:\n${stdout}\nstderr:\n${stderr}`,
-          );
+          throw new Error(`sql-mysql-raw-length-prefix: MYSQL_URL=${process.env.MYSQL_URL} is not reachable`);
         }
-        console.warn("sql-mysql-raw-length-prefix: no MySQL reachable at " + url + "; skipping assertions");
+        console.warn("sql-mysql-raw-length-prefix: no MySQL reachable (no MYSQL_URL, no socket); skipping");
         return;
       }
+      const { stdout, stderr, exitCode } = await runFixture(url);
       assertFixtureOutput(stdout, stderr, exitCode);
     });
   });

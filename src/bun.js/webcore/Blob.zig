@@ -4115,7 +4115,8 @@ fn fromJSJoinParts(
             var iter = try jsc.JSArrayIterator.init(top, global);
             try resolved.ensureTotalCapacityPrecise(iter.len);
             while (try iter.next()) |item| {
-                if (item.isUndefinedOrNull()) continue;
+                // undefined/null fall through to toJSString → "undefined"/"null",
+                // matching WebIDL USVString coercion (and Node/browsers).
                 const r = try fromJSResolvePart(global, item);
                 marked.append(r);
                 resolved.appendAssumeCapacity(r);

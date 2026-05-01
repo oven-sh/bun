@@ -42,7 +42,6 @@ pub const SocketGroup = extern struct {
         on_connect_error: ?*const fn (*us_socket_t, c_int) callconv(.c) ?*us_socket_t = null,
         on_connecting_error: ?*const fn (*ConnectingSocket, c_int) callconv(.c) ?*ConnectingSocket = null,
         on_handshake: ?*const fn (*us_socket_t, c_int, uws.us_bun_verify_error_t, ?*anyopaque) callconv(.c) void = null,
-        is_low_prio: ?*const fn (*us_socket_t) callconv(.c) c_int = null,
     };
 
     comptime {
@@ -50,7 +49,7 @@ pub const SocketGroup = extern struct {
         // 9 ptrs + u32 + u16 + 3×u8, padded to 8-byte alignment.
         if (@sizeOf(SocketGroup) != 9 * @sizeOf(*anyopaque) + 16)
             @compileError("SocketGroup layout drifted from us_socket_group_t");
-        if (@sizeOf(VTable) != 12 * @sizeOf(*anyopaque))
+        if (@sizeOf(VTable) != 11 * @sizeOf(*anyopaque))
             @compileError("VTable layout drifted from us_socket_vtable_t");
     }
 

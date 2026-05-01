@@ -20,7 +20,6 @@ comptime {
     _ = us_dispatch_connect_error;
     _ = us_dispatch_connecting_error;
     _ = us_dispatch_handshake;
-    _ = us_dispatch_is_low_prio;
     _ = us_dispatch_ssl_raw_tap;
 }
 
@@ -116,9 +115,6 @@ export fn us_dispatch_connecting_error(c: *ConnectingSocket, code: c_int) ?*Conn
 }
 export fn us_dispatch_handshake(s: *us_socket_t, ok: c_int, err: uws.us_bun_verify_error_t) void {
     if (vt(s).on_handshake) |f| f(s, ok, err, null);
-}
-export fn us_dispatch_is_low_prio(s: *us_socket_t) c_int {
-    return if (vt(s).is_low_prio) |f| f(s) else 0;
 }
 
 /// Ciphertext tap for `socket.upgradeTLS()` — fires on the `[raw, _]` half of

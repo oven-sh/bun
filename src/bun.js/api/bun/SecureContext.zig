@@ -6,9 +6,12 @@
 //! refcount is the only refcount and a socket safely outlives a GC'd
 //! SecureContext.
 //!
-//! `tls.ts` memoises `createSecureContext()` by config hash, so the common
-//! "one config, thousands of connections" pattern allocates one of these and
-//! one `SSL_CTX` total instead of one per connection.
+//! `intern()` memoises by config digest at two levels: a `WeakGCMap` on the
+//! global (same digest → same `JSSecureContext` while alive) and the per-VM
+//! native `SSLContextCache` (same digest → same `SSL_CTX*` regardless of which
+//! consumer asked). The "one config, thousands of connections" pattern
+//! allocates one of these and one `SSL_CTX` total — `tls.ts` no longer hashes
+//! in JS.
 const SecureContext = @This();
 
 pub const js = jsc.Codegen.JSSecureContext;
@@ -17,6 +20,10 @@ pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 
 ctx: *BoringSSL.SSL_CTX,
+/// `BunSocketContextOptions.digest()` — exactly the fields that reach
+/// `us_ssl_ctx_from_options`. Stored so an `intern()` WeakGCMap hit (keyed by
+/// the low 64 bits) can do a full content-equality check before reusing.
+digest: [32]u8,
 /// Approximate cert/key/CA byte length plus the BoringSSL `SSL_CTX` floor
 /// (~50 KB), so the GC can account for the off-heap allocation.
 extra_memory: usize,
@@ -41,8 +48,12 @@ pub fn constructor(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
 /// `us_ssl_ctx_from_options` so that override has roots to validate against.
 pub fn create(global: *jsc.JSGlobalObject, config: *const SSLConfig) bun.JSError!*SecureContext {
     const ctx_opts = config.asUSockets();
+    return createWithDigest(global, ctx_opts, ctx_opts.digest());
+}
+
+fn createWithDigest(global: *jsc.JSGlobalObject, ctx_opts: uws.SocketContext.BunSocketContextOptions, d: [32]u8) bun.JSError!*SecureContext {
     var err: uws.create_bun_socket_error_t = .none;
-    const ctx = ctx_opts.createSSLContext(&err) orelse {
+    const ctx = global.bunVM().rareData().sslCtxCache().getOrCreateDigest(ctx_opts, d, &err) orelse {
         // `err` is only set for the input-validation paths (bad PEM, missing
         // file, …). When BoringSSL itself fails (e.g. unsupported curve) the
         // enum is still `.none`; surface the library error stack instead of
@@ -56,8 +67,43 @@ pub fn create(global: *jsc.JSGlobalObject, config: *const SSLConfig) bun.JSError
     };
     return bun.new(SecureContext, .{
         .ctx = ctx,
+        .digest = d,
         .extra_memory = ctx_opts.approxCertBytes() + ssl_ctx_base_cost,
     });
+}
+
+/// `tls.createSecureContext(opts)` entry point. WeakGCMap-memoised by config
+/// digest so identical configs return the same `JSSecureContext` cell while
+/// it's alive; falls through to `create()` (which itself hits the native
+/// `SSLContextCache`) on miss. Returning the same cell is what makes
+/// `secureContext === createSecureContext(opts)` hold and lets `Listener.zig`
+/// pointer-compare without a JS-side WeakRef map.
+pub fn intern(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const args = callframe.arguments();
+    const opts = if (args.len > 0) args[0] else .js_undefined;
+
+    var config = (try SSLConfig.fromJS(global.bunVM(), global, opts)) orelse SSLConfig.zero;
+    defer config.deinit();
+
+    const ctx_opts = config.asUSockets();
+    const d = ctx_opts.digest();
+    const key = std.mem.readInt(u64, d[0..8], .little);
+
+    const cached = cpp.Bun__SecureContextCache__get(global, key);
+    if (cached != .zero) {
+        if (fromJS(cached)) |existing| {
+            // 64-bit key collision is ~2⁻⁶⁴ but a false hit hands the wrong
+            // cert to a connection. Full-digest compare is 32 bytes; cheap.
+            if (bun.strings.eqlLong(&existing.digest, &d, false)) {
+                return cached;
+            }
+        }
+    }
+
+    const sc = try createWithDigest(global, ctx_opts, d);
+    const value = sc.toJS(global);
+    cpp.Bun__SecureContextCache__set(global, key, value);
+    return value;
 }
 
 /// `SSL_CTX_up_ref` and return — for callers that want to outlive this
@@ -86,6 +132,13 @@ pub fn jsLiveCount(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JS
 const ssl_ctx_base_cost: usize = 50 * 1024;
 
 pub const c = uws.SocketContext.c;
+
+const cpp = struct {
+    pub extern fn Bun__SecureContextCache__get(*jsc.JSGlobalObject, u64) jsc.JSValue;
+    pub extern fn Bun__SecureContextCache__set(*jsc.JSGlobalObject, u64, jsc.JSValue) void;
+};
+
+const std = @import("std");
 
 const bun = @import("bun");
 const jsc = bun.jsc;

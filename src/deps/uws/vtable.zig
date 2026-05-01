@@ -24,7 +24,6 @@
 //!   pub fn onConnectError(ext, *us_socket_t, code: i32) void
 //!   pub fn onConnectingError(*ConnectingSocket, code: i32) void
 //!   pub fn onHandshake(ext, *us_socket_t, ok: bool, err: us_bun_verify_error_t) void
-//!   pub fn isLowPrio(ext, *us_socket_t) bool
 
 /// Produce a `*const VTable` for `H`. The result is a comptime address into
 /// `.rodata`; safe to store in any number of `SocketGroup`s.
@@ -43,7 +42,6 @@ pub fn make(comptime H: type) *const VTable {
             .on_connect_error = if (@hasDecl(H, "onConnectError")) T.on_connect_error else null,
             .on_connecting_error = if (@hasDecl(H, "onConnectingError")) T.on_connecting_error else null,
             .on_handshake = if (@hasDecl(H, "onHandshake")) T.on_handshake else null,
-            .is_low_prio = if (@hasDecl(H, "isLowPrio")) T.is_low_prio else null,
         };
     }).vt;
 }
@@ -108,10 +106,6 @@ pub fn Trampolines(comptime H: type) type {
         }
         pub fn on_handshake(s: *us_socket_t, ok: c_int, err: uws.us_bun_verify_error_t, _: ?*anyopaque) callconv(.c) void {
             call(s, H.onHandshake, .{ ok != 0, err });
-        }
-        pub fn is_low_prio(s: *us_socket_t) callconv(.c) c_int {
-            if (comptime has_ext) return @intFromBool(H.isLowPrio(s.ext(@typeInfo(E).pointer.child), s));
-            return @intFromBool(H.isLowPrio(s));
         }
     };
 }

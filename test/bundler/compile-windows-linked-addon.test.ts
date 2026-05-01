@@ -256,7 +256,7 @@ describe.skipIf(!isWindows)("bun build --compile native addon static link", () =
       const blobLen = Number(bunL.readBigUInt64LE(0));
       expect(blobLen).toBeGreaterThan(12);
       expect(bunL.readUInt32LE(8)).toBe(0x4b4e4c42); // 'BLNK'
-      expect(bunL.readUInt32LE(12)).toBe(1); // version
+      expect(bunL.readUInt32LE(12)).toBe(2); // version
       expect(bunL.readUInt32LE(16)).toBe(1); // one addon
       const nameLen = bunL.readUInt32LE(20);
       const name = bunL.subarray(24, 24 + nameLen).toString("utf8");
@@ -274,6 +274,9 @@ describe.skipIf(!isWindows)("bun build --compile native addon static link", () =
       const preferredBase = bunL.readBigUInt64LE(p);
       p += 8;
       p += 8; // pdata_rva + pdata_count (none in the fixture)
+      const tlsDirRva = bunL.readUInt32LE(p);
+      p += 4;
+      expect(tlsDirRva).toBe(0); // fixture has no IMAGE_TLS_DIRECTORY
       const exportRegister = bunL.readUInt32LE(p);
       p += 12; // skip the other two export slots
       const nSections = bunL.readUInt32LE(p);
@@ -352,25 +355,38 @@ describe.skipIf(!isWindows)("bun build --compile native addon static link", () =
   // a real addon is available.
 
   test(
-    "an addon with a TLS directory is skipped and falls back to opaque bytes",
+    "an addon with a TLS directory is merged and its tls_dir_rva is captured",
     async () => {
-      // addLinkedAddon() refuses static TLS and returns null; the build
-      // must still succeed with the raw addon in `.bun` for the runtime
-      // tempfile fallback.
+      // Implicit TLS is handled at runtime now (the bind assigns a
+      // fresh TLS index, installs a per-thread template copy, and our
+      // .CRT$XLB callback repeats that for every new thread). The
+      // build only needs to record where the IMAGE_TLS_DIRECTORY64
+      // lives — its VA fields are relocated like everything else.
       const addon = makeTinyPEDll();
-      // Set DataDirectory[TLS].size to something nonzero.
       const e_lfanew = addon.readUInt32LE(0x3c);
       const ddOff = e_lfanew + 24 + 112;
-      addon.writeUInt32LE(0x1000, ddOff + 9 * 8); // rva (bogus but nonzero)
-      addon.writeUInt32LE(0x28, ddOff + 9 * 8 + 4); // size
+      // Point DataDirectory[TLS] at 40 zero bytes inside the section:
+      // a well-formed directory shape with every VA field zero (the
+      // runtime check catches those, not the build).
+      addon.writeUInt32LE(0x1000 + 0x150, ddOff + 9 * 8);
+      addon.writeUInt32LE(40, ddOff + 9 * 8 + 4);
 
       using dir = tempDir("pe-linked-addon-tls", projectFiles(addon));
       const out = await compileForWindows(String(dir));
 
       const names = parsePESections(out).map(s => s.name);
       expect(names).toContain(".bun");
-      expect(names).not.toContain(".bunL");
-      expect(names).not.toContain(".bn0");
+      expect(names).toContain(".bunL");
+      expect(names).toContain(".bn0");
+
+      // tls_dir_rva in .bunL should be bn0.virtualAddress + 0x1150.
+      const bn0 = findSection(out, ".bn0")!;
+      const bunL = readSectionData(out, ".bunL");
+      const nameLen = bunL.readUInt32LE(20);
+      // rva_base(4) image_size(4) entry_point(4) preferred_base(8)
+      // pdata_rva(4) pdata_count(4) → tls_dir_rva
+      const tlsOff = 24 + nameLen + 4 + 4 + 4 + 8 + 4 + 4;
+      expect(bunL.readUInt32LE(tlsOff)).toBe(bn0.virtualAddress + 0x1150);
     },
     timeout,
   );

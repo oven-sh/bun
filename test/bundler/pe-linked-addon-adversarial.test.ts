@@ -211,10 +211,10 @@ describe("pe.addLinkedAddon adversarial input", () => {
     expect(expectSafe(res)).toBe("merged");
     // rvaBase lands after the host's single section, section-aligned.
     expect(res.rvaBase).toBe(2 * SECT_ALIGN);
-    // Metadata starts with 'BLNK' magic + version 1 + count 1.
+    // Metadata starts with 'BLNK' magic + version 2 + count 1.
     const m = Buffer.from(res.metadata!);
     expect(m.readUInt32LE(0)).toBe(0x4b4e4c42);
-    expect(m.readUInt32LE(4)).toBe(1);
+    expect(m.readUInt32LE(4)).toBe(2);
     expect(m.readUInt32LE(8)).toBe(1);
   });
 
@@ -260,12 +260,41 @@ describe("pe.addLinkedAddon adversarial input", () => {
     expect(r.skipped).toBe(true);
   });
 
-  test("addon with a TLS directory is skipped", () => {
+  test("addon with a well-formed TLS directory is merged (TLS handled at runtime)", () => {
+    // Implicit TLS is no longer a merge-time skip: the build captures
+    // the directory RVA and the runtime does the LdrpHandleTlsData
+    // dance itself. Point DataDirectory[TLS] at 40 zero bytes inside
+    // the section — a valid-shape IMAGE_TLS_DIRECTORY64 with every VA
+    // field zero — so the build-time bounds check accepts it.
     const r = peLinkAddon(
       makeHost(),
       makeAddon(b => {
-        b.writeUInt32LE(SECT_ALIGN + 0x10, DDOFF + 9 * 8);
-        b.writeUInt32LE(0x28, DDOFF + 9 * 8 + 4);
+        b.writeUInt32LE(SECT_ALIGN + 0x150, DDOFF + 9 * 8);
+        b.writeUInt32LE(40, DDOFF + 9 * 8 + 4);
+      }),
+      "x",
+    );
+    expect(expectSafe(r)).toBe("merged");
+  });
+
+  test("addon with a TLS directory whose RVA lies past SizeOfImage is skipped", () => {
+    const r = peLinkAddon(
+      makeHost(),
+      makeAddon(b => {
+        b.writeUInt32LE(0x7fff0000, DDOFF + 9 * 8);
+        b.writeUInt32LE(40, DDOFF + 9 * 8 + 4);
+      }),
+      "x",
+    );
+    expect(r.skipped).toBe(true);
+  });
+
+  test("addon with a truncated TLS directory (size < 40) is skipped", () => {
+    const r = peLinkAddon(
+      makeHost(),
+      makeAddon(b => {
+        b.writeUInt32LE(SECT_ALIGN + 0x150, DDOFF + 9 * 8);
+        b.writeUInt32LE(16, DDOFF + 9 * 8 + 4);
       }),
       "x",
     );

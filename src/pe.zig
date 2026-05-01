@@ -678,6 +678,17 @@ pub const PEFile = struct {
         /// unwind correctly.
         pdata_rva: u32,
         pdata_count: u32,
+        /// bun-relative RVA of the addon's `IMAGE_TLS_DIRECTORY64`, or 0
+        /// when the addon has no static TLS. The directory's VA fields
+        /// (`StartAddressOfRawData`, `AddressOfIndex`, `AddressOfCallBacks`,
+        /// …) are absolute addresses covered by `.reloc`, so by the time
+        /// the runtime reads them they already point at the right places
+        /// inside the merged section. The runtime assigns a fresh
+        /// implicit-TLS index, writes it to `*AddressOfIndex`, installs a
+        /// per-thread template copy in `TEB->ThreadLocalStoragePointer`,
+        /// and runs the callback array — the same work the loader's
+        /// `LdrpHandleTlsData` would have done for a real DLL.
+        tls_dir_rva: u32,
         /// bun-relative RVAs of the symbols `process.dlopen` needs.  Zero
         /// means "not exported by this addon".
         export_register: u32, // napi_register_module_v1
@@ -833,9 +844,9 @@ pub const PEFile = struct {
     ) !?LinkedAddon {
         const addon = AddonView.init(addon_bytes) catch return null;
 
-        // Refuse anything we would get wrong. The extract-to-tempfile path
-        // stays as the behavioural fallback.
-        if (addon.dir(IMAGE_DIRECTORY_ENTRY_TLS).size != 0) return null;
+        // Refuse anything we would get wrong. The extract-to-tempfile
+        // path stays as the behavioural fallback.
+        //
         // Without base relocations we cannot rebase the addon's absolute
         // addresses into bun.exe's image. A DLL built with /FIXED would
         // also fail LoadLibrary unless its preferred base happened to be
@@ -1035,6 +1046,25 @@ pub const PEFile = struct {
             pdata_count = pdata_dir.size / @sizeOf(RuntimeFunction);
         }
 
+        // Implicit TLS. We only need to remember where the
+        // IMAGE_TLS_DIRECTORY64 lives: its VA fields (template span,
+        // AddressOfIndex, AddressOfCallBacks) are absolute addresses
+        // covered by the addon's .reloc, so after the build-time delta
+        // above and the runtime ASLR delta they already resolve into
+        // the merged section. Any malformed directory (past the image,
+        // or smaller than the struct) falls back to tempfile.
+        var tls_dir_rva: u32 = 0;
+        const tls_dir = addon.dir(IMAGE_DIRECTORY_ENTRY_TLS);
+        if (tls_dir.size != 0 or tls_dir.virtual_address != 0) {
+            const TLS_DIR64_SIZE: u32 = 40; // IMAGE_TLS_DIRECTORY64
+            if (tls_dir.size < TLS_DIR64_SIZE or
+                @as(u64, tls_dir.virtual_address) + TLS_DIR64_SIZE > addon_image)
+            {
+                return null;
+            }
+            tls_dir_rva = rva_base + tls_dir.virtual_address;
+        }
+
         // Exports we care about.
         var export_register: u32 = 0;
         var export_api_version: u32 = 0;
@@ -1119,6 +1149,7 @@ pub const PEFile = struct {
             .imports = try imports.toOwnedSlice(),
             .pdata_rva = pdata_rva,
             .pdata_count = pdata_count,
+            .tls_dir_rva = tls_dir_rva,
             .export_register = export_register,
             .export_api_version = export_api_version,
             .export_plugin_name = export_plugin_name,
@@ -1238,7 +1269,7 @@ pub const PEFile = struct {
     /// extraction), so there is no attempt at forward compatibility beyond
     /// the magic+version gate.
     pub const linked_magic: u32 = 0x4B4E4C42; // 'BLNK'
-    pub const linked_version: u32 = 1;
+    pub const linked_version: u32 = 2;
 
     pub fn serializeLinkedAddons(allocator: Allocator, addons: []const LinkedAddon) ![]u8 {
         var buf = std.array_list.Managed(u8).init(allocator);
@@ -1266,6 +1297,7 @@ pub const PEFile = struct {
             try W.u64_(&buf, a.preferred_base);
             try W.u32_(&buf, a.pdata_rva);
             try W.u32_(&buf, a.pdata_count);
+            try W.u32_(&buf, a.tls_dir_rva);
             try W.u32_(&buf, a.export_register);
             try W.u32_(&buf, a.export_api_version);
             try W.u32_(&buf, a.export_plugin_name);

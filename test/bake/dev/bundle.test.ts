@@ -776,3 +776,41 @@ devTest("barrel optimization: two export-from blocks pointing to the same source
     await c.expectMessage("got: function");
   },
 });
+
+// Regression: #28886
+// Consumer has TWO separate `import { X } from 'barrel'` statements for the
+// same barrel. HMR deduplicates the second into the first; the second's
+// import record is marked is_unused=true and never gets its path resolved.
+// Barrel optimization then fails to see the named import from the dedup'd
+// record and marks its target submodule as unused → submodule stays `{}` →
+// the export is `undefined` at runtime.
+devTest("barrel optimization: two import statements from the same barrel (#28886)", {
+  // Flakes on darwin in CI (timing); fix is platform-agnostic, coverage via linux/windows/alpine.
+  skip: ["darwin"],
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { Alpha } from 'barrel-lib';
+      import { Beta } from 'barrel-lib';
+      console.log('got: ' + Alpha() + ' ' + Beta());
+    `,
+    "node_modules/barrel-lib/package.json": JSON.stringify({
+      name: "barrel-lib",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/barrel-lib/index.js": `
+      export { Alpha } from './alpha.js';
+      export { Beta } from './beta.js';
+      export { Gamma } from './gamma.js';
+    `,
+    "node_modules/barrel-lib/alpha.js": `export const Alpha = () => "ALPHA";`,
+    "node_modules/barrel-lib/beta.js": `export const Beta = () => "BETA";`,
+    "node_modules/barrel-lib/gamma.js": `export const Gamma = () => "GAMMA";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("got: ALPHA BETA");
+  },
+});

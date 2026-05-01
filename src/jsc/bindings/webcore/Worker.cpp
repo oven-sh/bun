@@ -38,6 +38,7 @@
 #include <wtf/Scope.h>
 #include "SerializedScriptValue.h"
 #include "ScriptExecutionContext.h"
+#include "BunClientData.h"
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 #include "MessageEvent.h"
@@ -90,6 +91,13 @@ void WebWorker__releaseParentPollRef(void* worker);
 // Free the Zig WebWorker struct. Called from ~Worker.
 void WebWorker__destroy(void* worker);
 
+// Atomic ref/unref of a VM's event loop from any thread. Safe to call with a
+// VM pointer cached at construction time, even concurrently with that VM's
+// teardown (just an atomic inc/dec + wakeup). This is the thread-safe
+// alternative to ScriptExecutionContext::refEventLoop() which dereferences
+// the context pointer.
+void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
+
 } // extern "C"
 // -------------------------------------------------------------------------------------------------
 
@@ -98,6 +106,7 @@ Worker::Worker(ScriptExecutionContext& context, WorkerOptions&& options)
     , ContextDestructionObserver(&context)
     , m_options(WTF::move(options))
     , m_parentContextId(context.identifier())
+    , m_parentBunVM(WebCore::clientData(context.vm())->bunVM)
     , m_clientIdentifier(ScriptExecutionContext::generateIdentifier())
 {
 }
@@ -255,11 +264,12 @@ void Worker::enqueueToWorker(MessageWithMessagePorts&& message)
 
 void Worker::enqueueToParent(MessageWithMessagePorts&& message)
 {
-    auto* context = scriptExecutionContext();
-    if (!context)
-        return;
+    // Runs on the worker thread. Don't touch the parent's ScriptExecutionContext
+    // pointer — it can be destroyed concurrently (documented at dispatchExit's
+    // posting-failure comment). Use the cached m_parentBunVM + the atomic
+    // helper for the ref, and the stable identifier for posting.
     // Ref parent event loop per message (balanced in drainInbox on the parent).
-    context->refEventLoop();
+    Bun__eventLoop__incrementRefConcurrently(m_parentBunVM, 1);
     {
         Locker locker { m_toParent.lock };
         m_toParent.queue.append(WTF::move(message));
@@ -267,8 +277,6 @@ void Worker::enqueueToParent(MessageWithMessagePorts&& message)
             return;
         m_toParent.drainScheduled.store(true, std::memory_order_relaxed);
     }
-    // By stable identifier — this runs on the worker thread, so don't touch
-    // the parent's ScriptExecutionContext pointer directly.
     bool posted = postTaskToParent([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
         protectedThis->drainToParent(context);
     });
@@ -290,7 +298,7 @@ void Worker::enqueueToParent(MessageWithMessagePorts&& message)
 // sender. A sustained producer (e.g. a tight postMessage loop) would otherwise
 // make every per-message pop a contended acquire.
 template<typename Dispatch>
-static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* globalObject, ScriptExecutionContext& context, ScriptExecutionContext* parentContext, Dispatch&& dispatch)
+static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* globalObject, ScriptExecutionContext& context, void* parentBunVM, Dispatch&& dispatch)
 {
     size_t limit;
     Deque<MessageWithMessagePorts> batch;
@@ -321,8 +329,10 @@ static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* gl
             auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), nullptr, WTF::move(ports));
             dispatch(event.event);
             // Balance the per-message refEventLoop taken in enqueueTo{Worker,Parent}.
-            if (parentContext)
-                parentContext->unrefEventLoop();
+            // Uses the cached parent VM + atomic helper so it's safe whether
+            // this runs on the parent thread (drainToParent) or the worker
+            // thread (drainToWorker; parent context may be freed concurrently).
+            Bun__eventLoop__incrementRefConcurrently(parentBunVM, -1);
 
             if (globalObject->drainMicrotasks()) {
                 // Termination pending. Drop the rest — dispatch is a no-op
@@ -331,10 +341,8 @@ static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* gl
                 // the per-message refs the local `batch` still holds;
                 // dispatchExit separately unrefs anything in `inbox.queue`
                 // enqueued after the std::exchange above.
-                if (parentContext) {
-                    for (size_t i = 0; i < batch.size(); i++)
-                        parentContext->unrefEventLoop();
-                }
+                for (size_t i = 0; i < batch.size(); i++)
+                    Bun__eventLoop__incrementRefConcurrently(parentBunVM, -1);
                 return false;
             }
         }
@@ -359,8 +367,11 @@ void Worker::drainToWorker(ScriptExecutionContext& context)
         m_toWorker.drainScheduled.store(false, std::memory_order_relaxed);
         return;
     }
-    auto* parentContext = scriptExecutionContext();
-    bool reschedule = drainInbox(m_toWorker, globalObject, context, parentContext, [&](Event& event) {
+    // drainToWorker runs on the worker thread. Unref via the cached parent
+    // bunVM pointer; dereferencing the parent's ScriptExecutionContext from
+    // this thread would be a UAF if the parent is concurrently being torn
+    // down (nested-worker case — see dispatchExit's posting-failure comment).
+    bool reschedule = drainInbox(m_toWorker, globalObject, context, m_parentBunVM, [&](Event& event) {
         globalObject->globalEventScope->dispatchEvent(event);
     });
     if (reschedule) {
@@ -378,8 +389,9 @@ void Worker::drainToParent(ScriptExecutionContext& context)
         m_toParent.drainScheduled.store(false, std::memory_order_relaxed);
         return;
     }
-    // drainToParent runs on the parent — context itself is the parent context.
-    bool reschedule = drainInbox(m_toParent, globalObject, context, &context, [&](Event& event) {
+    // drainToParent runs on the parent — still use m_parentBunVM for symmetry
+    // with drainToWorker, and because the atomic helper is just as fast.
+    bool reschedule = drainInbox(m_toParent, globalObject, context, m_parentBunVM, [&](Event& event) {
         dispatchEvent(event);
     });
     if (reschedule) {
@@ -561,7 +573,7 @@ bool Worker::dispatchExit(int32_t exitCode)
         m_toWorker.drainScheduled.store(false, std::memory_order_relaxed);
     }
 
-    return postTaskToParent([exitCode, leakedToWorkerRefs, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+    bool posted = postTaskToParent([exitCode, leakedToWorkerRefs, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
         for (size_t i = 0; i < leakedToWorkerRefs; i++)
             context.unrefEventLoop();
         // Closing → dispatch 'close' → Closed. The split lets 'close'/'exit'
@@ -582,6 +594,15 @@ bool Worker::dispatchExit(int32_t exitCode)
         // thread, so ~Worker never runs on the worker thread.
         protectedThis->deref();
     });
+    if (!posted) {
+        // Parent context already torn down (nested-worker case). The ref/poll
+        // leak is documented above as bounded. But unref the queued-message
+        // refs ourselves: they go to the parent VM, which may outlive the
+        // parent context, and the atomic helper is safe from this thread.
+        for (size_t i = 0; i < leakedToWorkerRefs; i++)
+            Bun__eventLoop__incrementRefConcurrently(m_parentBunVM, -1);
+    }
+    return posted;
 }
 
 // ---- extern "C" shims (called from Zig) -------------------------------------

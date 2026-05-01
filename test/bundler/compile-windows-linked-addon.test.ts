@@ -368,10 +368,7 @@ describe.skipIf(!isWindows)("bun build --compile native addon static link", () =
       expect(stderr.trim()).toBe("");
       expect(stdout.trim()).toBe("ok");
       expect(code).toBe(0);
-      expect(
-        readdirSync(tmp),
-        "statically-linked addon must not extract to disk",
-      ).toBeEmpty();
+      expect(readdirSync(tmp), "statically-linked addon must not extract to disk").toBeEmpty();
     },
     timeout,
   );

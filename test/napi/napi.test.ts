@@ -137,10 +137,7 @@ describe.concurrent("napi", () => {
                 ".node addon should be statically linked into the compiled exe",
               ).toBeTrue();
               expect(peHasSection(exe, ".bn0")).toBeTrue();
-              expect(
-                readdirSync(tmpdir),
-                "statically-linked addon should not extract to a temp file",
-              ).toBeEmpty();
+              expect(readdirSync(tmpdir), "statically-linked addon should not extract to a temp file").toBeEmpty();
             }
           },
           10 * 1000,

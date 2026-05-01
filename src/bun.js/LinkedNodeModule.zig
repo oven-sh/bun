@@ -82,8 +82,6 @@ const Reader = struct {
     }
 };
 
-const SectionInfo = bun.pe.PEFile.LinkedAddon.SectionInfo;
-
 /// Parsed view over one addon's entry in the `.bunL` blob. Slices borrow
 /// from the blob (which is loader-mapped for the process lifetime), so no
 /// allocation and no freeing.
@@ -384,7 +382,10 @@ extern "kernel32" fn RtlAddFunctionTable(
 ) callconv(.winapi) w.BOOLEAN;
 
 const std = @import("std");
+
 const bun = @import("bun");
 const Environment = bun.Environment;
+const SectionInfo = bun.pe.PEFile.LinkedAddon.SectionInfo;
+
 const w = std.os.windows;
 const k32 = w.kernel32;

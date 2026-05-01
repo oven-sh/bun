@@ -3,10 +3,10 @@
 import { randomUUIDv7, SQL } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
 import { isDockerEnabled } from "harness";
-import * as dockerCompose from "../../docker/index.ts";
 
 async function getPostgresURL(): Promise<string | null> {
   if (isDockerEnabled()) {
+    const dockerCompose = await import("../../docker/index.ts");
     const info = await dockerCompose.ensure("postgres_plain");
     return `postgres://bun_sql_test@${info.host}:${info.ports[5432]}/bun_sql_test`;
   }
@@ -28,6 +28,16 @@ describe.skipIf(!url)("issue #26809: expose column metadata on SQL results", () 
       { name: "id", type: 23, table: 0, number: 0 },
       { name: "msg", type: 25, table: 0, number: 0 },
     ]);
+  });
+
+  test("columns are available even when no rows are returned", async () => {
+    const result = await sql`select 1::int4 as id, 'hi'::text as msg where false`;
+    expect(result).toHaveLength(0);
+    expect(result.columns).toEqual([
+      { name: "id", type: 23, table: 0, number: 0 },
+      { name: "msg", type: 25, table: 0, number: 0 },
+    ]);
+    expect(result.statement.columns).toBe(result.columns);
   });
 
   test("distinguishes jsonb from text[]", async () => {

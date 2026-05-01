@@ -2962,6 +2962,16 @@ if (isDockerEnabled()) {
         ]);
       });
 
+      test("columns are available even when no rows are returned", async () => {
+        const result = await sql`select 1::int4 as id, 'hi'::text as msg where false`;
+        expect(result).toHaveLength(0);
+        expect(result.columns).toEqual([
+          { name: "id", type: 23, table: 0, number: 0 },
+          { name: "msg", type: 25, table: 0, number: 0 },
+        ]);
+        expect(result.statement.columns).toBe(result.columns);
+      });
+
       test("distinguishes jsonb from text[] (issue #26809)", async () => {
         const result = await sql`select '["a","b"]'::jsonb as data, ARRAY['a','b']::text[] as tags`;
         // Both JS values are arrays, but the type OIDs differ:

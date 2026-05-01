@@ -1,7 +1,7 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
-import { join } from "path";
 import zlib from "node:zlib";
+import { join } from "path";
 
 // ─── Fixture builders ───────────────────────────────────────────────────────
 // Fixtures are generated in-process so the test stays hermetic and we never

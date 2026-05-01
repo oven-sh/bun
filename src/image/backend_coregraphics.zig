@@ -200,6 +200,6 @@ fn load() void {
     available = true;
 }
 
-const std = @import("std");
 const bun = @import("bun");
 const codecs = @import("./codecs.zig");
+const std = @import("std");

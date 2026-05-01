@@ -296,6 +296,6 @@ fn loadFactory() void {
     factory_ptr = @ptrCast(@alignCast(out));
 }
 
-const std = @import("std");
 const bun = @import("bun");
 const codecs = @import("./codecs.zig");
+const std = @import("std");

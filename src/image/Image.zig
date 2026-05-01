@@ -543,8 +543,9 @@ pub const PipelineTask = struct {
 
 // ───────────────────────────── imports ──────────────────────────────────────
 
-const std = @import("std");
-const bun = @import("bun");
-const jsc = bun.jsc;
 const codecs = @import("./codecs.zig");
 const exif = @import("./exif.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const jsc = bun.jsc;

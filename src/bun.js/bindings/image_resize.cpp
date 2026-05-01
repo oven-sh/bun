@@ -268,7 +268,8 @@ double filter(int kind, double x)
 
 double radius(int kind)
 {
-    return kind == 0 ? 0.5 : kind == 1 ? 1.0 : 3.0;
+    return kind == 0 ? 0.5 : kind == 1 ? 1.0
+                                       : 3.0;
 }
 
 // Precompute spans + normalised weights for one axis. Returns max taps so the
@@ -301,7 +302,8 @@ int buildWeights(int kind, int32_t src_len, int32_t dst_len,
         // Normalise so brightness is preserved even where the kernel was
         // clipped at the image edge.
         if (sum != 0.0)
-            for (int32_t k = 0; k < n; k++) w[k] = static_cast<float>(w[k] / sum);
+            for (int32_t k = 0; k < n; k++)
+                w[k] = static_cast<float>(w[k] / sum);
         spans[i] = { start, n };
         if (n > max_n) max_n = n;
     }

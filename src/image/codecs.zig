@@ -9,9 +9,6 @@
 //! and frees the C buffer immediately so the JS layer can hand the bytes to
 //! `JSUint8Array.fromBytes` without a custom finalizer.
 
-const std = @import("std");
-const bun = @import("bun");
-
 /// Optional OS-native backend. `null` on Linux (and any platform we haven't
 /// written one for) so the dispatch in `decode`/`encode` compiles away. The
 /// backend module is only `@import`ed inside the matching arm so non-target
@@ -356,8 +353,6 @@ pub const png = struct {
     }
 };
 
-const quantize = @import("./quantize.zig");
-
 // ───────────────────────────── libwebp ──────────────────────────────────────
 
 pub const webp = struct {
@@ -393,3 +388,7 @@ pub const webp = struct {
         return try bun.default_allocator.dupe(u8, out.?[0..len]);
     }
 };
+
+const bun = @import("bun");
+const quantize = @import("./quantize.zig");
+const std = @import("std");

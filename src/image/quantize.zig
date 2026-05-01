@@ -11,9 +11,6 @@
 //! No dithering. Floyd–Steinberg would be ~40 more lines if it turns out to
 //! matter for the screenshot use case.
 
-const std = @import("std");
-const bun = @import("bun");
-
 pub const Result = struct {
     /// `[colors][4]u8` RGBA palette, `bun.default_allocator`-owned.
     palette: []u8,
@@ -149,3 +146,6 @@ fn shrink(rgba: []const u8, order: []const u32, lo: u32, hi: u32) Box {
     };
     return .{ .lo = lo, .hi = hi, .min = min, .max = max };
 }
+
+const bun = @import("bun");
+const std = @import("std");

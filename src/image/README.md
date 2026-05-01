@@ -1,17 +1,17 @@
 # `Bun.Image`
 
-Sharp-shaped image pipeline. Decode → (auto-orient) → transform* → encode, all
+Sharp-shaped image pipeline. Decode → (auto-orient) → transform\* → encode, all
 off the JS thread.
 
 ## Layout
 
-| file | owns | touch when |
-|---|---|---|
-| `Image.classes.ts` | JS surface (codegen input) | adding/renaming a JS method |
-| `Image.zig` | JS↔Zig glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery | new options, new chainable, new terminal |
-| `codecs.zig` | thin `extern fn` wrappers over libjpeg-turbo / libspng / libwebp + the `Format` sniffer + the pixel-limit guard | bumping a codec, adding a format |
-| `exif.zig` | JPEG APP1/TIFF Orientation reader (tag 0x0112 only) | extending EXIF coverage |
-| `../bun.js/bindings/image_resize.cpp` | highway resize/rotate/flip kernels (`bun_image_*` C ABI) | new filter, perf work |
+| file                                  | owns                                                                                                            | touch when                               |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `Image.classes.ts`                    | JS surface (codegen input)                                                                                      | adding/renaming a JS method              |
+| `Image.zig`                           | JS↔Zig glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery                     | new options, new chainable, new terminal |
+| `codecs.zig`                          | thin `extern fn` wrappers over libjpeg-turbo / libspng / libwebp + the `Format` sniffer + the pixel-limit guard | bumping a codec, adding a format         |
+| `exif.zig`                            | JPEG APP1/TIFF Orientation reader (tag 0x0112 only)                                                             | extending EXIF coverage                  |
+| `../bun.js/bindings/image_resize.cpp` | highway resize/rotate/flip kernels (`bun_image_*` C ABI)                                                        | new filter, perf work                    |
 
 The codecs themselves are vendored via `scripts/build/deps/{libjpeg-turbo,libspng,libwebp}.ts`.
 `patches/libjpeg-turbo/` carries the 8-bit-only patch + the j12/j16 stub overlay.
@@ -32,7 +32,7 @@ The codecs themselves are vendored via `scripts/build/deps/{libjpeg-turbo,libspn
 
 1. New `scripts/build/deps/<lib>.ts` (copy `libspng.ts` for the simple case).
 2. Extend `Format` + `sniff()` + `mime()` in `codecs.zig`, add a `pub const
-   <fmt> = struct { decode/encode }` block alongside the others.
+<fmt> = struct { decode/encode }` block alongside the others.
 3. If the format carries EXIF, extend `exif.zig`.
 4. `LICENSE.md` row.
 

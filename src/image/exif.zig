@@ -21,8 +21,6 @@
 //! `null`/`.normal` rather than an error. EXIF is advisory; we never fail
 //! decode over it.
 
-const std = @import("std");
-
 pub const Orientation = enum(u8) {
     normal = 1,
     flop = 2, // mirror horizontal
@@ -113,3 +111,5 @@ inline fn rd32(b: []const u8, off: usize, big: bool) ?u32 {
     if (off + 4 > b.len) return null;
     return std.mem.readInt(u32, b[off..][0..4], if (big) .big else .little);
 }
+
+const std = @import("std");

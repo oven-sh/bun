@@ -32,7 +32,7 @@ test.skipIf(!isPosix)(
       // installed through libc exit() and swallows every raise().
       process.on("SIGABRT", () => {
         // Never runs — the JS loop doesn't tick again after process.exit().
-        console.log("UNREACHABLE_JS_SIGABRT_HANDLER");
+        console.error("UNREACHABLE_JS_SIGABRT_HANDLER");
       });
 
       symbols.setup_exit_abort();
@@ -81,5 +81,4 @@ test.skipIf(!isPosix)(
       exitCode: 128 + 6,
     });
   },
-  20_000,
 );

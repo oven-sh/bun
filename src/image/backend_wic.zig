@@ -291,12 +291,18 @@ const GUID_WICPixelFormat32bppRGBA: GUID = .{ .d1 = 0xf5c7ad2d, .d2 = 0x6a8d, .d
 const GUID_ContainerFormatJpeg: GUID = .{ .d1 = 0x19e4a5aa, .d2 = 0x5662, .d3 = 0x4fc5, .d4 = .{ 0xa0, 0xc0, 0x17, 0x58, 0x02, 0x8e, 0x10, 0x57 } };
 const GUID_ContainerFormatPng: GUID = .{ .d1 = 0x1b7cfaf4, .d2 = 0x713f, .d3 = 0x473c, .d4 = .{ 0xbb, 0xcd, 0x61, 0x37, 0x42, 0x5f, 0xae, 0xaf } };
 const GUID_ContainerFormatWebp: GUID = .{ .d1 = 0xe094b0e2, .d2 = 0x67f2, .d3 = 0x45b3, .d4 = .{ 0xb0, 0xea, 0x11, 0x53, 0x37, 0xca, 0x7c, 0xf3 } };
+const GUID_ContainerFormatHeif: GUID = .{ .d1 = 0xe1e62521, .d2 = 0x6787, .d3 = 0x405b, .d4 = .{ 0xa3, 0x39, 0x50, 0x07, 0x15, 0xb5, 0x76, 0x3f } };
 
 fn containerGuid(f: codecs.Format) *const GUID {
     return switch (f) {
         .jpeg => &GUID_ContainerFormatJpeg,
         .png => &GUID_ContainerFormatPng,
         .webp => &GUID_ContainerFormatWebp,
+        // WIC routes HEIC and AVIF through the same HEIF container; the
+        // installed encoder (HEVC vs AV1) decides the codec. CreateEncoder
+        // returns WINCODEC_ERR_COMPONENTNOTFOUND if the extension isn't
+        // present, which surfaces as BackendUnavailable.
+        .heic, .avif => &GUID_ContainerFormatHeif,
     };
 }
 

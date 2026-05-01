@@ -64,11 +64,7 @@ describe("Transpiler transformSync buffer reuse", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       if (stdout.includes("NO_OOM")) {
         // Could not drive the allocator to fail mid-print (e.g. mimalloc tuning

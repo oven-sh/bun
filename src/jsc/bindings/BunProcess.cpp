@@ -1577,11 +1577,21 @@ extern "C" void Bun__resetProcessSignalHandlers()
     }
     for (auto& entry : *signalToContextIdsMap) {
         int signalNumber = entry.key;
-        if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal && oldHandler != SIG_ERR) {
-            // Something else (e.g. a native addon) replaced our handler after
-            // we installed it; leave that handler in place.
-            signal(signalNumber, oldHandler);
+        // Probe without modifying so a native addon that replaced our
+        // handler after we installed it keeps its full sigaction (flags,
+        // mask) intact.
+        struct sigaction current;
+        if (sigaction(signalNumber, nullptr, &current) != 0) {
+            continue;
         }
+        if ((current.sa_flags & SA_SIGINFO) || current.sa_handler != forwardSignal) {
+            continue;
+        }
+        struct sigaction dfl;
+        memset(&dfl, 0, sizeof(dfl));
+        dfl.sa_handler = SIG_DFL;
+        sigemptyset(&dfl.sa_mask);
+        sigaction(signalNumber, &dfl, nullptr);
     }
     signalToContextIdsMap->clear();
 #endif

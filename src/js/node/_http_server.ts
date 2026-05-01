@@ -819,11 +819,42 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
       break;
   }
   err.rawPacket = rawPacket;
-  const nodeSocket = new NodeHTTPServerSocket(self, socket, ssl);
-  self.emit("connection", nodeSocket);
+  const handle = socket as any;
+  const existingSocket = handle?.duplex;
+  const nodeSocket = existingSocket ?? new NodeHTTPServerSocket(self, handle, ssl);
+  nodeSocket[kEnableStreaming](true);
+  if (!existingSocket) {
+    self.emit("connection", nodeSocket);
+  } else {
+    // Clear stale reference from a prior request so the old IncomingMessage
+    // can be GC'd (test-http-server-keepalive-req-gc relies on this).
+    nodeSocket[kRequest] = null;
+  }
+  // Use handle.bytesWritten (stream buffer counter) directly — the getter on
+  // nodeSocket goes through handle.response.getBytesWritten() which points to
+  // a stale response object on keep-alive connections.
+  const bytesBeforeEmit = handle?.bytesWritten ?? 0;
   self.emit("clientError", err, nodeSocket);
+  // Mirror Node.js: deliver the parse error to listeners attached via
+  // `server.on('connection', sock => sock.on('error', ...))`.
   if (nodeSocket.listenerCount("error") > 0) {
     nodeSocket.emit("error", err);
+  }
+  // If the socket is still writable and no response was sent, send a default error response.
+  if (!nodeSocket.writableEnded && !nodeSocket.destroyed) {
+    const bytesAfterEmit = handle?.bytesWritten ?? 0;
+    if (nodeSocket.writable && bytesAfterEmit === bytesBeforeEmit) {
+      // Match the status codes that uWS used to send directly (see packages/bun-uws/src/HttpErrors.h)
+      const response =
+        errorCode === HttpParserError.HTTP_PARSER_ERROR_INVALID_HTTP_VERSION
+          ? "HTTP/1.1 505 HTTP Version Not Supported\r\nConnection: close\r\n\r\n"
+          : errorCode === HttpParserError.HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE
+            ? "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n"
+            : "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
+      nodeSocket.end(response);
+    } else {
+      nodeSocket.end();
+    }
   }
 }
 

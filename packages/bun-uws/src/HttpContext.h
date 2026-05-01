@@ -409,6 +409,14 @@ private:
         if (httpErrorStatusCode) {
             if(httpContextData->onClientError) {
                 httpContextData->onClientError(SSL, s, result.parserError, data, length);
+                /* The handler takes responsibility for the socket lifecycle.
+                 * Unref so the socket doesn't keep the event loop alive
+                 * (balances the us_socket_ref at the top of on_data).
+                 * Uncork so any data written by the handler gets flushed.
+                 * uncork() is safe on a closed socket. */
+                us_socket_unref(s);
+                ((AsyncSocket<SSL> *) s)->uncork();
+                return s;
             }
             /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */
             us_socket_write(s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length());

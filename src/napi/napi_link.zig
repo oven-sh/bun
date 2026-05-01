@@ -119,51 +119,66 @@ pub fn loadSlotFromMemory(slot: *const Slot, is_ns_module: *bool) ?*anyopaque {
         }
     }
 
-    const bytes = slotBytes(slot) orelse return null;
-
-    const handle: ?*anyopaque = brk: {
-        if (comptime Environment.isMac) {
-            var name_buf: [Slot.count + 32]u8 = undefined;
-            // dyld uses this as the image's install name; keep it stable per
-            // slot so stack traces and `NSNameOfModule` are recognisable.
-            const name = std.fmt.bufPrintZ(&name_buf, "bun:napi-slot-{d}", .{idx}) catch "bun:napi-slot";
-            is_ns_module.* = true;
-            break :brk Bun__darwinLoadMachOFromMemory(bytes.ptr, bytes.len, name.ptr);
-        }
-        if (comptime Environment.isLinux) {
-            var path_buf: bun.PathBuffer = undefined;
-            if (realizeViaMemfd(slot, bytes, &path_buf)) |p| {
-                var zbuf: bun.PathBuffer = undefined;
-                @memcpy(zbuf[0..p.len], p);
-                zbuf[p.len] = 0;
-                break :brk std.c.dlopen(zbuf[0..p.len :0], .{ .LAZY = true });
-            }
-            break :brk null;
-        }
-        // Windows / FreeBSD: no in-memory loader yet. Materialise to a
-        // content-addressed cache file and load that — still avoids the
-        // per-launch tmpfile the bundler-embedded path uses. Returning null
-        // here is fine; the caller reports it as a dlopen failure.
-        var path_buf: bun.PathBuffer = undefined;
-        const path = realizeViaCacheFile(slot, bytes, &path_buf) orelse break :brk null;
-        if (comptime Environment.isWindows) {
-            var wbuf: bun.WPathBuffer = undefined;
-            const wpath = bun.strings.toWPath(&wbuf, path);
-            break :brk bun.windows.kernel32.LoadLibraryExW(wpath.ptr, null, 0x00000008); // LOAD_WITH_ALTERED_SEARCH_PATH
-        }
-        if (comptime Environment.isPosix) {
-            var zbuf: bun.PathBuffer = undefined;
-            @memcpy(zbuf[0..path.len], path);
-            zbuf[path.len] = 0;
-            break :brk std.c.dlopen(zbuf[0..path.len :0], .{ .LAZY = true });
-        }
-        break :brk null;
-    };
-
+    const handle = loadSlotForPlatform(slot, is_ns_module);
     if (handle) |h| {
         if (idx < loaded_handles.len) loaded_handles[idx] = h;
     }
     return handle;
+}
+
+const loadSlotForPlatform = switch (Environment.os) {
+    .mac => loadSlotMac,
+    .linux => loadSlotLinux,
+    .freebsd => loadSlotPosixCacheFile,
+    else => loadSlotUnsupported,
+};
+
+fn loadSlotMac(slot: *const Slot, is_ns_module: *bool) ?*anyopaque {
+    if (comptime !Environment.isMac) unreachable;
+    const bytes = slotBytes(slot) orelse return null;
+    var name_buf: [64]u8 = undefined;
+    // dyld uses this as the image's install name; keep it stable per slot
+    // so stack traces and `NSNameOfModule` are recognisable.
+    const name = std.fmt.bufPrintZ(&name_buf, "bun:napi-slot-{d}", .{slot.index()}) catch "bun:napi-slot";
+    is_ns_module.* = true;
+    return Bun__darwinLoadMachOFromMemory(bytes.ptr, bytes.len, name.ptr);
+}
+
+fn loadSlotLinux(slot: *const Slot, is_ns_module: *bool) ?*anyopaque {
+    if (comptime !Environment.isLinux) unreachable;
+    _ = is_ns_module;
+    const bytes = slotBytes(slot) orelse return null;
+    var path_buf: bun.PathBuffer = undefined;
+    const p = realizeViaMemfd(slot, bytes, &path_buf) orelse return null;
+    var zbuf: bun.PathBuffer = undefined;
+    @memcpy(zbuf[0..p.len], p);
+    zbuf[p.len] = 0;
+    return std.c.dlopen(zbuf[0..p.len :0], .{ .LAZY = true });
+}
+
+fn loadSlotPosixCacheFile(slot: *const Slot, is_ns_module: *bool) ?*anyopaque {
+    if (comptime !Environment.isPosix) unreachable;
+    _ = is_ns_module;
+    // FreeBSD: no memfd, no NSLinkModule. Materialise to a content-addressed
+    // cache file and `dlopen()` that — still avoids the per-launch tmpfile
+    // the bundler-embedded path uses.
+    const bytes = slotBytes(slot) orelse return null;
+    var path_buf: bun.PathBuffer = undefined;
+    const path = realizeViaCacheFile(slot, bytes, &path_buf) orelse return null;
+    var zbuf: bun.PathBuffer = undefined;
+    @memcpy(zbuf[0..path.len], path);
+    zbuf[path.len] = 0;
+    return std.c.dlopen(zbuf[0..path.len :0], .{ .LAZY = true });
+}
+
+fn loadSlotUnsupported(slot: *const Slot, is_ns_module: *bool) ?*anyopaque {
+    // Windows: no in-memory PE loader yet and the PE post-link patcher
+    // isn't written, so slots can't be populated on Windows today anyway.
+    // `Process_functionDlopen` reports ERR_DLOPEN_FAILED for the (currently
+    // unreachable) case of a populated slot.
+    _ = slot;
+    _ = is_ns_module;
+    return null;
 }
 
 /// Called from `Process_functionDlopen` when the target starts with the
@@ -219,6 +234,8 @@ fn realizeViaMemfd(slot: *const Slot, bytes: []const u8, out_buf: *bun.PathBuffe
 }
 
 fn realizeViaCacheFile(slot: *const Slot, bytes: []const u8, out_buf: *bun.PathBuffer) ?[]const u8 {
+    if (comptime !Environment.isPosix) return null; // only used for the FreeBSD / memfd-less fallback
+
     // Deterministic cache path keyed on the addon's content hash so repeated
     // launches (and multiple executables linking the same addon) share one
     // on-disk copy. The slot already carries the hash the linker computed; we
@@ -232,10 +249,9 @@ fn realizeViaCacheFile(slot: *const Slot, bytes: []const u8, out_buf: *bun.PathB
         // graph. For slot-only addons there is no fallback.
         return null;
     };
-    bun.makePath(std.fs.cwd(), dir) catch {};
+    mkdirAll(dir);
 
-    const ext = if (comptime Environment.isWindows) ".dll" else ".node";
-    const path = std.fmt.bufPrintZ(out_buf, "{s}" ++ std.fs.path.sep_str ++ "napi-{x:0>16}{s}", .{ dir, h, ext }) catch return null;
+    const path = std.fmt.bufPrintZ(out_buf, "{s}" ++ std.fs.path.sep_str ++ "napi-{x:0>16}.node", .{ dir, h }) catch return null;
 
     if (bun.sys.existsZ(path)) return path;
 
@@ -281,13 +297,32 @@ fn cacheDir(out_buf: *bun.PathBuffer) ?[]const u8 {
             return std.fmt.bufPrint(out_buf, "{s}" ++ std.fs.path.sep_str ++ "bun" ++ std.fs.path.sep_str ++ "napi-link", .{p}) catch null;
         }
     }
-    if (bun.getenvZ(if (comptime Environment.isWindows) "USERPROFILE" else "HOME")) |p| {
+    if (bun.getenvZ("HOME")) |p| {
         if (p.len > 0) {
             return std.fmt.bufPrint(out_buf, "{s}" ++ std.fs.path.sep_str ++ ".cache" ++ std.fs.path.sep_str ++ "bun" ++ std.fs.path.sep_str ++ "napi-link", .{p}) catch null;
         }
     }
     const t = bun.fs.FileSystem.RealFS.tmpdirPath();
     return std.fmt.bufPrint(out_buf, "{s}" ++ std.fs.path.sep_str ++ "bun-napi-link", .{t}) catch null;
+}
+
+/// `mkdir -p` using `bun.sys.mkdirA` so we don't pull in `std.fs.Dir`
+/// (ban-words forbids both `std.fs.cwd()` and `.stdDir()`). Silently
+/// ignores failures — the subsequent `open()` will surface the real error.
+fn mkdirAll(abs: []const u8) void {
+    var buf: bun.PathBuffer = undefined;
+    var i: usize = 0;
+    while (i < abs.len) {
+        // Skip any run of separators.
+        while (i < abs.len and std.fs.path.isSep(abs[i])) i += 1;
+        if (i >= abs.len) break;
+        // Advance to the next separator or end.
+        while (i < abs.len and !std.fs.path.isSep(abs[i])) i += 1;
+        if (i == 0 or i > buf.len - 1) return;
+        @memcpy(buf[0..i], abs[0..i]);
+        buf[i] = 0;
+        _ = bun.sys.mkdirA(buf[0..i :0], 0o755);
+    }
 }
 
 // ---------------------------------------------------------------------------

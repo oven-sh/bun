@@ -517,7 +517,23 @@ fn _onStructuredCloneDeserialize(
     }
 
     bun.assertf(blob.isHeapAllocated(), "expected blob to be heap-allocated", .{});
-    blob.offset = @as(u52, @intCast(offset));
+
+    // `offset` comes from untrusted bytes. Clamp it so a crafted payload cannot
+    // make sharedView() slice past the end of the backing store (OOB heap read
+    // in ReleaseFast). For bytes stores this also keeps `size` within bounds;
+    // file/s3 stores report `max_size` here and are bounded by the filesystem
+    // read path instead.
+    blob.offset = @as(SizeType, @truncate(offset));
+    if (blob.store) |store| {
+        const store_size = store.size();
+        if (store_size != Blob.max_size) {
+            blob.offset = @min(blob.offset, store_size);
+            blob.size = @min(blob.size, store_size - blob.offset);
+        }
+    } else {
+        blob.offset = 0;
+    }
+
     if (content_type.len > 0) {
         blob.content_type = content_type;
         blob.content_type_allocated = true;
@@ -3599,7 +3615,9 @@ pub fn sharedView(this: *const Blob) []const u8 {
     if (this.size == 0 or this.store == null) return "";
     var slice_ = this.store.?.sharedView();
     if (slice_.len == 0) return "";
-    slice_ = slice_[this.offset..];
+    // Defensive: `offset` may originate from untrusted structured-clone data.
+    // Never index past the store's actual length regardless of caller state.
+    slice_ = slice_[@min(@as(usize, this.offset), slice_.len)..];
 
     return slice_[0..@min(slice_.len, @as(usize, this.size))];
 }

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { serialize, deserialize } from "bun:jsc";
 
 describe("structuredClone with Blob and File", () => {
   describe("Blob structured clone", () => {
@@ -291,6 +292,92 @@ describe("structuredClone with Blob and File", () => {
 
       const cloned = structuredClone(obj);
       expect(cloned.file).toBeInstanceOf(File);
+    });
+  });
+
+  describe("deserialize of crafted payloads", () => {
+    // The Blob structured-clone wire format carries an `offset` (u64 LE) that
+    // the sender controls. A malicious payload can set it past the end of the
+    // serialized byte store; without clamping, reading the resulting Blob
+    // (`arrayBuffer()`/`text()`/`bytes()`) slices past the backing allocation
+    // and returns unrelated heap memory.
+    //
+    // These tests assert that out-of-range offsets are clamped to the store
+    // bounds so no out-of-store bytes are ever exposed.
+
+    function craft(offset: bigint) {
+      // Use a recognizable marker for the store bytes so we can detect
+      // whether any returned byte came from outside the store.
+      const marker = 0xa5;
+      const payload = Buffer.alloc(4, marker);
+      const serialized = new Uint8Array(serialize(new Blob([payload])));
+
+      // Locate the offset field by serializing a sliced blob with a sentinel
+      // offset and diffing; this keeps the test robust against wire-format
+      // header changes.
+      const sentinel = new Uint8Array(
+        serialize(new Blob([Buffer.alloc(8, marker)]).slice(4)),
+      );
+      let at = -1;
+      for (let i = 0; i + 8 <= sentinel.length; i++) {
+        if (
+          sentinel[i] === 4 &&
+          sentinel[i + 1] === 0 &&
+          sentinel[i + 2] === 0 &&
+          sentinel[i + 3] === 0 &&
+          sentinel[i + 4] === 0 &&
+          sentinel[i + 5] === 0 &&
+          sentinel[i + 6] === 0 &&
+          sentinel[i + 7] === 0 &&
+          serialized[i] === 0
+        ) {
+          at = i;
+          break;
+        }
+      }
+      if (at < 0) throw new Error("could not locate offset field in serialized blob");
+
+      const view = new DataView(serialized.buffer, serialized.byteOffset, serialized.byteLength);
+      view.setBigUint64(at, offset, true);
+      return { serialized, marker };
+    }
+
+    test.each([
+      ["just past end", 5n],
+      ["small", 64n],
+      ["page", 4096n],
+      ["1 MiB", 1024n * 1024n],
+      ["2^40", 1n << 40n],
+      ["> u52", (1n << 52n) + 123n],
+      ["u64 max", (1n << 64n) - 1n],
+    ])("offset %s does not expose out-of-store bytes", async (_name, offset) => {
+      const { serialized, marker } = craft(offset);
+      const blob = deserialize(serialized);
+      expect(blob).toBeInstanceOf(Blob);
+
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      // Every returned byte must have come from the 4-byte store. With the
+      // crafted offset >= store length, the only in-bounds result is empty.
+      expect(bytes.byteLength).toBe(0);
+      for (const b of bytes) expect(b).toBe(marker);
+
+      // Other readers go through the same sharedView() path.
+      expect(await blob.text()).toBe("");
+      expect((await blob.bytes()).byteLength).toBe(0);
+    });
+
+    test("offset equal to store length yields empty view", async () => {
+      const { serialized } = craft(4n);
+      const blob = deserialize(serialized);
+      expect(new Uint8Array(await blob.arrayBuffer()).byteLength).toBe(0);
+    });
+
+    test("node:v8 deserialize is equally bounded", async () => {
+      const v8 = require("node:v8");
+      const { serialized } = craft(1n << 20n);
+      const blob = v8.deserialize(Buffer.from(serialized));
+      expect(blob).toBeInstanceOf(Blob);
+      expect((await blob.arrayBuffer()).byteLength).toBe(0);
     });
   });
 });

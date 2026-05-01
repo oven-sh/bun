@@ -1,8 +1,9 @@
 import { semver, write } from "bun";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
-import { ChildProcess, exec, execFile, execFileSync, execSync, spawn, spawnSync } from "node:child_process";
+import { bunEnv, bunExe, isWindows, nodeExe, runBunInstall, shellExe, tempDir, tmpdirSync } from "harness";
+import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
+import * as dc from "node:diagnostics_channel";
 import { promisify } from "node:util";
 import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
@@ -469,4 +470,138 @@ it("spawnSync(does-not-exist)", () => {
   expect(x.output).toEqual([null, null, null]);
   expect(x.stdout).toEqual(null);
   expect(x.stderr).toEqual(null);
+});
+
+describe("diagnostics_channel 'child_process'", () => {
+  it("publishes { process } when spawn() creates a ChildProcess", async () => {
+    const received: any[] = [];
+    const onMessage = (msg: any) => received.push(msg);
+    dc.subscribe("child_process", onMessage);
+    try {
+      const child = spawn(bunExe(), ["-e", "process.exit(0)"], { env: bunEnv });
+      const exitCode = await new Promise<number | null>(resolve => child.on("close", resolve));
+      expect(exitCode).toBe(0);
+      expect(received).toHaveLength(1);
+      expect(received[0]).toHaveProperty("process");
+      expect(received[0].process).toBe(child);
+      expect(received[0].process).toBeInstanceOf(ChildProcess);
+    } finally {
+      dc.unsubscribe("child_process", onMessage);
+    }
+  });
+
+  it("publishes for fork()", async () => {
+    const received: any[] = [];
+    const onMessage = (msg: any) => received.push(msg);
+    dc.subscribe("child_process", onMessage);
+    using dir = tempDir("cp-diag-fork", {
+      "child.js": "process.disconnect(); process.exit(0);",
+    });
+    try {
+      const child = fork(`${String(dir)}/child.js`, [], { env: bunEnv, silent: true });
+      // The channel publishes synchronously during fork()/spawn(), so we can assert
+      // immediately. Then wait for exit for cleanup.
+      expect(received).toHaveLength(1);
+      expect(received[0].process).toBe(child);
+      expect(received[0].process).toBeInstanceOf(ChildProcess);
+      await new Promise<void>(resolve => child.on("exit", () => resolve()));
+    } finally {
+      dc.unsubscribe("child_process", onMessage);
+    }
+  });
+
+  it("publishes for execFile()", async () => {
+    const received: any[] = [];
+    const onMessage = (msg: any) => received.push(msg);
+    dc.subscribe("child_process", onMessage);
+    try {
+      const child = execFile(bunExe(), ["-e", "process.exit(0)"], { env: bunEnv });
+      const exitCode = await new Promise<number | null>(resolve => child.on("close", resolve));
+      expect(exitCode).toBe(0);
+      expect(received).toHaveLength(1);
+      expect(received[0].process).toBe(child);
+      expect(received[0].process).toBeInstanceOf(ChildProcess);
+    } finally {
+      dc.unsubscribe("child_process", onMessage);
+    }
+  });
+
+  it("publishes for exec()", async () => {
+    const received: any[] = [];
+    const onMessage = (msg: any) => received.push(msg);
+    dc.subscribe("child_process", onMessage);
+    try {
+      const child = exec(`${JSON.stringify(bunExe())} -e "process.exit(0)"`, { env: bunEnv });
+      const exitCode = await new Promise<number | null>(resolve => child.on("close", resolve));
+      expect(exitCode).toBe(0);
+      expect(received).toHaveLength(1);
+      expect(received[0].process).toBe(child);
+      expect(received[0].process).toBeInstanceOf(ChildProcess);
+    } finally {
+      dc.unsubscribe("child_process", onMessage);
+    }
+  });
+
+  it("does not publish for spawnSync (matches Node)", () => {
+    const received: any[] = [];
+    const onMessage = (msg: any) => received.push(msg);
+    dc.subscribe("child_process", onMessage);
+    try {
+      spawnSync(bunExe(), ["-e", "process.exit(0)"], { env: bunEnv });
+      expect(received).toHaveLength(0);
+    } finally {
+      dc.unsubscribe("child_process", onMessage);
+    }
+  });
+});
+
+describe("diagnostics_channel 'child_process.spawn' tracing", () => {
+  it("publishes start + end on successful spawn", async () => {
+    const events: Array<{ kind: string; msg: any }> = [];
+    const handlers = {
+      start: (msg: any) => events.push({ kind: "start", msg }),
+      end: (msg: any) => events.push({ kind: "end", msg }),
+      error: (msg: any) => events.push({ kind: "error", msg }),
+    };
+    const tc = dc.tracingChannel("child_process.spawn");
+    tc.subscribe(handlers);
+    try {
+      const child = spawn(bunExe(), ["-e", "process.exit(0)"], { env: bunEnv });
+      const exitCode = await new Promise<number | null>(resolve => child.on("close", resolve));
+      expect(exitCode).toBe(0);
+      const kinds = events.map(e => e.kind);
+      expect(kinds).toEqual(["start", "end"]);
+      expect(events[0].msg.process).toBe(child);
+      expect(events[0].msg.process).toBeInstanceOf(ChildProcess);
+      // Node's start payload carries an options object with a `file` field.
+      expect(events[0].msg.options?.file).toBe(bunExe());
+      expect(events[1].msg.process).toBe(child);
+    } finally {
+      tc.unsubscribe(handlers);
+    }
+  });
+
+  it("publishes start + error on ENOENT", async () => {
+    const events: Array<{ kind: string; msg: any }> = [];
+    const handlers = {
+      start: (msg: any) => events.push({ kind: "start", msg }),
+      end: (msg: any) => events.push({ kind: "end", msg }),
+      error: (msg: any) => events.push({ kind: "error", msg }),
+    };
+    const tc = dc.tracingChannel("child_process.spawn");
+    tc.subscribe(handlers);
+    try {
+      const child = spawn("does-not-exist-bun-test");
+      child.on("error", () => {}); // suppress unhandled 'error'
+      await new Promise<void>(resolve => child.on("close", () => resolve()));
+      const kinds = events.map(e => e.kind);
+      expect(kinds).toEqual(["start", "error"]);
+      expect(events[0].msg.process).toBeInstanceOf(ChildProcess);
+      expect(events[0].msg.options?.file).toBe("does-not-exist-bun-test");
+      expect(events[1].msg.process).toBeInstanceOf(ChildProcess);
+      expect(events[1].msg.error?.code).toBe("ENOENT");
+    } finally {
+      tc.unsubscribe(handlers);
+    }
+  });
 });

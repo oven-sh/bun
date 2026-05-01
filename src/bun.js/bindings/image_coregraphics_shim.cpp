@@ -134,7 +134,11 @@ constexpr int kCFNumberDoubleType = 13;
 extern "C" {
 
 // Status codes match codecs.Error semantics: caller maps these.
-enum : int32_t { CG_OK = 0, CG_UNAVAILABLE = 1, CG_DECODE_FAILED = 2, CG_ENCODE_FAILED = 3, CG_TOO_MANY_PIXELS = 4 };
+enum : int32_t { CG_OK = 0,
+    CG_UNAVAILABLE = 1,
+    CG_DECODE_FAILED = 2,
+    CG_ENCODE_FAILED = 3,
+    CG_TOO_MANY_PIXELS = 4 };
 
 // Decode `bytes[0..len)` into a caller-allocated RGBA8 buffer.
 // Two-phase: pass `out=nullptr` to get dimensions; then call again with a
@@ -261,7 +265,8 @@ int32_t bun_coregraphics_encode(const uint8_t* rgba, uint32_t width, uint32_t he
     if (!r.premul) return CG_UNAVAILABLE;
     for (size_t i = 0; i + 4 <= n; i += 4) {
         uint32_t a = rgba[i + 3];
-        for (int c = 0; c < 3; c++) r.premul[i + c] = static_cast<uint8_t>((static_cast<uint32_t>(rgba[i + c]) * a + 127) / 255);
+        for (int c = 0; c < 3; c++)
+            r.premul[i + c] = static_cast<uint8_t>((static_cast<uint32_t>(rgba[i + c]) * a + 127) / 255);
         r.premul[i + 3] = static_cast<uint8_t>(a);
     }
 
@@ -282,7 +287,9 @@ int32_t bun_coregraphics_encode(const uint8_t* rgba, uint32_t width, uint32_t he
 
     CFRef props = nullptr;
     if (format != 1) { // quality only for lossy
-        double q = static_cast<double>(quality < 1 ? 1 : quality > 100 ? 100 : quality) / 100.0;
+        double q = static_cast<double>(quality < 1 ? 1 : quality > 100 ? 100
+                                                                       : quality)
+            / 100.0;
         r.num = s->CFNumberCreate(nullptr, kCFNumberDoubleType, &q);
         const void* k = *s->kCGImageDestinationLossyCompressionQuality;
         const void* v = r.num;

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir, isMacOS, isWindows } from "harness";
+import { isMacOS, isWindows, tempDir } from "harness";
 import zlib from "node:zlib";
 import { join } from "path";
 

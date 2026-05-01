@@ -1230,7 +1230,9 @@ pub const PEFile = struct {
             if (ilt_rva == 0 or iat_rva == 0) return true;
 
             var entries = std.array_list.Managed(LinkedAddon.ImportLib.Entry).init(allocator);
-            errdefer {
+            defer {
+                // Empty after toOwnedSlice() on success, so this only
+                // does work on a `return true` / error path.
                 for (entries.items) |*e| if (e.name.len > 0) allocator.free(e.name);
                 entries.deinit();
             }

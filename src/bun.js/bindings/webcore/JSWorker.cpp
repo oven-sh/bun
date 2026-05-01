@@ -355,12 +355,6 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto& impl = uncheckedDowncast<JSWorker>(jsValue)->wrapped();
-    if (!impl.updatePtr()) {
-        throwVMError(lexicalGlobalObject, throwScope, "Failed to start Worker thread"_s);
-        return {};
-    }
-
     setSubclassStructureIfNeeded<Worker>(lexicalGlobalObject, callFrame, asObject(jsValue));
     RETURN_IF_EXCEPTION(throwScope, {});
 
@@ -401,7 +395,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWorker_threadIdGetter, (JSGlobalObject * lexicalGloba
         return JSValue::encode(jsUndefined());
 
     auto& worker = castedThis->wrapped();
-    if (worker.isClosingOrTerminated()) return JSValue::encode(jsNumber(-1));
+    if (worker.wasTerminated()) return JSValue::encode(jsNumber(-1));
     // Main thread starts at 1
     //
     // Note that we cannot use posix thread ids here because we don't know their thread id until the thread starts

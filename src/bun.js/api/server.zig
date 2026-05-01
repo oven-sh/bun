@@ -445,6 +445,7 @@ const ServePlugins = struct {
         bun.assert(this.state == .pending);
         const pending = &this.state.pending;
         const plugin = pending.plugin;
+        const dev_server = pending.dev_server;
         var html_bundle_routes = pending.html_bundle_routes;
         pending.html_bundle_routes = .empty;
         defer html_bundle_routes.deinit(bun.default_allocator);
@@ -457,7 +458,7 @@ const ServePlugins = struct {
             bun.handleOom(route.onPluginsResolved(plugin));
             route.deref();
         }
-        if (pending.dev_server) |server| {
+        if (dev_server) |server| {
             bun.handleOom(server.onPluginsResolved(plugin));
         }
     }
@@ -467,6 +468,7 @@ const ServePlugins = struct {
 
         const error_js, const plugin_js = callframe.argumentsAsArray(2);
         const plugins = plugin_js.asPromisePtr(ServePlugins);
+        defer plugins.deref();
         handleOnReject(plugins, globalThis, error_js);
 
         return .js_undefined;
@@ -475,6 +477,7 @@ const ServePlugins = struct {
     pub fn handleOnReject(this: *ServePlugins, global: *jsc.JSGlobalObject, err: JSValue) void {
         bun.assert(this.state == .pending);
         const pending = &this.state.pending;
+        const dev_server = pending.dev_server;
         var html_bundle_routes = pending.html_bundle_routes;
         pending.html_bundle_routes = .empty;
         defer html_bundle_routes.deinit(bun.default_allocator);
@@ -487,7 +490,7 @@ const ServePlugins = struct {
             bun.handleOom(route.onPluginsRejected());
             route.deref();
         }
-        if (pending.dev_server) |server| {
+        if (dev_server) |server| {
             bun.handleOom(server.onPluginsRejected());
         }
 
@@ -1047,7 +1050,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // See https://github.com/oven-sh/bun/issues/1339
 
             // obviously invalid pointer marks it as used
-            upgrader.upgrade_context = @as(*uws.SocketContext, @ptrFromInt(std.math.maxInt(usize)));
+            upgrader.upgrade_context = @ptrFromInt(std.math.maxInt(usize));
             const signal = upgrader.signal;
             upgrader.signal = null;
             upgrader.resp = null;
@@ -2026,7 +2029,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.pending_requests += 1;
         }
 
-        pub fn onNodeHTTPRequestWithUpgradeCtx(this: *ThisServer, req: *uws.Request, resp: *App.Response, upgrade_ctx: ?*uws.SocketContext) void {
+        pub fn onNodeHTTPRequestWithUpgradeCtx(this: *ThisServer, req: *uws.Request, resp: *App.Response, upgrade_ctx: ?*uws.WebSocketUpgradeContext) void {
             this.onPendingRequest();
             if (comptime Environment.isDebug) {
                 this.vm.eventLoop().debug.enter();
@@ -2546,7 +2549,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             };
         }
 
-        fn upgradeWebSocketUserRoute(this: *UserRoute, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.SocketContext, method: ?bun.http.Method) void {
+        fn upgradeWebSocketUserRoute(this: *UserRoute, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.WebSocketUpgradeContext, method: ?bun.http.Method) void {
             const server = this.server;
             const index = this.id;
 
@@ -2559,7 +2562,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             server.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
 
-        pub fn onWebSocketUpgrade(this: *ThisServer, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.SocketContext, id: usize) void {
+        pub fn onWebSocketUpgrade(this: *ThisServer, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.WebSocketUpgradeContext, id: usize) void {
             jsc.markBinding(@src());
             if (id == 1) {
                 // This is actually a UserRoute if id is 1 so it's safe to cast
@@ -3719,7 +3722,7 @@ extern fn NodeHTTPServer__onRequest_http(
     methodString: jsc.JSValue,
     request: *uws.Request,
     response: *uws.NewApp(false).Response,
-    upgrade_ctx: ?*uws.SocketContext,
+    upgrade_ctx: ?*uws.WebSocketUpgradeContext,
     node_response_ptr: *?*NodeHTTPResponse,
 ) jsc.JSValue;
 
@@ -3731,7 +3734,7 @@ extern fn NodeHTTPServer__onRequest_https(
     methodString: jsc.JSValue,
     request: *uws.Request,
     response: *uws.NewApp(true).Response,
-    upgrade_ctx: ?*uws.SocketContext,
+    upgrade_ctx: ?*uws.WebSocketUpgradeContext,
     node_response_ptr: *?*NodeHTTPResponse,
 ) jsc.JSValue;
 

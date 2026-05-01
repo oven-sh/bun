@@ -42,7 +42,7 @@ const bufs = struct {
     // bundling 10 copies of Three.js. It may be worthwhile for more complicated
     // packages but we lack a decent module resolution benchmark right now.
     // Potentially revisit after https://github.com/oven-sh/bun/issues/2716
-    pub threadlocal var extension_path: [512]u8 = undefined;
+    pub threadlocal var extension_path: bun.PathBuffer = undefined;
     pub threadlocal var tsconfig_match_full_buf: bun.PathBuffer = undefined;
     pub threadlocal var tsconfig_match_full_buf2: bun.PathBuffer = undefined;
     pub threadlocal var tsconfig_match_full_buf3: bun.PathBuffer = undefined;
@@ -3261,20 +3261,23 @@ pub const Resolver = struct {
 
             var ext_buf = bufs(.extension_path);
 
-            bun.copy(u8, ext_buf, cleaned);
+            if (cleaned.len <= ext_buf.len) {
+                bun.copy(u8, ext_buf, cleaned);
 
-            // If that failed, try adding implicit extensions
-            for (this.extension_order) |ext| {
-                bun.copy(u8, ext_buf[cleaned.len..], ext);
-                const new_path = ext_buf[0 .. cleaned.len + ext.len];
-                // if (r.debug_logs) |*debug| {
-                //     debug.addNoteFmt("Checking for \"{s}\" ", .{new_path});
-                // }
-                if (map.get(new_path)) |_remapped| {
-                    this.remapped = _remapped;
-                    this.cleaned = new_path;
-                    this.input_path = new_path;
-                    return true;
+                // If that failed, try adding implicit extensions
+                for (this.extension_order) |ext| {
+                    if (cleaned.len + ext.len > ext_buf.len) continue;
+                    bun.copy(u8, ext_buf[cleaned.len..], ext);
+                    const new_path = ext_buf[0 .. cleaned.len + ext.len];
+                    // if (r.debug_logs) |*debug| {
+                    //     debug.addNoteFmt("Checking for \"{s}\" ", .{new_path});
+                    // }
+                    if (map.get(new_path)) |_remapped| {
+                        this.remapped = _remapped;
+                        this.cleaned = new_path;
+                        this.input_path = new_path;
+                        return true;
+                    }
                 }
             }
 
@@ -3292,19 +3295,22 @@ pub const Resolver = struct {
                 return true;
             }
 
-            bun.copy(u8, ext_buf, index_path);
+            if (index_path.len <= ext_buf.len) {
+                bun.copy(u8, ext_buf, index_path);
 
-            for (this.extension_order) |ext| {
-                bun.copy(u8, ext_buf[index_path.len..], ext);
-                const new_path = ext_buf[0 .. index_path.len + ext.len];
-                // if (r.debug_logs) |*debug| {
-                //     debug.addNoteFmt("Checking for \"{s}\" ", .{new_path});
-                // }
-                if (map.get(new_path)) |_remapped| {
-                    this.remapped = _remapped;
-                    this.cleaned = new_path;
-                    this.input_path = new_path;
-                    return true;
+                for (this.extension_order) |ext| {
+                    if (index_path.len + ext.len > ext_buf.len) continue;
+                    bun.copy(u8, ext_buf[index_path.len..], ext);
+                    const new_path = ext_buf[0 .. index_path.len + ext.len];
+                    // if (r.debug_logs) |*debug| {
+                    //     debug.addNoteFmt("Checking for \"{s}\" ", .{new_path});
+                    // }
+                    if (map.get(new_path)) |_remapped| {
+                        this.remapped = _remapped;
+                        this.cleaned = new_path;
+                        this.input_path = new_path;
+                        return true;
+                    }
                 }
             }
 

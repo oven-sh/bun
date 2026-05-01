@@ -71,11 +71,6 @@ ExceptionOr<void> BroadcastChannel::postMessage(JSC::JSGlobalObject& globalObjec
 
 void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
 {
-    // Balance the queued count bumped by the registry at post time; do it
-    // first so that if we bail (closed / no context) the channel can still
-    // become collectable.
-    m_state.fetch_sub(QueuedOne, std::memory_order_acq_rel);
-
     if (isClosed())
         return;
 
@@ -122,10 +117,14 @@ void BroadcastChannel::eventListenersDidChange()
 bool BroadcastChannel::hasPendingActivity() const
 {
     // Called from the GC thread; a single atomic load covers everything.
+    // Queued-but-undelivered messages are NOT counted as pending activity:
+    // the registry's posted task holds only a ThreadSafeWeakPtr (to avoid
+    // running ~BroadcastChannel on the posting thread), so a channel with
+    // no message listener is free to be collected before delivery and the
+    // task will simply no-op. This matches spec semantics — dispatchEvent
+    // with no listener is a no-op anyway.
     uint64_t s = m_state.load(std::memory_order_acquire);
-    if (s & Closed)
-        return false;
-    return (s & HasMessageListener) || (s >> QueuedShift) > 0;
+    return !(s & Closed) && (s & HasMessageListener);
 }
 
 void BroadcastChannel::jsRef(JSGlobalObject* lexicalGlobalObject)

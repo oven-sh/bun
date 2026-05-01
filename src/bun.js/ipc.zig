@@ -1309,6 +1309,9 @@ pub const IPCHandlers = struct {
             _: Socket,
             fd: c_int,
         ) void {
+            // SCM_RIGHTS is POSIX-only; on Windows this arm is unreachable but
+            // still type-checked, and `FD.fromNative` takes `*anyopaque` there.
+            if (comptime bun.Environment.isWindows) return;
             log("onFd: {d}", .{fd});
             if (send_queue.incoming_fd != null) {
                 log("onFd: incoming_fd already set; overwriting", .{});

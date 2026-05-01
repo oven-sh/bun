@@ -308,6 +308,16 @@ fn bind(entry: *Entry) !Resolved {
     // for `DisableThreadLibraryCalls`/`GetModuleFileName`-style queries,
     // which returning the exe for is at worst what the tmpfile path gave
     // anyway (a meaningless path).
+    //
+    // DLL_THREAD_ATTACH / DLL_THREAD_DETACH are never delivered to a
+    // merged addon: it is not in the loader's module list, so
+    // LdrpInitializeThread / LdrShutdownThread never dispatch to it.
+    // For /MD node-gyp addons this is inert — the CRT itself is loader-
+    // tracked and uses FLS for per-thread state, the default DllMain has
+    // no THREAD_ATTACH work, and the nonzero-TLS-template gate already
+    // routes anything with real __declspec(thread) storage to the
+    // fallback. An addon with a hand-written DllMain THREAD_ATTACH
+    // handler should set BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK=1.
     if (entry.entry_point != 0) {
         const DllMain = *const fn (w.HINSTANCE, w.DWORD, ?*anyopaque) callconv(.winapi) w.BOOL;
         const dll_main: DllMain = @ptrFromInt(base_addr + entry.entry_point);

@@ -1068,14 +1068,25 @@ pub const PEFile = struct {
         // only the outer array would leave the inner RVAs wrong, so keep
         // the whole thing addon-relative and have the runtime pass
         // `exe_base + rva_base` as BaseAddress instead.
+        //
+        // .pdata entry size is architecture-dependent: x64 RUNTIME_FUNCTION
+        // is {begin, end, unwind_info} = 12 bytes; ARM64
+        // IMAGE_ARM64_RUNTIME_FUNCTION_ENTRY is {begin, packed_unwind} =
+        // 8 bytes. RtlAddFunctionTable's EntryCount counts native-sized
+        // entries, so dividing by the wrong one would register only the
+        // first ⌊2N/3⌋ functions on ARM64 and leave the rest with no
+        // unwind data. The machine-type gate above already guarantees
+        // addon.pe.machine == host.pe.machine.
         var pdata_rva: u32 = 0;
         var pdata_count: u32 = 0;
         const pdata_dir = addon.dir(IMAGE_DIRECTORY_ENTRY_EXCEPTION);
-        if (pdata_dir.size >= @sizeOf(RuntimeFunction) and
+        const IMAGE_FILE_MACHINE_ARM64: u16 = 0xAA64;
+        const pdata_entry_size: u32 = if (addon.pe.machine == IMAGE_FILE_MACHINE_ARM64) 8 else 12;
+        if (pdata_dir.size >= pdata_entry_size and
             @as(u64, pdata_dir.virtual_address) + pdata_dir.size <= addon_image)
         {
             pdata_rva = rva_base + pdata_dir.virtual_address;
-            pdata_count = pdata_dir.size / @sizeOf(RuntimeFunction);
+            pdata_count = pdata_dir.size / pdata_entry_size;
         }
 
         // Exports we care about.

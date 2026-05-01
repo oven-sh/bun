@@ -168,10 +168,11 @@ pub fn ReplTransforms(comptime P: type) type {
                         //   import { a, b } from 'mod' -> var {a, b} = await import('mod')
                         //   import * as X from 'mod'   -> var X = await import('mod')
                         //   import 'mod'              -> await import('mod')
-                        const path_str = p.import_records.items[import_data.import_record_index].path.text;
+                        const import_record = &p.import_records.items[import_data.import_record_index];
                         const import_expr = p.newExpr(E.Import{
-                            .expr = p.newExpr(E.String{ .data = path_str }, stmt.loc),
+                            .expr = p.newExpr(E.String{ .data = import_record.path.text }, stmt.loc),
                             .import_record_index = std.math.maxInt(u32),
+                            .phase = import_record.phase,
                         }, stmt.loc);
                         const await_expr = p.newExpr(E.Await{ .value = import_expr }, stmt.loc);
 

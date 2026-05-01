@@ -243,7 +243,12 @@ describeRuntime("import defer (static)", () => {
     expect(stdout).toBe(["Deferred Module", "reexport,main", "reexport,main,dep"].join("\n"));
     expect(exitCode).toBe(0);
   });
+});
 
+// These exercise Bun's parser disambiguation only and do not require the
+// WebKit defer-phase patch: `import defer from` stays evaluation-phase, and
+// `import defer {x}` fails in Bun's parser before reaching JSC.
+describe("syntax disambiguation", () => {
   test("'import defer from' is a default import named 'defer' (back-compat)", async () => {
     const { stdout, stderr, exitCode } = await run({
       "main.mjs": `
@@ -366,6 +371,15 @@ describe("transpiler", () => {
     // But inside a `declare namespace` (ambient), the import-equals gate
     // is skipped, so phase imports are accepted (mirroring the baseline).
     expect(await ts.transform(`declare namespace Foo { import defer * as ns from "./x"; }`)).toBeDefined();
+  });
+
+  test("REPL transform preserves phase when lowering static import to dynamic", async () => {
+    // repl_transforms.zig rewrites `import * as X from "m"` -> `var X = await import("m")`.
+    // It must thread the import record's phase through to the synthesized
+    // E.Import so `import defer * as ns` lowers to `await import.defer(...)`.
+    const repl = new Bun.Transpiler({ loader: "ts", replMode: true });
+    const out = await repl.transform(`import defer * as ns from "./x.js"; ns.value;`);
+    expect(out).toContain("import.defer(");
   });
 
   test("import.defer()/import.source() do not force ESM detection", async () => {

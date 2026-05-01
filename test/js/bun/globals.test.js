@@ -300,20 +300,26 @@ describe.skipIf(hasOldWording)("non-global regexp TypeError wording", () => {
 
   // Exercises the DFG JIT paths in DFGOperations.cpp by forcing the operation to be
   // called many times. Both the empty-replacement and string-replacement paths live there.
+  // Counts every iteration to catch the case where the DFG tier stops throwing or
+  // silently switches wording after the baseline tier got it right.
   it("DFG-tier replaceAll reports the same wording", () => {
     const re = /a/;
-    const stringReplace = () => "aaa".replaceAll(re, "b");
-    const emptyReplace = () => "aaa".replaceAll(re, "");
-    for (const fn of [stringReplace, emptyReplace]) {
-      let last;
-      for (let i = 0; i < 20_000; i++) {
+    const iterations = 20_000;
+    for (const fn of [() => "aaa".replaceAll(re, "b"), () => "aaa".replaceAll(re, "")]) {
+      let throws = 0;
+      let mismatch;
+      for (let i = 0; i < iterations; i++) {
         try {
           fn();
         } catch (e) {
-          last = e;
+          throws++;
+          if (mismatch === undefined && (e.name !== "TypeError" || e.message !== EXPECTED_REPLACE_ALL)) {
+            mismatch = e;
+          }
         }
       }
-      expect(last).toEqual(expect.objectContaining({ name: "TypeError", message: EXPECTED_REPLACE_ALL }));
+      expect(mismatch).toBeUndefined();
+      expect(throws).toBe(iterations);
     }
   });
 });

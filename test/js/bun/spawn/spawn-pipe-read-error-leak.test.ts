@@ -95,13 +95,21 @@ async function once() {
   // entry goes away.
   closeSync(dupFd);
 
-  await Bun.sleep(0);
   Bun.gc(true);
 
-  const final = snapshotFds();
+  // The fd close goes through bun.Async.Closer which schedules close() on
+  // a jsc.WorkPool thread; Bun.sleep(0) doesn't synchronize with that. Poll
+  // a few times so a briefly-starved close thread doesn't flag a false
+  // positive (same pattern as spawn-stdin-pipe-fd-leak.test.ts).
   let leaked = 0;
-  for (const [fd, link] of final) {
-    if (before.get(fd) !== link) leaked++;
+  for (let i = 0; i < 20; i++) {
+    const final = snapshotFds();
+    leaked = 0;
+    for (const [fd, link] of final) {
+      if (before.get(fd) !== link) leaked++;
+    }
+    if (leaked === 0) break;
+    await Bun.sleep(20);
   }
   return leaked;
 }

@@ -752,14 +752,18 @@ pub const PEFile = struct {
             return .{ .bytes = bytes, .pe = pe, .opt = opt, .sections = sh[0..n] };
         }
 
-        /// Translate an addon-relative RVA to a file offset.
+        /// Translate an addon-relative RVA to a file offset. Section
+        /// header fields are attacker-controlled so every add is
+        /// saturating; callers then reject via the bytes.len check.
         fn rvaToOff(self: *const AddonView, rva: u32) !u32 {
             for (self.sections) |s| {
                 const vs = @max(s.virtual_size, s.size_of_raw_data);
-                if (rva >= s.virtual_address and rva < s.virtual_address + vs) {
+                if (rva >= s.virtual_address and rva < s.virtual_address +| vs) {
                     const delta = rva - s.virtual_address;
                     if (delta >= s.size_of_raw_data) return error.OutOfBounds; // bss / past raw
-                    return s.pointer_to_raw_data + delta;
+                    const off = s.pointer_to_raw_data +| delta;
+                    if (off >= self.bytes.len) return error.OutOfBounds;
+                    return off;
                 }
             }
             return error.OutOfBounds;
@@ -767,7 +771,7 @@ pub const PEFile = struct {
 
         fn sliceAtRva(self: *const AddonView, rva: u32, len: u32) ![]const u8 {
             const off = try self.rvaToOff(rva);
-            if (@as(usize, off) + len > self.bytes.len) return error.OutOfBounds;
+            if (@as(u64, off) + len > self.bytes.len) return error.OutOfBounds;
             return self.bytes[off..][0..len];
         }
 
@@ -869,7 +873,13 @@ pub const PEFile = struct {
         // The addon's RVA 0 maps to this RVA in bun.exe.
         const rva_base = try alignUpU32(last_va_end, sect_align);
         const addon_image = addon.opt.size_of_image;
+        // SizeOfImage is attacker-controlled. Refuse anything that would
+        // either blow the build-time allocation or push bun.exe's own
+        // SizeOfImage past 2 GiB (RVAs are signed in several Windows
+        // structures). The tempfile fallback has no such limit.
         if (addon_image == 0) return null;
+        if (addon_image > 512 * 1024 * 1024) return null;
+        if (@as(u64, rva_base) + addon_image > std.math.maxInt(i32)) return null;
 
         // Build a memory-image of the addon (zero-filled then sections
         // copied in at their original RVAs) so the on-disk section is laid
@@ -884,7 +894,9 @@ pub const PEFile = struct {
         for (addon.sections) |s| {
             if (s.virtual_address >= addon_image) return null;
             const copy_len = @min(s.size_of_raw_data, addon_image - s.virtual_address);
-            if (copy_len > 0 and s.pointer_to_raw_data + copy_len <= addon_bytes.len) {
+            if (copy_len > 0 and
+                @as(u64, s.pointer_to_raw_data) + copy_len <= addon_bytes.len)
+            {
                 @memcpy(
                     image[s.virtual_address..][0..copy_len],
                     addon_bytes[s.pointer_to_raw_data..][0..copy_len],
@@ -892,9 +904,13 @@ pub const PEFile = struct {
             }
             const vs = @max(s.virtual_size, s.size_of_raw_data);
             if (vs == 0) continue;
+            // Clamp the VirtualProtect span to what we actually copied
+            // (and therefore what the loader will map). A section header
+            // that lies about its virtual size cannot make the runtime
+            // protect pages outside the merged addon.
             try section_infos.append(.{
                 .rva = rva_base + s.virtual_address,
-                .size = vs,
+                .size = @min(vs, addon_image - s.virtual_address),
                 .final_protect = sectionFinalProtect(s.characteristics),
             });
         }
@@ -921,6 +937,12 @@ pub const PEFile = struct {
                 const n_entries = (block_size - @sizeOf(ImageBaseRelocation)) / 2;
                 const entries: [*]align(1) const u16 = @ptrCast(reloc_bytes[off + @sizeOf(ImageBaseRelocation) ..].ptr);
 
+                // A block whose page RVA lies outside the image cannot
+                // describe any slot we copied. Skip the whole addon —
+                // quietly applying only some relocations would leave a
+                // half-relocated image.
+                if (page_rva >= addon_image) return null;
+
                 // Emit header with bun-relative page RVA.
                 var out_hdr: ImageBaseRelocation = .{
                     .virtual_address = rva_base + page_rva,
@@ -941,11 +963,13 @@ pub const PEFile = struct {
                         return null;
                     }
                     const in_page: u32 = entry & 0x0FFF;
+                    // page_rva < addon_image and in_page < 0x1000, so
+                    // this cannot wrap; just guard the 8-byte write.
                     const target_rva = page_rva + in_page;
-                    if (target_rva + 8 > addon_image) return null;
+                    if (@as(u64, target_rva) + 8 > addon_image) return null;
                     const slot = image[target_rva..][0..8];
                     const old = std.mem.readInt(u64, slot, .little);
-                    std.mem.writeInt(u64, slot, @bitCast(@as(i64, @bitCast(old)) + build_delta), .little);
+                    std.mem.writeInt(u64, slot, @bitCast(@as(i64, @bitCast(old)) +% build_delta), .little);
                 }
                 off += block_size;
             }
@@ -989,18 +1013,25 @@ pub const PEFile = struct {
         if (exp_dir.size >= @sizeOf(ImageExportDirectory)) blk: {
             const exp_bytes = addon.sliceAtRva(exp_dir.virtual_address, @sizeOf(ImageExportDirectory)) catch break :blk;
             const exp: *align(1) const ImageExportDirectory = @ptrCast(exp_bytes.ptr);
+            // Counts are attacker-controlled. Saturate the multiplies so a
+            // hostile number_of_names=0x40000000 turns into a length that
+            // sliceAtRva cleanly rejects instead of wrapping to a small
+            // value and succeeding on the wrong bytes.
             const n_names = exp.number_of_names;
-            const names = addon.sliceAtRva(exp.address_of_names, n_names * 4) catch break :blk;
-            const ords = addon.sliceAtRva(exp.address_of_name_ordinals, n_names * 2) catch break :blk;
-            const funcs = addon.sliceAtRva(exp.address_of_functions, exp.number_of_functions * 4) catch break :blk;
+            const n_funcs = exp.number_of_functions;
+            const names = addon.sliceAtRva(exp.address_of_names, n_names *| 4) catch break :blk;
+            const ords = addon.sliceAtRva(exp.address_of_name_ordinals, n_names *| 2) catch break :blk;
+            const funcs = addon.sliceAtRva(exp.address_of_functions, n_funcs *| 4) catch break :blk;
             var i: u32 = 0;
             while (i < n_names) : (i += 1) {
                 const name_rva = std.mem.readInt(u32, names[i * 4 ..][0..4], .little);
                 const name = addon.cstrAtRva(name_rva) catch continue;
                 const ord = std.mem.readInt(u16, ords[i * 2 ..][0..2], .little);
-                if (ord >= exp.number_of_functions) continue;
-                const fn_rva = std.mem.readInt(u32, funcs[ord * 4 ..][0..4], .little);
-                if (fn_rva == 0) continue;
+                if (ord >= n_funcs) continue;
+                const fn_rva = std.mem.readInt(u32, funcs[@as(u32, ord) * 4 ..][0..4], .little);
+                // A forwarder or deliberately bogus RVA can point past
+                // the addon image; clamp so the rebase cannot wrap.
+                if (fn_rva == 0 or fn_rva >= addon_image) continue;
                 const bun_rva = rva_base + fn_rva;
                 if (std.mem.eql(u8, name, "napi_register_module_v1")) {
                     export_register = bun_rva;
@@ -1085,8 +1116,18 @@ pub const PEFile = struct {
         const dir = addon.dir(dir_idx);
         if (dir.size == 0 or dir.virtual_address == 0) return false;
 
+        // Walk at most as many descriptors as the directory claims to
+        // hold, plus one for the terminator. A hostile image that points
+        // the directory into a region with no zero terminator cannot make
+        // us loop past that.
+        const max_descs: u32 = dir.size / @sizeOf(Desc) +| 1;
+
         var desc_rva = dir.virtual_address;
-        while (true) : (desc_rva += @sizeOf(Desc)) {
+        var di: u32 = 0;
+        while (di < max_descs) : ({
+            di += 1;
+            desc_rva +|= @sizeOf(Desc);
+        }) {
             const desc_bytes = addon.sliceAtRva(desc_rva, @sizeOf(Desc)) catch return true;
             const desc: *align(1) const Desc = @ptrCast(desc_bytes.ptr);
             const name_rva: u32 = if (delay) desc.dll_name_rva else desc.name;
@@ -1113,15 +1154,26 @@ pub const PEFile = struct {
                 entries.deinit();
             }
 
+            // Thunks are walked until a zero terminator. Bound the walk
+            // by the addon image so a missing terminator cannot run us
+            // off the end or allocate unbounded entries; any real addon
+            // with more imports than fit in its own image is malformed.
+            const max_thunks: u32 = addon.opt.size_of_image / 8 +| 1;
+
             var idx: u32 = 0;
-            while (true) : (idx += 1) {
-                const thunk_bytes = addon.sliceAtRva(ilt_rva + idx * 8, 8) catch return true;
+            while (idx < max_thunks) : (idx += 1) {
+                const thunk_rva = ilt_rva +| idx *| 8;
+                const thunk_bytes = addon.sliceAtRva(thunk_rva, 8) catch return true;
                 const thunk = std.mem.readInt(u64, thunk_bytes[0..8], .little);
                 if (thunk == 0) break;
-                const slot_rva = iat_rva + idx * 8;
-                // Zero the IAT slot in the merged image so a missed bind is
-                // an obvious null-deref rather than a jump into junk.
-                if (slot_rva + 8 <= image.len) @memset(image[slot_rva..][0..8], 0);
+                const slot_rva = iat_rva +| idx *| 8;
+                // The IAT slot the runtime will bind must live inside the
+                // merged image, or we would later write through a bogus
+                // pointer.
+                if (slot_rva >= image.len or slot_rva + 8 > image.len) return true;
+                // Zero it so a missed bind is an obvious null-deref
+                // rather than a jump into junk.
+                @memset(image[slot_rva..][0..8], 0);
 
                 if (thunk & IMAGE_ORDINAL_FLAG64 != 0) {
                     try entries.append(.{
@@ -1132,14 +1184,14 @@ pub const PEFile = struct {
                 } else {
                     // IMAGE_IMPORT_BY_NAME: u16 hint then zero-terminated name
                     const hint_rva: u32 = @truncate(thunk & 0x7FFFFFFF);
-                    const name = addon.cstrAtRva(hint_rva + 2) catch return true;
+                    const name = addon.cstrAtRva(hint_rva +| 2) catch return true;
                     try entries.append(.{
                         .iat_rva = rva_base + slot_rva,
                         .ordinal = 0,
                         .name = try allocator.dupe(u8, name),
                     });
                 }
-            }
+            } else return true; // no terminator within bounds
 
             try out.append(.{
                 .name = try allocator.dupe(u8, dll_name),
@@ -1413,6 +1465,67 @@ pub const PEFile = struct {
 
         // If checksum recomputed, field should be non-zero
         // (Unless we intentionally write zero, which is allowed)
+    }
+};
+
+/// Direct access to `addLinkedAddon` for adversarial tests. Lets tests
+/// feed malformed / hostile addon images on any platform without needing
+/// a Windows bun.exe template or a `bun build --compile` round-trip, and
+/// assert that the merge either (a) produces a well-formed PE or (b) is
+/// cleanly skipped — never hangs, never corrupts the host image.
+pub const TestingAPIs = struct {
+    const jsc = bun.jsc;
+
+    pub fn linkAddon(global: *jsc.JSGlobalObject, call: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const args = call.arguments();
+        if (args.len < 3) return global.throwNotEnoughArguments("linkAddon", 3, args.len);
+
+        const host_slice = args[0].asArrayBuffer(global) orelse
+            return global.throwInvalidArgumentType("linkAddon", "host", "Uint8Array");
+        const addon_slice = args[1].asArrayBuffer(global) orelse
+            return global.throwInvalidArgumentType("linkAddon", "addon", "Uint8Array");
+        const name_str = try args[2].toBunString(global);
+        defer name_str.deref();
+        const name_utf8 = name_str.toUTF8(bun.default_allocator);
+        defer name_utf8.deinit();
+
+        var arena = bun.ArenaAllocator.init(bun.default_allocator);
+        defer arena.deinit();
+        const alloc = arena.allocator();
+
+        const result = jsc.JSValue.createEmptyObject(global, 5);
+        const putErr = struct {
+            fn do(g: *jsc.JSGlobalObject, r: jsc.JSValue, comptime where: []const u8, e: anyerror) bun.JSError!jsc.JSValue {
+                var msg = try bun.String.createFormat(where ++ ": {s}", .{@errorName(e)});
+                r.put(g, jsc.ZigString.static("error"), try msg.transferToJS(g));
+                return r;
+            }
+        }.do;
+
+        var host = PEFile.init(alloc, host_slice.byteSlice()) catch |err| return putErr(global, result, "host", err);
+        defer host.deinit();
+
+        const linked = host.addLinkedAddon(alloc, addon_slice.byteSlice(), 0, name_utf8.slice()) catch |err|
+            return putErr(global, result, "addon", err);
+        if (linked == null) {
+            result.put(global, jsc.ZigString.static("skipped"), .true);
+            return result;
+        }
+        var la = linked.?;
+        defer la.deinit(alloc);
+
+        const meta = PEFile.serializeLinkedAddons(alloc, &.{la}) catch |err|
+            return putErr(global, result, "serialize", err);
+        host.addLinkedAddonSection(meta) catch |err|
+            return putErr(global, result, "bunL", err);
+        host.validate() catch |err|
+            return putErr(global, result, "validate", err);
+
+        result.put(global, jsc.ZigString.static("skipped"), .false);
+        result.put(global, jsc.ZigString.static("output"), try jsc.ArrayBuffer.createBuffer(global, host.data.items));
+        result.put(global, jsc.ZigString.static("metadata"), try jsc.ArrayBuffer.createBuffer(global, meta));
+        result.put(global, jsc.ZigString.static("rvaBase"), jsc.JSValue.jsNumber(la.rva_base));
+        return result;
     }
 };
 

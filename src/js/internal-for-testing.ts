@@ -125,6 +125,23 @@ export const memfd_create: (size: number) => number = $newZigFunction(
   1,
 );
 
+// Feed a (possibly hostile) addon PE through pe.PEFile.addLinkedAddon
+// against a host PE image. Used by the adversarial-input tests so they
+// can run on every platform without a Windows bun.exe template. Returns
+// one of { skipped: true } / { error: string } / { skipped: false,
+// output: Buffer, metadata: Buffer, rvaBase: number }.
+export const peLinkAddon: (
+  host: Uint8Array,
+  addon: Uint8Array,
+  name: string,
+) => {
+  skipped?: boolean;
+  error?: string;
+  output?: Buffer;
+  metadata?: Buffer;
+  rvaBase?: number;
+} = $newZigFunction("pe.zig", "TestingAPIs.linkAddon", 3);
+
 export const createStatsForIno: (ino: bigint, big: boolean) => any = $newZigFunction(
   "Stat.zig",
   "createStatsForIno",

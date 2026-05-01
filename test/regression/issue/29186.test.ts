@@ -183,60 +183,61 @@ test.concurrent("self.close() discards queued tasks (setTimeout scheduled before
   expect(JSON.parse(stdout.trim())).toEqual(["before-close"]);
 });
 
-test.concurrent(
-  "worker.terminate() still interrupts JS even after self.close() was called",
-  async () => {
-    // 30s guard: the worker spins for 60s if the trap is not armed. A successful
-    // terminate() interrupts within ~50ms, so 30s is plenty of margin.
-    // `self.close()` sets a cooperative-close flag — but a follow-up
-    // parent-side `worker.terminate()` must still arm the JSC termination
-    // trap and interrupt any long-running synchronous work the worker got
-    // stuck in after close(). Otherwise `worker.terminate()` would be a
-    // silent no-op for closed-but-busy workers.
-    using dir = tempDir("issue-29186-terminate-after-close", {
-      "worker.mjs": `
+test.concurrent("worker.terminate() still interrupts JS even after self.close() was called", async () => {
+  // `self.close()` sets a cooperative-close flag — but a follow-up
+  // parent-side `worker.terminate()` must still arm the JSC termination
+  // trap and interrupt any long-running synchronous work the worker got
+  // stuck in after close(). Otherwise `worker.terminate()` would be a
+  // silent no-op for closed-but-busy workers.
+  //
+  // Ordering is deterministic via an "in-loop" readiness postMessage: the
+  // parent only calls terminate() after seeing that message, which proves
+  // the worker reached the busy loop AFTER self.close(). The first test in
+  // this file already proves postMessage-after-close is delivered.
+  using dir = tempDir("issue-29186-terminate-after-close", {
+    "worker.mjs": `
       self.close();
+      self.postMessage("in-loop");
       // Heavy synchronous work — would run forever without the trap.
       const start = performance.now();
       while (performance.now() - start < 60_000) {}
       self.postMessage("should-not-reach");
     `,
-      "main.mjs": `
+    "main.mjs": `
       const worker = new Worker(new URL("./worker.mjs", import.meta.url).href, { type: "module" });
-      const { promise, resolve, reject } = Promise.withResolvers();
+      const ready = Promise.withResolvers();
+      const done = Promise.withResolvers();
       let sawUnexpected = false;
 
-      worker.onmessage = () => { sawUnexpected = true; };
-      worker.addEventListener("close", () => resolve());
-      worker.onerror = (e) => reject(new Error("worker error: " + (e.message || e)));
+      worker.onmessage = ({ data }) => {
+        if (data === "in-loop") ready.resolve();
+        else sawUnexpected = true;
+      };
+      worker.addEventListener("close", () => done.resolve());
+      worker.onerror = (e) => done.reject(new Error("worker error: " + (e.message || e)));
 
-      // Give the worker a moment to enter the infinite loop, then force
+      // Wait for the worker to confirm it's in the busy loop, then force
       // termination.
-      await new Promise(r => setTimeout(r, 50));
+      await ready.promise;
       worker.terminate();
+      await done.promise;
 
-      // Bound the wait so a regression hangs the test visibly instead of
-      // silently running for 60s.
-      const guard = new Promise((_, r) => setTimeout(() => r(new Error("worker.terminate() did not interrupt the worker in time")), 10_000));
-      await Promise.race([promise, guard]);
       console.log(sawUnexpected ? "UNEXPECTED" : "OK");
     `,
-    });
+  });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.mjs"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
-    expect(stdout.trim()).toBe("OK");
-  },
-  30_000,
-);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
+  expect(stdout.trim()).toBe("OK");
+});
 
 test.concurrent("close() on the main thread is a no-op", async () => {
   // On main (non-window) contexts, `close()` should silently do nothing —

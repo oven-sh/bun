@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { isBroken, isWindows, withoutAggressiveGC } from "harness";
+import { isBroken, isWindows, tempDir, withoutAggressiveGC } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -158,6 +158,60 @@ test.todoIf(isBroken && isWindows)(
   },
   10_000,
 );
+
+test.todoIf(isBroken && isWindows)("sliced file upload with sendfile() sends correct Content-Length", async () => {
+  // File must be >= 32 KB and served over plain HTTP to take the sendfile() path.
+  const fileSize = 64 * 1024;
+  const full = Buffer.alloc(fileSize);
+  for (let i = 0; i < fileSize; i++) full[i] = i & 0xff;
+
+  using dir = tempDir("fetch-sendfile-slice", {
+    "huge.bin": full,
+  });
+  const path = join(String(dir), "huge.bin");
+
+  const { promise: gotHeaders, resolve: resolveHeaders } = Promise.withResolvers<string | null>();
+  using server = Bun.serve({
+    port: 0,
+    development: false,
+    maxRequestBodySize: fileSize * 2,
+    async fetch(req) {
+      resolveHeaders(req.headers.get("content-length"));
+      const body = Buffer.from(await req.arrayBuffer());
+      return Response.json({
+        contentLength: req.headers.get("content-length"),
+        bodyLength: body.length,
+        hash: Bun.CryptoHasher.hash("sha256", body, "hex"),
+      });
+    },
+  });
+
+  const start = 1000;
+  const end = 1234;
+  const expected = full.subarray(start, end);
+
+  const resPromise = fetch(server.url, {
+    method: "POST",
+    body: Bun.file(path).slice(start, end),
+  });
+  // Prevent an unhandled rejection if the header assertion below throws
+  // before we get to await resPromise.
+  resPromise.catch(() => {});
+
+  // Check the header first so we get a clean assertion failure (not a hang)
+  // if Content-Length advertises the full file size while only the slice is
+  // sent — the server would otherwise block in req.arrayBuffer() waiting for
+  // bytes that never arrive.
+  expect(await gotHeaders).toBe(String(expected.length));
+
+  const res = await resPromise;
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({
+    contentLength: String(expected.length),
+    bodyLength: expected.length,
+    hash: Bun.CryptoHasher.hash("sha256", expected, "hex"),
+  });
+});
 
 test("missing file throws the expected error", async () => {
   Bun.gc(true);

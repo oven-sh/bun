@@ -1,10 +1,15 @@
 // https://github.com/oven-sh/bun/issues/29124
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { join } from "path";
 
-test("issue #29124 — new Worker(new URL(rel, import.meta.url)) in a compile binary resolves a nested worker", async () => {
+// Default bun:test timeout (5s) is not enough: we spawn a child `bun
+// build --compile` (~1-2s on release, much longer on ASAN/debug) and
+// then run the produced standalone binary.
+const testTimeout = isDebug ? Infinity : 60_000;
+
+test("issue #29124 — new Worker(new URL(rel, import.meta.url)) in a compile binary resolves a nested worker", { timeout: testTimeout }, async () => {
   using dir = tempDir("issue-29124", {
     "src/cmd/main.ts": /* js */ `
       new Worker(new URL("../workers/worker.ts", import.meta.url));

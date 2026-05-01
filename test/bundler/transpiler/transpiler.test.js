@@ -3626,6 +3626,26 @@ it("Bun.Transpiler.transform stack overflows", async () => {
   expect(async () => await transpiler.transform(code)).toThrow(`Maximum call stack size exceeded`);
 });
 
+it("Bun.Transpiler.transform rejects with a readable parse error after allocation churn", async () => {
+  // The error message text produced by the parser used to be allocated in a
+  // per-task arena that was destroyed before the promise was rejected on the
+  // JS thread, leaving a dangling pointer. Force page reuse between the
+  // worker thread finishing and the promise settling.
+  const transpiler = new Bun.Transpiler();
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const pending = transpiler.transform("const x = 1 ++ 2 ++ 3;").then(
+      () => {
+        throw new Error("should have rejected");
+      },
+      err => err,
+    );
+    for (let i = 0; i < 10000; i++) Buffer.alloc(64);
+    Bun.gc(true);
+    const err = await pending;
+    expect(err.message).toBe('Expected ";" but found "2"');
+  }
+});
+
 describe("arrow function parsing after const declaration (scope mismatch bug)", () => {
   const transpiler = new Bun.Transpiler({ loader: "tsx" });
 

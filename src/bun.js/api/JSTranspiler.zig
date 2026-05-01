@@ -491,6 +491,15 @@ pub const TransformTask = struct {
         var arena = MimallocArena.init();
         defer arena.deinit();
 
+        // Log messages produced during parsing/printing borrow text allocated
+        // from `arena`. Clone them into `bun.default_allocator` before the
+        // arena is destroyed so `then()` can safely read them on the JS thread.
+        defer {
+            for (this.log.msgs.items) |*msg| {
+                msg.* = bun.handleOom(msg.clone(bun.default_allocator));
+            }
+        }
+
         const allocator = arena.allocator();
         var ast_memory_allocator = bun.handleOom(allocator.create(JSAst.ASTMemoryAllocator));
         var ast_scope = ast_memory_allocator.enter(allocator);

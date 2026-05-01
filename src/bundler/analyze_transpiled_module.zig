@@ -345,7 +345,7 @@ pub const ModuleInfo = struct {
             for (self.record_kinds.items, 0..) |k, idx| {
                 if (k == .import_info_single or k == .import_info_single_type_script) {
                     try local_name_to_module_name.put(self.buffer.items[i + 2], .{ .module_name = self.buffer.items[i], .import_name = self.buffer.items[i + 1], .record_kinds_idx = idx, .is_namespace = false });
-                } else if (k == .import_info_namespace) {
+                } else if (k == .import_info_namespace or k == .import_info_namespace_defer) {
                     try local_name_to_module_name.put(self.buffer.items[i + 2], .{ .module_name = self.buffer.items[i], .import_name = .star_namespace, .record_kinds_idx = idx, .is_namespace = true });
                 }
                 i += k.len() catch unreachable;

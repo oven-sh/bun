@@ -68,6 +68,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         request_body: ?*WebCore.Body.Value.HiveRef = null,
         request_body_buf: std.ArrayListUnmanaged(u8) = .{},
         request_body_content_len: usize = 0,
+        /// Running total of bytes received via onBufferedBodyChunk, used to
+        /// enforce maxRequestBodySize when the body is consumed as a stream.
+        streamed_body_bytes_received: usize = 0,
 
         sink: ?*ResponseStream.JSSink = null,
         byte_stream: ?*jsc.WebCore.ByteStream = null,
@@ -2350,14 +2353,25 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 // We have to ignore those chunks unless it's the last one
                 return;
             }
-            const vm = this.server.?.vm;
-            const globalThis = this.server.?.globalThis;
+            const server = this.server orelse return;
+            const vm = server.vm;
+            const globalThis = server.globalThis;
+            const max_body_size = server.config.max_request_body_size;
 
             // After the user does request.body,
             // if they then do .text(), .arrayBuffer(), etc
             // we can no longer hold the strong reference from the body value ref.
             if (this.request_body_readable_stream_ref.get(globalThis)) |readable| {
                 assert(this.request_body_buf.items.len == 0);
+
+                // Enforce max body size for streaming bodies (e.g. chunked transfer encoding
+                // where Content-Length is not set upfront).
+                this.streamed_body_bytes_received += chunk.len;
+                if (this.streamed_body_bytes_received > max_body_size) {
+                    this.rejectRequestBodyAsEntityTooLarge(resp);
+                    return;
+                }
+
                 vm.eventLoop().enter();
                 defer vm.eventLoop().exit();
 
@@ -2426,6 +2440,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     var old = body.value;
 
                     const total = bytes.items.len + chunk.len;
+
+                    // Enforce max body size for the final chunk.
+                    if (total > max_body_size) {
+                        this.rejectRequestBodyAsEntityTooLarge(resp);
+                        return;
+                    }
+
                     getter: {
                         // if (total <= jsc.WebCore.InlineBlob.available_bytes) {
                         //     if (total == 0) {
@@ -2465,11 +2486,35 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     return;
                 }
 
-                if (this.request_body_buf.capacity == 0) {
-                    this.request_body_buf.ensureTotalCapacityPrecise(this.allocator, @min(this.request_body_content_len, max_request_body_preallocate_length)) catch @panic("Out of memory while allocating request body buffer");
+                // Enforce max body size on cumulative buffered data.
+                const new_total = this.request_body_buf.items.len + chunk.len;
+                if (new_total > max_body_size) {
+                    this.rejectRequestBodyAsEntityTooLarge(resp);
+                    return;
                 }
-                this.request_body_buf.appendSlice(this.allocator, chunk) catch @panic("Out of memory while allocating request body");
+
+                if (this.request_body_buf.capacity == 0) {
+                    this.request_body_buf.ensureTotalCapacityPrecise(this.allocator, @min(this.request_body_content_len, max_request_body_preallocate_length)) catch {
+                        this.rejectRequestBodyAsEntityTooLarge(resp);
+                        return;
+                    };
+                }
+                this.request_body_buf.appendSlice(this.allocator, chunk) catch {
+                    this.rejectRequestBodyAsEntityTooLarge(resp);
+                    return;
+                };
             }
+        }
+
+        /// Send a 413 response and close the connection. Used when the
+        /// cumulative body size exceeds the configured maxRequestBodySize.
+        fn rejectRequestBodyAsEntityTooLarge(this: *RequestContext, resp: *App.Response) void {
+            assert(this.resp == resp);
+            if (!this.flags.has_written_status) {
+                this.flags.has_written_status = true;
+                resp.writeStatus("413 Request Entity Too Large");
+            }
+            this.endWithoutBody(true);
         }
 
         pub fn onStartStreamingRequestBody(this: *RequestContext) jsc.WebCore.DrainResult {

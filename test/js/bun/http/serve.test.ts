@@ -1546,6 +1546,119 @@ it("should response with HTTP 413 when request body is larger than maxRequestBod
   }
 });
 
+it("should enforce maxRequestBodySize for chunked transfer encoding requests", async () => {
+  using server = Bun.serve({
+    port: 0,
+    maxRequestBodySize: 64,
+    async fetch(req) {
+      const body = await req.text();
+      return new Response("OK:" + body.length);
+    },
+  });
+
+  const port = server.port;
+  const hostname = server.hostname;
+
+  // Test 1: chunked request within the limit should succeed
+  {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const socket = await Bun.connect({
+      hostname,
+      port,
+      socket: {
+        data(_socket, data) {
+          resolve(data.toString());
+          _socket.end();
+        },
+        open(socket) {
+          const body = "A".repeat(32);
+          const chunk = body.length.toString(16) + "\r\n" + body + "\r\n";
+          socket.write(
+            `POST / HTTP/1.1\r\nHost: ${hostname}:${port}\r\nTransfer-Encoding: chunked\r\n\r\n${chunk}0\r\n\r\n`,
+          );
+          socket.flush();
+        },
+        error() {},
+        close() {},
+      },
+    });
+    const response = await promise;
+    expect(response).toContain("200 OK");
+    expect(response).toContain("OK:32");
+  }
+
+  // Test 2: chunked request exceeding the limit should get 413
+  {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const socket = await Bun.connect({
+      hostname,
+      port,
+      socket: {
+        data(_socket, data) {
+          resolve(data.toString());
+          _socket.end();
+        },
+        open(socket) {
+          // Send a body larger than 64 bytes via chunked encoding (no Content-Length)
+          const body = "B".repeat(128);
+          const chunk = body.length.toString(16) + "\r\n" + body + "\r\n";
+          socket.write(
+            `POST / HTTP/1.1\r\nHost: ${hostname}:${port}\r\nTransfer-Encoding: chunked\r\n\r\n${chunk}0\r\n\r\n`,
+          );
+          socket.flush();
+        },
+        error() {},
+        close() {},
+      },
+    });
+    const response = await promise;
+    expect(response).toContain("413");
+  }
+
+  // Test 3: multiple small chunks that cumulatively exceed the limit should get 413
+  {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const socket = await Bun.connect({
+      hostname,
+      port,
+      socket: {
+        data(_socket, data) {
+          resolve(data.toString());
+          _socket.end();
+        },
+        open(socket) {
+          // First chunk of 40 bytes, below the 64 byte limit
+          const body1 = "C".repeat(40);
+          const chunk1 = body1.length.toString(16) + "\r\n" + body1 + "\r\n";
+          socket.write(`POST / HTTP/1.1\r\nHost: ${hostname}:${port}\r\nTransfer-Encoding: chunked\r\n\r\n${chunk1}`);
+          socket.flush();
+          // Second chunk of 40 bytes, pushing total to 80 which exceeds the 64 byte limit
+          setTimeout(() => {
+            const body2 = "D".repeat(40);
+            const chunk2 = body2.length.toString(16) + "\r\n" + body2 + "\r\n";
+            socket.write(chunk2 + "0\r\n\r\n");
+            socket.flush();
+          }, 50);
+        },
+        error() {},
+        close() {},
+      },
+    });
+    const response = await promise;
+    expect(response).toContain("413");
+  }
+
+  // Test 4: server should still work after rejecting oversized requests
+  {
+    const resp = await fetch(`http://${hostname}:${port}`, {
+      method: "POST",
+      body: "small",
+    });
+    expect(resp.status).toBe(200);
+    expect(await resp.text()).toBe("OK:5");
+  }
+});
+
 it("should support promise returned from error", async () => {
   const { promise, resolve } = Promise.withResolvers<string>();
 

@@ -252,6 +252,7 @@ pub const Filter = enum(i32) {
     lanczos2 = 6,
 };
 
+extern fn bun_image_resize_scratch_size(src_w: i32, src_h: i32, dst_w: i32, dst_h: i32, filter: i32) usize;
 extern fn bun_image_resize_rgba8(
     src: [*]const u8,
     src_w: i32,
@@ -260,6 +261,7 @@ extern fn bun_image_resize_rgba8(
     dst_w: i32,
     dst_h: i32,
     filter: i32,
+    scratch: [*]u8,
 ) c_int;
 extern fn bun_image_rotate_rgba8(src: [*]const u8, w: i32, h: i32, dst: [*]u8, deg: i32) void;
 extern fn bun_image_flip_rgba8(src: [*]const u8, w: i32, h: i32, dst: [*]u8, horiz: i32) void;
@@ -273,11 +275,19 @@ pub fn modulate(rgba: []u8, brightness: f32, saturation: f32) void {
 }
 
 pub fn resize(src: []const u8, sw: u32, sh: u32, dw: u32, dh: u32, f: Filter) Error![]u8 {
-    const out = try bun.default_allocator.alloc(u8, @as(usize, dw) * dh * 4);
-    errdefer bun.default_allocator.free(out);
-    if (bun_image_resize_rgba8(src.ptr, @intCast(sw), @intCast(sh), out.ptr, @intCast(dw), @intCast(dh), @intFromEnum(f)) != 0)
+    // ONE allocation for output + the kernel's scratch arena (intermediate
+    // dst_w×src_h×4 row buffer + spans/weights tables). Zero mallocs in the
+    // C++; mimalloc here is faster than libc, and the over-allocation rounds
+    // into the same size class as the row buffer alone.
+    const out_sz: usize = @as(usize, dw) * dh * 4;
+    const scratch_sz = bun_image_resize_scratch_size(@intCast(sw), @intCast(sh), @intCast(dw), @intCast(dh), @intFromEnum(f));
+    const block = try bun.default_allocator.alloc(u8, out_sz + scratch_sz);
+    errdefer bun.default_allocator.free(block);
+    if (bun_image_resize_rgba8(src.ptr, @intCast(sw), @intCast(sh), block.ptr, @intCast(dw), @intCast(dh), @intFromEnum(f), block.ptr + out_sz) != 0)
         return error.OutOfMemory;
-    return out;
+    // Drop the scratch tail; mimalloc's shrink is in-place when the new size
+    // fits the same block, so this is free.
+    return bun.handleOom(bun.default_allocator.realloc(block, out_sz));
 }
 
 pub fn rotate(src: []const u8, w: u32, h: u32, degrees: u32) Error!Decoded {

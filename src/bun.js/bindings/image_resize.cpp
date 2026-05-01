@@ -57,19 +57,30 @@ static HWY_INLINE uint8_t ClampU8(float v)
     return static_cast<uint8_t>(v + 0.5f);
 }
 
+// `__builtin_assume` lets clang drop the loop's zero-trip check / sign-extend
+// when we know a bound is positive — `s.n` is always ≥ 1 (buildWeights ensures
+// at least one tap) and ≤ wstride. Dimensions are all > 0 (checked at entry).
+#if defined(__clang__)
+#define BUN_ASSUME(x) __builtin_assume(x)
+#else
+#define BUN_ASSUME(x) ((void)0)
+#endif
+
 // Horizontal pass: src_w×src_h → dst_w×src_h. spans/weights index by dst x.
 //
 // One output pixel's RGBA is a 4-lane f32 accumulator; each tap is a 4-byte
 // load → u8×4 → i32×4 → f32×4 → FMA(broadcast wk). Fixed to a 4-lane tag so
 // the channel vector fits one SSE/NEON register and isn't 12-lanes-wasted on
-// AVX-512. (The previous version broadcast each channel into a full vector
-// then read lane 0 — effectively scalar with overhead; bughunt flagged it.)
-// Vectorising across OUTPUT pixels would need a gather (each x has its own
-// span.start); the per-pixel 4-lane body keeps loads contiguous and is the
-// same shape libvips' `reduceh` uses.
-static void HorizPass(const uint8_t* HWY_RESTRICT src, int32_t src_w, int32_t src_h,
-    uint8_t* HWY_RESTRICT dst, int32_t dst_w,
-    const Span* HWY_RESTRICT spans, const float* HWY_RESTRICT weights, int32_t wstride)
+// AVX-512. Vectorising across OUTPUT pixels would need a gather (each x has
+// its own span.start); the per-pixel 4-lane body keeps loads contiguous and
+// is the same shape libvips' `reduceh` uses.
+//
+// All addressing is via running pointers (`+= stride`) — no index*stride
+// multiplies in any inner loop. Iterators are `size_t` so there's no
+// sign-extension on each pointer add.
+static void HorizPass(const uint8_t* HWY_RESTRICT src, size_t src_w, size_t src_h,
+    uint8_t* HWY_RESTRICT dst, size_t dst_w,
+    const Span* HWY_RESTRICT spans, const float* HWY_RESTRICT weights, size_t wstride)
 {
     using D = hn::FixedTag<float, 4>;
     const D df;
@@ -79,108 +90,140 @@ static void HorizPass(const uint8_t* HWY_RESTRICT src, int32_t src_w, int32_t sr
     const auto lo = hn::Zero(df);
     const auto hi = hn::Set(df, 255.0f);
 
-    for (int32_t y = 0; y < src_h; y++) {
-        const uint8_t* srow = src + static_cast<size_t>(y) * src_w * 4;
-        uint8_t* drow = dst + static_cast<size_t>(y) * dst_w * 4;
-        for (int32_t x = 0; x < dst_w; x++) {
+    BUN_ASSUME(src_w > 0 && src_h > 0 && dst_w > 0);
+    const size_t src_row = src_w * 4;
+    const size_t dst_row = dst_w * 4;
+    const uint8_t* srow = src;
+    uint8_t* drow = dst;
+    for (size_t y = 0; y < src_h; y++, srow += src_row, drow += dst_row) {
+        const float* w = weights;
+        uint8_t* dp = drow;
+        for (size_t x = 0; x < dst_w; x++, w += wstride, dp += 4) {
             const Span s = spans[x];
-            const float* w = weights + static_cast<size_t>(x) * wstride;
+            BUN_ASSUME(s.n > 0);
+            BUN_ASSUME(s.start >= 0);
+            // sp is the only place that still needs a multiply (s.start is
+            // non-monotone in x); it's one shift+add per output pixel.
             const uint8_t* sp = srow + static_cast<size_t>(s.start) * 4;
             auto acc = hn::Zero(df);
-            for (int32_t k = 0; k < s.n; k++) {
-                auto v = hn::ConvertTo(df, hn::PromoteTo(di32, hn::LoadU(du8, sp + k * 4)));
-                acc = hn::MulAdd(v, hn::Set(df, w[k]), acc);
-            }
+            for (int32_t k = 0; k < s.n; k++, sp += 4)
+                acc = hn::MulAdd(hn::ConvertTo(df, hn::PromoteTo(di32, hn::LoadU(du8, sp))), hn::Set(df, w[k]), acc);
             acc = hn::Min(hn::Max(hn::Add(acc, half), lo), hi);
-            hn::StoreU(hn::DemoteTo(du8, hn::ConvertTo(di32, acc)), du8, drow + x * 4);
+            hn::StoreU(hn::DemoteTo(du8, hn::ConvertTo(di32, acc)), du8, dp);
         }
     }
-    (void)src_w;
 }
 
 // Vertical pass: dst_w×src_h → dst_w×dst_h. SIMD across x (contiguous RGBA
-// bytes), scalar over taps.
-static void VertPass(const uint8_t* HWY_RESTRICT src, int32_t src_h, int32_t dst_w,
-    uint8_t* HWY_RESTRICT dst, int32_t dst_h,
-    const Span* HWY_RESTRICT spans, const float* HWY_RESTRICT weights, int32_t wstride)
+// bytes), scalar over taps. The inner-tap stride is `row_bytes`, so the tap
+// loop walks down columns with `sp += row_bytes` — no per-tap multiply.
+static void VertPass(const uint8_t* HWY_RESTRICT src, size_t src_h, size_t dst_w,
+    uint8_t* HWY_RESTRICT dst, size_t dst_h,
+    const Span* HWY_RESTRICT spans, const float* HWY_RESTRICT weights, size_t wstride)
 {
     const hn::ScalableTag<float> df;
     const hn::Rebind<int32_t, decltype(df)> di32;
     const hn::Rebind<uint8_t, decltype(df)> du8;
+    const auto half = hn::Set(df, 0.5f);
+    const auto vlo = hn::Zero(df);
+    const auto vhi = hn::Set(df, 255.0f);
     const size_t N = hn::Lanes(df);
-    const size_t row_bytes = static_cast<size_t>(dst_w) * 4;
+    const size_t row_bytes = dst_w * 4;
     (void)src_h;
 
-    for (int32_t y = 0; y < dst_h; y++) {
+    BUN_ASSUME(dst_w > 0 && dst_h > 0);
+    uint8_t* drow = dst;
+    const float* w = weights;
+    for (size_t y = 0; y < dst_h; y++, drow += row_bytes, w += wstride) {
         const Span s = spans[y];
-        const float* w = weights + static_cast<size_t>(y) * wstride;
-        uint8_t* drow = dst + static_cast<size_t>(y) * row_bytes;
-        size_t i = 0;
-        for (; i + N <= row_bytes; i += N) {
+        BUN_ASSUME(s.n > 0);
+        BUN_ASSUME(s.start >= 0);
+        // One multiply per output row to anchor the column window; everything
+        // inside is `+= row_bytes` / `+= N`.
+        const uint8_t* col0 = src + static_cast<size_t>(s.start) * row_bytes;
+        uint8_t* dp = drow;
+        const uint8_t* end = drow + row_bytes;
+        for (; dp + N <= end; dp += N, col0 += N) {
             auto acc = hn::Zero(df);
-            for (int32_t k = 0; k < s.n; k++) {
-                const uint8_t* sp = src + static_cast<size_t>(s.start + k) * row_bytes + i;
-                // u8 → i32 → f32; highway has no direct u8→f32 PromoteTo.
-                auto v = hn::ConvertTo(df, hn::PromoteTo(di32, hn::LoadU(du8, sp)));
-                acc = hn::MulAdd(v, hn::Set(df, w[k]), acc);
-            }
-            acc = hn::Min(hn::Max(hn::Add(acc, hn::Set(df, 0.5f)), hn::Zero(df)), hn::Set(df, 255.0f));
-            hn::StoreU(hn::DemoteTo(du8, hn::ConvertTo(di32, acc)), du8, drow + i);
+            const uint8_t* sp = col0;
+            for (int32_t k = 0; k < s.n; k++, sp += row_bytes)
+                acc = hn::MulAdd(hn::ConvertTo(df, hn::PromoteTo(di32, hn::LoadU(du8, sp))), hn::Set(df, w[k]), acc);
+            acc = hn::Min(hn::Max(hn::Add(acc, half), vlo), vhi);
+            hn::StoreU(hn::DemoteTo(du8, hn::ConvertTo(di32, acc)), du8, dp);
         }
-        for (; i < row_bytes; i++) {
+        for (; dp < end; dp++, col0++) {
             float acc = 0.0f;
-            for (int32_t k = 0; k < s.n; k++)
-                acc += static_cast<float>(src[static_cast<size_t>(s.start + k) * row_bytes + i]) * w[k];
-            drow[i] = ClampU8(acc);
+            const uint8_t* sp = col0;
+            for (int32_t k = 0; k < s.n; k++, sp += row_bytes)
+                acc += static_cast<float>(*sp) * w[k];
+            *dp = ClampU8(acc);
         }
     }
 }
 
-// 90° CW: dst[x, y] = src[y, src_h-1-x]. Works on RGBA8; dst is src_h×src_w.
-static void Rotate90Impl(const uint8_t* HWY_RESTRICT src, int32_t w, int32_t h, uint8_t* HWY_RESTRICT dst)
+// 90° CW: dst[x, y] = src[y, src_h-1-x]. dst is h×w.
+// Walk a running source pointer (`sp += 4`) and a running dst pointer that
+// jumps one *destination row* per source pixel (`dp += dst_row`) — both inner
+// strides are constants, zero multiplies inside the loops.
+static void Rotate90Impl(const uint8_t* HWY_RESTRICT src, size_t w, size_t h, uint8_t* HWY_RESTRICT dst)
 {
-    for (int32_t y = 0; y < h; y++) {
-        const uint8_t* srow = src + static_cast<size_t>(y) * w * 4;
-        for (int32_t x = 0; x < w; x++) {
-            uint8_t* dp = dst + (static_cast<size_t>(x) * h + (h - 1 - y)) * 4;
-            std::memcpy(dp, srow + x * 4, 4);
-        }
+    BUN_ASSUME(w > 0 && h > 0);
+    const size_t dst_row = h * 4;
+    const uint8_t* sp = src;
+    // y=0 column lands at dst x = h-1.
+    uint8_t* dcol = dst + dst_row - 4;
+    for (size_t y = 0; y < h; y++, dcol -= 4) {
+        uint8_t* dp = dcol;
+        for (size_t x = 0; x < w; x++, sp += 4, dp += dst_row)
+            std::memcpy(dp, sp, 4);
     }
 }
 
-static void Rotate180Impl(const uint8_t* HWY_RESTRICT src, int32_t w, int32_t h, uint8_t* HWY_RESTRICT dst)
+static void Rotate180Impl(const uint8_t* HWY_RESTRICT src, size_t w, size_t h, uint8_t* HWY_RESTRICT dst)
 {
-    const size_t total = static_cast<size_t>(w) * h;
-    for (size_t i = 0; i < total; i++)
-        std::memcpy(dst + (total - 1 - i) * 4, src + i * 4, 4);
+    BUN_ASSUME(w > 0 && h > 0);
+    const size_t total = w * h;
+    const uint8_t* sp = src;
+    uint8_t* dp = dst + (total - 1) * 4;
+    for (size_t i = 0; i < total; i++, sp += 4, dp -= 4)
+        std::memcpy(dp, sp, 4);
 }
 
-static void Rotate270Impl(const uint8_t* HWY_RESTRICT src, int32_t w, int32_t h, uint8_t* HWY_RESTRICT dst)
+static void Rotate270Impl(const uint8_t* HWY_RESTRICT src, size_t w, size_t h, uint8_t* HWY_RESTRICT dst)
 {
-    for (int32_t y = 0; y < h; y++) {
-        const uint8_t* srow = src + static_cast<size_t>(y) * w * 4;
-        for (int32_t x = 0; x < w; x++) {
-            uint8_t* dp = dst + (static_cast<size_t>(w - 1 - x) * h + y) * 4;
-            std::memcpy(dp, srow + x * 4, 4);
-        }
+    BUN_ASSUME(w > 0 && h > 0);
+    const size_t dst_row = h * 4;
+    const uint8_t* sp = src;
+    uint8_t* dcol = dst;
+    for (size_t y = 0; y < h; y++, dcol += 4) {
+        uint8_t* dp = dcol + (w - 1) * dst_row;
+        for (size_t x = 0; x < w; x++, sp += 4, dp -= dst_row)
+            std::memcpy(dp, sp, 4);
     }
 }
 
-static void FlipHImpl(const uint8_t* HWY_RESTRICT src, int32_t w, int32_t h, uint8_t* HWY_RESTRICT dst)
+static void FlipHImpl(const uint8_t* HWY_RESTRICT src, size_t w, size_t h, uint8_t* HWY_RESTRICT dst)
 {
-    for (int32_t y = 0; y < h; y++) {
-        const uint8_t* srow = src + static_cast<size_t>(y) * w * 4;
-        uint8_t* drow = dst + static_cast<size_t>(y) * w * 4;
-        for (int32_t x = 0; x < w; x++)
-            std::memcpy(drow + x * 4, srow + (w - 1 - x) * 4, 4);
+    BUN_ASSUME(w > 0 && h > 0);
+    const size_t row = w * 4;
+    const uint8_t* srow = src;
+    uint8_t* drow = dst;
+    for (size_t y = 0; y < h; y++, srow += row, drow += row) {
+        const uint8_t* sp = srow;
+        uint8_t* dp = drow + row - 4;
+        for (size_t x = 0; x < w; x++, sp += 4, dp -= 4)
+            std::memcpy(dp, sp, 4);
     }
 }
 
-static void FlipVImpl(const uint8_t* HWY_RESTRICT src, int32_t w, int32_t h, uint8_t* HWY_RESTRICT dst)
+static void FlipVImpl(const uint8_t* HWY_RESTRICT src, size_t w, size_t h, uint8_t* HWY_RESTRICT dst)
 {
-    const size_t row = static_cast<size_t>(w) * 4;
-    for (int32_t y = 0; y < h; y++)
-        std::memcpy(dst + static_cast<size_t>(y) * row, src + static_cast<size_t>(h - 1 - y) * row, row);
+    BUN_ASSUME(w > 0 && h > 0);
+    const size_t row = w * 4;
+    const uint8_t* sp = src + (h - 1) * row;
+    uint8_t* dp = dst;
+    for (size_t y = 0; y < h; y++, sp -= row, dp += row)
+        std::memcpy(dp, sp, row);
 }
 
 // Nearest-palette index for one RGBA point. Squared Euclidean over all four
@@ -367,22 +410,28 @@ int buildWeights(int kind, int32_t src_len, int32_t dst_len,
     return max_n;
 }
 
-// Stack-with-heap-fallback for the small per-axis tables. spans + weights for
-// a typical thumbnail (≤ 800 px, lanczos3 at 4× downscale ≈ 26 taps) fits in
-// well under 32 KB; only very large or extreme-ratio outputs spill to malloc.
-template<typename T, size_t N>
-struct StackOr {
-    alignas(16) T stack[N];
-    T* p;
-    bool heap;
-    explicit StackOr(size_t n)
-        : p(n <= N ? stack : static_cast<T*>(std::malloc(sizeof(T) * n)))
-        , heap(n > N)
+// Round n up to a multiple of a (a is a power of two).
+constexpr size_t alignUp(size_t n, size_t a) { return (n + a - 1) & ~(a - 1); }
+
+// Layout of the caller-provided scratch arena. The intermediate row buffer
+// (dst_w×src_h×4) dominates; the spans/weights tables are a few tens of KB
+// packed into its tail. Computed once so `_scratch_size` and the resize body
+// agree exactly.
+struct ScratchLayout {
+    size_t wsx, wsy;
+    size_t off_xs, off_ys, off_xw, off_yw, total;
+    ScratchLayout(size_t src_w, size_t src_h, size_t dst_w, size_t dst_h, int kind)
     {
-    }
-    ~StackOr()
-    {
-        if (heap) std::free(p);
+        const double xs = static_cast<double>(dst_w) / src_w;
+        const double ys = static_cast<double>(dst_h) / src_h;
+        wsx = static_cast<size_t>(std::ceil(radius(kind) / (xs < 1.0 ? xs : 1.0))) * 2 + 2;
+        wsy = static_cast<size_t>(std::ceil(radius(kind) / (ys < 1.0 ? ys : 1.0))) * 2 + 2;
+        const size_t tmp_sz = dst_w * src_h * 4;
+        off_xs = alignUp(tmp_sz, alignof(Span));
+        off_ys = off_xs + sizeof(Span) * dst_w;
+        off_xw = alignUp(off_ys + sizeof(Span) * dst_h, alignof(float));
+        off_yw = off_xw + sizeof(float) * dst_w * wsx;
+        total = off_yw + sizeof(float) * dst_h * wsy;
     }
 };
 
@@ -390,37 +439,34 @@ struct StackOr {
 
 extern "C" {
 
-// Resize RGBA8. Allocates one intermediate (dst_w × src_h × 4) internally.
-// Returns 0 on success, -1 on alloc failure.
-int bun_image_resize_rgba8(const uint8_t* src, int32_t src_w, int32_t src_h,
-    uint8_t* dst, int32_t dst_w, int32_t dst_h, int32_t filter_kind)
+// How many bytes of scratch the resize needs. Caller (Zig) allocates this
+// alongside the output in ONE bun.default_allocator block — zero mallocs in
+// this TU.
+size_t bun_image_resize_scratch_size(int32_t src_w, int32_t src_h, int32_t dst_w, int32_t dst_h, int32_t filter_kind)
 {
-    if (src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0) return -1;
+    if (src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0) return 0;
+    return ScratchLayout(src_w, src_h, dst_w, dst_h, filter_kind).total;
+}
 
-    const double xs = static_cast<double>(dst_w) / src_w;
-    const double ys = static_cast<double>(dst_h) / src_h;
-    const int wsx = static_cast<int>(std::ceil(radius(filter_kind) / (xs < 1.0 ? xs : 1.0))) * 2 + 2;
-    const int wsy = static_cast<int>(std::ceil(radius(filter_kind) / (ys < 1.0 ? ys : 1.0))) * 2 + 2;
+// Resize RGBA8. `scratch` must be at least `bun_image_resize_scratch_size(...)`
+// bytes; partitioned into tmp | xspans | yspans | xw | yw. Returns 0 on
+// success, -1 on bad dimensions.
+int bun_image_resize_rgba8(const uint8_t* src, int32_t src_w, int32_t src_h,
+    uint8_t* dst, int32_t dst_w, int32_t dst_h, int32_t filter_kind, uint8_t* scratch)
+{
+    if (src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0 || !scratch) return -1;
+    const ScratchLayout L(src_w, src_h, dst_w, dst_h, filter_kind);
+    auto* tmp = scratch;
+    auto* xspans = reinterpret_cast<Span*>(scratch + L.off_xs);
+    auto* yspans = reinterpret_cast<Span*>(scratch + L.off_ys);
+    auto* xw = reinterpret_cast<float*>(scratch + L.off_xw);
+    auto* yw = reinterpret_cast<float*>(scratch + L.off_yw);
 
-    StackOr<Span, 1024> xspans(dst_w);
-    StackOr<Span, 1024> yspans(dst_h);
-    StackOr<float, 4096> xw(static_cast<size_t>(dst_w) * wsx);
-    StackOr<float, 4096> yw(static_cast<size_t>(dst_h) * wsy);
-    // The intermediate row buffer is dst_w × src_h × 4 — usually too big for
-    // stack (e.g. 400×1080×4 ≈ 1.7 MB), so this stays on the heap.
-    auto* tmp = static_cast<uint8_t*>(std::malloc(static_cast<size_t>(dst_w) * src_h * 4));
-    if (!xspans.p || !yspans.p || !xw.p || !yw.p || !tmp) {
-        std::free(tmp);
-        return -1;
-    }
+    buildWeights(filter_kind, src_w, dst_w, xspans, xw, static_cast<int32_t>(L.wsx));
+    buildWeights(filter_kind, src_h, dst_h, yspans, yw, static_cast<int32_t>(L.wsy));
 
-    buildWeights(filter_kind, src_w, dst_w, xspans.p, xw.p, wsx);
-    buildWeights(filter_kind, src_h, dst_h, yspans.p, yw.p, wsy);
-
-    HWY_DYNAMIC_DISPATCH(HorizPass)(src, src_w, src_h, tmp, dst_w, xspans.p, xw.p, wsx);
-    HWY_DYNAMIC_DISPATCH(VertPass)(tmp, src_h, dst_w, dst, dst_h, yspans.p, yw.p, wsy);
-
-    std::free(tmp);
+    HWY_DYNAMIC_DISPATCH(HorizPass)(src, src_w, src_h, tmp, dst_w, xspans, xw, L.wsx);
+    HWY_DYNAMIC_DISPATCH(VertPass)(tmp, src_h, dst_w, dst, dst_h, yspans, yw, L.wsy);
     return 0;
 }
 

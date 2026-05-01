@@ -12,8 +12,8 @@
 // Runs on every platform via the `peLinkAddon` testing hook — no Windows
 // host or downloaded bun.exe template required.
 
-import { describe, expect, test } from "bun:test";
 import { peLinkAddon } from "bun:internal-for-testing";
+import { describe, expect, test } from "bun:test";
 
 // ---------------------------------------------------------------------------
 // Synthetic PE builders. Kept deliberately small: enough structure for the
@@ -256,7 +256,11 @@ describe("pe.addLinkedAddon adversarial input", () => {
   });
 
   test("addon with SizeOfImage = 0 is skipped", () => {
-    const r = peLinkAddon(makeHost(), makeAddon(b => b.writeUInt32LE(0, OPTOFF + 56)), "x");
+    const r = peLinkAddon(
+      makeHost(),
+      makeAddon(b => b.writeUInt32LE(0, OPTOFF + 56)),
+      "x",
+    );
     expect(r.skipped).toBe(true);
   });
 

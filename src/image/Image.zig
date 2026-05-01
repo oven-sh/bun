@@ -220,6 +220,10 @@ fn setFormat(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallFram
         if (try opt.get(global, "compressionLevel")) |c| if (c.isNumber()) {
             enc.compression_level = @intFromFloat(@min(@max(c.asNumber(), 0), 9));
         };
+        if (try opt.get(global, "palette")) |p| enc.palette = p.toBoolean();
+        if (try opt.get(global, "colors")) |c| if (c.isNumber()) {
+            enc.colors = @intFromFloat(@min(@max(c.asNumber(), 2), 256));
+        };
     }
     this.pipeline.output = enc;
     return callframe.this();
@@ -251,34 +255,12 @@ pub fn doMetadata(this: *Image, global: *jsc.JSGlobalObject, _: *jsc.CallFrame) 
     return this.schedule(global, .metadata, .uint8array);
 }
 
-pub fn doToBuffer(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const args = callframe.arguments();
-    var enc: codecs.EncodeOptions = .{ .format = .png };
-    if (args.len > 0 and args[0].isObject()) {
-        const opt = args[0];
-        if (try opt.get(global, "format")) |f| {
-            if (f.isString()) {
-                const s = try f.toBunString(global);
-                defer s.deref();
-                if (s.eqlComptime("jpeg") or s.eqlComptime("jpg")) enc.format = .jpeg //
-                else if (s.eqlComptime("png")) enc.format = .png //
-                else if (s.eqlComptime("webp")) enc.format = .webp //
-                else return global.throwInvalidArguments("toBuffer: format must be 'jpeg' | 'png' | 'webp'", .{});
-            }
-        }
-        if (try opt.get(global, "quality")) |q| {
-            if (q.isNumber()) enc.quality = @intFromFloat(@min(@max(q.asNumber(), 1), 100));
-        }
-        if (try opt.get(global, "lossless")) |l| enc.lossless = l.toBoolean();
-        if (try opt.get(global, "compressionLevel")) |c| if (c.isNumber()) {
-            enc.compression_level = @intFromFloat(@min(@max(c.asNumber(), 0), 9));
-        };
-    }
-    return this.schedule(global, .{ .encode = enc }, .uint8array);
-}
-
 pub fn doBytes(this: *Image, global: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     return this.schedule(global, .{ .encode = this.pipeline.output }, .uint8array);
+}
+
+pub fn doBuffer(this: *Image, global: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    return this.schedule(global, .{ .encode = this.pipeline.output }, .buffer);
 }
 
 pub fn doBlob(this: *Image, global: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -308,6 +290,35 @@ fn schedule(this: *Image, global: *jsc.JSGlobalObject, kind: PipelineTask.Kind, 
     return task.promise.value();
 }
 
+/// Run the full pipeline on the *current* thread. Used when an `Image` is
+/// passed straight to `new Response(image)` / `new Request(url, {body: image})`
+/// — the body-init contract is synchronous, so we encode here and hand back an
+/// owned buffer the Body can wrap as an `InternalBlob`. The async terminals
+/// (`bytes`/`blob`/…) remain the off-thread path.
+///
+/// A later refinement is to return a `.Locked` body and resolve it from the
+/// worker pool; this is the simple, correct first cut.
+pub fn encodeForBody(this: *Image) !struct { bytes: []u8, mime: [:0]const u8 } {
+    var task: PipelineTask = .{
+        .image = this,
+        .global = undefined, // not touched by run()
+        .pipeline = this.pipeline,
+        .source = this.snapshotSource(),
+        .kind = .{ .encode = this.pipeline.output },
+        .deliver = .uint8array,
+        .max_pixels = this.max_pixels,
+        .auto_orient = this.auto_orient,
+    };
+    defer task.source.deinit();
+    task.run();
+    return switch (task.result) {
+        .encoded => |e| .{ .bytes = e.bytes, .mime = e.format.mime() },
+        .err => |e| e,
+        .io_err => error.DecodeFailed,
+        .meta => unreachable,
+    };
+}
+
 /// The worker thread must not race the JS thread for `this.source`, and a
 /// path-backed source needs reading. Either way the worker gets an owned copy.
 fn snapshotSource(this: *Image) Source {
@@ -334,7 +345,7 @@ pub const PipelineTask = struct {
     auto_orient: bool,
     result: Result = .{ .err = error.DecodeFailed },
 
-    pub const Deliver = enum { uint8array, blob, base64 };
+    pub const Deliver = enum { uint8array, buffer, blob, base64 };
 
     pub const Kind = union(enum) {
         /// `null` ⇒ re-encode in the source format (resolved after decode).
@@ -414,6 +425,7 @@ pub const PipelineTask = struct {
         switch (this.result) {
             .encoded => |enc| switch (this.deliver) {
                 .uint8array => try promise.resolve(global, jsc.JSUint8Array.fromBytes(global, enc.bytes)),
+                .buffer => try promise.resolve(global, jsc.JSValue.createBuffer(global, enc.bytes)),
                 .blob => {
                     var blob = jsc.WebCore.Blob.init(enc.bytes, bun.default_allocator, global);
                     blob.content_type = enc.format.mime();

@@ -23,8 +23,8 @@ export default [
       webp: { fn: "doFormatWebp", length: 1 },
 
       // Terminal async ops — run decode → pipeline → encode on the work pool.
-      toBuffer: { fn: "doToBuffer", length: 1, async: true },
       bytes: { fn: "doBytes", length: 0, async: true },
+      buffer: { fn: "doBuffer", length: 0, async: true },
       blob: { fn: "doBlob", length: 0, async: true },
       toBase64: { fn: "doToBase64", length: 0, async: true },
       metadata: { fn: "doMetadata", length: 0, async: true },

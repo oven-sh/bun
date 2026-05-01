@@ -618,6 +618,19 @@ pub const Value = union(Tag) {
                     .Blob = blob.dupeWithContentType(true),
                 };
             }
+
+            if (value.as(jsc.API.Image)) |image| {
+                // Body init is synchronous, so encode now and wrap as a Blob
+                // with the right MIME type. The off-thread path is still
+                // available via `await image.blob()`.
+                const out = image.encodeForBody() catch |err| {
+                    return globalThis.throw("Image: {s}", .{@errorName(err)});
+                };
+                var blob = Blob.init(out.bytes, bun.default_allocator, globalThis);
+                blob.content_type = out.mime;
+                blob.content_type_was_set = true;
+                return Body.Value{ .Blob = blob };
+            }
         }
 
         value.ensureStillAlive();

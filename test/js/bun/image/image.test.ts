@@ -153,7 +153,7 @@ describe("Bun.Image", () => {
   });
 
   test("PNG → PNG round-trip preserves every pixel", async () => {
-    const out = await new Bun.Image(cornersPng).toBuffer({ format: "png" });
+    const out = await new Bun.Image(cornersPng).png().bytes();
     expect(out[0]).toBe(0x89);
     expect(String.fromCharCode(out[1], out[2], out[3])).toBe("PNG");
     const { w, h, data } = decodePngRaw(out);
@@ -164,7 +164,7 @@ describe("Bun.Image", () => {
 
   describe.each(["jpeg", "webp"] as const)("%s", fmt => {
     test(`PNG → ${fmt} → decode dimensions`, async () => {
-      const out = await new Bun.Image(gradientPng).toBuffer({ format: fmt, quality: 90 });
+      const out = await new Bun.Image(gradientPng)[fmt]({ quality: 90 }).bytes();
       // Magic-byte sanity.
       if (fmt === "jpeg") {
         expect(out[0]).toBe(0xff);
@@ -180,8 +180,8 @@ describe("Bun.Image", () => {
     });
 
     test(`PNG → ${fmt} (q90) → PNG approximates source within tolerance`, async () => {
-      const out = await new Bun.Image(gradientPng).toBuffer({ format: fmt, quality: 90 });
-      const back = await new Bun.Image(out).toBuffer({ format: "png" });
+      const out = await new Bun.Image(gradientPng)[fmt]({ quality: 90 }).bytes();
+      const back = await new Bun.Image(out).png().bytes();
       const { data } = decodePngRaw(back);
       // Lossy codecs jitter pixels; assert mean absolute error stays small.
       const src = decodePngRaw(gradientPng).data;
@@ -194,14 +194,14 @@ describe("Bun.Image", () => {
   });
 
   test("WebP lossless round-trips exactly", async () => {
-    const out = await new Bun.Image(cornersPng).toBuffer({ format: "webp", lossless: true });
-    const back = decodePngRaw(await new Bun.Image(out).toBuffer({ format: "png" }));
+    const out = await new Bun.Image(cornersPng).webp({ lossless: true }).bytes();
+    const back = decodePngRaw(await new Bun.Image(out).png().bytes());
     for (let y = 0; y < 3; y++)
       for (let x = 0; x < 4; x++) expect(rgbaAt(back.data, 4, x, y)).toEqual(cornerPattern(x, y));
   });
 
   test("rotate(90) moves corners CW and swaps dimensions", async () => {
-    const out = await new Bun.Image(cornersPng).rotate(90).toBuffer({ format: "png" });
+    const out = await new Bun.Image(cornersPng).rotate(90).png().bytes();
     const { w, h, data } = decodePngRaw(out);
     expect(w).toBe(3);
     expect(h).toBe(4);
@@ -214,13 +214,13 @@ describe("Bun.Image", () => {
   });
 
   test("rotate(180) swaps opposite corners", async () => {
-    const { data } = decodePngRaw(await new Bun.Image(cornersPng).rotate(180).toBuffer({ format: "png" }));
+    const { data } = decodePngRaw(await new Bun.Image(cornersPng).rotate(180).png().bytes());
     expect(rgbaAt(data, 4, 3, 2)).toEqual([255, 0, 0, 255]); // red → bottom-right
     expect(rgbaAt(data, 4, 0, 0)).toEqual([255, 255, 255, 255]); // white → top-left
   });
 
   test("flop() mirrors horizontally", async () => {
-    const { data } = decodePngRaw(await new Bun.Image(cornersPng).flop().toBuffer({ format: "png" }));
+    const { data } = decodePngRaw(await new Bun.Image(cornersPng).flop().png().bytes());
     expect(rgbaAt(data, 4, 3, 0)).toEqual([255, 0, 0, 255]); // red moved to top-right
     expect(rgbaAt(data, 4, 0, 0)).toEqual([0, 255, 0, 255]); // green moved to top-left
   });
@@ -228,7 +228,7 @@ describe("Bun.Image", () => {
   describe("resize", () => {
     test("downscale 16→8 with each filter yields correct dims", async () => {
       for (const filter of ["box", "bilinear", "lanczos3"] as const) {
-        const out = await new Bun.Image(gradientPng).resize(8, 8, { filter }).toBuffer({ format: "png" });
+        const out = await new Bun.Image(gradientPng).resize(8, 8, { filter }).png().bytes();
         const { w, h } = decodePngRaw(out);
         expect(w).toBe(8);
         expect(h).toBe(8);
@@ -237,7 +237,7 @@ describe("Bun.Image", () => {
 
     test("box filter on flat colour is identity", async () => {
       const flat = makePng(8, 8, () => [200, 100, 50, 255]);
-      const out = await new Bun.Image(flat).resize(4, 4, { filter: "box" }).toBuffer({ format: "png" });
+      const out = await new Bun.Image(flat).resize(4, 4, { filter: "box" }).png().bytes();
       const { data } = decodePngRaw(out);
       for (let i = 0; i < data.length; i += 4) {
         expect(data[i]).toBe(200);
@@ -248,7 +248,7 @@ describe("Bun.Image", () => {
     });
 
     test("upscale 4→8 preserves corner colours under lanczos3", async () => {
-      const out = await new Bun.Image(cornersPng).resize(8, 6, { filter: "lanczos3" }).toBuffer({ format: "png" });
+      const out = await new Bun.Image(cornersPng).resize(8, 6, { filter: "lanczos3" }).png().bytes();
       const { w, h, data } = decodePngRaw(out);
       expect(w).toBe(8);
       expect(h).toBe(6);
@@ -260,7 +260,7 @@ describe("Bun.Image", () => {
     });
 
     test("preserves aspect ratio when height omitted", async () => {
-      const meta = decodePngRaw(await new Bun.Image(gradientPng).resize(8).toBuffer({ format: "png" }));
+      const meta = decodePngRaw(await new Bun.Image(gradientPng).resize(8).png().bytes());
       expect(meta.w).toBe(8);
       expect(meta.h).toBe(8);
     });
@@ -356,7 +356,8 @@ describe("Bun.Image", () => {
       .resize(100, 100) // overwritten below
       .rotate(90) // → 3×4
       .resize(6, 8)
-      .toBuffer({ format: "png" });
+      .png()
+      .bytes();
     const { w, h } = decodePngRaw(out);
     expect(w).toBe(6);
     expect(h).toBe(8);
@@ -390,6 +391,12 @@ describe("Bun.Image", () => {
       expect(blob.type).toBe("image/png");
       const back = decodePngRaw(new Uint8Array(await blob.arrayBuffer()));
       expect(back.w).toBe(16);
+    });
+
+    test(".buffer() returns a Node Buffer", async () => {
+      const buf = await new Bun.Image(cornersPng).png().buffer();
+      expect(Buffer.isBuffer(buf)).toBe(true);
+      expect(buf[0]).toBe(0x89);
     });
 
     test(".toBase64() produces valid base64", async () => {
@@ -433,6 +440,30 @@ describe("Bun.Image", () => {
       expect(data[0]).toBe(50);
     });
 
+    test("png({palette:true}) emits indexed PNG that round-trips colours", async () => {
+      // 2×2 with 4 distinct, well-separated colours — median-cut at 4 slots
+      // is exact when input has ≤ slots distinct values with equal counts.
+      const four = makePng(2, 2, (x, y) => [x ? 255 : 0, y ? 255 : 0, x === y ? 255 : 0, 255]);
+      const out = await new Bun.Image(four).png({ palette: true, colors: 4 }).bytes();
+      // Colour-type byte lives at IHDR[+9] = file offset 25.
+      expect(out[25]).toBe(3); // indexed
+      const back = decodePngRaw(await new Bun.Image(out).png().bytes());
+      expect(rgbaAt(back.data, 2, 0, 0)).toEqual([0, 0, 255, 255]);
+      expect(rgbaAt(back.data, 2, 1, 0)).toEqual([255, 0, 0, 255]);
+      expect(rgbaAt(back.data, 2, 0, 1)).toEqual([0, 255, 0, 255]);
+      expect(rgbaAt(back.data, 2, 1, 1)).toEqual([255, 255, 255, 255]);
+    });
+
+    test("png({palette:true, colors:16}) is much smaller than truecolour for a screenshot-ish image", async () => {
+      // Flat regions + a few colours — the case palette mode is for.
+      const shot = makePng(64, 64, (x, y) =>
+        x < 32 ? [30, 30, 30, 255] : y < 32 ? [200, 200, 200, 255] : [80, 120, 200, 255],
+      );
+      const rgba = await new Bun.Image(shot).png({ compressionLevel: 9 }).bytes();
+      const idx = await new Bun.Image(shot).png({ palette: true, colors: 16, compressionLevel: 9 }).bytes();
+      expect(idx.length).toBeLessThan(rgba.length);
+    });
+
     test("png({compressionLevel:0}) is larger than level 9", async () => {
       const big = makePng(32, 32, (x, y) => [(x * 8) & 255, (y * 8) & 255, ((x + y) * 4) & 255, 255]);
       const fast = await new Bun.Image(big).png({ compressionLevel: 0 }).bytes();
@@ -450,15 +481,21 @@ describe("Bun.Image", () => {
       expect(h).toBe(3);
     });
 
-    // `new Response(await img.blob())` is the v1 path for serving; lazy
-    // body integration (`new Response(img)`) needs Body.zig changes and is
-    // tracked separately.
-    test("works as a Response body via .blob()", async () => {
-      const blob = await new Bun.Image(gradientPng).resize(4, 4).webp().blob();
-      const res = new Response(blob);
+    test("new Response(image) encodes and sets Content-Type", async () => {
+      const res = new Response(new Bun.Image(gradientPng).resize(4, 4).webp());
       expect(res.headers.get("content-type")).toBe("image/webp");
       const buf = new Uint8Array(await res.arrayBuffer());
       expect(String.fromCharCode(...buf.subarray(8, 12))).toBe("WEBP");
+      const meta = await new Bun.Image(buf).metadata();
+      expect(meta).toEqual({ width: 4, height: 4, format: "webp" });
+    });
+
+    test("new Request({body: image}) works the same way", async () => {
+      const req = new Request("http://x/", { method: "POST", body: new Bun.Image(cornersPng).jpeg() });
+      expect(req.headers.get("content-type")).toBe("image/jpeg");
+      const buf = new Uint8Array(await req.arrayBuffer());
+      expect(buf[0]).toBe(0xff);
+      expect(buf[1]).toBe(0xd8);
     });
   });
 });

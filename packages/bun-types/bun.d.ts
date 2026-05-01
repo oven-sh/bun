@@ -8202,16 +8202,6 @@ declare module "bun" {
       saturation?: number;
     }
 
-    interface OutputOptions {
-      format?: Format | "jpg";
-      /** 1–100 for JPEG / lossy WebP. Ignored for PNG. @default 80 */
-      quality?: number;
-      /** WebP only: emit lossless VP8L. */
-      lossless?: boolean;
-      /** PNG only: zlib level 0–9. */
-      compressionLevel?: number;
-    }
-
     interface Metadata {
       width: number;
       height: number;
@@ -8260,7 +8250,14 @@ declare module "bun" {
     /** Set output format to JPEG. */
     jpeg(options?: { quality?: number }): this;
     /** Set output format to PNG. */
-    png(options?: { compressionLevel?: number }): this;
+    png(options?: {
+      /** zlib level 0–9. */
+      compressionLevel?: number;
+      /** Quantize to a palette and emit indexed (colour-type 3) PNG. */
+      palette?: boolean;
+      /** Max palette size when `palette: true`. 2–256. @default 256 */
+      colors?: number;
+    }): this;
     /** Set output format to WebP. */
     webp(options?: { quality?: number; lossless?: boolean }): this;
 
@@ -8269,12 +8266,12 @@ declare module "bun" {
      * called, re-encodes in the source format.
      */
     bytes(): Promise<Uint8Array>;
+    /** Like {@link bytes} but as a Node `Buffer`. */
+    buffer(): Promise<Buffer>;
     /** Run the pipeline and return a `Blob` with the matching `type`. */
     blob(): Promise<Blob>;
     /** Run the pipeline and return base64-encoded output. */
     toBase64(): Promise<string>;
-    /** Like {@link bytes} but with per-call output overrides. */
-    toBuffer(options?: Image.OutputOptions): Promise<Uint8Array>;
     /** Decode just enough to read width/height/format. */
     metadata(): Promise<Image.Metadata>;
 

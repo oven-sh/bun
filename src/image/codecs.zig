@@ -12,6 +12,17 @@
 const std = @import("std");
 const bun = @import("bun");
 
+/// Optional OS-native backend. `null` on Linux (and any platform we haven't
+/// written one for) so the dispatch in `decode`/`encode` compiles away. The
+/// backend module is only `@import`ed inside the matching arm so non-target
+/// platforms never see its symbols.
+const system_backend: ?type = if (bun.Environment.isMac)
+    @import("./backend_coregraphics.zig")
+else if (bun.Environment.isWindows)
+    @import("./backend_wic.zig")
+else
+    null;
+
 pub const Format = enum(u8) {
     jpeg,
     png,
@@ -59,6 +70,16 @@ pub const default_max_pixels: u64 = 0x3FFF * 0x3FFF;
 
 pub fn decode(bytes: []const u8, max_pixels: u64) Error!Decoded {
     const fmt = Format.sniff(bytes) orelse return error.UnknownFormat;
+    // Try the OS codec first; the static path is the correctness baseline so
+    // BackendUnavailable falls through silently. Any *other* error from the
+    // system backend (DecodeFailed/TooManyPixels/OOM) is authoritative — the
+    // static codec wouldn't do better on the same bytes.
+    if (system_backend) |b| {
+        if (b.decode(bytes, max_pixels)) |d| return d else |e| switch (e) {
+            error.BackendUnavailable => {},
+            else => |narrowed| return narrowed,
+        }
+    }
     return switch (fmt) {
         .jpeg => jpeg.decode(bytes, max_pixels),
         .png => png.decode(bytes, max_pixels),
@@ -79,12 +100,24 @@ pub const EncodeOptions = struct {
     lossless: bool = false,
     /// PNG only: zlib level 0–9. -1 = libspng default.
     compression_level: i8 = -1,
+    /// PNG only: quantize to ≤ `colors` and emit an indexed PNG.
+    palette: bool = false,
+    colors: u16 = 256,
 };
 
 pub fn encode(rgba: []const u8, width: u32, height: u32, opts: EncodeOptions) Error![]u8 {
+    if (system_backend) |b| {
+        if (b.encode(rgba, width, height, opts)) |out| return out else |e| switch (e) {
+            error.BackendUnavailable => {},
+            else => |narrowed| return narrowed,
+        }
+    }
     return switch (opts.format) {
         .jpeg => jpeg.encode(rgba, width, height, opts.quality),
-        .png => png.encode(rgba, width, height, opts.compression_level),
+        .png => if (opts.palette)
+            png.encodeIndexed(rgba, width, height, opts.compression_level, opts.colors)
+        else
+            png.encode(rgba, width, height, opts.compression_level),
         .webp => webp.encode(rgba, width, height, opts.quality, opts.lossless),
     };
 }
@@ -204,6 +237,8 @@ pub const png = struct {
     extern fn spng_decode_image(ctx: *spng_ctx, out: [*]u8, len: usize, fmt: c_int, flags: c_int) c_int;
     extern fn spng_get_ihdr(ctx: *spng_ctx, ihdr: *Ihdr) c_int;
     extern fn spng_set_ihdr(ctx: *spng_ctx, ihdr: *const Ihdr) c_int;
+    extern fn spng_set_plte(ctx: *spng_ctx, plte: *const Plte) c_int;
+    extern fn spng_set_trns(ctx: *spng_ctx, trns: *const Trns) c_int;
     extern fn spng_encode_image(ctx: *spng_ctx, img: [*]const u8, len: usize, fmt: c_int, flags: c_int) c_int;
     extern fn spng_get_png_buffer(ctx: *spng_ctx, len: *usize, err: *c_int) ?[*]u8;
     extern fn spng_set_option(ctx: *spng_ctx, opt: c_int, value: c_int) c_int;
@@ -226,7 +261,21 @@ pub const png = struct {
     // spng_option enum
     const SPNG_IMG_COMPRESSION_LEVEL = 2;
     const SPNG_ENCODE_TO_BUFFER = 12;
+    const SPNG_COLOR_TYPE_INDEXED = 3;
     const SPNG_COLOR_TYPE_TRUECOLOR_ALPHA = 6;
+
+    const Plte = extern struct {
+        n_entries: u32,
+        entries: [256][4]u8, // r,g,b,alpha(reserved)
+    };
+    const Trns = extern struct {
+        gray: u16 = 0,
+        red: u16 = 0,
+        green: u16 = 0,
+        blue: u16 = 0,
+        n_type3_entries: u32,
+        type3_alpha: [256]u8,
+    };
 
     pub fn decode(bytes: []const u8, max_pixels: u64) Error!Decoded {
         const ctx = spng_ctx_new(0) orelse return error.OutOfMemory;
@@ -266,7 +315,48 @@ pub const png = struct {
         defer std.c.free(buf);
         return try bun.default_allocator.dupe(u8, buf[0..len]);
     }
+
+    /// Quantize RGBA to ≤ `colors` and emit an indexed (colour-type 3) PNG
+    /// with PLTE + tRNS. The quantizer is a small median-cut — see
+    /// quantize.zig.
+    pub fn encodeIndexed(rgba: []const u8, w: u32, h: u32, level: i8, colors: u16) Error![]u8 {
+        var q = try quantize.quantize(rgba, colors);
+        defer q.deinit();
+
+        const ctx = spng_ctx_new(SPNG_CTX_ENCODER) orelse return error.OutOfMemory;
+        defer spng_ctx_free(ctx);
+        _ = spng_set_option(ctx, SPNG_ENCODE_TO_BUFFER, 1);
+        if (level >= 0) _ = spng_set_option(ctx, SPNG_IMG_COMPRESSION_LEVEL, @min(level, 9));
+
+        var ihdr: Ihdr = .{
+            .width = w,
+            .height = h,
+            .bit_depth = 8,
+            .color_type = SPNG_COLOR_TYPE_INDEXED,
+        };
+        if (spng_set_ihdr(ctx, &ihdr) != 0) return error.EncodeFailed;
+
+        var plte: Plte = .{ .n_entries = q.colors, .entries = undefined };
+        var trns: Trns = .{ .n_type3_entries = q.colors, .type3_alpha = undefined };
+        for (0..q.colors) |i| {
+            plte.entries[i] = .{ q.palette[i * 4], q.palette[i * 4 + 1], q.palette[i * 4 + 2], 255 };
+            trns.type3_alpha[i] = q.palette[i * 4 + 3];
+        }
+        if (spng_set_plte(ctx, &plte) != 0) return error.EncodeFailed;
+        if (q.has_alpha and spng_set_trns(ctx, &trns) != 0) return error.EncodeFailed;
+
+        if (spng_encode_image(ctx, q.indices.ptr, q.indices.len, SPNG_FMT_PNG, SPNG_ENCODE_FINALIZE) != 0)
+            return error.EncodeFailed;
+
+        var len: usize = 0;
+        var err: c_int = 0;
+        const buf = spng_get_png_buffer(ctx, &len, &err) orelse return error.EncodeFailed;
+        defer std.c.free(buf);
+        return try bun.default_allocator.dupe(u8, buf[0..len]);
+    }
 };
+
+const quantize = @import("./quantize.zig");
 
 // ───────────────────────────── libwebp ──────────────────────────────────────
 

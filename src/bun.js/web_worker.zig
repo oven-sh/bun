@@ -163,7 +163,7 @@ const LiveWorkers = struct {
         // Wake terminateAllAndWait so it re-sweeps and catches this worker
         // (it may have been created by another worker mid-sweep). No-op if
         // nothing is waiting.
-        std.Thread.Futex.wake(&outstanding, 1);
+        bun.Futex.wake(&outstanding, 1);
     }
 
     fn unregister(worker: *WebWorker) void {
@@ -174,7 +174,7 @@ const LiveWorkers = struct {
         // unconditionally is fine (spurious wakeups just re-check the
         // counter) and avoids a compare-before-wake race.
         _ = outstanding.fetchSub(1, .release);
-        std.Thread.Futex.wake(&outstanding, 1);
+        bun.Futex.wake(&outstanding, 1);
     }
 };
 
@@ -232,7 +232,7 @@ pub fn terminateAllAndWait(timeout_ms: u64) void {
                 log("terminateAllAndWait: timed out with {d} outstanding", .{n});
                 return;
             }
-            std.Thread.Futex.timedWait(&LiveWorkers.outstanding, n, deadline_ns - elapsed) catch {};
+            bun.Futex.wait(&LiveWorkers.outstanding, n, deadline_ns - elapsed) catch {};
         } else {
             // Monotonic clock unavailable — yield-spin.
             std.Thread.yield() catch {};

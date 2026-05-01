@@ -167,7 +167,7 @@ describe("does not leak uninitialized memory when input is detached by a getter 
   test("Bun.concatArrayBuffers (asUint8Array = true)", () => {
     sprayHeap();
     const first = new Uint8Array(SIZE);
-    const out = Bun.concatArrayBuffers(makeDetachingArray(first), undefined, true);
+    const out = Bun.concatArrayBuffers(makeDetachingArray(first), Infinity, true);
     expect(out).toBeInstanceOf(Uint8Array);
     expect(out.length).toBe(SIZE);
     expect(out.every(b => b === 0)).toBe(true);

@@ -99,14 +99,27 @@ pub const Fs = struct {
     ) !Entry {
         var rfs = _fs.fs;
 
-        const file_handle: std.fs.File = if (cached_file_descriptor) |fd| handle: {
-            const handle = std.fs.File{ .handle = fd };
-            try handle.seekTo(0);
-            break :handle handle;
-        } else try std.fs.openFileAbsoluteZ(path, .{ .mode = .read_only });
+        var file_handle: std.fs.File = undefined;
+
+        // Whether we opened the FD ourselves (and thus are responsible for closing it).
+        const opened_fresh = brk: {
+            if (cached_file_descriptor) |fd| {
+                const handle = std.fs.File{ .handle = fd };
+                // If the cached FD is stale (closed), seekTo will fail.
+                // Fall through to open the file fresh.
+                handle.seekTo(0) catch break :brk true;
+                file_handle = handle;
+                break :brk false;
+            }
+            break :brk true;
+        };
+
+        if (opened_fresh) {
+            file_handle = try std.fs.openFileAbsoluteZ(path, .{ .mode = .read_only });
+        }
 
         defer {
-            if (rfs.needToCloseFiles() and cached_file_descriptor == null) {
+            if (rfs.needToCloseFiles() and opened_fresh) {
                 file_handle.close();
             }
         }
@@ -128,7 +141,10 @@ pub const Fs = struct {
 
         return Entry{
             .contents = file.contents,
-            .fd = if (FeatureFlags.store_file_descriptors) file_handle.handle else 0,
+            // Only return the FD if we opened it ourselves. When the FD came
+            // from the caller's cache (!opened_fresh), the caller may close it
+            // which would invalidate the cache, causing stale-FD errors later.
+            .fd = if (FeatureFlags.store_file_descriptors and opened_fresh) file_handle.handle else 0,
         };
     }
 
@@ -156,17 +172,29 @@ pub const Fs = struct {
 
         var file_handle: std.fs.File = if (_file_handle) |__file| __file.stdFile() else undefined;
 
-        if (_file_handle == null) {
+        // Whether we opened the FD ourselves (and thus are responsible for closing it).
+        const opened_fresh = brk: {
+            if (_file_handle != null) {
+                // The caller passed a cached FD. Try to seek to the beginning.
+                // If it fails (e.g. the FD was closed/stale), fall through and
+                // open the file fresh instead of propagating the error.
+                file_handle.seekTo(0) catch {
+                    break :brk true;
+                };
+                break :brk false;
+            }
+            break :brk true;
+        };
+
+        if (opened_fresh) {
             if (FeatureFlags.store_file_descriptors and dirname_fd.isValid()) {
-                file_handle = (bun.sys.openatA(dirname_fd, std.fs.path.basename(path), bun.O.RDONLY, 0).unwrap() catch |err| brk: {
+                file_handle = (bun.sys.openatA(dirname_fd, std.fs.path.basename(path), bun.O.RDONLY, 0).unwrap() catch |err| brk2: {
                     switch (err) {
-                        error.ENOENT => {
+                        error.ENOENT, error.EBADF => {
+                            // ENOENT: directory mismatch; EBADF: stale/closed directory FD.
+                            // In both cases, fall back to opening by absolute path.
                             const handle = try bun.openFile(path, .{ .mode = .read_only });
-                            Output.prettyErrorln(
-                                "<r><d>Internal error: directory mismatch for directory \"{s}\", fd {f}<r>. You don't need to do anything, but this indicates a bug.",
-                                .{ path, dirname_fd },
-                            );
-                            break :brk bun.FD.fromStdFile(handle);
+                            break :brk2 bun.FD.fromStdFile(handle);
                         },
                         else => return err,
                     }
@@ -174,14 +202,12 @@ pub const Fs = struct {
             } else {
                 file_handle = try bun.openFile(path, .{ .mode = .read_only });
             }
-        } else {
-            try file_handle.seekTo(0);
         }
 
         if (comptime !Environment.isWindows) // skip on Windows because NTCreateFile will do it.
             debug("openat({f}, {s}) = {f}", .{ dirname_fd, path, bun.FD.fromStdFile(file_handle) });
 
-        const will_close = rfs.needToCloseFiles() and _file_handle == null;
+        const will_close = rfs.needToCloseFiles() and opened_fresh;
         defer {
             if (will_close) {
                 debug("readFileWithAllocator close({f})", .{bun.fs.printHandle(file_handle.handle)});
@@ -206,7 +232,11 @@ pub const Fs = struct {
 
         return Entry{
             .contents = file.contents,
-            .fd = if (FeatureFlags.store_file_descriptors and !will_close) .fromStdFile(file_handle) else bun.invalid_fd,
+            // Only return the FD if we opened it ourselves and are not closing it.
+            // When the FD came from the resolver cache (!opened_fresh), we must not
+            // hand it to the caller because the caller may close it, invalidating
+            // the resolver's cached copy and causing stale-FD errors on subsequent builds.
+            .fd = if (FeatureFlags.store_file_descriptors and opened_fresh and !will_close) .fromStdFile(file_handle) else bun.invalid_fd,
         };
     }
 };

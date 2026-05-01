@@ -1330,27 +1330,23 @@ pub const FetchFlags = enum {
 
 /// Support embedded .node files
 export fn Bun__resolveEmbeddedNodeFile(vm: *VirtualMachine, in_out_str: *bun.String) bool {
+    if (vm.standalone_module_graph == null) return false;
+
     const input_path = in_out_str.toUTF8(bun.default_allocator);
     defer input_path.deinit();
     const path_buf = bun.path_buffer_pool.get();
     defer bun.path_buffer_pool.put(path_buf);
-
-    // First check the NAPI link-slot table: addons appended to the executable
-    // after `bun build --compile` (without rebundling) live here, not in the
-    // standalone module graph. On Linux a match is handed to dlopen via
-    // memfd(/proc/self/fd/N); on macOS/Windows it's a one-time content-hashed
-    // cache file rather than the per-launch tmpfile below.
-    if (bun.napi_link.findSlot(input_path.slice())) |slot| {
-        if (bun.napi_link.realizeSlot(slot, path_buf)) |real| {
-            in_out_str.* = bun.String.cloneUTF8(real);
-            return true;
-        }
-    }
-
-    if (vm.standalone_module_graph == null) return false;
     const result = ModuleLoader.resolveEmbeddedFile(vm, path_buf, input_path.slice(), "node") orelse return false;
     in_out_str.* = bun.String.cloneUTF8(result);
     return true;
+}
+
+comptime {
+    // NAPI link-slot addons (appended to the executable after
+    // `bun build --compile` without rebundling) are handled directly by
+    // `Process_functionDlopen` via `Bun__tryLoadNapiLinkSlot` — they're
+    // loaded from memory and never touch this path.
+    _ = &bun.napi_link.Bun__tryLoadNapiLinkSlot;
 }
 
 export fn ModuleLoader__isBuiltin(data: [*]const u8, len: usize) bool {

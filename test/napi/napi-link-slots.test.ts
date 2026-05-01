@@ -103,16 +103,17 @@ describe.skipIf(!isMacOS)("linkNapiModule round-trip", () => {
     }
 
     // 2. Link the addon in post-hoc — no rebundle.
-    using cache = tempDir("napi-link-cache", {});
     unsafe.linkNapiModule(join(cwd, "app"), addonPath, "/$bunfs/linked.node", join(cwd, "app-linked"));
     chmodSync(join(cwd, "app-linked"), 0o755);
 
-    // 3. Run the linked executable. The slot should now report used, and the
-    //    addon's `try_unwrap` export should be reachable.
+    // 3. Run the linked executable. The slot should now report used, and
+    //    the addon's `try_unwrap` export should be reachable. The loader is
+    //    in-memory on macOS (NSCreateObjectFileImageFromMemory) so no
+    //    cache dir is needed.
     const r = spawnSync({
       cmd: [join(cwd, "app-linked")],
       cwd,
-      env: { ...bunEnv, BUN_NAPI_LINK_CACHE_DIR: String(cache) },
+      env: bunEnv,
       stderr: "pipe",
       stdout: "pipe",
     });

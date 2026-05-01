@@ -9,15 +9,12 @@
 //!
 //! At runtime, when `process.dlopen` sees a `/$bunfs/...` path, it consults
 //! this table before falling back to the per-launch tmpfile extraction used
-//! for bundler-embedded addons. A matching slot is loaded by handing the
-//! embedded bytes to `dlopen()` via `memfd_create` + `/proc/self/fd/N` on
-//! Linux, or via a content-hashed cache file on macOS/Windows so the
-//! extraction only happens once per addon version across all launches.
-//!
-//! On Mach-O specifically there is no way to have `dyld` load a dylib from an
-//! offset inside another file — `LC_LOAD_DYLIB` only takes paths — so the
-//! cache-file indirection is the closest we can get to "just changing the
-//! link address" while keeping a single-file distribution.
+//! for bundler-embedded addons. A matching slot is loaded entirely from
+//! memory: on macOS via `NSCreateObjectFileImageFromMemory` + `NSLinkModule`
+//! (bun never writes a `.node` to disk; whatever modern dyld does internally
+//! to satisfy code-signing is its own business), on Linux via
+//! `memfd_create(MFD_EXEC)` + `dlopen("/proc/self/fd/N")`. Windows still goes
+//! through a content-hashed cache file until a PE memory-loader is wired up.
 
 /// Mirrors `BunNapiLinkSlot` in `c-bindings.cpp`. Keep both at 256 bytes.
 pub const Slot = extern struct {
@@ -57,6 +54,12 @@ pub const Slot = extern struct {
 extern "C" fn Bun__getNapiLinkSlots() [*]Slot;
 extern "C" fn Bun__getNapiLinkSlotCount() u32;
 extern "C" fn Bun__getNapiLinkSectionBase() ?[*]const u8;
+extern "C" fn Bun__darwinLoadMachOFromMemory(bytes: [*]const u8, len: usize, name: [*:0]const u8) ?*anyopaque;
+
+/// Cache of already-loaded slots so repeated `require()` of the same virtual
+/// path returns the same module instance. Indexed by slot number; entries
+/// are written once and never freed (native addons can't be unloaded).
+var loaded_handles: [Slot.count]?*anyopaque = @splat(null);
 
 pub fn slots() []Slot {
     return Bun__getNapiLinkSlots()[0..Bun__getNapiLinkSlotCount()];
@@ -87,23 +90,100 @@ pub fn findSlot(input_path: []const u8) ?*const Slot {
     return null;
 }
 
-/// Return a real filesystem path that `dlopen()` can consume for the addon
-/// stored in `slot`. On Linux this is `/proc/self/fd/N` backed by a memfd; the
-/// fd is intentionally leaked for the lifetime of the process (native addons
-/// are never unloaded). On macOS/Windows this is a content-hashed cache file
-/// that's written once and reused across launches. Writes the path into
-/// `out_buf` and returns a slice of it, or null on failure.
-pub fn realizeSlot(slot: *const Slot, out_buf: *bun.PathBuffer) ?[]const u8 {
+/// Return the embedded `.node` bytes for `slot` as a slice pointing directly
+/// into the mapped `__BUN,__bun` / `.bun` section. The memory lives for the
+/// lifetime of the process.
+pub fn slotBytes(slot: *const Slot) ?[]const u8 {
     const base = Bun__getNapiLinkSectionBase() orelse return null;
-    const bytes = base[slot.offset..][0..slot.length];
+    return base[slot.offset..][0..slot.length];
+}
 
-    if (comptime Environment.isLinux) {
-        if (bun.sys.canUseMemfd()) {
-            if (realizeViaMemfd(slot, bytes, out_buf)) |p| return p;
+/// Load the addon image stored in `slot` and return an opaque handle usable
+/// by `process.dlopen` (an `NSModule` on macOS, a `dlopen()` handle on
+/// Linux, `HMODULE` on Windows). The handle is memoised per slot so static
+/// constructors only fire once; a repeated call returns the cached handle
+/// and `Process_functionDlopen` replays `napi_module_register` from the
+/// `DLHandleMap` keyed on that handle.
+///
+/// `is_ns_module` is set on macOS when the handle came from `NSLinkModule`
+/// rather than `dlopen()`, so the caller knows to use
+/// `NSLookupSymbolInModule` instead of `dlsym()`. On every other platform it
+/// is always false.
+pub fn loadSlotFromMemory(slot: *const Slot, is_ns_module: *bool) ?*anyopaque {
+    is_ns_module.* = false;
+    const idx = slot.index();
+    if (idx < loaded_handles.len) {
+        if (loaded_handles[idx]) |h| {
+            if (comptime Environment.isMac) is_ns_module.* = true;
+            return h;
         }
     }
 
-    return realizeViaCacheFile(slot, bytes, out_buf);
+    const bytes = slotBytes(slot) orelse return null;
+
+    const handle: ?*anyopaque = brk: {
+        if (comptime Environment.isMac) {
+            var name_buf: [Slot.count + 32]u8 = undefined;
+            // dyld uses this as the image's install name; keep it stable per
+            // slot so stack traces and `NSNameOfModule` are recognisable.
+            const name = std.fmt.bufPrintZ(&name_buf, "bun:napi-slot-{d}", .{idx}) catch "bun:napi-slot";
+            is_ns_module.* = true;
+            break :brk Bun__darwinLoadMachOFromMemory(bytes.ptr, bytes.len, name.ptr);
+        }
+        if (comptime Environment.isLinux) {
+            var path_buf: bun.PathBuffer = undefined;
+            if (realizeViaMemfd(slot, bytes, &path_buf)) |p| {
+                var zbuf: bun.PathBuffer = undefined;
+                @memcpy(zbuf[0..p.len], p);
+                zbuf[p.len] = 0;
+                break :brk std.c.dlopen(zbuf[0..p.len :0], .{ .LAZY = true });
+            }
+            break :brk null;
+        }
+        // Windows / FreeBSD: no in-memory loader yet. Materialise to a
+        // content-addressed cache file and load that — still avoids the
+        // per-launch tmpfile the bundler-embedded path uses. Returning null
+        // here is fine; the caller reports it as a dlopen failure.
+        var path_buf: bun.PathBuffer = undefined;
+        const path = realizeViaCacheFile(slot, bytes, &path_buf) orelse break :brk null;
+        if (comptime Environment.isWindows) {
+            var wbuf: bun.WPathBuffer = undefined;
+            const wpath = bun.strings.toWPath(&wbuf, path);
+            break :brk bun.windows.kernel32.LoadLibraryExW(wpath.ptr, null, 0x00000008); // LOAD_WITH_ALTERED_SEARCH_PATH
+        }
+        if (comptime Environment.isPosix) {
+            var zbuf: bun.PathBuffer = undefined;
+            @memcpy(zbuf[0..path.len], path);
+            zbuf[path.len] = 0;
+            break :brk std.c.dlopen(zbuf[0..path.len :0], .{ .LAZY = true });
+        }
+        break :brk null;
+    };
+
+    if (handle) |h| {
+        if (idx < loaded_handles.len) loaded_handles[idx] = h;
+    }
+    return handle;
+}
+
+/// Called from `Process_functionDlopen` when the target starts with the
+/// `/$bunfs/` prefix. If the path matches a populated slot, loads it from
+/// memory and writes the resulting handle into `out_handle`. Returns true
+/// whether or not the load succeeded — a true return with `out_handle == null`
+/// means "this path is a link slot but loading failed", so the caller
+/// surfaces a dlopen error instead of falling through to the
+/// module-graph tmpfile extractor (which wouldn't find it either).
+pub export fn Bun__tryLoadNapiLinkSlot(
+    path_ptr: [*]const u8,
+    path_len: usize,
+    out_handle: *?*anyopaque,
+    out_is_ns_module: *bool,
+) bool {
+    out_handle.* = null;
+    out_is_ns_module.* = false;
+    const slot = findSlot(path_ptr[0..path_len]) orelse return false;
+    out_handle.* = loadSlotFromMemory(slot, out_is_ns_module);
+    return true;
 }
 
 fn realizeViaMemfd(slot: *const Slot, bytes: []const u8, out_buf: *bun.PathBuffer) ?[]const u8 {

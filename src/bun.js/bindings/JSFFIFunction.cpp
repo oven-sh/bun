@@ -38,7 +38,10 @@
 #include "DOMJITHelpers.h"
 
 class FFICallbackFunctionWrapper {
-
+    // This class holds JSC::Strong<> handles. Copying it would allocate new
+    // HandleSet slots, and for threadsafe JSCallbacks that copy would happen
+    // on a foreign thread without the VM lock held, corrupting the HandleSet.
+    WTF_MAKE_NONCOPYABLE(FFICallbackFunctionWrapper);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FFICallbackFunctionWrapper);
 
 public:
@@ -212,7 +215,11 @@ FFI_Callback_threadsafe_call(FFICallbackFunctionWrapper& wrapper, size_t argCoun
     for (size_t i = 0; i < argCount; ++i)
         argsVec.append(args[i]);
 
-    WebCore::ScriptExecutionContext::postTaskTo(globalObject->scriptExecutionContext()->identifier(), [argsVec = WTF::move(argsVec), wrapper](WebCore::ScriptExecutionContext& ctx) mutable {
+    // The wrapper is heap-allocated (see Bun__createFFICallbackFunction) and is kept alive for as
+    // long as the JSCallback is open, so it is safe to capture by reference here. It must not be
+    // captured by value: this function may be invoked from a thread that is not holding the VM's
+    // API lock, and copying JSC::Strong<> mutates the VM's HandleSet without synchronization.
+    WebCore::ScriptExecutionContext::postTaskTo(globalObject->scriptExecutionContext()->identifier(), [argsVec = WTF::move(argsVec), &wrapper](WebCore::ScriptExecutionContext& ctx) mutable {
         auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(ctx.jsGlobalObject());
         auto& vm = JSC::getVM(globalObject);
         JSC::MarkedArgumentBuffer arguments;

@@ -859,6 +859,30 @@ describe.concurrent("wildcard exports with extensionless target", () => {
       exitCode: 0,
     });
   });
+
+  // Regression guard: when the wildcard target already has an extension
+  // like `"./*": "./dist/*.js"`, a missing `foo.js` must not silently
+  // double-append to `foo.js.ts` / `foo.js.mjs` / etc. — the literal
+  // `.js`→`.ts` TypeScript rewrite is the only fallback that should run.
+  test("explicit-extension wildcard target does not double-probe extensions", async () => {
+    using dir = tempDir("wildcard-explicit-ext", {
+      "node_modules/explicit-pkg/package.json": JSON.stringify({
+        name: "explicit-pkg",
+        type: "module",
+        exports: { "./*": "./dist/*.js" },
+      }),
+      // A sibling that a naive extension probe would grab.
+      "node_modules/explicit-pkg/dist/missing.js.mjs": "export const oops = 'nope';",
+      "index.ts": `
+        import { oops } from "explicit-pkg/missing";
+        console.log(oops);
+      `,
+    });
+
+    const result = await runScript(String(dir), "index.ts");
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("Cannot find module");
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/10001

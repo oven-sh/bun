@@ -57,7 +57,7 @@ pub const Flags = packed struct(u8) {
 };
 
 pub const UpgradeCTX = struct {
-    context: ?*uws.SocketContext = null,
+    context: ?*uws.WebSocketUpgradeContext = null,
     // request will be detached when go async
     request: ?*uws.Request = null,
 
@@ -276,7 +276,7 @@ pub fn create(
     request: *uws.Request,
     is_ssl: i32,
     response_ptr: *anyopaque,
-    upgrade_ctx: ?*anyopaque,
+    upgrade_ctx: ?*uws.WebSocketUpgradeContext,
     node_response_ptr: *?*NodeHTTPResponse,
 ) callconv(.c) jsc.JSValue {
     const vm = globalObject.bunVM();
@@ -1046,7 +1046,10 @@ fn clearOnDataCallback(this: *NodeHTTPResponse, thisValue: jsc.JSValue, globalOb
 }
 
 pub fn setOnData(this: *NodeHTTPResponse, thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject, value: JSValue) void {
-    if (value.isUndefined() or this.flags.ended or this.flags.socket_closed or this.body_read_state == .none or this.flags.is_data_buffered_during_pause_last or this.flags.upgraded) {
+    // Only `.pending` accepts a callback. `.done` means either uSockets delivered last=true or JS
+    // previously cleared `ondata` (which already called clearOnData()); either way, there is no
+    // more body to read, so don't re-register with uSockets or churn refs.
+    if (value.isUndefined() or this.flags.ended or this.flags.socket_closed or this.body_read_state != .pending or this.flags.is_data_buffered_during_pause_last or this.flags.upgraded) {
         js.onDataSetCached(thisValue, globalObject, .js_undefined);
         defer {
             if (this.body_read_ref.has) {
@@ -1075,10 +1078,11 @@ pub fn setOnData(this: *NodeHTTPResponse, thisValue: jsc.JSValue, globalObject: 
     }
     this.flags.is_data_buffered_during_pause = false;
 
-    if (!this.body_read_ref.has) {
-        this.ref();
-        this.body_read_ref.ref(globalObject.bunVM());
-    }
+    // Every site that unrefs `body_read_ref` also transitions `body_read_state` out of `.pending`
+    // or sets `is_data_buffered_during_pause_last`, both of which are rejected by the guard above.
+    // So reaching here, `body_read_ref` is still held from create(). Do not re-acquire it or
+    // `this.ref()` — there would be no balancing release (PR #18564 removed the paired derefs).
+    bun.debugAssert(this.body_read_ref.has);
 }
 
 pub fn write(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {

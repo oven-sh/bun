@@ -378,6 +378,7 @@ pub const JSPasswordObject = struct {
                         try promise.rejectWithAsyncStack(global, error_instance);
                     },
                     .hash => |value| {
+                        defer bun.default_allocator.free(value);
                         const js_string = jsc.ZigString.init(value).toJS(global);
                         bun.destroy(this);
                         try promise.resolve(global, js_string);
@@ -429,6 +430,7 @@ pub const JSPasswordObject = struct {
                     return globalObject.throwValue(error_instance);
                 },
                 .hash => |h| {
+                    defer bun.default_allocator.free(h);
                     return jsc.ZigString.init(h).toJS(globalObject);
                 },
             }

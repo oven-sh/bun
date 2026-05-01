@@ -213,6 +213,9 @@ comptime {
     // folder because zig will complain about outside-of-module stuff
     _ = &@import("./bun.js/bindings/GeneratedJS2Native.zig");
     _ = &gen; // reference bindings
+    // Exports `us_dispatch_*` for loop.c — nothing in Zig calls them, but the
+    // C event loop link-depends on them.
+    _ = &uws.dispatch;
 }
 
 /// Copied from Zig std.trait
@@ -239,6 +242,7 @@ pub const md = @import("./md/root.zig");
 
 pub const Output = @import("./output.zig");
 pub const Global = @import("./Global.zig");
+pub const ParentDeathWatchdog = @import("./ParentDeathWatchdog.zig");
 
 pub const FD = @import("./fd.zig").FD;
 pub const MovableIfWindowsFd = @import("./fd.zig").MovableIfWindowsFd;

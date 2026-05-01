@@ -42,6 +42,18 @@ DOMGuardedObject::DOMGuardedObject(JSDOMGlobalObject& globalObject, JSCell& guar
     globalObject.vm().writeBarrier(&globalObject, &guarded);
 }
 
+DOMGuardedObject::DOMGuardedObject(JSDOMGlobalObject& globalObject, JSCell& guarded, DoNotRegisterWithGlobalObjectTag)
+    : ActiveDOMCallback(globalObject.scriptExecutionContext())
+    , m_guarded(&guarded)
+    , m_globalObject(&globalObject)
+{
+    // Intentionally not added to globalObject.guardedObjects(): the JS
+    // wrapper that owns this object is responsible for keeping the guarded
+    // cell alive via its visitChildren. Rooting it from the global object
+    // would create a GC-root cycle when the guarded object transitively
+    // references its own wrapper (e.g. TransformStream -> WritableStream).
+}
+
 DOMGuardedObject::~DOMGuardedObject()
 {
     clear();

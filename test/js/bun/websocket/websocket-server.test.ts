@@ -1,7 +1,7 @@
 import type { Server, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, forceGuardMalloc } from "harness";
+import { bunEnv, bunExe, forceGuardMalloc, isWindows } from "harness";
 import { isIP } from "node:net";
 import path from "node:path";
 
@@ -1120,8 +1120,11 @@ it("server.upgrade() with Sec-WebSocket-Protocol in options.headers does not use
     env: {
       ...bunEnv,
       // Route bmalloc through the system heap so ASAN can observe the
-      // StringImpl allocation in sanitizer-enabled builds.
-      Malloc: "1",
+      // StringImpl allocation in sanitizer-enabled builds. On Windows
+      // bmalloc's SystemHeap is unimplemented and would RELEASE_BASSERT,
+      // so leave bmalloc in place there — Windows builds have no ASAN
+      // lane anyway.
+      ...(isWindows ? {} : { Malloc: "1" }),
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -1133,9 +1136,11 @@ it("server.upgrade() with Sec-WebSocket-Protocol in options.headers does not use
   // the value passed to resp.upgrade(), so the expected response protocol is
   // `part`, not the combined "part, tail".
   const expected = JSON.stringify({ status: 101, protocol: part, custom: "hello" });
-  expect({ stdout: stdout.trim(), stderr: stderr.split("\n", 3).join("\n").trim() }).toEqual({
+  // Don't truncate stderr — when this previously crashed on Windows ci_assert
+  // builds the panic line was past line 3, leaving "" and a misleading diff.
+  expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
     stdout: expected,
     stderr: "",
   });
   expect(exitCode).toBe(0);
-}, 30_000);
+});

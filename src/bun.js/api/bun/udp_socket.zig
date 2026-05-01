@@ -601,6 +601,40 @@ pub const UDPSocket = struct {
     }
 
     pub fn sendMany(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        // Iterating the input array can run arbitrary user JS: `iter.next()`'s
+        // slow path hits `JSObject.getIndex`, and `parseAddr` calls
+        // `port.coerceToInt32()` / `address.toBunString()`. That JS can drop
+        // the last reference to an earlier payload and force a GC, or detach
+        // an earlier ArrayBuffer (`.transfer(n)` frees its backing store
+        // synchronously), leaving borrowed pointers in `payloads[]` dangling
+        // before `socket.send` reads them.
+        //
+        // Root every payload JSValue in a MarkedArgumentBuffer for the
+        // duration of the call so GC cannot collect them, and split the work
+        // into two phases: phase 1 collects/validates payloads and runs all
+        // user JS; phase 2 borrows byte slices only once no more user JS
+        // sits between capture and `socket.send`.
+        const Ctx = struct {
+            this: *UDPSocket,
+            globalThis: *JSGlobalObject,
+            callframe: *CallFrame,
+            result: bun.JSError!JSValue,
+
+            pub fn run(ctx: *@This(), payload_roots: *jsc.MarkedArgumentBuffer) callconv(.c) void {
+                ctx.result = sendManyImpl(ctx.this, ctx.globalThis, ctx.callframe, payload_roots);
+            }
+        };
+        var ctx: Ctx = .{
+            .this = this,
+            .globalThis = globalThis,
+            .callframe = callframe,
+            .result = .js_undefined,
+        };
+        jsc.MarkedArgumentBuffer.run(Ctx, &ctx, &Ctx.run);
+        return ctx.result;
+    }
+
+    fn sendManyImpl(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame, payload_roots: *jsc.MarkedArgumentBuffer) bun.JSError!JSValue {
         if (this.closed) {
             return globalThis.throw("Socket is closed", .{});
         }
@@ -634,6 +668,7 @@ pub const UDPSocket = struct {
         defer arena.deinit();
         const alloc = arena.allocator();
 
+        var payload_vals = bun.handleOom(alloc.alloc(JSValue, len));
         var payloads = bun.handleOom(alloc.alloc([*]const u8, len));
         var lens = bun.handleOom(alloc.alloc(usize, len));
         var addr_ptrs = bun.handleOom(alloc.alloc(?*const anyopaque, len));
@@ -641,6 +676,11 @@ pub const UDPSocket = struct {
 
         var iter = try arg.arrayIterator(globalThis);
 
+        // Phase 1: collect and validate payload JSValues, resolve addresses.
+        // All user-JS re-entrance happens here. Root each payload in the
+        // MarkedArgumentBuffer so GC cannot collect it, but do NOT yet borrow
+        // raw pointers into backing stores — user JS on a later iteration
+        // could otherwise free or detach that storage.
         var i: u32 = 0;
         var port: JSValue = .zero;
         while (try iter.next()) |val| : (i += 1) {
@@ -649,37 +689,11 @@ pub const UDPSocket = struct {
             }
             const slice_idx = if (connected) i else i / 3;
             if (connected or i % 3 == 0) {
-                // Copy each payload into the arena. Subsequent iterations hit
-                // JSC safepoints (`iter.next()`'s slow path, `coerceToInt32`,
-                // `toBunString`) that can run user JS which may detach this
-                // ArrayBuffer (`.transfer()`) or drop the last reference to
-                // this JSString and GC it, freeing the backing store before
-                // we reach `socket.send`. Owning the bytes in the arena makes
-                // the captured pointers independent of JS heap lifetimes.
-                const slice: []const u8 = brk: {
-                    const borrowed: []const u8 = blk: {
-                        if (val.asArrayBuffer(globalThis)) |arrayBuffer| {
-                            break :blk arrayBuffer.slice();
-                        } else if (val.isString()) {
-                            const str = (try val.toJSString(globalThis)).toSlice(globalThis, alloc);
-                            // `toSlice` allocates into the arena when conversion
-                            // is required (UTF-16 / non-ASCII Latin-1); for ASCII
-                            // it borrows the WTFStringImpl's bytes. In the
-                            // allocated case the arena already owns the copy.
-                            if (str.isAllocated()) break :brk str.slice();
-                            break :blk str.slice();
-                        } else {
-                            return globalThis.throwInvalidArguments("Expected ArrayBufferView or string as payload", .{});
-                        }
-                    };
-                    // `alloc.dupe(u8, <empty>)` returns Zig's zero-length
-                    // sentinel (a deliberately invalid address) which the
-                    // kernel rejects with EFAULT even though `iov_len == 0`.
-                    // Use a valid static pointer for the empty case.
-                    break :brk if (borrowed.len == 0) "" else bun.handleOom(alloc.dupe(u8, borrowed));
-                };
-                payloads[slice_idx] = slice.ptr;
-                lens[slice_idx] = slice.len;
+                if (val.asArrayBuffer(globalThis) == null and !val.isString()) {
+                    return globalThis.throwInvalidArguments("Expected ArrayBufferView or string as payload", .{});
+                }
+                payload_roots.append(val);
+                payload_vals[slice_idx] = val;
             }
             if (connected) {
                 addr_ptrs[slice_idx] = null;
@@ -699,6 +713,32 @@ pub const UDPSocket = struct {
         if (i != array_len) {
             return globalThis.throwInvalidArguments("Mismatch between array length property and number of items", .{});
         }
+
+        // Phase 2: borrow byte slices now that no more user JS will run before
+        // `socket.send`. The payloads are rooted so GC cannot collect them; an
+        // ArrayBuffer that was detached during phase 1 now reports a
+        // zero-length slice rather than a dangling pointer into freed heap.
+        // String rope resolution / UTF-16 conversion here may allocate and GC,
+        // but every payload JSString is rooted so borrowed WTFStringImpl
+        // pointers stay valid.
+        const empty: []const u8 = "";
+        for (payload_vals, 0..) |val, slice_idx| {
+            const slice: []const u8 = brk: {
+                if (val.asArrayBuffer(globalThis)) |arrayBuffer| {
+                    // `byteSlice()` returns `&.{}` for a detached view; its
+                    // `.ptr` is Zig's zero-length sentinel which the kernel
+                    // rejects with EFAULT even though `iov_len == 0`. Hand
+                    // sendmmsg a valid static address instead.
+                    if (arrayBuffer.isDetached()) break :brk empty;
+                    break :brk arrayBuffer.slice();
+                }
+                // Already validated `isString()` in phase 1.
+                break :brk (try val.toJSString(globalThis)).toSlice(globalThis, alloc).slice();
+            };
+            payloads[slice_idx] = slice.ptr;
+            lens[slice_idx] = slice.len;
+        }
+
         const socket = this.socket orelse return globalThis.throw("Socket is closed", .{});
         const res = socket.send(payloads, lens, addr_ptrs);
         if (getUSError(res, .send, true)) |err| {

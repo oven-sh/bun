@@ -230,9 +230,13 @@ comptime {
 }
 
 pub export fn Bun__onExit() void {
-    // Usually already done by Global.exit(), but a native addon that calls
-    // libc exit() directly bypasses that path and still reaches us via
-    // atexit(). Idempotent — the map is cleared on first call.
+    // Usually already done by Global.exit(). Repeated here for the macOS /
+    // ASAN builds (where this is registered via atexit()) in case a native
+    // addon called libc exit() directly and bypassed Global.exit(). On other
+    // POSIX release builds this is registered via at_quick_exit(), which libc
+    // exit() does not run, so that bypass case is not covered there — but the
+    // livelock this guards against is macOS-specific. Idempotent: after the
+    // first call the sigaction probe sees SIG_DFL/SIG_IGN and skips.
     if (Environment.isPosix) {
         Bun__resetProcessSignalHandlers();
     }

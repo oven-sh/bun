@@ -1597,7 +1597,9 @@ extern "C" void Bun__resetProcessSignalHandlers()
         sigemptyset(&dfl.sa_mask);
         sigaction(signalNumber, &dfl, nullptr);
     }
-    signalToContextIdsMap->clear();
+    // No ->clear(): the map is only otherwise touched from the JS thread,
+    // and Bun__onExit can run this from whichever thread called libc exit();
+    // the sigaction probe above already makes repeat calls a no-op.
 #endif
 }
 

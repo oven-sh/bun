@@ -218,6 +218,37 @@ for (const [name, copy] of impls) {
       expect(fs.readdirSync(basename + "/result/dir_symlink")).toEqual(["c.txt"]);
     });
 
+    test("symlinks - copied link target is the original target, not the source link path", async () => {
+      // Previously the ELOOP fallback on Linux/FreeBSD called symlink(src, dest),
+      // so the copied link's target string was the path of the *source* symlink
+      // and every copied link pointed back into the source tree.
+      const basename = tempDirWithFiles("cp", {
+        "target.txt": "hello",
+        "from/keep": "",
+      });
+
+      const srcLink = join(basename, "from", "link");
+      const origTarget = join(basename, "target.txt");
+      fs.symlinkSync(origTarget, srcLink);
+
+      await copy(basename + "/from", basename + "/to", { recursive: true });
+
+      const copiedLink = join(basename, "to", "link");
+      expect(fs.lstatSync(copiedLink).isSymbolicLink()).toBe(true);
+
+      // The copied link's target string must not be the path of the source
+      // symlink. With the bug, readlink(copiedLink) returned srcLink.
+      const copiedTarget = fs.readlinkSync(copiedLink);
+      expect(copiedTarget).not.toBe(srcLink);
+      expect(fs.realpathSync(copiedLink)).toBe(fs.realpathSync(origTarget));
+
+      // Deleting the source tree must not break the copied link, since the
+      // link target lives outside the source tree. With the bug, the copied
+      // link pointed at from/link and would dangle once from/ was removed.
+      fs.rmSync(join(basename, "from"), { recursive: true, force: true });
+      expect(fs.readFileSync(copiedLink, "utf8")).toBe("hello");
+    });
+
     test("filter - works", async () => {
       const basename = tempDirWithFiles("cp", {
         "from/a.txt": "a",

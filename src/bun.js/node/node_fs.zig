@@ -6370,6 +6370,43 @@ pub const NodeFS = struct {
         return result;
     }
 
+    /// Recreate the symlink at `src` as a symlink at `dest`.
+    ///
+    /// Used by `_copySingleFileSync` when `open(src, O_NOFOLLOW)` fails with
+    /// ELOOP/EMLINK. The previous implementation called `symlink(src, dest)`,
+    /// which created a link whose *target string* was the path of the source
+    /// symlink instead of the target that the source symlink pointed at, so
+    /// every copied link pointed back into the source tree.
+    ///
+    /// The native fast path only runs when `verbatimSymlinks` is not set (the
+    /// JS fallback handles that option), so we match Node's default here:
+    /// `readlink(src)`, then resolve a relative target against `dirname(src)`.
+    fn _cpSymlink(this: *NodeFS, src: [:0]const u8, dest: [:0]const u8) Maybe(Return.CopyFile) {
+        var target_buf: bun.PathBuffer = undefined;
+        const link_target = switch (Syscall.readlink(src, &target_buf)) {
+            .result => |result| result,
+            .err => |err| {
+                @memcpy(this.sync_error_buf[0..src.len], src);
+                return .{ .err = err.withPath(this.sync_error_buf[0..src.len]) };
+            },
+        };
+
+        if (std.fs.path.isAbsolute(link_target)) {
+            return Syscall.symlink(link_target, dest);
+        }
+
+        var cwd_buf: bun.PathBuffer = undefined;
+        var resolved_buf: bun.PathBuffer = undefined;
+        const src_dir = bun.path.dirname(src, .posix);
+        const cwd = bun.getcwd(&cwd_buf) catch {
+            // If we can't resolve cwd, preserve the link target as-is rather
+            // than pointing the copied link back at the source path.
+            return Syscall.symlink(link_target, dest);
+        };
+        const resolved = bun.path.joinAbsStringBufZ(cwd, &resolved_buf, &.{ src_dir, link_target }, .posix);
+        return Syscall.symlink(resolved, dest);
+    }
+
     /// This is `copyFile`, but it copies symlinks as-is
     pub fn _copySingleFileSync(
         this: *NodeFS,
@@ -6510,7 +6547,7 @@ pub const NodeFS = struct {
                     if (err.getErrno() == .LOOP) {
                         // ELOOP is returned when you open a symlink with NOFOLLOW.
                         // as in, it does not actually let you open it.
-                        return Syscall.symlink(src, dest);
+                        return this._cpSymlink(src, dest);
                     }
 
                     return .{ .err = err };
@@ -6657,9 +6694,11 @@ pub const NodeFS = struct {
             const src_fd = switch (Syscall.open(src, bun.O.RDONLY | bun.O.NOFOLLOW, 0o644)) {
                 .result => |result| result,
                 .err => |err| {
-                    // ELOOP from O_NOFOLLOW on a symlink → recreate the link.
-                    if (err.getErrno() == .LOOP) {
-                        return Syscall.symlink(src, dest);
+                    // O_NOFOLLOW on a symlink → recreate the link. FreeBSD's
+                    // open(2) returns EMLINK for this case, though POSIX
+                    // specifies ELOOP; accept either.
+                    if (err.getErrno() == .MLINK or err.getErrno() == .LOOP) {
+                        return this._cpSymlink(src, dest);
                     }
                     return .{ .err = err };
                 },

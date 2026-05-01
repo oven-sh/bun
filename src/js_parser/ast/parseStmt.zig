@@ -1009,7 +1009,14 @@ pub fn ParseStmt(
                     //
                     // Note: "import defer from 'path'" is a default import with the
                     // binding "defer". Only "import defer *" triggers the phase syntax.
-                    if (p.lexer.token == .t_asterisk and strings.eqlComptime(default_name, "defer")) {
+                    //
+                    // Mirror the non-token terms of the TypeScript import-equals gate
+                    // below so `namespace Foo { import defer * as ns ... }` and
+                    // `export import defer * as ns ...` fall through to it and error
+                    // like every other import form here, rather than slipping through
+                    // as a real S.Import.
+                    const can_be_esm_phase_import = !opts.is_export and (!opts.is_namespace_scope or opts.is_typescript_declare);
+                    if (can_be_esm_phase_import and p.lexer.token == .t_asterisk and strings.eqlComptime(default_name, "defer")) {
                         stmt.default_name = null;
                         try p.lexer.next();
                         try p.lexer.expectContextualKeyword("as");
@@ -1021,7 +1028,7 @@ pub fn ParseStmt(
                         try p.lexer.expectOrInsertSemicolon();
                         return try p.processImportStatement(stmt, path, loc, false, .defer_);
                     }
-                    if (p.lexer.token == .t_identifier and strings.eqlComptime(default_name, "source") and !p.lexer.isContextualKeyword("from")) {
+                    if (can_be_esm_phase_import and p.lexer.token == .t_identifier and strings.eqlComptime(default_name, "source") and !p.lexer.isContextualKeyword("from")) {
                         stmt.default_name = .{
                             .loc = p.lexer.loc(),
                             .ref = try p.storeNameInRef(p.lexer.identifier),

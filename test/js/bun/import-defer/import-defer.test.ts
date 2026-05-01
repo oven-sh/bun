@@ -347,6 +347,27 @@ describe("transpiler", () => {
     expect(out).toContain("import source");
   });
 
+  test("phase imports reject inside TS namespace / after export like other import forms", async () => {
+    // Line ~1084 in parseStmt.zig routes `import <ident> ...` inside a
+    // non-declare TS namespace (or after `export import`) to
+    // parseTypeScriptImportEqualsStmt, which expects `=` and errors. The
+    // defer/source early-return branches must not bypass that gate.
+    const ts = new Bun.Transpiler({ loader: "ts" });
+    // Baseline: plain `import ns from "x"` inside a namespace is rejected.
+    await expect(ts.transform(`namespace Foo { import bar from "./x"; }`)).rejects.toThrow();
+    for (const src of [
+      `namespace Foo { import defer * as ns from "./x"; }`,
+      `namespace Foo { import source x from "./x"; }`,
+      `export import defer * as ns from "./x";`,
+      `export import source x from "./x";`,
+    ]) {
+      await expect(ts.transform(src)).rejects.toThrow();
+    }
+    // But inside a `declare namespace` (ambient), the import-equals gate
+    // is skipped, so phase imports are accepted (mirroring the baseline).
+    expect(await ts.transform(`declare namespace Foo { import defer * as ns from "./x"; }`)).toBeDefined();
+  });
+
   test("import.defer()/import.source() do not force ESM detection", async () => {
     // import.defer() and import.source() extend ImportCall, which is valid in
     // Script context (like plain `import()`). Unlike `import.meta`, their

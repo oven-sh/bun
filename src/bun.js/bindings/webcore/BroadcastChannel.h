@@ -93,15 +93,10 @@ private:
     void contextDestroyed() final;
 
     // State is a single atomic so the GC-thread hasPendingActivity() check
-    // never takes a lock. Layout: flags in the low byte, count of
-    // posted-but-not-yet-dispatched messages in the high bits (keeps the
-    // channel alive until its queued tasks run even if JS drops the last
-    // reference).
+    // never takes a lock.
     enum State : uint64_t {
         Closed = 1ull << 0,
         HasMessageListener = 1ull << 1,
-        QueuedShift = 8,
-        QueuedOne = 1ull << QueuedShift,
     };
 
     const String m_name;

@@ -103,7 +103,6 @@ describe("bun", () => {
           env: bunEnv,
           cwd: String(dir),
         });
-        expect(exitCode).toBe(0);
         const lines = stdout
           .toString()
           .split("\n")
@@ -122,6 +121,8 @@ describe("bun", () => {
         expect(lines).not.toContain("prebuild");
         expect(lines).not.toContain("postbuild");
         expect(lines).not.toContain("pretest");
+
+        expect(exitCode).toBe(0);
       }
     });
   });

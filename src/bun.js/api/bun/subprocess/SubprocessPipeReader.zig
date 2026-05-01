@@ -206,7 +206,7 @@ fn deinit(this: *PipeReader) void {
     }
 
     if (comptime Environment.isWindows) {
-        bun.assert(this.reader.source == null or this.reader.source.?.isClosed());
+        bun.assert(this.reader.source == null or this.reader.source.?.isClosed() or this.state == .err);
     }
 
     if (this.state == .done) {

@@ -772,8 +772,12 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
          * already armed WRITABLE via us_poll_change in us_socket{,_raw}_write;
          * preserve it. For TLS, ssl_update_handshake also sets this on
          * WANT_READ — that costs one harmless on_writable tick and then the
-         * regular loop.c writable-disarm clears it. */
-        if (!us_socket_is_closed(s)) {
+         * regular loop.c writable-disarm clears it.
+         *
+         * is_paused: socket.pause() inside on_open already cleared READABLE and
+         * set the flag — re-arming here would silently un-pause. Skipping
+         * leaves the connect-WRITABLE armed for one tick; loop.c disarms it. */
+        if (!us_socket_is_closed(s) && !s->flags.is_paused) {
             us_poll_change(&s->p, s->group->loop,
                 LIBUS_SOCKET_READABLE | (s->flags.last_write_failed ? LIBUS_SOCKET_WRITABLE : 0));
         }

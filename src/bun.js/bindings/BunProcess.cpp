@@ -3348,9 +3348,15 @@ static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSVal
     return process;
 }
 
+extern "C" uint64_t Bun__cgroup__getMemoryLimit();
 JSC_DEFINE_HOST_FUNCTION(Process_functionConstrainedMemory, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return JSValue::encode(jsNumber(WTF::ramSize()));
+    // Issue #17723: Return the actual cgroup memory limit when running inside
+    // a Docker/Kubernetes container, instead of the total system RAM.
+    // Frameworks like Next.js call this to auto-size their caches.
+    uint64_t limit = Bun__cgroup__getMemoryLimit();
+    if (limit == 0) limit = WTF::ramSize();
+    return JSValue::encode(jsNumber(limit));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

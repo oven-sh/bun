@@ -675,6 +675,7 @@ pub fn isHeapMemory(mem: anytype) bool {
 }
 
 pub const memory = @import("./memory.zig");
+pub const cgroup = @import("./cgroup.zig");
 pub const allocators = @import("./allocators.zig");
 pub const mimalloc = allocators.mimalloc;
 pub const MimallocArena = allocators.MimallocArena;

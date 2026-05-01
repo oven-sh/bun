@@ -183,23 +183,25 @@ test.concurrent("self.close() discards queued tasks (setTimeout scheduled before
   expect(JSON.parse(stdout.trim())).toEqual(["before-close"]);
 });
 
-test.concurrent("worker.terminate() still interrupts JS even after self.close() was called", async () => {
-  // 30s guard: the worker spins for 60s if the trap is not armed. A successful
-  // terminate() interrupts within ~50ms, so 30s is plenty of margin.
-  // `self.close()` sets a cooperative-close flag — but a follow-up
-  // parent-side `worker.terminate()` must still arm the JSC termination
-  // trap and interrupt any long-running synchronous work the worker got
-  // stuck in after close(). Otherwise `worker.terminate()` would be a
-  // silent no-op for closed-but-busy workers.
-  using dir = tempDir("issue-29186-terminate-after-close", {
-    "worker.mjs": `
+test.concurrent(
+  "worker.terminate() still interrupts JS even after self.close() was called",
+  async () => {
+    // 30s guard: the worker spins for 60s if the trap is not armed. A successful
+    // terminate() interrupts within ~50ms, so 30s is plenty of margin.
+    // `self.close()` sets a cooperative-close flag — but a follow-up
+    // parent-side `worker.terminate()` must still arm the JSC termination
+    // trap and interrupt any long-running synchronous work the worker got
+    // stuck in after close(). Otherwise `worker.terminate()` would be a
+    // silent no-op for closed-but-busy workers.
+    using dir = tempDir("issue-29186-terminate-after-close", {
+      "worker.mjs": `
       self.close();
       // Heavy synchronous work — would run forever without the trap.
       const start = performance.now();
       while (performance.now() - start < 60_000) {}
       self.postMessage("should-not-reach");
     `,
-    "main.mjs": `
+      "main.mjs": `
       const worker = new Worker(new URL("./worker.mjs", import.meta.url).href, { type: "module" });
       const { promise, resolve, reject } = Promise.withResolvers();
       let sawUnexpected = false;
@@ -219,20 +221,22 @@ test.concurrent("worker.terminate() still interrupts JS even after self.close() 
       await Promise.race([promise, guard]);
       console.log(sawUnexpected ? "UNEXPECTED" : "OK");
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.mjs"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
-  expect(stdout.trim()).toBe("OK");
-}, 30_000);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
+    expect(stdout.trim()).toBe("OK");
+  },
+  30_000,
+);
 
 test.concurrent("close() on the main thread is a no-op", async () => {
   // On main (non-window) contexts, `close()` should silently do nothing —

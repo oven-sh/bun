@@ -1657,11 +1657,16 @@ pub const internal = struct {
         var status = status_;
         var addr_info = addr_info_;
         // Test hook: force the ADDRCONFIG fallback path so it can be exercised
-        // in CI without a loopback-only network configuration.
+        // in CI without a loopback-only network configuration. Bumps the
+        // getaddrinfo_calls counter so the test can observe (via
+        // dns.getCacheStats().totalCount) that the hook actually fired
+        // instead of silently passing on binaries that don't recognise the
+        // flag.
         if (req.can_retry_for_addrconfig and bun.feature_flag.BUN_INTERNAL_DNS_FORCE_ADDRCONFIG_RETRY.get()) {
             if (addr_info) |info| std.c.freeaddrinfo(info);
             addr_info = null;
             status = @intFromEnum(std.c.EAI.NONAME);
+            _ = @atomicRmw(usize, &getaddrinfo_calls, .Add, 1, .monotonic);
         }
         const status_int: c_int = @intCast(status);
         if (status == @intFromEnum(std.c.EAI.NONAME) and req.can_retry_for_addrconfig) retry: {

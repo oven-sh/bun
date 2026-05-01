@@ -154,12 +154,23 @@ describe("dns", () => {
 // received and the request hung indefinitely.
 test.skipIf(!isMacOS)("internal DNS: libinfo ADDRCONFIG retry re-registers on the new mach port", async () => {
   const src = /* js */ `
+    const { dns } = require("bun");
     await using server = Bun.serve({
       port: 0,
       fetch: () => new Response("ok"),
     });
+    const before = dns.getCacheStats().totalCount;
     const res = await fetch("http://localhost:" + server.port + "/");
-    process.stdout.write(await res.text());
+    const body = await res.text();
+    const after = dns.getCacheStats().totalCount;
+    // The test hook bumps totalCount when it forces the NONAME retry. One
+    // fetch against a fresh hostname is one getaddrinfo() call, so a delta
+    // of 1 means the hook never fired (binary doesn't recognise the flag),
+    // and this test would otherwise pass without exercising the retry.
+    if (after - before < 2) {
+      throw new Error("ADDRCONFIG retry hook did not fire (totalCount delta=" + (after - before) + ")");
+    }
+    process.stdout.write(body);
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", src],

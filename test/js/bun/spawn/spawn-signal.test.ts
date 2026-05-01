@@ -21,8 +21,6 @@ test("spawn AbortSignal works after spawning", async () => {
 });
 
 test("spawn AbortSignal works if already aborted", async () => {
-  const controller = new AbortController();
-  const { signal } = controller;
   const start = performance.now();
   const subprocess = Bun.spawn({
     cmd: [bunExe(), "--eval", "await Bun.sleep(100000)"],
@@ -30,10 +28,8 @@ test("spawn AbortSignal works if already aborted", async () => {
     stdout: "inherit",
     stderr: "inherit",
     stdin: "inherit",
-    signal,
+    signal: AbortSignal.abort(),
   });
-  await Bun.sleep(1);
-  controller.abort();
   expect(await subprocess.exited).not.toBe(0);
   const end = performance.now();
   expect(end - start).toBeLessThan(100);

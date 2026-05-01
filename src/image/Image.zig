@@ -18,6 +18,9 @@ pub const toJS = js.toJS;
 pub const new = bun.TrivialNew(@This());
 
 source: Source,
+/// Keeps the input ArrayBuffer/TypedArray alive so `source.borrowed` stays
+/// valid without a constructor-time memcpy.
+strong_source: jsc.Strong.Optional = .empty,
 pipeline: Pipeline = .{},
 /// Decompression-bomb guard. Checked against the *header* dimensions before
 /// any RGBA buffer is allocated. Mirrors Sharp's `limitInputPixels`.
@@ -32,16 +35,31 @@ last_height: i32 = -1,
 has_pending_activity: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
 
 pub const Source = union(enum) {
-    /// Owned by `bun.default_allocator`. Set when the constructor argument was
-    /// a typed array / ArrayBuffer / Blob whose bytes were already in memory —
-    /// duplicated so the JS object can be GC'd while work runs off-thread.
-    bytes: []u8,
+    /// Borrowed from the JS input ArrayBuffer/TypedArray. The codegen's
+    /// `values: ["sourceJS"]` keeps a strong ref to that JS object on the
+    /// wrapper, so the backing store outlives the Image. Any terminal that
+    /// goes off-thread dupes from here (the worker can't trust JS lifetimes),
+    /// but the constructor no longer pays a memcpy of the whole input — which
+    /// was the entire `metadata()` cost on large buffers.
+    borrowed: []const u8,
+    /// Owned by `bun.default_allocator` — used for Blob inputs (the Blob's
+    /// store may be sliced/freed independently) and as the off-thread copy.
+    owned: []u8,
     /// Owned by `bun.default_allocator`. Read on the worker thread.
     path: [:0]u8,
 
+    fn bytes(self: Source) ?[]const u8 {
+        return switch (self) {
+            .borrowed => |b| b,
+            .owned => |b| b,
+            .path => null,
+        };
+    }
+
     fn deinit(self: *Source) void {
         switch (self.*) {
-            .bytes => |b| bun.default_allocator.free(b),
+            .borrowed => {},
+            .owned => |b| bun.default_allocator.free(b),
             .path => |p| bun.default_allocator.free(p),
         }
     }
@@ -99,11 +117,11 @@ pub fn constructor(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
     if (args.len < 1 or args[0].isUndefinedOrNull())
         return global.throwInvalidArguments("Image() expects a path, ArrayBuffer, TypedArray or Blob", .{});
 
-    const src = try sourceFromJS(global, args[0]);
-    var img = Image.new(.{ .source = src });
+    var img = Image.new(.{ .source = .{ .borrowed = &.{} } });
     // `opt.get` can throw (Proxy/getter); without this the heap-allocated
     // *Image and the duplicated source bytes leak.
     errdefer img.finalize();
+    img.source = try sourceFromJS(global, args[0], img);
 
     if (args.len > 1 and args[1].isObject()) {
         const opt = args[1];
@@ -116,6 +134,7 @@ pub fn constructor(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
 }
 
 pub fn finalize(this: *Image) void {
+    this.strong_source.deinit();
     this.source.deinit();
     bun.destroy(this);
 }
@@ -124,7 +143,7 @@ pub fn hasPendingActivity(this: *Image) callconv(.c) bool {
     return this.has_pending_activity.load(.seq_cst) > 0;
 }
 
-fn sourceFromJS(global: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!Source {
+fn sourceFromJS(global: *jsc.JSGlobalObject, value: jsc.JSValue, img: *Image) bun.JSError!Source {
     // String → file path. Everything else → bytes.
     if (value.isString()) {
         const str = try value.toBunString(global);
@@ -134,14 +153,17 @@ fn sourceFromJS(global: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!Sou
         return .{ .path = try bun.default_allocator.dupeZ(u8, utf8.slice()) };
     }
     if (value.asArrayBuffer(global)) |ab| {
-        return .{ .bytes = try bun.default_allocator.dupe(u8, ab.byteSlice()) };
+        // Borrow; the Strong ref keeps the backing store alive for the
+        // Image's lifetime, so no memcpy of the input here.
+        img.strong_source = .create(value, global);
+        return .{ .borrowed = ab.byteSlice() };
     }
     if (value.as(jsc.WebCore.Blob)) |blob| {
         // Only in-memory blobs for now; FileBlob/S3 callers can `await
-        // file.bytes()` first.
+        // file.bytes()` first. Dupe — the Blob's store may be sliced/replaced.
         const view = blob.sharedView();
         if (view.len > 0)
-            return .{ .bytes = try bun.default_allocator.dupe(u8, view) };
+            return .{ .owned = try bun.default_allocator.dupe(u8, view) };
     }
     return global.throwInvalidArguments("Image() input must be a path string, ArrayBuffer, TypedArray or in-memory Blob", .{});
 }
@@ -294,12 +316,12 @@ pub fn doMetadata(this: *Image, global: *jsc.JSGlobalObject, _: *jsc.CallFrame) 
     // Header-only probe is a few dozen byte reads — when the bytes are already
     // in memory it's cheaper to do it inline than to bounce off the WorkPool
     // (~0.4 ms roundtrip). Path-backed sources still go async for the file I/O.
-    if (this.source == .bytes) {
-        if (codecs.probe(this.source.bytes, this.max_pixels)) |p| {
+    if (this.source.bytes()) |buf| {
+        if (codecs.probe(buf, this.max_pixels)) |p| {
             var w = p.width;
             var h = p.height;
             if (this.auto_orient and p.format == .jpeg) {
-                const t = exif.readJpeg(this.source.bytes).transform();
+                const t = exif.readJpeg(buf).transform();
                 if (t.rotate == 90 or t.rotate == 270) std.mem.swap(u32, &w, &h);
             }
             this.last_width = @intCast(w);
@@ -419,13 +441,15 @@ pub const PipelineTask = struct {
 
     /// Runs on a `WorkPool` thread. No JSC access.
     pub fn run(this: *PipelineTask) void {
-        // For `.bytes` we borrow the constructor's buffer (immutable, kept
-        // alive by hasPendingActivity). Only `.path` allocates here, and only
-        // for the file body — freed once decoded.
+        // The Image's `strong_source` keeps the JS ArrayBuffer alive, and
+        // `hasPendingActivity` keeps the Image alive while this task runs, so
+        // borrowing the original bytes here is safe even off the JS thread.
+        // `.path` reads the file; `.owned` is already a private copy.
         var owned_file: ?[]u8 = null;
         defer if (owned_file) |f| bun.default_allocator.free(f);
         const input: []const u8 = switch (this.image.source) {
-            .bytes => |b| b,
+            .borrowed => |b| b,
+            .owned => |b| b,
             .path => |p| switch (bun.sys.File.readFrom(bun.FD.cwd(), p, bun.default_allocator)) {
                 .result => |bytes| blk: {
                     owned_file = bytes;

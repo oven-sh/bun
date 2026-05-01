@@ -792,9 +792,9 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject)
     // "expected a napi module" rather than a misleading
     // missing-symbol error.
     if (globalObject->m_pendingNapiModuleDlopenHandle) {
+        // No finalizer: napi modules are never unloaded, so the one
+        // NapiModuleMeta per addon lives for the process.
         auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
-
-        // TODO: think about the finalizer here
         Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr, env.ptr());
 
         bool success = resultValue.getObject()->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);

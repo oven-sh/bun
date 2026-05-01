@@ -362,4 +362,41 @@ describe("udpSocket()", () => {
       );
     }
   });
+
+  // sendMany() must not hold borrowed raw pointers into payload backing
+  // stores across user-JS re-entrance: a later iteration's port
+  // `valueOf()` / address `toString()` can drop the only reference to an
+  // earlier payload and force a GC, or detach its ArrayBuffer, freeing the
+  // buffer whose raw pointer is already stashed in the (non-GC-scanned)
+  // arena. Under ASAN with `Malloc=1` (so bmalloc routes through the
+  // system allocator) the `detach-arraybuffer` case is a deterministic
+  // heap-use-after-free in `sendmmsg`.
+  describe("sendMany keeps payloads rooted while user JS runs during iteration", () => {
+    for (const kind of ["detach-arraybuffer", "gc-string"] as const) {
+      test(
+        kind,
+        async () => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), path.join(import.meta.dir, "sendMany-gc-payload-fixture.ts"), kind],
+            env: { ...bunEnv, Malloc: "1" },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, rawStderr, exitCode] = await Promise.all([
+            proc.stdout.text(),
+            proc.stderr.text(),
+            proc.exited,
+          ]);
+          const stderr = rawStderr
+            .split("\n")
+            .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+            .join("\n");
+          expect(stderr).toBe("");
+          expect(stdout).toBe("OK\n");
+          expect(exitCode).toBe(0);
+        },
+        30_000,
+      );
+    }
+  });
 });

@@ -28,7 +28,7 @@ const runtimeSupported = await (async () => {
   });
   return exitCode === 0;
 })();
-const describeRuntime = runtimeSupported ? describe : describe.skip;
+const describeRuntime = runtimeSupported ? describe.concurrent : describe.skip;
 
 describeRuntime("import defer (static)", () => {
   test("module is not evaluated until a property is accessed", async () => {
@@ -345,5 +345,26 @@ describe("transpiler", () => {
     const transpiler = new Bun.Transpiler({ loader: "ts" });
     const out = await transpiler.transform(`import source x from "./x.wasm";\nexport const y = 1;`);
     expect(out).toContain("import source");
+  });
+
+  test("import.defer()/import.source() do not force ESM detection", async () => {
+    // import.defer() and import.source() extend ImportCall, which is valid in
+    // Script context (like plain `import()`). Unlike `import.meta`, their
+    // presence must not mark the file as having ESM syntax. Observable via
+    // the top-level `this` rewrite: in an otherwise-ambiguous .js input,
+    // ESM detection rewrites top-level `this` away from the CJS `exports`
+    // binding.
+    const transpiler = new Bun.Transpiler({ loader: "js" });
+    const plain = await transpiler.transform(`console.log(this);\nconst m = import("./x");`);
+    const meta = await transpiler.transform(`console.log(this);\nconst m = import.meta;`);
+    // Baseline: plain import() keeps CJS `this`, import.meta flips to ESM.
+    expect(plain).toContain("console.log(exports)");
+    expect(meta).not.toContain("console.log(exports)");
+    // Phase calls must behave like plain import(), not like import.meta.
+    for (const phase of ["defer", "source"]) {
+      const out = await transpiler.transform(`console.log(this);\nconst m = import.${phase}("./x");`);
+      expect(out).toContain("console.log(exports)");
+      expect(out).toContain(`import.${phase}(`);
+    }
   });
 });

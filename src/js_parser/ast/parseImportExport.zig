@@ -13,9 +13,13 @@ pub fn ParseImportExport(
             // Parse an "import.meta" expression
             var phase: bun.ImportPhase = .evaluation;
             if (p.lexer.token == .t_dot) {
-                p.esm_import_keyword = js_lexer.rangeOfIdentifier(p.source, loc);
                 try p.lexer.next();
                 if (p.lexer.isContextualKeyword("meta")) {
+                    // `import.meta` is module-only syntax; mark the file as
+                    // having ESM syntax. `import.defer()` / `import.source()`
+                    // extend ImportCall and are valid in Script context (like
+                    // plain `import()`), so they must not set this.
+                    p.esm_import_keyword = js_lexer.rangeOfIdentifier(p.source, loc);
                     try p.lexer.next();
                     p.has_import_meta = true;
                     return p.newExpr(E.ImportMeta{}, loc);

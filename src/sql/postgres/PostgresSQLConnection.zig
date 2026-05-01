@@ -248,7 +248,12 @@ fn updateHasPendingActivity(this: *PostgresSQLConnection) void {
     const b: u32 = switch (this.status) {
         // Terminal states: nothing more will happen on this connection, so
         // allow GC to collect the JS wrapper (and ultimately call deinit()).
-        .disconnected, .failed => 0,
+        // We must still outlive the socket's onClose callback — for SSL
+        // sockets `close(.normal)` defers the actual close until the peer's
+        // close_notify arrives, so the struct must stay alive until then.
+        // The socket's onClose re-enters here (via failWithJSValue's defer)
+        // with isClosed() == true, at which point GC can proceed.
+        .disconnected, .failed => @intFromBool(!this.socket.isClosed()),
         else => 1,
     };
     this.pending_activity_count.store(a + b, .release);

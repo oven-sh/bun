@@ -74,6 +74,7 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
 
 pub const decode = DecoderWrap(FieldDescription, decodeInternal).decode;
 
+const bun = @import("bun");
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
 const ColumnIdentifier = @import("../../shared/ColumnIdentifier.zig").ColumnIdentifier;
 const Data = @import("../../shared/Data.zig").Data;
@@ -84,6 +85,5 @@ const types = @import("../PostgresTypes.zig");
 const int4 = types.int4;
 const short = types.short;
 
-const bun = @import("bun");
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;

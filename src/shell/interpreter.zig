@@ -607,6 +607,14 @@ pub const Interpreter = struct {
             }
             const is_sentinel = @TypeOf(new_cwd_) == [:0]const u8;
 
+            // The path (absolute or joined) is copied into the 4096-byte threadlocal
+            // `ResolvePath.join_buf` below. Without this check, an attacker-controlled
+            // path longer than the buffer overflows adjacent TLS in ReleaseFast (where
+            // slice bounds are elided) and segfaults.
+            if (new_cwd_.len >= ResolvePath.join_buf.len) {
+                return Maybe(void).initErr(Syscall.Error.fromCode(.NAMETOOLONG, .chdir));
+            }
+
             const new_cwd: [:0]const u8 = brk: {
                 if (ResolvePath.Platform.auto.isAbsolute(new_cwd_)) {
                     if (is_sentinel) {

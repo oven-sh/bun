@@ -87,6 +87,16 @@ fn handleChangeCwdErr(this: *Cd, err: Syscall.Error, new_cwd_: []const u8) Yield
 
             return this.writeStderrNonBlocking("not a directory: {s}\n", .{new_cwd_});
         },
+        @as(usize, @intFromEnum(Syscall.E.NAMETOOLONG)) => {
+            if (this.bltn().stderr.needsIO() == null) {
+                const buf = this.bltn().fmtErrorArena(.cd, "file name too long\n", .{});
+                _ = this.bltn().writeNoIO(.stderr, buf);
+                this.state = .done;
+                return this.bltn().done(1);
+            }
+
+            return this.writeStderrNonBlocking("file name too long\n", .{});
+        },
         else => return .failed,
     }
 }

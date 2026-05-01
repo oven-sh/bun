@@ -786,6 +786,52 @@ booga"
       const { stdout } = await $`cd ${temp_dir} && pwd && cd - && pwd`;
       expect(stdout.toString()).toEqual(`${temp_dir}\n${process.cwd().replaceAll("\\", "/")}\n`);
     });
+
+    // Overflowing the 4096-byte threadlocal join_buf used by changeCwdImpl would
+    // corrupt adjacent TLS (ReleaseFast) or trip bounds checks (debug). These must
+    // now return ENAMETOOLONG instead. Spawned in a subprocess so a regression
+    // crashes the child, not the test runner.
+    test("cd rejects path longer than buffer with ENAMETOOLONG", async () => {
+      const script = `
+        import { $ } from "bun";
+        const big = "/" + Buffer.alloc(1 << 20, "a").toString();
+        const { stderr, exitCode } = await $\`cd \${big}\`.nothrow().quiet();
+        console.log(JSON.stringify({ exitCode, stderr: stderr.toString() }));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe(JSON.stringify({ exitCode: 1, stderr: "cd: file name too long\n" }));
+      expect(exitCode).toBe(0);
+    });
+
+    test(".cwd() rejects path longer than buffer with ENAMETOOLONG", async () => {
+      const script = `
+        import { $ } from "bun";
+        const big = "/" + Buffer.alloc(1 << 20, "a").toString();
+        try {
+          await $\`echo hi\`.cwd(big);
+          console.log("no-throw");
+        } catch (e) {
+          console.log(e.code ?? e.message);
+        }
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("ENAMETOOLONG");
+      expect(exitCode).toBe(0);
+    });
   });
 
   test("which", async () => {

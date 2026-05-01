@@ -114,6 +114,49 @@ const _MessagePort = globalThis.MessagePort;
 injectFakeEmitter(_MessagePort);
 
 const MessagePort = _MessagePort;
+const untransferableObjects = new WeakSet<object>();
+
+function isObjectLike(value: unknown): value is object {
+  return (typeof value === "object" && value !== null) || typeof value === "function";
+}
+
+function throwDataCloneError(message = "Cannot transfer object of unsupported type.") {
+  throw new DOMException(message, "DataCloneError");
+}
+
+function validateTransferList(transferList: unknown): unknown[] | undefined {
+  if (!transferList || !isObjectLike(transferList)) {
+    return undefined;
+  }
+
+  const iterator = transferList[Symbol.iterator];
+  if (typeof iterator !== "function") {
+    return undefined;
+  }
+
+  const items = Array.isArray(transferList) ? transferList : Array.from(transferList as Iterable<unknown>);
+  for (const transferable of items) {
+    if (isObjectLike(transferable) && untransferableObjects.has(transferable)) {
+      throwDataCloneError();
+    }
+  }
+  return items;
+}
+
+const messagePortPostMessage = MessagePort.prototype.postMessage;
+const messagePortPostMessageDescriptor = Object.getOwnPropertyDescriptor(MessagePort.prototype, "postMessage");
+function postMessage(this: MessagePort, message: any, transfer: any) {
+  const normalized = validateTransferList(transfer);
+  if (normalized && normalized !== transfer) {
+    return messagePortPostMessage.$apply(this, [message, normalized]);
+  }
+  return messagePortPostMessage.$apply(this, arguments);
+}
+Object.defineProperty(postMessage, "length", { value: messagePortPostMessage.length });
+Object.defineProperty(MessagePort.prototype, "postMessage", {
+  ...messagePortPostMessageDescriptor,
+  value: postMessage,
+});
 
 let resourceLimits = {};
 
@@ -151,6 +194,10 @@ function fakeParentPort() {
   const postMessage = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionPostMessage", 1);
   Object.defineProperty(fake, "postMessage", {
     value(...args: [any, any]) {
+      const normalized = validateTransferList(args[1]);
+      if (normalized && normalized !== args[1]) {
+        return postMessage.$apply(null, [args[0], normalized]);
+      }
       return postMessage.$apply(null, args);
     },
   });
@@ -215,8 +262,10 @@ function setEnvironmentData(key: unknown, value: unknown): void {
   }
 }
 
-function markAsUntransferable() {
-  throwNotImplemented("worker_threads.markAsUntransferable");
+function markAsUntransferable(object?: unknown) {
+  if (isObjectLike(object)) {
+    untransferableObjects.add(object);
+  }
 }
 
 function moveMessagePortToContext() {
@@ -234,6 +283,11 @@ class Worker extends EventEmitter {
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
+
+    const normalizedTransferList = validateTransferList(options?.transferList);
+    if (normalizedTransferList && normalizedTransferList !== options.transferList) {
+      options = { ...options, transferList: normalizedTransferList as any };
+    }
 
     const builtinsGeneratorHatesEval = "ev" + "a" + "l"[0];
     if (options && builtinsGeneratorHatesEval in options) {
@@ -341,6 +395,10 @@ class Worker extends EventEmitter {
   }
 
   postMessage(...args: [any, any]) {
+    const normalized = validateTransferList(args[1]);
+    if (normalized && normalized !== args[1]) {
+      return this.#worker.postMessage.$apply(this.#worker, [args[0], normalized]);
+    }
     return this.#worker.postMessage.$apply(this.#worker, args);
   }
 

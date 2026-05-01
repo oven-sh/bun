@@ -372,27 +372,31 @@ describe("structuredClone with Blob and File", () => {
       ["2^40", 1n << 40n],
       ["> u52", (1n << 52n) + 123n],
       ["u64 max", (1n << 64n) - 1n],
-    ])("offset %s does not expose out-of-store bytes", async (_name, offset) => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", childScript, String(offsetFieldIndex), String(offset)],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    ])(
+      "offset %s does not expose out-of-store bytes",
+      async (_name, offset) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", childScript, String(offsetFieldIndex), String(offset)],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      // offset >= store length, so the only in-bounds result is an empty view
-      // from every reader on both deserialize entry points.
-      const expected = { len: 0, bytesLen: 0, textLen: 0, all5: true };
-      expect(
-        stdout
-          .split("\n")
-          .filter(Boolean)
-          .map(l => JSON.parse(l)),
-      ).toEqual([expected, expected]);
-      expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
-    }, 30_000);
+        // offset >= store length, so the only in-bounds result is an empty view
+        // from every reader on both deserialize entry points.
+        const expected = { len: 0, bytesLen: 0, textLen: 0, all5: true };
+        expect(
+          stdout
+            .split("\n")
+            .filter(Boolean)
+            .map(l => JSON.parse(l)),
+        ).toEqual([expected, expected]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      },
+      30_000,
+    );
 
     test("in-process: offset at store boundary yields empty view", async () => {
       // offset == store length stays within the allocation on any build, so

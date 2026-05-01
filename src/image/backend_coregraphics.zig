@@ -53,20 +53,35 @@ pub fn decode(bytes: []const u8, max_pixels: u64) BackendError!codecs.Decoded {
     defer s.CGColorSpaceRelease(cs);
 
     // kCGImageAlphaPremultipliedLast (1) | kCGBitmapByteOrderDefault (0).
-    // CG's bitmap contexts won't render to non-premultiplied RGBA, so callers
-    // see premultiplied alpha here — fine for the resize→encode pipeline since
-    // both ImageIO encode and the static encoders accept it; if straight alpha
-    // ever matters we'd un-premultiply here.
+    // CG's bitmap contexts refuse to render to a non-premultiplied target
+    // (kCGImageAlphaLast → CGBitmapContextCreate returns null), so we draw
+    // premultiplied and undo it below to match the straight-alpha contract the
+    // rest of the pipeline (and the static codecs) work in.
     const ctx = s.CGBitmapContextCreate(out.ptr, w, h, 8, @as(usize, w) * 4, cs, kCGImageAlphaPremultipliedLast) orelse
         return error.DecodeFailed;
     defer s.CGContextRelease(ctx);
 
     s.CGContextDrawImage(ctx, .{ .origin = .{ .x = 0, .y = 0 }, .size = .{ .width = @floatFromInt(w), .height = @floatFromInt(h) } }, img);
 
+    // Un-premultiply: c = round(c * 255 / a). a==0 leaves RGB as drawn (zero);
+    // a==255 is the identity. Integer divide with +a/2 for round-to-nearest.
+    var i: usize = 0;
+    while (i + 4 <= out.len) : (i += 4) {
+        const a: u32 = out[i + 3];
+        if (a != 0 and a != 255) {
+            inline for (0..3) |c| out[i + c] = @intCast(@min(255, (@as(u32, out[i + c]) * 255 + a / 2) / a));
+        }
+    }
+
     return .{ .rgba = out, .width = w, .height = h };
 }
 
 pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOptions) BackendError![]u8 {
+    // ImageIO has no knob for indexed-PNG quantisation or VP8L lossless; let
+    // the static codecs handle those so behaviour matches across platforms.
+    if (opts.format == .png and opts.palette) return error.BackendUnavailable;
+    if (opts.format == .webp and opts.lossless) return error.BackendUnavailable;
+
     const s = try syms();
 
     const cs = s.CGColorSpaceCreateDeviceRGB() orelse return error.BackendUnavailable;

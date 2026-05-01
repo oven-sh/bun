@@ -58,8 +58,9 @@ pub fn decode(bytes: []const u8, max_pixels: u64) BackendError!codecs.Decoded {
 
     // WIC frames come in whatever pixel format the codec emits; normalise to
     // straight-alpha RGBA8 in one hop.
+    const convertFn = wicConvertBitmapSource orelse return error.BackendUnavailable;
     var conv: ?*IWICBitmapSource = null;
-    if (WICConvertBitmapSource(&GUID_WICPixelFormat32bppRGBA, frame.?, &conv) < 0 or conv == null)
+    if (convertFn(&GUID_WICPixelFormat32bppRGBA, frame.?, &conv) < 0 or conv == null)
         return error.DecodeFailed;
     defer release(conv);
 
@@ -73,6 +74,18 @@ pub fn decode(bytes: []const u8, max_pixels: u64) BackendError!codecs.Decoded {
 }
 
 pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOptions) BackendError![]u8 {
+    // Punt to the static codecs for everything WIC can't express the same way:
+    //   • palette PNG — WIC's PNG encoder won't quantise for us;
+    //   • lossless WebP — Windows ships a WebP *decoder* only, and even where
+    //     an encoder exists there's no lossless flag in the property bag;
+    //   • JPEG/WebP quality — TODO: thread through IPropertyBag2 "ImageQuality"
+    //     (VT_R4 0..1) on the IPropertyBag2* returned by CreateNewFrame. Until
+    //     that's wired, defer lossy encodes so quality matches across platforms.
+    // That leaves WIC handling PNG (no quality knob needed) for now.
+    if (opts.format == .png and opts.palette) return error.BackendUnavailable;
+    if (opts.format == .webp) return error.BackendUnavailable;
+    if (opts.format == .jpeg) return error.BackendUnavailable;
+
     const f = try factory();
 
     var stream: ?*IUnknown = null;
@@ -90,17 +103,19 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOpti
     var props: ?*IUnknown = null;
     if (enc.?.vt.CreateNewFrame(enc.?, &frame, &props) < 0 or frame == null) return error.EncodeFailed;
     defer release(frame);
-    // Quality is set via the IPropertyBag2 in `props` (key "ImageQuality",
-    // VT_R4 0..1). Left for follow-up — passing null props uses codec default.
-    release(props);
+    defer release(props);
 
     if (frame.?.vt.Initialize(frame.?, null) < 0) return error.EncodeFailed;
     if (frame.?.vt.SetSize(frame.?, width, height) < 0) return error.EncodeFailed;
     var pf = GUID_WICPixelFormat32bppRGBA;
-    // SetPixelFormat may rewrite pf to the closest the codec supports (e.g.
-    // JPEG → 24bppBGR). For scaffolding we proceed regardless; a real
-    // implementation would convert via IWICFormatConverter when pf changes.
-    _ = frame.?.vt.SetPixelFormat(frame.?, &pf);
+    // SetPixelFormat is in/out — the codec rewrites `pf` to the closest format
+    // it can natively sink (e.g. JPEG → 24bppBGR). WritePixels with our RGBA
+    // buffer would then be reinterpreted as that layout and produce garbage.
+    // The full fix is CreateBitmapFromMemory(RGBA) → WICConvertBitmapSource(pf)
+    // → WriteSource; until that's wired, fall back to the static codec when
+    // the format moves so output is always correct.
+    if (frame.?.vt.SetPixelFormat(frame.?, &pf) < 0) return error.EncodeFailed;
+    if (!std.meta.eql(pf, GUID_WICPixelFormat32bppRGBA)) return error.BackendUnavailable;
 
     const stride: u32 = width * 4;
     if (frame.?.vt.WritePixels(frame.?, height, stride, @intCast(rgba.len), rgba.ptr) < 0)
@@ -269,7 +284,13 @@ extern "ole32" fn GetHGlobalFromStream(stream: *IUnknown, out: *?*anyopaque) cal
 extern "kernel32" fn GlobalLock(h: *anyopaque) callconv(.winapi) ?*anyopaque;
 extern "kernel32" fn GlobalUnlock(h: *anyopaque) callconv(.winapi) c_int;
 extern "kernel32" fn GlobalSize(h: *anyopaque) callconv(.winapi) usize;
-extern "windowscodecs" fn WICConvertBitmapSource(dst_fmt: *const GUID, src: *IWICBitmapSource, out: *?*IWICBitmapSource) callconv(.winapi) HRESULT;
+
+/// `WICConvertBitmapSource` is the one flat export from windowscodecs.dll we
+/// need. Loaded lazily (LoadLibraryA inside `loadFactory`) so the binary
+/// carries no import-table dependency on windowscodecs — nano-server / stripped
+/// containers without the WIC feature still launch and just fall back.
+const WICConvertBitmapSourceFn = *const fn (dst_fmt: *const GUID, src: *IWICBitmapSource, out: *?*IWICBitmapSource) callconv(.winapi) HRESULT;
+var wicConvertBitmapSource: ?WICConvertBitmapSourceFn = null;
 
 const COINIT_MULTITHREADED: u32 = 0;
 const CLSCTX_INPROC_SERVER: u32 = 1;
@@ -291,6 +312,12 @@ fn factory() error{BackendUnavailable}!*IWICImagingFactory {
 }
 
 fn loadFactory() void {
+    // Resolve the one flat C export first; if windowscodecs.dll isn't present
+    // we never attempt CoCreateInstance and the whole backend stays disabled.
+    const dll = bun.windows.LoadLibraryA("windowscodecs.dll") orelse return;
+    const sym = bun.windows.GetProcAddressA(dll, "WICConvertBitmapSource") orelse return;
+    wicConvertBitmapSource = @ptrCast(@alignCast(sym));
+
     var out: ?*anyopaque = null;
     if (CoCreateInstance(&CLSID_WICImagingFactory, null, CLSCTX_INPROC_SERVER, &IID_IWICImagingFactory, &out) < 0) return;
     factory_ptr = @ptrCast(@alignCast(out));

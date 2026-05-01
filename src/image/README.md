@@ -11,7 +11,15 @@ off the JS thread.
 | `Image.zig`                           | JS↔Zig glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery                     | new options, new chainable, new terminal |
 | `codecs.zig`                          | thin `extern fn` wrappers over libjpeg-turbo / libspng / libwebp + the `Format` sniffer + the pixel-limit guard | bumping a codec, adding a format         |
 | `exif.zig`                            | JPEG APP1/TIFF Orientation reader (tag 0x0112 only)                                                             | extending EXIF coverage                  |
-| `../bun.js/bindings/image_resize.cpp` | highway resize/rotate/flip kernels (`bun_image_*` C ABI)                                                        | new filter, perf work                    |
+| `quantize.zig`                        | median-cut RGBA → palette for `png({palette})`                                                                  | dithering, perceptual weighting          |
+| `backend_coregraphics.zig`            | macOS ImageIO/CoreGraphics, lazy `dlopen`                                                                       | macOS-specific behaviour                 |
+| `backend_wic.zig`                     | Windows WIC, COM                                                                                                | Windows-specific behaviour               |
+| `../bun.js/bindings/image_resize.cpp` | highway resize/rotate/flip/modulate kernels (`bun_image_*` C ABI)                                               | new filter, perf work                    |
+
+`system_backend` in `codecs.zig` is `?type` — `null` on Linux so the dispatch
+compiles away. On macOS/Windows the backend is tried first; it returns
+`error.BackendUnavailable` for anything it can't do (palette PNG, lossless
+WebP, dlopen miss) and the static path takes over.
 
 The codecs themselves are vendored via `scripts/build/deps/{libjpeg-turbo,libspng,libwebp}.ts`.
 `patches/libjpeg-turbo/` carries the 8-bit-only patch + the j12/j16 stub overlay.

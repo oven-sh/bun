@@ -273,6 +273,72 @@ describe("Bun.Image", () => {
     expect(meta.height).toBe(16);
   });
 
+  describe("security", () => {
+    // A 100k×100k PNG header in <200 bytes — the canonical decompression bomb.
+    test("maxPixels rejects oversized PNG before allocating", async () => {
+      const bomb = makePng(1, 1, () => [0, 0, 0, 255]);
+      // Patch IHDR width/height in-place to 100000×100000 and recompute the
+      // chunk CRC; the IDAT is still a single black pixel so the file stays tiny.
+      const dv = new DataView(bomb.buffer, bomb.byteOffset);
+      dv.setUint32(16, 100_000);
+      dv.setUint32(20, 100_000);
+      let c = ~0 >>> 0;
+      for (let i = 12; i < 29; i++) {
+        c ^= bomb[i];
+        for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+      }
+      dv.setUint32(29, ~c >>> 0);
+      expect(new Bun.Image(bomb).metadata()).rejects.toThrow(/maxPixels/);
+    });
+
+    test("maxPixels can be lowered per-instance", async () => {
+      expect(new Bun.Image(gradientPng, { maxPixels: 10 }).metadata()).rejects.toThrow(/maxPixels/);
+      // …and the default still admits it.
+      expect((await new Bun.Image(gradientPng).metadata()).width).toBe(16);
+    });
+
+    // Malformed-input regression set: every codec must reject cleanly (no
+    // crash, no hang) on truncated or junk data. The codecs themselves are
+    // continuously fuzzed upstream; this just proves OUR error path doesn't
+    // panic the process.
+    for (const [name, bad] of [
+      ["truncated PNG", cornersPng.slice(0, 30)],
+      ["truncated JPEG", new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46])],
+      ["truncated WebP", Buffer.from("RIFF\x10\x00\x00\x00WEBPVP8 ", "binary")],
+    ] as const) {
+      test(`rejects cleanly on ${name}`, async () => {
+        expect(new Bun.Image(bad).metadata()).rejects.toThrow();
+      });
+    }
+  });
+
+  // EXIF: build a minimal JPEG via Bun.Image, then splice in an APP1 segment
+  // carrying Orientation=6 (90° CW). A 4×2 source should report 2×4 after
+  // auto-orient.
+  test("EXIF Orientation=6 auto-rotates", async () => {
+    const src = makePng(4, 2, () => [128, 128, 128, 255]);
+    const jpg = await new Bun.Image(src).jpeg({ quality: 90 }).bytes();
+    // Minimal big-endian TIFF: "MM\0*" + IFD0 offset 8; 1 entry: tag 0x0112,
+    // type 3 (SHORT), count 1, value 6.
+    // prettier-ignore
+    const tiff = new Uint8Array([
+      0x4d, 0x4d, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x08, // header
+      0x00, 0x01,                                     // 1 entry
+      0x01, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x06, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00,                         // next IFD = 0
+    ]);
+    const exif = Buffer.concat([Buffer.from("Exif\0\0"), tiff]);
+    const seglen = exif.length + 2;
+    const app1 = Buffer.concat([Buffer.from([0xff, 0xe1, seglen >> 8, seglen & 255]), exif]);
+    const withExif = Buffer.concat([jpg.subarray(0, 2), app1, jpg.subarray(2)]);
+
+    const meta = await new Bun.Image(withExif).metadata();
+    expect(meta).toEqual({ width: 2, height: 4, format: "jpeg" });
+    // And opting out leaves it landscape.
+    const raw = await new Bun.Image(withExif, { autoOrient: false }).metadata();
+    expect(raw).toEqual({ width: 4, height: 2, format: "jpeg" });
+  });
+
   test("rejects on unrecognised input", async () => {
     expect(new Bun.Image(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9])).metadata()).rejects.toThrow(
       /unrecognised|decode/i,
@@ -328,6 +394,27 @@ describe("Bun.Image", () => {
       expect(String.fromCharCode(bytes[1], bytes[2], bytes[3])).toBe("PNG");
       const back = decodePngRaw(bytes);
       expect(back.w).toBe(4);
+    });
+
+    test("fit:'inside' preserves aspect ratio inside the box", async () => {
+      const out = await new Bun.Image(gradientPng) // 16×16
+        .resize(8, 32, { fit: "inside" })
+        .png()
+        .bytes();
+      const { w, h } = decodePngRaw(out);
+      // 16×16 into an 8×32 box → scale = min(8/16, 32/16) = 0.5 → 8×8.
+      expect(w).toBe(8);
+      expect(h).toBe(8);
+    });
+
+    test("withoutEnlargement leaves a smaller source untouched", async () => {
+      const out = await new Bun.Image(cornersPng) // 4×3
+        .resize(100, 100, { fit: "inside", withoutEnlargement: true })
+        .png()
+        .bytes();
+      const { w, h } = decodePngRaw(out);
+      expect(w).toBe(4);
+      expect(h).toBe(3);
     });
 
     // `new Response(await img.blob())` is the v1 path for serving; lazy

@@ -22,6 +22,12 @@ ops: bun.BoundedArray(Op, max_ops) = .{},
 /// "re-encode in the source format" (set on first decode if still null when a
 /// terminal runs).
 output: ?codecs.EncodeOptions = null,
+/// Decompression-bomb guard. Checked against the *header* dimensions before
+/// any RGBA buffer is allocated. Mirrors Sharp's `limitInputPixels`.
+max_pixels: u64 = codecs.default_max_pixels,
+/// Apply EXIF Orientation (JPEG) before any user ops, the way Sharp's
+/// `.rotate()`-with-no-args / `autoOrient` does.
+auto_orient: bool = true,
 /// Populated after a pipeline has run once; lets `.width`/`.height` answer
 /// synchronously after the first await.
 last_width: i32 = -1,
@@ -46,8 +52,16 @@ pub const Source = union(enum) {
     }
 };
 
+pub const Fit = enum { fill, inside };
+
 pub const Op = union(enum) {
-    resize: struct { w: u32, h: u32, filter: codecs.Filter },
+    resize: struct {
+        w: u32,
+        h: u32,
+        filter: codecs.Filter,
+        fit: Fit,
+        without_enlargement: bool,
+    },
     rotate: u32, // 90 / 180 / 270
     flip: void, // vertical
     flop: void, // horizontal
@@ -61,7 +75,16 @@ pub fn constructor(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
         return global.throwInvalidArguments("Image() expects a path, ArrayBuffer, TypedArray or Blob", .{});
 
     const src = try sourceFromJS(global, args[0]);
-    return Image.new(.{ .source = src });
+    var img = Image.new(.{ .source = src });
+
+    if (args.len > 1 and args[1].isObject()) {
+        const opt = args[1];
+        if (try opt.get(global, "maxPixels")) |v| if (v.isNumber()) {
+            img.max_pixels = @intFromFloat(@max(0, v.asNumber()));
+        };
+        if (try opt.get(global, "autoOrient")) |v| img.auto_orient = v.toBoolean();
+    }
+    return img;
 }
 
 pub fn finalize(this: *Image) void {
@@ -115,19 +138,28 @@ pub fn doResize(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallF
         0;
 
     var filter: codecs.Filter = .lanczos3;
+    var fit: Fit = .fill;
+    var without_enlargement = false;
     if (args.len > 2 and args[2].isObject()) {
-        if (try args[2].get(global, "filter")) |f| {
-            if (f.isString()) {
-                const s = try f.toBunString(global);
-                defer s.deref();
-                if (s.eqlComptime("box")) filter = .box //
-                else if (s.eqlComptime("bilinear")) filter = .bilinear //
-                else if (s.eqlComptime("lanczos3")) filter = .lanczos3 //
-                else return global.throwInvalidArguments("resize: filter must be 'box' | 'bilinear' | 'lanczos3'", .{});
-            }
-        }
+        const opt = args[2];
+        if (try opt.get(global, "filter")) |f| if (f.isString()) {
+            const s = try f.toBunString(global);
+            defer s.deref();
+            if (s.eqlComptime("box")) filter = .box //
+            else if (s.eqlComptime("bilinear")) filter = .bilinear //
+            else if (s.eqlComptime("lanczos3")) filter = .lanczos3 //
+            else return global.throwInvalidArguments("resize: filter must be 'box' | 'bilinear' | 'lanczos3'", .{});
+        };
+        if (try opt.get(global, "fit")) |f| if (f.isString()) {
+            const s = try f.toBunString(global);
+            defer s.deref();
+            if (s.eqlComptime("inside")) fit = .inside //
+            else if (s.eqlComptime("fill")) fit = .fill //
+            else return global.throwInvalidArguments("resize: fit must be 'fill' | 'inside'", .{});
+        };
+        if (try opt.get(global, "withoutEnlargement")) |v| without_enlargement = v.toBoolean();
     }
-    try this.pushOp(global, .{ .resize = .{ .w = w, .h = h, .filter = filter } });
+    try this.pushOp(global, .{ .resize = .{ .w = w, .h = h, .filter = filter, .fit = fit, .without_enlargement = without_enlargement } });
     return callframe.this();
 }
 
@@ -241,6 +273,8 @@ fn schedule(this: *Image, global: *jsc.JSGlobalObject, kind: PipelineTask.Kind, 
         .source = this.snapshotSource(),
         .kind = kind,
         .deliver = deliver,
+        .max_pixels = this.max_pixels,
+        .auto_orient = this.auto_orient,
     });
     _ = this.has_pending_activity.fetchAdd(1, .seq_cst);
     var task = AsyncImageTask.createOnJSThread(bun.default_allocator, global, job);
@@ -270,6 +304,8 @@ pub const PipelineTask = struct {
     ops: []Op,
     kind: Kind,
     deliver: Deliver,
+    max_pixels: u64,
+    auto_orient: bool,
     result: Result = .{ .err = error.DecodeFailed },
 
     pub const Deliver = enum { uint8array, blob, base64 };
@@ -306,13 +342,23 @@ pub const PipelineTask = struct {
             },
         };
 
-        var decoded = codecs.decode(input) catch |e| {
+        var decoded = codecs.decode(input, this.max_pixels) catch |e| {
             this.result = .{ .err = e };
             return;
         };
         defer bun.default_allocator.free(decoded.rgba);
 
         const src_format = codecs.Format.sniff(input) orelse .png;
+
+        // EXIF auto-orient: applied BEFORE any user op so resize targets and
+        // metadata report the visually-upright dimensions, the way Sharp does.
+        if (this.auto_orient and src_format == .jpeg) {
+            const orient = exif.readJpeg(input);
+            if (orient != .normal) applyOrientation(&decoded, orient) catch |e| {
+                this.result = .{ .err = e };
+                return;
+            };
+        }
 
         if (this.kind == .metadata) {
             this.result = .{ .meta = .{ .w = decoded.width, .h = decoded.height, .format = src_format } };
@@ -321,14 +367,14 @@ pub const PipelineTask = struct {
 
         for (this.ops) |op| switch (op) {
             .resize => |r| {
-                const dh = if (r.h != 0) r.h else @max(1, r.w * decoded.height / decoded.width);
-                const dw = r.w;
-                const next = codecs.resize(decoded.rgba, decoded.width, decoded.height, dw, dh, r.filter) catch |e| {
+                const target = resolveResize(r, decoded.width, decoded.height);
+                if (target.w == decoded.width and target.h == decoded.height) continue;
+                const next = codecs.resize(decoded.rgba, decoded.width, decoded.height, target.w, target.h, r.filter) catch |e| {
                     this.result = .{ .err = e };
                     return;
                 };
                 bun.default_allocator.free(decoded.rgba);
-                decoded = .{ .rgba = next, .width = dw, .height = dh };
+                decoded = .{ .rgba = next, .width = target.w, .height = target.h };
             },
             .rotate => |deg| {
                 const next = codecs.rotate(decoded.rgba, decoded.width, decoded.height, deg) catch |e| {
@@ -397,11 +443,49 @@ pub const PipelineTask = struct {
                     error.UnknownFormat => "Image: unrecognised format (expected JPEG, PNG or WebP)",
                     error.DecodeFailed => "Image: decode failed",
                     error.EncodeFailed => "Image: encode failed",
+                    error.TooManyPixels => "Image: input exceeds maxPixels limit",
                     error.OutOfMemory => "Image: out of memory",
                 };
                 try promise.reject(global, global.createErrorInstance("{s}", .{msg}));
             },
             .io_err => |e| try promise.reject(global, e.toJS(global)),
+        }
+    }
+
+    /// Map a resize op to concrete output dims given the current dims.
+    fn resolveResize(r: anytype, sw: u32, sh: u32) struct { w: u32, h: u32 } {
+        var w = r.w;
+        var h = if (r.h != 0) r.h else @max(1, r.w * sh / sw);
+        if (r.fit == .inside) {
+            // Shrink the box so the source's aspect ratio is preserved and
+            // both sides fit. (Sharp's `fit:'inside'` — the only mode the
+            // Claude Code path uses.)
+            const sx = @as(f64, @floatFromInt(w)) / @as(f64, @floatFromInt(sw));
+            const sy = @as(f64, @floatFromInt(h)) / @as(f64, @floatFromInt(sh));
+            const s = @min(sx, sy);
+            w = @max(1, @as(u32, @intFromFloat(@round(@as(f64, @floatFromInt(sw)) * s))));
+            h = @max(1, @as(u32, @intFromFloat(@round(@as(f64, @floatFromInt(sh)) * s))));
+        }
+        if (r.without_enlargement and (w > sw or h > sh)) return .{ .w = sw, .h = sh };
+        return .{ .w = w, .h = h };
+    }
+
+    fn applyOrientation(d: *codecs.Decoded, orient: exif.Orientation) codecs.Error!void {
+        const t = orient.transform();
+        if (t.flip) {
+            const next = try codecs.flip(d.rgba, d.width, d.height, false);
+            bun.default_allocator.free(d.rgba);
+            d.rgba = next;
+        }
+        if (t.flop) {
+            const next = try codecs.flip(d.rgba, d.width, d.height, true);
+            bun.default_allocator.free(d.rgba);
+            d.rgba = next;
+        }
+        if (t.rotate != 0) {
+            const next = try codecs.rotate(d.rgba, d.width, d.height, t.rotate);
+            bun.default_allocator.free(d.rgba);
+            d.* = next;
         }
     }
 
@@ -419,3 +503,4 @@ const std = @import("std");
 const bun = @import("bun");
 const jsc = bun.jsc;
 const codecs = @import("./codecs.zig");
+const exif = @import("./exif.zig");

@@ -15,9 +15,9 @@
 import type { Dependency } from "../source.ts";
 import { depBuildDir } from "../source.ts";
 
-const LIBJPEG_TURBO_COMMIT = "7723f50f3f66b9da74376e6d8badb6162464212c"; // 3.1.1
+const LIBJPEG_TURBO_COMMIT = "e352b02f794f701407b39af08576035ba3360d60"; // 3.1.4
 
-const VERSION = "3.1.1";
+const VERSION = "3.1.4";
 
 // CMakeLists.txt's JPEG_SOURCES expanded; SIMD off so no simd/ subdir.
 // prettier-ignore
@@ -71,7 +71,7 @@ export const libjpegTurbo: Dependency = {
         replace: [
           ["@JPEG_LIB_VERSION@", "80"],
           ["@VERSION@", VERSION],
-          ["@LIBJPEG_TURBO_VERSION_NUMBER@", "3001001"],
+          ["@LIBJPEG_TURBO_VERSION_NUMBER@", "3001004"],
           ["#cmakedefine WITH_SIMD 1", "/* #undef WITH_SIMD */"],
           ["#cmakedefine RIGHT_SHIFT_IS_UNSIGNED 1", "/* #undef RIGHT_SHIFT_IS_UNSIGNED */"],
           cmakedefine(true), // C_/D_ARITH_CODING_SUPPORTED

@@ -46,16 +46,29 @@ pub const Error = error{
     UnknownFormat,
     DecodeFailed,
     EncodeFailed,
+    /// width × height exceeds the caller's `max_pixels` guard. This is the
+    /// decompression-bomb defence — checked AFTER reading the header but
+    /// BEFORE allocating the full RGBA buffer.
+    TooManyPixels,
     OutOfMemory,
 };
 
-pub fn decode(bytes: []const u8) Error!Decoded {
+/// Sharp's default: 0x3FFF * 0x3FFF ≈ 268 MP. A single RGBA8 frame at this
+/// cap is ~1 GiB, which is already past where you'd want to be.
+pub const default_max_pixels: u64 = 0x3FFF * 0x3FFF;
+
+pub fn decode(bytes: []const u8, max_pixels: u64) Error!Decoded {
     const fmt = Format.sniff(bytes) orelse return error.UnknownFormat;
     return switch (fmt) {
-        .jpeg => jpeg.decode(bytes),
-        .png => png.decode(bytes),
-        .webp => webp.decode(bytes),
+        .jpeg => jpeg.decode(bytes, max_pixels),
+        .png => png.decode(bytes, max_pixels),
+        .webp => webp.decode(bytes, max_pixels),
     };
+}
+
+inline fn guard(w: u32, h: u32, max_pixels: u64) Error!void {
+    // u64 mul cannot overflow from two u32 factors.
+    if (@as(u64, w) * @as(u64, h) > max_pixels) return error.TooManyPixels;
 }
 
 pub const EncodeOptions = struct {
@@ -134,13 +147,18 @@ pub const jpeg = struct {
     const TJPF_RGBA = 7;
     const TJSAMP_420 = 2;
 
-    pub fn decode(bytes: []const u8) Error!Decoded {
+    pub fn decode(bytes: []const u8, max_pixels: u64) Error!Decoded {
         const h = tj3Init(1) orelse return error.OutOfMemory;
         defer tj3Destroy(h);
         if (tj3DecompressHeader(h, bytes.ptr, bytes.len) != 0) return error.DecodeFailed;
-        const w: u32 = @intCast(tj3Get(h, TJPARAM_JPEGWIDTH));
-        const ht: u32 = @intCast(tj3Get(h, TJPARAM_JPEGHEIGHT));
-        if (w == 0 or ht == 0) return error.DecodeFailed;
+        const rw = tj3Get(h, TJPARAM_JPEGWIDTH);
+        const rh = tj3Get(h, TJPARAM_JPEGHEIGHT);
+        // tj3Get returns -1 on error; treat any non-positive dim as a decode
+        // failure rather than letting @intCast trap on hostile input.
+        if (rw <= 0 or rh <= 0) return error.DecodeFailed;
+        const w: u32 = @intCast(rw);
+        const ht: u32 = @intCast(rh);
+        try guard(w, ht, max_pixels);
         const out = try bun.default_allocator.alloc(u8, @as(usize, w) * ht * 4);
         errdefer bun.default_allocator.free(out);
         if (tj3Decompress8(h, bytes.ptr, bytes.len, out.ptr, 0, TJPF_RGBA) != 0)
@@ -198,12 +216,13 @@ pub const png = struct {
     const SPNG_ENCODE_TO_BUFFER = 12; // spng_option
     const SPNG_COLOR_TYPE_TRUECOLOR_ALPHA = 6;
 
-    pub fn decode(bytes: []const u8) Error!Decoded {
+    pub fn decode(bytes: []const u8, max_pixels: u64) Error!Decoded {
         const ctx = spng_ctx_new(0) orelse return error.OutOfMemory;
         defer spng_ctx_free(ctx);
         if (spng_set_png_buffer(ctx, bytes.ptr, bytes.len) != 0) return error.DecodeFailed;
         var ihdr: Ihdr = undefined;
         if (spng_get_ihdr(ctx, &ihdr) != 0) return error.DecodeFailed;
+        try guard(ihdr.width, ihdr.height, max_pixels);
         var size: usize = 0;
         if (spng_decoded_image_size(ctx, SPNG_FMT_RGBA8, &size) != 0) return error.DecodeFailed;
         const out = try bun.default_allocator.alloc(u8, size);
@@ -239,14 +258,19 @@ pub const png = struct {
 // ───────────────────────────── libwebp ──────────────────────────────────────
 
 pub const webp = struct {
+    extern fn WebPGetInfo(data: [*]const u8, len: usize, w: *c_int, h: *c_int) c_int;
     extern fn WebPDecodeRGBA(data: [*]const u8, len: usize, w: *c_int, h: *c_int) ?[*]u8;
     extern fn WebPEncodeRGBA(rgba: [*]const u8, w: c_int, h: c_int, stride: c_int, q: f32, out: *?[*]u8) usize;
     extern fn WebPEncodeLosslessRGBA(rgba: [*]const u8, w: c_int, h: c_int, stride: c_int, out: *?[*]u8) usize;
     extern fn WebPFree(ptr: ?*anyopaque) void;
 
-    pub fn decode(bytes: []const u8) Error!Decoded {
+    pub fn decode(bytes: []const u8, max_pixels: u64) Error!Decoded {
         var w: c_int = 0;
         var h: c_int = 0;
+        // Header-only probe first so the pixel guard fires before libwebp
+        // allocates the full canvas internally.
+        if (WebPGetInfo(bytes.ptr, bytes.len, &w, &h) == 0) return error.DecodeFailed;
+        try guard(@intCast(w), @intCast(h), max_pixels);
         const ptr = WebPDecodeRGBA(bytes.ptr, bytes.len, &w, &h) orelse return error.DecodeFailed;
         defer WebPFree(ptr);
         const len: usize = @as(usize, @intCast(w)) * @as(usize, @intCast(h)) * 4;

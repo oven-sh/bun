@@ -15,7 +15,7 @@
 
 import type { Dependency } from "../source.ts";
 
-const LIBWEBP_COMMIT = "a4d7a715337ded4451fec90ff8ce79728e04126c"; // v1.5.0
+const LIBWEBP_COMMIT = "b7e29b9d75bd31422b00c2a446d49d7af06c328d"; // v1.6.0
 
 // prettier-ignore
 const DEC = [
@@ -46,7 +46,8 @@ const DSP = [
   "enc_sse2", "enc_sse41",
   "filters", "filters_mips_dsp_r2", "filters_msa", "filters_neon",
   "filters_sse2",
-  "lossless", "lossless_enc", "lossless_enc_mips32",
+  "lossless", "lossless_avx2", "lossless_enc", "lossless_enc_avx2",
+  "lossless_enc_mips32",
   "lossless_enc_mips_dsp_r2", "lossless_enc_msa", "lossless_enc_neon",
   "lossless_enc_sse2", "lossless_enc_sse41", "lossless_mips_dsp_r2",
   "lossless_msa", "lossless_neon", "lossless_sse2", "lossless_sse41",

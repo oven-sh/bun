@@ -1,6 +1,6 @@
 --- a/src/turbojpeg.c
 +++ b/src/turbojpeg.c
-@@ -1197,12 +1197,14 @@
+@@ -1220,12 +1220,14 @@
  #define BITS_IN_JSAMPLE  8
  #include "turbojpeg-mp.c"
  #undef BITS_IN_JSAMPLE
@@ -17,15 +17,15 @@
  DLLEXPORT int tjCompress2(tjhandle handle, const unsigned char *srcBuf,
 --- a/src/turbojpeg-mp.c
 +++ b/src/turbojpeg-mp.c
-@@ -289,6 +289,7 @@
+@@ -280,6 +280,7 @@
  
  /*************************** Packed-Pixel Image I/O **************************/
  
 +#ifndef BUN_8BIT_ONLY
+ #if BITS_IN_JSAMPLE != 16 || defined(C_LOSSLESS_SUPPORTED)
+ 
  /* TurboJPEG 3.0+ */
- DLLEXPORT _JSAMPLE *GET_NAME(tj3LoadImage, BITS_IN_JSAMPLE)
-   (tjhandle handle, const char *filename, int *width, int align, int *height,
-@@ -549,6 +550,7 @@
+@@ -561,6 +562,7 @@
  
  #endif
  }

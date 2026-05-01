@@ -419,14 +419,15 @@ test("new Blob() does not leak when a later part's toString() throws", async () 
       `
         const size = 4 << 20;
         const u8 = new Uint8Array(size);
+        const chunk = Buffer.alloc(64, "x").toString();
         const thrower = { toString() { throw new Error("nope"); } };
         for (let i = 0; i < 4; i++) {
-          try { new Blob(["x".repeat(64), u8, thrower]); } catch {}
+          try { new Blob([chunk, u8, thrower]); } catch {}
         }
         Bun.gc(true);
         const before = process.memoryUsage.rss();
         for (let i = 0; i < 128; i++) {
-          try { new Blob(["x".repeat(64), u8, thrower]); } catch {}
+          try { new Blob([chunk, u8, thrower]); } catch {}
         }
         Bun.gc(true);
         const after = process.memoryUsage.rss();

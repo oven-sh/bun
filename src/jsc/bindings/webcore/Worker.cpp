@@ -218,17 +218,29 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
 
 void Worker::enqueueToWorker(MessageWithMessagePorts&& message)
 {
+    auto* parentContext = scriptExecutionContext();
     {
         Locker locker { m_toWorker.lock };
+        // Closing/Closed: silently drop. dispatchExit synchronously transitions
+        // to Closing on the worker thread under this same lock before it
+        // clears the queue, so any enqueue after that point would leak a
+        // parent event-loop ref (the message would never drain).
+        State s = m_state.load();
+        if (s == State::Closing || s == State::Closed)
+            return;
+        // Ref the parent event loop for each enqueued message. Without this,
+        // an unref'd worker's messages are lost because the parent exits
+        // before the round-trip completes. drainInbox unrefs once per
+        // message dispatched; dispatchExit unrefs any leftover messages.
+        if (parentContext)
+            parentContext->refEventLoop();
         m_toWorker.queue.append(WTF::move(message));
         // If the worker isn't Running yet, just buffer; fireEarlyMessages()
-        // drains the inbox on the worker thread once it is. If Closing/
-        // Closed, also buffer (dropped with the Worker) — postMessage()
-        // already rejects on Closed, so only the close-handler window lands
-        // here. If a drain is already scheduled, don't double-schedule.
-        // drainScheduled is only set/cleared under the lock so the
-        // load/store pair is not a race.
-        if (m_state.load() != State::Running || m_toWorker.drainScheduled.load(std::memory_order_relaxed))
+        // drains the inbox on the worker thread once it is. If a drain is
+        // already scheduled, don't double-schedule — it will see this
+        // message. drainScheduled is only set/cleared under the lock so
+        // the load/store pair is not a race.
+        if (s != State::Running || m_toWorker.drainScheduled.load(std::memory_order_relaxed))
             return;
         m_toWorker.drainScheduled.store(true, std::memory_order_relaxed);
     }
@@ -243,6 +255,11 @@ void Worker::enqueueToWorker(MessageWithMessagePorts&& message)
 
 void Worker::enqueueToParent(MessageWithMessagePorts&& message)
 {
+    auto* context = scriptExecutionContext();
+    if (!context)
+        return;
+    // Ref parent event loop per message (balanced in drainInbox on the parent).
+    context->refEventLoop();
     {
         Locker locker { m_toParent.lock };
         m_toParent.queue.append(WTF::move(message));
@@ -273,7 +290,7 @@ void Worker::enqueueToParent(MessageWithMessagePorts&& message)
 // sender. A sustained producer (e.g. a tight postMessage loop) would otherwise
 // make every per-message pop a contended acquire.
 template<typename Dispatch>
-static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* globalObject, ScriptExecutionContext& context, Dispatch&& dispatch)
+static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* globalObject, ScriptExecutionContext& context, ScriptExecutionContext* parentContext, Dispatch&& dispatch)
 {
     size_t limit;
     Deque<MessageWithMessagePorts> batch;
@@ -303,11 +320,21 @@ static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* gl
             auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
             auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), nullptr, WTF::move(ports));
             dispatch(event.event);
+            // Balance the per-message refEventLoop taken in enqueueTo{Worker,Parent}.
+            if (parentContext)
+                parentContext->unrefEventLoop();
 
             if (globalObject->drainMicrotasks()) {
                 // Termination pending. Drop the rest — dispatch is a no-op
                 // once m_terminateRequested is set (drainToParent), and the
-                // worker thread is tearing down (drainToWorker).
+                // worker thread is tearing down (drainToWorker). Release
+                // the per-message refs the local `batch` still holds;
+                // dispatchExit separately unrefs anything in `inbox.queue`
+                // enqueued after the std::exchange above.
+                if (parentContext) {
+                    for (size_t i = 0; i < batch.size(); i++)
+                        parentContext->unrefEventLoop();
+                }
                 return false;
             }
         }
@@ -332,7 +359,8 @@ void Worker::drainToWorker(ScriptExecutionContext& context)
         m_toWorker.drainScheduled.store(false, std::memory_order_relaxed);
         return;
     }
-    bool reschedule = drainInbox(m_toWorker, globalObject, context, [&](Event& event) {
+    auto* parentContext = scriptExecutionContext();
+    bool reschedule = drainInbox(m_toWorker, globalObject, context, parentContext, [&](Event& event) {
         globalObject->globalEventScope->dispatchEvent(event);
     });
     if (reschedule) {
@@ -350,7 +378,8 @@ void Worker::drainToParent(ScriptExecutionContext& context)
         m_toParent.drainScheduled.store(false, std::memory_order_relaxed);
         return;
     }
-    bool reschedule = drainInbox(m_toParent, globalObject, context, [&](Event& event) {
+    // drainToParent runs on the parent — context itself is the parent context.
+    bool reschedule = drainInbox(m_toParent, globalObject, context, &context, [&](Event& event) {
         dispatchEvent(event);
     });
     if (reschedule) {
@@ -517,12 +546,29 @@ bool Worker::dispatchExit(int32_t exitCode)
     // teardown implies process shutdown (or at least that nothing observes the
     // leak), so this is bounded. The proper fix is for a worker to stop+join
     // its sub-workers before tearing down its own context.
-    return postTaskToParent([exitCode, protectedThis = Ref { *this }](ScriptExecutionContext&) {
+
+    // Drop any queued messages and count their parent refs. Each message in
+    // m_toWorker.queue held one parent event-loop ref (from enqueueToWorker)
+    // that won't be balanced by drainInbox — the worker VM is torn down.
+    // Transitioning to Closing under the same lock makes enqueueToWorker
+    // on the parent observe the flag and silently drop new messages.
+    size_t leakedToWorkerRefs;
+    {
+        Locker locker { m_toWorker.lock };
+        m_state.store(State::Closing);
+        leakedToWorkerRefs = m_toWorker.queue.size();
+        m_toWorker.queue.clear();
+        m_toWorker.drainScheduled.store(false, std::memory_order_relaxed);
+    }
+
+    return postTaskToParent([exitCode, leakedToWorkerRefs, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+        for (size_t i = 0; i < leakedToWorkerRefs; i++)
+            context.unrefEventLoop();
         // Closing → dispatch 'close' → Closed. The split lets 'close'/'exit'
         // handlers observe threadId == -1 and isOnline() == false while
         // postMessage() (gated only on Closed) still accepts and drops the
         // message, matching browser/Node and pre-refactor behaviour.
-        protectedThis->m_state.store(State::Closing);
+        // (We already transitioned to Closing on the worker thread above.)
 
         if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
             auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);

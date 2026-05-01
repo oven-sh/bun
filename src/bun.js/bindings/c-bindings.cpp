@@ -1092,7 +1092,8 @@ extern "C" void Bun__linkedAddonTlsCallback(PVOID, DWORD, PVOID);
 #if defined(__clang__) || defined(_MSC_VER)
 #pragma section(".CRT$XLB", long, read)
 extern "C" __declspec(allocate(".CRT$XLB")) const PIMAGE_TLS_CALLBACK
-    __bun_linked_addon_tls_cb = (PIMAGE_TLS_CALLBACK)&Bun__linkedAddonTlsCallback;
+    __bun_linked_addon_tls_cb
+    = (PIMAGE_TLS_CALLBACK)&Bun__linkedAddonTlsCallback;
 // Without /INCLUDE the linker dead-strips the unreferenced section
 // entry and the callback never fires.
 #pragma comment(linker, "/INCLUDE:__bun_linked_addon_tls_cb")

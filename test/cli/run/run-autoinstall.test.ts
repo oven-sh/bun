@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync } from "fs";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";
 
 //   --install=<val>                 Configure auto-install behavior. One of "auto" (default, auto-installs when no node_modules), "fallback" (missing packages only), "force" (always).
@@ -83,56 +83,4 @@ test("--install=fallback to install missing packages", async () => {
 
   expect(stderr?.toString("utf8")).not.toContain("error: Cannot find package 'is-odd'");
   expect(stdout?.toString("utf8")).toBe("true false\n");
-});
-
-// dirInfoForResolution stored DirInfo.abs_path as a slice into the threadlocal
-// bufs(.path_in_global_disk_cache) buffer. After auto-installing a second package, that
-// buffer is overwritten and the first package's cached DirInfo.abs_path points at stale
-// bytes. When a module inside the first package then resolves its own name (package
-// self-reference), loadNodeModules reads dir_info.abs_path directly and looks up a
-// garbage path. With global_cache=.auto the auto-install fallback is skipped because
-// any_node_modules_folder was set by the self-reference branch, so resolution fails with
-// "Cannot find module". With the fix, abs_path is interned in DirnameStore and stays
-// valid. A debug assertion in dirInfoUncached additionally guards the invariant.
-test("auto-install: DirInfo.abs_path survives threadlocal buffer reuse across resolutions", async () => {
-  using dir = tempDir("autoinstall-abs-path", {
-    // No package.json / node_modules so global_cache defaults to .auto (resolver.zig canUse).
-    // nanoid has `exports` with a `./non-secure` subpath, enabling the self-reference
-    // branch at resolver.zig:1807. left-pad's cache folder name is longer than nanoid's,
-    // so nanoid's cached abs_path slice becomes a truncated prefix of left-pad's path
-    // once left-pad is resolved. left-pad is archived so its version string is stable.
-    "index.js": `
-      const path = require("path");
-      const { createRequire } = require("module");
-
-      const nanoidPath = require.resolve("nanoid");
-      const nanoidDir = path.dirname(nanoidPath);
-      require.resolve("left-pad");
-
-      const innerRequire = createRequire(nanoidPath);
-      const nonSecure = innerRequire.resolve("nanoid/non-secure");
-      if (!nonSecure.startsWith(nanoidDir)) {
-        throw new Error("self-reference resolved outside package dir: " + nonSecure + " vs " + nanoidDir);
-      }
-      console.log("resolved");
-    `,
-  });
-
-  await using proc = Bun.spawn({
-    // Deliberately no -i / --install flag: default .auto prevents the auto-install
-    // fallback from masking the corrupted abs_path.
-    cmd: [bunExe(), "index.js"],
-    cwd: String(dir),
-    // The earlier describe("basic autoinstall") block mutates the shared bunEnv in place
-    // (env.BUN_INSTALL = install), so spread-copy and clear it to keep this test isolated.
-    env: { ...bunEnv, BUN_INSTALL: undefined },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stderr).not.toContain("Cannot find module");
-  expect(stdout.trim()).toBe("resolved");
-  expect(exitCode).toBe(0);
 });

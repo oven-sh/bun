@@ -44,8 +44,10 @@ static void close_cb_free(uv_handle_t *h) { free(h->data); }
 
 /* This one is different for polls, since we need two frees here */
 static void close_cb_free_poll(uv_handle_t *h) {
-  /* It is only in case we called us_poll_stop then quickly us_poll_free that we
-   * enter this. Most of the time, actual freeing is done by us_poll_free. */
+  /* h->data is the owning us_poll_t (the embedding us_socket_t allocation).
+   * us_poll_free arms this; freeing here (after uv_close completes) is the
+   * only path — the synchronous-free branch was removed when uv_close moved
+   * out of us_poll_stop. */
   if (h->data) {
     free(h->data);
     free(h);
@@ -76,18 +78,23 @@ void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
     free(p);
     return;
   }
-  /* The idea here is like so; in us_poll_stop we call uv_close after setting
-   * data of uv-poll to 0. This means that in close_cb_free we call free on 0
-   * with does nothing, since us_poll_stop should not really free the poll.
-   * HOWEVER, if we then call us_poll_free while still closing the uv-poll, we
-   * simply change back the data to point to our structure so that we actually
-   * do free it like we should. */
+  /* uv_close lives here (not in us_poll_stop) so it runs from check_cb via
+   * us_internal_free_closed_sockets — i.e. *outside* poll_cb. us_poll_stop is
+   * reachable re-entrantly inside the handle's own poll_cb (connect-WRITABLE →
+   * us_internal_socket_after_open → us_poll_change/uv_poll_start(READABLE) →
+   * on_open → JS end() → us_internal_socket_close_raw → us_poll_stop), and
+   * uv_close-ing a uv_poll_t whose AFD poll request was submitted in the same
+   * frame leaves the handle wedged (close_cb never fires; observed as a
+   * full-process hang on Windows for `Bun.connect` TLS sockets ended from
+   * `open`). Deferring to here keeps every us_poll_stop caller's semantics
+   * (they all park on closed_head/closed_udp_head and reach this), just one
+   * loop tick later. */
+  p->uv_p->data = p;
   if (uv_is_closing((uv_handle_t *)p->uv_p)) {
-    p->uv_p->data = p;
-  } else {
-    free(p->uv_p);
-    free(p);
+    /* Shouldn't happen anymore, but tolerate a caller that already closed. */
+    return;
   }
+  uv_close((uv_handle_t *)p->uv_p, close_cb_free_poll);
 }
 
 void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
@@ -118,13 +125,8 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
 void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
   if(!p->uv_p) return;
   uv_poll_stop(p->uv_p);
-
-  /* We normally only want to close the poll here, not free it. But if we stop
-   * it, then quickly "free" it with us_poll_free, we postpone the actual
-   * freeing to close_cb_free_poll whenever it triggers. That's why we set data
-   * to null here, so that us_poll_free can reset it if needed */
-  p->uv_p->data = 0;
-  uv_close((uv_handle_t *)p->uv_p, close_cb_free_poll);
+  /* uv_close deferred to us_poll_free — see comment there for why closing
+   * here (inside poll_cb) wedged the handle on Windows. */
 }
 
 int us_poll_events(struct us_poll_t *p) {

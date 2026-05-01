@@ -158,23 +158,19 @@ if (isDockerEnabled()) {
   });
 } else {
   describe("mysql (local)", () => {
-    test(
-      ".raw() on json / varchar returns only the payload (#30039)",
-      async () => {
-        // discoverMysqlUrl() can spend ~20s starting a cold MariaDB + running
-        // the root-socket bootstrap, so the default 5s bun:test timeout would
-        // fire mid-poll and hide the regression the gate is checking for.
-        const url = await discoverMysqlUrl();
-        if (!url) {
-          // discoverMysqlUrl returns MYSQL_URL as-is when set, so getting null
-          // here means MYSQL_URL is unset — nothing to diagnose, just skip.
-          console.warn("sql-mysql-raw-length-prefix: no MySQL reachable (no MYSQL_URL, no socket); skipping");
-          return;
-        }
-        const { stdout, stderr, exitCode } = await runFixture(url);
-        assertFixtureOutput(stdout, stderr, exitCode);
-      },
-      60_000,
-    );
+    test(".raw() on json / varchar returns only the payload (#30039)", async () => {
+      // discoverMysqlUrl() can spend ~20s starting a cold MariaDB + running
+      // the root-socket bootstrap, so the default 5s bun:test timeout would
+      // fire mid-poll and hide the regression the gate is checking for.
+      const url = await discoverMysqlUrl();
+      if (!url) {
+        // discoverMysqlUrl returns MYSQL_URL as-is when set, so getting null
+        // here means MYSQL_URL is unset — nothing to diagnose, just skip.
+        console.warn("sql-mysql-raw-length-prefix: no MySQL reachable (no MYSQL_URL, no socket); skipping");
+        return;
+      }
+      const { stdout, stderr, exitCode } = await runFixture(url);
+      assertFixtureOutput(stdout, stderr, exitCode);
+    }, 60_000);
   });
 }

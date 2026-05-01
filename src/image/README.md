@@ -18,9 +18,11 @@ The codecs themselves are vendored via `scripts/build/deps/{libjpeg-turbo,libspn
 
 ## Adding a chainable op
 
-1. Add a variant to `Op` in `Image.zig` and a case in `PipelineTask.run`'s
-   `for (this.ops)` switch.
-2. Add a `do<Name>` method that parses args, `pushOp`s, returns `callframe.this()`.
+1. Add a field to `Pipeline` in `Image.zig` (one slot per op — setters
+   overwrite, there is no op list) and a stage in `PipelineTask.applyPipeline`
+   at the right point in the fixed `rotate → flip/flop → resize` order.
+2. Add a `do<Name>` method that parses args, writes the slot, returns
+   `callframe.this()`.
 3. Add it to `proto:` in `Image.classes.ts`.
 4. If it needs a kernel, put the C ABI in `image_resize.cpp` and the `extern`
    in `codecs.zig`.

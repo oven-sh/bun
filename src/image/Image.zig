@@ -2,10 +2,11 @@
 //! libjpeg-turbo / libspng / libwebp codecs and the highway resize kernel.
 //!
 //! Shape: the constructor only captures the *input* (path or bytes). Chainable
-//! mutators (`resize`, `rotate`, `flip`, `flop`) push ops into a small inline
-//! list and return `this`. The actual decode → transform → encode work happens
-//! off-thread when `toBuffer()` (or `metadata()`) is awaited, via
-//! `jsc.ConcurrentPromiseTask` so the JS thread never blocks on a codec.
+//! mutators (`resize`, `rotate`, `flip`, `flop`, `jpeg`/`png`/`webp`) each
+//! write one slot of `Pipeline` and return `this` — there is no op list, so
+//! calling a setter twice overwrites. The actual decode → transform → encode
+//! work happens off-thread when a terminal (`bytes`/`blob`/`toBuffer`/
+//! `toBase64`/`metadata`) is awaited, via `jsc.ConcurrentPromiseTask`.
 
 const Image = @This();
 
@@ -17,11 +18,7 @@ pub const toJS = js.toJS;
 pub const new = bun.TrivialNew(@This());
 
 source: Source,
-ops: bun.BoundedArray(Op, max_ops) = .{},
-/// Output settings recorded by `.jpeg()/.png()/.webp()`. `null` means
-/// "re-encode in the source format" (set on first decode if still null when a
-/// terminal runs).
-output: ?codecs.EncodeOptions = null,
+pipeline: Pipeline = .{},
 /// Decompression-bomb guard. Checked against the *header* dimensions before
 /// any RGBA buffer is allocated. Mirrors Sharp's `limitInputPixels`.
 max_pixels: u64 = codecs.default_max_pixels,
@@ -33,8 +30,6 @@ auto_orient: bool = true,
 last_width: i32 = -1,
 last_height: i32 = -1,
 has_pending_activity: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
-
-const max_ops = 16;
 
 pub const Source = union(enum) {
     /// Owned by `bun.default_allocator`. Set when the constructor argument was
@@ -54,17 +49,29 @@ pub const Source = union(enum) {
 
 pub const Fit = enum { fill, inside };
 
-pub const Op = union(enum) {
-    resize: struct {
-        w: u32,
-        h: u32,
-        filter: codecs.Filter,
-        fit: Fit,
-        without_enlargement: bool,
-    },
-    rotate: u32, // 90 / 180 / 270
-    flip: void, // vertical
-    flop: void, // horizontal
+pub const Resize = struct {
+    w: u32,
+    h: u32,
+    filter: codecs.Filter = .lanczos3,
+    fit: Fit = .fill,
+    without_enlargement: bool = false,
+};
+
+/// One slot per operation, not an op list — calling `.resize()` twice
+/// overwrites, it doesn't resize twice. This is Sharp's semantics and means
+/// the worker snapshot is a plain struct copy with a fixed execution order
+/// (`run()` below), no allocation, no "too many ops" edge.
+///
+/// Execution order matches Sharp: (autoOrient) → rotate → flip/flop → resize.
+/// Rotate precedes resize so the target box is interpreted in upright space.
+pub const Pipeline = struct {
+    rotate: u16 = 0, // 0/90/180/270
+    flip: bool = false, // vertical
+    flop: bool = false, // horizontal
+    resize: ?Resize = null,
+    /// Output settings from `.jpeg()/.png()/.webp()`. `null` ⇒ re-encode in
+    /// source format.
+    output: ?codecs.EncodeOptions = null,
 };
 
 // ───────────────────────────── lifecycle ────────────────────────────────────
@@ -120,46 +127,36 @@ fn sourceFromJS(global: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!Sou
 
 // ───────────────────────────── chainable ops ────────────────────────────────
 
-fn pushOp(this: *Image, global: *jsc.JSGlobalObject, op: Op) bun.JSError!void {
-    this.ops.append(op) catch
-        return global.throw("Image: too many chained operations (max {d})", .{max_ops});
-}
-
 pub fn doResize(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const args = callframe.arguments();
     if (args.len < 1 or !args[0].isNumber())
         return global.throwInvalidArguments("resize(width, height?, options?)", .{});
-    const w: u32 = @intFromFloat(@max(1, args[0].asNumber()));
-    // 0 height = preserve aspect ratio (resolved at execute time once the
-    // source dimensions are known).
-    const h: u32 = if (args.len > 1 and args[1].isNumber())
-        @intFromFloat(@max(1, args[1].asNumber()))
-    else
-        0;
-
-    var filter: codecs.Filter = .lanczos3;
-    var fit: Fit = .fill;
-    var without_enlargement = false;
+    var r: Resize = .{
+        .w = @intFromFloat(@max(1, args[0].asNumber())),
+        // 0 height = preserve aspect ratio (resolved at execute time once the
+        // source dimensions are known).
+        .h = if (args.len > 1 and args[1].isNumber()) @intFromFloat(@max(1, args[1].asNumber())) else 0,
+    };
     if (args.len > 2 and args[2].isObject()) {
         const opt = args[2];
         if (try opt.get(global, "filter")) |f| if (f.isString()) {
             const s = try f.toBunString(global);
             defer s.deref();
-            if (s.eqlComptime("box")) filter = .box //
-            else if (s.eqlComptime("bilinear")) filter = .bilinear //
-            else if (s.eqlComptime("lanczos3")) filter = .lanczos3 //
+            if (s.eqlComptime("box")) r.filter = .box //
+            else if (s.eqlComptime("bilinear")) r.filter = .bilinear //
+            else if (s.eqlComptime("lanczos3")) r.filter = .lanczos3 //
             else return global.throwInvalidArguments("resize: filter must be 'box' | 'bilinear' | 'lanczos3'", .{});
         };
         if (try opt.get(global, "fit")) |f| if (f.isString()) {
             const s = try f.toBunString(global);
             defer s.deref();
-            if (s.eqlComptime("inside")) fit = .inside //
-            else if (s.eqlComptime("fill")) fit = .fill //
+            if (s.eqlComptime("inside")) r.fit = .inside //
+            else if (s.eqlComptime("fill")) r.fit = .fill //
             else return global.throwInvalidArguments("resize: fit must be 'fill' | 'inside'", .{});
         };
-        if (try opt.get(global, "withoutEnlargement")) |v| without_enlargement = v.toBoolean();
+        if (try opt.get(global, "withoutEnlargement")) |v| r.without_enlargement = v.toBoolean();
     }
-    try this.pushOp(global, .{ .resize = .{ .w = w, .h = h, .filter = filter, .fit = fit, .without_enlargement = without_enlargement } });
+    this.pipeline.resize = r;
     return callframe.this();
 }
 
@@ -169,25 +166,24 @@ pub fn doRotate(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallF
         return global.throwInvalidArguments("rotate(degrees) expects 90, 180 or 270", .{});
     const raw: i32 = @intFromFloat(args[0].asNumber());
     const deg: u32 = @intCast(@mod(@mod(raw, 360) + 360, 360));
-    if (deg == 0) return callframe.this();
-    if (deg != 90 and deg != 180 and deg != 270)
+    if (deg != 0 and deg != 90 and deg != 180 and deg != 270)
         return global.throwInvalidArguments("rotate: only multiples of 90 are supported", .{});
-    try this.pushOp(global, .{ .rotate = deg });
+    this.pipeline.rotate = @intCast(deg);
     return callframe.this();
 }
 
-pub fn doFlip(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    try this.pushOp(global, .flip);
+pub fn doFlip(this: *Image, _: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    this.pipeline.flip = true;
     return callframe.this();
 }
 
-pub fn doFlop(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    try this.pushOp(global, .flop);
+pub fn doFlop(this: *Image, _: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    this.pipeline.flop = true;
     return callframe.this();
 }
 
 fn setFormat(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, fmt: codecs.Format) bun.JSError!jsc.JSValue {
-    var enc: codecs.EncodeOptions = this.output orelse .{ .format = fmt };
+    var enc: codecs.EncodeOptions = this.pipeline.output orelse .{ .format = fmt };
     enc.format = fmt;
     const args = callframe.arguments();
     if (args.len > 0 and args[0].isObject()) {
@@ -197,7 +193,7 @@ fn setFormat(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallFram
         }
         if (try opt.get(global, "lossless")) |l| enc.lossless = l.toBoolean();
     }
-    this.output = enc;
+    this.pipeline.output = enc;
     return callframe.this();
 }
 
@@ -251,25 +247,24 @@ pub fn doToBuffer(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.Cal
 }
 
 pub fn doBytes(this: *Image, global: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    return this.schedule(global, .{ .encode = this.output }, .uint8array);
+    return this.schedule(global, .{ .encode = this.pipeline.output }, .uint8array);
 }
 
 pub fn doBlob(this: *Image, global: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    return this.schedule(global, .{ .encode = this.output }, .blob);
+    return this.schedule(global, .{ .encode = this.pipeline.output }, .blob);
 }
 
 pub fn doToBase64(this: *Image, global: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    return this.schedule(global, .{ .encode = this.output }, .base64);
+    return this.schedule(global, .{ .encode = this.pipeline.output }, .base64);
 }
 
 fn schedule(this: *Image, global: *jsc.JSGlobalObject, kind: PipelineTask.Kind, deliver: PipelineTask.Deliver) bun.JSError!jsc.JSValue {
-    // Snapshot the op list — `toBuffer()` can be awaited multiple times and
-    // mutators may run between awaits.
-    const snap = bun.default_allocator.dupe(Op, this.ops.constSlice()) catch bun.outOfMemory();
     const job = PipelineTask.new(.{
         .image = this,
         .global = global,
-        .ops = snap,
+        // Struct copy — the worker reads its own snapshot so further chained
+        // calls on the JS side between schedule and completion don't race.
+        .pipeline = this.pipeline,
         .source = this.snapshotSource(),
         .kind = kind,
         .deliver = deliver,
@@ -301,7 +296,7 @@ pub const PipelineTask = struct {
     image: *Image,
     global: *jsc.JSGlobalObject,
     source: Source,
-    ops: []Op,
+    pipeline: Pipeline,
     kind: Kind,
     deliver: Deliver,
     max_pixels: u64,
@@ -365,33 +360,9 @@ pub const PipelineTask = struct {
             return;
         }
 
-        for (this.ops) |op| switch (op) {
-            .resize => |r| {
-                const target = resolveResize(r, decoded.width, decoded.height);
-                if (target.w == decoded.width and target.h == decoded.height) continue;
-                const next = codecs.resize(decoded.rgba, decoded.width, decoded.height, target.w, target.h, r.filter) catch |e| {
-                    this.result = .{ .err = e };
-                    return;
-                };
-                bun.default_allocator.free(decoded.rgba);
-                decoded = .{ .rgba = next, .width = target.w, .height = target.h };
-            },
-            .rotate => |deg| {
-                const next = codecs.rotate(decoded.rgba, decoded.width, decoded.height, deg) catch |e| {
-                    this.result = .{ .err = e };
-                    return;
-                };
-                bun.default_allocator.free(decoded.rgba);
-                decoded = next;
-            },
-            .flip, .flop => {
-                const next = codecs.flip(decoded.rgba, decoded.width, decoded.height, op == .flop) catch |e| {
-                    this.result = .{ .err = e };
-                    return;
-                };
-                bun.default_allocator.free(decoded.rgba);
-                decoded.rgba = next;
-            },
+        this.applyPipeline(&decoded) catch |e| {
+            this.result = .{ .err = e };
+            return;
         };
 
         const enc: codecs.EncodeOptions = this.kind.encode orelse .{ .format = src_format };
@@ -452,8 +423,38 @@ pub const PipelineTask = struct {
         }
     }
 
-    /// Map a resize op to concrete output dims given the current dims.
-    fn resolveResize(r: anytype, sw: u32, sh: u32) struct { w: u32, h: u32 } {
+    /// Fixed Sharp order: rotate → flip/flop → resize. Each stage replaces
+    /// `d` in place; the old buffer is freed before assigning the new one so
+    /// peak memory is at most 2× one frame.
+    fn applyPipeline(this: *PipelineTask, d: *codecs.Decoded) codecs.Error!void {
+        const p = this.pipeline;
+        if (p.rotate != 0) {
+            const next = try codecs.rotate(d.rgba, d.width, d.height, p.rotate);
+            bun.default_allocator.free(d.rgba);
+            d.* = next;
+        }
+        if (p.flip) {
+            const next = try codecs.flip(d.rgba, d.width, d.height, false);
+            bun.default_allocator.free(d.rgba);
+            d.rgba = next;
+        }
+        if (p.flop) {
+            const next = try codecs.flip(d.rgba, d.width, d.height, true);
+            bun.default_allocator.free(d.rgba);
+            d.rgba = next;
+        }
+        if (p.resize) |r| {
+            const t = resolveResize(r, d.width, d.height);
+            if (t.w != d.width or t.h != d.height) {
+                const next = try codecs.resize(d.rgba, d.width, d.height, t.w, t.h, r.filter);
+                bun.default_allocator.free(d.rgba);
+                d.* = .{ .rgba = next, .width = t.w, .height = t.h };
+            }
+        }
+    }
+
+    /// Map a resize spec to concrete output dims given the current dims.
+    fn resolveResize(r: Resize, sw: u32, sh: u32) struct { w: u32, h: u32 } {
         var w = r.w;
         var h = if (r.h != 0) r.h else @max(1, r.w * sh / sw);
         if (r.fit == .inside) {
@@ -492,7 +493,6 @@ pub const PipelineTask = struct {
     fn deinit(this: *PipelineTask) void {
         _ = this.image.has_pending_activity.fetchSub(1, .seq_cst);
         this.source.deinit();
-        bun.default_allocator.free(this.ops);
         bun.destroy(this);
     }
 };

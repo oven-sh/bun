@@ -349,10 +349,16 @@ describe("Bun.Image", () => {
     expect(() => new Bun.Image(cornersPng).rotate(45)).toThrow();
   });
 
-  test("chained ops are applied in order (resize then rotate)", async () => {
-    const out = await new Bun.Image(gradientPng).resize(8, 4).rotate(90).toBuffer({ format: "png" });
+  // Sharp semantics: rotate runs BEFORE resize regardless of call order, and a
+  // second .resize() overwrites the first rather than resizing twice.
+  test("pipeline order is fixed (rotate before resize) and setters overwrite", async () => {
+    const out = await new Bun.Image(cornersPng) // 4×3
+      .resize(100, 100) // overwritten below
+      .rotate(90) // → 3×4
+      .resize(6, 8)
+      .toBuffer({ format: "png" });
     const { w, h } = decodePngRaw(out);
-    expect(w).toBe(4);
+    expect(w).toBe(6);
     expect(h).toBe(8);
   });
 

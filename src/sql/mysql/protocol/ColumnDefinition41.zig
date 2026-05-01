@@ -105,8 +105,8 @@ const types = @import("../MySQLTypes.zig");
 const ColumnIdentifier = @import("../../shared/ColumnIdentifier.zig").ColumnIdentifier;
 const Data = @import("../../shared/Data.zig").Data;
 
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-
 const NewReader = @import("./NewReader.zig").NewReader;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;
+
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

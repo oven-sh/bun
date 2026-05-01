@@ -555,8 +555,16 @@ pub const SendQueue = struct {
             this.windows.windows_write = null; // will be freed by _windowsOnWriteComplete
         }
         this.keep_alive.disable();
+        const was_open = this.socket == .open;
         this.socket = .closed;
-        this.getGlobalThis().bunVM().enqueueTask(jsc.ManagedTask.New(SendQueue, _onAfterIPCClosed).init(this));
+        // Only enqueue the close notification for the open→closed transition.
+        // `closeSocket` (via `SendQueue.deinit` during the owner's finalizer)
+        // can reach this path again with the socket already `.closed`; the
+        // owner is about to free the memory that backs `this`, so scheduling
+        // a task that points back into it would use-after-free.
+        if (was_open) {
+            this.getGlobalThis().bunVM().enqueueTask(jsc.ManagedTask.New(SendQueue, _onAfterIPCClosed).init(this));
+        }
     }
     fn _windowsClose(this: *SendQueue) void {
         log("SendQueue#_windowsClose", .{});
@@ -565,7 +573,6 @@ pub const SendQueue = struct {
         pipe.data = pipe;
         pipe.close(&_windowsOnClosed);
         this._socketClosed();
-        this.getGlobalThis().bunVM().enqueueTask(jsc.ManagedTask.New(SendQueue, _onAfterIPCClosed).init(this));
     }
     fn _windowsOnClosed(windows: *uv.Pipe) callconv(.c) void {
         log("SendQueue#_windowsOnClosed", .{});

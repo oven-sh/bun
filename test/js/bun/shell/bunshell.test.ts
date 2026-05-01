@@ -1914,7 +1914,10 @@ describe("condexprs", () => {
 
   TestBuilder.command`[[ -d mydir ]] && echo yes!`.directory("mydir").stdout("yes!\n").runAsTest("-d");
   TestBuilder.command`[[ -d mumbo.jumbo ]] && echo yes!`.exitCode(1).runAsTest("-d non-existent");
-  TestBuilder.command`[[ -d package.json ]] && echo yes!`.file("package.json", "hi").exitCode(1).runAsTest("-d regular file");
+  TestBuilder.command`[[ -d package.json ]] && echo yes!`
+    .file("package.json", "hi")
+    .exitCode(1)
+    .runAsTest("-d regular file");
 
   TestBuilder.command`[[ -c /dev/null ]] && echo yes!`.stdout("yes!\n").runAsTest("-c");
   TestBuilder.command`[[ -c lol ]] && echo yes!`.exitCode(1).file("lol", "lol").runAsTest("-c not character device");

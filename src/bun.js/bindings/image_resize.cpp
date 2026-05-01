@@ -1,0 +1,348 @@
+// Bun.Image resize / rotate kernels.
+//
+// Highway gives runtime SIMD dispatch the same way highway_strings.cpp does:
+// this file is re-included once per target ISA via foreach_target.h, each pass
+// compiles the HWY_NAMESPACE block for that ISA, and the HWY_ONCE block at the
+// bottom exports plain C entry points that HWY_DYNAMIC_DISPATCH to the best
+// variant at runtime.
+//
+// Pixel format is RGBA8 throughout — the codec layer normalises to that on
+// decode so the kernels don't branch on channel count.
+//
+// Resize is separable two-pass (horizontal then vertical) with three filters:
+//   box       — area-average, only correct for downscale
+//   bilinear  — triangle, radius 1
+//   lanczos3  — sinc-windowed sinc, radius 3 (Sharp's default)
+// Weights are precomputed per output column/row; the inner loop is a SIMD
+// gather-multiply-accumulate over u8→f32 lanes.
+
+// clang-format off
+#undef HWY_TARGET_INCLUDE
+#define HWY_TARGET_INCLUDE "image_resize.cpp"
+#include <hwy/foreach_target.h>
+#include <hwy/highway.h>
+// clang-format on
+
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+
+#ifndef BUN_IMAGE_SPAN_DEFINED
+#define BUN_IMAGE_SPAN_DEFINED
+namespace bun_image {
+// One contribution span: for output pixel `i`, sum src[start..start+n) * w[..n).
+// Defined outside HWY_NAMESPACE so HorizPass/VertPass have the same signature
+// across every dispatch target (HWY_EXPORT builds a single function-pointer
+// table and won't accept N_SSE4::Span* vs N_AVX2::Span*).
+struct Span {
+    int32_t start;
+    int32_t n;
+};
+} // namespace bun_image
+#endif
+
+HWY_BEFORE_NAMESPACE();
+namespace bun_image {
+namespace HWY_NAMESPACE {
+
+namespace hn = hwy::HWY_NAMESPACE;
+using bun_image::Span;
+
+// Vectorised inner product: dst_rgba += Σ src[k]_rgba * w[k]. src points at the
+// first contributing pixel (RGBA8), w at its weight; n is small (≤ 2*radius+1
+// for upscale, ≤ ceil(scale)+2*radius for downscale).
+static HWY_INLINE void AccumulateRGBA(const uint8_t* HWY_RESTRICT src,
+    const float* HWY_RESTRICT w, int32_t n, float* HWY_RESTRICT out4)
+{
+    const hn::ScalableTag<float> df;
+    auto r = hn::Zero(df);
+    auto g = hn::Zero(df);
+    auto b = hn::Zero(df);
+    auto a = hn::Zero(df);
+    // Scalar over taps — n is tiny and the per-tap body is one broadcast +
+    // 4 FMAs; vectorising across taps would need a gather. The win is the
+    // f32×4 channel math staying in registers.
+    for (int32_t k = 0; k < n; k++) {
+        const float wk = w[k];
+        r = hn::MulAdd(hn::Set(df, static_cast<float>(src[k * 4 + 0])), hn::Set(df, wk), r);
+        g = hn::MulAdd(hn::Set(df, static_cast<float>(src[k * 4 + 1])), hn::Set(df, wk), g);
+        b = hn::MulAdd(hn::Set(df, static_cast<float>(src[k * 4 + 2])), hn::Set(df, wk), b);
+        a = hn::MulAdd(hn::Set(df, static_cast<float>(src[k * 4 + 3])), hn::Set(df, wk), a);
+    }
+    out4[0] = hn::GetLane(r);
+    out4[1] = hn::GetLane(g);
+    out4[2] = hn::GetLane(b);
+    out4[3] = hn::GetLane(a);
+}
+
+static HWY_INLINE uint8_t ClampU8(float v)
+{
+    // +0.5 for round-to-nearest before truncation.
+    if (v <= 0.0f) return 0;
+    if (v >= 255.0f) return 255;
+    return static_cast<uint8_t>(v + 0.5f);
+}
+
+// Horizontal pass: src_w×src_h → dst_w×src_h. spans/weights index by dst x.
+static void HorizPass(const uint8_t* HWY_RESTRICT src, int32_t src_w, int32_t src_h,
+    uint8_t* HWY_RESTRICT dst, int32_t dst_w,
+    const Span* HWY_RESTRICT spans, const float* HWY_RESTRICT weights, int32_t wstride)
+{
+    for (int32_t y = 0; y < src_h; y++) {
+        const uint8_t* srow = src + static_cast<size_t>(y) * src_w * 4;
+        uint8_t* drow = dst + static_cast<size_t>(y) * dst_w * 4;
+        for (int32_t x = 0; x < dst_w; x++) {
+            float acc[4];
+            const Span s = spans[x];
+            AccumulateRGBA(srow + s.start * 4, weights + static_cast<size_t>(x) * wstride, s.n, acc);
+            drow[x * 4 + 0] = ClampU8(acc[0]);
+            drow[x * 4 + 1] = ClampU8(acc[1]);
+            drow[x * 4 + 2] = ClampU8(acc[2]);
+            drow[x * 4 + 3] = ClampU8(acc[3]);
+        }
+    }
+}
+
+// Vertical pass: dst_w×src_h → dst_w×dst_h. SIMD across x (contiguous RGBA
+// bytes), scalar over taps.
+static void VertPass(const uint8_t* HWY_RESTRICT src, int32_t src_h, int32_t dst_w,
+    uint8_t* HWY_RESTRICT dst, int32_t dst_h,
+    const Span* HWY_RESTRICT spans, const float* HWY_RESTRICT weights, int32_t wstride)
+{
+    const hn::ScalableTag<float> df;
+    const hn::Rebind<int32_t, decltype(df)> di32;
+    const hn::Rebind<uint8_t, decltype(df)> du8;
+    const size_t N = hn::Lanes(df);
+    const size_t row_bytes = static_cast<size_t>(dst_w) * 4;
+    (void)src_h;
+
+    for (int32_t y = 0; y < dst_h; y++) {
+        const Span s = spans[y];
+        const float* w = weights + static_cast<size_t>(y) * wstride;
+        uint8_t* drow = dst + static_cast<size_t>(y) * row_bytes;
+        size_t i = 0;
+        for (; i + N <= row_bytes; i += N) {
+            auto acc = hn::Zero(df);
+            for (int32_t k = 0; k < s.n; k++) {
+                const uint8_t* sp = src + static_cast<size_t>(s.start + k) * row_bytes + i;
+                // u8 → i32 → f32; highway has no direct u8→f32 PromoteTo.
+                auto v = hn::ConvertTo(df, hn::PromoteTo(di32, hn::LoadU(du8, sp)));
+                acc = hn::MulAdd(v, hn::Set(df, w[k]), acc);
+            }
+            acc = hn::Min(hn::Max(hn::Add(acc, hn::Set(df, 0.5f)), hn::Zero(df)), hn::Set(df, 255.0f));
+            hn::StoreU(hn::DemoteTo(du8, hn::ConvertTo(di32, acc)), du8, drow + i);
+        }
+        for (; i < row_bytes; i++) {
+            float acc = 0.0f;
+            for (int32_t k = 0; k < s.n; k++)
+                acc += static_cast<float>(src[static_cast<size_t>(s.start + k) * row_bytes + i]) * w[k];
+            drow[i] = ClampU8(acc);
+        }
+    }
+}
+
+// 90° CW: dst[x, y] = src[y, src_h-1-x]. Works on RGBA8; dst is src_h×src_w.
+static void Rotate90Impl(const uint8_t* HWY_RESTRICT src, int32_t w, int32_t h, uint8_t* HWY_RESTRICT dst)
+{
+    for (int32_t y = 0; y < h; y++) {
+        const uint8_t* srow = src + static_cast<size_t>(y) * w * 4;
+        for (int32_t x = 0; x < w; x++) {
+            uint8_t* dp = dst + (static_cast<size_t>(x) * h + (h - 1 - y)) * 4;
+            std::memcpy(dp, srow + x * 4, 4);
+        }
+    }
+}
+
+static void Rotate180Impl(const uint8_t* HWY_RESTRICT src, int32_t w, int32_t h, uint8_t* HWY_RESTRICT dst)
+{
+    const size_t total = static_cast<size_t>(w) * h;
+    for (size_t i = 0; i < total; i++)
+        std::memcpy(dst + (total - 1 - i) * 4, src + i * 4, 4);
+}
+
+static void Rotate270Impl(const uint8_t* HWY_RESTRICT src, int32_t w, int32_t h, uint8_t* HWY_RESTRICT dst)
+{
+    for (int32_t y = 0; y < h; y++) {
+        const uint8_t* srow = src + static_cast<size_t>(y) * w * 4;
+        for (int32_t x = 0; x < w; x++) {
+            uint8_t* dp = dst + (static_cast<size_t>(w - 1 - x) * h + y) * 4;
+            std::memcpy(dp, srow + x * 4, 4);
+        }
+    }
+}
+
+static void FlipHImpl(const uint8_t* HWY_RESTRICT src, int32_t w, int32_t h, uint8_t* HWY_RESTRICT dst)
+{
+    for (int32_t y = 0; y < h; y++) {
+        const uint8_t* srow = src + static_cast<size_t>(y) * w * 4;
+        uint8_t* drow = dst + static_cast<size_t>(y) * w * 4;
+        for (int32_t x = 0; x < w; x++)
+            std::memcpy(drow + x * 4, srow + (w - 1 - x) * 4, 4);
+    }
+}
+
+static void FlipVImpl(const uint8_t* HWY_RESTRICT src, int32_t w, int32_t h, uint8_t* HWY_RESTRICT dst)
+{
+    const size_t row = static_cast<size_t>(w) * 4;
+    for (int32_t y = 0; y < h; y++)
+        std::memcpy(dst + static_cast<size_t>(y) * row, src + static_cast<size_t>(h - 1 - y) * row, row);
+}
+
+} // namespace HWY_NAMESPACE
+} // namespace bun_image
+HWY_AFTER_NAMESPACE();
+
+#if HWY_ONCE
+namespace bun_image {
+
+HWY_EXPORT(HorizPass);
+HWY_EXPORT(VertPass);
+HWY_EXPORT(Rotate90Impl);
+HWY_EXPORT(Rotate180Impl);
+HWY_EXPORT(Rotate270Impl);
+HWY_EXPORT(FlipHImpl);
+HWY_EXPORT(FlipVImpl);
+
+namespace {
+
+constexpr double kPi = 3.14159265358979323846;
+
+double sinc(double x)
+{
+    if (std::fabs(x) < 1e-8) return 1.0;
+    const double px = kPi * x;
+    return std::sin(px) / px;
+}
+
+// Filter kernel; radius is the support half-width in source pixels at scale=1.
+double filter(int kind, double x)
+{
+    switch (kind) {
+    case 0: // box
+        return (x > -0.5 && x <= 0.5) ? 1.0 : 0.0;
+    case 1: // bilinear / triangle
+        x = std::fabs(x);
+        return x < 1.0 ? 1.0 - x : 0.0;
+    default: // lanczos3
+        x = std::fabs(x);
+        return x < 3.0 ? sinc(x) * sinc(x / 3.0) : 0.0;
+    }
+}
+
+double radius(int kind)
+{
+    return kind == 0 ? 0.5 : kind == 1 ? 1.0 : 3.0;
+}
+
+// Precompute spans + normalised weights for one axis. Returns max taps so the
+// caller can lay weights out as a dense [out_len × wstride] matrix.
+int buildWeights(int kind, int32_t src_len, int32_t dst_len,
+    Span* spans, float* weights, int32_t wstride)
+{
+    const double scale = static_cast<double>(dst_len) / static_cast<double>(src_len);
+    // When downscaling, stretch the kernel by 1/scale so it covers the whole
+    // source footprint of a destination pixel (this is what makes box → area
+    // average and lanczos antialiased).
+    const double fscale = scale < 1.0 ? scale : 1.0;
+    const double support = radius(kind) / fscale;
+    int max_n = 0;
+    for (int32_t i = 0; i < dst_len; i++) {
+        const double center = (i + 0.5) / scale - 0.5;
+        int32_t start = static_cast<int32_t>(std::floor(center - support + 0.5));
+        int32_t end = static_cast<int32_t>(std::floor(center + support + 0.5));
+        if (start < 0) start = 0;
+        if (end >= src_len) end = src_len - 1;
+        int32_t n = end - start + 1;
+        if (n > wstride) n = wstride;
+        double sum = 0.0;
+        float* w = weights + static_cast<size_t>(i) * wstride;
+        for (int32_t k = 0; k < n; k++) {
+            const double v = filter(kind, ((start + k) - center) * fscale);
+            w[k] = static_cast<float>(v);
+            sum += v;
+        }
+        // Normalise so brightness is preserved even where the kernel was
+        // clipped at the image edge.
+        if (sum != 0.0)
+            for (int32_t k = 0; k < n; k++) w[k] = static_cast<float>(w[k] / sum);
+        spans[i] = { start, n };
+        if (n > max_n) max_n = n;
+    }
+    return max_n;
+}
+
+} // namespace
+
+extern "C" {
+
+// Resize RGBA8. Allocates one intermediate (dst_w × src_h × 4) internally.
+// Returns 0 on success, -1 on alloc failure.
+int bun_image_resize_rgba8(const uint8_t* src, int32_t src_w, int32_t src_h,
+    uint8_t* dst, int32_t dst_w, int32_t dst_h, int32_t filter_kind)
+{
+    if (src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0) return -1;
+
+    const double xs = static_cast<double>(dst_w) / src_w;
+    const double ys = static_cast<double>(dst_h) / src_h;
+    const int wsx = static_cast<int>(std::ceil(radius(filter_kind) / (xs < 1.0 ? xs : 1.0))) * 2 + 2;
+    const int wsy = static_cast<int>(std::ceil(radius(filter_kind) / (ys < 1.0 ? ys : 1.0))) * 2 + 2;
+
+    auto* xspans = static_cast<Span*>(std::malloc(sizeof(Span) * dst_w));
+    auto* yspans = static_cast<Span*>(std::malloc(sizeof(Span) * dst_h));
+    auto* xw = static_cast<float*>(std::malloc(sizeof(float) * dst_w * wsx));
+    auto* yw = static_cast<float*>(std::malloc(sizeof(float) * dst_h * wsy));
+    auto* tmp = static_cast<uint8_t*>(std::malloc(static_cast<size_t>(dst_w) * src_h * 4));
+    if (!xspans || !yspans || !xw || !yw || !tmp) {
+        std::free(xspans);
+        std::free(yspans);
+        std::free(xw);
+        std::free(yw);
+        std::free(tmp);
+        return -1;
+    }
+
+    buildWeights(filter_kind, src_w, dst_w, xspans, xw, wsx);
+    buildWeights(filter_kind, src_h, dst_h, yspans, yw, wsy);
+
+    HWY_DYNAMIC_DISPATCH(HorizPass)(src, src_w, src_h, tmp, dst_w, xspans, xw, wsx);
+    HWY_DYNAMIC_DISPATCH(VertPass)(tmp, src_h, dst_w, dst, dst_h, yspans, yw, wsy);
+
+    std::free(xspans);
+    std::free(yspans);
+    std::free(xw);
+    std::free(yw);
+    std::free(tmp);
+    return 0;
+}
+
+// degrees ∈ {90, 180, 270}. dst dims swap for 90/270; caller allocates.
+void bun_image_rotate_rgba8(const uint8_t* src, int32_t w, int32_t h, uint8_t* dst, int32_t degrees)
+{
+    switch (degrees) {
+    case 90:
+        HWY_DYNAMIC_DISPATCH(Rotate90Impl)(src, w, h, dst);
+        break;
+    case 180:
+        HWY_DYNAMIC_DISPATCH(Rotate180Impl)(src, w, h, dst);
+        break;
+    case 270:
+        HWY_DYNAMIC_DISPATCH(Rotate270Impl)(src, w, h, dst);
+        break;
+    default:
+        std::memcpy(dst, src, static_cast<size_t>(w) * h * 4);
+    }
+}
+
+void bun_image_flip_rgba8(const uint8_t* src, int32_t w, int32_t h, uint8_t* dst, int32_t horizontal)
+{
+    if (horizontal)
+        HWY_DYNAMIC_DISPATCH(FlipHImpl)(src, w, h, dst);
+    else
+        HWY_DYNAMIC_DISPATCH(FlipVImpl)(src, w, h, dst);
+}
+
+} // extern "C"
+
+} // namespace bun_image
+#endif // HWY_ONCE

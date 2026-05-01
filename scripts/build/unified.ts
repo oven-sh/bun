@@ -122,6 +122,12 @@ const noUnify: readonly string[] = [
   // assuming TU isolation — keep it that way.
   "packages/bun-usockets/src/crypto/root_certs_windows.cpp",
   "packages/bun-usockets/src/crypto/root_certs_darwin.cpp",
+
+  // Second highway TU. foreach_target.h has a TU-wide include guard, so when
+  // bundled after highway_strings.cpp it doesn't re-expand and only the
+  // baseline ISA namespace exists for image_resize → HWY_EXPORT can't find
+  // N_AVX2/N_AVX3/etc. variants.
+  "src/bun.js/bindings/image_resize.cpp",
 ];
 
 /**

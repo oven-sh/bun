@@ -10,6 +10,7 @@ pub const Task = TaggedPointerUnion(.{
     ArchiveWriteTask,
     ArchiveFilesTask,
     AsyncGlobWalkTask,
+    AsyncImageTask,
     AsyncTransformTask,
     bun.bake.DevServer.HotReloadEvent,
     bun.bundle_v2.DeferredBatchTask,
@@ -231,6 +232,11 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, co
                 var globWalkTask: *AsyncGlobWalkTask = task.get(AsyncGlobWalkTask).?;
                 defer globWalkTask.deinit();
                 try globWalkTask.runFromJS();
+            },
+            @field(Task.Tag, @typeName(AsyncImageTask)) => {
+                var image_task: *AsyncImageTask = task.get(AsyncImageTask).?;
+                defer image_task.deinit();
+                try image_task.runFromJS();
             },
             @field(Task.Tag, @typeName(AsyncTransformTask)) => {
                 var transform_task: *AsyncTransformTask = task.get(AsyncTransformTask).?;
@@ -639,6 +645,7 @@ const NativeZlib = jsc.API.NativeZlib;
 const NativeZstd = jsc.API.NativeZstd;
 const NativePromiseContextDeferredDerefTask = jsc.API.NativePromiseContext.DeferredDerefTask;
 const AsyncGlobWalkTask = jsc.API.Glob.WalkTask.AsyncGlobWalkTask;
+const AsyncImageTask = jsc.API.Image.AsyncImageTask;
 const AsyncTransformTask = jsc.API.JSTranspiler.TransformTask.AsyncTransformTask;
 
 const ArchiveBlobTask = jsc.API.Archive.BlobTask;

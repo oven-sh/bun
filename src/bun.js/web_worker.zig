@@ -525,6 +525,26 @@ fn startVM(this: *WebWorker) !void {
     vm.proxy_env_storage = temp_proxy_storage;
     temp_proxy_storage = .{};
 
+    vm.is_main_thread = false;
+    jsc.VirtualMachine.is_main_thread_vm = false;
+    vm.onUnhandledRejection = onUnhandledRejection;
+
+    // Publish `vm` now (rather than at the end of startVM) so that:
+    //   - a concurrent notifyNeedTermination()/terminateAllAndWait() can
+    //     wake us once JS starts running, and
+    //   - early returns below reach spin()/shutdown() with this.vm set,
+    //     so teardownJSCVM/vm.deinit() run and the just-built JSC::VM
+    //     heap is not leaked.
+    // We do NOT call shutdown() directly from here: shutdown() with a
+    // non-null vm runs vm.onExit() (JS), which requires holdAPILock.
+    // Instead we return; threadMain enters holdAPILock(spin) and spin()'s
+    // first check observes requested_terminate.
+    {
+        this.vm_lock.lock();
+        defer this.vm_lock.unlock();
+        this.vm = vm;
+    }
+
     var b = &vm.transpiler;
     b.resolver.env_loader = b.env;
 
@@ -535,29 +555,19 @@ fn startVM(this: *WebWorker) !void {
     // Second checkpoint: initWorker just spent the bulk of startup time;
     // if terminate arrived during it, skip configureDefines() (which
     // walks the resolver's global dir_cache) and entry-point loading.
-    if (this.hasRequestedTerminate()) {
-        vm.proxy_env_storage.deinit();
-        this.shutdown();
-    }
+    // spin() will observe the flag and shutdown() under the API lock.
+    if (this.hasRequestedTerminate()) return;
 
     b.configureDefines() catch {
-        // shutdown()'s null-guard skips vm.deinit() while `this.vm` is still
-        // null (only assigned below), so free the moved-in proxy storage here.
-        vm.proxy_env_storage.deinit();
-        this.flushLogs(vm);
-        this.shutdown();
-        // unreachable
+        // Fall through to spin() → shutdown() for full teardown under
+        // the API lock (flushLogs runs JS). Set terminate so spin()
+        // bails immediately; vm.log carries the error for flushLogs.
+        vm.exit_handler.exit_code = 1;
+        _ = this.setRequestedTerminate();
+        return;
     };
 
     vm.loadExtraEnvAndSourceCodePrinter();
-    vm.is_main_thread = false;
-    jsc.VirtualMachine.is_main_thread_vm = false;
-    vm.onUnhandledRejection = onUnhandledRejection;
-
-    // Publish `vm` so a concurrent notifyNeedTermination() can wake us.
-    this.vm_lock.lock();
-    defer this.vm_lock.unlock();
-    this.vm = vm;
 }
 
 /// Phase 2: load the entry point, dispatch 'online', run the event loop.
@@ -568,6 +578,15 @@ fn spin(this: *WebWorker) void {
     var vm = this.vm.?;
     assert(this.status == .start);
     this.setStatus(.starting);
+
+    // Terminated during startVM() (or startVM() short-circuited here on
+    // configureDefines failure) — shut down under the API lock so the
+    // JSC::VM built by initWorker is torn down rather than leaked.
+    if (this.hasRequestedTerminate()) {
+        this.flushLogs(vm);
+        this.shutdown();
+    }
+
     vm.preload = this.preloads;
 
     // Resolve the entry point on the worker thread (the parent only stored the

@@ -22,10 +22,8 @@ describe("Transpiler transformSync buffer reuse", () => {
   // silent there. Gated to the debug build specifically: the reserved-arena
   // size below is tuned against its memory footprint, and it is what the
   // fail-before gate runs. Windows mimalloc reserve semantics differ.
-  test.skipIf(!isDebug || isWindows)(
-    "does not cache a freed print buffer after transformSync throws",
-    async () => {
-      const fixture = /* js */ `
+  test.skipIf(!isDebug || isWindows)("does not cache a freed print buffer after transformSync throws", async () => {
+    const fixture = /* js */ `
         const t = new Bun.Transpiler({ loader: "js" });
         // Prime the cached BufferWriter with a ~500KB allocation so the first
         // growth during the huge print below moves it (freeing this pointer).
@@ -46,36 +44,35 @@ describe("Transpiler transformSync buffer reuse", () => {
         const out = t.transformSync("const ok = 1;");
         process.stdout.write(out === "const ok = 1;\\n" ? "RECOVERED_OK\\n" : "BAD:" + JSON.stringify(out) + "\\n");
       `;
-      using dir = tempDir("transpiler-buffer-writer", { "repro.js": fixture });
+    using dir = tempDir("transpiler-buffer-writer", { "repro.js": fixture });
 
-      // 128MiB sits comfortably inside the 64–160MiB window where parse
-      // succeeds but the print buffer growth past ~20–30MiB exhausts the
-      // reserved arena on current debug/ASAN builds.
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "repro.js"],
-        cwd: String(dir),
-        env: {
-          ...bunEnv,
-          MIMALLOC_RESERVE_OS_MEMORY: "128M",
-          MIMALLOC_DISALLOW_OS_ALLOC: "1",
-          MIMALLOC_SHOW_ERRORS: "0",
-          MIMALLOC_MAX_ERRORS: "0",
-        },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // 128MiB sits comfortably inside the 64–160MiB window where parse
+    // succeeds but the print buffer growth past ~20–30MiB exhausts the
+    // reserved arena on current debug/ASAN builds.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "repro.js"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        MIMALLOC_RESERVE_OS_MEMORY: "128M",
+        MIMALLOC_DISALLOW_OS_ALLOC: "1",
+        MIMALLOC_SHOW_ERRORS: "0",
+        MIMALLOC_MAX_ERRORS: "0",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      // Fail loudly if the allocator never returned OOM mid-print; otherwise
-      // this test would silently stop covering the regression when mimalloc
-      // tuning shifts. Adjust MIMALLOC_RESERVE_OS_MEMORY / the statement count
-      // above if this fires.
-      expect(stdout).not.toContain("NO_OOM");
-      expect(stderr).not.toContain("AddressSanitizer");
-      expect(stdout.trim()).toBe("RECOVERED_OK");
-      expect(exitCode).toBe(0);
-    },
-  );
+    // Fail loudly if the allocator never returned OOM mid-print; otherwise
+    // this test would silently stop covering the regression when mimalloc
+    // tuning shifts. Adjust MIMALLOC_RESERVE_OS_MEMORY / the statement count
+    // above if this fires.
+    expect(stdout).not.toContain("NO_OOM");
+    expect(stderr).not.toContain("AddressSanitizer");
+    expect(stdout.trim()).toBe("RECOVERED_OK");
+    expect(exitCode).toBe(0);
+  });
 
   test("pooled print buffer survives repeated growth and shrink", () => {
     const transpiler = new Bun.Transpiler({ loader: "ts" });

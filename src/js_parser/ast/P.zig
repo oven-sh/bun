@@ -2949,8 +2949,15 @@ pub fn NewParser_(
                 try p.validateAndSetImportType(&path, &stmt);
             }
 
-            // Track the items for this namespace
-            try p.import_items_for_namespace.put(p.allocator, stmt.namespace_ref, item_refs);
+            // Track the items for this namespace so maybeRewritePropertyAccess
+            // can later rewrite `ns.foo` to a direct import identifier under
+            // bundling. Skip non-evaluation phases: a deferred namespace must
+            // keep its property accesses intact so evaluation is gated on
+            // first access; registering it here would let the visit phase
+            // strip the E.Dot before ImportScanner ever runs.
+            if (phase == .evaluation) {
+                try p.import_items_for_namespace.put(p.allocator, stmt.namespace_ref, item_refs);
+            }
             return p.s(stmt, loc);
         }
 

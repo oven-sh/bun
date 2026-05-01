@@ -730,14 +730,14 @@ pub fn wsClientGroup(rare: *RareData, vm: *jsc.VirtualMachine, comptime ssl: boo
     return rare.lazyGroup(vm, if (ssl) "ws_client_tls_group" else "ws_client_group");
 }
 
-/// Shared `SSL_CTX*` for client connects that didn't supply a custom CA
-/// (`Valkey({tls: true})`, `new WebSocket("wss://…")`). The old code allocated
-/// a fresh `us_socket_context_t` per such case and cached the pointer; now
-/// the SSL_CTX is the only thing worth caching.
 pub fn sslCtxCache(rare: *RareData) *api.SSLContextCache {
     return &rare.ssl_ctx_cache;
 }
 
+/// Shared `SSL_CTX*` for client connects that didn't supply a custom CA
+/// (`Valkey({tls: true})`, `new WebSocket("wss://…")`). The old code allocated
+/// a fresh `us_socket_context_t` per such case and cached the pointer; now
+/// the SSL_CTX is the only thing worth caching.
 pub fn defaultClientSslCtx(rare: *RareData) *uws.SslCtx {
     if (rare.default_client_ssl_ctx == null) {
         var err: uws.create_bun_socket_error_t = .none;

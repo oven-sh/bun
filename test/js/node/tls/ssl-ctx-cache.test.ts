@@ -120,8 +120,10 @@ test("SSL_CTX is freed once no owners remain (weak cache, not strong)", async ()
   expect(sslCtxLiveCount()).toBeLessThanOrEqual(before);
 });
 
-// Same-CA inline configs across `Bun.connect` and `tls.connect` should resolve
-// to one CTX — the cache is keyed by digest, not by which API asked.
+// Same-CA inline configs across repeated `Bun.connect` calls resolve to one
+// CTX — the cache is keyed by digest. (Not shared with `new WebSocket`, which
+// projects via `asUSocketsForClientVerification()` → different `request_cert`
+// → different digest by design.)
 test("Bun.connect with inline ca shares SSL_CTX across calls", async () => {
   await withServer(async port => {
     const tlsOpts = { ca: tlsCerts.cert, rejectUnauthorized: false };
@@ -175,25 +177,33 @@ test("file-backed config: in-place rotation invalidates cache (mtime+size in dig
   const caFile = join(String(dir), "ca.pem");
 
   await withServer(async port => {
-    const before = sslCtxLiveCount();
+    // Pin the wrapped SecureContext so GC between connects can't drop the
+    // count and turn the strict equalities below into flakes — `.context` is
+    // populated from the Symbol-keyed slot via `createSecureContext`.
+    const pin: unknown[] = [];
     const connectOnce = async () => {
-      const s = tls.connect({ port, caFile, rejectUnauthorized: false } as any);
+      const sc = tls.createSecureContext({ caFile, rejectUnauthorized: false } as any);
+      pin.push(sc);
+      const s = tls.connect({ port, secureContext: sc });
       await once(s, "secureConnect");
       s.destroy();
       await once(s, "close");
     };
 
+    // Warm: first connect may also lazy-init unrelated CTXs (default client,
+    // root store) — measure deltas after the first one.
     await connectOnce();
+    const after1 = sslCtxLiveCount();
     await connectOnce();
-    const afterTwoSamePath = sslCtxLiveCount();
     // Second connect with identical (path, mtime, size) hits cache.
-    expect(afterTwoSamePath).toBe(before + 1);
+    expect(sslCtxLiveCount()).toBe(after1);
 
     // Rotate in place — same path, different content. Rewriting bumps mtime
     // and (here) size; either alone changes the digest.
     writeFileSync(caFile, tlsCerts.cert + "\n");
     await connectOnce();
     // New (mtime, size) → fresh digest → fresh CTX.
-    expect(sslCtxLiveCount()).toBe(afterTwoSamePath + 1);
+    expect(sslCtxLiveCount()).toBe(after1 + 1);
+    pin.length = 0;
   });
 });

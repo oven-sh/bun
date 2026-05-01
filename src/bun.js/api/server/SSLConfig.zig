@@ -111,23 +111,6 @@ pub fn asUSockets(this: *const SSLConfig) uws.SocketContext.BunSocketContextOpti
     return ctx_opts;
 }
 
-/// SHA-256 over exactly the fields that reach `us_ssl_ctx_from_options`. Two
-/// configs with the same digest build a byte-identical `SSL_CTX*`, so the
-/// native `SSLContextCache` can hand the same pointer to both. We hash the
-/// `BunSocketContextOptions` projection (not `SSLConfig` itself) so per-SSL
-/// fields that never touch the CTX — `server_name`, `protos` (ALPN) — are
-/// excluded by construction: `Bun.connect({tls:{servername:'x'}})` and
-/// `{tls:true}` digest identically and share the default client CTX.
-///
-/// `secure_options` and `client_renegotiation_{limit,window}` are read from
-/// `BunSocketContextOptions` by the C builder (the latter packed into a CTX
-/// ex_data slot), so they're hashed even though `asUSockets()` currently
-/// leaves them at struct defaults — keeps the digest future-proof if that
-/// gap is closed.
-pub fn ctxDigest(this: *const SSLConfig) [32]u8 {
-    return this.asUSockets().digest();
-}
-
 /// Returns socket options for client-side TLS with manual verification.
 /// Sets request_cert=1 (to receive server cert) and reject_unauthorized=0
 /// (to handle verification manually in handshake callback).

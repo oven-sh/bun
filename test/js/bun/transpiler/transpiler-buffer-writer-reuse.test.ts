@@ -30,7 +30,7 @@ describe("Transpiler transformSync buffer reuse", () => {
         // Prime the cached BufferWriter with a ~500KB allocation so the first
         // growth during the huge print below moves it (freeing this pointer).
         t.transformSync(";");
-        const chunk = "a".repeat(500 * 1024);
+        const chunk = Buffer.alloc(500 * 1024, "a").toString();
         t.transformSync('var m = "' + chunk + '";');
         // Many statements: each string literal is one writeAll, so the buffer
         // grows in ~500KB steps and getError() is checked after every statement
@@ -75,7 +75,6 @@ describe("Transpiler transformSync buffer reuse", () => {
       expect(stdout.trim()).toBe("RECOVERED_OK");
       expect(exitCode).toBe(0);
     },
-    30_000,
   );
 
   test("pooled print buffer survives repeated growth and shrink", () => {

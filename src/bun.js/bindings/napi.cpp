@@ -785,13 +785,21 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject)
         return;
     }
 
-    auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
+    // A null handle means the addon was statically merged into the
+    // Windows exe (see dlopenHandleForMeta in BunProcess.cpp): there
+    // is no real module to GetProcAddress against, so skip attaching
+    // the meta. JSBundlerPlugin's onBeforeParse then fails with
+    // "expected a napi module" rather than a misleading
+    // missing-symbol error.
+    if (globalObject->m_pendingNapiModuleDlopenHandle) {
+        auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
 
-    // TODO: think about the finalizer here
-    Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr, env.ptr());
+        // TODO: think about the finalizer here
+        Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr, env.ptr());
 
-    bool success = resultValue.getObject()->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
-    ASSERT(success);
+        bool success = resultValue.getObject()->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+        ASSERT(success);
+    }
 
     globalObject->m_pendingNapiModuleDlopenHandle = nullptr;
 

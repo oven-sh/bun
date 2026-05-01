@@ -589,26 +589,38 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
         // The addon's code lives in bun.exe's own image; there is no
         // separate module in the loader's list. Use a per-addon token
         // (exe_base + rva_base) as the `handle` that flows into
-        // DLHandleMap / napiDlopenHandle so two merged addons do not
-        // collide on the same key. It is never given to a Win32 API
-        // that expects a real HMODULE — GetProcAddress is bypassed
-        // below in favour of the precomputed export RVAs.
+        // DLHandleMap so two merged addons do not collide on the same
+        // key. GetProcAddress is bypassed below in favour of the
+        // precomputed export RVAs.
         handle = reinterpret_cast<HMODULE>(linkedResolved.handle_token);
     } else {
         BunString filename_str = Bun::toString(filename);
         handle = Bun__LoadLibraryBunString(&filename_str);
     }
+    // NapiModuleMeta stores this so JSBundlerPlugin can later
+    // `GetProcAddress` the user-supplied onBeforeParse symbol out of
+    // it. A linked addon's `handle` is an identity token, not
+    // something GetProcAddress can walk (no DOS/PE header at that
+    // address, and the addon is not in the loader's module list), so
+    // pass nullptr there; executePendingNapiModule / the
+    // BUN_PLUGIN_NAME block below then skip attaching the meta and
+    // build.onBeforeParse fails with a clear "not a napi module"
+    // error. Native bundler plugins inside a --compile exe can set
+    // BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK=1 to take the tempfile
+    // path instead.
+    void* dlopenHandleForMeta = usedLinkedAddon ? nullptr : handle;
 
 // On Windows, we use GetLastError() for error messages, so we can only delete after checking for errors
 #else
     CrashHandler__setDlOpenAction(utf8.data());
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
     CrashHandler__setDlOpenAction(nullptr);
+    void* dlopenHandleForMeta = handle;
 
     tryToDeleteIfNecessary();
 #endif
 
-    globalObject->m_pendingNapiModuleDlopenHandle = handle;
+    globalObject->m_pendingNapiModuleDlopenHandle = dlopenHandleForMeta;
 
     if (!handle) {
 #if OS(WINDOWS)
@@ -683,7 +695,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
             for (auto& mod : pendingNapiModules) {
                 // Restore dlopen handle for this module before execution
                 // executePendingNapiModule clears it, so we must set it for each module
-                globalObject->m_pendingNapiModuleDlopenHandle = handle;
+                globalObject->m_pendingNapiModuleDlopenHandle = dlopenHandleForMeta;
                 globalObject->m_pendingNapiModule = mod;
                 Napi::executePendingNapiModule(globalObject);
                 globalObject->m_pendingNapiModule = {};
@@ -737,7 +749,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
             for (auto& mod : pendingNapiModules) {
                 // Restore dlopen handle for this module before execution
                 // executePendingNapiModule clears it, so we must set it for each module
-                globalObject->m_pendingNapiModuleDlopenHandle = handle;
+                globalObject->m_pendingNapiModuleDlopenHandle = dlopenHandleForMeta;
                 globalObject->m_pendingNapiModule = mod;
                 Napi::executePendingNapiModule(globalObject);
                 globalObject->m_pendingNapiModule = {};
@@ -844,20 +856,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
         // as we are going to call `dlsym()` on it later to get the plugin implementation.
         const char** pointer_to_plugin_name = (const char**)dlsym(handle, "BUN_PLUGIN_NAME");
 #elif OS(WINDOWS)
-        // NapiModuleMeta stores the dlopen handle so JSBundlerPlugin
-        // can later `GetProcAddress` the user-supplied onBeforeParse
-        // symbol out of it. A linked addon's `handle` is a per-addon
-        // identity token, not something GetProcAddress can walk (no
-        // DOS/PE header at that address, and the addon is not in the
-        // loader's module list). Capturing the addon's full export
-        // table at build time so JSBundlerPlugin can look the symbol
-        // up without GetProcAddress is a reasonable follow-up; for
-        // now, decline to mark a linked addon as a native bundler
-        // plugin so build.onBeforeParse fails with a clear "not a
-        // napi module" error rather than a confusing missing-symbol
-        // one. Native bundler plugins inside a --compile exe are a
-        // niche enough intersection that the tempfile fallback
-        // (BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK=1) remains available.
+        // See the dlopenHandleForMeta comment above for why a linked
+        // addon is never marked as a native bundler plugin.
         const char** pointer_to_plugin_name = usedLinkedAddon
             ? nullptr
             : (const char**)GetProcAddress(handle, "BUN_PLUGIN_NAME");

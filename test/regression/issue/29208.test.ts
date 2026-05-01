@@ -118,11 +118,28 @@ if (isDockerEnabled()) {
 // Detection order:
 //   1. BUN_TEST_LOCAL_MYSQL_URL — explicit override.
 //   2. mysql://bun_test:bun_test_pw@127.0.0.1:3306/bun_sql_test — the farm
-//      convention; auto-provisioned via `mysql -u root` if reachable.
+//      convention; auto-provisioned via `mysql -u root`. If MariaDB is
+//      installed but not running (e.g. the mechanical gate, which does not
+//      source /opt/start-services.sh), it is started via `mysqld_safe` and
+//      polled for readiness so the test actually exercises the fix instead
+//      of vacuously passing.
 //
 // Skipped cleanly if neither is available.
 describe("issue #29208 (local MySQL)", () => {
   let resolvedUrl: string | undefined;
+
+  const mysqlPing = async () => {
+    try {
+      await using p = Bun.spawn({
+        cmd: ["mysql", "-u", "root", "--connect-timeout=2", "-e", "SELECT 1"],
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      return (await p.exited) === 0;
+    } catch {
+      return false;
+    }
+  };
 
   beforeAll(async () => {
     const explicitUrl = process.env.BUN_TEST_LOCAL_MYSQL_URL;
@@ -131,9 +148,24 @@ describe("issue #29208 (local MySQL)", () => {
       return;
     }
 
-    // Idempotently auto-provision the farm-convention user. If the mysql
-    // CLI is missing or root isn't trusted, provisioning fails silently and
-    // the test becomes a no-op.
+    if (!Bun.which("mysql")) return; // no client binary → nothing to do.
+
+    // If the server isn't reachable yet but a local mysqld_safe exists,
+    // start it (idempotent under mysqld_safe's own pidfile check) and poll.
+    if (!(await mysqlPing()) && Bun.which("mysqld_safe")) {
+      Bun.spawn({
+        cmd: ["mysqld_safe", "--user=mysql", "--datadir=/var/lib/mysql"],
+        stdout: "ignore",
+        stderr: "ignore",
+        stdin: "ignore",
+      }).unref();
+      for (let i = 0; i < 60 && !(await mysqlPing()); i++) {
+        await Bun.sleep(500);
+      }
+    }
+
+    // Idempotently auto-provision the farm-convention user. If root isn't
+    // trusted, provisioning fails silently and the test becomes a no-op.
     try {
       await using proc = Bun.spawn({
         cmd: ["mysql", "-u", "root"],
@@ -150,9 +182,9 @@ describe("issue #29208 (local MySQL)", () => {
         resolvedUrl = "mysql://bun_test:bun_test_pw@127.0.0.1:3306/bun_sql_test";
       }
     } catch {
-      // mysql CLI unavailable — no local server path, rely on Docker above.
+      // mysql CLI failed — no local server path, rely on Docker above.
     }
-  });
+  }, 45_000);
 
   test("utcDate option gates UTC decoding of DATETIME/TIMESTAMP under non-UTC TZ", async () => {
     if (!resolvedUrl) {

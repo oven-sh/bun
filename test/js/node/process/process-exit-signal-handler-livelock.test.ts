@@ -16,13 +16,11 @@ import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 
-test.skipIf(!isPosix)(
-  "process.on('SIGABRT') does not livelock when a thread aborts after process.exit()",
-  async () => {
-    const helperSource = fs.readFileSync(path.join(import.meta.dirname, "exit-sigabrt-livelock-fixture.c"), "utf8");
-    const lib = process.platform === "darwin" ? "helper.dylib" : "helper.so";
+test.skipIf(!isPosix)("process.on('SIGABRT') does not livelock when a thread aborts after process.exit()", async () => {
+  const helperSource = fs.readFileSync(path.join(import.meta.dirname, "exit-sigabrt-livelock-fixture.c"), "utf8");
+  const lib = process.platform === "darwin" ? "helper.dylib" : "helper.so";
 
-    const fixture = /* ts */ `
+  const fixture = /* ts */ `
       import { dlopen } from "bun:ffi";
       const { symbols } = dlopen(${JSON.stringify(lib)}, {
         setup_exit_abort: { args: [], returns: "void" },
@@ -40,45 +38,44 @@ test.skipIf(!isPosix)(
       process.exit(0);
     `;
 
-    using dir = tempDir("exit-sigabrt-livelock", {
-      "helper.c": helperSource,
-      "fixture.ts": fixture,
-    });
-    const cwd = String(dir);
+  using dir = tempDir("exit-sigabrt-livelock", {
+    "helper.c": helperSource,
+    "fixture.ts": fixture,
+  });
+  const cwd = String(dir);
 
-    // Build the helper shared library with the system toolchain.
-    await using cc = Bun.spawn({
-      cmd: ["cc", "-shared", "-fPIC", "-o", lib, "helper.c"],
-      cwd,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [ccStderr, ccExit] = await Promise.all([cc.stderr.text(), cc.exited]);
-    expect(ccStderr).toBe("");
-    expect(ccExit).toBe(0);
+  // Build the helper shared library with the system toolchain.
+  await using cc = Bun.spawn({
+    cmd: ["cc", "-shared", "-fPIC", "-o", lib, "helper.c"],
+    cwd,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [ccStderr, ccExit] = await Promise.all([cc.stderr.text(), cc.exited]);
+  expect(ccStderr).toBe("");
+  expect(ccExit).toBe(0);
 
-    // Run the fixture. Without the fix this livelocks in raise_abort_loop
-    // and gets killed by the spawn timeout; with the fix it dies with
-    // SIGABRT almost immediately.
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "fixture.ts"],
-      cwd,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 3_000,
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Run the fixture. Without the fix this livelocks in raise_abort_loop
+  // and gets killed by the spawn timeout; with the fix it dies with
+  // SIGABRT almost immediately.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "fixture.ts"],
+    cwd,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 3_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toBe("calling process.exit\n");
-    expect(stderr).not.toContain("UNREACHABLE_JS_SIGABRT_HANDLER");
-    // With the fix the handler is SIG_DFL by the time raise_abort_loop
-    // runs, so the first SIGABRT terminates the process. Without the fix
-    // forwardSignal swallows every SIGABRT, the loop spins, and the spawn
-    // timeout sends SIGTERM instead.
-    expect({ signalCode: proc.signalCode, exitCode }).toEqual({
-      signalCode: "SIGABRT",
-      exitCode: 128 + 6,
-    });
-  },
-);
+  expect(stdout).toBe("calling process.exit\n");
+  expect(stderr).not.toContain("UNREACHABLE_JS_SIGABRT_HANDLER");
+  // With the fix the handler is SIG_DFL by the time raise_abort_loop
+  // runs, so the first SIGABRT terminates the process. Without the fix
+  // forwardSignal swallows every SIGABRT, the loop spins, and the spawn
+  // timeout sends SIGTERM instead.
+  expect({ signalCode: proc.signalCode, exitCode }).toEqual({
+    signalCode: "SIGABRT",
+    exitCode: 128 + 6,
+  });
+});

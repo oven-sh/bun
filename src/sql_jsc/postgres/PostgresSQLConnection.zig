@@ -1571,6 +1571,29 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             defer this.updateRef();
 
             request.onResult(cmd.command_tag.slice(), this.globalObject, this.js_value, false);
+
+            // In a simple-mode multi-statement query, a command that emits no
+            // RowDescription (INSERT/UPDATE/CREATE/etc. without RETURNING)
+            // would otherwise inherit the previous SELECT's fields in
+            // onResult -> buildStatementJS. Clear them so the next command
+            // starts clean; a subsequent RowDescription repopulates them.
+            // Prepared statements are excluded: their fields come from
+            // Describe once and must persist across executions.
+            if (request.flags.simple) {
+                if (request.statement) |statement| {
+                    if (statement.fields.len > 0) {
+                        for (statement.fields) |*field| {
+                            field.deinit();
+                        }
+                        bun.default_allocator.free(statement.fields);
+                        statement.fields = &.{};
+                        statement.cached_structure.deinit();
+                        statement.cached_structure = .{};
+                        statement.needs_duplicate_check = true;
+                        statement.fields_flags = .{};
+                    }
+                }
+            }
         },
         .BindComplete => {
             try reader.eatMessage(protocol.BindComplete);

@@ -3012,6 +3012,17 @@ if (isDockerEnabled()) {
         expect(results[1].columns.map(c => c.type)).toEqual([25, 23]);
       });
 
+      test("multi-statement simple(): non-SELECT after SELECT does not inherit stale columns", async () => {
+        const table = "stale_cols_" + randomUUIDv7("hex").replaceAll("-", "");
+        const results =
+          await sql`select 1 as x; create table ${sql(table)} (id int); select 2::int4 as y; drop table ${sql(table)}`.simple();
+        expect(results).toHaveLength(4);
+        expect(results[0].columns).toEqual([{ name: "x", type: 23, table: 0, number: 0 }]);
+        expect(results[1].columns).toEqual([]); // CREATE — must not inherit x
+        expect(results[2].columns).toEqual([{ name: "y", type: 23, table: 0, number: 0 }]);
+        expect(results[3].columns).toEqual([]); // DROP — must not inherit y
+      });
+
       test("columns is populated for table columns with table OID", async () => {
         const table = "columns_meta_" + randomUUIDv7("hex").replaceAll("-", "");
         await sql`create table ${sql(table)} (id int4 primary key, name text)`;

@@ -218,3 +218,36 @@ test("result.columns is an empty array for commands with no RowDescription", asy
     await sql.close();
   }
 });
+
+test("multi-statement simple(): non-SELECT after SELECT does not inherit stale columns", async () => {
+  // SELECT (RowDescription+DataRow) then INSERT (no RowDescription) then SELECT again.
+  const port = await mockServer(socket => {
+    socket.write(
+      Buffer.concat([
+        rowDescription([{ name: "x", typeOid: 23 }]),
+        dataRow(["1"]),
+        commandComplete("SELECT 1"),
+        // INSERT: no RowDescription
+        commandComplete("INSERT 0 1"),
+        rowDescription([{ name: "y", typeOid: 25 }]),
+        dataRow(["hi"]),
+        commandComplete("SELECT 1"),
+        // DROP: no RowDescription
+        commandComplete("DROP TABLE"),
+        readyForQuery,
+      ]),
+    );
+  });
+
+  const sql = new SQL({ url: `postgres://u@127.0.0.1:${port}/db`, max: 1, idleTimeout: 5, connectionTimeout: 5 });
+  try {
+    const results = await sql`select 1 as x; insert into t values (1); select 'hi' as y; drop table t`.simple();
+    expect(results).toHaveLength(4);
+    expect(results[0].columns).toEqual([{ name: "x", type: 23, table: 0, number: 0 }]);
+    expect(results[1].columns).toEqual([]); // INSERT — must not inherit x
+    expect(results[2].columns).toEqual([{ name: "y", type: 25, table: 0, number: 0 }]);
+    expect(results[3].columns).toEqual([]); // DROP — must not inherit y
+  } finally {
+    await sql.close();
+  }
+});

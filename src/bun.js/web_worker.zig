@@ -61,8 +61,13 @@ const log = Output.scoped(.Worker, .hidden);
 /// The owning C++ `WebCore::Worker`. Never null; this struct is freed by
 /// `~Worker`, so the pointer cannot dangle.
 cpp_worker: *anyopaque,
-/// Parent `jsc.VirtualMachine`. Lives at least as long as this struct via
-/// `parent_poll_ref` (keep-alive) + the thread-held `Worker` ref.
+/// Parent `jsc.VirtualMachine`. When `parent_poll_ref` is held (the default;
+/// dropped by `{ref:false}` / `.unref()`) the parent's event loop stays alive
+/// until the close task runs. When it is NOT held, the parent can exit while
+/// this thread is still running — that's the detached-not-joined "Known gap"
+/// in the file header; only parent-thread-only callers (`setRef`,
+/// `releaseParentPollRef`) dereference this field, and they can't run once
+/// the parent's loop has drained.
 parent: *jsc.VirtualMachine,
 parent_context_id: u32,
 execution_context_id: u32,

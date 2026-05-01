@@ -400,8 +400,9 @@ void Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>
             break;
         case State::Closing:
         case State::Closed:
-            // Worker VM is gone; drop immediately. postMessage() from a
-            // 'close'/'exit' handler lands here (silent no-op per spec).
+            // Worker VM is gone; drop immediately (silent no-op).
+            // postMessage() goes through enqueueToWorker(), not here — the
+            // only user is getHeapSnapshot().
             return;
         }
     }

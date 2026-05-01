@@ -4067,10 +4067,20 @@ fn fromJSWithoutDeferGC(
         }
     }
 
-    // Multi-part path. A later part's toString() can run arbitrary JS that
-    // drops the last reference to an earlier inner Blob and forces GC, so we
-    // root each borrowed part in a MarkedArgumentBuffer for the duration of
-    // the join. That lets Blob parts use pushStatic (no extra copy) safely.
+    // Multi-part path. We want to borrow ArrayBuffer/Blob bytes (pushStatic)
+    // rather than heap-duplicate them, but a later part's toString() can run
+    // arbitrary JS that detaches/resizes an earlier ArrayBuffer or drops the
+    // last reference to an inner Blob before joiner.done() reads the borrowed
+    // bytes. To keep the borrow safe without copying, we do two passes:
+    //   1. Resolve every part — ArrayBuffer/Blob as-is, everything else via
+    //      toString() — and root each in a MarkedArgumentBuffer. All user JS
+    //      runs here.
+    //   2. Borrow bytes and join. No user JS runs between the first borrow
+    //      and done(), so borrowed backings can't be invalidated mid-join.
+    // If a toString() in pass 1 detaches/resizes an earlier buffer, pass 2
+    // simply reads its current (possibly zero) length; that diverges from the
+    // spec's "get a copy of the bytes" but never crashes and avoids a 2× peak
+    // for the overwhelmingly common case where no part mutates another.
     const JoinCtx = struct {
         global: *JSGlobalObject,
         top: JSValue,
@@ -4090,134 +4100,42 @@ fn fromJSJoinParts(
     top: JSValue,
     marked: *jsc.MarkedArgumentBuffer,
 ) bun.JSError!Blob {
-    var current = top;
-
     var stack_allocator = std.heap.stackFallback(1024, bun.default_allocator);
     const stack_mem_all = stack_allocator.get();
-    var stack: std.array_list.Managed(JSValue) = std.array_list.Managed(JSValue).init(stack_mem_all);
+
+    // Pass 1: resolve each part to a byte-bearing JSValue, rooting everything
+    // in `marked`. This is the only place user JS (toString, indexed getters)
+    // runs. After this loop, each entry is either an ArrayBuffer/TypedArray/
+    // DataView, a Blob wrapper, or a primitive JSString.
+    var resolved: std.array_list.Managed(JSValue) = std.array_list.Managed(JSValue).init(stack_mem_all);
+    defer resolved.deinit();
+
+    switch (top.jsTypeLoose()) {
+        .Array, .DerivedArray => {
+            var iter = try jsc.JSArrayIterator.init(top, global);
+            try resolved.ensureTotalCapacityPrecise(iter.len);
+            while (try iter.next()) |item| {
+                if (item.isUndefinedOrNull()) continue;
+                const r = try fromJSResolvePart(global, item);
+                marked.append(r);
+                resolved.appendAssumeCapacity(r);
+            }
+        },
+        else => {
+            const r = try fromJSResolvePart(global, top);
+            marked.append(r);
+            try resolved.append(r);
+        },
+    }
+
+    // Pass 2: borrow bytes. No user JS runs from here until done() returns.
     var joiner = StringJoiner{ .allocator = stack_mem_all };
-    // ArrayBuffer parts are pushCloned into the joiner (heap-duped for anything
-    // past the 1KB stack buffer), and string parts hand their allocator to it.
-    // If a later part's toString()/getter throws, we must release those.
+    // String parts hand their UTF-8 allocator to the joiner; release on error.
     errdefer joiner.deinit();
     var could_have_non_ascii = false;
 
-    defer if (stack_allocator.fixed_buffer_allocator.end_index >= 1024) stack.deinit();
-
-    while (true) {
-        switch (current.jsTypeLoose()) {
-            .NumberObject,
-            jsc.JSValue.JSType.String,
-            jsc.JSValue.JSType.StringObject,
-            jsc.JSValue.JSType.DerivedStringObject,
-            => {
-                var sliced = try current.toSlice(global, bun.default_allocator);
-                const allocator = sliced.allocator.get();
-                could_have_non_ascii = could_have_non_ascii or !sliced.allocator.isWTFAllocator();
-                joiner.push(sliced.slice(), allocator);
-            },
-
-            .Array, .DerivedArray => {
-                var iter = try jsc.JSArrayIterator.init(current, global);
-                try stack.ensureUnusedCapacity(iter.len);
-                var any_arrays = false;
-                while (try iter.next()) |item| {
-                    if (item.isUndefinedOrNull()) continue;
-
-                    // When it's a string or ArrayBuffer inside an array, we can avoid the extra push/pop
-                    // we only really want this for nested arrays
-                    // However, we must preserve the order
-                    // That means if there are any arrays
-                    // we have to restart the loop
-                    if (!any_arrays) {
-                        switch (item.jsTypeLoose()) {
-                            .NumberObject,
-                            .Cell,
-                            .String,
-                            .StringObject,
-                            .DerivedStringObject,
-                            => {
-                                var sliced = try item.toSlice(global, bun.default_allocator);
-                                const allocator = sliced.allocator.get();
-                                could_have_non_ascii = could_have_non_ascii or !sliced.allocator.isWTFAllocator();
-                                joiner.push(sliced.slice(), allocator);
-                                continue;
-                            },
-                            .ArrayBuffer,
-                            .Int8Array,
-                            .Uint8Array,
-                            .Uint8ClampedArray,
-                            .Int16Array,
-                            .Uint16Array,
-                            .Int32Array,
-                            .Uint32Array,
-                            .Float16Array,
-                            .Float32Array,
-                            .Float64Array,
-                            .BigInt64Array,
-                            .BigUint64Array,
-                            .DataView,
-                            => {
-                                could_have_non_ascii = true;
-                                var buf = item.asArrayBuffer(global).?;
-                                // Copy the bytes now. Rooting the JSValue is not enough
-                                // here: a later element's toString() can resize() a
-                                // resizable ArrayBuffer (unmapping the backing) or
-                                // transfer() it to an unrooted new owner regardless of
-                                // whether this JSValue is GC-reachable. The File API
-                                // spec says "get a copy of the bytes" at this step.
-                                joiner.pushCloned(buf.byteSlice());
-                                continue;
-                            },
-                            .Array, .DerivedArray => {
-                                any_arrays = true;
-                                could_have_non_ascii = true;
-                                break;
-                            },
-
-                            .DOMWrapper => {
-                                if (item.as(Blob)) |blob| {
-                                    could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
-                                    // Root the Blob so a later element's toString() can't
-                                    // drop its last reference and GC the store before
-                                    // joiner.done() reads it. Blobs are immutable, so a
-                                    // borrowed view stays valid as long as the store lives.
-                                    marked.append(item);
-                                    joiner.pushStatic(blob.sharedView());
-                                    continue;
-                                } else {
-                                    const sliced = try item.toSliceClone(global);
-                                    const allocator = sliced.allocator.get();
-                                    could_have_non_ascii = could_have_non_ascii or allocator != null;
-                                    joiner.push(sliced.slice(), allocator);
-                                    continue;
-                                }
-                            },
-                            else => {},
-                        }
-                    }
-
-                    stack.appendAssumeCapacity(item);
-                }
-            },
-
-            .DOMWrapper => {
-                if (current.as(Blob)) |blob| {
-                    could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
-                    // Root the Blob so a later element's toString() can't drop
-                    // its last reference and GC the store before joiner.done()
-                    // reads it. Blobs are immutable, so a borrowed view stays
-                    // valid as long as the store lives.
-                    marked.append(current);
-                    joiner.pushStatic(blob.sharedView());
-                } else {
-                    const sliced = try current.toSliceClone(global);
-                    const allocator = sliced.allocator.get();
-                    could_have_non_ascii = could_have_non_ascii or allocator != null;
-                    joiner.push(sliced.slice(), allocator);
-                }
-            },
-
+    for (resolved.items) |item| {
+        switch (item.jsTypeLoose()) {
             .ArrayBuffer,
             .Int8Array,
             .Uint8Array,
@@ -4233,29 +4151,32 @@ fn fromJSJoinParts(
             .BigUint64Array,
             .DataView,
             => {
-                var buf = current.asArrayBuffer(global).?;
-                // Copy the bytes now. Rooting the JSValue is not enough here:
-                // a later element's toString() can resize() a resizable
-                // ArrayBuffer (unmapping the backing) or transfer() it to an
-                // unrooted new owner regardless of whether this JSValue is
-                // GC-reachable. The File API spec says "get a copy of the
-                // bytes" at this step.
-                joiner.pushCloned(buf.slice());
                 could_have_non_ascii = true;
+                var buf = item.asArrayBuffer(global).?;
+                // `marked` keeps the view and its ArrayBuffer reachable so GC
+                // can't free the backing before done(). If a pass-1 toString()
+                // already detached/resized the buffer, byteSlice() reflects
+                // its current length (possibly 0) — safe, just fewer bytes.
+                joiner.pushStatic(buf.byteSlice());
+            },
+
+            .DOMWrapper => {
+                // Pass 1 only lets Blob wrappers through here.
+                const blob = item.as(Blob).?;
+                could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
+                // `marked` keeps the Blob reachable; Blobs are immutable so the
+                // borrowed store bytes stay valid through done().
+                joiner.pushStatic(blob.sharedView());
             },
 
             else => {
-                var sliced = try current.toSlice(global, bun.default_allocator);
-                if (global.hasException()) {
-                    // errdefer joiner.deinit() above releases already-joined parts.
-                    sliced.deinit();
-                    return error.JSError;
-                }
+                // Primitive JSString from pass 1 — toSlice() here is a pure
+                // UTF-16→UTF-8 conversion with no user JS.
+                var sliced = try item.toSlice(global, bun.default_allocator);
                 could_have_non_ascii = could_have_non_ascii or !sliced.allocator.isWTFAllocator();
                 joiner.push(sliced.slice(), sliced.allocator.get());
             },
         }
-        current = stack.pop() orelse break;
     }
 
     const joined = try joiner.done(bun.default_allocator);
@@ -4264,6 +4185,40 @@ fn fromJSJoinParts(
         return Blob.initWithAllASCII(joined, bun.default_allocator, global, true);
     }
     return Blob.init(joined, bun.default_allocator, global);
+}
+
+/// Resolve a single Blob part to a byte-bearing JSValue for fromJSJoinParts'
+/// pass 2: ArrayBuffer/TypedArray/DataView and Blob wrappers pass through;
+/// everything else (including nested arrays and non-Blob DOM wrappers) is
+/// coerced to a primitive JSString via ToString, which is where any user JS
+/// runs.
+fn fromJSResolvePart(global: *JSGlobalObject, item: JSValue) bun.JSError!JSValue {
+    switch (item.jsTypeLoose()) {
+        .ArrayBuffer,
+        .Int8Array,
+        .Uint8Array,
+        .Uint8ClampedArray,
+        .Int16Array,
+        .Uint16Array,
+        .Int32Array,
+        .Uint32Array,
+        .Float16Array,
+        .Float32Array,
+        .Float64Array,
+        .BigInt64Array,
+        .BigUint64Array,
+        .DataView,
+        => return item,
+
+        .DOMWrapper => {
+            if (item.as(Blob) != null) return item;
+            return (try item.toJSString(global)).toJS();
+        },
+
+        .String => return item,
+
+        else => return (try item.toJSString(global)).toJS(),
+    }
 }
 
 pub const Any = union(enum) {

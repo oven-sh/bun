@@ -308,13 +308,16 @@ test("dupeWithContentType does not alias the source's allocated content_type", a
   expect(exitCode).toBe(0);
 });
 
-test("new Blob() copies ArrayBuffer parts before later parts' toString() can resize them", async () => {
-  // The Blob constructor joins parts via a StringJoiner that used to borrow
-  // ArrayBuffer backings (pushStatic) and only memcpy them at the end. A later
-  // part's toString() runs arbitrary JS, which can resize a resizable
-  // ArrayBuffer and unmap the borrowed backing before the final memcpy reads
-  // it. Run in a subprocess so an ASAN/SEGV crash shows up as a test failure
-  // instead of killing the runner.
+test("new Blob() survives a later part's toString() resizing an earlier ArrayBuffer", async () => {
+  // The Blob constructor borrows ArrayBuffer backings into a StringJoiner and
+  // only memcpys them at the end. It used to borrow before resolving later
+  // parts' toString(), which can run arbitrary JS that resizes a resizable
+  // ArrayBuffer and unmaps the already-borrowed backing → SEGV in done(). The
+  // constructor now resolves every toString() in a first pass and only reads
+  // buffer bytes in a second pass; a buffer that was resized during pass 1
+  // contributes its post-resize length (0 here) rather than crashing.
+  //
+  // Run in a subprocess so an ASAN/SEGV crash surfaces as a test failure.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -334,12 +337,7 @@ test("new Blob() copies ArrayBuffer parts before later parts' toString() can res
           },
         ]);
         const text = await blob.text();
-        console.log(JSON.stringify({
-          size: blob.size,
-          first: text.charCodeAt(0),
-          last: text.charCodeAt(text.length - 1),
-          allA: text.slice(0, size) === Buffer.alloc(size, "A").toString(),
-        }));
+        console.log(JSON.stringify({ size: blob.size, text }));
       `,
     ],
     env: bunEnv,
@@ -350,19 +348,17 @@ test("new Blob() copies ArrayBuffer parts before later parts' toString() can res
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({
-    size: (1 << 20) + 1,
-    first: 65,
-    last: 66,
-    allA: true,
-  });
+  // The resized-to-0 buffer contributes 0 bytes; only the toString() result
+  // remains. (Spec says copy the original bytes; we trade that for avoiding a
+  // 2× peak in the non-adversarial case.)
+  expect(JSON.parse(stdout)).toEqual({ size: 1, text: "B" });
   expect(exitCode).toBe(0);
 });
 
-test("new Blob() copies ArrayBuffer parts before later parts' toString() can detach them", async () => {
-  // Same as above but detach via transfer() instead of resize(). The bytes
-  // must be captured at the time the part is processed, not after toString()
-  // has had a chance to move the backing.
+test("new Blob() survives a later part's toString() transferring an earlier ArrayBuffer", async () => {
+  // Same as above but detach via transfer() instead of resize(). After
+  // transfer(), the original view is detached and contributes 0 bytes; the
+  // moved backing (even if overwritten) must not leak into the Blob.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -376,16 +372,13 @@ test("new Blob() copies ArrayBuffer parts before later parts' toString() can det
             toString() {
               const moved = u8.buffer.transfer();
               new Uint8Array(moved).fill("Z".charCodeAt(0));
+              Bun.gc(true);
               return "B";
             },
           },
         ]);
         const text = await blob.text();
-        console.log(JSON.stringify({
-          size: blob.size,
-          first: text.charCodeAt(0),
-          allA: text.slice(0, size) === Buffer.alloc(size, "A").toString(),
-        }));
+        console.log(JSON.stringify({ size: blob.size, text }));
       `,
     ],
     env: bunEnv,
@@ -396,19 +389,29 @@ test("new Blob() copies ArrayBuffer parts before later parts' toString() can det
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({
-    size: (1 << 20) + 1,
-    first: 65,
-    allA: true,
-  });
+  // Previously this read the moved backing (Blob full of 'Z'); now the
+  // detached view contributes 0 bytes.
+  expect(JSON.parse(stdout)).toEqual({ size: 1, text: "B" });
   expect(exitCode).toBe(0);
 });
 
-test("new Blob() releases copied ArrayBuffer parts when a later part throws", async () => {
-  // Now that ArrayBuffer parts are heap-duped into the joiner, a later part
-  // throwing from toString() must not leak those copies. Each iteration below
-  // dupes 4MB into the joiner and then throws; without cleanup 128 iterations
-  // would retain ~512MB.
+test("new Blob() with a mix of ArrayBuffer and benign non-buffer parts borrows without copying", async () => {
+  // The non-adversarial common case: mixing typed arrays with a plain string
+  // part should not require duplicating the buffer bytes in memory. Verify
+  // the join produces the right bytes and completes cleanly.
+  const size = 1 << 16;
+  const u8 = new Uint8Array(size).fill("A".charCodeAt(0));
+  const blob = new Blob([u8, "B", new Uint8Array(8).fill("C".charCodeAt(0))]);
+  const text = await blob.text();
+  expect(blob.size).toBe(size + 1 + 8);
+  expect(text.slice(0, size)).toBe("A".repeat(size));
+  expect(text.slice(size)).toBe("B" + "C".repeat(8));
+});
+
+test("new Blob() does not leak when a later part's toString() throws", async () => {
+  // Pass 1 may have rooted large buffers in the MarkedArgumentBuffer and
+  // allocated UTF-8 slices for earlier string parts before a later toString()
+  // throws. None of that should be retained across iterations.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -417,14 +420,13 @@ test("new Blob() releases copied ArrayBuffer parts when a later part throws", as
         const size = 4 << 20;
         const u8 = new Uint8Array(size);
         const thrower = { toString() { throw new Error("nope"); } };
-        // Warm up, then snapshot baseline RSS.
         for (let i = 0; i < 4; i++) {
-          try { new Blob([u8, thrower]); } catch {}
+          try { new Blob(["x".repeat(64), u8, thrower]); } catch {}
         }
         Bun.gc(true);
         const before = process.memoryUsage.rss();
         for (let i = 0; i < 128; i++) {
-          try { new Blob([u8, thrower]); } catch {}
+          try { new Blob(["x".repeat(64), u8, thrower]); } catch {}
         }
         Bun.gc(true);
         const after = process.memoryUsage.rss();
@@ -440,9 +442,20 @@ test("new Blob() releases copied ArrayBuffer parts when a later part throws", as
 
   expect(stderr).toBe("");
   const { growthMB } = JSON.parse(stdout);
-  // Without the errdefer this grows by ~512MB; with it, a few MB of noise.
   expect(growthMB).toBeLessThan(64);
   expect(exitCode).toBe(0);
+});
+
+test("new Blob() joins parts in sequence order", async () => {
+  // The old single-pass implementation deferred plain-object parts to a LIFO
+  // stack (reversing them relative to inline-handled siblings), broke out of
+  // iteration on a nested array (dropping trailing parts), and double-
+  // processed non-Blob DOM wrappers. The two-pass join resolves each part to
+  // a string/buffer/Blob in iteration order.
+  expect(await new Blob(["a", { toString: () => "B" }, "c"]).text()).toBe("aBc");
+  expect(await new Blob([{ toString: () => "A" }, { toString: () => "B" }]).text()).toBe("AB");
+  expect(await new Blob(["a", ["b", "c"], "d"]).text()).toBe("ab,cd");
+  expect(await new Blob([new Response("body"), "X"]).text()).toBe("[object Response]X");
 });
 
 test("new Blob() keeps inner Blob parts alive while a later part's toString() forces GC", async () => {
@@ -493,15 +506,6 @@ test("new Blob() keeps inner Blob parts alive while a later part's toString() fo
     allA: true,
   });
   expect(exitCode).toBe(0);
-});
-
-test("new Blob() stringifies non-Blob DOM wrapper parts once, in order", async () => {
-  // The inline-array .DOMWrapper fast path's else-branch used the enclosing
-  // array (`current`) instead of the element (`item`) when cloning to a
-  // string, and lacked a `continue` so the element was also pushed to the
-  // deferred stack and processed a second time.
-  const text = await new Blob([new Response("body"), "X"]).text();
-  expect(text).toBe("[object Response]X");
 });
 
 test("dupe() preserves allocated content_type for Body clone", () => {

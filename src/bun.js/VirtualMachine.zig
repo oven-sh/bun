@@ -965,6 +965,13 @@ pub fn globalExit(this: *VirtualMachine) noreturn {
 
     if (this.shouldDestructMainThreadOnExit()) {
         if (this.eventLoop().forever_timer) |t| t.deinit(true);
+        // Detached worker threads may still be in startVM()/spin() using the
+        // process-global resolver BSSMap singletons (dir_cache, dirname_store,
+        // etc.). transpiler.deinit() below frees those singletons, so request
+        // termination of every live worker and wait for each to reach
+        // shutdown() (past all resolver access) first. Node.js does the
+        // equivalent in Environment::stop_sub_worker_contexts().
+        webcore.WebWorker.terminateAllAndWait(10_000);
         // Embedded per-VM socket groups must drain while JSC is still alive
         // (closeAll() fires on_close → JS). After JSC teardown,
         // RareData.deinit() only deinit()s the groups (asserts empty).

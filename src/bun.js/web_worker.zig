@@ -46,11 +46,17 @@
 //!
 //! Every field below is grouped by which thread may touch it.
 //!
+//! At process exit (`globalExit` under BUN_DESTRUCT_VM_ON_EXIT),
+//! `terminateAllAndWait()` stops every live worker and waits for each to
+//! reach `shutdown()` before process-global resolver state is freed — the
+//! main-thread analogue of Node's `Environment::stop_sub_worker_contexts()`.
+//!
 //! Known gap vs Node.js: the worker thread is detached, not joined, so
 //! `await worker.terminate()` resolves before the OS thread is fully gone;
-//! nested workers are not stopped/joined when their parent exits. When a
-//! parent context is gone before the close task posts, the thread-held
-//! `Worker` ref is intentionally leaked (see `Worker::dispatchExit`).
+//! nested workers are not stopped when their WORKER parent's context tears
+//! down (only the main thread waits). When a parent context is gone before
+//! the close task posts, the thread-held `Worker` ref is intentionally
+//! leaked (see `Worker::dispatchExit`).
 
 const WebWorker = @This();
 
@@ -83,6 +89,11 @@ preloads: [][]const u8,
 name: [:0]const u8,
 
 // ---- Cross-thread signalling ------------------------------------------------
+
+/// Intrusive node for the process-global `LiveWorkers` list. Registered
+/// before the thread is spawned; removed in `shutdown()` once the worker is
+/// past all process-global resolver access.
+live_node: std.DoublyLinkedList.Node = .{},
 
 /// Set by the parent (`notifyNeedTermination`) or by the worker itself
 /// (`exit`). The worker loop polls this between ticks.
@@ -126,6 +137,74 @@ extern fn WebWorker__dispatchExit(*anyopaque, i32) void;
 extern fn WebWorker__dispatchOnline(cpp_worker: *anyopaque, *jsc.JSGlobalObject) void;
 extern fn WebWorker__fireEarlyMessages(cpp_worker: *anyopaque, *jsc.JSGlobalObject) void;
 extern fn WebWorker__dispatchError(*jsc.JSGlobalObject, *anyopaque, bun.String, JSValue) void;
+
+/// Process-global registry of worker threads that have been spawned and
+/// have not yet reached the point in `shutdown()` where they are past all
+/// process-global resolver access (BSSMap singletons like `dir_cache`).
+/// `globalExit()` uses this to terminate and wait for workers before
+/// `transpiler.deinit()` frees those singletons.
+///
+/// Lock ordering: `LiveWorkers.mutex` → `worker.vm_lock` (never the reverse).
+const LiveWorkers = struct {
+    var mutex: bun.Mutex = .{};
+    var list: std.DoublyLinkedList = .{};
+    /// Number of workers registered in `list`. Separate atomic so the wait
+    /// loop can poll without taking the mutex on every iteration.
+    var outstanding: std.atomic.Value(u32) = .init(0);
+
+    fn register(worker: *WebWorker) void {
+        mutex.lock();
+        defer mutex.unlock();
+        list.append(&worker.live_node);
+        _ = outstanding.fetchAdd(1, .release);
+    }
+
+    fn unregister(worker: *WebWorker) void {
+        mutex.lock();
+        defer mutex.unlock();
+        list.remove(&worker.live_node);
+        _ = outstanding.fetchSub(1, .release);
+    }
+};
+
+/// Request termination of every live worker and block until each has reached
+/// `shutdown()` (past all process-global resolver access), or `timeout_ms`
+/// elapses. Called from `VirtualMachine.globalExit()` on the main thread
+/// before `transpiler.deinit()` frees the process-global BSSMap singletons —
+/// without this, a detached worker still in `startVM()`/`spin()` would UAF on
+/// `dir_cache` / `dirname_store` etc.
+///
+/// This is the `Environment::stop_sub_worker_contexts()` equivalent for the
+/// main thread; nested workers (a worker's own sub-workers at the worker's
+/// exit) remain the documented gap.
+pub fn terminateAllAndWait(timeout_ms: u64) void {
+    if (LiveWorkers.outstanding.load(.acquire) == 0) return;
+
+    {
+        LiveWorkers.mutex.lock();
+        defer LiveWorkers.mutex.unlock();
+        var it = LiveWorkers.list.first;
+        while (it) |node| : (it = node.next) {
+            const worker: *WebWorker = @fieldParentPtr("live_node", node);
+            if (worker.requested_terminate.swap(true, .release)) continue;
+            worker.vm_lock.lock();
+            defer worker.vm_lock.unlock();
+            if (worker.vm) |vm| {
+                vm.jsc_vm.notifyNeedTermination();
+                vm.eventLoop().wakeup();
+            }
+        }
+    }
+
+    const start = std.time.milliTimestamp();
+    while (LiveWorkers.outstanding.load(.acquire) > 0) {
+        if (std.time.milliTimestamp() - start >= @as(i64, @intCast(timeout_ms))) {
+            log("terminateAllAndWait: timed out with {d} outstanding", .{LiveWorkers.outstanding.load(.acquire)});
+            return;
+        }
+        std.Thread.yield() catch {};
+    }
+}
 
 export fn WebWorker__getParentWorker(vm: *jsc.VirtualMachine) ?*anyopaque {
     const worker = vm.worker orelse return null;
@@ -222,11 +301,16 @@ pub fn create(
         worker.parent_poll_ref.ref(parent);
     }
 
+    // Register BEFORE spawning so terminateAllAndWait() can never miss a
+    // worker whose thread is already running.
+    LiveWorkers.register(worker);
+
     var thread = std.Thread.spawn(
         .{ .stack_size = bun.default_thread_stack_size },
         threadMain,
         .{worker},
     ) catch {
+        LiveWorkers.unregister(worker);
         worker.parent_poll_ref.unref(parent);
         worker.destroy();
         error_message.* = bun.String.static("Failed to spawn worker thread");
@@ -583,6 +667,12 @@ fn shutdown(this: *WebWorker) noreturn {
     if (globalObject) |global| {
         WebWorker__teardownJSCVM(global);
     }
+
+    // JSC is down; no more resolver/module-loader access past this point.
+    // Unregister so the main thread's terminateAllAndWait() can proceed to
+    // free process-global resolver state. Must happen before dispatchExit
+    // because `this` may be freed once that posts.
+    LiveWorkers.unregister(this);
 
     // ---- 4. Post close task to parent ------------------------------------
     WebWorker__dispatchExit(cpp_worker, exit_code);

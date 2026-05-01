@@ -26,14 +26,7 @@ test("new Worker with { ref: false } does not keep the parent alive", async () =
         console.log("spawned");
       `,
     ],
-    // The parent exits while the detached worker thread is still starting.
-    // With BUN_DESTRUCT_VM_ON_EXIT=1 (set by the CI ASAN runner), globalExit
-    // frees process-global resolver caches (BSSMap singletons) that the
-    // worker's startVM() → configureDefines() is concurrently reading — a
-    // pre-existing race orthogonal to this test (workers are detached, not
-    // joined at process exit). Disable it here; we only care whether the
-    // parent event loop stays alive.
-    env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "0" },
+    env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });

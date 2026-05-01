@@ -142,14 +142,14 @@ export async function expectMaxObjectTypeCount(
   var { heapStats } = require("bun:jsc");
 
   gc();
-  if (heapStats().objectTypeCounts[type] <= count) return;
+  if ((heapStats().objectTypeCounts[type] ?? 0) <= count) return;
   gc(true);
   for (const wait = 20; maxWait > 0; maxWait -= wait) {
-    if (heapStats().objectTypeCounts[type] <= count) break;
+    if ((heapStats().objectTypeCounts[type] ?? 0) <= count) break;
     await Bun.sleep(wait);
     gc();
   }
-  expect(heapStats().objectTypeCounts[type] || 0).toBeLessThanOrEqual(count);
+  expect(heapStats().objectTypeCounts[type] ?? 0).toBeLessThanOrEqual(count);
 }
 
 // we must ensure that finalizers are run

@@ -666,7 +666,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
 
     if (millisecondsValue.inherits<JSC::DateInstance>()) {
         auto now = MonotonicTime::now();
-        double milliseconds = uncheckedDowncast<JSC::DateInstance>(millisecondsValue)->internalNumber() - now.approximateWallTime().secondsSinceEpoch().milliseconds();
+        double milliseconds = uncheckedDowncast<JSC::DateInstance>(millisecondsValue)->internalNumber() - now.approximate<WTF::WallTime>().secondsSinceEpoch().milliseconds();
         millisecondsValue = JSC::jsNumber(milliseconds > 0 ? std::ceil(milliseconds) : 0);
     }
 

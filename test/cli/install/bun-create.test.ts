@@ -107,20 +107,32 @@ it("should create template from local folder", async () => {
   expect(await Bun.file(join(x_dir, testTemplate, "foo", "bar.js")).text()).toBe("hi");
 });
 
+// `bun create <github-url>` hits https://api.github.com/repos/{owner}/{repo}/tarball.
+// Unauthenticated GitHub API is limited to 60 req/hr per IP; CI agents running many
+// parallel builds exhaust that quickly. When we detect the rate-limit error, skip the
+// test rather than fail — we are testing `bun create`, not GitHub's availability.
+function isGithubRateLimited(stderr: string): boolean {
+  if (stderr.includes("GitHub returned 403")) {
+    console.warn("Skipping: GitHub API rate limit reached (403). Set GITHUB_TOKEN to avoid this.");
+    return true;
+  }
+  return false;
+}
+
 it("should not mention cd prompt when created in current directory", async () => {
-  const { stdout, exited } = spawn({
+  const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "create", "https://github.com/dylan-conway/create-test", "."],
     cwd: x_dir,
     stdout: "pipe",
     stdin: "inherit",
-    stderr: "inherit",
+    stderr: "pipe",
     env,
   });
 
-  await exited;
+  const [out, err] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  if (isGithubRateLimited(err)) return;
 
-  const out = await stdout.text();
-
+  expect(err).not.toContain("error:");
   expect(out).toContain("bun dev");
   expect(out).not.toContain("\n\n  cd \n  bun dev\n\n");
 }, 20_000);
@@ -135,13 +147,13 @@ for (const repo of ["https://github.com/dylan-conway/create-test", "github.com/d
       env,
     });
 
-    const err = await stderr.text();
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    if (isGithubRateLimited(err)) return;
     expect(err).not.toContain("error:");
-    const out = await stdout.text();
     expect(out).toContain("Success! dylan-conway/create-test loaded into create-test");
     expect(await exists(join(x_dir, "create-test", "node_modules", "jquery"))).toBe(true);
 
-    expect(await exited).toBe(0);
+    expect(exitCode).toBe(0);
   }, 20_000);
 }
 

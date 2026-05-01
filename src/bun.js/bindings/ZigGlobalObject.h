@@ -36,6 +36,7 @@ class InternalModuleRegistry;
 class NapiHandleScopeImpl;
 class JSNextTickQueue;
 class Process;
+class SecureContextCache;
 } // namespace Bun
 
 namespace v8 {
@@ -770,6 +771,11 @@ public:
     bool hasOverriddenModuleWrapper = false;
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
+
+    // WeakGCMap<uint64_t, JSObject> — JS-level dedup of SecureContext by
+    // config digest. WeakGCMap self-registers with the heap, so no
+    // visitChildren wiring needed (and it must NOT keep its values alive).
+    std::unique_ptr<Bun::SecureContextCache> m_secureContextCache;
 
     WTF::Vector<WTF::Ref<NapiEnv>> m_napiEnvs;
     Ref<NapiEnv> makeNapiEnv(const napi_module&);

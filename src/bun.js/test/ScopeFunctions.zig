@@ -1,7 +1,9 @@
 const Mode = enum { describe, @"test" };
 mode: Mode,
 cfg: bun_test.BaseScopeCfg,
-/// typically `.zero`. not Strong.Optional because codegen adds it to the visit function.
+/// typically `.zero`. not Strong.Optional because codegen visits the C++ `m_each`
+/// WriteBarrier on the JS wrapper (see `values: ["each"]` in jest.classes.ts). This
+/// field is kept in sync with that slot via `js.eachSetCached` in `createUnbound`.
 each: jsc.JSValue,
 
 pub const strings = struct {
@@ -456,6 +458,10 @@ pub fn createUnbound(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue,
 
     const value = scope_functions.toJS(globalThis);
     value.ensureStillAlive();
+    // Write into the C++ m_each WriteBarrier so GC visits it. The Zig `each` field
+    // lives in unmanaged memory that JSC never scans; without this the array can be
+    // collected between `.each(arr)` and the trailing `("name", cb)` call.
+    if (each != .zero) js.eachSetCached(value, globalThis, each);
     return value;
 }
 

@@ -296,7 +296,9 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
 
         const can_execute = !connection.hasQueryRunning();
         if (can_execute) {
+            const write_start = PostgresSQLConnection.WriteBufferSnapshot.take(connection);
             PostgresRequest.executeQuery(query_str.slice(), PostgresSQLConnection.Writer, writer) catch |err| {
+                write_start.restore(connection);
                 // fail to run do cleanup
                 this.statement = null;
                 bun.default_allocator.destroy(stmt);
@@ -446,6 +448,7 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
                     return error.JSError;
                 };
                 writer.write(&protocol.Sync) catch |err| {
+                    write_start.restore(connection);
                     if (connection_entry_value != null) {
                         _ = connection.statements.remove(signature_hash);
                     }

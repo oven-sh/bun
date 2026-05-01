@@ -1409,6 +1409,7 @@ fn advance(this: *PostgresSQLConnection) void {
                                     continue;
                                 };
                                 connection_writer.write(&protocol.Sync) catch |err| {
+                                    write_start.restore(this);
                                     if (this.globalObject.tryTakeException()) |err_| {
                                         req.onJSError(err_, this.globalObject);
                                     } else {

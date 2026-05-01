@@ -262,6 +262,26 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
     else
         null;
 
+    // In HMR, ConvertESMExportsForHmr deduplicates import records by path:
+    // two `import { X } from 'mod'` statements become one, and the second
+    // record is marked is_unused=true. resolveImportRecords then skips those
+    // records, so their path.text stays as the raw specifier while the
+    // surviving record's path.text becomes the resolved absolute path.
+    // named_imports entries created for the dedup'd record still point at
+    // its index, so the direct path lookup below fails for those entries.
+    // Build a fallback: raw specifier → surviving record's resolved path
+    // text, using non-unused records in this file. See #28886.
+    var dedup_fallback = bun.StringArrayHashMapUnmanaged([]const u8){};
+    defer dedup_fallback.deinit(this.allocator());
+    if (this.transpiler.options.dev_server != null) {
+        for (file_import_records.slice()) |ir_probe| {
+            if (ir_probe.flags.is_unused or ir_probe.flags.is_internal) continue;
+            if (ir_probe.original_path.len == 0) continue;
+            if (bun.strings.eql(ir_probe.original_path, ir_probe.path.text)) continue;
+            try dedup_fallback.put(this.allocator(), ir_probe.original_path, ir_probe.path.text);
+        }
+    }
+
     var ni_iter = result.ast.named_imports.iterator();
     while (ni_iter.next()) |ni_entry| {
         const ni = ni_entry.value_ptr;
@@ -272,10 +292,17 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
         // path map as a read-only fallback. Do NOT write back to the import
         // record — the dev server intentionally leaves source_indices unset
         // and other code (IncrementalGraph, printer) depends on that.
+        // For dedup'd HMR records (is_unused), fall back to a sibling's
+        // resolved path text since the record itself still has the raw
+        // specifier in path.text.
+        const resolved_path_text = if (ir.flags.is_unused)
+            (dedup_fallback.get(ir.path.text) orelse ir.path.text)
+        else
+            ir.path.text;
         const target = if (ir.source_index.isValid())
             ir.source_index.get()
         else if (path_to_source_index_map) |map|
-            map.getPath(&ir.path) orelse continue
+            map.get(resolved_path_text) orelse continue
         else
             continue;
 
@@ -294,7 +321,7 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
             }
             // Persist the export request on DevServer so it survives across builds.
             if (this.transpiler.options.dev_server) |dev| {
-                persistBarrelExport(dev, ir.path.text, alias);
+                persistBarrelExport(dev, resolved_path_text, alias);
             }
         } else if (!gop.found_existing) {
             gop.value_ptr.* = .{ .partial = .{} };
@@ -341,10 +368,14 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
         const ni = ni_entry.value_ptr;
         if (ni.import_record_index >= file_import_records.len) continue;
         const ir = file_import_records.slice()[ni.import_record_index];
+        const resolved_path_text = if (ir.flags.is_unused)
+            (dedup_fallback.get(ir.path.text) orelse ir.path.text)
+        else
+            ir.path.text;
         const ir_target = if (ir.source_index.isValid())
             ir.source_index.get()
         else if (path_to_source_index_map) |map|
-            map.getPath(&ir.path) orelse continue
+            map.get(resolved_path_text) orelse continue
         else
             continue;
 

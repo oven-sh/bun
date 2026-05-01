@@ -19,6 +19,8 @@ if (mode !== "sendMany" && mode !== "send") {
   process.exit(2);
 }
 
+const size = 4096;
+
 let received: Buffer | undefined;
 let resolve!: () => void;
 const gotData = new Promise<void>(r => (resolve = r));
@@ -29,7 +31,14 @@ const server = await Bun.udpSocket({
   socket: {
     data(_socket, data) {
       if (received) return;
-      received = Buffer.from(data as ArrayBuffer);
+      const chunk = Buffer.from(data as ArrayBuffer);
+      // In `send` mode the first call captures the payload from the
+      // now-detached view (length 0). On Linux that surfaces as EFAULT and
+      // nothing is sent; on Windows it succeeds and a 0-byte packet arrives
+      // here before the retry loop delivers the real payload. Ignore it so
+      // both platforms settle on the 4096-byte retry packet.
+      if (chunk.length !== size) return;
+      received = chunk;
       resolve();
     },
   },
@@ -37,7 +46,6 @@ const server = await Bun.udpSocket({
 const client = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1" });
 
 try {
-  const size = 4096;
   const buf = new ArrayBuffer(size);
   const payload = new Uint8Array(buf);
   for (let i = 0; i < size; i++) payload[i] = i & 0xff;
@@ -65,10 +73,11 @@ try {
   // sendMany copies the bytes into its arena before coercion, so the original
   // 4096-byte packet is sent. send() resolves the destination first and then
   // captures the payload from the now-detached view, which is length 0; on
-  // some platforms that surfaces as EFAULT (the same pre-existing behavior
-  // as `send(detachedView, ...)`). Either outcome is fine — the regression
-  // this fixture guards is the ASAN heap-use-after-free, which aborts the
-  // process before this catch ever runs.
+  // Linux that surfaces as EFAULT (the same pre-existing behavior as
+  // `send(detachedView, ...)`), on Windows it sends a 0-byte packet. Either
+  // outcome is fine — the regression this fixture guards is the ASAN
+  // heap-use-after-free, which aborts the process before this catch ever
+  // runs.
   try {
     if (mode === "sendMany") {
       client.sendMany([payload, evilPort, "127.0.0.1"]);

@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
 import { BunString_toThreadSafeRefCountDelta } from "bun:internal-for-testing";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // BunString__toThreadSafe must release the ref it held on the previous

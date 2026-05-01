@@ -292,6 +292,18 @@ describe.concurrent("napi", () => {
     });
   });
 
+  describe("napi_create_external_arraybuffer", () => {
+    it("wraps caller data and does not fire finalize_cb while the ArrayBuffer is alive", async () => {
+      const result = await checkSameOutput("test_external_arraybuffer_finalizer", []);
+      expect(result).toContain("PASS: napi_create_external_arraybuffer wraps caller data without copying");
+      expect(result).toContain(
+        "PASS: napi_create_external_arraybuffer finalizer not called while ArrayBuffer is alive",
+      );
+      expect(result).toContain("PASS: napi_create_external_arraybuffer data intact after GC");
+      expect(result).not.toContain("FAIL");
+    });
+  });
+
   describe("napi_async_work", () => {
     it("null checks execute callbacks", async () => {
       const output = await checkSameOutput("test_napi_async_work_execute_null_check", []);

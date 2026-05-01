@@ -1927,6 +1927,102 @@ static napi_value test_external_buffer_data_lifetime(const Napi::CallbackInfo &i
   return ok(env);
 }
 
+// Regression test: napi_create_external_arraybuffer uses the armable
+// NapiExternalBufferDestructor so that if the wrapping JSArrayBuffer fails
+// to be created, finalize_cb is not invoked (per the Node-API contract the
+// caller retains ownership on failure). The JSArrayBuffer::create(vm, ...)
+// path cannot currently fail without crashing, so the failure branch is not
+// directly reachable from a test; this covers the success path to guard
+// against the refactor breaking finalize_cb delivery (forgetting arm()) or
+// firing it prematurely.
+static int external_arraybuffer_finalize_count = 0;
+
+static napi_value
+test_external_arraybuffer_finalizer(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  external_arraybuffer_finalize_count = 0;
+
+  const size_t data_size = 16;
+  uint8_t *ext_data = (uint8_t *)malloc(data_size);
+  for (size_t i = 0; i < data_size; i++)
+    ext_data[i] = (uint8_t)(0xA0 + i);
+
+  napi_value arraybuffer;
+  NODE_API_CALL(
+      env, napi_create_external_arraybuffer(
+               env, ext_data, data_size,
+               +[](napi_env, void *data, void *) {
+                 external_arraybuffer_finalize_count++;
+                 free(data);
+               },
+               nullptr, &arraybuffer));
+
+  // The finalizer must not have run yet: the ArrayBuffer is still live.
+  if (external_arraybuffer_finalize_count != 0) {
+    printf("FAIL: napi_create_external_arraybuffer finalizer ran before "
+           "ArrayBuffer was collected\n");
+    return ok(env);
+  }
+
+  // Verify the backing store is the caller's pointer and the bytes match.
+  void *ab_data;
+  size_t ab_len;
+  NODE_API_CALL(
+      env, napi_get_arraybuffer_info(env, arraybuffer, &ab_data, &ab_len));
+
+  bool bytes_ok = ab_len == data_size;
+  for (size_t i = 0; bytes_ok && i < data_size; i++)
+    bytes_ok = ((uint8_t *)ab_data)[i] == (uint8_t)(0xA0 + i);
+
+  if (ab_data == ext_data && bytes_ok) {
+    printf("PASS: napi_create_external_arraybuffer wraps caller data "
+           "without copying\n");
+  } else {
+    printf("FAIL: napi_create_external_arraybuffer data mismatch\n");
+  }
+
+  // Pin the ArrayBuffer across several GC cycles and verify the finalizer
+  // does not fire while it is reachable.
+  napi_ref ab_ref;
+  NODE_API_CALL(env, napi_create_reference(env, arraybuffer, 1, &ab_ref));
+
+  run_gc(info);
+  run_gc(info);
+  run_gc(info);
+
+  if (external_arraybuffer_finalize_count == 0) {
+    printf("PASS: napi_create_external_arraybuffer finalizer not called "
+           "while ArrayBuffer is alive\n");
+  } else {
+    printf("FAIL: napi_create_external_arraybuffer finalizer called %d "
+           "time(s) while ArrayBuffer is alive\n",
+           external_arraybuffer_finalize_count);
+  }
+
+  // The data must still be intact.
+  napi_value ab_value;
+  NODE_API_CALL(env, napi_get_reference_value(env, ab_ref, &ab_value));
+  NODE_API_CALL(env,
+                napi_get_arraybuffer_info(env, ab_value, &ab_data, &ab_len));
+  bytes_ok = ab_len == data_size;
+  for (size_t i = 0; bytes_ok && i < data_size; i++)
+    bytes_ok = ((uint8_t *)ab_data)[i] == (uint8_t)(0xA0 + i);
+  if (bytes_ok) {
+    printf("PASS: napi_create_external_arraybuffer data intact after GC\n");
+  } else {
+    printf("FAIL: napi_create_external_arraybuffer data corrupted after "
+           "GC\n");
+  }
+
+  NODE_API_CALL(env, napi_delete_reference(env, ab_ref));
+
+  // Do not assert on post-release finalizer timing: both V8 and JSC may
+  // defer it past the synchronous GC calls above. Any double-invocation or
+  // use-after-free will be caught by ASAN when the process tears down.
+  return ok(env);
+}
+
 // Regression test: PROPERTY_NAME_FROM_UTF8 must copy string data.
 // Previously it used StringImpl::createWithoutCopying for ASCII strings,
 // which could leave dangling pointers in JSC's atom string table.
@@ -2153,6 +2249,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_empty_buffer_info);
   REGISTER_FUNCTION(env, exports, napi_get_typeof);
   REGISTER_FUNCTION(env, exports, test_external_buffer_data_lifetime);
+  REGISTER_FUNCTION(env, exports, test_external_arraybuffer_finalizer);
   REGISTER_FUNCTION(env, exports, test_napi_get_named_property_copied_string);
   REGISTER_FUNCTION(env, exports, test_issue_25933);
   REGISTER_FUNCTION(env, exports, test_napi_make_callback_async_context_frame);

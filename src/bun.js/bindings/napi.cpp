@@ -2018,8 +2018,9 @@ extern "C" napi_status napi_create_buffer(napi_env env, size_t length,
 }
 
 // SharedTask subclass with an armed flag so that the destructor can be
-// armed only after JSUint8Array::create succeeds.  If creation throws,
-// the destructor runs disarmed and skips finalize_cb.
+// armed only after the wrapping JS object (JSUint8Array / JSArrayBuffer)
+// is successfully created. If creation throws, the destructor runs
+// disarmed and skips finalize_cb so the caller retains ownership.
 class NapiExternalBufferDestructor final : public SharedTask<void(void*)> {
 public:
     NapiExternalBufferDestructor(WTF::Ref<NapiEnv>&& env, napi_finalize cb, void* hint)
@@ -2103,12 +2104,22 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
 
-    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(external_data), byte_length }, createSharedTask<void(void*)>([env = WTF::Ref<NapiEnv>(*env), finalize_hint, finalize_cb](void* p) {
-        NAPI_LOG("external ArrayBuffer finalizer");
-        env->doFinalizer(finalize_cb, p, finalize_hint);
-    }));
+    // Uses NapiExternalBufferDestructor instead of createSharedTask so that
+    // finalize_cb is only invoked if JSArrayBuffer::create succeeds. Per the
+    // Node-API contract, the caller retains ownership of external_data when
+    // this function fails, so calling finalize_cb on the failure path would
+    // cause a double-free.
+    Ref<NapiExternalBufferDestructor> destructor = adoptRef(*new NapiExternalBufferDestructor(WTF::Ref<NapiEnv>(*env), finalize_cb, finalize_hint));
+    // Get pointer before using WTF::move
+    auto* destructorPtr = destructor.ptr();
+    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(external_data), byte_length }, WTF::move(destructor));
 
     auto* buffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTF::move(arrayBuffer));
+    NAPI_RETURN_IF_EXCEPTION(env);
+
+    // Arm only after successful creation: if create threw, the destructor
+    // runs disarmed and skips finalize_cb (caller retains ownership).
+    destructorPtr->arm();
 
     *result = toNapi(buffer, globalObject);
     NAPI_RETURN_SUCCESS(env);

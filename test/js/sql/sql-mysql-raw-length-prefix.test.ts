@@ -79,7 +79,9 @@ if (isDockerEnabled()) {
   // No docker daemon (local sandbox). If a MySQL server is reachable at
   // MYSQL_URL, exercise the fixture there so the regression is still
   // covered; otherwise silently skip — the docker branch above owns CI.
-  const url = process.env.MYSQL_URL || "mysql://testuser:testpass@127.0.0.1:3306/bun_test";
+  // Default matches the convention used by sql-mysql-bind-oob.test.ts so
+  // one local-MySQL setup exercises both regressions.
+  const url = process.env.MYSQL_URL || "mysql://bun@127.0.0.1:3306/bun_sql_test";
 
   describe("mysql (local)", () => {
     test(".raw() on json / varchar returns only the payload (#30039)", async () => {

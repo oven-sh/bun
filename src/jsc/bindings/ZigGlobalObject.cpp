@@ -535,14 +535,20 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         const auto initializeWorker = [&](WebCore::Worker& worker) -> void {
             auto& options = worker.options();
 
-            // `close` is the WHATWG DedicatedWorkerGlobalScope#close API. It's
-            // installed unconditionally by the LUT, but `node:worker_threads`
-            // workers must not expose it — Node.js has no such global there,
-            // so `typeof close` should be `"undefined"`. Drop the property
-            // from the global on Node workers to match.
-            if (options.kind == WebCore::WorkerOptions::Kind::Node) {
-                JSC::DeletePropertySlot slot;
-                JSC::JSObject::deleteProperty(globalObject, globalObject, JSC::Identifier::fromString(vm, "close"_s), slot);
+            // `close` is the WHATWG DedicatedWorkerGlobalScope#close API.
+            // Install it only on Web workers — Node.js `worker_threads`
+            // workers have no such global, so `typeof close` must be
+            // `"undefined"` there. We use `putDirectNativeFunction` rather
+            // than a LUT entry so `typeof close === "undefined"` on Node
+            // workers costs nothing and doesn't trigger
+            // `reifyAllStaticProperties` (which would eagerly materialize
+            // every lazy global in `bunGlobalObjectTable`).
+            if (options.kind == WebCore::WorkerOptions::Kind::Web) {
+                globalObject->putDirectNativeFunction(
+                    vm, globalObject,
+                    JSC::Identifier::fromString(vm, "close"_s),
+                    0, WebCore::jsFunctionSelfClose,
+                    JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
             }
 
             if (options.env.has_value()) {
@@ -578,6 +584,19 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 
         if (auto* worker = static_cast<WebCore::Worker*>(worker_ptr)) {
             initializeWorker(*worker);
+        } else {
+            // No parent worker → main thread (or a test-isolation VM).
+            // Install `close` as a no-op equivalent of the
+            // DedicatedWorkerGlobalScope#close API. `jsFunctionSelfClose`
+            // early-returns when there is no parent Worker, so the function
+            // itself does the right thing — we just need it to exist so
+            // `typeof close === "function"` and shared code that works on
+            // both the main thread and inside a Web Worker doesn't throw.
+            globalObject->putDirectNativeFunction(
+                vm, globalObject,
+                JSC::Identifier::fromString(vm, "close"_s),
+                0, WebCore::jsFunctionSelfClose,
+                JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
         }
     }
 

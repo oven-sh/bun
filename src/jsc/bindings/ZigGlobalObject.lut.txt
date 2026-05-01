@@ -9,7 +9,6 @@
   clearImmediate                  functionClearImmediate                               Function 1
   clearInterval                   functionClearInterval                                Function 1
   clearTimeout                    functionClearTimeout                                 Function 1
-  close                           jsFunctionSelfClose                                  Function 0
   confirm                         WebCore__confirm                                     Function 1
   dispatchEvent                   jsFunctionDispatchEvent                              Function 1
   fetch                           constructBunFetchObject                              PropertyCallback

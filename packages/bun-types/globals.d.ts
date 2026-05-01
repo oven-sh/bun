@@ -1380,6 +1380,16 @@ declare function structuredClone<T>(value: T, options?: Bun.StructuredSerializeO
  */
 declare function postMessage(message: any, transfer?: Bun.Transferable[]): void;
 
+/**
+ * Stop the worker's event loop after the current task finishes.
+ *
+ * WHATWG DedicatedWorkerGlobalScope#close. Only useful in a Web Worker;
+ * calling this from the main thread does nothing. Not available inside
+ * `node:worker_threads` workers — use `process.exit()` or
+ * `parentPort.close()` there instead.
+ */
+declare function close(): void;
+
 interface EventSourceInit {
   withCredentials?: boolean;
 }

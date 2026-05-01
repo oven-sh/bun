@@ -76,7 +76,8 @@ pub fn NewReaderWrap(
 
         pub fn rawEncodeLenData(this: @This()) AnyMySQLError.Error!Data {
             if (decodeLengthInt(this.peek())) |result| {
-                return try this.read(@intCast(result.value + result.bytes_read));
+                this.skip(result.bytes_read);
+                return try this.read(@intCast(result.value));
             }
             return AnyMySQLError.Error.InvalidEncodedLength;
         }

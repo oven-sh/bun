@@ -480,6 +480,34 @@ if (isDockerEnabled()) {
           expect(b).toEqual({ b: 2 });
         });
 
+        test(".raw() decodes length-prefixed columns without the prefix bytes (#30039)", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          const random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
+          await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (post json, name varchar(32))`;
+          // A JSON payload longer than 0xfb bytes uses a 3-byte length prefix;
+          // 'testname' is 8 bytes and uses a 1-byte prefix. Exercise both.
+          const jsonPayload = {
+            type: "doc",
+            content: Array.from({ length: 20 }, () => ({ type: "paragraph", text: "hello world" })),
+          };
+          const jsonText = JSON.stringify(jsonPayload);
+          await sql`INSERT INTO ${sql(random_name)} ${sql([{ post: jsonPayload, name: "testname" }])}`;
+
+          // Binary protocol (prepared statements) — default path.
+          const raw = await sql`SELECT post, name FROM ${sql(random_name)}`.raw();
+          expect(raw[0][0]).toBeInstanceOf(Uint8Array);
+          expect(raw[0][1]).toBeInstanceOf(Uint8Array);
+          // First byte must be payload ('{' for JSON, 't' for "testname"),
+          // not the MySQL length-encoded-integer prefix byte (0xa7 / 0x08 respectively).
+          expect(Buffer.from(raw[0][0]).toString("utf-8")).toBe(jsonText);
+          expect(Buffer.from(raw[0][1]).toString("utf-8")).toBe("testname");
+
+          // Text protocol (.simple()) — different decode path that also uses rawEncodeLenData.
+          const rawSimple = await sql`SELECT post, name FROM ${sql(random_name)}`.simple().raw();
+          expect(Buffer.from(rawSimple[0][0]).toString("utf-8")).toBe(jsonText);
+          expect(Buffer.from(rawSimple[0][1]).toString("utf-8")).toBe("testname");
+        });
+
         test("Binary", async () => {
           const random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
           await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a binary(1), b varbinary(1), c blob)`;

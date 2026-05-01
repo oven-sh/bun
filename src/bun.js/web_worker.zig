@@ -148,8 +148,8 @@ extern fn WebWorker__dispatchError(*jsc.JSGlobalObject, *anyopaque, bun.String, 
 const LiveWorkers = struct {
     var mutex: bun.Mutex = .{};
     var list: std.DoublyLinkedList = .{};
-    /// Number of workers registered in `list`. Separate atomic so the wait
-    /// loop can poll without taking the mutex on every iteration.
+    /// Number of workers registered in `list`. Separate atomic so
+    /// `terminateAllAndWait` can futex-wait on it without the mutex.
     var outstanding: std.atomic.Value(u32) = .init(0);
 
     fn register(worker: *WebWorker) void {
@@ -161,9 +161,13 @@ const LiveWorkers = struct {
 
     fn unregister(worker: *WebWorker) void {
         mutex.lock();
-        defer mutex.unlock();
         list.remove(&worker.live_node);
+        mutex.unlock();
+        // Wake any waiter in terminateAllAndWait when we hit zero. Waking
+        // unconditionally is fine (spurious wakeups just re-check the
+        // counter) and avoids a compare-before-wake race.
         _ = outstanding.fetchSub(1, .release);
+        std.Thread.Futex.wake(&outstanding, 1);
     }
 };
 
@@ -177,6 +181,13 @@ const LiveWorkers = struct {
 /// This is the `Environment::stop_sub_worker_contexts()` equivalent for the
 /// main thread; nested workers (a worker's own sub-workers at the worker's
 /// exit) remain the documented gap.
+///
+/// Termination is cooperative: `requested_terminate` is polled at
+/// checkpoints throughout `startVM()` and `spin()`, and for a running VM
+/// `notifyNeedTermination()` raises a TerminationException at the next JSC
+/// safepoint. We do NOT use `thread_suspend`/`SuspendThread` — a worker
+/// frozen mid-mimalloc-alloc or holding the `dir_cache` mutex would
+/// deadlock/corrupt the very cleanup we're trying to make safe.
 pub fn terminateAllAndWait(timeout_ms: u64) void {
     if (LiveWorkers.outstanding.load(.acquire) == 0) return;
 
@@ -196,13 +207,23 @@ pub fn terminateAllAndWait(timeout_ms: u64) void {
         }
     }
 
-    const start = std.time.milliTimestamp();
-    while (LiveWorkers.outstanding.load(.acquire) > 0) {
-        if (std.time.milliTimestamp() - start >= @as(i64, @intCast(timeout_ms))) {
-            log("terminateAllAndWait: timed out with {d} outstanding", .{LiveWorkers.outstanding.load(.acquire)});
+    // Futex-wait on the counter so we sleep rather than burn a core. Each
+    // unregister() wakes us; we re-check and re-wait until zero or deadline.
+    var timer = std.time.Timer.start() catch {
+        // Monotonic clock unavailable — fall back to a yield spin.
+        while (LiveWorkers.outstanding.load(.acquire) > 0) std.Thread.yield() catch {};
+        return;
+    };
+    const deadline_ns = timeout_ms * std.time.ns_per_ms;
+    while (true) {
+        const n = LiveWorkers.outstanding.load(.acquire);
+        if (n == 0) return;
+        const elapsed = timer.read();
+        if (elapsed >= deadline_ns) {
+            log("terminateAllAndWait: timed out with {d} outstanding", .{n});
             return;
         }
-        std.Thread.yield() catch {};
+        std.Thread.Futex.timedWait(&LiveWorkers.outstanding, n, deadline_ns - elapsed) catch {};
     }
 }
 
@@ -468,6 +489,15 @@ fn startVM(this: *WebWorker) !void {
     const loader = try allocator.create(bun.DotEnv.Loader);
     loader.* = bun.DotEnv.Loader.init(map, allocator);
 
+    // Checkpoint before the expensive part: initWorker builds a full JSC
+    // VM. If terminateAllAndWait() fired while we were cloning the env
+    // above, bail now rather than spending ~50–100ms (release) creating a
+    // VM that will immediately tear down.
+    if (this.hasRequestedTerminate()) {
+        temp_proxy_storage.deinit();
+        this.shutdown();
+    }
+
     var vm = try jsc.VirtualMachine.initWorker(this, .{
         .allocator = allocator,
         .args = transform_options,
@@ -487,6 +517,14 @@ fn startVM(this: *WebWorker) !void {
 
     if (this.parent.standalone_module_graph) |graph| {
         bun.bun_js.applyStandaloneRuntimeFlags(b, graph);
+    }
+
+    // Second checkpoint: initWorker just spent the bulk of startup time;
+    // if terminate arrived during it, skip configureDefines() (which
+    // walks the resolver's global dir_cache) and entry-point loading.
+    if (this.hasRequestedTerminate()) {
+        vm.proxy_env_storage.deinit();
+        this.shutdown();
     }
 
     b.configureDefines() catch {

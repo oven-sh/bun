@@ -177,5 +177,36 @@ describe("issue #29010 — Date parameters serialize as ISO 8601", async () => {
         expect.objectContaining({ code: "ERR_POSTGRES_INVALID_QUERY_BINDING" }),
       );
     });
+
+    // The `error.InvalidQueryBinding` return above fires *mid* `writeBind`
+    // — after the 'B' tag, a zeroed length placeholder, names, format codes
+    // and any earlier parameter values are already in `write_buffer`. The
+    // catch blocks in `advance()` / `doRun` must roll the buffer back so
+    // catching the rejection and issuing another query on the same
+    // connection doesn't ship a truncated Bind frame that desyncs the
+    // protocol and kills the connection.
+    test("connection survives a caught bind error (prepare: false)", async () => {
+      await using db = new SQL({ ...baseOptions, prepare: false });
+      await expect(db`SELECT ${invalid}::timestamptz AS x`.execute()).rejects.toThrow(
+        expect.objectContaining({ code: "ERR_POSTGRES_INVALID_QUERY_BINDING" }),
+      );
+      // Without rollback the partial Parse + Describe + 'B'… bytes are still
+      // in `write_buffer`, so this SELECT's frames are appended after them
+      // and the server drops the connection with "invalid message length".
+      const [{ y }] = await db`SELECT 1 AS y`;
+      expect(y).toBe(1);
+    });
+
+    test("connection survives a caught bind error (prepare: true, binary path)", async () => {
+      await using db = new SQL({ ...baseOptions, prepare: true });
+      const good = new Date("2024-01-15T12:30:45.000Z");
+      // Prime so the next bind takes the binary path in `bindAndExecute`.
+      await db`SELECT ${good}::timestamptz AS x`;
+      await expect(db`SELECT ${invalid}::timestamptz AS x`.execute()).rejects.toThrow(
+        expect.objectContaining({ code: "ERR_POSTGRES_INVALID_QUERY_BINDING" }),
+      );
+      const [{ y }] = await db`SELECT 1 AS y`;
+      expect(y).toBe(1);
+    });
   });
 });

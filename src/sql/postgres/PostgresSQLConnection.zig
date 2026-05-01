@@ -1017,6 +1017,35 @@ pub const Writer = struct {
     }
 };
 
+/// Snapshot of `write_buffer` length for rollback on a failed write.
+///
+/// `PostgresRequest.*` helpers append directly to `write_buffer` and can
+/// fail mid-message — e.g. `writeBind` returns `error.InvalidQueryBinding`
+/// for `new Date(NaN)` *after* emitting the 'B' tag, a zeroed length
+/// placeholder, names, format codes and earlier parameter values. If that
+/// partial frame is left in the buffer, the next query's bytes are appended
+/// after it and `flushData()` ships a protocol stream PostgreSQL rejects
+/// with "invalid message length", killing the connection.
+///
+/// Capture with `.take(connection)` immediately before a `PostgresRequest`
+/// call and `.restore(connection)` at the top of its `catch |err|` block so
+/// the connection remains usable after a bind error the user catches.
+/// `head` is not captured — it only advances in `flushData()`, which is not
+/// called between the snapshot and the catch.
+pub const WriteBufferSnapshot = struct {
+    len: u32,
+
+    pub fn take(connection: *const PostgresSQLConnection) WriteBufferSnapshot {
+        return .{ .len = connection.write_buffer.byte_list.len };
+    }
+
+    pub fn restore(self: WriteBufferSnapshot, connection: *PostgresSQLConnection) void {
+        bun.debugAssert(self.len <= connection.write_buffer.byte_list.len);
+        bun.debugAssert(connection.write_buffer.head <= self.len);
+        connection.write_buffer.byte_list.len = self.len;
+    }
+};
+
 pub fn writer(this: *PostgresSQLConnection) protocol.NewWriter(Writer) {
     return .{
         .wrapped = .{
@@ -1139,7 +1168,9 @@ fn advance(this: *PostgresSQLConnection) void {
                     var query_str = req.query.toUTF8(bun.default_allocator);
                     defer query_str.deinit();
                     debug("execute simple query: {s}", .{query_str.slice()});
+                    const write_start = WriteBufferSnapshot.take(this);
                     PostgresRequest.executeQuery(query_str.slice(), PostgresSQLConnection.Writer, this.writer()) catch |err| {
+                        write_start.restore(this);
                         if (this.globalObject.tryTakeException()) |err_| {
                             req.onJSError(err_, this.globalObject);
                         } else {
@@ -1202,7 +1233,9 @@ fn advance(this: *PostgresSQLConnection) void {
                                     debug("parse, bind and execute unnamed stmt", .{});
                                     var query_str = req.query.toUTF8(bun.default_allocator);
                                     defer query_str.deinit();
+                                    const write_start = WriteBufferSnapshot.take(this);
                                     PostgresRequest.parseAndBindAndExecute(this.globalObject, query_str.slice(), statement, binding_value, columns_value, false, PostgresSQLConnection.Writer, this.writer()) catch |err| {
+                                        write_start.restore(this);
                                         if (this.globalObject.tryTakeException()) |err_| {
                                             req.onJSError(err_, this.globalObject);
                                         } else {
@@ -1221,7 +1254,9 @@ fn advance(this: *PostgresSQLConnection) void {
                                     };
                                 } else {
                                     debug("binding and executing stmt", .{});
+                                    const write_start = WriteBufferSnapshot.take(this);
                                     PostgresRequest.bindAndExecute(this.globalObject, statement, binding_value, columns_value, PostgresSQLConnection.Writer, this.writer()) catch |err| {
+                                        write_start.restore(this);
                                         if (this.globalObject.tryTakeException()) |err_| {
                                             req.onJSError(err_, this.globalObject);
                                         } else {
@@ -1280,7 +1315,9 @@ fn advance(this: *PostgresSQLConnection) void {
                                     // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
                                     const binding_value = PostgresSQLQuery.js.bindingGetCached(thisValue) orelse .zero;
                                     debug("prepareAndQueryWithSignature", .{});
+                                    const write_start = WriteBufferSnapshot.take(this);
                                     PostgresRequest.prepareAndQueryWithSignature(this.globalObject, query_str.slice(), binding_value, PostgresSQLConnection.Writer, this.writer(), &statement.signature) catch |err| {
+                                        write_start.restore(this);
                                         if (this.globalObject.tryTakeException()) |err_| {
                                             req.onJSError(err_, this.globalObject);
                                         } else {
@@ -1323,7 +1360,9 @@ fn advance(this: *PostgresSQLConnection) void {
                                     const binding_value = PostgresSQLQuery.js.bindingGetCached(thisValue) orelse .zero;
                                     const columns_value = PostgresSQLQuery.js.columnsGetCached(thisValue) orelse .zero;
                                     debug("parseAndBindAndExecute (unnamed, first execution)", .{});
+                                    const write_start = WriteBufferSnapshot.take(this);
                                     PostgresRequest.parseAndBindAndExecute(this.globalObject, query_str.slice(), statement, binding_value, columns_value, true, PostgresSQLConnection.Writer, this.writer()) catch |err| {
+                                        write_start.restore(this);
                                         if (this.globalObject.tryTakeException()) |err_| {
                                             req.onJSError(err_, this.globalObject);
                                         } else {
@@ -1353,7 +1392,9 @@ fn advance(this: *PostgresSQLConnection) void {
                                 const connection_writer = this.writer();
                                 debug("writing query", .{});
                                 // write query and wait for it to be prepared
+                                const write_start = WriteBufferSnapshot.take(this);
                                 PostgresRequest.writeQuery(query_str.slice(), statement.signature.prepared_statement_name, statement.signature.fields, PostgresSQLConnection.Writer, connection_writer) catch |err| {
+                                    write_start.restore(this);
                                     if (this.globalObject.tryTakeException()) |err_| {
                                         req.onJSError(err_, this.globalObject);
                                     } else {

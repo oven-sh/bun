@@ -240,7 +240,10 @@ fn lookup(path: []const u8) ?*Entry {
     // separator. Normalise here rather than at every call site.
     if (table.getPtr(path)) |e| return e;
     if (std.mem.indexOfScalar(u8, path, '\\') != null) {
-        var buf: bun.PathBuffer = undefined;
+        // PathBuffer is ~96KB on Windows; take it from the pool rather
+        // than the stack.
+        const buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(buf);
         if (path.len > buf.len) return null;
         @memcpy(buf[0..path.len], path);
         for (buf[0..path.len]) |*c| if (c.* == '\\') {

@@ -175,7 +175,9 @@ describe("hostile header dimensions", () => {
       buf[off] = val;
       const dv = new DataView(buf.buffer, buf.byteOffset);
       dv.setUint32(29, crc32(buf.subarray(12, 29)));
-      expect(await survives(new Bun.Image(buf).metadata())).toBe("rejected");
+      // metadata() is header-only and IHDR is structurally readable; full
+      // decode is what must reject.
+      expect(await survives(new Bun.Image(buf).bytes())).toBe("rejected");
     }
   });
 
@@ -197,7 +199,7 @@ describe("malformed PNG structure", () => {
     // IDAT starts after sig(8)+IHDR(25)=33; its length field is at offset 33.
     const dv = new DataView(buf.buffer, buf.byteOffset);
     dv.setUint32(33, 0xffffff00);
-    expect(await survives(new Bun.Image(buf).metadata())).toBe("rejected");
+    expect(await survives(new Bun.Image(buf).bytes())).toBe("rejected");
   });
 
   test("IHDR CRC mismatch", async () => {

@@ -24,6 +24,10 @@ pub const Format = enum(u8) {
     jpeg,
     png,
     webp,
+    /// System-backend-only on macOS/Windows; no static codec.
+    heic,
+    /// System-backend-only on macOS/Windows; no static codec.
+    avif,
 
     pub fn sniff(bytes: []const u8) ?Format {
         if (bytes.len >= 3 and bytes[0] == 0xFF and bytes[1] == 0xD8 and bytes[2] == 0xFF)
@@ -32,6 +36,24 @@ pub const Format = enum(u8) {
             return .png;
         if (bytes.len >= 12 and std.mem.eql(u8, bytes[0..4], "RIFF") and std.mem.eql(u8, bytes[8..12], "WEBP"))
             return .webp;
+        // ISO BMFF: u32be box-size · "ftyp" · major-brand · minor-version ·
+        // compatible-brands… HEIC and AVIF share this container; the brands
+        // distinguish them. Check the major brand at [8..12) and the
+        // compatible brands at [16..box).
+        if (bytes.len >= 16 and std.mem.eql(u8, bytes[4..8], "ftyp")) {
+            const box: usize = @min(bytes.len, @max(16, std.mem.readInt(u32, bytes[0..4], .big)));
+            var off: usize = 8;
+            while (off + 4 <= box) : (off += 4) {
+                if (off == 12) continue; // minor_version
+                const b = bytes[off..][0..4];
+                if (std.mem.eql(u8, b, "avif") or std.mem.eql(u8, b, "avis"))
+                    return .avif;
+                if (std.mem.eql(u8, b, "heic") or std.mem.eql(u8, b, "heix") or
+                    std.mem.eql(u8, b, "mif1") or std.mem.eql(u8, b, "msf1") or
+                    std.mem.eql(u8, b, "hevc") or std.mem.eql(u8, b, "hevx"))
+                    return .heic;
+            }
+        }
         return null;
     }
 
@@ -40,6 +62,8 @@ pub const Format = enum(u8) {
             .jpeg => "image/jpeg",
             .png => "image/png",
             .webp => "image/webp",
+            .heic => "image/heic",
+            .avif => "image/avif",
         };
     }
 };
@@ -58,6 +82,9 @@ pub const Error = error{
     /// decompression-bomb defence — checked AFTER reading the header but
     /// BEFORE allocating the full RGBA buffer.
     TooManyPixels,
+    /// HEIC/AVIF on a platform with no system backend (Linux), or the system
+    /// backend declined and there's no static codec to fall back to.
+    UnsupportedOnPlatform,
     OutOfMemory,
 };
 
@@ -81,12 +108,58 @@ pub fn decode(bytes: []const u8, max_pixels: u64) Error!Decoded {
         .jpeg => jpeg.decode(bytes, max_pixels),
         .png => png.decode(bytes, max_pixels),
         .webp => webp.decode(bytes, max_pixels),
+        // No static codec — system backend was the only path.
+        .heic, .avif => error.UnsupportedOnPlatform,
     };
 }
 
 inline fn guard(w: u32, h: u32, max_pixels: u64) Error!void {
     // u64 mul cannot overflow from two u32 factors.
     if (@as(u64, w) * @as(u64, h) > max_pixels) return error.TooManyPixels;
+}
+
+/// Header-only dimensions probe for `.metadata()`. Decoding the full RGBA for
+/// a 1920×1080 PNG just to read the IHDR is ~70× slower than Sharp; this reads
+/// the few bytes each format needs and stops. Still subject to `max_pixels` so
+/// metadata() and bytes() agree on what's "too big".
+pub fn probe(bytes: []const u8, max_pixels: u64) Error!struct { format: Format, width: u32, height: u32 } {
+    const fmt = Format.sniff(bytes) orelse return error.UnknownFormat;
+    var w: u32 = 0;
+    var h: u32 = 0;
+    switch (fmt) {
+        .png => {
+            // sig(8) · IHDR{len(4) type(4) w(4) h(4) ...}
+            if (bytes.len < 24) return error.DecodeFailed;
+            w = std.mem.readInt(u32, bytes[16..20], .big);
+            h = std.mem.readInt(u32, bytes[20..24], .big);
+        },
+        .jpeg => {
+            // turbojpeg's header decode is already cheap (no scan data read).
+            const handle = jpeg.tj3Init(1) orelse return error.OutOfMemory;
+            defer jpeg.tj3Destroy(handle);
+            if (jpeg.tj3DecompressHeader(handle, bytes.ptr, bytes.len) != 0) return error.DecodeFailed;
+            const rw = jpeg.tj3Get(handle, jpeg.TJPARAM_JPEGWIDTH);
+            const rh = jpeg.tj3Get(handle, jpeg.TJPARAM_JPEGHEIGHT);
+            if (rw <= 0 or rh <= 0) return error.DecodeFailed;
+            w = @intCast(rw);
+            h = @intCast(rh);
+        },
+        .webp => {
+            var cw: c_int = 0;
+            var ch: c_int = 0;
+            if (webp.WebPGetInfo(bytes.ptr, bytes.len, &cw, &ch) == 0) return error.DecodeFailed;
+            w = @intCast(cw);
+            h = @intCast(ch);
+        },
+        .heic, .avif => {
+            // System backend handles these; fall through to a full decode if
+            // available, otherwise UnsupportedOnPlatform.
+            return error.UnsupportedOnPlatform;
+        },
+    }
+    if (w == 0 or h == 0) return error.DecodeFailed;
+    try guard(w, h, max_pixels);
+    return .{ .format = fmt, .width = w, .height = h };
 }
 
 pub const EncodeOptions = struct {
@@ -149,12 +222,21 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: EncodeOptions) Er
         else
             png.encode(rgba, width, height, opts.compression_level),
         .webp => webp.encode(rgba, width, height, opts.quality, opts.lossless),
+        .heic, .avif => error.UnsupportedOnPlatform,
     };
 }
 
 // ───────────────────────────── highway kernels ──────────────────────────────
 
-pub const Filter = enum(i32) { box = 0, bilinear = 1, lanczos3 = 2, mitchell = 3 };
+pub const Filter = enum(i32) {
+    box = 0,
+    bilinear = 1,
+    lanczos3 = 2,
+    mitchell = 3,
+    nearest = 4,
+    cubic = 5, // Catmull-Rom
+    lanczos2 = 6,
+};
 
 extern fn bun_image_resize_rgba8(
     src: [*]const u8,

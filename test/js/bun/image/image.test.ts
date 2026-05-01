@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { tempDir, isMacOS, isWindows } from "harness";
 import zlib from "node:zlib";
 import { join } from "path";
 
@@ -298,16 +298,16 @@ describe("Bun.Image", () => {
     });
 
     // Malformed-input regression set: every codec must reject cleanly (no
-    // crash, no hang) on truncated or junk data. The codecs themselves are
-    // continuously fuzzed upstream; this just proves OUR error path doesn't
-    // panic the process.
+    // crash, no hang) on truncated or junk data. Tests `.bytes()` (full decode)
+    // — `.metadata()` is now header-only and would correctly succeed on a PNG
+    // with an intact IHDR but no IDAT.
     for (const [name, bad] of [
       ["truncated PNG", cornersPng.slice(0, 30)],
       ["truncated JPEG", new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46])],
       ["truncated WebP", Buffer.from("RIFF\x10\x00\x00\x00WEBPVP8 ", "binary")],
     ] as const) {
       test(`rejects cleanly on ${name}`, async () => {
-        expect(new Bun.Image(bad).metadata()).rejects.toThrow();
+        expect(new Bun.Image(bad).bytes()).rejects.toThrow();
       });
     }
   });
@@ -412,6 +412,67 @@ describe("Bun.Image", () => {
 
   test("rotate rejects non-90° multiples", () => {
     expect(() => new Bun.Image(cornersPng).rotate(45)).toThrow();
+  });
+
+  describe("HEIC / AVIF (system-backend formats)", () => {
+    // Minimal ftyp boxes — enough for the sniffer; not valid images. Decode
+    // must reject AFTER sniffing the format (so we hit the right codepath).
+    const heicHdr = Buffer.from([
+      0,
+      0,
+      0,
+      24,
+      ..."ftyp".split("").map(c => c.charCodeAt(0)),
+      ..."heic".split("").map(c => c.charCodeAt(0)),
+      0,
+      0,
+      0,
+      0,
+      ..."mif1heic".split("").map(c => c.charCodeAt(0)),
+    ]);
+    const avifHdr = Buffer.from([
+      0,
+      0,
+      0,
+      24,
+      ..."ftyp".split("").map(c => c.charCodeAt(0)),
+      ..."avif".split("").map(c => c.charCodeAt(0)),
+      0,
+      0,
+      0,
+      0,
+      ..."avifmif1".split("").map(c => c.charCodeAt(0)),
+    ]);
+
+    test("sniffer recognises ftyp brands", async () => {
+      // metadata() will fail (not a real image) but the FORMAT in the error
+      // path proves the sniffer routed correctly. On Linux it's
+      // UnsupportedOnPlatform; on macOS/Windows the system codec rejects.
+      expect(new Bun.Image(heicHdr).metadata()).rejects.toThrow();
+      expect(new Bun.Image(avifHdr).metadata()).rejects.toThrow();
+    });
+
+    if (!isMacOS && !isWindows) {
+      test("encode .heic()/.avif() throws UnsupportedOnPlatform on Linux", async () => {
+        expect(new Bun.Image(cornersPng).heic().bytes()).rejects.toThrow(/not supported on this platform/);
+        expect(new Bun.Image(cornersPng).avif().bytes()).rejects.toThrow(/not supported on this platform/);
+      });
+    } else {
+      // On macOS/Windows the system encoder may or may not have the codec
+      // installed (HEVC license on Windows, AVIF only on macOS 13+). Either
+      // outcome is fine; just no crash.
+      test(".heic()/.avif() either encode or fall through cleanly", async () => {
+        for (const fmt of ["heic", "avif"] as const) {
+          try {
+            const out = await new Bun.Image(cornersPng)[fmt]({ quality: 50 }).bytes();
+            // If it succeeded, it must be an ISO BMFF.
+            expect(String.fromCharCode(...out.subarray(4, 8))).toBe("ftyp");
+          } catch (e) {
+            expect(String(e)).toMatch(/not supported|BackendUnavailable|encode/i);
+          }
+        }
+      });
+    }
   });
 
   // @intFromFloat on NaN/Inf is UB; these used to abort the process.

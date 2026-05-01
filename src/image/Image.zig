@@ -165,11 +165,8 @@ pub fn doResize(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallF
         if (try opt.get(global, "filter")) |f| if (f.isString()) {
             const s = try f.toBunString(global);
             defer s.deref();
-            if (s.eqlComptime("box")) r.filter = .box //
-            else if (s.eqlComptime("bilinear")) r.filter = .bilinear //
-            else if (s.eqlComptime("lanczos3")) r.filter = .lanczos3 //
-            else if (s.eqlComptime("mitchell")) r.filter = .mitchell //
-            else return global.throwInvalidArguments("resize: filter must be 'box' | 'bilinear' | 'lanczos3' | 'mitchell'", .{});
+            r.filter = parseFilter(s) orelse
+                return global.throwInvalidArguments("resize: filter must be 'nearest' | 'box' | 'bilinear' | 'cubic' | 'mitchell' | 'lanczos2' | 'lanczos3'", .{});
         };
         if (try opt.get(global, "fit")) |f| if (f.isString()) {
             const s = try f.toBunString(global);
@@ -255,6 +252,19 @@ pub fn doFormatPng(this: *Image, g: *jsc.JSGlobalObject, cf: *jsc.CallFrame) bun
 }
 pub fn doFormatWebp(this: *Image, g: *jsc.JSGlobalObject, cf: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     return this.setFormat(g, cf, .webp);
+}
+pub fn doFormatHeic(this: *Image, g: *jsc.JSGlobalObject, cf: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    return this.setFormat(g, cf, .heic);
+}
+pub fn doFormatAvif(this: *Image, g: *jsc.JSGlobalObject, cf: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    return this.setFormat(g, cf, .avif);
+}
+
+fn parseFilter(s: bun.String) ?codecs.Filter {
+    inline for (@typeInfo(codecs.Filter).@"enum".fields) |f|
+        if (s.eqlComptime(f.name)) return @enumFromInt(f.value);
+    if (s.eqlComptime("linear")) return .bilinear; // Sharp alias
+    return null;
 }
 
 // ───────────────────────────── getters ──────────────────────────────────────
@@ -390,6 +400,31 @@ pub const PipelineTask = struct {
             },
         };
 
+        // Header-only fast path for `.metadata()` — Sharp parses just the
+        // IHDR/SOF/VP8 header; we used to decode the full RGBA buffer first
+        // (~70× slower on a 1920×1080 PNG). EXIF orientation only swaps the
+        // reported dims, no pixels involved.
+        if (this.kind == .metadata) {
+            if (codecs.probe(input, this.max_pixels)) |p| {
+                var w = p.width;
+                var h = p.height;
+                if (this.auto_orient and p.format == .jpeg) {
+                    const t = exif.readJpeg(input).transform();
+                    if (t.rotate == 90 or t.rotate == 270) std.mem.swap(u32, &w, &h);
+                }
+                this.result = .{ .meta = .{ .w = w, .h = h, .format = p.format } };
+                return;
+            } else |e| switch (e) {
+                // HEIC/AVIF have no header probe — fall through to full decode
+                // via the system backend.
+                error.UnsupportedOnPlatform => {},
+                else => {
+                    this.result = .{ .err = e };
+                    return;
+                },
+            }
+        }
+
         var decoded = codecs.decode(input, this.max_pixels) catch |e| {
             this.result = .{ .err = e };
             return;
@@ -409,6 +444,7 @@ pub const PipelineTask = struct {
         }
 
         if (this.kind == .metadata) {
+            // Reached only for HEIC/AVIF (probe fell through).
             this.result = .{ .meta = .{ .w = decoded.width, .h = decoded.height, .format = src_format } };
             return;
         }
@@ -484,6 +520,7 @@ pub const PipelineTask = struct {
                     error.DecodeFailed => "Image: decode failed",
                     error.EncodeFailed => "Image: encode failed",
                     error.TooManyPixels => "Image: input exceeds maxPixels limit",
+                    error.UnsupportedOnPlatform => "Image: format not supported on this platform (HEIC/AVIF require macOS or Windows)",
                     error.OutOfMemory => "Image: out of memory",
                 };
                 try promise.reject(global, global.createErrorInstance("{s}", .{msg}));

@@ -281,27 +281,37 @@ double sinc(double x)
     return std::sin(px) / px;
 }
 
+// BC-spline cubic. The (B,C) family from Mitchell & Netravali 1988; radius 2.
+//   B=1/3, C=1/3 → Mitchell (recommended; minimal ringing, no overshoot)
+//   B=0,   C=1/2 → Catmull-Rom ("cubic" in Sharp; sharper, slight ring)
+double bcCubic(double B, double C, double x)
+{
+    x = std::fabs(x);
+    const double xx = x * x;
+    if (x < 1.0)
+        return ((12 - 9 * B - 6 * C) * xx * x + (-18 + 12 * B + 6 * C) * xx + (6 - 2 * B)) / 6.0;
+    if (x < 2.0)
+        return ((-B - 6 * C) * xx * x + (6 * B + 30 * C) * xx + (-12 * B - 48 * C) * x + (8 * B + 24 * C)) / 6.0;
+    return 0.0;
+}
+
 // Filter kernel; radius is the support half-width in source pixels at scale=1.
 double filter(int kind, double x)
 {
     switch (kind) {
     case 0: // box
+    case 4: // nearest — same kernel; the radius<1 collapses to a single tap
         return (x > -0.5 && x <= 0.5) ? 1.0 : 0.0;
     case 1: // bilinear / triangle
         x = std::fabs(x);
         return x < 1.0 ? 1.0 - x : 0.0;
-    case 3: { // mitchell — Mitchell–Netravali bicubic, B=C=1/3.
-        // The (B,C) family is f(x)=1/6·(P|x|³+Q|x|²+R|x|+S) on [0,1) and
-        // [1,2); B=C=1/3 is the "visually best" point Mitchell & Netravali
-        // 1988 recommend — less ringing than lanczos3, slightly softer.
+    case 3: // mitchell
+        return bcCubic(1.0 / 3.0, 1.0 / 3.0, x);
+    case 5: // cubic (Catmull-Rom)
+        return bcCubic(0.0, 0.5, x);
+    case 6: // lanczos2
         x = std::fabs(x);
-        const double xx = x * x;
-        if (x < 1.0)
-            return (7.0 * xx * x - 12.0 * xx + 16.0 / 3.0) / 6.0;
-        if (x < 2.0)
-            return ((-7.0 / 3.0) * xx * x + 12.0 * xx - 20.0 * x + 32.0 / 3.0) / 6.0;
-        return 0.0;
-    }
+        return x < 2.0 ? sinc(x) * sinc(x / 2.0) : 0.0;
     default: // lanczos3
         x = std::fabs(x);
         return x < 3.0 ? sinc(x) * sinc(x / 3.0) : 0.0;
@@ -311,14 +321,17 @@ double filter(int kind, double x)
 double radius(int kind)
 {
     switch (kind) {
-    case 0:
-        return 0.5; // box
-    case 1:
-        return 1.0; // bilinear
-    case 3:
-        return 2.0; // mitchell
-    default:
-        return 3.0; // lanczos3
+    case 0: // box
+    case 4: // nearest
+        return 0.5;
+    case 1: // bilinear
+        return 1.0;
+    case 3: // mitchell
+    case 5: // cubic
+    case 6: // lanczos2
+        return 2.0;
+    default: // lanczos3
+        return 3.0;
     }
 }
 

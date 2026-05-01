@@ -110,33 +110,32 @@ async function resizePixels(
 // ─── resize filters ─────────────────────────────────────────────────────────
 
 describe("resize filter properties", () => {
+  const allFilters = ["nearest", "box", "bilinear", "cubic", "mitchell", "lanczos2", "lanczos3"] as const;
+
   // DC gain: a flat field must come back flat under every filter (weights are
   // renormalised to sum to 1 even where the kernel was clipped at an edge).
-  test.each(["box", "bilinear", "lanczos3", "mitchell"] as const)(
-    "%s preserves a flat field exactly (sum-to-one + edge renormalisation)",
-    async filter => {
-      const flat = makePng(9, 7, () => [173, 173, 173, 255]);
-      for (const [w, h] of [
-        [3, 3],
-        [18, 14],
-        [9, 7],
-      ] as const) {
-        const out = await resizePixels(flat, w, h, filter);
-        for (let i = 0; i < out.length; i += 4) {
-          expect(out[i]).toBe(173);
-          expect(out[i + 3]).toBe(255);
-        }
+  test.each(allFilters)("%s preserves a flat field exactly (sum-to-one + edge renormalisation)", async filter => {
+    const flat = makePng(9, 7, () => [173, 173, 173, 255]);
+    for (const [w, h] of [
+      [3, 3],
+      [18, 14],
+      [9, 7],
+    ] as const) {
+      const out = await resizePixels(flat, w, h, filter);
+      for (let i = 0; i < out.length; i += 4) {
+        expect(out[i]).toBe(173);
+        expect(out[i + 3]).toBe(255);
       }
-    },
-  );
+    }
+  });
 
-  test.each(["box", "bilinear", "lanczos3", "mitchell"] as const)("%s 1×1 source → N×N is constant", async filter => {
+  test.each(allFilters)("%s 1×1 source → N×N is constant", async filter => {
     const one = makePng(1, 1, () => [42, 99, 200, 255]);
     const out = await resizePixels(one, 5, 5, filter);
     for (let i = 0; i < out.length; i += 4) expect([out[i], out[i + 1], out[i + 2]]).toEqual([42, 99, 200]);
   });
 
-  test.each(["box", "bilinear", "lanczos3", "mitchell"] as const)("%s same-size is identity", async filter => {
+  test.each(allFilters)("%s same-size is identity", async filter => {
     const src = makePng(7, 5, (x, y) => [(x * 37) & 255, (y * 53) & 255, ((x ^ y) * 11) & 255, 255]);
     const out = await resizePixels(src, 7, 5, filter);
     expect(Buffer.compare(out, decodePng(src).data)).toBe(0);

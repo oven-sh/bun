@@ -21,6 +21,8 @@ export default [
       jpeg: { fn: "doFormatJpeg", length: 1 },
       png: { fn: "doFormatPng", length: 1 },
       webp: { fn: "doFormatWebp", length: 1 },
+      heic: { fn: "doFormatHeic", length: 1 },
+      avif: { fn: "doFormatAvif", length: 1 },
 
       // Terminal async ops — run decode → pipeline → encode on the work pool.
       bytes: { fn: "doBytes", length: 0, async: true },

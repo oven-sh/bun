@@ -219,7 +219,14 @@ fn deinit(this: *PipeReader) void {
     }
 
     if (comptime Environment.isWindows) {
-        bun.assert(this.reader.source == null or this.reader.source.?.isClosed() or this.state == .err);
+        // WindowsBufferedReader.onError() never closes the source, and
+        // WindowsBufferedReader.deinit() nulls this.source before calling
+        // closeImpl so it never actually closes either. Close it here on
+        // the error path so the uv.Pipe handle doesn't leak.
+        if (this.state == .err and this.reader.source != null and !this.reader.source.?.isClosed()) {
+            this.reader.closeImpl(false);
+        }
+        bun.assert(this.reader.source == null or this.reader.source.?.isClosed());
     }
 
     if (this.state == .done) {

@@ -127,7 +127,10 @@ process.exit(0);
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
+  const stderrLines = stderr
+    .split("\n")
+    .filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes"));
+  expect(stderrLines).toEqual([]);
   expect(stdout.trim()).toBe(JSON.stringify({ leaked: 0 }));
   expect(exitCode).toBe(0);
 });

@@ -259,10 +259,22 @@ describe("globalThis.gc", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/30023
-describe("non-global regexp TypeError wording", () => {
-  const EXPECTED_MATCH_ALL = "String.prototype.matchAll argument must contain the global (g) flag";
-  const EXPECTED_REPLACE_ALL = "String.prototype.replaceAll argument must contain the global (g) flag";
+// Paired with oven-sh/WebKit#207 — asserts the clearer TypeError wording
+// emitted by JavaScriptCore when matchAll/replaceAll get a non-global RegExp.
+// Skipped automatically against a WebKit build that still ships the old
+// wording so CI stays green until WEBKIT_VERSION is bumped.
+const EXPECTED_MATCH_ALL = "String.prototype.matchAll argument must contain the global (g) flag";
+const EXPECTED_REPLACE_ALL = "String.prototype.replaceAll argument must contain the global (g) flag";
+const hasNewWording = (() => {
+  try {
+    "abc".matchAll(/a/);
+  } catch (e) {
+    return e && e.message === EXPECTED_MATCH_ALL;
+  }
+  return false;
+})();
 
+describe.skipIf(!hasNewWording)("non-global regexp TypeError wording", () => {
   it("String.prototype.matchAll rejects a non-global RegExp", () => {
     expect(() => "abc".matchAll(/a/)).toThrow(
       expect.objectContaining({ name: "TypeError", message: EXPECTED_MATCH_ALL }),

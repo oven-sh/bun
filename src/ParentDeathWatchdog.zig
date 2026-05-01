@@ -249,6 +249,50 @@ fn onProcessExit() callconv(.c) void {
 /// (so its child set is stable while we recurse), which is what makes the
 /// verify step sufficient. The only forking process is `self`, and we're in
 /// the exit handler — not forking.
+pub fn killDescendants() void {
+    if (comptime !Environment.isPosix) return;
+
+    const self_pid = std.c.getpid();
+
+    var to_visit: std.ArrayListUnmanaged(std.c.pid_t) = .{};
+    defer to_visit.deinit(bun.default_allocator);
+    var to_kill: std.ArrayListUnmanaged(std.c.pid_t) = .{};
+    defer to_kill.deinit(bun.default_allocator);
+
+    to_visit.append(bun.default_allocator, self_pid) catch return;
+
+    var buf: [4096]std.c.pid_t = undefined;
+    // Hard cap on tree size so a fork bomb under us can't make exit hang.
+    while (to_visit.items.len > 0 and to_kill.items.len < 4096) {
+        const parent = to_visit.swapRemove(to_visit.items.len - 1);
+        const n = listChildPids(parent, &buf) orelse continue;
+        for (buf[0..n]) |child| {
+            if (child == self_pid or child <= 1) continue;
+            // Freeze first, then confirm it's still the process we enumerated.
+            if (std.c.kill(child, std.posix.SIG.STOP) != 0) continue;
+            if (parentPidOf(child) != parent) {
+                // Recycled between enumerate and STOP — undo and skip.
+                _ = std.c.kill(child, std.posix.SIG.CONT);
+                continue;
+            }
+            to_kill.append(bun.default_allocator, child) catch {
+                // OOM after we've already STOPped+verified this child — kill it
+                // now rather than leaving it frozen and absent from to_kill.
+                _ = std.c.kill(child, std.posix.SIG.KILL);
+                break;
+            };
+            to_visit.append(bun.default_allocator, child) catch break;
+        }
+    }
+
+    // Reverse: leaves first. SIGKILL terminates stopped processes directly.
+    var i = to_kill.items.len;
+    while (i > 0) {
+        i -= 1;
+        _ = std.c.kill(to_kill.items[i], std.posix.SIG.KILL);
+    }
+}
+
 /// Linux-only: enumerate our direct children into `out`. Used by `spawnPosix`
 /// to snapshot pre-existing siblings before arming subreaper, so the post-wait
 /// `killSubreaperAdoptees` can tell adopted orphans apart from `Bun.spawn`
@@ -342,50 +386,6 @@ fn killTreeRootedAt(root: std.c.pid_t, expected_ppid_of_root: std.c.pid_t) void 
         }
     }
 
-    var i = to_kill.items.len;
-    while (i > 0) {
-        i -= 1;
-        _ = std.c.kill(to_kill.items[i], std.posix.SIG.KILL);
-    }
-}
-
-pub fn killDescendants() void {
-    if (comptime !Environment.isPosix) return;
-
-    const self_pid = std.c.getpid();
-
-    var to_visit: std.ArrayListUnmanaged(std.c.pid_t) = .{};
-    defer to_visit.deinit(bun.default_allocator);
-    var to_kill: std.ArrayListUnmanaged(std.c.pid_t) = .{};
-    defer to_kill.deinit(bun.default_allocator);
-
-    to_visit.append(bun.default_allocator, self_pid) catch return;
-
-    var buf: [4096]std.c.pid_t = undefined;
-    // Hard cap on tree size so a fork bomb under us can't make exit hang.
-    while (to_visit.items.len > 0 and to_kill.items.len < 4096) {
-        const parent = to_visit.swapRemove(to_visit.items.len - 1);
-        const n = listChildPids(parent, &buf) orelse continue;
-        for (buf[0..n]) |child| {
-            if (child == self_pid or child <= 1) continue;
-            // Freeze first, then confirm it's still the process we enumerated.
-            if (std.c.kill(child, std.posix.SIG.STOP) != 0) continue;
-            if (parentPidOf(child) != parent) {
-                // Recycled between enumerate and STOP — undo and skip.
-                _ = std.c.kill(child, std.posix.SIG.CONT);
-                continue;
-            }
-            to_kill.append(bun.default_allocator, child) catch {
-                // OOM after we've already STOPped+verified this child — kill it
-                // now rather than leaving it frozen and absent from to_kill.
-                _ = std.c.kill(child, std.posix.SIG.KILL);
-                break;
-            };
-            to_visit.append(bun.default_allocator, child) catch break;
-        }
-    }
-
-    // Reverse: leaves first. SIGKILL terminates stopped processes directly.
     var i = to_kill.items.len;
     while (i > 0) {
         i -= 1;

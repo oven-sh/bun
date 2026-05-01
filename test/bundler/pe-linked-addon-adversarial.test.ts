@@ -260,32 +260,84 @@ describe("pe.addLinkedAddon adversarial input", () => {
     expect(r.skipped).toBe(true);
   });
 
-  test("addon with a TLS directory is skipped (no userspace LdrpTlsBitmap reservation)", () => {
-    // Implicit TLS needs an index reserved in the loader's private
-    // LdrpTlsBitmap and a template installed in every existing
-    // thread's ThreadLocalStoragePointer array. Neither has a
-    // userspace API; faking it collides with the next real
-    // LoadLibrary. The tempfile fallback lets the loader handle it.
+  test("addon with an empty-template TLS directory is merged (MSVC CRT stub)", () => {
+    // MSVC's _DllMainCRTStartup pulls in tlssup.obj, so essentially
+    // every MSVC-built DLL has an IMAGE_TLS_DIRECTORY64 even with no
+    // __declspec(thread) data. When StartAddressOfRawData ==
+    // EndAddressOfRawData and SizeOfZeroFill == 0 there is no per-
+    // thread storage to install, so no LdrpTlsBitmap slot is needed
+    // and the CRT's __dyn_tls_init/_dtor callbacks are no-ops. Merge
+    // and ignore the directory.
+    const r = peLinkAddon(
+      makeHost(),
+      makeAddon(b => {
+        // 40 zero bytes at 0x1150 → raw_start == raw_end == zero_fill == 0.
+        b.writeUInt32LE(SECT_ALIGN + 0x150, DDOFF + 9 * 8);
+        b.writeUInt32LE(40, DDOFF + 9 * 8 + 4);
+      }),
+      "x",
+    );
+    expect(expectSafe(r)).toBe("merged");
+  });
+
+  test("addon with a nonzero TLS template is skipped (real __declspec(thread))", () => {
+    // A nonzero RawData span (or SizeOfZeroFill) means the addon has
+    // actual __declspec(thread) / thread_local! storage, which needs
+    // an index reserved in the loader's private LdrpTlsBitmap and a
+    // template installed in every existing thread's
+    // ThreadLocalStoragePointer — neither has a userspace API. Let
+    // the tempfile LoadLibraryExW path handle it.
     const r = peLinkAddon(
       makeHost(),
       makeAddon(b => {
         b.writeUInt32LE(SECT_ALIGN + 0x150, DDOFF + 9 * 8);
         b.writeUInt32LE(40, DDOFF + 9 * 8 + 4);
+        // Write the directory body at file offset HDR(0x200)+0x150:
+        // StartAddressOfRawData / EndAddressOfRawData differ by 8.
+        b.writeBigUInt64LE(0x180001000n, FILE_ALIGN + 0x150 + 0);
+        b.writeBigUInt64LE(0x180001008n, FILE_ALIGN + 0x150 + 8);
       }),
       "x",
     );
     expect(r.skipped).toBe(true);
   });
 
-  test("addon with only a TLS directory RVA (size == 0) is still skipped", () => {
-    // Some toolchains emit a zero-size TLS directory entry with a
-    // nonzero RVA; the skip must trigger on either field.
+  test("addon with a nonzero TLS SizeOfZeroFill is skipped", () => {
     const r = peLinkAddon(
       makeHost(),
       makeAddon(b => {
         b.writeUInt32LE(SECT_ALIGN + 0x150, DDOFF + 9 * 8);
-        b.writeUInt32LE(0, DDOFF + 9 * 8 + 4);
+        b.writeUInt32LE(40, DDOFF + 9 * 8 + 4);
+        // Template span is zero but SizeOfZeroFill (off +32) is not.
+        b.writeUInt32LE(16, FILE_ALIGN + 0x150 + 32);
       }),
+      "x",
+    );
+    expect(r.skipped).toBe(true);
+  });
+
+  test("addon with a truncated TLS directory (size < 40) is skipped", () => {
+    const r = peLinkAddon(
+      makeHost(),
+      makeAddon(b => {
+        b.writeUInt32LE(SECT_ALIGN + 0x150, DDOFF + 9 * 8);
+        b.writeUInt32LE(16, DDOFF + 9 * 8 + 4);
+      }),
+      "x",
+    );
+    expect(r.skipped).toBe(true);
+  });
+
+  test("addon whose PE machine type differs from the host is skipped", () => {
+    // ARM64 PE32+ uses IMAGE_REL_BASED_DIR64 just like x64, so the
+    // reloc walker would not catch a wrong-arch addon. Without this
+    // gate a --target=bun-windows-arm64 build that picked up an x64
+    // prebuild would merge cleanly and then crash with
+    // STATUS_ILLEGAL_INSTRUCTION in DllMain instead of the clean
+    // ERROR_BAD_EXE_FORMAT the tempfile path gives.
+    const r = peLinkAddon(
+      makeHost(),
+      makeAddon(b => b.writeUInt16LE(0xaa64, PEOFF + 4)), // IMAGE_FILE_MACHINE_ARM64
       "x",
     );
     expect(r.skipped).toBe(true);

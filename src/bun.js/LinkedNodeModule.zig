@@ -24,11 +24,15 @@
 //! `node_api_module_get_api_version_v1` / `BUN_PLUGIN_NAME` pointers back to
 //! `BunProcess.cpp` so the rest of the dlopen flow is unchanged.
 //!
-//! Addons with an `IMAGE_TLS_DIRECTORY` are never merged: reserving a slot
-//! in the loader's private `LdrpTlsBitmap` and growing every existing
-//! thread's `ThreadLocalStoragePointer` array has no userspace API, and
-//! faking it risks index collisions with later `LoadLibrary` calls. Those
-//! addons go through the tempfile fallback where the real loader handles it.
+//! Addons with real `__declspec(thread)` storage (a nonzero TLS template)
+//! are never merged: reserving a slot in the loader's private
+//! `LdrpTlsBitmap` and growing every existing thread's
+//! `ThreadLocalStoragePointer` array has no userspace API, and faking it
+//! risks index collisions with later `LoadLibrary` calls. Those addons go
+//! through the tempfile fallback where the real loader handles it. The
+//! MSVC CRT's callback-only TLS directory (empty template — present in
+//! essentially every node-gyp addon via `tlssup.obj`) needs no index and
+//! is merged with the directory ignored.
 //!
 //! Any failure (bad blob, missing import, `DllMain` returning FALSE)
 //! returns false and the caller falls back to writing a temp file and

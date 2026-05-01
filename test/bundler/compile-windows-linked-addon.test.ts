@@ -354,19 +354,27 @@ describe.skipIf(!isWindows)("bun build --compile native addon static link", () =
   // a real addon is available.
 
   test(
-    "an addon with a TLS directory is skipped and falls back to opaque bytes",
+    "an addon with real __declspec(thread) TLS data is skipped and falls back to opaque bytes",
     async () => {
-      // Implicit TLS needs an index reserved in the loader's private
-      // LdrpTlsBitmap and a template installed in every existing
-      // thread's ThreadLocalStoragePointer array — neither has a
-      // userspace API. addLinkedAddon() refuses static TLS and returns
-      // null; the build must still succeed with the raw addon in
-      // `.bun` for the runtime tempfile fallback.
+      // A nonzero TLS template (RawData span or SizeOfZeroFill) means
+      // real __declspec(thread) / thread_local! storage, which needs
+      // an index reserved in the loader's private LdrpTlsBitmap and a
+      // template installed in every existing thread's
+      // ThreadLocalStoragePointer — neither has a userspace API.
+      // addLinkedAddon() refuses these; the build must still succeed
+      // with the raw addon in `.bun` for the runtime tempfile
+      // fallback. An empty-template directory (the MSVC CRT's
+      // tlssup.obj stub, present in essentially every node-gyp
+      // addon) is merged — the adversarial suite covers that case.
       const addon = makeTinyPEDll();
       const e_lfanew = addon.readUInt32LE(0x3c);
       const ddOff = e_lfanew + 24 + 112;
       addon.writeUInt32LE(0x1000 + 0x150, ddOff + 9 * 8); // rva (in-image)
       addon.writeUInt32LE(40, ddOff + 9 * 8 + 4); // size
+      // Write the directory body at file offset 0x200+0x150 with a
+      // nonzero RawData span → real TLS template.
+      addon.writeBigUInt64LE(0x180001000n, 0x200 + 0x150 + 0);
+      addon.writeBigUInt64LE(0x180001008n, 0x200 + 0x150 + 8);
 
       using dir = tempDir("pe-linked-addon-tls", projectFiles(addon));
       const out = await compileForWindows(String(dir));

@@ -836,17 +836,43 @@ pub const PEFile = struct {
         // Refuse anything we would get wrong. The extract-to-tempfile
         // path stays as the behavioural fallback.
         //
+        // A wrong-architecture addon (e.g. an x64 prebuild bundled into
+        // a --target=bun-windows-arm64 build) would merge structurally
+        // — ARM64 PE32+ uses IMAGE_REL_BASED_DIR64 just like x64 — and
+        // then crash with STATUS_ILLEGAL_INSTRUCTION when DllMain runs.
+        // The tempfile path gets a clean ERROR_BAD_EXE_FORMAT instead.
+        if (addon.pe.machine != (try self.getPEHeader()).machine) return null;
+        //
         // Implicit TLS (`__declspec(thread)`, Rust `thread_local!`) needs
         // an index reserved in the loader's private `LdrpTlsBitmap` and a
         // template installed in every existing thread's
         // `ThreadLocalStoragePointer` array. Neither has a userspace API;
         // faking it invites index collisions with later `LoadLibrary`
         // calls and misses threads that already exist. Let `LoadLibraryExW`
-        // handle these via the fallback.
-        if (addon.dir(IMAGE_DIRECTORY_ENTRY_TLS).size != 0 or
-            addon.dir(IMAGE_DIRECTORY_ENTRY_TLS).virtual_address != 0)
-        {
-            return null;
+        // handle those via the fallback.
+        //
+        // However: MSVC's `_DllMainCRTStartup` pulls in `tlssup.obj`, so
+        // essentially every MSVC-built DLL has an IMAGE_TLS_DIRECTORY64
+        // even with no `__declspec(thread)` data of its own. That
+        // directory has an *empty template* (`StartAddressOfRawData ==
+        // EndAddressOfRawData` and `SizeOfZeroFill == 0`) and its
+        // callback array holds only the CRT's `__dyn_tls_init`/`_dtor`,
+        // which with no `.CRT$XD*` dynamic initializers are no-ops that
+        // never touch `ThreadLocalStoragePointer`. Such an addon needs
+        // no index and no per-thread install, so it is safe to merge
+        // and simply ignore the directory at runtime.
+        const tls_dir = addon.dir(IMAGE_DIRECTORY_ENTRY_TLS);
+        if (tls_dir.size != 0 or tls_dir.virtual_address != 0) {
+            const TLS_DIR64_SIZE: u32 = 40; // IMAGE_TLS_DIRECTORY64
+            if (tls_dir.size < TLS_DIR64_SIZE) return null;
+            const dir_bytes = addon.sliceAtRva(tls_dir.virtual_address, TLS_DIR64_SIZE) catch
+                return null;
+            const raw_start = std.mem.readInt(u64, dir_bytes[0..8], .little);
+            const raw_end = std.mem.readInt(u64, dir_bytes[8..16], .little);
+            const zero_fill = std.mem.readInt(u32, dir_bytes[32..36], .little);
+            // Nonzero template → real __declspec(thread) storage.
+            if (raw_end != raw_start or zero_fill != 0) return null;
+            // Empty template → CRT stub; merge and ignore it.
         }
         // Without base relocations we cannot rebase the addon's absolute
         // addresses into bun.exe's image. A DLL built with /FIXED would

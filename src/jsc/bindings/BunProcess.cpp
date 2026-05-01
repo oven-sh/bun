@@ -1589,7 +1589,11 @@ extern "C" void Bun__resetProcessSignalHandlers()
         }
         struct sigaction dfl;
         memset(&dfl, 0, sizeof(dfl));
-        dfl.sa_handler = SIG_DFL;
+        // Bun ignores SIGPIPE at startup (bun_ignore_sigpipe) so writes to a
+        // closed pipe surface as EPIPE; restore that disposition rather than
+        // SIG_DFL, or Output.flush()/atexit stdio flushes after us could kill
+        // the process with signal 13 instead of the requested exit code.
+        dfl.sa_handler = signalNumber == SIGPIPE ? SIG_IGN : SIG_DFL;
         sigemptyset(&dfl.sa_mask);
         sigaction(signalNumber, &dfl, nullptr);
     }

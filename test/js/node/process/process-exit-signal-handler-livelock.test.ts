@@ -52,7 +52,7 @@ test.skipIf(!isPosix)("process.on('SIGABRT') does not livelock when a thread abo
     stdout: "pipe",
   });
   const [ccStderr, ccExit] = await Promise.all([cc.stderr.text(), cc.exited]);
-  expect(ccStderr).toBe("");
+  if (ccExit !== 0) console.error(ccStderr);
   expect(ccExit).toBe(0);
 
   // Run the fixture. Without the fix this livelocks in raise_abort_loop

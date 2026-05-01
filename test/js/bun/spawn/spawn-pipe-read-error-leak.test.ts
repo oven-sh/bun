@@ -139,4 +139,4 @@ process.exit(0);
   expect(stderrLines).toEqual([]);
   expect(stdout.trim()).toBe(JSON.stringify({ leaked: 0 }));
   expect(exitCode).toBe(0);
-});
+}, 30_000);

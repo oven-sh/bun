@@ -2620,7 +2620,7 @@ pub const sync = struct {
         // before `udata`.
         const TAG_PPID: usize = 2;
 
-        var changes_buf: [4]std.c.Kevent = undefined;
+        var changes_buf: [5]std.c.Kevent = undefined;
         var changes: []std.c.Kevent = changes_buf[0..0];
         const add = struct {
             fn f(list: *[]std.c.Kevent, ident: usize, filter: i16, fflags: u32, udata: usize) void {
@@ -2637,10 +2637,18 @@ pub const sync = struct {
         }.f;
         if (ppid > 1)
             add(&changes, @intCast(ppid), std.c.EVFILT.PROC, std.c.NOTE.EXIT, TAG_PPID);
-        // Do NOT EV_ADD EVFILT_PROC on `child` — xnu already auto-created its
-        // NOTE_TRACK|NOTE_EXIT knote (udata 0) inside fork1(); re-registering
-        // would *replace* it (one knote per ident+filter) and lose NOTE_TRACK.
-        //
+        // Belt-and-braces: EV_ADD PROC on `child` with the SAME fflags as the
+        // auto-knote xnu creates inside `fork1()`. Idempotent if that knote
+        // exists (EV_ADD on an existing ident+filter updates sfflags — same
+        // value here — and preserves pending `kn_fflags`, so a queued
+        // NOTE_CHILD survives); creates it if the auto-attach was skipped —
+        // NOTE_TRACKERR on the self-knote fires *there* and we `EV_DELETE` it
+        // in `spawnPosix` before ever draining, so the failure is invisible.
+        // Without this the non-TTY `.inherit`-stdio path has no knote on
+        // `child` and `kevent(timeout=null)` below blocks forever (observed
+        // as a whole-file timeout on darwin-14-x64 in CI). Using the same
+        // NOTE_TRACK keeps descendant auto-tracking intact.
+        add(&changes, @intCast(child), std.c.EVFILT.PROC, NOTE.TRACK | std.c.NOTE.EXIT, 0);
         // TTY job-control: EVFILT_PROC has no "stopped" note, so wake on
         // SIGCHLD and `wait4(WUNTRACED|WNOHANG)` to catch Ctrl-Z. Only when
         // stdin is a TTY — non-TTY callers never see stops, matching plain
@@ -2653,7 +2661,7 @@ pub const sync = struct {
             if (fd != bun.invalid_fd) add(&changes, @intCast(fd.cast()), std.c.EVFILT.READ, 0, i);
         }
 
-        var receipts: [4]std.c.Kevent = undefined;
+        var receipts: [5]std.c.Kevent = undefined;
         switch (bun.sys.kevent(kq_fd, changes, receipts[0..changes.len], null)) {
             .err => |err| return .{ .err = err },
             .result => {},
@@ -2670,10 +2678,13 @@ pub const sync = struct {
                     bun.Global.exit(bun.ParentDeathWatchdog.exit_code);
                 continue;
             }
-            // Non-ppid registration (EVFILT_SIGNAL / EVFILT_READ) failed —
-            // fall through to the caller's `poll()` loop so `.buffer` stdio
-            // still drains instead of a blind `reapChild()` that would drop
-            // output or deadlock on a full pipe.
+            // Non-ppid registration (child PROC / EVFILT_SIGNAL / EVFILT_READ)
+            // failed — fall through to the caller's `poll()` loop so
+            // `.buffer` stdio still drains instead of a blind `reapChild()`
+            // that would drop output or deadlock on a full pipe. ESRCH on the
+            // child PROC entry is impossible (our own unreaped child —
+            // `filt_procattach` finds zombies), so any errno here is a real
+            // registration failure.
             return null;
         }
         if (ppid > 1 and std.c.getppid() != ppid)

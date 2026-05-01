@@ -841,7 +841,10 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     if constexpr (isStrict) {
-        if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
+        // Skip the class name check when either side is a Proxy.
+        // Node.js treats Proxies as transparent for deep equality.
+        // https://github.com/oven-sh/bun/issues/28647
+        if (!(o1->isProxy() || o2->isProxy()) && !equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
             return false;
         }
     }

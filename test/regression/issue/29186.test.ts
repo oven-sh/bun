@@ -33,8 +33,10 @@ test.concurrent("self.close() lets the current task finish before terminating", 
 
       worker.onmessage = ({ data }) => { events.push({ type: "message", data }); };
       worker.onerror = (e) => reject(new Error("worker error: " + (e.message || e)));
-      worker.addEventListener("close", () => {
-        events.push({ type: "close" });
+      worker.addEventListener("close", (e) => {
+        // Record code/wasClean so the test catches regressions where
+        // internal close() is misclassified as abrupt failure.
+        events.push({ type: "close", code: e.code, wasClean: e.wasClean });
         resolve();
       });
 
@@ -58,7 +60,8 @@ test.concurrent("self.close() lets the current task finish before terminating", 
   expect(JSON.parse(stdout.trim())).toEqual([
     { type: "message", data: "before" },
     { type: "message", data: "after" },
-    { type: "close" },
+    // Spec-compliant clean close: code 0, wasClean true.
+    { type: "close", code: 0, wasClean: true },
   ]);
 });
 

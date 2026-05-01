@@ -253,10 +253,22 @@ export fn WebWorker__getParentWorker(vm: *jsc.VirtualMachine) ?*anyopaque {
     return worker.cpp_worker;
 }
 
-/// True if the loop should exit — either abrupt (`requested_terminate`) or
-/// cooperative (`requested_close`). Every `spin()` loop check uses this so
-/// that either signal breaks out.
+/// True if abrupt termination has been requested (`terminate()` / `exit()` /
+/// `terminateAllAndWait`). **Does not** include the cooperative
+/// `self.close()` flag — external callers in `VirtualMachine`/`event_loop`
+/// treat this as a hard-failure signal (returning `error.WorkerTerminated`,
+/// reporting `.stopped` from `scriptExecutionStatus`, etc.). `spin()`'s
+/// loop-exit predicate uses `shouldExitLoop()` instead.
 pub fn hasRequestedTerminate(this: *const WebWorker) bool {
+    return this.requested_terminate.load(.acquire);
+}
+
+/// `spin()`'s loop-exit predicate: either abrupt terminate or cooperative
+/// close. Kept distinct from `hasRequestedTerminate()` so a cooperative
+/// `self.close()` doesn't tell external callers the worker is in a failure
+/// state — the task that called `close()` must run to completion with a
+/// clean `wasClean: true` close event.
+fn shouldExitLoop(this: *const WebWorker) bool {
     return this.requested_terminate.load(.acquire) or this.requested_close.load(.acquire);
 }
 
@@ -662,7 +674,7 @@ fn spin(this: *WebWorker) void {
     // the inbox, any `setTimeout(fn, 0)` queued before close()) must be
     // discarded. Jumping straight to shutdown also keeps the parent from
     // observing an 'open' event for a worker that is already closed.
-    if (this.hasRequestedTerminate()) {
+    if (this.shouldExitLoop()) {
         this.shutdown();
     }
 
@@ -688,22 +700,22 @@ fn spin(this: *WebWorker) void {
     // dispatchOnline — unless the 'message' handler that just ran inside
     // `fireEarlyMessages` called `close()` or `process.exit()`. In that
     // case there is nothing more to run.
-    if (!this.hasRequestedTerminate()) {
+    if (!this.shouldExitLoop()) {
         vm.tick();
     }
 
     // Check the flag BEFORE each tick so a `close()` observed at the top of
     // the loop doesn't let one more batch of queued tasks run.
-    while (!this.hasRequestedTerminate() and vm.isEventLoopAlive()) {
+    while (!this.shouldExitLoop() and vm.isEventLoopAlive()) {
         vm.tick();
-        if (this.hasRequestedTerminate()) break;
+        if (this.shouldExitLoop()) break;
         vm.eventLoop().autoTickActive();
     }
 
-    log("[{d}] before exit {s}", .{ this.execution_context_id, if (this.hasRequestedTerminate()) "(terminated)" else "(event loop dead)" });
+    log("[{d}] before exit {s}", .{ this.execution_context_id, if (this.shouldExitLoop()) "(terminated)" else "(event loop dead)" });
 
-    // Only emit 'beforeExit' on a natural drain, not on terminate().
-    if (!this.hasRequestedTerminate()) {
+    // Only emit 'beforeExit' on a natural drain, not on terminate()/close().
+    if (!this.shouldExitLoop()) {
         // TODO: is this able to allow the event loop to continue?
         vm.onBeforeExit();
     }

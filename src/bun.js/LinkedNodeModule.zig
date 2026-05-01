@@ -354,6 +354,12 @@ fn applyRelocs(base: [*]u8, entry: *const Entry, delta: i64) !void {
 fn bindImports(base: [*]u8, entry: *const Entry, self_h: w.HMODULE) !void {
     const blob = (Bun__getLinkedAddonsPEData() orelse return error.NoBlob)[0..Bun__getLinkedAddonsPELength()];
     var r = Reader{ .bytes = blob, .pos = entry.imports_pos };
+    // Same corrupted-.bunL defence as applyRelocs: every IAT slot we
+    // write must resolve into the merged addon, or a bit-rotted blob
+    // could make us scribble into unrelated bun.exe memory instead of
+    // falling back to the tempfile path.
+    const lo: u64 = entry.rva_base;
+    const hi: u64 = lo + entry.image_size;
     const nlib = try r.u32_();
     var name_buf: [512:0]u8 = undefined;
     var j: u32 = 0;
@@ -388,6 +394,7 @@ fn bindImports(base: [*]u8, entry: *const Entry, self_h: w.HMODULE) !void {
                 break :blk k32.GetProcAddress(module, name_buf[0..sym.len :0]);
             };
             if (addr == null) return error.ImportSymbolMissing;
+            if (iat_rva < lo or @as(u64, iat_rva) + @sizeOf(usize) > hi) return error.BadImport;
             const slot: *align(1) usize = @ptrCast(base + iat_rva);
             slot.* = @intFromPtr(addr.?);
         }

@@ -2055,6 +2055,13 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, result);
+    // Match Node.js: reject while a napi exception is pending before
+    // adopting data. NAPI_RETURN_IF_EXCEPTION below also consults
+    // hasPendingException(), so without this early return a stashed
+    // napi_throw* exception would pass the preamble, let createFromBytes
+    // adopt data, then bail after JSUint8Array::create succeeded but
+    // before arm(), orphaning a GC cell with a disarmed destructor.
+    NAPI_RETURN_EARLY_IF_FALSE(env, !env->hasPendingException(), napi_pending_exception);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);

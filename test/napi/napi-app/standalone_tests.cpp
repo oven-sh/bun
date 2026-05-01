@@ -2095,6 +2095,70 @@ static napi_value test_external_arraybuffer_with_pending_exception(
   return ok(env);
 }
 
+// Same as above, for napi_create_external_buffer: the post-create
+// NAPI_RETURN_IF_EXCEPTION check in that function also consults
+// hasPendingException(), so a stashed napi_throw* exception must be
+// rejected up front rather than after createFromBytes has adopted data.
+static int external_buffer_finalize_count = 0;
+
+static napi_value test_external_buffer_with_pending_exception(
+    const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  external_buffer_finalize_count = 0;
+
+  const size_t data_size = 8;
+  uint8_t *ext_data = (uint8_t *)malloc(data_size);
+  memset(ext_data, 0x5A, data_size);
+
+  NODE_API_CALL(env,
+                napi_throw_error(env, nullptr, "stashed before create"));
+
+  napi_value buffer = nullptr;
+  napi_status status = napi_create_external_buffer(
+      env, data_size, ext_data,
+      +[](napi_env, void *data, void *) {
+        external_buffer_finalize_count++;
+        free(data);
+      },
+      nullptr, &buffer);
+
+  napi_value exc;
+  napi_get_and_clear_last_exception(env, &exc);
+
+  printf("napi_create_external_buffer with pending exception: status=%d\n",
+         (int)status);
+
+  if (status == napi_ok) {
+    if (external_buffer_finalize_count != 0) {
+      printf("FAIL: finalizer ran before Buffer was collected\n");
+      return ok(env);
+    }
+    void *buf_data;
+    size_t buf_len;
+    NODE_API_CALL(env,
+                  napi_get_buffer_info(env, buffer, &buf_data, &buf_len));
+    if (buf_data == ext_data && buf_len == data_size) {
+      printf("PASS: ownership transferred on napi_ok with pending "
+             "exception\n");
+    } else {
+      printf("FAIL: napi_ok but buffer does not wrap caller data\n");
+    }
+  } else {
+    if (external_buffer_finalize_count == 0) {
+      printf("PASS: caller retains ownership on failure with pending "
+             "exception\n");
+    } else {
+      printf("FAIL: finalizer ran %d time(s) even though the call "
+             "failed\n",
+             external_buffer_finalize_count);
+    }
+    free(ext_data);
+  }
+
+  return ok(env);
+}
+
 // Regression test: PROPERTY_NAME_FROM_UTF8 must copy string data.
 // Previously it used StringImpl::createWithoutCopying for ASCII strings,
 // which could leave dangling pointers in JSC's atom string table.
@@ -2324,6 +2388,8 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_external_arraybuffer_finalizer);
   REGISTER_FUNCTION(env, exports,
                     test_external_arraybuffer_with_pending_exception);
+  REGISTER_FUNCTION(env, exports,
+                    test_external_buffer_with_pending_exception);
   REGISTER_FUNCTION(env, exports, test_napi_get_named_property_copied_string);
   REGISTER_FUNCTION(env, exports, test_issue_25933);
   REGISTER_FUNCTION(env, exports, test_napi_make_callback_async_context_frame);

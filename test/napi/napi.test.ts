@@ -290,6 +290,13 @@ describe.concurrent("napi", () => {
       expect(result).toContain("PASS: napi_is_detached_arraybuffer returns true for empty buffer's arraybuffer");
       expect(result).not.toContain("FAIL");
     });
+
+    it("rejects with napi_pending_exception before adopting data when an exception is pending", async () => {
+      const result = await checkSameOutput("test_external_buffer_with_pending_exception", []);
+      expect(result).toContain("status=10");
+      expect(result).toContain("PASS: caller retains ownership on failure with pending exception");
+      expect(result).not.toContain("FAIL");
+    });
   });
 
   describe("napi_create_external_arraybuffer", () => {

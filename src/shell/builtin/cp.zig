@@ -456,7 +456,7 @@ pub const ShellCpTask = struct {
                 this.cwd_path[0..],
                 this.tgt[0..],
             };
-            break :brk ResolvePath.joinZBuf(buf2[0..bun.MAX_PATH_BYTES], parts, .auto);
+            break :brk ResolvePath.joinZBufWithoutBoundsCheck(buf2[0..bun.MAX_PATH_BYTES], parts, .auto);
         };
 
         // Cases:
@@ -514,7 +514,7 @@ pub const ShellCpTask = struct {
                     tgt[0..tgt.len],
                     basename,
                 };
-                tgt = ResolvePath.joinZBuf(buf3[0..bun.MAX_PATH_BYTES], parts, .auto);
+                tgt = ResolvePath.joinZBufWithoutBoundsCheck(buf3[0..bun.MAX_PATH_BYTES], parts, .auto);
             } else if (this.operands == 2) {
                 // source_dir -> new_target_dir
             } else {
@@ -532,7 +532,7 @@ pub const ShellCpTask = struct {
                 tgt[0..tgt.len],
                 basename,
             };
-            tgt = ResolvePath.joinZBuf(buf3[0..bun.MAX_PATH_BYTES], parts, .auto);
+            tgt = ResolvePath.joinZBufWithoutBoundsCheck(buf3[0..bun.MAX_PATH_BYTES], parts, .auto);
             copying_many = true;
         }
 

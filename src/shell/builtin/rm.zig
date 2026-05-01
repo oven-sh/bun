@@ -809,8 +809,8 @@ pub const ShellRmTask = struct {
 
     pub fn bufJoin(this: *ShellRmTask, buf: *bun.PathBuffer, parts: []const []const u8, _: Syscall.Tag) Maybe([:0]const u8) {
         if (this.join_style == .posix) {
-            return .{ .result = ResolvePath.joinZBuf(buf, parts, .posix) };
-        } else return .{ .result = ResolvePath.joinZBuf(buf, parts, .windows) };
+            return .{ .result = ResolvePath.joinZBufWithoutBoundsCheck(buf, parts, .posix) };
+        } else return .{ .result = ResolvePath.joinZBufWithoutBoundsCheck(buf, parts, .windows) };
     }
 
     pub fn removeEntry(this: *ShellRmTask, dir_task: *DirTask, is_absolute: bool) Maybe(void) {

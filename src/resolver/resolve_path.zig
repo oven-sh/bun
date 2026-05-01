@@ -1219,15 +1219,52 @@ pub fn join(_parts: anytype, comptime platform: Platform) []const u8 {
     return joinStringBuf(&join_buf, _parts, platform);
 }
 pub fn joinZ(_parts: anytype, comptime platform: Platform) [:0]const u8 {
-    return joinZBuf(&join_buf, _parts, platform);
+    return joinZBufWithoutBoundsCheck(&join_buf, _parts, platform);
 }
 
-pub fn joinZBuf(buf: []u8, _parts: anytype, comptime platform: Platform) [:0]const u8 {
+/// Join `_parts` with separators and normalize into `buf`, nul-terminated.
+///
+/// Returns `error.NameTooLong` when the concatenated input length exceeds
+/// what `buf` can hold. The underlying `joinStringBuf` -> `normalizeStringNodeT`
+/// pipeline has no output bounds check (`normalizeStringGenericTZ` writes
+/// segments via unchecked `@memcpy`), so without this guard a too-long input
+/// overflows `buf` — a safety panic in debug, UB in ReleaseFast. The check is
+/// against the pre-normalization concatenated length; normalization can only
+/// shrink, so a result that would fit after collapsing `..`/`.`/`//` may be
+/// conservatively rejected.
+///
+/// Callers that have already ensured the result fits (or want the legacy
+/// panic-on-overflow) should use `joinZBufWithoutBoundsCheck`.
+pub fn joinZBuf(buf: []u8, _parts: anytype, comptime platform: Platform) error{NameTooLong}![:0]const u8 {
+    var upper: usize = 0;
+    var first: u8 = 0;
+    for (_parts) |p| {
+        if (p.len == 0) continue;
+        if (upper == 0) first = p[0];
+        if (upper > 0) upper += 1; // separator between non-empty parts
+        upper += p.len;
+    }
+    // One byte is reserved for the trailing nul. On non-Windows platforms
+    // `normalizeStringNodeT` additionally writes the body into `buf[1..]`,
+    // reserving `buf[0]` for a leading separator on absolute results; for
+    // relative inputs that byte is dead, so effective capacity is one less.
+    const leading_sep = first != 0 and platform.isSeparator(first);
+    const reserve: usize = if (platform == .windows or leading_sep) 1 else 2;
+    if (upper + reserve > buf.len) return error.NameTooLong;
+
     const joined = joinStringBuf(buf[0 .. buf.len - 1], _parts, platform);
     assert(bun.isSliceInBuffer(joined, buf));
     const start_offset = @intFromPtr(joined.ptr) - @intFromPtr(buf.ptr);
     buf[joined.len + start_offset] = 0;
     return buf[start_offset..][0..joined.len :0];
+}
+
+/// Like `joinZBuf` but panics instead of returning an error when the result
+/// would overflow `buf`. Use this when the inputs are known to fit (e.g. a
+/// bounded number of fixed-length segments) and the error path would be
+/// unreachable anyway.
+pub fn joinZBufWithoutBoundsCheck(buf: []u8, _parts: anytype, comptime platform: Platform) [:0]const u8 {
+    return joinZBuf(buf, _parts, platform) catch @panic("joinZBuf: out of bounds");
 }
 pub fn joinStringBuf(buf: []u8, parts: anytype, comptime platform: Platform) []const u8 {
     return joinStringBufT(u8, buf, parts, platform);

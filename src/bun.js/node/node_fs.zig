@@ -4673,7 +4673,7 @@ pub const NodeFS = struct {
 
                     const path_parts = [_]string{ root_basename, basename };
                     return .{
-                        .err = err.withPath(bun.path.joinZBuf(buf, &path_parts, .auto)),
+                        .err = err.withPath(bun.path.joinZBufWithoutBoundsCheck(buf, &path_parts, .auto)),
                     };
                 }
                 return .{
@@ -4705,7 +4705,7 @@ pub const NodeFS = struct {
                 if (comptime !is_root) {
                     const path_parts = [_]string{ root_basename, basename };
                     return .{
-                        .err = err.withPath(bun.path.joinZBuf(buf, &path_parts, .auto)),
+                        .err = err.withPath(bun.path.joinZBufWithoutBoundsCheck(buf, &path_parts, .auto)),
                     };
                 }
 
@@ -4723,7 +4723,7 @@ pub const NodeFS = struct {
                 }
 
                 const path_parts = [_]string{ basename, utf8_name };
-                break :brk bun.path.joinZBuf(buf, &path_parts, .auto);
+                break :brk bun.path.joinZBufWithoutBoundsCheck(buf, &path_parts, .auto);
             };
 
             // Track effective kind - may be resolved from .unknown via stat
@@ -4891,7 +4891,7 @@ pub const NodeFS = struct {
                     }
 
                     const path_parts = [_]string{ basename, utf8_name };
-                    break :brk bun.path.joinZBuf(buf, &path_parts, .auto);
+                    break :brk bun.path.joinZBufWithoutBoundsCheck(buf, &path_parts, .auto);
                 };
 
                 // Track effective kind - may be resolved from .unknown via stat

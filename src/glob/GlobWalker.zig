@@ -106,7 +106,7 @@ pub fn statatWindows(fd: bun.FD, path: [:0]const u8) Maybe(bun.Stat) {
         dir[0..dir.len],
         path,
     };
-    const statpath = ResolvePath.joinZBuf(&buf, parts, .auto);
+    const statpath = ResolvePath.joinZBufWithoutBoundsCheck(&buf, parts, .auto);
     return Syscall.stat(statpath);
 }
 

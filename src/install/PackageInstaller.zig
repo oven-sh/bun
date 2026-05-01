@@ -58,7 +58,7 @@ pub const PackageInstaller = struct {
         noinline fn directoryExistsAtWithoutOpeningDirectories(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8) bool {
             var path_buf: bun.PathBuffer = undefined;
             const parts: [2][]const u8 = .{ this.path.items, file_path };
-            return bun.sys.directoryExistsAt(.fromStdDir(root_node_modules_dir), bun.path.joinZBuf(&path_buf, &parts, .auto)).unwrapOr(false);
+            return bun.sys.directoryExistsAt(.fromStdDir(root_node_modules_dir), bun.path.joinZBufWithoutBoundsCheck(&path_buf, &parts, .auto)).unwrapOr(false);
         }
 
         pub fn directoryExistsAt(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8) bool {
@@ -75,7 +75,7 @@ pub const PackageInstaller = struct {
         noinline fn openFileWithoutOpeningDirectories(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8) bun.sys.Maybe(bun.sys.File) {
             var path_buf: bun.PathBuffer = undefined;
             const parts: [2][]const u8 = .{ this.path.items, file_path };
-            return bun.sys.File.openat(.fromStdDir(root_node_modules_dir), bun.path.joinZBuf(&path_buf, &parts, .auto), bun.O.RDONLY, 0);
+            return bun.sys.File.openat(.fromStdDir(root_node_modules_dir), bun.path.joinZBufWithoutBoundsCheck(&path_buf, &parts, .auto), bun.O.RDONLY, 0);
         }
 
         pub fn readFile(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8, allocator: std.mem.Allocator) !bun.sys.File.ReadToEndResult {

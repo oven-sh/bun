@@ -162,7 +162,7 @@ pub fn doPatchCommit(
             const name, const version = Dependency.splitNameAndMaybeVersion(argument);
             const pkg_id, const node_modules = pkgInfoForNameAndVersion(lockfile, &iterator, argument, name, version);
 
-            const changes_dir = bun.path.joinZBuf(pathbuf[0..], &[_][]const u8{
+            const changes_dir = bun.path.joinZBufWithoutBoundsCheck(pathbuf[0..], &[_][]const u8{
                 node_modules.relative_path,
                 name,
             }, .auto);

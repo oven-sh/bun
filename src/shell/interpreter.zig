@@ -1840,7 +1840,7 @@ pub const ShellSyscall = struct {
             dirpath[0..dirpath.len],
             to[0..to.len],
         };
-        const joined = ResolvePath.joinZBuf(buf, parts, .auto);
+        const joined = ResolvePath.joinZBufWithoutBoundsCheck(buf, parts, .auto);
         return .{ .result = joined };
     }
 

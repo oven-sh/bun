@@ -505,7 +505,7 @@ pub fn moveToCacheDirectory(
     }) {
         const json_file, json_buf = bun.sys.File.readFileFrom(
             bun.FD.fromStdDir(cache_dir),
-            bun.path.joinZBuf(&json_path_buf, &[_]string{ folder_name, "package.json" }, .auto),
+            bun.path.joinZBufWithoutBoundsCheck(&json_path_buf, &[_]string{ folder_name, "package.json" }, .auto),
             bun.default_allocator,
         ).unwrap() catch |err| {
             if (this.resolution.tag == .github and err == error.ENOENT) {

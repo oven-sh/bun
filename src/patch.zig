@@ -179,7 +179,7 @@ pub const PatchFile = struct {
                             .err => |e| return e.withoutPath(),
                         };
                         var buf: bun.PathBuffer = undefined;
-                        const joined_absfilepath = bun.path.joinZBuf(&buf, &[_][]const u8{ absfilepath, filepath }, .auto);
+                        const joined_absfilepath = bun.path.joinZBufWithoutBoundsCheck(&buf, &[_][]const u8{ absfilepath, filepath }, .auto);
                         const fd = switch (bun.sys.open(joined_absfilepath, bun.O.RDWR, 0)) {
                             .err => |e| return e.withoutPath(),
                             .result => |f| f,

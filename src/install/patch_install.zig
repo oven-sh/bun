@@ -236,7 +236,7 @@ pub const PatchTask = struct {
 
         var absolute_patchfile_path_buf: bun.PathBuffer = undefined;
         // 1. Parse the patch file
-        const absolute_patchfile_path = bun.path.joinZBuf(&absolute_patchfile_path_buf, &[_][]const u8{
+        const absolute_patchfile_path = bun.path.joinZBufWithoutBoundsCheck(&absolute_patchfile_path_buf, &[_][]const u8{
             dir,
             patchfile_path,
         }, .auto);
@@ -375,7 +375,7 @@ pub const PatchTask = struct {
 
         // 6. rename to cache dir
         var path_in_tmpdir_buf: bun.PathBuffer = undefined;
-        const path_in_tmpdir = bun.path.joinZBuf(
+        const path_in_tmpdir = bun.path.joinZBufWithoutBoundsCheck(
             &path_in_tmpdir_buf,
             &[_][]const u8{
                 tempdir_name,
@@ -407,7 +407,7 @@ pub const PatchTask = struct {
 
         var absolute_patchfile_path_buf: bun.PathBuffer = undefined;
         // parse the patch file
-        const absolute_patchfile_path = bun.path.joinZBuf(
+        const absolute_patchfile_path = bun.path.joinZBufWithoutBoundsCheck(
             &absolute_patchfile_path_buf,
             &[_][]const u8{
                 dir,

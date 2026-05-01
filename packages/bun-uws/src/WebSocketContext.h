@@ -439,7 +439,6 @@ private:
         /* on_connect_error */nullptr,
         /* on_connecting_error */ nullptr,
         /* on_handshake */    nullptr,
-        /* is_low_prio */     nullptr,
     };
 
     void free() {

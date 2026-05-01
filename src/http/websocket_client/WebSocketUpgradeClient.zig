@@ -280,7 +280,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             const secure_ptr: ?*uws.SslCtx = if (comptime ssl) brk: {
                 if (ssl_config) |config| if (config.requires_custom_request_ctx) {
                     var err: uws.create_bun_socket_error_t = .none;
-                    const ctx = config.asUSocketsForClientVerification().createSSLContext(&err) orelse {
+                    // Per-VM weak cache: every `new WebSocket(wss://, {tls:{ca}})`
+                    // with the same CA shares one CTX with each other and with
+                    // any `Bun.connect`/Postgres/etc. that named it.
+                    const ctx = vm.rareData().sslCtxCache().getOrCreateOpts(config.asUSocketsForClientVerification(), &err) orelse {
                         // Do NOT fall through to the default trust store — the
                         // user passed an explicit CA/cert and BoringSSL
                         // rejected it. Swapping in system roots would let the

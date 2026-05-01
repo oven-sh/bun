@@ -130,7 +130,6 @@ extern struct us_socket_t *us_dispatch_connect_error(us_socket_r s, int code);
 extern struct us_connecting_socket_t *us_dispatch_connecting_error(struct us_connecting_socket_t *c, int code);
 extern void us_dispatch_handshake(us_socket_r s, int success, struct us_bun_verify_error_t err);
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
-extern int us_dispatch_is_low_prio(us_socket_r s);
 
 extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);
 extern int Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);

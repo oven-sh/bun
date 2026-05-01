@@ -501,7 +501,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                  * SSL handshakes are CPU intensive, so we limit the number of handshakes per loop iteration, and move the rest
                  * to the low-priority queue */
                 struct us_socket_flags* flags = &s->flags;
-                if (s->ssl ? us_internal_ssl_is_low_prio(s) : us_dispatch_is_low_prio(s)) {
+                /* Only the SSL handshake gate ever returns low-prio. The
+                 * non-SSL arm dispatched a full vtable lookup just to read
+                 * NULL — no Zig handler defines isLowPrio and every C++ vtable
+                 * sets is_low_prio = nullptr — so it's been dropped. */
+                if (s->ssl && us_internal_ssl_is_low_prio(s)) {
                     if (flags->low_prio_state == 2) {
                         flags->low_prio_state = 0; /* Socket has been delayed and now it's time to process incoming data for one iteration */
                     } else if (loop->data.low_prio_budget > 0) {

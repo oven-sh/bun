@@ -7,7 +7,12 @@ export default [
     finalize: true,
     memoryCost: true,
     configurable: false,
-    klass: {},
+    klass: {
+      // `tls.createSecureContext()` entry — WeakGCMap-memoised by config
+      // digest so identical configs return the same JS cell. Replaces the
+      // old SHA-256/WeakRef cache that lived in `tls.ts`.
+      intern: { fn: "intern", length: 1 },
+    },
     // No prototype surface — node:tls hands out the SecureContext object
     // itself as `.context`. We deliberately do NOT expose the underlying
     // SSL_CTX* to JS: a Number would lose precision above 2^53, and Node's

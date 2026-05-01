@@ -578,7 +578,6 @@ private:
         /* on_connect_error */nullptr,
         /* on_connecting_error */ nullptr,
         /* on_handshake */    SSL ? &onHandshake : nullptr,
-        /* is_low_prio */     nullptr,
     };
 
 public:

@@ -360,35 +360,44 @@ pub fn installWithManager(
 
                     builder.clamp();
 
+                    // `enqueueDependencyWithMain` can reach `Lockfile.Package.fromNPM`,
+                    // which grows `buffers.dependencies` and may reallocate it.
+                    // Iterate by index against a snapshot of the original length and
+                    // copy each entry to the stack so neither the loop nor the callee
+                    // ever reads through a pointer into the old backing storage.
                     if (manager.summary.overrides_changed and all_name_hashes.len > 0) {
-                        for (manager.lockfile.buffers.dependencies.items, 0..) |*dependency, dependency_i| {
+                        const dependencies_len = manager.lockfile.buffers.dependencies.items.len;
+                        for (0..dependencies_len) |dependency_i| {
+                            const dependency = manager.lockfile.buffers.dependencies.items[dependency_i];
                             if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes, dependency.name_hash)) |_| {
                                 manager.lockfile.buffers.resolutions.items[dependency_i] = invalid_package_id;
                                 manager.enqueueDependencyWithMain(
                                     @truncate(dependency_i),
-                                    dependency,
+                                    &dependency,
                                     invalid_package_id,
                                     false,
                                 ) catch |err| {
-                                    addDependencyError(manager, dependency, err);
+                                    addDependencyError(manager, &dependency, err);
                                 };
                             }
                         }
                     }
 
                     if (manager.summary.catalogs_changed) {
-                        for (manager.lockfile.buffers.dependencies.items, 0..) |*dep, _dep_id| {
+                        const dependencies_len = manager.lockfile.buffers.dependencies.items.len;
+                        for (0..dependencies_len) |_dep_id| {
                             const dep_id: DependencyID = @intCast(_dep_id);
+                            const dep = manager.lockfile.buffers.dependencies.items[dep_id];
                             if (dep.version.tag != .catalog) continue;
 
                             manager.lockfile.buffers.resolutions.items[dep_id] = invalid_package_id;
                             manager.enqueueDependencyWithMain(
                                 dep_id,
-                                dep,
+                                &dep,
                                 invalid_package_id,
                                 false,
                             ) catch |err| {
-                                addDependencyError(manager, dep, err);
+                                addDependencyError(manager, &dep, err);
                             };
                         }
                     }
@@ -643,9 +652,29 @@ pub fn installWithManager(
                 if (security_scanner.performSecurityScanAfterResolution(manager, ctx, original_cwd) catch |err| {
                     switch (err) {
                         error.SecurityScannerInWorkspace => {
-                            Output.pretty("<red>Security scanner cannot be a dependency of a workspace package. It must be a direct dependency of the root package.<r>\n", .{});
+                            Output.errGeneric("security scanner cannot be a dependency of a workspace package. It must be a direct dependency of the root package.", .{});
                         },
-                        else => {},
+                        error.SecurityScannerRetryFailed => {
+                            Output.errGeneric("security scanner failed after partial install. This is probably a bug in Bun. Please report it at https://github.com/oven-sh/bun/issues", .{});
+                        },
+                        error.InvalidPackageID => {
+                            Output.errGeneric("cannot perform partial install: security scanner package ID is invalid", .{});
+                        },
+                        error.PartialInstallFailed => {
+                            Output.errGeneric("failed to install security scanner package", .{});
+                        },
+                        error.NoPackagesInstalled => {
+                            Output.errGeneric("no packages were installed during security scanner installation", .{});
+                        },
+                        error.IPCPipeFailed => {
+                            Output.errGeneric("failed to create IPC pipe for security scanner", .{});
+                        },
+                        error.ProcessWatchFailed => {
+                            Output.errGeneric("failed to watch security scanner process", .{});
+                        },
+                        else => |e| {
+                            Output.errGeneric("security scanner failed: {s}", .{@errorName(e)});
+                        },
                     }
 
                     Global.exit(1);

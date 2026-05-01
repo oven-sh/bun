@@ -758,11 +758,15 @@ async function main() {
 
   const parser = cppParser;
 
-  // Source list: explicit arg from the build system, or fall back to the
-  // cmake-generated file (until cmake is removed). The build system owns
-  // globbing and hands us the result — no filesystem dependency outside
-  // what we're given.
-  const cxxSourcesPath = args[2] ?? "cmake/sources/CxxSources.txt";
+  // Source list: build system globs and passes the path (see
+  // scripts/build/codegen.ts emitCppBind). For ad-hoc runs:
+  //   bun scripts/glob-sources.ts cxx > /tmp/cxx.txt
+  //   bun src/codegen/cppbind.ts <codegen> <out> /tmp/cxx.txt
+  const cxxSourcesPath = args[2];
+  if (!cxxSourcesPath) {
+    console.error("usage: cppbind.ts <codegen-dir> <output> <cxx-sources-file>");
+    process.exit(1);
+  }
   const allCppFiles = (await Bun.file(cxxSourcesPath).text())
     .trim()
     .split("\n")

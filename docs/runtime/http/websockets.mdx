@@ -24,7 +24,7 @@ Internally Bun's WebSocket implementation is built on [uWebSockets](https://gith
 
 ## Start a WebSocket server
 
-Below is a simple WebSocket server built with `Bun.serve`, in which all incoming requests are [upgraded](https://developer.mozilla.org/en-US/docs/Web/HTTP/Protocol_upgrade_mechanism) to WebSocket connections in the `fetch` handler. The socket handlers are declared in the `websocket` parameter.
+Below is a WebSocket server built with `Bun.serve`, in which all incoming requests are [upgraded](https://developer.mozilla.org/en-US/docs/Web/HTTP/Protocol_upgrade_mechanism) to WebSocket connections in the `fetch` handler. The socket handlers are declared in the `websocket` parameter.
 
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.serve({

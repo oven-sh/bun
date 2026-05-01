@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
-import { tls as COMMON_CERT_ } from "harness";
+import { bunEnv, bunExe, tls as COMMON_CERT_ } from "harness";
 import net from "net";
 import { join } from "path";
 import stream from "stream";
@@ -377,7 +377,7 @@ for (const { name, connect } of tests) {
 
       socket.on("secureConnect", () => {
         expect(socket.remotePort).toBe(443);
-        expect(socket[symbolConnectOptions].serverName).toBe("bun.sh");
+        expect(socket[symbolConnectOptions].servername).toBe("bun.sh");
         socket.end();
         done();
       });
@@ -398,7 +398,7 @@ for (const { name, connect } of tests) {
         if (connect === tlsConnect) {
           expect(socket.remotePort).toBe(443);
         }
-        expect(socket[symbolConnectOptions].serverName).toBe("bun.sh");
+        expect(socket[symbolConnectOptions].servername).toBe("bun.sh");
         socket.end();
         done();
       });
@@ -421,7 +421,7 @@ for (const { name, connect } of tests) {
           if (connect === tlsConnect) {
             expect(socket.remotePort).toBe(443);
           }
-          expect(socket[symbolConnectOptions].serverName).toBe("bun.sh");
+          expect(socket[symbolConnectOptions].servername).toBe("bun.sh");
           socket.end();
           done();
         },
@@ -437,7 +437,7 @@ for (const { name, connect } of tests) {
       });
 
       socket.on("secureConnect", () => {
-        expect(socket[symbolConnectOptions].serverName).toBe("bun.sh");
+        expect(socket[symbolConnectOptions].servername).toBe("bun.sh");
         if (connect === tlsConnect) {
           expect(socket.remotePort).toBe(443);
         }
@@ -514,3 +514,28 @@ for (const { name, connect } of tests) {
     });
   });
 }
+
+it("setSession() should not leak the SSL_SESSION returned by d2i_SSL_SESSION", async () => {
+  // d2i_SSL_SESSION returns an owned SSL_SESSION; SSL_set_session takes its own
+  // reference ("the caller retains ownership"), so the caller's reference must
+  // be freed. The fixture calls setSession 20,000× on one socket in its `open`
+  // handler (the only window before the handshake starts) and reports RSS growth.
+  //
+  // Without the SSL_SESSION_free: ~125–140 MB growth (~7 KB leaked per call).
+  // With it: ~5–10 MB (allocator noise, no per-call growth).
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dirname, "node-tls-set-session-leak.fixture.ts"), "20000"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { calls, growthBytes } = JSON.parse(stdout);
+  expect(calls).toBe(20000);
+  // Leave generous headroom above the fixed-build measurement so unrelated
+  // allocator changes don't turn this into a flaky test, while still being
+  // far below the ~125 MB leak signature.
+  expect(growthBytes).toBeLessThan(40 * 1024 * 1024);
+  expect(exitCode).toBe(0);
+}, 60_000);

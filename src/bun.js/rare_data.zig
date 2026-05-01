@@ -13,6 +13,7 @@ postgresql_context: bun.api.Postgres.PostgresSQLContext = .{},
 entropy_cache: ?*EntropyCache = null,
 
 hot_map: ?HotMap = null,
+cron_jobs: std.ArrayListUnmanaged(*bun.api.cron.CronJob) = .{},
 
 // TODO: make this per JSGlobalObject instead of global
 // This does not handle ShadowRealm correctly!
@@ -22,14 +23,49 @@ file_polls_: ?*Async.FilePoll.Store = null,
 
 global_dns_data: ?*bun.api.dns.GlobalData = null,
 
-spawn_ipc_usockets_context: ?*uws.SocketContext = null,
+/// Embedded socket groups for kinds that aren't tied to a Listener / server.
+/// Lazily linked into the loop on first socket; never separately allocated.
+spawn_ipc_group: uws.SocketGroup = .{},
+/// `bun test --parallel` IPC channel (worker ↔ coordinator). Survives the
+/// per-file isolation swap so the worker keeps its link to the coordinator.
+test_parallel_ipc_group: uws.SocketGroup = .{},
+/// `Bun.connect` client sockets — one group per VM (not per connection).
+bun_connect_group_tcp: uws.SocketGroup = .{},
+bun_connect_group_tls: uws.SocketGroup = .{},
+/// SQL drivers — TCP and TLS share one group each per VM. STARTTLS adopts
+/// from the `_tcp` group into `_tls` without reallocating a context.
+postgres_group: uws.SocketGroup = .{},
+postgres_tls_group: uws.SocketGroup = .{},
+mysql_group: uws.SocketGroup = .{},
+mysql_tls_group: uws.SocketGroup = .{},
+valkey_group: uws.SocketGroup = .{},
+valkey_tls_group: uws.SocketGroup = .{},
+/// `new WebSocket(...)` client. Upgrade phase (HTTP handshake) and connected
+/// phase (frame I/O) live in separate kinds so the handshake handler doesn't
+/// have to runtime-branch on state.
+ws_upgrade_group: uws.SocketGroup = .{},
+ws_upgrade_tls_group: uws.SocketGroup = .{},
+ws_client_group: uws.SocketGroup = .{},
+ws_client_tls_group: uws.SocketGroup = .{},
+/// Weak digest→`SSL_CTX*` cache. Every JS-thread consumer that turns an
+/// `SSLConfig` into an `SSL_CTX*` goes through here so identical configs
+/// share one CTX (Postgres pool, Valkey, `Bun.connect`, `tls.connect`, …).
+ssl_ctx_cache: api.SSLContextCache = .{},
+
+/// `ssl_ctx_cache.getOrCreate(&.{})` — i.e. the default-trust-store client
+/// CTX. Cached separately so the hot `tls:true` / `wss://` path skips even the
+/// SHA-256 + map lookup. Ref owned here.
+default_client_ssl_ctx: ?*uws.SslCtx = null,
 
 mime_types: ?bun.http.MimeType.Map = null,
 
 node_fs_stat_watcher_scheduler: ?bun.ptr.RefPtr(StatWatcherScheduler) = null,
 
-listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
+listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FD) = .{},
 listening_sockets_for_watch_mode_lock: bun.Mutex = .{},
+
+fs_watchers_for_isolation: std.ArrayListUnmanaged(*FSWatcher) = .{},
+stat_watchers_for_isolation: std.ArrayListUnmanaged(*StatWatcher) = .{},
 
 temp_pipe_read_buffer: ?*PipeReadBuffer = null,
 
@@ -41,6 +77,9 @@ default_csrf_secret: []const u8 = "",
 valkey_context: ValkeyContext = .{},
 
 tls_default_ciphers: ?[:0]const u8 = null,
+
+// proxy_env_storage moved to VirtualMachine — see comment there on why
+// lazy RareData creation raced with worker spawn.
 
 #spawn_sync_event_loop: bun.ptr.Owned(?*SpawnSyncEventLoop) = .initNull(),
 
@@ -98,6 +137,120 @@ pub const PathBuf = struct {
 
 const PipeReadBuffer = [256 * 1024]u8;
 const DIGESTED_HMAC_256_LEN = 32;
+
+pub const ProxyEnvStorage = struct {
+    HTTP_PROXY: ?*RefCountedEnvValue = null,
+    http_proxy: ?*RefCountedEnvValue = null,
+    HTTPS_PROXY: ?*RefCountedEnvValue = null,
+    https_proxy: ?*RefCountedEnvValue = null,
+    NO_PROXY: ?*RefCountedEnvValue = null,
+    no_proxy: ?*RefCountedEnvValue = null,
+
+    /// Held by Bun__setEnvValue around the slot swap + env.map.put, and by
+    /// the worker around cloneFrom + env.map.cloneWithAllocator. This closes
+    /// two races: (1) worker's cloneFrom reading a slot pointer concurrently
+    /// with the parent's deref → free on the same pointer; (2) the env.map's
+    /// backing ArrayHashMap being iterated during clone while the parent's
+    /// put() rehashes it.
+    lock: bun.Mutex = .{},
+
+    pub const Slot = struct {
+        /// Static-lifetime field name (e.g. "NO_PROXY") — safe to use as
+        /// the env map key without duping.
+        key: []const u8,
+        ptr: *?*RefCountedEnvValue,
+    };
+
+    pub fn slot(self: *ProxyEnvStorage, name: []const u8) ?Slot {
+        // On Windows the env.map is case-insensitive (CaseInsensitiveASCII-
+        // StringArrayHashMap) — map.put("HTTP_PROXY", ...) and
+        // map.put("http_proxy", ...) write the same entry. If we tracked
+        // refs in separate case-variant slots, one slot's value would leak
+        // and syncInto would replay the stale one into the worker's map.
+        // Canonicalize both cases to the uppercase slot on Windows; the
+        // lowercase slots stay null. Posix keeps both — its map and its
+        // getHttpProxy lookup are case-sensitive.
+        const eql = if (comptime bun.Environment.isWindows)
+            bun.strings.eqlCaseInsensitiveASCIIICheckLength
+        else
+            bun.strings.eql;
+        inline for (@typeInfo(ProxyEnvStorage).@"struct".fields) |f| {
+            if (comptime f.type == ?*RefCountedEnvValue) {
+                // Uppercase fields are declared first. On Windows the
+                // case-insensitive eql matches the uppercase field for
+                // either input case and returns before reaching lowercase.
+                if (eql(name, f.name)) {
+                    return .{ .key = f.name, .ptr = &@field(self, f.name) };
+                }
+            }
+        }
+        return null;
+    }
+
+    /// Bump refcounts on all non-null values so a worker can share the
+    /// parent's strings. Caller must hold parent.lock — the pointer load
+    /// and ref() are not atomic with respect to Bun__setEnvValue's deref().
+    pub fn cloneFrom(self: *ProxyEnvStorage, parent: *const ProxyEnvStorage) void {
+        inline for (@typeInfo(ProxyEnvStorage).@"struct".fields) |f| {
+            if (comptime f.type == ?*RefCountedEnvValue) {
+                if (@field(parent, f.name)) |val| {
+                    val.ref();
+                    @field(self, f.name) = val;
+                }
+            }
+        }
+    }
+
+    /// Overwrite proxy-var entries in an env map with this storage's reffed
+    /// bytes. Used after map.cloneWithAllocator in the worker so the cloned
+    /// map and the reffed storage agree — defense-in-depth in case the map
+    /// clone captured a snapshot the storage doesn't hold a ref on (e.g. an
+    /// initial-environ value later overwritten by the setter).
+    pub fn syncInto(self: *const ProxyEnvStorage, map: *bun.DotEnv.Map) void {
+        inline for (@typeInfo(ProxyEnvStorage).@"struct".fields) |f| {
+            if (comptime f.type == ?*RefCountedEnvValue) {
+                if (@field(self, f.name)) |val| {
+                    bun.handleOom(map.put(f.name, val.bytes));
+                }
+            }
+        }
+    }
+
+    pub fn deinit(self: *ProxyEnvStorage) void {
+        inline for (@typeInfo(ProxyEnvStorage).@"struct".fields) |f| {
+            if (comptime f.type == ?*RefCountedEnvValue) {
+                if (@field(self, f.name)) |val| {
+                    val.deref();
+                    @field(self, f.name) = null;
+                }
+            }
+        }
+    }
+};
+
+/// A ref-counted heap-allocated byte slice. The env map stores borrowed
+/// `.bytes` slices; as long as any VM holds a ref, the bytes stay valid.
+pub const RefCountedEnvValue = struct {
+    const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", RefCountedEnvValue.destroy, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
+    ref_count: RefCount,
+    bytes: []const u8,
+
+    pub fn create(value: []const u8) *RefCountedEnvValue {
+        return bun.new(RefCountedEnvValue, .{
+            .ref_count = .init(),
+            .bytes = bun.handleOom(bun.default_allocator.dupe(u8, value)),
+        });
+    }
+
+    fn destroy(this: *RefCountedEnvValue) void {
+        bun.default_allocator.free(this.bytes);
+        bun.destroy(this);
+    }
+};
+
 pub const AWSSignatureCache = struct {
     cache: bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8) = bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8).init(bun.default_allocator),
     date: u64 = 0,
@@ -154,16 +307,16 @@ pub fn pipeReadBuffer(this: *RareData) *PipeReadBuffer {
     };
 }
 
-pub fn addListeningSocketForWatchMode(this: *RareData, socket: bun.FileDescriptor) void {
+pub fn addListeningSocketForWatchMode(this: *RareData, socket: bun.FD) void {
     this.listening_sockets_for_watch_mode_lock.lock();
     defer this.listening_sockets_for_watch_mode_lock.unlock();
     this.listening_sockets_for_watch_mode.append(bun.default_allocator, socket) catch {};
 }
 
-pub fn removeListeningSocketForWatchMode(this: *RareData, socket: bun.FileDescriptor) void {
+pub fn removeListeningSocketForWatchMode(this: *RareData, socket: bun.FD) void {
     this.listening_sockets_for_watch_mode_lock.lock();
     defer this.listening_sockets_for_watch_mode_lock.unlock();
-    if (std.mem.indexOfScalar(bun.FileDescriptor, this.listening_sockets_for_watch_mode.items, socket)) |i| {
+    if (std.mem.indexOfScalar(bun.FD, this.listening_sockets_for_watch_mode.items, socket)) |i| {
         _ = this.listening_sockets_for_watch_mode.swapRemove(i);
     }
 }
@@ -177,6 +330,35 @@ pub fn closeAllListenSocketsForWatchMode(this: *RareData) void {
         socket.close();
     }
     this.listening_sockets_for_watch_mode = .{};
+}
+
+pub fn addFSWatcherForIsolation(this: *RareData, watcher: *FSWatcher) void {
+    bun.handleOom(this.fs_watchers_for_isolation.append(bun.default_allocator, watcher));
+}
+
+pub fn removeFSWatcherForIsolation(this: *RareData, watcher: *FSWatcher) void {
+    if (std.mem.indexOfScalar(*FSWatcher, this.fs_watchers_for_isolation.items, watcher)) |i| {
+        _ = this.fs_watchers_for_isolation.swapRemove(i);
+    }
+}
+
+pub fn addStatWatcherForIsolation(this: *RareData, watcher: *StatWatcher) void {
+    bun.handleOom(this.stat_watchers_for_isolation.append(bun.default_allocator, watcher));
+}
+
+pub fn removeStatWatcherForIsolation(this: *RareData, watcher: *StatWatcher) void {
+    if (std.mem.indexOfScalar(*StatWatcher, this.stat_watchers_for_isolation.items, watcher)) |i| {
+        _ = this.stat_watchers_for_isolation.swapRemove(i);
+    }
+}
+
+pub fn closeAllWatchersForIsolation(this: *RareData) void {
+    while (this.fs_watchers_for_isolation.pop()) |watcher| {
+        watcher.detach();
+    }
+    while (this.stat_watchers_for_isolation.pop()) |watcher| {
+        watcher.close();
+    }
 }
 
 pub fn hotMap(this: *RareData, allocator: std.mem.Allocator) *HotMap {
@@ -503,15 +685,76 @@ comptime {
     @export(&js_getTLSDefaultCiphers, .{ .name = "Bun__getTLSDefaultCiphers" });
 }
 
-pub fn spawnIPCContext(rare: *RareData, vm: *jsc.VirtualMachine) *uws.SocketContext {
-    if (rare.spawn_ipc_usockets_context) |ctx| {
-        return ctx;
+pub fn spawnIPCGroup(rare: *RareData, vm: *jsc.VirtualMachine) *uws.SocketGroup {
+    if (rare.spawn_ipc_group.loop == null) {
+        rare.spawn_ipc_group.init(vm.uwsLoop(), null, null);
     }
+    return &rare.spawn_ipc_group;
+}
 
-    const ctx = uws.SocketContext.createNoSSLContext(vm.event_loop_handle.?, @sizeOf(usize)).?;
-    IPC.Socket.configure(ctx, true, *IPC.SendQueue, IPC.IPCHandlers.PosixSocket);
-    rare.spawn_ipc_usockets_context = ctx;
-    return ctx;
+pub fn testParallelIPCGroup(rare: *RareData, vm: *jsc.VirtualMachine) *uws.SocketGroup {
+    if (rare.test_parallel_ipc_group.loop == null) {
+        rare.test_parallel_ipc_group.init(vm.uwsLoop(), null, null);
+    }
+    return &rare.test_parallel_ipc_group;
+}
+
+/// One shared group per (VM, ssl) for every `Bun.connect` / `tls.connect`
+/// client socket. Replaces the old per-connection `us_socket_context_t`
+/// allocation that was the root of the SSL_CTX-per-connect leak.
+pub fn bunConnectGroup(rare: *RareData, vm: *jsc.VirtualMachine, comptime ssl: bool) *uws.SocketGroup {
+    const g = if (ssl) &rare.bun_connect_group_tls else &rare.bun_connect_group_tcp;
+    if (g.loop == null) g.init(vm.uwsLoop(), null, null);
+    return g;
+}
+
+inline fn lazyGroup(rare: *RareData, vm: *jsc.VirtualMachine, comptime field: []const u8) *uws.SocketGroup {
+    const g = &@field(rare, field);
+    if (g.loop == null) g.init(vm.uwsLoop(), null, null);
+    return g;
+}
+
+pub fn postgresGroup(rare: *RareData, vm: *jsc.VirtualMachine, comptime ssl: bool) *uws.SocketGroup {
+    return rare.lazyGroup(vm, if (ssl) "postgres_tls_group" else "postgres_group");
+}
+pub fn mysqlGroup(rare: *RareData, vm: *jsc.VirtualMachine, comptime ssl: bool) *uws.SocketGroup {
+    return rare.lazyGroup(vm, if (ssl) "mysql_tls_group" else "mysql_group");
+}
+pub fn valkeyGroup(rare: *RareData, vm: *jsc.VirtualMachine, comptime ssl: bool) *uws.SocketGroup {
+    return rare.lazyGroup(vm, if (ssl) "valkey_tls_group" else "valkey_group");
+}
+pub fn wsUpgradeGroup(rare: *RareData, vm: *jsc.VirtualMachine, comptime ssl: bool) *uws.SocketGroup {
+    return rare.lazyGroup(vm, if (ssl) "ws_upgrade_tls_group" else "ws_upgrade_group");
+}
+pub fn wsClientGroup(rare: *RareData, vm: *jsc.VirtualMachine, comptime ssl: bool) *uws.SocketGroup {
+    return rare.lazyGroup(vm, if (ssl) "ws_client_tls_group" else "ws_client_group");
+}
+
+pub fn sslCtxCache(rare: *RareData) *api.SSLContextCache {
+    return &rare.ssl_ctx_cache;
+}
+
+/// Shared `SSL_CTX*` for client connects that didn't supply a custom CA
+/// (`Valkey({tls: true})`, `new WebSocket("wss://…")`). The old code allocated
+/// a fresh `us_socket_context_t` per such case and cached the pointer; now
+/// the SSL_CTX is the only thing worth caching.
+pub fn defaultClientSslCtx(rare: *RareData) *uws.SslCtx {
+    if (rare.default_client_ssl_ctx == null) {
+        var err: uws.create_bun_socket_error_t = .none;
+        // Mode-neutral CTX (VERIFY_NONE). `us_internal_ssl_attach` overrides
+        // each client SSL to VERIFY_PEER + the shared bundled-root store, so
+        // `new WebSocket("wss://…")` (which shares this CTX and defaults to
+        // rejectUnauthorized:true) verifies real servers. Route through the
+        // weak cache so a `tls.connect()` with default options later resolves
+        // to the same CTX rather than building a second one with the same
+        // digest. The +1 ref returned here is held for the VM's lifetime, so
+        // the entry never tombstones.
+        rare.default_client_ssl_ctx = rare.ssl_ctx_cache.getOrCreateOpts(.{}, &err) orelse bun.Output.panic(
+            "default client SSL_CTX init failed: {s}",
+            .{err.message() orelse "unknown"},
+        );
+    }
+    return rare.default_client_ssl_ctx.?;
 }
 
 pub fn globalDNSResolver(rare: *RareData, vm: *jsc.VirtualMachine) *api.dns.Resolver {
@@ -604,6 +847,8 @@ pub fn deinit(this: *RareData) void {
     }
 
     this.cleanup_hooks.clearAndFree(bun.default_allocator);
+    bun.debugAssert(this.cron_jobs.items.len == 0);
+    this.cron_jobs.deinit(bun.default_allocator);
     this.path_buf.deinit();
 
     if (this.websocket_deflate) |deflate| {
@@ -617,6 +862,57 @@ pub fn deinit(this: *RareData) void {
     }
 
     this.valkey_context.deinit();
+
+    if (this.default_client_ssl_ctx) |s| bun.BoringSSL.c.SSL_CTX_free(s);
+    // After the default-ctx free so the tombstone callback still finds a live
+    // map; deinit then clears every remaining entry's ex_data so any later
+    // SSL_CTX_free (from sockets that survive RareData) doesn't deref freed
+    // Entries.
+    this.ssl_ctx_cache.deinit();
+    // closeAllSocketGroups() must have already run (before JSC teardown) so
+    // these are empty; deinit() asserts that in debug.
+    inline for (socket_group_fields) |f| @field(this, f).deinit();
+}
+
+const socket_group_fields = .{
+    "bun_connect_group_tcp", "bun_connect_group_tls",
+    "spawn_ipc_group",       "test_parallel_ipc_group",
+    "postgres_group",        "postgres_tls_group",
+    "mysql_group",           "mysql_tls_group",
+    "valkey_group",          "valkey_tls_group",
+    "ws_upgrade_group",      "ws_upgrade_tls_group",
+    "ws_client_group",       "ws_client_tls_group",
+};
+
+/// Drain every embedded socket group. Must run BEFORE JSC teardown — closeAll
+/// fires on_close → JS callbacks → needs a live VM. RareData.deinit() runs
+/// after `WebWorker__teardownJSCVM` (web_worker.zig), so doing the closeAll
+/// there would dispatch into freed JSC heap.
+pub fn closeAllSocketGroups(this: *RareData, vm: *jsc.VirtualMachine) void {
+    // closeAll() dispatches on_close into JS while the VM is still alive, so a
+    // handler can call Bun.connect/postgres/etc. and re-populate a group we
+    // just drained. Loop until every group is observed empty in the same pass
+    // (bounded — each retry only happens if a JS callback opened a *new*
+    // socket, and the cap stops a deliberately-spinning on_close from wedging
+    // teardown; the post-close force-drain in close_all handles whatever's
+    // left after the cap).
+    // Walk the loop's linked-group list rather than just our 14 embedded
+    // fields: Listener/uWS-App groups own their own SocketGroup, and accepted
+    // sockets land *there*, not in RareData. Iterating only `socket_group_fields`
+    // missed those, leaking one 88-byte us_socket_t per still-open accepted
+    // connection at process.exit() (the LSAN cluster on #29932 build 49245).
+    _ = this;
+    const loop = vm.uwsLoop();
+    var rounds: u8 = 0;
+    while (rounds < 8) : (rounds += 1) {
+        if (!loop.closeAllGroups()) break;
+    }
+    // us_socket_close pushes to loop->data.closed_head; loop_post() normally
+    // frees it on the next tick. We're past the last tick, so drain it now —
+    // every us_socket_t is libc-allocated and otherwise becomes an LSAN leak
+    // (the only pointer into it lives in mimalloc-backed RareData, which LSAN
+    // can't trace once we unregister the root region).
+    vm.uwsLoop().drainClosedSockets();
 }
 
 pub fn websocketDeflate(this: *RareData) *WebSocketDeflate.RareData {
@@ -637,13 +933,15 @@ pub fn spawnSyncEventLoop(this: *RareData, vm: *jsc.VirtualMachine) *SpawnSyncEv
     };
 }
 
-const IPC = @import("./ipc.zig");
 const UUID = @import("./uuid.zig");
 const WebSocketDeflate = @import("../http/websocket_client/WebSocketDeflate.zig");
 const std = @import("std");
 const EditorContext = @import("../open.zig").EditorContext;
-const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
+const FSWatcher = @import("./node/node_fs_watcher.zig").FSWatcher;
 const ValkeyContext = @import("../valkey/valkey.zig").ValkeyContext;
+
+const StatWatcher = @import("./node/node_fs_stat_watcher.zig").StatWatcher;
+const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 
 const bun = @import("bun");
 const Async = bun.Async;

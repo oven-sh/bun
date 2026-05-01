@@ -143,7 +143,7 @@ const PosixBufferedReader = struct {
         this.handle.setOwner(this);
     }
 
-    pub fn startMemfd(this: *PosixBufferedReader, fd: bun.FileDescriptor) void {
+    pub fn startMemfd(this: *PosixBufferedReader, fd: bun.FD) void {
         this.flags.memfd = true;
         this.handle = .{ .fd = fd };
     }
@@ -177,7 +177,7 @@ const PosixBufferedReader = struct {
         }
     }
 
-    pub fn getFd(this: *PosixBufferedReader) bun.FileDescriptor {
+    pub fn getFd(this: *PosixBufferedReader) bun.FD {
         return this.handle.getFd();
     }
 
@@ -296,7 +296,7 @@ const PosixBufferedReader = struct {
         }
     }
 
-    pub fn start(this: *PosixBufferedReader, fd: bun.FileDescriptor, is_pollable: bool) bun.sys.Maybe(void) {
+    pub fn start(this: *PosixBufferedReader, fd: bun.FD, is_pollable: bool) bun.sys.Maybe(void) {
         if (!is_pollable) {
             this.buffer().clearRetainingCapacity();
             this.flags.is_done = false;
@@ -315,7 +315,7 @@ const PosixBufferedReader = struct {
         };
     }
 
-    pub fn startFileOffset(this: *PosixBufferedReader, fd: bun.FileDescriptor, poll: bool, offset: usize) bun.sys.Maybe(void) {
+    pub fn startFileOffset(this: *PosixBufferedReader, fd: bun.FD, poll: bool, offset: usize) bun.sys.Maybe(void) {
         this._offset = offset;
         this.flags.use_pread = true;
         return this.start(fd, poll);
@@ -417,18 +417,18 @@ const PosixBufferedReader = struct {
         return false;
     }
 
-    fn wrapReadFn(comptime func: *const fn (bun.FileDescriptor, []u8) bun.sys.Maybe(usize)) *const fn (bun.FileDescriptor, []u8, usize) bun.sys.Maybe(usize) {
+    fn wrapReadFn(comptime func: *const fn (bun.FD, []u8) bun.sys.Maybe(usize)) *const fn (bun.FD, []u8, usize) bun.sys.Maybe(usize) {
         return struct {
-            pub fn call(fd: bun.FileDescriptor, buf: []u8, offset: usize) bun.sys.Maybe(usize) {
+            pub fn call(fd: bun.FD, buf: []u8, offset: usize) bun.sys.Maybe(usize) {
                 _ = offset;
                 return func(fd, buf);
             }
         }.call;
     }
 
-    fn readFile(parent: *PosixBufferedReader, resizable_buffer: *std.array_list.Managed(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
+    fn readFile(parent: *PosixBufferedReader, resizable_buffer: *std.array_list.Managed(u8), fd: bun.FD, size_hint: isize, received_hup: bool) void {
         const preadFn = struct {
-            pub fn call(fd1: bun.FileDescriptor, buf: []u8, offset: usize) bun.sys.Maybe(usize) {
+            pub fn call(fd1: bun.FD, buf: []u8, offset: usize) bun.sys.Maybe(usize) {
                 return bun.sys.pread(fd1, buf, @intCast(offset));
             }
         }.call;
@@ -439,17 +439,19 @@ const PosixBufferedReader = struct {
         }
     }
 
-    fn readSocket(parent: *PosixBufferedReader, resizable_buffer: *std.array_list.Managed(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
+    fn readSocket(parent: *PosixBufferedReader, resizable_buffer: *std.array_list.Managed(u8), fd: bun.FD, size_hint: isize, received_hup: bool) void {
         return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .socket, wrapReadFn(bun.sys.recvNonBlock));
     }
 
-    fn readPipe(parent: *PosixBufferedReader, resizable_buffer: *std.array_list.Managed(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
+    fn readPipe(parent: *PosixBufferedReader, resizable_buffer: *std.array_list.Managed(u8), fd: bun.FD, size_hint: isize, received_hup: bool) void {
         return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .nonblocking_pipe, wrapReadFn(bun.sys.readNonblocking));
     }
 
-    fn readBlockingPipe(parent: *PosixBufferedReader, resizable_buffer: *std.array_list.Managed(u8), fd: bun.FileDescriptor, _: isize, received_hup: bool) void {
+    fn readBlockingPipe(parent: *PosixBufferedReader, resizable_buffer: *std.array_list.Managed(u8), fd: bun.FD, _: isize, received_hup_initially: bool) void {
+        var received_hup = received_hup_initially;
         while (true) {
             const streaming = parent.vtable.isStreamingEnabled();
+            var got_retry = false;
 
             if (resizable_buffer.capacity == 0) {
                 // Use stack buffer for streaming
@@ -480,6 +482,7 @@ const PosixBufferedReader = struct {
                             return;
                         }
                         // EAGAIN - fall through to register for next poll
+                        got_retry = true;
                     },
                 }
             } else {
@@ -510,6 +513,7 @@ const PosixBufferedReader = struct {
                             parent.onError(err);
                             return;
                         }
+                        got_retry = true;
                     },
                 }
             }
@@ -520,12 +524,51 @@ const PosixBufferedReader = struct {
                 return;
             }
 
-            // We have received HUP but have not consumed it yet. We can't register for next poll cycle.
-            // We need to keep going.
+            // We have received HUP. Normally that means all writers are gone
+            // and draining the buffer will eventually hit EOF (read() == 0),
+            // so we loop locally instead of re-arming the poll (HUP is
+            // level-triggered and would fire again immediately).
+            //
+            // But `received_hup` is a snapshot from when the epoll/kqueue
+            // event fired. `onReadChunk` above re-enters JS (resolves the
+            // pending read, drains microtasks, fires the 'data' event), and
+            // user code there can open a new writer on the same FIFO — after
+            // which the pipe is no longer hung up. Looping again would then
+            // either spin forever on EAGAIN (if the fd is O_NONBLOCK) or
+            // block the event loop in read() (if the fd is blocking and
+            // RWF_NOWAIT is unavailable — Linux named FIFOs return
+            // EOPNOTSUPP for it, unlike anonymous pipes).
+            //
+            // An explicit EAGAIN proves the HUP is stale, so re-arm.
+            if (got_retry) {
+                parent.registerPoll();
+                return;
+            }
+            // Otherwise we just returned from user JS; re-poll the fd to see
+            // whether HUP still holds before committing to another blocking
+            // read. This is one extra poll() per chunk only on the HUP path
+            // (i.e. while draining the final buffered bytes), not per read.
+            switch (bun.isReadable(fd)) {
+                .hup => {
+                    // Still hung up; keep draining towards EOF.
+                },
+                .ready => {
+                    // Data is available but HUP cleared — a writer came back.
+                    // Drop the stale HUP so the next iteration takes the
+                    // normal registerPoll() exit once the data is drained.
+                    received_hup = false;
+                },
+                .not_ready => {
+                    // No data and no HUP: a writer exists. Go back to the
+                    // event loop instead of blocking in read().
+                    parent.registerPoll();
+                    return;
+                },
+            }
         }
     }
 
-    fn readWithFn(parent: *PosixBufferedReader, resizable_buffer: *std.array_list.Managed(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool, comptime file_type: FileType, comptime sys_fn: *const fn (bun.FileDescriptor, []u8, usize) bun.sys.Maybe(usize)) void {
+    fn readWithFn(parent: *PosixBufferedReader, resizable_buffer: *std.array_list.Managed(u8), fd: bun.FD, size_hint: isize, received_hup: bool, comptime file_type: FileType, comptime sys_fn: *const fn (bun.FD, []u8, usize) bun.sys.Maybe(usize)) void {
         _ = size_hint; // autofix
         const streaming = parent.vtable.isStreamingEnabled();
 
@@ -689,7 +732,7 @@ const PosixBufferedReader = struct {
         }
     }
 
-    fn readFromBlockingPipeWithoutBlocking(parent: *PosixBufferedReader, resizable_buffer: *std.array_list.Managed(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
+    fn readFromBlockingPipeWithoutBlocking(parent: *PosixBufferedReader, resizable_buffer: *std.array_list.Managed(u8), fd: bun.FD, size_hint: isize, received_hup: bool) void {
         if (parent.vtable.isStreamingEnabled()) {
             resizable_buffer.clearRetainingCapacity();
         }
@@ -760,7 +803,7 @@ pub const WindowsBufferedReader = struct {
                 return Type.onReaderError(@as(*Type, @ptrCast(@alignCast(this))), err);
             }
             fn loop(this: *anyopaque) *Async.Loop {
-                return Type.loop(@as(*Type, @alignCast(@ptrCast(this))));
+                return Type.loop(@as(*Type, @ptrCast(@alignCast(this))));
             }
         };
         return .{
@@ -794,7 +837,7 @@ pub const WindowsBufferedReader = struct {
         to.setParent(parent);
     }
 
-    pub fn getFd(this: *const WindowsBufferedReader) bun.FileDescriptor {
+    pub fn getFd(this: *const WindowsBufferedReader) bun.FD {
         const source = this.source orelse return bun.invalid_fd;
         return source.getFd();
     }
@@ -913,7 +956,7 @@ pub const WindowsBufferedReader = struct {
         return this.startWithCurrentPipe();
     }
 
-    pub fn start(this: *WindowsBufferedReader, fd: bun.FileDescriptor, _: bool) bun.sys.Maybe(void) {
+    pub fn start(this: *WindowsBufferedReader, fd: bun.FD, _: bool) bun.sys.Maybe(void) {
         bun.assert(this.source == null);
         // Use the event loop from the parent, not the global one
         // This is critical for spawnSync to use its isolated loop
@@ -927,7 +970,7 @@ pub const WindowsBufferedReader = struct {
         return this.startWithCurrentPipe();
     }
 
-    pub fn startFileOffset(this: *WindowsBufferedReader, fd: bun.FileDescriptor, poll: bool, offset: usize) bun.sys.Maybe(void) {
+    pub fn startFileOffset(this: *WindowsBufferedReader, fd: bun.FD, poll: bool, offset: usize) bun.sys.Maybe(void) {
         this._offset = offset;
         this.flags.use_pread = true;
         return this.start(fd, poll);

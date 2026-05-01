@@ -18,7 +18,7 @@ const debug = Output.scoped(.fs, .visible);
 pub const Fs = struct {
     pub const Entry = struct {
         contents: string,
-        fd: StoredFileDescriptorType,
+        fd: FD,
         /// When `contents` comes from a native plugin, this field is populated
         /// with information on how to free it.
         external_free_function: ExternalFreeFunction = .none,
@@ -94,7 +94,7 @@ pub const Fs = struct {
         this: *Fs,
         _fs: *fs.FileSystem,
         path: [:0]const u8,
-        cached_file_descriptor: ?StoredFileDescriptorType,
+        cached_file_descriptor: ?FD,
         shared: *MutableString,
     ) !Entry {
         var rfs = _fs.fs;
@@ -136,9 +136,9 @@ pub const Fs = struct {
         c: *Fs,
         _fs: *fs.FileSystem,
         path: string,
-        dirname_fd: StoredFileDescriptorType,
+        dirname_fd: FD,
         comptime use_shared_buffer: bool,
-        _file_handle: ?StoredFileDescriptorType,
+        _file_handle: ?FD,
     ) !Entry {
         return c.readFileWithAllocator(bun.default_allocator, _fs, path, dirname_fd, use_shared_buffer, _file_handle);
     }
@@ -148,9 +148,9 @@ pub const Fs = struct {
         allocator: std.mem.Allocator,
         _fs: *fs.FileSystem,
         path: string,
-        dirname_fd: StoredFileDescriptorType,
+        dirname_fd: FD,
         comptime use_shared_buffer: bool,
-        _file_handle: ?StoredFileDescriptorType,
+        _file_handle: ?FD,
     ) !Entry {
         var rfs = _fs.fs;
 
@@ -321,11 +321,11 @@ const Define = @import("./defines.zig").Define;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const FD = bun.FD;
 const FeatureFlags = bun.FeatureFlags;
 const Global = bun.Global;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const default_allocator = bun.default_allocator;
 const js_ast = bun.ast;
 const js_parser = bun.js_parser;

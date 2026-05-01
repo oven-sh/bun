@@ -912,10 +912,14 @@ Readable.prototype.pipe = function (dest, pipeOpts) {
   src.on("data", ondata);
   function ondata(chunk) {
     $debug("ondata");
-    const ret = dest.write(chunk);
-    $debug("dest.write", ret);
-    if (ret === false) {
-      pause();
+    try {
+      const ret = dest.write(chunk);
+      $debug("dest.write", ret);
+      if (ret === false) {
+        pause();
+      }
+    } catch (err) {
+      dest.destroy(err);
     }
   }
 

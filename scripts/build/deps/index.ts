@@ -21,6 +21,8 @@ import { libdeflate } from "./libdeflate.ts";
 import { libuv } from "./libuv.ts";
 import { lolhtml } from "./lolhtml.ts";
 import { lshpack } from "./lshpack.ts";
+import { lsqpack } from "./lsqpack.ts";
+import { lsquic } from "./lsquic.ts";
 import { mimalloc } from "./mimalloc.ts";
 import { nodejsHeaders } from "./nodejs-headers.ts";
 import { picohttpparser } from "./picohttpparser.ts";
@@ -53,10 +55,15 @@ export const allDeps: readonly Dependency[] = [
   libuv,
   lolhtml,
   lshpack,
+  lsqpack,
   mimalloc,
   sqlite,
   tinycc,
   boringssl,
+  // lsquic after boringssl: needs ssl.h at compile time (fetchDeps), and as
+  // a DirectBuild dep its .o files go straight on the link line so static
+  // link order doesn't apply.
+  lsquic,
   // WebKit LAST in link order — WTF/JSC provide symbols that everything
   // above might reference (via JavaScriptCore types in headers).
   webkit,
@@ -74,6 +81,8 @@ export {
   libuv,
   lolhtml,
   lshpack,
+  lsqpack,
+  lsquic,
   mimalloc,
   nodejsHeaders,
   picohttpparser,

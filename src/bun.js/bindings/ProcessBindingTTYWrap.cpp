@@ -196,7 +196,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
     auto flag = callFrame->argument(0);
     bool raw = flag.asBoolean();
 
-    Zig::GlobalObject* global = jsCast<Zig::GlobalObject*>(globalObject);
+    Zig::GlobalObject* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
 
     return JSValue::encode(jsNumber(Source__setRawModeStdin(raw)));
 #else
@@ -238,7 +238,7 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
         return {};
     }
 
-    TTYWrapObject* ttyWrap = jsDynamicCast<TTYWrapObject*>(callFrame->thisValue());
+    TTYWrapObject* ttyWrap = dynamicDowncast<TTYWrapObject>(callFrame->thisValue());
     if (!ttyWrap) [[unlikely]] {
         JSC::throwTypeError(globalObject, throwScope, "TTY.setRawMode expects a TTYWrapObject as this"_s);
         return {};
@@ -275,14 +275,14 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionGetWindowSize,
         return {};
     }
 
-    TTYWrapObject* ttyWrap = jsDynamicCast<TTYWrapObject*>(callFrame->thisValue());
+    TTYWrapObject* ttyWrap = dynamicDowncast<TTYWrapObject>(callFrame->thisValue());
     if (!ttyWrap) [[unlikely]] {
         JSC::throwTypeError(globalObject, throwScope, "TTY.getWindowSize expects a TTYWrapObject as this"_s);
         return {};
     }
 
     int fd = ttyWrap->fd;
-    JSC::JSArray* array = jsDynamicCast<JSC::JSArray*>(callFrame->uncheckedArgument(0));
+    JSC::JSArray* array = dynamicDowncast<JSC::JSArray>(callFrame->uncheckedArgument(0));
     if (!array || array->length() < 2) {
         JSC::throwTypeError(globalObject, throwScope, "getWindowSize expects an array"_s);
         return {};
@@ -312,7 +312,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionInternalGetWindowSize,
 
     int fd = callFrame->uncheckedArgument(0).toInt32(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-    JSC::JSArray* array = jsDynamicCast<JSC::JSArray*>(callFrame->uncheckedArgument(1));
+    JSC::JSArray* array = dynamicDowncast<JSC::JSArray>(callFrame->uncheckedArgument(1));
     if (!array || array->length() < 2) {
         JSC::throwTypeError(globalObject, throwScope, "getWindowSize requires 2 argument (an array)"_s);
         return {};
@@ -419,7 +419,7 @@ public:
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        auto* constructor = jsDynamicCast<TTYWrapConstructor*>(callframe->jsCallee());
+        auto* constructor = dynamicDowncast<TTYWrapConstructor>(callframe->jsCallee());
 
         if (!constructor) {
             throwTypeError(globalObject, scope, "TTYWrapConstructor::construct called with wrong 'this' value"_s);
@@ -451,7 +451,7 @@ public:
 #if OS(WINDOWS)
         auto* handle = new UV::TTY();
         memset(handle, 0, sizeof(UV::TTY));
-        int rc = uv_tty_init(jsCast<Zig::GlobalObject*>(globalObject)->uvLoop(), handle->tty(), fd, 0);
+        int rc = uv_tty_init(uncheckedDowncast<Zig::GlobalObject>(globalObject)->uvLoop(), handle->tty(), fd, 0);
         if (rc < 0) {
             delete handle;
             throwTypeError(globalObject, scope, "Failed to initialize TTY handle"_s);

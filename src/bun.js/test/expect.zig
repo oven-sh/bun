@@ -957,9 +957,9 @@ pub const Expect = struct {
 
                 const wrapper_fn = Bun__JSWrappingFunction__create(globalThis, matcher_name, jsc.toJSHostFn(Expect.applyCustomMatcher), matcher_fn, true);
 
-                expect_proto.put(globalThis, matcher_name, wrapper_fn);
-                expect_constructor.put(globalThis, matcher_name, wrapper_fn);
-                expect_static_proto.put(globalThis, matcher_name, wrapper_fn);
+                try expect_proto.putMayBeIndex(globalThis, matcher_name, wrapper_fn);
+                try expect_constructor.putMayBeIndex(globalThis, matcher_name, wrapper_fn);
+                try expect_static_proto.putMayBeIndex(globalThis, matcher_name, wrapper_fn);
             }
         }
 
@@ -1689,51 +1689,49 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         return instance_jsvalue;
     }
 
-    /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue
-    pub fn execute(this: *ExpectCustomAsymmetricMatcher, thisValue: JSValue, globalThis: *JSGlobalObject, received: JSValue) callconv(.c) bool {
+    fn executeImpl(this: *ExpectCustomAsymmetricMatcher, thisValue: JSValue, globalThis: *JSGlobalObject, received: JSValue) bun.JSError!bool {
         // retrieve the user-provided matcher implementation function (the function passed to expect.extend({ ... }))
         const matcher_fn: JSValue = js.matcherFnGetCached(thisValue) orelse {
-            globalThis.throw("Internal consistency error: the ExpectCustomAsymmetricMatcher(matcherFn) was garbage collected but it should not have been!", .{}) catch {};
-            return false;
+            return globalThis.throw("Internal consistency error: the ExpectCustomAsymmetricMatcher(matcherFn) was garbage collected but it should not have been!", .{});
         };
         matcher_fn.ensureStillAlive();
         if (!matcher_fn.jsType().isFunction()) {
-            globalThis.throw("Internal consistency error: the ExpectCustomMatcher(matcherFn) is not a function!", .{}) catch {};
-            return false;
+            return globalThis.throw("Internal consistency error: the ExpectCustomMatcher(matcherFn) is not a function!", .{});
         }
 
         // retrieve the matcher name
-        const matcher_name = matcher_fn.getName(globalThis) catch {
-            return false;
-        };
+        const matcher_name = try matcher_fn.getName(globalThis);
 
         // retrieve the asymmetric matcher args
         // if null, it means the function has not yet been called to capture the args, which is a misuse of the matcher
         const captured_args: JSValue = js.capturedArgsGetCached(thisValue) orelse {
-            globalThis.throw("expect.{f} misused, it needs to be instantiated by calling it with 0 or more arguments", .{matcher_name}) catch {};
-            return false;
+            return globalThis.throw("expect.{f} misused, it needs to be instantiated by calling it with 0 or more arguments", .{matcher_name});
         };
         captured_args.ensureStillAlive();
 
         // prepare the args array as `[received, ...captured_args]`
-        const args_count = captured_args.getLength(globalThis) catch return false;
+        const args_count = try captured_args.getLength(globalThis);
         var allocator = std.heap.stackFallback(8 * @sizeOf(JSValue), globalThis.allocator());
         var matcher_args = std.array_list.Managed(JSValue).initCapacity(allocator.get(), args_count + 1) catch {
-            globalThis.throwOutOfMemory() catch {};
-            return false;
+            return globalThis.throwOutOfMemory();
         };
         matcher_args.appendAssumeCapacity(received);
         for (0..args_count) |i| {
-            matcher_args.appendAssumeCapacity(captured_args.getIndex(globalThis, @truncate(i)) catch return false);
+            matcher_args.appendAssumeCapacity(try captured_args.getIndex(globalThis, @truncate(i)));
         }
 
-        return Expect.executeCustomMatcher(globalThis, matcher_name, matcher_fn, matcher_args.items, this.flags, true) catch false;
+        return Expect.executeCustomMatcher(globalThis, matcher_name, matcher_fn, matcher_args.items, this.flags, true);
+    }
+
+    /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue
+    pub fn execute(this: *ExpectCustomAsymmetricMatcher, thisValue: JSValue, globalThis: *JSGlobalObject, received: JSValue) callconv(.c) bool {
+        return executeImpl(this, thisValue, globalThis, received) catch false;
     }
 
     pub fn asymmetricMatch(this: *ExpectCustomAsymmetricMatcher, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments_old(1).slice();
         const received_value = if (arguments.len < 1) .js_undefined else arguments[0];
-        const matched = execute(this, callframe.this(), globalThis, received_value);
+        const matched = try executeImpl(this, callframe.this(), globalThis, received_value);
         return JSValue.jsBoolean(matched);
     }
 

@@ -59,9 +59,15 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // suppressed (the pragma's effect is per-preprocessing-pass, not per-AST).
   // The -Xclang prefix is required: plain -include doesn't combine with PCH
   // on the clang driver, but -Xclang bypasses the driver's sanity check.
+  //
+  // clang-cl: same -Xclang -include-pch / -include pair as posix. clang-cl
+  // accepts -Xclang directly. The MSVC-style alternative (/Yu + /FI) does
+  // NOT work: clang-cl's /Yu scans the literal source for the through-header
+  // and ignores /FI-injected includes, so it errors with "#include ... not
+  // seen" on any TU that doesn't itself spell out the wrapper include.
   n.rule("cxx_pch", {
     command: cfg.windows
-      ? `${ccacheLauncher}${cxx} /nologo /showIncludes $cxxflags /Yu$pch_header /Fp$pch_file /c $in /Fo$out`
+      ? `${ccacheLauncher}${cxx} /nologo /showIncludes $cxxflags -Xclang -include-pch -Xclang $pch_file -Xclang -include -Xclang $pch_header /c $in /Fo$out`
       : `${ccacheLauncher}${cxx} $cxxflags -Winvalid-pch -Xclang -include-pch -Xclang $pch_file -Xclang -include -Xclang $pch_header -MMD -MT $out -MF $out.d -c $in -o $out`,
     description: "cxx $out",
     ...depfileOpts,
@@ -75,6 +81,18 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
     description: "cc $out",
     ...depfileOpts,
   });
+
+  // ─── NASM assemble (Windows-x64 only) ───
+  // BoringSSL's win-x64 assembly is NASM syntax; clang can't assemble it.
+  // -MD writes a Make-style depfile; nasm 2.14+ supports it.
+  if (cfg.nasm !== undefined) {
+    n.rule("nasm", {
+      command: `${q(cfg.nasm)} $nasmflags -MD $out.d -o $out $in`,
+      description: "nasm $out",
+      depfile: "$out.d",
+      deps: "gcc",
+    });
+  }
 
   // ─── PCH compilation ───
   // Compiles a header into a precompiled header.
@@ -91,10 +109,21 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // suppress JSC warnings, which makes everything it transitively includes
   // "system" for -MMD purposes. -MMD would give a near-empty depfile; -MD
   // tracks all headers so PCH invalidates when WebKit headers change.
+  // -fno-pch-timestamp: don't embed input mtimes in the PCH. ccache returns
+  // cached PCH outputs by content hash, so the embedded mtime can be stale
+  // (e.g. after deleting pch/ and reconfiguring) → every consumer fails with
+  // "mtime changed". ninja's depfile already tracks invalidation; clang's
+  // redundant mtime check just fights ccache.
+  // Windows: -Xclang -include, NOT /FI. clang-cl's /FI auto-promotes to
+  // -include-pch when a .pch already exists at the /Fp path — even for the
+  // /Yc -emit-pch cc1 job — so a stale PCH (e.g. after a cxxflags change)
+  // gets validated instead of overwritten and the build fails with
+  // "<langopt> was enabled in precompiled file but is currently disabled".
+  // -Xclang goes straight to cc1, bypassing the driver's auto-detection.
   n.rule("pch", {
     command: cfg.windows
-      ? `${ccacheLauncher}${cxx} /nologo /showIncludes $cxxflags /Yc$pch_header /Fp$out /c $pch_stub /Fo$pch_stub_obj`
-      : `${ccacheLauncher}${cxx} $cxxflags -Winvalid-pch -fpch-instantiate-templates -Xclang -emit-pch -Xclang -include -Xclang $pch_header -x c++-header -MD -MT $out -MF $out.d -c $in -o $out`,
+      ? `${ccacheLauncher}${cxx} /nologo /showIncludes $cxxflags /clang:-fpch-instantiate-templates -Xclang -fno-pch-timestamp /Yc$pch_header -Xclang -include -Xclang $pch_header /Fp$out /c $in /Fo$pch_stub_obj`
+      : `${ccacheLauncher}${cxx} $cxxflags -Winvalid-pch -fpch-instantiate-templates -Xclang -fno-pch-timestamp -Xclang -emit-pch -Xclang -include -Xclang $pch_header -x c++-header -MD -MT $out -MF $out.d -c $in -o $out`,
     description: "pch $out",
     ...depfileOpts,
   });
@@ -111,7 +140,7 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // everything after passes verbatim to lld-link. Our ldflags are all
   // pure linker options (/STACK, /DEF, /OPT, /errorlimit, system libs)
   // that clang-cl's driver doesn't recognize.
-  const wrap = `${q(cfg.bun)} ${q(streamPath)} link --console`;
+  const wrap = `${cfg.jsRuntime} ${q(streamPath)} link --console`;
   n.rule("link", {
     command: cfg.windows
       ? `${wrap} ${cxx} /nologo -fuse-ld=lld @$out.rsp /Fe$out /link $ldflags`
@@ -143,19 +172,22 @@ export interface CompileOpts {
   /** Original header the PCH was built from (needed for clang-cl /Yu). */
   pchHeader?: string;
   /**
-   * Extra implicit deps. Use for generated headers this specific .cpp needs.
-   * E.g. ErrorCode.cpp depends on ErrorCode+List.h.
+   * Extra implicit deps. Use for generated headers this specific .cpp needs
+   * (e.g. ErrorCode.cpp depends on ErrorCode+List.h), and for dep outputs
+   * (lib*.a) — local sub-builds rewrite forwarding headers as undeclared
+   * side effects, so the lib is the invalidation signal; order-only would
+   * lag one build behind.
    */
   implicitInputs?: string[];
   /**
    * Order-only deps. Must exist before compile, but mtime not tracked.
    * The compiler's .d depfile tracks ACTUAL header dependencies on
-   * subsequent builds — order-only is for "dep libs/headers must be
-   * extracted before first compile attempts to #include them".
+   * subsequent builds — order-only is for "header must be generated
+   * before first compile attempts to #include it".
    *
-   * Prefer this over implicitInputs for dep outputs: if you touch
-   * libJavaScriptCore.a, you don't want every .c file to recompile
-   * (.c files don't include JSC headers). The depfile knows better.
+   * Use for codegen headers (declared ninja outputs with restat, so
+   * depfile tracking is exact). Dep outputs (lib*.a) go in
+   * implicitInputs instead — see above.
    */
   orderOnlyInputs?: string[];
   /** Job pool override. */
@@ -178,11 +210,41 @@ export function cxx(n: Ninja, cfg: Config, src: string, opts: CompileOpts): stri
 
 /**
  * Compile a C source file. Returns absolute path to the .o output.
+ *
+ * `.S` (preprocessed assembly) is also accepted — clang dispatches on the
+ * extension and runs cpp + as. Used by deps that ship hand-tuned kernels
+ * (e.g. zstd's huf_decompress_amd64.S).
  */
 export function cc(n: Ninja, cfg: Config, src: string, opts: Omit<CompileOpts, "pch" | "pchHeader">): string {
-  assert(extname(src) === ".c", `cc() expects .c source, got: ${src}`);
+  const ext = extname(src);
+  assert(ext === ".c" || ext === ".S", `cc() expects .c/.S source, got: ${src}`);
   // C files never use PCH (PCH is C++-only in our build)
   return compile(n, cfg, src, opts, "cc");
+}
+
+/**
+ * Assemble a NASM-syntax `.asm` file. Returns absolute path to the .obj
+ * output. Windows-x64 only — gas-syntax `.S` goes through cc().
+ */
+export function nasm(
+  n: Ninja,
+  cfg: Config,
+  src: string,
+  opts: { flags: string[]; orderOnlyInputs?: string[] },
+): string {
+  assert(extname(src) === ".asm", `nasm() expects .asm source, got: ${src}`);
+  assert(cfg.nasm !== undefined, "nasm not found in toolchain", {
+    hint: "Install from https://nasm.us or `winget install NASM.NASM`",
+  });
+  const out = objectPath(cfg, src);
+  n.build({
+    outputs: [out],
+    rule: "nasm",
+    inputs: [resolve(cfg.cwd, src)],
+    orderOnlyInputs: [objectDirStamp(cfg), ...(opts.orderOnlyInputs ?? [])],
+    vars: { nasmflags: opts.flags.join(" ") },
+  });
+  return out;
 }
 
 function compile(n: Ninja, cfg: Config, src: string, opts: CompileOpts, lang: "cxx" | "cc"): string {
@@ -279,17 +341,16 @@ export function pch(
     orderOnlyInputs?: string[];
   },
 ): { pch: string; wrapperHeader: string } {
-  // TODO(windows): the clang-cl /Yu rule references $pch_stub / $pch_stub_obj
-  // that this function doesn't set. Wire them up, then delete this assert.
-  assert(!cfg.windows, "PCH on Windows not yet wired up", {
-    hint: "compile.ts pch() doesn't set $pch_stub / $pch_stub_obj for the clang-cl rule",
-  });
-
   const absHeader = resolve(cfg.cwd, header);
   const pchDir = resolve(cfg.buildDir, "pch");
   const wrapperHeader = resolve(pchDir, `${basename(header)}.hxx`);
   const stubCxx = resolve(pchDir, `${basename(header)}.hxx.cxx`);
   const out = resolve(pchDir, `${basename(header)}.hxx.pch`);
+  // clang-cl /Yc compiles the stub source AND emits a PCH in one invocation,
+  // so it always writes a side-effect .obj. Unlike MSVC, clang's PCH is a
+  // serialized AST (not a partial object file), so consumers don't need this
+  // .obj linked — we declare it only so ninja tracks/cleans it.
+  const stubObj = `${stubCxx}${cfg.objSuffix}`;
 
   // Write the wrapper at configure time. `#pragma clang system_header` must
   // be the FIRST non-comment line for clang to honor it.
@@ -312,7 +373,7 @@ export function pch(
   // The pragma is ignored in main files but works in includes, hence this dance.
   writeIfChanged(stubCxx, `/* generated by scripts/build/compile.ts */\n`);
 
-  n.build({
+  const node: BuildNode = {
     outputs: [out],
     rule: "pch",
     // Compile the STUB, force-include the wrapper.
@@ -326,7 +387,12 @@ export function pch(
       cxxflags: opts.flags.join(" "),
       pch_header: n.rel(wrapperHeader),
     },
-  });
+  };
+  if (cfg.windows) {
+    node.implicitOutputs = [stubObj];
+    node.vars!.pch_stub_obj = n.rel(stubObj);
+  }
+  n.build(node);
 
   return { pch: out, wrapperHeader };
 }

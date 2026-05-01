@@ -4,9 +4,11 @@ pub const InternalLoopData = extern struct {
     sweep_timer: ?*Timer,
     sweep_timer_count: i32,
     wakeup_async: ?*us_internal_async,
-    head: ?*SocketContext,
-    iterator: ?*SocketContext,
-    closed_context_head: ?*SocketContext,
+    head: ?*SocketGroup,
+    quic_head: ?*anyopaque,
+    quic_next_tick_us: i64,
+    quic_timer: ?*Timer,
+    iterator: ?*SocketGroup,
     recv_buf: [*]u8,
     send_buf: [*]u8,
     ssl_data: ?*anyopaque,
@@ -23,6 +25,7 @@ pub const InternalLoopData = extern struct {
     parent_tag: c_char,
     iteration_nr: usize,
     jsc_vm: ?*jsc.VM,
+    tick_depth: c_int,
 
     pub fn recvSlice(this: *InternalLoopData) []u8 {
         return this.recv_buf[0..LIBUS_RECV_BUFFER_LENGTH];
@@ -64,7 +67,7 @@ const jsc = bun.jsc;
 const uws = bun.uws;
 const ConnectingSocket = uws.ConnectingSocket;
 const Loop = uws.Loop;
-const SocketContext = uws.SocketContext;
+const SocketGroup = uws.SocketGroup;
 const Timer = uws.Timer;
 const udp = uws.udp;
 const us_socket_t = uws.us_socket_t;

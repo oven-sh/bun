@@ -6,6 +6,12 @@ import assert from "node:assert/strict";
 import util from "node:util";
 import { exitCodeMap } from "./exit-code-map.mjs";
 
+// Prevent silent crashes from unhandled promise rejections
+process.on("unhandledRejection", reason => {
+  console.error("[E] Unhandled rejection:", reason);
+  process.exit(exitCodeMap.reloadFailed);
+});
+
 const args = process.argv.slice(2);
 let url = args.find(arg => !arg.startsWith("-"));
 if (!url) {
@@ -143,9 +149,15 @@ function createWindow(windowUrl) {
         assert(element.src.startsWith("blob:"));
         const blob = objectURLRegistry.get(element.src);
         assert(blob);
+        // Capture the window this script was appended to. Rapid HMR reloads
+        // can swap the module-level `window` before `arrayBuffer()` resolves,
+        // which would otherwise eval an HMR chunk against a freshly-created
+        // window whose runtime has not loaded yet.
+        const owningWindow = window;
         blob.arrayBuffer().then(buffer => {
+          if (window !== owningWindow) return;
           const code = new TextDecoder().decode(buffer);
-          (0, window.eval)(code);
+          (0, owningWindow.eval)(code);
         });
         return;
       }
@@ -344,13 +356,29 @@ async function handleReload() {
 
 // Extract page loading logic to a reusable function
 async function loadPage() {
-  const response = await fetch(url);
+  let response;
+  const maxRetries = 3;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      response = await fetch(url);
+      break;
+    } catch (err) {
+      if (attempt < maxRetries - 1) {
+        // Retry after a short delay for transient connection errors (e.g. Windows port not ready)
+        await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+        continue;
+      }
+      console.error("Failed to fetch page after retries:", err.message);
+      process.exit(exitCodeMap.reloadFailed);
+    }
+  }
   if (response.status >= 400 && response.status <= 499) {
     console.error("Failed to load page:", response.statusText);
     process.exit(exitCodeMap.reloadFailed);
   }
-  if (!response.headers.get("content-type").match(/^text\/html;?/)) {
-    console.error("Invalid content type:", response.headers.get("content-type"));
+  const contentType = response.headers.get("content-type");
+  if (!contentType || !contentType.match(/^text\/html;?/)) {
+    console.error("Invalid content type:", contentType);
     process.exit(exitCodeMap.reloadFailed);
   }
   const html = await response.text();
@@ -540,4 +568,9 @@ process.on("exit", () => {
 
 // Initial page load
 createWindow(url);
-await loadPage(window);
+try {
+  await loadPage(window);
+} catch (error) {
+  console.error("Failed initial page load:", error);
+  process.exit(exitCodeMap.reloadFailed);
+}

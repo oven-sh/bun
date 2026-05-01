@@ -17,6 +17,8 @@
 #include "wtf/Assertions.h"
 #include "napi_macros.h"
 
+#include <wtf/ListHashSet.h>
+
 #include <optional>
 #include <unordered_set>
 #include <variant>
@@ -201,9 +203,12 @@ public:
         JSC::DeferGCForAWhile deferGC(m_vm);
 
         m_isFinishingFinalizers = true;
-        for (const BoundFinalizer& boundFinalizer : m_finalizers) {
+        // Reverse insertion order so children are torn down before parents (Node.js LIFO).
+        // ListHashSet iteration is safe against concurrent inserts, and m_isFinishingFinalizers
+        // routes all removals to active=false, so the only unsafe op (erase-current) can't occur.
+        for (auto it = m_finalizers.rbegin(); it != m_finalizers.rend(); ++it) {
             Bun::NapiHandleScope handle_scope(m_globalObject);
-            boundFinalizer.call(this);
+            it->call(this);
         }
         m_finalizers.clear();
         m_isFinishingFinalizers = false;
@@ -214,24 +219,24 @@ public:
 
     void removeFinalizer(napi_finalize callback, void* hint, void* data)
     {
-        m_finalizers.erase({ callback, hint, data });
+        m_finalizers.remove({ callback, hint, data });
     }
 
     struct BoundFinalizer;
 
     void removeFinalizer(const BoundFinalizer& finalizer)
     {
-        m_finalizers.erase(finalizer);
+        m_finalizers.remove(finalizer);
     }
 
     const auto& addFinalizer(napi_finalize callback, void* hint, void* data)
     {
-        return *m_finalizers.emplace(callback, hint, data).first;
+        return *m_finalizers.add({ callback, hint, data }).iterator;
     }
 
     bool hasFinalizers() const
     {
-        return !m_finalizers.empty();
+        return !m_finalizers.isEmpty();
     }
 
     /// Will abort the process if a duplicate entry would be added.
@@ -458,20 +463,24 @@ public:
         }
 
         struct Hash {
-            std::size_t operator()(const NapiEnv::BoundFinalizer& bound) const
+            static unsigned hash(const BoundFinalizer& bound)
             {
-                constexpr std::hash<void*> hasher;
-                constexpr std::ptrdiff_t magic = 0x9e3779b9;
-                return (hasher(reinterpret_cast<void*>(bound.callback)) + magic) ^ (hasher(bound.hint) + magic) ^ (hasher(bound.data) + magic);
+                return WTF::computeHash(reinterpret_cast<uintptr_t>(bound.callback), reinterpret_cast<uintptr_t>(bound.hint), reinterpret_cast<uintptr_t>(bound.data));
             }
+            static bool equal(const BoundFinalizer& a, const BoundFinalizer& b)
+            {
+                return a == b;
+            }
+            static constexpr bool safeToCompareToEmptyOrDeleted = false;
         };
     };
 
 private:
     Zig::GlobalObject* m_globalObject = nullptr;
     napi_module m_napiModule;
-    // TODO(@heimskr): Use WTF::HashSet
-    std::unordered_set<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
+    // ListHashSet preserves insertion order so cleanup() can run finalizers in reverse
+    // (LIFO), matching Node.js teardown semantics for napi_wrap references.
+    WTF::ListHashSet<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
     bool m_isFinishingFinalizers = false;
     JSC::VM& m_vm;
     Napi::HookSet m_cleanupHooks;
@@ -696,7 +705,7 @@ public:
         }
 
         if (value.isSymbol()) {
-            auto* symbol = jsDynamicCast<JSC::Symbol*>(value);
+            auto* symbol = dynamicDowncast<JSC::Symbol>(value);
             ASSERT(symbol != nullptr);
             if (symbol->uid().isRegistered()) {
                 // Global symbols must always be retrievable,

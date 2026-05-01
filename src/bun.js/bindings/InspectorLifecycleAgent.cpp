@@ -3,6 +3,8 @@
 #include <JavaScriptCore/InspectorFrontendRouter.h>
 #include <JavaScriptCore/InspectorBackendDispatcher.h>
 #include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <wtf/text/WTFString.h>
 #include <JavaScriptCore/ScriptCallStackFactory.h>
 #include <JavaScriptCore/ScriptArguments.h>
@@ -145,20 +147,19 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* global = defaultGlobalObject(&m_globalObject);
-    auto* esmMap = global->esmRegistryMap();
-    if (!esmMap) return makeUnexpected(ErrorString("Module graph not available"_s));
     auto* cjsMap = global->requireMap();
 
     Ref<JSON::ArrayOf<String>> esm = JSON::ArrayOf<String>::create();
     {
-        auto iter1 = JSC::JSMapIterator::create(vm, global->mapIteratorStructure(), esmMap, JSC::IterationKind::Keys);
-        RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to create iterator"_s)));
-        JSC::JSValue value;
-        while (iter1->next(global, value)) {
-            esm->addItem(value.toWTFString(global));
-            RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to add item to esm array"_s)));
+        Vector<String> keys;
+        for (auto& [key, entry] : global->moduleLoader()->moduleMap()) {
+            if (key.first)
+                keys.append(String { key.first });
         }
-        RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to iterate over esm map"_s)));
+        // ModuleMap is hash-ordered; sort so the inspector output is stable.
+        std::sort(keys.begin(), keys.end(), WTF::codePointCompareLessThan);
+        for (auto& k : keys)
+            esm->addItem(k);
     }
 
     Ref<JSON::ArrayOf<String>> cjs = JSON::ArrayOf<String>::create();
@@ -178,7 +179,7 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
     Ref<JSON::ArrayOf<String>> argv = JSON::ArrayOf<String>::create();
     {
 
-        auto* array = jsCast<JSC::JSArray*>(process->getArgv(global));
+        auto* array = uncheckedDowncast<JSC::JSArray>(process->getArgv(global));
         RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to get argv"_s)));
         for (size_t i = 0, length = array->length(); i < length; i++) {
             auto value = array->getIndex(global, i);

@@ -343,7 +343,7 @@ pub const struct_evp_md_pctx_ops = opaque {};
 pub const struct_env_md_ctx_st = extern struct {
     // md_data contains the hash-specific context
     md_data: extern union {
-        data: [208]u8,
+        data: [240]u8,
         alignment: u64,
     },
     // digest is the underlying digest function, or NULL if not set
@@ -6377,7 +6377,7 @@ pub const CIPHER_R_NO_DIRECTION_SET = @as(c_int, 124);
 pub const CIPHER_R_INVALID_NONCE = @as(c_int, 125);
 pub const OPENSSL_HEADER_DIGEST_H = "";
 pub const EVP_MAX_MD_SIZE = @as(c_int, 64);
-pub const EVP_MAX_MD_BLOCK_SIZE = @as(c_int, 128);
+pub const EVP_MAX_MD_BLOCK_SIZE = @as(c_int, 144);
 pub const EVP_MD_FLAG_PKEY_DIGEST = @as(c_int, 1);
 pub const EVP_MD_FLAG_DIGALGID_ABSENT = @as(c_int, 2);
 pub const EVP_MD_FLAG_XOF = @as(c_int, 4);
@@ -18756,6 +18756,10 @@ pub extern fn EVP_sha384() *const EVP_MD;
 pub extern fn EVP_sha512() *const EVP_MD;
 pub extern fn EVP_sha512_224() *const EVP_MD;
 pub extern fn EVP_sha512_256() *const EVP_MD;
+pub extern fn EVP_sha3_224() *const EVP_MD;
+pub extern fn EVP_sha3_256() *const EVP_MD;
+pub extern fn EVP_sha3_384() *const EVP_MD;
+pub extern fn EVP_sha3_512() *const EVP_MD;
 
 pub extern fn EVP_blake2b256() *const EVP_MD;
 pub extern fn EVP_blake2b512() *const EVP_MD;
@@ -19054,17 +19058,28 @@ pub const SSL = opaque {
     }
 
     pub fn configureHTTPClient(ssl: *SSL, hostname: [:0]const u8) void {
+        configureHTTPClientWithALPN(ssl, hostname, .h1);
+    }
+
+    pub const AlpnOffer = enum { h1, h1_or_h2, h2_only };
+
+    pub fn configureHTTPClientWithALPN(ssl: *SSL, hostname: [:0]const u8, offer: AlpnOffer) void {
         if (hostname.len > 0) ssl.setHostname(hostname);
         _ = SSL_clear_options(ssl, SSL_OP_LEGACY_SERVER_CONNECT);
         _ = SSL_set_options(ssl, SSL_OP_LEGACY_SERVER_CONNECT);
 
-        const alpns = &[_]u8{ 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
-        bun.assert(SSL_set_alpn_protos(ssl, alpns, alpns.len) == 0);
+        const alpn_h1 = &[_]u8{ 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
+        const alpn_h2 = &[_]u8{ 2, 'h', '2' };
+        const alpn_h2_h1 = &[_]u8{ 2, 'h', '2', 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
+        const alpns: []const u8 = switch (offer) {
+            .h1 => alpn_h1,
+            .h1_or_h2 => alpn_h2_h1,
+            .h2_only => alpn_h2,
+        };
+        bun.assert(SSL_set_alpn_protos(ssl, alpns.ptr, alpns.len) == 0);
 
         SSL_enable_signed_cert_timestamps(ssl);
         SSL_enable_ocsp_stapling(ssl);
-
-        SSL_set_enable_ech_grease(ssl, 1);
     }
 
     pub fn handshake(this: *SSL) Error!void {

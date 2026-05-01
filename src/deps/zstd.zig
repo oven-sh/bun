@@ -53,6 +53,9 @@ pub fn decompressAlloc(allocator: std.mem.Allocator, src: []const u8) ![]u8 {
     // 2. Reported size exceeds safety limit (to prevent malicious inputs claiming huge sizes)
     if (size == ZSTD_CONTENTSIZE_UNKNOWN or size > MAX_PREALLOCATE_SIZE) {
         var list = std.ArrayListUnmanaged(u8){};
+        // `reader.deinit()` below does not free `list`; free it ourselves on any error
+        // (init failure, readAll failure, or toOwnedSlice failure).
+        errdefer list.deinit(allocator);
         const reader = try ZstdReaderArrayList.init(src, &list, allocator);
         defer reader.deinit();
 
@@ -67,10 +70,8 @@ pub fn decompressAlloc(allocator: std.mem.Allocator, src: []const u8) ![]u8 {
     const result = decompress(output, src);
     return switch (result) {
         .success => |actual_size| output[0..actual_size],
-        .err => {
-            allocator.free(output);
-            return error.DecompressionFailed;
-        },
+        // `output` is freed by the errdefer above.
+        .err => error.DecompressionFailed,
     };
 }
 

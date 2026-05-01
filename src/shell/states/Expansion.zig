@@ -322,6 +322,8 @@ fn transitionToGlobState(this: *Expansion) Yield {
     ) catch |err| bun.handleOom(err)) {
         .result => {},
         .err => |e| {
+            arena.deinit();
+            this.child_state = .idle;
             this.state = .{ .err = bun.shell.ShellErr.newSys(e) };
             return .{ .expansion = this };
         },
@@ -337,7 +339,7 @@ pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) ?Yield {
         .simple => |*simp| {
             const is_cmd_subst = this.expandSimpleNoIO(simp, &this.current_out, true);
             if (is_cmd_subst) {
-                const io: IO = .{
+                var io: IO = .{
                     .stdin = this.base.rootIO().stdin.ref(),
                     .stdout = .pipe,
                     .stderr = this.base.rootIO().stderr.ref(),
@@ -345,6 +347,7 @@ pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) ?Yield {
                 const shell_state = switch (this.base.shell.dupeForSubshell(this.base.allocScope(), this.base.allocator(), io, .cmd_subst)) {
                     .result => |s| s,
                     .err => |e| {
+                        io.deref();
                         this.base.throw(&bun.shell.ShellErr.newSys(e));
                         return .failed;
                     },
@@ -369,7 +372,7 @@ pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) ?Yield {
             for (cmp.atoms[start_word_idx + starting_offset ..]) |*simple_atom| {
                 const is_cmd_subst = this.expandSimpleNoIO(simple_atom, &this.current_out, true);
                 if (is_cmd_subst) {
-                    const io: IO = .{
+                    var io: IO = .{
                         .stdin = this.base.rootIO().stdin.ref(),
                         .stdout = .pipe,
                         .stderr = this.base.rootIO().stderr.ref(),
@@ -377,6 +380,7 @@ pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) ?Yield {
                     const shell_state = switch (this.base.shell.dupeForSubshell(this.base.allocScope(), this.base.allocator(), io, .cmd_subst)) {
                         .result => |s| s,
                         .err => |e| {
+                            io.deref();
                             this.base.throw(&bun.shell.ShellErr.newSys(e));
                             return .failed;
                         },

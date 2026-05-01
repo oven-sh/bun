@@ -12,7 +12,7 @@ using namespace WTF;
 extern "C" SYSV_ABI EncodedJSValue Bun__createShellInterpreter(Zig::GlobalObject* _Nonnull globalObject, void* _Nonnull ptr, EncodedJSValue parsed_shell_script, EncodedJSValue resolve, EncodedJSValue reject)
 {
     auto& vm = globalObject->vm();
-    const auto& existingArgs = jsCast<WebCore::JSParsedShellScript*>(JSValue::decode(parsed_shell_script))->values();
+    const auto& existingArgs = uncheckedDowncast<WebCore::JSParsedShellScript>(JSValue::decode(parsed_shell_script))->values();
     WTF::FixedVector<WriteBarrier<Unknown>> args = WTF::FixedVector<WriteBarrier<Unknown>>(existingArgs.size());
     for (size_t i = 0; i < existingArgs.size(); i++) {
         args[i].setWithoutWriteBarrier(existingArgs[i].get());

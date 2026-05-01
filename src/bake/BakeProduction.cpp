@@ -44,7 +44,7 @@ extern "C" JSC::JSPromise* BakeRenderRoutesForProdStatic(
         // This should be impossible because it returns a promise.
         return JSC::JSPromise::rejectedPromise(global, returnedException->value());
     }
-    return JSC::jsCast<JSC::JSPromise*>(result);
+    return uncheckedDowncast<JSC::JSPromise>(result);
 }
 
 } // namespace Bake

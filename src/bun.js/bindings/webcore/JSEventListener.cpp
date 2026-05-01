@@ -32,6 +32,7 @@
 // #include "JSDocument.h"
 #include "JSEvent.h"
 #include "JSEventTarget.h"
+#include "WebCoreJSClientData.h"
 // #include "JSExecState.h"
 // #include "JSExecStateInstrumentation.h"
 // #include "JSWorkerGlobalScope.h"
@@ -162,7 +163,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
         return;
 
     // if (scriptExecutionContext.isDocument()) {
-    //     JSDOMWindow* window = jsCast<JSDOMWindow*>(globalObject);
+    //     JSDOMWindow* window = uncheckedDowncast<JSDOMWindow>(globalObject);
     //     if (!window->wrapped().isCurrentlyDisplayedInFrame())
     //         return;
     //     if (wasCreatedFromMarkup()) {
@@ -177,7 +178,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     // }
 
     // RefPtr<Event> savedEvent;
-    // auto* jsFunctionWindow = jsDynamicCast<JSDOMWindow*>(vm, jsFunction->globalObject(vm));
+    // auto* jsFunctionWindow = dynamicDowncast<JSDOMWindow>(vm, jsFunction->globalObject(vm));
     // if (jsFunctionWindow) {
     //     savedEvent = jsFunctionWindow->currentEvent();
 
@@ -202,7 +203,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
         if (m_isAttribute)
             return;
 
-        handleEventFunction = jsFunction->get(lexicalGlobalObject, Identifier::fromString(vm, "handleEvent"_s));
+        handleEventFunction = jsFunction->get(lexicalGlobalObject, WebCore::builtinNames(vm).handleEventPublicName());
         if (scope.exception()) [[unlikely]] {
             auto* exception = scope.exception();
             (void)scope.tryClearException();
@@ -226,7 +227,14 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
 
     // JSExecState::instrumentFunction(&scriptExecutionContext, callData);
 
-    JSValue thisValue = handleEventFunction == jsFunction ? toJS(lexicalGlobalObject, globalObject, event.currentTarget()) : jsFunction;
+    JSValue thisValue = [&]() -> JSValue {
+        if (handleEventFunction != jsFunction)
+            return jsFunction;
+        RefPtr currentTarget = event.currentTarget();
+        if (!currentTarget)
+            return jsNull();
+        return toJS(lexicalGlobalObject, globalObject, *currentTarget);
+    }();
     NakedPtr<JSC::Exception> uncaughtException;
     JSValue retval = JSC::profiledCall(lexicalGlobalObject, JSC::ProfilingReason::Other, handleEventFunction, callData, thisValue, args, uncaughtException);
 
@@ -314,10 +322,10 @@ String JSEventListener::functionName() const
     if (!m_wrapper || !m_jsFunction)
         return {};
 
-    auto& vm = isolatedWorld().vm();
+    auto& vm = m_isolatedWorld->vm();
     JSC::JSLockHolder lock(vm);
 
-    auto* handlerFunction = JSC::jsDynamicCast<JSC::JSFunction*>(m_jsFunction.get());
+    auto* handlerFunction = dynamicDowncast<JSC::JSFunction>(m_jsFunction.get());
     if (!handlerFunction)
         return {};
 

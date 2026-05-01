@@ -105,6 +105,8 @@ pub const Run = struct {
         vm.is_main_thread = true;
         jsc.VirtualMachine.is_main_thread_vm = true;
 
+        bun.http.experimental_http2_client_from_cli = ctx.runtime_options.experimental_http2_fetch;
+        bun.http.experimental_http3_client_from_cli = ctx.runtime_options.experimental_http3_fetch;
         doPreconnect(ctx.runtime_options.preconnect);
 
         const callback = OpaqueWrap(Run, Run.start);
@@ -208,6 +210,38 @@ pub const Run = struct {
             if (ctx.runtime_options.eval.eval_and_print) {
                 b.options.dead_code_elimination = false;
             }
+        } else if (ctx.runtime_options.cron_title.len > 0 and ctx.runtime_options.cron_period.len > 0) {
+            // Cron execution mode: wrap the entry point in a script that imports the
+            // module and calls default.scheduled(controller)
+            // Escape path for embedding in JS string literal (handle backslashes on Windows)
+            const escaped_path = try escapeForJSString(bun.default_allocator, entry_path);
+            defer bun.default_allocator.free(escaped_path);
+            const escaped_period = try escapeForJSString(bun.default_allocator, ctx.runtime_options.cron_period);
+            defer bun.default_allocator.free(escaped_period);
+            const cron_script = try std.fmt.allocPrint(bun.default_allocator,
+                \\const mod = await import("{s}");
+                \\const scheduled = (mod.default || mod).scheduled;
+                \\if (typeof scheduled !== "function") throw new Error("Module does not export default.scheduled()");
+                \\const controller = {{ cron: "{s}", type: "scheduled", scheduledTime: Date.now() }};
+                \\await scheduled(controller);
+            , .{ escaped_path, escaped_period });
+            // entry_path must end with /[eval] for the transpiler to use eval_source
+            const trigger = bun.pathLiteral("/[eval]");
+            var cwd_buf: bun.PathBuffer = undefined;
+            const cwd_slice = switch (bun.sys.getcwd(&cwd_buf)) {
+                .result => |cwd| cwd,
+                .err => return error.SystemResources,
+            };
+            var eval_path_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
+            @memcpy(eval_path_buf[0..cwd_slice.len], cwd_slice);
+            @memcpy(eval_path_buf[cwd_slice.len..][0..trigger.len], trigger);
+            const eval_entry_path = eval_path_buf[0 .. cwd_slice.len + trigger.len];
+            // Heap-allocate the path so it outlives this stack frame
+            const heap_entry_path = try bun.default_allocator.dupe(u8, eval_entry_path);
+            const script_source = try bun.default_allocator.create(logger.Source);
+            script_source.* = logger.Source.initPathString(heap_entry_path, cron_script);
+            vm.module_loader.eval_source = script_source;
+            run.entry_path = heap_entry_path;
         }
 
         b.options.install = ctx.install;
@@ -258,6 +292,8 @@ pub const Run = struct {
 
         vm.transpiler.env.loadTracy();
 
+        bun.http.experimental_http2_client_from_cli = ctx.runtime_options.experimental_http2_fetch;
+        bun.http.experimental_http3_client_from_cli = ctx.runtime_options.experimental_http3_fetch;
         doPreconnect(ctx.runtime_options.preconnect);
 
         vm.main_is_html_entrypoint = (loader orelse vm.transpiler.options.loader(std.fs.path.extension(entry_path))) == .html;
@@ -379,8 +415,9 @@ pub const Run = struct {
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
             if (promise.status() == .rejected) {
-                const handled = vm.uncaughtException(vm.global, promise.result(), true);
-                promise.setHandled(vm.global.vm());
+                const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
+                promise.setHandled();
+                vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 
                 if (vm.hot_reload != .none or handled) {
                     vm.addMainToWatcherIfNeeded();
@@ -403,7 +440,7 @@ pub const Run = struct {
                 }
             }
 
-            _ = promise.result();
+            _ = promise.result(vm.global.vm());
 
             if (vm.log.msgs.items.len > 0) {
                 dumpBuildError(vm);
@@ -441,6 +478,15 @@ pub const Run = struct {
             _ = vm.arena.gc();
             _ = vm.global.vm().runGC(false);
             vm.tick();
+        }
+
+        // Initial synchronous evaluation of the entrypoint is done (TLA may
+        // still be pending and will resolve in the loop below); the embedded
+        // source pages are off the hot path now. No-op unless this is a
+        // compiled standalone binary, and skip under --watch/--hot since those
+        // re-read source on every reload.
+        if (!this.vm.isWatcherEnabled()) {
+            bun.StandaloneModuleGraph.hintSourcePagesDontNeed();
         }
 
         {
@@ -599,6 +645,32 @@ const OpaqueWrap = jsc.OpaqueWrap;
 const VirtualMachine = jsc.VirtualMachine;
 
 const string = []const u8;
+
+/// Escape a string for safe embedding in a JS double-quoted string literal.
+/// Escapes backslashes, double quotes, newlines, etc.
+fn escapeForJSString(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
+    var needs_escape = false;
+    for (input) |c| {
+        if (c == '\\' or c == '"' or c == '\n' or c == '\r' or c == '\t') {
+            needs_escape = true;
+            break;
+        }
+    }
+    if (!needs_escape) return allocator.dupe(u8, input);
+
+    var result = try std.array_list.Managed(u8).initCapacity(allocator, input.len + 16);
+    for (input) |c| {
+        switch (c) {
+            '\\' => try result.appendSlice("\\\\"),
+            '"' => try result.appendSlice("\\\""),
+            '\n' => try result.appendSlice("\\n"),
+            '\r' => try result.appendSlice("\\r"),
+            '\t' => try result.appendSlice("\\t"),
+            else => try result.append(c),
+        }
+    }
+    return result.toOwnedSlice();
+}
 
 const CPUProfiler = @import("./bun.js/bindings/BunCPUProfiler.zig");
 const HeapProfiler = @import("./bun.js/bindings/BunHeapProfiler.zig");

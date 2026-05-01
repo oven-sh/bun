@@ -288,7 +288,10 @@ pub const GetAddrInfo = struct {
 
         pub const default: GetAddrInfo.Backend = switch (bun.Environment.os) {
             .mac, .windows => .system,
-            else => .c_ares,
+            // Android: c-ares can't discover nameservers (no /etc/resolv.conf,
+            // no JNI for ares_library_init_android). bionic getaddrinfo proxies
+            // through netd which knows the real resolvers.
+            else => if (bun.Environment.isAndroid) .system else .c_ares,
         };
 
         pub const FromJSError = JSError || error{

@@ -100,6 +100,7 @@ static const struct HeaderNameString {
     { "Ping-To", 7 },
     { "Pragma", 6 },
     { "Proxy-Authorization", 19 },
+    { "Proxy-Connection", 16 },
     { "Purpose", 7 },
     { "Range", 5 },
     { "Referer", 7 },
@@ -214,6 +215,7 @@ Ping-From, HTTPHeaderName::PingFrom
 Ping-To, HTTPHeaderName::PingTo
 Pragma, HTTPHeaderName::Pragma
 Proxy-Authorization, HTTPHeaderName::ProxyAuthorization
+Proxy-Connection, HTTPHeaderName::ProxyConnection
 Purpose, HTTPHeaderName::Purpose
 Range, HTTPHeaderName::Range
 Referer, HTTPHeaderName::Referer
@@ -266,7 +268,7 @@ bool findHTTPHeaderName(StringView stringView, HTTPHeaderName& headerName)
         Latin1Character characters[maxHTTPHeaderNameLength];
         const auto span = stringView.span16();
         for (unsigned i = 0; i < length; ++i) {
-            UChar character = span.data()[i];
+            char16_t character = span.data()[i];
             if (!isASCII(character))
                 return false;
 
@@ -288,7 +290,7 @@ StringView httpHeaderNameString(HTTPHeaderName headerName)
 
     const auto& name = headerNameStrings[static_cast<unsigned>(headerName)];
 
-    return StringView { reinterpret_cast<const Latin1Character*>(name.name), static_cast<unsigned>(name.length) };
+    return StringView(std::span { reinterpret_cast<const Latin1Character*>(name.name), static_cast<unsigned>(name.length) });
 }
 
 } // namespace WebCore

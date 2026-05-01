@@ -43,7 +43,7 @@ pub fn generate(_: Command.Context, _: Example.Tag, entry_point: string, result:
         // https://ui.shadcn.com/docs/installation/manual
         // This will probably be tricky to keep updated.
         // but hopefully the dependency scanning will just handle it for us.
-        try result.dependencies.insert("tailwindcss-animate");
+        try result.dependencies.insert("tw-animate-css");
         try result.dependencies.insert("class-variance-authority");
         try result.dependencies.insert("clsx");
         try result.dependencies.insert("tailwind-merge");
@@ -61,6 +61,12 @@ pub fn generate(_: Command.Context, _: Example.Tag, entry_point: string, result:
     try result.dependencies.insert("react-dom@19");
     try result.dependencies.insert("react@19");
 
+    const dev_dependencies = &[_][]const u8{
+        "@types/bun",
+        "@types/react@19",
+        "@types/react-dom@19",
+    };
+
     // Choose template based on dependencies and example type
     const template: Template = brk: {
         if (needs_to_inject_shadcn_ui) {
@@ -73,7 +79,7 @@ pub fn generate(_: Command.Context, _: Example.Tag, entry_point: string, result:
     };
 
     // Generate project files from template
-    try generateFiles(default_allocator, entry_point, result.dependencies.keys(), template, react_component_export);
+    try generateFiles(default_allocator, entry_point, result.dependencies.keys(), dev_dependencies, template, react_component_export);
 
     Global.exit(0);
 }
@@ -161,8 +167,53 @@ fn stringWithReplacements(original_input: []const u8, basename: []const u8, rela
     return input;
 }
 
+fn runInstall(argv: [][]const u8) !void {
+    Output.commandOut(argv);
+    Output.flush();
+
+    argv[0] = try bun.selfExePath();
+
+    const process = bun.spawnSync(&.{
+        .argv = argv,
+        .envp = null,
+        .cwd = bun.fs.FileSystem.instance.top_level_dir,
+        .stderr = .inherit,
+        .stdout = .inherit,
+        .stdin = .inherit,
+
+        .windows = if (Environment.isWindows) .{
+            .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null, null)),
+        },
+    }) catch |err| {
+        Output.err(err, "failed to install dependencies", .{});
+        Global.crash();
+    };
+
+    switch (process) {
+        .err => |err| {
+            Output.err(err, "failed to install dependencies", .{});
+            Global.crash();
+        },
+        .result => |spawn_result| {
+            if (!spawn_result.status.isOK()) {
+                if (spawn_result.status.signalCode()) |signal| {
+                    if (signal.toExitCode()) |exit_code| {
+                        Global.exit(exit_code);
+                    }
+                }
+
+                if (spawn_result.status == .exited) {
+                    Global.exit(spawn_result.status.exited.code);
+                }
+
+                Global.crash();
+            }
+        },
+    }
+}
+
 // Generate all project files from template
-pub fn generateFiles(allocator: std.mem.Allocator, entry_point: string, dependencies: []const []const u8, template: Template, react_component_export: []const u8) !void {
+pub fn generateFiles(allocator: std.mem.Allocator, entry_point: string, dependencies: []const []const u8, dev_dependencies: []const []const u8, template: Template, react_component_export: []const u8) !void {
     var log = template.logger();
     var basename = std.fs.path.basename(entry_point);
     const extension = std.fs.path.extension(basename);
@@ -220,62 +271,30 @@ pub fn generateFiles(allocator: std.mem.Allocator, entry_point: string, dependen
         },
     }
 
+    if (dependencies.len > 0 or dev_dependencies.len > 0) {
+        if (log.has_written_initial_message) {
+            Output.print("\n", .{});
+        }
+        Output.pretty("<r>📦 <b>Auto-installing {d} detected dependencies<r>\n", .{dependencies.len + dev_dependencies.len});
+    }
+
     if (dependencies.len > 0) {
-        // Install dependencies
         var argv = std.array_list.Managed([]const u8).init(default_allocator);
         try argv.append("bun");
         try argv.append("--only-missing");
         try argv.append("install");
         try argv.appendSlice(dependencies);
-        if (log.has_written_initial_message) {
-            Output.print("\n", .{});
-        }
-        Output.pretty("<r>📦 <b>Auto-installing {d} detected dependencies<r>\n", .{dependencies.len});
+        try runInstall(argv.items);
+    }
 
-        // print "bun" but use bun.selfExePath()
-        Output.commandOut(argv.items);
-
-        Output.flush();
-
-        argv.items[0] = try bun.selfExePath();
-
-        const process = bun.spawnSync(&.{
-            .argv = argv.items,
-            .envp = null,
-            .cwd = bun.fs.FileSystem.instance.top_level_dir,
-            .stderr = .inherit,
-            .stdout = .inherit,
-            .stdin = .inherit,
-
-            .windows = if (Environment.isWindows) .{
-                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null, null)),
-            },
-        }) catch |err| {
-            Output.err(err, "failed to install dependencies", .{});
-            Global.crash();
-        };
-
-        switch (process) {
-            .err => |err| {
-                Output.err(err, "failed to install dependencies", .{});
-                Global.crash();
-            },
-            .result => |spawn_result| {
-                if (!spawn_result.status.isOK()) {
-                    if (spawn_result.status.signalCode()) |signal| {
-                        if (signal.toExitCode()) |exit_code| {
-                            Global.exit(exit_code);
-                        }
-                    }
-
-                    if (spawn_result.status == .exited) {
-                        Global.exit(spawn_result.status.exited.code);
-                    }
-
-                    Global.crash();
-                }
-            },
-        }
+    if (dev_dependencies.len > 0) {
+        var argv = std.array_list.Managed([]const u8).init(default_allocator);
+        try argv.append("bun");
+        try argv.append("--only-missing");
+        try argv.append("add");
+        try argv.append("-d");
+        try argv.appendSlice(dev_dependencies);
+        try runInstall(argv.items);
     }
 
     // Show success message and start dev server

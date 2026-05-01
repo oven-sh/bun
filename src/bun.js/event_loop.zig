@@ -141,6 +141,10 @@ pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *jsc.JSGlobalOb
     this.deferred_tasks.run();
     this.virtual_machine.is_inside_deferred_task_queue = false;
 
+    if (this.virtual_machine.event_loop_handle != null) {
+        this.virtual_machine.uwsLoop().drainQuicIfNecessary();
+    }
+
     if (comptime bun.Environment.isDebug) {
         this.debug.drain_microtasks_count_outside_tick_queue += @as(usize, @intFromBool(!this.debug.is_inside_tick_queue));
     }
@@ -191,10 +195,20 @@ fn externRunCallback3(global: *jsc.JSGlobalObject, callback: jsc.JSValue, thisVa
     loop.runCallback(callback, global, thisValue, &.{ arg0, arg1, arg2 });
 }
 
+fn externEnter(global: *jsc.JSGlobalObject) callconv(.c) void {
+    global.bunVM().eventLoop().enter();
+}
+
+fn externExit(global: *jsc.JSGlobalObject) callconv(.c) void {
+    global.bunVM().eventLoop().exit();
+}
+
 comptime {
     @export(&externRunCallback1, .{ .name = "Bun__EventLoop__runCallback1" });
     @export(&externRunCallback2, .{ .name = "Bun__EventLoop__runCallback2" });
     @export(&externRunCallback3, .{ .name = "Bun__EventLoop__runCallback3" });
+    @export(&externEnter, .{ .name = "Bun__EventLoop__enter" });
+    @export(&externExit, .{ .name = "Bun__EventLoop__exit" });
 }
 
 /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
@@ -270,17 +284,17 @@ fn updateCounts(this: *EventLoop) void {
     const loop = this.virtual_machine.event_loop_handle.?;
     if (comptime Environment.isWindows) {
         if (delta > 0) {
-            loop.active_handles += @intCast(delta);
+            loop.addActive(@intCast(delta));
         } else {
-            loop.active_handles -= @intCast(-delta);
+            loop.subActive(@intCast(-delta));
         }
     } else {
         if (delta > 0) {
             loop.num_polls += @intCast(delta);
-            loop.active += @intCast(delta);
+            loop.active +|= @as(u32, @intCast(delta));
         } else {
             loop.num_polls -= @intCast(-delta);
-            loop.active -= @intCast(-delta);
+            loop.active -|= @as(u32, @intCast(-delta));
         }
     }
 }

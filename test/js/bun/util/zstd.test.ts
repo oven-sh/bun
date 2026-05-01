@@ -34,6 +34,47 @@ describe("Zstandard compression", async () => {
     expect(() => zstdDecompressSync(valid)).toThrow();
   });
 
+  it("does not leak on streaming decompression error (unknown content size + corrupt stream)", () => {
+    // Zstd frame header with content size *unknown* so decompressAlloc takes the streaming path:
+    //   28 B5 2F FD - magic
+    //   00          - Frame_Header_Descriptor: FCS_flag=0, Single_Segment=0 → content size not present
+    //   58          - Window_Descriptor
+    // followed by garbage block data so ZSTD_decompressStream errors after the output buffer
+    // has already been allocated.
+    const bad = Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x58, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
+
+    // Ensure this input actually hits the streaming error path (not InvalidZstdData / fast path).
+    expect(() => zstdDecompressSync(bad)).toThrowError(/ZstdDecompressionError/);
+
+    const iterations = 10000;
+    function batch() {
+      for (let i = 0; i < iterations; i++) {
+        try {
+          zstdDecompressSync(bad);
+        } catch {}
+      }
+      Bun.gc(true);
+      return process.memoryUsage.rss();
+    }
+
+    // Warm up until RSS stabilizes (allocator / ASAN quarantine reach steady state).
+    // Without the fix each call leaks the ~4 KiB partial output buffer, so growth never
+    // converges and every batch adds ~40+ MiB.
+    let prev = batch();
+    let growthMiB = Infinity;
+    for (let round = 0; round < 5; round++) {
+      const cur = batch();
+      growthMiB = (cur - prev) / 1024 / 1024;
+      prev = cur;
+      if (growthMiB < 10) break;
+    }
+
+    expect(
+      growthMiB,
+      `RSS grew by ${growthMiB.toFixed(1)} MiB over ${iterations} failed zstd decompressions after warmup`,
+    ).toBeLessThan(10);
+  }, 60_000);
+
   // Test with known zstd-compressed data
   describe("zstd CLI compatibility", () => {
     for (const { name, compressed, original } of [
@@ -161,23 +202,31 @@ describe("Zstandard compression", async () => {
   });
 
   for (const { data: input, name } of testCases) {
-    describe(name + " (" + input.length + " bytes)", () => {
+    describe.concurrent(name + " (" + input.length + " bytes)", () => {
       for (let level = 1; level <= 22; level++) {
         it("level " + level, async () => {
+          // Kick off async compression first so it runs in the thread pool while
+          // the sync compression below blocks the main thread.
+          const asyncCompressedPromise = zstdCompress(input, { level });
+
           // Sync compression
           const syncCompressed = zstdCompressSync(input, { level });
 
           // Async compression
-          const asyncCompressed = await zstdCompress(input, { level });
+          const asyncCompressed = await asyncCompressedPromise;
 
           // Compare compressed results (they should be identical with same level)
           expect(syncCompressed).toStrictEqual(asyncCompressed);
+
+          // Kick off async decompression of sync compressed data first so it overlaps
+          // with the sync decompression below.
+          const asyncDecompressedPromise = zstdDecompress(syncCompressed);
 
           // Sync decompression of async compressed data
           const syncDecompressed = zstdDecompressSync(asyncCompressed);
 
           // Async decompression of sync compressed data
-          const asyncDecompressed = await zstdDecompress(syncCompressed);
+          const asyncDecompressed = await asyncDecompressedPromise;
 
           // Compare decompressed results
           expect(syncDecompressed).toStrictEqual(asyncDecompressed);
@@ -191,7 +240,7 @@ describe("Zstandard compression", async () => {
   }
 });
 
-describe("Zstandard HTTP compression", () => {
+describe.concurrent("Zstandard HTTP compression", () => {
   // Sample data for HTTP tests
   const testData = {
     text: "This is a test string for zstd HTTP compression tests. Repeating content to improve compression: This is a test string for zstd HTTP compression tests.",

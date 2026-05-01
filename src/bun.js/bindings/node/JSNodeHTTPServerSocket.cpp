@@ -17,8 +17,8 @@ extern "C" void us_socket_free_stream_buffer(us_socket_stream_buffer_t* streamBu
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
-extern "C" int us_socket_is_ssl_handshake_finished(int ssl, struct us_socket_t* s);
-extern "C" int us_socket_ssl_handshake_callback_has_fired(int ssl, struct us_socket_t* s);
+extern "C" int us_socket_is_ssl_handshake_finished(struct us_socket_t* s);
+extern "C" int us_socket_ssl_handshake_callback_has_fired(struct us_socket_t* s);
 
 namespace Bun {
 
@@ -30,7 +30,7 @@ const JSC::ClassInfo JSNodeHTTPServerSocket::s_info = { "NodeHTTPServerSocket"_s
 
 JSNodeHTTPServerSocket* JSNodeHTTPServerSocket::create(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl, WebCore::JSNodeHTTPResponse* response)
 {
-    if (socket && us_socket_is_closed(is_ssl, socket)) {
+    if (socket && us_socket_is_closed(socket)) {
         // dont attach closed socket because the callback will never be called
         socket = nullptr;
     }
@@ -49,10 +49,10 @@ template<bool SSL>
 void JSNodeHTTPServerSocket::clearSocketData(bool upgraded, us_socket_t* socket)
 {
     if (upgraded) {
-        auto* webSocket = (uWS::WebSocketData*)us_socket_ext(SSL, socket);
+        auto* webSocket = (uWS::WebSocketData*)us_socket_ext(socket);
         webSocket->socketData = nullptr;
     } else {
-        auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(SSL, socket);
+        auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(socket);
         httpResponseData->socketData = nullptr;
     }
 }
@@ -60,13 +60,13 @@ void JSNodeHTTPServerSocket::clearSocketData(bool upgraded, us_socket_t* socket)
 void JSNodeHTTPServerSocket::close()
 {
     if (socket) {
-        us_socket_close(is_ssl, socket, 0, nullptr);
+        us_socket_close(socket, 0, nullptr);
     }
 }
 
 bool JSNodeHTTPServerSocket::isClosed() const
 {
-    return !socket || us_socket_is_closed(is_ssl, socket);
+    return !socket || us_socket_is_closed(socket);
 }
 
 bool JSNodeHTTPServerSocket::isAuthorized() const
@@ -77,8 +77,8 @@ bool JSNodeHTTPServerSocket::isAuthorized() const
 
     // Check if the handshake callback has fired. If so, use the isAuthorized flag
     // which reflects the actual certificate verification result.
-    if (us_socket_ssl_handshake_callback_has_fired(is_ssl, socket)) {
-        auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<true>*>(us_socket_ext(is_ssl, socket));
+    if (us_socket_ssl_handshake_callback_has_fired(socket)) {
+        auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<true>*>(us_socket_ext(socket));
         if (!httpResponseData)
             return false;
         return httpResponseData->isAuthorized;
@@ -96,7 +96,7 @@ bool JSNodeHTTPServerSocket::isAuthorized() const
     // Since we're in an HTTP handler and the socket isn't closed, we can safely
     // assume the handshake will succeed. If it fails, the socket will be closed
     // and subsequent operations will fail appropriately.
-    return us_socket_is_ssl_handshake_finished(is_ssl, socket);
+    return us_socket_is_ssl_handshake_finished(socket);
 }
 
 JSNodeHTTPServerSocket::~JSNodeHTTPServerSocket()
@@ -192,8 +192,9 @@ void JSNodeHTTPServerSocket::onDrain()
         auto* globalObject = defaultGlobalObject(this->globalObject());
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
         us_socket_buffered_js_write(this->socket, this->is_ssl, this->ended, &this->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
-        if (scope.exception()) {
-            globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
+        if (auto* exception = scope.exception()) {
+            (void)scope.tryClearException();
+            globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
             return;
         }
         bufferedSize = this->streamBuffer.bufferedSize();
@@ -244,8 +245,9 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
         JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(data), length));
         auto chunk = JSC::JSValue(buffer);
-        if (scope.exception()) {
-            globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
+        if (auto* exception = scope.exception()) {
+            (void)scope.tryClearException();
+            globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
             return;
         }
         gcProtect(chunk);
@@ -293,7 +295,7 @@ void JSNodeHTTPServerSocket::finishCreation(JSC::VM& vm)
 template<typename Visitor>
 void JSNodeHTTPServerSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSNodeHTTPServerSocket* fn = jsCast<JSNodeHTTPServerSocket*>(cell);
+    JSNodeHTTPServerSocket* fn = uncheckedDowncast<JSNodeHTTPServerSocket>(cell);
     ASSERT_GC_OBJECT_INHERITS(fn, info());
     Base::visitChildren(fn, visitor);
 
@@ -311,7 +313,7 @@ DEFINE_VISIT_CHILDREN(JSNodeHTTPServerSocket);
 template<bool SSL>
 static JSNodeHTTPServerSocket* getNodeHTTPServerSocket(us_socket_t* socket)
 {
-    auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(SSL, socket);
+    auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(socket);
     return reinterpret_cast<JSNodeHTTPServerSocket*>(httpResponseData->socketData);
 }
 

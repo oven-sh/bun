@@ -395,84 +395,80 @@ function checkServerIdentity(hostname, cert) {
   }
 }
 
+// Native SSL_CTX wrapper. `intern()` is WeakGCMap-memoised by config digest
+// (the native `SSLContextCache` underneath is shared with every Zig consumer
+// — Postgres, Valkey, `Bun.connect`, …), so identical options return the same
+// native handle and the same `SSL_CTX*`. Replaces the SHA-256/WeakRef cache
+// that used to live in this file.
+const NativeSecureContext = $zig("SecureContext.zig", "js.getConstructor");
+
+// Node treats any falsy key/cert/ca as "not provided" (test-tls-options-
+// boolean-check.js exercises false/0/""). The bindgen SSLConfigFile union only
+// accepts null|string|ArrayBuffer|Blob|array, so coerce falsy → null before
+// crossing into native so `{ key: false }` etc. doesn't throw
+// ERR_INVALID_ARG_TYPE from the bindgen layer.
+function newNativeSecureContext(options) {
+  if (options && (!options.key || !options.cert || !options.ca)) {
+    options = {
+      ...options,
+      key: options.key || null,
+      cert: options.cert || null,
+      ca: options.ca || null,
+    };
+  }
+  return NativeSecureContext.intern(options);
+}
+
 var InternalSecureContext = class SecureContext {
   context;
-  key;
-  cert;
-  ca;
-  passphrase;
   servername;
-  secureOptions;
 
   constructor(options) {
-    const context = {};
-
     if (options) {
-      let cert = options.cert;
-      if (cert) {
-        throwOnInvalidTLSArray("options.cert", cert);
-        this.cert = cert;
-      }
-
-      let key = options.key;
-      if (key) {
-        throwOnInvalidTLSArray("options.key", key);
-        this.key = key;
-      }
-
-      let ca = options.ca;
-      if (ca) {
-        throwOnInvalidTLSArray("options.ca", ca);
-        this.ca = ca;
-      }
-
-      let passphrase = options.passphrase;
-      if (passphrase && typeof passphrase !== "string") {
+      if (options.cert) throwOnInvalidTLSArray("options.cert", options.cert);
+      if (options.key) throwOnInvalidTLSArray("options.key", options.key);
+      if (options.ca) throwOnInvalidTLSArray("options.ca", options.ca);
+      if (options.passphrase != null && typeof options.passphrase !== "string")
         throw new TypeError("passphrase argument must be an string");
-      }
-      this.passphrase = passphrase;
-
-      let servername = options.servername;
-      if (servername && typeof servername !== "string") {
+      if (options.servername != null && typeof options.servername !== "string")
         throw new TypeError("servername argument must be an string");
-      }
-      this.servername = servername;
-
-      let secureOptions = options.secureOptions || 0;
-      if (secureOptions && typeof secureOptions !== "number") {
+      if (options.secureOptions != null && typeof options.secureOptions !== "number")
         throw new TypeError("secureOptions argument must be an number");
-      }
-
-      this.secureOptions = secureOptions;
-
       if (!$isUndefinedOrNull(options.privateKeyIdentifier)) {
-        if ($isUndefinedOrNull(options.privateKeyEngine)) {
-          // prettier-ignore
+        if ($isUndefinedOrNull(options.privateKeyEngine))
           throw $ERR_INVALID_ARG_VALUE("options.privateKeyEngine", options.privateKeyEngine);
-        } else if (typeof options.privateKeyEngine !== "string") {
-          // prettier-ignore
-          throw $ERR_INVALID_ARG_TYPE("options.privateKeyEngine", ["string", "null", "undefined"], options.privateKeyEngine);
-        }
-
-        if (typeof options.privateKeyIdentifier !== "string") {
-          // prettier-ignore
-          throw $ERR_INVALID_ARG_TYPE("options.privateKeyIdentifier", ["string", "null", "undefined"], options.privateKeyIdentifier);
-        }
+        if (typeof options.privateKeyEngine !== "string")
+          throw $ERR_INVALID_ARG_TYPE(
+            "options.privateKeyEngine",
+            ["string", "null", "undefined"],
+            options.privateKeyEngine,
+          );
+        if (typeof options.privateKeyIdentifier !== "string")
+          throw $ERR_INVALID_ARG_TYPE(
+            "options.privateKeyIdentifier",
+            ["string", "null", "undefined"],
+            options.privateKeyIdentifier,
+          );
       }
     }
-
-    this.context = context;
+    // The native handle (SSL_CTX wrapper) is what's memoised — not this JS
+    // object — so per-call fields like `servername` come from THIS call's
+    // options while the expensive SSL_CTX is shared.
+    this.context = newNativeSecureContext(options);
+    this.servername = options?.servername;
   }
 };
 
 function SecureContext(options): void {
-  // TODO: The `never` exists because TypeScript only lets you construct functions that return void
-  // but in reality we should just be calling like InternalSecureContext.$call or similar
   return new InternalSecureContext(options) as never;
 }
 
 function createSecureContext(options) {
-  return new SecureContext(options);
+  if (options instanceof InternalSecureContext) return options;
+  // The native handle (SSL_CTX) is memoised inside `NativeSecureContext.intern`
+  // by the per-VM `SSLContextCache`, so no JS-side hashing here. The JS wrapper
+  // is built fresh because it carries the per-call `servername`.
+  return new InternalSecureContext(options);
 }
 
 // Translate some fields from the handle's C-friendly format into more idiomatic
@@ -685,16 +681,26 @@ TLSSocket.prototype.getX509Certificate = function getX509Certificate() {
 };
 
 TLSSocket.prototype[buntls] = function (port, host) {
+  const ctx = this[ksecureContext];
+  // RFC 6066 forbids IP literals in SNI. Match Node.js: only default servername to host
+  // when host is not an IP. For IP hosts, pass "" so the native layer skips SNI instead of
+  // falling back to the connection host.
+  let servername = this.servername || ctx?.servername;
+  if (servername === undefined) {
+    servername = host && !net.isIP(host) ? host : "";
+  }
   return {
     socket: this._handle,
     ALPNProtocols: this.ALPNProtocols,
-    serverName: this.servername || host || "localhost",
     checkServerIdentity: this[kcheckServerIdentity],
     session: this[ksession],
     rejectUnauthorized: this._rejectUnauthorized,
     requestCert: this._requestCert,
     ciphers: this.ciphers,
-    ...this[ksecureContext],
+    // Hand the native SSL_CTX wrapper to upgradeTLS so it can up_ref instead
+    // of rebuilding from raw cert/key bytes.
+    secureContext: ctx?.context,
+    servername,
   };
 };
 
@@ -728,7 +734,9 @@ function Server(options, secureConnectionListener): void {
       context = createSecureContext(context);
     }
     if (this._handle) {
-      addServerName(this._handle, hostname, context);
+      // Pass the native SSL_CTX wrapper, not the JS InternalSecureContext —
+      // the Zig side detects it via SecureContext.fromJS and up_refs.
+      addServerName(this._handle, hostname, context.context);
     } else {
       if (!contexts) contexts = new Map();
       contexts.set(hostname, context);
@@ -870,7 +878,15 @@ function normalizeConnectArgs(listArgs) {
 function connect(...args) {
   let normal = normalizeConnectArgs(args);
   const options = normal[0];
-  const { ALPNProtocols } = options as { ALPNProtocols?: unknown };
+  const { ALPNProtocols, servername } = options as { ALPNProtocols?: unknown; servername?: unknown };
+
+  if (servername && net.isIP(servername)) {
+    throw $ERR_INVALID_ARG_VALUE(
+      "options.servername",
+      servername,
+      "Setting the TLS ServerName to an IP address is not permitted.",
+    );
+  }
 
   if (ALPNProtocols) {
     convertALPNProtocols(ALPNProtocols, options);

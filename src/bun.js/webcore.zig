@@ -47,6 +47,7 @@ pub const streams = @import("./webcore/streams.zig");
 pub const NetworkSink = streams.NetworkSink;
 pub const HTTPResponseSink = streams.HTTPResponseSink;
 pub const HTTPSResponseSink = streams.HTTPSResponseSink;
+pub const H3ResponseSink = streams.H3ResponseSink;
 pub const HTTPServerWritable = streams.HTTPServerWritable;
 
 comptime {
@@ -58,7 +59,7 @@ comptime {
 
 pub const PathOrFileDescriptor = union(enum) {
     path: jsc.ZigString.Slice,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
 
     pub fn deinit(this: *const PathOrFileDescriptor) void {
         if (this.* == .path) this.path.deinit();

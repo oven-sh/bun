@@ -35,8 +35,10 @@
 #include "RegisteredEventListener.h"
 #include <atomic>
 #include <memory>
+#include <wtf/Assertions.h>
 #include <wtf/Forward.h>
 #include <wtf/Lock.h>
+#include <wtf/Threading.h>
 #include <wtf/text/AtomString.h>
 
 namespace WebCore {
@@ -57,7 +59,7 @@ public:
     void clear();
 
     void replace(const AtomString& eventType, EventListener& oldListener, Ref<EventListener>&& newListener, const RegisteredEventListener::Options&);
-    bool add(const AtomString& eventType, Ref<EventListener>&&, const RegisteredEventListener::Options&);
+    RegisteredEventListener* add(const AtomString& eventType, Ref<EventListener>&&, const RegisteredEventListener::Options&);
     bool remove(const AtomString& eventType, EventListener&, bool useCapture);
     WEBCORE_EXPORT EventListenerVector* find(const AtomString& eventType);
     const EventListenerVector* find(const AtomString& eventType) const { return const_cast<EventListenerMap*>(this)->find(eventType); }
@@ -70,8 +72,21 @@ public:
     Lock& lock() { return m_lock; }
 
 private:
+    void releaseAssertOrSetThreadUID()
+    {
+        if (!m_threadUID) {
+            ASSERT(!Thread::mayBeGCThread());
+            m_threadUID = Thread::currentSingleton().uid();
+            return;
+        }
+        if (m_threadUID == Thread::currentSingleton().uid()) [[likely]]
+            return;
+        RELEASE_ASSERT(Thread::mayBeGCThread());
+    }
+
     Vector<std::pair<AtomString, EventListenerVector>, 0, CrashOnOverflow, 4> m_entries;
     Lock m_lock;
+    uint32_t m_threadUID { 0 };
 };
 
 template<typename Visitor>

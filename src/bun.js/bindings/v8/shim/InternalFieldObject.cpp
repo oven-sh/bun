@@ -26,7 +26,7 @@ InternalFieldObject* InternalFieldObject::create(JSC::VM& vm, JSC::Structure* st
 template<typename Visitor>
 void InternalFieldObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    InternalFieldObject* thisObject = jsCast<InternalFieldObject*>(cell);
+    InternalFieldObject* thisObject = uncheckedDowncast<InternalFieldObject>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 

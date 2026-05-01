@@ -537,6 +537,10 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     }
 
     const event_loop = bun.jsc.MiniEventLoop.initGlobal(this_transpiler.env, null);
+    // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
+    // (the VirtualMachine.init path is never reached for --filter). Linux is
+    // already covered by prctl in enable() + linux_pdeathsig on each spawn.
+    bun.ParentDeathWatchdog.installOnEventLoop(bun.jsc.EventLoopHandle.init(event_loop));
     const shell_bin: [:0]const u8 = if (Environment.isPosix)
         RunCommand.findShell(this_transpiler.env.get("PATH") orelse "", fsinstance.top_level_dir) orelse return error.MissingShell
     else
@@ -549,12 +553,6 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         .shell_bin = shell_bin,
         .env = this_transpiler.env,
     };
-
-    // Check if elide-lines is used in a non-terminal environment
-    if (ctx.bundler_options.elide_lines != null and !state.pretty_output) {
-        Output.prettyErrorln("<r><red>error<r>: --elide-lines is only supported in terminal environments", .{});
-        Global.exit(1);
-    }
 
     // initialize the handles
     var map = bun.StringHashMap(std.array_list.Managed(*ProcessHandle)).init(ctx.allocator);

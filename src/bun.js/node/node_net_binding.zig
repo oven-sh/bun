@@ -77,7 +77,6 @@ pub fn newDetachedSocket(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFr
     if (!is_ssl) {
         const socket = bun.api.TCPSocket.new(.{
             .socket = .detached,
-            .socket_context = null,
             .ref_count = .init(),
             .protos = null,
             .handlers = null,
@@ -86,7 +85,6 @@ pub fn newDetachedSocket(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFr
     } else {
         const socket = bun.api.TLSSocket.new(.{
             .socket = .detached,
-            .socket_context = null,
             .ref_count = .init(),
             .protos = null,
             .handlers = null,

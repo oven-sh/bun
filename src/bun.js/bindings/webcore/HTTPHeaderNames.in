@@ -79,6 +79,7 @@ Ping-To
 Purpose
 Pragma
 Proxy-Authorization
+Proxy-Connection
 Range
 Referer
 Referrer-Policy

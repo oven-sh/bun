@@ -42,7 +42,7 @@ const bufs = struct {
     // bundling 10 copies of Three.js. It may be worthwhile for more complicated
     // packages but we lack a decent module resolution benchmark right now.
     // Potentially revisit after https://github.com/oven-sh/bun/issues/2716
-    pub threadlocal var extension_path: [512]u8 = undefined;
+    pub threadlocal var extension_path: bun.PathBuffer = undefined;
     pub threadlocal var tsconfig_match_full_buf: bun.PathBuffer = undefined;
     pub threadlocal var tsconfig_match_full_buf2: bun.PathBuffer = undefined;
     pub threadlocal var tsconfig_match_full_buf3: bun.PathBuffer = undefined;
@@ -598,6 +598,13 @@ pub const Resolver = struct {
         if (r.opts.packages == .external and isPackagePath(import_path)) {
             return true;
         }
+        return r.matchesUserExternalPattern(import_path);
+    }
+
+    /// True iff `import_path` matches a user-supplied `--external` wildcard
+    /// pattern. Does NOT consider `packages = external`; use
+    /// `isExternalPattern` for the combined check.
+    pub fn matchesUserExternalPattern(r: *ThisResolver, import_path: string) bool {
         for (r.opts.external.patterns) |pattern| {
             if (import_path.len >= pattern.prefix.len + pattern.suffix.len and (strings.startsWith(
                 import_path,
@@ -610,6 +617,25 @@ pub const Resolver = struct {
             }
         }
         return false;
+    }
+
+    /// Resolves `import_path` via the enclosing tsconfig's `paths`. Returns
+    /// the `MatchResult` iff a key matches AND the mapped target exists on
+    /// disk. Used to let path-aliased local files win over `packages=external`
+    /// without breaking catch-all `"*"` paths entries that only cover ambient
+    /// type stubs.
+    pub fn resolveViaTSConfigPaths(
+        r: *ThisResolver,
+        source_dir: string,
+        import_path: string,
+        kind: ast.ImportKind,
+    ) ?MatchResult {
+        if (source_dir.len == 0) return null;
+        if (!std.fs.path.isAbsolute(source_dir)) return null;
+        const dir_info = (r.dirInfoCached(source_dir) catch null) orelse return null;
+        const tsconfig = dir_info.enclosing_tsconfig_json orelse return null;
+        if (tsconfig.paths.count() == 0) return null;
+        return r.matchTSConfigPaths(tsconfig, import_path, kind);
     }
 
     pub fn flushDebugLogs(r: *ThisResolver, flush_mode: DebugLogs.FlushMode) !void {
@@ -694,6 +720,34 @@ pub const Resolver = struct {
                         .module_type = .cjs,
                         .primary_side_effects_data = .no_side_effects__pure_data,
                         .flags = .{ .is_external = true },
+                    },
+                };
+            }
+        }
+
+        // #29590: a tsconfig `paths` key can look bare (e.g. "@/*") and
+        // otherwise collide with `packages=external + isPackagePath`. Try
+        // the alias first, but only follow it when it actually resolves to
+        // a file on disk — a catch-all `"*": ["./types/*"]` for ambient
+        // .d.ts stubs must still let real bare imports stay external.
+        if (kind != .entry_point_build and kind != .entry_point_run and
+            r.opts.packages == .external and isPackagePath(import_path) and
+            !r.matchesUserExternalPattern(import_path))
+        {
+            if (r.resolveViaTSConfigPaths(source_dir, import_path, kind)) |res| {
+                if (r.debug_logs) |*debug| {
+                    debug.addNote("Resolved via tsconfig.json \"paths\" before applying packages=external");
+                    r.flushDebugLogs(.success) catch {};
+                }
+                return .{
+                    .success = Result{
+                        .import_kind = kind,
+                        .path_pair = res.path_pair,
+                        .diff_case = res.diff_case,
+                        .package_json = res.package_json,
+                        .dirname_fd = res.dirname_fd,
+                        .file_fd = res.file_fd,
+                        .jsx = r.opts.jsx,
                     },
                 };
             }
@@ -1904,7 +1958,7 @@ pub const Resolver = struct {
         dir_info = source_dir_info;
 
         // this is the magic!
-        if (global_cache.canUse(any_node_modules_folder) and r.usePackageManager() and esm_ != null) {
+        if (global_cache.canUse(any_node_modules_folder) and r.usePackageManager() and esm_ != null and strings.isNPMPackageName(esm_.?.name)) {
             const esm = esm_.?.withAutoVersion();
             load_module_from_cache: {
                 // If the source directory doesn't have a node_modules directory, we can
@@ -3207,20 +3261,23 @@ pub const Resolver = struct {
 
             var ext_buf = bufs(.extension_path);
 
-            bun.copy(u8, ext_buf, cleaned);
+            if (cleaned.len <= ext_buf.len) {
+                bun.copy(u8, ext_buf, cleaned);
 
-            // If that failed, try adding implicit extensions
-            for (this.extension_order) |ext| {
-                bun.copy(u8, ext_buf[cleaned.len..], ext);
-                const new_path = ext_buf[0 .. cleaned.len + ext.len];
-                // if (r.debug_logs) |*debug| {
-                //     debug.addNoteFmt("Checking for \"{s}\" ", .{new_path});
-                // }
-                if (map.get(new_path)) |_remapped| {
-                    this.remapped = _remapped;
-                    this.cleaned = new_path;
-                    this.input_path = new_path;
-                    return true;
+                // If that failed, try adding implicit extensions
+                for (this.extension_order) |ext| {
+                    if (cleaned.len + ext.len > ext_buf.len) continue;
+                    bun.copy(u8, ext_buf[cleaned.len..], ext);
+                    const new_path = ext_buf[0 .. cleaned.len + ext.len];
+                    // if (r.debug_logs) |*debug| {
+                    //     debug.addNoteFmt("Checking for \"{s}\" ", .{new_path});
+                    // }
+                    if (map.get(new_path)) |_remapped| {
+                        this.remapped = _remapped;
+                        this.cleaned = new_path;
+                        this.input_path = new_path;
+                        return true;
+                    }
                 }
             }
 
@@ -3238,19 +3295,22 @@ pub const Resolver = struct {
                 return true;
             }
 
-            bun.copy(u8, ext_buf, index_path);
+            if (index_path.len <= ext_buf.len) {
+                bun.copy(u8, ext_buf, index_path);
 
-            for (this.extension_order) |ext| {
-                bun.copy(u8, ext_buf[index_path.len..], ext);
-                const new_path = ext_buf[0 .. index_path.len + ext.len];
-                // if (r.debug_logs) |*debug| {
-                //     debug.addNoteFmt("Checking for \"{s}\" ", .{new_path});
-                // }
-                if (map.get(new_path)) |_remapped| {
-                    this.remapped = _remapped;
-                    this.cleaned = new_path;
-                    this.input_path = new_path;
-                    return true;
+                for (this.extension_order) |ext| {
+                    if (index_path.len + ext.len > ext_buf.len) continue;
+                    bun.copy(u8, ext_buf[index_path.len..], ext);
+                    const new_path = ext_buf[0 .. index_path.len + ext.len];
+                    // if (r.debug_logs) |*debug| {
+                    //     debug.addNoteFmt("Checking for \"{s}\" ", .{new_path});
+                    // }
+                    if (map.get(new_path)) |_remapped| {
+                        this.remapped = _remapped;
+                        this.cleaned = new_path;
+                        this.input_path = new_path;
+                        return true;
+                    }
                 }
             }
 
@@ -4231,7 +4291,6 @@ pub const Resolver = struct {
                         merged_config.emit_decorator_metadata = merged_config.emit_decorator_metadata or parent_config.emit_decorator_metadata;
                         if (parent_config.base_url.len > 0) {
                             merged_config.base_url = parent_config.base_url;
-                            merged_config.base_url_for_paths = parent_config.base_url_for_paths;
                         }
                         merged_config.jsx = parent_config.mergeJSX(merged_config.jsx);
                         merged_config.jsx_flags.setUnion(parent_config.jsx_flags);
@@ -4240,11 +4299,36 @@ pub const Resolver = struct {
                             merged_config.preserve_imports_not_used_as_values = value;
                         }
 
-                        var iter = parent_config.paths.iterator();
-                        while (iter.next()) |c| {
-                            merged_config.paths.put(c.key_ptr.*, c.value_ptr.*) catch unreachable;
+                        // TypeScript replaces paths across extends (child overrides parent
+                        // entirely), so when a more-specific config defines paths, replace
+                        // rather than merge. base_url_for_paths is set whenever the paths
+                        // key is present in the JSON (even if empty), so it discriminates
+                        // "not defined" from "defined as {}" — the latter clears inherited
+                        // paths per TypeScript semantics.
+                        if (parent_config.base_url_for_paths.len > 0) {
+                            // The previous merged_config.paths is being replaced; free its
+                            // backing storage before overwriting so the PathsMap from the
+                            // deeper config doesn't leak. Each value is a []string slice
+                            // that was separately heap-allocated in TSConfigJSON.parse()
+                            // (tsconfig_json.zig), so free those before the map itself.
+                            for (merged_config.paths.values()) |v| bun.default_allocator.free(v);
+                            merged_config.paths.deinit();
+                            merged_config.paths = parent_config.paths;
+                            merged_config.base_url_for_paths = parent_config.base_url_for_paths;
+                        } else {
+                            // paths were not moved to merged_config, so they're still owned
+                            // by parent_config. base_url_for_paths.len == 0 implies the map
+                            // is empty (it's only set when the `paths` key is present in the
+                            // JSON), so this is a no-op but documents the ownership.
+                            parent_config.paths.deinit();
                         }
-                        // todo deinit these parent configs somehow?
+                        // Every scalar/reference we need has been copied into merged_config
+                        // (strings live in dirname_store or default_allocator and outlive the
+                        // struct). The heap-allocated TSConfigJSON itself is no longer needed;
+                        // without this, every intermediate config in an extends chain leaks on
+                        // each dirInfoUncached() call, which is especially bad under HMR where
+                        // bustDirCache triggers a re-parse of the whole chain on every reload.
+                        bun.destroy(parent_config);
                     }
                     info.tsconfig_json = merged_config;
                 }
@@ -4384,7 +4468,7 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
 const FeatureFlags = bun.FeatureFlags;
-const FileDescriptorType = bun.FileDescriptor;
+const FileDescriptorType = bun.FD;
 const MutableString = bun.MutableString;
 const Mutex = bun.Mutex;
 const Output = bun.Output;

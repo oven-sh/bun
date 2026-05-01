@@ -94,9 +94,7 @@ pub const Linker = struct {
         return hash_name;
     }
 
-    // This modifies the Ast in-place!
-    // But more importantly, this does the following:
-    // - Wrap CommonJS files
+    // This modifies the Ast in-place! It resolves import records and generates paths.
     pub fn link(
         linker: *ThisLinker,
         file_path: Fs.Path,
@@ -411,7 +409,7 @@ const ResolverType = Resolver.Resolver;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const FileDescriptorType = bun.FileDescriptor;
+const FileDescriptorType = bun.FD;
 const allocators = bun.allocators;
 const jsc = bun.jsc;
 const logger = bun.logger;

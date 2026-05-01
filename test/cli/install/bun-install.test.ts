@@ -1,5 +1,6 @@
 import { file, listen, Socket, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, jest, setDefaultTimeout, test } from "bun:test";
+import { readlinkSync } from "fs";
 import { access, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
 import {
   bunEnv,
@@ -30,20 +31,13 @@ expect.extend({
   toBeWorkspaceLink,
   toBeValidBin,
   toHaveBins,
-  toHaveWorkspaceLink: async function (package_dir: string, [link, real]: [string, string]) {
-    if (!isWindows) {
-      return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join("..", real));
-    } else {
-      return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join(package_dir, real));
-    }
+  toHaveWorkspaceLink: function (package_dir: string, [link, real]: [string, string]) {
+    const target = readlinkSync(join(package_dir, "node_modules", link));
+    return toBeWorkspaceLink(target, isWindows ? join(package_dir, real) : join("..", real));
   },
-  toHaveWorkspaceLink2: async function (package_dir: string, [link, realPosix, realWin]: [string, string, string]) {
-    if (!isWindows) {
-      return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join("..", realPosix));
-    } else {
-      // prettier-ignore
-      return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join(package_dir, realWin));
-    }
+  toHaveWorkspaceLink2: function (package_dir: string, [link, realPosix, realWin]: [string, string, string]) {
+    const target = readlinkSync(join(package_dir, "node_modules", link));
+    return toBeWorkspaceLink(target, isWindows ? join(package_dir, realWin) : join("..", realPosix));
   },
 });
 

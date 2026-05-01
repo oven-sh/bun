@@ -495,14 +495,13 @@ var ensureTempNodeGypScriptOnce = bun.once(struct {
             \\)
             \\
             ,
-            else =>
-            \\#!/bin/sh
-            \\if [ "x$npm_config_node_gyp" = "x" ]; then
-            \\  bun x --silent node-gyp $@
-            \\else
-            \\  "$npm_config_node_gyp" $@
-            \\fi
-            \\
+            else => (if (Environment.isAndroid) "#!/system/bin/sh\n" else "#!/bin/sh\n") ++
+                \\if [ "x$npm_config_node_gyp" = "x" ]; then
+                \\  bun x --silent node-gyp $@
+                \\else
+                \\  "$npm_config_node_gyp" $@
+                \\fi
+                \\
             ,
         };
 
@@ -1139,7 +1138,7 @@ const PreallocatedTaskStore = bun.HiveArray(Task, 64).Fallback;
 const PreallocatedNetworkTasks = bun.HiveArray(NetworkTask, 128).Fallback;
 const ResolveTaskQueue = bun.UnboundedQueue(Task, .next);
 
-const RepositoryMap = std.HashMapUnmanaged(Task.Id, bun.FileDescriptor, IdentityContext(Task.Id), 80);
+const RepositoryMap = std.HashMapUnmanaged(Task.Id, bun.FD, IdentityContext(Task.Id), 80);
 const NpmAliasMap = std.HashMapUnmanaged(PackageNameHash, Dependency.Version, IdentityContext(u64), 80);
 
 const NetworkQueue = bun.LinearFifo(*NetworkTask, .{ .Static = 32 });
@@ -1191,6 +1190,7 @@ pub const enqueueDependencyToRoot = enqueue.enqueueDependencyToRoot;
 pub const enqueueDependencyWithMain = enqueue.enqueueDependencyWithMain;
 pub const enqueueDependencyWithMainAndSuccessFn = enqueue.enqueueDependencyWithMainAndSuccessFn;
 pub const enqueueExtractNPMPackage = enqueue.enqueueExtractNPMPackage;
+pub const createExtractTaskForStreaming = enqueue.createExtractTaskForStreaming;
 pub const enqueueGitCheckout = enqueue.enqueueGitCheckout;
 pub const enqueueGitForCheckout = enqueue.enqueueGitForCheckout;
 pub const enqueueNetworkTask = enqueue.enqueueNetworkTask;

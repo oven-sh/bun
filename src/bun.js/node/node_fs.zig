@@ -295,7 +295,7 @@ pub const Async = struct {
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
                 const result = switch (this.result) {
-                    .err => |err| err.toJS(globalObject) catch |e| return promise.reject(globalObject, globalObject.takeException(e)),
+                    .err => |err| err.toJSWithAsyncStack(globalObject, promise) catch |e| return promise.reject(globalObject, globalObject.takeException(e)),
                     .result => |*res| brk: {
                         break :brk globalObject.toJS(res) catch |e| return promise.reject(globalObject, globalObject.takeException(e));
                     },
@@ -399,7 +399,7 @@ pub const Async = struct {
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
                 const result = switch (this.result) {
-                    .err => |err| err.toJS(globalObject) catch |e| return promise.reject(globalObject, globalObject.takeException(e)),
+                    .err => |err| err.toJSWithAsyncStack(globalObject, promise) catch |e| return promise.reject(globalObject, globalObject.takeException(e)),
                     .result => |*res| brk: {
                         break :brk globalObject.toJS(res) catch |e| return promise.reject(globalObject, globalObject.takeException(e));
                     },
@@ -667,7 +667,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             var promise_value = this.promise.value();
             var promise = this.promise.get();
             const result = switch (this.result) {
-                .err => |err| err.toJS(globalObject) catch |e| return promise.reject(globalObject, globalObject.takeException(e)),
+                .err => |err| err.toJSWithAsyncStack(globalObject, promise) catch |e| return promise.reject(globalObject, globalObject.takeException(e)),
                 .result => |*res| brk: {
                     break :brk globalObject.toJS(res) catch |e| return promise.reject(globalObject, globalObject.takeException(e));
                 },
@@ -867,9 +867,24 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                 },
                 .result => |ent| ent,
             }) |current| : (entry = iterator.next()) {
+                const cname = current.name.slice();
+
+                // The accumulated path for deep directory trees can exceed the fixed
+                // OSPathBuffer. Bail out with ENAMETOOLONG instead of writing past the
+                // end of the buffer and corrupting the stack.
+                if (src_dir_len + 1 + cname.len >= src_buf.len or
+                    dest_dir_len + 1 + cname.len >= dest_buf.len)
+                {
+                    this.finishConcurrently(.{ .err = .{
+                        .errno = @intFromEnum(E.NAMETOOLONG),
+                        .syscall = .copyfile,
+                        .path = nodefs.osPathIntoSyncErrorBuf(src_buf[0..src_dir_len]),
+                    } });
+                    return false;
+                }
+
                 switch (current.kind) {
                     .directory => {
-                        const cname = current.name.slice();
                         @memcpy(src_buf[src_dir_len + 1 .. src_dir_len + 1 + cname.len], cname);
                         src_buf[src_dir_len] = std.fs.path.sep;
                         src_buf[src_dir_len + 1 + cname.len] = 0;
@@ -891,8 +906,6 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                     },
                     else => {
                         _ = this.subtask_count.fetchAdd(1, .monotonic);
-
-                        const cname = current.name.slice();
 
                         // Allocate a path buffer for the path data
                         var path_buf = bun.default_allocator.alloc(
@@ -949,7 +962,7 @@ pub const AsyncReaddirRecursiveTask = struct {
     result_list_queue: ResultListEntry.Queue = ResultListEntry.Queue{},
 
     /// All the subtasks will use this fd to open files
-    root_fd: FileDescriptor = bun.invalid_fd,
+    root_fd: FD = bun.invalid_fd,
 
     /// This isued when joining the file paths for error messages
     root_path: PathString = PathString.empty,
@@ -1217,7 +1230,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         const success = this.pending_err == null;
         var promise_value = this.promise.value();
         var promise = this.promise.get();
-        const result = if (this.pending_err) |*err| (err.toJS(globalObject) catch |e| return promise.reject(globalObject, globalObject.takeException(e))) else brk: {
+        const result = if (this.pending_err) |*err| (err.toJSWithAsyncStack(globalObject, promise) catch |e| return promise.reject(globalObject, globalObject.takeException(e))) else brk: {
             const res = switch (this.result_list) {
                 .with_file_types => |*res| Return.Readdir{ .with_file_types = res.moveToUnmanaged().items },
                 .buffers => |*res| Return.Readdir{ .buffers = res.moveToUnmanaged().items },
@@ -1325,7 +1338,7 @@ pub const Arguments = struct {
     };
 
     pub const Writev = struct {
-        fd: FileDescriptor,
+        fd: FD,
         buffers: jsc.Node.VectorArrayBuffer,
         position: ?u52 = 0,
 
@@ -1377,7 +1390,7 @@ pub const Arguments = struct {
     };
 
     pub const Readv = struct {
-        fd: FileDescriptor,
+        fd: FD,
         buffers: jsc.Node.VectorArrayBuffer,
         position: ?u52 = 0,
 
@@ -1431,7 +1444,7 @@ pub const Arguments = struct {
     };
 
     pub const FTruncate = struct {
-        fd: FileDescriptor,
+        fd: FD,
         len: ?jsc.WebCore.Blob.SizeType = null,
 
         pub fn deinit(this: @This()) void {
@@ -1509,7 +1522,7 @@ pub const Arguments = struct {
     };
 
     pub const Fchown = struct {
-        fd: FileDescriptor,
+        fd: FD,
         uid: uid_t,
         gid: gid_t,
 
@@ -1628,7 +1641,7 @@ pub const Arguments = struct {
     };
 
     pub const FChmod = struct {
-        fd: FileDescriptor,
+        fd: FD,
         mode: Mode = 0x777,
 
         pub fn deinit(_: *const @This()) void {}
@@ -1742,7 +1755,7 @@ pub const Arguments = struct {
     };
 
     pub const Fstat = struct {
-        fd: FileDescriptor,
+        fd: FD,
         big_int: bool = false,
 
         pub fn deinit(_: @This()) void {}
@@ -2259,7 +2272,7 @@ pub const Arguments = struct {
     };
 
     pub const Close = struct {
-        fd: FileDescriptor,
+        fd: FD,
 
         pub fn deinit(_: Close) void {}
         pub fn toThreadSafe(_: Close) void {}
@@ -2341,7 +2354,7 @@ pub const Arguments = struct {
     pub const Utimes = Lutimes;
 
     pub const Futimes = struct {
-        fd: FileDescriptor,
+        fd: FD,
         atime: TimeLike,
         mtime: TimeLike,
 
@@ -2403,7 +2416,7 @@ pub const Arguments = struct {
     /// the end of the file.
     /// @since v0.0.2
     pub const Write = struct {
-        fd: FileDescriptor,
+        fd: FD,
         buffer: StringOrBuffer,
         // buffer_val: jsc.JSValue = jsc.JSValue.zero,
         offset: u64 = 0,
@@ -2508,7 +2521,7 @@ pub const Arguments = struct {
     };
 
     pub const Read = struct {
-        fd: FileDescriptor,
+        fd: FD,
         buffer: Buffer,
         offset: u64,
         length: u64,
@@ -2739,7 +2752,7 @@ pub const Arguments = struct {
         /// Encoded at the time of construction.
         data: StringOrBuffer,
 
-        dirfd: FileDescriptor,
+        dirfd: FD,
 
         signal: ?*AbortSignal = null,
 
@@ -2968,7 +2981,7 @@ pub const Arguments = struct {
     };
 
     pub const FdataSync = struct {
-        fd: FileDescriptor,
+        fd: FD,
 
         pub fn deinit(_: FdataSync) void {}
         pub fn toThreadSafe(self: *const @This()) void {
@@ -3102,13 +3115,13 @@ pub const Arguments = struct {
     };
 
     pub const WriteEv = struct {
-        fd: FileDescriptor,
+        fd: FD,
         buffers: []const ArrayBuffer,
         position: ReadPosition,
     };
 
     pub const ReadEv = struct {
-        fd: FileDescriptor,
+        fd: FD,
         buffers: []ArrayBuffer,
         position: ReadPosition,
     };
@@ -3120,7 +3133,7 @@ pub const Arguments = struct {
     pub const WatchFile = StatWatcher.Arguments;
 
     pub const Fsync = struct {
-        fd: FileDescriptor,
+        fd: FD,
 
         pub fn deinit(_: Fsync) void {}
         pub fn toThreadSafe(_: *const @This()) void {}
@@ -3408,7 +3421,7 @@ pub const NodeFS = struct {
     }
 
     // since we use a 64 KB stack buffer, we should not let this function get inlined
-    pub noinline fn copyFileUsingReadWriteLoop(src: [:0]const u8, dest: [:0]const u8, src_fd: FileDescriptor, dest_fd: FileDescriptor, stat_size: usize, wrote: *u64) Maybe(Return.CopyFile) {
+    pub noinline fn copyFileUsingReadWriteLoop(src: [:0]const u8, dest: [:0]const u8, src_fd: FD, dest_fd: FD, stat_size: usize, wrote: *u64) Maybe(Return.CopyFile) {
         var stack_buf: [64 * 1024]u8 = undefined;
         var buf_to_free: []u8 = &[_]u8{};
         var buf: []u8 = &stack_buf;
@@ -3482,7 +3495,7 @@ pub const NodeFS = struct {
     // This is relevant for `bun install`
     // However, sendfile() is supported across devices.
     // Only on Linux. There are constraints though. It cannot be used if the file type does not support
-    pub noinline fn copyFileUsingSendfileOnLinuxWithReadWriteFallback(src: [:0]const u8, dest: [:0]const u8, src_fd: FileDescriptor, dest_fd: FileDescriptor, stat_size: usize, wrote: *u64) Maybe(Return.CopyFile) {
+    pub noinline fn copyFileUsingSendfileOnLinuxWithReadWriteFallback(src: [:0]const u8, dest: [:0]const u8, src_fd: FD, dest_fd: FD, stat_size: usize, wrote: *u64) Maybe(Return.CopyFile) {
         while (true) {
             const amt = switch (bun.sys.sendfile(src_fd, dest_fd, std.math.maxInt(i32) - 1)) {
                 .err => {
@@ -3593,6 +3606,78 @@ pub const NodeFS = struct {
             }
 
             return ret.errnoSysP(c.copyfile(src, dest, null, mode), .copyfile, src) orelse ret.success;
+        }
+
+        if (comptime Environment.isFreeBSD) {
+            var src_buf: bun.PathBuffer = undefined;
+            var dest_buf: bun.PathBuffer = undefined;
+            const src = args.src.sliceZ(&src_buf);
+            const dest = args.dest.sliceZ(&dest_buf);
+
+            if (args.mode.isForceClone()) {
+                return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.EOPNOTSUPP), .syscall = .copyfile } };
+            }
+
+            const src_fd = switch (Syscall.open(src, bun.O.RDONLY, 0)) {
+                .result => |result| result,
+                .err => |err| return .{ .err = err.withPath(args.src.slice()) },
+            };
+            defer src_fd.close();
+
+            const stat_: bun.Stat = switch (Syscall.fstat(src_fd)) {
+                .result => |result| result,
+                .err => |err| return Maybe(Return.CopyFile){ .err = err },
+            };
+            if (!posix.S.ISREG(stat_.mode)) {
+                return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.EOPNOTSUPP), .syscall = .copyfile } };
+            }
+
+            var flags: i32 = bun.O.CREAT | bun.O.WRONLY;
+            if (args.mode.shouldntOverwrite()) {
+                flags |= bun.O.EXCL;
+            }
+            const dest_fd = switch (Syscall.open(dest, flags, jsc.Node.fs.default_permission)) {
+                .result => |result| result,
+                .err => |err| return Maybe(Return.CopyFile){ .err = err },
+            };
+            defer dest_fd.close();
+
+            // Don't O_TRUNC at open: if src and dest resolve to the same
+            // inode, that would zero the file before the first read. Match
+            // Node by checking inodes after both are open and refusing.
+            if (Syscall.fstat(dest_fd).asValue()) |dst_stat| {
+                if (stat_.ino == dst_stat.ino and stat_.dev == dst_stat.dev) {
+                    return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.EINVAL), .syscall = .copyfile, .path = args.src.slice() } };
+                }
+            }
+            _ = Syscall.ftruncate(dest_fd, 0);
+
+            // FreeBSD 13+ has copy_file_range(2). Try the kernel-side copy
+            // first; fall back to read/write on cross-device or unsupported
+            // fd types.
+            cfr: while (true) {
+                const rc = std.c.copy_file_range(src_fd.native(), null, dest_fd.native(), null, std.math.maxInt(i32) - 1, 0);
+                switch (bun.sys.getErrno(rc)) {
+                    .SUCCESS => if (rc == 0) {
+                        _ = Syscall.fchmod(dest_fd, stat_.mode);
+                        return ret.success;
+                    },
+                    .INTR => continue,
+                    .XDEV, .INVAL, .OPNOTSUPP, .BADF => break :cfr,
+                    else => |e| {
+                        _ = bun.sys.unlink(dest);
+                        return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(e), .syscall = .copyfile } };
+                    },
+                }
+            }
+
+            var wrote: u64 = 0;
+            if (copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, @intCast(@max(stat_.size, 0)), &wrote).asErr()) |err| {
+                _ = bun.sys.unlink(dest);
+                return Maybe(Return.CopyFile){ .err = err };
+            }
+            _ = Syscall.fchmod(dest_fd, stat_.mode);
+            return ret.success;
         }
 
         if (comptime Environment.isLinux) {
@@ -3858,6 +3943,11 @@ pub const NodeFS = struct {
     pub fn lchmod(this: *NodeFS, args: Arguments.LCHmod, _: Flavor) Maybe(Return.Lchmod) {
         if (comptime Environment.isWindows) {
             return Maybe(Return.Lchmod).todo();
+        }
+        if (comptime Environment.isAndroid) {
+            // bionic has no lchmod(); symlink modes are meaningless on Linux
+            // anyway. Match glibc's stub behaviour.
+            return .{ .err = .{ .errno = @intFromEnum(bun.sys.E.OPNOTSUPP), .syscall = .lchmod, .path = args.path.slice() } };
         }
 
         const path = args.path.sliceZ(&this.sync_error_buf);
@@ -4442,7 +4532,7 @@ pub const NodeFS = struct {
 
     fn readdirWithEntries(
         args: Arguments.Readdir,
-        fd: bun.FileDescriptor,
+        fd: bun.FD,
         basename: [:0]const u8,
         comptime ExpectedType: type,
         entries: *std.array_list.Managed(ExpectedType),
@@ -4727,7 +4817,7 @@ pub const NodeFS = struct {
         }
 
         stack.writeItem(root_basename) catch unreachable;
-        var root_fd: bun.FileDescriptor = bun.invalid_fd;
+        var root_fd: bun.FD = bun.invalid_fd;
 
         defer {
             // all other paths are relative to the root directory
@@ -5002,7 +5092,7 @@ pub const NodeFS = struct {
 
     pub fn readFileWithOptions(this: *NodeFS, args: Arguments.ReadFile, comptime flavor: Flavor, comptime string_type: StringType) Maybe(Return.ReadFileWithOptions) {
         var path: [:0]const u8 = undefined;
-        const fd_maybe_windows: FileDescriptor = switch (args.path) {
+        const fd_maybe_windows: FD = switch (args.path) {
             .path => brk: {
                 path = args.path.path.sliceZ(&this.sync_error_buf);
 
@@ -5627,7 +5717,7 @@ pub const NodeFS = struct {
                     // One of the path components was not a directory.
                     // This error is unreachable if `sub_path` does not contain a path separator.
                     error.NotDir => .NOTDIR,
-                    // On Windows, file paths must be valid Unicode.
+                    // On Windows, file paths must be valid WTF-8.
                     error.InvalidUtf8 => .INVAL,
                     error.InvalidWtf8 => .INVAL,
 
@@ -6188,6 +6278,19 @@ pub const NodeFS = struct {
         }) |current| : (entry = iterator.next()) {
             const name_slice = current.name.slice();
 
+            // The accumulated path for deep directory trees can exceed the fixed
+            // OSPathBuffer. Bail out with ENAMETOOLONG instead of writing past the
+            // end of the buffer and corrupting the stack.
+            if (src_dir_len + 1 + name_slice.len >= src_buf.len or
+                dest_dir_len + 1 + name_slice.len >= dest_buf.len)
+            {
+                return .{ .err = .{
+                    .errno = @intFromEnum(E.NAMETOOLONG),
+                    .syscall = .copyfile,
+                    .path = this.osPathIntoSyncErrorBuf(src_buf[0..src_dir_len]),
+                } };
+            }
+
             @memcpy(src_buf[src_dir_len + 1 .. src_dir_len + 1 + name_slice.len], name_slice);
             src_buf[src_dir_len] = std.fs.path.sep;
             src_buf[src_dir_len + 1 + name_slice.len] = 0;
@@ -6544,6 +6647,107 @@ pub const NodeFS = struct {
             }
 
             return ret.success;
+        }
+
+        if (Environment.isFreeBSD) {
+            if (mode.isForceClone()) {
+                return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.EOPNOTSUPP), .syscall = .copyfile } };
+            }
+
+            const src_fd = switch (Syscall.open(src, bun.O.RDONLY | bun.O.NOFOLLOW, 0o644)) {
+                .result => |result| result,
+                .err => |err| {
+                    // ELOOP from O_NOFOLLOW on a symlink → recreate the link.
+                    if (err.getErrno() == .LOOP) {
+                        return Syscall.symlink(src, dest);
+                    }
+                    return .{ .err = err };
+                },
+            };
+            defer src_fd.close();
+
+            const stat_: bun.Stat = switch (Syscall.fstat(src_fd)) {
+                .result => |result| result,
+                .err => |err| return Maybe(Return.CopyFile){ .err = err.withFd(src_fd) },
+            };
+            if (!posix.S.ISREG(stat_.mode)) {
+                return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.EOPNOTSUPP), .syscall = .copyfile } };
+            }
+
+            var flags: i32 = bun.O.CREAT | bun.O.WRONLY;
+            var wrote: u64 = 0;
+            if (mode.shouldntOverwrite()) {
+                flags |= bun.O.EXCL;
+            }
+
+            const dest_fd = dest_fd: {
+                switch (Syscall.open(dest, flags, jsc.Node.fs.default_permission)) {
+                    .result => |result| break :dest_fd result,
+                    .err => |err| {
+                        if (err.getErrno() == .NOENT) {
+                            var len = dest.len;
+                            while (len > 0 and dest[len - 1] != std.fs.path.sep) {
+                                len -= 1;
+                            }
+                            const mkdirResult = this.mkdirRecursive(.{
+                                .path = PathLike{ .string = PathString.init(dest[0..len]) },
+                                .recursive = true,
+                            });
+                            if (mkdirResult == .err) {
+                                return Maybe(Return.CopyFile){ .err = mkdirResult.err };
+                            }
+                            switch (Syscall.open(dest, flags, jsc.Node.fs.default_permission)) {
+                                .result => |result| break :dest_fd result,
+                                .err => {},
+                            }
+                        }
+                        @memcpy(this.sync_error_buf[0..dest.len], dest);
+                        return Maybe(Return.CopyFile){ .err = err.withPath(this.sync_error_buf[0..dest.len]) };
+                    },
+                }
+            };
+
+            // No O_TRUNC at open: if src and dest resolve to the same inode,
+            // that would zero the file before the first read.
+            if (Syscall.fstat(dest_fd).asValue()) |dst_stat| {
+                if (stat_.ino == dst_stat.ino and stat_.dev == dst_stat.dev) {
+                    dest_fd.close();
+                    @memcpy(this.sync_error_buf[0..src.len], src);
+                    return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.EINVAL), .syscall = .copyfile, .path = this.sync_error_buf[0..src.len] } };
+                }
+            }
+
+            defer {
+                _ = Syscall.ftruncate(dest_fd, @as(i64, @intCast(@as(u63, @truncate(wrote)))));
+                _ = Syscall.fchmod(dest_fd, stat_.mode);
+                dest_fd.close();
+            }
+
+            const size: usize = @intCast(@max(stat_.size, 0));
+
+            // FreeBSD 13+ has copy_file_range(2). std.c declares it returning
+            // usize on FreeBSD, so bitcast to isize before getErrno (see
+            // freebsd_errno.getErrno).
+            var off_in: i64 = 0;
+            var off_out: i64 = 0;
+            cfr: while (true) {
+                const rc: isize = @bitCast(std.c.copy_file_range(src_fd.native(), &off_in, dest_fd.native(), &off_out, if (size == 0) std.math.maxInt(i32) - 1 else size -| wrote, 0));
+                switch (bun.sys.getErrno(rc)) {
+                    .SUCCESS => {
+                        if (rc == 0) return ret.success;
+                        wrote +|= @intCast(rc);
+                        if (size != 0 and wrote >= size) return ret.success;
+                    },
+                    .INTR => continue,
+                    .XDEV, .INVAL, .OPNOTSUPP, .NOSYS, .BADF => break :cfr,
+                    else => |e| {
+                        @memcpy(this.sync_error_buf[0..dest.len], dest);
+                        return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(e), .syscall = .copyfile, .path = this.sync_error_buf[0..dest.len] } };
+                    },
+                }
+            }
+
+            return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
         }
 
         if (Environment.isWindows) {
@@ -7022,7 +7226,6 @@ const FileSystem = @import("../../fs.zig").FileSystem;
 const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
-const FileDescriptor = bun.FileDescriptor;
 const Mode = bun.Mode;
 const PathString = bun.PathString;
 const c = bun.c;

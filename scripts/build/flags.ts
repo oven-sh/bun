@@ -29,30 +29,27 @@ export interface Flag {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// GLOBAL COMPILER FLAGS
-//   Applied to BOTH bun's own sources AND forwarded to vendored deps
-//   via -DCMAKE_C_FLAGS / -DCMAKE_CXX_FLAGS.
+// CPU TARGET FLAGS
+//   -march/-mcpu/-mtune. Split out so deps that manage their own optimization
+//   and sanitizer flags (WebKit) can still inherit the target arch without
+//   the rest of globalFlags.
 // ═══════════════════════════════════════════════════════════════════════════
 
-export const globalFlags: Flag[] = [
-  // ─── CPU target ───
+export const cpuTargetFlags: Flag[] = [
   {
     flag: "-mcpu=apple-m1",
     when: c => c.darwin && c.arm64,
     desc: "Target Apple M1 (works on all Apple Silicon)",
   },
   {
-    // CMake auto-added these via CMAKE_OSX_DEPLOYMENT_TARGET/CMAKE_OSX_SYSROOT;
-    // we must add explicitly. Without this, clang/ld64 default to the host SDK
-    // version — CI builds get minos=15.0, breaking macOS 13/14 users at launch.
-    flag: c => [`-mmacosx-version-min=${c.osxDeploymentTarget!}`, "-isysroot", c.osxSysroot!],
-    when: c => c.darwin && c.osxDeploymentTarget !== undefined && c.osxSysroot !== undefined,
-    desc: "macOS deployment target + SDK (sets LC_BUILD_VERSION minos)",
+    flag: ["-march=armv8-a+crc", "-mtune=ampere1"],
+    when: c => (c.linux || c.freebsd) && c.arm64 && c.abi !== "android",
+    desc: "ARM64 Linux/FreeBSD: ARMv8-A base + CRC, tuned for Ampere (Graviton-like)",
   },
   {
-    flag: ["-march=armv8-a+crc", "-mtune=ampere1"],
-    when: c => c.linux && c.arm64,
-    desc: "ARM64 Linux: ARMv8-A base + CRC, tuned for Ampere (Graviton-like)",
+    flag: ["-march=armv8-a+crc", "-mtune=cortex-a78"],
+    when: c => c.linux && c.arm64 && c.abi === "android",
+    desc: "ARM64 Android: ARMv8-A base + CRC, tuned for Cortex-A78 (common big core)",
   },
   {
     flag: ["/clang:-march=armv8-a+crc", "/clang:-mtune=ampere1"],
@@ -68,6 +65,91 @@ export const globalFlags: Flag[] = [
     flag: "-march=haswell",
     when: c => c.x64 && !c.baseline,
     desc: "x64 default: Haswell (2013) — AVX2, BMI2 available",
+  },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GLOBAL COMPILER FLAGS
+//   Applied to BOTH bun's own sources AND forwarded to vendored deps
+//   via -DCMAKE_C_FLAGS / -DCMAKE_CXX_FLAGS.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const globalFlags: Flag[] = [
+  // ─── Cross-compilation target/sysroot ───
+  // Generic — currently only Android sets these. Kept first so the
+  // target triple is in effect before any arch-dependent flags.
+  {
+    flag: c => `--target=${c.crossTarget!}`,
+    when: c => c.crossTarget !== undefined,
+    desc: "Cross-compile target triple (clang is inherently a cross-compiler)",
+  },
+  {
+    flag: c => `--sysroot=${c.sysroot!}`,
+    when: c => c.sysroot !== undefined,
+    desc: "Cross-compile sysroot (target libc headers + libs)",
+  },
+  {
+    // Same host-GCC #include_next leak as the FreeBSD block below: on
+    // amazonlinux, clang's driver injects /usr/include/c++/N even with
+    // --sysroot. -nostdlibinc drops all default system include paths
+    // (keeping clang's resource dir) and we add back only the NDK's three
+    // dirs in the order #include_next expects: libc++ → per-arch bionic
+    // → generic bionic.
+    flag: c => [
+      "-nostdlibinc",
+      "-isystem",
+      join(c.sysroot!, "usr", "include", "c++", "v1"),
+      "-isystem",
+      join(c.sysroot!, "usr", "include", c.arm64 ? "aarch64-linux-android" : "x86_64-linux-android"),
+      "-isystem",
+      join(c.sysroot!, "usr", "include"),
+    ],
+    when: c => c.abi === "android",
+    lang: "cxx",
+    desc: "Android: explicit NDK include paths only (suppress host GCC C++ detection)",
+  },
+  {
+    flag: ["-DANDROID", "-D_FILE_OFFSET_BITS=64"],
+    when: c => c.abi === "android",
+    desc: "Android: platform define + 64-bit off_t (bionic defaults to 32-bit on LP32)",
+  },
+  {
+    // On hosts with a GCC install (amazonlinux), clang's driver auto-detects
+    // it and injects /usr/include/c++/N into the search list — even with
+    // --sysroot, --gcc-toolchain, and -nostdinc++. That breaks #include_next
+    // in the sysroot's libc++ headers. -nostdlibinc drops ALL standard system
+    // include paths (host AND sysroot defaults) while keeping clang's own
+    // resource dir (stddef.h etc.); we then add back only the two sysroot
+    // dirs in the correct order so #include_next from c++/v1 finds usr/include.
+    flag: c => [
+      "-nostdlibinc",
+      "-isystem",
+      join(c.sysroot!, "usr", "include", "c++", "v1"),
+      "-isystem",
+      join(c.sysroot!, "usr", "include"),
+    ],
+    when: c => c.freebsd && c.sysroot !== undefined,
+    lang: "cxx",
+    desc: "FreeBSD: explicit sysroot include paths only (suppress host GCC C++ detection)",
+  },
+  {
+    // C compiles don't have the host-C++-path leak, so --sysroot's default
+    // search is fine — but it omits __BSD_VISIBLE when no feature-test macro
+    // is set on some clang configs. Match what FreeBSD's own cc does.
+    flag: "-D__BSD_VISIBLE=1",
+    when: c => c.freebsd,
+    desc: "FreeBSD: expose BSD typedefs (u_long etc.) in <sys/types.h>",
+  },
+
+  // ─── CPU target ───
+  ...cpuTargetFlags,
+  {
+    // CMake auto-added these via CMAKE_OSX_DEPLOYMENT_TARGET/CMAKE_OSX_SYSROOT;
+    // we must add explicitly. Without this, clang/ld64 default to the host SDK
+    // version — CI builds get minos=15.0, breaking macOS 13/14 users at launch.
+    flag: c => [`-mmacosx-version-min=${c.osxDeploymentTarget!}`, "-isysroot", c.osxSysroot!],
+    when: c => c.darwin && c.osxDeploymentTarget !== undefined && c.osxSysroot !== undefined,
+    desc: "macOS deployment target + SDK (sets LC_BUILD_VERSION minos)",
   },
 
   // ─── MSVC runtime (Windows) ───
@@ -88,6 +170,17 @@ export const globalFlags: Flag[] = [
   },
 
   // ─── Optimization ───
+  {
+    // cmake's Release/RelWithDebInfo build types append this to
+    // CMAKE_<LANG>_FLAGS_<TYPE> automatically; nested-cmake deps got it
+    // from there. Direct deps only see globalFlags, so it must be here
+    // too — otherwise every assert() in zstd/boringssl/mimalloc/etc.
+    // stays live in release. (bun's own NDEBUG in `defines` below is
+    // redundant after this, but harmless.)
+    flag: "-DNDEBUG",
+    when: c => c.release,
+    desc: "Disable libc assert() (release builds, direct deps included)",
+  },
   {
     flag: "-O0",
     when: c => c.unix && c.debug,
@@ -164,7 +257,7 @@ export const globalFlags: Flag[] = [
     desc: "Disable C++ exceptions",
   },
   {
-    flag: "/EHsc",
+    flag: "/EHs-c-",
     when: c => c.windows,
     desc: "Disable C++ exceptions (MSVC: s- disables C++, c- disables C)",
   },
@@ -320,6 +413,23 @@ export const globalFlags: Flag[] = [
     desc: "Enable devirtualization across whole program (LTO only)",
   },
 
+  // ─── PGO (compile-side) ───
+  {
+    flag: c => `-fprofile-generate=${c.pgoGenerate}`,
+    when: c => c.unix && !!c.pgoGenerate,
+    desc: "IR PGO: instrument for profile generation",
+  },
+  {
+    flag: c => [
+      `-fprofile-use=${c.pgoUse}`,
+      "-Wno-profile-instr-out-of-date",
+      "-Wno-profile-instr-unprofiled",
+      "-Wno-backend-plugin",
+    ],
+    when: c => c.unix && !!c.pgoUse,
+    desc: "IR PGO: optimize with profile data",
+  },
+
   // ─── Path remapping (CI reproducibility) ───
   {
     flag: c => [
@@ -339,15 +449,23 @@ export const globalFlags: Flag[] = [
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const bunOnlyFlags: Flag[] = [
+  // ─── Build profiling ───
+  {
+    flag: "-ftime-trace",
+    when: c => c.timeTrace,
+    lang: "cxx",
+    desc: "Emit per-TU Chrome-trace JSON next to each .o (analyze with ClangBuildAnalyzer)",
+  },
+
   // ─── Language standard ───
   // WebKit uses gnu++ extensions on Linux; if we don't match, the first
   // memory allocation crashes (ABI mismatch in sized delete).
   // Not in globalFlags because deps set their own standard.
   {
     flag: "-std=gnu++23",
-    when: c => c.linux,
+    when: c => c.linux || c.freebsd,
     lang: "cxx",
-    desc: "C++23 with GNU extensions (required to match WebKit's ABI on Linux)",
+    desc: "C++23 with GNU extensions (required to match WebKit's ABI on Linux/FreeBSD)",
   },
   {
     flag: "-std=c++23",
@@ -395,7 +513,7 @@ export const bunOnlyFlags: Flag[] = [
       "-fsanitize=returns-nonnull-attribute",
       "-fsanitize=unreachable",
     ],
-    when: c => c.unix && ((c.debug && c.abi !== "musl") || (c.release && c.asan)),
+    when: c => c.unix && ((c.debug && c.abi !== "musl" && c.abi !== "android" && !c.freebsd) || (c.release && c.asan)),
     desc: "Undefined-behavior sanitizers",
   },
   {
@@ -413,8 +531,13 @@ export const bunOnlyFlags: Flag[] = [
   },
   {
     flag: ["-fno-pic", "-fno-pie"],
-    when: c => c.unix,
+    when: c => c.unix && c.abi !== "android",
     desc: "No position-independent code (we're a final executable)",
+  },
+  {
+    flag: "-fPIC",
+    when: c => c.abi === "android",
+    desc: "Android requires PIE since API 21; bionic's loader rejects non-PIE",
   },
 
   // ─── Warnings-as-errors (unix) ───
@@ -573,7 +696,7 @@ export const linkerFlags: Flag[] = [
   },
   {
     flag: "-fsanitize=null",
-    when: c => c.unix && c.debug && c.abi !== "musl",
+    when: c => c.unix && c.debug && c.abi !== "musl" && c.abi !== "android" && !c.freebsd,
     desc: "Link UBSan runtime",
   },
   {
@@ -608,11 +731,28 @@ export const linkerFlags: Flag[] = [
     desc: "LTO codegen at -Os (matches compile-side opt level)",
   },
 
+  // ─── PGO (link-side) ───
+  {
+    flag: c => `-fprofile-generate=${c.pgoGenerate}`,
+    when: c => c.unix && !!c.pgoGenerate,
+    desc: "IR PGO: link profiling runtime",
+  },
+  {
+    flag: c => `-fprofile-use=${c.pgoUse}`,
+    when: c => c.unix && !!c.pgoUse,
+    desc: "IR PGO: LTO+PGO at link time",
+  },
+
   // ─── Windows ───
   {
     flag: ["/STACK:0x1200000,0x200000", "/errorlimit:0"],
     when: c => c.windows,
     desc: "18MB stack reserve (JSC uses deep recursion), no error limit",
+  },
+  {
+    flag: "/DEBUG:FULL",
+    when: c => c.windows && c.debug,
+    desc: "Emit PDB so the crash handler can symbolize stack traces",
   },
   {
     flag: [
@@ -623,7 +763,6 @@ export const linkerFlags: Flag[] = [
       "/delayload:ole32.dll",
       "/delayload:WINMM.dll",
       "/delayload:dbghelp.dll",
-      "/delayload:VCRUNTIME140_1.dll",
       "/delayload:WS2_32.dll",
       "/delayload:WSOCK32.dll",
       "/delayload:ADVAPI32.dll",
@@ -667,6 +806,7 @@ export const linkerFlags: Flag[] = [
       "-Wl,--wrap=exp2",
       "-Wl,--wrap=expf",
       "-Wl,--wrap=fcntl64",
+      "-Wl,--wrap=getrandom",
       "-Wl,--wrap=gettid",
       "-Wl,--wrap=log",
       "-Wl,--wrap=log2",
@@ -674,19 +814,35 @@ export const linkerFlags: Flag[] = [
       "-Wl,--wrap=logf",
       "-Wl,--wrap=pow",
       "-Wl,--wrap=powf",
+      "-Wl,--wrap=quick_exit",
     ],
-    when: c => c.linux && c.abi !== "musl",
-    desc: "Wrap glibc 2.29+ symbols (portable to older glibc)",
+    when: c => c.linux && c.abi === "gnu",
+    desc: "Wrap glibc 2.18+ symbols (portable down to glibc 2.17)",
   },
   {
     flag: ["-static-libstdc++", "-static-libgcc"],
-    when: c => c.linux && c.abi !== "musl",
+    when: c => c.linux && c.abi === "gnu",
     desc: "Static C++ runtime (don't depend on host libstdc++)",
   },
   {
     flag: ["-lstdc++", "-lgcc"],
     when: c => c.linux && c.abi === "musl",
     desc: "Dynamic C++ runtime on musl (static unavailable)",
+  },
+  {
+    flag: c => [
+      `--target=${c.crossTarget!}`,
+      `--sysroot=${c.sysroot!}`,
+      "--rtlib=compiler-rt",
+      "--unwindlib=libunwind",
+      "-stdlib=libc++",
+      "-static-libstdc++",
+      // -l:libunwind.a (driver-emitted) searches -L paths; point at the NDK's
+      // own per-arch runtime dir so it resolves regardless of resource-dir layout.
+      `-L${join(c.androidNdkRuntimeDir!, c.arm64 ? "aarch64" : "x86_64")}`,
+    ],
+    when: c => c.linux && c.abi === "android",
+    desc: "Android link: target/sysroot + compiler-rt/libunwind + static libc++",
   },
   {
     // Paired with compile-side -fno-unwind-tables above.
@@ -707,8 +863,13 @@ export const linkerFlags: Flag[] = [
   },
   {
     flag: ["-fno-pic", "-Wl,-no-pie"],
-    when: c => c.linux,
+    when: c => c.linux && c.abi !== "android",
     desc: "No PIE (we don't need ASLR; simpler codegen)",
+  },
+  {
+    flag: ["-fPIC", "-pie"],
+    when: c => c.abi === "android",
+    desc: "Android: bionic loader requires PIE",
   },
   {
     flag: [
@@ -753,13 +914,61 @@ export const linkerFlags: Flag[] = [
   },
   {
     flag: c => [
-      "-Bsymbolics-functions",
+      "-Wl,-Bsymbolic-functions",
       "-rdynamic",
       `-Wl,--dynamic-list=${c.cwd}/src/symbols.dyn`,
       `-Wl,--version-script=${c.cwd}/src/linker.lds`,
     ],
     when: c => c.linux,
     desc: "Dynamic symbol list + version script",
+  },
+
+  // ─── FreeBSD ───
+  {
+    flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`, "-stdlib=libc++"],
+    when: c => c.freebsd && c.crossTarget !== undefined,
+    desc: "FreeBSD cross-link: target/sysroot + libc++ (FreeBSD base ships libc++)",
+  },
+  {
+    flag: c => `--ld-path=${c.ld}`,
+    when: c => c.freebsd,
+    desc: "Use lld instead of system ld",
+  },
+  {
+    flag: ["-fno-pic", "-no-pie"],
+    when: c => c.freebsd,
+    desc: "FreeBSD 13+ clang defaults to PIE; opt out (matches Linux, avoids -fPIC rebuild of WebKit/deps)",
+  },
+  {
+    flag: [
+      "-Wl,-O2",
+      "-Wl,--as-needed",
+      "-Wl,-z,stack-size=12800000",
+      "-Wl,--compress-debug-sections=zlib",
+      "-Wl,-z,lazy",
+      "-Wl,-z,norelro",
+      "-Wl,--gdb-index",
+      "-Wl,-z,combreloc",
+      "-Wl,--hash-style=both",
+      "-Wl,--build-id=sha1",
+    ],
+    when: c => c.freebsd,
+    desc: "FreeBSD linker tuning (same as Linux ELF)",
+  },
+  {
+    flag: "-Wl,--gc-sections",
+    when: c => c.freebsd && c.release,
+    desc: "Garbage-collect unused sections",
+  },
+  {
+    flag: c => [
+      "-Wl,-Bsymbolic-functions",
+      "-rdynamic",
+      `-Wl,--dynamic-list=${c.cwd}/src/symbols.dyn`,
+      `-Wl,--version-script=${c.cwd}/src/linker-freebsd.lds`,
+    ],
+    when: c => c.freebsd,
+    desc: "Dynamic symbol list + version script (FreeBSD adds environ/__progname)",
   },
 ];
 
@@ -769,8 +978,10 @@ export const linkerFlags: Flag[] = [
  * CMake tracks these via set_target_properties LINK_DEPENDS.
  */
 export function linkDepends(cfg: Config): string[] {
+  if (cfg.freebsd) return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker-freebsd.lds")];
   if (cfg.windows) return [join(cfg.cwd, "src/symbols.def")];
   if (cfg.darwin) return [join(cfg.cwd, "src/symbols.txt")];
+  // linux: ELF dynamic-list + version script
   return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
 }
 
@@ -810,8 +1021,12 @@ export const stripFlags: Flag[] = [
     // musl: no eh_frame handling differences, but CMake gates on NOT musl so we do too.
     // Strip only runs on plain release (shouldStrip gates debug/asan/valgrind/assertions)
     // which in CI always has LTO on — in practice paired with --no-eh-frame-hdr.
-    flag: ["-R", ".eh_frame", "-R", ".gcc_except_table"],
-    when: c => c.linux && c.abi !== "musl",
+    //
+    // GNU strip does not rewrite the program header table — so any
+    // PT_GNU_EH_FRAME phdr entry also survives as an orphan. See the
+    // --no-eh-frame-hdr rationale in linkFlags above.
+    flag: ["-R", ".eh_frame", "-R", ".eh_frame_hdr", "-R", ".gcc_except_table"],
+    when: c => c.linux && c.abi === "gnu",
     desc: "Remove unwind sections (GNU strip required — llvm-strip leaves [LOAD #2 [R]])",
   },
 ];
@@ -886,8 +1101,14 @@ export const fileOverrides: FileOverride[] = [
     // -fwhole-program-vtables requires -flto; disabling one requires
     // disabling the other or clang errors.
     extraFlags: ["-fno-lto", "-fno-whole-program-vtables"],
-    when: c => c.linux && c.lto && c.abi !== "musl",
+    when: c => c.linux && c.lto && c.abi === "gnu",
     desc: "Disable LTO: LLD 21 emits glibc versioned symbols (exp@GLIBC_2.17) into .lto_discard which fails to parse '@'",
+  },
+  {
+    file: "src/bun.js/bindings/windows/rescle.cpp",
+    extraFlags: "/EHsc",
+    when: c => c.windows,
+    desc: "Vendored electron/rcedit; VersionInfo ctor throws std::system_error caught in OnEnumResourceLanguage. Self-contained throw/catch — already excluded from PCH",
   },
 ];
 
@@ -978,12 +1199,27 @@ export function computeDepFlags(cfg: Config): { cflags: string[]; cxxflags: stri
 }
 
 /**
+ * Just the -march/-mcpu/-mtune flags. For deps (WebKit) whose own build system
+ * sets -O/-g/sanitizer flags but never sets a CPU target, so without this they
+ * end up targeting generic x86-64 while the rest of bun targets haswell.
+ */
+export function computeCpuTargetFlags(cfg: Config): string[] {
+  const out: string[] = [];
+  for (const f of cpuTargetFlags) {
+    if (f.when && !f.when(cfg)) continue;
+    out.push(...resolveFlagValue(f.flag, cfg));
+  }
+  return out;
+}
+
+/**
  * Per-file extra flags lookup. Call after computeFlags() when compiling a
  * specific source. Returns extra flags to append (may be empty).
  */
 export function extraFlagsFor(cfg: Config, srcRelPath: string): string[] {
+  const key = srcRelPath.replaceAll("\\", "/");
   for (const o of fileOverrides) {
-    if (o.file !== srcRelPath) continue;
+    if (o.file !== key) continue;
     if (o.when && !o.when(cfg)) continue;
     return resolveFlagValue(o.extraFlags, cfg);
   }

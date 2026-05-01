@@ -38,7 +38,7 @@ DEFINE_VISIT_CHILDREN(GlobalScope);
 template<typename Visitor>
 void GlobalScope::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    GlobalScope* thisObject = jsCast<GlobalScope*>(cell);
+    GlobalScope* thisObject = uncheckedDowncast<GlobalScope>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 

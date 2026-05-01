@@ -24,6 +24,13 @@ fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject: *J
         bun.default_allocator.free(params);
     }
     while (try iter.next()) |js_value| {
+        if (i >= params.len) {
+            // The binding array yielded more values than the prepared statement
+            // expects. This can happen when the user-supplied array is mutated (e.g.
+            // from an index getter) between signature generation and binding. Fail
+            // loudly instead of writing past the end of `params`/`param_types`.
+            return error.WrongNumberOfParametersProvided;
+        }
         const param = execute.param_types[i];
         params[i] = try Value.fromJS(
             js_value,
@@ -38,6 +45,12 @@ fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject: *J
         return error.InvalidQueryBinding;
     }
 
+    if (i != params.len) {
+        // Fewer values than the prepared statement expects; the remaining slots
+        // would be uninitialized.
+        return error.WrongNumberOfParametersProvided;
+    }
+
     this.#status = .binding;
     execute.params = params;
 }
@@ -47,18 +60,21 @@ fn bindAndExecute(this: *MySQLQuery, writer: anytype, statement: *MySQLStatement
     if (statement.signature.fields.len != statement.params.len) {
         return error.WrongNumberOfParametersProvided;
     }
-    var packet = try writer.start(0);
     var execute = PreparedStatement.Execute{
         .statement_id = statement.statement_id,
         .param_types = statement.signature.fields,
         .new_params_bind_flag = statement.execution_flags.need_to_send_params,
         .iteration_count = 1,
     };
-    statement.execution_flags.need_to_send_params = false;
     defer execute.deinit();
+    // Bind before touching the writer so a bind failure (user-triggerable via JS
+    // getters / param-count mismatch) doesn't leave a partial packet header in
+    // the connection's write buffer.
     try this.bind(&execute, globalObject, binding_value, columns_value);
+    var packet = try writer.start(0);
     try execute.write(writer);
     try packet.end();
+    statement.execution_flags.need_to_send_params = false;
     this.#status = .running;
 }
 

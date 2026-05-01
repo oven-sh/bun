@@ -1390,8 +1390,6 @@ pub const Formatter = struct {
                     .CodeBlock,
                     .JSCellButterfly,
                     .JSSourceCode,
-                    .JSScriptFetcher,
-                    .JSScriptFetchParameters,
                     .JSCallee,
                     .GlobalLexicalEnvironment,
                     .LexicalEnvironment,
@@ -2326,16 +2324,28 @@ pub const Formatter = struct {
                 );
             },
             .Class => {
-                var printable = ZigString.init(&name_buf);
-                try value.getClassName(this.globalThis, &printable);
-                this.addForNewLine(printable.len);
+                // Prefer the constructor's own `.name` property over
+                // `getClassName` / `calculatedClassName`. For DOM / WebCore
+                // InternalFunction constructors like `ReadableStreamBYOBReader`,
+                // `calculatedClassName` walks the prototype chain and hits
+                // `Function.prototype.constructor === Function`, returning
+                // "Function". The `.name` property is set to the real class
+                // name on the constructor itself. See #29225.
+                var printable = try value.getName(this.globalThis);
+                defer printable.deref();
+                this.addForNewLine(printable.length());
 
+                // Only report `extends` when the parent is itself a class
+                // (i.e. `class Foo extends Bar`). Built-in and DOM constructors
+                // have `Function.prototype` as their prototype, which would
+                // render as `[class X extends Function]` and is noise.
                 const proto = value.getPrototype(this.globalThis);
-                var printable_proto = ZigString.init(&name_buf);
-                try proto.getClassName(this.globalThis, &printable_proto);
-                this.addForNewLine(printable_proto.len);
+                const proto_is_class = !proto.isEmptyOrUndefinedOrNull() and proto.isCell() and proto.isClass(this.globalThis);
+                var printable_proto: bun.String = if (proto_is_class) try proto.getName(this.globalThis) else bun.String.empty;
+                defer printable_proto.deref();
+                this.addForNewLine(printable_proto.length());
 
-                if (printable.len == 0) {
+                if (printable.isEmpty()) {
                     if (printable_proto.isEmpty()) {
                         writer.print(comptime Output.prettyFmt("<cyan>[class (anonymous)]<r>", enable_ansi_colors), .{});
                     } else {

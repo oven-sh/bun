@@ -249,7 +249,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
-        pub fn errnoSysFd(rc: anytype, syscall: sys.Tag, fd: bun.FileDescriptor) ?@This() {
+        pub fn errnoSysFd(rc: anytype, syscall: sys.Tag, fd: bun.FD) ?@This() {
             if (comptime Environment.isWindows) {
                 if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else {
                     if (rc != 0) return null;
@@ -290,7 +290,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
-        pub fn errnoSysFP(rc: anytype, syscall: sys.Tag, fd: bun.FileDescriptor, file_path: anytype) ?@This() {
+        pub fn errnoSysFP(rc: anytype, syscall: sys.Tag, fd: bun.FD, file_path: anytype) ?@This() {
             if (comptime Environment.isWindows) {
                 if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else {
                     if (rc != 0) return null;

@@ -140,6 +140,7 @@ enum EventTargetInterface {
     WorkletGlobalScopeEventTargetInterfaceType = 72,
     XMLHttpRequestEventTargetInterfaceType = 73,
     XMLHttpRequestUploadEventTargetInterfaceType = 74,
+    BunWebViewEventTargetInterfaceType = 75,
 };
 
 } // namespace WebCore

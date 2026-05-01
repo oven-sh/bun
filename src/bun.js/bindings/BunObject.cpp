@@ -93,16 +93,17 @@ extern "C" bool has_bun_garbage_collector_flag_enabled;
 
 static JSValue BunObject_lazyPropCb_wrap_ArrayBufferSink(VM& vm, JSObject* bunObject)
 {
-    return jsCast<Zig::GlobalObject*>(bunObject->globalObject())->ArrayBufferSink();
+    return uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject())->ArrayBufferSink();
 }
 
 static JSValue constructCookieObject(VM& vm, JSObject* bunObject);
 static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject);
 static JSValue constructSecretsObject(VM& vm, JSObject* bunObject);
+static JSValue constructWebViewObject(VM& vm, JSObject* bunObject);
 
 static JSValue constructEnvObject(VM& vm, JSObject* object)
 {
-    return jsCast<Zig::GlobalObject*>(object->globalObject())->processEnvObject();
+    return uncheckedDowncast<Zig::GlobalObject>(object->globalObject())->processEnvObject();
 }
 
 static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObject* lexicalGlobalObject, JSValue arrayValue, size_t maxLength, bool asUint8Array)
@@ -115,7 +116,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    auto array = JSC::jsDynamicCast<JSC::JSArray*>(arrayValue);
+    auto array = dynamicDowncast<JSC::JSArray>(arrayValue);
     if (!array) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, throwScope, "Argument must be an array"_s);
         return {};
@@ -152,7 +153,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
         auto element = array->getIndex(lexicalGlobalObject, i);
         RETURN_IF_EXCEPTION(throwScope, {});
 
-        if (auto* typedArray = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(element)) {
+        if (auto* typedArray = dynamicDowncast<JSC::JSArrayBufferView>(element)) {
             if (typedArray->isDetached()) [[unlikely]] {
                 return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject, "Cannot validate on a detached buffer"_s);
             }
@@ -163,7 +164,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
             if (current > 0) {
                 args.append(typedArray);
             }
-        } else if (auto* arrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(element)) {
+        } else if (auto* arrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(element)) {
             auto* impl = arrayBuffer->impl();
             if (!impl) [[unlikely]] {
                 return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject, "Cannot validate on a detached buffer"_s);
@@ -201,7 +202,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
         for (size_t i = 0; i < args.size(); i++) {
             auto element = args.at(i);
             RETURN_IF_EXCEPTION(throwScope, {});
-            auto* view = JSC::jsCast<JSC::JSArrayBufferView*>(element);
+            auto* view = uncheckedDowncast<JSC::JSArrayBufferView>(element);
             size_t length = std::min(remain, view->byteLength());
             memcpy(head, view->vector(), length);
             remain -= length;
@@ -211,7 +212,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
         for (size_t i = 0; i < args.size(); i++) {
             auto element = args.at(i);
             RETURN_IF_EXCEPTION(throwScope, {});
-            auto* view = JSC::jsCast<JSC::JSArrayBuffer*>(element);
+            auto* view = uncheckedDowncast<JSC::JSArrayBuffer>(element);
             size_t length = std::min(remain, view->impl()->byteLength());
             memcpy(head, view->impl()->data(), length);
             remain -= length;
@@ -222,11 +223,11 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
             auto element = args.at(i);
             RETURN_IF_EXCEPTION(throwScope, {});
             size_t length = 0;
-            if (auto* view = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(element)) {
+            if (auto* view = dynamicDowncast<JSC::JSArrayBuffer>(element)) {
                 length = std::min(remain, view->impl()->byteLength());
                 memcpy(head, view->impl()->data(), length);
             } else {
-                auto* typedArray = JSC::jsCast<JSC::JSArrayBufferView*>(element);
+                auto* typedArray = uncheckedDowncast<JSC::JSArrayBufferView>(element);
                 length = std::min(remain, typedArray->byteLength());
                 memcpy(head, typedArray->vector(), length);
             }
@@ -298,7 +299,7 @@ static JSValue constructBunVersionWithSha(VM& vm, JSObject*)
 
 static JSValue constructIsMainThread(VM&, JSObject* object)
 {
-    return jsBoolean(jsCast<Zig::GlobalObject*>(object->globalObject())->scriptExecutionContext()->isMainThread());
+    return jsBoolean(uncheckedDowncast<Zig::GlobalObject>(object->globalObject())->scriptExecutionContext()->isMainThread());
 }
 
 static JSValue constructPluginObject(VM& vm, JSObject* bunObject)
@@ -347,7 +348,7 @@ JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
 {
     JSFunction* fetchFn = JSFunction::create(vm, bunObject->globalObject(), 1, "fetch"_s, Bun__fetch, ImplementationVisibility::Public, NoIntrinsic);
 
-    auto* globalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
     fetchFn->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "preconnect"_s), 1, Bun__fetchPreconnect, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
 
@@ -356,7 +357,7 @@ JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
 
 static JSValue constructBunShell(VM& vm, JSObject* bunObject)
 {
-    auto* globalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
     JSFunction* createParsedShellScript = JSFunction::create(vm, bunObject->globalObject(), 2, "createParsedShellScript"_s, BunObject_callback_createParsedShellScript, ImplementationVisibility::Private, NoIntrinsic);
     JSFunction* createShellInterpreterFunction = JSFunction::create(vm, bunObject->globalObject(), 1, "createShellInterpreter"_s, BunObject_callback_createShellInterpreter, ImplementationVisibility::Private, NoIntrinsic);
     JSC::JSFunction* createShellFn = JSC::JSFunction::create(vm, globalObject, shellCreateBunShellTemplateFunctionCodeGenerator(vm), globalObject);
@@ -456,7 +457,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, C
     JSC::StreamingJSONParseResult result;
 
     if (arg.isCell() && isTypedArrayType(arg.asCell()->type())) {
-        auto* view = jsCast<JSC::JSArrayBufferView*>(arg.asCell());
+        auto* view = uncheckedDowncast<JSC::JSArrayBufferView>(arg.asCell());
         if (view->isDetached()) {
             throwTypeError(globalObject, scope, "ArrayBuffer is detached"_s);
             return {};
@@ -547,7 +548,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
     };
 
     if (isTypedArray) {
-        auto* view = jsCast<JSC::JSArrayBufferView*>(arg.asCell());
+        auto* view = uncheckedDowncast<JSC::JSArrayBufferView>(arg.asCell());
         if (view->isDetached()) {
             throwTypeError(globalObject, scope, "ArrayBuffer is detached"_s);
             return {};
@@ -618,7 +619,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
         errorValue = createSyntaxError(globalObject, "Failed to parse JSONL"_s);
     }
 
-    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
+    auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     JSObject* resultObj = constructEmptyObject(vm, zigGlobalObject->jsonlParseResultStructure());
     resultObj->putDirectOffset(vm, 0, array);
     resultObj->putDirectOffset(vm, 1, jsNumber(readBytes));
@@ -665,7 +666,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
 
     if (millisecondsValue.inherits<JSC::DateInstance>()) {
         auto now = MonotonicTime::now();
-        double milliseconds = jsCast<JSC::DateInstance*>(millisecondsValue)->internalNumber() - now.approximateWallTime().secondsSinceEpoch().milliseconds();
+        double milliseconds = uncheckedDowncast<JSC::DateInstance>(millisecondsValue)->internalNumber() - now.approximateWallTime().secondsSinceEpoch().milliseconds();
         millisecondsValue = JSC::jsNumber(milliseconds > 0 ? std::ceil(milliseconds) : 0);
     }
 
@@ -796,7 +797,8 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
         jsValue = WebCore::toJSNewlyCreated<IDLInterface<DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTF::move(object));
     }
 
-    auto* jsDOMURL = jsCast<JSDOMURL*>(jsValue.asCell());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    auto* jsDOMURL = uncheckedDowncast<JSDOMURL>(jsValue.asCell());
     vm.heap.reportExtraMemoryAllocated(jsDOMURL, jsDOMURL->wrapped().memoryCostForGC());
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsValue));
 }
@@ -976,6 +978,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     build                                          BunObject_callback_build                                            DontDelete|Function 1
     concatArrayBuffers                             functionConcatTypedArrays                                           DontDelete|Function 3
     connect                                        BunObject_callback_connect                                          DontDelete|Function 1
+    cron                                           BunObject_lazyPropCb_wrap_cron                                      DontDelete|PropertyCallback
     cwd                                            BunObject_lazyPropCb_wrap_cwd                                       DontEnum|DontDelete|PropertyCallback
     color                                          BunObject_callback_color                                            DontDelete|Function 2
     deepEquals                                     functionBunDeepEquals                                               DontDelete|Function 2
@@ -1044,6 +1047,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     Terminal                                       BunObject_lazyPropCb_wrap_Terminal                                  DontDelete|PropertyCallback
     unsafe                                         BunObject_lazyPropCb_wrap_unsafe                                    DontDelete|PropertyCallback
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
+    WebView                                        constructWebViewObject                                              ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1
     RedisClient                                    BunObject_lazyPropCb_wrap_ValkeyClient                              DontDelete|PropertyCallback
     redis                                          BunObject_lazyPropCb_wrap_valkey                                    DontDelete|PropertyCallback
@@ -1124,19 +1128,19 @@ static JSC_DEFINE_CUSTOM_SETTER(setBunObjectMain, (JSC::JSGlobalObject * globalO
 // LazyProperty wrappers for stdin/stderr/stdout
 static JSValue BunObject_lazyPropCb_wrap_stdin(VM& vm, JSObject* bunObject)
 {
-    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
     return zigGlobalObject->m_bunStdin.getInitializedOnMainThread(zigGlobalObject);
 }
 
 static JSValue BunObject_lazyPropCb_wrap_stderr(VM& vm, JSObject* bunObject)
 {
-    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
     return zigGlobalObject->m_bunStderr.getInitializedOnMainThread(zigGlobalObject);
 }
 
 static JSValue BunObject_lazyPropCb_wrap_stdout(VM& vm, JSObject* bunObject)
 {
-    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
     return zigGlobalObject->m_bunStdout.getInitializedOnMainThread(zigGlobalObject);
 }
 
@@ -1154,25 +1158,31 @@ const JSC::ClassInfo JSBunObject::s_info = { "Bun"_s, &Base::s_info, &bunObjectT
 
 static JSValue constructCookieObject(VM& vm, JSObject* bunObject)
 {
-    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
     return WebCore::JSCookie::getConstructor(vm, zigGlobalObject);
 }
 
 static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject)
 {
-    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
     return WebCore::JSCookieMap::getConstructor(vm, zigGlobalObject);
 }
 
 static JSValue constructSecretsObject(VM& vm, JSObject* bunObject)
 {
-    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
     return Bun::createSecretsObject(vm, zigGlobalObject);
+}
+
+static JSValue constructWebViewObject(VM& vm, JSObject* bunObject)
+{
+    auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
+    return zigGlobalObject->m_JSWebViewClassStructure.constructor(zigGlobalObject);
 }
 
 JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject)
 {
-    return JSBunObject::create(vm, jsCast<Zig::GlobalObject*>(globalObject));
+    return JSBunObject::create(vm, uncheckedDowncast<Zig::GlobalObject>(globalObject));
 }
 
 static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues)
@@ -1212,7 +1222,7 @@ void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
     JSC::MarkedArgumentBuffer& exportValues)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* object = globalObject->bunObject();

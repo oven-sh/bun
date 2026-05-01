@@ -60,7 +60,6 @@ pub fn doPartialInstallOfSecurityScanner(
     }
 
     if (security_scanner_pkg_id == invalid_package_id) {
-        Output.errGeneric("Cannot perform partial install: security scanner package ID is invalid", .{});
         return error.InvalidPackageID;
     }
 
@@ -93,12 +92,10 @@ pub fn doPartialInstallOfSecurityScanner(
     }
 
     if (summary.fail > 0) {
-        Output.errGeneric("Failed to install security scanner package (failed: {d}, success: {d})", .{ summary.fail, summary.success });
         return error.PartialInstallFailed;
     }
 
     if (summary.success == 0 and summary.skipped == 0) {
-        Output.errGeneric("No packages were installed during security scanner installation", .{});
         return error.NoPackagesInstalled;
     }
 }
@@ -155,7 +152,6 @@ const ScannerFinder = struct {
                 const dep = this.manager.lockfile.buffers.dependencies.items[dep_id];
 
                 if (std.mem.eql(u8, dep.name.slice(string_buf), this.scanner_name)) {
-                    Output.errGeneric("Security scanner '{s}' cannot be a dependency of a workspace package. It must be a direct dependency of the root package.", .{this.scanner_name});
                     return error.SecurityScannerInWorkspace;
                 }
             }
@@ -183,7 +179,8 @@ pub fn performSecurityScanAfterResolution(manager: *PackageManager, command_ctx:
             const retry_result = try attemptSecurityScanWithRetry(manager, security_scanner, scan_all, command_ctx, original_cwd, true);
             switch (retry_result) {
                 .success => |scan_results| return scan_results,
-                else => return error.SecurityScannerRetryFailed,
+                .needs_install => return error.SecurityScannerRetryFailed,
+                .@"error" => |err| return err,
             }
         },
         .@"error" => |err| return err,
@@ -204,11 +201,7 @@ pub fn performSecurityScanForAll(manager: *PackageManager, command_ctx: bun.cli.
             const retry_result = try attemptSecurityScanWithRetry(manager, security_scanner, true, command_ctx, original_cwd, true);
             switch (retry_result) {
                 .success => |scan_results| return scan_results,
-                .needs_install => {
-                    // Should not happen after retry - we just installed it
-                    Output.errGeneric("Security scanner still required installation after partial install. This is probably a bug in Bun. Please report it to https://github.com/oven-sh/bun/issues", .{});
-                    return error.SecurityScannerRetryFailed;
-                },
+                .needs_install => return error.SecurityScannerRetryFailed,
                 .@"error" => |err| return err,
             }
         },
@@ -779,7 +772,7 @@ pub const SecurityScanSubprocess = struct {
     /// spawn machinery. The child's end is dup'd to fd 4 and closed in the
     /// parent by spawn's to_close_at_end list (process.zig:1460). The parent's
     /// end comes back via spawned.extra_pipes.
-    fn spawnPosix(this: *SecurityScanSubprocess, argv: *[5]?[*:0]const u8, ipc_output_fds: [2]bun.FileDescriptor) !void {
+    fn spawnPosix(this: *SecurityScanSubprocess, argv: *[5]?[*:0]const u8, ipc_output_fds: [2]bun.FD) !void {
         const extra_fds = [_]bun.spawn.SpawnOptions.Stdio{
             .{ .pipe = ipc_output_fds[1] }, // fd 3: child inherits write end
             .buffer, // fd 4: socketpair, parent's end in extra_pipes
@@ -802,7 +795,7 @@ pub const SecurityScanSubprocess = struct {
         this.ipc_reader.flags.nonblocking = true;
         this.ipc_reader.flags.socket = false;
 
-        try this.finishSpawn(&spawned, ipc_output_fds[0], spawned.extra_pipes.items[1]);
+        try this.finishSpawn(&spawned, ipc_output_fds[0], spawned.extra_pipes.items[1].fd());
     }
 
     /// Windows fd 4: .buffer stdio for extra_fds sets UV_OVERLAPPED_PIPE on the
@@ -811,7 +804,7 @@ pub const SecurityScanSubprocess = struct {
     /// parent's write end is overlapped. Child inherits the non-overlapped read
     /// end via .pipe (inherit_fd); parent wraps the overlapped write end in a
     /// uv.Pipe for IOCP-based async writes.
-    fn spawnWindows(this: *SecurityScanSubprocess, argv: *[5]?[*:0]const u8, ipc_output_fds: [2]bun.FileDescriptor) !void {
+    fn spawnWindows(this: *SecurityScanSubprocess, argv: *[5]?[*:0]const u8, ipc_output_fds: [2]bun.FD) !void {
         const uv = bun.windows.libuv;
 
         var json_fds: [2]uv.uv_file = undefined;
@@ -823,8 +816,8 @@ pub const SecurityScanSubprocess = struct {
         // Track ownership with optionals: null means the fd has been transferred
         // or closed, so the errdefer skips it. Prevents double-close on error paths
         // after pipe.open() takes ownership or after the explicit closes below.
-        var child_read_fd: ?bun.FileDescriptor = bun.FD.fromUV(json_fds[0]);
-        var parent_write_fd: ?bun.FileDescriptor = bun.FD.fromUV(json_fds[1]);
+        var child_read_fd: ?bun.FD = bun.FD.fromUV(json_fds[0]);
+        var parent_write_fd: ?bun.FD = bun.FD.fromUV(json_fds[1]);
         errdefer {
             if (child_read_fd) |fd| fd.close();
             if (parent_write_fd) |fd| fd.close();
@@ -869,7 +862,7 @@ pub const SecurityScanSubprocess = struct {
     fn finishSpawn(
         this: *SecurityScanSubprocess,
         spawned: anytype,
-        ipc_read_fd: bun.FileDescriptor,
+        ipc_read_fd: bun.FD,
         json_stdio_result: jsc.Subprocess.StdioResult,
     ) !void {
         // Allocate the blob copy before registering any event loop callbacks. If

@@ -109,10 +109,13 @@ pub const FileSystemRouter = struct {
         const path_to_use = (root_dir_path.cloneWithTrailingSlash(allocator) catch unreachable).slice();
 
         const root_dir_info = vm.transpiler.resolver.readDirInfo(path_to_use) catch {
+            // Build the JS error before freeing the arena: `log` is backed by the arena allocator.
+            // Capture the error union so cleanup runs even if toJS itself fails.
+            const err_value = log.toJS(globalThis, globalThis.allocator(), "reading root directory");
             origin_str.deinit();
             arena.deinit();
             globalThis.allocator().destroy(arena);
-            return globalThis.throwValue(try log.toJS(globalThis, globalThis.allocator(), "reading root directory"));
+            return globalThis.throwValue(try err_value);
         } orelse {
             origin_str.deinit();
             arena.deinit();
@@ -127,10 +130,13 @@ pub const FileSystemRouter = struct {
         }) catch unreachable;
 
         router.loadRoutes(&log, root_dir_info, Resolver, &vm.transpiler.resolver, router.config.dir) catch {
+            // Build the JS error before freeing the arena: `log` is backed by the arena allocator.
+            // Capture the error union so cleanup runs even if toJS itself fails.
+            const err_value = log.toJS(globalThis, globalThis.allocator(), "loading routes");
             origin_str.deinit();
             arena.deinit();
             globalThis.allocator().destroy(arena);
-            return globalThis.throwValue(try log.toJS(globalThis, globalThis.allocator(), "loading routes"));
+            return globalThis.throwValue(try err_value);
         };
 
         if (try argument.get(globalThis, "origin")) |origin| {
@@ -143,10 +149,13 @@ pub const FileSystemRouter = struct {
         }
 
         if (log.errors + log.warnings > 0) {
+            // Build the JS error before freeing the arena: `log` is backed by the arena allocator.
+            // Capture the error union so cleanup runs even if toJS itself fails.
+            const err_value = log.toJS(globalThis, globalThis.allocator(), "loading routes");
             origin_str.deinit();
             arena.deinit();
             globalThis.allocator().destroy(arena);
-            return globalThis.throwValue(try log.toJS(globalThis, globalThis.allocator(), "loading routes"));
+            return globalThis.throwValue(try err_value);
         }
 
         var fs_router = globalThis.allocator().create(FileSystemRouter) catch unreachable;
@@ -233,7 +242,12 @@ pub const FileSystemRouter = struct {
         bustDirCache(this, globalThis);
 
         const root_dir_info = vm.transpiler.resolver.readDirInfo(this.router.config.dir) catch {
-            return globalThis.throwValue(try log.toJS(globalThis, globalThis.allocator(), "reading root directory"));
+            // Build the JS error before freeing the arena: `log` is backed by the arena allocator.
+            // Capture the error union so cleanup runs even if toJS itself fails.
+            const err_value = log.toJS(globalThis, globalThis.allocator(), "reading root directory");
+            arena.deinit();
+            globalThis.allocator().destroy(arena);
+            return globalThis.throwValue(try err_value);
         } orelse {
             arena.deinit();
             globalThis.allocator().destroy(arena);
@@ -246,9 +260,12 @@ pub const FileSystemRouter = struct {
             .asset_prefix_path = this.router.config.asset_prefix_path,
         }) catch unreachable;
         router.loadRoutes(&log, root_dir_info, Resolver, &vm.transpiler.resolver, router.config.dir) catch {
+            // Build the JS error before freeing the arena: `log` is backed by the arena allocator.
+            // Capture the error union so cleanup runs even if toJS itself fails.
+            const err_value = log.toJS(globalThis, globalThis.allocator(), "loading routes");
             arena.deinit();
             globalThis.allocator().destroy(arena);
-            return globalThis.throwValue(try log.toJS(globalThis, globalThis.allocator(), "loading routes"));
+            return globalThis.throwValue(try err_value);
         };
 
         this.router.deinit();
@@ -448,6 +465,9 @@ pub const MatchedRoute = struct {
 
     pub fn deinit(this: *MatchedRoute) void {
         if (this.query_string_map) |*map| {
+            map.deinit();
+        }
+        if (this.param_map) |*map| {
             map.deinit();
         }
         if (this.needs_deinit) {

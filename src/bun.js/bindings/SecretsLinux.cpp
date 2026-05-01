@@ -1,6 +1,6 @@
 #include "root.h"
 
-#if OS(LINUX)
+#if OS(LINUX) || OS(FREEBSD)
 
 #include "Secrets.h"
 #include <dlfcn.h>
@@ -402,4 +402,4 @@ bool deletePassword(const CString& service, const CString& name, Error& err)
 } // namespace Secrets
 } // namespace Bun
 
-#endif // OS(LINUX)
+#endif // OS(LINUX) || OS(FREEBSD)

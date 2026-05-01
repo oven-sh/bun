@@ -31,16 +31,21 @@ pub const deref = RefCount.deref;
 ref_count: RefCount,
 
 /// The master side of the PTY (original fd, used for ioctl operations)
-master_fd: bun.FileDescriptor,
+/// On Windows this is always invalid_fd; ConPTY uses hpcon for control.
+master_fd: bun.FD,
 
-/// Duplicated master fd for reading
-read_fd: bun.FileDescriptor,
+/// Duplicated master fd for reading (POSIX) / overlapped read pipe end (Windows)
+read_fd: bun.FD,
 
-/// Duplicated master fd for writing
-write_fd: bun.FileDescriptor,
+/// Duplicated master fd for writing (POSIX) / overlapped write pipe end (Windows)
+write_fd: bun.FD,
 
-/// The slave side of the PTY (used by child processes)
-slave_fd: bun.FileDescriptor,
+/// The slave side of the PTY (used by child processes). Unused on Windows.
+slave_fd: bun.FD,
+
+/// Windows ConPTY handle. Used for resize and passed to uv_spawn via
+/// uv_process_options_t.pseudoconsole.
+hpcon: if (Environment.isWindows) ?bun.windows.HPCON else void = if (Environment.isWindows) null else {},
 
 /// Current terminal size
 cols: u16,
@@ -77,7 +82,11 @@ pub const Flags = packed struct(u8) {
     connected: bool = false,
     reader_done: bool = false,
     writer_done: bool = false,
-    _: u1 = 0,
+    /// Set when an inline-created terminal has been attached to a subprocess
+    /// via spawn; prevents reusing the same inline terminal for a second
+    /// spawn (which on Windows would be silently killed by ClosePseudoConsole
+    /// when the first subprocess exits, and on POSIX has no slave_fd left).
+    inline_spawned: bool = false,
 };
 
 pub const IOWriter = bun.io.StreamingWriter(@This(), struct {
@@ -108,6 +117,7 @@ pub const Options = struct {
     /// Parse terminal options from a JS object
     pub fn parseFromJS(globalObject: *jsc.JSGlobalObject, js_options: JSValue) bun.JSError!Options {
         var options = Options{};
+        errdefer options.deinit();
 
         if (try js_options.getOptional(globalObject, "cols", i32)) |n| {
             if (n > 0 and n <= 65535) options.cols = @intCast(n);
@@ -163,7 +173,9 @@ const InitError = CreatePtyError || error{ WriterStartFailed, ReaderStartFailed 
 /// Internal initialization - shared by constructor and createFromSpawn
 fn initTerminal(
     globalObject: *jsc.JSGlobalObject,
-    options: Options,
+    /// term_name ownership is transferred to the Terminal struct on success or
+    /// any error after createPty; cleared in-place once moved.
+    options: *Options,
     /// If provided, use this JSValue; otherwise create one via toJS
     existing_js_value: ?jsc.JSValue,
 ) InitError!CreateResult {
@@ -175,6 +187,9 @@ fn initTerminal(
         options.term_name
     else
         jsc.ZigString.Slice.fromUTF8NeverFree("xterm-256color");
+    // Ownership moves to the struct below; clear so caller's options.deinit()
+    // doesn't double-free on the WriterStartFailed/ReaderStartFailed paths.
+    options.term_name = .{};
 
     const terminal = bun.new(Terminal, .{
         .ref_count = .init(),
@@ -182,8 +197,9 @@ fn initTerminal(
         .read_fd = pty_result.read_fd,
         .write_fd = pty_result.write_fd,
         .slave_fd = pty_result.slave,
-        .cols = options.cols,
-        .rows = options.rows,
+        .hpcon = if (comptime Environment.isWindows) pty_result.hpcon else {},
+        .cols = if (Environment.isWindows) @intCast(clampToCoord(options.cols)) else options.cols,
+        .rows = if (Environment.isWindows) @intCast(clampToCoord(options.rows)) else options.rows,
         .term_name = term_name,
         .event_loop_handle = jsc.EventLoopHandle.init(globalObject.bunVM().eventLoop()),
         .globalThis = globalObject,
@@ -198,15 +214,36 @@ fn initTerminal(
     // Start writer with the write fd - adds a ref
     switch (terminal.writer.start(pty_result.write_fd, true)) {
         .result => terminal.ref(),
-        .err => return error.WriterStartFailed,
+        .err => {
+            // POSIX: writer.start() may have allocated a poll holding write_fd
+            // before registerWithFd failed; closeInternal → writer.close()
+            // frees the poll and closes write_fd. Windows: writer.start()
+            // failure leaves source==null so writer.close() is a no-op; close
+            // write_fd directly. Pre-set writer_done so onWriterClose's deref
+            // is skipped and the struct isn't freed mid-closeInternal.
+            terminal.flags.writer_done = true;
+            terminal.read_fd.close();
+            terminal.read_fd = bun.invalid_fd;
+            if (comptime Environment.isWindows) {
+                terminal.write_fd.close();
+                terminal.write_fd = bun.invalid_fd;
+            }
+            terminal.closeInternal();
+            terminal.deref();
+            return error.WriterStartFailed;
+        },
     }
 
     // Start reader with the read fd - adds a ref
     switch (terminal.reader.start(pty_result.read_fd, true)) {
         .err => {
-            // Reader never started but writer was started
-            // Close writer (will trigger onWriterDone -> deref for writer's ref)
-            terminal.writer.close();
+            // Reader never started: closeInternal skips reader.close() but
+            // runs writer.close() → onWriterClose → deref (2→1). Then drop
+            // the initial ref (1→0).
+            terminal.read_fd.close();
+            terminal.read_fd = bun.invalid_fd;
+            terminal.closeInternal();
+            terminal.deref();
             return error.ReaderStartFailed;
         },
         .result => {
@@ -230,10 +267,9 @@ fn initTerminal(
     // Get or create the JS wrapper
     const this_value = existing_js_value orelse terminal.toJS(globalObject);
 
-    // Store the this_value (JSValue wrapper) - start with strong ref since we're actively reading
-    // This is the JS side ref (released in finalize)
+    // Store the this_value (JSValue wrapper) - start with strong ref since we're actively reading.
+    // The JS-side ref is the one taken by RefCount.init() above; released in finalize().
     terminal.this_value = jsc.JSRef.initStrong(this_value, globalObject);
-    terminal.ref();
 
     // Store callbacks via generated gc setters (prevents GC of callbacks while terminal is alive)
     // Note: callbacks were already validated in parseFromJS() and may be wrapped in AsyncContextFrame
@@ -267,7 +303,7 @@ pub fn constructor(
 
     var options = try Options.parseFromJS(globalObject, js_options);
 
-    const result = initTerminal(globalObject, options, this_value) catch |err| {
+    const result = initTerminal(globalObject, &options, this_value) catch |err| {
         options.deinit();
         return switch (err) {
             error.OpenPtyFailed => globalObject.throw("Failed to open PTY", .{}),
@@ -286,31 +322,78 @@ pub fn constructor(
 /// The slave_fd should be used for the subprocess's stdin/stdout/stderr
 pub fn createFromSpawn(
     globalObject: *jsc.JSGlobalObject,
-    options: Options,
+    options: *Options,
 ) InitError!CreateResult {
     return initTerminal(globalObject, options, null);
 }
 
 /// Get the slave fd for subprocess to use
-pub fn getSlaveFd(this: *Terminal) bun.FileDescriptor {
+pub fn getSlaveFd(this: *Terminal) bun.FD {
     return this.slave_fd;
+}
+
+/// Windows: get the ConPTY handle to pass to uv_spawn via
+/// uv_process_options_t.pseudoconsole.
+pub fn getPseudoconsole(this: *Terminal) ?bun.windows.HPCON {
+    if (comptime !Environment.isWindows) return null;
+    return this.hpcon;
 }
 
 /// Close the parent's copy of slave_fd after fork
 /// The child process has its own copy - closing the parent's ensures
 /// EOF is received on the master side when the child exits
 pub fn closeSlaveFd(this: *Terminal) void {
+    this.flags.inline_spawned = true;
     if (this.slave_fd != bun.invalid_fd) {
         this.slave_fd.close();
         this.slave_fd = bun.invalid_fd;
     }
 }
 
+/// Windows: close only the ConPTY handle so conhost releases its pipe ends and
+/// our reader observes EOF. Leaves the Terminal itself open (closed=false),
+/// matching POSIX semantics where child exit delivers EOF without closing the
+/// master fd.
+pub fn closePseudoconsole(this: *Terminal) void {
+    if (comptime !Environment.isWindows) return;
+    if (this.hpcon) |hpcon| {
+        this.hpcon = null;
+        this.closePseudoconsoleOffThread(hpcon);
+    }
+}
+
+/// On Windows < 11 24H2, ClosePseudoConsole blocks until the output pipe is
+/// drained. Our reader runs on the event-loop thread, so calling it there
+/// deadlocks. Fire from a detached thread so the event loop keeps draining;
+/// conhost completes its flush and our reader sees the final data then EOF.
+/// hpcon is passed to the thread by value so the Terminal struct may be freed
+/// before the thread completes.
+fn closePseudoconsoleOffThread(this: *Terminal, hpcon: bun.windows.HPCON) void {
+    if (comptime !Environment.isWindows) return;
+    const Runner = struct {
+        fn run(h: bun.windows.HPCON) void {
+            bun.windows.ClosePseudoConsole(h);
+        }
+    };
+    const t = std.Thread.spawn(.{}, Runner.run, .{hpcon}) catch {
+        // CreateThread failed — the process is in a bad state. Close the
+        // reader so onReaderDone fires next loop tick (releasing the reader
+        // ref) instead of hanging on an EOF that will never come. Leak hpcon;
+        // calling ClosePseudoConsole here would deadlock since reader.close()
+        // is async (uv_close) and the pipe HANDLE is still open. Conhost sees
+        // broken-pipe once libuv's deferred close runs.
+        if (this.flags.reader_started and !this.flags.reader_done) this.reader.close();
+        return;
+    };
+    t.detach();
+}
+
 const PtyResult = struct {
-    master: bun.FileDescriptor,
-    read_fd: bun.FileDescriptor,
-    write_fd: bun.FileDescriptor,
-    slave: bun.FileDescriptor,
+    master: bun.FD,
+    read_fd: bun.FD,
+    write_fd: bun.FD,
+    slave: bun.FD,
+    hpcon: if (Environment.isWindows) bun.windows.HPCON else void,
 };
 
 const CreatePtyError = error{ OpenPtyFailed, DupFailed, NotSupported };
@@ -318,10 +401,11 @@ const CreatePtyError = error{ OpenPtyFailed, DupFailed, NotSupported };
 fn createPty(cols: u16, rows: u16) CreatePtyError!PtyResult {
     if (comptime Environment.isPosix) {
         return createPtyPosix(cols, rows);
-    } else {
-        // Windows PTY support would go here
-        return error.NotSupported;
     }
+    if (comptime Environment.isWindows) {
+        return createPtyWindows(cols, rows);
+    }
+    return error.NotSupported;
 }
 
 // OpenPtyTermios is required for the openpty() extern signature even though we pass null.
@@ -433,8 +517,12 @@ fn createPtyPosix(cols: u16, rows: u16) CreatePtyError!PtyResult {
             .IXANY = true, // Any character restarts output
             .IMAXBEL = true, // Ring bell on input queue full
             .BRKINT = true, // Signal interrupt on break
-            .IUTF8 = true, // Input is UTF-8
         };
+        // IUTF8: present in Linux/macOS/FreeBSD kernels but Zig std's
+        // tc_iflag_t only exposes the field on Linux/macOS, so probe for it.
+        if (comptime @hasField(@TypeOf(t.iflag), "IUTF8")) {
+            t.iflag.IUTF8 = true;
+        }
 
         // Output flags: standard terminal output processing
         t.oflag = .{
@@ -528,7 +616,140 @@ fn createPtyPosix(cols: u16, rows: u16) CreatePtyError!PtyResult {
         .read_fd = read_fd,
         .write_fd = write_fd,
         .slave = slave_fd_desc,
+        .hpcon = {},
     };
+}
+
+/// Create one end of a pipe pair as an overlapped named pipe (server) and the
+/// other as a synchronous client. Returns both raw HANDLEs. Caller closes
+/// both on error. The "server" end is suitable for libuv (uv_pipe_open) and
+/// the "client" end is suitable for ConPTY (which uses synchronous I/O).
+fn createOverlappedPipePair(
+    /// PIPE_ACCESS_INBOUND: server reads, client writes.
+    /// PIPE_ACCESS_OUTBOUND: server writes, client reads.
+    server_access: u32,
+) CreatePtyError!struct { server: bun.windows.HANDLE, client: bun.windows.HANDLE } {
+    const w = bun.windows;
+    const k32 = std.os.windows.kernel32;
+    const FILE_FLAG_FIRST_PIPE_INSTANCE: u32 = 0x00080000;
+
+    const pid: u32 = std.os.windows.GetCurrentProcessId();
+    const counter = pipe_serial.fetchAdd(1, .monotonic);
+    var name_utf8_buf: [96]u8 = undefined;
+    const name = std.fmt.bufPrint(
+        &name_utf8_buf,
+        "\\\\.\\pipe\\bun-conpty-{d}-{d}",
+        .{ pid, counter },
+    ) catch return error.OpenPtyFailed;
+    var name_w_buf: [96:0]u16 = undefined;
+    const name_w_len = bun.strings.convertUTF8toUTF16InBuffer(&name_w_buf, name).len;
+    name_w_buf[name_w_len] = 0;
+    const name_w = name_w_buf[0..name_w_len :0];
+
+    const server = k32.CreateNamedPipeW(
+        name_w,
+        server_access | std.os.windows.FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
+        std.os.windows.PIPE_TYPE_BYTE | std.os.windows.PIPE_READMODE_BYTE | std.os.windows.PIPE_WAIT,
+        1,
+        65536,
+        65536,
+        0,
+        null,
+    );
+    if (server == w.INVALID_HANDLE_VALUE) return error.OpenPtyFailed;
+    errdefer _ = w.CloseHandle(server);
+
+    const client_access: u32 = if (server_access == std.os.windows.PIPE_ACCESS_INBOUND)
+        std.os.windows.GENERIC_WRITE
+    else
+        std.os.windows.GENERIC_READ;
+
+    const client = k32.CreateFileW(
+        name_w,
+        client_access,
+        0,
+        null,
+        std.os.windows.OPEN_EXISTING,
+        0,
+        null,
+    );
+    if (client == w.INVALID_HANDLE_VALUE) return error.OpenPtyFailed;
+
+    return .{ .server = server, .client = client };
+}
+
+var pipe_serial = std.atomic.Value(u32).init(0);
+
+fn createPtyWindows(cols: u16, rows: u16) CreatePtyError!PtyResult {
+    const w = bun.windows;
+
+    // Track ownership explicitly: handles are nulled out as they are closed or
+    // transferred so the errdefer cleanup never double-closes.
+    var out_server: ?w.HANDLE = null;
+    var out_client: ?w.HANDLE = null;
+    var in_server: ?w.HANDLE = null;
+    var in_client: ?w.HANDLE = null;
+    var hpcon: ?w.HPCON = null;
+    errdefer {
+        if (hpcon) |h| w.ClosePseudoConsole(h);
+        if (out_server) |h| _ = w.CloseHandle(h);
+        if (out_client) |h| _ = w.CloseHandle(h);
+        if (in_server) |h| _ = w.CloseHandle(h);
+        if (in_client) |h| _ = w.CloseHandle(h);
+    }
+
+    // Output pipe: ConPTY writes (client), we read (overlapped server).
+    {
+        const pair = try createOverlappedPipePair(std.os.windows.PIPE_ACCESS_INBOUND);
+        out_server = pair.server;
+        out_client = pair.client;
+    }
+
+    // Input pipe: we write (overlapped server), ConPTY reads (client).
+    {
+        const pair = try createOverlappedPipePair(std.os.windows.PIPE_ACCESS_OUTBOUND);
+        in_server = pair.server;
+        in_client = pair.client;
+    }
+
+    const size = w.COORD{ .X = clampToCoord(cols), .Y = clampToCoord(rows) };
+    {
+        var pc: w.HPCON = undefined;
+        if (w.CreatePseudoConsole(size, in_client.?, out_client.?, 0, &pc) < 0)
+            return error.OpenPtyFailed;
+        hpcon = pc;
+    }
+
+    // ConPTY duplicated the client handles internally; close our copies.
+    _ = w.CloseHandle(in_client.?);
+    in_client = null;
+    _ = w.CloseHandle(out_client.?);
+    out_client = null;
+
+    // Wrap server (overlapped) ends as libuv-owned FDs so they can be passed
+    // to BufferedReader/StreamingWriter.start() which calls uv_pipe_open.
+    const read_fd = bun.FD.fromNative(out_server.?).makeLibUVOwned() catch return error.DupFailed;
+    out_server = null;
+    errdefer read_fd.close();
+
+    const write_fd = bun.FD.fromNative(in_server.?).makeLibUVOwned() catch return error.DupFailed;
+    in_server = null;
+
+    const result_hpcon = hpcon.?;
+    hpcon = null;
+
+    return PtyResult{
+        .master = bun.invalid_fd,
+        .read_fd = read_fd,
+        .write_fd = write_fd,
+        .slave = bun.invalid_fd,
+        .hpcon = result_hpcon,
+    };
+}
+
+/// COORD.X/Y are i16; clamp the u16 cols/rows to its range.
+inline fn clampToCoord(v: u16) i16 {
+    return @intCast(@min(v, std.math.maxInt(i16)));
 }
 
 /// Check if terminal is closed
@@ -617,7 +838,9 @@ pub fn write(
     return switch (write_result) {
         .done => |amt| JSValue.jsNumber(@as(i32, @intCast(amt))),
         .wrote => |amt| JSValue.jsNumber(@as(i32, @intCast(amt))),
-        .pending => |amt| JSValue.jsNumber(@as(i32, @intCast(amt))),
+        // On Windows the streaming writer buffers and returns .pending=0; the
+        // bytes were accepted, so report bytes.len to match POSIX semantics.
+        .pending => |amt| JSValue.jsNumber(@as(i32, @intCast(if (Environment.isWindows) bytes.len else amt))),
         .err => |err| globalObject.throwValue(try err.toJS(globalObject)),
     };
 }
@@ -677,8 +900,18 @@ pub fn resize(
         }
     }
 
-    this.cols = new_cols;
-    this.rows = new_rows;
+    if (comptime Environment.isWindows) {
+        if (this.hpcon) |hpcon| {
+            const size = bun.windows.COORD{ .X = clampToCoord(new_cols), .Y = clampToCoord(new_rows) };
+            const hr = bun.windows.ResizePseudoConsole(hpcon, size);
+            if (hr < 0) {
+                return globalObject.throw("Failed to resize terminal", .{});
+            }
+        }
+    }
+
+    this.cols = if (Environment.isWindows) @intCast(clampToCoord(new_cols)) else new_cols;
+    this.rows = if (Environment.isWindows) @intCast(clampToCoord(new_rows)) else new_rows;
 
     return .js_undefined;
 }
@@ -711,13 +944,13 @@ pub fn setRawMode(
 const Termios = if (Environment.isPosix) std.posix.termios else void;
 
 /// Get terminal attributes using tcgetattr
-fn getTermios(fd: bun.FileDescriptor) ?Termios {
+fn getTermios(fd: bun.FD) ?Termios {
     if (comptime !Environment.isPosix) return null;
     return std.posix.tcgetattr(fd.cast()) catch null;
 }
 
 /// Set terminal attributes using tcsetattr (TCSANOW = immediate)
-fn setTermios(fd: bun.FileDescriptor, termios_p: *const Termios) bool {
+fn setTermios(fd: bun.FD, termios_p: *const Termios) bool {
     if (comptime !Environment.isPosix) return false;
     std.posix.tcsetattr(fd.cast(), .NOW, termios_p.*) catch return false;
     return true;
@@ -756,6 +989,12 @@ pub fn asyncDispose(
     globalObject: *jsc.JSGlobalObject,
     _: *jsc.CallFrame,
 ) bun.JSError!JSValue {
+    // After dispose the caller must not see further data/exit callbacks.
+    // closeInternal on Windows leaves the reader draining off-thread, so
+    // suppress callbacks and downgrade the JSRef so the wrapper is
+    // GC-eligible once the caller's reference is dropped.
+    this.this_value.downgrade();
+    this.flags.finalized = true;
     this.closeInternal();
     return jsc.JSPromise.resolvedPromiseValue(globalObject, .js_undefined);
 }
@@ -764,15 +1003,29 @@ pub fn closeInternal(this: *Terminal) void {
     if (this.flags.closed) return;
     this.flags.closed = true;
 
+    // Close writer (closes write_fd)
+    this.writer.close();
+    this.write_fd = bun.invalid_fd;
+
+    if (comptime Environment.isWindows) {
+        // Dispatch ClosePseudoConsole off-thread (it blocks until the output
+        // pipe is drained on Windows < 11 24H2) and leave the reader open so
+        // the event loop can keep draining; conhost flushes the final frame,
+        // closes its pipe end, and the reader observes EOF → onReaderDone.
+        if (this.hpcon) |hpcon| {
+            this.hpcon = null;
+            this.closePseudoconsoleOffThread(hpcon);
+        }
+        // Reader stays open even if hpcon was already null (closePseudoconsole
+        // may have dispatched it earlier); onReaderDone closes on EOF.
+        if (this.flags.reader_started and !this.flags.reader_done) return;
+    }
+
     // Close reader (closes read_fd)
     if (this.flags.reader_started) {
         this.reader.close();
     }
     this.read_fd = bun.invalid_fd;
-
-    // Close writer (closes write_fd)
-    this.writer.close();
-    this.write_fd = bun.invalid_fd;
 
     // Close master fd
     if (this.master_fd != bun.invalid_fd) {
@@ -887,6 +1140,8 @@ fn callExitCallback(this: *Terminal, exit_code: i32, signal: ?bun.SignalCode) vo
 pub fn onReadChunk(this: *Terminal, chunk: []const u8, has_more: bun.io.ReadState) bool {
     _ = has_more;
     log("onReadChunk: {} bytes", .{chunk.len});
+
+    if (this.flags.finalized) return true;
 
     // First data received - upgrade to strong ref (connected)
     if (!this.flags.connected) {

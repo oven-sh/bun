@@ -37,8 +37,9 @@
 #include "ScriptWrappable.h"
 #include <memory>
 #include <variant>
+#include <wtf/Atomics.h>
 #include <wtf/Forward.h>
-
+#include <wtf/OptionSet.h>
 #include <wtf/WeakPtr.h>
 
 #include "root.h"
@@ -60,6 +61,13 @@ struct EventTargetData {
 
 public:
     EventTargetData() = default;
+
+    void clear()
+    {
+        eventListenerMap.clear();
+        isFiringEventListeners = false;
+    }
+
     EventListenerMap eventListenerMap;
     bool isFiringEventListeners { false };
 };
@@ -112,7 +120,6 @@ public:
     // Used for legacy "onevent" attributes.
     template<typename JSMaybeErrorEventListener>
     void setAttributeEventListener(const AtomString& eventType, JSC::JSValue listener, JSC::JSObject& jsEventTarget);
-    bool setAttributeEventListener(const AtomString& eventType, RefPtr<EventListener>&&, DOMWrapperWorld&);
     JSEventListener* attributeEventListener(const AtomString& eventType, DOMWrapperWorld&);
 
     bool hasEventListeners() const;
@@ -136,9 +143,17 @@ public:
 protected:
     WEBCORE_EXPORT virtual ~EventTarget();
 
-    virtual EventTargetData* eventTargetData() = 0;
-    virtual EventTargetData* eventTargetDataConcurrently() = 0;
-    virtual EventTargetData& ensureEventTargetData() = 0;
+    enum class EventTargetFlag : uint16_t {
+        HasEventTargetData = 1 << 0,
+    };
+
+    bool hasEventTargetFlag(EventTargetFlag flag) const { return weakPtrFactory().bitfield() & std::to_underlying(flag); }
+    void setEventTargetFlag(EventTargetFlag, bool = true);
+    bool hasEventTargetData() const { return hasEventTargetFlag(EventTargetFlag::HasEventTargetData); }
+
+    EventTargetData* eventTargetData();
+    EventTargetData* eventTargetDataConcurrently();
+    EventTargetData& ensureEventTargetData();
 
     virtual void eventListenersDidChange() {}
 
@@ -157,21 +172,47 @@ private:
     void invalidateEventListenerRegions();
 };
 
-class EventTargetWithInlineData : public EventTarget {
-    WTF_MAKE_TZONE_ALLOCATED(EventTargetWithInlineData);
+// EventTargetData lives on the WeakPtrImpl; subclasses no longer need their own storage.
+using EventTargetWithInlineData = EventTarget;
 
-protected:
-    EventTargetData* eventTargetData() final { return &m_eventTargetData; }
-    EventTargetData* eventTargetDataConcurrently() final { return &m_eventTargetData; }
-    EventTargetData& ensureEventTargetData() final { return m_eventTargetData; }
-
-private:
-    EventTargetData m_eventTargetData;
-};
+inline void EventTarget::setEventTargetFlag(EventTargetFlag flag, bool value)
+{
+    auto flags = OptionSet<EventTargetFlag>::fromRaw(weakPtrFactory().bitfield());
+    flags.set(flag, value);
+    weakPtrFactory().setBitfield(flags.toRaw());
+}
 
 inline const EventTargetData* EventTarget::eventTargetData() const
 {
-    return const_cast<EventTarget*>(this)->eventTargetData();
+    if (hasEventTargetData())
+        return &weakPtrFactory().impl()->eventTargetData();
+    return nullptr;
+}
+
+inline EventTargetData* EventTarget::eventTargetData()
+{
+    if (hasEventTargetData())
+        return &weakPtrFactory().impl()->eventTargetData();
+    return nullptr;
+}
+
+inline EventTargetData* EventTarget::eventTargetDataConcurrently()
+{
+    bool flag = this->hasEventTargetData();
+    auto fencedFlag = Dependency::fence(flag);
+    if (flag)
+        return &fencedFlag.consume(this)->weakPtrFactory().impl()->eventTargetData();
+    return nullptr;
+}
+
+inline EventTargetData& EventTarget::ensureEventTargetData()
+{
+    if (auto* data = eventTargetData())
+        return *data;
+    initializeWeakPtrFactory();
+    WTF::storeStoreFence();
+    setEventTargetFlag(EventTargetFlag::HasEventTargetData, true);
+    return weakPtrFactory().impl()->eventTargetData();
 }
 
 inline bool EventTarget::isFiringEventListeners() const

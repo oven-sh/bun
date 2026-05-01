@@ -48,7 +48,14 @@ public:
     void clear();
 
 protected:
+    // Used by subclasses whose guarded JS object's liveness is driven by a JS
+    // wrapper (which marks it in visitChildren) rather than by the global
+    // object's m_guardedObjects root set. Avoids GC-root cycles when the
+    // guarded object indirectly references its own JS wrapper.
+    struct DoNotRegisterWithGlobalObjectTag {};
+
     DOMGuardedObject(JSDOMGlobalObject&, JSC::JSCell&);
+    DOMGuardedObject(JSDOMGlobalObject&, JSC::JSCell&, DoNotRegisterWithGlobalObjectTag);
 
     void contextDestroyed();
     bool isEmpty() const { return !m_guarded; }
@@ -66,7 +73,11 @@ protected:
         : DOMGuardedObject(globalObject, guarded)
     {
     }
-    T* guarded() const { return JSC::jsDynamicCast<T*>(guardedObject()); }
+    DOMGuarded(JSDOMGlobalObject& globalObject, T& guarded, DoNotRegisterWithGlobalObjectTag tag)
+        : DOMGuardedObject(globalObject, guarded, tag)
+    {
+    }
+    T* guarded() const { return dynamicDowncast<T>(guardedObject()); }
 };
 
 } // namespace WebCore

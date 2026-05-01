@@ -903,11 +903,12 @@ pub const PEFile = struct {
         // If we consumed a slot that `.bunL`/`.bun` will need later the
         // build would hard-fail in addLinkedAddonSection/addBunSection
         // instead of falling back, so refuse *here* while the caller
-        // can still skip this addon and keep going. `addBunSection`
-        // later rounds `SizeOfHeaders` up to `file_align`, so apply the
-        // same rounding here or a host with partial slack in that last
-        // alignment bucket would pass this gate and then hard-fail.
+        // can still skip this addon and keep going. Mirror both of
+        // `addBunSection`'s gates: the hard 96-section PE cap, and the
+        // `alignUp(SizeOfHeaders, file_align) <= first_raw` byte-slack
+        // check.
         const want_sections: u32 = self.num_sections + 3;
+        if (want_sections > 96) return error.InsufficientHeaderSpace;
         const new_headers_end = self.section_headers_offset + @sizeOf(SectionHeader) * want_sections;
         const reserved_headers = try alignUpU32(@intCast(new_headers_end), file_align);
         var first_raw: u32 = @intCast(self.data.items.len);
@@ -1361,8 +1362,9 @@ pub const PEFile = struct {
         // Reserve room for this section *and* the `.bun` section that
         // `addBunSection` will append next. Taking the last slot here
         // would turn a skippable merge into a hard build failure.
-        // `addBunSection` rounds `SizeOfHeaders` up to `file_align`, so
-        // the same rounding applies here.
+        // Mirror both of `addBunSection`'s gates: the 96-section PE
+        // cap and the file-aligned byte-slack check.
+        if (self.num_sections + 2 > 96) return error.InsufficientHeaderSpace;
         const new_headers_end = self.section_headers_offset + @sizeOf(SectionHeader) * (self.num_sections + 2);
         const reserved_headers = try alignUpU32(@intCast(new_headers_end), file_align);
         if (reserved_headers > first_raw) return error.InsufficientHeaderSpace;

@@ -836,8 +836,8 @@ it("reading fd of a TLS listener should not crash", () => {
 // fires on TCP-connect (pre-handshake) when a `handshake` handler is also
 // present — left a uv_poll_t with a freshly-submitted AFD request racing
 // uv_close in the same poll_cb frame. The handle never finished closing →
-// loop ref'd → process hung. The fix defers the READABLE re-arm until after
-// on_open returns (and skips it if on_open closed the socket).
+// process hung. The fix moves uv_close from us_poll_stop to us_poll_free,
+// which runs from check_cb (outside poll_cb).
 it("TLS .end() inside open (mid-handshake) fires close and doesn't hang", async () => {
   using server = Bun.listen({
     hostname: "127.0.0.1",

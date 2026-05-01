@@ -40,7 +40,7 @@ test.skipIf(isWindows)("command name ending in '2' followed by redirect is not t
   expect(result.exitCode).toBe(0);
 });
 
-test.skipIf(isWindows)("standalone digit redirect still works", async () => {
+test("standalone digit redirect still works", async () => {
   using dir = tempDir("12602-fd", {
     "input.txt": "hello from file",
   });

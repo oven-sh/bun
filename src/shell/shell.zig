@@ -2961,6 +2961,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                     .BraceEnd,
                     .CmdSubstEnd,
                     .Asterisk,
+                    .DoubleAsterisk,
                     => true,
 
                     .Pipe,
@@ -2969,7 +2970,6 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                     .DoubleAmpersand,
                     .Redirect,
                     .Dollar,
-                    .DoubleAsterisk,
                     .Eq,
                     .Semicolon,
                     .Newline,

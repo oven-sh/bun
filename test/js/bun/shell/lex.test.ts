@@ -563,6 +563,18 @@ describe("lex shell", () => {
       { "Eof": {} },
     ]);
 
+    // But with a space, the digit is a new word and stays an fd prefix.
+    expect(JSON.parse(lex`echo ** 2>file`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "DoubleAsterisk": {} },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stderr: true }) },
+      { "Text": "file" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+
     // A digit that *does* begin a word (preceded by whitespace) is still an fd prefix.
     expect(JSON.parse(lex`echo abc 2>file`)).toEqual([
       { "Text": "echo" },

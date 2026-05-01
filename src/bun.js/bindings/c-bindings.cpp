@@ -996,7 +996,7 @@ static_assert(sizeof(BunNapiLinkSlot) == 256, "BunNapiLinkSlot must be 256 bytes
 }
 
 #define BUN_NAPI_LINK_SLOT_INIT(i) { BUN_NAPI_LINK_SLOT_MAGIC | ((uint64_t)(i) << 56), 0, 0, 0, { 0 } }
-#define BUN_NAPI_LINK_SLOTS_INIT \
+#define BUN_NAPI_LINK_SLOTS_INIT                                                                                      \
     { BUN_NAPI_LINK_SLOT_INIT(0), BUN_NAPI_LINK_SLOT_INIT(1), BUN_NAPI_LINK_SLOT_INIT(2), BUN_NAPI_LINK_SLOT_INIT(3), \
         BUN_NAPI_LINK_SLOT_INIT(4), BUN_NAPI_LINK_SLOT_INIT(5), BUN_NAPI_LINK_SLOT_INIT(6), BUN_NAPI_LINK_SLOT_INIT(7) }
 

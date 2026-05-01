@@ -148,9 +148,9 @@ pub fn linkNapiModule(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
     return .js_undefined;
 }
 
+const bun = @import("bun");
 const std = @import("std");
 
-const bun = @import("bun");
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;

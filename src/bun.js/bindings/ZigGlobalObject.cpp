@@ -2473,6 +2473,16 @@ void GlobalObject::finishCreation(VM& vm)
             init.setConstructor(constructor);
         });
 
+    m_JSH2ResponseSinkClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::H2ResponseSink);
+            auto* structure = JSH2ResponseSink::createStructure(init.vm, init.global, prototype);
+            auto* constructor = JSH2ResponseSinkConstructor::create(init.vm, init.global, JSH2ResponseSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
     m_JSBufferClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = WebCore::createBufferPrototype(init.vm, init.global);
@@ -3732,6 +3742,22 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onResolve;
     } else if (handler == Bun__HTTPRequestContextDebugH3__onResolveStream) {
         return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onResolveStream;
+    } else if (handler == Bun__HTTPRequestContextH2__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextH2__onReject;
+    } else if (handler == Bun__HTTPRequestContextH2__onRejectStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextH2__onRejectStream;
+    } else if (handler == Bun__HTTPRequestContextH2__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextH2__onResolve;
+    } else if (handler == Bun__HTTPRequestContextH2__onResolveStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextH2__onResolveStream;
+    } else if (handler == Bun__HTTPRequestContextDebugH2__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH2__onReject;
+    } else if (handler == Bun__HTTPRequestContextDebugH2__onRejectStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH2__onRejectStream;
+    } else if (handler == Bun__HTTPRequestContextDebugH2__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH2__onResolve;
+    } else if (handler == Bun__HTTPRequestContextDebugH2__onResolveStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH2__onResolveStream;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

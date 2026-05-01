@@ -154,6 +154,14 @@ public:
                 if (success) *success = false;
                 return std::move(*this);
             }
+            /* sni_cb swaps ssl->ctx to this per-SNI SSL_CTX *before*
+             * BoringSSL reads alpn_select_cb, so the h2 ALPN callback
+             * on the root sslCtx never fires for SNI-routed
+             * connections. Install it on the fresh domainCtx too
+             * (no-op at select time if h2Context isn't live). */
+            if (httpContext->getSocketContextData()->hasH2()) {
+                installH2Alpn<SSL>(domainCtx, httpContext->getSocketContextData());
+            }
             /* Queue for any listeners not yet created. We hold one SSL_CTX ref;
              * each listen socket took its own via SSL_CTX_up_ref. */
             pendingServerNames.push_back({hostname_pattern, domainCtx, domainRouter});
@@ -196,6 +204,16 @@ public:
     /* Returns the SSL_CTX* of this app, or nullptr. */
     void *getNativeHandle() {
         return sslCtx;
+    }
+
+    /* H2App reaches in to install the ALPN cb on every SSL_CTX this
+     * app might serve a connection from. Kept here rather than
+     * widening `sslCtx`/`pendingServerNames` to public. */
+    struct ssl_ctx_st *getSslCtx() { return sslCtx; }
+    HttpContext<SSL> *getHttpContext() { return httpContext; }
+    template <typename Fn>
+    void forEachPendingServerNameSslCtx(Fn &&fn) {
+        if constexpr (SSL) for (auto &p : pendingServerNames) fn(p.ctx);
     }
 
     /* Attaches a "filter" function to track socket connections/disconnections */
@@ -349,6 +367,14 @@ public:
         us_socket_group_close_all(httpContext->getSocketGroup());
         for (us_socket_group_t *g : webSocketGroups) {
             us_socket_group_close_all(g);
+        }
+        if constexpr (SSL) {
+            /* H2 adopts sockets out of httpContext into its own group
+             * (via us_socket_adopt), so closing httpContext alone
+             * leaves those connections open. Mirror the WS walk. */
+            if (auto *child = httpContext->getSocketContextData()->h2Context) {
+                uws_internal_h2_close_all(child);
+            }
         }
 
         return std::move(*this);

@@ -532,9 +532,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub const debug_mode = development_kind == .debug;
 
         const ThisServer = @This();
-        pub const RequestContext = NewRequestContext(ssl_enabled, debug_mode, @This(), false);
+        pub const RequestContext = NewRequestContext(ssl_enabled, debug_mode, @This(), .h1);
         const has_h3 = ssl_enabled;
-        pub const H3RequestContext = if (has_h3) NewRequestContext(ssl_enabled, debug_mode, @This(), true) else void;
+        const has_h2 = ssl_enabled;
+        pub const H3RequestContext = if (has_h3) NewRequestContext(ssl_enabled, debug_mode, @This(), .h3) else void;
+        pub const H2RequestContext = if (has_h2) NewRequestContext(ssl_enabled, debug_mode, @This(), .h2) else void;
 
         pub const App = uws.NewApp(ssl_enabled);
         app: ?*App = null,
@@ -544,6 +546,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         /// Cached `h3=":<port>"; ma=86400` value for Alt-Svc on H1 responses;
         /// formatted once in onH3Listen so renderMetadata doesn't reformat.
         h3_alt_svc: if (has_h3) [:0]const u8 else void = if (has_h3) "" else {},
+        /// H2 rides the H1 TLS listener via ALPN (no separate listen socket).
+        h2_app: if (has_h2) ?*uws.H2.App else void = if (has_h2) null else {},
         js_value: jsc.JSRef = jsc.JSRef.empty(),
         /// Potentially null before listen() is called, and once .destroy() is called.
         vm: *jsc.VirtualMachine,
@@ -553,6 +557,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pending_requests: usize = 0,
         request_pool_allocator: *RequestContext.RequestContextStackAllocator = undefined,
         h3_request_pool_allocator: if (has_h3) *H3RequestContext.RequestContextStackAllocator else void = if (has_h3) undefined else {},
+        h2_request_pool_allocator: if (has_h2) *H2RequestContext.RequestContextStackAllocator else void = if (has_h2) undefined else {},
         all_closed_promise: jsc.JSPromise.Strong = .{},
 
         listen_callback: jsc.AnyTask = undefined,
@@ -1090,6 +1095,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             this.app.?.clearRoutes();
             if (comptime has_h3) if (this.h3_app) |h3a| h3a.clearRoutes();
+            if (comptime has_h2) if (this.h2_app) |h2a| h2a.clearRoutes();
 
             // only reload those two, but ignore if they're not specified.
             if (this.config.onRequest != new_config.onRequest and (new_config.onRequest != .zero and !new_config.onRequest.isUndefined())) {
@@ -1176,6 +1182,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.config = try this.config.cloneForReloadingStaticRoutes();
             this.app.?.clearRoutes();
             if (comptime has_h3) if (this.h3_app) |h3a| h3a.clearRoutes();
+            if (comptime has_h2) if (this.h2_app) |h2a| h2a.clearRoutes();
             const route_list_value = this.setRoutes();
             if (route_list_value != .zero) {
                 if (this.js_value.tryGet()) |server_js_value| {
@@ -1623,6 +1630,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         pub fn stopListening(this: *ThisServer, abrupt: bool) void {
             httplog("stopListening", .{});
+            if (comptime has_h2) {
+                // H2 shares the H1 listener; GOAWAY on graceful stop so
+                // live connections can drain. Abrupt falls through to
+                // this.app.?.close() below — TemplatedApp::close() walks
+                // h2ChildContext alongside webSocketContexts and
+                // force-closes every adopted H2 socket.
+                if (!abrupt) if (this.h2_app) |h2a| h2a.close();
+            }
             if (comptime has_h3) {
                 if (this.h3_listener) |h3l| {
                     this.h3_listener = null;
@@ -1744,6 +1759,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     h3a.destroy();
                 }
             }
+            if (comptime has_h2) {
+                if (this.h2_app) |h2a| {
+                    this.h2_app = null;
+                    h2a.destroy();
+                }
+            }
             if (comptime has_h3) if (this.h3_alt_svc.len > 0)
                 bun.default_allocator.free(this.h3_alt_svc);
             if (this.app) |app| {
@@ -1807,6 +1828,17 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     );
                 }
                 server.h3_request_pool_allocator = H3RequestContext.pool.?;
+            }
+
+            if (comptime has_h2) {
+                if (H2RequestContext.pool == null) {
+                    H2RequestContext.pool = bun.create(
+                        server.allocator,
+                        H2RequestContext.RequestContextStackAllocator,
+                        H2RequestContext.RequestContextStackAllocator.init(bun.typedAllocator(H2RequestContext)),
+                    );
+                }
+                server.h2_request_pool_allocator = H2RequestContext.pool.?;
             }
 
             if (comptime ssl_enabled) {
@@ -1967,6 +1999,23 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         pub fn onH3404(_: *ThisServer, _: *uws.H3.Request, resp: *uws.H3.Response) void {
             if (comptime !has_h3) unreachable;
+            resp.writeStatus("404 Not Found");
+            resp.end("", false);
+        }
+
+        pub fn onH2Request(this: *ThisServer, req: *uws.H2.Request, resp: *uws.H2.Response) void {
+            if (comptime !has_h2) unreachable;
+            if (this.config.onRequest == .zero) return onH2404(this, req, resp);
+            this.onRequestFor(H2RequestContext, req, resp);
+        }
+
+        pub fn onH2UserRouteRequest(user_route: *UserRoute, req: *uws.H2.Request, resp: *uws.H2.Response) void {
+            if (comptime !has_h2) unreachable;
+            onUserRouteRequestFor(H2RequestContext, user_route, req, resp);
+        }
+
+        pub fn onH2404(_: *ThisServer, _: *uws.H2.Request, resp: *uws.H2.Response) void {
+            if (comptime !has_h2) unreachable;
             resp.writeStatus("404 Not Found");
             resp.end("", false);
         }
@@ -2223,7 +2272,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }) orelse return;
 
             const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
-            const callRoute = if (Ctx.is_h3) Bun__ServerRouteList__callRouteH3 else Bun__ServerRouteList__callRoute;
+            const callRoute = if (Ctx.is_h3) Bun__ServerRouteList__callRouteH3 else if (Ctx.is_h2) Bun__ServerRouteList__callRouteH2 else Bun__ServerRouteList__callRoute;
             const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), callRoute, .{ server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
 
             server.handleRequestFor(Ctx, &should_deinit_context, prepared, req, response_value);
@@ -2357,7 +2406,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     req: *Ctx.Req,
                     resp: *Ctx.Resp,
                 ) SavedRequest {
-                    if (comptime Ctx.is_h3) @compileError("PreparedRequest.save is HTTP/1-only");
+                    if (comptime Ctx.is_stream) @compileError("PreparedRequest.save is HTTP/1-only");
                     // By saving a request, all information from `req` must be
                     // copied since the provided uws.Request will be re-used for
                     // future requests (stack allocated).
@@ -2401,9 +2450,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             //
             // We first validate the self-reported request body length so that
             // we avoid needing to worry as much about what memory to free.
-            // RFC 9114 §4.2: an HTTP/3 message containing a transfer-encoding
-            // header field is malformed.
-            if (comptime Ctx.is_h3) if (req.header("transfer-encoding") != null) {
+            // RFC 9113 §8.2.2 / RFC 9114 §4.2: an HTTP/2 or HTTP/3 message
+            // containing a transfer-encoding header field is malformed.
+            if (comptime Ctx.is_stream) if (req.header("transfer-encoding") != null) {
                 resp.writeStatus("400 Bad Request");
                 resp.endWithoutBody(false);
                 return null;
@@ -2419,12 +2468,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         break :brk 0;
                     };
 
-                    // Abort the request very early. For H3 a per-request error
-                    // is a stream error (RFC 9114 §4.1.2); close_connection
-                    // would CONNECTION_CLOSE every sibling stream on the conn.
+                    // Abort the request very early. For H2/H3 a per-request
+                    // error is a stream error (RFC 9113 §8.1.1, RFC 9114
+                    // §4.1.2); close_connection would tear down every
+                    // sibling stream on the conn.
                     if (len > this.config.max_request_body_size) {
                         resp.writeStatus("413 Request Entity Too Large");
-                        resp.endWithoutBody(comptime !Ctx.is_h3);
+                        resp.endWithoutBody(comptime !Ctx.is_stream);
                         return null;
                     }
 
@@ -2458,7 +2508,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }.warn, &did_send_idletimeout_warning_once);
             }
 
-            const pool_allocator = if (comptime Ctx.is_h3) this.h3_request_pool_allocator else this.request_pool_allocator;
+            const pool_allocator = if (comptime Ctx.is_h3) this.h3_request_pool_allocator else if (comptime Ctx.is_h2) this.h2_request_pool_allocator else this.request_pool_allocator;
             const ctx = bun.handleOom(pool_allocator.tryGet());
             ctx.create(this, req, resp, should_deinit_context, method);
             this.vm.jsc_vm.reportExtraMemory(@sizeOf(Ctx));
@@ -2479,11 +2529,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             ctx.request_weakref = .initRef(request_object);
 
             // The lazy `getRequest()` path that backs Request.url / .headers
-            // is `*uws.Request`-typed; for HTTP/3 we populate both eagerly so
-            // the rest of the pipeline never needs to know which transport
-            // delivered the bytes.
-            if (comptime Ctx.is_h3) {
-                request_object.setFetchHeaders(.createFromH3(req));
+            // is `*uws.Request`-typed; for HTTP/2 and HTTP/3 we populate both
+            // eagerly so the rest of the pipeline never needs to know which
+            // transport delivered the bytes.
+            if (comptime Ctx.is_stream) {
+                request_object.setFetchHeaders(if (comptime Ctx.is_h2) .createFromH2(req) else .createFromH3(req));
                 const path = req.url();
                 if (path.len > 0 and path[0] == '/') {
                     if (req.header("host")) |host| {
@@ -2513,10 +2563,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             if (request_body_length) |req_len| {
                 ctx.request_body_content_len = req_len;
                 ctx.flags.is_transfer_encoding = req.header("transfer-encoding") != null;
-                // HTTP/3 (RFC 9114 §4.2.2): Content-Length is optional and
-                // Transfer-Encoding is forbidden; the body is terminated by
-                // the QUIC stream FIN, so always arm onData for body methods.
-                if (req_len > 0 or ctx.flags.is_transfer_encoding or comptime Ctx.is_h3) {
+                // HTTP/2 (RFC 9113 §8.1) and HTTP/3 (RFC 9114 §4.2.2):
+                // Content-Length is optional and Transfer-Encoding is
+                // forbidden; the body is terminated by the stream
+                // END_STREAM/FIN, so always arm onData for body methods.
+                if (req_len > 0 or ctx.flags.is_transfer_encoding or comptime Ctx.is_stream) {
                     // we defer pre-allocating the body until we receive the first chunk
                     // that way if the client is lying about how big the body is or the client aborts
                     // we don't waste memory
@@ -2784,6 +2835,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         if (comptime has_h3) {
                             if (this.h3_app) |h3_app| h3_app.any(user_route.route.path, *UserRoute, user_route, onH3UserRouteRequest);
                         }
+                        if (comptime has_h2) {
+                            if (this.h2_app) |h2_app| h2_app.any(user_route.route.path, *UserRoute, user_route, onH2UserRouteRequest);
+                        }
                         if (is_star_path) {
                             star_methods_covered_by_user = .initFull();
                         }
@@ -2804,6 +2858,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         app.method(method_val, user_route.route.path, *UserRoute, user_route, onUserRouteRequest);
                         if (comptime has_h3) {
                             if (this.h3_app) |h3_app| h3_app.method(method_val, user_route.route.path, *UserRoute, user_route, onH3UserRouteRequest);
+                        }
+                        if (comptime has_h2) {
+                            if (this.h2_app) |h2_app| h2_app.method(method_val, user_route.route.path, *UserRoute, user_route, onH2UserRouteRequest);
                         }
                         if (is_star_path) {
                             star_methods_covered_by_user.insert(method_val);
@@ -2833,6 +2890,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     if (this.h3_app) |h3_app| {
                         h3_app.head(route_path, *ThisServer, this, onH3Request);
                         h3_app.any(route_path, *ThisServer, this, onH3Request);
+                    }
+                }
+                if (comptime has_h2) {
+                    if (this.h2_app) |h2_app| {
+                        h2_app.head(route_path, *ThisServer, this, onH2Request);
+                        h2_app.any(route_path, *ThisServer, this, onH2Request);
                     }
                 }
             }
@@ -2866,16 +2929,22 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *StaticRoute, static_route, entry.path, entry.method);
                             if (comptime has_h3) if (this.h3_app) |h3_app|
                                 ServerConfig.applyStaticRouteH3(any_server, h3_app, *StaticRoute, static_route, entry.path, entry.method);
+                            if (comptime has_h2) if (this.h2_app) |h2_app|
+                                ServerConfig.applyStaticRouteH2(any_server, h2_app, *StaticRoute, static_route, entry.path, entry.method);
                         },
                         .file => |file_route| {
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *FileRoute, file_route, entry.path, entry.method);
                             if (comptime has_h3) if (this.h3_app) |h3_app|
                                 ServerConfig.applyStaticRouteH3(any_server, h3_app, *FileRoute, file_route, entry.path, entry.method);
+                            if (comptime has_h2) if (this.h2_app) |h2_app|
+                                ServerConfig.applyStaticRouteH2(any_server, h2_app, *FileRoute, file_route, entry.path, entry.method);
                         },
                         .html => |html_bundle_route| {
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *HTMLBundle.Route, html_bundle_route.data, entry.path, entry.method);
                             if (comptime has_h3) if (this.h3_app) |h3_app|
                                 ServerConfig.applyStaticRouteH3(any_server, h3_app, *HTMLBundle.Route, html_bundle_route.data, entry.path, entry.method);
+                            if (comptime has_h2) if (this.h2_app) |h2_app|
+                                ServerConfig.applyStaticRouteH2(any_server, h2_app, *HTMLBundle.Route, html_bundle_route.data, entry.path, entry.method);
                             if (dev_server) |dev| {
                                 bun.handleOom(dev.html_router.put(dev.allocator(), entry.path, html_bundle_route.data));
                             }
@@ -2986,6 +3055,31 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
+            // H2 fallback — same rule as H3 above; DevServer routes are
+            // also not mirrored to H2.
+            if (comptime has_h2) {
+                if (this.h2_app) |h2_app| {
+                    if (h3_star_covered.eql(bun.http.Method.Set.initFull())) {
+                        // covered
+                    } else if (has_any_user_route_for_star_path or has_static_route_for_star_path) {
+                        var uncovered = h3_star_covered;
+                        uncovered.toggleAll();
+                        var iter = uncovered.iterator();
+                        while (iter.next()) |m| {
+                            if (this.config.onRequest != .zero) {
+                                h2_app.method(m, "/*", *ThisServer, this, onH2Request);
+                            } else {
+                                h2_app.method(m, "/*", *ThisServer, this, onH2404);
+                            }
+                        }
+                    } else if (this.config.onRequest != .zero) {
+                        h2_app.any("/*", *ThisServer, this, onH2Request);
+                    } else {
+                        h2_app.any("/*", *ThisServer, this, onH2404);
+                    }
+                }
+            }
+
             if (should_add_chrome_devtools_json_route) {
                 app.get(chrome_devtools_route, *ThisServer, this, onChromeDevToolsJSONRequest);
             }
@@ -3040,6 +3134,23 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             if (!globalThis.hasException()) {
                                 globalThis.throw("Failed to create HTTP/3 server", .{}) catch {};
                             }
+                            this.deinit();
+                            return .zero;
+                        };
+                    }
+                }
+
+                if (comptime has_h2) {
+                    if (this.config.h2) {
+                        // H2 attaches to the H1 TLS listener: creates a child
+                        // socket context that shares its SSL_CTX and installs
+                        // an ALPN select cb offering "h2,http/1.1". No
+                        // separate listen() — sockets that negotiate "h2"
+                        // are adopted out of the H1 context on first on_data.
+                        this.h2_app = uws.H2.App.create(app, this.config.idleTimeout) orelse {
+                            // H2.App.create is a C call that doesn't touch JS,
+                            // so there is no prior exception to check for.
+                            globalThis.throw("Failed to create HTTP/2 server", .{}) catch {};
                             this.deinit();
                             return .zero;
                         };
@@ -3751,6 +3862,16 @@ extern "c" fn Bun__ServerRouteList__callRoute(
 ) jsc.JSValue;
 
 extern "c" fn Bun__ServerRouteList__callRouteH3(
+    globalObject: *jsc.JSGlobalObject,
+    index: u32,
+    requestPtr: *Request,
+    serverObject: jsc.JSValue,
+    routeListObject: jsc.JSValue,
+    requestObject: *jsc.JSValue,
+    req: *anyopaque,
+) jsc.JSValue;
+
+extern "c" fn Bun__ServerRouteList__callRouteH2(
     globalObject: *jsc.JSGlobalObject,
     index: u32,
     requestPtr: *Request,

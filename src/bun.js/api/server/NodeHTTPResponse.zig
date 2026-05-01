@@ -503,6 +503,7 @@ fn writeHeadInternal(response: uws.AnyResponse, globalObject: *jsc.JSGlobalObjec
         .TCP => NodeHTTPServer__writeHead_http(globalObject, status_message.ptr, status_message.len, headers, @ptrCast(response.TCP)),
         .SSL => NodeHTTPServer__writeHead_https(globalObject, status_message.ptr, status_message.len, headers, @ptrCast(response.SSL)),
         .H3 => bun.Output.panic("node:http does not support HTTP/3 responses", .{}),
+        .H2 => bun.Output.panic("node:http does not support HTTP/2 responses", .{}),
     }
 }
 

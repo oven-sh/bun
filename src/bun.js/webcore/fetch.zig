@@ -706,14 +706,15 @@ fn fetchImpl(
                         allocator.free(url_proxy_buffer);
                         break :extract_proxy buffer;
                     }
-                    // Handle object format: proxy: { url: "http://proxy.example.com:8080", headers?: Headers }
+                    // Handle object format: proxy: { url: "http://proxy.example.com:8080" | URL, headers?: Headers }
                     // If the proxy object doesn't have a 'url' property, ignore it.
                     // This handles cases like passing a URL object directly as proxy (which has 'href' not 'url').
                     if (proxy_arg.isObject()) {
                         // Get the URL from the proxy object
                         if (try proxy_arg.get(globalThis, "url")) |proxy_url_arg| {
                             if (!proxy_url_arg.isUndefinedOrNull()) {
-                                if (proxy_url_arg.isString() and try proxy_url_arg.getLength(ctx) > 0) {
+                                const proxy_url_is_string = proxy_url_arg.isString() and try proxy_url_arg.getLength(ctx) > 0;
+                                if (proxy_url_is_string or proxy_url_arg.as(jsc.DOMURL) != null) {
                                     var href = try jsc.URL.hrefFromJS(proxy_url_arg, globalThis);
                                     if (href.tag == .Dead) {
                                         const err = ctx.toTypeError(.INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{});

@@ -577,6 +577,26 @@ describe.concurrent("proxy object format with headers", () => {
     expect(response.status).toBe(200);
   });
 
+  test("proxy object with URL url works", async () => {
+    httpProxyServer.log.length = 0;
+
+    const response = await fetch(httpsServer.url, {
+      method: "GET",
+      proxy: {
+        url: new URL(httpProxyServer.url),
+      } as any,
+      keepalive: false,
+      tls: {
+        ca: tlsCert.cert,
+        rejectUnauthorized: false,
+      },
+    });
+
+    expect(response.ok).toBe(true);
+    expect(response.status).toBe(200);
+    expect(httpProxyServer.log).toEqual([`CONNECT localhost:${httpsServer.port}`]);
+  });
+
   test("proxy object with url and headers sends headers to proxy (HTTP proxy)", async () => {
     // Create a proxy server that captures headers
     const capturedHeaders: string[] = [];

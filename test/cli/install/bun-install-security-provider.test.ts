@@ -1,0 +1,797 @@
+import { bunEnv, runBunInstall, tmpdirSync } from "harness";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
+import {
+  createTestContext,
+  destroyTestContext,
+  dummyAfterAll,
+  dummyBeforeAll,
+  dummyRegistryForContext,
+  setContextHandler,
+  type TestContext,
+} from "./dummy.registry.js";
+
+beforeAll(dummyBeforeAll);
+afterAll(dummyAfterAll);
+
+function test(
+  name: string,
+  options: {
+    testTimeout?: number;
+    scanner: Bun.Security.Scanner["scan"] | string;
+    fails?: boolean;
+    expect?: (std: { out: string; err: string; ctx: TestContext }) => void | Promise<void>;
+    expectedExitCode?: number;
+    bunfigScanner?: string | false;
+    packages?: string[];
+    scannerFile?: string;
+    packageJson?: object;
+    customRegistry?: (urls: string[], ctx: TestContext) => any;
+    concurrent?: boolean;
+  },
+) {
+  const itFn = options.concurrent === false ? it : it.concurrent;
+  itFn(
+    name,
+    async () => {
+      const ctx = await createTestContext();
+      try {
+        const urls: string[] = [];
+        setContextHandler(
+          ctx,
+          options.customRegistry ? options.customRegistry(urls, ctx) : dummyRegistryForContext(ctx, urls),
+        );
+
+        const write = (path: string, content: string | object) =>
+          Bun.write(join(ctx.package_dir, path), typeof content === "string" ? content : JSON.stringify(content));
+
+        const scannerPath = options.scannerFile || "./scanner.ts";
+        if (typeof options.scanner === "string") {
+          await write(scannerPath, options.scanner);
+        } else {
+          const s = `export const scanner = {
+  version: "1",
+  scan: ${options.scanner.toString()},
+};`;
+          await write(scannerPath, s);
+        }
+
+        const bunfig = await Bun.file(join(ctx.package_dir, "bunfig.toml")).text();
+        if (options.bunfigScanner !== false) {
+          const scannerPath = options.bunfigScanner ?? "./scanner.ts";
+          await write("./bunfig.toml", `${bunfig}\n[install.security]\nscanner = "${scannerPath}"`);
+        }
+
+        await write(
+          "package.json",
+          options.packageJson ?? {
+            name: "my-app",
+            version: "1.0.0",
+            dependencies: {},
+          },
+        );
+
+        const expectedExitCode = options.expectedExitCode ?? (options.fails ? 1 : 0);
+        const packages = options.packages ?? ["bar"];
+
+        const { out, err } = await runBunInstall(bunEnv, ctx.package_dir, {
+          packages,
+          allowErrors: true,
+          allowWarnings: false,
+          savesLockfile: false,
+          expectedExitCode,
+        });
+
+        if (options.fails) {
+          expect(out).toContain("Installation aborted due to fatal security advisories");
+        }
+
+        await options.expect?.({ out, err, ctx });
+      } finally {
+        destroyTestContext(ctx);
+      }
+    },
+    {
+      // Default raised from 5_000 because tests now run concurrently; per-test
+      // wall time is higher under CPU contention even though total time drops.
+      timeout: options.testTimeout ?? 30_000,
+    },
+  );
+}
+
+test("basic", {
+  fails: true,
+  scanner: async ({ packages }) => [
+    {
+      package: packages[0].name,
+      description: "Advisory 1 description",
+      level: "fatal",
+      url: "https://example.com/advisory-1",
+    },
+  ],
+});
+
+test("shows progress message when scanner takes more than 1 second", {
+  scanner: async () => {
+    await Bun.sleep(2000);
+    return [];
+  },
+  expect: async ({ err }) => {
+    expect(err).toMatch(/\[\.\/scanner\.ts\] Scanning \d+ packages? took \d+ms/);
+  },
+});
+
+test("expect output to contain the advisory", {
+  fails: true,
+  scanner: async ({ packages }) => [
+    {
+      package: packages[0].name,
+      description: "Advisory 1 description",
+      level: "fatal",
+      url: "https://example.com/advisory-1",
+    },
+  ],
+  expect: ({ out }) => {
+    expect(out).toContain("Advisory 1 description");
+  },
+});
+
+test("stdout contains all input package metadata", {
+  fails: false,
+  scanner: async ({ packages }) => {
+    console.log(JSON.stringify(packages));
+    return [];
+  },
+  expect: ({ out, ctx }) => {
+    expect(out).toContain('\"version\":\"0.0.2\"');
+    expect(out).toContain('\"name\":\"bar\"');
+    expect(out).toContain('\"requestedRange\":\"^0.0.2\"');
+    expect(out).toContain(`\"tarball\":\"${ctx.registry_url}bar-0.0.2.tgz\"`);
+  },
+});
+
+describe("Security Scanner Edge Cases", () => {
+  test("scanner module not found", {
+    scanner: "dummy", // We need a scanner but will override the path
+    bunfigScanner: "./non-existent-scanner.ts",
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain(
+        "Security scanner './non-existent-scanner.ts' is configured in bunfig.toml but the file could not be found.\n  Please check that the file exists and the path is correct.",
+      );
+    },
+  });
+
+  test("scanner module throws during import", {
+    scanner: `throw new Error("Module failed to load");`,
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security scanner failed: Module failed to load");
+    },
+  });
+
+  test("scanner missing version field", {
+    scanner: `export const scanner = {
+      scan: async () => []
+    };`,
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("with a version property");
+    },
+  });
+
+  test("scanner wrong version", {
+    scanner: `export const scanner = {
+      version: "2",
+      scan: async () => []
+    };`,
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security scanner must be version 1");
+    },
+  });
+
+  test("scanner missing scan", {
+    scanner: `export const scanner = {
+      version: "1"
+    };`,
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("scanner.scan is not a function");
+    },
+  });
+
+  test("scanner scan not a function", {
+    scanner: `export const scanner = {
+      version: "1",
+      scan: "not a function"
+    };`,
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("scanner.scan is not a function");
+    },
+  });
+});
+
+// Invalid return value tests
+describe("Invalid Return Values", () => {
+  test("scanner returns non-array", {
+    scanner: async () => "not an array" as any,
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security scanner must return an array of advisories");
+    },
+  });
+
+  test("scanner returns null", {
+    scanner: async () => null as any,
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security scanner must return an array of advisories");
+    },
+  });
+
+  test("scanner returns undefined", {
+    scanner: async () => undefined as any,
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security scanner must return an array of advisories");
+    },
+  });
+
+  test("scanner throws exception", {
+    scanner: async () => {
+      throw new Error("Scanner failed");
+    },
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Scanner failed");
+    },
+  });
+
+  test("scanner returns non-object in array", {
+    scanner: async () => ["not an object"] as any,
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 must be an object");
+    },
+  });
+});
+
+// Invalid advisory format tests
+describe("Invalid Advisory Formats", () => {
+  test("advisory missing package field", {
+    scanner: async () => [
+      {
+        description: "Missing package field",
+        level: "fatal",
+        url: "https://example.com",
+      } as any,
+    ],
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 missing required 'package' field");
+    },
+  });
+
+  test("advisory package field not string", {
+    scanner: async () => [
+      {
+        package: 123,
+        description: "Package is number",
+        level: "fatal",
+        url: "https://example.com",
+      } as any,
+    ],
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 'package' field must be a string");
+    },
+  });
+
+  test("advisory package field empty string", {
+    scanner: async () => [
+      {
+        package: "",
+        description: "Empty package name",
+        level: "fatal",
+        url: "https://example.com",
+      },
+    ],
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 'package' field cannot be empty");
+    },
+  });
+
+  test("advisory missing description field", {
+    scanner: async () => [
+      {
+        package: "bar",
+        // description field is completely missing
+        level: "fatal",
+        url: "https://example.com",
+      } as any,
+    ],
+    fails: true,
+    expect: ({ out }) => {
+      // When field is missing, it's treated as null and installation proceeds
+      expect(out).toContain("bar");
+      expect(out).toContain("https://example.com");
+    },
+  });
+
+  test("advisory with null description field", {
+    scanner: async () => [
+      {
+        package: "bar",
+        description: null,
+        level: "fatal",
+        url: "https://example.com",
+      },
+    ],
+    fails: true,
+    expect: ({ out }) => {
+      // Should not print null description
+      expect(out).not.toContain("null");
+      expect(out).toContain("https://example.com");
+    },
+  });
+
+  test("advisory with empty string description", {
+    scanner: async () => [
+      {
+        package: "bar",
+        description: "",
+        level: "fatal",
+        url: "https://example.com",
+      },
+    ],
+    fails: true,
+    expect: ({ out }) => {
+      // Should not print empty description
+      expect(out).toContain("bar");
+      expect(out).toContain("https://example.com");
+    },
+  });
+
+  test("advisory description field not string or null", {
+    scanner: async () => [
+      {
+        package: "bar",
+        description: { text: "object description" },
+        level: "fatal",
+        url: "https://example.com",
+      } as any,
+    ],
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 'description' field must be a string or null");
+    },
+  });
+
+  test("advisory missing url field", {
+    scanner: async () => [
+      {
+        package: "bar",
+        description: "Test advisory",
+        // url field is completely missing
+        level: "fatal",
+      } as any,
+    ],
+    fails: true,
+    expect: ({ out }) => {
+      // When field is missing, it's treated as null and installation proceeds
+      expect(out).toContain("Test advisory");
+      expect(out).toContain("bar");
+    },
+  });
+
+  test("advisory with null url field", {
+    scanner: async () => [
+      {
+        package: "bar",
+        description: "Test advisory",
+        level: "fatal",
+        url: null,
+      },
+    ],
+    fails: true,
+    expect: ({ out }) => {
+      expect(out).toContain("Test advisory");
+      // Should not print a URL line when url is null
+      expect(out).not.toContain("https://");
+      expect(out).not.toContain("http://");
+    },
+  });
+
+  test("advisory with empty string url", {
+    scanner: async () => [
+      {
+        package: "bar",
+        description: "Has empty URL",
+        level: "fatal",
+        url: "",
+      },
+    ],
+    fails: true,
+    expect: ({ out }) => {
+      expect(out).toContain("Has empty URL");
+      // Should not print empty URL line at all
+      expect(out).toContain("bar");
+    },
+  });
+
+  test("advisory missing level field", {
+    scanner: async () => [
+      {
+        package: "bar",
+        description: "Missing level",
+        url: "https://example.com",
+      } as any,
+    ],
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 missing required 'level' field");
+    },
+  });
+
+  test("advisory url field not string or null", {
+    scanner: async () => [
+      {
+        package: "bar",
+        description: "URL is boolean",
+        level: "fatal",
+        url: true,
+      } as any,
+    ],
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 'url' field must be a string or null");
+    },
+  });
+
+  test("advisory invalid level", {
+    scanner: async () => [
+      {
+        package: "bar",
+        description: "Invalid level",
+        level: "critical",
+        url: "https://example.com",
+      } as any,
+    ],
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 'level' field must be 'fatal' or 'warn'");
+    },
+  });
+
+  test("advisory level not string", {
+    scanner: async () => [
+      {
+        package: "bar",
+        description: "Level is number",
+        level: 1,
+        url: "https://example.com",
+      } as any,
+    ],
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 'level' field must be a string");
+    },
+  });
+
+  test("second advisory invalid", {
+    scanner: async () => [
+      {
+        package: "bar",
+        description: "Valid advisory",
+        level: "warn",
+        url: "https://example.com/1",
+      },
+      {
+        package: "baz",
+        description: 123, // not a string or null
+        level: "fatal",
+        url: "https://example.com/2",
+      } as any,
+    ],
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 1 'description' field must be a string or null");
+    },
+  });
+});
+
+describe("Process Behavior", () => {
+  test("scanner process exits early", {
+    scanner: `
+      console.log("Starting...");
+      process.exit(42);
+    `,
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security scanner exited with code 42 without sending data");
+    },
+  });
+});
+
+describe("Large Data Handling", () => {
+  test("scanner returns many advisories", {
+    scanner: async ({ packages }) => {
+      const advisories: any[] = [];
+
+      for (let i = 0; i < 1000; i++) {
+        advisories.push({
+          package: packages[0].name,
+          description: `Advisory ${i} description with a very long text that might cause buffer issues`,
+          level: i % 10 === 0 ? "fatal" : "warn",
+          url: `https://example.com/advisory-${i}`,
+        });
+      }
+
+      return advisories;
+    },
+    fails: true,
+    expect: ({ out }) => {
+      expect(out).toContain("Advisory 0 description");
+      expect(out).toContain("Advisory 99 description");
+      expect(out).toContain("Advisory 999 description");
+    },
+  });
+
+  test("scanner with very large response", {
+    scanner: async ({ packages }) => {
+      const longString = Buffer.alloc(10000, 65).toString(); // 10k of 'A's
+      return [
+        {
+          package: packages[0].name,
+          description: longString,
+          level: "fatal",
+          url: "https://example.com",
+        },
+      ];
+    },
+    fails: true,
+    expect: ({ out }) => {
+      expect(out).toContain("AAAA");
+    },
+  });
+});
+
+describe("Multiple Package Scanning", () => {
+  test("multiple packages scanned", {
+    packages: ["bar", "qux"],
+    scanner: async ({ packages }) => {
+      return packages.map(pkg => ({
+        package: pkg.name,
+        description: `Security issue in ${pkg.name}`,
+        level: "fatal",
+        url: `https://example.com/${pkg.name}`,
+      }));
+    },
+    fails: true,
+    expect: ({ out }) => {
+      expect(out).toContain("Security issue in bar");
+      expect(out).toContain("Security issue in qux");
+    },
+  });
+});
+
+describe("Edge Cases", () => {
+  test("advisory with both null description and url", {
+    scanner: async ({ packages }) => [
+      {
+        package: packages[0].name,
+        description: null,
+        level: "fatal",
+        url: null,
+      },
+    ],
+    fails: true,
+    expect: ({ out }) => {
+      // Should show the package name and level but not null values
+      expect(out).toContain("bar");
+      expect(out).not.toContain("null");
+    },
+  });
+
+  test("empty advisories array", {
+    scanner: async () => [],
+    expectedExitCode: 0,
+  });
+
+  test("special characters in advisory", {
+    scanner: async ({ packages }) => [
+      {
+        package: packages[0].name,
+        description: "Advisory with \"quotes\" and 'single quotes' and \n newlines \t tabs",
+        level: "fatal",
+        url: "https://example.com/path?param=value&other=123#hash",
+      },
+    ],
+    fails: true,
+    expect: ({ out }) => {
+      expect(out).toContain("quotes");
+      expect(out).toContain("single quotes");
+    },
+  });
+
+  test("unicode in advisory fields", {
+    scanner: async ({ packages }) => [
+      {
+        package: packages[0].name,
+        description: "Security issue with emoji 🔒 and unicode ñ é ü",
+        level: "fatal",
+        url: "https://example.com/unicode",
+      },
+    ],
+    fails: true,
+    expect: ({ out }) => {
+      expect(out).toContain("🔒");
+      expect(out).toContain("ñ é ü");
+    },
+  });
+
+  test("advisory without level field", {
+    scanner: async ({ packages }) => [
+      {
+        package: packages[0].name,
+        description: "No level specified",
+        url: "https://example.com",
+      } as any,
+    ],
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 missing required 'level' field");
+    },
+  });
+
+  test("null values in level field", {
+    scanner: async ({ packages }) => [
+      {
+        package: packages[0].name,
+        description: "Advisory with null level",
+        level: null as any,
+        url: "https://example.com",
+      },
+    ],
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 'level' field must be a string");
+    },
+  });
+});
+
+describe("Package Resolution", () => {
+  test("scanner with version ranges", {
+    scanner: async ({ packages }) => {
+      console.log("Version ranges:");
+      for (const pkg of packages) {
+        console.log(`- ${pkg.name}: ${pkg.requestedRange} resolved to ${pkg.version}`);
+      }
+      return [];
+    },
+    packages: ["bar@~0.0.1", "qux@>=0.0.1 <1.0.0"],
+    expectedExitCode: 0,
+    expect: ({ out }) => {
+      expect(out).toContain("bar: ~0.0.1 resolved to");
+      expect(out).toContain("qux: >=0.0.1 <1.0.0 resolved to");
+    },
+  });
+
+  test("scanner with latest tags", {
+    scanner: async ({ packages }) => {
+      for (const pkg of packages) {
+        if (pkg.requestedRange === "latest" || pkg.requestedRange === "*") {
+          console.log(`Latest tag: ${pkg.name}@${pkg.requestedRange} -> ${pkg.version}`);
+        }
+      }
+      return [];
+    },
+    packages: ["bar@latest", "qux@*"],
+    expectedExitCode: 0,
+    expect: ({ out }) => {
+      expect(out).toContain("Latest tag:");
+    },
+  });
+});
+
+describe("Large payload via ipc pipe", () => {
+  let tgzTempDir: string;
+
+  // Pad package names so the JSON exceeds 1MB with fewer packages. Each
+  // package resolution triggers an HTTP round-trip to the dummy registry,
+  // which is the slow part on Windows aarch64. The name appears twice in
+  // each JSON entry (name field + tarball URL), so 150-char padding gives
+  // ~430 bytes/entry; 3000 entries = ~1.3MB. Filenames stay under 200 chars.
+  const PKG_COUNT = 3000;
+  const NAME_PAD = Buffer.alloc(150, "x").toString();
+  const pkgName = (i: number) => `test-pkg-${NAME_PAD}-${i}`;
+
+  beforeAll(async () => {
+    tgzTempDir = tmpdirSync();
+
+    const barTarball = await Bun.file(`${import.meta.dir}/bar-0.0.2.tgz`).bytes();
+    const writes: Promise<number>[] = [];
+    for (let i = 0; i < PKG_COUNT; i++) {
+      writes.push(Bun.write(`${tgzTempDir}/${pkgName(i)}-0.0.2.tgz`, barTarball));
+      if (writes.length >= 256) {
+        await Promise.all(writes);
+        writes.length = 0;
+      }
+    }
+    await Promise.all(writes);
+  });
+
+  afterAll(async () => {
+    await rm(tgzTempDir, { recursive: true, force: true });
+  });
+
+  test("handles packages JSON larger than max arg length (>1MB)", {
+    testTimeout: 120_000,
+    scanner: async ({ packages }) => {
+      const jsonSize = JSON.stringify(packages).length;
+      console.log(`Received JSON payload of ${jsonSize} bytes from ${packages.length} packages`);
+
+      if (jsonSize < 1024 * 1024) {
+        throw new Error(`Expected JSON payload to exceed 1MB, got ${jsonSize} bytes`);
+      }
+
+      if (packages.length === 0) {
+        throw new Error("Expected to receive packages");
+      }
+
+      return [];
+    },
+
+    packageJson: (() => {
+      const dependencies: Record<string, string> = {};
+
+      for (let i = 0; i < PKG_COUNT; i++) {
+        dependencies[pkgName(i)] = "0.0.2";
+      }
+      return {
+        name: "my-app",
+        version: "1.0.0",
+        dependencies,
+      };
+    })(),
+    packages: [],
+    concurrent: false,
+    customRegistry: (urls, ctx) => {
+      return async (request: Request) => {
+        urls.push(request.url);
+        const url = request.url.replaceAll("%2f", "/");
+        expect(request.method).toBe("GET");
+        if (url.endsWith(".tgz")) {
+          return new Response(Bun.file(join(tgzTempDir, url.slice(url.lastIndexOf("/") + 1).toLowerCase())));
+        }
+        expect(request.headers.get("accept")).toBe(
+          "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+        );
+        expect(request.headers.get("npm-auth-type")).toBe(null);
+        expect(await request.text()).toBe("");
+        const name = new URL(url).pathname.replace(`/${ctx.id}/`, "");
+        return new Response(
+          JSON.stringify({
+            name,
+            versions: {
+              "0.0.2": { name, version: "0.0.2", dist: { tarball: `${ctx.registry_url}${name}-0.0.2.tgz` } },
+            },
+            "dist-tags": { latest: "0.0.2" },
+          }),
+        );
+      };
+    },
+    expectedExitCode: 0,
+    expect: ({ out }) => {
+      expect(out).toContain("Received JSON payload");
+
+      const match = out.match(/Received JSON payload of (\d+) bytes/);
+      expect(match).not.toBeNull();
+      const bytes = parseInt(match![1], 10);
+      expect(bytes).toBeGreaterThan(1024 * 1024);
+    },
+  });
+});

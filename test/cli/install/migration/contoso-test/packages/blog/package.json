@@ -1,0 +1,38 @@
+{
+  "name": "blog",
+  "version": "1.0.2",
+  "private": true,
+  "scripts": {
+    "develop": "next dev",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "deploy": "next build && next export",
+    "lint": "next lint",
+    "lint:fix": "next lint --fix",
+    "docker:build": "docker build --tag blog .",
+    "docker:run": "docker run --rm --publish 3000:3000 --env-file ../../.env.docker blog"
+  },
+  "dependencies": {
+    "next": "^13.3.0",
+    "qs": "^6.10.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-markdown": "^8.0.4",
+    "rehype-raw": "^6.1.1",
+    "rehype-sanitize": "^5.0.1",
+    "uikit": "^3.16.14"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^18.11.18",
+    "@typescript-eslint/eslint-plugin": "^5.48.1",
+    "@typescript-eslint/parser": "^5.48.1",
+    "eslint": "^8.31.0",
+    "eslint-config-next": "^13.3.0",
+    "eslint-config-prettier": "^8.6.0",
+    "eslint-plugin-prettier": "^4.2.1",
+    "prettier": "^2.8.2",
+    "typescript": "^4.8.4"
+  }
+}

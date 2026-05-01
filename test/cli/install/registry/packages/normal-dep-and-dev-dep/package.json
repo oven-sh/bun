@@ -1,0 +1,92 @@
+{
+	"name": "normal-dep-and-dev-dep",
+	"versions": {
+		"1.0.0": {
+			"name": "normal-dep-and-dev-dep",
+			"version": "1.0.0",
+			"devDependencies": {
+				"no-deps": "1.0.0"
+			},
+			"dependencies": {
+				"no-deps": "1.0.1"
+			},
+			"_id": "normal-dep-and-dev-dep@1.0.0",
+			"_nodeVersion": "21.7.1",
+			"_npmVersion": "10.5.0",
+			"dist": {
+				"integrity": "sha512-moHxO7clpiEzpm9h6zuh8Mi02oQlpTKJbWi7RgYtPJMlVQ+EZZJF3FKK5VRA0QoFBm93UX8L+Sq/+v75ESmpDw==",
+				"shasum": "ca95ae2f0f869b212d6ea642e129eeba5dc88712",
+				"tarball": "http://localhost:4873/normal-dep-and-dev-dep/-/normal-dep-and-dev-dep-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.1": {
+			"name": "normal-dep-and-dev-dep",
+			"version": "1.0.1",
+			"devDependencies": {
+				"no-deps": "1.0.0"
+			},
+			"dependencies": {
+				"no-deps": "1.1.0"
+			},
+			"_id": "normal-dep-and-dev-dep@1.0.1",
+			"_nodeVersion": "21.7.1",
+			"_npmVersion": "10.5.0",
+			"dist": {
+				"integrity": "sha512-MzZS9lLNBdqXf/lI+TKlXGeWrcDkOjzdSPJtvkRUN1FUjXg2DcGVldEqx9D8kNwF87Hxf2cRLvLv4a8GqZ6zPg==",
+				"shasum": "db93a5ea0db8af1749eefb3f45cd1b8302371037",
+				"tarball": "http://localhost:4873/normal-dep-and-dev-dep/-/normal-dep-and-dev-dep-1.0.1.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.2": {
+			"name": "normal-dep-and-dev-dep",
+			"version": "1.0.2",
+			"devDependencies": {
+				"no-deps": "1.1.0"
+			},
+			"dependencies": {
+				"no-deps": "1.0.0"
+			},
+			"_id": "normal-dep-and-dev-dep@1.0.2",
+			"_nodeVersion": "21.7.1",
+			"_npmVersion": "10.5.0",
+			"dist": {
+				"integrity": "sha512-TGQryAbP5h0jIyPyDSQ1Ggk7djuHFxlRVtHq31nu+PkSOktw1bQdWFd2T12Lz0F9kmDX5lkiK+S+C7z143C3Xg==",
+				"shasum": "35f9f1b7bce3ba1bddfb36cb2f265d6be09177df",
+				"tarball": "http://localhost:4873/normal-dep-and-dev-dep/-/normal-dep-and-dev-dep-1.0.2.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-03-20T01:44:49.992Z",
+		"created": "2024-03-20T00:41:07.121Z",
+		"1.0.0": "2024-03-20T00:41:07.121Z",
+		"1.0.1": "2024-03-20T00:41:17.944Z",
+		"1.0.2": "2024-03-20T01:44:49.992Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.2"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"normal-dep-and-dev-dep-1.0.0.tgz": {
+			"shasum": "ca95ae2f0f869b212d6ea642e129eeba5dc88712",
+			"version": "1.0.0"
+		},
+		"normal-dep-and-dev-dep-1.0.1.tgz": {
+			"shasum": "db93a5ea0db8af1749eefb3f45cd1b8302371037",
+			"version": "1.0.1"
+		},
+		"normal-dep-and-dev-dep-1.0.2.tgz": {
+			"shasum": "35f9f1b7bce3ba1bddfb36cb2f265d6be09177df",
+			"version": "1.0.2"
+		}
+	},
+	"_rev": "",
+	"_id": "normal-dep-and-dev-dep",
+	"readme": "ERROR: No README data found!"
+}

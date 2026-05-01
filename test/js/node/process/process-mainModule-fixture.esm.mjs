@@ -1,0 +1,1 @@
+process.mainModule = 123;

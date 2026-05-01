@@ -1,0 +1,45 @@
+{
+	"name": "uses-what-bin-slow-window",
+	"versions": {
+		"1.0.0": {
+			"name": "uses-what-bin-slow-window",
+			"version": "1.0.0",
+			"scripts": {
+				"install": "bun sleep.js && what-bin"
+			},
+			"dependencies": {
+				"what-bin": "1.0.0"
+			},
+			"_id": "uses-what-bin-slow-window@1.0.0",
+			"gitHead": "9207d4123bb4116b8e19153b38fb9f2b58032ee4",
+			"_nodeVersion": "22.7.0",
+			"_npmVersion": "10.8.3",
+			"dist": {
+				"integrity": "sha512-u7EgbLjHj4a4EzZM3ed3aVBGKJBqhZ8yXdbOB2QsM4MfoLhjR/lxFBWbuca5kraC0PdtfpvVzhkT921UWPsauw==",
+				"shasum": "de6e837e6ca15e2400ebd2ce069dc384a1444ad8",
+				"tarball": "http://localhost:4873/uses-what-bin-slow-window/-/uses-what-bin-slow-window-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-09-11T04:59:52.705Z",
+		"created": "2024-09-11T04:59:52.705Z",
+		"1.0.0": "2024-09-11T04:59:52.705Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"uses-what-bin-slow-window-1.0.0.tgz": {
+			"shasum": "de6e837e6ca15e2400ebd2ce069dc384a1444ad8",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "uses-what-bin-slow-window",
+	"readme": "ERROR: No README data found!"
+}

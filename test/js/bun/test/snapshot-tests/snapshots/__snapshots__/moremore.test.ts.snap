@@ -1,0 +1,96 @@
+// Jest Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`test snapshots with Boolean and Number 1`] = `1`;
+
+exports[`test snapshots with Boolean and Number 2`] = `NaN`;
+
+exports[`test snapshots with Boolean and Number 3`] = `Infinity`;
+
+exports[`test snapshots with Boolean and Number 4`] = `-Infinity`;
+
+exports[`test snapshots with Boolean and Number 5`] = `0`;
+
+exports[`test snapshots with Boolean and Number 6`] = `-0`;
+
+exports[`test snapshots with Boolean and Number 7`] = `1.1`;
+
+exports[`test snapshots with Boolean and Number 8`] = `-1.1`;
+
+exports[`test snapshots with Boolean and Number 9`] = `undefined`;
+
+exports[`test snapshots with Boolean and Number 10`] = `null`;
+
+exports[`test snapshots with Boolean and Number 11`] = `"hello"`;
+
+exports[`test snapshots with Boolean and Number 12`] = `""`;
+
+exports[`test snapshots with Boolean and Number 13`] = `Number {}`;
+
+exports[`test snapshots with Boolean and Number 14`] = `Number2 {}`;
+
+exports[`test snapshots with Boolean and Number 15`] = `Number3 {}`;
+
+exports[`test snapshots with Boolean and Number 16`] = `123348923.2341281`;
+
+exports[`test snapshots with Boolean and Number 17`] = `false`;
+
+exports[`test snapshots with Boolean and Number 18`] = `true`;
+
+exports[`test snapshots with Boolean and Number 19`] = `Boolean {}`;
+
+exports[`test snapshots with Boolean and Number 20`] = `Boolean {}`;
+
+exports[`test snapshots with Boolean and Number 21`] = `Boolean2 {}`;
+
+exports[`test snapshots with Boolean and Number 22`] = `Boolean2 {}`;
+
+exports[`test snapshots with Boolean and Number 23`] = `
+Boolean3 {
+  "false": true,
+}
+`;
+
+exports[`test snapshots with Boolean and Number 24`] = `
+Boolean3 {
+  "false": true,
+}
+`;
+
+exports[`test snapshots with Boolean and Number 25`] = `
+{
+  "a": {
+    "b": {
+      "c": {
+        "d": {
+          "e": {
+            "bigint": Any<BigInt>,
+            "f": {
+              "g": {
+                "compare": "compare",
+                "h": {
+                  "bool": Any<Boolean>,
+                  "i": Any<Number3>,
+                },
+              },
+            },
+            "ignore1": 234,
+            "ignore2": {
+              "ignore3": 23421,
+              "ignore4": {
+                "ignore5": {
+                  "ignore6": "hello",
+                  "ignore7": "done",
+                },
+              },
+            },
+          },
+        },
+        "num": Any<Number>,
+        "string": Any<String>,
+      },
+    },
+    "j": Any<Date>,
+  },
+  "first": Any<Boolean2>,
+}
+`;

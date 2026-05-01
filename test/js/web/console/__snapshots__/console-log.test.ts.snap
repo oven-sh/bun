@@ -1,0 +1,45 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`console.group: console-group-error 1`] = `
+"Warning log
+  Error log"
+`;
+
+exports[`console.group: console-group-output 1`] = `
+"Basic group
+  Inside basic group
+Outer group
+  Inside outer group
+  Inner group
+    Inside inner group
+  Back to outer group
+Level 1
+  Level 2
+    Level 3
+      Deep inside
+undefined
+Empty nested
+Test extra end
+  Inside
+Different logs
+  Regular log
+  Info log
+  Debug log
+Complex types
+  {
+    a: 1,
+    b: 2,
+  }
+  [ 1, 2, 3 ]
+null
+  undefined
+    0
+      false
+        
+          Inside falsy groups
+🎉 Unicode!
+  Inside unicode group
+  Tab	Newline
+Quote"Backslash
+    Special chars"
+`;

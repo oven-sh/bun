@@ -1,0 +1,17 @@
+{
+  "files": [],
+  "include": [],
+  "compilerOptions": {
+    "noEmit": true,
+    "skipLibCheck": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  },
+  "references": [
+    { "path": "./src" },
+    { "path": "./src/bake" },
+    { "path": "./src/js" },
+    { "path": "./test" },
+    { "path": "./packages/bun-types" }
+  ]
+}

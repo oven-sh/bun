@@ -1,0 +1,44 @@
+{
+	"name": "hoist-lockfile-3",
+	"versions": {
+		"1.0.0": {
+			"name": "hoist-lockfile-3",
+			"version": "1.0.0",
+			"dependencies": {
+				"hoist-lockfile-shared": ">=1.0.1"
+			},
+			"_id": "hoist-lockfile-3@1.0.0",
+			"_integrity": "sha512-iGz7jH7jxz/zq4OZM8hhT7kUX2Ye1m+45SoyMVcWTM7ZB+cY306Ff1mQePKTjkn84/pJMITMdRgDv/qF8PuQUw==",
+			"_nodeVersion": "22.6.0",
+			"_npmVersion": "10.8.3",
+			"integrity": "sha512-iGz7jH7jxz/zq4OZM8hhT7kUX2Ye1m+45SoyMVcWTM7ZB+cY306Ff1mQePKTjkn84/pJMITMdRgDv/qF8PuQUw==",
+			"shasum": "04cab7133b1c33a55aa0b8158d0f615ebdc4b99c",
+			"dist": {
+				"integrity": "sha512-iGz7jH7jxz/zq4OZM8hhT7kUX2Ye1m+45SoyMVcWTM7ZB+cY306Ff1mQePKTjkn84/pJMITMdRgDv/qF8PuQUw==",
+				"shasum": "04cab7133b1c33a55aa0b8158d0f615ebdc4b99c",
+				"tarball": "http://http://localhost:4873/hoist-lockfile-3/-/hoist-lockfile-3-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-12-15T10:02:33.352Z",
+		"created": "2024-12-15T10:02:33.352Z",
+		"1.0.0": "2024-12-15T10:02:33.352Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"hoist-lockfile-3-1.0.0.tgz": {
+			"shasum": "04cab7133b1c33a55aa0b8158d0f615ebdc4b99c",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "hoist-lockfile-3",
+	"readme": ""
+}

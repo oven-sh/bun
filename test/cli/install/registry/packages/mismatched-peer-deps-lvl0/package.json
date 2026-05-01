@@ -1,0 +1,45 @@
+{
+	"name": "mismatched-peer-deps-lvl0",
+	"versions": {
+		"1.0.0": {
+			"name": "mismatched-peer-deps-lvl0",
+			"version": "1.0.0",
+			"dependencies": {
+				"mismatched-peer-deps-lvl1": "*"
+			},
+			"peerDependencies": {
+				"no-deps": "<=1.1.0"
+			},
+			"_id": "mismatched-peer-deps-lvl0@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-ojgiznwZgCw88w20xwSksZFe/BIbAhx45zGpIV8N64JHplaCE430OrDWBD0B7MHFhu5bQwvt7VrJ5Hrnu2VtGA==",
+				"shasum": "c356fce8781132dbea36e026f104f295f998c293",
+				"tarball": "http://localhost:4873/mismatched-peer-deps-lvl0/-/mismatched-peer-deps-lvl0-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:11.916Z",
+		"created": "2023-11-01T22:05:11.916Z",
+		"1.0.0": "2023-11-01T22:05:11.916Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"mismatched-peer-deps-lvl0-1.0.0.tgz": {
+			"shasum": "c356fce8781132dbea36e026f104f295f998c293",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-1ec3a9c905533b53",
+	"_id": "mismatched-peer-deps-lvl0",
+	"readme": "ERROR: No README data found!"
+}

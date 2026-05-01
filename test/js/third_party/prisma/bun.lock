@@ -1,0 +1,53 @@
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "prisma",
+      "dependencies": {
+        "@napi-rs/canvas": "0.1.47",
+        "@prisma/client": "5.1.1",
+      },
+      "devDependencies": {
+        "bun-types": "0.7.0",
+        "prisma": "5.1.1",
+      },
+      "peerDependencies": {
+        "typescript": "5.0.0",
+      },
+      "optionalPeers": [
+        "typescript",
+      ],
+    },
+  },
+  "packages": {
+    "@napi-rs/canvas": ["@napi-rs/canvas@0.1.47", "", { "optionalDependencies": { "@napi-rs/canvas-android-arm64": "0.1.47", "@napi-rs/canvas-darwin-arm64": "0.1.47", "@napi-rs/canvas-darwin-x64": "0.1.47", "@napi-rs/canvas-linux-arm-gnueabihf": "0.1.47", "@napi-rs/canvas-linux-arm64-gnu": "0.1.47", "@napi-rs/canvas-linux-arm64-musl": "0.1.47", "@napi-rs/canvas-linux-x64-gnu": "0.1.47", "@napi-rs/canvas-linux-x64-musl": "0.1.47", "@napi-rs/canvas-win32-x64-msvc": "0.1.47" } }, "sha512-gRvwr7GSNm0p+uFTvmmvglRvzmuhUKJDSBqsVujN/XMevjFrbKS5d63tXqMHbOfNDq259QSqc+NF2wQvErRlKA=="],
+
+    "@napi-rs/canvas-android-arm64": ["@napi-rs/canvas-android-arm64@0.1.47", "", { "os": "android", "cpu": "arm64" }, "sha512-cc902P9iIT4XE88539gtFmYRLeKa5Z8M3DqNURolAi9seX12MCEi9ZiM5FsBqI4/eNQGYhoN/62nv2Au6jkuew=="],
+
+    "@napi-rs/canvas-darwin-arm64": ["@napi-rs/canvas-darwin-arm64@0.1.47", "", { "os": "darwin", "cpu": "arm64" }, "sha512-r53Et824aXxKwUvUZS65dKThpC7s35VtHkRFAp2OI8xrFvat7RDbHxyDKiQNQ8szwHXi3jLoBUfFfgcxm2EPtQ=="],
+
+    "@napi-rs/canvas-darwin-x64": ["@napi-rs/canvas-darwin-x64@0.1.47", "", { "os": "darwin", "cpu": "x64" }, "sha512-ioiXJk1FJOu1LSMOZiqicXeLxMNnc97UaHeuY7LVkt7v5njSQSDzHWxNIuSwwpGEhSia3KjzLNjSb0xgdzOJSg=="],
+
+    "@napi-rs/canvas-linux-arm-gnueabihf": ["@napi-rs/canvas-linux-arm-gnueabihf@0.1.47", "", { "os": "linux", "cpu": "arm" }, "sha512-sgGsw+dFM5Qg7GWaJ3cs4VmTd4qqO3HDPI8CIJF97Uzby+ChpBSlE5gr5TuRFFmRyYoY+xVlBNaGfvc+PQO+xQ=="],
+
+    "@napi-rs/canvas-linux-arm64-gnu": ["@napi-rs/canvas-linux-arm64-gnu@0.1.47", "", { "os": "linux", "cpu": "arm64" }, "sha512-mOKc3xHObW8v52CRsZSVCFIfU7wOgnb6TfVGlkA/35VttvqHVnWZr7HUjdZABprDPyeeMdBkxlG08vlzMdZBHw=="],
+
+    "@napi-rs/canvas-linux-arm64-musl": ["@napi-rs/canvas-linux-arm64-musl@0.1.47", "", { "os": "linux", "cpu": "arm64" }, "sha512-I1UtRKy6FWbOWQFCNdINyxbx6/DJZVAeXhJj93HXsj0tnbV9zE5Dj/xmkdyhBCePT1LR/iLmMuvI19rB+tLRUg=="],
+
+    "@napi-rs/canvas-linux-x64-gnu": ["@napi-rs/canvas-linux-x64-gnu@0.1.47", "", { "os": "linux", "cpu": "x64" }, "sha512-4RkTyEq3YUb+O2kN8WfpS/IPcE5Wz/CBRwGRE642h85Zrcds04GeguNVKJNJD/uWVPAvAbtavqG9htzApYvRQw=="],
+
+    "@napi-rs/canvas-linux-x64-musl": ["@napi-rs/canvas-linux-x64-musl@0.1.47", "", { "os": "linux", "cpu": "x64" }, "sha512-AAEWSiIsYeywNe1DxMoP+LOv+RM5UbvOwtCXOpAYPmW1axNyVGJtovYHtEC/6Sp0tIOU/RIO5PmPeQ9ryS0Ocw=="],
+
+    "@napi-rs/canvas-win32-x64-msvc": ["@napi-rs/canvas-win32-x64-msvc@0.1.47", "", { "os": "win32", "cpu": "x64" }, "sha512-Y/zqSUA96jhikg3ZN12w8hePguC1x/lNQkTdNMykKqe4e8HayzHRXD6QLzJt1b4UI3uXUNwiMceDk9aNCUuvoQ=="],
+
+    "@prisma/client": ["@prisma/client@5.1.1", "", { "dependencies": { "@prisma/engines-version": "5.1.1-1.6a3747c37ff169c90047725a05a6ef02e32ac97e" }, "peerDependencies": { "prisma": "*" }, "optionalPeers": ["prisma"] }, "sha512-fxcCeK5pMQGcgCqCrWsi+I2rpIbk0rAhdrN+ke7f34tIrgPwA68ensrpin+9+fZvuV2OtzHmuipwduSY6HswdA=="],
+
+    "@prisma/engines": ["@prisma/engines@5.1.1", "", {}, "sha512-NV/4nVNWFZSJCCIA3HIFJbbDKO/NARc9ej0tX5S9k2EVbkrFJC4Xt9b0u4rNZWL4V+F5LAjvta8vzEUw0rw+HA=="],
+
+    "@prisma/engines-version": ["@prisma/engines-version@5.1.1-1.6a3747c37ff169c90047725a05a6ef02e32ac97e", "", {}, "sha512-owZqbY/wucbr65bXJ/ljrHPgQU5xXTSkmcE/JcbqE1kusuAXV/TLN3/exmz21SZ5rJ7WDkyk70J2G/n68iogbQ=="],
+
+    "bun-types": ["bun-types@0.7.0", "", {}, "sha512-jXFiYtwSUQtD/Y3LHRWeWNwhFaUYvcO96zI7y3gSPgTq+ozxXpuTGDxABLdIKmFc672Q7Qp/OgrfJFEjg4Mnkg=="],
+
+    "prisma": ["prisma@5.1.1", "", { "dependencies": { "@prisma/engines": "5.1.1" }, "bin": { "prisma": "build/index.js" } }, "sha512-WJFG/U7sMmcc6TjJTTifTfpI6Wjoh55xl4AzopVwAdyK68L9/ogNo8QQ2cxuUjJf/Wa82z/uhyh3wMzvRIBphg=="],
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "npm-lockfile-test",
+  "workspaces": [
+    "./packages/pkg0",
+    "packages\\pkg1",
+    ".//packages/pkg2",
+    "packages/../packages/pkg3"
+  ]
+}

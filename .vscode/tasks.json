@@ -1,0 +1,59 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build Bun",
+      "type": "shell",
+      "command": "bun run build",
+      "group": {
+        "kind": "build",
+        "isDefault": true,
+      },
+      "problemMatcher": [
+        {
+          "owner": "zig",
+          "fileLocation": ["relative", "${workspaceFolder}"],
+          "pattern": [
+            {
+              "regexp": "^(.+?):(\\d+):(\\d+): (error|warning|note): (.+)$",
+              "file": 1,
+              "line": 2,
+              "column": 3,
+              "severity": 4,
+              "message": 5,
+            },
+            {
+              "regexp": "^\\s+(.+)$",
+              "message": 1,
+              "loop": true,
+            },
+          ],
+        },
+        {
+          "owner": "clang",
+          "fileLocation": ["relative", "${workspaceFolder}"],
+          "pattern": [
+            {
+              "regexp": "^([^:]+):(\\d+):(\\d+):\\s+(warning|error|note|remark):\\s+(.*)$",
+              "file": 1,
+              "line": 2,
+              "column": 3,
+              "severity": 4,
+              "message": 5,
+            },
+            {
+              "regexp": "^\\s*(.*)$",
+              "message": 1,
+              "loop": true,
+            },
+          ],
+        },
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true,
+      },
+    },
+  ],
+}

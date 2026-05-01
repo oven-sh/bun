@@ -1,0 +1,42 @@
+{
+	"name": "no-deps-failing",
+	"versions": {
+		"1.0.0": {
+			"name": "no-deps-failing",
+			"version": "1.0.0",
+			"scripts": {
+				"install": "exit 1"
+			},
+			"_id": "no-deps-failing@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-E7KSHs9/JLGe0rQmziVot0oAMTK3VXgTatkFytk9ftZtStH3Vky7AWx0UZB8jRlh9+5wo2UZqC8qq6Cdf0tpeA==",
+				"shasum": "d8e2b4e58de3e95e09a6467fdcbfe13d82ad440a",
+				"tarball": "http://localhost:4873/no-deps-failing/-/no-deps-failing-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:19.444Z",
+		"created": "2023-11-01T22:05:19.444Z",
+		"1.0.0": "2023-11-01T22:05:19.444Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"no-deps-failing-1.0.0.tgz": {
+			"shasum": "d8e2b4e58de3e95e09a6467fdcbfe13d82ad440a",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-0ce6facb37171baf",
+	"_id": "no-deps-failing",
+	"readme": "ERROR: No README data found!"
+}

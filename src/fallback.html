@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  </head>
+  <body style="visibility: hidden">
+    <!-- biome-ignore: format -->
+    <script id="__bunfallback" type="binary/peechy">
+      {[blob]s}
+    </script>
+
+    {[preload]s}
+
+    <script type="module" async src="/bun:error.js"></script>
+
+    <!-- biome-ignore: format -->
+    <script id="__bun_fallback_script" type="application/javascript">
+      {[fallback]s}
+    </script>
+
+    <!-- biome-ignore: format -->
+    <script async type="module">
+      {[entry_point]s}
+    </script>
+    <link rel="preload" type="text/css" as="style" href="/bun:erro.css" />
+  </body>
+</html>

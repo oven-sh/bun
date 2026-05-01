@@ -1,0 +1,77 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`toMatchSnapshot errors should throw if arguments are in the wrong order: right spot 1`] = `
+{
+  "a": "oops",
+}
+`;
+
+exports[`it will create a snapshot file if it doesn't exist 1`] = `
+{
+  "a": {
+    "b": {
+      "c": Any<Boolean>,
+    },
+  },
+  "c": 2,
+  "jkfje": 99238,
+}
+`;
+
+exports[`it will create a snapshot file if it doesn't exist 2`] = `
+{
+  "a": {
+    "b": {
+      "c": Any<String>,
+    },
+  },
+  "c": 2,
+  "jkfje": 99238,
+}
+`;
+
+exports[`it will create a snapshot file if it doesn't exist 3`] = `
+{
+  "a": {
+    "b": {
+      "c": Any<Number>,
+    },
+  },
+  "c": 2,
+  "jkfje": 99238,
+}
+`;
+
+exports[`it will create a snapshot file if it doesn't exist 4`] = `
+{
+  "a": {
+    "b": {
+      "c": Any<BigInt>,
+    },
+  },
+  "c": 2,
+  "jkfje": 99238,
+}
+`;
+
+exports[`it will create a snapshot file if it doesn't exist 5`] = `
+{
+  "a": Any<Date>,
+}
+`;
+
+exports[`it will create a snapshot file if it doesn't exist 6`] = `
+{
+  "a": "any",
+  "b": Any<String>,
+  "j": Any<Number>,
+}
+`;
+
+exports[`it will create a snapshot file if it doesn't exist 7`] = `
+{
+  "a": "any",
+  "b": Any<String>,
+  "j": Any<RegExp>,
+}
+`;

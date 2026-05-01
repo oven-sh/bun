@@ -1,0 +1,176 @@
+{
+  // Editor
+  "editor.tabSize": 2,
+  "editor.insertSpaces": true,
+  "editor.formatOnSave": true,
+  "editor.formatOnSaveMode": "file",
+
+  // Search
+  "search.quickOpen.includeSymbols": false,
+  "search.seedWithNearestWord": true,
+  "search.smartCase": true,
+  "search.exclude": {
+    "node_modules": true,
+    ".git": true,
+    "vendor/*/**": true,
+    "test/node.js/upstream": true,
+    // This will fill up your whole search history.
+    "test/js/node/test/fixtures": true,
+    "test/js/node/test/common": true,
+  },
+  "search.followSymlinks": false,
+  "search.useIgnoreFiles": true,
+
+  // Git
+  "git.autoRepositoryDetection": "openEditors",
+  "git.ignoreSubmodules": true,
+  "git.ignoreLimitWarning": true,
+
+  // Zig
+  // "zig.initialSetupDone": true,
+  // "zig.buildOption": "build",
+  "zig.zls.zigLibPath": "${workspaceFolder}/vendor/zig/lib",
+  "zig.buildOnSaveArgs": [
+    "-Dgenerated-code=./build/debug/codegen",
+    "--watch",
+    "-fincremental"
+  ],
+  // "zig.zls.buildOnSaveStep": "check",
+  // "zig.zls.enableBuildOnSave": true,
+  // "zig.buildOnSave": true,
+  // "zig.buildFilePath": "${workspaceFolder}/build.zig",
+  "zig.path": "${workspaceFolder}/vendor/zig/zig.exe",
+  "zig.zls.path": "${workspaceFolder}/vendor/zig/zls.exe",
+  "zig.formattingProvider": "zls",
+  // "zig.zls.enableInlayHints": false,
+  "[zig]": {
+    "editor.tabSize": 4,
+    "editor.useTabStops": false,
+    "editor.defaultFormatter": "ziglang.vscode-zig",
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "never",
+    },
+  },
+
+  // lldb
+  "lldb.launch.initCommands": ["command source ${workspaceFolder}/.lldbinit"],
+  "lldb.verboseLogging": false,
+
+  // C++
+  "cmake.configureOnOpen": false,
+  "C_Cpp.errorSquiggles": "enabled",
+  "[cpp]": {
+    "editor.tabSize": 4,
+    "editor.defaultFormatter": "xaver.clang-format",
+  },
+  "[c]": {
+    "editor.tabSize": 4,
+    "editor.defaultFormatter": "xaver.clang-format",
+  },
+  "[h]": {
+    "editor.tabSize": 4,
+    "editor.defaultFormatter": "xaver.clang-format",
+  },
+  "clangd.arguments": ["--header-insertion=never"],
+
+  // JavaScript
+  "prettier.enable": true,
+  "prettier.configPath": ".prettierrc",
+  "eslint.workingDirectories": ["${workspaceFolder}/packages/bun-types"],
+  "[javascript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+  },
+  "[javascriptreact]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+  },
+  "prettier.prettierPath": "./node_modules/prettier",
+
+  // TypeScript
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+  },
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+  },
+
+  // JSON
+  "[json]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+  },
+  "[jsonc]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+  },
+
+  // Markdown
+  "[markdown]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.unicodeHighlight.ambiguousCharacters": true,
+    "editor.unicodeHighlight.invisibleCharacters": true,
+    "diffEditor.ignoreTrimWhitespace": false,
+    "editor.wordWrap": "on",
+    "editor.quickSuggestions": {
+      "comments": "off",
+      "strings": "off",
+      "other": "off",
+    },
+  },
+
+  // TOML
+  "[toml]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+  },
+
+  // YAML
+  "[yaml]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+  },
+
+  // Docker
+  "[dockerfile]": {
+    "editor.formatOnSave": false,
+  },
+
+  // Files
+  "files.exclude": {
+    "**/.git": true,
+    "**/.svn": true,
+    "**/.hg": true,
+    "**/CVS": true,
+    "**/.DS_Store": true,
+    "**/Thumbs.db": true,
+    "**/*.xcworkspacedata": true,
+    "**/*.xcscheme": true,
+    "**/*.xcodeproj": true,
+    "**/*.i": true,
+  },
+  "files.associations": {
+    "*.css": "tailwindcss",
+    "*.idl": "cpp",
+    "*.mdc": "markdown",
+    "array": "cpp",
+    "ios": "cpp",
+    "oxlint.json": "jsonc",
+    "bun.lock": "jsonc",
+  },
+  "C_Cpp.files.exclude": {
+    "**/.vscode": true,
+    "WebKit/JSTests": true,
+    "WebKit/Tools": true,
+    "WebKit/WebDriverTests": true,
+    "WebKit/WebKit.xcworkspace": true,
+    "WebKit/WebKitLibraries": true,
+    "WebKit/Websites": true,
+    "WebKit/resources": true,
+    "WebKit/LayoutTests": true,
+    "WebKit/ManualTests": true,
+    "WebKit/PerformanceTests": true,
+    "WebKit/WebKitLegacy": true,
+    "WebKit/WebCore": true,
+    "WebKit/WebDriver": true,
+    "WebKit/WebKitBuild": true,
+    "WebKit/WebInspectorUI": true,
+  },
+  "git.detectSubmodules": false,
+  "bun.test.customScript": "./build/debug/bun-debug test",
+}

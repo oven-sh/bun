@@ -1,0 +1,226 @@
+---
+name: bun
+appspec: { version: "0.001" }
+plugins: [-Meta]
+title: A tool for installing and managing JavaScript packages
+
+options:
+  - version|V                  --Show version and exit
+  - name: cwd
+    type: string
+    summary: "Change directory"
+
+# subcommands:
+#   bun:
+
+subcommands:
+  run:
+    summary: Run a script or package bin
+    parameters:
+      - name: script
+        multiple: false
+        completion:
+          command_string: >
+            SHELL=zsh bun getcompletes r
+
+    options:
+      - silent --Don't echo the command
+
+  create:
+    summary: Create a new project
+    subcommands:
+      next:
+        summary: "Next.js app"
+        parameters:
+          - name: file
+            multiple: false
+            type: file
+            required: true
+
+      react:
+        summary: "React app"
+        parameters:
+          - name: file
+            multiple: false
+            type: file
+            required: true
+
+  bun:
+    summary: Generate a bundle
+    parameters:
+      - name: file
+        multiple: true
+        type: file
+        required: false
+    options:
+      - name: use
+        type: string
+        summary: Use a framework, e.g. "next"
+
+  upgrade:
+    summary: Upgrade to the latest version of bun
+
+  dev:
+    summary: Start a dev server
+    options:
+      - name: bunfile
+        type: string
+        summary: "Use a specific .bun file (default: node_modules.bun)"
+
+      - name: origin
+        type: string
+        summary: "Rewrite import paths to start from a different url. Default: http://localhost:3000"
+
+      - name: u
+        type: string
+        summary: "Rewrite import paths to start from a different url. Default: http://localhost:3000"
+
+      - name: server-bunfile
+        type: string
+        summary: "Use a specific .bun file for SSR in bun dev (default: node_modules.server.bun)"
+      - name: env-file
+        type: string
+        summary: "Load environment variables from the specified file(s)"
+      - name: extension-order
+        type: string
+        summary: "defaults to: .tsx,.ts,.jsx,.js,.json"
+      - name: "jsx-runtime"
+        type: string
+        enum: ["automatic", "classic"]
+        summary: 'JSX runtime to use. Defaults to "automatic"'
+      - name: main-fields
+        type: string
+        summary: Main fields to lookup in package.json. Defaults to --platform dependent
+      - disable-react-fast-refresh --Disable React Fast Refresh
+      - disable-hmr                --Disable Hot Module Reloading
+      - &jsx_factory name: jsx-factory
+        type: string
+        summary: "Changes the function called when compiling JSX elements using the classic JSX runtime"
+      - &jsx_fragment name: jsx-fragment
+        type: string
+        summary: "Changes the function called when compiling JSX fragments"
+      - &jsx_import_source name: jsx-import-source
+        type: string
+        summary: 'Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: "react"'
+      - &port name: port
+        type: int
+        summary: Port number
+  install:
+    summary: Install packages from package.json
+    options:
+      - name: registry
+        type: string
+        summary: "Change default registry (default: $BUN_CONFIG_REGISTRY || $npm_config_registry)"
+      - name: token
+        type: string
+        summary: "Authentication token used for npm registry requests (default: $npm_config_token)"
+      - y -- "Write a yarn.lock file (yarn v1)"
+      - yarn -- "Write a yarn.lock file (yarn v1)"
+      - production -- "Don't install devDependencies"
+      - p -- "Don't install devDependencies"
+      - frozen-lockfile -- "Disallow changes to lockfile"
+      - no-save --
+      - dry-run -- "Don't install anything"
+      - force -- "Always request the latest versions from the registry & reinstall all dependencies"
+      - name: cache-dir
+        type: string
+        summary: "Store & load cached data from a specific directory path"
+      - no-cache -- "Ignore manifest cache entirely"
+      - silent -- "Don't output anything"
+      - verbose -- "Excessively verbose logging"
+      - name: cwd
+        type: string
+        summary: "Set a specific cwd"
+      - name: backend
+        summary: "Platform-specific optimizations for installing dependencies"
+        type: string
+        enum: ["clonefile", "copyfile", "hardlink", "clonefile_each_dir"]
+      - name: link-native-bins
+        summary: 'Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo'
+  add:
+    summary: Add a dependency to package.json
+    options:
+      - name: registry
+        type: string
+        summary: "Change default registry (default: $BUN_CONFIG_REGISTRY || $npm_config_registry)"
+      - name: token
+        type: string
+        summary: "Authentication token used for npm registry requests (default: $npm_config_token)"
+      - y -- "Write a yarn.lock file (yarn v1)"
+      - yarn -- "Write a yarn.lock file (yarn v1)"
+      - production -- "Don't install devDependencies"
+      - optional -- "Add dependency to optionalDependencies"
+      - development -- "Add dependency to devDependencies"
+      - d -- "Add dependency to devDependencies"
+      - p -- "Don't install devDependencies"
+      - frozen-lockfile -- "Disallow changes to lockfile"
+      - no-save --
+      - dry-run -- "Don't install anything"
+      - force -- "Always request the latest versions from the registry & reinstall all dependencies"
+      - no-cache -- "Ignore manifest cache entirely"
+      - silent -- "Don't output anything"
+      - verbose -- "Excessively verbose logging"
+      - name: cache-dir
+        type: string
+        summary: "Store & load cached data from a specific directory path"
+
+      - name: cwd
+        type: string
+        summary: "Set a specific cwd"
+      - name: backend
+        summary: "Platform-specific optimizations for installing dependencies"
+        type: string
+        enum: ["clonefile", "copyfile", "hardlink", "clonefile_each_dir"]
+      - name: link-native-bins
+        summary: 'Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo'
+    parameters:
+      - name: package
+        multiple: true
+        type: string
+        required: true
+  remove:
+    summary: Remove a dependency from package.json
+    options:
+      - name: registry
+        type: string
+        summary: "Change default registry (default: $BUN_CONFIG_REGISTRY || $npm_config_registry)"
+      - name: token
+        type: string
+        summary: "Authentication token used for npm registry requests (default: $npm_config_token)"
+      - y -- "Write a yarn.lock file (yarn v1)"
+      - yarn -- "Write a yarn.lock file (yarn v1)"
+      - production -- "Don't install devDependencies"
+      - p -- "Don't install devDependencies"
+      - frozen-lockfile -- "Disallow changes to lockfile"
+      - no-save --
+      - dry-run -- "Don't install anything"
+      - force -- "Always request the latest versions from the registry & reinstall all dependencies"
+      - name: cache-dir
+        type: string
+        summary: "Store & load cached data from a specific directory path"
+      - no-cache -- "Ignore manifest cache entirely"
+      - silent -- "Don't output anything"
+      - verbose -- "Excessively verbose logging"
+      - name: cwd
+        type: string
+        summary: "Set a specific cwd"
+      - name: backend
+        summary: "Platform-specific optimizations for installing dependencies"
+        type: string
+        enum: ["clonefile", "copyfile", "hardlink", "clonefile_each_dir"]
+      - name: link-native-bins
+        summary: 'Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo'
+    parameters:
+      - name: package
+        multiple: true
+        type: string
+        required: true
+
+parameters:
+  - name: sasdasdds
+    completion:
+      command_string: >
+        SHELL=zsh bun getcompletes r
+
+# vim:et:sts=2:sws=2:sw=2:foldmethod=indent
+

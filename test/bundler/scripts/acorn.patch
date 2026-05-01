@@ -1,0 +1,94 @@
+diff --git a/acorn-loose/rollup.config.mjs b/acorn-loose/rollup.config.mjs
+index 83eb7af..9b51c12 100644
+--- a/acorn-loose/rollup.config.mjs
++++ b/acorn-loose/rollup.config.mjs
+@@ -1,5 +1,3 @@
+-import buble from "@rollup/plugin-buble"
+-
+ export default {
+   external: ["acorn"],
+   input: "acorn-loose/src/index.js",
+@@ -17,6 +15,5 @@ export default {
+     }
+   ],
+   plugins: [
+-    buble({transforms: {dangerousForOf: true}})
+   ]
+ }
+diff --git a/acorn-walk/rollup.config.mjs b/acorn-walk/rollup.config.mjs
+index d78ec05..11d5904 100644
+--- a/acorn-walk/rollup.config.mjs
++++ b/acorn-walk/rollup.config.mjs
+@@ -1,5 +1,3 @@
+-import buble from "@rollup/plugin-buble"
+-
+ export default {
+   input: "acorn-walk/src/index.js",
+   output: [
+@@ -14,6 +12,5 @@ export default {
+     }
+   ],
+   plugins: [
+-    buble({transforms: {dangerousForOf: true}})
+   ]
+ }
+diff --git a/package.json b/package.json
+index 2171590..75ae6b4 100644
+--- a/package.json
++++ b/package.json
+@@ -27,9 +27,8 @@
+     "build:walk": "rollup -c acorn-walk/rollup.config.mjs",
+     "generate": "node bin/generate-identifier-regex.js",
+     "lint": "eslint .",
+-    "prepare": "npm run test",
+     "pretest": "npm run build:main && npm run build:loose",
+-    "test": "node test/run.js && npm run lint",
++    "test": "node test/run.js",
+     "test:test262": "node bin/run_test262.js"
+   },
+   "devDependencies": {
+diff --git a/test/run.js b/test/run.js
+index 84f1b18..039040f 100644
+--- a/test/run.js
++++ b/test/run.js
+@@ -1,5 +1,8 @@
+-(function() {
+-  var driver = require("./driver.js")
++(async function () {
++  var acorn = await import("../acorn/dist/acorn.mjs");
++  var acorn_loose = await import("../acorn-loose/dist/acorn-loose.mjs");
++  globalThis.acorn = acorn;
++  var driver = require("./driver.js");
+   require("./tests.js");
+   require("./tests-harmony.js");
+   require("./tests-es7.js");
+@@ -26,8 +29,6 @@
+   require("./tests-numeric-separators.js");
+   require("./tests-class-features-2022.js");
+   require("./tests-module-string-names.js");
+-  var acorn = require("../acorn")
+-  var acorn_loose = require("../acorn-loose")
+ 
+   var htmlLog = typeof document === "object" && document.getElementById('log');
+   var htmlGroup = htmlLog;
+diff --git a/test/tests-trailing-commas-in-func.js b/test/tests-trailing-commas-in-func.js
+index 049e575..80390f2 100644
+--- a/test/tests-trailing-commas-in-func.js
++++ b/test/tests-trailing-commas-in-func.js
+@@ -799,4 +799,3 @@ testFail("export function foo(,) { }", "Unexpected token (1:20)", {ecmaVersion:
+ 
+ testFail("(a,)", "Unexpected token (1:3)", {ecmaVersion: 7})
+ testFail("(a,)", "Unexpected token (1:3)", {ecmaVersion: 8})
+-
+diff --git a/test/tests.js b/test/tests.js
+index 0272265..8ea387d 100644
+--- a/test/tests.js
++++ b/test/tests.js
+@@ -4,7 +4,6 @@
+ if (typeof exports !== "undefined") {
+   var driver = require("./driver.js");
+   var test = driver.test, testFail = driver.testFail, testAssert = driver.testAssert;
+-  var acorn = require("../acorn");
+ }
+ 
+ test("import ''", {

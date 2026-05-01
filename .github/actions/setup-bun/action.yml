@@ -1,0 +1,51 @@
+name: Setup Bun
+description: An internal version of the 'oven-sh/setup-bun' action.
+
+inputs:
+  bun-version:
+    type: string
+    description: "The version of bun to install: 'latest', 'canary', 'bun-v1.2.0', etc."
+    default: latest
+    required: false
+  baseline:
+    type: boolean
+    description: "Whether to use the baseline version of bun."
+    default: false
+    required: false
+  download-url:
+    type: string
+    description: "The base URL to download bun from."
+    default: "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases"
+    required: false
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Bun
+      shell: bash
+      run: |
+        case "$(uname -s)" in
+          Linux*)  os=linux;;
+          Darwin*) os=darwin;;
+          *)       os=windows;;
+        esac
+        case "$(uname -m)" in
+          arm64 | aarch64)  arch=aarch64;;
+          *)                arch=x64;;
+        esac
+        case "${{ inputs.baseline }}" in
+          true | 1) target="bun-${os}-${arch}-baseline";;
+          *)        target="bun-${os}-${arch}";;
+        esac
+        case "${{ inputs.bun-version }}" in
+          latest) release="latest";;
+          canary) release="canary";;
+          *)      release="bun-v${{ inputs.bun-version }}";;
+        esac
+        curl -LO "${{ inputs.download-url }}/${release}/${target}.zip" --retry 5
+        unzip ${target}.zip
+        mkdir -p ${{ runner.temp }}/.bun/bin
+        mv ${target}/bun* ${{ runner.temp }}/.bun/bin/
+        chmod +x ${{ runner.temp }}/.bun/bin/*
+        ln -fs ${{ runner.temp }}/.bun/bin/bun ${{ runner.temp }}/.bun/bin/bunx
+        echo "${{ runner.temp }}/.bun/bin" >> ${GITHUB_PATH}

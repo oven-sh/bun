@@ -1,0 +1,8 @@
+{
+  "name": "Spiral 4v4 NS",
+  "description": "4v4 unshared map. 4 spawns in a spiral. Preferred to play with 4v4 NS.",
+  "version": "1.0",
+  "creator": "Grand Homie",
+  "players": [8, 8],
+  "default": { "a": 1 }
+}

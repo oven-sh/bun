@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "skipLibCheck": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "noEmit": false,
+    "declarationDir": "out"
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["dist", "node_modules"]
+}

@@ -1,0 +1,1 @@
+Bun.unsafe.segfault();

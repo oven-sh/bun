@@ -1,0 +1,42 @@
+{
+	"name": "one-deep2-dep-bins",
+	"versions": {
+		"1.0.0": {
+			"name": "one-deep2-dep-bins",
+			"version": "1.0.0",
+			"dependencies": {
+				"one-deep2-dep-bins": "1.0.0"
+			},
+			"_id": "one-deep2-dep-bins@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-8Jy69hBATOBF3JWDvqXptHoMxuTymetNKWsR98DqyK3bW0nli+ZM6JuN0SnkobUXvNhVyQaZXr+WTBXdOT4Fzg==",
+				"shasum": "74493be4adacd31adb41f907f5c090dfe21b2c71",
+				"tarball": "http://localhost:4873/one-deep2-dep-bins/-/one-deep2-dep-bins-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:23.506Z",
+		"created": "2023-11-01T22:05:23.506Z",
+		"1.0.0": "2023-11-01T22:05:23.506Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"one-deep2-dep-bins-1.0.0.tgz": {
+			"shasum": "74493be4adacd31adb41f907f5c090dfe21b2c71",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-3f1816c735b117a8",
+	"_id": "one-deep2-dep-bins",
+	"readme": "ERROR: No README data found!"
+}

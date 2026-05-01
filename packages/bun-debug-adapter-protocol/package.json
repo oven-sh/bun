@@ -1,0 +1,9 @@
+{
+  "name": "bun-debug-adapter-protocol",
+  "version": "0.0.1",
+  "type": "module",
+  "dependencies": {
+    "semver": "^7.5.4",
+    "source-map-js": "^1.0.2"
+  }
+}

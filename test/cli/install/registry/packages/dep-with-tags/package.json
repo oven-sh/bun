@@ -1,0 +1,137 @@
+{
+	"name": "dep-with-tags",
+	"versions": {
+		"1.0.0": {
+			"name": "dep-with-tags",
+			"version": "1.0.0",
+			"dependencies": {},
+			"_id": "dep-with-tags@1.0.0",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-XB/M8CHI49qBjwHY4SJacxdubPJdkTQpG4aLV1GphIsHJNV8cz/ee97seEX8UGvMD2oWCpuGSQWJbihuQDb7EQ==",
+				"shasum": "309d399d607cd2b413b0a3ed30c5de95bbadd489",
+				"tarball": "http://localhost:4873/dep-with-tags/-/dep-with-tags-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.1": {
+			"name": "dep-with-tags",
+			"version": "1.0.1",
+			"dependencies": {},
+			"_id": "dep-with-tags@1.0.1",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-akiZqe4FHDriKxmXUwT/MnugbJAHNibtAM+UcAGFpr1LYvV00TRxufqnNNj6ZgbZd2LfbJFlSZ4rRTEnBf0wUw==",
+				"shasum": "ca7c4798f9340ac3faa782daa6a962eb234a8317",
+				"tarball": "http://localhost:4873/dep-with-tags/-/dep-with-tags-1.0.1.tgz"
+			},
+			"contributors": []
+		},
+		"2.0.0": {
+			"name": "dep-with-tags",
+			"version": "2.0.0",
+			"dependencies": {},
+			"_id": "dep-with-tags@2.0.0",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-2sha1vZ9rG0iurQZno5jQBEi3amkm6GUlUgZVLhtwD4wCLZ+PpVRuYkL+6a3Ue4Wt8fiMYZWunyh3nmPAUP3oQ==",
+				"shasum": "1f5c876f9e561ea70aed7e9609794471e0703ef0",
+				"tarball": "http://localhost:4873/dep-with-tags/-/dep-with-tags-2.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"2.0.1": {
+			"name": "dep-with-tags",
+			"version": "2.0.1",
+			"dependencies": {},
+			"_id": "dep-with-tags@2.0.1",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-7O5A2wU7ubjYfVIc1lZNdczbOxrXVCGf7bbzOW607Y12WWib7TIMQm3r1XiUrdfgDdlAyFRlJUh/8pBAGQb8oQ==",
+				"shasum": "28acd23319e571b792e195c7aba3f83f098e3bf7",
+				"tarball": "http://localhost:4873/dep-with-tags/-/dep-with-tags-2.0.1.tgz"
+			},
+			"contributors": []
+		},
+		"3.0.0": {
+			"name": "dep-with-tags",
+			"version": "3.0.0",
+			"dependencies": {},
+			"_id": "dep-with-tags@3.0.0",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-A4sQrinTIwq49TAn2FvUBsVqz17q3g5bcyzJYLdRYAsFE91jiz1eVjDVeCiOKA3eY2VV88aJfaRJOCZibPGOnA==",
+				"shasum": "fab1ac57a4d1ffd56d25bd2c6e9d180fbb9f46e3",
+				"tarball": "http://localhost:4873/dep-with-tags/-/dep-with-tags-3.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"3.0.1": {
+			"name": "dep-with-tags",
+			"version": "3.0.1",
+			"dependencies": {},
+			"_id": "dep-with-tags@3.0.1",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-axPXYhO5HsRjS0dBGtDzh8ZO1jslfoSrMt3IzC16vfH/kYjEZZ4oTZ8i4uRhCLk2xYcX+RaeaLL3SonoMapYwA==",
+				"shasum": "c3895ea8b73696f6fd224b0364ff0a142cfbd13e",
+				"tarball": "http://localhost:4873/dep-with-tags/-/dep-with-tags-3.0.1.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-07T00:25:42.483Z",
+		"created": "2023-11-07T00:24:52.810Z",
+		"1.0.0": "2023-11-07T00:24:52.810Z",
+		"1.0.1": "2023-11-07T00:25:07.173Z",
+		"2.0.0": "2023-11-07T00:25:21.739Z",
+		"2.0.1": "2023-11-07T00:25:29.630Z",
+		"3.0.0": "2023-11-07T00:25:37.772Z",
+		"3.0.1": "2023-11-07T00:25:42.483Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "3.0.0",
+		"pre-1": "1.0.1",
+		"pre-2": "2.0.1",
+		"pre-3": "3.0.1"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"dep-with-tags-1.0.0.tgz": {
+			"shasum": "309d399d607cd2b413b0a3ed30c5de95bbadd489",
+			"version": "1.0.0"
+		},
+		"dep-with-tags-1.0.1.tgz": {
+			"shasum": "ca7c4798f9340ac3faa782daa6a962eb234a8317",
+			"version": "1.0.1"
+		},
+		"dep-with-tags-2.0.0.tgz": {
+			"shasum": "1f5c876f9e561ea70aed7e9609794471e0703ef0",
+			"version": "2.0.0"
+		},
+		"dep-with-tags-2.0.1.tgz": {
+			"shasum": "28acd23319e571b792e195c7aba3f83f098e3bf7",
+			"version": "2.0.1"
+		},
+		"dep-with-tags-3.0.0.tgz": {
+			"shasum": "fab1ac57a4d1ffd56d25bd2c6e9d180fbb9f46e3",
+			"version": "3.0.0"
+		},
+		"dep-with-tags-3.0.1.tgz": {
+			"shasum": "c3895ea8b73696f6fd224b0364ff0a142cfbd13e",
+			"version": "3.0.1"
+		}
+	},
+	"_rev": "",
+	"_id": "dep-with-tags",
+	"readme": "ERROR: No README data found!"
+}

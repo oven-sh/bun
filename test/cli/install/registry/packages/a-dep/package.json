@@ -1,0 +1,200 @@
+{
+	"name": "a-dep",
+	"versions": {
+		"1.0.1": {
+			"name": "a-dep",
+			"version": "1.0.1",
+			"_id": "a-dep@1.0.1",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-6nmTaPgO2U/uOODqOhbjbnaB4xHuZ+UB7AjKUA3g2dT4WRWeNxgp0dC8Db4swXSnO5/uLLUdFmUJKINNBO/3wg==",
+				"shasum": "c45bc06f08aafdd8e2e6eeef510d1cf06bb46f86",
+				"tarball": "http://localhost:4873/a-dep/-/a-dep-1.0.1.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.2": {
+			"name": "a-dep",
+			"version": "1.0.2",
+			"_id": "a-dep@1.0.2",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-786lp/Wqdz6jY9NOPFnU2OZAl/7wW/CWCHNn4I+0Or9NtA0F9I1TXtisuy8hMFw/6u6CYXwlzdwySiOdpJ94oQ==",
+				"shasum": "964832ca77835803982610f78906155096ef7533",
+				"tarball": "http://localhost:4873/a-dep/-/a-dep-1.0.2.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.3": {
+			"name": "a-dep",
+			"version": "1.0.3",
+			"_id": "a-dep@1.0.3",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-QfPrBvyIAUQ2gOsFIKqLmWkuu3tzzxNrETSWWsGB9hrjX4VPcjcESAw/VWWtEhzFxJ9O0rXrLnOuuViltkZNUQ==",
+				"shasum": "4868050819cfcf8188981b71cf0897da520c81a1",
+				"tarball": "http://localhost:4873/a-dep/-/a-dep-1.0.3.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.4": {
+			"name": "a-dep",
+			"version": "1.0.4",
+			"_id": "a-dep@1.0.4",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-MsvSrNlDpIt/5S0CzdruUf6Z82i8x4kVIUHbQUZ3eA/NvZOJ2hA0jgzcvskLbFixkfJI/wa8DpF77bf1yJ+rtg==",
+				"shasum": "c1a8a7e42b826f5227ee51accf1bb33306c62eab",
+				"tarball": "http://localhost:4873/a-dep/-/a-dep-1.0.4.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.5": {
+			"name": "a-dep",
+			"version": "1.0.5",
+			"_id": "a-dep@1.0.5",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-eKtFd4hOTiMNvOOCpwRCkRvkUB6DU6HmDF/AFCUw28s6nhNLzX62xh/ETLWMhOmeEH8JnKx3/3IY/QMhdju1jw==",
+				"shasum": "92dd2d4b71ea0a01cc082423cde4de342bbd20de",
+				"tarball": "http://localhost:4873/a-dep/-/a-dep-1.0.5.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.6": {
+			"name": "a-dep",
+			"version": "1.0.6",
+			"_id": "a-dep@1.0.6",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-z1rF5ViBIWuLTqatRhPm1fFzzBf1UeJxhNiEubonVby9Z6Qj1Hq824x55xZXy3zeJyHRQcRjba0TvTpYSDhPzA==",
+				"shasum": "d468262e7de2999697986c79c69f1083630054ba",
+				"tarball": "http://localhost:4873/a-dep/-/a-dep-1.0.6.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.7": {
+			"name": "a-dep",
+			"version": "1.0.7",
+			"_id": "a-dep@1.0.7",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-ZulZYNAU2vy6904od8YqrzykBW+OMhoCL0zp918tAm32EWwrpf19a5Oq3Cg07hv47Ooz0IXVTq3qM0+8Ke6WVg==",
+				"shasum": "a3d707e5115165d7725651f63a31e52f33bfe996",
+				"tarball": "http://localhost:4873/a-dep/-/a-dep-1.0.7.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.8": {
+			"name": "a-dep",
+			"version": "1.0.8",
+			"_id": "a-dep@1.0.8",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-UNSDOM0TqyBMbOAKLpfIX6pwvi9E5S43KsWz0nyXp0SwhzL2iOR07hgeUPcNd8RgD92U6pU5Ck48aZqYKpgemg==",
+				"shasum": "f7a1ac983a283f045205cca405e28c5b991e799b",
+				"tarball": "http://localhost:4873/a-dep/-/a-dep-1.0.8.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.9": {
+			"name": "a-dep",
+			"version": "1.0.9",
+			"_id": "a-dep@1.0.9",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-egROgndeFzcsRhMMFP/0eMq3Zi3T0lHQO8tN5a6oxBe7CsmMQkgiEeUf4rkIz4vTCsF/d5HLlMSJnJD3SSbJAg==",
+				"shasum": "5b5abe726ec1e48d2ab99c99be88d5df4096ff15",
+				"tarball": "http://localhost:4873/a-dep/-/a-dep-1.0.9.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.10": {
+			"name": "a-dep",
+			"version": "1.0.10",
+			"_id": "a-dep@1.0.10",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-NeQ6Ql9jRW8V+VOiVb+PSQAYOvVoSimW+tXaR0CoJk4kM9RIk/XlAUGCsNtn5XqjlDO4hcH8NcyaL507InevEg==",
+				"shasum": "1bf13970d7a1e18716bb08de8557f0dca5b31129",
+				"tarball": "http://localhost:4873/a-dep/-/a-dep-1.0.10.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-18T02:34:17.114Z",
+		"created": "2023-11-18T02:33:20.541Z",
+		"1.0.1": "2023-11-18T02:33:20.541Z",
+		"1.0.2": "2023-11-18T02:33:25.648Z",
+		"1.0.3": "2023-11-18T02:33:32.277Z",
+		"1.0.4": "2023-11-18T02:33:37.466Z",
+		"1.0.5": "2023-11-18T02:33:44.495Z",
+		"1.0.6": "2023-11-18T02:33:54.142Z",
+		"1.0.7": "2023-11-18T02:34:02.044Z",
+		"1.0.8": "2023-11-18T02:34:07.455Z",
+		"1.0.9": "2023-11-18T02:34:12.879Z",
+		"1.0.10": "2023-11-18T02:34:17.114Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.10"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"a-dep-1.0.1.tgz": {
+			"shasum": "c45bc06f08aafdd8e2e6eeef510d1cf06bb46f86",
+			"version": "1.0.1"
+		},
+		"a-dep-1.0.2.tgz": {
+			"shasum": "964832ca77835803982610f78906155096ef7533",
+			"version": "1.0.2"
+		},
+		"a-dep-1.0.3.tgz": {
+			"shasum": "4868050819cfcf8188981b71cf0897da520c81a1",
+			"version": "1.0.3"
+		},
+		"a-dep-1.0.4.tgz": {
+			"shasum": "c1a8a7e42b826f5227ee51accf1bb33306c62eab",
+			"version": "1.0.4"
+		},
+		"a-dep-1.0.5.tgz": {
+			"shasum": "92dd2d4b71ea0a01cc082423cde4de342bbd20de",
+			"version": "1.0.5"
+		},
+		"a-dep-1.0.6.tgz": {
+			"shasum": "d468262e7de2999697986c79c69f1083630054ba",
+			"version": "1.0.6"
+		},
+		"a-dep-1.0.7.tgz": {
+			"shasum": "a3d707e5115165d7725651f63a31e52f33bfe996",
+			"version": "1.0.7"
+		},
+		"a-dep-1.0.8.tgz": {
+			"shasum": "f7a1ac983a283f045205cca405e28c5b991e799b",
+			"version": "1.0.8"
+		},
+		"a-dep-1.0.9.tgz": {
+			"shasum": "5b5abe726ec1e48d2ab99c99be88d5df4096ff15",
+			"version": "1.0.9"
+		},
+		"a-dep-1.0.10.tgz": {
+			"shasum": "1bf13970d7a1e18716bb08de8557f0dca5b31129",
+			"version": "1.0.10"
+		}
+	},
+	"_rev": "",
+	"_id": "a-dep",
+	"readme": "ERROR: No README data found!"
+}

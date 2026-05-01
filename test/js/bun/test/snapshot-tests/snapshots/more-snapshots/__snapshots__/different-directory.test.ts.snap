@@ -1,0 +1,76 @@
+// Jest Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`snapshots in different directory 1`] = `
+"12
+3
+4"
+`;
+
+exports[`snapshots in different directory 2`] = `
+"
+"
+`;
+
+exports[`snapshots in different directory 3`] = `
+"12
+3
+  r
+\\"
+`;
+
+exports[`snapshots in different directory 4`] = `
+"12
+3
+456	7\\"
+`;
+
+exports[`snapshots in different directory 5`] = `
+"\\
+\\
+\\	\\\\\\"
+`;
+
+exports[`snapshots in different directory 6`] = `
+"
+"
+`;
+
+exports[`snapshots in different directory 7`] = `
+"
+"
+`;
+
+exports[`snapshots in different directory 8`] = `"\\"`;
+
+exports[`snapshots in different directory 9`] = `""`;
+
+exports[`snapshots in different directory 10`] = `""`;
+
+exports[`snapshots in different directory 11`] = `"	"`;
+
+exports[`snapshots in different directory 12`] = `""`;
+
+exports[`snapshots in different directory 13`] = `
+"'
+
+
+
+
+
+
+
+
+"
+`;
+
+exports[`snapshots in different directory 14`] = `
+{
+  "a": {
+    "b": {
+      "c": Any<Date>,
+    },
+  },
+  "c": 2,
+  "jkfje": 99238,
+}
+`;

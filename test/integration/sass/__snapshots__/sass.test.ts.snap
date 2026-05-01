@@ -1,0 +1,40 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`sass source maps 1`] = `
+{
+  "css": 
+".ruleGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  border-width: 1px;
+}"
+,
+  "loadedUrls": [],
+}
+`;
+
+exports[`sass source maps 2`] = `
+{
+  "css": 
+".ruleGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  border-width: 1px;
+}"
+,
+  "loadedUrls": [],
+  "sourceMap": {
+    "mappings": "AAAA;EACI;EACA;EACA;EACA;EACA",
+    "names": [],
+    "sourceRoot": "",
+    "sources": [
+      "data:;charset=utf-8,.ruleGroup%20%7B%0A%20%20%20%20display:%20flex;%0A%20%20%20%20flex-direction:%20column;%0A%20%20%20%20gap:%200.5rem;%0A%20%20%20%20padding:%200.5rem;%0A%20%20%20%20border-width:%201px;%0A%20%20%7D%0A%20%20",
+    ],
+    "version": 3,
+  },
+}
+`;

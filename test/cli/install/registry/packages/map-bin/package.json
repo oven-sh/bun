@@ -1,0 +1,60 @@
+{
+	"name": "map-bin",
+	"versions": {
+		"1.0.1": {
+			"name": "map-bin",
+			"version": "1.0.1",
+			"_id": "map-bin@1.0.1",
+			"_nodeVersion": "21.7.1",
+			"_npmVersion": "10.5.0",
+			"dist": {
+				"integrity": "sha512-gUBRPx4nGeJHZrIQYK0dSK81FFio6w4LOr4lwegeMFX5JkI3C0U1/KRd31dwKp9h5aiax2pELbXJpSYPUfGMWg==",
+				"shasum": "83d75968e924af9c8130b7e6a2835d324fc0eb25",
+				"tarball": "http://localhost:4873/map-bin/-/map-bin-1.0.1.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.2": {
+			"name": "map-bin",
+			"version": "1.0.2",
+			"bin": {
+				"map-bin": "bin/map-bin",
+				"map_bin": "bin/map-bin"
+			},
+			"_id": "map-bin@1.0.2",
+			"_nodeVersion": "21.7.1",
+			"_npmVersion": "10.5.0",
+			"dist": {
+				"integrity": "sha512-d5+2d5socrCT/99w16Gdl/wQu+C3WHflIE/3idFuJOW9xuvt+8VW4bDND/kptCNI63w/ePSJoYm327Sn+I7QCQ==",
+				"shasum": "6d17dc204433fec01193263538f5e851947c7638",
+				"tarball": "http://localhost:4873/map-bin/-/map-bin-1.0.2.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-03-25T16:23:28.361Z",
+		"created": "2024-03-25T16:22:22.142Z",
+		"1.0.1": "2024-03-25T16:22:22.142Z",
+		"1.0.2": "2024-03-25T16:23:28.361Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.2"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"map-bin-1.0.1.tgz": {
+			"shasum": "83d75968e924af9c8130b7e6a2835d324fc0eb25",
+			"version": "1.0.1"
+		},
+		"map-bin-1.0.2.tgz": {
+			"shasum": "6d17dc204433fec01193263538f5e851947c7638",
+			"version": "1.0.2"
+		}
+	},
+	"_rev": "",
+	"_id": "map-bin",
+	"readme": "ERROR: No README data found!"
+}

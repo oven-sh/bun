@@ -1,0 +1,32 @@
+name: Test Bump version
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        type: string
+        description: What is the release tag? (e.g. "1.0.2", "canary")
+        required: true
+
+env:
+  BUN_VERSION: "1.2.0"
+
+jobs:
+  bump:
+    name: "Bump version"
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Bump version
+        uses: ./.github/actions/bump
+        with:
+          version: ${{ inputs.version }}
+          token: ${{ github.token }}

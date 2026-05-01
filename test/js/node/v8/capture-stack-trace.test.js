@@ -1,0 +1,908 @@
+import { nativeFrameForTesting } from "bun:internal-for-testing";
+import { noInline } from "bun:jsc";
+import { afterEach, expect, mock, test } from "bun:test";
+const origPrepareStackTrace = Error.prepareStackTrace;
+afterEach(() => {
+  Error.prepareStackTrace = origPrepareStackTrace;
+});
+
+test("Regular .stack", () => {
+  var err;
+  class Foo {
+    constructor() {
+      err = new Error("wat");
+    }
+  }
+
+  new Foo();
+  expect(err.stack).toMatch(/at new Foo/);
+});
+
+test("throw inside Error.prepareStackTrace doesnt crash", () => {
+  Error.prepareStackTrace = function (err, stack) {
+    Error.prepareStackTrace = null;
+    throw new Error("wat");
+  };
+
+  expect(() => new Error().stack).toThrow("wat");
+});
+
+test("capture stack trace", () => {
+  function f1() {
+    f2();
+  }
+
+  function f2() {
+    f3();
+  }
+
+  function f3() {
+    logErrorStackTrace();
+  }
+
+  function logErrorStackTrace() {
+    let error = {};
+    Error.captureStackTrace(error);
+    expect(error.stack !== undefined).toBe(true);
+  }
+
+  f1();
+});
+
+test("capture stack trace with message", () => {
+  function f1() {
+    f2();
+  }
+
+  function f2() {
+    f3();
+  }
+
+  function f3() {
+    logErrorStackTrace();
+  }
+
+  function logErrorStackTrace() {
+    let e1 = { message: "bad error!" };
+    Error.captureStackTrace(e1);
+    expect(e1.message === "bad error!").toBe(true);
+
+    let e2 = new Error("bad error!");
+    Error.captureStackTrace(e2);
+    expect(e2.message === "bad error!").toBe(true);
+  }
+
+  f1();
+});
+
+test("capture stack trace with constructor", () => {
+  class S {
+    constructor() {
+      captureStackTrace();
+    }
+  }
+
+  function captureStackTrace() {
+    let e1 = {};
+    Error.captureStackTrace(e1);
+    expect(e1.stack.split("\n")[2].includes("new S")).toBe(true);
+  }
+
+  let s = new S();
+});
+
+test("capture stack trace limit", () => {
+  function f1() {
+    f2();
+  }
+
+  function f2() {
+    f3();
+  }
+
+  function f3() {
+    f4();
+  }
+
+  function f4() {
+    f5();
+  }
+
+  function f5() {
+    f6();
+  }
+
+  function f6() {
+    f7();
+  }
+
+  function f7() {
+    f8();
+  }
+
+  function f8() {
+    f9();
+  }
+
+  function f9() {
+    f10();
+  }
+
+  function f10() {
+    captureStackTrace();
+  }
+
+  var originalLimit = Error.stackTraceLimit;
+  function captureStackTrace() {
+    let e1 = {};
+    Error.captureStackTrace(e1);
+
+    expect(e1.stack.split("\n").length).toBe(11);
+
+    let e2 = new Error();
+    Error.captureStackTrace(e2);
+
+    expect(e2.stack.split("\n").length).toBe(11);
+
+    let e3 = {};
+    Error.stackTraceLimit = 4;
+    Error.captureStackTrace(e3);
+    expect(e3.stack.split("\n").length).toBe(5);
+
+    let e4 = new Error();
+    Error.captureStackTrace(e4);
+    expect(e4.stack.split("\n").length).toBe(5);
+
+    let e5 = { stackTraceLimit: 2 };
+    Error.captureStackTrace(e5);
+    expect(e5.stack.split("\n").length).toBe(5);
+
+    let e6 = {};
+    Error.stackTraceLimit = Infinity;
+    Error.captureStackTrace(e6);
+    expect(e6.stack.split("\n").length).toBe(13);
+  }
+  try {
+    f1();
+  } finally {
+    Error.stackTraceLimit = originalLimit;
+  }
+});
+
+test("prepare stack trace", () => {
+  function f1() {
+    f2();
+  }
+
+  function f2() {
+    let e = {};
+    let prevPrepareStackTrace = Error.prepareStackTrace;
+    Error.prepareStackTrace = (e, stack) => {
+      return "custom stack trace";
+    };
+    Error.captureStackTrace(e);
+    expect(e.stack).toBe("custom stack trace");
+    Error.prepareStackTrace = prevPrepareStackTrace;
+    f3();
+  }
+
+  function f3() {
+    let e = { message: "bad error!" };
+    let prevPrepareStackTrace = Error.prepareStackTrace;
+    Error.prepareStackTrace = (e, s) => {
+      expect(e.message === "bad error!").toBe(true);
+      expect(s.length).toBe(4);
+    };
+    Error.stackTraceLimit = 10;
+    Error.captureStackTrace(e);
+    expect(e.stack === undefined).toBe(true);
+    Error.prepareStackTrace = prevPrepareStackTrace;
+  }
+
+  f1();
+});
+
+test("capture stack trace second argument", () => {
+  function f0() {
+    let s = new S();
+  }
+
+  class S {
+    constructor() {
+      f1();
+    }
+  }
+
+  function f1() {
+    f2();
+  }
+
+  function f2() {
+    f3();
+  }
+
+  function f3() {
+    f4();
+  }
+
+  function f4() {
+    f5();
+  }
+
+  function f5() {
+    f6();
+  }
+
+  function f6() {
+    let e = { message: "bad error!" };
+    Error.captureStackTrace(e);
+    expect(e.stack.split("\n")[1].includes("at f6")).toBe(true);
+    expect(e.stack.split("\n")[2].includes("at f5")).toBe(true);
+
+    let e2 = {};
+    Error.captureStackTrace(e2, f3);
+    expect(e2.stack.split("\n")[1].includes("at f2")).toBe(true);
+    expect(e2.stack.split("\n")[2].includes("at f1")).toBe(true);
+
+    let e3 = {};
+    Error.captureStackTrace(e3, f9);
+    expect(e3.stack.split("\n").length).toBe(1);
+
+    let e4 = { message: "exclude constructor!" };
+    Error.captureStackTrace(e4, S.constructor);
+    expect(e4.stack.split("\n").length).toBe(1);
+
+    let e5 = { message: "actually exclude constructor!" };
+    Error.captureStackTrace(e5, S);
+    expect(e5.stack.split("\n")[1].includes("at f0")).toBe(true);
+  }
+
+  function f9() {
+    // nothing
+  }
+
+  f0();
+});
+
+test("capture stack trace edge cases", () => {
+  let e1 = {};
+  Error.captureStackTrace(e1, null);
+  expect(e1.stack !== undefined).toBe(true);
+
+  let e2 = {};
+  Error.captureStackTrace(e2, undefined);
+  expect(e2.stack !== undefined).toBe(true);
+
+  let e3 = {};
+  Error.captureStackTrace(e3, 1);
+  expect(e3.stack !== undefined).toBe(true);
+
+  let e4 = {};
+  Error.captureStackTrace(e4, "foo");
+  expect(e4.stack !== undefined).toBe(true);
+
+  let e5 = {};
+  Error.captureStackTrace(e5, {});
+  expect(e5.stack !== undefined).toBe(true);
+
+  expect(Error.captureStackTrace({})).toBe(undefined);
+  expect(Error.captureStackTrace({}, () => {})).toBe(undefined);
+  expect(Error.captureStackTrace({}, undefined)).toBe(undefined);
+  expect(Error.captureStackTrace({}, null)).toBe(undefined);
+  expect(Error.captureStackTrace({}, 1)).toBe(undefined);
+  expect(Error.captureStackTrace({}, "foo")).toBe(undefined);
+  expect(Error.captureStackTrace({}, {})).toBe(undefined);
+  expect(Error.captureStackTrace({}, [])).toBe(undefined);
+  expect(Error.captureStackTrace({}, true)).toBe(undefined);
+});
+
+test("prepare stack trace call sites", () => {
+  function f1() {
+    f2();
+  }
+
+  function f2() {
+    f3();
+  }
+
+  function f3() {
+    let e = { message: "bad error!" };
+    // let e = new Error("bad error!");
+    let prevPrepareStackTrace = Error.prepareStackTrace;
+    Error.prepareStackTrace = (e, s) => {
+      expect(s[0].getThis !== undefined).toBe(true);
+      expect(s[0].getTypeName !== undefined).toBe(true);
+      expect(s[0].getFunction !== undefined).toBe(true);
+      expect(s[0].getFunctionName !== undefined).toBe(true);
+      expect(s[0].getMethodName !== undefined).toBe(true);
+      expect(s[0].getFileName !== undefined).toBe(true);
+      expect(s[0].getLineNumber !== undefined).toBe(true);
+      expect(s[0].getColumnNumber !== undefined).toBe(true);
+      expect(s[0].getEvalOrigin !== undefined).toBe(true);
+      expect(s[0].isToplevel !== undefined).toBe(true);
+      expect(s[0].isEval !== undefined).toBe(true);
+      expect(s[0].isNative !== undefined).toBe(true);
+      expect(s[0].isConstructor !== undefined).toBe(true);
+      expect(s[0].isAsync !== undefined).toBe(true);
+      expect(s[0].isPromiseAll !== undefined).toBe(true);
+      expect(s[0].getPromiseIndex !== undefined).toBe(true);
+    };
+    Error.captureStackTrace(e);
+    expect(e.stack === undefined).toBe(true);
+    Error.prepareStackTrace = prevPrepareStackTrace;
+  }
+
+  f1();
+});
+
+test("sanity check", () => {
+  function f1() {
+    f2();
+  }
+
+  function f2() {
+    f3();
+  }
+
+  function f3() {
+    let e = new Error("bad error!");
+    let prevPrepareStackTrace = Error.prepareStackTrace;
+    Error.prepareStackTrace = (e, s) => {
+      // getThis returns undefined in strict mode
+      expect(s[0].getThis()).toBe(undefined);
+      expect(s[0].getTypeName()).toBe("undefined");
+      // getFunction returns undefined in strict mode
+      expect(s[0].getFunction()).toBe(undefined);
+      expect(s[0].getFunctionName()).toBe("f3");
+      expect(s[0].getMethodName()).toBe("f3");
+      expect(typeof s[0].getLineNumber()).toBe("number");
+      expect(typeof s[0].getColumnNumber()).toBe("number");
+      expect(s[0].getFileName().includes("capture-stack-trace.test.js")).toBe(true);
+
+      expect(s[0].getEvalOrigin()).toBe(undefined);
+      expect(s[0].isToplevel()).toBe(true);
+      expect(s[0].isEval()).toBe(false);
+      expect(s[0].isNative()).toBe(false);
+      expect(s[0].isConstructor()).toBe(false);
+      expect(s[0].isAsync()).toBe(false);
+      expect(s[0].isPromiseAll()).toBe(false);
+      expect(s[0].getPromiseIndex()).toBe(null);
+    };
+    Error.captureStackTrace(e);
+    expect(e.stack === undefined).toBe(true);
+    Error.prepareStackTrace = prevPrepareStackTrace;
+  }
+
+  f1();
+});
+
+test("CallFrame isEval works as expected", () => {
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+
+  let name, fn;
+
+  Error.prepareStackTrace = (e, s) => {
+    return s;
+  };
+
+  name = "f1";
+  const stack = eval(`(function ${name}() {
+    return new Error().stack;
+  })()`);
+
+  Error.prepareStackTrace = prevPrepareStackTrace;
+  // TODO: 0 and 1 should both return true here.
+  expect(stack[1].isEval()).toBe(true);
+  expect(stack[0].getFunctionName()).toBe(name);
+});
+
+test("CallFrame isTopLevel returns false for Function constructor", () => {
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+  const sloppyFn = new Function("let e=new Error();Error.captureStackTrace(e);return e.stack");
+  sloppyFn.displayName = "sloppyFnWow";
+  noInline(sloppyFn);
+  const that = {};
+
+  Error.prepareStackTrace = (e, s) => {
+    expect(s[0].getFunctionName()).toBe(sloppyFn.displayName);
+    expect(s[0].getFunction()).toBe(sloppyFn);
+
+    expect(s[0].isToplevel()).toBe(false);
+    expect(s[0].isEval()).toBe(false);
+
+    // Strict-mode functions shouldn't have getThis or getFunction
+    // available.
+    expect(s[1].getThis()).toBe(undefined);
+    expect(s[1].getFunction()).toBe(undefined);
+  };
+
+  sloppyFn.call(that);
+
+  Error.prepareStackTrace = prevPrepareStackTrace;
+});
+
+test("CallFrame.p.getThisgetFunction: strict/sloppy mode interaction", () => {
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+
+  const strictFn = new Function('"use strict";let e=new Error();Error.captureStackTrace(e);return e.stack');
+  const sloppyFn = new Function("x", "x()");
+  const that = {};
+
+  Error.prepareStackTrace = (e, s) => {
+    // The first strict mode function encounted during stack unwinding
+    // stops subsequent frames from having getThis\getFunction.
+    for (const t of s) {
+      expect(t.getThis()).toBe(undefined);
+      expect(t.getFunction()).toBe(undefined);
+    }
+  };
+
+  sloppyFn.call(that, strictFn);
+
+  Error.prepareStackTrace = prevPrepareStackTrace;
+});
+
+test("CallFrame.p.isConstructor", () => {
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+
+  class C {
+    constructor() {
+      Error.captureStackTrace(new Error(""));
+    }
+  }
+
+  Error.prepareStackTrace = (e, s) => {
+    expect(s[0].isConstructor()).toBe(true);
+    // TODO: should be false: this is an instance of C
+    expect(s[0].isToplevel()).toBe(true);
+    // TODO: should return the class name
+    // expect(s[0].getTypeName()).toBe('C');
+
+    expect(s[1].isConstructor()).toBe(false);
+    expect(s[1].isToplevel()).toBe(true);
+  };
+  new C();
+  Error.prepareStackTrace = prevPrepareStackTrace;
+});
+
+test("CallFrame.p.isNative", () => {
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+  Error.prepareStackTrace = (e, s) => {
+    expect(s[0].isNative()).toBe(false);
+    expect(s[1].isNative()).toBe(true);
+    expect(s[2].isNative()).toBe(false);
+  };
+
+  nativeFrameForTesting(() => {
+    const err = new Error("");
+    Error.captureStackTrace(err);
+    return 0;
+  });
+  Error.prepareStackTrace = prevPrepareStackTrace;
+});
+
+test("return non-strings from Error.prepareStackTrace", () => {
+  // This behavior is allowed by V8 and used by the node-depd npm package.
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+  Error.prepareStackTrace = (e, s) => s;
+  const e = new Error();
+  Error.captureStackTrace(e);
+  expect(Array.isArray(e.stack)).toBe(true);
+  Error.prepareStackTrace = prevPrepareStackTrace;
+});
+
+test("CallFrame.p.toString", () => {
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+  Error.prepareStackTrace = (e, s) => s;
+  const e = new Error();
+  Error.captureStackTrace(e);
+  expect(e.stack[0].toString().includes("<anonymous>")).toBe(true);
+});
+
+// TODO: line numbers are wrong in a release build
+test("err.stack should invoke prepareStackTrace", () => {
+  var lineNumber = -1;
+  var functionName = "";
+  var parentLineNumber = -1;
+  function functionWithAName() {
+    // This is V8's behavior.
+    let prevPrepareStackTrace = Error.prepareStackTrace;
+
+    Error.prepareStackTrace = (e, s) => {
+      lineNumber = s[0].getLineNumber();
+      functionName = s[0].getFunctionName();
+      parentLineNumber = s[1].getLineNumber();
+      expect(s[0].getFileName().includes("capture-stack-trace.test.js")).toBe(true);
+      expect(s[1].getFileName().includes("capture-stack-trace.test.js")).toBe(true);
+    };
+    const e = new Error();
+    e.stack;
+    Error.prepareStackTrace = prevPrepareStackTrace;
+  }
+
+  functionWithAName();
+
+  expect(functionName).toBe("functionWithAName");
+  expect(lineNumber).toBe(518);
+  expect(parentLineNumber).toBe(523);
+});
+
+test("Error.prepareStackTrace inside a node:vm works", () => {
+  const { runInNewContext } = require("node:vm");
+  Error.prepareStackTrace = null;
+  const result = runInNewContext(
+    `
+    Error.prepareStackTrace = (err, stack) => {
+      if (typeof err.stack !== "string") {
+        throw new Error("err.stack is not a string");
+      }
+
+      return "custom stack trace";
+    };
+
+    const err = new Error();
+    err.stack;
+    `,
+  );
+  expect(result).toBe("custom stack trace");
+  expect(Error.prepareStackTrace).toBeNull();
+});
+
+test("Error.captureStackTrace inside error constructor works", () => {
+  class ExtendedError extends Error {
+    constructor() {
+      super();
+      Error.captureStackTrace(this, ExtendedError);
+    }
+  }
+
+  class AnotherError extends ExtendedError {}
+
+  expect(() => {
+    throw new AnotherError();
+  }).toThrow();
+});
+
+import "harness";
+import { join } from "path";
+
+test("Error.prepareStackTrace has a default implementation which behaves the same as being unset", () => {
+  expect([join(import.meta.dirname, "error-prepare-stack-default-fixture.js")]).toRun();
+});
+
+test("Error.prepareStackTrace returns a CallSite object", () => {
+  Error.prepareStackTrace = function (err, stack) {
+    return stack;
+  };
+  const error = new Error();
+  expect(error.stack[0]).not.toBeString();
+  expect(error.stack[0][Symbol.toStringTag]).toBe("CallSite");
+});
+
+test("Error.captureStackTrace updates the stack property each call, even if Error.prepareStackTrace is set", () => {
+  const prevPrepareStackTrace = Error.prepareStackTrace;
+  var didCallPrepareStackTrace = false;
+
+  let error = new Error();
+  const firstStack = error.stack;
+  Error.prepareStackTrace = function (err, stack) {
+    expect(err.stack).not.toBe(firstStack);
+    didCallPrepareStackTrace = true;
+    return stack;
+  };
+  function outer() {
+    inner();
+  }
+  function inner() {
+    Error.captureStackTrace(error);
+  }
+  outer();
+  const secondStack = error.stack;
+  expect(firstStack).not.toBe(secondStack);
+  expect(firstStack).toBeString();
+  expect(firstStack).not.toContain("outer");
+  expect(firstStack).not.toContain("inner");
+  expect(didCallPrepareStackTrace).toBe(true);
+  expect(secondStack.find(a => a.getFunctionName() === "outer")).toBeTruthy();
+  expect(secondStack.find(a => a.getFunctionName() === "inner")).toBeTruthy();
+  Error.prepareStackTrace = prevPrepareStackTrace;
+});
+
+test("Error.captureStackTrace updates the stack property each call", () => {
+  let error = new Error();
+  const firstStack = error.stack;
+  function outer() {
+    inner();
+  }
+  function inner() {
+    Error.captureStackTrace(error);
+  }
+  outer();
+  const secondStack = error.stack;
+  expect(firstStack).not.toBe(secondStack);
+  expect(firstStack.length).toBeLessThan(secondStack.length);
+  expect(firstStack).not.toContain("outer");
+  expect(firstStack).not.toContain("inner");
+  expect(secondStack).toContain("outer");
+  expect(secondStack).toContain("inner");
+});
+
+test("calling .stack later uses the stored StackTrace", function hey() {
+  let error = new Error();
+  let stack;
+  function outer() {
+    inner();
+  }
+  function inner() {
+    stack = error.stack;
+  }
+  outer();
+
+  expect(stack).not.toContain("outer");
+  expect(stack).not.toContain("inner");
+  expect(stack).toContain("hey");
+});
+
+test("calling .stack on a non-materialized Error updates the stack properly", function hey() {
+  let error = new Error();
+  let stack;
+  function outer() {
+    inner();
+  }
+  function inner() {
+    stack = error.stack;
+  }
+  function wrapped() {
+    Error.captureStackTrace(error);
+  }
+  wrapped();
+  outer();
+
+  expect(stack).not.toContain("outer");
+  expect(stack).not.toContain("inner");
+  expect(stack).toContain("hey");
+  expect(stack).toContain("wrapped");
+});
+
+test("Error.prepareStackTrace on an array with non-CallSite objects doesn't crash", () => {
+  const result = Error.prepareStackTrace(new Error("ok"), [{ a: 1 }, { b: 2 }, { c: 3 }]);
+  expect(result).toBe("Error: ok\n    at [object Object]\n    at [object Object]\n    at [object Object]");
+});
+
+test("Error.prepareStackTrace calls toString()", () => {
+  const result = Error.prepareStackTrace(new Error("ok"), [
+    { a: 1 },
+    { b: 2 },
+    {
+      c: 3,
+      toString() {
+        return "potato";
+      },
+    },
+  ]);
+  expect(result).toBe("Error: ok\n    at [object Object]\n    at [object Object]\n    at potato");
+});
+
+test("Error.prepareStackTrace propagates exceptions", () => {
+  expect(() =>
+    Error.prepareStackTrace(new Error("ok"), [
+      { a: 1 },
+      { b: 2 },
+      {
+        c: 3,
+        toString() {
+          throw new Error("hi");
+        },
+      },
+    ]),
+  ).toThrow("hi");
+});
+
+test("CallFrame.p.getScriptNameOrSourceURL inside eval", () => {
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+  const prepare = mock((e, s) => {
+    expect(s[0].getScriptNameOrSourceURL()).toBe("https://zombo.com/welcome-to-zombo.js");
+    expect(s[1].getScriptNameOrSourceURL()).toBe("https://zombo.com/welcome-to-zombo.js");
+    expect(s[2].getScriptNameOrSourceURL()).toBe("[native code]");
+    expect(s[3].getScriptNameOrSourceURL()).toBe(import.meta.path);
+    expect(s[4].getScriptNameOrSourceURL()).toBe(import.meta.path);
+  });
+  Error.prepareStackTrace = prepare;
+  let evalScript = `(function() {
+    throw new Error("bad error!");
+  })() //# sourceURL=https://zombo.com/welcome-to-zombo.js`;
+
+  try {
+    function insideAFunction() {
+      eval(evalScript);
+    }
+    insideAFunction();
+  } catch (e) {
+    e.stack;
+  }
+  Error.prepareStackTrace = prevPrepareStackTrace;
+
+  expect(prepare).toHaveBeenCalledTimes(1);
+});
+
+test("CallFrame.p.isAsync", async () => {
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+  const prepare = mock((e, s) => {
+    expect(s[0].isAsync()).toBeFalse();
+    expect(s[1].isAsync()).toBeTrue();
+    expect(s[2].isAsync()).toBeTrue();
+    expect(s[3].isAsync()).toBeTrue();
+  });
+  Error.prepareStackTrace = prepare;
+  async function foo() {
+    await bar();
+  }
+  async function bar() {
+    await baz();
+  }
+  async function baz() {
+    await 1;
+    throw new Error("error from baz");
+  }
+
+  try {
+    await foo();
+  } catch (e) {
+    e.stack;
+  }
+  Error.prepareStackTrace = prevPrepareStackTrace;
+
+  expect(prepare).toHaveBeenCalledTimes(1);
+});
+
+test("captureStackTrace with constructor function not in stack returns error string", () => {
+  // When the second argument to captureStackTrace is a function that isn't in
+  // the call stack, all frames are filtered out and .stack should still return
+  // the error name and message (matching Node.js behavior).
+  function notInStack() {}
+
+  // Case 1: stack not accessed before captureStackTrace
+  {
+    const e = new Error("test");
+    Error.captureStackTrace(e, notInStack);
+    expect(e.stack).toBe("Error: test");
+  }
+
+  // Case 2: stack accessed before captureStackTrace
+  {
+    const e = new Error("test");
+    void e.stack;
+    Error.captureStackTrace(e, notInStack);
+    expect(e.stack).toBe("Error: test");
+  }
+
+  // Case 3: empty message
+  {
+    const e = new Error();
+    Error.captureStackTrace(e, notInStack);
+    expect(e.stack).toBe("Error");
+  }
+
+  // Case 4: custom error name
+  {
+    const e = new TypeError("bad type");
+    Error.captureStackTrace(e, notInStack);
+    expect(e.stack).toBe("TypeError: bad type");
+  }
+});
+
+test("Error.captureStackTrace includes async frames from the await chain", async () => {
+  async function innerAsync() {
+    await new Promise(r => setImmediate(r));
+    const err = new Error("async test");
+    Error.captureStackTrace(err);
+    return err;
+  }
+  noInline(innerAsync);
+
+  async function outerAsync() {
+    return await innerAsync();
+  }
+  noInline(outerAsync);
+
+  const err = await outerAsync();
+  expect(err.stack).toContain("at innerAsync");
+  expect(err.stack).toContain("at async outerAsync");
+});
+
+test("Error.captureStackTrace with caller argument preserves async frames", async () => {
+  async function innerAsync() {
+    await new Promise(r => setImmediate(r));
+    const err = new Error("async test");
+    Error.captureStackTrace(err, innerAsync);
+    return err;
+  }
+  noInline(innerAsync);
+
+  async function middleAsync() {
+    return await innerAsync();
+  }
+  noInline(middleAsync);
+
+  async function outerAsync() {
+    return await middleAsync();
+  }
+  noInline(outerAsync);
+
+  const err = await outerAsync();
+  // innerAsync should be filtered out, but async parents should remain
+  expect(err.stack).not.toContain("at innerAsync");
+  expect(err.stack).toContain("at async middleAsync");
+  expect(err.stack).toContain("at async outerAsync");
+});
+
+test("Error.captureStackTrace with caller not in stack clears async frames too", async () => {
+  function notInStack() {}
+
+  async function innerAsync() {
+    await new Promise(r => setImmediate(r));
+    const err = new Error("async test");
+    Error.captureStackTrace(err, notInStack);
+    return err;
+  }
+  noInline(innerAsync);
+
+  async function outerAsync() {
+    return await innerAsync();
+  }
+  noInline(outerAsync);
+
+  const err = await outerAsync();
+  // When caller is not found, V8 clears everything
+  expect(err.stack).toBe("Error: async test");
+});
+
+test("Error.captureStackTrace applies stackTraceLimit after caller removal", () => {
+  // Build a deep call chain so the caller sits beyond stackTraceLimit.
+  // If the limit were applied before removal, all collected frames would
+  // be above the caller and get removed, yielding an empty trace.
+  const origLimit = Error.stackTraceLimit;
+  Error.stackTraceLimit = 3;
+  try {
+    function target() {
+      const err = {};
+      Error.captureStackTrace(err, target);
+      return err;
+    }
+    noInline(target);
+
+    function recurse(depth) {
+      if (depth === 0) return target();
+      // Not a tail call — keeps each frame on the stack.
+      const r = recurse(depth - 1);
+      return { ...r };
+    }
+    noInline(recurse);
+
+    const err = recurse(20);
+    const frames = err.stack.split("\n").filter(l => l.includes("    at "));
+    // Should have exactly 3 frames (the limit), all below target()
+    expect(frames.length).toBe(3);
+    expect(err.stack).not.toContain("at target");
+    expect(err.stack).toContain("at recurse");
+  } finally {
+    Error.stackTraceLimit = origLimit;
+  }
+});
+
+test("captureStackTrace does not crash when stackTraceLimit is non-numeric", () => {
+  const origLimit = Error.stackTraceLimit;
+  try {
+    Error.stackTraceLimit = "foo";
+    const obj = {};
+    expect(() => Error.captureStackTrace(obj)).not.toThrow();
+    expect(typeof obj.stack).toBe("string");
+
+    delete Error.stackTraceLimit;
+    const obj2 = {};
+    expect(() => Error.captureStackTrace(obj2)).not.toThrow();
+    expect(typeof obj2.stack).toBe("string");
+  } finally {
+    Error.stackTraceLimit = origLimit;
+  }
+});

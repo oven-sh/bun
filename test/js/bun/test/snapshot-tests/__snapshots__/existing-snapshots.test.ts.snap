@@ -1,0 +1,71 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`it will work with an existing snapshot file made with bun 1`] = `
+{
+  "a": {
+    "b": {
+      "c": Any<Boolean>,
+    },
+  },
+  "c": 2,
+  "jkfje": 99238,
+}
+`;
+
+exports[`it will work with an existing snapshot file made with bun 2`] = `
+{
+  "a": {
+    "b": {
+      "c": Any<String>,
+    },
+  },
+  "c": 2,
+  "jkfje": 99238,
+}
+`;
+
+exports[`it will work with an existing snapshot file made with bun 3`] = `
+{
+  "a": {
+    "b": {
+      "c": Any<Number>,
+    },
+  },
+  "c": 2,
+  "jkfje": 99238,
+}
+`;
+
+exports[`it will work with an existing snapshot file made with bun 4`] = `
+{
+  "a": {
+    "b": {
+      "c": Any<BigInt>,
+    },
+  },
+  "c": 2,
+  "jkfje": 99238,
+}
+`;
+
+exports[`it will work with an existing snapshot file made with bun 5`] = `
+{
+  "a": Any<Date>,
+}
+`;
+
+exports[`it will work with an existing snapshot file made with bun 6`] = `
+{
+  "a": "any",
+  "b": Any<String>,
+  "j": Any<Number>,
+}
+`;
+
+exports[`it will work with an existing snapshot file made with bun 7`] = `
+{
+  "a": "any",
+  "b": Any<String>,
+  "j": Any<RegExp>,
+}
+`;

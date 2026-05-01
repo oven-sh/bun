@@ -1,0 +1,242 @@
+{
+  a: "",
+}
+Hello World!
+0
+-0
+123
+-123
+123.567
+-123.567
+true
+false
+null
+undefined
+Infinity
+-Infinity
+Symbol(Symbol Description)
+2000-06-27T02:24:34.304Z
+[String: "Hello"]
+[String: "Hello 👋🏼"]
+[Number: 5]
+[Boolean: true]
+[ 123, 456, 789 ]
+{
+  name: "foo",
+}
+{
+  a: 123,
+  b: 456,
+  c: 789,
+}
+1.7976931348623157e+308
+5e-324
+9e+59
+0.3
+0.29999999999999993
+{
+  a: {
+    b: {
+      c: 123,
+    },
+    bacon: true,
+  },
+  name: "bar",
+}
+Promise { <pending> }
+{}
+[Function]
+[Function]
+[class Foo]
+[class (anonymous)]
+Foo {}
+FooWithProp {
+  a: 1,
+}
+[Function: foooo]
+/FooRegex/
+Is it a bug or a feature that formatting numbers like 123 is colored
+String 123 should be 2nd word, 456 == 456 and percent s %s == What okay
+123456 without space should work
+{
+  foo: {
+    name: "baz",
+  },
+  bar: [Circular],
+} am
+[
+  {}, {}, {}, {}
+]
+{
+  level1: {
+    level2: {
+      level3: [Object ...],
+    },
+  },
+}
+{
+  "1": [Object ...],
+}
+{
+  "1": [Object ...],
+}
+{
+  "1": {
+    "2": [Object ...],
+  },
+}
+{
+  "1": {
+    "2": {
+      "3": 3,
+    },
+  },
+}
+{
+  "1": [Object ...],
+}
+{
+  "1": [Object ...],
+}
+SetIterator { 
+  1,
+  "123",
+  {
+    a: [],
+    str: "123123132",
+    nr: 3453,
+  },
+}
+SetIterator { 
+  1,
+  "123",
+  {
+    a: [],
+    str: "123123132",
+    nr: 3453,
+  },
+}
+SetIterator { } SetIterator { }
+MapIterator { 
+  "key",
+  "key_2",
+}
+MapIterator { 
+  {
+    a: [],
+    str: "123123132",
+    nr: 3453,
+  },
+  {
+    b: "test",
+  },
+}
+MapIterator { } MapIterator { }
+NestedClass {
+  a: 1,
+  b: 2,
+  foo: FooWithProp {
+    a: 1,
+  },
+  test: [Function: test],
+}
+myCustomName {
+  [Symbol(Symbol.toStringTag)]: "myCustomName",
+}
+{
+  "0": 1,
+  "1": 2,
+  "2": 3,
+  "3": 4,
+  length: 4,
+}
+[ 1, 2, 3 ]
+[ empty item, 2, empty item ]
+[ 1, 2, empty item ]
+[ 1, 2, 3 ]
+[ 2 x empty items, 3 ]
+[ 1, 2 x empty items ]
+[
+  1, 2, empty item, 4, 38 x empty items
+]
+[
+  1, empty item, 4, 39 x empty items
+]
+[
+  42 x empty items
+]
+[
+  1024 x empty items
+]
+[
+  "i0", empty item, "i2", "i3", "i4", "i5", "i6", "i7", "i8", "i9", "i10", "i11", "i12", "i13", "i14", "i15", "i16",
+  "i17", "i18", "i19", "i20", "i21", "i22", "i23", "i24", "i25", "i26", "i27", "i28", "i29", "i30", "i31", "i32",
+  "i33", "i34", "i35", "i36", "i37", "i38", "i39", "i40", "i41", "i42", "i43", "i44", "i45", "i46", "i47", "i48",
+  "i49", "i50", "i51", "i52", "i53", "i54", "i55", "i56", "i57", "i58", "i59", "i60", "i61", "i62", "i63", "i64",
+  "i65", "i66", "i67", "i68", "i69", "i70", "i71", "i72", "i73", "i74", "i75", "i76", "i77", "i78", "i79", "i80",
+  "i81", "i82", "i83", "i84", "i85", "i86", "i87", "i88", "i89", "i90", "i91", "i92", "i93", "i94", "i95", "i96",
+  "i97", "i98", "i99", "i100",
+  ... 923 more items
+]
+{
+  a: 42,
+  length: 0,
+}
+{
+  "1": 42,
+  length: 1,
+}
+{
+  "": "",
+}
+{
+  hello: 2,
+}
+<Revoked Proxy>
+[
+  [
+    [
+      [
+        [
+          4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+          4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+          4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+          4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+          4, 4, 4, 4,
+          ... 900 more items
+        ]
+      ]
+    ]
+  ]
+]
+custom inspect
+| 0 | 0 | 132 | -42 | 4 | -8 |
+| NaN | NaN | NaN | 0 | NaN | NaN |
+| 0 | 0 | 132 | -42 | -4 | 8 |
+| NaN | NaN | NaN | 0 | NaN | NaN |
+4
+| 0 | 0.2 | 132.51 | -42.52 | 4.127888538432189e+22 | -8.5e-12 |
+| NaN | Infinity | -Infinity | 0 | NaN | NaN |
+0.5 | 0.005
+0
+504252
+-491952
+8589934592
+-8589934592
+0.0005
+-0.0005
+1.7976931348623157e+308 1
+-1.7976931348623157e+308 1
+5e-324 4
+-5e-324 4
+5e-324 9
+-5e-324 4
+0.30000000000000004
+Hello World 123
+Hello %vWorld 123
+Hello NaN %i
+Hello NaN % 1
+Hello NaN 1
+Hello \5 6,
+Hello %i 5 6
+%d 1

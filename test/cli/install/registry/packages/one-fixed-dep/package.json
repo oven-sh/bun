@@ -1,0 +1,64 @@
+{
+	"name": "one-fixed-dep",
+	"versions": {
+		"1.0.0": {
+			"name": "one-fixed-dep",
+			"version": "1.0.0",
+			"dependencies": {
+				"no-deps": "1.0.0"
+			},
+			"_id": "one-fixed-dep@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-eLc7J+EoM2ymMvC9QWxV6jWanghtKbM+BHzkwEdj+MwO2J58vNkDcmLN6FTIZqgA6dl9lt3XiMwV3/2b7wHz8w==",
+				"shasum": "7d6b8dc24cc6f00cc6bd79f7436ce87160a2347f",
+				"tarball": "http://localhost:4873/one-fixed-dep/-/one-fixed-dep-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"2.0.0": {
+			"name": "one-fixed-dep",
+			"version": "2.0.0",
+			"dependencies": {
+				"no-deps": "2.0.0"
+			},
+			"_id": "one-fixed-dep@2.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-Ck122iHjMnLkL4du4cDA33WgPSPFi8Tp/suwkm+rbo0xnvfX128kdmYSUHcypqoSrudrLCLc/YfBCED6+no/3Q==",
+				"shasum": "154002cd56bc5fa563963eb035b872d355c0d49b",
+				"tarball": "http://localhost:4873/one-fixed-dep/-/one-fixed-dep-2.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:24.379Z",
+		"created": "2023-11-01T22:05:24.068Z",
+		"1.0.0": "2023-11-01T22:05:24.068Z",
+		"2.0.0": "2023-11-01T22:05:24.379Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "2.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"one-fixed-dep-1.0.0.tgz": {
+			"shasum": "7d6b8dc24cc6f00cc6bd79f7436ce87160a2347f",
+			"version": "1.0.0"
+		},
+		"one-fixed-dep-2.0.0.tgz": {
+			"shasum": "154002cd56bc5fa563963eb035b872d355c0d49b",
+			"version": "2.0.0"
+		}
+	},
+	"_rev": "6-6095d43d2ebb7c7c",
+	"_id": "one-fixed-dep",
+	"readme": "ERROR: No README data found!"
+}

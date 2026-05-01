@@ -1,0 +1,554 @@
+import type { Socket } from "bun";
+import { setSocketOptions } from "bun:internal-for-testing";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isPosix } from "harness";
+
+describe.if(isPosix)("HTTP server handles chunked transfer encoding", () => {
+  test.concurrentIf(!isASAN)("handles fragmented chunk terminators", async () => {
+    const script = `
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const body = await req.text();
+          return new Response("Got: " + body);
+        },
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      const socket = await Bun.connect({
+        hostname: "localhost",
+        port: server.port,
+        socket: {
+          data(socket, data) {
+            console.log(data.toString());
+            socket.end();
+          },
+          open(socket) {
+            socket.write("POST / HTTP/1.1\\r\\nHost: localhost\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n4\\r\\nWiki\\r");
+            socket.flush();
+            setTimeout(() => {
+              socket.write("\\n0\\r\\n\\r\\n");
+              socket.flush();
+            }, 50);
+          },
+          error() {},
+          close() { resolve(); },
+        },
+      });
+      await promise;
+      server.stop();
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(stdout).toContain("200 OK");
+    expect(stdout).toContain("Got: Wiki");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrentIf(!isASAN)("rejects invalid terminator in fragmented reads", async () => {
+    const script = `
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const body = await req.text();
+          return new Response("Got: " + body);
+        },
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      const socket = await Bun.connect({
+        hostname: "localhost",
+        port: server.port,
+        socket: {
+          data(socket, data) {
+            console.log(data.toString());
+            socket.end();
+          },
+          open(socket) {
+            socket.write("POST / HTTP/1.1\\r\\nHost: localhost\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n4\\r\\nTestX");
+            socket.flush();
+            setTimeout(() => {
+              socket.write("\\n0\\r\\n\\r\\n");
+              socket.flush();
+            }, 50);
+          },
+          error() {},
+          close() { resolve(); },
+        },
+      });
+      await promise;
+      server.stop();
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(stdout).toContain("400");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
+  test.concurrentIf(!isASAN)("handles lone CR at end of chunk-size line across TCP segments", async () => {
+    // Regression test: when a TCP segment boundary falls between the \r and \n
+    // of a chunk-size line (e.g. "5\r" in one segment, "\n..." in the next),
+    // the server must buffer and resume correctly instead of spinning.
+    const script = `
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const body = await req.text();
+          return new Response("Got: " + body);
+        },
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      const socket = await Bun.connect({
+        hostname: "localhost",
+        port: server.port,
+        socket: {
+          data(socket, data) {
+            console.log(data.toString());
+            socket.end();
+          },
+          open(socket) {
+            // Send headers
+            socket.write("PUT / HTTP/1.1\\r\\nHost: localhost\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n");
+            socket.flush();
+            // After a delay, send chunk size with lone \\r (no \\n yet)
+            setTimeout(() => {
+              socket.write("5\\r");
+              socket.flush();
+              // After another delay, send the rest: \\n, chunk data, and final chunk
+              setTimeout(() => {
+                socket.write("\\nHello\\r\\n0\\r\\n\\r\\n");
+                socket.flush();
+              }, 50);
+            }, 50);
+          },
+          error() {},
+          close() { resolve(); },
+        },
+      });
+      await promise;
+      server.stop();
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(stdout).toContain("200 OK");
+    expect(stdout).toContain("Got: Hello");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrentIf(!isASAN)("handles lone CR in chunk-size with extensions", async () => {
+    // Same split but with a chunk extension before the CRLF
+    const script = `
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const body = await req.text();
+          return new Response("Got: " + body);
+        },
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      const socket = await Bun.connect({
+        hostname: "localhost",
+        port: server.port,
+        socket: {
+          data(socket, data) {
+            console.log(data.toString());
+            socket.end();
+          },
+          open(socket) {
+            socket.write("PUT / HTTP/1.1\\r\\nHost: localhost\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n");
+            socket.flush();
+            setTimeout(() => {
+              // chunk size with extension, CR split from LF
+              socket.write("5;ext=val\\r");
+              socket.flush();
+              setTimeout(() => {
+                socket.write("\\nHello\\r\\n0\\r\\n\\r\\n");
+                socket.flush();
+              }, 50);
+            }, 50);
+          },
+          error() {},
+          close() { resolve(); },
+        },
+      });
+      await promise;
+      server.stop();
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(stdout).toContain("200 OK");
+    expect(stdout).toContain("Got: Hello");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrentIf(!isASAN)("rejects bare LF in chunk-size position (invalid byte not stranded)", async () => {
+    // A byte <=32 that isn't \r in chunk-size position must error immediately.
+    // Previously this could strand the byte in HttpParser's fallback buffer,
+    // corrupting header parsing on the next request.
+    const script = `
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          try {
+            await req.text();
+            return new Response("OK");
+          } catch {
+            return new Response("Body error", { status: 400 });
+          }
+        },
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      let received = "";
+      const socket = await Bun.connect({
+        hostname: "localhost",
+        port: server.port,
+        socket: {
+          data(socket, data) {
+            received += data.toString();
+          },
+          open(socket) {
+            // Bare LF (0x0A) where chunk-size hex is expected
+            socket.write("PUT / HTTP/1.1\\r\\nHost: localhost\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\\n");
+            socket.flush();
+          },
+          error() {},
+          close() {
+            console.log(received);
+            resolve();
+          },
+        },
+      });
+      await promise;
+      server.stop();
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Server should reject with 400, not hang or accept
+    expect(stderr).toBe("");
+    expect(stdout).toContain("400");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrentIf(!isASAN)("rejects Content-Length values that would alias chunked-encoding state bits", async () => {
+    // remainingStreamingBytes is shared between CL and chunked state. CL >= 2^59 would
+    // set STATE_HAS_HEXDIG and route a fixed-length body into the chunked decoder.
+    const script = `
+      let urls = [];
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) { urls.push(new URL(req.url).pathname); return new Response("OK"); },
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      let received = "";
+      const socket = await Bun.connect({
+        hostname: "localhost",
+        port: server.port,
+        socket: {
+          data(s, d) { received += d.toString(); },
+          async open(s) {
+            s.write("GET /first HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: 576460752303423488\\r\\n\\r\\n");
+            s.flush();
+            await Bun.sleep(20);
+            s.write("\\r\\n\\r\\nGET /smuggled HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+            s.flush();
+          },
+          error() {},
+          close() { console.log(JSON.stringify({ received, urls })); resolve(); },
+        },
+      });
+      await promise;
+      server.stop();
+    `;
+
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const { received, urls } = JSON.parse(stdout);
+    expect(received).toContain("400");
+    expect(urls).not.toContain("/smuggled");
+    expect(exitCode).toBe(0);
+  });
+
+  describe.each([
+    ["bare CRLF", "\\r\\n"],
+    ["extension only", ";a=b\\r\\n"],
+  ])("rejects chunk-size with zero hex digits (%s)", (_, chunkSizeLine) => {
+    // RFC 7230 4.1: chunk-size = 1*HEXDIG. A chunk-size line with no hex digit
+    // must be rejected. Previously this parsed as size 0 (last-chunk), allowing a
+    // pipelined request after the bogus terminator to be smuggled.
+    test.concurrentIf(!isASAN)("rejects and does not process trailing pipelined request", async () => {
+      const script = `
+        let requests = 0;
+        const server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            requests++;
+            try {
+              await req.text();
+              return new Response("OK " + req.url);
+            } catch {
+              return new Response("Body error", { status: 400 });
+            }
+          },
+        });
+        const { promise, resolve } = Promise.withResolvers();
+        let received = "";
+        const socket = await Bun.connect({
+          hostname: "localhost",
+          port: server.port,
+          socket: {
+            data(socket, data) { received += data.toString(); },
+            open(socket) {
+              socket.write(
+                "PUT /first HTTP/1.1\\r\\nHost: x\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n" +
+                "${chunkSizeLine}\\r\\n" +
+                "GET /smuggled HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"
+              );
+              socket.flush();
+            },
+            error() {},
+            close() { console.log(JSON.stringify({ received, requests })); resolve(); },
+          },
+        });
+        await promise;
+        server.stop();
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      const { received, requests } = JSON.parse(stdout);
+      expect(received).toContain("400");
+      expect(received).not.toContain("/smuggled");
+      // The smuggled request must never reach the handler.
+      expect(requests).toBeLessThanOrEqual(1);
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrentIf(!isASAN)("rejects when chunk-size line is split across packets", async () => {
+      const script = `
+        const server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            try { await req.text(); return new Response("OK"); }
+            catch { return new Response("Body error", { status: 400 }); }
+          },
+        });
+        const { promise, resolve } = Promise.withResolvers();
+        let received = "";
+        const socket = await Bun.connect({
+          hostname: "localhost",
+          port: server.port,
+          socket: {
+            data(socket, data) { received += data.toString(); },
+            async open(socket) {
+              socket.write("PUT / HTTP/1.1\\r\\nHost: x\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n");
+              socket.flush();
+              await Bun.sleep(20);
+              socket.write("${chunkSizeLine}");
+              socket.flush();
+              await Bun.sleep(20);
+              socket.write("\\r\\n");
+              socket.flush();
+            },
+            error() {},
+            close() { console.log(received); resolve(); },
+          },
+        });
+        await promise;
+        server.stop();
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout).toContain("400");
+      expect(exitCode).toBe(0);
+    });
+  });
+});
+
+describe.if(isPosix)("HTTP server handles fragmented requests", () => {
+  test.concurrentIf(!isASAN)("handles requests with tiny send buffer (regression test)", async () => {
+    using server = Bun.serve({
+      hostname: "localhost",
+
+      port: 0,
+      async fetch(req) {
+        const body = await req.text();
+        const headers: Record<string, string> = {};
+        req.headers.forEach((value, key) => {
+          headers[key] = value;
+        });
+        return new Response(
+          JSON.stringify({
+            method: req.method,
+            url: req.url,
+            headers,
+            body,
+          }),
+          {
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      },
+    });
+
+    const { port } = server;
+    let remaining = 100;
+    const batchSize = 10;
+
+    for (let i = 0; i < remaining; i += batchSize) {
+      const promises: Promise<void>[] = [];
+      for (let j = 0; j < batchSize; j++) {
+        promises.push(
+          (async i => {
+            const { resolve: resolveClose, reject: rejectClose, promise: closePromise } = Promise.withResolvers();
+
+            let buffer: Buffer;
+
+            function actuallyWrite(socket) {
+              while (buffer.length > 0) {
+                const written = socket.write(buffer.slice(0, 1));
+
+                if (written == 0) break;
+
+                if (written > 1) {
+                  throw new Error(`Written ${written} bytes, expected 1`);
+                }
+                socket.flush();
+                buffer = buffer.slice(written);
+              }
+            }
+
+            let remainingRequests = 20;
+
+            const socket = await Bun.connect({
+              hostname: server.hostname,
+              port: server.port!,
+              socket: {
+                open(socket: Socket) {
+                  // Set a very small send buffer to force fragmentation
+                  // This simulates the condition that triggered the bug
+                  setSocketOptions(socket, 1, 1); // 1 = send buffer, 1 = size
+
+                  const input = `GET /test-${i} HTTP/1.1\r\nHost: ${server.hostname}:${port}\r\nUser-Agent: Bun-Test\r\nAccept: */*\r\n\r\n`;
+                  const repeated = Buffer.alloc(input.length * remainingRequests, input);
+
+                  buffer = repeated;
+                  actuallyWrite(socket);
+                },
+                data(socket: Socket, data: Buffer) {
+                  // Mini HTTP parser to count complete responses
+                  const dataStr = data.toString();
+                  const responses = dataStr.split("\r\n\r\n");
+
+                  // Count complete responses (those that have both headers and body)
+                  for (let k = 0; k < responses.length - 1; k++) {
+                    if (responses[k].includes("HTTP/1.1 200 OK")) {
+                      remainingRequests--;
+                    }
+                  }
+                  if (remainingRequests == 0) {
+                    socket.end();
+                  }
+                },
+                close() {
+                  if (remainingRequests > 0) {
+                    throw new Error(`Expected 20 responses, got ${20 - remainingRequests}`);
+                  }
+
+                  resolveClose();
+                },
+                drain(socket: Socket) {
+                  actuallyWrite(socket);
+                },
+                error(_socket: Socket, error: Error) {
+                  rejectClose(error);
+                },
+              },
+            });
+
+            // Wait for the socket to close
+            await closePromise;
+          })(i),
+        );
+      }
+
+      await Promise.all(promises);
+    }
+
+    server.stop();
+  });
+});

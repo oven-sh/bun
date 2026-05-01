@@ -1,0 +1,11 @@
+{
+  "buildOptions": {
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "src/*": ["src/*"]
+    }
+  }
+  // such comment
+  // very much
+}

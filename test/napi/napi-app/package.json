@@ -1,0 +1,15 @@
+{
+  "name": "napitests",
+  "version": "1.0.0",
+  "gypfile": true,
+  "scripts": {
+    "install": "node-gyp rebuild --debug -j max",
+    "build": "node-gyp rebuild --debug -j max",
+    "clean": "node-gyp clean"
+  },
+  "devDependencies": {
+    "node-gyp": "^11.2.0",
+    "node-addon-api": "^8.0.0",
+    "node-api-headers": "1.5.0"
+  }
+}

@@ -1,0 +1,10 @@
+node_modules
+
+/.cache
+/build
+/public/build
+.env
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+bun.lockb

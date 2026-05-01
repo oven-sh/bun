@@ -1,0 +1,41 @@
+{
+	"name": "one-dep",
+	"versions": {
+		"1.0.0": {
+			"name": "one-dep",
+			"version": "1.0.0",
+			"dependencies": {
+				"no-deps": "1.0.1"
+			},
+			"_id": "one-dep@1.0.0",
+			"_nodeVersion": "21.7.1",
+			"_npmVersion": "10.5.0",
+			"dist": {
+				"integrity": "sha512-qG6lZjwM1vFmRCHwP+XpOKu6FkrBmwr20+54+qaHGdjZlw/wz8aJrhFqX4dZksqmBLZtj2mzL77Yf04WKs1+Kg==",
+				"shasum": "223b234fc74d080acf05a08c8d96d81f819e872c",
+				"tarball": "http://localhost:4873/one-dep/-/one-dep-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-03-20T03:03:32.384Z",
+		"created": "2024-03-20T03:03:32.384Z",
+		"1.0.0": "2024-03-20T03:03:32.384Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"one-dep-1.0.0.tgz": {
+			"shasum": "223b234fc74d080acf05a08c8d96d81f819e872c",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "one-dep",
+	"readme": "ERROR: No README data found!"
+}

@@ -1,0 +1,8 @@
+Index:
+  Background: Skip # Disable slow background indexing of these files.
+
+CompileFlags:
+  CompilationDatabase: build/debug
+
+Diagnostics:
+  UnusedIncludes: None

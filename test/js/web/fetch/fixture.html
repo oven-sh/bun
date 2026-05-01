@@ -1,0 +1,1428 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta property="og:title" content="Bun is a fast all-in-one JavaScript runtime" />
+    <title>Bun is a fast all-in-one JavaScript runtime</title>
+    <meta
+      property="og:description"
+      content="Bundle, transpile, install and run JavaScript &amp; TypeScript
+      projects – all in Bun. Bun is a new JavaScript runtime with
+      a native bundler, transpiler, task runner and npm client built-in."
+    />
+    <meta name="og:locale" content="en_US" />
+    <meta name="twitter:site" content="@jarredsumner" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta property="og:image" content="https://bun.sh/share.png" />
+    <meta
+      name="description"
+      content="Bundle, transpile, install and run JavaScript &amp; TypeScript
+      projects – all in Bun. Bun is a new JavaScript runtime with
+      a native bundler, transpiler, task runner and npm client built-in."
+    />
+    <meta name="theme-color" content="#fbf0df" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" sizes="256x256" href="/logo-square.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/logo-square@32px.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/logo-square@16px.png" />
+    <style>
+      :root {
+        --black: #0b0a08;
+        --blue: #00a6e1;
+        --orange: #f89b4b;
+        --orange-light: #d4d3d2;
+        --monospace-font: "Fira Code", "Hack", "Source Code Pro", "SF Mono", "Inconsolata", monospace;
+        --dark-border: rgba(200, 200, 25, 0.2);
+        --max-width: 1152px;
+        --system-font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell,
+          "Open Sans", "Helvetica Neue", sans-serif;
+        --horizontal-padding: 3rem;
+        --vertical-padding: 4rem;
+        --line-height: 1.4;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      head,
+      body,
+      :root {
+        margin: 0 auto;
+        padding: 0;
+        font-family: var(--system-font);
+      }
+      body {
+        background-color: #fbf0df;
+      }
+      a {
+        color: inherit;
+        text-decoration: none;
+        transition: transform 0.1s linear;
+      }
+      a:visited {
+        color: inherit;
+      }
+      a:hover {
+        text-decoration: underline;
+        transform: scale(1.06);
+        transform-origin: middle center;
+      }
+      #header-wrap,
+      #pitch {
+        background-color: var(--black);
+        color: #fbf0df;
+        width: 100%;
+      }
+      #logo-link {
+        width: fit-content;
+        display: flex;
+        gap: 24px;
+        align-items: center;
+      }
+      main {
+        width: auto;
+        margin: 0 auto;
+        max-width: var(--max-width);
+        display: grid;
+        grid-template-columns: auto auto;
+        overflow-y: hidden;
+      }
+      main,
+      header,
+      #explain-section {
+        margin: 0 auto;
+        max-width: var(--max-width);
+        padding: 0 var(--horizontal-padding);
+      }
+      #cards-wrap,
+      #usecases,
+      main,
+      header {
+        padding: var(--vertical-padding) var(--horizontal-padding);
+      }
+      #pitch-content {
+        max-width: 600px;
+      }
+      .tagline {
+        margin-top: 0;
+        line-height: 1;
+        font-size: 36pt;
+      }
+      .subtitle {
+        font-size: 1.2rem;
+      }
+      .Navigation ul {
+        white-space: nowrap;
+        display: flex;
+        gap: 2rem;
+        list-style: none;
+      }
+      .NavText {
+        color: #fbf0df;
+        display: block;
+        font-weight: 500;
+        font-size: 1.2rem;
+      }
+      #HeaderInstallButton {
+        margin-left: 2.4rem;
+      }
+      #pitch main {
+        gap: 2rem;
+      }
+      #logo {
+        max-width: 70px;
+        margin: auto 0;
+      }
+      #logo-text {
+        max-width: 96px;
+      }
+      header {
+        display: grid;
+        grid-template-columns: auto max-content;
+        background-color: var(--black);
+        padding: 1.5rem 3rem;
+        align-items: center;
+        color: #fff;
+      }
+      #HeaderInstallButton:hover {
+        cursor: pointer;
+        transform: scale(1.06);
+      }
+      #HeaderInstallButton {
+        transition: transform 0.1s linear;
+        background: #00a6e1;
+        padding: 8px 16px;
+        border-radius: 100px;
+        color: #000;
+        font-weight: 500;
+      }
+      .InstallBox {
+        margin-top: 2rem;
+        background: #15140e;
+        padding: 24px;
+        border-radius: 24px;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-user-drag: none;
+        -moz-user-select: none;
+      }
+      .InstallBox-label-heading {
+        font-size: 1.4rem;
+        margin-bottom: 1rem;
+        font-weight: 500;
+      }
+      .InstallBox-label-subtitle {
+        font-size: 0.9rem;
+        color: var(--orange-light);
+      }
+      #usecases-section {
+        background: linear-gradient(12deg, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0.2)),
+          conic-gradient(
+            from 6.27deg at 46.95% 50.05%,
+            #ff8181 0deg,
+            #e5f067 75deg,
+            #6dd9ba 155.62deg,
+            #67f0ae 168.75deg,
+            #8b67f0 243.75deg,
+            #f067e2 300deg,
+            #e967e3 334.49deg,
+            #f06767 348.9deg,
+            #ff8181 360deg
+          );
+        color: #fff;
+        font-family: var(--monospace-font);
+        contain: paint;
+        font-size: 24pt;
+        font-weight: 700;
+      }
+      #usecases-section {
+        padding: 0;
+        margin: 0;
+      }
+      #usecases {
+        padding-top: 1rem;
+        padding-bottom: 1rem;
+      }
+      #usecases-section h1 {
+        background: linear-gradient(90deg, #ff0000 0%, #faff00 50.52%, #0500ff 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        text-shadow: 0px 4px 4px rgba(0, 0, 0, 0.25);
+        font-family: Helvetica;
+        margin: 0;
+        padding: 0;
+      }
+      .InstallBox-code-box {
+        background-color: #252420;
+        padding: 4px 16px;
+        position: relative;
+        border-radius: 8px;
+        text-align: center;
+        align-items: center;
+        border: 1px solid var(--orange);
+        margin-top: 1rem;
+        display: flex;
+        justify-content: space-between;
+        align-content: center;
+        white-space: nowrap;
+        margin-bottom: 1rem;
+        font-family: var(--monospace-font);
+      }
+      .InstallBox-curl {
+        user-select: all;
+        -webkit-user-select: text;
+        pointer-events: auto;
+        white-space: nowrap;
+        cursor: text;
+        display: inline-flex;
+        padding: 12px 8px;
+        gap: 2ch;
+      }
+      .InstallBox-curl:before {
+        display: block;
+        content: "$" / "";
+        color: var(--orange);
+        pointer-events: none;
+        width: 1ch;
+        height: 1ch;
+      }
+      .InstallBox-view-source-link {
+        color: var(--orange-light);
+      }
+      .InstallBox-copy {
+        height: 100%;
+        display: flex;
+        align-items: center;
+        color: var(--orange-light);
+        transition: transform 0.05s linear;
+        transition-property: color, transform;
+        transform-origin: center center;
+        cursor: pointer;
+        background: transparent;
+        border: none;
+        font-size: inherit;
+        font-family: inherit;
+      }
+      .InstallBox-copy:hover {
+        color: var(--blue);
+        transform: scale(1.06);
+      }
+      .InstallBox-copy:active {
+        transform: scale(1.12);
+      }
+      .Tabs {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        margin-left: auto;
+        margin-right: auto;
+        justify-content: center;
+        align-items: center;
+        width: min-content;
+        white-space: nowrap;
+        padding: 0;
+      }
+      .Tab {
+        width: min-content;
+        border: none;
+        background-color: transparent;
+        font-family: var(--monospace-font);
+        text-align: center;
+        border-bottom: 1px solid #ccc;
+        cursor: pointer;
+        padding: 16px;
+        color: inherit;
+        font-size: inherit;
+      }
+      .Tab:hover,
+      .Graphs--active-react .Tab[data-tab="react"],
+      .Graphs--active-sqlite .Tab[data-tab="sqlite"],
+      .Graphs--active-websocket .Tab[data-tab="websocket"] {
+        border-bottom-color: #7fffd4;
+        background-color: #82d8f71a;
+        border-right-color: #7fffd4;
+        border-left-color: #7fffd4;
+      }
+      .BarGraph {
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+      }
+      .BarGraph-heading {
+        font-weight: 500;
+        font-size: 1.5rem;
+        margin: 0;
+      }
+      .BarGraphList {
+        flex: 1;
+        position: relative;
+        list-style-type: none;
+        padding: 0;
+      }
+      .BarGraph,
+      .ActiveTab,
+      .Graphs {
+        height: auto;
+      }
+      .BarGraph-subheading {
+        font-size: 0.9rem;
+        color: #878686;
+        margin: 0;
+      }
+      .BarGraphList {
+        margin-top: 1rem;
+        display: grid;
+        grid-template-columns: repeat(var(--count), 1fr);
+        font-variant-numeric: tabular-nums;
+        font-family: var(--monospace-font);
+        justify-content: center;
+        align-items: flex-start;
+        height: 100%;
+        background-color: #080808;
+      }
+      .BarGraphKey {
+        display: grid;
+        text-align: center;
+        margin-top: 1rem;
+        grid-template-columns: repeat(var(--count), 1fr);
+      }
+      .BarGraphBar {
+        --primary: 70px;
+        --opposite: 100%;
+      }
+      .BarGraph,
+      .BarGraphBar-label,
+      .BarGraphItem {
+        --level: calc(var(--amount) / var(--max));
+        --inverse: calc(1 / var(--level));
+      }
+      .BarGraphBar {
+        margin: 0 auto;
+        width: var(--primary);
+        height: var(--opposite);
+        background-color: #5d5986;
+        position: relative;
+        height: calc(200px * var(--level));
+      }
+      .BarGraphItem {
+        border-right: 1px dashed var(--dark-border);
+        border-top: 1px dashed var(--dark-border);
+        border-bottom: 1px dashed var(--dark-border);
+        min-height: 200px;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+      }
+      .BarGraphItem--deno {
+        border-right-color: transparent;
+      }
+      .BarGraph--vertical .BarGraphBar {
+        max-width: 90%;
+      }
+      .BarGraphBar-label {
+        color: #fff;
+        font-variant-numeric: tabular-nums;
+        font-family: var(--monospace-font);
+        width: 100%;
+        text-align: center;
+        position: relative;
+        display: flex;
+        justify-content: center;
+      }
+      .CardContent {
+        position: relative;
+      }
+      .BarGraph--vertical .BarGraphBar-label {
+        transform: scaleX(var(--inverse));
+        bottom: 0;
+        right: 0;
+      }
+      .BarGraph--horizontal .BarGraphBar-label {
+        top: -22px;
+      }
+      .BarGraphItem--bun .BarGraphBar {
+        background-color: #f9f1e1;
+        box-shadow: inset 1px 1px 3px #ccc6bb;
+        background-image: url(data:image/svg+xml;base64,PHN2ZyBpZD0iQnVuIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA4MCA3MCI+PHRpdGxlPkJ1biBMb2dvPC90aXRsZT48cGF0aCBpZD0iU2hhZG93IiBkPSJNNzEuMDksMjAuNzRjLS4xNi0uMTctLjMzLS4zNC0uNS0uNXMtLjMzLS4zNC0uNS0uNS0uMzMtLjM0LS41LS41LS4zMy0uMzQtLjUtLjUtLjMzLS4zNC0uNS0uNS0uMzMtLjM0LS41LS41LS4zMy0uMzQtLjUtLjVBMjYuNDYsMjYuNDYsMCwwLDEsNzUuNSwzNS43YzAsMTYuNTctMTYuODIsMzAuMDUtMzcuNSwzMC4wNS0xMS41OCwwLTIxLjk0LTQuMjMtMjguODMtMTAuODZsLjUuNS41LjUuNS41LjUuNS41LjUuNS41LjUuNUMxOS41NSw2NS4zLDMwLjE0LDY5Ljc1LDQyLDY5Ljc1YzIwLjY4LDAsMzcuNS0xMy40OCwzNy41LTMwQzc5LjUsMzIuNjksNzYuNDYsMjYsNzEuMDksMjAuNzRaIi8+PGcgaWQ9IkJvZHkiPjxwYXRoIGlkPSJCYWNrZ3JvdW5kIiBkPSJNNzMsMzUuN2MwLDE1LjIxLTE1LjY3LDI3LjU0LTM1LDI3LjU0UzMsNTAuOTEsMywzNS43QzMsMjYuMjcsOSwxNy45NCwxOC4yMiwxM1MzMy4xOCwzLDM4LDNzOC45NCw0LjEzLDE5Ljc4LDEwQzY3LDE3Ljk0LDczLDI2LjI3LDczLDM1LjdaIiBzdHlsZT0iZmlsbDojZmJmMGRmIi8+PHBhdGggaWQ9IkJvdHRvbV9TaGFkb3ciIGRhdGEtbmFtZT0iQm90dG9tIFNoYWRvdyIgZD0iTTczLDM1LjdhMjEuNjcsMjEuNjcsMCwwLDAtLjgtNS43OGMtMi43MywzMy4zLTQzLjM1LDM0LjktNTkuMzIsMjQuOTRBNDAsNDAsMCwwLDAsMzgsNjMuMjRDNTcuMyw2My4yNCw3Myw1MC44OSw3MywzNS43WiIgc3R5bGU9ImZpbGw6I2Y2ZGVjZSIvPjxwYXRoIGlkPSJMaWdodF9TaGluZSIgZGF0YS1uYW1lPSJMaWdodCBTaGluZSIgZD0iTTI0LjUzLDExLjE3QzI5LDguNDksMzQuOTQsMy40Niw0MC43OCwzLjQ1QTkuMjksOS4yOSwwLDAsMCwzOCwzYy0yLjQyLDAtNSwxLjI1LTguMjUsMy4xMy0xLjEzLjY2LTIuMywxLjM5LTMuNTQsMi4xNS0yLjMzLDEuNDQtNSwzLjA3LTgsNC43QzguNjksMTguMTMsMywyNi42MiwzLDM1LjdjMCwuNCwwLC44LDAsMS4xOUM5LjA2LDE1LjQ4LDIwLjA3LDEzLjg1LDI0LjUzLDExLjE3WiIgc3R5bGU9ImZpbGw6I2ZmZmVmYyIvPjxwYXRoIGlkPSJUb3AiIGQ9Ik0zNS4xMiw1LjUzQTE2LjQxLDE2LjQxLDAsMCwxLDI5LjQ5LDE4Yy0uMjguMjUtLjA2LjczLjMuNTksMy4zNy0xLjMxLDcuOTItNS4yMyw2LTEzLjE0QzM1LjcxLDUsMzUuMTIsNS4xMiwzNS4xMiw1LjUzWm0yLjI3LDBBMTYuMjQsMTYuMjQsMCwwLDEsMzksMTljLS4xMi4zNS4zMS42NS41NS4zNkM0MS43NCwxNi41Niw0My42NSwxMSwzNy45Myw1LDM3LjY0LDQuNzQsMzcuMTksNS4xNCwzNy4zOSw1LjQ5Wm0yLjc2LS4xN0ExNi40MiwxNi40MiwwLDAsMSw0NywxNy4xMmEuMzMuMzMsMCwwLDAsLjY1LjExYy45Mi0zLjQ5LjQtOS40NC03LjE3LTEyLjUzQzQwLjA4LDQuNTQsMzkuODIsNS4wOCw0MC4xNSw1LjMyWk0yMS42OSwxNS43NmExNi45NCwxNi45NCwwLDAsMCwxMC40Ny05Yy4xOC0uMzYuNzUtLjIyLjY2LjE4LTEuNzMsOC03LjUyLDkuNjctMTEuMTIsOS40NUMyMS4zMiwxNi40LDIxLjMzLDE1Ljg3LDIxLjY5LDE1Ljc2WiIgc3R5bGU9ImZpbGw6I2NjYmVhNztmaWxsLXJ1bGU6ZXZlbm9kZCIvPjxwYXRoIGlkPSJPdXRsaW5lIiBkPSJNMzgsNjUuNzVDMTcuMzIsNjUuNzUuNSw1Mi4yNy41LDM1LjdjMC0xMCw2LjE4LTE5LjMzLDE2LjUzLTI0LjkyLDMtMS42LDUuNTctMy4yMSw3Ljg2LTQuNjIsMS4yNi0uNzgsMi40NS0xLjUxLDMuNi0yLjE5QzMyLDEuODksMzUsLjUsMzgsLjVzNS42MiwxLjIsOC45LDMuMTRjMSwuNTcsMiwxLjE5LDMuMDcsMS44NywyLjQ5LDEuNTQsNS4zLDMuMjgsOSw1LjI3QzY5LjMyLDE2LjM3LDc1LjUsMjUuNjksNzUuNSwzNS43LDc1LjUsNTIuMjcsNTguNjgsNjUuNzUsMzgsNjUuNzVaTTM4LDNjLTIuNDIsMC01LDEuMjUtOC4yNSwzLjEzLTEuMTMuNjYtMi4zLDEuMzktMy41NCwyLjE1LTIuMzMsMS40NC01LDMuMDctOCw0LjdDOC42OSwxOC4xMywzLDI2LjYyLDMsMzUuNywzLDUwLjg5LDE4LjcsNjMuMjUsMzgsNjMuMjVTNzMsNTAuODksNzMsMzUuN0M3MywyNi42Miw2Ny4zMSwxOC4xMyw1Ny43OCwxMyw1NCwxMSw1MS4wNSw5LjEyLDQ4LjY2LDcuNjRjLTEuMDktLjY3LTIuMDktMS4yOS0zLTEuODRDNDIuNjMsNCw0MC40MiwzLDM4LDNaIi8+PC9nPjxnIGlkPSJNb3V0aCI+PGcgaWQ9IkJhY2tncm91bmQtMiIgZGF0YS1uYW1lPSJCYWNrZ3JvdW5kIj48cGF0aCBkPSJNNDUuMDUsNDNhOC45Myw4LjkzLDAsMCwxLTIuOTIsNC43MSw2LjgxLDYuODEsMCwwLDEtNCwxLjg4QTYuODQsNi44NCwwLDAsMSwzNCw0Ny43MSw4LjkzLDguOTMsMCwwLDEsMzEuMTIsNDNhLjcyLjcyLDAsMCwxLC44LS44MUg0NC4yNkEuNzIuNzIsMCwwLDEsNDUuMDUsNDNaIiBzdHlsZT0iZmlsbDojYjcxNDIyIi8+PC9nPjxnIGlkPSJUb25ndWUiPjxwYXRoIGlkPSJCYWNrZ3JvdW5kLTMiIGRhdGEtbmFtZT0iQmFja2dyb3VuZCIgZD0iTTM0LDQ3Ljc5YTYuOTEsNi45MSwwLDAsMCw0LjEyLDEuOSw2LjkxLDYuOTEsMCwwLDAsNC4xMS0xLjksMTAuNjMsMTAuNjMsMCwwLDAsMS0xLjA3LDYuODMsNi44MywwLDAsMC00LjktMi4zMSw2LjE1LDYuMTUsMCwwLDAtNSwyLjc4QzMzLjU2LDQ3LjQsMzMuNzYsNDcuNiwzNCw0Ny43OVoiIHN0eWxlPSJmaWxsOiNmZjYxNjQiLz48cGF0aCBpZD0iT3V0bGluZS0yIiBkYXRhLW5hbWU9Ik91dGxpbmUiIGQ9Ik0zNC4xNiw0N2E1LjM2LDUuMzYsMCwwLDEsNC4xOS0yLjA4LDYsNiwwLDAsMSw0LDEuNjljLjIzLS4yNS40NS0uNTEuNjYtLjc3YTcsNywwLDAsMC00LjcxLTEuOTMsNi4zNiw2LjM2LDAsMCwwLTQuODksMi4zNkE5LjUzLDkuNTMsMCwwLDAsMzQuMTYsNDdaIi8+PC9nPjxwYXRoIGlkPSJPdXRsaW5lLTMiIGRhdGEtbmFtZT0iT3V0bGluZSIgZD0iTTM4LjA5LDUwLjE5YTcuNDIsNy40MiwwLDAsMS00LjQ1LTIsOS41Miw5LjUyLDAsMCwxLTMuMTEtNS4wNSwxLjIsMS4yLDAsMCwxLC4yNi0xLDEuNDEsMS40MSwwLDAsMSwxLjEzLS41MUg0NC4yNmExLjQ0LDEuNDQsMCwwLDEsMS4xMy41MSwxLjE5LDEuMTksMCwwLDEsLjI1LDFoMGE5LjUyLDkuNTIsMCwwLDEtMy4xMSw1LjA1QTcuNDIsNy40MiwwLDAsMSwzOC4wOSw1MC4xOVptLTYuMTctNy40Yy0uMTYsMC0uMi4wNy0uMjEuMDlhOC4yOSw4LjI5LDAsMCwwLDIuNzMsNC4zN0E2LjIzLDYuMjMsMCwwLDAsMzguMDksNDlhNi4yOCw2LjI4LDAsMCwwLDMuNjUtMS43Myw4LjMsOC4zLDAsMCwwLDIuNzItNC4zNy4yMS4yMSwwLDAsMC0uMi0uMDlaIi8+PC9nPjxnIGlkPSJGYWNlIj48ZWxsaXBzZSBpZD0iUmlnaHRfQmx1c2giIGRhdGEtbmFtZT0iUmlnaHQgQmx1c2giIGN4PSI1My4yMiIgY3k9IjQwLjE4IiByeD0iNS44NSIgcnk9IjMuNDQiIHN0eWxlPSJmaWxsOiNmZWJiZDAiLz48ZWxsaXBzZSBpZD0iTGVmdF9CbHVjaCIgZGF0YS1uYW1lPSJMZWZ0IEJsdWNoIiBjeD0iMjIuOTUiIGN5PSI0MC4xOCIgcng9IjUuODUiIHJ5PSIzLjQ0IiBzdHlsZT0iZmlsbDojZmViYmQwIi8+PHBhdGggaWQ9IkV5ZXMiIGQ9Ik0yNS43LDM4LjhhNS41MSw1LjUxLDAsMSwwLTUuNS01LjUxQTUuNTEsNS41MSwwLDAsMCwyNS43LDM4LjhabTI0Ljc3LDBBNS41MSw1LjUxLDAsMSwwLDQ1LDMzLjI5LDUuNSw1LjUsMCwwLDAsNTAuNDcsMzguOFoiIHN0eWxlPSJmaWxsLXJ1bGU6ZXZlbm9kZCIvPjxwYXRoIGlkPSJJcmlzIiBkPSJNMjQsMzMuNjRhMi4wNywyLjA3LDAsMSwwLTIuMDYtMi4wN0EyLjA3LDIuMDcsMCwwLDAsMjQsMzMuNjRabTI0Ljc3LDBhMi4wNywyLjA3LDAsMSwwLTIuMDYtMi4wN0EyLjA3LDIuMDcsMCwwLDAsNDguNzUsMzMuNjRaIiBzdHlsZT0iZmlsbDojZmZmO2ZpbGwtcnVsZTpldmVub2RkIi8+PC9nPjwvc3ZnPg==);
+        background-repeat: no-repeat;
+        background-size: 56px 48.8px;
+        background-position: 6px 20%;
+      }
+      .BarGraph--vertical .BarGraphItem--bun {
+        border-top-right-radius: 12px;
+        border-bottom-right-radius: 12px;
+      }
+      .BarGraph--horizontal .BarGraphItem--bun {
+        border-top-left-radius: 12px;
+        border-top-right-radius: 12px;
+      }
+      .BarGraph--vertical .BarGraphBar {
+        height: var(--primary);
+        width: var(--opposite);
+        transform: scaleX(var(--level));
+        transform-origin: bottom left;
+        max-height: 40px;
+        margin-top: 1rem;
+        margin-bottom: 1rem;
+      }
+      .BarGraph--vertical .BarGraphList,
+      .BarGraph--vertical .BarGraphKey--vertical {
+        grid-template-columns: 1fr;
+        grid-template-rows: repeat(var(--count), 1fr);
+      }
+      .BarGraph--vertical .BarGraphList {
+        direction: rtl;
+      }
+      .BarGraphKeyItem-label {
+        color: #fff;
+      }
+      .BarGraphKeyItem-value {
+        color: #7a7a7a;
+        margin-top: 0.5rem;
+      }
+      .BarGraphKeyItem-viewSource {
+        margin-top: 0.5rem;
+        color: #7a7a7a;
+        text-transform: lowercase;
+        font-weight: thin;
+        font-size: 0.8rem;
+      }
+      .BarGraphKeyItem:hover {
+        text-decoration: none;
+      }
+      .BarGraphKeyItem:hover .BarGraphKeyItem-viewSource {
+        color: var(--orange-light);
+      }
+      .DemphasizedLabel {
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+      #frameworks {
+        display: flex;
+      }
+      .FrameworksGroup {
+        display: grid;
+        grid-template-rows: auto 40px;
+        gap: 0.5rem;
+      }
+      .DemphasizedLabel {
+        color: #7a7a7a;
+        font-weight: 300;
+      }
+      .FrameworksList {
+        display: grid;
+        grid-template-columns: repeat(2, 40px);
+        gap: 3.5rem;
+        align-items: center;
+      }
+      #cards {
+        display: grid;
+      }
+      #explain ul {
+        font-size: 1.2rem;
+      }
+      #explain li {
+        margin-bottom: 1rem;
+        line-height: var(--line-height);
+      }
+      .Tag {
+        --background: rgba(31, 31, 132, 0.15);
+        background-color: var(--background);
+        border-radius: 8px;
+        padding: 3px 8px;
+        color: #000;
+        text-decoration: none !important;
+        display: inline-block;
+        font-family: var(--monospace-font) !important;
+      }
+      .mono {
+        font-family: var(--monospace-font);
+      }
+      .Tag--Command {
+        --background: #111;
+        font-weight: medium;
+        color: #a3ff85;
+      }
+      .Tag--Command:before {
+        content: "\276f"/ "";
+        color: #ffffff59;
+        margin-top: auto;
+        margin-bottom: auto;
+        margin-right: 1ch;
+        margin-left: 0.5ch;
+        display: inline-block;
+        transform: translateY(-1px);
+      }
+      .Tag--WebAPI {
+        --background: #29b6f6;
+        box-shadow: inset -1px -1px 3px #e7bb49;
+      }
+      .Tag--NodeJS {
+        --background: rgb(130, 172, 108);
+      }
+      .Tag--TypeScript {
+        --background: rgb(69, 119, 192);
+        color: #fff;
+      }
+      .Tag--React {
+        color: #82d8f7;
+        --background: #333;
+      }
+      .Tag--React:before {
+        color: #82d8f780;
+        content: "<" / "";
+      }
+      .Tag--React:after {
+        color: #82d8f780;
+        content: ">" / "";
+      }
+      .Tag--Bun {
+        --background: #e600e5;
+        color: #fff;
+      }
+      .mono {
+        font-family: var(--monospace-font);
+        border-radius: 6px;
+        color: #006713;
+      }
+      @media (min-width: 931px) {
+        .InstallBox--mobile {
+          display: none;
+        }
+      }
+      #explain {
+        max-width: 650px;
+        margin: 0 auto;
+      }
+      @media (max-width: 930px) {
+        header {
+          padding: 24px 16px;
+        }
+        .InstallBox--desktop {
+          display: none;
+        }
+        #logo {
+          width: 48px;
+        }
+        :root {
+          --max-width: 100%;
+          --horizontal-padding: 16px;
+          --vertical-padding: 2rem;
+          --line-height: 1.6;
+        }
+        main {
+          grid-template-columns: auto;
+          grid-template-rows: auto auto auto;
+        }
+        #explain li {
+          line-height: var(--line-height);
+          margin-bottom: 1.5rem;
+        }
+        ul {
+          padding: 0;
+          list-style: none;
+        }
+        .Tabs {
+          margin-left: 0;
+        }
+        .Graphs,
+        .BarGraph,
+        .BarGraphList {
+          max-width: auto;
+        }
+        .BarGraph {
+          padding: 24px 0;
+        }
+        #pitch-content {
+          max-width: auto;
+        }
+        #pitch main {
+          gap: 1rem;
+        }
+        .InstallBox {
+          margin-top: 0;
+        }
+        .tagline {
+          font-size: 32pt;
+        }
+        #logo-text,
+        #HeaderInstallButton {
+          display: none;
+        }
+      }
+      .InstallBox--mobile {
+        border-radius: 0;
+      }
+      @media (max-width: 599px) {
+        .InstallBox-copy {
+          display: none;
+        }
+        .InstallBox-code-box {
+          font-size: 0.8rem;
+        }
+      }
+      @media (max-width: 360px) {
+        .tagline {
+          font-size: 22pt;
+        }
+      }
+      #explain p {
+        line-height: var(--line-height);
+        font-size: 1.2rem;
+      }
+      #explain p a {
+        text-decoration: underline;
+      }
+      .Zig {
+        transform: translateY(15%);
+      }
+      .CodeBlock .shiki {
+        padding: 1rem;
+        border-radius: 8px;
+        font-family: var(--monospace-font);
+        font-size: 1rem;
+      }
+      .Identifier {
+        font-family: var(--monospace-font);
+        font-size: 1rem;
+        color: #50fa7b !important;
+        background-color: #282a36;
+        padding: 0.25rem;
+        border-radius: 8px;
+        text-decoration: none !important;
+      }
+      .PerformanceClaim {
+        text-decoration: dashed underline 2px #000 !important;
+        text-decoration-skip-ink: auto !important;
+      }
+      .BarGraph--react,
+      .BarGraph--websocket,
+      .BarGraph--sqlite {
+        display: none;
+      }
+      .Graphs--active-react .BarGraph--react,
+      .Graphs--active-websocket .BarGraph--websocket,
+      .Graphs--active-sqlite .BarGraph--sqlite {
+        display: block;
+      }
+      @media (min-width: 930px) {
+        .Graphs {
+          margin-left: auto;
+        }
+        .BarGraph-subheading,
+        .BarGraph-heading {
+          text-align: center;
+        }
+        .BarGraph-heading {
+          margin-bottom: 0.25rem;
+        }
+        .BarGraphKeyItem-label {
+          width: 130px;
+        }
+      }
+      @media (max-width: 929px) {
+        .InstallBox-code-box {
+          width: fit-content;
+        }
+        .CodeBlock .shiki {
+          padding: 24px 16px;
+          margin: calc(-1 * var(--horizontal-padding));
+          width: calc(100vw - var(--horizontal-padding) - var(--horizontal-padding) -2px);
+          white-space: pre-wrap;
+          box-sizing: border-box;
+          border-radius: 0;
+          font-size: 0.8rem;
+        }
+        .logo-link {
+          gap: 0;
+        }
+        header {
+          grid-template-columns: min-content auto;
+          gap: 2rem;
+        }
+        .tagline,
+        .subtitle,
+        .BarGraph-heading,
+        .BarGraph-subheading {
+          padding: 0 var(--horizontal-padding);
+        }
+        main {
+          padding-left: 0;
+          padding-right: 0;
+          text-align: left;
+        }
+        .InstallBox {
+          padding: 24px 16px;
+          margin-bottom: -32px;
+        }
+        .tagline {
+          font-size: 30pt;
+        }
+        .Tag--Command {
+          display: block;
+          width: fit-content;
+          margin-bottom: 1rem;
+        }
+        .Tabs {
+          margin: 0;
+          gap: 0rem;
+          width: 100%;
+          border-top: 1px solid rgba(200, 200, 200, 0.1);
+        }
+        .Tab {
+          width: 100%;
+          border-bottom-color: #333;
+        }
+        #pitch-content {
+          max-width: 100%;
+        }
+        .Graphs--active-react .Tab[data-tab="react"],
+        .Graphs--active-sqlite .Tab[data-tab="sqlite"],
+        .Graphs--active-websocket .Tab[data-tab="websocket"] {
+          background-color: #6464641a;
+        }
+      }
+      #explain p > code {
+        white-space: pre;
+        padding: 1px 2px;
+      }
+      .Group {
+        display: block;
+      }
+      .Tag--Command {
+        display: block;
+        width: fit-content;
+        margin-bottom: 0.5rem;
+        padding: 8px 12px;
+      }
+      .Label-replace {
+        font-weight: 500;
+      }
+      .Label-text {
+        margin-top: 0.5rem;
+        margin-bottom: 1rem;
+      }
+      #batteries {
+        padding-left: 0;
+      }
+      .Group {
+        margin-bottom: 2rem;
+      }
+      .Group strong {
+        display: block;
+      }
+      .Built {
+        text-align: center;
+        margin-top: 4rem;
+        margin-bottom: 2rem;
+        color: #333;
+      }
+      img {
+        object-fit: contain;
+      }
+      .visually-hidden {
+        clip: rect(0 0 0 0);
+        clip-path: inset(50%);
+        height: 1px;
+        overflow: hidden;
+        position: absolute;
+        white-space: nowrap;
+        width: 1px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="header-wrap">
+      <header>
+        <a href="/" id="logo-link" aria-label="home"
+          ><img
+            height="61px"
+            src="data:image/svg+xml;base64, PHN2ZyBpZD0iQnVuIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA4MCA3MCI+PHRpdGxlPkJ1biBMb2dvPC90aXRsZT48cGF0aCBpZD0iU2hhZG93IiBkPSJNNzEuMDksMjAuNzRjLS4xNi0uMTctLjMzLS4zNC0uNS0uNXMtLjMzLS4zNC0uNS0uNS0uMzMtLjM0LS41LS41LS4zMy0uMzQtLjUtLjUtLjMzLS4zNC0uNS0uNS0uMzMtLjM0LS41LS41LS4zMy0uMzQtLjUtLjVBMjYuNDYsMjYuNDYsMCwwLDEsNzUuNSwzNS43YzAsMTYuNTctMTYuODIsMzAuMDUtMzcuNSwzMC4wNS0xMS41OCwwLTIxLjk0LTQuMjMtMjguODMtMTAuODZsLjUuNS41LjUuNS41LjUuNS41LjUuNS41LjUuNUMxOS41NSw2NS4zLDMwLjE0LDY5Ljc1LDQyLDY5Ljc1YzIwLjY4LDAsMzcuNS0xMy40OCwzNy41LTMwQzc5LjUsMzIuNjksNzYuNDYsMjYsNzEuMDksMjAuNzRaIi8+PGcgaWQ9IkJvZHkiPjxwYXRoIGlkPSJCYWNrZ3JvdW5kIiBkPSJNNzMsMzUuN2MwLDE1LjIxLTE1LjY3LDI3LjU0LTM1LDI3LjU0UzMsNTAuOTEsMywzNS43QzMsMjYuMjcsOSwxNy45NCwxOC4yMiwxM1MzMy4xOCwzLDM4LDNzOC45NCw0LjEzLDE5Ljc4LDEwQzY3LDE3Ljk0LDczLDI2LjI3LDczLDM1LjdaIiBzdHlsZT0iZmlsbDojZmJmMGRmIi8+PHBhdGggaWQ9IkJvdHRvbV9TaGFkb3ciIGRhdGEtbmFtZT0iQm90dG9tIFNoYWRvdyIgZD0iTTczLDM1LjdhMjEuNjcsMjEuNjcsMCwwLDAtLjgtNS43OGMtMi43MywzMy4zLTQzLjM1LDM0LjktNTkuMzIsMjQuOTRBNDAsNDAsMCwwLDAsMzgsNjMuMjRDNTcuMyw2My4yNCw3Myw1MC44OSw3MywzNS43WiIgc3R5bGU9ImZpbGw6I2Y2ZGVjZSIvPjxwYXRoIGlkPSJMaWdodF9TaGluZSIgZGF0YS1uYW1lPSJMaWdodCBTaGluZSIgZD0iTTI0LjUzLDExLjE3QzI5LDguNDksMzQuOTQsMy40Niw0MC43OCwzLjQ1QTkuMjksOS4yOSwwLDAsMCwzOCwzYy0yLjQyLDAtNSwxLjI1LTguMjUsMy4xMy0xLjEzLjY2LTIuMywxLjM5LTMuNTQsMi4xNS0yLjMzLDEuNDQtNSwzLjA3LTgsNC43QzguNjksMTguMTMsMywyNi42MiwzLDM1LjdjMCwuNCwwLC44LDAsMS4xOUM5LjA2LDE1LjQ4LDIwLjA3LDEzLjg1LDI0LjUzLDExLjE3WiIgc3R5bGU9ImZpbGw6I2ZmZmVmYyIvPjxwYXRoIGlkPSJUb3AiIGQ9Ik0zNS4xMiw1LjUzQTE2LjQxLDE2LjQxLDAsMCwxLDI5LjQ5LDE4Yy0uMjguMjUtLjA2LjczLjMuNTksMy4zNy0xLjMxLDcuOTItNS4yMyw2LTEzLjE0QzM1LjcxLDUsMzUuMTIsNS4xMiwzNS4xMiw1LjUzWm0yLjI3LDBBMTYuMjQsMTYuMjQsMCwwLDEsMzksMTljLS4xMi4zNS4zMS42NS41NS4zNkM0MS43NCwxNi41Niw0My42NSwxMSwzNy45Myw1LDM3LjY0LDQuNzQsMzcuMTksNS4xNCwzNy4zOSw1LjQ5Wm0yLjc2LS4xN0ExNi40MiwxNi40MiwwLDAsMSw0NywxNy4xMmEuMzMuMzMsMCwwLDAsLjY1LjExYy45Mi0zLjQ5LjQtOS40NC03LjE3LTEyLjUzQzQwLjA4LDQuNTQsMzkuODIsNS4wOCw0MC4xNSw1LjMyWk0yMS42OSwxNS43NmExNi45NCwxNi45NCwwLDAsMCwxMC40Ny05Yy4xOC0uMzYuNzUtLjIyLjY2LjE4LTEuNzMsOC03LjUyLDkuNjctMTEuMTIsOS40NUMyMS4zMiwxNi40LDIxLjMzLDE1Ljg3LDIxLjY5LDE1Ljc2WiIgc3R5bGU9ImZpbGw6I2NjYmVhNztmaWxsLXJ1bGU6ZXZlbm9kZCIvPjxwYXRoIGlkPSJPdXRsaW5lIiBkPSJNMzgsNjUuNzVDMTcuMzIsNjUuNzUuNSw1Mi4yNy41LDM1LjdjMC0xMCw2LjE4LTE5LjMzLDE2LjUzLTI0LjkyLDMtMS42LDUuNTctMy4yMSw3Ljg2LTQuNjIsMS4yNi0uNzgsMi40NS0xLjUxLDMuNi0yLjE5QzMyLDEuODksMzUsLjUsMzgsLjVzNS42MiwxLjIsOC45LDMuMTRjMSwuNTcsMiwxLjE5LDMuMDcsMS44NywyLjQ5LDEuNTQsNS4zLDMuMjgsOSw1LjI3QzY5LjMyLDE2LjM3LDc1LjUsMjUuNjksNzUuNSwzNS43LDc1LjUsNTIuMjcsNTguNjgsNjUuNzUsMzgsNjUuNzVaTTM4LDNjLTIuNDIsMC01LDEuMjUtOC4yNSwzLjEzLTEuMTMuNjYtMi4zLDEuMzktMy41NCwyLjE1LTIuMzMsMS40NC01LDMuMDctOCw0LjdDOC42OSwxOC4xMywzLDI2LjYyLDMsMzUuNywzLDUwLjg5LDE4LjcsNjMuMjUsMzgsNjMuMjVTNzMsNTAuODksNzMsMzUuN0M3MywyNi42Miw2Ny4zMSwxOC4xMyw1Ny43OCwxMyw1NCwxMSw1MS4wNSw5LjEyLDQ4LjY2LDcuNjRjLTEuMDktLjY3LTIuMDktMS4yOS0zLTEuODRDNDIuNjMsNCw0MC40MiwzLDM4LDNaIi8+PC9nPjxnIGlkPSJNb3V0aCI+PGcgaWQ9IkJhY2tncm91bmQtMiIgZGF0YS1uYW1lPSJCYWNrZ3JvdW5kIj48cGF0aCBkPSJNNDUuMDUsNDNhOC45Myw4LjkzLDAsMCwxLTIuOTIsNC43MSw2LjgxLDYuODEsMCwwLDEtNCwxLjg4QTYuODQsNi44NCwwLDAsMSwzNCw0Ny43MSw4LjkzLDguOTMsMCwwLDEsMzEuMTIsNDNhLjcyLjcyLDAsMCwxLC44LS44MUg0NC4yNkEuNzIuNzIsMCwwLDEsNDUuMDUsNDNaIiBzdHlsZT0iZmlsbDojYjcxNDIyIi8+PC9nPjxnIGlkPSJUb25ndWUiPjxwYXRoIGlkPSJCYWNrZ3JvdW5kLTMiIGRhdGEtbmFtZT0iQmFja2dyb3VuZCIgZD0iTTM0LDQ3Ljc5YTYuOTEsNi45MSwwLDAsMCw0LjEyLDEuOSw2LjkxLDYuOTEsMCwwLDAsNC4xMS0xLjksMTAuNjMsMTAuNjMsMCwwLDAsMS0xLjA3LDYuODMsNi44MywwLDAsMC00LjktMi4zMSw2LjE1LDYuMTUsMCwwLDAtNSwyLjc4QzMzLjU2LDQ3LjQsMzMuNzYsNDcuNiwzNCw0Ny43OVoiIHN0eWxlPSJmaWxsOiNmZjYxNjQiLz48cGF0aCBpZD0iT3V0bGluZS0yIiBkYXRhLW5hbWU9Ik91dGxpbmUiIGQ9Ik0zNC4xNiw0N2E1LjM2LDUuMzYsMCwwLDEsNC4xOS0yLjA4LDYsNiwwLDAsMSw0LDEuNjljLjIzLS4yNS40NS0uNTEuNjYtLjc3YTcsNywwLDAsMC00LjcxLTEuOTMsNi4zNiw2LjM2LDAsMCwwLTQuODksMi4zNkE5LjUzLDkuNTMsMCwwLDAsMzQuMTYsNDdaIi8+PC9nPjxwYXRoIGlkPSJPdXRsaW5lLTMiIGRhdGEtbmFtZT0iT3V0bGluZSIgZD0iTTM4LjA5LDUwLjE5YTcuNDIsNy40MiwwLDAsMS00LjQ1LTIsOS41Miw5LjUyLDAsMCwxLTMuMTEtNS4wNSwxLjIsMS4yLDAsMCwxLC4yNi0xLDEuNDEsMS40MSwwLDAsMSwxLjEzLS41MUg0NC4yNmExLjQ0LDEuNDQsMCwwLDEsMS4xMy41MSwxLjE5LDEuMTksMCwwLDEsLjI1LDFoMGE5LjUyLDkuNTIsMCwwLDEtMy4xMSw1LjA1QTcuNDIsNy40MiwwLDAsMSwzOC4wOSw1MC4xOVptLTYuMTctNy40Yy0uMTYsMC0uMi4wNy0uMjEuMDlhOC4yOSw4LjI5LDAsMCwwLDIuNzMsNC4zN0E2LjIzLDYuMjMsMCwwLDAsMzguMDksNDlhNi4yOCw2LjI4LDAsMCwwLDMuNjUtMS43Myw4LjMsOC4zLDAsMCwwLDIuNzItNC4zNy4yMS4yMSwwLDAsMC0uMi0uMDlaIi8+PC9nPjxnIGlkPSJGYWNlIj48ZWxsaXBzZSBpZD0iUmlnaHRfQmx1c2giIGRhdGEtbmFtZT0iUmlnaHQgQmx1c2giIGN4PSI1My4yMiIgY3k9IjQwLjE4IiByeD0iNS44NSIgcnk9IjMuNDQiIHN0eWxlPSJmaWxsOiNmZWJiZDAiLz48ZWxsaXBzZSBpZD0iTGVmdF9CbHVjaCIgZGF0YS1uYW1lPSJMZWZ0IEJsdWNoIiBjeD0iMjIuOTUiIGN5PSI0MC4xOCIgcng9IjUuODUiIHJ5PSIzLjQ0IiBzdHlsZT0iZmlsbDojZmViYmQwIi8+PHBhdGggaWQ9IkV5ZXMiIGQ9Ik0yNS43LDM4LjhhNS41MSw1LjUxLDAsMSwwLTUuNS01LjUxQTUuNTEsNS41MSwwLDAsMCwyNS43LDM4LjhabTI0Ljc3LDBBNS41MSw1LjUxLDAsMSwwLDQ1LDMzLjI5LDUuNSw1LjUsMCwwLDAsNTAuNDcsMzguOFoiIHN0eWxlPSJmaWxsLXJ1bGU6ZXZlbm9kZCIvPjxwYXRoIGlkPSJJcmlzIiBkPSJNMjQsMzMuNjRhMi4wNywyLjA3LDAsMSwwLTIuMDYtMi4wN0EyLjA3LDIuMDcsMCwwLDAsMjQsMzMuNjRabTI0Ljc3LDBhMi4wNywyLjA3LDAsMSwwLTIuMDYtMi4wN0EyLjA3LDIuMDcsMCwwLDAsNDguNzUsMzMuNjRaIiBzdHlsZT0iZmlsbDojZmZmO2ZpbGwtcnVsZTpldmVub2RkIi8+PC9nPjwvc3ZnPg=="
+            alt="Bun logo"
+            id="logo" /><img
+            alt="Bun"
+            id="logo-text"
+            height="31.65px"
+            src="data:image/png;base64, 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"
+        /></a>
+        <nav class="Navigation">
+          <ul>
+            <li>
+              <a class="NavText" href="https://github.com/oven-sh/bun#Reference">Docs</a>
+            </li>
+            <li>
+              <a class="NavText" href="https://bun.sh/discord">Discord</a>
+            </li>
+            <li>
+              <a class="NavText" href="https://github.com/oven-sh/bun">GitHub</a>
+            </li>
+          </ul>
+        </nav>
+      </header>
+    </div>
+    <div id="pitch">
+      <main>
+        <div id="pitch-content">
+          <h1 class="tagline">Bun is a fast all-in-one JavaScript runtime</h1>
+          <p class="subtitle">
+            Bundle, transpile, install and run JavaScript &amp; TypeScript projects — all in Bun. Bun is a new
+            JavaScript runtime with a native bundler, transpiler, task runner and npm client built-in.
+          </p>
+          <div class="InstallBox InstallBox--desktop">
+            <div class="InstallBox-label">
+              <div class="InstallBox-label-heading">
+                Install Bun CLI
+                <!-- -->0.2.1<!-- -->
+                (beta)
+              </div>
+              <div class="InstallBox-label-subtitle">
+                macOS x64 &amp; Silicon, Linux x64, Windows Subsystem for Linux
+              </div>
+            </div>
+            <div class="InstallBox-code-box">
+              <div class="InstallBox-curl">curl https://bun.sh/install | bash</div>
+              <button class="InstallBox-copy" aria-label="Copy installation script">copy</button>
+            </div>
+            <a class="InstallBox-view-source-link" target="_blank" href="https://bun.sh/install">Show script source</a>
+          </div>
+        </div>
+        <div class="Graphs Graphs--active-react">
+          <div class="Tabs" role="tablist">
+            <button
+              data-tab="react"
+              id="tab-react"
+              aria-controls="react-tab-content"
+              class="Tab"
+              role="tab"
+              aria-selected="true"
+              tabindex="0"
+            >
+              Bun.serve</button
+            ><button
+              data-tab="websocket"
+              id="tab-websocket"
+              aria-controls="websocket-tab-content"
+              class="Tab"
+              role="tab"
+              tabindex="-1"
+            >
+              WebSocket</button
+            ><button
+              data-tab="sqlite"
+              id="tab-sqlite"
+              aria-controls="sqlite-tab-content"
+              class="Tab"
+              role="tab"
+              tabindex="-1"
+            >
+              bun:sqlite
+            </button>
+          </div>
+          <div id="active-tab" class="ActiveTab">
+            <div
+              role="tabpanel"
+              tabindex="0"
+              id="react-tab-content"
+              aria-labelledby="tab-react"
+              class="BarGraph BarGraph--react BarGraph--horizontal BarGraph--dark"
+            >
+              <h2 class="BarGraph-heading">Server-side rendering React</h2>
+              <p class="BarGraph-subheading">HTTP requests per second (Linux x64)</p>
+              <ul style="--count: 3" class="BarGraphList">
+                <li class="BarGraphItem BarGraphItem--bun" style="--amount: 69845; --max: 87306.25">
+                  <div class="visually-hidden">bun: 69,845 requests per second</div>
+                  <div style="--amount: 69845; --max: 87306.25" class="BarGraphBar" aria-hidden="true">
+                    <div style="--amount: 69845; --max: 87306.25" class="BarGraphBar-label">69,845</div>
+                  </div>
+                </li>
+                <li class="BarGraphItem BarGraphItem--node" style="--amount: 16288; --max: 87306.25">
+                  <div class="visually-hidden">node: 16,288 requests per second</div>
+                  <div style="--amount: 16288; --max: 87306.25" class="BarGraphBar" aria-hidden="true">
+                    <div style="--amount: 16288; --max: 87306.25" class="BarGraphBar-label">16,288</div>
+                  </div>
+                </li>
+                <li class="BarGraphItem BarGraphItem--deno" style="--amount: 12926; --max: 87306.25">
+                  <div class="visually-hidden">deno: 12,926 requests per second</div>
+                  <div style="--amount: 12926; --max: 87306.25" class="BarGraphBar" aria-hidden="true">
+                    <div style="--amount: 12926; --max: 87306.25" class="BarGraphBar-label">12,926</div>
+                  </div>
+                </li>
+              </ul>
+              <div style="--count: 3" class="BarGraphKey">
+                <a
+                  href="https://github.com/oven-sh/bun/blob/b0a7f8df926e91d3b2f0b3b8833ddaf55073f30e/bench/react-hello-world/react-hello-world.jsx#L27"
+                  target="_blank"
+                  class="BarGraphKeyItem"
+                  aria-label="bun benchmark source"
+                  ><div class="BarGraphKeyItem-label">bun</div>
+                  <div class="BarGraphKeyItem-value">v0.2.0</div>
+                  <div class="BarGraphKeyItem-viewSource">View source</div></a
+                ><a
+                  href="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/react-hello-world/react-hello-world.node.jsx"
+                  target="_blank"
+                  class="BarGraphKeyItem"
+                  aria-label="node benchmark source"
+                  ><div class="BarGraphKeyItem-label">node</div>
+                  <div class="BarGraphKeyItem-value">v18.1.0</div>
+                  <div class="BarGraphKeyItem-viewSource">View source</div></a
+                ><a
+                  href="https://github.com/oven-sh/bun/blob/af033c02c5fbaade201abfe332f376879d9e6885/bench/react-hello-world/react-hello-world.deno.jsx"
+                  target="_blank"
+                  class="BarGraphKeyItem"
+                  aria-label="Deno.serve() benchmark source"
+                  ><div class="BarGraphKeyItem-label">Deno.serve()</div>
+                  <div class="BarGraphKeyItem-value">v1.26.0</div>
+                  <div class="BarGraphKeyItem-viewSource">View source</div></a
+                >
+              </div>
+            </div>
+            <div
+              role="tabpanel"
+              tabindex="-1"
+              id="websocket-tab-content"
+              aria-labelledby="tab-websocket"
+              class="BarGraph BarGraph--websocket BarGraph--horizontal BarGraph--dark"
+            >
+              <h2 class="BarGraph-heading">WebSocket server chat</h2>
+              <p class="BarGraph-subheading">Messages sent per second (Linux x64, 16 clients)</p>
+              <ul style="--count: 3" class="BarGraphList">
+                <li class="BarGraphItem BarGraphItem--bun" style="--amount: 737280; --max: 921600">
+                  <div class="visually-hidden">bun: 737,280 messages sent per second</div>
+                  <div style="--amount: 737280; --max: 921600" class="BarGraphBar" aria-hidden="true">
+                    <div style="--amount: 737280; --max: 921600" class="BarGraphBar-label">737,280</div>
+                  </div>
+                </li>
+                <li class="BarGraphItem BarGraphItem--node" style="--amount: 107457; --max: 921600">
+                  <div class="visually-hidden">node: 107,457 messages sent per second</div>
+                  <div style="--amount: 107457; --max: 921600" class="BarGraphBar" aria-hidden="true">
+                    <div style="--amount: 107457; --max: 921600" class="BarGraphBar-label">107,457</div>
+                  </div>
+                </li>
+                <li class="BarGraphItem BarGraphItem--deno" style="--amount: 82097; --max: 921600">
+                  <div class="visually-hidden">deno: 82,097 messages sent per second</div>
+                  <div style="--amount: 82097; --max: 921600" class="BarGraphBar" aria-hidden="true">
+                    <div style="--amount: 82097; --max: 921600" class="BarGraphBar-label">82,097</div>
+                  </div>
+                </li>
+              </ul>
+              <div style="--count: 3" class="BarGraphKey">
+                <a
+                  href="https://github.com/oven-sh/bun/blob/9c7eb75a9ac845d92bfdfd6cc574dc8f39bde293/bench/websocket-server/chat-server.bun.js#L1"
+                  target="_blank"
+                  class="BarGraphKeyItem"
+                  aria-label="Bun.serve() benchmark source"
+                  ><div class="BarGraphKeyItem-label">Bun.serve()</div>
+                  <div class="BarGraphKeyItem-value">v0.2.1</div>
+                  <div class="BarGraphKeyItem-viewSource">View source</div></a
+                ><a
+                  href="https://github.com/oven-sh/bun/blob/9c7eb75a9ac845d92bfdfd6cc574dc8f39bde293/bench/websocket-server/chat-server.node.mjs#L1"
+                  target="_blank"
+                  class="BarGraphKeyItem"
+                  aria-label="ws (Node.js) benchmark source"
+                  ><div class="BarGraphKeyItem-label">ws (Node.js)</div>
+                  <div class="BarGraphKeyItem-value">node v18.10.0</div>
+                  <div class="BarGraphKeyItem-viewSource">View source</div></a
+                ><a
+                  href="https://github.com/oven-sh/bun/blob/9c7eb75a9ac845d92bfdfd6cc574dc8f39bde293/bench/websocket-server/chat-server.deno.mjs#L1"
+                  target="_blank"
+                  class="BarGraphKeyItem"
+                  aria-label="Deno.serve() benchmark source"
+                  ><div class="BarGraphKeyItem-label">Deno.serve()</div>
+                  <div class="BarGraphKeyItem-value">v1.26.2</div>
+                  <div class="BarGraphKeyItem-viewSource">View source</div></a
+                >
+              </div>
+            </div>
+            <div
+              role="tabpanel"
+              tabindex="-1"
+              id="sqlite-tab-content"
+              aria-labelledby="tab-sqlite"
+              class="BarGraph--sqlite BarGraph BarGraph--horizontal BarGraph--dark"
+            >
+              <h2 class="BarGraph-heading">Load a huge table</h2>
+              <p class="BarGraph-subheading">Average queries per second</p>
+              <ul style="--count: 3" class="BarGraphList">
+                <li class="BarGraphItem BarGraphItem--bun" style="--amount: 70.32; --max: 88">
+                  <div class="visually-hidden">bun: 70.32 queries per second</div>
+                  <div style="--amount: 70.32; --max: 88" class="BarGraphBar" aria-hidden="true">
+                    <div style="--amount: 70.32; --max: 88" class="BarGraphBar-label">70.32</div>
+                  </div>
+                </li>
+                <li class="BarGraphItem BarGraphItem--deno" style="--amount: 36.54; --max: 88">
+                  <div class="visually-hidden">deno: 36.54 queries per second</div>
+                  <div style="--amount: 36.54; --max: 88" class="BarGraphBar" aria-hidden="true">
+                    <div style="--amount: 36.54; --max: 88" class="BarGraphBar-label">36.54</div>
+                  </div>
+                </li>
+                <li class="BarGraphItem BarGraphItem--better-sqlite3" style="--amount: 23.28; --max: 88">
+                  <div class="visually-hidden">better-sqlite3: 23.28 queries per second</div>
+                  <div style="--amount: 23.28; --max: 88" class="BarGraphBar" aria-hidden="true">
+                    <div style="--amount: 23.28; --max: 88" class="BarGraphBar-label">23.28</div>
+                  </div>
+                </li>
+              </ul>
+              <div style="--count: 3" class="BarGraphKey">
+                <a
+                  href="https://github.com/oven-sh/bun/blob/b0a7f8df926e91d3b2f0b3b8833ddaf55073f30e/bench/sqlite/bun.js#L9"
+                  target="_blank"
+                  class="BarGraphKeyItem"
+                  aria-label="bun:sqlite benchmark source"
+                  ><div class="BarGraphKeyItem-label">bun:sqlite</div>
+                  <div class="BarGraphKeyItem-value">v0.2.0</div>
+                  <div class="BarGraphKeyItem-viewSource">View source</div></a
+                ><a
+                  href="https://github.com/oven-sh/bun/blob/6223030360c121e272aad98c7d1c14a009c5fc1c/bench/sqlite/deno.js#L9"
+                  target="_blank"
+                  class="BarGraphKeyItem"
+                  aria-label="deno (x/sqlite3) benchmark source"
+                  ><div class="BarGraphKeyItem-label">deno (x/sqlite3)</div>
+                  <div class="BarGraphKeyItem-value">v1.26.1</div>
+                  <div class="BarGraphKeyItem-viewSource">View source</div></a
+                ><a
+                  href="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/sqlite/node.mjs"
+                  target="_blank"
+                  class="BarGraphKeyItem"
+                  aria-label="better-sqlite3 benchmark source"
+                  ><div class="BarGraphKeyItem-label">better-sqlite3</div>
+                  <div class="BarGraphKeyItem-value">node v18.2.0</div>
+                  <div class="BarGraphKeyItem-viewSource">View source</div></a
+                >
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="InstallBox InstallBox--mobile">
+          <div class="InstallBox-label">
+            <div class="InstallBox-label-heading">
+              Install Bun CLI
+              <!-- -->0.2.1<!-- -->
+              (beta)
+            </div>
+            <div class="InstallBox-label-subtitle">macOS x64 &amp; Silicon, Linux x64, Windows Subsystem for Linux</div>
+          </div>
+          <div class="InstallBox-code-box">
+            <div class="InstallBox-curl">curl https://bun.sh/install | bash</div>
+            <button class="InstallBox-copy" aria-label="Copy installation script">copy</button>
+          </div>
+          <a class="InstallBox-view-source-link" target="_blank" href="https://bun.sh/install">Show script source</a>
+        </div>
+      </main>
+    </div>
+    <section id="explain-section">
+      <div id="explain">
+        <h2>Tell me more about Bun</h2>
+        <p>
+          Bun is a modern JavaScript runtime like Node or Deno. It was built from scratch to focus on three main things:
+        </p>
+        <ul>
+          <li>Start fast (it has the edge in mind).</li>
+          <li>New levels of performance (extending JavaScriptCore, the engine).</li>
+          <li>Being a great and complete tool (bundler, transpiler, package manager).</li>
+        </ul>
+        <p>
+          Bun is designed as a drop-in replacement for your current JavaScript &amp; TypeScript apps or scripts — on
+          your local computer, server or on the edge. Bun natively implements hundreds of Node.js and Web APIs,
+          including ~90% of<!-- -->
+          <a href="https://nodejs.org/api/n-api.html" target="_blank">Node-API</a>
+          <!-- -->functions (native modules), fs, path, Buffer and more.
+        </p>
+        <p>
+          The goal of Bun is to run most of the world&#x27;s JavaScript outside of browsers, bringing performance and
+          complexity enhancements to your future infrastructure, as well as developer productivity through better,
+          simpler tooling.
+        </p>
+        <h2>Batteries included</h2>
+        <ul id="batteries">
+          <li>
+            Web APIs like<!-- -->
+            <a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/API/fetch" class="Tag Tag--WebAPI"
+              >fetch</a
+            >,<!-- -->
+            <a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/API/WebSocket" class="Tag Tag--WebAPI"
+              >WebSocket</a
+            >, and<!-- -->
+            <a
+              target="_blank"
+              href="https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream"
+              class="Tag Tag--WebAPI"
+              >ReadableStream</a
+            >
+            <!-- -->are built-in
+          </li>
+          <li>
+            <span target="_blank" class="Tag Tag--NodeJS">node_modules</span>
+            bun implements Node.js&#x27; module resolution algorithm, so you can use npm packages in Bun. ESM and
+            CommonJS are supported, but Bun internally uses ESM
+          </li>
+          <li>
+            In Bun, every file is transpiled.<!-- -->
+            <span target="_blank" class="Tag Tag--TypeScript">TypeScript</span>
+            &amp; <span target="_blank" class="Tag Tag--React">JSX</span> just work
+          </li>
+          <li>
+            Bun supports <code>&quot;paths&quot;</code>, <code>&quot;jsxImportSource&quot;</code>and more from
+            <span target="_blank" class="Tag Tag--TypeScript">tsconfig.json</span>
+            files
+          </li>
+          <li>
+            <span target="_blank" class="Tag Tag--Bun">Bun.Transpiler</span>
+            Bun&#x27;s JSX &amp; TypeScript transpiler is available as an API in Bun
+          </li>
+          <li>
+            use the fastest system calls available with
+            <span target="_blank" class="Tag Tag--Bun">Bun.write</span>
+            <!-- -->to write, copy, pipe, send and clone files
+          </li>
+          <li>
+            Bun automatically loads environment variables from
+            <span target="_blank" class="Tag Tag--Bun">.env</span>
+            <!-- -->files. No more<!-- -->
+            <code class="mono">require(&quot;dotenv&quot;).config()</code>
+          </li>
+          <li>
+            Bun ships with a fast SQLite3 client built-in<!-- -->
+            <span target="_blank" class="Tag Tag--Bun">bun:sqlite</span>
+          </li>
+          <li>
+            <a target="_blank" href="https://github.com/oven-sh/bun/issues/158" class="Tag Tag--NodeJS">Node-API</a>
+            <!-- -->Bun implements most of<!-- -->
+            <a href="https://nodejs.org/api/n-api.html#node-api" target="_blank">Node-API (N-API)</a>. Many Node.js
+            native modules just work
+          </li>
+          <li>
+            <span target="_blank" class="Tag Tag--Bun">bun:ffi</span> call native code from JavaScript with Bun&#x27;s
+            low-overhead foreign function interface
+          </li>
+          <li>
+            <span target="_blank" class="Tag Tag--NodeJS">node:fs</span>
+            <span target="_blank" class="Tag Tag--NodeJS">node:path</span> Bun natively supports a growing list of
+            Node.js core modules along with globals like Buffer and process
+          </li>
+        </ul>
+        <h2>How does Bun work?</h2>
+        <p>
+          Bun uses the<!-- -->
+          <a href="https://github.com/WebKit/WebKit/tree/main/Source/JavaScriptCore">JavaScriptCore</a>
+          <!-- -->engine, which tends<!-- -->
+          <a target="blank" href="https://twitter.com/jarredsumner/status/1499225725492076544">to start</a>
+          <!-- -->and perform a little faster than more traditional choices like V8. Bun is written in<!-- -->
+          <a href="https://ziglang.org/"
+            ><svg xmlns="http://www.w3.org/2000/svg" height="1.2rem" class="Zig" viewBox="0 0 400 140">
+              <title>Zig</title>
+              <g fill="#F7A41D">
+                <g>
+                  <polygon points="46,22 28,44 19,30"></polygon>
+                  <polygon
+                    points="46,22 33,33 28,44 22,44 22,95 31,95 20,100 12,117 0,117 0,22"
+                    shape-rendering="crispEdges"
+                  ></polygon>
+                  <polygon points="31,95 12,117 4,106"></polygon>
+                </g>
+                <g>
+                  <polygon points="56,22 62,36 37,44"></polygon>
+                  <polygon points="56,22 111,22 111,44 37,44 56,32" shape-rendering="crispEdges"></polygon>
+                  <polygon points="116,95 97,117 90,104"></polygon>
+                  <polygon points="116,95 100,104 97,117 42,117 42,95" shape-rendering="crispEdges"></polygon>
+                  <polygon points="150,0 52,117 3,140 101,22"></polygon>
+                </g>
+                <g>
+                  <polygon points="141,22 140,40 122,45"></polygon>
+                  <polygon
+                    points="153,22 153,117 106,117 120,105 125,95 131,95 131,45 122,45 132,36 141,22"
+                    shape-rendering="crispEdges"
+                  ></polygon>
+                  <polygon points="125,95 130,110 106,117"></polygon>
+                </g>
+              </g>
+              <g fill="#121212">
+                <g>
+                  <polygon points="260,22 260,37 229,40 177,40 177,22" shape-rendering="crispEdges"></polygon>
+                  <polygon points="260,37 207,99 207,103 176,103 229,40 229,37"></polygon>
+                  <polygon points="261,99 261,117 176,117 176,103 206,99" shape-rendering="crispEdges"></polygon>
+                </g>
+                <rect x="272" y="22" shape-rendering="crispEdges" width="22" height="95"></rect>
+                <g>
+                  <polygon points="394,67 394,106 376,106 376,81 360,70 346,67" shape-rendering="crispEdges"></polygon>
+                  <polygon points="360,68 376,81 346,67"></polygon>
+                  <path
+                    d="M394,106c-10.2,7.3-24,12-37.7,12c-29,0-51.1-20.8-51.1-48.3c0-27.3,22.5-48.1,52-48.1
+			c14.3,0,29.2,5.5,38.9,14l-13,15c-7.1-6.3-16.8-10-25.9-10c-17,0-30.2,12.9-30.2,29.5c0,16.8,13.3,29.6,30.3,29.6
+			c5.7,0,12.8-2.3,19-5.5L394,106z"
+                  ></path>
+                </g>
+              </g></svg></a
+          >, a low-level programming language with manual memory management.<br /><br />Most of Bun is written from
+          scratch including the JSX/TypeScript transpiler, npm client, bundler, SQLite client, HTTP client, WebSocket
+          client and more.
+        </p>
+        <h2>Why is Bun fast?</h2>
+        <p>
+          An enormous amount of time spent profiling, benchmarking and optimizing things. The answer is different for
+          every part of Bun, but one general theme:<!-- -->
+          <a href="https://ziglang.org/"
+            ><svg xmlns="http://www.w3.org/2000/svg" height="1.2rem" class="Zig" viewBox="0 0 400 140">
+              <title>Zig</title>
+              <g fill="#F7A41D">
+                <g>
+                  <polygon points="46,22 28,44 19,30"></polygon>
+                  <polygon
+                    points="46,22 33,33 28,44 22,44 22,95 31,95 20,100 12,117 0,117 0,22"
+                    shape-rendering="crispEdges"
+                  ></polygon>
+                  <polygon points="31,95 12,117 4,106"></polygon>
+                </g>
+                <g>
+                  <polygon points="56,22 62,36 37,44"></polygon>
+                  <polygon points="56,22 111,22 111,44 37,44 56,32" shape-rendering="crispEdges"></polygon>
+                  <polygon points="116,95 97,117 90,104"></polygon>
+                  <polygon points="116,95 100,104 97,117 42,117 42,95" shape-rendering="crispEdges"></polygon>
+                  <polygon points="150,0 52,117 3,140 101,22"></polygon>
+                </g>
+                <g>
+                  <polygon points="141,22 140,40 122,45"></polygon>
+                  <polygon
+                    points="153,22 153,117 106,117 120,105 125,95 131,95 131,45 122,45 132,36 141,22"
+                    shape-rendering="crispEdges"
+                  ></polygon>
+                  <polygon points="125,95 130,110 106,117"></polygon>
+                </g>
+              </g>
+              <g fill="#121212">
+                <g>
+                  <polygon points="260,22 260,37 229,40 177,40 177,22" shape-rendering="crispEdges"></polygon>
+                  <polygon points="260,37 207,99 207,103 176,103 229,40 229,37"></polygon>
+                  <polygon points="261,99 261,117 176,117 176,103 206,99" shape-rendering="crispEdges"></polygon>
+                </g>
+                <rect x="272" y="22" shape-rendering="crispEdges" width="22" height="95"></rect>
+                <g>
+                  <polygon points="394,67 394,106 376,106 376,81 360,70 346,67" shape-rendering="crispEdges"></polygon>
+                  <polygon points="360,68 376,81 346,67"></polygon>
+                  <path
+                    d="M394,106c-10.2,7.3-24,12-37.7,12c-29,0-51.1-20.8-51.1-48.3c0-27.3,22.5-48.1,52-48.1
+			c14.3,0,29.2,5.5,38.9,14l-13,15c-7.1-6.3-16.8-10-25.9-10c-17,0-30.2,12.9-30.2,29.5c0,16.8,13.3,29.6,30.3,29.6
+			c5.7,0,12.8-2.3,19-5.5L394,106z"
+                  ></path>
+                </g>
+              </g></svg></a
+          >&#x27;s low-level control over memory and lack of hidden control flow makes it much simpler to write fast
+          software.<!-- -->
+          <a href="https://github.com/sponsors/ziglang">Sponsor the Zig Software Foundation</a>.
+        </p>
+        <h2>Getting started</h2>
+        <p>
+          To install Bun, run this<!-- -->
+          <a target="_blank" href="https://bun.sh/install">install script</a>
+          <!-- -->in your terminal. It downloads Bun from GitHub.
+        </p>
+        <div class="CodeBlock">
+          <pre
+            class="shiki"
+            style="background-color: #282a36"
+          ><code><span class="line"><span style="color: #F8F8F2">curl https://bun.sh/install </span><span style="color: #FF79C6">|</span><span style="color: #F8F8F2"> bash</span></span></code></pre>
+        </div>
+        <p>
+          <!-- -->Bun&#x27;s HTTP server is built on web standards like<!-- -->
+          <a class="Identifier" href="https://developer.mozilla.org/en-US/docs/Web/API/Request">Request</a>
+          <!-- -->and<!-- -->
+          <a class="Identifier" href="https://developer.mozilla.org/en-US/docs/Web/API/Response">Response</a>
+        </p>
+        <div class="CodeBlock">
+          <pre
+            class="shiki"
+            style="background-color: #282a36"
+          ><code><span class="line"><span style="color: #6272A4">// http.js</span></span>
+<span class="line"><span style="color: #FF79C6">export</span><span style="color: #F8F8F2"> </span><span style="color: #FF79C6">default</span><span style="color: #F8F8F2"> {</span></span>
+<span class="line"><span style="color: #F8F8F2">  port</span><span style="color: #FF79C6">:</span><span style="color: #F8F8F2"> </span><span style="color: #BD93F9">3000</span><span style="color: #F8F8F2">,</span></span>
+<span class="line"><span style="color: #F8F8F2">  </span><span style="color: #50FA7B">fetch</span><span style="color: #F8F8F2">(</span><span style="color: #FFB86C; font-style: italic">request</span><span style="color: #F8F8F2">) {</span></span>
+<span class="line"><span style="color: #F8F8F2">    </span><span style="color: #FF79C6">return</span><span style="color: #F8F8F2"> </span><span style="color: #FF79C6; font-weight: bold">new</span><span style="color: #F8F8F2"> </span><span style="color: #50FA7B">Response</span><span style="color: #F8F8F2">(</span><span style="color: #E9F284">&quot;</span><span style="color: #F1FA8C">Welcome to Bun!</span><span style="color: #E9F284">&quot;</span><span style="color: #F8F8F2">);</span></span>
+<span class="line"><span style="color: #F8F8F2">  },</span></span>
+<span class="line"><span style="color: #F8F8F2">};</span></span></code></pre>
+        </div>
+        <p>Run it with Bun:</p>
+        <div class="CodeBlock">
+          <pre
+            class="shiki"
+            style="background-color: #282a36"
+          ><code><span class="line"><span style="color: #F8F8F2">bun run http.js</span></span></code></pre>
+        </div>
+        <p>
+          Then open<!-- -->
+          <a target="_blank" href="http://localhost:3000">http://localhost:3000</a>
+          <!-- -->in your browser.<br /><br />See<!-- -->
+          <a href="https://github.com/oven-sh/bun/tree/main/examples">more examples</a>
+          <!-- -->and check out<!-- -->
+          <a href="https://github.com/oven-sh/bun#Reference">the docs</a>. If you have any questions or want help, join<!-- -->
+          <a href="https://bun.sh/discord">Bun&#x27;s Discord</a>.
+        </p>
+        <h2>Bun CLI</h2>
+        <div class="Group">
+          <span target="_blank" class="Tag Tag--Command">bun run</span>
+          <p>
+            The same command for running JavaScript &amp; TypeScript files with bun&#x27;s JavaScript runtime also runs
+            package.json<!-- -->
+            <code class="mono">&quot;scripts&quot;</code>.
+          </p>
+          <strong
+            >Replace <code class="mono">npm run</code> with<!-- -->
+            <code class="mono">bun run</code> and save 160ms on every run.</strong
+          ><br />
+          <div>
+            Bun runs package.json scripts<!-- -->
+            <a
+              href="https://twitter.com/jarredsumner/status/1454218996983623685"
+              target="_blank"
+              class="PerformanceClaim"
+              >30x faster than <code class="mono">npm run</code></a
+            >
+          </div>
+        </div>
+        <div class="Group">
+          <span target="_blank" class="Tag Tag--Command">bun install</span>
+          <p>
+            <code classsName="mono">bun install</code> is an npm-compatible package manager. You probably will be
+            surprised by how much faster copying files can get.
+          </p>
+          <strong
+            >Replace <code class="mono">yarn</code> with<!-- -->
+            <code class="mono">bun install</code> and get 20x faster package installs.</strong
+          ><br />
+          <div><code class="mono">bun install</code> uses the fastest system calls available to copy files.</div>
+        </div>
+        <div class="Group">
+          <span target="_blank" class="Tag Tag--Command">bun wiptest</span>
+          <p>A Jest-like test runner for JavaScript &amp; TypeScript projects built-in to Bun.</p>
+          <div class="Label">
+            <a
+              href="https://twitter.com/jarredsumner/status/1542824445810642946"
+              target="_blank"
+              class="PerformanceClaim"
+              >You&#x27;ve never seen a JavaScript test runner this fast</a
+            >
+            <!-- -->(or incomplete).
+          </div>
+        </div>
+        <h2>What is the license?</h2>
+        <p>MIT License, excluding dependencies which have various licenses.</p>
+        <h2>How do I see the source code?</h2>
+        <p>Bun is on <a href="https://github.com/oven-sh/bun">GitHub</a>.</p>
+      </div>
+    </section>
+    <section id="explain-section"><div id="explain"></div></section>
+    <script>
+      [...document.querySelectorAll(".Tab")].map(el => {
+        el.addEventListener("click", function (e) {
+          var tab = e.srcElement.getAttribute("data-tab");
+          [...document.querySelectorAll(".Tab")].map(el => {
+            var active = el.getAttribute("data-tab") === tab;
+            el.setAttribute("tabindex", active ? 0 : -1);
+            el.setAttribute("aria-selected", active);
+          });
+          [...document.querySelectorAll(".BarGraph")].map(el => {
+            var active = el.id === tab + "-tab-content";
+            el.setAttribute("tabindex", active ? 0 : -1);
+          });
+          document.querySelector(".Graphs").setAttribute("class", "Graphs Graphs--active-" + tab);
+        });
+
+        el.addEventListener("keydown", e => {
+          var tabs = [...document.querySelectorAll(".Tab")];
+          var activeTabEl = document.querySelector(".Tab[aria-selected='true']");
+          var activeTabIndex = tabs.indexOf(activeTabEl);
+          if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+            e.preventDefault();
+            activeTabIndex = (activeTabIndex + 1) % tabs.length;
+            tabs[activeTabIndex].click();
+            tabs[activeTabIndex].focus();
+          }
+          if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+            e.preventDefault();
+            activeTabIndex = (activeTabIndex + tabs.length - 1) % tabs.length;
+            tabs[activeTabIndex].click();
+            tabs[activeTabIndex].focus();
+          }
+          if (e.key === "Home") {
+            e.preventDefault();
+            tabs[0].click();
+            tabs[0].focus();
+          }
+          if (e.key === "End") {
+            e.preventDefault();
+            tabs[tabs.length - 1].click();
+            tabs[tabs.length - 1].focus();
+          }
+        });
+      });
+
+      for (const el of document.querySelectorAll(".InstallBox-copy")) {
+        el.addEventListener("click", async e => {
+          await navigator.clipboard.writeText("curl https://bun.sh/install | bash");
+        });
+      }
+    </script>
+    <div class="Built">
+      Built with Bun
+      <!-- -->0.2.1
+    </div>
+  </body>
+</html>

@@ -1,0 +1,757 @@
+# emoji-variation-sequences.txt
+# Date: 2024-05-01, 21:25:24 GMT
+# © 2024 Unicode®, Inc.
+# Unicode and the Unicode Logo are registered trademarks of Unicode, Inc. in the U.S. and other countries.
+# For terms of use and license, see https://www.unicode.org/terms_of_use.html
+#
+# Emoji Variation Sequences for UTS #51
+# Used with Emoji Version 16.0 and subsequent minor revisions (if any)
+#
+# For documentation and usage, see https://www.unicode.org/reports/tr51
+#
+0023 FE0E  ; text style;  # (1.1) NUMBER SIGN
+0023 FE0F  ; emoji style; # (1.1) NUMBER SIGN
+002A FE0E  ; text style;  # (1.1) ASTERISK
+002A FE0F  ; emoji style; # (1.1) ASTERISK
+0030 FE0E  ; text style;  # (1.1) DIGIT ZERO
+0030 FE0F  ; emoji style; # (1.1) DIGIT ZERO
+0031 FE0E  ; text style;  # (1.1) DIGIT ONE
+0031 FE0F  ; emoji style; # (1.1) DIGIT ONE
+0032 FE0E  ; text style;  # (1.1) DIGIT TWO
+0032 FE0F  ; emoji style; # (1.1) DIGIT TWO
+0033 FE0E  ; text style;  # (1.1) DIGIT THREE
+0033 FE0F  ; emoji style; # (1.1) DIGIT THREE
+0034 FE0E  ; text style;  # (1.1) DIGIT FOUR
+0034 FE0F  ; emoji style; # (1.1) DIGIT FOUR
+0035 FE0E  ; text style;  # (1.1) DIGIT FIVE
+0035 FE0F  ; emoji style; # (1.1) DIGIT FIVE
+0036 FE0E  ; text style;  # (1.1) DIGIT SIX
+0036 FE0F  ; emoji style; # (1.1) DIGIT SIX
+0037 FE0E  ; text style;  # (1.1) DIGIT SEVEN
+0037 FE0F  ; emoji style; # (1.1) DIGIT SEVEN
+0038 FE0E  ; text style;  # (1.1) DIGIT EIGHT
+0038 FE0F  ; emoji style; # (1.1) DIGIT EIGHT
+0039 FE0E  ; text style;  # (1.1) DIGIT NINE
+0039 FE0F  ; emoji style; # (1.1) DIGIT NINE
+00A9 FE0E  ; text style;  # (1.1) COPYRIGHT SIGN
+00A9 FE0F  ; emoji style; # (1.1) COPYRIGHT SIGN
+00AE FE0E  ; text style;  # (1.1) REGISTERED SIGN
+00AE FE0F  ; emoji style; # (1.1) REGISTERED SIGN
+203C FE0E  ; text style;  # (1.1) DOUBLE EXCLAMATION MARK
+203C FE0F  ; emoji style; # (1.1) DOUBLE EXCLAMATION MARK
+2049 FE0E  ; text style;  # (3.0) EXCLAMATION QUESTION MARK
+2049 FE0F  ; emoji style; # (3.0) EXCLAMATION QUESTION MARK
+2122 FE0E  ; text style;  # (1.1) TRADE MARK SIGN
+2122 FE0F  ; emoji style; # (1.1) TRADE MARK SIGN
+2139 FE0E  ; text style;  # (3.0) INFORMATION SOURCE
+2139 FE0F  ; emoji style; # (3.0) INFORMATION SOURCE
+2194 FE0E  ; text style;  # (1.1) LEFT RIGHT ARROW
+2194 FE0F  ; emoji style; # (1.1) LEFT RIGHT ARROW
+2195 FE0E  ; text style;  # (1.1) UP DOWN ARROW
+2195 FE0F  ; emoji style; # (1.1) UP DOWN ARROW
+2196 FE0E  ; text style;  # (1.1) NORTH WEST ARROW
+2196 FE0F  ; emoji style; # (1.1) NORTH WEST ARROW
+2197 FE0E  ; text style;  # (1.1) NORTH EAST ARROW
+2197 FE0F  ; emoji style; # (1.1) NORTH EAST ARROW
+2198 FE0E  ; text style;  # (1.1) SOUTH EAST ARROW
+2198 FE0F  ; emoji style; # (1.1) SOUTH EAST ARROW
+2199 FE0E  ; text style;  # (1.1) SOUTH WEST ARROW
+2199 FE0F  ; emoji style; # (1.1) SOUTH WEST ARROW
+21A9 FE0E  ; text style;  # (1.1) LEFTWARDS ARROW WITH HOOK
+21A9 FE0F  ; emoji style; # (1.1) LEFTWARDS ARROW WITH HOOK
+21AA FE0E  ; text style;  # (1.1) RIGHTWARDS ARROW WITH HOOK
+21AA FE0F  ; emoji style; # (1.1) RIGHTWARDS ARROW WITH HOOK
+231A FE0E  ; text style;  # (1.1) WATCH
+231A FE0F  ; emoji style; # (1.1) WATCH
+231B FE0E  ; text style;  # (1.1) HOURGLASS
+231B FE0F  ; emoji style; # (1.1) HOURGLASS
+2328 FE0E  ; text style;  # (1.1) KEYBOARD
+2328 FE0F  ; emoji style; # (1.1) KEYBOARD
+23CF FE0E  ; text style;  # (4.0) EJECT SYMBOL
+23CF FE0F  ; emoji style; # (4.0) EJECT SYMBOL
+23E9 FE0E  ; text style;  # (6.0) BLACK RIGHT-POINTING DOUBLE TRIANGLE
+23E9 FE0F  ; emoji style; # (6.0) BLACK RIGHT-POINTING DOUBLE TRIANGLE
+23EA FE0E  ; text style;  # (6.0) BLACK LEFT-POINTING DOUBLE TRIANGLE
+23EA FE0F  ; emoji style; # (6.0) BLACK LEFT-POINTING DOUBLE TRIANGLE
+23EB FE0E  ; text style;  # (6.0) BLACK UP-POINTING DOUBLE TRIANGLE
+23EB FE0F  ; emoji style; # (6.0) BLACK UP-POINTING DOUBLE TRIANGLE
+23EC FE0E  ; text style;  # (6.0) BLACK DOWN-POINTING DOUBLE TRIANGLE
+23EC FE0F  ; emoji style; # (6.0) BLACK DOWN-POINTING DOUBLE TRIANGLE
+23ED FE0E  ; text style;  # (6.0) BLACK RIGHT-POINTING DOUBLE TRIANGLE WITH VERTICAL BAR
+23ED FE0F  ; emoji style; # (6.0) BLACK RIGHT-POINTING DOUBLE TRIANGLE WITH VERTICAL BAR
+23EE FE0E  ; text style;  # (6.0) BLACK LEFT-POINTING DOUBLE TRIANGLE WITH VERTICAL BAR
+23EE FE0F  ; emoji style; # (6.0) BLACK LEFT-POINTING DOUBLE TRIANGLE WITH VERTICAL BAR
+23EF FE0E  ; text style;  # (6.0) BLACK RIGHT-POINTING TRIANGLE WITH DOUBLE VERTICAL BAR
+23EF FE0F  ; emoji style; # (6.0) BLACK RIGHT-POINTING TRIANGLE WITH DOUBLE VERTICAL BAR
+23F0 FE0E  ; text style;  # (6.0) ALARM CLOCK
+23F0 FE0F  ; emoji style; # (6.0) ALARM CLOCK
+23F1 FE0E  ; text style;  # (6.0) STOPWATCH
+23F1 FE0F  ; emoji style; # (6.0) STOPWATCH
+23F2 FE0E  ; text style;  # (6.0) TIMER CLOCK
+23F2 FE0F  ; emoji style; # (6.0) TIMER CLOCK
+23F3 FE0E  ; text style;  # (6.0) HOURGLASS WITH FLOWING SAND
+23F3 FE0F  ; emoji style; # (6.0) HOURGLASS WITH FLOWING SAND
+23F8 FE0E  ; text style;  # (7.0) DOUBLE VERTICAL BAR
+23F8 FE0F  ; emoji style; # (7.0) DOUBLE VERTICAL BAR
+23F9 FE0E  ; text style;  # (7.0) BLACK SQUARE FOR STOP
+23F9 FE0F  ; emoji style; # (7.0) BLACK SQUARE FOR STOP
+23FA FE0E  ; text style;  # (7.0) BLACK CIRCLE FOR RECORD
+23FA FE0F  ; emoji style; # (7.0) BLACK CIRCLE FOR RECORD
+24C2 FE0E  ; text style;  # (1.1) CIRCLED LATIN CAPITAL LETTER M
+24C2 FE0F  ; emoji style; # (1.1) CIRCLED LATIN CAPITAL LETTER M
+25AA FE0E  ; text style;  # (1.1) BLACK SMALL SQUARE
+25AA FE0F  ; emoji style; # (1.1) BLACK SMALL SQUARE
+25AB FE0E  ; text style;  # (1.1) WHITE SMALL SQUARE
+25AB FE0F  ; emoji style; # (1.1) WHITE SMALL SQUARE
+25B6 FE0E  ; text style;  # (1.1) BLACK RIGHT-POINTING TRIANGLE
+25B6 FE0F  ; emoji style; # (1.1) BLACK RIGHT-POINTING TRIANGLE
+25C0 FE0E  ; text style;  # (1.1) BLACK LEFT-POINTING TRIANGLE
+25C0 FE0F  ; emoji style; # (1.1) BLACK LEFT-POINTING TRIANGLE
+25FB FE0E  ; text style;  # (3.2) WHITE MEDIUM SQUARE
+25FB FE0F  ; emoji style; # (3.2) WHITE MEDIUM SQUARE
+25FC FE0E  ; text style;  # (3.2) BLACK MEDIUM SQUARE
+25FC FE0F  ; emoji style; # (3.2) BLACK MEDIUM SQUARE
+25FD FE0E  ; text style;  # (3.2) WHITE MEDIUM SMALL SQUARE
+25FD FE0F  ; emoji style; # (3.2) WHITE MEDIUM SMALL SQUARE
+25FE FE0E  ; text style;  # (3.2) BLACK MEDIUM SMALL SQUARE
+25FE FE0F  ; emoji style; # (3.2) BLACK MEDIUM SMALL SQUARE
+2600 FE0E  ; text style;  # (1.1) BLACK SUN WITH RAYS
+2600 FE0F  ; emoji style; # (1.1) BLACK SUN WITH RAYS
+2601 FE0E  ; text style;  # (1.1) CLOUD
+2601 FE0F  ; emoji style; # (1.1) CLOUD
+2602 FE0E  ; text style;  # (1.1) UMBRELLA
+2602 FE0F  ; emoji style; # (1.1) UMBRELLA
+2603 FE0E  ; text style;  # (1.1) SNOWMAN
+2603 FE0F  ; emoji style; # (1.1) SNOWMAN
+2604 FE0E  ; text style;  # (1.1) COMET
+2604 FE0F  ; emoji style; # (1.1) COMET
+260E FE0E  ; text style;  # (1.1) BLACK TELEPHONE
+260E FE0F  ; emoji style; # (1.1) BLACK TELEPHONE
+2611 FE0E  ; text style;  # (1.1) BALLOT BOX WITH CHECK
+2611 FE0F  ; emoji style; # (1.1) BALLOT BOX WITH CHECK
+2614 FE0E  ; text style;  # (4.0) UMBRELLA WITH RAIN DROPS
+2614 FE0F  ; emoji style; # (4.0) UMBRELLA WITH RAIN DROPS
+2615 FE0E  ; text style;  # (4.0) HOT BEVERAGE
+2615 FE0F  ; emoji style; # (4.0) HOT BEVERAGE
+2618 FE0E  ; text style;  # (4.1) SHAMROCK
+2618 FE0F  ; emoji style; # (4.1) SHAMROCK
+261D FE0E  ; text style;  # (1.1) WHITE UP POINTING INDEX
+261D FE0F  ; emoji style; # (1.1) WHITE UP POINTING INDEX
+2620 FE0E  ; text style;  # (1.1) SKULL AND CROSSBONES
+2620 FE0F  ; emoji style; # (1.1) SKULL AND CROSSBONES
+2622 FE0E  ; text style;  # (1.1) RADIOACTIVE SIGN
+2622 FE0F  ; emoji style; # (1.1) RADIOACTIVE SIGN
+2623 FE0E  ; text style;  # (1.1) BIOHAZARD SIGN
+2623 FE0F  ; emoji style; # (1.1) BIOHAZARD SIGN
+2626 FE0E  ; text style;  # (1.1) ORTHODOX CROSS
+2626 FE0F  ; emoji style; # (1.1) ORTHODOX CROSS
+262A FE0E  ; text style;  # (1.1) STAR AND CRESCENT
+262A FE0F  ; emoji style; # (1.1) STAR AND CRESCENT
+262E FE0E  ; text style;  # (1.1) PEACE SYMBOL
+262E FE0F  ; emoji style; # (1.1) PEACE SYMBOL
+262F FE0E  ; text style;  # (1.1) YIN YANG
+262F FE0F  ; emoji style; # (1.1) YIN YANG
+2638 FE0E  ; text style;  # (1.1) WHEEL OF DHARMA
+2638 FE0F  ; emoji style; # (1.1) WHEEL OF DHARMA
+2639 FE0E  ; text style;  # (1.1) WHITE FROWNING FACE
+2639 FE0F  ; emoji style; # (1.1) WHITE FROWNING FACE
+263A FE0E  ; text style;  # (1.1) WHITE SMILING FACE
+263A FE0F  ; emoji style; # (1.1) WHITE SMILING FACE
+2640 FE0E  ; text style;  # (1.1) FEMALE SIGN
+2640 FE0F  ; emoji style; # (1.1) FEMALE SIGN
+2642 FE0E  ; text style;  # (1.1) MALE SIGN
+2642 FE0F  ; emoji style; # (1.1) MALE SIGN
+2648 FE0E  ; text style;  # (1.1) ARIES
+2648 FE0F  ; emoji style; # (1.1) ARIES
+2649 FE0E  ; text style;  # (1.1) TAURUS
+2649 FE0F  ; emoji style; # (1.1) TAURUS
+264A FE0E  ; text style;  # (1.1) GEMINI
+264A FE0F  ; emoji style; # (1.1) GEMINI
+264B FE0E  ; text style;  # (1.1) CANCER
+264B FE0F  ; emoji style; # (1.1) CANCER
+264C FE0E  ; text style;  # (1.1) LEO
+264C FE0F  ; emoji style; # (1.1) LEO
+264D FE0E  ; text style;  # (1.1) VIRGO
+264D FE0F  ; emoji style; # (1.1) VIRGO
+264E FE0E  ; text style;  # (1.1) LIBRA
+264E FE0F  ; emoji style; # (1.1) LIBRA
+264F FE0E  ; text style;  # (1.1) SCORPIUS
+264F FE0F  ; emoji style; # (1.1) SCORPIUS
+2650 FE0E  ; text style;  # (1.1) SAGITTARIUS
+2650 FE0F  ; emoji style; # (1.1) SAGITTARIUS
+2651 FE0E  ; text style;  # (1.1) CAPRICORN
+2651 FE0F  ; emoji style; # (1.1) CAPRICORN
+2652 FE0E  ; text style;  # (1.1) AQUARIUS
+2652 FE0F  ; emoji style; # (1.1) AQUARIUS
+2653 FE0E  ; text style;  # (1.1) PISCES
+2653 FE0F  ; emoji style; # (1.1) PISCES
+265F FE0E  ; text style;  # (1.1) BLACK CHESS PAWN
+265F FE0F  ; emoji style; # (1.1) BLACK CHESS PAWN
+2660 FE0E  ; text style;  # (1.1) BLACK SPADE SUIT
+2660 FE0F  ; emoji style; # (1.1) BLACK SPADE SUIT
+2663 FE0E  ; text style;  # (1.1) BLACK CLUB SUIT
+2663 FE0F  ; emoji style; # (1.1) BLACK CLUB SUIT
+2665 FE0E  ; text style;  # (1.1) BLACK HEART SUIT
+2665 FE0F  ; emoji style; # (1.1) BLACK HEART SUIT
+2666 FE0E  ; text style;  # (1.1) BLACK DIAMOND SUIT
+2666 FE0F  ; emoji style; # (1.1) BLACK DIAMOND SUIT
+2668 FE0E  ; text style;  # (1.1) HOT SPRINGS
+2668 FE0F  ; emoji style; # (1.1) HOT SPRINGS
+267B FE0E  ; text style;  # (3.2) BLACK UNIVERSAL RECYCLING SYMBOL
+267B FE0F  ; emoji style; # (3.2) BLACK UNIVERSAL RECYCLING SYMBOL
+267E FE0E  ; text style;  # (4.1) PERMANENT PAPER SIGN
+267E FE0F  ; emoji style; # (4.1) PERMANENT PAPER SIGN
+267F FE0E  ; text style;  # (4.1) WHEELCHAIR SYMBOL
+267F FE0F  ; emoji style; # (4.1) WHEELCHAIR SYMBOL
+2692 FE0E  ; text style;  # (4.1) HAMMER AND PICK
+2692 FE0F  ; emoji style; # (4.1) HAMMER AND PICK
+2693 FE0E  ; text style;  # (4.1) ANCHOR
+2693 FE0F  ; emoji style; # (4.1) ANCHOR
+2694 FE0E  ; text style;  # (4.1) CROSSED SWORDS
+2694 FE0F  ; emoji style; # (4.1) CROSSED SWORDS
+2695 FE0E  ; text style;  # (4.1) STAFF OF AESCULAPIUS
+2695 FE0F  ; emoji style; # (4.1) STAFF OF AESCULAPIUS
+2696 FE0E  ; text style;  # (4.1) SCALES
+2696 FE0F  ; emoji style; # (4.1) SCALES
+2697 FE0E  ; text style;  # (4.1) ALEMBIC
+2697 FE0F  ; emoji style; # (4.1) ALEMBIC
+2699 FE0E  ; text style;  # (4.1) GEAR
+2699 FE0F  ; emoji style; # (4.1) GEAR
+269B FE0E  ; text style;  # (4.1) ATOM SYMBOL
+269B FE0F  ; emoji style; # (4.1) ATOM SYMBOL
+269C FE0E  ; text style;  # (4.1) FLEUR-DE-LIS
+269C FE0F  ; emoji style; # (4.1) FLEUR-DE-LIS
+26A0 FE0E  ; text style;  # (4.0) WARNING SIGN
+26A0 FE0F  ; emoji style; # (4.0) WARNING SIGN
+26A1 FE0E  ; text style;  # (4.0) HIGH VOLTAGE SIGN
+26A1 FE0F  ; emoji style; # (4.0) HIGH VOLTAGE SIGN
+26A7 FE0E  ; text style;  # (4.1) MALE WITH STROKE AND MALE AND FEMALE SIGN
+26A7 FE0F  ; emoji style; # (4.1) MALE WITH STROKE AND MALE AND FEMALE SIGN
+26AA FE0E  ; text style;  # (4.1) MEDIUM WHITE CIRCLE
+26AA FE0F  ; emoji style; # (4.1) MEDIUM WHITE CIRCLE
+26AB FE0E  ; text style;  # (4.1) MEDIUM BLACK CIRCLE
+26AB FE0F  ; emoji style; # (4.1) MEDIUM BLACK CIRCLE
+26B0 FE0E  ; text style;  # (4.1) COFFIN
+26B0 FE0F  ; emoji style; # (4.1) COFFIN
+26B1 FE0E  ; text style;  # (4.1) FUNERAL URN
+26B1 FE0F  ; emoji style; # (4.1) FUNERAL URN
+26BD FE0E  ; text style;  # (5.2) SOCCER BALL
+26BD FE0F  ; emoji style; # (5.2) SOCCER BALL
+26BE FE0E  ; text style;  # (5.2) BASEBALL
+26BE FE0F  ; emoji style; # (5.2) BASEBALL
+26C4 FE0E  ; text style;  # (5.2) SNOWMAN WITHOUT SNOW
+26C4 FE0F  ; emoji style; # (5.2) SNOWMAN WITHOUT SNOW
+26C5 FE0E  ; text style;  # (5.2) SUN BEHIND CLOUD
+26C5 FE0F  ; emoji style; # (5.2) SUN BEHIND CLOUD
+26C8 FE0E  ; text style;  # (5.2) THUNDER CLOUD AND RAIN
+26C8 FE0F  ; emoji style; # (5.2) THUNDER CLOUD AND RAIN
+26CE FE0E  ; text style;  # (6.0) OPHIUCHUS
+26CE FE0F  ; emoji style; # (6.0) OPHIUCHUS
+26CF FE0E  ; text style;  # (5.2) PICK
+26CF FE0F  ; emoji style; # (5.2) PICK
+26D1 FE0E  ; text style;  # (5.2) HELMET WITH WHITE CROSS
+26D1 FE0F  ; emoji style; # (5.2) HELMET WITH WHITE CROSS
+26D3 FE0E  ; text style;  # (5.2) CHAINS
+26D3 FE0F  ; emoji style; # (5.2) CHAINS
+26D4 FE0E  ; text style;  # (5.2) NO ENTRY
+26D4 FE0F  ; emoji style; # (5.2) NO ENTRY
+26E9 FE0E  ; text style;  # (5.2) SHINTO SHRINE
+26E9 FE0F  ; emoji style; # (5.2) SHINTO SHRINE
+26EA FE0E  ; text style;  # (5.2) CHURCH
+26EA FE0F  ; emoji style; # (5.2) CHURCH
+26F0 FE0E  ; text style;  # (5.2) MOUNTAIN
+26F0 FE0F  ; emoji style; # (5.2) MOUNTAIN
+26F1 FE0E  ; text style;  # (5.2) UMBRELLA ON GROUND
+26F1 FE0F  ; emoji style; # (5.2) UMBRELLA ON GROUND
+26F2 FE0E  ; text style;  # (5.2) FOUNTAIN
+26F2 FE0F  ; emoji style; # (5.2) FOUNTAIN
+26F3 FE0E  ; text style;  # (5.2) FLAG IN HOLE
+26F3 FE0F  ; emoji style; # (5.2) FLAG IN HOLE
+26F4 FE0E  ; text style;  # (5.2) FERRY
+26F4 FE0F  ; emoji style; # (5.2) FERRY
+26F5 FE0E  ; text style;  # (5.2) SAILBOAT
+26F5 FE0F  ; emoji style; # (5.2) SAILBOAT
+26F7 FE0E  ; text style;  # (5.2) SKIER
+26F7 FE0F  ; emoji style; # (5.2) SKIER
+26F8 FE0E  ; text style;  # (5.2) ICE SKATE
+26F8 FE0F  ; emoji style; # (5.2) ICE SKATE
+26F9 FE0E  ; text style;  # (5.2) PERSON WITH BALL
+26F9 FE0F  ; emoji style; # (5.2) PERSON WITH BALL
+26FA FE0E  ; text style;  # (5.2) TENT
+26FA FE0F  ; emoji style; # (5.2) TENT
+26FD FE0E  ; text style;  # (5.2) FUEL PUMP
+26FD FE0F  ; emoji style; # (5.2) FUEL PUMP
+2702 FE0E  ; text style;  # (1.1) BLACK SCISSORS
+2702 FE0F  ; emoji style; # (1.1) BLACK SCISSORS
+2705 FE0E  ; text style;  # (6.0) WHITE HEAVY CHECK MARK
+2705 FE0F  ; emoji style; # (6.0) WHITE HEAVY CHECK MARK
+2708 FE0E  ; text style;  # (1.1) AIRPLANE
+2708 FE0F  ; emoji style; # (1.1) AIRPLANE
+2709 FE0E  ; text style;  # (1.1) ENVELOPE
+2709 FE0F  ; emoji style; # (1.1) ENVELOPE
+270A FE0E  ; text style;  # (6.0) RAISED FIST
+270A FE0F  ; emoji style; # (6.0) RAISED FIST
+270B FE0E  ; text style;  # (6.0) RAISED HAND
+270B FE0F  ; emoji style; # (6.0) RAISED HAND
+270C FE0E  ; text style;  # (1.1) VICTORY HAND
+270C FE0F  ; emoji style; # (1.1) VICTORY HAND
+270D FE0E  ; text style;  # (1.1) WRITING HAND
+270D FE0F  ; emoji style; # (1.1) WRITING HAND
+270F FE0E  ; text style;  # (1.1) PENCIL
+270F FE0F  ; emoji style; # (1.1) PENCIL
+2712 FE0E  ; text style;  # (1.1) BLACK NIB
+2712 FE0F  ; emoji style; # (1.1) BLACK NIB
+2714 FE0E  ; text style;  # (1.1) HEAVY CHECK MARK
+2714 FE0F  ; emoji style; # (1.1) HEAVY CHECK MARK
+2716 FE0E  ; text style;  # (1.1) HEAVY MULTIPLICATION X
+2716 FE0F  ; emoji style; # (1.1) HEAVY MULTIPLICATION X
+271D FE0E  ; text style;  # (1.1) LATIN CROSS
+271D FE0F  ; emoji style; # (1.1) LATIN CROSS
+2721 FE0E  ; text style;  # (1.1) STAR OF DAVID
+2721 FE0F  ; emoji style; # (1.1) STAR OF DAVID
+2728 FE0E  ; text style;  # (6.0) SPARKLES
+2728 FE0F  ; emoji style; # (6.0) SPARKLES
+2733 FE0E  ; text style;  # (1.1) EIGHT SPOKED ASTERISK
+2733 FE0F  ; emoji style; # (1.1) EIGHT SPOKED ASTERISK
+2734 FE0E  ; text style;  # (1.1) EIGHT POINTED BLACK STAR
+2734 FE0F  ; emoji style; # (1.1) EIGHT POINTED BLACK STAR
+2744 FE0E  ; text style;  # (1.1) SNOWFLAKE
+2744 FE0F  ; emoji style; # (1.1) SNOWFLAKE
+2747 FE0E  ; text style;  # (1.1) SPARKLE
+2747 FE0F  ; emoji style; # (1.1) SPARKLE
+274C FE0E  ; text style;  # (6.0) CROSS MARK
+274C FE0F  ; emoji style; # (6.0) CROSS MARK
+274E FE0E  ; text style;  # (6.0) NEGATIVE SQUARED CROSS MARK
+274E FE0F  ; emoji style; # (6.0) NEGATIVE SQUARED CROSS MARK
+2753 FE0E  ; text style;  # (6.0) BLACK QUESTION MARK ORNAMENT
+2753 FE0F  ; emoji style; # (6.0) BLACK QUESTION MARK ORNAMENT
+2754 FE0E  ; text style;  # (6.0) WHITE QUESTION MARK ORNAMENT
+2754 FE0F  ; emoji style; # (6.0) WHITE QUESTION MARK ORNAMENT
+2755 FE0E  ; text style;  # (6.0) WHITE EXCLAMATION MARK ORNAMENT
+2755 FE0F  ; emoji style; # (6.0) WHITE EXCLAMATION MARK ORNAMENT
+2757 FE0E  ; text style;  # (5.2) HEAVY EXCLAMATION MARK SYMBOL
+2757 FE0F  ; emoji style; # (5.2) HEAVY EXCLAMATION MARK SYMBOL
+2763 FE0E  ; text style;  # (1.1) HEAVY HEART EXCLAMATION MARK ORNAMENT
+2763 FE0F  ; emoji style; # (1.1) HEAVY HEART EXCLAMATION MARK ORNAMENT
+2764 FE0E  ; text style;  # (1.1) HEAVY BLACK HEART
+2764 FE0F  ; emoji style; # (1.1) HEAVY BLACK HEART
+2795 FE0E  ; text style;  # (6.0) HEAVY PLUS SIGN
+2795 FE0F  ; emoji style; # (6.0) HEAVY PLUS SIGN
+2796 FE0E  ; text style;  # (6.0) HEAVY MINUS SIGN
+2796 FE0F  ; emoji style; # (6.0) HEAVY MINUS SIGN
+2797 FE0E  ; text style;  # (6.0) HEAVY DIVISION SIGN
+2797 FE0F  ; emoji style; # (6.0) HEAVY DIVISION SIGN
+27A1 FE0E  ; text style;  # (1.1) BLACK RIGHTWARDS ARROW
+27A1 FE0F  ; emoji style; # (1.1) BLACK RIGHTWARDS ARROW
+27B0 FE0E  ; text style;  # (6.0) CURLY LOOP
+27B0 FE0F  ; emoji style; # (6.0) CURLY LOOP
+27BF FE0E  ; text style;  # (6.0) DOUBLE CURLY LOOP
+27BF FE0F  ; emoji style; # (6.0) DOUBLE CURLY LOOP
+2934 FE0E  ; text style;  # (3.2) ARROW POINTING RIGHTWARDS THEN CURVING UPWARDS
+2934 FE0F  ; emoji style; # (3.2) ARROW POINTING RIGHTWARDS THEN CURVING UPWARDS
+2935 FE0E  ; text style;  # (3.2) ARROW POINTING RIGHTWARDS THEN CURVING DOWNWARDS
+2935 FE0F  ; emoji style; # (3.2) ARROW POINTING RIGHTWARDS THEN CURVING DOWNWARDS
+2B05 FE0E  ; text style;  # (4.0) LEFTWARDS BLACK ARROW
+2B05 FE0F  ; emoji style; # (4.0) LEFTWARDS BLACK ARROW
+2B06 FE0E  ; text style;  # (4.0) UPWARDS BLACK ARROW
+2B06 FE0F  ; emoji style; # (4.0) UPWARDS BLACK ARROW
+2B07 FE0E  ; text style;  # (4.0) DOWNWARDS BLACK ARROW
+2B07 FE0F  ; emoji style; # (4.0) DOWNWARDS BLACK ARROW
+2B1B FE0E  ; text style;  # (5.1) BLACK LARGE SQUARE
+2B1B FE0F  ; emoji style; # (5.1) BLACK LARGE SQUARE
+2B1C FE0E  ; text style;  # (5.1) WHITE LARGE SQUARE
+2B1C FE0F  ; emoji style; # (5.1) WHITE LARGE SQUARE
+2B50 FE0E  ; text style;  # (5.1) WHITE MEDIUM STAR
+2B50 FE0F  ; emoji style; # (5.1) WHITE MEDIUM STAR
+2B55 FE0E  ; text style;  # (5.2) HEAVY LARGE CIRCLE
+2B55 FE0F  ; emoji style; # (5.2) HEAVY LARGE CIRCLE
+3030 FE0E  ; text style;  # (1.1) WAVY DASH
+3030 FE0F  ; emoji style; # (1.1) WAVY DASH
+303D FE0E  ; text style;  # (3.2) PART ALTERNATION MARK
+303D FE0F  ; emoji style; # (3.2) PART ALTERNATION MARK
+3297 FE0E  ; text style;  # (1.1) CIRCLED IDEOGRAPH CONGRATULATION
+3297 FE0F  ; emoji style; # (1.1) CIRCLED IDEOGRAPH CONGRATULATION
+3299 FE0E  ; text style;  # (1.1) CIRCLED IDEOGRAPH SECRET
+3299 FE0F  ; emoji style; # (1.1) CIRCLED IDEOGRAPH SECRET
+1F004 FE0E ; text style;  # (5.1) MAHJONG TILE RED DRAGON
+1F004 FE0F ; emoji style; # (5.1) MAHJONG TILE RED DRAGON
+1F170 FE0E ; text style;  # (6.0) NEGATIVE SQUARED LATIN CAPITAL LETTER A
+1F170 FE0F ; emoji style; # (6.0) NEGATIVE SQUARED LATIN CAPITAL LETTER A
+1F171 FE0E ; text style;  # (6.0) NEGATIVE SQUARED LATIN CAPITAL LETTER B
+1F171 FE0F ; emoji style; # (6.0) NEGATIVE SQUARED LATIN CAPITAL LETTER B
+1F17E FE0E ; text style;  # (6.0) NEGATIVE SQUARED LATIN CAPITAL LETTER O
+1F17E FE0F ; emoji style; # (6.0) NEGATIVE SQUARED LATIN CAPITAL LETTER O
+1F17F FE0E ; text style;  # (5.2) NEGATIVE SQUARED LATIN CAPITAL LETTER P
+1F17F FE0F ; emoji style; # (5.2) NEGATIVE SQUARED LATIN CAPITAL LETTER P
+1F202 FE0E ; text style;  # (6.0) SQUARED KATAKANA SA
+1F202 FE0F ; emoji style; # (6.0) SQUARED KATAKANA SA
+1F21A FE0E ; text style;  # (5.2) SQUARED CJK UNIFIED IDEOGRAPH-7121
+1F21A FE0F ; emoji style; # (5.2) SQUARED CJK UNIFIED IDEOGRAPH-7121
+1F22F FE0E ; text style;  # (5.2) SQUARED CJK UNIFIED IDEOGRAPH-6307
+1F22F FE0F ; emoji style; # (5.2) SQUARED CJK UNIFIED IDEOGRAPH-6307
+1F237 FE0E ; text style;  # (6.0) SQUARED CJK UNIFIED IDEOGRAPH-6708
+1F237 FE0F ; emoji style; # (6.0) SQUARED CJK UNIFIED IDEOGRAPH-6708
+1F30D FE0E ; text style;  # (6.0) EARTH GLOBE EUROPE-AFRICA
+1F30D FE0F ; emoji style; # (6.0) EARTH GLOBE EUROPE-AFRICA
+1F30E FE0E ; text style;  # (6.0) EARTH GLOBE AMERICAS
+1F30E FE0F ; emoji style; # (6.0) EARTH GLOBE AMERICAS
+1F30F FE0E ; text style;  # (6.0) EARTH GLOBE ASIA-AUSTRALIA
+1F30F FE0F ; emoji style; # (6.0) EARTH GLOBE ASIA-AUSTRALIA
+1F315 FE0E ; text style;  # (6.0) FULL MOON SYMBOL
+1F315 FE0F ; emoji style; # (6.0) FULL MOON SYMBOL
+1F31C FE0E ; text style;  # (6.0) LAST QUARTER MOON WITH FACE
+1F31C FE0F ; emoji style; # (6.0) LAST QUARTER MOON WITH FACE
+1F321 FE0E ; text style;  # (7.0) THERMOMETER
+1F321 FE0F ; emoji style; # (7.0) THERMOMETER
+1F324 FE0E ; text style;  # (7.0) WHITE SUN WITH SMALL CLOUD
+1F324 FE0F ; emoji style; # (7.0) WHITE SUN WITH SMALL CLOUD
+1F325 FE0E ; text style;  # (7.0) WHITE SUN BEHIND CLOUD
+1F325 FE0F ; emoji style; # (7.0) WHITE SUN BEHIND CLOUD
+1F326 FE0E ; text style;  # (7.0) WHITE SUN BEHIND CLOUD WITH RAIN
+1F326 FE0F ; emoji style; # (7.0) WHITE SUN BEHIND CLOUD WITH RAIN
+1F327 FE0E ; text style;  # (7.0) CLOUD WITH RAIN
+1F327 FE0F ; emoji style; # (7.0) CLOUD WITH RAIN
+1F328 FE0E ; text style;  # (7.0) CLOUD WITH SNOW
+1F328 FE0F ; emoji style; # (7.0) CLOUD WITH SNOW
+1F329 FE0E ; text style;  # (7.0) CLOUD WITH LIGHTNING
+1F329 FE0F ; emoji style; # (7.0) CLOUD WITH LIGHTNING
+1F32A FE0E ; text style;  # (7.0) CLOUD WITH TORNADO
+1F32A FE0F ; emoji style; # (7.0) CLOUD WITH TORNADO
+1F32B FE0E ; text style;  # (7.0) FOG
+1F32B FE0F ; emoji style; # (7.0) FOG
+1F32C FE0E ; text style;  # (7.0) WIND BLOWING FACE
+1F32C FE0F ; emoji style; # (7.0) WIND BLOWING FACE
+1F336 FE0E ; text style;  # (7.0) HOT PEPPER
+1F336 FE0F ; emoji style; # (7.0) HOT PEPPER
+1F378 FE0E ; text style;  # (6.0) COCKTAIL GLASS
+1F378 FE0F ; emoji style; # (6.0) COCKTAIL GLASS
+1F37D FE0E ; text style;  # (7.0) FORK AND KNIFE WITH PLATE
+1F37D FE0F ; emoji style; # (7.0) FORK AND KNIFE WITH PLATE
+1F393 FE0E ; text style;  # (6.0) GRADUATION CAP
+1F393 FE0F ; emoji style; # (6.0) GRADUATION CAP
+1F396 FE0E ; text style;  # (7.0) MILITARY MEDAL
+1F396 FE0F ; emoji style; # (7.0) MILITARY MEDAL
+1F397 FE0E ; text style;  # (7.0) REMINDER RIBBON
+1F397 FE0F ; emoji style; # (7.0) REMINDER RIBBON
+1F399 FE0E ; text style;  # (7.0) STUDIO MICROPHONE
+1F399 FE0F ; emoji style; # (7.0) STUDIO MICROPHONE
+1F39A FE0E ; text style;  # (7.0) LEVEL SLIDER
+1F39A FE0F ; emoji style; # (7.0) LEVEL SLIDER
+1F39B FE0E ; text style;  # (7.0) CONTROL KNOBS
+1F39B FE0F ; emoji style; # (7.0) CONTROL KNOBS
+1F39E FE0E ; text style;  # (7.0) FILM FRAMES
+1F39E FE0F ; emoji style; # (7.0) FILM FRAMES
+1F39F FE0E ; text style;  # (7.0) ADMISSION TICKETS
+1F39F FE0F ; emoji style; # (7.0) ADMISSION TICKETS
+1F3A7 FE0E ; text style;  # (6.0) HEADPHONE
+1F3A7 FE0F ; emoji style; # (6.0) HEADPHONE
+1F3AC FE0E ; text style;  # (6.0) CLAPPER BOARD
+1F3AC FE0F ; emoji style; # (6.0) CLAPPER BOARD
+1F3AD FE0E ; text style;  # (6.0) PERFORMING ARTS
+1F3AD FE0F ; emoji style; # (6.0) PERFORMING ARTS
+1F3AE FE0E ; text style;  # (6.0) VIDEO GAME
+1F3AE FE0F ; emoji style; # (6.0) VIDEO GAME
+1F3C2 FE0E ; text style;  # (6.0) SNOWBOARDER
+1F3C2 FE0F ; emoji style; # (6.0) SNOWBOARDER
+1F3C4 FE0E ; text style;  # (6.0) SURFER
+1F3C4 FE0F ; emoji style; # (6.0) SURFER
+1F3C6 FE0E ; text style;  # (6.0) TROPHY
+1F3C6 FE0F ; emoji style; # (6.0) TROPHY
+1F3CA FE0E ; text style;  # (6.0) SWIMMER
+1F3CA FE0F ; emoji style; # (6.0) SWIMMER
+1F3CB FE0E ; text style;  # (7.0) WEIGHT LIFTER
+1F3CB FE0F ; emoji style; # (7.0) WEIGHT LIFTER
+1F3CC FE0E ; text style;  # (7.0) GOLFER
+1F3CC FE0F ; emoji style; # (7.0) GOLFER
+1F3CD FE0E ; text style;  # (7.0) RACING MOTORCYCLE
+1F3CD FE0F ; emoji style; # (7.0) RACING MOTORCYCLE
+1F3CE FE0E ; text style;  # (7.0) RACING CAR
+1F3CE FE0F ; emoji style; # (7.0) RACING CAR
+1F3D4 FE0E ; text style;  # (7.0) SNOW CAPPED MOUNTAIN
+1F3D4 FE0F ; emoji style; # (7.0) SNOW CAPPED MOUNTAIN
+1F3D5 FE0E ; text style;  # (7.0) CAMPING
+1F3D5 FE0F ; emoji style; # (7.0) CAMPING
+1F3D6 FE0E ; text style;  # (7.0) BEACH WITH UMBRELLA
+1F3D6 FE0F ; emoji style; # (7.0) BEACH WITH UMBRELLA
+1F3D7 FE0E ; text style;  # (7.0) BUILDING CONSTRUCTION
+1F3D7 FE0F ; emoji style; # (7.0) BUILDING CONSTRUCTION
+1F3D8 FE0E ; text style;  # (7.0) HOUSE BUILDINGS
+1F3D8 FE0F ; emoji style; # (7.0) HOUSE BUILDINGS
+1F3D9 FE0E ; text style;  # (7.0) CITYSCAPE
+1F3D9 FE0F ; emoji style; # (7.0) CITYSCAPE
+1F3DA FE0E ; text style;  # (7.0) DERELICT HOUSE BUILDING
+1F3DA FE0F ; emoji style; # (7.0) DERELICT HOUSE BUILDING
+1F3DB FE0E ; text style;  # (7.0) CLASSICAL BUILDING
+1F3DB FE0F ; emoji style; # (7.0) CLASSICAL BUILDING
+1F3DC FE0E ; text style;  # (7.0) DESERT
+1F3DC FE0F ; emoji style; # (7.0) DESERT
+1F3DD FE0E ; text style;  # (7.0) DESERT ISLAND
+1F3DD FE0F ; emoji style; # (7.0) DESERT ISLAND
+1F3DE FE0E ; text style;  # (7.0) NATIONAL PARK
+1F3DE FE0F ; emoji style; # (7.0) NATIONAL PARK
+1F3DF FE0E ; text style;  # (7.0) STADIUM
+1F3DF FE0F ; emoji style; # (7.0) STADIUM
+1F3E0 FE0E ; text style;  # (6.0) HOUSE BUILDING
+1F3E0 FE0F ; emoji style; # (6.0) HOUSE BUILDING
+1F3ED FE0E ; text style;  # (6.0) FACTORY
+1F3ED FE0F ; emoji style; # (6.0) FACTORY
+1F3F3 FE0E ; text style;  # (7.0) WAVING WHITE FLAG
+1F3F3 FE0F ; emoji style; # (7.0) WAVING WHITE FLAG
+1F3F5 FE0E ; text style;  # (7.0) ROSETTE
+1F3F5 FE0F ; emoji style; # (7.0) ROSETTE
+1F3F7 FE0E ; text style;  # (7.0) LABEL
+1F3F7 FE0F ; emoji style; # (7.0) LABEL
+1F408 FE0E ; text style;  # (6.0) CAT
+1F408 FE0F ; emoji style; # (6.0) CAT
+1F415 FE0E ; text style;  # (6.0) DOG
+1F415 FE0F ; emoji style; # (6.0) DOG
+1F41F FE0E ; text style;  # (6.0) FISH
+1F41F FE0F ; emoji style; # (6.0) FISH
+1F426 FE0E ; text style;  # (6.0) BIRD
+1F426 FE0F ; emoji style; # (6.0) BIRD
+1F43F FE0E ; text style;  # (7.0) CHIPMUNK
+1F43F FE0F ; emoji style; # (7.0) CHIPMUNK
+1F441 FE0E ; text style;  # (7.0) EYE
+1F441 FE0F ; emoji style; # (7.0) EYE
+1F442 FE0E ; text style;  # (6.0) EAR
+1F442 FE0F ; emoji style; # (6.0) EAR
+1F446 FE0E ; text style;  # (6.0) WHITE UP POINTING BACKHAND INDEX
+1F446 FE0F ; emoji style; # (6.0) WHITE UP POINTING BACKHAND INDEX
+1F447 FE0E ; text style;  # (6.0) WHITE DOWN POINTING BACKHAND INDEX
+1F447 FE0F ; emoji style; # (6.0) WHITE DOWN POINTING BACKHAND INDEX
+1F448 FE0E ; text style;  # (6.0) WHITE LEFT POINTING BACKHAND INDEX
+1F448 FE0F ; emoji style; # (6.0) WHITE LEFT POINTING BACKHAND INDEX
+1F449 FE0E ; text style;  # (6.0) WHITE RIGHT POINTING BACKHAND INDEX
+1F449 FE0F ; emoji style; # (6.0) WHITE RIGHT POINTING BACKHAND INDEX
+1F44D FE0E ; text style;  # (6.0) THUMBS UP SIGN
+1F44D FE0F ; emoji style; # (6.0) THUMBS UP SIGN
+1F44E FE0E ; text style;  # (6.0) THUMBS DOWN SIGN
+1F44E FE0F ; emoji style; # (6.0) THUMBS DOWN SIGN
+1F453 FE0E ; text style;  # (6.0) EYEGLASSES
+1F453 FE0F ; emoji style; # (6.0) EYEGLASSES
+1F46A FE0E ; text style;  # (6.0) FAMILY
+1F46A FE0F ; emoji style; # (6.0) FAMILY
+1F47D FE0E ; text style;  # (6.0) EXTRATERRESTRIAL ALIEN
+1F47D FE0F ; emoji style; # (6.0) EXTRATERRESTRIAL ALIEN
+1F4A3 FE0E ; text style;  # (6.0) BOMB
+1F4A3 FE0F ; emoji style; # (6.0) BOMB
+1F4B0 FE0E ; text style;  # (6.0) MONEY BAG
+1F4B0 FE0F ; emoji style; # (6.0) MONEY BAG
+1F4B3 FE0E ; text style;  # (6.0) CREDIT CARD
+1F4B3 FE0F ; emoji style; # (6.0) CREDIT CARD
+1F4BB FE0E ; text style;  # (6.0) PERSONAL COMPUTER
+1F4BB FE0F ; emoji style; # (6.0) PERSONAL COMPUTER
+1F4BF FE0E ; text style;  # (6.0) OPTICAL DISC
+1F4BF FE0F ; emoji style; # (6.0) OPTICAL DISC
+1F4CB FE0E ; text style;  # (6.0) CLIPBOARD
+1F4CB FE0F ; emoji style; # (6.0) CLIPBOARD
+1F4DA FE0E ; text style;  # (6.0) BOOKS
+1F4DA FE0F ; emoji style; # (6.0) BOOKS
+1F4DF FE0E ; text style;  # (6.0) PAGER
+1F4DF FE0F ; emoji style; # (6.0) PAGER
+1F4E4 FE0E ; text style;  # (6.0) OUTBOX TRAY
+1F4E4 FE0F ; emoji style; # (6.0) OUTBOX TRAY
+1F4E5 FE0E ; text style;  # (6.0) INBOX TRAY
+1F4E5 FE0F ; emoji style; # (6.0) INBOX TRAY
+1F4E6 FE0E ; text style;  # (6.0) PACKAGE
+1F4E6 FE0F ; emoji style; # (6.0) PACKAGE
+1F4EA FE0E ; text style;  # (6.0) CLOSED MAILBOX WITH LOWERED FLAG
+1F4EA FE0F ; emoji style; # (6.0) CLOSED MAILBOX WITH LOWERED FLAG
+1F4EB FE0E ; text style;  # (6.0) CLOSED MAILBOX WITH RAISED FLAG
+1F4EB FE0F ; emoji style; # (6.0) CLOSED MAILBOX WITH RAISED FLAG
+1F4EC FE0E ; text style;  # (6.0) OPEN MAILBOX WITH RAISED FLAG
+1F4EC FE0F ; emoji style; # (6.0) OPEN MAILBOX WITH RAISED FLAG
+1F4ED FE0E ; text style;  # (6.0) OPEN MAILBOX WITH LOWERED FLAG
+1F4ED FE0F ; emoji style; # (6.0) OPEN MAILBOX WITH LOWERED FLAG
+1F4F7 FE0E ; text style;  # (6.0) CAMERA
+1F4F7 FE0F ; emoji style; # (6.0) CAMERA
+1F4F9 FE0E ; text style;  # (6.0) VIDEO CAMERA
+1F4F9 FE0F ; emoji style; # (6.0) VIDEO CAMERA
+1F4FA FE0E ; text style;  # (6.0) TELEVISION
+1F4FA FE0F ; emoji style; # (6.0) TELEVISION
+1F4FB FE0E ; text style;  # (6.0) RADIO
+1F4FB FE0F ; emoji style; # (6.0) RADIO
+1F4FD FE0E ; text style;  # (7.0) FILM PROJECTOR
+1F4FD FE0F ; emoji style; # (7.0) FILM PROJECTOR
+1F508 FE0E ; text style;  # (6.0) SPEAKER
+1F508 FE0F ; emoji style; # (6.0) SPEAKER
+1F50D FE0E ; text style;  # (6.0) LEFT-POINTING MAGNIFYING GLASS
+1F50D FE0F ; emoji style; # (6.0) LEFT-POINTING MAGNIFYING GLASS
+1F512 FE0E ; text style;  # (6.0) LOCK
+1F512 FE0F ; emoji style; # (6.0) LOCK
+1F513 FE0E ; text style;  # (6.0) OPEN LOCK
+1F513 FE0F ; emoji style; # (6.0) OPEN LOCK
+1F549 FE0E ; text style;  # (7.0) OM SYMBOL
+1F549 FE0F ; emoji style; # (7.0) OM SYMBOL
+1F54A FE0E ; text style;  # (7.0) DOVE OF PEACE
+1F54A FE0F ; emoji style; # (7.0) DOVE OF PEACE
+1F550 FE0E ; text style;  # (6.0) CLOCK FACE ONE OCLOCK
+1F550 FE0F ; emoji style; # (6.0) CLOCK FACE ONE OCLOCK
+1F551 FE0E ; text style;  # (6.0) CLOCK FACE TWO OCLOCK
+1F551 FE0F ; emoji style; # (6.0) CLOCK FACE TWO OCLOCK
+1F552 FE0E ; text style;  # (6.0) CLOCK FACE THREE OCLOCK
+1F552 FE0F ; emoji style; # (6.0) CLOCK FACE THREE OCLOCK
+1F553 FE0E ; text style;  # (6.0) CLOCK FACE FOUR OCLOCK
+1F553 FE0F ; emoji style; # (6.0) CLOCK FACE FOUR OCLOCK
+1F554 FE0E ; text style;  # (6.0) CLOCK FACE FIVE OCLOCK
+1F554 FE0F ; emoji style; # (6.0) CLOCK FACE FIVE OCLOCK
+1F555 FE0E ; text style;  # (6.0) CLOCK FACE SIX OCLOCK
+1F555 FE0F ; emoji style; # (6.0) CLOCK FACE SIX OCLOCK
+1F556 FE0E ; text style;  # (6.0) CLOCK FACE SEVEN OCLOCK
+1F556 FE0F ; emoji style; # (6.0) CLOCK FACE SEVEN OCLOCK
+1F557 FE0E ; text style;  # (6.0) CLOCK FACE EIGHT OCLOCK
+1F557 FE0F ; emoji style; # (6.0) CLOCK FACE EIGHT OCLOCK
+1F558 FE0E ; text style;  # (6.0) CLOCK FACE NINE OCLOCK
+1F558 FE0F ; emoji style; # (6.0) CLOCK FACE NINE OCLOCK
+1F559 FE0E ; text style;  # (6.0) CLOCK FACE TEN OCLOCK
+1F559 FE0F ; emoji style; # (6.0) CLOCK FACE TEN OCLOCK
+1F55A FE0E ; text style;  # (6.0) CLOCK FACE ELEVEN OCLOCK
+1F55A FE0F ; emoji style; # (6.0) CLOCK FACE ELEVEN OCLOCK
+1F55B FE0E ; text style;  # (6.0) CLOCK FACE TWELVE OCLOCK
+1F55B FE0F ; emoji style; # (6.0) CLOCK FACE TWELVE OCLOCK
+1F55C FE0E ; text style;  # (6.0) CLOCK FACE ONE-THIRTY
+1F55C FE0F ; emoji style; # (6.0) CLOCK FACE ONE-THIRTY
+1F55D FE0E ; text style;  # (6.0) CLOCK FACE TWO-THIRTY
+1F55D FE0F ; emoji style; # (6.0) CLOCK FACE TWO-THIRTY
+1F55E FE0E ; text style;  # (6.0) CLOCK FACE THREE-THIRTY
+1F55E FE0F ; emoji style; # (6.0) CLOCK FACE THREE-THIRTY
+1F55F FE0E ; text style;  # (6.0) CLOCK FACE FOUR-THIRTY
+1F55F FE0F ; emoji style; # (6.0) CLOCK FACE FOUR-THIRTY
+1F560 FE0E ; text style;  # (6.0) CLOCK FACE FIVE-THIRTY
+1F560 FE0F ; emoji style; # (6.0) CLOCK FACE FIVE-THIRTY
+1F561 FE0E ; text style;  # (6.0) CLOCK FACE SIX-THIRTY
+1F561 FE0F ; emoji style; # (6.0) CLOCK FACE SIX-THIRTY
+1F562 FE0E ; text style;  # (6.0) CLOCK FACE SEVEN-THIRTY
+1F562 FE0F ; emoji style; # (6.0) CLOCK FACE SEVEN-THIRTY
+1F563 FE0E ; text style;  # (6.0) CLOCK FACE EIGHT-THIRTY
+1F563 FE0F ; emoji style; # (6.0) CLOCK FACE EIGHT-THIRTY
+1F564 FE0E ; text style;  # (6.0) CLOCK FACE NINE-THIRTY
+1F564 FE0F ; emoji style; # (6.0) CLOCK FACE NINE-THIRTY
+1F565 FE0E ; text style;  # (6.0) CLOCK FACE TEN-THIRTY
+1F565 FE0F ; emoji style; # (6.0) CLOCK FACE TEN-THIRTY
+1F566 FE0E ; text style;  # (6.0) CLOCK FACE ELEVEN-THIRTY
+1F566 FE0F ; emoji style; # (6.0) CLOCK FACE ELEVEN-THIRTY
+1F567 FE0E ; text style;  # (6.0) CLOCK FACE TWELVE-THIRTY
+1F567 FE0F ; emoji style; # (6.0) CLOCK FACE TWELVE-THIRTY
+1F56F FE0E ; text style;  # (7.0) CANDLE
+1F56F FE0F ; emoji style; # (7.0) CANDLE
+1F570 FE0E ; text style;  # (7.0) MANTELPIECE CLOCK
+1F570 FE0F ; emoji style; # (7.0) MANTELPIECE CLOCK
+1F573 FE0E ; text style;  # (7.0) HOLE
+1F573 FE0F ; emoji style; # (7.0) HOLE
+1F574 FE0E ; text style;  # (7.0) MAN IN BUSINESS SUIT LEVITATING
+1F574 FE0F ; emoji style; # (7.0) MAN IN BUSINESS SUIT LEVITATING
+1F575 FE0E ; text style;  # (7.0) SLEUTH OR SPY
+1F575 FE0F ; emoji style; # (7.0) SLEUTH OR SPY
+1F576 FE0E ; text style;  # (7.0) DARK SUNGLASSES
+1F576 FE0F ; emoji style; # (7.0) DARK SUNGLASSES
+1F577 FE0E ; text style;  # (7.0) SPIDER
+1F577 FE0F ; emoji style; # (7.0) SPIDER
+1F578 FE0E ; text style;  # (7.0) SPIDER WEB
+1F578 FE0F ; emoji style; # (7.0) SPIDER WEB
+1F579 FE0E ; text style;  # (7.0) JOYSTICK
+1F579 FE0F ; emoji style; # (7.0) JOYSTICK
+1F587 FE0E ; text style;  # (7.0) LINKED PAPERCLIPS
+1F587 FE0F ; emoji style; # (7.0) LINKED PAPERCLIPS
+1F58A FE0E ; text style;  # (7.0) LOWER LEFT BALLPOINT PEN
+1F58A FE0F ; emoji style; # (7.0) LOWER LEFT BALLPOINT PEN
+1F58B FE0E ; text style;  # (7.0) LOWER LEFT FOUNTAIN PEN
+1F58B FE0F ; emoji style; # (7.0) LOWER LEFT FOUNTAIN PEN
+1F58C FE0E ; text style;  # (7.0) LOWER LEFT PAINTBRUSH
+1F58C FE0F ; emoji style; # (7.0) LOWER LEFT PAINTBRUSH
+1F58D FE0E ; text style;  # (7.0) LOWER LEFT CRAYON
+1F58D FE0F ; emoji style; # (7.0) LOWER LEFT CRAYON
+1F590 FE0E ; text style;  # (7.0) RAISED HAND WITH FINGERS SPLAYED
+1F590 FE0F ; emoji style; # (7.0) RAISED HAND WITH FINGERS SPLAYED
+1F5A5 FE0E ; text style;  # (7.0) DESKTOP COMPUTER
+1F5A5 FE0F ; emoji style; # (7.0) DESKTOP COMPUTER
+1F5A8 FE0E ; text style;  # (7.0) PRINTER
+1F5A8 FE0F ; emoji style; # (7.0) PRINTER
+1F5B1 FE0E ; text style;  # (7.0) THREE BUTTON MOUSE
+1F5B1 FE0F ; emoji style; # (7.0) THREE BUTTON MOUSE
+1F5B2 FE0E ; text style;  # (7.0) TRACKBALL
+1F5B2 FE0F ; emoji style; # (7.0) TRACKBALL
+1F5BC FE0E ; text style;  # (7.0) FRAME WITH PICTURE
+1F5BC FE0F ; emoji style; # (7.0) FRAME WITH PICTURE
+1F5C2 FE0E ; text style;  # (7.0) CARD INDEX DIVIDERS
+1F5C2 FE0F ; emoji style; # (7.0) CARD INDEX DIVIDERS
+1F5C3 FE0E ; text style;  # (7.0) CARD FILE BOX
+1F5C3 FE0F ; emoji style; # (7.0) CARD FILE BOX
+1F5C4 FE0E ; text style;  # (7.0) FILE CABINET
+1F5C4 FE0F ; emoji style; # (7.0) FILE CABINET
+1F5D1 FE0E ; text style;  # (7.0) WASTEBASKET
+1F5D1 FE0F ; emoji style; # (7.0) WASTEBASKET
+1F5D2 FE0E ; text style;  # (7.0) SPIRAL NOTE PAD
+1F5D2 FE0F ; emoji style; # (7.0) SPIRAL NOTE PAD
+1F5D3 FE0E ; text style;  # (7.0) SPIRAL CALENDAR PAD
+1F5D3 FE0F ; emoji style; # (7.0) SPIRAL CALENDAR PAD
+1F5DC FE0E ; text style;  # (7.0) COMPRESSION
+1F5DC FE0F ; emoji style; # (7.0) COMPRESSION
+1F5DD FE0E ; text style;  # (7.0) OLD KEY
+1F5DD FE0F ; emoji style; # (7.0) OLD KEY
+1F5DE FE0E ; text style;  # (7.0) ROLLED-UP NEWSPAPER
+1F5DE FE0F ; emoji style; # (7.0) ROLLED-UP NEWSPAPER
+1F5E1 FE0E ; text style;  # (7.0) DAGGER KNIFE
+1F5E1 FE0F ; emoji style; # (7.0) DAGGER KNIFE
+1F5E3 FE0E ; text style;  # (7.0) SPEAKING HEAD IN SILHOUETTE
+1F5E3 FE0F ; emoji style; # (7.0) SPEAKING HEAD IN SILHOUETTE
+1F5E8 FE0E ; text style;  # (7.0) LEFT SPEECH BUBBLE
+1F5E8 FE0F ; emoji style; # (7.0) LEFT SPEECH BUBBLE
+1F5EF FE0E ; text style;  # (7.0) RIGHT ANGER BUBBLE
+1F5EF FE0F ; emoji style; # (7.0) RIGHT ANGER BUBBLE
+1F5F3 FE0E ; text style;  # (7.0) BALLOT BOX WITH BALLOT
+1F5F3 FE0F ; emoji style; # (7.0) BALLOT BOX WITH BALLOT
+1F5FA FE0E ; text style;  # (7.0) WORLD MAP
+1F5FA FE0F ; emoji style; # (7.0) WORLD MAP
+1F610 FE0E ; text style;  # (6.0) NEUTRAL FACE
+1F610 FE0F ; emoji style; # (6.0) NEUTRAL FACE
+1F687 FE0E ; text style;  # (6.0) METRO
+1F687 FE0F ; emoji style; # (6.0) METRO
+1F68D FE0E ; text style;  # (6.0) ONCOMING BUS
+1F68D FE0F ; emoji style; # (6.0) ONCOMING BUS
+1F691 FE0E ; text style;  # (6.0) AMBULANCE
+1F691 FE0F ; emoji style; # (6.0) AMBULANCE
+1F694 FE0E ; text style;  # (6.0) ONCOMING POLICE CAR
+1F694 FE0F ; emoji style; # (6.0) ONCOMING POLICE CAR
+1F698 FE0E ; text style;  # (6.0) ONCOMING AUTOMOBILE
+1F698 FE0F ; emoji style; # (6.0) ONCOMING AUTOMOBILE
+1F6AD FE0E ; text style;  # (6.0) NO SMOKING SYMBOL
+1F6AD FE0F ; emoji style; # (6.0) NO SMOKING SYMBOL
+1F6B2 FE0E ; text style;  # (6.0) BICYCLE
+1F6B2 FE0F ; emoji style; # (6.0) BICYCLE
+1F6B9 FE0E ; text style;  # (6.0) MENS SYMBOL
+1F6B9 FE0F ; emoji style; # (6.0) MENS SYMBOL
+1F6BA FE0E ; text style;  # (6.0) WOMENS SYMBOL
+1F6BA FE0F ; emoji style; # (6.0) WOMENS SYMBOL
+1F6BC FE0E ; text style;  # (6.0) BABY SYMBOL
+1F6BC FE0F ; emoji style; # (6.0) BABY SYMBOL
+1F6CB FE0E ; text style;  # (7.0) COUCH AND LAMP
+1F6CB FE0F ; emoji style; # (7.0) COUCH AND LAMP
+1F6CD FE0E ; text style;  # (7.0) SHOPPING BAGS
+1F6CD FE0F ; emoji style; # (7.0) SHOPPING BAGS
+1F6CE FE0E ; text style;  # (7.0) BELLHOP BELL
+1F6CE FE0F ; emoji style; # (7.0) BELLHOP BELL
+1F6CF FE0E ; text style;  # (7.0) BED
+1F6CF FE0F ; emoji style; # (7.0) BED
+1F6E0 FE0E ; text style;  # (7.0) HAMMER AND WRENCH
+1F6E0 FE0F ; emoji style; # (7.0) HAMMER AND WRENCH
+1F6E1 FE0E ; text style;  # (7.0) SHIELD
+1F6E1 FE0F ; emoji style; # (7.0) SHIELD
+1F6E2 FE0E ; text style;  # (7.0) OIL DRUM
+1F6E2 FE0F ; emoji style; # (7.0) OIL DRUM
+1F6E3 FE0E ; text style;  # (7.0) MOTORWAY
+1F6E3 FE0F ; emoji style; # (7.0) MOTORWAY
+1F6E4 FE0E ; text style;  # (7.0) RAILWAY TRACK
+1F6E4 FE0F ; emoji style; # (7.0) RAILWAY TRACK
+1F6E5 FE0E ; text style;  # (7.0) MOTOR BOAT
+1F6E5 FE0F ; emoji style; # (7.0) MOTOR BOAT
+1F6E9 FE0E ; text style;  # (7.0) SMALL AIRPLANE
+1F6E9 FE0F ; emoji style; # (7.0) SMALL AIRPLANE
+1F6F0 FE0E ; text style;  # (7.0) SATELLITE
+1F6F0 FE0F ; emoji style; # (7.0) SATELLITE
+1F6F3 FE0E ; text style;  # (7.0) PASSENGER SHIP
+1F6F3 FE0F ; emoji style; # (7.0) PASSENGER SHIP
+
+#Total sequences: 371
+
+#EOF

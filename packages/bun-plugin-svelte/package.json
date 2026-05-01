@@ -1,0 +1,42 @@
+{
+  "name": "bun-plugin-svelte",
+  "version": "0.0.6",
+  "description": "Official Svelte plugin for Bun",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oven-sh/bun",
+    "directory": "packages/bun-plugin-svelte"
+  },
+  "homepage": "https://bun.com",
+  "license": "MIT",
+  "type": "module",
+  "module": "src/index.ts",
+  "index": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "example": "bun --config=./example/bunfig.toml example/index.html",
+    "lint": "oxlint .",
+    "fmt": "prettier --write .",
+    "check:types": "tsc --noEmit",
+    "build:types": "tsc --emitDeclarationOnly --declaration --declarationDir ./dist"
+  },
+  "devDependencies": {
+    "@types/bun": "../bun-types",
+    "svelte": "^5.20.4",
+    "@threlte/core": "8.0.1"
+  },
+  "peerDependencies": {
+    "svelte": "^5"
+  },
+  "files": [
+    "README.md",
+    "bunfig.toml",
+    "tsconfig.json",
+    "modules.d.ts",
+    "dist",
+    "src",
+    "!src/**/*.spec.ts"
+  ]
+}

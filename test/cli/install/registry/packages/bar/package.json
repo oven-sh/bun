@@ -1,0 +1,39 @@
+{
+	"name": "bar",
+	"versions": {
+		"0.0.7": {
+			"name": "bar",
+			"version": "0.0.7",
+			"description": "not a workspace",
+			"_id": "bar@0.0.7",
+			"_nodeVersion": "22.1.0",
+			"_npmVersion": "10.7.0",
+			"dist": {
+				"integrity": "sha512-bIIMkU3aj4yOCC+MYYjCYkZJz00hfi03uJnV0dFCdeURxhWhEa/xR+HRIuJ85kldNbODSh3voHMTueTALrP9+A==",
+				"shasum": "4563d296c559d5d63b4a548362fdf8f551ef0799",
+				"tarball": "http://localhost:4873/bar/-/bar-0.0.7.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-05-20T19:09:57.381Z",
+		"created": "2024-05-20T19:09:57.381Z",
+		"0.0.7": "2024-05-20T19:09:57.381Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "0.0.7"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"bar-0.0.7.tgz": {
+			"shasum": "4563d296c559d5d63b4a548362fdf8f551ef0799",
+			"version": "0.0.7"
+		}
+	},
+	"_rev": "",
+	"_id": "bar",
+	"readme": "ERROR: No README data found!"
+}

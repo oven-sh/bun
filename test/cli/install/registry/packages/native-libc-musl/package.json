@@ -1,0 +1,42 @@
+{
+	"name": "native-libc-musl",
+	"versions": {
+		"1.0.0": {
+			"name": "native-libc-musl",
+			"version": "1.0.0",
+			"libc": [
+				"musl"
+			],
+			"_id": "native-libc-musl@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-1uffg8IA4EJ4VUnuZU4zyRO9EyduuNfbqg2MMVCWSMAsQkfzZnNR0hqtL0GW/EuhE8FWU/FE//Srf1px1pnN2Q==",
+				"shasum": "67bb7ee3453cf9d7fb23d85d7bff743d7fe76650",
+				"tarball": "http://localhost:4873/native-libc-musl/-/native-libc-musl-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:14.230Z",
+		"created": "2023-11-01T22:05:14.230Z",
+		"1.0.0": "2023-11-01T22:05:14.230Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"native-libc-musl-1.0.0.tgz": {
+			"shasum": "67bb7ee3453cf9d7fb23d85d7bff743d7fe76650",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-e4a4a36034430fd5",
+	"_id": "native-libc-musl",
+	"readme": "ERROR: No README data found!"
+}

@@ -1,0 +1,6 @@
+{
+  "name": "safe-is-number-7",
+  "dependencies": {
+    "is-number": "7.0.0"
+  }
+}

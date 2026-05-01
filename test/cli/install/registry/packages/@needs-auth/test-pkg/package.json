@@ -1,0 +1,43 @@
+{
+	"name": "@needs-auth/test-pkg",
+	"versions": {
+		"1.0.0": {
+			"name": "@needs-auth/test-pkg",
+			"main": "index.js",
+			"version": "1.0.0",
+			"dependencies": {},
+			"publishConfig": {
+				"registry": "http://localhost:22115"
+			},
+			"_id": "@needs-auth/test-pkg@1.0.0",
+			"_nodeVersion": "18.14.0",
+			"_npmVersion": "10.8.1",
+			"dist": {
+				"integrity": "sha512-7mQh/xL1CkoLei0Bc+sf0BzavEuJsY0dQxk3Zw3mBiuv3si91oOsE2Nz1SnUXpu1SHvqoqjMxwhhQEM9fpoHTQ==",
+				"shasum": "f7db88f438f712bd66b990e617f3a3fd5d396f17",
+				"tarball": "http://localhost:22115/@needs-auth/test-pkg/-/@needs-auth/test-pkg-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-07-06T01:49:26.660Z",
+		"created": "2024-07-06T01:49:26.660Z",
+		"1.0.0": "2024-07-06T01:49:26.660Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"test-pkg-1.0.0.tgz": {
+			"shasum": "f7db88f438f712bd66b990e617f3a3fd5d396f17",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "@needs-auth/test-pkg",
+	"readme": "ERROR: No README data found!"
+}

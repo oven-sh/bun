@@ -1,0 +1,42 @@
+{
+	"name": "no-deps-checked",
+	"versions": {
+		"1.0.0": {
+			"name": "no-deps-checked",
+			"version": "1.0.0",
+			"scripts": {
+				"install": "echo 'module.exports = 42' > built.js"
+			},
+			"_id": "no-deps-checked@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-dwiHm4pBuxYaSynOlRWBRe7NINYjQupLT7QUllttImzk1dNt7kQj7lsP0jou1mrl4uSn2yHVkkswSBCdwV2KWA==",
+				"shasum": "ad11194a747307feb76b46bf5c63942c45764308",
+				"tarball": "http://localhost:4873/no-deps-checked/-/no-deps-checked-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:17.672Z",
+		"created": "2023-11-01T22:05:17.672Z",
+		"1.0.0": "2023-11-01T22:05:17.672Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"no-deps-checked-1.0.0.tgz": {
+			"shasum": "ad11194a747307feb76b46bf5c63942c45764308",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-6407ed02238d5ab9",
+	"_id": "no-deps-checked",
+	"readme": "ERROR: No README data found!"
+}

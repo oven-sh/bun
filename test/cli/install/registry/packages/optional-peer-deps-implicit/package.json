@@ -1,0 +1,44 @@
+{
+	"name": "optional-peer-deps-implicit",
+	"versions": {
+		"1.0.0": {
+			"name": "optional-peer-deps-implicit",
+			"version": "1.0.0",
+			"peerDependenciesMeta": {
+				"no-deps": {
+					"optional": true
+				}
+			},
+			"_id": "optional-peer-deps-implicit@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-BHuetog3DEBBi4mbBRGG1WtfPj8aNcyXB4DF8ZxEmFyczkm0nYXNtCn7wRielIFa8lSEIHiRP9nWWrlXgR7LaA==",
+				"shasum": "ef26fac9491bbafe3c5e6f99754c99bc3ee2f6ab",
+				"tarball": "http://localhost:4873/optional-peer-deps-implicit/-/optional-peer-deps-implicit-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:27.521Z",
+		"created": "2023-11-01T22:05:27.521Z",
+		"1.0.0": "2023-11-01T22:05:27.521Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"optional-peer-deps-implicit-1.0.0.tgz": {
+			"shasum": "ef26fac9491bbafe3c5e6f99754c99bc3ee2f6ab",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-9add5b9ef969953a",
+	"_id": "optional-peer-deps-implicit",
+	"readme": "ERROR: No README data found!"
+}

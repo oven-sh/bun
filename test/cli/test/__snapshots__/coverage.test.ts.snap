@@ -1,0 +1,28 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`lcov coverage reporter: lcov-coverage-reporter-output 1`] = `
+"TN:
+SF:demo1.ts
+FNF:1
+FNH:0
+DA:2,19
+DA:3,16
+DA:4,1
+LF:3
+LH:3
+end_of_record
+TN:
+SF:demo2.ts
+FNF:2
+FNH:1
+DA:2,28
+DA:4,11
+DA:6,9
+DA:9,0
+DA:10,0
+DA:11,1
+DA:14,9
+LF:7
+LH:5
+end_of_record"
+`;

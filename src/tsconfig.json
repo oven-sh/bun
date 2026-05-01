@@ -1,0 +1,15 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    // baseUrl needed until resolver fix propagates to system Bun used during build
+    "ignoreDeprecations": "6.0",
+    "baseUrl": ".",
+    "paths": {
+      "bindgen": ["./codegen/bindgen-lib.ts"],
+      "bindgenv2": ["./codegen/bindgenv2/lib.ts"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+  // separate projects have extra settings that only apply in those scopes
+  "exclude": ["js", "bake", "init", "create", "bun.js/bindings/libuv"]
+}

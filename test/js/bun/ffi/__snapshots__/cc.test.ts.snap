@@ -1,0 +1,10 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`can run a .c file: cc-fixture-stderr 1`] = `"Hello, World!"`;
+
+exports[`can run a .c file: cc-fixture-stdout 1`] = `
+"Hello, World!
+Hello, World!
+Hi!, 123 == 123
+bool true = 1, bool false = 0"
+`;

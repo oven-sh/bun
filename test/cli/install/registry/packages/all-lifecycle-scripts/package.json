@@ -1,0 +1,46 @@
+{
+	"name": "all-lifecycle-scripts",
+	"versions": {
+		"1.0.0": {
+			"name": "all-lifecycle-scripts",
+			"version": "1.0.0",
+			"scripts": {
+				"preinstall": "bun preinstall.js",
+				"install": "bun install.js",
+				"postinstall": "bun postinstall.js",
+				"preprepare": "bun preprepare.js",
+				"prepare": "bun prepare.js",
+				"postprepare": "bun postprepare.js"
+			},
+			"_id": "all-lifecycle-scripts@1.0.0",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-hgU56juWYnFOQ3byQuydEgugxd+iWvaWfaoGvly4k/AxehC3dhM6IhXoDc3K7b/n1mP/II8hGIjI+LmxXFNMlw==",
+				"shasum": "91cd0bd6a450b21db0078b9118c54bc0a27fccb7",
+				"tarball": "http://localhost:4873/all-lifecycle-scripts/-/all-lifecycle-scripts-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-10T00:45:59.599Z",
+		"created": "2023-11-10T00:45:59.599Z",
+		"1.0.0": "2023-11-10T00:45:59.599Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"all-lifecycle-scripts-1.0.0.tgz": {
+			"shasum": "91cd0bd6a450b21db0078b9118c54bc0a27fccb7",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "all-lifecycle-scripts",
+	"readme": "ERROR: No README data found!"
+}

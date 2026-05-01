@@ -1,0 +1,11 @@
+{
+  "name": "bench",
+  "scripts": {
+    "bench:bun": "bun bun.js",
+    "bench:node": "node node.mjs",
+    "deps": "cd src && bun run deps",
+    "build": "cd src && bun run build",
+    "bench:deno": "deno run -A --unstable deno.js",
+    "bench": "bun run bench:bun && bun run bench:node && bun run bench:deno"
+  }
+}

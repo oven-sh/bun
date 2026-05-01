@@ -1,0 +1,1 @@
+this case has a very fun and hard to understand dependency graph. bun pm migrate is expected to migrate it without changing what packages will install. the hoisting doesnt match exactly what npm does, but it is equally valid.

@@ -1,0 +1,148 @@
+// Jest Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`d0 d1 t1 1`] = `"hello\`snapshot\\"`;
+
+exports[`d0 d1 t2 1`] = `"hey"`;
+
+exports[`d0 snapshot serialize edgecases 1`] = `1`;
+
+exports[`d0 snapshot serialize edgecases 2`] = `
+"12
+3
+4"
+`;
+
+exports[`d0 snapshot serialize edgecases 3`] = `
+"
+"
+`;
+
+exports[`d0 snapshot serialize edgecases 4`] = `
+"12
+3
+
+
+
+
+
+
+
+
+
+
+
+456	7\\
+
+
+
+r
+r
+"
+`;
+
+exports[`d0 snapshot serialize edgecases 5`] = `
+"12
+3
+456	7\\"
+`;
+
+exports[`d0 snapshot serialize edgecases 6`] = `
+"
+"
+`;
+
+exports[`d0 snapshot serialize edgecases 7`] = `
+"
+"
+`;
+
+exports[`d0 snapshot serialize edgecases 8`] = `"\\"`;
+
+exports[`d0 snapshot serialize edgecases 9`] = `""`;
+
+exports[`d0 snapshot serialize edgecases 10`] = `""`;
+
+exports[`d0 snapshot serialize edgecases 11`] = `"	"`;
+
+exports[`d0 snapshot serialize edgecases 12`] = `""`;
+
+exports[`d0 snapshot serialize edgecases 13`] = `"	"`;
+
+exports[`d0 snapshot serialize edgecases 14`] = `
+"hello sn
+    apshot"
+`;
+
+exports[`d0 snapshot serialize edgecases 15`] = `String {}`;
+
+exports[`d0 snapshot serialize edgecases 16`] = `String {}`;
+
+exports[`d0 snapshot serialize edgecases 17`] = `
+"\\
+export with test name
+
+"
+`;
+
+exports[`d0 snapshot serialize edgecases 18`] = `1`;
+
+exports[`d0 snapshot serialize edgecases 19`] = `2`;
+
+exports[`d0 snapshot serialize edgecases 20`] = `"\`\`\`\`\`\`\`\`\`\\\`\`\`\`\`\`\\\`\\\`\`\`\`\`\`\\\`\`\`\`\`\\\`\`\\\\\`\\\`\`\`\`\`\`\`\`\`\`\`\`"`;
+
+exports[`d0 snapshot serialize edgecases 21`] = `"\`\`\`\`\`\`\`\`\`\\\`\`\`\`\`\`\\\`\\\`\`\`\`\`\`\\\`\`\`\`\`\\\`\`\\\\\`\\\`\`\`\`\`\`\`\`\`\`\`\`\\"`;
+
+exports[`d0 snapshot serialize edgecases 22`] = `"\\\`\`\`\`\`\`\`\`\`\\\`\`\`\`\`\`\\\`\\\`\`\`\`\`\`\\\`\`\`\`\`\\\`\`\\\\\`\\\`\`\`\`\`\`\`\`\`\`\`\`"`;
+
+exports[`d0 snapshot serialize edgecases 23`] = `"\\\`\`\`\`\`\`\`\`\`\\\`\`\`\`\`\`\\\`\\\`\`\`\`\`\`\\\`\`\`\`\`\\\`\`\\\\\`\\\`\`\`\`\`\`\`\`\`\`\`\`\\"`;
+
+exports[`d0 snapshot serialize edgecases 24`] = `"one t\`wo \`three"`;
+
+exports[`d0 snapshot serialize edgecases 25`] = `"one tw\\\`o three"`;
+
+exports[`d0 snapshot serialize edgecases 26`] = `
+"
+export[\\\`hello snap'shot 2\`] = \`"
+`;
+
+exports[`d0 snapshot serialize edgecases 27`] = `
+"
+export[\`hello snapshot 2\`] = \`"
+`;
+
+exports[`d0 snapshot serialize edgecases 28`] = `"\`hello snapshot3 \\\`\`"`;
+
+exports[`d0 snapshot serialize edgecases 29`] = `"\`hello snapshot4 \\\`\\\`"`;
+
+exports[`d0 snapshot serialize edgecases 30`] = `"\\\`hello snapshot5 \\\`\\\`"`;
+
+exports[`d0 snapshot serialize edgecases: one 1`] = `1`;
+
+exports[`d0 snapshot serialize edgecases: one 2`] = `3`;
+
+exports[`d0 snapshot serialize edgecases: ¾ 1`] = `
+{
+  "a": 1,
+  "b": 2,
+  "c": 3,
+}
+`;
+
+exports[`d0 snapshot serialize edgecases: 🐄 1`] = `
+{
+  "a": 1,
+  "b": 2,
+  "c": 3,
+}
+`;
+
+exports[`d0 snapshot serialize edgecases: 😃 1`] = `
+{
+  "a": "🐄",
+  "b": "🐈",
+}
+`;
+
+exports[`d0 t3 1`] = `"hello snapshot"`;
+
+exports[`d0 t4 1`] = `"hello\`snapshot\\"`;

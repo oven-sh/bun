@@ -1,0 +1,47 @@
+
+# Underline
+
+With the flag `MD_FLAG_UNDERLINE`, MD4C sees underscore `_` rather as a mark
+denoting an underlined span rather than an ordinary emphasis (or a strong
+emphasis).
+
+```````````````````````````````` example
+_foo_
+.
+<p><u>foo</u></p>
+.
+--funderline
+````````````````````````````````
+
+In sequences of multiple underscores, each single one translates into an
+underline span mark.
+
+```````````````````````````````` example
+___foo___
+.
+<p><u><u><u>foo</u></u></u></p>
+.
+--funderline
+````````````````````````````````
+
+Intra-word underscores are not recognized as underline marks:
+
+```````````````````````````````` example
+foo_bar_baz
+.
+<p>foo_bar_baz</p>
+.
+--funderline
+````````````````````````````````
+
+Also the parser follows the standard understanding when the underscore can
+or cannot open or close a span. Therefore there is no underline in the following
+example because no underline can be seen as a closing mark.
+
+```````````````````````````````` example
+_foo _bar
+.
+<p>_foo _bar</p>
+.
+--funderline
+````````````````````````````````

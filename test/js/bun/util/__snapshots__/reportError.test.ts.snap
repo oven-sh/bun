@@ -1,0 +1,26 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`reportError 1`] = `
+"1 | reportError(new Error("reportError Test!"));
+                ^
+error: reportError Test!
+      at /reportError.ts:1:13
+error: true
+error: false
+error: null
+error: 123
+error: Infinity
+error: NaN
+error: NaN
+error
+error
+error
+error
+error
+error: string
+error
+error
+error
+error
+"
+`;

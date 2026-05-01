@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DevServer Memory Visualization</title>
+    <style>
+      html,
+      body {
+        background-color: #1e1e2e;
+        color: #cdd6f4;
+        font-family: sans-serif;
+        margin: 20px;
+      }
+
+      h1,
+      h2 {
+        margin-bottom: 20px;
+      }
+
+      table {
+        border-collapse: collapse;
+        width: 80%;
+        max-width: 800px;
+        margin: 20px 0;
+      }
+
+      th,
+      td {
+        padding: 12px 15px;
+        text-align: left;
+        border-bottom: 1px solid #585b70;
+      }
+
+      th {
+        background-color: #313244;
+        font-weight: bold;
+      }
+
+      .memory-cell {
+        font-family: monospace;
+        text-align: right;
+      }
+
+      .section-header {
+        background-color: #45475a;
+        font-weight: bold;
+      }
+
+      #update-time {
+        font-size: 0.8em;
+        color: #a6adc8;
+        margin-bottom: 20px;
+      }
+
+      /* Source Maps table styles */
+      #source-maps-table {
+        width: 100%;
+        max-width: 1200px;
+        font-size: 0.9em;
+      }
+
+      #source-maps-table th,
+      #source-maps-table td {
+        padding: 8px 10px;
+      }
+
+      #source-maps-table .key-cell {
+        font-family: monospace;
+        max-width: 200px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      #source-maps-container {
+        margin-top: 40px;
+      }
+
+      .count-cell {
+        text-align: center;
+        font-family: monospace;
+      }
+
+      .size-cell {
+        text-align: right;
+        font-family: monospace;
+      }
+
+      .expiry-cell {
+        text-align: center;
+        font-family: monospace;
+      }
+
+      #source-maps-count {
+        font-size: 0.9em;
+        color: #a6adc8;
+        margin-bottom: 10px;
+      }
+    </style>
+  </head>
+
+  <body>
+    <h1>DevServer Memory Visualization</h1>
+    <div id="update-time">Last updated: Never</div>
+
+    <table id="memory-table">
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th>Memory Usage</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="section-header">
+          <td colspan="2">DevServer Memory Breakdown</td>
+        </tr>
+        <tr>
+          <td>Incremental Graph (Client)</td>
+          <td class="memory-cell" id="incremental_graph_client">—</td>
+        </tr>
+        <tr>
+          <td>Incremental Graph (Server)</td>
+          <td class="memory-cell" id="incremental_graph_server">—</td>
+        </tr>
+        <tr>
+          <td>JS Code</td>
+          <td class="memory-cell" id="js_code">—</td>
+        </tr>
+        <tr>
+          <td>Source Maps</td>
+          <td class="memory-cell" id="source_maps">—</td>
+        </tr>
+        <tr>
+          <td>Assets</td>
+          <td class="memory-cell" id="assets">—</td>
+        </tr>
+        <tr>
+          <td>Other</td>
+          <td class="memory-cell" id="other">—</td>
+        </tr>
+        <tr class="section-header">
+          <td colspan="2">Overall Memory Statistics</td>
+        </tr>
+        <tr>
+          <td>DevServer AllocationScope</td>
+          <td class="memory-cell" id="devserver_tracked">—</td>
+        </tr>
+        <tr>
+          <td>Process usage</td>
+          <td class="memory-cell" id="process_used">—</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div id="source-maps-container">
+      <h2>Source Maps</h2>
+      <div id="source-maps-count">Total Source Maps: 0</div>
+      <div id="source-maps-table-container">
+        <table id="source-maps-table">
+          <thead>
+            <tr>
+              <th>Key</th>
+              <th>Ref Count</th>
+              <th>Weak Refs</th>
+              <th>Expiry Time</th>
+              <th>File Paths</th>
+              <th>Size (bytes)</th>
+            </tr>
+          </thead>
+          <tbody id="source-maps-tbody">
+            <!-- Source maps will be inserted here -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <script>
+      // Connect to HMR WebSocket and enable memory visualization packets
+      const ws = new WebSocket(location.origin + "/_bun/hmr");
+      ws.binaryType = "arraybuffer"; // We are expecting binary data
+
+      ws.onopen = function () {
+        ws.send("sM"); // Subscribe to memory visualizer events
+      };
+
+      ws.onmessage = function (event) {
+        decodeAndUpdate(new Uint8Array(event.data));
+      };
+
+      // Helper to read integers from buffer
+      function readUint32(buffer, offset) {
+        return buffer[offset] | (buffer[offset + 1] << 8) | (buffer[offset + 2] << 16) | (buffer[offset + 3] << 24);
+      }
+
+      function readUint64(buffer, offset) {
+        const lo = readUint32(buffer, offset);
+        const hi = readUint32(buffer, offset + 4);
+        // Use BigInt for 64-bit numbers to avoid precision loss
+        return (BigInt(hi) << 32n) | BigInt(lo);
+      }
+
+      function readKey(buffer, offset) {
+        // Read 8 bytes and convert to a hex string
+        let hexString = "";
+        for (let i = 0; i < 8; i++) {
+          hexString += buffer[offset + i].toString(16).padStart(2, "0");
+        }
+        return hexString.toUpperCase();
+      }
+
+      function readFloat64(buffer, offset) {
+        // Create a DataView of the buffer to handle alignment issues
+        const view = new DataView(buffer.buffer, buffer.byteOffset + offset, 8);
+        return view.getFloat64(0, true); // true for little-endian
+      }
+
+      // Format bytes to human-readable format
+      function formatBytes(bytes) {
+        if (bytes === 0) return "0 Bytes";
+
+        const k = 1024;
+        const sizes = ["Bytes", "KB", "MB", "GB"];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+      }
+
+      // Format date from timestamp
+      function formatDate(timestamp) {
+        if (timestamp === 0) return "N/A";
+
+        const date = new Date(timestamp);
+        return date.toLocaleString();
+      }
+
+      // Calculate color intensity based on memory usage
+      function getColorIntensity(value, max) {
+        // Ensure we don't divide by zero
+        if (max === 0) return "#0a0a1a";
+
+        // Calculate intensity from 0 to 1
+        const intensity = Math.min(value / max, 1);
+
+        // Generate a blue color with varying intensity
+        const blue = Math.floor(50 + intensity * 205)
+          .toString(16)
+          .padStart(2, "0");
+        return `#0a0a${blue}`;
+      }
+
+      function decodeAndUpdate(buffer) {
+        // Only process messages starting with 'M' (ASCII code 77)
+        if (buffer[0] !== 77) return;
+
+        let offset = 1; // Skip the 'M' byte
+
+        // Parse memory usage metrics
+        const memoryData = {
+          incremental_graph_client: readUint32(buffer, offset),
+          incremental_graph_server: readUint32(buffer, offset + 4),
+          js_code: readUint32(buffer, offset + 8),
+          source_maps: readUint32(buffer, offset + 12),
+          assets: readUint32(buffer, offset + 16),
+          other: readUint32(buffer, offset + 20),
+
+          devserver_tracked: readUint32(buffer, offset + 24),
+          process_used: readUint32(buffer, offset + 28),
+          system_used: readUint32(buffer, offset + 32),
+          system_total: readUint32(buffer, offset + 36),
+        };
+
+        offset += 40; // Move past the main memory metrics
+
+        // Parse source maps data
+        const sourceMapsCount = readUint32(buffer, offset);
+        offset += 4;
+
+        const sourceMaps = [];
+        for (let i = 0; i < sourceMapsCount; i++) {
+          const key = readKey(buffer, offset);
+          offset += 8;
+
+          const refCount = readUint32(buffer, offset);
+          offset += 4;
+
+          const weakRefs = readUint32(buffer, offset);
+          offset += 4;
+
+          let weakRefExpire = 0;
+          if (weakRefs > 0) {
+            weakRefExpire = readFloat64(buffer, offset);
+            offset += 8;
+          }
+
+          const filePathsCount = readUint32(buffer, offset);
+          offset += 4;
+
+          const mapCost = readUint32(buffer, offset);
+          offset += 4;
+
+          sourceMaps.push({
+            key,
+            refCount,
+            weakRefs,
+            weakRefExpire: weakRefs > 0 ? weakRefExpire * 1000 : 0,
+            filePathsCount,
+            mapCost,
+          });
+        }
+
+        // Update the tables with new data
+        updateMemoryTable(memoryData);
+        updateSourceMapsTable(sourceMaps);
+
+        // Update the last updated time
+        document.getElementById("update-time").textContent = "Last updated: " + new Date().toLocaleTimeString();
+      }
+
+      function updateMemoryTable(data) {
+        // Calculate the max memory among the dev server breakdown fields
+        const devServerFields = [
+          "incremental_graph_client",
+          "incremental_graph_server",
+          "js_code",
+          "source_maps",
+          "assets",
+          "other",
+        ];
+
+        const maxDevServerMemory = Math.max(...devServerFields.map(field => data[field]));
+
+        // Update the dev server memory breakdown fields with color coding
+        devServerFields.forEach(field => {
+          const element = document.getElementById(field);
+          element.textContent = formatBytes(data[field]);
+          element.style.backgroundColor = getColorIntensity(data[field], maxDevServerMemory);
+        });
+
+        // Update the overall memory statistics (no color coding)
+        document.getElementById("devserver_tracked").textContent = formatBytes(data.devserver_tracked);
+        document.getElementById("process_used").textContent = formatBytes(data.process_used);
+        // document.getElementById('system_used').textContent = formatBytes(data.system_used);
+        // document.getElementById('system_total').textContent = formatBytes(data.system_total);
+      }
+
+      function updateSourceMapsTable(sourceMaps) {
+        // Update count display
+        document.getElementById("source-maps-count").textContent = `Total Source Maps: ${sourceMaps.length}`;
+
+        // Clear existing table rows
+        const tbody = document.getElementById("source-maps-tbody");
+        tbody.innerHTML = "";
+
+        // Add new rows
+        sourceMaps.forEach(sourceMap => {
+          const row = document.createElement("tr");
+
+          // Key cell
+          const keyCell = document.createElement("td");
+          keyCell.className = "key-cell";
+          keyCell.textContent = sourceMap.key;
+          row.appendChild(keyCell);
+
+          // Ref count cell
+          const refCountCell = document.createElement("td");
+          refCountCell.className = "count-cell";
+          refCountCell.textContent = sourceMap.refCount;
+          row.appendChild(refCountCell);
+
+          // Weak refs cell
+          const weakRefsCell = document.createElement("td");
+          weakRefsCell.className = "count-cell";
+          weakRefsCell.textContent = sourceMap.weakRefs;
+          row.appendChild(weakRefsCell);
+
+          // Expiry time cell
+          const expiryCell = document.createElement("td");
+          expiryCell.className = "expiry-cell";
+          expiryCell.textContent = formatDate(sourceMap.weakRefExpire);
+          row.appendChild(expiryCell);
+
+          // File paths count cell
+          const filePathsCell = document.createElement("td");
+          filePathsCell.className = "count-cell";
+          filePathsCell.textContent = sourceMap.filePathsCount;
+          row.appendChild(filePathsCell);
+
+          // Map cost cell
+          const mapCostCell = document.createElement("td");
+          mapCostCell.className = "size-cell";
+          mapCostCell.textContent = formatBytes(sourceMap.mapCost);
+          row.appendChild(mapCostCell);
+
+          tbody.appendChild(row);
+        });
+      }
+    </script>
+  </body>
+</html>

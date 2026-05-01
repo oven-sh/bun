@@ -1,0 +1,2144 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`dependency on workspace without version in package.json: version: * 1`] = `
+"{
+  "format": "v3",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "package_index": {
+    "no-deps": 2,
+    "foo": 0,
+    "bar": 1
+  },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 1
+        },
+        "no-deps": {
+          "id": 1,
+          "package_id": 2
+        }
+      }
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "bar",
+      "literal": "",
+      "workspace": "packages/bar",
+      "package_id": 1,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 0
+    },
+    {
+      "name": "no-deps",
+      "literal": "",
+      "workspace": "packages/mono",
+      "package_id": 2,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 1
+    },
+    {
+      "name": "no-deps",
+      "literal": "*",
+      "workspace": "packages/mono",
+      "package_id": 2,
+      "behavior": {
+        "prod": true
+      },
+      "id": 2
+    }
+  ],
+  "packages": [
+    {
+      "id": 0,
+      "name": "foo",
+      "name_hash": "14841791273925386894",
+      "resolution": {
+        "tag": "root",
+        "value": "",
+        "resolved": ""
+      },
+      "dependencies": [
+        0,
+        1
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "local",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 1,
+      "name": "bar",
+      "name_hash": "11592711315645265694",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/bar",
+        "resolved": "workspace:packages/bar"
+      },
+      "dependencies": [
+        2
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    }
+  ],
+  "workspace_paths": {
+    "11592711315645265694": "packages/bar",
+    "5128161233225832376": "packages/mono"
+  },
+  "workspace_versions": {
+    "11592711315645265694": "1.0.0"
+  }
+}"
+`;
+
+exports[`dependency on workspace without version in package.json: version: *.*.* 1`] = `
+"{
+  "format": "v3",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "package_index": {
+    "no-deps": 2,
+    "foo": 0,
+    "bar": 1
+  },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 1
+        },
+        "no-deps": {
+          "id": 1,
+          "package_id": 2
+        }
+      }
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "bar",
+      "literal": "",
+      "workspace": "packages/bar",
+      "package_id": 1,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 0
+    },
+    {
+      "name": "no-deps",
+      "literal": "",
+      "workspace": "packages/mono",
+      "package_id": 2,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 1
+    },
+    {
+      "name": "no-deps",
+      "literal": "*.*.*",
+      "workspace": "packages/mono",
+      "package_id": 2,
+      "behavior": {
+        "prod": true
+      },
+      "id": 2
+    }
+  ],
+  "packages": [
+    {
+      "id": 0,
+      "name": "foo",
+      "name_hash": "14841791273925386894",
+      "resolution": {
+        "tag": "root",
+        "value": "",
+        "resolved": ""
+      },
+      "dependencies": [
+        0,
+        1
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "local",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 1,
+      "name": "bar",
+      "name_hash": "11592711315645265694",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/bar",
+        "resolved": "workspace:packages/bar"
+      },
+      "dependencies": [
+        2
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    }
+  ],
+  "workspace_paths": {
+    "11592711315645265694": "packages/bar",
+    "5128161233225832376": "packages/mono"
+  },
+  "workspace_versions": {
+    "11592711315645265694": "1.0.0"
+  }
+}"
+`;
+
+exports[`dependency on workspace without version in package.json: version: =* 1`] = `
+"{
+  "format": "v3",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "package_index": {
+    "no-deps": 2,
+    "foo": 0,
+    "bar": 1
+  },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 1
+        },
+        "no-deps": {
+          "id": 1,
+          "package_id": 2
+        }
+      }
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "bar",
+      "literal": "",
+      "workspace": "packages/bar",
+      "package_id": 1,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 0
+    },
+    {
+      "name": "no-deps",
+      "literal": "",
+      "workspace": "packages/mono",
+      "package_id": 2,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 1
+    },
+    {
+      "name": "no-deps",
+      "literal": "=*",
+      "workspace": "packages/mono",
+      "package_id": 2,
+      "behavior": {
+        "prod": true
+      },
+      "id": 2
+    }
+  ],
+  "packages": [
+    {
+      "id": 0,
+      "name": "foo",
+      "name_hash": "14841791273925386894",
+      "resolution": {
+        "tag": "root",
+        "value": "",
+        "resolved": ""
+      },
+      "dependencies": [
+        0,
+        1
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "local",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 1,
+      "name": "bar",
+      "name_hash": "11592711315645265694",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/bar",
+        "resolved": "workspace:packages/bar"
+      },
+      "dependencies": [
+        2
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    }
+  ],
+  "workspace_paths": {
+    "11592711315645265694": "packages/bar",
+    "5128161233225832376": "packages/mono"
+  },
+  "workspace_versions": {
+    "11592711315645265694": "1.0.0"
+  }
+}"
+`;
+
+exports[`dependency on workspace without version in package.json: version: kjwoehcojrgjoj 1`] = `
+"{
+  "format": "v3",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "package_index": {
+    "no-deps": 2,
+    "foo": 0,
+    "bar": 1
+  },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 1
+        },
+        "no-deps": {
+          "id": 1,
+          "package_id": 2
+        }
+      }
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "bar",
+      "literal": "",
+      "workspace": "packages/bar",
+      "package_id": 1,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 0
+    },
+    {
+      "name": "no-deps",
+      "literal": "",
+      "workspace": "packages/mono",
+      "package_id": 2,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 1
+    },
+    {
+      "name": "no-deps",
+      "literal": "kjwoehcojrgjoj",
+      "workspace": "packages/mono",
+      "package_id": 2,
+      "behavior": {
+        "prod": true
+      },
+      "id": 2
+    }
+  ],
+  "packages": [
+    {
+      "id": 0,
+      "name": "foo",
+      "name_hash": "14841791273925386894",
+      "resolution": {
+        "tag": "root",
+        "value": "",
+        "resolved": ""
+      },
+      "dependencies": [
+        0,
+        1
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "local",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 1,
+      "name": "bar",
+      "name_hash": "11592711315645265694",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/bar",
+        "resolved": "workspace:packages/bar"
+      },
+      "dependencies": [
+        2
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    }
+  ],
+  "workspace_paths": {
+    "11592711315645265694": "packages/bar",
+    "5128161233225832376": "packages/mono"
+  },
+  "workspace_versions": {
+    "11592711315645265694": "1.0.0"
+  }
+}"
+`;
+
+exports[`dependency on workspace without version in package.json: version: *.1.* 1`] = `
+"{
+  "format": "v3",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "package_index": {
+    "no-deps": 2,
+    "foo": 0,
+    "bar": 1
+  },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 1
+        },
+        "no-deps": {
+          "id": 1,
+          "package_id": 2
+        }
+      }
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "bar",
+      "literal": "",
+      "workspace": "packages/bar",
+      "package_id": 1,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 0
+    },
+    {
+      "name": "no-deps",
+      "literal": "",
+      "workspace": "packages/mono",
+      "package_id": 2,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 1
+    },
+    {
+      "name": "no-deps",
+      "literal": "*.1.*",
+      "workspace": "packages/mono",
+      "package_id": 2,
+      "behavior": {
+        "prod": true
+      },
+      "id": 2
+    }
+  ],
+  "packages": [
+    {
+      "id": 0,
+      "name": "foo",
+      "name_hash": "14841791273925386894",
+      "resolution": {
+        "tag": "root",
+        "value": "",
+        "resolved": ""
+      },
+      "dependencies": [
+        0,
+        1
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "local",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 1,
+      "name": "bar",
+      "name_hash": "11592711315645265694",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/bar",
+        "resolved": "workspace:packages/bar"
+      },
+      "dependencies": [
+        2
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    }
+  ],
+  "workspace_paths": {
+    "11592711315645265694": "packages/bar",
+    "5128161233225832376": "packages/mono"
+  },
+  "workspace_versions": {
+    "11592711315645265694": "1.0.0"
+  }
+}"
+`;
+
+exports[`dependency on workspace without version in package.json: version: *-pre 1`] = `
+"{
+  "format": "v3",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "package_index": {
+    "no-deps": 2,
+    "foo": 0,
+    "bar": 1
+  },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 1
+        },
+        "no-deps": {
+          "id": 1,
+          "package_id": 2
+        }
+      }
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "bar",
+      "literal": "",
+      "workspace": "packages/bar",
+      "package_id": 1,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 0
+    },
+    {
+      "name": "no-deps",
+      "literal": "",
+      "workspace": "packages/mono",
+      "package_id": 2,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 1
+    },
+    {
+      "name": "no-deps",
+      "literal": "*-pre",
+      "workspace": "packages/mono",
+      "package_id": 2,
+      "behavior": {
+        "prod": true
+      },
+      "id": 2
+    }
+  ],
+  "packages": [
+    {
+      "id": 0,
+      "name": "foo",
+      "name_hash": "14841791273925386894",
+      "resolution": {
+        "tag": "root",
+        "value": "",
+        "resolved": ""
+      },
+      "dependencies": [
+        0,
+        1
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "local",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 1,
+      "name": "bar",
+      "name_hash": "11592711315645265694",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/bar",
+        "resolved": "workspace:packages/bar"
+      },
+      "dependencies": [
+        2
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    }
+  ],
+  "workspace_paths": {
+    "11592711315645265694": "packages/bar",
+    "5128161233225832376": "packages/mono"
+  },
+  "workspace_versions": {
+    "11592711315645265694": "1.0.0"
+  }
+}"
+`;
+
+exports[`dependency on workspace without version in package.json: version: 1 1`] = `
+"{
+  "format": "v3",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "package_index": {
+    "no-deps": [
+      2,
+      3
+    ],
+    "foo": 0,
+    "bar": 1
+  },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 1
+        },
+        "no-deps": {
+          "id": 1,
+          "package_id": 2
+        }
+      }
+    },
+    {
+      "id": 1,
+      "path": "node_modules/bar/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "no-deps": {
+          "id": 2,
+          "package_id": 3
+        }
+      }
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "bar",
+      "literal": "",
+      "workspace": "packages/bar",
+      "package_id": 1,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 0
+    },
+    {
+      "name": "no-deps",
+      "literal": "",
+      "workspace": "packages/mono",
+      "package_id": 2,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 1
+    },
+    {
+      "name": "no-deps",
+      "literal": "1",
+      "npm": {
+        "name": "no-deps",
+        "version": "<2.0.0 >=1.0.0"
+      },
+      "package_id": 3,
+      "behavior": {
+        "prod": true
+      },
+      "id": 2
+    }
+  ],
+  "packages": [
+    {
+      "id": 0,
+      "name": "foo",
+      "name_hash": "14841791273925386894",
+      "resolution": {
+        "tag": "root",
+        "value": "",
+        "resolved": ""
+      },
+      "dependencies": [
+        0,
+        1
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "local",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 1,
+      "name": "bar",
+      "name_hash": "11592711315645265694",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/bar",
+        "resolved": "workspace:packages/bar"
+      },
+      "dependencies": [
+        2
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 3,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "npm",
+        "value": "1.1.0",
+        "resolved": "http://localhost:1234/no-deps/-/no-deps-1.1.0.tgz"
+      },
+      "dependencies": [],
+      "integrity": "sha512-ebG2pipYAKINcNI3YxdsiAgFvNGp2gdRwxAKN2LYBm9+YxuH/lHH2sl+GKQTuGiNfCfNZRMHUyyLPEJD6HWm7w==",
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    }
+  ],
+  "workspace_paths": {
+    "11592711315645265694": "packages/bar",
+    "5128161233225832376": "packages/mono"
+  },
+  "workspace_versions": {
+    "11592711315645265694": "1.0.0"
+  }
+}"
+`;
+
+exports[`dependency on workspace without version in package.json: version: 1.* 1`] = `
+"{
+  "format": "v3",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "package_index": {
+    "no-deps": [
+      2,
+      3
+    ],
+    "foo": 0,
+    "bar": 1
+  },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 1
+        },
+        "no-deps": {
+          "id": 1,
+          "package_id": 2
+        }
+      }
+    },
+    {
+      "id": 1,
+      "path": "node_modules/bar/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "no-deps": {
+          "id": 2,
+          "package_id": 3
+        }
+      }
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "bar",
+      "literal": "",
+      "workspace": "packages/bar",
+      "package_id": 1,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 0
+    },
+    {
+      "name": "no-deps",
+      "literal": "",
+      "workspace": "packages/mono",
+      "package_id": 2,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 1
+    },
+    {
+      "name": "no-deps",
+      "literal": "1.*",
+      "npm": {
+        "name": "no-deps",
+        "version": "<2.0.0 >=1.0.0"
+      },
+      "package_id": 3,
+      "behavior": {
+        "prod": true
+      },
+      "id": 2
+    }
+  ],
+  "packages": [
+    {
+      "id": 0,
+      "name": "foo",
+      "name_hash": "14841791273925386894",
+      "resolution": {
+        "tag": "root",
+        "value": "",
+        "resolved": ""
+      },
+      "dependencies": [
+        0,
+        1
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "local",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 1,
+      "name": "bar",
+      "name_hash": "11592711315645265694",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/bar",
+        "resolved": "workspace:packages/bar"
+      },
+      "dependencies": [
+        2
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 3,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "npm",
+        "value": "1.1.0",
+        "resolved": "http://localhost:1234/no-deps/-/no-deps-1.1.0.tgz"
+      },
+      "dependencies": [],
+      "integrity": "sha512-ebG2pipYAKINcNI3YxdsiAgFvNGp2gdRwxAKN2LYBm9+YxuH/lHH2sl+GKQTuGiNfCfNZRMHUyyLPEJD6HWm7w==",
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    }
+  ],
+  "workspace_paths": {
+    "11592711315645265694": "packages/bar",
+    "5128161233225832376": "packages/mono"
+  },
+  "workspace_versions": {
+    "11592711315645265694": "1.0.0"
+  }
+}"
+`;
+
+exports[`dependency on workspace without version in package.json: version: 1.1.* 1`] = `
+"{
+  "format": "v3",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "package_index": {
+    "no-deps": [
+      2,
+      3
+    ],
+    "foo": 0,
+    "bar": 1
+  },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 1
+        },
+        "no-deps": {
+          "id": 1,
+          "package_id": 2
+        }
+      }
+    },
+    {
+      "id": 1,
+      "path": "node_modules/bar/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "no-deps": {
+          "id": 2,
+          "package_id": 3
+        }
+      }
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "bar",
+      "literal": "",
+      "workspace": "packages/bar",
+      "package_id": 1,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 0
+    },
+    {
+      "name": "no-deps",
+      "literal": "",
+      "workspace": "packages/mono",
+      "package_id": 2,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 1
+    },
+    {
+      "name": "no-deps",
+      "literal": "1.1.*",
+      "npm": {
+        "name": "no-deps",
+        "version": "<1.2.0 >=1.1.0"
+      },
+      "package_id": 3,
+      "behavior": {
+        "prod": true
+      },
+      "id": 2
+    }
+  ],
+  "packages": [
+    {
+      "id": 0,
+      "name": "foo",
+      "name_hash": "14841791273925386894",
+      "resolution": {
+        "tag": "root",
+        "value": "",
+        "resolved": ""
+      },
+      "dependencies": [
+        0,
+        1
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "local",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 1,
+      "name": "bar",
+      "name_hash": "11592711315645265694",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/bar",
+        "resolved": "workspace:packages/bar"
+      },
+      "dependencies": [
+        2
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 3,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "npm",
+        "value": "1.1.0",
+        "resolved": "http://localhost:1234/no-deps/-/no-deps-1.1.0.tgz"
+      },
+      "dependencies": [],
+      "integrity": "sha512-ebG2pipYAKINcNI3YxdsiAgFvNGp2gdRwxAKN2LYBm9+YxuH/lHH2sl+GKQTuGiNfCfNZRMHUyyLPEJD6HWm7w==",
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    }
+  ],
+  "workspace_paths": {
+    "11592711315645265694": "packages/bar",
+    "5128161233225832376": "packages/mono"
+  },
+  "workspace_versions": {
+    "11592711315645265694": "1.0.0"
+  }
+}"
+`;
+
+exports[`dependency on workspace without version in package.json: version: 1.1.0 1`] = `
+"{
+  "format": "v3",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "package_index": {
+    "no-deps": [
+      2,
+      3
+    ],
+    "foo": 0,
+    "bar": 1
+  },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 1
+        },
+        "no-deps": {
+          "id": 1,
+          "package_id": 2
+        }
+      }
+    },
+    {
+      "id": 1,
+      "path": "node_modules/bar/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "no-deps": {
+          "id": 2,
+          "package_id": 3
+        }
+      }
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "bar",
+      "literal": "",
+      "workspace": "packages/bar",
+      "package_id": 1,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 0
+    },
+    {
+      "name": "no-deps",
+      "literal": "",
+      "workspace": "packages/mono",
+      "package_id": 2,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 1
+    },
+    {
+      "name": "no-deps",
+      "literal": "1.1.0",
+      "npm": {
+        "name": "no-deps",
+        "version": "==1.1.0"
+      },
+      "package_id": 3,
+      "behavior": {
+        "prod": true
+      },
+      "id": 2
+    }
+  ],
+  "packages": [
+    {
+      "id": 0,
+      "name": "foo",
+      "name_hash": "14841791273925386894",
+      "resolution": {
+        "tag": "root",
+        "value": "",
+        "resolved": ""
+      },
+      "dependencies": [
+        0,
+        1
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "local",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 1,
+      "name": "bar",
+      "name_hash": "11592711315645265694",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/bar",
+        "resolved": "workspace:packages/bar"
+      },
+      "dependencies": [
+        2
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 3,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "npm",
+        "value": "1.1.0",
+        "resolved": "http://localhost:1234/no-deps/-/no-deps-1.1.0.tgz"
+      },
+      "dependencies": [],
+      "integrity": "sha512-ebG2pipYAKINcNI3YxdsiAgFvNGp2gdRwxAKN2LYBm9+YxuH/lHH2sl+GKQTuGiNfCfNZRMHUyyLPEJD6HWm7w==",
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    }
+  ],
+  "workspace_paths": {
+    "11592711315645265694": "packages/bar",
+    "5128161233225832376": "packages/mono"
+  },
+  "workspace_versions": {
+    "11592711315645265694": "1.0.0"
+  }
+}"
+`;
+
+exports[`dependency on workspace without version in package.json: version: *-pre+build 1`] = `
+"{
+  "format": "v3",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "package_index": {
+    "no-deps": [
+      2,
+      3
+    ],
+    "foo": 0,
+    "bar": 1
+  },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 1
+        },
+        "no-deps": {
+          "id": 1,
+          "package_id": 2
+        }
+      }
+    },
+    {
+      "id": 1,
+      "path": "node_modules/bar/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "no-deps": {
+          "id": 2,
+          "package_id": 3
+        }
+      }
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "bar",
+      "literal": "",
+      "workspace": "packages/bar",
+      "package_id": 1,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 0
+    },
+    {
+      "name": "no-deps",
+      "literal": "",
+      "workspace": "packages/mono",
+      "package_id": 2,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 1
+    },
+    {
+      "name": "no-deps",
+      "literal": "*-pre+build",
+      "npm": {
+        "name": "no-deps",
+        "version": ">=0.0.0"
+      },
+      "package_id": 3,
+      "behavior": {
+        "prod": true
+      },
+      "id": 2
+    }
+  ],
+  "packages": [
+    {
+      "id": 0,
+      "name": "foo",
+      "name_hash": "14841791273925386894",
+      "resolution": {
+        "tag": "root",
+        "value": "",
+        "resolved": ""
+      },
+      "dependencies": [
+        0,
+        1
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "local",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 1,
+      "name": "bar",
+      "name_hash": "11592711315645265694",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/bar",
+        "resolved": "workspace:packages/bar"
+      },
+      "dependencies": [
+        2
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 3,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "npm",
+        "value": "2.0.0",
+        "resolved": "http://localhost:1234/no-deps/-/no-deps-2.0.0.tgz"
+      },
+      "dependencies": [],
+      "integrity": "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    }
+  ],
+  "workspace_paths": {
+    "11592711315645265694": "packages/bar",
+    "5128161233225832376": "packages/mono"
+  },
+  "workspace_versions": {
+    "11592711315645265694": "1.0.0"
+  }
+}"
+`;
+
+exports[`dependency on workspace without version in package.json: version: *+build 1`] = `
+"{
+  "format": "v3",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "package_index": {
+    "no-deps": [
+      2,
+      3
+    ],
+    "foo": 0,
+    "bar": 1
+  },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 1
+        },
+        "no-deps": {
+          "id": 1,
+          "package_id": 2
+        }
+      }
+    },
+    {
+      "id": 1,
+      "path": "node_modules/bar/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "no-deps": {
+          "id": 2,
+          "package_id": 3
+        }
+      }
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "bar",
+      "literal": "",
+      "workspace": "packages/bar",
+      "package_id": 1,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 0
+    },
+    {
+      "name": "no-deps",
+      "literal": "",
+      "workspace": "packages/mono",
+      "package_id": 2,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 1
+    },
+    {
+      "name": "no-deps",
+      "literal": "*+build",
+      "npm": {
+        "name": "no-deps",
+        "version": ">=0.0.0"
+      },
+      "package_id": 3,
+      "behavior": {
+        "prod": true
+      },
+      "id": 2
+    }
+  ],
+  "packages": [
+    {
+      "id": 0,
+      "name": "foo",
+      "name_hash": "14841791273925386894",
+      "resolution": {
+        "tag": "root",
+        "value": "",
+        "resolved": ""
+      },
+      "dependencies": [
+        0,
+        1
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "local",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 1,
+      "name": "bar",
+      "name_hash": "11592711315645265694",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/bar",
+        "resolved": "workspace:packages/bar"
+      },
+      "dependencies": [
+        2
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 3,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "npm",
+        "value": "2.0.0",
+        "resolved": "http://localhost:1234/no-deps/-/no-deps-2.0.0.tgz"
+      },
+      "dependencies": [],
+      "integrity": "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    }
+  ],
+  "workspace_paths": {
+    "11592711315645265694": "packages/bar",
+    "5128161233225832376": "packages/mono"
+  },
+  "workspace_versions": {
+    "11592711315645265694": "1.0.0"
+  }
+}"
+`;
+
+exports[`dependency on workspace without version in package.json: version: latest 1`] = `
+"{
+  "format": "v3",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "package_index": {
+    "no-deps": [
+      2,
+      3
+    ],
+    "foo": 0,
+    "bar": 1
+  },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 1
+        },
+        "no-deps": {
+          "id": 1,
+          "package_id": 2
+        }
+      }
+    },
+    {
+      "id": 1,
+      "path": "node_modules/bar/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "no-deps": {
+          "id": 2,
+          "package_id": 3
+        }
+      }
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "bar",
+      "literal": "",
+      "workspace": "packages/bar",
+      "package_id": 1,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 0
+    },
+    {
+      "name": "no-deps",
+      "literal": "",
+      "workspace": "packages/mono",
+      "package_id": 2,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 1
+    },
+    {
+      "name": "no-deps",
+      "literal": "latest",
+      "dist_tag": {
+        "name": "no-deps",
+        "tag": "no-deps"
+      },
+      "package_id": 3,
+      "behavior": {
+        "prod": true
+      },
+      "id": 2
+    }
+  ],
+  "packages": [
+    {
+      "id": 0,
+      "name": "foo",
+      "name_hash": "14841791273925386894",
+      "resolution": {
+        "tag": "root",
+        "value": "",
+        "resolved": ""
+      },
+      "dependencies": [
+        0,
+        1
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "local",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 1,
+      "name": "bar",
+      "name_hash": "11592711315645265694",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/bar",
+        "resolved": "workspace:packages/bar"
+      },
+      "dependencies": [
+        2
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 3,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "npm",
+        "value": "2.0.0",
+        "resolved": "http://localhost:1234/no-deps/-/no-deps-2.0.0.tgz"
+      },
+      "dependencies": [],
+      "integrity": "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    }
+  ],
+  "workspace_paths": {
+    "11592711315645265694": "packages/bar",
+    "5128161233225832376": "packages/mono"
+  },
+  "workspace_versions": {
+    "11592711315645265694": "1.0.0"
+  }
+}"
+`;
+
+exports[`dependency on workspace without version in package.json: version:  1`] = `
+"{
+  "format": "v3",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "package_index": {
+    "no-deps": [
+      2,
+      3
+    ],
+    "foo": 0,
+    "bar": 1
+  },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 1
+        },
+        "no-deps": {
+          "id": 1,
+          "package_id": 2
+        }
+      }
+    },
+    {
+      "id": 1,
+      "path": "node_modules/bar/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "no-deps": {
+          "id": 2,
+          "package_id": 3
+        }
+      }
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "bar",
+      "literal": "",
+      "workspace": "packages/bar",
+      "package_id": 1,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 0
+    },
+    {
+      "name": "no-deps",
+      "literal": "",
+      "workspace": "packages/mono",
+      "package_id": 2,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 1
+    },
+    {
+      "name": "no-deps",
+      "literal": "",
+      "dist_tag": {
+        "name": "no-deps",
+        "tag": "no-deps"
+      },
+      "package_id": 3,
+      "behavior": {
+        "prod": true
+      },
+      "id": 2
+    }
+  ],
+  "packages": [
+    {
+      "id": 0,
+      "name": "foo",
+      "name_hash": "14841791273925386894",
+      "resolution": {
+        "tag": "root",
+        "value": "",
+        "resolved": ""
+      },
+      "dependencies": [
+        0,
+        1
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "local",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 1,
+      "name": "bar",
+      "name_hash": "11592711315645265694",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/bar",
+        "resolved": "workspace:packages/bar"
+      },
+      "dependencies": [
+        2
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 3,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "npm",
+        "value": "2.0.0",
+        "resolved": "http://localhost:1234/no-deps/-/no-deps-2.0.0.tgz"
+      },
+      "dependencies": [],
+      "integrity": "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    }
+  ],
+  "workspace_paths": {
+    "11592711315645265694": "packages/bar",
+    "5128161233225832376": "packages/mono"
+  },
+  "workspace_versions": {
+    "11592711315645265694": "1.0.0"
+  }
+}"
+`;
+
+exports[`dependency on same name as workspace and dist-tag: with version 1`] = `
+"{
+  "format": "v3",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "package_index": {
+    "no-deps": [
+      2,
+      3
+    ],
+    "foo": 0,
+    "bar": 1
+  },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 1
+        },
+        "no-deps": {
+          "id": 1,
+          "package_id": 2
+        }
+      }
+    },
+    {
+      "id": 1,
+      "path": "node_modules/bar/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "no-deps": {
+          "id": 2,
+          "package_id": 3
+        }
+      }
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "bar",
+      "literal": "",
+      "workspace": "packages/bar",
+      "package_id": 1,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 0
+    },
+    {
+      "name": "no-deps",
+      "literal": "",
+      "workspace": "packages/mono",
+      "package_id": 2,
+      "behavior": {
+        "workspace": true
+      },
+      "id": 1
+    },
+    {
+      "name": "no-deps",
+      "literal": "latest",
+      "dist_tag": {
+        "name": "no-deps",
+        "tag": "no-deps"
+      },
+      "package_id": 3,
+      "behavior": {
+        "prod": true
+      },
+      "id": 2
+    }
+  ],
+  "packages": [
+    {
+      "id": 0,
+      "name": "foo",
+      "name_hash": "14841791273925386894",
+      "resolution": {
+        "tag": "root",
+        "value": "",
+        "resolved": ""
+      },
+      "dependencies": [
+        0,
+        1
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "local",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 1,
+      "name": "bar",
+      "name_hash": "11592711315645265694",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/bar",
+        "resolved": "workspace:packages/bar"
+      },
+      "dependencies": [
+        2
+      ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 3,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "npm",
+        "value": "2.0.0",
+        "resolved": "http://localhost:1234/no-deps/-/no-deps-2.0.0.tgz"
+      },
+      "dependencies": [],
+      "integrity": "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    }
+  ],
+  "workspace_paths": {
+    "11592711315645265694": "packages/bar",
+    "5128161233225832376": "packages/mono"
+  },
+  "workspace_versions": {
+    "11592711315645265694": "1.0.0",
+    "5128161233225832376": "4.17.21"
+  }
+}"
+`;

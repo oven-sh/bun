@@ -1,0 +1,16 @@
+{
+  "name": "prisma",
+  "module": "index.ts",
+  "type": "module",
+  "devDependencies": {
+    "bun-types": "0.7.0",
+    "prisma": "5.1.1"
+  },
+  "peerDependencies": {
+    "typescript": "5.0.0"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "0.1.47",
+    "@prisma/client": "5.1.1"
+  }
+}

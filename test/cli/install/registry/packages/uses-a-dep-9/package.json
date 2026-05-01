@@ -1,0 +1,41 @@
+{
+	"name": "uses-a-dep-9",
+	"versions": {
+		"1.0.0": {
+			"name": "uses-a-dep-9",
+			"version": "1.0.0",
+			"dependencies": {
+				"a-dep": "1.0.9"
+			},
+			"_id": "uses-a-dep-9@1.0.0",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-bjyou8LqYTAXsh0e2e/dtFk34JmlSFQGNBTKWcAp0pFAan/tcs+VxLH5qcu363mfikajGNsxj3bsfY9xGPQ1gg==",
+				"shasum": "9f08178564180dbfd07997570da1efae0bdd3bf9",
+				"tarball": "http://localhost:4873/uses-a-dep-9/-/uses-a-dep-9-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-18T02:37:15.079Z",
+		"created": "2023-11-18T02:37:15.079Z",
+		"1.0.0": "2023-11-18T02:37:15.079Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"uses-a-dep-9-1.0.0.tgz": {
+			"shasum": "9f08178564180dbfd07997570da1efae0bdd3bf9",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "uses-a-dep-9",
+	"readme": "ERROR: No README data found!"
+}

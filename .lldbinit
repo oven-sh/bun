@@ -1,0 +1,1 @@
+command source -C -s true -e true misctools/lldb/init.lldb

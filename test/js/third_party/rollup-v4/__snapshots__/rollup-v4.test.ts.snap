@@ -1,0 +1,38 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`it works 1`] = `
+{
+  "body": [
+    {
+      "declarations": [
+        {
+          "end": 14,
+          "id": {
+            "end": 7,
+            "name": "x",
+            "start": 6,
+            "type": "Identifier",
+          },
+          "init": {
+            "end": 14,
+            "raw": "true",
+            "start": 10,
+            "type": "Literal",
+            "value": true,
+          },
+          "start": 6,
+          "type": "VariableDeclarator",
+        },
+      ],
+      "end": 14,
+      "kind": "const",
+      "start": 0,
+      "type": "VariableDeclaration",
+    },
+  ],
+  "end": 14,
+  "sourceType": "module",
+  "start": 0,
+  "type": "Program",
+}
+`;

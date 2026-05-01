@@ -1,0 +1,29 @@
+{
+  "name": "bun-plugin-yaml",
+  "version": "0.0.1",
+  "module": "index.ts",
+  "type": "module",
+  "types": "index.ts",
+  "exports": {
+    ".": {
+      "import": "./index.ts",
+      "require": "./index.ts",
+      "default": "./index.js",
+      "types": "./modules.d.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.ts",
+    "tsconfig.json",
+    "package.json",
+    "modules.d.ts"
+  ],
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.5",
+    "bun-types": "canary"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  }
+}

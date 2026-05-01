@@ -1,0 +1,42 @@
+{
+	"name": "native-libc-glibc",
+	"versions": {
+		"1.0.0": {
+			"name": "native-libc-glibc",
+			"version": "1.0.0",
+			"libc": [
+				"glibc"
+			],
+			"_id": "native-libc-glibc@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-D7ivPUqV+bs4jZCFt/fm0BRchhE1kO3XMKZ7/Tt3cF2gfJcewMy/zuId79iaVn9aztJYkOk1GWFpMPXmX5rJHA==",
+				"shasum": "3c2746de955a98e7d1be7f8659bf33ecd3a223ba",
+				"tarball": "http://localhost:4873/native-libc-glibc/-/native-libc-glibc-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:13.905Z",
+		"created": "2023-11-01T22:05:13.905Z",
+		"1.0.0": "2023-11-01T22:05:13.905Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"native-libc-glibc-1.0.0.tgz": {
+			"shasum": "3c2746de955a98e7d1be7f8659bf33ecd3a223ba",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-10f234fa28217421",
+	"_id": "native-libc-glibc",
+	"readme": "ERROR: No README data found!"
+}

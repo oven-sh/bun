@@ -1,0 +1,6 @@
+{
+  "name": "@azure/service-bus",
+  "dependencies": {
+    "@azure/service-bus": "7.9.4"
+  }
+}

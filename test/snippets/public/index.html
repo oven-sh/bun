@@ -1,0 +1,91 @@
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>bun Test</title>
+  </head>
+  <body>
+    <script type="module">
+      globalThis.console.assert = (condition, ...content) => {
+        if (!condition) {
+          throw new Error(content.join(" "));
+        }
+      };
+      globalThis.getModuleScriptSrc = async (name) => {
+        const response = await fetch(name, {
+          cache: "force-cache",
+        });
+
+        if (response.ok) {
+          return await response.text();
+        } else {
+          throw new Error(`Failed to get module script ${name}`);
+        }
+      };
+
+      globalThis.runTest = async (name) => {
+        var Namespace = await import(name);
+        var testFunction = Namespace.test;
+
+        if (
+          !("test" in Namespace) &&
+          "default" in Namespace &&
+          typeof Namespace.default === "function"
+        ) {
+          Namespace = Namespace.default();
+          testFunction = Namespace.test;
+        }
+
+        if (!testFunction) {
+          throw new Error("No test function found in " + name);
+        }
+
+        if (typeof testFunction !== "function") {
+          throw new Error(
+            `Expected (await import(\"${name}\"")) to have a test function.\nReceived: ${Object.keys(
+              Namespace
+            ).join(", ")} `
+          );
+        }
+
+        if (globalThis.BUN_DEBUG_MODE) {
+          try {
+            return await testFunction();
+          } catch (exception) {
+            console.error(exception);
+            debugger;
+            throw exception;
+          }
+        } else {
+          return await testFunction();
+        }
+      };
+
+      if (globalThis.location.pathname.endsWith("-test")) {
+        const script = document.createElement("script");
+        script.src = globalThis.location.pathname.substring(
+          0,
+          location.pathname.length - "-test".length
+        );
+        script.type = "module";
+        document.body.appendChild(script);
+
+        globalThis.testDone = (path) => alert(`test ${path} success`);
+        globalThis.testFail = (path) => alert(`!test ${path} fail`);
+        runTest(
+          globalThis.location.pathname.substring(
+            0,
+            location.pathname.length - "-test".length
+          )
+        ).then(
+          () => {},
+          (err) => {
+            console.error(err);
+            alert(err.toString());
+          }
+        );
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,42 @@
+{
+	"name": "no-deps-scripted-to-deeply-fail",
+	"versions": {
+		"1.0.0": {
+			"name": "no-deps-scripted-to-deeply-fail",
+			"version": "1.0.0",
+			"dependencies": {
+				"no-deps-scripted-to-fail": "1.0.0"
+			},
+			"_id": "no-deps-scripted-to-deeply-fail@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-YjV2Uqct6mkK3rHX6AzDVKu8SyHHijBqWnWaR5CuSpPFZBIfCeINckHd1/8MgpzSVyz5Nm7Mt4NEmpOkdTl3Nw==",
+				"shasum": "26e895a3520d949631dfa079e8147c4dcf3dadb3",
+				"tarball": "http://localhost:4873/no-deps-scripted-to-deeply-fail/-/no-deps-scripted-to-deeply-fail-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:21.513Z",
+		"created": "2023-11-01T22:05:21.513Z",
+		"1.0.0": "2023-11-01T22:05:21.513Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"no-deps-scripted-to-deeply-fail-1.0.0.tgz": {
+			"shasum": "26e895a3520d949631dfa079e8147c4dcf3dadb3",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-310c670777ae7e5d",
+	"_id": "no-deps-scripted-to-deeply-fail",
+	"readme": "ERROR: No README data found!"
+}

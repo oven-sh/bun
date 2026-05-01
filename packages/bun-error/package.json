@@ -1,0 +1,13 @@
+{
+  "name": "bun-error",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "build": "bun build --production --define:process.env.NODE_ENV=\"'production'\"  --minify index.tsx bun-error.css --outdir=dist --target=browser --format=esm"
+  },
+  "dependencies": {
+    "preact": "^10.27.2"
+  }
+}

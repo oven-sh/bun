@@ -1,0 +1,45 @@
+{
+	"name": "forward-peer-deps",
+	"versions": {
+		"1.0.0": {
+			"name": "forward-peer-deps",
+			"version": "1.0.0",
+			"dependencies": {
+				"peer-deps": "1.0.0"
+			},
+			"peerDependencies": {
+				"no-deps": "*"
+			},
+			"_id": "forward-peer-deps@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-He4Q2NGM3vGQ8US6IvCAMzayOu6DcH4SUpL3XrlGgaTvv3hT3g+8QvsdI+GMQg+w8+YTMGY3INv1f/AqWGPqeQ==",
+				"shasum": "d28408c2d04f4038b70454a29505f9a9f6efb3e4",
+				"tarball": "http://localhost:4873/forward-peer-deps/-/forward-peer-deps-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:08.146Z",
+		"created": "2023-11-01T22:05:08.146Z",
+		"1.0.0": "2023-11-01T22:05:08.146Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"forward-peer-deps-1.0.0.tgz": {
+			"shasum": "d28408c2d04f4038b70454a29505f9a9f6efb3e4",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-572a4b0a3ffa2cbe",
+	"_id": "forward-peer-deps",
+	"readme": "ERROR: No README data found!"
+}

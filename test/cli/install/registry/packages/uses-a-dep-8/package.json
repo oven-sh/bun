@@ -1,0 +1,41 @@
+{
+	"name": "uses-a-dep-8",
+	"versions": {
+		"1.0.0": {
+			"name": "uses-a-dep-8",
+			"version": "1.0.0",
+			"dependencies": {
+				"a-dep": "1.0.8"
+			},
+			"_id": "uses-a-dep-8@1.0.0",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-ypa2E4S6Tun835uBqox9nsAQlAv+rNq/91aij6zv+Y3IJj0xEmoZou97Rft2stqGQTDQ92OLquBQi+fUWCOhDA==",
+				"shasum": "6b5fe16ff4a011c31a8af085a0d41da864f45dd0",
+				"tarball": "http://localhost:4873/uses-a-dep-8/-/uses-a-dep-8-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-18T02:35:42.984Z",
+		"created": "2023-11-18T02:35:42.984Z",
+		"1.0.0": "2023-11-18T02:35:42.984Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"uses-a-dep-8-1.0.0.tgz": {
+			"shasum": "6b5fe16ff4a011c31a8af085a0d41da864f45dd0",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "uses-a-dep-8",
+	"readme": "ERROR: No README data found!"
+}

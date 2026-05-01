@@ -1,0 +1,392 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: basic-dependencies 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "basic-test",
+      "dependencies": {
+        "lodash": "^4.17.21",
+        "react": "^18.2.0",
+      },
+      "devDependencies": {
+        "typescript": "^5.3.3",
+      },
+    },
+  },
+  "packages": {
+    "js-tokens": ["js-tokens@4.0.0", "", {}, "sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ=="],
+
+    "lodash": ["lodash@4.17.21", "", {}, "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg=="],
+
+    "loose-envify": ["loose-envify@1.4.0", "", { "dependencies": { "js-tokens": "4.0.0" }, "bin": { "loose-envify": "cli.js" } }, "sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q=="],
+
+    "react": ["react@18.2.0", "", { "dependencies": { "loose-envify": "1.4.0" } }, "sha512-/3IjMdb2L9QbBdWiW5e3P2/npwMBaU9mHCSCUzNln0ZCYbcfTsGbTJrU/kGemdH2IWmB2ioZ+zkxtmq6g09fGQ=="],
+
+    "typescript": ["typescript@5.3.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-pXWcraxM0uxAS+tN0AG/BF2TyqmHO014Z070UsJ+pFvYuRSq8KH8DmWpnbXe0pEPDHXZV3FcAbJkijJ5oNEnWw=="],
+  }
+}
+"
+`;
+
+exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: canary-versions 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "canary-test",
+      "dependencies": {
+        "react": "19.2.0-canary-a96a0f39-20250815",
+        "react-dom": "19.2.0-canary-a96a0f39-20250815",
+        "scheduler": "0.27.0-canary-a96a0f39-20250815",
+      },
+    },
+  },
+  "packages": {
+    "react": ["react@19.2.0-canary-a96a0f39-20250815", "", {}, ""],
+
+    "react-dom": ["react-dom@19.2.0-canary-a96a0f39-20250815", "", { "dependencies": { "scheduler": "0.27.0-canary-a96a0f39-20250815" } }, ""],
+
+    "scheduler": ["scheduler@0.27.0-canary-a96a0f39-20250815", "", {}, ""],
+  }
+}
+"
+`;
+
+exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: monorepo-workspaces 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "monorepo-root",
+      "dependencies": {
+        "@workspace/shared": "workspace:*",
+        "@workspace/utils": "workspace:^",
+      },
+    },
+    "apps/web": {
+      "name": "web",
+      "dependencies": {
+        "@workspace/shared": "workspace:*",
+        "react": "^18.2.0",
+      },
+    },
+    "packages/shared": {
+      "name": "shared",
+      "dependencies": {
+        "@workspace/utils": "workspace:*",
+        "lodash": "^4.17.21",
+      },
+    },
+    "packages/utils": {
+      "name": "utils",
+      "dependencies": {
+        "axios": "^1.6.0",
+      },
+    },
+  },
+  "packages": {
+    "@workspace/shared": ["shared@workspace:packages/shared"],
+
+    "@workspace/utils": ["utils@workspace:packages/utils"],
+
+    "axios": ["axios@1.6.7", "", {}, ""],
+
+    "lodash": ["lodash@4.17.21", "", {}, ""],
+
+    "react": ["react@18.2.0", "", {}, ""],
+
+    "shared": ["shared@workspace:packages/shared"],
+
+    "utils": ["utils@workspace:packages/utils"],
+
+    "web": ["web@workspace:apps/web"],
+  }
+}
+"
+`;
+
+exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: patches-overrides 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "patches-test",
+      "dependencies": {
+        "lodash": "^4.17.21",
+      },
+    },
+  },
+  "patchedDependencies": {
+    "lodash@4.17.21": "patches/lodash@4.17.21.patch",
+  },
+  "overrides": {
+    "axios": "1.6.0",
+  },
+  "packages": {
+    "lodash": ["lodash@4.17.21", "", {}, ""],
+  }
+}
+"
+`;
+
+exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: file-link-deps 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "file-links-test",
+      "dependencies": {
+        "config": "file:./shared/config",
+        "local-pkg": "file:./local-pkg",
+      },
+    },
+  },
+  "packages": {
+    "config": ["hi2@file:shared/config", {}],
+
+    "local-pkg": ["hi@file:local-pkg", {}],
+  }
+}
+"
+`;
+
+exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: custom-registries 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "registries-test",
+      "dependencies": {
+        "@company/private-pkg": "^1.0.0",
+        "lodash": "^4.17.21",
+      },
+    },
+  },
+  "packages": {
+    "@company/private-pkg": ["@company/private-pkg@1.0.5", "", {}, ""],
+
+    "lodash": ["lodash@4.17.21", "", {}, ""],
+  }
+}
+"
+`;
+
+exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: peer-dependencies 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "peer-deps-test",
+      "dependencies": {
+        "@mui/material": "^5.15.0",
+        "react": "^18.2.0",
+        "react-dom": "^18.2.0",
+      },
+    },
+  },
+  "packages": {
+    "@emotion/react": ["@emotion/react@11.11.3", "", { "peerDependencies": { "react": "18.2.0" } }, ""],
+
+    "@emotion/styled": ["@emotion/styled@11.11.0", "", { "peerDependencies": { "@emotion/react": "11.11.3", "react": "18.2.0" } }, ""],
+
+    "@mui/material": ["@mui/material@5.15.0", "", { "optionalDependencies": { "@emotion/react": "11.11.3", "@emotion/styled": "11.11.0" }, "peerDependencies": { "react": "18.2.0", "react-dom": "18.2.0" } }, ""],
+
+    "react": ["react@18.2.0", "", {}, ""],
+
+    "react-dom": ["react-dom@18.2.0", "", { "peerDependencies": { "react": "18.2.0" } }, "sha512-reactdomAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+  }
+}
+"
+`;
+
+exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: duplicate-packages 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "duplicates-test",
+      "dependencies": {
+        "lodash": "^4.17.21",
+        "my-lodash": "npm:lodash@^4.17.20",
+        "package-a": "^1.0.0",
+        "package-b": "^1.0.0",
+      },
+    },
+  },
+  "packages": {
+    "lodash": ["lodash@4.17.21", "", {}, "sha512-lodash21AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+
+    "my-lodash": ["lodash@4.17.20", "", {}, "sha512-lodash20AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+
+    "package-a": ["package-a@1.0.0", "", { "dependencies": { "shared-dep": "2.0.0" } }, "sha512-packageAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+
+    "package-b": ["package-b@1.0.0", "", { "dependencies": { "shared-dep": "3.0.0" } }, "sha512-packageBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+
+    "shared-dep": ["shared-dep@2.0.0", "", {}, ""],
+
+    "package-b/shared-dep": ["shared-dep@3.0.0", "", {}, ""],
+  }
+}
+"
+`;
+
+exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: catalogs 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "catalogs-test",
+      "dependencies": {
+        "lodash": "4.17.21",
+        "react": "18.2.0",
+      },
+    },
+  },
+  "catalog": {
+    "react": "18.2.0",
+  },
+  "catalogs": {
+    "tools": {
+      "lodash": "4.17.21",
+    },
+  },
+  "packages": {
+    "js-tokens": ["js-tokens@4.0.0", "", {}, "sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ=="],
+
+    "lodash": ["lodash@4.17.21", "", {}, "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg=="],
+
+    "loose-envify": ["loose-envify@1.4.0", "", { "dependencies": { "js-tokens": "4.0.0" }, "bin": { "loose-envify": "cli.js" } }, "sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q=="],
+
+    "react": ["react@18.2.0", "", { "dependencies": { "loose-envify": "1.4.0" } }, "sha512-/3IjMdb2L9QbBdWiW5e3P2/npwMBaU9mHCSCUzNln0ZCYbcfTsGbTJrU/kGemdH2IWmB2ioZ+zkxtmq6g09fGQ=="],
+  }
+}
+"
+`;
+
+exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: integrity-hashes 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "integrity-test",
+      "dependencies": {
+        "axios": "^1.6.0",
+        "express": "^4.18.2",
+      },
+    },
+  },
+  "packages": {
+    "axios": ["axios@1.6.7", "", {}, "sha512-/hDJGff6/c7u0hDkvkGxR/oy6CbCs8ziCsC7SqmhjfozqiJGc8Z11wrv9z9lYfY4K8l+H9TpjcMDX0xOZmx+RA=="],
+
+    "express": ["express@4.18.2", "", {}, "sha512-5/PsL6iGPdfQ/lKM1UuielYgv3BUoJfz1aUwU9vHZ+J7gyvwdQXFEBIEIaxeGf0GIcreATNyBExtalisDbuMqQ=="],
+  }
+}
+"
+`;
+
+exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: version-zero 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "version-zero-test",
+      "dependencies": {
+        "package-with-zero": "0.0.0",
+      },
+    },
+  },
+  "packages": {
+    "package-with-zero": ["package-with-zero@0.0.0", "", {}, "sha512-zeroAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+  }
+}
+"
+`;
+
+exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: mixed-dependency-types 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "mixed-deps-test",
+      "dependencies": {
+        "react": "^18.2.0",
+        "typescript": "^4.0.0",
+      },
+      "devDependencies": {
+        "eslint": "^8.56.0",
+      },
+      "optionalDependencies": {
+        "fsevents": "^2.3.3",
+      },
+    },
+  },
+  "packages": {
+    "eslint": ["eslint@8.56.0", "", { "bin": { "eslint": "bin/eslint.js" } }, ""],
+
+    "fsevents": ["fsevents@2.3.3", "", { "os": "darwin" }, "sha512-fseventsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+
+    "react": ["react@18.2.0", "", {}, ""],
+
+    "typescript": ["typescript@4.9.5", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-ts4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+  }
+}
+"
+`;
+
+exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: circular-workspaces 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "circular-test",
+      "dependencies": {
+        "@workspace/pkg1": "workspace:*",
+      },
+    },
+    "packages/pkg1": {
+      "name": "@workspace/pkg1",
+      "dependencies": {
+        "@workspace/pkg2": "workspace:*",
+        "lodash": "^4.17.21",
+      },
+    },
+    "packages/pkg2": {
+      "name": "@workspace/pkg2",
+      "dependencies": {
+        "@workspace/pkg3": "workspace:*",
+      },
+    },
+    "packages/pkg3": {
+      "name": "@workspace/pkg3",
+      "dependencies": {
+        "@workspace/pkg1": "workspace:*",
+      },
+    },
+  },
+  "packages": {
+    "@workspace/pkg1": ["@workspace/pkg1@workspace:packages/pkg1"],
+
+    "@workspace/pkg2": ["@workspace/pkg2@workspace:packages/pkg2"],
+
+    "@workspace/pkg3": ["@workspace/pkg3@workspace:packages/pkg3"],
+
+    "lodash": ["lodash@4.17.21", "", {}, ""],
+  }
+}
+"
+`;

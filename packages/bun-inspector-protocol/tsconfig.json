@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "module": "ESNext",
+    "target": "ESNext",
+    "moduleResolution": "Bundler",
+    "moduleDetection": "force",
+    "strict": true,
+    "downlevelIteration": true,
+    "skipLibCheck": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "inlineSourceMap": true,
+    "allowJs": true,
+    "outDir": "dist"
+  },
+  "include": [".", "../bun-types/index.d.ts"]
+}

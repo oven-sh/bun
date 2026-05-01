@@ -1,0 +1,41 @@
+{
+	"name": "has-missing-optional-dep",
+	"versions": {
+		"1.0.0": {
+			"name": "has-missing-optional-dep",
+			"version": "1.0.0",
+			"optionalDependencies": {
+				"this-package-does-not-exist-in-the-registry": "||"
+			},
+			"_id": "has-missing-optional-dep@1.0.0",
+			"_nodeVersion": "22.3.0",
+			"_npmVersion": "10.8.1",
+			"dist": {
+				"integrity": "sha512-XQr2TvafpmE+2L588mG6lp816cNczIgYrbXnH03UhDDqHvgzV5pltTum9YgjtcKAScM4KpgIliEUvgf9pxlmTg==",
+				"shasum": "589b96e2db2cd83ad0595b03f4cf225251e44afd",
+				"tarball": "http://localhost:4873/has-missing-optional-dep/-/has-missing-optional-dep-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-06-19T19:28:09.181Z",
+		"created": "2024-06-19T19:28:09.181Z",
+		"1.0.0": "2024-06-19T19:28:09.181Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"has-missing-optional-dep-1.0.0.tgz": {
+			"shasum": "589b96e2db2cd83ad0595b03f4cf225251e44afd",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "has-missing-optional-dep",
+	"readme": "ERROR: No README data found!"
+}

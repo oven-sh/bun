@@ -1,0 +1,20 @@
+[test]
+# Large monorepos (like Bun) may want to specify the test directory more specifically 
+# By default, `bun test` scans every single folder recursively which, if you
+# have a gigantic submodule (like WebKit), requires lots of directory
+# traversals
+#
+# Instead, we can only scan the test directory for Bun's runtime tests
+root = "test"
+preload = "./test/preload.ts"
+
+[install]
+linker = "isolated"
+# The CI test runner points BUN_INSTALL_CACHE_DIR at a per-call tmpdir and
+# deletes it between the root and test/ installs. With the global store
+# enabled, `node_modules/.bun/<pkg>` is an absolute symlink into that
+# now-deleted cache, so `test/`'s `file:../node_modules/react` dep dangles.
+# The feature is exercised by test/cli/install/isolated-install.test.ts.
+globalStore = false
+minimumReleaseAge = 259200 # three days
+minimumReleaseAgeExcludes = ["typescript"]

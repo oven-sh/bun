@@ -1,0 +1,11 @@
+{
+  "name": "es-module-lexer-test",
+  "module": "index.ts",
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "dependencies": {
+    "es-module-lexer": "1.3.0"
+  }
+}

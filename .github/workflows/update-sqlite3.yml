@@ -1,0 +1,94 @@
+name: Update SQLite3
+
+on:
+  schedule:
+    - cron: "0 6 * * 0" # Run weekly
+  workflow_dispatch:
+
+jobs:
+  check-update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check SQLite version
+        id: check-version
+        run: |
+          set -euo pipefail
+
+          # Get current version from the header file using SQLITE_VERSION_NUMBER
+          CURRENT_VERSION_NUM=$(grep -o '#define SQLITE_VERSION_NUMBER [0-9]\+' src/bun.js/bindings/sqlite/sqlite3_local.h | awk '{print $3}' | tr -d '\n\r')
+          if [ -z "$CURRENT_VERSION_NUM" ]; then
+            echo "Error: Could not find SQLITE_VERSION_NUMBER in sqlite3_local.h"
+            exit 1
+          fi
+
+          # Convert numeric version to semantic version for display
+          CURRENT_MAJOR=$((CURRENT_VERSION_NUM / 1000000))
+          CURRENT_MINOR=$((($CURRENT_VERSION_NUM / 1000) % 1000))
+          CURRENT_PATCH=$((CURRENT_VERSION_NUM % 1000))
+          CURRENT_VERSION="$CURRENT_MAJOR.$CURRENT_MINOR.$CURRENT_PATCH"
+
+          echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "current_num=$CURRENT_VERSION_NUM" >> $GITHUB_OUTPUT
+
+          # Fetch SQLite download page
+          DOWNLOAD_PAGE=$(curl -sL https://sqlite.org/download.html)
+          if [ -z "$DOWNLOAD_PAGE" ]; then
+            echo "Error: Failed to fetch SQLite download page"
+            exit 1
+          fi
+
+          # Extract latest version and year from the amalgamation link
+          LATEST_INFO=$(echo "$DOWNLOAD_PAGE" | grep -o 'sqlite-amalgamation-[0-9]\{7\}.zip' | head -n1)
+          LATEST_YEAR=$(echo "$DOWNLOAD_PAGE" | grep -o '[0-9]\{4\}/sqlite-amalgamation-[0-9]\{7\}.zip' | head -n1 | cut -d'/' -f1 | tr -d '\n\r')
+          LATEST_VERSION_NUM=$(echo "$LATEST_INFO" | grep -o '[0-9]\{7\}' | tr -d '\n\r')
+
+          if [ -z "$LATEST_VERSION_NUM" ] || [ -z "$LATEST_YEAR" ]; then
+            echo "Error: Could not extract latest version info"
+            exit 1
+          fi
+
+          # Convert numeric version to semantic version for display
+          LATEST_MAJOR=$((10#$LATEST_VERSION_NUM / 1000000))
+          LATEST_MINOR=$((($LATEST_VERSION_NUM / 10000) % 100))
+          LATEST_PATCH=$((10#$LATEST_VERSION_NUM % 1000))
+          LATEST_VERSION="$LATEST_MAJOR.$LATEST_MINOR.$LATEST_PATCH"
+
+          echo "latest=$LATEST_VERSION" >> $GITHUB_OUTPUT
+          echo "latest_year=$LATEST_YEAR" >> $GITHUB_OUTPUT
+          echo "latest_num=$LATEST_VERSION_NUM" >> $GITHUB_OUTPUT
+
+          # Debug output
+          echo "Current version: $CURRENT_VERSION ($CURRENT_VERSION_NUM)"
+          echo "Latest version: $LATEST_VERSION ($LATEST_VERSION_NUM)"
+
+      - name: Update SQLite if needed
+        if: success() && steps.check-version.outputs.current_num < steps.check-version.outputs.latest_num
+        run: |
+          ./scripts/update-sqlite-amalgamation.sh ${{ steps.check-version.outputs.latest_num }} ${{ steps.check-version.outputs.latest_year }}
+
+      - name: Create Pull Request
+        if: success() && steps.check-version.outputs.current_num < steps.check-version.outputs.latest_num
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          add-paths: |
+            src/bun.js/bindings/sqlite/sqlite3.c
+            src/bun.js/bindings/sqlite/sqlite3_local.h
+          commit-message: "deps: update sqlite to ${{ steps.check-version.outputs.latest }}"
+          title: "deps: update sqlite to ${{ steps.check-version.outputs.latest }}"
+          delete-branch: true
+          branch: deps/update-sqlite
+          body: |
+            ## What does this PR do?
+
+            Updates SQLite to version ${{ steps.check-version.outputs.latest }}
+
+            Compare: https://sqlite.org/src/vdiff?from=${{ steps.check-version.outputs.current }}&to=${{ steps.check-version.outputs.latest }}
+
+            Auto-updated by [this workflow](https://github.com/oven-sh/bun/actions/workflows/update-sqlite3.yml)

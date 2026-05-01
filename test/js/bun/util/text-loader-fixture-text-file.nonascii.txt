@@ -1,0 +1,10 @@
+Hello, world!
+This is a test file featuring non-ASCII characters:
+
+1. Café ☕
+2. Déjà vu 🌙
+3. Pokémon 🐱‍👤
+4. Übermensch 🦸‍♂️
+5. 日本語 🇯🇵
+
+Enjoy testing your text loader with this file!

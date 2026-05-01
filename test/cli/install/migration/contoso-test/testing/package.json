@@ -1,0 +1,17 @@
+{
+  "name": "testing",
+  "version": "1.0.0",
+  "description": "This document will guide you through the process of setting up a new Playwright test project, and authoring and running end-to-end tests for the Contoso web application.",
+  "main": "index.js",
+  "scripts": {},
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@playwright/test": "^1.31.1",
+    "@types/node": "^18.14.5"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.3"
+  }
+}

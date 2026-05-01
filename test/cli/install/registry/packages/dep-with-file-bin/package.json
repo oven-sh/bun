@@ -1,0 +1,39 @@
+{
+  "name": "dep-with-file-bin",
+  "versions": {
+    "1.0.0": {
+      "name": "dep-with-file-bin",
+      "version": "1.0.0",
+      "bin": "file-bin",
+      "_id": "dep-with-file-bin@1.0.0",
+      "_nodeVersion": "22.3.0",
+      "_npmVersion": "10.8.1",
+      "dist": {
+        "integrity": "sha512-0Wxd9twd0OSlNp7CaZUyz1Fv9utR/q/4BpxEl5VhBCK2yBHM8N0Kqvx4xQWL1DFu59WnvMnVLuQpUmmBivIHvQ==",
+        "shasum": "db0849d5b69675b3baafa7488a6b4bab06f9cd3d",
+        "tarball": "http://localhost:4873/dep-with-file-bin/-/dep-with-file-bin-1.0.0.tgz"
+      },
+      "contributors": []
+    }
+  },
+  "time": {
+    "modified": "2024-06-24T23:02:42.992Z",
+    "created": "2024-06-24T23:02:42.992Z",
+    "1.0.0": "2024-06-24T23:02:42.992Z"
+  },
+  "users": {},
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "_uplinks": {},
+  "_distfiles": {},
+  "_attachments": {
+    "dep-with-file-bin-1.0.0.tgz": {
+      "shasum": "db0849d5b69675b3baafa7488a6b4bab06f9cd3d",
+      "version": "1.0.0"
+    }
+  },
+  "_rev": "",
+  "_id": "dep-with-file-bin",
+  "readme": "ERROR: No README data found!"
+}

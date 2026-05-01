@@ -1,0 +1,41 @@
+{
+	"name": "dep-with-single-entry-map-bin",
+	"versions": {
+		"1.0.0": {
+			"name": "dep-with-single-entry-map-bin",
+			"version": "1.0.0",
+			"bin": {
+				"single-entry-map-bin": "single-entry-map-bin"
+			},
+			"_id": "dep-with-single-entry-map-bin@1.0.0",
+			"_nodeVersion": "22.3.0",
+			"_npmVersion": "10.8.1",
+			"dist": {
+				"integrity": "sha512-9hGEhDEiFwhCEE3rWRcRdJhYCSEL60JnDYbQq69OpQxcrIbPOrry0hEtie8oLWjgSdEtdRGqf3gGvHlWzF7Kjw==",
+				"shasum": "3e8beef599138fdeda8397dc4c12f4e8673223ca",
+				"tarball": "http://localhost:4873/dep-with-single-entry-map-bin/-/dep-with-single-entry-map-bin-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-06-24T23:10:55.988Z",
+		"created": "2024-06-24T23:10:55.988Z",
+		"1.0.0": "2024-06-24T23:10:55.988Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"dep-with-single-entry-map-bin-1.0.0.tgz": {
+			"shasum": "3e8beef599138fdeda8397dc4c12f4e8673223ca",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "dep-with-single-entry-map-bin",
+	"readme": "ERROR: No README data found!"
+}

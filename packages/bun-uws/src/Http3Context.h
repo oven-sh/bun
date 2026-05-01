@@ -1,0 +1,103 @@
+#ifndef UWS_H3CONTEXT_H
+#define UWS_H3CONTEXT_H
+
+#include "quic.h"
+#include "Loop.h"
+#include "Http3ContextData.h"
+#include "Http3Request.h"
+#include "Http3Response.h"
+#include "Http3ResponseData.h"
+
+namespace uWS {
+
+struct Http3Context {
+
+    static Http3Context *create(Loop *loop, us_bun_socket_context_options_t options, unsigned idleTimeoutSecs = 0) {
+        us_quic_socket_context_t *ctx = us_create_quic_socket_context(
+            (us_loop_t *) loop, options, sizeof(Http3ContextData), idleTimeoutSecs);
+        if (!ctx) return nullptr;
+        new (us_quic_socket_context_ext(ctx)) Http3ContextData();
+
+        us_quic_socket_context_on_stream_open(ctx, [](us_quic_stream_t *s, int) {
+            new (us_quic_stream_ext(s)) Http3ResponseData();
+        });
+
+        us_quic_socket_context_on_stream_headers(ctx, [](us_quic_stream_t *s) {
+            Http3ContextData *cd = (Http3ContextData *) us_quic_socket_context_ext(us_quic_stream_context(s));
+            Http3Response *res = (Http3Response *) s;
+            Http3ResponseData *rd = res->getHttpResponseData();
+            rd->reset();
+
+            Http3Request req(s);
+            if (req.getHeader("expect") == "100-continue") res->writeContinue();
+            cd->router.getUserData() = {res, &req};
+            if (!cd->router.route(req.getMethod(), req.getUrl())) {
+                res->writeStatus("404 Not Found")->end();
+            }
+        });
+
+        us_quic_socket_context_on_stream_data(ctx, [](us_quic_stream_t *s, const char *data, unsigned len, int fin) {
+            Http3Response *res = (Http3Response *) s;
+            Http3ResponseData *rd = res->getHttpResponseData();
+            if (rd->inStream) rd->inStream(res, data, len, fin != 0, rd->userData);
+        });
+
+        us_quic_socket_context_on_stream_writable(ctx, [](us_quic_stream_t *s) {
+            Http3Response *res = (Http3Response *) s;
+            if (!res->drain()) us_quic_stream_want_write(s, 1);
+        });
+
+        us_quic_socket_context_on_stream_close(ctx, [](us_quic_stream_t *s) {
+            Http3Response *res = (Http3Response *) s;
+            Http3ResponseData *rd = res->getHttpResponseData();
+            /* Fire onAborted for both real aborts and post-completion stream
+             * teardown. The handler distinguishes via hasResponded(); for the
+             * completed case it just drops its pointer so it doesn't outlive
+             * this destructor. */
+            if (rd->onAborted) {
+                rd->onAborted(res, rd->userData);
+            }
+            rd->~Http3ResponseData();
+        });
+
+        return (Http3Context *) ctx;
+    }
+
+    void free() {
+        getContextData()->~Http3ContextData();
+        us_quic_socket_context_free((us_quic_socket_context_t *) this);
+    }
+
+    Http3ContextData *getContextData() {
+        return (Http3ContextData *) us_quic_socket_context_ext((us_quic_socket_context_t *) this);
+    }
+
+    void onHttp(std::string_view method, std::string_view pattern,
+                MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
+        Http3ContextData *cd = getContextData();
+        std::vector<std::string_view> methods =
+            method == "*" ? std::vector<std::string_view>{"*"} : std::vector<std::string_view>{method};
+        cd->router.add(methods, pattern, [handler = std::move(handler)](auto *router) mutable {
+            auto &ud = router->getUserData();
+            ud.httpRequest->setYield(false);
+            ud.httpRequest->setParameters(router->getParameters());
+            handler(ud.httpResponse, ud.httpRequest);
+            return !ud.httpRequest->getYield();
+        }, method == "*" ? cd->router.LOW_PRIORITY : cd->router.MEDIUM_PRIORITY);
+    }
+
+    us_quic_listen_socket_t *listen(const char *host, int port, int flags) {
+        return us_quic_socket_context_listen((us_quic_socket_context_t *) this,
+            host, port, flags, sizeof(Http3ResponseData));
+    }
+
+    void shutdown() { us_quic_socket_context_shutdown((us_quic_socket_context_t *) this); }
+
+    bool addServerName(const char *hostname, us_bun_socket_context_options_t options) {
+        return us_quic_socket_context_add_server_name((us_quic_socket_context_t *) this, hostname, options) == 0;
+    }
+};
+
+}
+
+#endif

@@ -1,0 +1,91 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`Bun.plugin using { forceSide: 'server' } allows for imported components to be SSR'd: foo.svelte - head 1`] = `""`;
+
+exports[`Bun.plugin using { forceSide: 'server' } allows for imported components to be SSR'd: foo.svelte - body 1`] = `
+"<!--[--><!---->
+
+<main class="app svelte-30r5b3lexyb64">
+  <h1 class="svelte-30r5b3lexyb64">Hello World!</h1>
+</main>
+
+<!--]-->"
+`;
+
+exports[`Bun.plugin Generates server-side code: foo.svelte - head 1`] = `""`;
+
+exports[`Bun.plugin Generates server-side code: foo.svelte - body 1`] = `
+"<!--[--><!---->
+
+<main class="app svelte-30r5b3lexyb64">
+  <h1 class="svelte-30r5b3lexyb64">Hello World!</h1>
+</main>
+
+<!--]-->"
+`;
+
+exports[`Bun.build Generates server-side code when targeting "node" or "bun": foo.svelte - server-side (node) 1`] = `
+{
+  "body": 
+"<!--[--><!---->
+
+<main class="app svelte-30r5b3lexyb64">
+  <h1 class="svelte-30r5b3lexyb64">Hello World!</h1>
+</main>
+
+<!--]-->"
+,
+  "head": "",
+  "html": 
+"<!--[--><!---->
+
+<main class="app svelte-30r5b3lexyb64">
+  <h1 class="svelte-30r5b3lexyb64">Hello World!</h1>
+</main>
+
+<!--]-->"
+,
+}
+`;
+
+exports[`Bun.build Generates server-side code when targeting "node" or "bun": foo.svelte - server-side (bun) 1`] = `
+{
+  "body": 
+"<!--[--><!---->
+
+<main class="app svelte-30r5b3lexyb64">
+  <h1 class="svelte-30r5b3lexyb64">Hello World!</h1>
+</main>
+
+<!--]-->"
+,
+  "head": "",
+  "html": 
+"<!--[--><!---->
+
+<main class="app svelte-30r5b3lexyb64">
+  <h1 class="svelte-30r5b3lexyb64">Hello World!</h1>
+</main>
+
+<!--]-->"
+,
+}
+`;
+
+exports[`Bun.build Generates client-side code when targeting 'browser': foo.svelte - client-side 1`] = `
+"// test/fixtures/foo.svelte
+var foo_default = "./foo-y5ajevk1.svelte";
+export {
+  foo_default as default
+};
+"
+`;
+
+exports[`Bun.build Generates client-side code when targeting 'browser': foo.svelte - client-side index 1`] = `
+"// test/fixtures/foo.svelte
+var foo_default = "./foo-y5ajevk1.svelte";
+export {
+  foo_default as default
+};
+"
+`;

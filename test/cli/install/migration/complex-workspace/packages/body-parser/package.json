@@ -1,0 +1,7 @@
+{
+  "name": "body-parser",
+  "version": "200.0.0",
+  "dependencies": {
+    "svelte": "git+ssh://git@gitlab.com/dylan-conway/public-install-test.git#93f3aa4ec9ca8a0bacc010776db48bfcd915c44c"
+  }
+}

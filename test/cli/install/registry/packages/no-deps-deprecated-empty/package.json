@@ -1,0 +1,40 @@
+{
+	"name": "no-deps-deprecated-empty",
+	"versions": {
+		"1.0.0": {
+			"name": "no-deps-deprecated-empty",
+			"version": "1.0.0",
+			"deprecated": "",
+			"_id": "no-deps-deprecated-empty@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-Cs5Va5YRW621mcyWxE6A5ZxKkWK/+RIhs/1hpN3vt9nNWoSSu/6Hw8o2ZaFWuEx4ijkLrZejC16ZvlMyfRN7sQ==",
+				"shasum": "91d5628e8f6fd390c8fc5c728dfc505e88503aaf",
+				"tarball": "http://localhost:4873/no-deps-deprecated-empty/-/no-deps-deprecated-empty-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:18.240Z",
+		"created": "2023-11-01T22:05:18.240Z",
+		"1.0.0": "2023-11-01T22:05:18.240Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"no-deps-deprecated-empty-1.0.0.tgz": {
+			"shasum": "91d5628e8f6fd390c8fc5c728dfc505e88503aaf",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-711c4318cfd98fb8",
+	"_id": "no-deps-deprecated-empty",
+	"readme": "ERROR: No README data found!"
+}

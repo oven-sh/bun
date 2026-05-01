@@ -1,0 +1,54 @@
+package analytics;
+
+smol OperatingSystem {
+  linux = 1;
+  macos = 2;
+  windows = 3;
+  wsl = 4;
+}
+
+smol Architecture {
+    x64 = 1;
+    arm = 2;
+}
+
+struct Platform {
+    OperatingSystem os;
+    Architecture arch;
+    byte[] version;
+}
+
+enum EventKind {
+  bundle_success = 1;
+  bundle_fail = 2;
+  http_start = 3;
+  http_build = 4;
+  bundle_start = 5;
+}
+
+struct Uint64 {
+  uint32 first;
+  uint32 second;
+}
+
+struct EventListHeader {
+    Uint64 machine_id;
+    uint32 session_id;
+    Platform platform;
+    uint32 build_id;
+    // hash of the folder name
+    Uint64 project_id;
+    uint32 session_length;
+    // enum flags
+    uint32 feature_usage;
+}
+
+struct EventHeader {
+    Uint64 timestamp;
+    EventKind kind;
+}
+
+struct EventList {
+    EventListHeader header;
+    uint32 event_count;
+}

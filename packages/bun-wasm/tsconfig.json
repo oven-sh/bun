@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "moduleResolution": "bundler",
+    "target": "esnext",
+    "module": "esnext",
+    "declaration": true,
+    "esModuleInterop": true,
+    "isolatedModules": false,
+    "skipLibCheck": true,
+    "emitDeclarationOnly": true,
+    "strict": true,
+    "outDir": ".",
+    "types": ["node"]
+  },
+  "include": ["./node_modules/peechy", "./schema.d.ts", "./index.ts", "./schema.js"],
+  "exclude": []
+}

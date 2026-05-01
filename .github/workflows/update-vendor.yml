@@ -1,0 +1,79 @@
+name: Update vendor
+
+on:
+  schedule:
+    - cron: "0 4 * * 0"
+  workflow_dispatch:
+
+jobs:
+  check-update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    strategy:
+      matrix:
+        package:
+          - elysia
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Check version
+        id: check-version
+        run: |
+          set -euo pipefail
+
+          # Extract the commit hash from the line after COMMIT
+          current=$(bun -p '(await Bun.file("test/vendor.json").json()).filter(v=>v.package===process.argv[1])[0].tag' ${{ matrix.package }})
+          repository=$(bun -p '(await Bun.file("test/vendor.json").json()).filter(v=>v.package===process.argv[1])[0].repository' ${{ matrix.package }} | cut -d'/' -f4,5)
+
+          if [ -z "$current" ]; then
+            echo "Error: Could not find COMMIT line in test/vendor.json"
+            exit 1
+          fi
+
+          echo "current=$current" >> $GITHUB_OUTPUT
+          echo "repository=$repository" >> $GITHUB_OUTPUT
+
+          LATEST_RELEASE=$(curl -sL https://api.github.com/repos/${repository}/releases/latest)
+          if [ -z "$LATEST_RELEASE" ]; then
+            echo "Error: Failed to fetch latest release from GitHub API"
+            exit 1
+          fi
+
+          LATEST_TAG=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
+          if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
+            echo "Error: Could not extract tag name from GitHub API response"
+            exit 1
+          fi
+
+          echo "latest=$LATEST_TAG" >> $GITHUB_OUTPUT
+
+      - name: Update version if needed
+        if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
+        run: |
+          set -euo pipefail
+          bun -e 'await Bun.write("test/vendor.json", JSON.stringify((await Bun.file("test/vendor.json").json()).map(v=>{if(v.package===process.argv[1])v.tag=process.argv[2];return v;}), null, 2) + "\n")' ${{ matrix.package }} ${{ steps.check-version.outputs.latest }}
+
+      - name: Create Pull Request
+        if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          add-paths: |
+            test/vendor.json
+          commit-message: "deps: update ${{ matrix.package }} to ${{ steps.check-version.outputs.latest }} (${{ steps.check-version.outputs.latest }})"
+          title: "deps: update ${{ matrix.package }} to ${{ steps.check-version.outputs.latest }}"
+          delete-branch: true
+          branch: deps/update-${{ matrix.package }}
+          body: |
+            ## What does this PR do?
+
+            Updates ${{ matrix.package }} to version ${{ steps.check-version.outputs.latest }}
+
+            Compare: https://github.com/${{ steps.check-version.outputs.repository }}/compare/${{ steps.check-version.outputs.current }}...${{ steps.check-version.outputs.latest }}
+
+            Auto-updated by [this workflow](https://github.com/oven-sh/bun/actions/workflows/update-vendor.yml)

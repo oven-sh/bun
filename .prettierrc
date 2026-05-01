@@ -1,0 +1,30 @@
+{
+  "arrowParens": "avoid",
+  "printWidth": 120,
+  "trailingComma": "all",
+  "useTabs": false,
+  "quoteProps": "preserve",
+  "overrides": [
+    {
+      "files": [".vscode/*.json"],
+      "options": {
+        "parser": "jsonc",
+        "quoteProps": "preserve",
+        "singleQuote": false,
+        "trailingComma": "all"
+      }
+    },
+    {
+      "files": ["*.md"],
+      "options": {
+        "printWidth": 80
+      }
+    },
+    {
+      "files": ["src/codegen/bindgenv2/**/*.ts", "*.bindv2.ts"],
+      "options": {
+        "printWidth": 100
+      }
+    }
+  ]
+}

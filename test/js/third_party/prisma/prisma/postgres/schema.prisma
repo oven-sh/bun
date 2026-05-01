@@ -1,0 +1,64 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "client"
+}
+
+datasource db {
+  provider = "postgres"
+  url      = env("TLS_POSTGRES_DATABASE_URL")
+}
+
+model User {
+  id    Int     @id @default(autoincrement())
+  testId Int
+  email String 
+  name  String?
+  posts Post[]
+}
+
+model Post {
+  id        Int     @id @default(autoincrement())
+  testId    Int
+  title     String
+  content   String?
+  published Boolean @default(false)
+  author    User    @relation(fields: [authorId], references: [id])
+  authorId  Int
+
+  // Big schema to replicate
+  // https://github.com/oven-sh/bun/issues/5320
+  option1  Int?
+  option2  Int?
+  option3  Int?
+  option4  Int?
+  option5  Int?
+  option6  Int?
+  option7  Int?
+  option8  Int?
+  option9  Int?
+  option10 Int?
+  option11 Int?
+  option12 Int?
+  option13 Int?
+  option14 Int?
+  option15 Int?
+  option16 Int?
+  option17 Int?
+  option18 Int?
+  option19 Int?
+  option20 Int?
+  option21 Int?
+  option22 Int?
+  option23 Int?
+  option24 Int?
+  option25 Int?
+}
+
+// For test/js/third_party/postgres/postgres.test.ts
+model users {
+  id    Int     @id @default(autoincrement())
+  alive Boolean
+}

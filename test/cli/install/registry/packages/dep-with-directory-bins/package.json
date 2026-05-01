@@ -1,0 +1,41 @@
+{
+  "name": "dep-with-directory-bins",
+  "versions": {
+    "1.0.0": {
+      "name": "dep-with-directory-bins",
+      "version": "1.0.0",
+      "directories": {
+        "bin": "./bins"
+      },
+      "_id": "dep-with-directory-bins@1.0.0",
+      "_nodeVersion": "22.3.0",
+      "_npmVersion": "10.8.1",
+      "dist": {
+        "integrity": "sha512-uZLlUwT2HiX/YMXf/60hfKZ8VDaju26kUyiXohg6/PlevgYR0cLVd3a459tBPHip3TjX620TLW7kbBM306vJKQ==",
+        "shasum": "e15b26ce0ba04b009b5ebbea9476abe212756cc8",
+        "tarball": "http://localhost:4873/dep-with-directory-bins/-/dep-with-directory-bins-1.0.0.tgz"
+      },
+      "contributors": []
+    }
+  },
+  "time": {
+    "modified": "2024-06-24T23:12:27.191Z",
+    "created": "2024-06-24T23:12:27.191Z",
+    "1.0.0": "2024-06-24T23:12:27.191Z"
+  },
+  "users": {},
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "_uplinks": {},
+  "_distfiles": {},
+  "_attachments": {
+    "dep-with-directory-bins-1.0.0.tgz": {
+      "shasum": "e15b26ce0ba04b009b5ebbea9476abe212756cc8",
+      "version": "1.0.0"
+    }
+  },
+  "_rev": "",
+  "_id": "dep-with-directory-bins",
+  "readme": "ERROR: No README data found!"
+}

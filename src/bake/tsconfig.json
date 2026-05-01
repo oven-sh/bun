@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"],
+    // baseUrl needed until resolver fix propagates to system Bun used during build
+    "ignoreDeprecations": "6.0",
+    "baseUrl": ".",
+    "paths": {
+      "bun-framework-react/*": ["./bun-framework-react/*"],
+      "bindgen": ["../codegen/bindgen-lib"]
+    },
+    "jsx": "react-jsx",
+    "types": ["react/experimental"]
+  },
+  "include": ["**/*.ts", "**/*.tsx", "../runtime.js", "../runtime.bun.js"],
+  "references": [{ "path": "../../packages/bun-types" }]
+}

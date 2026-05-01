@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  </head>
+  <body>
+    <script id="__bunfallback" type="binary/peechy">
+      {[blob]f}
+    </script>
+
+    <style data-has-bun-fallback-style>
+      {[bun_error_css]s}
+    </style>
+
+    <style data-bun-error-page-style>
+      {[bun_error_page_css]s}
+    </style>
+
+    <script type="module" async>
+      {[fallback]s};
+      ;{[bun_error]s};
+      ;globalThis[Symbol.for("Bun__renderFallbackError")](globalThis.__BUN_DATA__);
+    </script>
+  </body>
+</html>

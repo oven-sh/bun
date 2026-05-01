@@ -1,0 +1,3114 @@
+{
+  "name": "JSC",
+  "version": {
+    "major": 1,
+    "minor": 4
+  },
+  "domains": [
+    {
+      "domain": "Audit",
+      "description": "",
+      "version": 4,
+      "debuggableTypes": ["itml", "javascript", "page", "service-worker", "web-page"],
+      "targetTypes": ["itml", "javascript", "page", "service-worker", "worker"],
+      "commands": [
+        {
+          "name": "setup",
+          "description": "Creates the `WebInspectorAudit` object that is passed to run. Must call teardown before calling setup more than once.",
+          "parameters": [
+            {
+              "name": "contextId",
+              "$ref": "Runtime.ExecutionContextId",
+              "optional": true,
+              "description": "Specifies in which isolated context to run the test. Each content script lives in an isolated context and this parameter may be used to specify one of those contexts. If the parameter is omitted or 0 the evaluation will be performed in the context of the inspected page."
+            }
+          ]
+        },
+        {
+          "name": "run",
+          "description": "Parses and evaluates the given test string and sends back the result. Returned values are saved to the \"audit\" object group. Call setup before and teardown after if the `WebInspectorAudit` object should be passed into the test.",
+          "parameters": [
+            {
+              "name": "test",
+              "type": "string",
+              "description": "Test string to parse and evaluate."
+            },
+            {
+              "name": "contextId",
+              "$ref": "Runtime.ExecutionContextId",
+              "optional": true,
+              "description": "Specifies in which isolated context to run the test. Each content script lives in an isolated context and this parameter may be used to specify one of those contexts. If the parameter is omitted or 0 the evaluation will be performed in the context of the inspected page."
+            }
+          ],
+          "returns": [
+            {
+              "name": "result",
+              "$ref": "Runtime.RemoteObject",
+              "description": "Evaluation result."
+            },
+            {
+              "name": "wasThrown",
+              "type": "boolean",
+              "optional": true,
+              "description": "True if the result was thrown during the evaluation."
+            }
+          ]
+        },
+        {
+          "name": "teardown",
+          "description": "Destroys the `WebInspectorAudit` object that is passed to run. Must call setup before calling teardown."
+        }
+      ]
+    },
+    {
+      "domain": "Console",
+      "description": "Console domain defines methods and events for interaction with the JavaScript console. Console collects messages created by means of the <a href='http://getfirebug.com/wiki/index.php/Console_API'>JavaScript Console API</a>. One needs to enable this domain using <code>enable</code> command in order to start receiving the console messages. Browser collects messages issued while console domain is not enabled as well and reports them using <code>messageAdded</code> notification upon enabling.",
+      "debuggableTypes": ["itml", "javascript", "page", "service-worker", "web-page"],
+      "targetTypes": ["itml", "javascript", "page", "service-worker", "worker"],
+      "types": [
+        {
+          "id": "ChannelSource",
+          "type": "string",
+          "enum": [
+            "xml",
+            "javascript",
+            "network",
+            "console-api",
+            "storage",
+            "appcache",
+            "rendering",
+            "css",
+            "security",
+            "content-blocker",
+            "media",
+            "mediasource",
+            "webrtc",
+            "itp-debug",
+            "private-click-measurement",
+            "payment-request",
+            "other"
+          ],
+          "description": "Channels for different types of log messages."
+        },
+        {
+          "id": "ChannelLevel",
+          "type": "string",
+          "enum": ["off", "basic", "verbose"],
+          "description": "Level of logging."
+        },
+        {
+          "id": "ClearReason",
+          "type": "string",
+          "enum": ["console-api", "frontend", "main-frame-navigation"],
+          "description": "The reason the console is being cleared."
+        },
+        {
+          "id": "Channel",
+          "description": "Logging channel.",
+          "type": "object",
+          "properties": [
+            {
+              "name": "source",
+              "$ref": "ChannelSource"
+            },
+            {
+              "name": "level",
+              "$ref": "ChannelLevel"
+            }
+          ]
+        },
+        {
+          "id": "ConsoleMessage",
+          "type": "object",
+          "description": "Console message.",
+          "properties": [
+            {
+              "name": "source",
+              "$ref": "ChannelSource"
+            },
+            {
+              "name": "level",
+              "type": "string",
+              "enum": ["log", "info", "warning", "error", "debug"],
+              "description": "Message severity."
+            },
+            {
+              "name": "text",
+              "type": "string",
+              "description": "Message text."
+            },
+            {
+              "name": "type",
+              "type": "string",
+              "optional": true,
+              "enum": [
+                "log",
+                "dir",
+                "dirxml",
+                "table",
+                "trace",
+                "clear",
+                "startGroup",
+                "startGroupCollapsed",
+                "endGroup",
+                "assert",
+                "timing",
+                "profile",
+                "profileEnd",
+                "image"
+              ],
+              "description": "Console message type."
+            },
+            {
+              "name": "url",
+              "type": "string",
+              "optional": true,
+              "description": "URL of the message origin."
+            },
+            {
+              "name": "line",
+              "type": "integer",
+              "optional": true,
+              "description": "Line number in the resource that generated this message."
+            },
+            {
+              "name": "column",
+              "type": "integer",
+              "optional": true,
+              "description": "Column number on the line in the resource that generated this message."
+            },
+            {
+              "name": "repeatCount",
+              "type": "integer",
+              "optional": true,
+              "description": "Repeat count for repeated messages."
+            },
+            {
+              "name": "parameters",
+              "type": "array",
+              "items": {
+                "$ref": "Runtime.RemoteObject"
+              },
+              "optional": true,
+              "description": "Message parameters in case of the formatted message."
+            },
+            {
+              "name": "stackTrace",
+              "$ref": "StackTrace",
+              "optional": true,
+              "description": "JavaScript stack trace for assertions and error messages."
+            },
+            {
+              "name": "networkRequestId",
+              "$ref": "Network.RequestId",
+              "optional": true,
+              "description": "Identifier of the network request associated with this message."
+            },
+            {
+              "name": "timestamp",
+              "type": "number",
+              "optional": true,
+              "description": "Time when this message was added. Currently only used when an expensive operation happens to make sure that the frontend can account for it."
+            }
+          ]
+        },
+        {
+          "id": "CallFrame",
+          "type": "object",
+          "description": "Stack entry for console errors and assertions.",
+          "properties": [
+            {
+              "name": "functionName",
+              "type": "string",
+              "description": "JavaScript function name."
+            },
+            {
+              "name": "url",
+              "type": "string",
+              "description": "JavaScript script name or url."
+            },
+            {
+              "name": "scriptId",
+              "$ref": "Debugger.ScriptId",
+              "description": "Script identifier."
+            },
+            {
+              "name": "lineNumber",
+              "type": "integer",
+              "description": "JavaScript script line number."
+            },
+            {
+              "name": "columnNumber",
+              "type": "integer",
+              "description": "JavaScript script column number."
+            }
+          ]
+        },
+        {
+          "id": "StackTrace",
+          "description": "Call frames for async function calls, console assertions, and error messages.",
+          "type": "object",
+          "properties": [
+            {
+              "name": "callFrames",
+              "type": "array",
+              "items": {
+                "$ref": "CallFrame"
+              }
+            },
+            {
+              "name": "topCallFrameIsBoundary",
+              "type": "boolean",
+              "optional": true,
+              "description": "Whether the first item in <code>callFrames</code> is the native function that scheduled the asynchronous operation (e.g. setTimeout)."
+            },
+            {
+              "name": "truncated",
+              "type": "boolean",
+              "optional": true,
+              "description": "Whether one or more frames have been truncated from the bottom of the stack."
+            },
+            {
+              "name": "parentStackTrace",
+              "$ref": "StackTrace",
+              "optional": true,
+              "description": "Parent StackTrace."
+            }
+          ]
+        }
+      ],
+      "commands": [
+        {
+          "name": "enable",
+          "description": "Enables console domain, sends the messages collected so far to the client by means of the <code>messageAdded</code> notification."
+        },
+        {
+          "name": "disable",
+          "description": "Disables console domain, prevents further console messages from being reported to the client."
+        },
+        {
+          "name": "clearMessages",
+          "description": "Clears console messages collected in the browser."
+        },
+        {
+          "name": "setConsoleClearAPIEnabled",
+          "description": "Control whether calling <code>console.clear()</code> has an effect in Web Inspector. Defaults to true.",
+          "parameters": [
+            {
+              "name": "enable",
+              "type": "boolean"
+            }
+          ]
+        },
+        {
+          "name": "getLoggingChannels",
+          "description": "List of the different message sources that are non-default logging channels.",
+          "returns": [
+            {
+              "name": "channels",
+              "type": "array",
+              "items": {
+                "$ref": "Channel"
+              },
+              "description": "Logging channels."
+            }
+          ]
+        },
+        {
+          "name": "setLoggingChannelLevel",
+          "description": "Modify the level of a channel.",
+          "parameters": [
+            {
+              "name": "source",
+              "$ref": "ChannelSource",
+              "description": "Logging channel to modify."
+            },
+            {
+              "name": "level",
+              "$ref": "ChannelLevel",
+              "description": "New level."
+            }
+          ]
+        }
+      ],
+      "events": [
+        {
+          "name": "messageAdded",
+          "description": "Issued when new console message is added.",
+          "parameters": [
+            {
+              "name": "message",
+              "$ref": "ConsoleMessage",
+              "description": "Console message that has been added."
+            }
+          ]
+        },
+        {
+          "name": "messageRepeatCountUpdated",
+          "description": "Issued when subsequent message(s) are equal to the previous one(s).",
+          "parameters": [
+            {
+              "name": "count",
+              "type": "integer",
+              "description": "New repeat count value."
+            },
+            {
+              "name": "timestamp",
+              "type": "number",
+              "optional": true,
+              "description": "Timestamp of the latest message."
+            }
+          ]
+        },
+        {
+          "name": "messagesCleared",
+          "description": "Issued when console is cleared. This happens either upon <code>clearMessages</code> command or after page navigation.",
+          "parameters": [
+            {
+              "name": "reason",
+              "$ref": "ClearReason",
+              "description": "The reason the console is being cleared."
+            }
+          ]
+        },
+        {
+          "name": "heapSnapshot",
+          "description": "Issued from console.takeHeapSnapshot.",
+          "parameters": [
+            {
+              "name": "timestamp",
+              "type": "number"
+            },
+            {
+              "name": "snapshotData",
+              "$ref": "Heap.HeapSnapshotData",
+              "description": "Snapshot at the end of tracking."
+            },
+            {
+              "name": "title",
+              "type": "string",
+              "optional": true,
+              "description": "Optional title provided to console.takeHeapSnapshot."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "domain": "Debugger",
+      "description": "Debugger domain exposes JavaScript debugging capabilities. It allows setting and removing breakpoints, stepping through execution, exploring stack traces, etc.",
+      "debuggableTypes": ["itml", "javascript", "page", "service-worker", "web-page"],
+      "targetTypes": ["itml", "javascript", "page", "service-worker", "worker"],
+      "types": [
+        {
+          "id": "BreakpointId",
+          "type": "string",
+          "description": "Breakpoint identifier."
+        },
+        {
+          "id": "BreakpointActionIdentifier",
+          "type": "integer",
+          "description": "Breakpoint action identifier."
+        },
+        {
+          "id": "ScriptId",
+          "type": "string",
+          "description": "Unique script identifier."
+        },
+        {
+          "id": "CallFrameId",
+          "type": "string",
+          "description": "Call frame identifier."
+        },
+        {
+          "id": "Location",
+          "type": "object",
+          "description": "Location in the source code.",
+          "properties": [
+            {
+              "name": "scriptId",
+              "$ref": "ScriptId",
+              "description": "Script identifier as reported in the <code>Debugger.scriptParsed</code>."
+            },
+            {
+              "name": "lineNumber",
+              "type": "integer",
+              "description": "Line number in the script (0-based)."
+            },
+            {
+              "name": "columnNumber",
+              "type": "integer",
+              "optional": true,
+              "description": "Column number in the script (0-based)."
+            }
+          ]
+        },
+        {
+          "id": "BreakpointAction",
+          "type": "object",
+          "description": "Action to perform when a breakpoint is triggered.",
+          "properties": [
+            {
+              "name": "type",
+              "type": "string",
+              "enum": ["log", "evaluate", "sound", "probe"],
+              "description": "Different kinds of breakpoint actions."
+            },
+            {
+              "name": "data",
+              "type": "string",
+              "optional": true,
+              "description": "Data associated with this breakpoint type (e.g. for type \"eval\" this is the JavaScript string to evaluate)."
+            },
+            {
+              "name": "id",
+              "$ref": "BreakpointActionIdentifier",
+              "optional": true,
+              "description": "A frontend-assigned identifier for this breakpoint action."
+            },
+            {
+              "name": "emulateUserGesture",
+              "type": "boolean",
+              "optional": true,
+              "description": "Indicates whether this action should be executed with a user gesture or not. Defaults to <code>false<code>."
+            }
+          ]
+        },
+        {
+          "id": "BreakpointOptions",
+          "type": "object",
+          "description": "Extra options that modify breakpoint behavior.",
+          "properties": [
+            {
+              "name": "condition",
+              "type": "string",
+              "optional": true,
+              "description": "Expression to use as a breakpoint condition. When specified, debugger will only stop on the breakpoint if this expression evaluates to true."
+            },
+            {
+              "name": "actions",
+              "type": "array",
+              "optional": true,
+              "items": {
+                "$ref": "BreakpointAction"
+              },
+              "description": "Actions to perform automatically when the breakpoint is triggered."
+            },
+            {
+              "name": "autoContinue",
+              "type": "boolean",
+              "optional": true,
+              "description": "Automatically continue after hitting this breakpoint and running actions."
+            },
+            {
+              "name": "ignoreCount",
+              "type": "integer",
+              "optional": true,
+              "description": "Number of times to ignore this breakpoint, before stopping on the breakpoint and running actions."
+            }
+          ]
+        },
+        {
+          "id": "FunctionDetails",
+          "type": "object",
+          "description": "Information about the function.",
+          "properties": [
+            {
+              "name": "location",
+              "$ref": "Location",
+              "description": "Location of the function."
+            },
+            {
+              "name": "name",
+              "type": "string",
+              "optional": true,
+              "description": "Name of the function. Not present for anonymous functions."
+            },
+            {
+              "name": "displayName",
+              "type": "string",
+              "optional": true,
+              "description": "Display name of the function(specified in 'displayName' property on the function object)."
+            },
+            {
+              "name": "scopeChain",
+              "type": "array",
+              "optional": true,
+              "items": {
+                "$ref": "Scope"
+              },
+              "description": "Scope chain for this closure."
+            }
+          ]
+        },
+        {
+          "id": "CallFrame",
+          "type": "object",
+          "description": "JavaScript call frame. Array of call frames form the call stack.",
+          "properties": [
+            {
+              "name": "callFrameId",
+              "$ref": "CallFrameId",
+              "description": "Call frame identifier. This identifier is only valid while the virtual machine is paused."
+            },
+            {
+              "name": "functionName",
+              "type": "string",
+              "description": "Name of the JavaScript function called on this call frame."
+            },
+            {
+              "name": "location",
+              "$ref": "Location",
+              "description": "Location in the source code."
+            },
+            {
+              "name": "scopeChain",
+              "type": "array",
+              "items": {
+                "$ref": "Scope"
+              },
+              "description": "Scope chain for this call frame."
+            },
+            {
+              "name": "this",
+              "$ref": "Runtime.RemoteObject",
+              "description": "<code>this</code> object for this call frame."
+            },
+            {
+              "name": "isTailDeleted",
+              "type": "boolean",
+              "description": "Is the current frame tail deleted from a tail call."
+            }
+          ]
+        },
+        {
+          "id": "Scope",
+          "type": "object",
+          "description": "Scope description.",
+          "properties": [
+            {
+              "name": "object",
+              "$ref": "Runtime.RemoteObject",
+              "description": "Object representing the scope. For <code>global</code> and <code>with</code> scopes it represents the actual object; for the rest of the scopes, it is artificial transient object enumerating scope variables as its properties."
+            },
+            {
+              "name": "type",
+              "type": "string",
+              "enum": [
+                "global",
+                "with",
+                "closure",
+                "catch",
+                "functionName",
+                "globalLexicalEnvironment",
+                "nestedLexical"
+              ],
+              "description": "Scope type."
+            },
+            {
+              "name": "name",
+              "type": "string",
+              "optional": true,
+              "description": "Name associated with the scope."
+            },
+            {
+              "name": "location",
+              "$ref": "Location",
+              "optional": true,
+              "description": "Location if available of the scope definition."
+            },
+            {
+              "name": "empty",
+              "type": "boolean",
+              "optional": true,
+              "description": "Whether the scope has any variables."
+            }
+          ]
+        },
+        {
+          "id": "ProbeSample",
+          "description": "A sample collected by evaluating a probe breakpoint action.",
+          "type": "object",
+          "properties": [
+            {
+              "name": "probeId",
+              "$ref": "BreakpointActionIdentifier",
+              "description": "Identifier of the probe breakpoint action that created the sample."
+            },
+            {
+              "name": "sampleId",
+              "type": "integer",
+              "description": "Unique identifier for this sample."
+            },
+            {
+              "name": "batchId",
+              "type": "integer",
+              "description": "A batch identifier which is the same for all samples taken at the same breakpoint hit."
+            },
+            {
+              "name": "timestamp",
+              "type": "number",
+              "description": "Timestamp of when the sample was taken."
+            },
+            {
+              "name": "payload",
+              "$ref": "Runtime.RemoteObject",
+              "description": "Contents of the sample."
+            }
+          ]
+        },
+        {
+          "id": "AssertPauseReason",
+          "type": "object",
+          "description": "The pause reason auxiliary data when paused because of an assertion.",
+          "properties": [
+            {
+              "name": "message",
+              "type": "string",
+              "optional": true,
+              "description": "The console.assert message string if provided."
+            }
+          ]
+        },
+        {
+          "id": "BreakpointPauseReason",
+          "type": "object",
+          "description": "The pause reason auxiliary data when paused because of hitting a breakpoint.",
+          "properties": [
+            {
+              "name": "breakpointId",
+              "type": "string",
+              "description": "The identifier of the breakpoint causing the pause."
+            }
+          ]
+        },
+        {
+          "id": "CSPViolationPauseReason",
+          "type": "object",
+          "description": "The pause reason auxiliary data when paused because of a Content Security Policy directive.",
+          "properties": [
+            {
+              "name": "directive",
+              "type": "string",
+              "description": "The CSP directive that blocked script execution."
+            }
+          ]
+        }
+      ],
+      "commands": [
+        {
+          "name": "enable",
+          "description": "Enables debugger for the given page. Clients should not assume that the debugging has been enabled until the result for this command is received."
+        },
+        {
+          "name": "disable",
+          "description": "Disables debugger for given page."
+        },
+        {
+          "name": "setAsyncStackTraceDepth",
+          "description": "Set the async stack trace depth for the page. A value of zero disables recording of async stack traces.",
+          "parameters": [
+            {
+              "name": "depth",
+              "type": "integer",
+              "description": "Async stack trace depth."
+            }
+          ]
+        },
+        {
+          "name": "setBreakpointsActive",
+          "description": "Activates / deactivates all breakpoints on the page.",
+          "parameters": [
+            {
+              "name": "active",
+              "type": "boolean",
+              "description": "New value for breakpoints active state."
+            }
+          ]
+        },
+        {
+          "name": "setBreakpointByUrl",
+          "description": "Sets JavaScript breakpoint at given location specified either by URL or URL regex. Once this command is issued, all existing parsed scripts will have breakpoints resolved and returned in <code>locations</code> property. Further matching script parsing will result in subsequent <code>breakpointResolved</code> events issued. This logical breakpoint will survive page reloads.",
+          "parameters": [
+            {
+              "name": "lineNumber",
+              "type": "integer",
+              "description": "Line number to set breakpoint at."
+            },
+            {
+              "name": "url",
+              "type": "string",
+              "optional": true,
+              "description": "URL of the resources to set breakpoint on."
+            },
+            {
+              "name": "urlRegex",
+              "type": "string",
+              "optional": true,
+              "description": "Regex pattern for the URLs of the resources to set breakpoints on. Either <code>url</code> or <code>urlRegex</code> must be specified."
+            },
+            {
+              "name": "columnNumber",
+              "type": "integer",
+              "optional": true,
+              "description": "Offset in the line to set breakpoint at."
+            },
+            {
+              "name": "options",
+              "$ref": "BreakpointOptions",
+              "optional": true,
+              "description": "Options to apply to this breakpoint to modify its behavior."
+            }
+          ],
+          "returns": [
+            {
+              "name": "breakpointId",
+              "$ref": "BreakpointId",
+              "description": "Id of the created breakpoint for further reference."
+            },
+            {
+              "name": "locations",
+              "type": "array",
+              "items": {
+                "$ref": "Location"
+              },
+              "description": "List of the locations this breakpoint resolved into upon addition."
+            }
+          ]
+        },
+        {
+          "name": "setBreakpoint",
+          "description": "Sets JavaScript breakpoint at a given location.",
+          "parameters": [
+            {
+              "name": "location",
+              "$ref": "Location",
+              "description": "Location to set breakpoint in."
+            },
+            {
+              "name": "options",
+              "$ref": "BreakpointOptions",
+              "optional": true,
+              "description": "Options to apply to this breakpoint to modify its behavior."
+            }
+          ],
+          "returns": [
+            {
+              "name": "breakpointId",
+              "$ref": "BreakpointId",
+              "description": "Id of the created breakpoint for further reference."
+            },
+            {
+              "name": "actualLocation",
+              "$ref": "Location",
+              "description": "Location this breakpoint resolved into."
+            }
+          ]
+        },
+        {
+          "name": "removeBreakpoint",
+          "description": "Removes JavaScript breakpoint.",
+          "parameters": [
+            {
+              "name": "breakpointId",
+              "$ref": "BreakpointId"
+            }
+          ]
+        },
+        {
+          "name": "addSymbolicBreakpoint",
+          "description": "Adds a JavaScript breakpoint that pauses execution whenever a function with the given name is about to be called.",
+          "parameters": [
+            {
+              "name": "symbol",
+              "type": "string",
+              "description": "The name of the function to pause in when called."
+            },
+            {
+              "name": "caseSensitive",
+              "type": "boolean",
+              "optional": true,
+              "description": "If true, symbol is case sensitive. Defaults to true."
+            },
+            {
+              "name": "isRegex",
+              "type": "boolean",
+              "optional": true,
+              "description": "If true, treats symbol as a regex. Defaults to false."
+            },
+            {
+              "name": "options",
+              "$ref": "BreakpointOptions",
+              "optional": true,
+              "description": "Options to apply to this breakpoint to modify its behavior."
+            }
+          ]
+        },
+        {
+          "name": "removeSymbolicBreakpoint",
+          "description": "Removes a previously added symbolic breakpoint.",
+          "parameters": [
+            {
+              "name": "symbol",
+              "type": "string",
+              "description": "The name of the function to pause in when called."
+            },
+            {
+              "name": "caseSensitive",
+              "type": "boolean",
+              "optional": true,
+              "description": "If true, symbol is case sensitive. Defaults to true."
+            },
+            {
+              "name": "isRegex",
+              "type": "boolean",
+              "optional": true,
+              "description": "If true, treats symbol as a regex. Defaults to false."
+            }
+          ]
+        },
+        {
+          "name": "continueUntilNextRunLoop",
+          "description": "Continues execution until the current evaluation completes. This will trigger either a Debugger.paused or Debugger.resumed event."
+        },
+        {
+          "name": "continueToLocation",
+          "description": "Continues execution until specific location is reached. This will trigger either a Debugger.paused or Debugger.resumed event.",
+          "parameters": [
+            {
+              "name": "location",
+              "$ref": "Location",
+              "description": "Location to continue to."
+            }
+          ]
+        },
+        {
+          "name": "stepNext",
+          "description": "Steps over the expression. This will trigger either a Debugger.paused or Debugger.resumed event."
+        },
+        {
+          "name": "stepOver",
+          "description": "Steps over the statement. This will trigger either a Debugger.paused or Debugger.resumed event."
+        },
+        {
+          "name": "stepInto",
+          "description": "Steps into the function call. This will trigger either a Debugger.paused or Debugger.resumed event."
+        },
+        {
+          "name": "stepOut",
+          "description": "Steps out of the function call. This will trigger either a Debugger.paused or Debugger.resumed event."
+        },
+        {
+          "name": "pause",
+          "description": "Stops on the next JavaScript statement."
+        },
+        {
+          "name": "resume",
+          "description": "Resumes JavaScript execution. This will trigger a Debugger.resumed event."
+        },
+        {
+          "name": "searchInContent",
+          "description": "Searches for given string in script content.",
+          "parameters": [
+            {
+              "name": "scriptId",
+              "$ref": "ScriptId",
+              "description": "Id of the script to search in."
+            },
+            {
+              "name": "query",
+              "type": "string",
+              "description": "String to search for."
+            },
+            {
+              "name": "caseSensitive",
+              "type": "boolean",
+              "optional": true,
+              "description": "If true, search is case sensitive."
+            },
+            {
+              "name": "isRegex",
+              "type": "boolean",
+              "optional": true,
+              "description": "If true, treats string parameter as regex."
+            }
+          ],
+          "returns": [
+            {
+              "name": "result",
+              "type": "array",
+              "items": {
+                "$ref": "GenericTypes.SearchMatch"
+              },
+              "description": "List of search matches."
+            }
+          ]
+        },
+        {
+          "name": "getScriptSource",
+          "description": "Returns source for the script with given id.",
+          "parameters": [
+            {
+              "name": "scriptId",
+              "$ref": "ScriptId",
+              "description": "Id of the script to get source for."
+            }
+          ],
+          "returns": [
+            {
+              "name": "scriptSource",
+              "type": "string",
+              "description": "Script source."
+            }
+          ]
+        },
+        {
+          "name": "getFunctionDetails",
+          "description": "Returns detailed information on given function.",
+          "parameters": [
+            {
+              "name": "functionId",
+              "$ref": "Runtime.RemoteObjectId",
+              "description": "Id of the function to get location for."
+            }
+          ],
+          "returns": [
+            {
+              "name": "details",
+              "$ref": "FunctionDetails",
+              "description": "Information about the function."
+            }
+          ]
+        },
+        {
+          "name": "getBreakpointLocations",
+          "description": "Returns a list of valid breakpoint locations within the given location range.",
+          "parameters": [
+            {
+              "name": "start",
+              "$ref": "Location",
+              "description": "Starting location to look for breakpoint locations after (inclusive). Must have same scriptId as end."
+            },
+            {
+              "name": "end",
+              "$ref": "Location",
+              "description": "Ending location to look for breakpoint locations before (exclusive). Must have same scriptId as start."
+            }
+          ],
+          "returns": [
+            {
+              "name": "locations",
+              "type": "array",
+              "items": {
+                "$ref": "Location"
+              },
+              "description": "List of resolved breakpoint locations."
+            }
+          ]
+        },
+        {
+          "name": "setPauseOnDebuggerStatements",
+          "description": "Control whether the debugger pauses execution before `debugger` statements.",
+          "parameters": [
+            {
+              "name": "enabled",
+              "type": "boolean"
+            },
+            {
+              "name": "options",
+              "$ref": "BreakpointOptions",
+              "optional": true,
+              "description": "Options to apply to this breakpoint to modify its behavior."
+            }
+          ]
+        },
+        {
+          "name": "setPauseOnExceptions",
+          "description": "Defines pause on exceptions state. Can be set to stop on all exceptions, uncaught exceptions or no exceptions. Initial pause on exceptions state is <code>none</code>.",
+          "parameters": [
+            {
+              "name": "state",
+              "type": "string",
+              "enum": ["none", "uncaught", "all"],
+              "description": "Pause on exceptions mode."
+            },
+            {
+              "name": "options",
+              "$ref": "BreakpointOptions",
+              "optional": true,
+              "description": "Options to apply to this breakpoint to modify its behavior."
+            }
+          ]
+        },
+        {
+          "name": "setPauseOnAssertions",
+          "description": "Set pause on assertions state. Assertions are console.assert assertions.",
+          "parameters": [
+            {
+              "name": "enabled",
+              "type": "boolean"
+            },
+            {
+              "name": "options",
+              "$ref": "BreakpointOptions",
+              "optional": true,
+              "description": "Options to apply to this breakpoint to modify its behavior."
+            }
+          ]
+        },
+        {
+          "name": "setPauseOnMicrotasks",
+          "description": "Pause when running the next JavaScript microtask.",
+          "parameters": [
+            {
+              "name": "enabled",
+              "type": "boolean"
+            },
+            {
+              "name": "options",
+              "$ref": "BreakpointOptions",
+              "optional": true,
+              "description": "Options to apply to this breakpoint to modify its behavior."
+            }
+          ]
+        },
+        {
+          "name": "setPauseForInternalScripts",
+          "description": "Change whether to pause in the debugger for internal scripts. The default value is false.",
+          "parameters": [
+            {
+              "name": "shouldPause",
+              "type": "boolean"
+            }
+          ]
+        },
+        {
+          "name": "evaluateOnCallFrame",
+          "description": "Evaluates expression on a given call frame.",
+          "parameters": [
+            {
+              "name": "callFrameId",
+              "$ref": "CallFrameId",
+              "description": "Call frame identifier to evaluate on."
+            },
+            {
+              "name": "expression",
+              "type": "string",
+              "description": "Expression to evaluate."
+            },
+            {
+              "name": "objectGroup",
+              "type": "string",
+              "optional": true,
+              "description": "String object group name to put result into (allows rapid releasing resulting object handles using <code>releaseObjectGroup</code>)."
+            },
+            {
+              "name": "includeCommandLineAPI",
+              "type": "boolean",
+              "optional": true,
+              "description": "Specifies whether command line API should be available to the evaluated expression, defaults to false."
+            },
+            {
+              "name": "doNotPauseOnExceptionsAndMuteConsole",
+              "type": "boolean",
+              "optional": true,
+              "description": "Specifies whether evaluation should stop on exceptions and mute console. Overrides setPauseOnException state."
+            },
+            {
+              "name": "returnByValue",
+              "type": "boolean",
+              "optional": true,
+              "description": "Whether the result is expected to be a JSON object that should be sent by value."
+            },
+            {
+              "name": "generatePreview",
+              "type": "boolean",
+              "optional": true,
+              "description": "Whether preview should be generated for the result."
+            },
+            {
+              "name": "saveResult",
+              "type": "boolean",
+              "optional": true,
+              "description": "Whether the resulting value should be considered for saving in the $n history."
+            },
+            {
+              "name": "emulateUserGesture",
+              "type": "boolean",
+              "optional": true,
+              "description": "Whether the expression should be considered to be in a user gesture or not."
+            }
+          ],
+          "returns": [
+            {
+              "name": "result",
+              "$ref": "Runtime.RemoteObject",
+              "description": "Object wrapper for the evaluation result."
+            },
+            {
+              "name": "wasThrown",
+              "type": "boolean",
+              "optional": true,
+              "description": "True if the result was thrown during the evaluation."
+            },
+            {
+              "name": "savedResultIndex",
+              "type": "integer",
+              "optional": true,
+              "description": "If the result was saved, this is the $n index that can be used to access the value."
+            }
+          ]
+        },
+        {
+          "name": "setShouldBlackboxURL",
+          "description": "Sets whether the given URL should be in the list of blackboxed scripts, which are ignored when pausing.",
+          "parameters": [
+            {
+              "name": "url",
+              "type": "string"
+            },
+            {
+              "name": "shouldBlackbox",
+              "type": "boolean"
+            },
+            {
+              "name": "caseSensitive",
+              "type": "boolean",
+              "optional": true,
+              "description": "If <code>true</code>, <code>url</code> is case sensitive."
+            },
+            {
+              "name": "isRegex",
+              "type": "boolean",
+              "optional": true,
+              "description": "If <code>true</code>, treat <code>url</code> as regular expression."
+            },
+            {
+              "name": "sourceRanges",
+              "type": "array",
+              "items": {
+                "type": "integer"
+              },
+              "optional": true,
+              "description": "If provided, limits where in the script the debugger will skip pauses. Expected structure is a repeated <code>[startLine, startColumn, endLine, endColumn]</code>. Ignored if <code>shouldBlackbox</code> is <code>false</code>."
+            }
+          ]
+        },
+        {
+          "name": "setBlackboxBreakpointEvaluations",
+          "description": "Sets whether evaluation of breakpoint conditions, ignore counts, and actions happen at the location of the breakpoint or are deferred due to blackboxing.",
+          "parameters": [
+            {
+              "name": "blackboxBreakpointEvaluations",
+              "type": "boolean"
+            }
+          ]
+        }
+      ],
+      "events": [
+        {
+          "name": "globalObjectCleared",
+          "description": "Called when global has been cleared and debugger client should reset its state. Happens upon navigation or reload."
+        },
+        {
+          "name": "scriptParsed",
+          "description": "Fired when virtual machine parses script. This event is also fired for all known and uncollected scripts upon enabling debugger.",
+          "parameters": [
+            {
+              "name": "scriptId",
+              "$ref": "ScriptId",
+              "description": "Identifier of the script parsed."
+            },
+            {
+              "name": "url",
+              "type": "string",
+              "description": "URL of the script parsed (if any)."
+            },
+            {
+              "name": "startLine",
+              "type": "integer",
+              "description": "Line offset of the script within the resource with given URL (for script tags)."
+            },
+            {
+              "name": "startColumn",
+              "type": "integer",
+              "description": "Column offset of the script within the resource with given URL."
+            },
+            {
+              "name": "endLine",
+              "type": "integer",
+              "description": "Last line of the script."
+            },
+            {
+              "name": "endColumn",
+              "type": "integer",
+              "description": "Length of the last line of the script."
+            },
+            {
+              "name": "isContentScript",
+              "type": "boolean",
+              "optional": true,
+              "description": "Determines whether this script is a user extension script."
+            },
+            {
+              "name": "sourceURL",
+              "type": "string",
+              "optional": true,
+              "description": "sourceURL name of the script (if any)."
+            },
+            {
+              "name": "sourceMapURL",
+              "type": "string",
+              "optional": true,
+              "description": "URL of source map associated with script (if any)."
+            },
+            {
+              "name": "module",
+              "type": "boolean",
+              "optional": true,
+              "description": "True if this script was parsed as a module."
+            }
+          ]
+        },
+        {
+          "name": "scriptFailedToParse",
+          "description": "Fired when virtual machine fails to parse the script.",
+          "parameters": [
+            {
+              "name": "url",
+              "type": "string",
+              "description": "URL of the script that failed to parse."
+            },
+            {
+              "name": "scriptSource",
+              "type": "string",
+              "description": "Source text of the script that failed to parse."
+            },
+            {
+              "name": "startLine",
+              "type": "integer",
+              "description": "Line offset of the script within the resource."
+            },
+            {
+              "name": "errorLine",
+              "type": "integer",
+              "description": "Line with error."
+            },
+            {
+              "name": "errorMessage",
+              "type": "string",
+              "description": "Parse error message."
+            }
+          ]
+        },
+        {
+          "name": "breakpointResolved",
+          "description": "Fired when breakpoint is resolved to an actual script and location.",
+          "parameters": [
+            {
+              "name": "breakpointId",
+              "$ref": "BreakpointId",
+              "description": "Breakpoint unique identifier."
+            },
+            {
+              "name": "location",
+              "$ref": "Location",
+              "description": "Actual breakpoint location."
+            }
+          ]
+        },
+        {
+          "name": "paused",
+          "description": "Fired when the virtual machine stopped on breakpoint or exception or any other stop criteria.",
+          "parameters": [
+            {
+              "name": "callFrames",
+              "type": "array",
+              "items": {
+                "$ref": "CallFrame"
+              },
+              "description": "Call stack the virtual machine stopped on."
+            },
+            {
+              "name": "reason",
+              "type": "string",
+              "enum": [
+                "URL",
+                "DOM",
+                "AnimationFrame",
+                "Interval",
+                "Listener",
+                "Timeout",
+                "exception",
+                "assert",
+                "CSPViolation",
+                "DebuggerStatement",
+                "Breakpoint",
+                "PauseOnNextStatement",
+                "Microtask",
+                "FunctionCall",
+                "BlackboxedScript",
+                "other"
+              ],
+              "description": "Pause reason."
+            },
+            {
+              "name": "data",
+              "type": "object",
+              "optional": true,
+              "description": "Object containing break-specific auxiliary properties."
+            },
+            {
+              "name": "asyncStackTrace",
+              "$ref": "Console.StackTrace",
+              "optional": true,
+              "description": "Linked list of asynchronous StackTraces."
+            }
+          ]
+        },
+        {
+          "name": "resumed",
+          "description": "Fired when the virtual machine resumed execution."
+        },
+        {
+          "name": "didSampleProbe",
+          "description": "Fires when a new probe sample is collected.",
+          "parameters": [
+            {
+              "name": "sample",
+              "$ref": "ProbeSample",
+              "description": "A collected probe sample."
+            }
+          ]
+        },
+        {
+          "name": "playBreakpointActionSound",
+          "description": "Fired when a \"sound\" breakpoint action is triggered on a breakpoint.",
+          "parameters": [
+            {
+              "name": "breakpointActionId",
+              "$ref": "BreakpointActionIdentifier",
+              "description": "Breakpoint action identifier."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "domain": "Heap",
+      "description": "Heap domain exposes JavaScript heap attributes and capabilities.",
+      "debuggableTypes": ["itml", "javascript", "page", "service-worker", "web-page"],
+      "targetTypes": ["itml", "javascript", "page", "service-worker", "worker"],
+      "types": [
+        {
+          "id": "GarbageCollection",
+          "description": "Information about a garbage collection.",
+          "type": "object",
+          "properties": [
+            {
+              "name": "type",
+              "type": "string",
+              "enum": ["full", "partial"],
+              "description": "The type of garbage collection."
+            },
+            {
+              "name": "startTime",
+              "type": "number"
+            },
+            {
+              "name": "endTime",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "id": "HeapSnapshotData",
+          "description": "JavaScriptCore HeapSnapshot JSON data.",
+          "type": "string"
+        }
+      ],
+      "commands": [
+        {
+          "name": "enable",
+          "description": "Enables Heap domain events."
+        },
+        {
+          "name": "disable",
+          "description": "Disables Heap domain events."
+        },
+        {
+          "name": "gc",
+          "description": "Trigger a full garbage collection."
+        },
+        {
+          "name": "snapshot",
+          "description": "Take a heap snapshot.",
+          "returns": [
+            {
+              "name": "timestamp",
+              "type": "number"
+            },
+            {
+              "name": "snapshotData",
+              "$ref": "HeapSnapshotData"
+            }
+          ]
+        },
+        {
+          "name": "startTracking",
+          "description": "Start tracking heap changes. This will produce a `trackingStart` event."
+        },
+        {
+          "name": "stopTracking",
+          "description": "Stop tracking heap changes. This will produce a `trackingComplete` event."
+        },
+        {
+          "name": "getPreview",
+          "description": "Returns a preview (string, Debugger.FunctionDetails, or Runtime.ObjectPreview) for a Heap.HeapObjectId.",
+          "parameters": [
+            {
+              "name": "heapObjectId",
+              "type": "integer",
+              "description": "Identifier of the heap object within the snapshot."
+            }
+          ],
+          "returns": [
+            {
+              "name": "string",
+              "type": "string",
+              "optional": true,
+              "description": "String value."
+            },
+            {
+              "name": "functionDetails",
+              "$ref": "Debugger.FunctionDetails",
+              "optional": true,
+              "description": "Function details."
+            },
+            {
+              "name": "preview",
+              "$ref": "Runtime.ObjectPreview",
+              "optional": true,
+              "description": "Object preview."
+            }
+          ]
+        },
+        {
+          "name": "getRemoteObject",
+          "description": "Returns the strongly referenced Runtime.RemoteObject for a Heap.HeapObjectId.",
+          "parameters": [
+            {
+              "name": "heapObjectId",
+              "type": "integer",
+              "description": "Identifier of the heap object within the snapshot."
+            },
+            {
+              "name": "objectGroup",
+              "type": "string",
+              "optional": true,
+              "description": "Symbolic group name that can be used to release multiple objects."
+            }
+          ],
+          "returns": [
+            {
+              "name": "result",
+              "$ref": "Runtime.RemoteObject",
+              "description": "Resulting object."
+            }
+          ]
+        }
+      ],
+      "events": [
+        {
+          "name": "garbageCollected",
+          "description": "Information about the garbage collection.",
+          "parameters": [
+            {
+              "name": "collection",
+              "$ref": "GarbageCollection"
+            }
+          ]
+        },
+        {
+          "name": "trackingStart",
+          "description": "Tracking started.",
+          "parameters": [
+            {
+              "name": "timestamp",
+              "type": "number"
+            },
+            {
+              "name": "snapshotData",
+              "$ref": "HeapSnapshotData",
+              "description": "Snapshot at the start of tracking."
+            }
+          ]
+        },
+        {
+          "name": "trackingComplete",
+          "description": "Tracking stopped.",
+          "parameters": [
+            {
+              "name": "timestamp",
+              "type": "number"
+            },
+            {
+              "name": "snapshotData",
+              "$ref": "HeapSnapshotData",
+              "description": "Snapshot at the end of tracking."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "domain": "Inspector",
+      "debuggableTypes": ["itml", "javascript", "page", "web-page"],
+      "targetTypes": ["itml", "javascript", "page"],
+      "commands": [
+        {
+          "name": "enable",
+          "description": "Enables inspector domain notifications."
+        },
+        {
+          "name": "disable",
+          "description": "Disables inspector domain notifications."
+        },
+        {
+          "name": "initialized",
+          "description": "Sent by the frontend after all initialization messages have been sent."
+        }
+      ],
+      "events": [
+        {
+          "name": "evaluateForTestInFrontend",
+          "parameters": [
+            {
+              "name": "script",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "inspect",
+          "parameters": [
+            {
+              "name": "object",
+              "$ref": "Runtime.RemoteObject"
+            },
+            {
+              "name": "hints",
+              "type": "object"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "domain": "LifecycleReporter",
+      "description": "LifecycleReporter domain allows reporting of lifecycle events.",
+      "debuggableTypes": ["itml", "javascript"],
+      "targetTypes": ["itml", "javascript"],
+      "types": [],
+      "commands": [
+        {
+          "name": "enable",
+          "description": "Enables LifecycleReporter domain events."
+        },
+        {
+          "name": "disable",
+          "description": "Disables LifecycleReporter domain events."
+        },
+        {
+          "name": "preventExit",
+          "description": "Prevents the process from exiting."
+        },
+        {
+          "name": "stopPreventingExit",
+          "description": "Does not prevent the process from exiting."
+        }
+      ],
+      "events": [
+        {
+          "name": "reload",
+          "parameters": []
+        },
+        {
+          "name": "error",
+          "parameters": [
+            {
+              "name": "message",
+              "type": "string",
+              "description": "string associated with the error"
+            },
+            {
+              "name": "name",
+              "type": "string",
+              "description": "If an Error instance, the error.name property"
+            },
+            {
+              "name": "urls",
+              "type": "array",
+              "description": "Array of URLs associated with the error",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "lineColumns",
+              "type": "array",
+              "description": "Line, column pairs associated with the error. Already sourcemapped.",
+              "items": {
+                "type": "integer"
+              }
+            },
+            {
+              "name": "sourceLines",
+              "type": "array",
+              "description": "Source code preview associated with the error for up to 5 lines before the error, relative to the first non-internal stack frame.",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "domain": "Runtime",
+      "description": "Runtime domain exposes JavaScript runtime by means of remote evaluation and mirror objects. Evaluation results are returned as mirror object that expose object type, string representation and unique identifier that can be used for further object reference. Original objects are maintained in memory unless they are either explicitly released or are released along with the other objects in their object group.",
+      "debuggableTypes": ["itml", "javascript", "page", "service-worker", "web-page"],
+      "targetTypes": ["itml", "javascript", "page", "service-worker", "worker"],
+      "types": [
+        {
+          "id": "RemoteObjectId",
+          "type": "string",
+          "description": "Unique object identifier."
+        },
+        {
+          "id": "RemoteObject",
+          "type": "object",
+          "description": "Mirror object referencing original JavaScript object.",
+          "properties": [
+            {
+              "name": "type",
+              "type": "string",
+              "enum": ["object", "function", "undefined", "string", "number", "boolean", "symbol", "bigint"],
+              "description": "Object type."
+            },
+            {
+              "name": "subtype",
+              "type": "string",
+              "optional": true,
+              "enum": [
+                "array",
+                "null",
+                "node",
+                "regexp",
+                "date",
+                "error",
+                "map",
+                "set",
+                "weakmap",
+                "weakset",
+                "iterator",
+                "class",
+                "proxy",
+                "weakref"
+              ],
+              "description": "Object subtype hint. Specified for <code>object</code> <code>function</code> (for class) type values only."
+            },
+            {
+              "name": "className",
+              "type": "string",
+              "optional": true,
+              "description": "Object class (constructor) name. Specified for <code>object</code> type values only."
+            },
+            {
+              "name": "value",
+              "type": "any",
+              "optional": true,
+              "description": "Remote object value (in case of primitive values or JSON values if it was requested)."
+            },
+            {
+              "name": "description",
+              "type": "string",
+              "optional": true,
+              "description": "String representation of the object."
+            },
+            {
+              "name": "objectId",
+              "$ref": "RemoteObjectId",
+              "optional": true,
+              "description": "Unique object identifier (for non-primitive values)."
+            },
+            {
+              "name": "size",
+              "type": "integer",
+              "optional": true,
+              "description": "Size of the array/collection. Specified for array/map/set/weakmap/weakset object type values only."
+            },
+            {
+              "name": "classPrototype",
+              "$ref": "RemoteObject",
+              "optional": true,
+              "description": "Remote object for the class prototype. Specified for class object type values only."
+            },
+            {
+              "name": "preview",
+              "$ref": "ObjectPreview",
+              "optional": true,
+              "description": "Preview containing abbreviated property values. Specified for <code>object</code> type values only."
+            }
+          ]
+        },
+        {
+          "id": "ObjectPreview",
+          "type": "object",
+          "description": "Object containing abbreviated remote object value.",
+          "properties": [
+            {
+              "name": "type",
+              "type": "string",
+              "enum": ["object", "function", "undefined", "string", "number", "boolean", "symbol", "bigint"],
+              "description": "Object type."
+            },
+            {
+              "name": "subtype",
+              "type": "string",
+              "optional": true,
+              "enum": [
+                "array",
+                "null",
+                "node",
+                "regexp",
+                "date",
+                "error",
+                "map",
+                "set",
+                "weakmap",
+                "weakset",
+                "iterator",
+                "class",
+                "proxy",
+                "weakref"
+              ],
+              "description": "Object subtype hint. Specified for <code>object</code> type values only."
+            },
+            {
+              "name": "description",
+              "type": "string",
+              "optional": true,
+              "description": "String representation of the object."
+            },
+            {
+              "name": "lossless",
+              "type": "boolean",
+              "description": "Determines whether preview is lossless (contains all information of the original object)."
+            },
+            {
+              "name": "overflow",
+              "type": "boolean",
+              "optional": true,
+              "description": "True iff some of the properties of the original did not fit."
+            },
+            {
+              "name": "properties",
+              "type": "array",
+              "items": {
+                "$ref": "PropertyPreview"
+              },
+              "optional": true,
+              "description": "List of the properties."
+            },
+            {
+              "name": "entries",
+              "type": "array",
+              "items": {
+                "$ref": "EntryPreview"
+              },
+              "optional": true,
+              "description": "List of the entries. Specified for <code>map</code> and <code>set</code> subtype values only."
+            },
+            {
+              "name": "size",
+              "type": "integer",
+              "optional": true,
+              "description": "Size of the array/collection. Specified for array/map/set/weakmap/weakset object type values only."
+            }
+          ]
+        },
+        {
+          "id": "PropertyPreview",
+          "type": "object",
+          "properties": [
+            {
+              "name": "name",
+              "type": "string",
+              "description": "Property name."
+            },
+            {
+              "name": "type",
+              "type": "string",
+              "enum": [
+                "object",
+                "function",
+                "undefined",
+                "string",
+                "number",
+                "boolean",
+                "symbol",
+                "bigint",
+                "accessor"
+              ],
+              "description": "Object type."
+            },
+            {
+              "name": "subtype",
+              "type": "string",
+              "optional": true,
+              "enum": [
+                "array",
+                "null",
+                "node",
+                "regexp",
+                "date",
+                "error",
+                "map",
+                "set",
+                "weakmap",
+                "weakset",
+                "iterator",
+                "class",
+                "proxy",
+                "weakref"
+              ],
+              "description": "Object subtype hint. Specified for <code>object</code> type values only."
+            },
+            {
+              "name": "value",
+              "type": "string",
+              "optional": true,
+              "description": "User-friendly property value string."
+            },
+            {
+              "name": "valuePreview",
+              "$ref": "ObjectPreview",
+              "optional": true,
+              "description": "Nested value preview."
+            },
+            {
+              "name": "isPrivate",
+              "type": "boolean",
+              "optional": true,
+              "description": "True if this is a private field."
+            },
+            {
+              "name": "internal",
+              "type": "boolean",
+              "optional": true,
+              "description": "True if this is an internal property."
+            }
+          ]
+        },
+        {
+          "id": "EntryPreview",
+          "type": "object",
+          "properties": [
+            {
+              "name": "key",
+              "$ref": "ObjectPreview",
+              "optional": true,
+              "description": "Entry key. Specified for map-like collection entries."
+            },
+            {
+              "name": "value",
+              "$ref": "ObjectPreview",
+              "description": "Entry value."
+            }
+          ]
+        },
+        {
+          "id": "CollectionEntry",
+          "type": "object",
+          "properties": [
+            {
+              "name": "key",
+              "$ref": "Runtime.RemoteObject",
+              "optional": true,
+              "description": "Entry key of a map-like collection, otherwise not provided."
+            },
+            {
+              "name": "value",
+              "$ref": "Runtime.RemoteObject",
+              "description": "Entry value."
+            }
+          ]
+        },
+        {
+          "id": "PropertyDescriptor",
+          "type": "object",
+          "description": "Object property descriptor.",
+          "properties": [
+            {
+              "name": "name",
+              "type": "string",
+              "description": "Property name or symbol description."
+            },
+            {
+              "name": "value",
+              "$ref": "RemoteObject",
+              "optional": true,
+              "description": "The value associated with the property."
+            },
+            {
+              "name": "writable",
+              "type": "boolean",
+              "optional": true,
+              "description": "True if the value associated with the property may be changed (data descriptors only)."
+            },
+            {
+              "name": "get",
+              "$ref": "RemoteObject",
+              "optional": true,
+              "description": "A function which serves as a getter for the property, or <code>undefined</code> if there is no getter (accessor descriptors only)."
+            },
+            {
+              "name": "set",
+              "$ref": "RemoteObject",
+              "optional": true,
+              "description": "A function which serves as a setter for the property, or <code>undefined</code> if there is no setter (accessor descriptors only)."
+            },
+            {
+              "name": "wasThrown",
+              "type": "boolean",
+              "optional": true,
+              "description": "True if the result was thrown during the evaluation."
+            },
+            {
+              "name": "configurable",
+              "type": "boolean",
+              "optional": true,
+              "description": "True if the type of this property descriptor may be changed and if the property may be deleted from the corresponding object."
+            },
+            {
+              "name": "enumerable",
+              "type": "boolean",
+              "optional": true,
+              "description": "True if this property shows up during enumeration of the properties on the corresponding object."
+            },
+            {
+              "name": "isOwn",
+              "optional": true,
+              "type": "boolean",
+              "description": "True if the property is owned for the object."
+            },
+            {
+              "name": "symbol",
+              "optional": true,
+              "$ref": "Runtime.RemoteObject",
+              "description": "Property symbol object, if the property is a symbol."
+            },
+            {
+              "name": "isPrivate",
+              "optional": true,
+              "$ref": "boolean",
+              "description": "True if the property is a private field."
+            },
+            {
+              "name": "nativeGetter",
+              "optional": true,
+              "type": "boolean",
+              "description": "True if the property value came from a native getter."
+            }
+          ]
+        },
+        {
+          "id": "InternalPropertyDescriptor",
+          "type": "object",
+          "description": "Object internal property descriptor. This property isn't normally visible in JavaScript code.",
+          "properties": [
+            {
+              "name": "name",
+              "type": "string",
+              "description": "Conventional property name."
+            },
+            {
+              "name": "value",
+              "$ref": "RemoteObject",
+              "optional": true,
+              "description": "The value associated with the property."
+            }
+          ]
+        },
+        {
+          "id": "CallArgument",
+          "type": "object",
+          "description": "Represents function call argument. Either remote object id <code>objectId</code> or primitive <code>value</code> or neither of (for undefined) them should be specified.",
+          "properties": [
+            {
+              "name": "value",
+              "type": "any",
+              "optional": true,
+              "description": "Primitive value."
+            },
+            {
+              "name": "objectId",
+              "$ref": "RemoteObjectId",
+              "optional": true,
+              "description": "Remote object handle."
+            }
+          ]
+        },
+        {
+          "id": "ExecutionContextId",
+          "type": "integer",
+          "description": "Id of an execution context."
+        },
+        {
+          "id": "ExecutionContextType",
+          "type": "string",
+          "enum": ["normal", "user", "internal"],
+          "description": "Type of the execution context."
+        },
+        {
+          "id": "ExecutionContextDescription",
+          "type": "object",
+          "description": "Description of an isolated world.",
+          "properties": [
+            {
+              "name": "id",
+              "$ref": "ExecutionContextId",
+              "description": "Unique id of the execution context. It can be used to specify in which execution context script evaluation should be performed."
+            },
+            {
+              "name": "type",
+              "$ref": "ExecutionContextType"
+            },
+            {
+              "name": "name",
+              "type": "string",
+              "description": "Human readable name describing given context."
+            },
+            {
+              "name": "frameId",
+              "$ref": "Network.FrameId",
+              "description": "Id of the owning frame."
+            }
+          ]
+        },
+        {
+          "id": "SyntaxErrorType",
+          "type": "string",
+          "enum": ["none", "irrecoverable", "unterminated-literal", "recoverable"],
+          "description": "Syntax error type: \"none\" for no error, \"irrecoverable\" for unrecoverable errors, \"unterminated-literal\" for when there is an unterminated literal, \"recoverable\" for when the expression is unfinished but valid so far."
+        },
+        {
+          "id": "ErrorRange",
+          "type": "object",
+          "description": "Range of an error in source code.",
+          "properties": [
+            {
+              "name": "startOffset",
+              "type": "integer",
+              "description": "Start offset of range (inclusive)."
+            },
+            {
+              "name": "endOffset",
+              "type": "integer",
+              "description": "End offset of range (exclusive)."
+            }
+          ]
+        },
+        {
+          "id": "StructureDescription",
+          "type": "object",
+          "properties": [
+            {
+              "name": "fields",
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "optional": true,
+              "description": "Array of strings, where the strings represent object properties."
+            },
+            {
+              "name": "optionalFields",
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "optional": true,
+              "description": "Array of strings, where the strings represent optional object properties."
+            },
+            {
+              "name": "constructorName",
+              "type": "string",
+              "optional": true,
+              "description": "Name of the constructor."
+            },
+            {
+              "name": "prototypeStructure",
+              "$ref": "StructureDescription",
+              "optional": true,
+              "description": "Pointer to the StructureRepresentation of the protoype if one exists."
+            },
+            {
+              "name": "isImprecise",
+              "type": "boolean",
+              "optional": true,
+              "description": "If true, it indicates that the fields in this StructureDescription may be inaccurate. I.e, there might have been fields that have been deleted before it was profiled or it has fields we haven't profiled."
+            }
+          ]
+        },
+        {
+          "id": "TypeSet",
+          "type": "object",
+          "properties": [
+            {
+              "name": "isFunction",
+              "type": "boolean",
+              "description": "Indicates if this type description has been type Function."
+            },
+            {
+              "name": "isUndefined",
+              "type": "boolean",
+              "description": "Indicates if this type description has been type Undefined."
+            },
+            {
+              "name": "isNull",
+              "type": "boolean",
+              "description": "Indicates if this type description has been type Null."
+            },
+            {
+              "name": "isBoolean",
+              "type": "boolean",
+              "description": "Indicates if this type description has been type Boolean."
+            },
+            {
+              "name": "isInteger",
+              "type": "boolean",
+              "description": "Indicates if this type description has been type Integer."
+            },
+            {
+              "name": "isNumber",
+              "type": "boolean",
+              "description": "Indicates if this type description has been type Number."
+            },
+            {
+              "name": "isString",
+              "type": "boolean",
+              "description": "Indicates if this type description has been type String."
+            },
+            {
+              "name": "isObject",
+              "type": "boolean",
+              "description": "Indicates if this type description has been type Object."
+            },
+            {
+              "name": "isSymbol",
+              "type": "boolean",
+              "description": "Indicates if this type description has been type Symbol."
+            },
+            {
+              "name": "isBigInt",
+              "type": "boolean",
+              "description": "Indicates if this type description has been type BigInt."
+            }
+          ]
+        },
+        {
+          "id": "TypeDescription",
+          "type": "object",
+          "description": "Container for type information that has been gathered.",
+          "properties": [
+            {
+              "name": "isValid",
+              "type": "boolean",
+              "description": "If true, we were able to correlate the offset successfuly with a program location. If false, the offset may be bogus or the offset may be from a CodeBlock that hasn't executed."
+            },
+            {
+              "name": "leastCommonAncestor",
+              "type": "string",
+              "optional": true,
+              "description": "Least common ancestor of all Constructors if the TypeDescription has seen any structures. This string is the display name of the shared constructor function."
+            },
+            {
+              "name": "typeSet",
+              "$ref": "TypeSet",
+              "optional": true,
+              "description": "Set of booleans for determining the aggregate type of this type description."
+            },
+            {
+              "name": "structures",
+              "type": "array",
+              "items": {
+                "$ref": "StructureDescription"
+              },
+              "optional": true,
+              "description": "Array of descriptions for all structures seen for this variable."
+            },
+            {
+              "name": "isTruncated",
+              "type": "boolean",
+              "optional": true,
+              "description": "If true, this indicates that no more structures are being profiled because some maximum threshold has been reached and profiling has stopped because of memory pressure."
+            }
+          ]
+        },
+        {
+          "id": "TypeLocation",
+          "type": "object",
+          "description": "Describes the location of an expression we want type information for.",
+          "properties": [
+            {
+              "name": "typeInformationDescriptor",
+              "type": "integer",
+              "description": "What kind of type information do we want (normal, function return values, 'this' statement)."
+            },
+            {
+              "name": "sourceID",
+              "type": "string",
+              "description": "sourceID uniquely identifying a script"
+            },
+            {
+              "name": "divot",
+              "type": "integer",
+              "description": "character offset for assignment range"
+            }
+          ]
+        },
+        {
+          "id": "BasicBlock",
+          "type": "object",
+          "description": "From Wikipedia: a basic block is a portion of the code within a program with only one entry point and only one exit point. This type gives the location of a basic block and if that basic block has executed.",
+          "properties": [
+            {
+              "name": "startOffset",
+              "type": "integer",
+              "description": "Start offset of the basic block."
+            },
+            {
+              "name": "endOffset",
+              "type": "integer",
+              "description": "End offset of the basic block."
+            },
+            {
+              "name": "hasExecuted",
+              "type": "boolean",
+              "description": "Indicates if the basic block has executed before."
+            },
+            {
+              "name": "executionCount",
+              "type": "integer",
+              "description": "Indicates how many times the basic block has executed."
+            }
+          ]
+        }
+      ],
+      "commands": [
+        {
+          "name": "parse",
+          "description": "Parses JavaScript source code for errors.",
+          "parameters": [
+            {
+              "name": "source",
+              "type": "string",
+              "description": "Source code to parse."
+            }
+          ],
+          "returns": [
+            {
+              "name": "result",
+              "$ref": "SyntaxErrorType",
+              "description": "Parse result."
+            },
+            {
+              "name": "message",
+              "type": "string",
+              "optional": true,
+              "description": "Parse error message."
+            },
+            {
+              "name": "range",
+              "$ref": "ErrorRange",
+              "optional": true,
+              "description": "Range in the source where the error occurred."
+            }
+          ]
+        },
+        {
+          "name": "evaluate",
+          "description": "Evaluates expression on global object.",
+          "parameters": [
+            {
+              "name": "expression",
+              "type": "string",
+              "description": "Expression to evaluate."
+            },
+            {
+              "name": "objectGroup",
+              "type": "string",
+              "optional": true,
+              "description": "Symbolic group name that can be used to release multiple objects."
+            },
+            {
+              "name": "includeCommandLineAPI",
+              "type": "boolean",
+              "optional": true,
+              "description": "Determines whether Command Line API should be available during the evaluation."
+            },
+            {
+              "name": "doNotPauseOnExceptionsAndMuteConsole",
+              "type": "boolean",
+              "optional": true,
+              "description": "Specifies whether evaluation should stop on exceptions and mute console. Overrides setPauseOnException state."
+            },
+            {
+              "name": "contextId",
+              "$ref": "Runtime.ExecutionContextId",
+              "optional": true,
+              "description": "Specifies in which isolated context to perform evaluation. Each content script lives in an isolated context and this parameter may be used to specify one of those contexts. If the parameter is omitted or 0 the evaluation will be performed in the context of the inspected page."
+            },
+            {
+              "name": "returnByValue",
+              "type": "boolean",
+              "optional": true,
+              "description": "Whether the result is expected to be a JSON object that should be sent by value."
+            },
+            {
+              "name": "generatePreview",
+              "type": "boolean",
+              "optional": true,
+              "description": "Whether preview should be generated for the result."
+            },
+            {
+              "name": "saveResult",
+              "type": "boolean",
+              "optional": true,
+              "description": "Whether the resulting value should be considered for saving in the $n history."
+            },
+            {
+              "name": "emulateUserGesture",
+              "type": "boolean",
+              "optional": true,
+              "description": "Whether the expression should be considered to be in a user gesture or not."
+            }
+          ],
+          "returns": [
+            {
+              "name": "result",
+              "$ref": "RemoteObject",
+              "description": "Evaluation result."
+            },
+            {
+              "name": "wasThrown",
+              "type": "boolean",
+              "optional": true,
+              "description": "True if the result was thrown during the evaluation."
+            },
+            {
+              "name": "savedResultIndex",
+              "type": "integer",
+              "optional": true,
+              "description": "If the result was saved, this is the $n index that can be used to access the value."
+            }
+          ]
+        },
+        {
+          "name": "awaitPromise",
+          "description": "Calls the async callback when the promise with the given ID gets settled.",
+          "parameters": [
+            {
+              "name": "promiseObjectId",
+              "$ref": "RemoteObjectId",
+              "description": "Identifier of the promise."
+            },
+            {
+              "name": "returnByValue",
+              "type": "boolean",
+              "optional": true,
+              "description": "Whether the result is expected to be a JSON object that should be sent by value."
+            },
+            {
+              "name": "generatePreview",
+              "type": "boolean",
+              "optional": true,
+              "description": "Whether preview should be generated for the result."
+            },
+            {
+              "name": "saveResult",
+              "type": "boolean",
+              "optional": true,
+              "description": "Whether the resulting value should be considered for saving in the $n history."
+            }
+          ],
+          "returns": [
+            {
+              "name": "result",
+              "$ref": "RemoteObject",
+              "description": "Evaluation result."
+            },
+            {
+              "name": "wasThrown",
+              "type": "boolean",
+              "optional": true,
+              "description": "True if the result was thrown during the evaluation."
+            },
+            {
+              "name": "savedResultIndex",
+              "type": "integer",
+              "optional": true,
+              "description": "If the result was saved, this is the $n index that can be used to access the value."
+            }
+          ],
+          "async": true
+        },
+        {
+          "name": "callFunctionOn",
+          "description": "Calls function with given declaration on the given object. Object group of the result is inherited from the target object.",
+          "parameters": [
+            {
+              "name": "objectId",
+              "$ref": "RemoteObjectId",
+              "description": "Identifier of the object to call function on."
+            },
+            {
+              "name": "functionDeclaration",
+              "type": "string",
+              "description": "Declaration of the function to call."
+            },
+            {
+              "name": "arguments",
+              "type": "array",
+              "items": {
+                "$ref": "CallArgument",
+                "description": "Call argument."
+              },
+              "optional": true,
+              "description": "Call arguments. All call arguments must belong to the same JavaScript world as the target object."
+            },
+            {
+              "name": "doNotPauseOnExceptionsAndMuteConsole",
+              "type": "boolean",
+              "optional": true,
+              "description": "Specifies whether function call should stop on exceptions and mute console. Overrides setPauseOnException state."
+            },
+            {
+              "name": "returnByValue",
+              "type": "boolean",
+              "optional": true,
+              "description": "Whether the result is expected to be a JSON object which should be sent by value."
+            },
+            {
+              "name": "generatePreview",
+              "type": "boolean",
+              "optional": true,
+              "description": "Whether preview should be generated for the result."
+            },
+            {
+              "name": "emulateUserGesture",
+              "type": "boolean",
+              "optional": true,
+              "description": "Whether the expression should be considered to be in a user gesture or not."
+            },
+            {
+              "name": "awaitPromise",
+              "type": "boolean",
+              "optional": true,
+              "description": "Whether to automatically await returned promise."
+            }
+          ],
+          "returns": [
+            {
+              "name": "result",
+              "$ref": "RemoteObject",
+              "description": "Call result."
+            },
+            {
+              "name": "wasThrown",
+              "type": "boolean",
+              "optional": true,
+              "description": "True if the result was thrown during the evaluation."
+            }
+          ],
+          "async": true
+        },
+        {
+          "name": "getPreview",
+          "description": "Returns a preview for the given object.",
+          "parameters": [
+            {
+              "name": "objectId",
+              "$ref": "RemoteObjectId",
+              "description": "Identifier of the object to return a preview for."
+            }
+          ],
+          "returns": [
+            {
+              "name": "preview",
+              "$ref": "ObjectPreview"
+            }
+          ]
+        },
+        {
+          "name": "getProperties",
+          "description": "Returns properties of a given object. Object group of the result is inherited from the target object.",
+          "parameters": [
+            {
+              "name": "objectId",
+              "$ref": "RemoteObjectId",
+              "description": "Identifier of the object to return properties for."
+            },
+            {
+              "name": "ownProperties",
+              "optional": true,
+              "type": "boolean",
+              "description": "If true, returns properties belonging only to the object itself, not to its prototype chain."
+            },
+            {
+              "name": "fetchStart",
+              "optional": true,
+              "type": "integer",
+              "description": "If provided skip to this value before collecting values. Otherwise, start at the beginning. Has no effect when the `objectId` is for a `iterator`/`WeakMap`/`WeakSet` object."
+            },
+            {
+              "name": "fetchCount",
+              "optional": true,
+              "type": "integer",
+              "description": "If provided only return `fetchCount` values. Otherwise, return values all the way to the end."
+            },
+            {
+              "name": "generatePreview",
+              "type": "boolean",
+              "optional": true,
+              "description": "Whether preview should be generated for property values."
+            }
+          ],
+          "returns": [
+            {
+              "name": "properties",
+              "type": "array",
+              "items": {
+                "$ref": "PropertyDescriptor"
+              },
+              "description": "Object properties."
+            },
+            {
+              "name": "internalProperties",
+              "optional": true,
+              "type": "array",
+              "items": {
+                "$ref": "InternalPropertyDescriptor"
+              },
+              "description": "Internal object properties. Only included if `fetchStart` is 0."
+            }
+          ]
+        },
+        {
+          "name": "getDisplayableProperties",
+          "description": "Returns displayable properties of a given object. Object group of the result is inherited from the target object. Displayable properties are own properties, internal properties, and native getters in the prototype chain (assumed to be bindings and treated like own properties for the frontend).",
+          "parameters": [
+            {
+              "name": "objectId",
+              "$ref": "RemoteObjectId",
+              "description": "Identifier of the object to return properties for."
+            },
+            {
+              "name": "fetchStart",
+              "optional": true,
+              "type": "integer",
+              "description": "If provided skip to this value before collecting values. Otherwise, start at the beginning. Has no effect when the `objectId` is for a `iterator`/`WeakMap`/`WeakSet` object."
+            },
+            {
+              "name": "fetchCount",
+              "optional": true,
+              "type": "integer",
+              "description": "If provided only return `fetchCount` values. Otherwise, return values all the way to the end."
+            },
+            {
+              "name": "generatePreview",
+              "type": "boolean",
+              "optional": true,
+              "description": "Whether preview should be generated for property values."
+            }
+          ],
+          "returns": [
+            {
+              "name": "properties",
+              "type": "array",
+              "items": {
+                "$ref": "PropertyDescriptor"
+              },
+              "description": "Object properties."
+            },
+            {
+              "name": "internalProperties",
+              "optional": true,
+              "type": "array",
+              "items": {
+                "$ref": "InternalPropertyDescriptor"
+              },
+              "description": "Internal object properties. Only included if `fetchStart` is 0."
+            }
+          ]
+        },
+        {
+          "name": "getCollectionEntries",
+          "description": "Returns entries of given Map / Set collection.",
+          "parameters": [
+            {
+              "name": "objectId",
+              "$ref": "Runtime.RemoteObjectId",
+              "description": "Id of the collection to get entries for."
+            },
+            {
+              "name": "objectGroup",
+              "optional": true,
+              "type": "string",
+              "description": "Symbolic group name that can be used to release multiple. If not provided, it will be the same objectGroup as the RemoteObject determined from <code>objectId</code>. This is useful for WeakMap to release the collection entries."
+            },
+            {
+              "name": "fetchStart",
+              "optional": true,
+              "type": "integer",
+              "description": "If provided skip to this value before collecting values. Otherwise, start at the beginning. Has no effect when the `objectId<` is for a `iterator<`/`WeakMap<`/`WeakSet<` object."
+            },
+            {
+              "name": "fetchCount",
+              "optional": true,
+              "type": "integer",
+              "description": "If provided only return `fetchCount` values. Otherwise, return values all the way to the end."
+            }
+          ],
+          "returns": [
+            {
+              "name": "entries",
+              "type": "array",
+              "items": {
+                "$ref": "CollectionEntry"
+              },
+              "description": "Array of collection entries."
+            }
+          ]
+        },
+        {
+          "name": "saveResult",
+          "description": "Assign a saved result index to this value.",
+          "parameters": [
+            {
+              "name": "value",
+              "$ref": "CallArgument",
+              "description": "Id or value of the object to save."
+            },
+            {
+              "name": "contextId",
+              "optional": true,
+              "$ref": "ExecutionContextId",
+              "description": "Unique id of the execution context. To specify in which execution context script evaluation should be performed. If not provided, determine from the CallArgument's objectId."
+            }
+          ],
+          "returns": [
+            {
+              "name": "savedResultIndex",
+              "type": "integer",
+              "optional": true,
+              "description": "If the value was saved, this is the $n index that can be used to access the value."
+            }
+          ]
+        },
+        {
+          "name": "setSavedResultAlias",
+          "description": "Creates an additional reference to all saved values in the Console using the the given string as a prefix instead of $.",
+          "parameters": [
+            {
+              "name": "alias",
+              "type": "string",
+              "optional": true,
+              "description": "Passing an empty/null string will clear the alias."
+            }
+          ]
+        },
+        {
+          "name": "releaseObject",
+          "description": "Releases remote object with given id.",
+          "parameters": [
+            {
+              "name": "objectId",
+              "$ref": "RemoteObjectId",
+              "description": "Identifier of the object to release."
+            }
+          ]
+        },
+        {
+          "name": "releaseObjectGroup",
+          "description": "Releases all remote objects that belong to a given group.",
+          "parameters": [
+            {
+              "name": "objectGroup",
+              "type": "string",
+              "description": "Symbolic object group name."
+            }
+          ]
+        },
+        {
+          "name": "enable",
+          "description": "Enables reporting of execution contexts creation by means of <code>executionContextCreated</code> event. When the reporting gets enabled the event will be sent immediately for each existing execution context."
+        },
+        {
+          "name": "disable",
+          "description": "Disables reporting of execution contexts creation."
+        },
+        {
+          "name": "getRuntimeTypesForVariablesAtOffsets",
+          "description": "Returns detailed information on the given function.",
+          "parameters": [
+            {
+              "name": "locations",
+              "type": "array",
+              "items": {
+                "$ref": "TypeLocation"
+              },
+              "description": "An array of type locations we're requesting information for. Results are expected in the same order they're sent in."
+            }
+          ],
+          "returns": [
+            {
+              "name": "types",
+              "type": "array",
+              "items": {
+                "$ref": "TypeDescription",
+                "description": "Types for requested variable."
+              }
+            }
+          ]
+        },
+        {
+          "name": "enableTypeProfiler",
+          "description": "Enables type profiling on the VM."
+        },
+        {
+          "name": "disableTypeProfiler",
+          "description": "Disables type profiling on the VM."
+        },
+        {
+          "name": "enableControlFlowProfiler",
+          "description": "Enables control flow profiling on the VM."
+        },
+        {
+          "name": "disableControlFlowProfiler",
+          "description": "Disables control flow profiling on the VM."
+        },
+        {
+          "name": "getBasicBlocks",
+          "description": "Returns a list of basic blocks for the given sourceID with information about their text ranges and whether or not they have executed.",
+          "parameters": [
+            {
+              "name": "sourceID",
+              "type": "string",
+              "description": "Indicates which sourceID information is requested for."
+            }
+          ],
+          "returns": [
+            {
+              "name": "basicBlocks",
+              "type": "array",
+              "items": {
+                "$ref": "BasicBlock",
+                "description": "Array of basic blocks."
+              }
+            }
+          ]
+        }
+      ],
+      "events": [
+        {
+          "name": "executionContextCreated",
+          "description": "Issued when new execution context is created.",
+          "parameters": [
+            {
+              "name": "context",
+              "$ref": "ExecutionContextDescription",
+              "description": "A newly created execution context."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "domain": "ScriptProfiler",
+      "description": "Profiler domain exposes JavaScript evaluation timing and profiling.",
+      "debuggableTypes": ["itml", "javascript", "page", "web-page"],
+      "targetTypes": ["itml", "javascript", "page"],
+      "types": [
+        {
+          "id": "EventType",
+          "type": "string",
+          "enum": ["API", "Microtask", "Other"]
+        },
+        {
+          "id": "Event",
+          "type": "object",
+          "properties": [
+            {
+              "name": "startTime",
+              "type": "number"
+            },
+            {
+              "name": "endTime",
+              "type": "number"
+            },
+            {
+              "name": "type",
+              "$ref": "EventType"
+            }
+          ]
+        },
+        {
+          "id": "ExpressionLocation",
+          "type": "object",
+          "properties": [
+            {
+              "name": "line",
+              "type": "integer",
+              "description": "1-based."
+            },
+            {
+              "name": "column",
+              "type": "integer",
+              "description": "1-based."
+            }
+          ]
+        },
+        {
+          "id": "StackFrame",
+          "type": "object",
+          "properties": [
+            {
+              "name": "sourceID",
+              "$ref": "Debugger.ScriptId",
+              "description": "Unique script identifier."
+            },
+            {
+              "name": "name",
+              "type": "string",
+              "description": "A displayable name for the stack frame. i.e function name, (program), etc."
+            },
+            {
+              "name": "line",
+              "type": "integer",
+              "description": "-1 if unavailable. 1-based if available."
+            },
+            {
+              "name": "column",
+              "type": "integer",
+              "description": "-1 if unavailable. 1-based if available."
+            },
+            {
+              "name": "url",
+              "type": "string"
+            },
+            {
+              "name": "expressionLocation",
+              "$ref": "ExpressionLocation",
+              "optional": true
+            }
+          ]
+        },
+        {
+          "id": "StackTrace",
+          "type": "object",
+          "properties": [
+            {
+              "name": "timestamp",
+              "type": "number"
+            },
+            {
+              "name": "stackFrames",
+              "type": "array",
+              "items": {
+                "$ref": "StackFrame"
+              },
+              "description": "First array item is the bottom of the call stack and last array item is the top of the call stack."
+            }
+          ]
+        },
+        {
+          "id": "Samples",
+          "type": "object",
+          "properties": [
+            {
+              "name": "stackTraces",
+              "type": "array",
+              "items": {
+                "$ref": "StackTrace"
+              }
+            }
+          ]
+        }
+      ],
+      "commands": [
+        {
+          "name": "startTracking",
+          "description": "Start tracking script evaluations.",
+          "parameters": [
+            {
+              "name": "includeSamples",
+              "type": "boolean",
+              "optional": true,
+              "description": "Start the sampling profiler, defaults to false."
+            }
+          ]
+        },
+        {
+          "name": "stopTracking",
+          "description": "Stop tracking script evaluations. This will produce a `trackingComplete` event."
+        }
+      ],
+      "events": [
+        {
+          "name": "trackingStart",
+          "description": "Tracking started.",
+          "parameters": [
+            {
+              "name": "timestamp",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "name": "trackingUpdate",
+          "description": "Periodic tracking updates with event data.",
+          "parameters": [
+            {
+              "name": "event",
+              "$ref": "Event"
+            }
+          ]
+        },
+        {
+          "name": "trackingComplete",
+          "description": "Tracking stopped. Includes any buffered data during tracking, such as profiling information.",
+          "parameters": [
+            {
+              "name": "timestamp",
+              "type": "number"
+            },
+            {
+              "name": "samples",
+              "$ref": "Samples",
+              "optional": true,
+              "description": "Stack traces."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "domain": "TestReporter",
+      "description": "TestReporter domain allows reporting of test-related events.",
+      "debuggableTypes": ["itml", "javascript"],
+      "targetTypes": ["itml", "javascript"],
+      "types": [
+        {
+          "id": "TestStatus",
+          "type": "string",
+          "enum": ["pass", "fail", "timeout", "skip", "todo", "skipped_because_label"]
+        },
+        {
+          "id": "TestType",
+          "type": "string",
+          "enum": ["test", "describe"]
+        }
+      ],
+      "commands": [
+        {
+          "name": "enable",
+          "description": "Enables TestReporter domain events."
+        },
+        {
+          "name": "disable",
+          "description": "Disables TestReporter domain events."
+        }
+      ],
+      "events": [
+        {
+          "name": "found",
+          "parameters": [
+            {
+              "name": "id",
+              "type": "integer",
+              "description": "Unique identifier of the test that was found."
+            },
+            {
+              "name": "scriptId",
+              "$ref": "Debugger.ScriptId",
+              "description": "Unique identifier of the script the test is in. Available when the debugger is attached.",
+              "optional": true
+            },
+            {
+              "name": "url",
+              "type": "string",
+              "description": "url of the script the test is in. Available when the debugger is not attached.",
+              "optional": true
+            },
+            {
+              "name": "line",
+              "type": "integer",
+              "description": "Line number in the script that started the test."
+            },
+            {
+              "name": "name",
+              "type": "string",
+              "description": "Name of the test that started.",
+              "optional": true
+            },
+            {
+              "name": "type",
+              "$ref": "TestType",
+              "description": "Type of the item found (test or describe block).",
+              "optional": true
+            },
+            {
+              "name": "parentId",
+              "type": "integer",
+              "description": "ID of the parent describe block, if any.",
+              "optional": true
+            }
+          ]
+        },
+        {
+          "name": "start",
+          "parameters": [
+            {
+              "name": "id",
+              "type": "integer",
+              "description": "Unique identifier of the test that started."
+            }
+          ]
+        },
+        {
+          "name": "end",
+          "parameters": [
+            {
+              "name": "id",
+              "type": "integer",
+              "description": "Unique identifier of the test that ended."
+            },
+            {
+              "name": "status",
+              "$ref": "TestStatus",
+              "description": "Status of the test that ended."
+            },
+            {
+              "name": "elapsed",
+              "type": "integer",
+              "description": "Elapsed time in milliseconds since the test started."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

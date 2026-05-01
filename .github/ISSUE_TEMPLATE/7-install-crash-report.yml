@@ -1,0 +1,34 @@
+name: bun install crash report
+description: Report a crash in bun install
+labels:
+  - npm
+  - crash
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Thank you so much** for submitting a crash report. You're helping us make Bun more reliable for everyone!
+  - type: textarea
+    id: package_json
+    attributes:
+      label: "`package.json` file"
+      description: "Can you upload your `package.json` file? This helps us reproduce the crash."
+      render: json
+  - type: textarea
+    id: repro
+    attributes:
+      label: How can we reproduce the crash?
+      description: Please provide a [minimal reproduction](https://stackoverflow.com/help/minimal-reproducible-example) using a GitHub repository, [Replit](https://replit.com/@replit/Bun) or [CodeSandbox](https://codesandbox.io/templates/bun)
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Please copy and paste any relevant log output. This will be
+        automatically formatted into code, so no need for backticks.
+      render: shell
+  - type: textarea
+    id: remapped_trace
+    attributes:
+      label: Stack Trace (bun.report)
+    validations:
+      required: true

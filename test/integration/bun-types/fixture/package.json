@@ -1,0 +1,14 @@
+{
+  "name": "fixture",
+  "module": "index.ts",
+  "scripts": {
+    "check": "tsc --noEmit -p ./tsconfig.json"
+  },
+  "type": "module",
+  "dependencies": {
+    "typescript": "latest"
+  },
+  "resolutions": {
+    "@types/node": "latest"
+  }
+}

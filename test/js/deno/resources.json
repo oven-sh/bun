@@ -1,0 +1,98 @@
+{
+  "baseUrl": "https://raw.githubusercontent.com/denoland/deno/a68eb3fcc3997fce8680f87edce46f6450e79635/",
+  "imports": {
+    "test_util.ts": "deno:harness",
+    "test_util/std/bytes/concat.ts": "deno:harness",
+    "test_util/std/io/buffer.ts": "deno:harness"
+  },
+  "tests": [
+    {
+      "path": "abort/abort-controller.test.ts",
+      "remotePath": "cli/tests/unit/abort_controller_test.ts"
+    },
+    {
+      "path": "url/url.test.ts",
+      "remotePath": "cli/tests/unit/url_test.ts",
+      "skipTests": ["customInspectFunction"]
+    },
+    {
+      "path": "url/urlsearchparams.test.ts",
+      "remotePath": "cli/tests/unit/url_search_params_test.ts"
+    },
+    {
+      "path": "event/event.test.ts",
+      "remotePath": "cli/tests/unit/event_test.ts",
+      "skipTests": [
+        "eventInspectOutput",
+        "inspectEvent"
+      ]
+    },
+    {
+      "path": "event/event-target.test.ts",
+      "remotePath": "cli/tests/unit/event_target_test.ts",
+      "skipTests": [
+        "eventTargetThisShouldDefaultToWindow"
+      ]
+    },
+    {
+      "path": "event/custom-event.test.ts",
+      "remotePath": "cli/tests/unit/custom_event_test.ts"
+    },
+    {
+      "path": "fetch/body.test.ts",
+      "remotePath": "cli/tests/unit/body_test.ts"
+    },
+    {
+      "path": "fetch/blob.test.ts",
+      "remotePath": "cli/tests/unit/blob_test.ts",
+      "skipTests": ["blobCustomInspectFunction"]
+    },
+    {
+      "path": "fetch/file.test.ts",
+      "remotePath": "cli/tests/unit/file_test.ts",
+      "skip": true
+    },
+    {
+      "path": "fetch/headers.test.ts",
+      "remotePath": "cli/tests/unit/headers_test.ts",
+      "skipTests": ["customInspectReturnsCorrectHeadersFormat"]
+    },
+    {
+      "path": "fetch/request.test.ts",
+      "remotePath": "cli/tests/unit/request_test.ts",
+      "skipTests": [
+        "customInspectFunction",
+        "requestRelativeUrl"
+      ]
+    },
+    {
+      "path": "fetch/response.test.ts",
+      "remotePath": "cli/tests/unit/response_test.ts",
+      "skipTests": ["customInspectFunction"]
+    },
+    {
+      "path": "crypto/random.test.ts",
+      "remotePath": "cli/tests/unit/get_random_values_test.ts"
+    },
+    {
+      "path": "crypto/webcrypto.test.ts",
+      "remotePath": "cli/tests/unit/webcrypto_test.ts",
+      "skipTests": [
+        "testUnwrapKey",
+        "testAesKeyGen"
+      ]
+    },
+    {
+      "path": "encoding/encoding.test.ts",
+      "remotePath": "cli/tests/unit/text_encoding_test.ts",
+      "skipTests": [
+        "textDecoderErrorEncoding",
+        "binaryEncode"
+      ]
+    },
+    {
+      "path": "v8/error.test.ts",
+      "remotePath": "cli/tests/unit/error_stack_test.ts"
+    }
+  ]
+}

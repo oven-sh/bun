@@ -1,0 +1,38 @@
+{
+	"name": "basic-1",
+	"versions": {
+		"1.0.0": {
+			"name": "basic-1",
+			"version": "1.0.0",
+			"_id": "basic-1@1.0.0",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-NW5qBU1Kn7DzCjfVfnAbBBRGuQ7krbBtrnezZwOXutA9NvrCT4SI4EJMog3AGsNeK/1OygErysF8RN/FqDYunA==",
+				"shasum": "11d841f0921c64fed2ab9b500db79033dd4a1532",
+				"tarball": "http://localhost:4874/basic-1/-/basic-1-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T04:57:38.442Z",
+		"created": "2023-11-01T04:57:38.442Z",
+		"1.0.0": "2023-11-01T04:57:38.442Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"basic-1-1.0.0.tgz": {
+			"shasum": "11d841f0921c64fed2ab9b500db79033dd4a1532",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-d09de165554529e1",
+	"_id": "basic-1",
+	"readme": "ERROR: No README data found!"
+}

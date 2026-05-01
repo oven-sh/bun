@@ -1,0 +1,41 @@
+{
+	"name": "missing-file-dep",
+	"versions": {
+		"1.0.0": {
+			"name": "missing-file-dep",
+			"version": "1.0.0",
+			"dependencies": {
+				"files": "file:./missing-folder"
+			},
+			"_id": "missing-file-dep@1.0.0",
+			"_nodeVersion": "21.7.1",
+			"_npmVersion": "10.5.0",
+			"dist": {
+				"integrity": "sha512-bs5oJpN3GvMPkgT0opcuvSxjkxcB4+y9B9rGbH3vUzVjsMAYrJg8KMFr4xOsiL3SqKymrTS2Vzn9hx9OZwITow==",
+				"shasum": "7df1b52fe34f1b79f46ece71149f2b999d339c49",
+				"tarball": "http://localhost:4873/missing-file-dep/-/missing-file-dep-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-04-17T18:09:26.720Z",
+		"created": "2024-04-17T18:09:26.720Z",
+		"1.0.0": "2024-04-17T18:09:26.720Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"missing-file-dep-1.0.0.tgz": {
+			"shasum": "7df1b52fe34f1b79f46ece71149f2b999d339c49",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "missing-file-dep",
+	"readme": "ERROR: No README data found!"
+}

@@ -1,0 +1,3 @@
+hello hello
+copyright symbols: ©
+My UTF-16 string is 😀

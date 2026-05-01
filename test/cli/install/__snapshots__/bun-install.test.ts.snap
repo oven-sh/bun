@@ -1,0 +1,71 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`should report error on invalid format for package.json 1`] = `
+"1 | foo
+    ^
+error: Unexpected foo
+    at [dir]/package.json:1:1
+ParserError: failed to parse '[dir]/package.json'
+"
+`;
+
+exports[`should report error on invalid format for dependencies 1`] = `
+"1 | {"name":"foo","version":"0.0.1","dependencies":[]}
+                                    ^
+error: dependencies expects a map of specifiers, e.g.
+  "dependencies": {
+    <green>"bun"<r>: <green>"latest"<r>
+  }
+    at [dir]/package.json:1:33
+"
+`;
+
+exports[`should report error on invalid format for workspaces 1`] = `
+"1 | {"name":"foo","version":"0.0.1","workspaces":{"packages":{"bar":true}}}
+                                                             ^
+error: "workspaces.packages" expects an array of strings, e.g.
+  "workspaces": {
+    "packages": [
+      "path/to/package"
+    ]
+  }
+    at [dir]/package.json:1:58
+"
+`;
+
+exports[`should handle modified git resolutions in bun.lock 1`] = `"{"lockfileVersion":0,"configVersion":1,"workspaces":{"":{"dependencies":{"jquery":"3.7.1"}}},"packages":{"jquery":["jquery@git+ssh://git@github.com/dylan-conway/install-test-8.git#3a1288830817d13da39e9231302261896f8721ea",{},"3a1288830817d13da39e9231302261896f8721ea"]}}"`;
+
+exports[`bun-install should report error on invalid format for package.json 1`] = `
+"1 | foo
+    ^
+error: Unexpected foo
+    at [dir]/package.json:1:1
+ParserError: failed to parse '[dir]/package.json'
+"
+`;
+
+exports[`bun-install should report error on invalid format for dependencies 1`] = `
+"1 | {"name":"foo","version":"0.0.1","dependencies":[]}
+                                    ^
+error: dependencies expects a map of specifiers, e.g.
+  "dependencies": {
+    <green>"bun"<r>: <green>"latest"<r>
+  }
+    at [dir]/package.json:1:33
+"
+`;
+
+exports[`bun-install should report error on invalid format for workspaces 1`] = `
+"1 | {"name":"foo","version":"0.0.1","workspaces":{"packages":{"bar":true}}}
+                                                             ^
+error: "workspaces.packages" expects an array of strings, e.g.
+  "workspaces": {
+    "packages": [
+      "path/to/package"
+    ]
+  }
+    at [dir]/package.json:1:58
+"
+`;
+
+exports[`bun-install should handle modified git resolutions in bun.lock 1`] = `"{"lockfileVersion":0,"configVersion":1,"workspaces":{"":{"dependencies":{"jquery":"3.7.1"}}},"packages":{"jquery":["jquery@git+ssh://git@github.com/dylan-conway/install-test-8.git#3a1288830817d13da39e9231302261896f8721ea",{},"3a1288830817d13da39e9231302261896f8721ea"]}}"`;

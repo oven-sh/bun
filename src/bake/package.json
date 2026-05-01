@@ -1,0 +1,10 @@
+{
+  "sideEffects": false,
+  "type": "module",
+  "imports": {
+    "#stack-trace": {
+      "server": "./server/stack-trace-stub.ts",
+      "default": "./client/stack-trace.ts"
+    }
+  }
+}

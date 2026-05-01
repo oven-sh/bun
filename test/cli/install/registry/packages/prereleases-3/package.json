@@ -1,0 +1,92 @@
+{
+	"name": "prereleases-3",
+	"versions": {
+		"5.0.0-alpha.150": {
+			"name": "prereleases-3",
+			"version": "5.0.0-alpha.150",
+			"_id": "prereleases-3@5.0.0-alpha.150",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-W6a/CVlIGcsOCUGwRuvvl+VhFy6fvHrfijGcQ9ykL8vvDv+ZOc6wXZ/KH3xyG/7ZJd5pnfoVozKj4Gb5/oRHTg==",
+				"shasum": "5f87d66f180a8e78b27a09001ba2568be219429e",
+				"tarball": "http://localhost:4873/prereleases-3/-/prereleases-3-5.0.0-alpha.150.tgz"
+			},
+			"contributors": []
+		},
+		"5.0.0-alpha.151": {
+			"name": "prereleases-3",
+			"version": "5.0.0-alpha.151",
+			"_id": "prereleases-3@5.0.0-alpha.151",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-Dxzdd+WpspJfPPLrJZ0Xb6C/6Q+32yPu3yxTDraiZra6JUKwL2uBqYFSq4+aY453V8JAIsInqAUoi4yL624fxw==",
+				"shasum": "e0660f54d9c105a7900fcb94021037d7f1a8eccf",
+				"tarball": "http://localhost:4873/prereleases-3/-/prereleases-3-5.0.0-alpha.151.tgz"
+			},
+			"contributors": []
+		},
+		"5.0.0-alpha.152": {
+			"name": "prereleases-3",
+			"version": "5.0.0-alpha.152",
+			"_id": "prereleases-3@5.0.0-alpha.152",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-pTQ2f7DFJQlg++wJ5eTx74XO1vhtn0xcbALUN4XZI9w2vvYAeiEOm5HoBUOU/ZMVEB4EDDU+GjNy+Ht/AxKJtg==",
+				"shasum": "73b6201c6d0fb958bb4d86e1da44c191a07cda1c",
+				"tarball": "http://localhost:4873/prereleases-3/-/prereleases-3-5.0.0-alpha.152.tgz"
+			},
+			"contributors": []
+		},
+		"5.0.0-alpha.153": {
+			"name": "prereleases-3",
+			"version": "5.0.0-alpha.153",
+			"_id": "prereleases-3@5.0.0-alpha.153",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-5rcdlO+6LKETuexXvy1ljm2YdvkGNh/6yqZXG44i67DzKwU11wHxd+iqJsfeZ6H5vIxdMF8f6GbOKvEolc+9cw==",
+				"shasum": "2a24bf0c596fe7cc03e5d365a5e11fb95d4f9804",
+				"tarball": "http://localhost:4873/prereleases-3/-/prereleases-3-5.0.0-alpha.153.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-07T23:35:58.654Z",
+		"created": "2023-11-07T23:35:49.806Z",
+		"5.0.0-alpha.150": "2023-11-07T23:35:49.806Z",
+		"5.0.0-alpha.151": "2023-11-07T23:35:52.818Z",
+		"5.0.0-alpha.152": "2023-11-07T23:35:55.655Z",
+		"5.0.0-alpha.153": "2023-11-07T23:35:58.654Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "5.0.0-alpha.153"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"prereleases-3-5.0.0-alpha.150.tgz": {
+			"shasum": "5f87d66f180a8e78b27a09001ba2568be219429e",
+			"version": "5.0.0-alpha.150"
+		},
+		"prereleases-3-5.0.0-alpha.151.tgz": {
+			"shasum": "e0660f54d9c105a7900fcb94021037d7f1a8eccf",
+			"version": "5.0.0-alpha.151"
+		},
+		"prereleases-3-5.0.0-alpha.152.tgz": {
+			"shasum": "73b6201c6d0fb958bb4d86e1da44c191a07cda1c",
+			"version": "5.0.0-alpha.152"
+		},
+		"prereleases-3-5.0.0-alpha.153.tgz": {
+			"shasum": "2a24bf0c596fe7cc03e5d365a5e11fb95d4f9804",
+			"version": "5.0.0-alpha.153"
+		}
+	},
+	"_rev": "",
+	"_id": "prereleases-3",
+	"readme": "ERROR: No README data found!"
+}

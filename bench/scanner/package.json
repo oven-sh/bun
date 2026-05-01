@@ -1,0 +1,6 @@
+{
+  "name": "scan",
+  "dependencies": {
+    "esbuild": "^0.14.11"
+  }
+}

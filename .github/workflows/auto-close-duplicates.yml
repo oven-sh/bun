@@ -1,0 +1,29 @@
+name: Auto-close duplicate issues
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+
+jobs:
+  auto-close-duplicates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: auto-close-duplicates-${{ github.repository }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+
+      - name: Auto-close duplicate issues
+        run: bun run scripts/auto-close-duplicates.ts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}

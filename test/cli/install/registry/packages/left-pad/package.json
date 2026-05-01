@@ -1,0 +1,39 @@
+{
+	"name": "left-pad",
+	"versions": {
+		"1.0.0": {
+			"name": "left-pad",
+			"version": "1.0.0",
+			"_id": "left-pad@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-+4x+fPUv96e+piHW2kG7BY7sTzd1MfANrsWt1zvG+91BjS+/aOvQSzqrsL9kYgPnwBqN/COQOCKxc9f2jPPwOw==",
+				"shasum": "379b7b956c49ffdd9561f7205de6f752e60e6fcd",
+				"tarball": "http://localhost:4873/left-pad/-/left-pad-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:11.594Z",
+		"created": "2023-11-01T22:05:11.594Z",
+		"1.0.0": "2023-11-01T22:05:11.594Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"left-pad-1.0.0.tgz": {
+			"shasum": "379b7b956c49ffdd9561f7205de6f752e60e6fcd",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-81f835c074469cda",
+	"_id": "left-pad",
+	"readme": "ERROR: No README data found!"
+}

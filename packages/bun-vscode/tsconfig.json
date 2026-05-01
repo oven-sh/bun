@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "moduleResolution": "node",
+    "target": "ESNext",
+    "module": "ESNext",
+    "declaration": true,
+    "esModuleInterop": true,
+    "isolatedModules": false,
+    "skipLibCheck": true,
+    "strict": true
+  },
+  "include": ["src", "test", "types", "../../bun-devtools", "../../bun-debug-adapter-protocol"],
+  "exclude": ["node_modules"]
+}

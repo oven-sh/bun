@@ -1,0 +1,82 @@
+name: Daily Root Certs Update Check
+
+on:
+  schedule:
+    - cron: "0 0 * * *" # Runs at 00:00 UTC every day
+  workflow_dispatch: # Allows manual trigger
+
+jobs:
+  check-and-update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Generate root certs and capture output
+        id: generate-certs
+        run: |
+          cd packages/bun-usockets/
+          OUTPUT=$(bun generate-root-certs.mjs -v)
+          echo "cert_output<<EOF" >> $GITHUB_ENV
+          echo "$OUTPUT" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Check for changes and stage files
+        id: check-changes
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "Found changes, staging modified files..."
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "github-actions[bot]@users.noreply.github.com"
+            
+            # Get list of modified files and add them
+            git status --porcelain | while read -r status file; do
+              # Remove leading status and whitespace
+              file=$(echo "$file" | sed 's/^.* //')
+              echo "Adding changed file: $file"
+              git add "$file"
+            done
+            
+            echo "changes=true" >> $GITHUB_OUTPUT
+            
+            # Store the list of changed files
+            CHANGED_FILES=$(git status --porcelain)
+            echo "changed_files<<EOF" >> $GITHUB_ENV
+            echo "$CHANGED_FILES" >> $GITHUB_ENV
+            echo "EOF" >> $GITHUB_ENV
+          else
+            echo "No changes detected"
+            echo "changes=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Pull Request
+        if: steps.check-changes.outputs.changes == 'true'
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "update(root_certs): Update root certificates $(date +'%Y-%m-%d')"
+          title: "update(root_certs) $(date +'%Y-%m-%d')"
+          body: |
+            Automated root certificates update
+
+            ${{ env.cert_output }}
+
+            ## Changed Files:
+            ```
+            ${{ env.changed_files }}
+            ```
+          branch: certs/update-root-certs
+          base: main
+          delete-branch: true
+          labels:
+            - "automation"
+            - "root-certs"

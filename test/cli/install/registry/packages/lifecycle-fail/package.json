@@ -1,0 +1,45 @@
+{
+	"name": "lifecycle-fail",
+	"versions": {
+		"1.1.1": {
+			"name": "lifecycle-fail",
+			"version": "1.1.1",
+			"scripts": {
+				"preinstall": "bun fail.js",
+				"postinstall": "bun create.js"
+			},
+			"_id": "lifecycle-fail@1.1.1",
+			"_integrity": "sha512-tqxnPDUZAsW0sy8JUO3LuzuyS7MkvRjGvnnkvbzv1Oo3sRZHMA2yhWDEQ9Bjo0ozxhU+H6vrW2q8EKDAXwnlQw==",
+			"_nodeVersion": "22.6.0",
+			"_npmVersion": "10.8.3",
+			"integrity": "sha512-tqxnPDUZAsW0sy8JUO3LuzuyS7MkvRjGvnnkvbzv1Oo3sRZHMA2yhWDEQ9Bjo0ozxhU+H6vrW2q8EKDAXwnlQw==",
+			"shasum": "455d2b86cb654b846325e808804573bf56c5f1a4",
+			"dist": {
+				"integrity": "sha512-tqxnPDUZAsW0sy8JUO3LuzuyS7MkvRjGvnnkvbzv1Oo3sRZHMA2yhWDEQ9Bjo0ozxhU+H6vrW2q8EKDAXwnlQw==",
+				"shasum": "455d2b86cb654b846325e808804573bf56c5f1a4",
+				"tarball": "http://http://localhost:4873/lifecycle-fail/-/lifecycle-fail-1.1.1.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-10-24T03:03:12.460Z",
+		"created": "2024-10-24T03:03:12.460Z",
+		"1.1.1": "2024-10-24T03:03:12.460Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.1.1"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"lifecycle-fail-1.1.1.tgz": {
+			"shasum": "455d2b86cb654b846325e808804573bf56c5f1a4",
+			"version": "1.1.1"
+		}
+	},
+	"_rev": "",
+	"_id": "lifecycle-fail",
+	"readme": ""
+}

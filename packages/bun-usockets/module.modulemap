@@ -1,0 +1,4 @@
+module bun-usockets {
+	header "src/libusockets.h"
+	export *
+}

@@ -1,0 +1,8 @@
+{
+  "name": "hello",
+  "imports": {
+    "#async_hooks": "async_hooks",
+    "#bun": "bun",
+    "#bun_test": "bun:test"
+  }
+}

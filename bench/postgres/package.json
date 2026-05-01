@@ -1,0 +1,16 @@
+{
+  "name": "postgres",
+  "module": "index.ts",
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "mariadb": "^3.4.5",
+    "mysql2": "^3.14.3",
+    "postgres": "^3.4.7"
+  }
+}

@@ -1,0 +1,42 @@
+{
+	"name": "@scoped/has-bin-entry",
+	"versions": {
+		"1.0.0": {
+			"name": "@scoped/has-bin-entry",
+			"version": "1.0.0",
+			"bin": {
+				"has-bin-entry": "bin.js"
+			},
+			"_id": "@scoped/has-bin-entry@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-HhnAMIvmplGGmxoJUqNCJ1EVOQfIL58ZtcFV4TZRmwK4JljySkvl0HWnLFakyGQiCrWrl/Pet2+SFC2yRCAEaA==",
+				"shasum": "611b2b566718e05e8643fe872923ed91342b039a",
+				"tarball": "http://localhost:4873/@scoped/has-bin-entry/-/@scoped/has-bin-entry-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:04:58.219Z",
+		"created": "2023-11-01T22:04:58.219Z",
+		"1.0.0": "2023-11-01T22:04:58.219Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"has-bin-entry-1.0.0.tgz": {
+			"shasum": "611b2b566718e05e8643fe872923ed91342b039a",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-d93b6047fb7d5c2e",
+	"_id": "@scoped/has-bin-entry",
+	"readme": "ERROR: No README data found!"
+}

@@ -1,0 +1,33 @@
+{
+  "recommendations": [
+    // Zig
+    "ziglang.vscode-zig",
+
+    // C/C++
+    "clang.clangd",
+    "ms-vscode.cmake-tools",
+    "xaver.clang-format",
+    "vadimcn.vscode-lldb",
+
+    // JavaScript
+    "oven.bun-vscode",
+    "esbenp.prettier-vscode",
+
+    // TypeScript
+    "better-ts-errors.better-ts-errors",
+    "MylesMurphy.prettify-ts",
+
+    // Markdown
+    "bierner.markdown-preview-github-styles",
+    "bierner.markdown-emoji",
+    "bierner.emojisense",
+    "bierner.markdown-checkbox",
+    "bierner.jsdoc-markdown-highlighting",
+
+    // TOML
+    "tamasfe.even-better-toml",
+
+    // Other
+    "bierner.comment-tagged-templates",
+  ],
+}

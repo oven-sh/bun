@@ -1,0 +1,43 @@
+{
+	"name": "no-deps-bins-esm",
+	"versions": {
+		"1.0.0": {
+			"name": "no-deps-bins-esm",
+			"version": "1.0.0",
+			"type": "module",
+			"bin": {
+				"no-deps-bins-esm": "index.mjs"
+			},
+			"_id": "no-deps-bins-esm@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-Yi0LoCSyIAqEhJEE7rMRpvGeNSa0SLKu48s5tqnqB+TRSWOmuwqVVCUiR1MhwyRGe4mcnK7TeiBFIsr3jyYopw==",
+				"shasum": "057ab2470f19426128749804bae0f05de9081372",
+				"tarball": "http://localhost:4873/no-deps-bins-esm/-/no-deps-bins-esm-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:16.816Z",
+		"created": "2023-11-01T22:05:16.816Z",
+		"1.0.0": "2023-11-01T22:05:16.816Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"no-deps-bins-esm-1.0.0.tgz": {
+			"shasum": "057ab2470f19426128749804bae0f05de9081372",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-22e4bb52d2574fef",
+	"_id": "no-deps-bins-esm",
+	"readme": "ERROR: No README data found!"
+}

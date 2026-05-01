@@ -1,0 +1,368 @@
+# TODO: Move this to bash scripts intead of Github Actions
+# so it can be run from Buildkite, see: .buildkite/scripts/release.sh
+
+name: Release
+concurrency: release
+
+env:
+  BUN_VERSION: ${{ github.event.inputs.tag || github.event.release.tag_name || 'canary' }}
+  BUN_LATEST: ${{ (github.event.inputs.is-latest || github.event.release.tag_name) && 'true' || 'false' }}
+
+on:
+  release:
+    types:
+      - published
+  schedule:
+    - cron: "0 14 * * *" # every day at 6am PST
+  workflow_dispatch:
+    inputs:
+      is-latest:
+        description: Is this the latest release?
+        type: boolean
+        default: false
+      tag:
+        type: string
+        description: What is the release tag? (e.g. "1.0.2", "canary")
+        required: true
+      use-docker:
+        description: Should Docker images be released?
+        type: boolean
+        default: false
+      use-npm:
+        description: Should npm packages be published?
+        type: boolean
+        default: false
+      use-homebrew:
+        description: Should binaries be released to Homebrew?
+        type: boolean
+        default: false
+      use-s3:
+        description: Should binaries be uploaded to S3?
+        type: boolean
+        default: false
+      use-types:
+        description: Should types be released to npm?
+        type: boolean
+        default: false
+      use-definitelytyped:
+        description: "Should types be PR'd to DefinitelyTyped?"
+        type: boolean
+        default: false
+
+jobs:
+  sign:
+    name: Sign Release
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'oven-sh' }}
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: packages/bun-release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup GPG
+        uses: crazy-max/ghaction-import-gpg@v5
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: "1.2.3"
+      - name: Install Dependencies
+        run: bun install
+      - name: Sign Release
+        run: |
+          echo "$GPG_PASSPHRASE" | bun upload-assets -- "${{ env.BUN_VERSION }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+  npm:
+    name: Release to NPM
+    runs-on: ubuntu-latest
+    needs: sign
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-npm == 'true' }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: packages/bun-release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # To workaround issue
+          ref: main
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: "1.2.3"
+      - name: Install Dependencies
+        run: bun install
+      - name: Release
+        run: bun upload-npm -- "${{ env.BUN_VERSION }}" publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+  npm-types:
+    name: Release types to NPM
+    runs-on: ubuntu-latest
+    needs: sign
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-types == 'true' }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: packages/bun-types
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: latest
+      - name: Setup Bun
+        if: ${{ env.BUN_VERSION != 'canary' }}
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: "1.2.3"
+      - name: Setup Bun
+        if: ${{ env.BUN_VERSION == 'canary' }}
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: "canary" # Must be 'canary' so tag is correct
+      - name: Install Dependencies
+        run: bun install
+      - name: Setup Tag
+        if: ${{ env.BUN_VERSION == 'canary' }}
+        run: |
+          VERSION=$(bun --version)
+          TAG="${VERSION}-canary.$(date +'%Y%m%dT%H%M%S')"
+          echo "Setup tag: ${TAG}"
+          echo "TAG=${TAG}" >> ${GITHUB_ENV}
+      - name: Build
+        run: bun run build
+        env:
+          BUN_VERSION: ${{ env.TAG || env.BUN_VERSION }}
+      - name: Release (canary)
+        if: ${{ env.BUN_VERSION == 'canary' }}
+        uses: JS-DevTools/npm-publish@v1
+        with:
+          package: packages/bun-types/package.json
+          token: ${{ secrets.NPM_TOKEN }}
+          tag: canary
+      - name: Release (latest)
+        if: ${{ env.BUN_LATEST == 'true' }}
+        uses: JS-DevTools/npm-publish@v1
+        with:
+          package: packages/bun-types/package.json
+          token: ${{ secrets.NPM_TOKEN }}
+  definitelytyped:
+    name: Make pr to DefinitelyTyped to update `bun-types` version
+    runs-on: ubuntu-latest
+    needs: npm-types
+    if: ${{ github.event_name == 'release' || github.event.inputs.use-definitelytyped == 'true' }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout (DefinitelyTyped)
+        uses: actions/checkout@v4
+        with:
+          repository: DefinitelyTyped/DefinitelyTyped
+      - name: Checkout (bun)
+        uses: actions/checkout@v4
+        with:
+          path: bun
+      - name: Setup Bun
+        uses: ./bun/.github/actions/setup-bun
+        with:
+          bun-version: "1.2.0"
+      - id: bun-version
+        run: echo "BUN_VERSION=${BUN_VERSION#bun-v}" >> "$GITHUB_OUTPUT"
+      - name: Update bun-types version in package.json
+        run: |
+          bun -e '
+          const file = Bun.file("./types/bun/package.json");
+          const json = await file.json();
+          const version = "${{ steps.bun-version.outputs.BUN_VERSION }}"; 
+          json.dependencies["bun-types"] = version;
+          json.version = version.slice(0, version.lastIndexOf(".")) + ".9999";
+          await file.write(JSON.stringify(json, null, 4) + "\n");
+          '
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v7
+        if: ${{ env.BUN_LATEST == 'true' && env.BUN_VERSION != 'canary'}}
+        with:
+          token: ${{ secrets.ROBOBUN_TOKEN }}
+          add-paths: ./types/bun/package.json
+          title: "[bun] update to ${{ steps.bun-version.outputs.BUN_VERSION }}"
+          commit-message: "[bun] update to ${{ steps.bun-version.outputs.BUN_VERSION }}"
+          body: |
+            Update `bun-types` version to ${{ steps.bun-version.outputs.BUN_VERSION }}
+
+            https://bun.com/blog/${{ env.BUN_VERSION }}
+          push-to-fork: oven-sh/DefinitelyTyped
+          branch: ${{env.BUN_VERSION}}
+  docker:
+    name: Release to Dockerhub
+    runs-on: ubuntu-latest
+    needs: sign
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-docker == 'true' }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: debian
+            suffix: ""
+          - variant: debian
+            suffix: -debian
+          - variant: slim
+            suffix: -slim
+            dir: debian-slim
+          - variant: alpine
+            suffix: -alpine
+          - variant: distroless
+            suffix: -distroless
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Docker emulator
+        uses: docker/setup-qemu-action@v3
+      - id: buildx
+        name: Setup Docker buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+      - id: metadata
+        name: Setup Docker metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: oven/bun
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=latest,enable=${{ env.BUN_LATEST == 'true' && matrix.suffix == '' }}
+            type=raw,value=${{ matrix.variant }},enable=${{ env.BUN_LATEST == 'true' }}
+            type=match,pattern=(bun-v)?(canary|\d+.\d+.\d+),group=2,value=${{ env.BUN_VERSION }},suffix=${{ matrix.suffix }}
+            type=match,pattern=(bun-v)?(canary|\d+.\d+),group=2,value=${{ env.BUN_VERSION }},suffix=${{ matrix.suffix }}
+            type=match,pattern=(bun-v)?(canary|\d+),group=2,value=${{ env.BUN_VERSION }},suffix=${{ matrix.suffix }}
+      - name: Login to Docker
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Push to Docker
+        uses: docker/build-push-action@v6
+        with:
+          context: ./dockerhub/${{ matrix.dir || matrix.variant }}
+          platforms: linux/amd64,linux/arm64
+          builder: ${{ steps.buildx.outputs.name }}
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          build-args: |
+            BUN_VERSION=${{ env.BUN_VERSION }}
+  homebrew:
+    name: Release to Homebrew
+    runs-on: ubuntu-latest
+    needs: sign
+    permissions:
+      contents: read
+    if: ${{ github.event_name == 'release' || github.event.inputs.use-homebrew == 'true' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: oven-sh/homebrew-bun
+          token: ${{ secrets.ROBOBUN_TOKEN }}
+      - id: gpg
+        name: Setup GPG
+        uses: crazy-max/ghaction-import-gpg@v5
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "2.6"
+      - name: Update Tap
+        run: ruby scripts/release.rb "${{ env.BUN_VERSION }}"
+      - name: Commit Tap
+        uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_options: --gpg-sign=${{ steps.gpg.outputs.keyid }}
+          commit_message: Release ${{ env.BUN_VERSION }}
+          commit_user_name: robobun
+          commit_user_email: robobun@oven.sh
+          commit_author: robobun <robobun@oven.sh>
+  s3:
+    name: Upload to S3
+    runs-on: ubuntu-latest
+    needs: sign
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-s3 == 'true' }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: packages/bun-release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: "1.2.0"
+      - name: Install Dependencies
+        run: bun install
+      - name: Release
+        run: bun upload-s3 -- "${{ env.BUN_VERSION }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY}}
+          AWS_ENDPOINT: ${{ secrets.AWS_ENDPOINT }}
+          AWS_BUCKET: bun
+
+  notify-sentry:
+    name: Notify Sentry
+    runs-on: ubuntu-latest
+    needs: s3
+    steps:
+      - name: Notify Sentry
+        uses: getsentry/action-release@v1.7.0
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        with:
+          ignore_missing: true
+          ignore_empty: true
+          version: ${{ env.BUN_VERSION }}
+          environment: production
+
+  bump:
+    name: "Bump version"
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'schedule' }}
+    permissions:
+      pull-requests: write
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        if: ${{ env.BUN_LATEST == 'true' }}
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        if: ${{ env.BUN_LATEST == 'true' }}
+        with:
+          bun-version: "1.2.0"
+      - name: Bump version
+        uses: ./.github/actions/bump
+        if: ${{ env.BUN_LATEST == 'true' }}
+        with:
+          version: ${{ env.BUN_VERSION }}
+          token: ${{ github.token }}

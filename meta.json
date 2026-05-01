@@ -1,0 +1,24 @@
+{
+  "inputs": {
+    "../../tmp/test-entry.js": {
+      "bytes": 21,
+      "imports": [
+      ],
+      "format": "esm"
+    }
+  },
+  "outputs": {
+    "./test-entry.js": {
+      "bytes": 49,
+      "inputs": {
+        "../../tmp/test-entry.js": {
+          "bytesInOutput": 22
+        }
+      },
+      "imports": [
+      ],
+      "exports": [],
+      "entryPoint": "../../tmp/test-entry.js"
+    }
+  }
+}

@@ -1,0 +1,3 @@
+#! /bin/sh
+export BUN_INSTALL_CACHE_DIR=/tmp/bun/cache
+exec /opt/bun --cwd $LAMBDA_TASK_ROOT /opt/runtime.ts

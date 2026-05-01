@@ -1,0 +1,39 @@
+{
+	"name": "various-requires",
+	"versions": {
+		"1.0.0": {
+			"name": "various-requires",
+			"version": "1.0.0",
+			"_id": "various-requires@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-ZGf3wjhnZXU26SuoPPuZgpFpz6dG+7y7e56nXVA6IQi3Z28SD4uSKXG8hzmEq90rMF+ivLWxFyot1Zch1bLoWg==",
+				"shasum": "0b70953f275a521ea645c836e39e356085dfac01",
+				"tarball": "http://localhost:4873/various-requires/-/various-requires-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:33.697Z",
+		"created": "2023-11-01T22:05:33.697Z",
+		"1.0.0": "2023-11-01T22:05:33.697Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"various-requires-1.0.0.tgz": {
+			"shasum": "0b70953f275a521ea645c836e39e356085dfac01",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-0fc196633c6f3a54",
+	"_id": "various-requires",
+	"readme": "ERROR: No README data found!"
+}

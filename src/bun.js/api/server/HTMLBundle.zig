@@ -295,7 +295,7 @@ pub const Route = struct {
             config.force_node_env = .development;
             config.jsx.development = true;
         }
-        config.source_map = .linked;
+        config.source_map = if (is_development) .linked else .none;
 
         const completion_task = try bun.BundleV2.createAndScheduleCompletionTask(
             config,
@@ -369,6 +369,9 @@ pub const Route = struct {
 
                 // Create static routes for each output file
                 for (output_files) |*output_file| {
+                    // Don't serve source map files in production mode.
+                    if (!server.config().isDevelopment() and output_file.output_kind == .sourcemap)
+                        continue;
                     const blob = jsc.WebCore.Blob.Any{ .Blob = bun.handleOom(output_file.toBlob(bun.default_allocator, globalThis)) };
                     var headers = bun.http.Headers{ .allocator = bun.default_allocator };
                     const content_type = blob.Blob.contentTypeOrMimeType() orelse brk: {

@@ -1,5 +1,6 @@
 import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
+import v8 from "node:v8";
 
 describe("structuredClone with Blob and File", () => {
   describe("Blob structured clone", () => {
@@ -371,7 +372,6 @@ describe("structuredClone with Blob and File", () => {
     });
 
     test("node:v8 deserialize is equally bounded", async () => {
-      const v8 = require("node:v8");
       const { serialized } = craft(1n << 20n);
       const blob = v8.deserialize(Buffer.from(serialized));
       expect(blob).toBeInstanceOf(Blob);

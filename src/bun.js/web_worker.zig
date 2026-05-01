@@ -67,13 +67,16 @@ const log = Output.scoped(.Worker, .hidden);
 /// The owning C++ `WebCore::Worker`. Never null; this struct is freed by
 /// `~Worker`, so the pointer cannot dangle.
 cpp_worker: *anyopaque,
-/// Parent `jsc.VirtualMachine`. When `parent_poll_ref` is held (the default;
-/// dropped by `{ref:false}` / `.unref()`) the parent's event loop stays alive
-/// until the close task runs. When it is NOT held, the parent can exit while
-/// this thread is still running — that's the detached-not-joined "Known gap"
-/// in the file header; only parent-thread-only callers (`setRef`,
-/// `releaseParentPollRef`) dereference this field, and they can't run once
-/// the parent's loop has drained.
+/// Parent `jsc.VirtualMachine`. Read on the worker thread by `startVM()`
+/// (transform options, env, proxy storage, standalone graph) and on the
+/// parent thread by `setRef()` / `releaseParentPollRef()`.
+///
+/// Validity: when the parent is the main thread, `globalExit()` calls
+/// `terminateAllAndWait()` before freeing anything, so this stays valid
+/// through `startVM()` even with `{ref:false}`/`.unref()`. When the parent
+/// is itself a worker, nothing joins us on its exit — the nested-worker
+/// "Known gap" in the file header. When `parent_poll_ref` is held (the
+/// default), the parent's loop stays alive until the close task runs.
 parent: *jsc.VirtualMachine,
 parent_context_id: u32,
 execution_context_id: u32,
@@ -157,6 +160,10 @@ const LiveWorkers = struct {
         defer mutex.unlock();
         list.append(&worker.live_node);
         _ = outstanding.fetchAdd(1, .release);
+        // Wake terminateAllAndWait so it re-sweeps and catches this worker
+        // (it may have been created by another worker mid-sweep). No-op if
+        // nothing is waiting.
+        std.Thread.Futex.wake(&outstanding, 1);
     }
 
     fn unregister(worker: *WebWorker) void {
@@ -191,39 +198,45 @@ const LiveWorkers = struct {
 pub fn terminateAllAndWait(timeout_ms: u64) void {
     if (LiveWorkers.outstanding.load(.acquire) == 0) return;
 
-    {
-        LiveWorkers.mutex.lock();
-        defer LiveWorkers.mutex.unlock();
-        var it = LiveWorkers.list.first;
-        while (it) |node| : (it = node.next) {
-            const worker: *WebWorker = @fieldParentPtr("live_node", node);
-            if (worker.requested_terminate.swap(true, .release)) continue;
-            worker.vm_lock.lock();
-            defer worker.vm_lock.unlock();
-            if (worker.vm) |vm| {
-                vm.jsc_vm.notifyNeedTermination();
-                vm.eventLoop().wakeup();
-            }
-        }
-    }
-
     // Futex-wait on the counter so we sleep rather than burn a core. Each
     // unregister() wakes us; we re-check and re-wait until zero or deadline.
-    var timer = std.time.Timer.start() catch {
-        // Monotonic clock unavailable — fall back to a yield spin.
-        while (LiveWorkers.outstanding.load(.acquire) > 0) std.Thread.yield() catch {};
-        return;
-    };
+    // We re-sweep the list on EVERY iteration: a worker A that was mid-
+    // `WebWorker__create` for a nested worker B when we first swept will
+    // register B after we release the mutex, and B's `requested_terminate`
+    // was never set. Sweeping is O(outstanding) and `requested_terminate`
+    // is a swap, so re-sweeping already-terminated entries is cheap.
+    var timer = std.time.Timer.start() catch null;
     const deadline_ns = timeout_ms * std.time.ns_per_ms;
     while (true) {
+        {
+            LiveWorkers.mutex.lock();
+            defer LiveWorkers.mutex.unlock();
+            var it = LiveWorkers.list.first;
+            while (it) |node| : (it = node.next) {
+                const worker: *WebWorker = @fieldParentPtr("live_node", node);
+                if (worker.requested_terminate.swap(true, .release)) continue;
+                worker.vm_lock.lock();
+                defer worker.vm_lock.unlock();
+                if (worker.vm) |vm| {
+                    vm.jsc_vm.notifyNeedTermination();
+                    vm.eventLoop().wakeup();
+                }
+            }
+        }
+
         const n = LiveWorkers.outstanding.load(.acquire);
         if (n == 0) return;
-        const elapsed = timer.read();
-        if (elapsed >= deadline_ns) {
-            log("terminateAllAndWait: timed out with {d} outstanding", .{n});
-            return;
+        if (timer) |*t| {
+            const elapsed = t.read();
+            if (elapsed >= deadline_ns) {
+                log("terminateAllAndWait: timed out with {d} outstanding", .{n});
+                return;
+            }
+            std.Thread.Futex.timedWait(&LiveWorkers.outstanding, n, deadline_ns - elapsed) catch {};
+        } else {
+            // Monotonic clock unavailable — yield-spin.
+            std.Thread.yield() catch {};
         }
-        std.Thread.Futex.timedWait(&LiveWorkers.outstanding, n, deadline_ns - elapsed) catch {};
     }
 }
 

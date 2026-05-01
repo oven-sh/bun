@@ -2605,17 +2605,23 @@ pub const Resolver = struct {
     ) ?MatchResult {
         const rfs = &r.fs.fs;
 
-        // Case 1: no extension → append extension_order.
-        bun.copy(u8, bufs(.load_as_file), base);
-        for (extension_order) |ext| {
-            const file_name = bufs(.load_as_file)[0 .. base.len + ext.len];
-            bun.copy(u8, file_name[base.len..], ext);
-            if (entries.get(file_name)) |ext_query| {
-                if (ext_query.entry.kind(rfs, r.store_fd) == .file) {
-                    if (r.debug_logs) |*debug| {
-                        debug.addNoteFmt("Resolved to \"{s}\" by adding extension \"{s}\"", .{ file_name, ext });
+        // Case 1: target has no extension (`"./*": "./dist/*"`) → append
+        // extension_order. Gated on the substituted basename actually being
+        // extensionless so `"./*": "./dist/*.js"` doesn't chase
+        // `./dist/foo.js.ts`, `./dist/foo.js.js`, etc. when `foo.js` is
+        // missing — the literal `.js`→`.ts` rewrite is Case 2's job.
+        if (std.fs.path.extension(base).len == 0) {
+            bun.copy(u8, bufs(.load_as_file), base);
+            for (extension_order) |ext| {
+                const file_name = bufs(.load_as_file)[0 .. base.len + ext.len];
+                bun.copy(u8, file_name[base.len..], ext);
+                if (entries.get(file_name)) |ext_query| {
+                    if (ext_query.entry.kind(rfs, r.store_fd) == .file) {
+                        if (r.debug_logs) |*debug| {
+                            debug.addNoteFmt("Resolved to \"{s}\" by adding extension \"{s}\"", .{ file_name, ext });
+                        }
+                        return buildWildcardMatch(r, entries, resolved_dir_info, package_json, ext_query);
                     }
-                    return buildWildcardMatch(r, entries, resolved_dir_info, package_json, ext_query);
                 }
             }
         }

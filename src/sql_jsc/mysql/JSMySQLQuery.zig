@@ -151,6 +151,21 @@ pub fn setPendingValueFromJS(this: *@This(), _: *jsc.JSGlobalObject, callframe: 
     return .js_undefined;
 }
 
+/// Build the `{ string, columns: [{ name, type, table, length, flags }, ...] }`
+/// object exposed as `result.statement` / `result.columns` in JS.
+fn buildStatementJS(this: *@This(), globalObject: *jsc.JSGlobalObject) bun.JSError!JSValue {
+    const statement = this.#query.getStatement() orelse return .js_undefined;
+    const received = statement.columns_received;
+    const columns = try JSValue.createEmptyArray(globalObject, received);
+    for (statement.columns[0..received], 0..) |*column, i| {
+        try columns.putIndex(globalObject, @intCast(i), try column.toJS(globalObject));
+    }
+    const obj = JSValue.createEmptyObject(globalObject, 2);
+    obj.put(globalObject, jsc.ZigString.static("string"), try this.#query.getQueryString().toJS(globalObject));
+    obj.put(globalObject, jsc.ZigString.static("columns"), columns);
+    return obj;
+}
+
 pub fn resolve(
     this: *@This(),
     queries_array: JSValue,
@@ -188,6 +203,14 @@ pub fn resolve(
     pending_value.ensureStillAlive();
     this.setPendingValue(.js_undefined);
 
+    // Capture column metadata for this result set before MySQLStatement.reset()
+    // zeroes columns_received and the next header overwrites the definitions.
+    const statement_js: JSValue = this.buildStatementJS(this.#globalObject) catch brk: {
+        if (this.#globalObject.tryTakeException()) |e| return this.rejectWithJSValue(queries_array, e);
+        break :brk .js_undefined;
+    };
+    statement_js.ensureStillAlive();
+
     event_loop.runCallback(function, this.#globalObject, thisValue, &.{
         targetValue,
         pending_value,
@@ -197,6 +220,7 @@ pub fn resolve(
         JSValue.jsBoolean(is_last_result),
         JSValue.jsNumber(result.last_insert_id),
         JSValue.jsNumber(result.affected_rows),
+        statement_js,
     });
 }
 

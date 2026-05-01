@@ -444,6 +444,77 @@ declare module "bun" {
     }
 
     /**
+     * Metadata describing a single column in a query result, derived from the
+     * database's wire-protocol row description.
+     *
+     * Currently populated for PostgreSQL and MySQL/MariaDB. SQLite results do
+     * not expose this metadata.
+     *
+     * @example
+     * ```ts
+     * const result = await sql`SELECT id, data FROM posts`;
+     * console.log(result.columns);
+     * // PostgreSQL:
+     * // [
+     * //   { name: "id",   type: 23,   table: 16388, number: 1 },   // int4
+     * //   { name: "data", type: 3802, table: 16388, number: 2 },   // jsonb
+     * // ]
+     * ```
+     */
+    interface ResultColumn {
+      /**
+       * Column name as returned by the database.
+       */
+      name: string;
+      /**
+       * Column type identifier.
+       *
+       * - PostgreSQL: the data type OID from `pg_type` (e.g. `23` = int4,
+       *   `25` = text, `3802` = jsonb, `1009` = text[])
+       * - MySQL/MariaDB: the protocol column type code
+       *   (e.g. `3` = LONG, `253` = VAR_STRING, `245` = JSON)
+       */
+      type: number;
+      /**
+       * Source table identifier.
+       *
+       * - PostgreSQL: the OID of the table, or `0` if the column is not a
+       *   simple reference to a table column
+       * - MySQL/MariaDB: the table alias name
+       */
+      table?: number | string;
+      /**
+       * PostgreSQL: the attribute number of the column within its table
+       * (1-based), or `0` if the column is not a simple reference to a table
+       * column.
+       */
+      number?: number;
+      /**
+       * MySQL/MariaDB: the column length.
+       */
+      length?: number;
+      /**
+       * MySQL/MariaDB: the column flags bitmask.
+       */
+      flags?: number;
+    }
+
+    /**
+     * Statement metadata attached to a query result.
+     */
+    interface ResultStatement {
+      /**
+       * The SQL text that was sent to the server (after placeholder
+       * substitution, before parameter binding).
+       */
+      string: string;
+      /**
+       * Column metadata for this result set.
+       */
+      columns: ResultColumn[];
+    }
+
+    /**
      * Callback function type for transaction contexts
      * @param sql Function to execute SQL queries within the transaction
      */

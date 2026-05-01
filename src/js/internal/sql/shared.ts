@@ -75,6 +75,8 @@ class SQLResultArray<T> extends PublicArray<T> {
   public command!: string | null;
   public lastInsertRowid!: number | bigint | null;
   public affectedRows!: number | bigint | null;
+  public columns!: Bun.SQL.ResultColumn[] | null;
+  public statement!: Bun.SQL.ResultStatement | null;
 
   static [Symbol.toStringTag] = "SQLResults";
 
@@ -88,6 +90,8 @@ class SQLResultArray<T> extends PublicArray<T> {
       command: { value: null, writable: true },
       lastInsertRowid: { value: null, writable: true },
       affectedRows: { value: null, writable: true },
+      columns: { value: null, writable: true },
+      statement: { value: null, writable: true },
     });
   }
 

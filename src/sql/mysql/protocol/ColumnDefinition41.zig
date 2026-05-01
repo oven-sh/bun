@@ -51,6 +51,16 @@ pub fn deinit(this: *ColumnDefinition41) void {
     this.name_or_index.deinit();
 }
 
+pub fn toJS(this: *const @This(), globalObject: *jsc.JSGlobalObject) bun.JSError!JSValue {
+    const obj = JSValue.createEmptyObject(globalObject, 5);
+    obj.put(globalObject, jsc.ZigString.static("name"), try bun.String.createUTF8ForJS(globalObject, this.name.slice()));
+    obj.put(globalObject, jsc.ZigString.static("type"), JSValue.jsNumber(@as(u32, @intFromEnum(this.column_type))));
+    obj.put(globalObject, jsc.ZigString.static("table"), try bun.String.createUTF8ForJS(globalObject, this.table.slice()));
+    obj.put(globalObject, jsc.ZigString.static("length"), JSValue.jsNumber(this.column_length));
+    obj.put(globalObject, jsc.ZigString.static("flags"), JSValue.jsNumber(this.flags.toInt()));
+    return obj;
+}
+
 pub fn decodeInternal(this: *ColumnDefinition41, comptime Context: type, reader: NewReader(Context)) !void {
     // Length encoded strings
     this.catalog = try reader.encodeLenString();
@@ -94,6 +104,9 @@ const bun = @import("bun");
 const types = @import("../MySQLTypes.zig");
 const ColumnIdentifier = @import("../../shared/ColumnIdentifier.zig").ColumnIdentifier;
 const Data = @import("../../shared/Data.zig").Data;
+
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
 
 const NewReader = @import("./NewReader.zig").NewReader;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;

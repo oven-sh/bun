@@ -127,6 +127,22 @@ fn consumePendingValue(thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject
     return pending_value;
 }
 
+/// Build the `{ string, columns: [{ name, type, table, number }, ...] }`
+/// object exposed as `result.statement` / `result.columns` in JS. Must be
+/// called before the next RowDescription overwrites `statement.fields` (see
+/// PostgresSQLConnection.on .RowDescription).
+fn buildStatementJS(this: *@This(), globalObject: *jsc.JSGlobalObject) bun.JSError!JSValue {
+    const statement = this.statement orelse return .js_undefined;
+    const columns = try JSValue.createEmptyArray(globalObject, statement.fields.len);
+    for (statement.fields, 0..) |*field, i| {
+        try columns.putIndex(globalObject, @intCast(i), try field.toJS(globalObject));
+    }
+    const obj = JSValue.createEmptyObject(globalObject, 2);
+    obj.put(globalObject, jsc.ZigString.static("string"), try this.query.toJS(globalObject));
+    obj.put(globalObject, jsc.ZigString.static("columns"), columns);
+    return obj;
+}
+
 pub fn onResult(this: *@This(), command_tag_str: []const u8, globalObject: *jsc.JSGlobalObject, connection: jsc.JSValue, is_last: bool) void {
     this.ref();
     defer this.deref();
@@ -150,6 +166,15 @@ pub fn onResult(this: *@This(), command_tag_str: []const u8, globalObject: *jsc.
     const function = vm.rareData().postgresql_context.onQueryResolveFn.get().?;
     const event_loop = vm.eventLoop();
 
+    // Column metadata is only meaningful on the per-result-set callbacks
+    // (is_last=false). The final is_last=true call carries no result and by
+    // then statement.fields may have been overwritten by later result sets.
+    const statement_js: JSValue = if (is_last)
+        .js_undefined
+    else
+        this.buildStatementJS(globalObject) catch |e| return this.onJSError(globalObject.takeException(e), globalObject);
+    statement_js.ensureStillAlive();
+
     event_loop.runCallback(function, globalObject, thisValue, &.{
         targetValue,
         consumePendingValue(thisValue, globalObject) orelse .js_undefined,
@@ -157,6 +182,7 @@ pub fn onResult(this: *@This(), command_tag_str: []const u8, globalObject: *jsc.
         tag.toJSNumber(),
         if (connection == .zero) .js_undefined else PostgresSQLConnection.js.queriesGetCached(connection) orelse .js_undefined,
         JSValue.jsBoolean(is_last),
+        statement_js,
     });
 }
 

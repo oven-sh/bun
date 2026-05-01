@@ -76,6 +76,51 @@ if (isDockerEnabled()) {
             await sql`UPDATE ${sql(random_name)} SET name = "test2" WHERE id = ${lastInsertRowid}`;
           expect(affectedRows).toBe(1);
         });
+        describe("result.columns / result.statement", () => {
+          test("columns has name and type", async () => {
+            const result = await sql`select CAST(1 AS SIGNED) as id, CAST('hi' AS CHAR) as msg`;
+            expect(result.columns.map(c => c.name)).toEqual(["id", "msg"]);
+            expect(typeof result.columns[0].type).toBe("number");
+            expect(typeof result.columns[0].length).toBe("number");
+            expect(typeof result.columns[0].flags).toBe("number");
+            expect(result.columns[0].table).toBe("");
+          });
+
+          test(".values() result has columns", async () => {
+            const result = await sql`select CAST(1 AS SIGNED) as x, CAST(2 AS SIGNED) as y`.values();
+            expect(result.columns.map(c => c.name)).toEqual(["x", "y"]);
+          });
+
+          test(".simple() result has columns", async () => {
+            const result = await sql`select CAST(1 AS SIGNED) as x`.simple();
+            expect(result.columns[0].name).toBe("x");
+          });
+
+          test("columns is populated for table columns", async () => {
+            await using db = new SQL({ ...getOptions(), max: 1 });
+            using sql = await db.reserve();
+            const table = "columns_meta_" + randomUUIDv7("hex").replaceAll("-", "");
+            await sql`CREATE TEMPORARY TABLE ${sql(table)} (id INT PRIMARY KEY, name VARCHAR(50))`;
+            await sql`INSERT INTO ${sql(table)} VALUES (1, 'a')`;
+            const result = await sql`SELECT id, name FROM ${sql(table)}`;
+            expect(result.columns.map(c => c.name)).toEqual(["id", "name"]);
+            expect(result.columns[0].table).toBe(table);
+            expect(result.columns[0].type).toBe(3); // MYSQL_TYPE_LONG
+            expect(result.columns[1].type).toBe(253); // MYSQL_TYPE_VAR_STRING
+          });
+
+          test("duplicate column names are preserved in columns", async () => {
+            const result = await sql`select CAST(1 AS SIGNED) as x, CAST(2 AS SIGNED) as x`.values();
+            expect(result.columns.map(c => c.name)).toEqual(["x", "x"]);
+            expect(result[0]).toEqual([1, 2]);
+          });
+
+          test("statement has string and columns", async () => {
+            const result = await sql`select CAST(1 AS SIGNED) as x`;
+            expect(result.statement.string).toBe("select CAST(1 AS SIGNED) as x");
+            expect(result.statement.columns).toBe(result.columns);
+          });
+        });
         describe("should work with more than the max inline capacity", () => {
           for (let size of [50, 60, 62, 64, 70, 100]) {
             for (let duplicated of [true, false]) {

@@ -656,9 +656,12 @@ const Linux = struct {
                         name
                     else if (name.len == 0)
                         owner.subpath
-                    else if (owner.subpath.len + 1 + name.len > path_buf.len)
+                    else if (owner.subpath.len + 1 + name.len >= path_buf.len)
                         // joinStringBuf has no bounds check; fall back to the bare
-                        // filename rather than overflowing path_buf.
+                        // filename rather than overflowing path_buf. `>=` not `>`:
+                        // on POSIX normalizeStringNodeT reserves buf[0] for a
+                        // possible leading '/', so relative output capacity is
+                        // path_buf.len - 1.
                         name
                     else
                         bun.path.joinStringBuf(&path_buf, &[_][]const u8{ owner.subpath, name }, .posix);

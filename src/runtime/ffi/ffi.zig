@@ -861,7 +861,10 @@ pub const FFI = struct {
         func.base_name = "";
         js_callback.ensureStillAlive();
 
-        func.compileCallback(globalThis, js_callback, func.threadsafe) catch return ZigString.init("Out of memory").toErrorInstance(globalThis);
+        func.compileCallback(globalThis, js_callback, func.threadsafe) catch {
+            func.deinit(globalThis);
+            return ZigString.init("Out of memory").toErrorInstance(globalThis);
+        };
         switch (func.step) {
             .failed => |err| {
                 const message = ZigString.init(err.msg).toErrorInstance(globalThis);

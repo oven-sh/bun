@@ -375,7 +375,10 @@ test.concurrent("close is defined on every bun test --isolate file's fresh globa
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(exitCode).toBe(0);
+  // Match the `toMatchObject({exitCode:0})` pattern the rest of the file
+  // uses — on a regression the failure diff will include stderr (which
+  // names the inner test file that failed and its assertion message).
+  expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
   expect(stderr).toContain("2 pass");
   expect(stderr).toContain("0 fail");
 });

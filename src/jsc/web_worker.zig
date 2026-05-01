@@ -698,13 +698,19 @@ fn spin(this: *WebWorker) void {
     this.flushLogs(vm);
     log("[{d}] event loop start", .{this.execution_context_id});
 
-    // If top-level eval called `self.close()` or `process.exit()` or a
-    // parent-side `worker.terminate()` fired during load, skip `dispatchOnline`
-    // and `fireEarlyMessages` and the unconditional first tick: per WHATWG
-    // "close a worker" those buffered tasks (the 'message' events sitting in
-    // the inbox, any `setTimeout(fn, 0)` queued before close()) must be
-    // discarded. Jumping straight to shutdown also keeps the parent from
-    // observing an 'open' event for a worker that is already closed.
+    // The catch arms above already handle close()/exit()/terminate() that
+    // fired during entry-point evaluation (intercepted by the
+    // hasRequestedTerminate/hasRequestedClose checks in
+    // loadEntryPointForWebWorker). This guard catches the narrower cases
+    // where the flag flipped between then and now: a `self.close()` or
+    // `process.exit()` inside the rejected-promise `uncaughtException`
+    // handler above, a `self.close()` inside a worker-side 'error' listener
+    // dispatched by `flushLogs`, or a parent-side `worker.terminate()`
+    // racing in before we reach this point. Skip `dispatchOnline` and
+    // `fireEarlyMessages` in those cases so the parent doesn't observe an
+    // 'open' event for a worker that is already shutting down, and the
+    // queued 'message' events and `setTimeout(fn, 0)` callbacks the
+    // WHATWG "close a worker" algorithm requires us to discard never fire.
     if (this.shouldExitLoop()) {
         this.shutdown();
     }

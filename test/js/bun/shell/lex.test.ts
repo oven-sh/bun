@@ -451,6 +451,37 @@ describe("lex shell", () => {
     expect(JSON.parse(result)).toEqual(expected);
   });
 
+  test("op_redirect fd-prefixed stdin `<`", () => {
+    // `N<file` is a single `<` redirect — append must be false.
+    expect(JSON.parse(lex`cmd1 0< file.txt`)).toEqual([
+      { "Text": "cmd1" },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stdin: true }) },
+      { "Text": "file.txt" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+    expect(JSON.parse(lex`cat 0<input.txt`)).toEqual([
+      { "Text": "cat" },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stdin: true }) },
+      { "Text": "input.txt" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+
+    // `N<<file` is the doubled form (single Redirect token, append=true),
+    // not two separate Redirect tokens.
+    expect(JSON.parse(lex`cmd1 0<< file.txt`)).toEqual([
+      { "Text": "cmd1" },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stdin: true, append: true }) },
+      { "Text": "file.txt" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+  });
+
   test("op_redirect digit at end of word is not an fd prefix", () => {
     // `abc1>file` must lex as the word `abc1` followed by `>` (stdout redirect),
     // not `abc` followed by `1>`.
@@ -498,6 +529,32 @@ describe("lex shell", () => {
       { "Text": "foo" },
       { "Delimit": {} },
       { "CmdSubstEnd": {} },
+      { "Text": "2" },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stdout: true }) },
+      { "Text": "file" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+
+    // Digit following a glob is part of the same compound word.
+    expect(JSON.parse(lex`echo *2>file`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "Asterisk": {} },
+      { "Text": "2" },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stdout: true }) },
+      { "Text": "file" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+
+    // Same for `**`.
+    expect(JSON.parse(lex`echo **2>file`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "DoubleAsterisk": {} },
       { "Text": "2" },
       { "Delimit": {} },
       { "Redirect": redirect({ stdout: true }) },

@@ -2734,6 +2734,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                                 .BraceEnd,
                                 .CmdSubstEnd,
                                 .Asterisk,
+                                .DoubleAsterisk,
                                 => break :escaped,
                                 else => {},
                             };
@@ -3082,6 +3083,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                         return flags;
                     },
                     '<' => {
+                        _ = self.eat();
                         dir = .in;
                         const is_double = self.eat_simple_redirect_operator(dir);
                         if (is_double) flags.append = true;

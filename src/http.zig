@@ -2012,6 +2012,11 @@ pub fn onData(
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
     log("onData {}", .{incoming_data.len});
+    // Receiving any bytes proves the reused keep-alive socket was not stale
+    // and the server saw this request. Drop the one-shot retry so a
+    // subsequent mid-response close cannot replay a non-idempotent request
+    // (RFC 7230 6.3.1).
+    this.allow_retry = false;
     if (this.signals.get(.aborted)) {
         this.closeAndAbort(is_ssl, socket);
         return;

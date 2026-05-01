@@ -1307,14 +1307,17 @@ pub const JestPrettyFormat = struct {
                     writer.writeAll(comptime Output.prettyFmt("<cyan>" ++ fmt ++ "<r>", enable_ansi_colors));
                 },
                 .Map => {
-                    const length_value = try value.get(this.globalThis, "size") orelse jsc.JSValue.jsNumberFromInt32(0);
-                    const length = length_value.toInt32();
+                    const is_weak = value.jsType() == .WeakMap;
+                    const length = if (is_weak) 0 else length: {
+                        const length_value = try value.get(this.globalThis, "size") orelse jsc.JSValue.jsNumberFromInt32(0);
+                        break :length length_value.toInt32();
+                    };
 
                     const prev_quote_strings = this.quote_strings;
                     this.quote_strings = true;
                     defer this.quote_strings = prev_quote_strings;
 
-                    const map_name = if (value.jsType() == .WeakMap) "WeakMap" else "Map";
+                    const map_name = if (is_weak) "WeakMap" else "Map";
 
                     if (length == 0) {
                         return writer.print("{s} {{}}", .{map_name});
@@ -1335,8 +1338,11 @@ pub const JestPrettyFormat = struct {
                     writer.writeAll("\n");
                 },
                 .Set => {
-                    const length_value = try value.get(this.globalThis, "size") orelse jsc.JSValue.jsNumberFromInt32(0);
-                    const length = length_value.toInt32();
+                    const is_weak = value.jsType() == .WeakSet;
+                    const length = if (is_weak) 0 else length: {
+                        const length_value = try value.get(this.globalThis, "size") orelse jsc.JSValue.jsNumberFromInt32(0);
+                        break :length length_value.toInt32();
+                    };
 
                     const prev_quote_strings = this.quote_strings;
                     this.quote_strings = true;
@@ -1344,7 +1350,7 @@ pub const JestPrettyFormat = struct {
 
                     this.writeIndent(Writer, writer_) catch {};
 
-                    const set_name = if (value.jsType() == .WeakSet) "WeakSet" else "Set";
+                    const set_name = if (is_weak) "WeakSet" else "Set";
 
                     if (length == 0) {
                         return writer.print("{s} {{}}", .{set_name});

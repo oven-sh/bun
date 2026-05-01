@@ -772,3 +772,15 @@ it("CustomEvent", () => {
     }"
   `);
 });
+
+it("WeakMap/WeakSet with own size property does not throw", () => {
+  const wm = new WeakMap();
+  wm.size = 2;
+  expect(Bun.inspect(wm)).toBe("WeakMap {}");
+  expect(() => expect(wm).toMatchObject([1, 2])).toThrow();
+
+  const ws = new WeakSet();
+  ws.size = 2;
+  expect(Bun.inspect(ws)).toBe("WeakSet {}");
+  expect(() => expect(ws).toMatchObject([1, 2])).toThrow();
+});

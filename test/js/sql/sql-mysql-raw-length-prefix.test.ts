@@ -16,7 +16,7 @@ import path from "path";
 
 const fixture = path.join(import.meta.dir, "sql-mysql-raw-length-prefix.fixture.ts");
 
-async function runFixture(url: string, caPath = "") {
+async function runFixture(url: string, caPath = process.env.CA_PATH ?? "") {
   await using proc = Bun.spawn({
     cmd: [bunExe(), fixture],
     env: { ...bunEnv, MYSQL_URL: url, CA_PATH: caPath },

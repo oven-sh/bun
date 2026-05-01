@@ -729,7 +729,9 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
             // It's expected that close is called by the caller
         }
     } else {
+#ifndef _WIN32
         us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE);
+#endif
         bsd_socket_nodelay(us_poll_fd(&s->p), 1);
         us_internal_poll_set_type(&s->p, POLL_TYPE_SOCKET);
         us_socket_timeout(s, 0);
@@ -754,6 +756,28 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
         } else {
             us_dispatch_open(s, 1, 0, 0);
         }
+
+#ifdef _WIN32
+        /* Windows (libuv): re-arm for READABLE *after* on_open. uv_poll_start
+         * submits a fresh AFD poll request; if user code closes the socket
+         * inside on_open (e.g. `.end()` from a TLS socket's `open` handler,
+         * which fires pre-handshake when a `handshake` handler is also
+         * present), the resulting uv_poll_stop + uv_close runs in the same
+         * poll_cb frame as the just-submitted request and the handle never
+         * finishes closing — the process hangs. POSIX has no such re-entrancy
+         * (epoll_ctl(MOD) / kqueue mask change), so the early re-arm above is
+         * kept to leave the hot path bit-identical there.
+         *
+         * last_write_failed: a partial write inside on_open (or the SSL BIO)
+         * already armed WRITABLE via us_poll_change in us_socket{,_raw}_write;
+         * preserve it. For TLS, ssl_update_handshake also sets this on
+         * WANT_READ — that costs one harmless on_writable tick and then the
+         * regular loop.c writable-disarm clears it. */
+        if (!us_socket_is_closed(s)) {
+            us_poll_change_force(&s->p, s->group->loop,
+                LIBUS_SOCKET_READABLE | (s->flags.last_write_failed ? LIBUS_SOCKET_WRITABLE : 0));
+        }
+#endif
     }
 }
 

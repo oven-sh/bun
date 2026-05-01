@@ -62,7 +62,12 @@ pub fn decode(bytes: []const u8, max_pixels: u64) BackendError!codecs.Decoded {
         return error.DecodeFailed;
     defer s.CGContextRelease(ctx);
 
-    s.CGContextDrawImage(ctx, .{ .origin = .{ .x = 0, .y = 0 }, .size = .{ .width = @floatFromInt(w), .height = @floatFromInt(h) } }, img);
+    // Thunked through C: CGRect is 32 bytes by value — SysV x86_64 passes it
+    // as MEMORY (caller-pushed), and the dlsym'd-function-pointer call from
+    // Zig mis-lays it on Intel macOS (segfaults on macOS 13/14 x64 CI; arm64,
+    // where it's an HFA in v0-v3, is fine). The shim takes scalars and lets
+    // clang do the struct-by-value emission.
+    bun_CGContextDrawImage(@ptrCast(@constCast(s.CGContextDrawImage)), ctx, img, 0, 0, @floatFromInt(w), @floatFromInt(h));
 
     // Un-premultiply: c = round(c * 255 / a). a==0 leaves RGB as drawn (zero);
     // a==255 is the identity. Integer divide with +a/2 for round-to-nearest.
@@ -144,6 +149,8 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOpti
 
 const CFRef = ?*anyopaque;
 const CGFloat = f64;
+extern fn bun_CGContextDrawImage(fn_ptr: *anyopaque, ctx: CFRef, img: CFRef, x: f64, y: f64, w: f64, h: f64) void;
+
 const CGRect = extern struct {
     origin: extern struct { x: CGFloat, y: CGFloat },
     size: extern struct { width: CGFloat, height: CGFloat },
@@ -183,6 +190,8 @@ const Syms = struct {
     CGColorSpaceRelease: *const fn (CFRef) callconv(.c) void,
     CGBitmapContextCreate: *const fn (?*anyopaque, usize, usize, usize, usize, CFRef, u32) callconv(.c) CFRef,
     CGBitmapContextCreateImage: *const fn (CFRef) callconv(.c) CFRef,
+    /// Never called directly — see `bun_CGContextDrawImage` for why this is
+    /// resolved via dlsym but invoked through a C thunk.
     CGContextDrawImage: *const fn (CFRef, CGRect, CFRef) callconv(.c) void,
     CGContextRelease: *const fn (CFRef) callconv(.c) void,
     CGImageGetWidth: *const fn (CFRef) callconv(.c) usize,

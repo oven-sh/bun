@@ -451,6 +451,95 @@ describe("lex shell", () => {
     expect(JSON.parse(result)).toEqual(expected);
   });
 
+  test("op_redirect digit at end of word is not an fd prefix", () => {
+    // `abc1>file` must lex as the word `abc1` followed by `>` (stdout redirect),
+    // not `abc` followed by `1>`.
+    expect(JSON.parse(lex`echo abc1>file`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "Text": "abc1" },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stdout: true }) },
+      { "Text": "file" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+
+    // `test100>out` must not split off the trailing `0` as `0>`.
+    expect(JSON.parse(lex`echo test100>out`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "Text": "test100" },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stdout: true }) },
+      { "Text": "out" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+
+    // Digit following a quoted fragment is part of the same compound word.
+    expect(JSON.parse(lex`echo "abc"1>file`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "DoubleQuotedText": "abc" },
+      { "Text": "1" },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stdout: true }) },
+      { "Text": "file" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+
+    // Digit following a command substitution is part of the same compound word.
+    expect(JSON.parse(lex`echo $(foo)2>file`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "CmdSubstBegin": {} },
+      { "Text": "foo" },
+      { "Delimit": {} },
+      { "CmdSubstEnd": {} },
+      { "Text": "2" },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stdout: true }) },
+      { "Text": "file" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+
+    // A digit that *does* begin a word (preceded by whitespace) is still an fd prefix.
+    expect(JSON.parse(lex`echo abc 2>file`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "Text": "abc" },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stderr: true }) },
+      { "Text": "file" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+
+    // A digit at the start of input is still an fd prefix.
+    expect(JSON.parse(lex`2>file`)).toEqual([
+      { "Redirect": redirect({ stderr: true }) },
+      { "Text": "file" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+
+    // A digit immediately after an operator (no intervening word) is still an fd prefix.
+    expect(JSON.parse(lex`echo foo;2>file`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "Text": "foo" },
+      { "Delimit": {} },
+      { "Semicolon": {} },
+      { "Redirect": redirect({ stderr: true }) },
+      { "Text": "file" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+  });
+
   test("obj_ref", () => {
     const expected = [
       {

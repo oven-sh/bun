@@ -2716,6 +2716,27 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             comptime for ('0'..'9') |c| assertSpecialChar(c);
 
                             if (self.chars.state != .Normal) break :escaped;
+                            // POSIX: a digit is only an fd-prefix for a redirect (e.g. `2>`)
+                            // when it begins a new word. If we're already accumulating a
+                            // word (e.g. `abc1>file`) or the preceding token is part of the
+                            // same compound word (e.g. `"abc"1>file`, `$(cmd)1>file`), the
+                            // digit is literal text and the `>`/`<` that follows is handled
+                            // by its own operator case.
+                            if (self.word_start != self.j) break :escaped;
+                            if (self.last_tok_tag()) |tag| switch (tag) {
+                                .Var,
+                                .VarArgv,
+                                .Text,
+                                .SingleQuotedText,
+                                .DoubleQuotedText,
+                                .BraceBegin,
+                                .Comma,
+                                .BraceEnd,
+                                .CmdSubstEnd,
+                                .Asterisk,
+                                => break :escaped,
+                                else => {},
+                            };
                             const snapshot = self.make_snapshot();
                             if (self.eat_redirect(input)) |redirect| {
                                 try self.break_word(true);

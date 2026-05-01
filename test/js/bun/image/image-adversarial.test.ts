@@ -9,7 +9,7 @@
 //
 // Kept in its own file so the happy-path image.test.ts stays readable.
 
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { gcTick } from "harness";
 import zlib from "node:zlib";
 

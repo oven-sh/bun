@@ -146,8 +146,66 @@ if [[ ! -d $bin_dir ]]; then
         error "Failed to create install directory \"$bin_dir\""
 fi
 
+info "Downloading bun from \"$bun_uri\""
 curl --fail --location --progress-bar --output "$exe.zip" "$bun_uri" ||
     error "Failed to download bun from \"$bun_uri\""
+
+verify_download() {
+    if [[ ${BUN_INSTALL_SKIP_VERIFY:-} = 1 ]]; then
+        info 'Skipping checksum verification (BUN_INSTALL_SKIP_VERIFY=1)'
+        return 0
+    fi
+
+    local sha_cmd
+    if command -v sha256sum >/dev/null; then
+        sha_cmd='sha256sum'
+    elif command -v shasum >/dev/null; then
+        sha_cmd='shasum -a 256'
+    else
+        error 'sha256sum or shasum is required to verify the download (set BUN_INSTALL_SKIP_VERIFY=1 to skip)'
+    fi
+
+    local sums_uri="${bun_uri%/*}/SHASUMS256.txt"
+    local sums_path="$bin_dir/SHASUMS256.txt"
+
+    curl --fail --silent --show-error --location --output "$sums_path" "$sums_uri" ||
+        error "Failed to download checksums from \"$sums_uri\" (set BUN_INSTALL_SKIP_VERIFY=1 to skip)"
+
+    # If gpg is available and the bun release key is already in the user's
+    # keyring, also verify the PGP signature on the manifest. The key is not
+    # fetched on the fly: doing so would create a trust-on-first-use window
+    # that an attacker controlling the channel could exploit.
+    local bun_release_key='F3DCC08A8572C0749B3E18888EAB4D40A7B22B59'
+    if command -v gpg >/dev/null && gpg --list-keys "$bun_release_key" >/dev/null 2>&1; then
+        local sig_uri="${bun_uri%/*}/SHASUMS256.txt.asc"
+        local sig_path="$bin_dir/SHASUMS256.txt.asc"
+        curl --fail --silent --show-error --location --output "$sig_path" "$sig_uri" ||
+            error "Failed to download signature from \"$sig_uri\""
+        gpg --verify "$sig_path" "$sums_path" ||
+            error 'PGP signature verification failed for SHASUMS256.txt'
+        info "Verified PGP signature on SHASUMS256.txt"
+        rm -f "$sig_path"
+    fi
+
+    local zip_name="bun-$target.zip"
+    local expected
+    expected=$(awk -v name="$zip_name" '$2 == name { print $1; exit }' "$sums_path")
+    if [[ -z $expected ]]; then
+        error "No checksum entry for \"$zip_name\" in SHASUMS256.txt"
+    fi
+
+    local actual
+    actual=$($sha_cmd "$exe.zip" | awk '{ print $1 }')
+    if [[ $expected != "$actual" ]]; then
+        rm -f "$exe.zip"
+        error "Checksum mismatch for \"$zip_name\" (expected $expected, got $actual)"
+    fi
+
+    info "Verified SHA-256 of \"$zip_name\""
+    rm -f "$sums_path"
+}
+
+verify_download
 
 unzip -oqd "$bin_dir" "$exe.zip" ||
     error 'Failed to extract bun'

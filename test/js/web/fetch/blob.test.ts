@@ -404,8 +404,8 @@ test("new Blob() with a mix of ArrayBuffer and benign non-buffer parts borrows w
   const blob = new Blob([u8, "B", new Uint8Array(8).fill("C".charCodeAt(0))]);
   const text = await blob.text();
   expect(blob.size).toBe(size + 1 + 8);
-  expect(text.slice(0, size)).toBe("A".repeat(size));
-  expect(text.slice(size)).toBe("B" + "C".repeat(8));
+  expect(text.slice(0, size)).toBe(Buffer.alloc(size, "A").toString());
+  expect(text.slice(size)).toBe("BCCCCCCCC");
 });
 
 test("new Blob() does not leak when a later part's toString() throws", async () => {
@@ -456,6 +456,8 @@ test("new Blob() joins parts in sequence order", async () => {
   expect(await new Blob([{ toString: () => "A" }, { toString: () => "B" }]).text()).toBe("AB");
   expect(await new Blob(["a", ["b", "c"], "d"]).text()).toBe("ab,cd");
   expect(await new Blob([new Response("body"), "X"]).text()).toBe("[object Response]X");
+  // undefined/null are coerced via the USVString branch (WebIDL), not dropped.
+  expect(await new Blob([undefined, null, "x"]).text()).toBe("undefinednullx");
 });
 
 test("new Blob() keeps inner Blob parts alive while a later part's toString() forces GC", async () => {

@@ -6,7 +6,10 @@ pub const FetchTasklet = struct {
     http: ?*http.AsyncHTTP = null,
     result: http.HTTPClientResult = .{},
     metadata: ?http.HTTPResponseMetadata = null,
-    javascript_vm: *VirtualMachine = undefined,
+    /// HTTP-thread call sites must go through `vm_handle.get()`; the worker's
+    /// VirtualMachine is freed on `Worker.terminate()` while callbacks may
+    /// still be in flight, so a raw `*VirtualMachine` here would dangle.
+    vm_handle: VirtualMachine.Handle = undefined,
     global_this: *JSGlobalObject = undefined,
     request_body: HTTPRequestBody = undefined,
     request_body_streaming_buffer: ?*http.ThreadSafeStreamBuffer = null,
@@ -78,14 +81,22 @@ pub const FetchTasklet = struct {
         bun.debugAssert(count > 0);
 
         if (count == 1) {
-            if (this.javascript_vm.isShuttingDown()) {
-                this.deinit() catch |err| switch (err) {};
+            const vm = this.vm_handle.get() orelse {
+                // VM is gone (worker terminated). We can't enqueue and we
+                // can't run full deinit() here: clearAbortSignal() and the
+                // jsc.Strong/jsc.Weak deinits in clearData() touch non-atomic
+                // JSC state. Free what's owned by bun.default_allocator and
+                // intentionally leak the rest.
+                this.deinitFromThread();
+                return;
+            };
+            if (vm.isShuttingDown()) {
+                this.deinitFromThread();
                 return;
             }
             // this is really unlikely to happen, but can happen
             // lets make sure that we always call deinit from main thread
-
-            this.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.deinit));
+            vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.deinit));
         }
     }
 
@@ -261,6 +272,61 @@ pub const FetchTasklet = struct {
         this.clearData();
 
         const allocator = bun.default_allocator;
+
+        if (this.http) |http_| {
+            this.http = null;
+            allocator.destroy(http_);
+        }
+        allocator.destroy(this);
+    }
+
+    /// Thread-safe subset of deinit(). Called from the HTTP thread when the
+    /// last ref drops after the VM is gone. Only frees state owned by
+    /// bun.default_allocator; intentionally skips AbortSignal (non-atomic
+    /// RefCounted), jsc.Strong/Weak handles, native_response (non-atomic
+    /// ref_count), and the sink (owns a JSRef) — touching any of those here
+    /// would race the JS thread tearing down the VM.
+    fn deinitFromThread(this: *FetchTasklet) void {
+        log("deinitFromThread", .{});
+        bun.assert(this.ref_count.load(.monotonic) == 0);
+
+        const allocator = bun.default_allocator;
+        if (this.url_proxy_buffer.len > 0) {
+            allocator.free(this.url_proxy_buffer);
+            this.url_proxy_buffer.len = 0;
+        }
+        if (this.hostname) |hostname| {
+            allocator.free(hostname);
+            this.hostname = null;
+        }
+        if (this.result.certificate_info) |*certificate| {
+            certificate.deinit(allocator);
+            this.result.certificate_info = null;
+        }
+        this.request_headers.entries.deinit(allocator);
+        this.request_headers.buf.deinit(allocator);
+        if (this.http) |http_| {
+            http_.clearData();
+        }
+        if (this.metadata) |*md| {
+            md.deinit(allocator);
+            this.metadata = null;
+        }
+        this.response_buffer.deinit();
+        this.scheduled_response_buffer.deinit();
+        if (this.request_body_streaming_buffer) |buffer| {
+            this.request_body_streaming_buffer = null;
+            buffer.clearDrainCallback();
+            buffer.deref();
+        }
+        switch (this.request_body) {
+            // .Sendfile closes an fd (pure syscall). .AnyBlob's variants all
+            // have atomic refcounts (Blob.Store, WTF::StringImpl) or just free
+            // a bun.default_allocator buffer (InternalBlob). .ReadableStream
+            // is a jsc.Strong — leak it.
+            .Sendfile, .AnyBlob => this.request_body.detach(),
+            .ReadableStream => {},
+        }
 
         if (this.http) |http_| {
             this.http = null;
@@ -456,7 +522,9 @@ pub const FetchTasklet = struct {
         this.has_schedule_callback.store(false, .monotonic);
         const is_done = !this.result.has_more;
 
-        const vm = this.javascript_vm;
+        // onProgressUpdate runs as a ConcurrentTask on the JS thread, so the
+        // VM is alive while we're here.
+        const vm = this.vm_handle.get().?;
         // vm is shutting down we cannot touch JS
         if (vm.isShuttingDown()) {
             this.mutex.unlock();
@@ -999,7 +1067,7 @@ pub const FetchTasklet = struct {
             http_.enableResponseBodyStreaming();
         }
         // we should not keep the process alive if we are ignoring the body
-        const vm = this.javascript_vm;
+        const vm = this.vm_handle.get().?;
         this.poll_ref.unref(vm);
         // clean any remaining references
         this.clearStreamCancelHandler();
@@ -1083,7 +1151,7 @@ pub const FetchTasklet = struct {
                 },
             },
             .http = try allocator.create(http.AsyncHTTP),
-            .javascript_vm = jsc_vm,
+            .vm_handle = jsc_vm.getHandle(),
             .request_body = fetch_options.body,
             .global_this = globalThis,
             .promise = promise,
@@ -1236,10 +1304,11 @@ pub const FetchTasklet = struct {
 
     /// This is ALWAYS called from the http thread and we cannot touch the buffer here because is locked
     pub fn onWriteRequestDataDrain(this: *FetchTasklet) void {
-        if (this.javascript_vm.isShuttingDown()) return;
+        const vm = this.vm_handle.get() orelse return;
+        if (vm.isShuttingDown()) return;
         // ref until the main thread callback is called
         this.ref();
-        this.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.resumeRequestDataStream));
+        vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.resumeRequestDataStream));
     }
 
     /// This is ALWAYS called from the main thread
@@ -1473,9 +1542,28 @@ pub const FetchTasklet = struct {
                 return;
             }
         }
-        // will deinit when done with the http client (when is_done = true)
-        if (task.javascript_vm.isShuttingDown()) return;
-        task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
+        const vm = task.vm_handle.get() orelse {
+            // VM is gone (worker terminated). Can't enqueue onProgressUpdate.
+            // Reset the flag we just set so a later final-chunk callback isn't
+            // gated; for the final chunk, drop the ref onProgressUpdate would
+            // have dropped so the deferred derefFromThread() above reaches
+            // zero (after mutex.unlock) and runs thread-safe cleanup.
+            task.has_schedule_callback.store(false, .monotonic);
+            if (is_done) {
+                const old = task.ref_count.fetchSub(1, .monotonic);
+                bun.debugAssert(old > 1);
+            }
+            return;
+        };
+        if (vm.isShuttingDown()) {
+            task.has_schedule_callback.store(false, .monotonic);
+            if (is_done) {
+                const old = task.ref_count.fetchSub(1, .monotonic);
+                bun.debugAssert(old > 1);
+            }
+            return;
+        }
+        vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
     }
 };
 

@@ -295,6 +295,34 @@ pub fn isShuttingDown(this: *const VirtualMachine) bool {
     return this.is_shutting_down;
 }
 
+/// A weak reference to a `VirtualMachine` that can be safely queried from
+/// another thread after the VM may have been destroyed. The worker's
+/// `VirtualMachine` lives in a per-worker `MimallocArena` that is freed on
+/// `Worker.terminate()`, so a raw `*VirtualMachine` held by an off-thread
+/// task (e.g. the HTTP thread's `FetchTasklet.callback`) becomes dangling.
+/// `Handle.get()` re-validates via the global `ScriptExecutionContext` map —
+/// when the context is no longer registered, the VM is gone. There is an
+/// inherent TOCTOU between `get()` returning non-null and the caller using
+/// the pointer; that's accepted, and is strictly narrower than reading the
+/// raw pointer directly.
+pub const Handle = struct {
+    #id: bun.webcore.ScriptExecutionContext.Identifier,
+    #vm: ?*VirtualMachine,
+
+    pub fn get(self: *Handle) ?*VirtualMachine {
+        if (self.#vm == null) return null;
+        if (self.#id.globalObject() == null) self.#vm = null;
+        return self.#vm;
+    }
+};
+
+pub fn getHandle(self: *VirtualMachine) Handle {
+    return .{
+        .#id = self.global.scriptExecutionContextIdentifier(),
+        .#vm = self,
+    };
+}
+
 pub fn getTLSRejectUnauthorized(this: *const VirtualMachine) bool {
     return this.default_tls_reject_unauthorized orelse this.transpiler.env.getTLSRejectUnauthorized();
 }

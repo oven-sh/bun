@@ -21,11 +21,24 @@
 
 const SSLContextCache = @This();
 
-map: std.AutoArrayHashMapUnmanaged(Digest, *Entry) = .empty,
+map: std.ArrayHashMapUnmanaged(Digest, *Entry, DigestContext, false) = .empty,
 mutex: bun.Mutex = .{},
 ops_since_compact: u32 = 0,
 
 pub const Digest = [32]u8;
+
+/// SHA-256 output is uniformly distributed, so the first 4 bytes are a perfect
+/// bucket hash — no need to re-Wyhash 32 bytes (what AutoContext would do).
+/// `eql` still compares the full digest. `store_hash = false` since recompute
+/// is a single load.
+const DigestContext = struct {
+    pub fn hash(_: @This(), k: Digest) u32 {
+        return std.mem.readInt(u32, k[0..4], .little);
+    }
+    pub fn eql(_: @This(), a: Digest, b: Digest, _: usize) bool {
+        return bun.strings.eqlLong(&a, &b, false);
+    }
+};
 
 pub const Entry = struct {
     /// Nulled by `bun_ssl_ctx_cache_on_free` when BoringSSL drops the last
@@ -41,7 +54,8 @@ pub fn getOrCreate(
     config: *const SSLConfig,
     err: *uws.create_bun_socket_error_t,
 ) ?*BoringSSL.SSL_CTX {
-    return self.getOrCreateOpts(config.asUSockets(), err);
+    const opts = config.asUSockets();
+    return self.getOrCreateDigest(opts, opts.digest(), err);
 }
 
 /// Variant for callers that already projected to `BunSocketContextOptions`
@@ -51,8 +65,18 @@ pub fn getOrCreateOpts(
     opts: uws.SocketContext.BunSocketContextOptions,
     err: *uws.create_bun_socket_error_t,
 ) ?*BoringSSL.SSL_CTX {
-    const d = opts.digest();
+    return self.getOrCreateDigest(opts, opts.digest(), err);
+}
 
+/// Core entry — `d` already computed by caller. `SecureContext.intern()`
+/// threads its WeakGCMap key through here so the SHA-256 runs once total
+/// instead of three times on a miss.
+pub fn getOrCreateDigest(
+    self: *SSLContextCache,
+    opts: uws.SocketContext.BunSocketContextOptions,
+    d: Digest,
+    err: *uws.create_bun_socket_error_t,
+) ?*BoringSSL.SSL_CTX {
     self.mutex.lock();
     defer self.mutex.unlock();
 

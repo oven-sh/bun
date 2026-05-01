@@ -48,8 +48,12 @@ pub fn constructor(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
 /// `us_ssl_ctx_from_options` so that override has roots to validate against.
 pub fn create(global: *jsc.JSGlobalObject, config: *const SSLConfig) bun.JSError!*SecureContext {
     const ctx_opts = config.asUSockets();
+    return createWithDigest(global, ctx_opts, ctx_opts.digest());
+}
+
+fn createWithDigest(global: *jsc.JSGlobalObject, ctx_opts: uws.SocketContext.BunSocketContextOptions, d: [32]u8) bun.JSError!*SecureContext {
     var err: uws.create_bun_socket_error_t = .none;
-    const ctx = global.bunVM().rareData().sslCtxCache().getOrCreateOpts(ctx_opts, &err) orelse {
+    const ctx = global.bunVM().rareData().sslCtxCache().getOrCreateDigest(ctx_opts, d, &err) orelse {
         // `err` is only set for the input-validation paths (bad PEM, missing
         // file, …). When BoringSSL itself fails (e.g. unsupported curve) the
         // enum is still `.none`; surface the library error stack instead of
@@ -63,7 +67,7 @@ pub fn create(global: *jsc.JSGlobalObject, config: *const SSLConfig) bun.JSError
     };
     return bun.new(SecureContext, .{
         .ctx = ctx,
-        .digest = ctx_opts.digest(),
+        .digest = d,
         .extra_memory = ctx_opts.approxCertBytes() + ssl_ctx_base_cost,
     });
 }
@@ -81,7 +85,8 @@ pub fn intern(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSErro
     var config = (try SSLConfig.fromJS(global.bunVM(), global, opts)) orelse SSLConfig.zero;
     defer config.deinit();
 
-    const d = config.ctxDigest();
+    const ctx_opts = config.asUSockets();
+    const d = ctx_opts.digest();
     const key = std.mem.readInt(u64, d[0..8], .little);
 
     const cached = cpp.Bun__SecureContextCache__get(global, key);
@@ -95,11 +100,7 @@ pub fn intern(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSErro
         }
     }
 
-    const sc = try create(global, &config);
-    // intern() and create() both derive the digest via asUSockets().digest();
-    // if those paths ever drift, identical configs would silently stop
-    // interning. Debug-assert they agree.
-    bun.assert(bun.strings.eqlLong(&sc.digest, &d, false));
+    const sc = try createWithDigest(global, ctx_opts, d);
     const value = sc.toJS(global);
     cpp.Bun__SecureContextCache__set(global, key, value);
     return value;

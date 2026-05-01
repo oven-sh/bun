@@ -8,7 +8,9 @@ import tls from "node:tls";
 import { once } from "node:events";
 // @ts-expect-error - debug-only export
 import { sslCtxLiveCount } from "bun:internal-for-testing";
-import { tls as tlsCerts } from "harness";
+import { tls as tlsCerts, tempDir } from "harness";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 async function withServer(fn: (port: number) => Promise<void>) {
   const server = tls.createServer({ ...tlsCerts, rejectUnauthorized: false }, s => s.end());
@@ -156,4 +158,34 @@ test("Bun.connect with inline ca shares SSL_CTX across calls", async () => {
     });
     await promise;
   }
+});
+
+test("file-backed config: in-place rotation invalidates cache (mtime+size in digest)", async () => {
+  using dir = tempDir("ssl-ctx-rotate", {
+    "ca.pem": tlsCerts.cert,
+  });
+  const caFile = join(String(dir), "ca.pem");
+
+  await withServer(async port => {
+    const before = sslCtxLiveCount();
+    const connectOnce = async () => {
+      const s = tls.connect({ port, caFile, rejectUnauthorized: false } as any);
+      await once(s, "secureConnect");
+      s.destroy();
+      await once(s, "close");
+    };
+
+    await connectOnce();
+    await connectOnce();
+    const afterTwoSamePath = sslCtxLiveCount();
+    // Second connect with identical (path, mtime, size) hits cache.
+    expect(afterTwoSamePath).toBe(before + 1);
+
+    // Rotate in place — same path, different content. Rewriting bumps mtime
+    // and (here) size; either alone changes the digest.
+    writeFileSync(caFile, tlsCerts.cert + "\n");
+    await connectOnce();
+    // New (mtime, size) → fresh digest → fresh CTX.
+    expect(sslCtxLiveCount()).toBe(afterTwoSamePath + 1);
+  });
 });

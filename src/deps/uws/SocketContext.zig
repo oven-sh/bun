@@ -66,11 +66,35 @@ pub const BunSocketContextOptions = extern struct {
                 hp.update(&.{0});
             }
         }.f;
-        feedZ(&h, self.key_file_name);
-        feedZ(&h, self.cert_file_name);
+        // File-backed fields: feed path + (mtime, size) so an in-place cert
+        // rotation produces a fresh digest. stat() is ~1µs and only runs when
+        // the file form is used (Bun-specific; node:tls always passes inline
+        // bytes). On stat failure we feed zeros — `createSSLContext` will fail
+        // on the same path and the entry never reaches the cache.
+        const feedPath = struct {
+            fn f(hp: *bun.sha.Hashers.SHA256, s: [*c]const u8) void {
+                hp.update(&.{@intFromBool(s != null)});
+                if (s) |p| {
+                    const path = std.mem.span(@as([*:0]const u8, @ptrCast(p)));
+                    hp.update(path);
+                    var meta: [3]i64 = @splat(0);
+                    if (path.len > 0) switch (bun.sys.stat(path)) {
+                        .result => |st| {
+                            const mt = st.mtime();
+                            meta = .{ @intCast(mt.sec), @intCast(mt.nsec), @intCast(st.size) };
+                        },
+                        .err => {},
+                    };
+                    hp.update(std.mem.asBytes(&meta));
+                }
+                hp.update(&.{0});
+            }
+        }.f;
+        feedPath(&h, self.key_file_name);
+        feedPath(&h, self.cert_file_name);
         feedZ(&h, self.passphrase);
-        feedZ(&h, self.dh_params_file_name);
-        feedZ(&h, self.ca_file_name);
+        feedPath(&h, self.dh_params_file_name);
+        feedPath(&h, self.ca_file_name);
         feedZ(&h, self.ssl_ciphers);
         h.update(std.mem.asBytes(&self.ssl_prefer_low_memory_usage));
         feedArr(&h, self.key, self.key_count);

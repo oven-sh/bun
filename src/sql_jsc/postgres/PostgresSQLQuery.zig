@@ -169,10 +169,13 @@ pub fn onResult(this: *@This(), command_tag_str: []const u8, globalObject: *jsc.
     // Column metadata is only meaningful on the per-result-set callbacks
     // (is_last=false). The final is_last=true call carries no result and by
     // then statement.fields may have been overwritten by later result sets.
-    const statement_js: JSValue = if (is_last)
-        .js_undefined
-    else
-        this.buildStatementJS(globalObject) catch |e| return this.onJSError(globalObject.takeException(e), globalObject);
+    // If building the metadata fails (e.g. JS-heap OOM), swallow the
+    // exception and resolve without it rather than reject a query whose rows
+    // were already received.
+    const statement_js: JSValue = if (is_last) .js_undefined else this.buildStatementJS(globalObject) catch brk: {
+        _ = globalObject.tryTakeException();
+        break :brk .js_undefined;
+    };
     statement_js.ensureStillAlive();
 
     event_loop.runCallback(function, globalObject, thisValue, &.{

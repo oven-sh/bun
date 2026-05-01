@@ -159,7 +159,12 @@ describe.concurrent("napi", () => {
           10 * 1000,
         );
 
-        it(
+        // BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK is a no-op on
+        // non-Windows (linkNativeAddonsForWindows only runs on the PE
+        // branch of inject(), and LinkedNodeModule.enabled =
+        // Environment.isWindows), so this test would be byte-for-byte
+        // identical to the one above there.
+        it.skipIf(!isWindows)(
           "should work with --compile when static addon linking is disabled",
           async () => {
             // Exercises the fallback used when an addon cannot be merged

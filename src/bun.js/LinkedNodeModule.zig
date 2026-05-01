@@ -302,6 +302,17 @@ fn bind(entry: *Entry) !Resolved {
     // or chained unwinds and language-specific handlers resolve to the
     // wrong place.
     if (entry.pdata_count > 0) {
+        // Same corrupted-.bunL defence as the VirtualProtect loop
+        // above: pdata_rva/pdata_count come straight from the blob.
+        // RtlAddFunctionTable does not validate the span, and a
+        // garbage registration surfaces non-locally (during the next
+        // SEH/C++ unwind), so fail closed to the tempfile path.
+        const pdata_entry_size: u64 = if (@import("builtin").cpu.arch == .aarch64) 8 else 12;
+        if (entry.pdata_rva < lo or
+            @as(u64, entry.pdata_rva) + @as(u64, entry.pdata_count) * pdata_entry_size > hi)
+        {
+            return error.BadPdata;
+        }
         const rfn: [*]RUNTIME_FUNCTION = @ptrCast(@alignCast(base + entry.pdata_rva));
         if (RtlAddFunctionTable(rfn, entry.pdata_count, base_addr + entry.rva_base) == 0) {
             // Without .pdata registered, any SEH / C++ exception inside

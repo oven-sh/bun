@@ -206,8 +206,7 @@ describe("TextDecoder", () => {
           expect(decoded).toBe(text);
         }
       });
-    }, // 100k iterations under ASAN instrumentation takes ~13s.
-    30_000);
+    }, 30_000); // 100k iterations under ASAN instrumentation takes ~13s.
   });
 
   it("should decode unicode text with multiple consecutive emoji", () => {

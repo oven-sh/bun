@@ -368,22 +368,18 @@ it("setTimeout canceling with unref, close, _idleTimeout, and _onTimeout", () =>
 });
 
 for (const mode of ["clear", "refresh"]) {
-  it(
-    `setTimeout doesn't leak when ${mode} is called inside its own callback`,
-    async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-clear-in-callback-leak-fixture.js"), mode],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(stdout).toContain("delta:");
-      expect(exitCode).toBe(0);
-    },
-    90_000,
-  );
+  it(`setTimeout doesn't leak when ${mode} is called inside its own callback`, async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-clear-in-callback-leak-fixture.js"), mode],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("delta:");
+    expect(exitCode).toBe(0);
+  }, 90_000);
 }
 
 it("setTimeout does not leak a pending exception when emitting a timeout warning throws", async () => {

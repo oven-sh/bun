@@ -15,9 +15,11 @@ import { bunEnv, bunExe, isLinux, libcPathForDlopen, tempDir } from "harness";
 // returns EBADF, which reaches SubprocessPipeReader.onReaderError. This
 // relies on Linux epoll semantics so the test is Linux-only, but the leak
 // itself is cross-platform.
-test.skipIf(!isLinux)("PipeReader is freed when a subprocess stdout read fails", async () => {
-  using dir = tempDir("spawn-pipe-read-error-leak", {
-    "fixture.js": `
+test.skipIf(!isLinux)(
+  "PipeReader is freed when a subprocess stdout read fails",
+  async () => {
+    using dir = tempDir("spawn-pipe-read-error-leak", {
+      "fixture.js": `
 const { dlopen, FFIType } = require("bun:ffi");
 const { readdirSync, readlinkSync, openSync, closeSync, writeFileSync, rmSync } = require("fs");
 const { execFileSync } = require("child_process");
@@ -123,20 +125,22 @@ console.log(JSON.stringify({ leaked: total }));
 // just timing out.
 process.exit(0);
 `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "fixture.js"],
-    env: { ...bunEnv, LIBC_PATH: libcPathForDlopen() },
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: { ...bunEnv, LIBC_PATH: libcPathForDlopen() },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const stderrLines = stderr.split("\n").filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes"));
-  expect(stderrLines).toEqual([]);
-  expect(stdout.trim()).toBe(JSON.stringify({ leaked: 0 }));
-  expect(exitCode).toBe(0);
-}, 30_000);
+    const stderrLines = stderr.split("\n").filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes"));
+    expect(stderrLines).toEqual([]);
+    expect(stdout.trim()).toBe(JSON.stringify({ leaked: 0 }));
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);

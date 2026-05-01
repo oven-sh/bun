@@ -73,14 +73,20 @@ function assertFixtureOutput(stdout: string, stderr: string, exitCode: number) {
 // socket (the sandboxed gate container has MariaDB running as root via
 // /run/mysqld/mysqld.sock but no pre-existing TCP user).
 async function discoverMysqlUrl(): Promise<string | null> {
-  const candidates = [process.env.MYSQL_URL, "mysql://bun@127.0.0.1:3306/bun_sql_test"].filter((u): u is string => !!u);
-  for (const url of candidates) {
-    try {
-      await using sql = new SQL({ url, max: 1 });
-      await sql`SELECT 1`;
-      return url;
-    } catch {}
-  }
+  // If MYSQL_URL is set, trust it and hand it to runFixture — the subprocess
+  // picks up CA_PATH for TLS URLs, which a plain `new SQL({ url })` probe here
+  // would not. A broken MYSQL_URL will surface as a missing CONNECTED marker
+  // in assertFixtureOutput() rather than being silently misclassified here.
+  if (process.env.MYSQL_URL) return process.env.MYSQL_URL;
+
+  // Local dev: try the sibling-test convention first.
+  try {
+    const url = "mysql://bun@127.0.0.1:3306/bun_sql_test";
+    await using sql = new SQL({ url, max: 1 });
+    await sql`SELECT 1`;
+    return url;
+  } catch {}
+
   // Last resort: bootstrap bun@%/bun_sql_test via root over UNIX socket.
   const sockets = ["/run/mysqld/mysqld.sock", "/var/run/mysqld/mysqld.sock", "/tmp/mysql.sock"];
   const socket = sockets.find(p => existsSync(p));

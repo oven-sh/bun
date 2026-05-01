@@ -1,3 +1,4 @@
+import { isRope } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import npmStringWidth from "string-width";
 
@@ -869,6 +870,176 @@ describe("stringWidth extended", () => {
       for (const s of cases) {
         expect(Bun.stringWidth(s)).toBe(Bun.stringWidth(Bun.stripANSI(s)));
       }
+    });
+  });
+
+  // Bun.stringWidth on a rope string walks the rope's fibers in place rather
+  // than flattening to a contiguous buffer first, when the rope is entirely
+  // 8-bit (Latin-1). These tests verify (a) the rope is left unresolved, and
+  // (b) the computed width is identical to the flattened result.
+  // The fast path is gated on total length ≥ JSString::minLengthForRopeWalk
+  // (296) and bails to resolving if the first 16 leaves average under 48
+  // bytes, so tests that assert "still a rope" must clear both thresholds.
+  describe("rope strings", () => {
+    // Concatenate parts at runtime so JSC leaves the result as a rope.
+    const ropeOf = (...parts: (string | number)[]) => {
+      let r = "";
+      for (const p of parts) r = r + p;
+      return r;
+    };
+    // 64-byte filler fiber: large enough to clear the avg-fiber-size bail.
+    const fill64 = Buffer.alloc(64, "F").toString();
+
+    // Force-resolve a rope to a flat string *without* mutating the input
+    // (spread + join materializes a fresh buffer).
+    const flatten = (s: string) => Array.from(s).join("");
+
+    const ropeAndFlat = (build: () => string) => {
+      const rope = build();
+      const flat = flatten(build());
+      expect(isRope(rope)).toBe(true);
+      expect(isRope(flat)).toBe(false);
+      return { rope, flat };
+    };
+
+    test("8-bit rope: width matches flattened for both ANSI modes", () => {
+      let y: any = 0;
+      const { rope, flat } = ropeAndFlat(() => {
+        let r = "abc" + y;
+        for (let i = 0; i < 100; i++) r = r + fill64;
+        return r;
+      });
+      for (const countAnsiEscapeCodes of [true, false]) {
+        const w = Bun.stringWidth(rope, { countAnsiEscapeCodes });
+        expect(w).toBe(Bun.stringWidth(flat, { countAnsiEscapeCodes }));
+        expect(w).toBe(flat.length);
+      }
+      expect(isRope(rope)).toBe(true);
+    });
+
+    test("deep rope (exercises iterRopeSlowCase out-of-order traversal)", () => {
+      let y: any = 0;
+      let rope = "a" + y;
+      for (let i = 0; i < 2000; i++) rope = rope + fill64;
+      expect(isRope(rope)).toBe(true);
+      expect(Bun.stringWidth(rope)).toBe(rope.length);
+      expect(isRope(rope)).toBe(true);
+    });
+
+    test("rope with Latin-1 control chars across fibers", () => {
+      const nul = String.fromCharCode(0x00);
+      const del = String.fromCharCode(0x7f);
+      const shy = String.fromCharCode(0xad);
+      // Pad each fiber to ≥64B so the avg-fiber-size bail doesn't trigger.
+      const { rope, flat } = ropeAndFlat(() =>
+        ropeOf(
+          fill64 + "ab",
+          fill64 + nul,
+          fill64 + "cd",
+          fill64 + del,
+          fill64 + shy,
+          fill64 + "ef",
+          fill64 + shy + nul,
+        ),
+      );
+      // 7×64 filler + visible: a b c d e f = 454
+      const w = Bun.stringWidth(rope);
+      expect(w).toBe(Bun.stringWidth(flat));
+      expect(w).toBe(7 * 64 + 6);
+      expect(isRope(rope)).toBe(true);
+    });
+
+    test("rope containing ESC with countAnsiEscapeCodes: true stays unresolved", () => {
+      // With countAnsiEscapeCodes: true, ANSI sequences contribute their raw
+      // Latin-1 byte widths, which are per-byte — no fallback needed.
+      const esc = String.fromCharCode(0x1b);
+      const { rope, flat } = ropeAndFlat(() =>
+        ropeOf(fill64 + "a", fill64 + esc, fill64 + "[31m", fill64 + "b", fill64),
+      );
+      // ESC is a C0 control (width 0); "[31m" is 4 printable chars.
+      const w = Bun.stringWidth(rope, { countAnsiEscapeCodes: true });
+      expect(w).toBe(Bun.stringWidth(flat, { countAnsiEscapeCodes: true }));
+      expect(w).toBe(5 * 64 + 6);
+      expect(isRope(rope)).toBe(true);
+    });
+
+    test("short / fragmented ropes fall back to resolving", () => {
+      // Below minLengthForRopeWalk (296): fast path is skipped entirely.
+      const short = ropeOf("ab", 0, "cd", 1, "ef");
+      expect(isRope(short)).toBe(true);
+      expect(Bun.stringWidth(short)).toBe(8);
+      expect(isRope(short)).toBe(false);
+      // Long but highly fragmented (avg fiber < 48B): bails after sampling.
+      let frag = "" + (0 as any);
+      for (let i = 0; i < 200; i++) frag = frag + "ab";
+      expect(isRope(frag)).toBe(true);
+      expect(Bun.stringWidth(frag)).toBe(401);
+      expect(isRope(frag)).toBe(false);
+    });
+
+    test("rope with ANSI sequence straddling fibers falls back correctly", () => {
+      // ESC in one fiber, "[31m" in the next — the fast path can't track the
+      // CSI state across the boundary, so it must resolve and re-scan.
+      // Lead with enough filler to clear minLengthForRopeWalk so the fast
+      // path is actually entered; ESC and "[31m" stay adjacent so the flat
+      // string still contains a valid CSI. With <16 leaves the avg-fiber-size
+      // bail can't fire, so the only way out of the iterator is the ESC bail.
+      const esc = String.fromCharCode(0x1b);
+      const { rope, flat } = ropeAndFlat(() =>
+        ropeOf(fill64, fill64, fill64, fill64, fill64, "hello", 0, esc, "[31m", "world", esc, "[0m"),
+      );
+      expect(rope.length).toBeGreaterThanOrEqual(296);
+      const w = Bun.stringWidth(rope, { countAnsiEscapeCodes: false });
+      expect(w).toBe(Bun.stringWidth(flat, { countAnsiEscapeCodes: false }));
+      // 5×fill64 + "hello" + "0" + "world" = 320 + 11
+      expect(w).toBe(5 * 64 + 11);
+      // Entered the fast path (length gate cleared above), then bailed on ESC
+      // and resolved via view().
+      expect(isRope(rope)).toBe(false);
+    });
+
+    test("UTF-16 rope still produces correct width (resolves)", () => {
+      // UTF-16 ropes cannot use the fast path (grapheme clusters may span
+      // fibers); verify the result is still correct.
+      let y: any = 0;
+      const { rope, flat } = ropeAndFlat(() => {
+        let r = "a" + y;
+        for (let i = 0; i < 20; i++) r = r + "中文";
+        for (let i = 0; i < 20; i++) r = r + "😀";
+        return r;
+      });
+      expect(Bun.stringWidth(rope)).toBe(Bun.stringWidth(flat));
+      // "a0" + 20×"中文"(4) + 20×"😀"(2) = 2 + 80 + 40 = 122
+      expect(Bun.stringWidth(rope)).toBe(122);
+    });
+
+    test("rope correctness fuzz vs. flattened", () => {
+      const fibers = [
+        "plain ascii",
+        String.fromCharCode(0x00, 0x01, 0x1f), // C0 controls (width 0 each)
+        String.fromCharCode(0x7f, 0x80, 0x9f), // DEL + C1 controls (width 0 each)
+        String.fromCharCode(0xad), // soft hyphen (width 0)
+        String.fromCharCode(0xa0, 0xff), // printable Latin-1 (width 1 each)
+        "x",
+        "longer chunk of text to make fibers uneven",
+      ].map(f => flatten(fill64 + f)); // pad each leaf flat to clear avg-fiber-size bail
+      const { rope, flat } = ropeAndFlat(() => {
+        let r = "seed" + (0 as any);
+        for (let i = 0; i < 200; i++) r = r + fibers[(i * 3 + 1) % fibers.length];
+        return r;
+      });
+      for (const countAnsiEscapeCodes of [false, true]) {
+        expect(Bun.stringWidth(rope, { countAnsiEscapeCodes })).toBe(Bun.stringWidth(flat, { countAnsiEscapeCodes }));
+      }
+      expect(isRope(rope)).toBe(true);
+    });
+
+    test("substring rope (String.prototype.slice)", () => {
+      // JSC represents substrings of resolved strings as substring-ropes.
+      const base = flatten(ropeOf("abcdefghij", 0, "klmnopqrstuvwxyz"));
+      const sub = base.slice(3, 20);
+      expect(Bun.stringWidth(sub)).toBe(Bun.stringWidth(flatten(sub)));
+      expect(Bun.stringWidth(sub)).toBe(17);
     });
   });
 });

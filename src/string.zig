@@ -1102,13 +1102,10 @@ pub const String = extern struct {
         }
 
         const js_str = try argument.toJSString(globalObject);
-        const view = js_str.view(globalObject);
 
-        if (view.isEmpty()) {
+        if (js_str.length() == 0) {
             return .jsNumber(@as(i32, 0));
         }
-
-        const str = bun.String.init(view);
 
         // Parse options: { countAnsiEscapeCodes?: bool, ambiguousIsNarrow?: bool }
         var count_ansi: bool = false;
@@ -1123,6 +1120,31 @@ pub const String = extern struct {
             }
         }
 
+        // Fast path for 8-bit ropes: Latin-1 visible width is per-byte, so
+        // summing per-fiber widths is exact regardless of traversal order.
+        // The only stateful Latin-1 construct is an ANSI escape sequence,
+        // which may straddle fibers — bail to resolving if we see ESC and the
+        // caller wants escapes excluded. UTF-16 ropes can't use this: grapheme
+        // clusters may span fibers and deep ropes iterate out of order.
+        // Substring ropes are skipped: they resolve via substringSharingImpl
+        // (no character copy), so the iterator indirection is just overhead.
+        // Short ropes are skipped per JSC's minLengthForRopeWalk: they resolve
+        // cheaply (≤2048 chars even goes on-stack in equalSlowCase), so the
+        // per-fiber callback indirection isn't worth it.
+        const min_length_for_rope_walk: usize = 296; // JSC::JSString::minLengthForRopeWalk
+        if (js_str.isNonSubstringRope() and js_str.is8Bit() and js_str.length() >= min_length_for_rope_walk) {
+            var state: RopeLatin1WidthIterator = .{ .bail_on_esc = !count_ansi };
+            var it = state.iter();
+            js_str.iterator(globalObject, &it);
+            js_str.ensureStillAlive();
+            if (!state.bailed) {
+                return .jsNumber(state.width);
+            }
+        }
+
+        const view = js_str.view(globalObject);
+        const str = bun.String.init(view);
+
         const width = if (count_ansi)
             str.visibleWidth(!ambiguous_is_narrow)
         else
@@ -1130,6 +1152,67 @@ pub const String = extern struct {
 
         return .jsNumber(width);
     }
+
+    const RopeLatin1WidthIterator = struct {
+        width: usize = 0,
+        bytes_seen: usize = 0,
+        fibers_seen: u32 = 0,
+        bail_on_esc: bool,
+        bailed: bool = false,
+
+        // Highly fragmented ropes (e.g. repeated `s += "x"`) lose to resolving:
+        // per-leaf C-callback overhead outpaces the memcpy saved. Sample the
+        // first few leaves and bail if average leaf length is small. Mirrors
+        // JSC's tryJSSubstringImpl maxTraversalDepth=8 in spirit (bail to
+        // resolveRope when traversal looks expensive), but keyed on leaf size
+        // since iterRope visits every leaf rather than descending one path.
+        const sample_fibers: u32 = 16;
+        const min_avg_fiber_len: usize = 48;
+
+        fn append8(it: *jsc.JSString.Iterator, ptr: [*]const u8, len: u32) callconv(.c) void {
+            const this: *RopeLatin1WidthIterator = @ptrCast(@alignCast(it.data.?));
+            const slice = ptr[0..len];
+            if (this.bail_on_esc and bun.strings.containsChar(slice, 0x1B)) {
+                this.bailed = true;
+                it.stop = 1;
+                return;
+            }
+            this.bytes_seen += len;
+            this.fibers_seen += 1;
+            if (this.fibers_seen == sample_fibers and this.bytes_seen < sample_fibers * min_avg_fiber_len) {
+                this.bailed = true;
+                it.stop = 1;
+                return;
+            }
+            this.width += bun.strings.visible.width.latin1(slice);
+        }
+
+        fn write8(it: *jsc.JSString.Iterator, ptr: [*]const u8, len: u32, _: u32) callconv(.c) void {
+            append8(it, ptr, len);
+        }
+
+        fn append16(it: *jsc.JSString.Iterator, _: [*]const u16, _: u32) callconv(.c) void {
+            // is8Bit() on a rope is the AND of all fibers, so this is unreachable in practice.
+            const this: *RopeLatin1WidthIterator = @ptrCast(@alignCast(it.data.?));
+            this.bailed = true;
+            it.stop = 1;
+        }
+
+        fn write16(it: *jsc.JSString.Iterator, _: [*]const u16, _: u32, _: u32) callconv(.c) void {
+            append16(it, undefined, 0);
+        }
+
+        fn iter(this: *RopeLatin1WidthIterator) jsc.JSString.Iterator {
+            return .{
+                .data = this,
+                .stop = 0,
+                .append8 = append8,
+                .append16 = append16,
+                .write8 = write8,
+                .write16 = write16,
+            };
+        }
+    };
 
     /// Reports owned allocation size, not the actual size of the string.
     pub fn estimatedSize(this: *const String) usize {

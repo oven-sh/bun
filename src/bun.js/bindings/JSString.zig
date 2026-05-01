@@ -5,6 +5,7 @@ pub const JSString = opaque {
     extern fn JSC__JSString__iterator(this: *JSString, globalObject: *JSGlobalObject, iter: *anyopaque) void;
     extern fn JSC__JSString__length(this: *const JSString) usize;
     extern fn JSC__JSString__is8Bit(this: *const JSString) bool;
+    extern fn JSC__JSString__isNonSubstringRope(this: *const JSString) bool;
 
     pub fn toJS(str: *JSString) JSValue {
         return JSValue.fromCell(str);
@@ -75,6 +76,12 @@ pub const JSString = opaque {
 
     pub fn is8Bit(this: *const JSString) bool {
         return JSC__JSString__is8Bit(this);
+    }
+
+    /// True for concatenation ropes (multi-fiber), false for substring ropes
+    /// and resolved strings. Does not resolve the rope.
+    pub fn isNonSubstringRope(this: *const JSString) bool {
+        return JSC__JSString__isNonSubstringRope(this);
     }
 
     pub const JStringIteratorAppend8Callback = *const fn (*Iterator, [*]const u8, u32) callconv(.c) void;

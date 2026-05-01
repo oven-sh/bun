@@ -3064,6 +3064,7 @@ bool JSC__JSString__eql(const JSC::JSString* arg0, JSC::JSGlobalObject* obj, JSC
     return arg0->equal(obj, arg2);
 }
 bool JSC__JSString__is8Bit(const JSC::JSString* arg0) { return arg0->is8Bit(); };
+bool JSC__JSString__isNonSubstringRope(const JSC::JSString* arg0) { return arg0->isNonSubstringRope(); };
 size_t JSC__JSString__length(const JSC::JSString* arg0) { return arg0->length(); }
 
 JSC::JSObject* JSC__JSString__toObject(JSC::JSString* arg0, JSC::JSGlobalObject* arg1)

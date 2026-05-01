@@ -41,8 +41,9 @@ expect.extend({
   },
 });
 
+setDefaultTimeout(1000 * 60 * 5);
+
 beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
   dummyBeforeAll();
 });
 
@@ -2391,6 +2392,111 @@ describe.concurrent("bun-install", () => {
       expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
+      });
+      await access(join(ctx.package_dir, "bun.lockb"));
+    });
+  });
+
+  it("should consider OR'd alternatives when first comparator is an exact version", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, {
+          "1.0.0": { as: "0.0.3" },
+          "2.5.0": { as: "0.0.5" },
+          latest: "2.5.0",
+        }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: {
+            baz: "1.0.0 || ^2.0.0",
+          },
+        }),
+      );
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const err = await stderr.text();
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      const out = await stdout.text();
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install v1."),
+        "",
+        expect.stringContaining("+ baz@2.5.0"),
+        "",
+        "1 package installed",
+      ]);
+      expect(await exited).toBe(0);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.5.tgz`]);
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
+        name: "baz",
+        version: "0.0.5",
+        bin: {
+          "baz-exec": "index.js",
+        },
+      });
+      await access(join(ctx.package_dir, "bun.lockb"));
+    });
+  });
+
+  it("should resolve OR'd alternative when the exact version does not exist", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, {
+          "2.5.0": { as: "0.0.5" },
+          latest: "2.5.0",
+        }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: {
+            baz: "1.0.0 || ^2.0.0",
+          },
+        }),
+      );
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const err = await stderr.text();
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      const out = await stdout.text();
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install v1."),
+        "",
+        expect.stringContaining("+ baz@2.5.0"),
+        "",
+        "1 package installed",
+      ]);
+      expect(await exited).toBe(0);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.5.tgz`]);
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
+        name: "baz",
+        version: "0.0.5",
+        bin: {
+          "baz-exec": "index.js",
+        },
       });
       await access(join(ctx.package_dir, "bun.lockb"));
     });

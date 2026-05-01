@@ -1924,9 +1924,15 @@ cat redir_out`
 describe("condexprs", () => {
   TestBuilder.command`[[ -f package.json ]] && echo yes!`.file("package.json", "hi").stdout("yes!\n").runAsTest("-f");
   TestBuilder.command`[[ -f mumbo.jumbo ]] && echo yes!`.exitCode(1).runAsTest("-f non-existent");
+  TestBuilder.command`[[ -f mydir ]] && echo yes!`.directory("mydir").exitCode(1).runAsTest("-f directory");
+  TestBuilder.command`[[ -f /dev/null ]] && echo yes!`.exitCode(1).runAsTest("-f character device");
 
   TestBuilder.command`[[ -d mydir ]] && echo yes!`.directory("mydir").stdout("yes!\n").runAsTest("-d");
   TestBuilder.command`[[ -d mumbo.jumbo ]] && echo yes!`.exitCode(1).runAsTest("-d non-existent");
+  TestBuilder.command`[[ -d package.json ]] && echo yes!`
+    .file("package.json", "hi")
+    .exitCode(1)
+    .runAsTest("-d regular file");
 
   TestBuilder.command`[[ -c /dev/null ]] && echo yes!`.stdout("yes!\n").runAsTest("-c");
   TestBuilder.command`[[ -c lol ]] && echo yes!`.exitCode(1).file("lol", "lol").runAsTest("-c not character device");

@@ -930,13 +930,14 @@ function Server(options, secureConnectionListener): void {
 $toClass(Server, "Server", NetServer);
 
 Server.prototype.getTicketKeys = function getTicketKeys() {
-  throw Error("Not implented in Bun yet");
+  throw Error("Not implemented in Bun yet");
 };
 
 Server.prototype.setTicketKeys = function setTicketKeys(keys) {
   validateBuffer(keys);
   if (keys.byteLength !== 48) {
-    throw new TypeError("Session ticket keys must be a 48-byte buffer");
+    // Node uses internal/assert here (ERR_INTERNAL_ASSERTION → Error, not TypeError).
+    throw new Error("Session ticket keys must be a 48-byte buffer");
   }
 };
 

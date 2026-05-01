@@ -41,7 +41,12 @@ test("Subprocess with ipc is collectable after the child exits", async () => {
       await once();
     }
 
-    // Give handleIPCClose time to run on the event loop, then collect.
+    // Poll until every wrapper has been finalized. Bun.sleep(0) is not
+    // sufficient here: its fast path keeps the last async frame (and thus
+    // the final \`proc\`) reachable, so only 7/8 get collected. A non-zero
+    // timer goes through the real event-loop idle path; the loop still
+    // exits as soon as \`collected === ITERS\`, so on success this takes a
+    // handful of iterations, not 60.
     for (let i = 0; i < 60 && collected < ITERS; i++) {
       await Bun.sleep(25);
       Bun.gc(true);

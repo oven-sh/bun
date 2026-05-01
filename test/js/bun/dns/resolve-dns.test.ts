@@ -1,6 +1,6 @@
 import { SystemError, dns } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, withoutAggressiveGC } from "harness";
 import { isIP, isIPv4, isIPv6 } from "node:net";
 
 const backends = ["system", "libc", "c-ares"];
@@ -171,6 +171,70 @@ describe("dns", () => {
     expect(result).toBeArray();
     expect(result.length).toBeGreaterThan(0);
     expect(isIP(result[0].address)).toBeGreaterThan(0);
+  });
+
+  // LibInfo.lookup (macOS `backend: "system"`) acquires a slot in the 32-entry
+  // pending_host_cache_native HiveArray, then calls getaddrinfo_async_start. If
+  // that call fails synchronously the slot must be released via used.unset so a
+  // later lookup for the same hostname doesn't see .inflight and append onto the
+  // freed request (use-after-free). https://github.com/oven-sh/bun/pull/30005
+  //
+  // getaddrinfo_async_start only fails under mach-port exhaustion, so the error
+  // branch is forced via BUN_INTERNAL_DNS_FORCE_LIBINFO_START_ERROR.
+  test.skipIf(!isMacOS)("LibInfo.lookup releases pending-cache slot on getaddrinfo_async_start error", async () => {
+    const script = /* js */ `
+      const { dns } = require("bun");
+      const opts = { backend: "system" };
+      // Two lookups with the same hostname+options so they hash to the same
+      // pending-cache slot. If the first failure orphans the slot, the second
+      // lookup is classified .inflight and PendingCacheKey.append dereferences
+      // the freed GetAddrInfoRequest -> heap-use-after-free under ASAN.
+      for (let i = 0; i < 2; i++) {
+        try {
+          await dns.lookup("example.com", opts);
+          console.log("resolved");
+        } catch (e) {
+          console.log("rejected:" + e.message);
+        }
+      }
+      // The HiveArray has 32 slots; with the old used.set() no-op, 32 distinct
+      // failures permanently fill it. Verify a 33rd distinct host still hits
+      // the error path rather than falling through to .disabled.
+      for (let i = 0; i < 33; i++) {
+        try {
+          await dns.lookup("host-" + i + ".invalid", opts);
+          console.log("resolved");
+        } catch (e) {
+          // ok
+        }
+      }
+      try {
+        await dns.lookup("example.com", opts);
+        console.log("post:resolved");
+      } catch (e) {
+        console.log("post:rejected:" + e.message);
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        BUN_INTERNAL_DNS_FORCE_LIBINFO_START_ERROR: "1",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stderr, stdout: stdout.trim().split("\n") }).toEqual({
+      stderr: "",
+      stdout: [
+        expect.stringContaining("rejected:getaddrinfo_async_start error"),
+        expect.stringContaining("rejected:getaddrinfo_async_start error"),
+        expect.stringContaining("post:rejected:getaddrinfo_async_start error"),
+      ],
+    });
+    expect(exitCode).toBe(0);
   });
 
   describe("setServers", () => {

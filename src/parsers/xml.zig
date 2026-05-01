@@ -335,6 +335,19 @@ pub const XML = struct {
         var depth: usize = 1;
         var quote: u8 = 0;
         while (self.pos < self.source.len) {
+            // Comments and PIs inside the internal subset may contain
+            // unbalanced '<' / '>' — skip them atomically so they can't
+            // confuse the depth counter.
+            if (quote == 0) {
+                if (self.hasPrefix("<!--")) {
+                    self.skipComment() catch return error.UnterminatedDoctype;
+                    continue;
+                }
+                if (self.hasPrefix("<?")) {
+                    self.skipProcessingInstruction() catch return error.UnterminatedDoctype;
+                    continue;
+                }
+            }
             const c = self.source[self.pos];
             self.pos += 1;
             if (quote != 0) {
@@ -479,9 +492,17 @@ pub const XML = struct {
             }
 
             if (c == '&') {
+                const before = text.items.len;
                 try self.scanEntity(&text);
                 has_text = true;
-                only_whitespace_text = false;
+                // A character reference like `&#32;` may expand to
+                // whitespace — don't count that as significant text.
+                for (text.items[before..]) |b| {
+                    if (!isWhitespace(b)) {
+                        only_whitespace_text = false;
+                        break;
+                    }
+                }
                 continue;
             }
 
@@ -520,10 +541,12 @@ pub const XML = struct {
 
         if (significant_text) {
             const trimmed = try self.trimAndCollapse(text.items);
-            try properties.append(.{
-                .key = Expr.init(E.String, E.String.init(try self.allocator.dupe(u8, "#text")), start_loc),
-                .value = Expr.init(E.String, E.String.init(trimmed), start_loc),
-            });
+            if (trimmed.len > 0) {
+                try properties.append(.{
+                    .key = Expr.init(E.String, E.String.init(try self.allocator.dupe(u8, "#text")), start_loc),
+                    .value = Expr.init(E.String, E.String.init(trimmed), start_loc),
+                });
+            }
         }
 
         return .{ tag_name, Expr.init(E.Object, .{
@@ -531,58 +554,69 @@ pub const XML = struct {
         }, start_loc) };
     }
 
+    const NameSlot = struct {
+        count: u32,
+        /// Index into `properties` once emitted, else maxInt.
+        prop_index: u32,
+        list: std.array_list.Managed(Expr),
+    };
+
     /// Group children by tag name, preserving first-appearance order of the
-    /// distinct names. Repeated names become arrays.
+    /// distinct names. Repeated names become arrays. Runs in O(N).
     fn groupChildren(
         self: *XML,
         properties: *std.array_list.Managed(G.Property),
         children: []const Child,
         start_loc: logger.Loc,
     ) ParseError!void {
-        var i: usize = 0;
-        while (i < children.len) : (i += 1) {
-            const name = children[i].name;
+        var slots = bun.StringHashMap(NameSlot).init(self.allocator);
+        try slots.ensureTotalCapacity(@intCast(children.len));
 
-            // Already emitted?
-            var already = false;
-            var k: usize = 0;
-            while (k < i) : (k += 1) {
-                if (strings.eqlLong(children[k].name, name, true)) {
-                    already = true;
-                    break;
-                }
-            }
-            if (already) continue;
-
-            // Count siblings with the same name.
-            var count: usize = 1;
-            var j: usize = i + 1;
-            while (j < children.len) : (j += 1) {
-                if (strings.eqlLong(children[j].name, name, true)) count += 1;
-            }
-
-            const key_expr = Expr.init(E.String, E.String.init(name), start_loc);
-
-            if (count == 1) {
-                try properties.append(.{
-                    .key = key_expr,
-                    .value = children[i].value,
-                });
+        // Pass 1: count occurrences of each name.
+        for (children) |child| {
+            const entry = try slots.getOrPut(child.name);
+            if (entry.found_existing) {
+                entry.value_ptr.count += 1;
             } else {
-                var items = std.array_list.Managed(Expr).init(self.allocator);
-                try items.ensureTotalCapacity(count);
-                var m: usize = i;
-                while (m < children.len) : (m += 1) {
-                    if (strings.eqlLong(children[m].name, name, true)) {
-                        items.appendAssumeCapacity(children[m].value);
-                    }
-                }
-                try properties.append(.{
-                    .key = key_expr,
-                    .value = Expr.init(E.Array, .{
-                        .items = .moveFromList(&items),
-                    }, start_loc),
+                entry.value_ptr.* = .{
+                    .count = 1,
+                    .prop_index = std.math.maxInt(u32),
+                    .list = undefined,
+                };
+            }
+        }
+
+        try properties.ensureUnusedCapacity(slots.count());
+
+        // Pass 2: emit in child order, grouping duplicates into arrays.
+        for (children) |child| {
+            const slot = slots.getPtr(child.name).?;
+            if (slot.count == 1) {
+                properties.appendAssumeCapacity(.{
+                    .key = Expr.init(E.String, E.String.init(child.name), start_loc),
+                    .value = child.value,
                 });
+                continue;
+            }
+            if (slot.prop_index == std.math.maxInt(u32)) {
+                slot.list = try std.array_list.Managed(Expr).initCapacity(self.allocator, slot.count);
+                slot.prop_index = @intCast(properties.items.len);
+                properties.appendAssumeCapacity(.{
+                    .key = Expr.init(E.String, E.String.init(child.name), start_loc),
+                    // Placeholder; filled in below.
+                    .value = Expr.init(E.Array, .{}, start_loc),
+                });
+            }
+            slot.list.appendAssumeCapacity(child.value);
+        }
+
+        // Pass 3: attach the gathered arrays.
+        var it = slots.valueIterator();
+        while (it.next()) |slot| {
+            if (slot.count > 1) {
+                properties.items[slot.prop_index].value = Expr.init(E.Array, .{
+                    .items = .moveFromList(&slot.list),
+                }, start_loc);
             }
         }
     }

@@ -175,8 +175,8 @@ pub fn create(bytes: []const u8) bun.sys.Maybe(bun.webcore.Blob.Store.Bytes) {
     // Bun.file(fd).write() after guessing the descriptor number), writes
     // to the now-unbacked pages — including std.mem.Allocator.free's
     // `@memset(ptr, undefined)` in safe builds — would SIGBUS. Ignore
-    // errors: older kernels that reached here via the retry path may
-    // not have MFD_ALLOW_SEALING set, and the store still works.
+    // errors: the store still works unsealed and a sandbox could
+    // conceivably filter F_ADD_SEALS.
     _ = bun.sys.fcntl(fd, F_ADD_SEALS, F_SEAL_SHRINK);
 
     var linux_memfd_allocator = Self.new(.{

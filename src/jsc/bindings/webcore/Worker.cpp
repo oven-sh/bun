@@ -90,6 +90,12 @@ void WebWorker__releaseParentPollRef(void* worker);
 // Free the Zig WebWorker struct. Called from ~Worker.
 void WebWorker__destroy(void* worker);
 
+// Whether cooperative close (self.close()) has been requested for the
+// worker attached to `workerVM`. Used by in-flight dispatch loops
+// (drainInbox) to stop mid-batch when the spec says queued tasks must
+// be discarded.
+bool WebWorker__hasRequestedClose(void* workerVM);
+
 } // extern "C"
 // -------------------------------------------------------------------------------------------------
 
@@ -308,6 +314,14 @@ static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* gl
                 // Termination pending. Drop the rest — dispatch is a no-op
                 // once m_terminateRequested is set (drainToParent), and the
                 // worker thread is tearing down (drainToWorker).
+                return false;
+            }
+            // Cooperative close: `self.close()` in a message handler must
+            // discard the rest of the batch per the WHATWG "close a worker"
+            // algorithm. drainMicrotasks() above only trips on the JSC
+            // termination trap, which self.close() deliberately doesn't
+            // arm, so check the close flag separately.
+            if (WebWorker__hasRequestedClose(globalObject->bunVM())) {
                 return false;
             }
         }

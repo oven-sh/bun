@@ -242,6 +242,100 @@ test.concurrent("worker.terminate() still interrupts JS even after self.close() 
   expect(stdout.trim()).toBe("OK");
 });
 
+test.concurrent("self.close() followed by top-level await doesn't fire discarded timers or hang", async () => {
+  // Per WHATWG "close a worker" step 1, `close()` discards already-queued
+  // tasks. A top-level `self.close(); await new Promise(r => setTimeout(r, 100))`
+  // must NOT fire the timer — the await is itself the closing task, and
+  // the worker should shut down as soon as the synchronous portion ends.
+  // (Also guards against a hang when the awaited promise never resolves.)
+  using dir = tempDir("issue-29186-close-before-await", {
+    "worker.mjs": `
+      self.close();
+      // Schedule a message that would signal a discarded-task regression.
+      setTimeout(() => { self.postMessage("timer-fired"); }, 0);
+      // Await a promise that never resolves. Pre-fix this hung the worker
+      // because waitForPromiseWithTermination didn't observe requested_close.
+      await new Promise(() => {});
+      self.postMessage("after-await");
+    `,
+    "main.mjs": `
+      const worker = new Worker(new URL("./worker.mjs", import.meta.url).href, { type: "module" });
+      const events = [];
+      const { promise, resolve, reject } = Promise.withResolvers();
+
+      worker.onmessage = ({ data }) => { events.push(data); };
+      worker.onerror = (e) => reject(new Error("worker error: " + (e.message || e)));
+      worker.addEventListener("close", (e) => {
+        events.push({ type: "close", code: e.code, wasClean: e.wasClean });
+        resolve();
+      });
+
+      await promise;
+      console.log(JSON.stringify(events));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
+  // Neither the timer nor the after-await postMessage should fire.
+  expect(JSON.parse(stdout.trim())).toEqual([
+    { type: "close", code: 0, wasClean: true },
+  ]);
+});
+
+test.concurrent("self.close() inside an onmessage handler discards the rest of the batch", async () => {
+  // Per WHATWG "close a worker", if close() is called while processing
+  // message k of a buffered batch, messages k+1..N must be discarded.
+  // drainInbox used to only break on JSC's termination trap, which
+  // self.close() deliberately doesn't arm.
+  using dir = tempDir("issue-29186-close-in-handler", {
+    "worker.mjs": `
+      self.onmessage = ({ data }) => {
+        self.postMessage("handled-" + data);
+        if (data === 1) self.close();
+      };
+    `,
+    "main.mjs": `
+      const worker = new Worker(new URL("./worker.mjs", import.meta.url).href, { type: "module" });
+      const events = [];
+      const { promise, resolve, reject } = Promise.withResolvers();
+
+      worker.onmessage = ({ data }) => { events.push(data); };
+      worker.onerror = (e) => reject(new Error("worker error: " + (e.message || e)));
+      worker.addEventListener("close", () => resolve());
+
+      // Buffer 3 messages while the worker is still starting up.
+      worker.postMessage(1);
+      worker.postMessage(2);
+      worker.postMessage(3);
+
+      await promise;
+      console.log(JSON.stringify(events));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
+  // Only the first handler ran — 2 and 3 are discarded.
+  expect(JSON.parse(stdout.trim())).toEqual(["handled-1"]);
+});
+
 test.concurrent("close() on the main thread is a no-op", async () => {
   // On main (non-window) contexts, `close()` should silently do nothing —
   // matching how `postMessage` is a no-op there today.

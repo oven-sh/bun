@@ -263,13 +263,32 @@ pub fn hasRequestedTerminate(this: *const WebWorker) bool {
     return this.requested_terminate.load(.acquire);
 }
 
-/// `spin()`'s loop-exit predicate: either abrupt terminate or cooperative
-/// close. Kept distinct from `hasRequestedTerminate()` so a cooperative
-/// `self.close()` doesn't tell external callers the worker is in a failure
-/// state — the task that called `close()` must run to completion with a
-/// clean `wasClean: true` close event.
-fn shouldExitLoop(this: *const WebWorker) bool {
+/// True if cooperative close (`self.close()`) has been requested. Callers
+/// in `VirtualMachine` use this to distinguish a clean close from an
+/// abrupt termination so the parent sees `CloseEvent{code:0, wasClean:true}`.
+pub fn hasRequestedClose(this: *const WebWorker) bool {
+    return this.requested_close.load(.acquire);
+}
+
+/// Loop-exit predicate for event loops inside the worker thread: either
+/// abrupt terminate or cooperative close should break the loop. Used by
+/// `spin()` and by `waitForPromiseWithTermination` (the inner loop that
+/// drives entry-point evaluation). Kept distinct from
+/// `hasRequestedTerminate()` so a cooperative `self.close()` doesn't tell
+/// external callers the worker is in a failure state — the task that
+/// called `close()` must run to completion with a clean
+/// `wasClean: true` close event.
+pub fn shouldExitLoop(this: *const WebWorker) bool {
     return this.requested_terminate.load(.acquire) or this.requested_close.load(.acquire);
+}
+
+/// Whether cooperative close (`self.close()`) has been requested. Used by
+/// in-flight dispatch loops (e.g. `drainInbox` in Worker.cpp) to stop
+/// processing buffered tasks mid-batch per the WHATWG "close a worker"
+/// algorithm. Exported for C++ consumers.
+export fn WebWorker__hasRequestedClose(vm: *jsc.VirtualMachine) bool {
+    const worker = vm.worker orelse return false;
+    return worker.requested_close.load(.acquire);
 }
 
 /// Swap the abrupt-termination flag to true; returns the old value so callers
@@ -646,11 +665,23 @@ fn spin(this: *WebWorker) void {
         this.shutdown();
     }
 
-    var promise = vm.loadEntryPointForWebWorker(path) catch {
-        // process.exit() may have run during load; don't clobber its code.
-        if (!this.exit_called) vm.exit_handler.exit_code = 1;
-        this.flushLogs(vm);
-        this.shutdown();
+    var promise = vm.loadEntryPointForWebWorker(path) catch |err| switch (err) {
+        // Cooperative shutdown — `self.close()` during top-level eval/
+        // await. Exit cleanly (code 0, wasClean true). The module promise
+        // may still be pending, so don't touch it; shutdown() posts the
+        // close event to the parent.
+        error.WorkerClosed => {
+            this.flushLogs(vm);
+            this.shutdown();
+        },
+        else => {
+            // Abrupt: parent terminate(), uncaught error, or
+            // process.exit() during load. process.exit() already set its
+            // own code; don't clobber it.
+            if (!this.exit_called) vm.exit_handler.exit_code = 1;
+            this.flushLogs(vm);
+            this.shutdown();
+        },
     };
 
     if (promise.status() == .rejected) {

@@ -2414,8 +2414,17 @@ pub fn loadEntryPointForWebWorker(this: *VirtualMachine, entry_path: string) any
         .internal = promise,
     });
     if (this.worker) |worker| {
+        // Abrupt: parent terminate() / process.exit() — caller will set
+        // exit_code = 1 (unless process.exit() set it first).
         if (worker.hasRequestedTerminate()) {
             return error.WorkerTerminated;
+        }
+        // Cooperative: self.close() during top-level eval/await. The module
+        // promise may still be pending (e.g. `self.close(); await …`) — we
+        // must not touch it. Caller treats this as a clean shutdown
+        // (exit_code = 0, wasClean = true).
+        if (worker.hasRequestedClose()) {
+            return error.WorkerClosed;
         }
     }
     return this.pending_internal_promise.?;

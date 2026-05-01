@@ -577,12 +577,18 @@ pub fn waitForPromise(this: *EventLoop, promise: jsc.AnyPromise) void {
 
 pub fn waitForPromiseWithTermination(this: *EventLoop, promise: jsc.AnyPromise) void {
     const worker = this.virtual_machine.worker orelse @panic("EventLoop.waitForPromiseWithTermination: worker is not initialized");
+    // `shouldExitLoop()` observes BOTH `requested_terminate` and
+    // `requested_close`. This loop drives entry-point evaluation, so a
+    // top-level `self.close()` followed by `await ...` must stop ticking
+    // rather than fire tasks the WHATWG "close a worker" algorithm
+    // requires us to discard (and, for an await on a never-resolving
+    // promise, would otherwise hang the worker forever).
     switch (promise.status()) {
         .pending => {
-            while (!worker.hasRequestedTerminate() and promise.status() == .pending) {
+            while (!worker.shouldExitLoop() and promise.status() == .pending) {
                 this.tick();
 
-                if (!worker.hasRequestedTerminate() and promise.status() == .pending) {
+                if (!worker.shouldExitLoop() and promise.status() == .pending) {
                     this.autoTick();
                 }
             }

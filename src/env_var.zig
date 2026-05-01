@@ -207,11 +207,6 @@ pub const feature_flag = struct {
     pub const BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS = newFeatureFlag("BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS", .{});
     pub const BUN_INSTRUMENTS = newFeatureFlag("BUN_INSTRUMENTS", .{});
     pub const BUN_INTERNAL_BUNX_INSTALL = newFeatureFlag("BUN_INTERNAL_BUNX_INSTALL", .{});
-    /// Test-only: make the macOS libinfo async resolver treat the first
-    /// callback as EAI_NONAME so the ADDRCONFIG fallback path (which issues a
-    /// second getaddrinfo_async_start on a fresh mach port) is exercised
-    /// without requiring a loopback-only network configuration.
-    pub const BUN_INTERNAL_DNS_FORCE_ADDRCONFIG_RETRY = newFeatureFlag("BUN_INTERNAL_DNS_FORCE_ADDRCONFIG_RETRY", .{});
     pub const BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN = newFeatureFlag("BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN", .{});
     pub const BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT = newFeatureFlag("BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT", .{});
     pub const BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF = newFeatureFlag("BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF", .{});

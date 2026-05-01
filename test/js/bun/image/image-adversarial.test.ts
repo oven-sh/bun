@@ -513,13 +513,40 @@ describe("hostile option objects", () => {
     expect(await survives(new Bun.Image(ab).metadata())).toBe("rejected");
   });
 
+  test("resizable ArrayBuffer is rejected at construction", () => {
+    const ab = new ArrayBuffer(tinyPng.byteLength, { maxByteLength: tinyPng.byteLength * 2 });
+    new Uint8Array(ab).set(tinyPng);
+    expect(() => new Bun.Image(ab)).toThrow(/resizable/);
+    // …and a view into one is rejected the same way.
+    expect(() => new Bun.Image(new Uint8Array(ab))).toThrow(/resizable/);
+  });
+
+  test("detach AFTER construction rejects the next terminal", async () => {
+    const ab = tinyPng.buffer.slice(tinyPng.byteOffset, tinyPng.byteOffset + tinyPng.byteLength);
+    const img = new Bun.Image(ab);
+    expect((await img.metadata()).width).toBe(2);
+    structuredClone(ab, { transfer: [ab] }); // detach between calls
+    // schedule() re-reads the buffer and sees byteLength 0.
+    expect(img.png().bytes()).rejects.toThrow(/detached/);
+  });
+
   test("SharedArrayBuffer input", async () => {
     const sab = new SharedArrayBuffer(tinyPng.byteLength);
     new Uint8Array(sab).set(tinyPng);
-    // Constructor dupes immediately, so concurrent mutation of the SAB after
-    // this point doesn't race the worker.
+    // SAB is non-detachable; the per-task pin is a no-op and the worker reads
+    // it directly. Concurrent mutation would just decode garbage, not UB.
     const meta = await new Bun.Image(sab).metadata();
     expect(meta.width).toBe(2);
+  });
+
+  test("data: URL input (base64)", async () => {
+    const url = "data:image/png;base64," + Buffer.from(tinyPng).toString("base64");
+    const meta = await new Bun.Image(url).metadata();
+    expect(meta).toEqual({ width: 2, height: 2, format: "png" });
+  });
+
+  test("data: URL with bad base64 throws", () => {
+    expect(() => new Bun.Image("data:image/png;base64,!!!not base64!!!")).toThrow(/base64/);
   });
 });
 

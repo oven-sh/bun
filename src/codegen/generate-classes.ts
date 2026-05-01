@@ -1414,7 +1414,10 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
           bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor&, ASCIILiteral* reason) final
           {
               auto* controller = uncheckedDowncast<${name}>(handle.slot()->asCell());
-              if (${name}::hasPendingActivity(controller->wrapped())) {
+              // m_ctx is null between wrapper creation and constructor return
+              // when constructNeedsThis is set; GC during that window must not
+              // call into the Zig hasPendingActivity with nullptr.
+              if (controller->wrapped() && ${name}::hasPendingActivity(controller->wrapped())) {
                   if (reason) [[unlikely]] {
                     *reason = "has pending activity"_s;
                   }

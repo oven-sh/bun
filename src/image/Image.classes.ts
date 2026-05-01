@@ -4,8 +4,16 @@ export default [
   define({
     name: "Image",
     construct: true,
+    constructNeedsThis: true,
     finalize: true,
-    hasPendingActivity: true,
+    // Strong-ref slot for the input ArrayBuffer/TypedArray so we BORROW its
+    // bytes instead of duping in the constructor. While a task is in flight
+    // the JSRef on the Zig side holds a Strong ref to this wrapper, the
+    // wrapper's sourceJS slot keeps the ArrayBuffer alive, and the buffer is
+    // pinned for the task's duration — so the slice stays valid off-thread.
+    // (No `hasPendingActivity` polling; the JSRef upgrade/downgrade is
+    //  explicit at schedule/then.)
+    values: ["sourceJS"],
     configurable: false,
     JSType: "0b11101110",
     klass: {},

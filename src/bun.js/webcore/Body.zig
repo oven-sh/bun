@@ -623,7 +623,7 @@ pub const Value = union(Tag) {
                 // Body init is synchronous, so encode now and wrap as a Blob
                 // with the right MIME type. The off-thread path is still
                 // available via `await image.blob()`.
-                const out = try image.encodeForBody(globalThis);
+                const out = try image.encodeForBody(globalThis, value);
                 // Blob.Store frees via an Allocator, so dupe out of the
                 // codec's allocator here. The hot path (`.bytes()`) hands the
                 // codec buffer to JS without this copy.

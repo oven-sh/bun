@@ -3260,6 +3260,7 @@ bool JSC__JSValue__asArrayBuffer(
         out->byte_len = view->byteLength();
         out->cell_type = type;
         out->shared = view->isShared();
+        out->resizable = view->isResizableOrGrowableShared();
         break;
     }
     case JSC::JSType::ArrayBufferType: {
@@ -3269,6 +3270,7 @@ bool JSC__JSValue__asArrayBuffer(
         out->byte_len = buffer->byteLength();
         out->cell_type = JSC::JSType::ArrayBufferType;
         out->shared = buffer->isShared();
+        out->resizable = buffer->isResizableOrGrowableShared();
         break;
     }
     case JSC::JSType::ObjectType:
@@ -3279,6 +3281,7 @@ bool JSC__JSValue__asArrayBuffer(
             out->byte_len = view->byteLength();
             out->cell_type = view->type();
             out->shared = view->isShared();
+            out->resizable = view->isResizableOrGrowableShared();
         } else if (JSC::JSArrayBuffer* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
             JSC::ArrayBuffer* buffer = jsBuffer->impl();
             if (!buffer)
@@ -3288,6 +3291,7 @@ bool JSC__JSValue__asArrayBuffer(
             out->byte_len = buffer->byteLength();
             out->cell_type = JSC::JSType::ArrayBufferType;
             out->shared = buffer->isShared();
+            out->resizable = buffer->isResizableOrGrowableShared();
         } else {
             return false;
         }
@@ -3300,6 +3304,32 @@ bool JSC__JSValue__asArrayBuffer(
     out->_value = JSValue::encode(value);
     out->ptr = static_cast<char*>(data);
     return true;
+}
+
+// Pin/unpin the backing ArrayBuffer of a JSArrayBuffer or JSArrayBufferView so
+// transfer()/detach() throw while a native borrower holds a slice into it.
+// `pin` is a no-op on SharedArrayBuffer (already non-detachable). Returns
+// false if `value` has no ArrayBuffer impl.
+static JSC::ArrayBuffer* arrayBufferImpl(JSC::JSValue value)
+{
+    if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
+        return jb->impl();
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
+        return view->possiblySharedBuffer();
+    return nullptr;
+}
+CPP_DECL bool JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
+{
+    if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v))) {
+        buf->pin();
+        return true;
+    }
+    return false;
+}
+CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
+{
+    if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v)))
+        buf->unpin();
 }
 
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__createEmptyArray(JSC::JSGlobalObject* arg0, size_t length)

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { cpSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 // Regression test: EventLoop.tickConcurrentWithCount used `writableSlice(0)`
 // after `ensureUnusedCapacity(count)`. The latter guarantees `writableLength()
@@ -44,7 +44,10 @@ test.skipIf(isWindows)(
         stderr: "pipe",
       });
       [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const line = stdout.trim().split("\n").findLast(l => l.startsWith("{"));
+      const line = stdout
+        .trim()
+        .split("\n")
+        .findLast(l => l.startsWith("{"));
       expect(line, `no JSON in stdout:\n${stdout}\nstderr:\n${stderr}`).toBeString();
       result = JSON.parse(line!);
       if (result!.run >= 2) break;

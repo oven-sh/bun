@@ -69,13 +69,20 @@ pub fn decodeInternal(this: *ColumnDefinition41, comptime Context: type, reader:
     this.schema = try reader.encodeLenString();
     debug("schema: {s}", .{this.schema.slice()});
 
-    this.table = try reader.encodeLenString();
+    // `name` and `table` are surfaced to JS via toJS() when the query's final
+    // OK/EOF packet arrives, which may be many onData() calls after decode.
+    // The reader returns `Data{ .temporary = ... }` slices into the socket
+    // read buffer which will have been overwritten or realloc'd by then, so
+    // own a copy now. The other string fields are never read post-decode.
+    const table = try reader.encodeLenString();
+    this.table = try Data.create(table.slice(), bun.default_allocator);
     debug("table: {s}", .{this.table.slice()});
 
     this.org_table = try reader.encodeLenString();
     debug("org_table: {s}", .{this.org_table.slice()});
 
-    this.name = try reader.encodeLenString();
+    const name = try reader.encodeLenString();
+    this.name = try Data.create(name.slice(), bun.default_allocator);
     debug("name: {s}", .{this.name.slice()});
 
     this.org_name = try reader.encodeLenString();

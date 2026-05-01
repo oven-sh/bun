@@ -364,11 +364,21 @@ pub fn createInstance(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
         // We always request the cert so we can verify it and also we manually
         // abort the connection if the hostname doesn't match. Built here so
         // CA/cert errors throw synchronously, applied later by upgradeToTLS.
+        // Goes through the per-VM weak `SSLContextCache` so every pooled
+        // connection / reconnect shares one `SSL_CTX*` per distinct config.
         var err: uws.create_bun_socket_error_t = .none;
-        secure = tls_config.asUSocketsForClientVerification().createSSLContext(&err) orelse {
+        secure = vm.rareData().sslCtxCache().getOrCreateOpts(tls_config.asUSocketsForClientVerification(), &err) orelse {
             tls_config.deinit();
             return globalObject.throwValue(err.toJS(globalObject));
         };
+    }
+    // Covers `try arguments[7/8].toBunString()` and the null-byte rejection
+    // below. Ownership passes to `MySQLConnection.init` once `bun.new`
+    // succeeds — we null the locals at that point so the connect-fail path
+    // (which `deref()`s the connection) doesn't double-free.
+    errdefer {
+        if (secure) |s| bun.BoringSSL.c.SSL_CTX_free(s);
+        tls_config.deinit();
     }
 
     var username: []const u8 = "";
@@ -416,8 +426,7 @@ pub fn createInstance(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
     inline for (.{ .{ username, "username" }, .{ password, "password" }, .{ database, "database" }, .{ path, "path" } }) |entry| {
         if (entry[0].len > 0 and std.mem.indexOfScalar(u8, entry[0], 0) != null) {
             bun.default_allocator.free(options_buf);
-            tls_config.deinit();
-            if (secure) |s| bun.BoringSSL.c.SSL_CTX_free(s);
+            // tls_config / secure released by the errdefer above.
             return globalObject.throwInvalidArguments(entry[1] ++ " must not contain null bytes", .{});
         }
     }
@@ -448,6 +457,10 @@ pub fn createInstance(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
             ssl_mode,
         ),
     });
+    // Ownership transferred into `ptr.#connection`; disarm the errdefer so the
+    // connect-fail `ptr.deref()` is the sole cleanup path from here on.
+    secure = null;
+    tls_config = .{};
 
     {
         const hostname = hostname_str.toUTF8(bun.default_allocator);

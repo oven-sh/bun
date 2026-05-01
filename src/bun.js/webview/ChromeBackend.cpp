@@ -277,7 +277,6 @@ static constexpr us_socket_vtable_t s_cdpVTable = {
     .on_connect_error = nullptr,
     .on_connecting_error = nullptr,
     .on_handshake = nullptr,
-    .is_low_prio = nullptr,
 };
 
 bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDataDir,

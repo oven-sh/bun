@@ -112,7 +112,6 @@ static constexpr us_socket_vtable_t s_hostVTable = {
     .on_connect_error = nullptr,
     .on_connecting_error = nullptr,
     .on_handshake = nullptr,
-    .is_low_prio = nullptr,
 };
 
 // us_socket_ref/unref are no-ops on kqueue, and us_poll_start_rc doesn't

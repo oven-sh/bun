@@ -259,7 +259,6 @@ struct us_socket_vtable_t {
     struct us_socket_t *(*on_connect_error)(us_socket_r, int code);
     struct us_connecting_socket_t *(*on_connecting_error)(struct us_connecting_socket_t *, int code);
     void (*on_handshake)(us_socket_r, int success, struct us_bun_verify_error_t, void *custom_data);
-    int (*is_low_prio)(us_socket_r);
 };
 
 /* Mutable list-head + sweep state. Zero-initialise then us_socket_group_init().

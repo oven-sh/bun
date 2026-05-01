@@ -534,7 +534,7 @@ function spawnSync(file, args, options) {
       // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
       // so we have to set argv0 to spawnargs[0] and cmd[0] to file
       cmd: [options.file, ...Array.prototype.slice.$call(options.args, 1)],
-      env: options.env || undefined,
+      env: options[kBunEnv] || undefined,
       cwd: options.cwd || undefined,
       stdio: bunStdio,
       windowsVerbatimArguments: options.windowsVerbatimArguments,
@@ -991,7 +991,15 @@ function normalizeSpawnArguments(file, args, options) {
     if (value !== undefined) {
       validateArgumentNullCheck(key, `options.env['${key}']`);
       validateArgumentNullCheck(value, `options.env['${key}']`);
-      bunEnv[key] = value;
+      // On Windows, env keys are case-insensitive but `process.env` iterates
+      // with the OS's canonical casing (e.g. "Path"). Bun.spawnSync's PATH
+      // lookup for argv[0] does a case-sensitive match on "PATH", so rename
+      // the PATH entry here to keep command resolution working.
+      if (process.platform === "win32" && StringPrototypeToUpperCase.$call(key) === "PATH") {
+        bunEnv["PATH"] = value;
+      } else {
+        bunEnv[key] = value;
+      }
     }
   }
 

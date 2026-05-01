@@ -243,6 +243,10 @@ describe("Bun.XML.parse", () => {
         r: { a: ["1", "2"] },
       });
     });
+
+    test("whitespace-only char reference does not emit #text", () => {
+      expect(parse("<r>&#32;<a>1</a>&#9;</r>")).toEqual({ r: { a: "1" } });
+    });
   });
 
   describe("mixed content", () => {
@@ -500,7 +504,7 @@ describe("Bun.XML.parse adversarial", () => {
   test("many distinct children", () => {
     let kids = "";
     const obj: Record<string, string> = {};
-    for (let i = 0; i < 200; i++) {
+    for (let i = 0; i < 2000; i++) {
       kids += `<k${i}>${i}</k${i}>`;
       obj[`k${i}`] = String(i);
     }
@@ -651,6 +655,14 @@ describe("Bun.XML.parse security", () => {
 
     test("SYSTEM url with embedded quotes and brackets", () => {
       expect(parse(`<!DOCTYPE r SYSTEM "javascript:alert('>]]><')"><r>x</r>`)).toEqual({ r: "x" });
+    });
+
+    test("comment inside internal subset with unbalanced '>'", () => {
+      expect(parse("<!DOCTYPE r [<!-- a > b > c -->]><r>x</r>")).toEqual({ r: "x" });
+    });
+
+    test("PI inside internal subset with unbalanced '>'", () => {
+      expect(parse("<!DOCTYPE r [<?foo a > b?>]><r>x</r>")).toEqual({ r: "x" });
     });
   });
 

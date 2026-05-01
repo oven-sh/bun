@@ -1,5 +1,6 @@
 import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import v8 from "node:v8";
 
 describe("structuredClone with Blob and File", () => {
@@ -301,45 +302,67 @@ describe("structuredClone with Blob and File", () => {
     // the sender controls. A malicious payload can set it past the end of the
     // serialized byte store; without clamping, reading the resulting Blob
     // (`arrayBuffer()`/`text()`/`bytes()`) slices past the backing allocation
-    // and returns unrelated heap memory.
+    // and returns unrelated heap memory (or segfaults on an unmapped page).
     //
     // These tests assert that out-of-range offsets are clamped to the store
-    // bounds so no out-of-store bytes are ever exposed.
+    // bounds so no out-of-store bytes are ever exposed. The work runs in a
+    // child process so that the pre-fix crash surfaces as an ordinary test
+    // failure instead of killing the test runner.
+
+    // Locate the offset field once. Do it by serializing a sliced blob with a
+    // sentinel offset and comparing against a zero-offset payload; keeps the
+    // test robust against wire-format header changes.
+    const marker = 0xa5;
+    const baseline = new Uint8Array(serialize(new Blob([Buffer.alloc(4, marker)])));
+    const sentinel = new Uint8Array(serialize(new Blob([Buffer.alloc(8, marker)]).slice(4)));
+    let offsetFieldIndex = -1;
+    for (let i = 0; i + 8 <= sentinel.length; i++) {
+      if (
+        sentinel[i] === 4 &&
+        sentinel[i + 1] === 0 &&
+        sentinel[i + 2] === 0 &&
+        sentinel[i + 3] === 0 &&
+        sentinel[i + 4] === 0 &&
+        sentinel[i + 5] === 0 &&
+        sentinel[i + 6] === 0 &&
+        sentinel[i + 7] === 0 &&
+        baseline[i] === 0
+      ) {
+        offsetFieldIndex = i;
+        break;
+      }
+    }
+    if (offsetFieldIndex < 0) throw new Error("could not locate offset field in serialized blob");
 
     function craft(offset: bigint) {
-      // Use a recognizable marker for the store bytes so we can detect
-      // whether any returned byte came from outside the store.
-      const marker = 0xa5;
-      const payload = Buffer.alloc(4, marker);
-      const serialized = new Uint8Array(serialize(new Blob([payload])));
-
-      // Locate the offset field by serializing a sliced blob with a sentinel
-      // offset and diffing; this keeps the test robust against wire-format
-      // header changes.
-      const sentinel = new Uint8Array(serialize(new Blob([Buffer.alloc(8, marker)]).slice(4)));
-      let at = -1;
-      for (let i = 0; i + 8 <= sentinel.length; i++) {
-        if (
-          sentinel[i] === 4 &&
-          sentinel[i + 1] === 0 &&
-          sentinel[i + 2] === 0 &&
-          sentinel[i + 3] === 0 &&
-          sentinel[i + 4] === 0 &&
-          sentinel[i + 5] === 0 &&
-          sentinel[i + 6] === 0 &&
-          sentinel[i + 7] === 0 &&
-          serialized[i] === 0
-        ) {
-          at = i;
-          break;
-        }
-      }
-      if (at < 0) throw new Error("could not locate offset field in serialized blob");
-
+      const serialized = new Uint8Array(serialize(new Blob([Buffer.alloc(4, marker)])));
       const view = new DataView(serialized.buffer, serialized.byteOffset, serialized.byteLength);
-      view.setBigUint64(at, offset, true);
-      return { serialized, marker };
+      view.setBigUint64(offsetFieldIndex, offset, true);
+      return serialized;
     }
+
+    // Child script: receives (offsetFieldIndex, offset) on argv, rebuilds the
+    // crafted payload, deserializes, reads every body-mixin path, and prints a
+    // JSON summary. On a vulnerable build this either prints a non-zero length
+    // (OOB heap bytes) or the process dies before printing anything.
+    const childScript = `
+      const { serialize, deserialize } = require("bun:jsc");
+      const v8 = require("node:v8");
+      const [, atStr, offsetStr] = process.argv;
+      const at = Number(atStr);
+      const offset = BigInt(offsetStr);
+      const serialized = new Uint8Array(serialize(new Blob([Buffer.alloc(4, 0xa5)])));
+      new DataView(serialized.buffer, serialized.byteOffset, serialized.byteLength).setBigUint64(at, offset, true);
+
+      for (const de of [deserialize, buf => v8.deserialize(Buffer.from(buf))]) {
+        const blob = de(serialized);
+        const ab = new Uint8Array(await blob.arrayBuffer());
+        const bytes = await blob.bytes();
+        const text = await blob.text();
+        const all5 = ab.every(b => b === 0xa5);
+        process.stdout.write(JSON.stringify({ len: ab.byteLength, bytesLen: bytes.byteLength, textLen: text.length, all5 }) + "\\n");
+      }
+    `;
 
     test.each([
       ["just past end", 5n],
@@ -350,32 +373,38 @@ describe("structuredClone with Blob and File", () => {
       ["> u52", (1n << 52n) + 123n],
       ["u64 max", (1n << 64n) - 1n],
     ])("offset %s does not expose out-of-store bytes", async (_name, offset) => {
-      const { serialized, marker } = craft(offset);
-      const blob = deserialize(serialized);
-      expect(blob).toBeInstanceOf(Blob);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", childScript, String(offsetFieldIndex), String(offset)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      const bytes = new Uint8Array(await blob.arrayBuffer());
-      // Every returned byte must have come from the 4-byte store. With the
-      // crafted offset >= store length, the only in-bounds result is empty.
-      expect(bytes.byteLength).toBe(0);
-      for (const b of bytes) expect(b).toBe(marker);
+      // offset >= store length, so the only in-bounds result is an empty view
+      // from every reader on both deserialize entry points.
+      const expected = { len: 0, bytesLen: 0, textLen: 0, all5: true };
+      expect(
+        stdout
+          .split("\n")
+          .filter(Boolean)
+          .map(l => JSON.parse(l)),
+      ).toEqual([expected, expected]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    }, 30_000);
 
-      // Other readers go through the same sharedView() path.
-      expect(await blob.text()).toBe("");
-      expect((await blob.bytes()).byteLength).toBe(0);
-    });
-
-    test("offset equal to store length yields empty view", async () => {
-      const { serialized } = craft(4n);
-      const blob = deserialize(serialized);
-      expect(new Uint8Array(await blob.arrayBuffer()).byteLength).toBe(0);
-    });
-
-    test("node:v8 deserialize is equally bounded", async () => {
-      const { serialized } = craft(1n << 20n);
-      const blob = v8.deserialize(Buffer.from(serialized));
+    test("in-process: offset at store boundary yields empty view", async () => {
+      // offset == store length stays within the allocation on any build, so
+      // this is safe to assert in-process and covers the boundary directly.
+      const blob = deserialize(craft(4n));
       expect(blob).toBeInstanceOf(Blob);
       expect((await blob.arrayBuffer()).byteLength).toBe(0);
+      expect((await blob.bytes()).byteLength).toBe(0);
+      expect(await blob.text()).toBe("");
+
+      const viaV8 = v8.deserialize(Buffer.from(craft(4n)));
+      expect((await viaV8.arrayBuffer()).byteLength).toBe(0);
     });
   });
 });

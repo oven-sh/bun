@@ -211,9 +211,14 @@ BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
 extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__toThreadSafe(BunString* str)
 {
     if (str->tag == BunStringTag::WTFStringImpl) {
-        auto impl = str->impl.wtf->isolatedCopy();
-        if (impl.ptr() != str->impl.wtf) {
+        auto* existing = str->impl.wtf;
+        // StringImpl::isolatedCopy() always returns a freshly-allocated impl,
+        // so when we replace the pointer we must release the ref we were
+        // holding to the original; otherwise every call leaks one ref.
+        auto impl = existing->isolatedCopy();
+        if (impl.ptr() != existing) {
             str->impl.wtf = &impl.leakRef();
+            existing->deref();
         }
     }
 }

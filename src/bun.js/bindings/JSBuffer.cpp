@@ -913,7 +913,8 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalO
         return {};
     }
 
-    JSC::JSUint8Array* outBuffer = byteLength <= availableLength
+    const bool outputIsUninitialized = byteLength <= availableLength;
+    JSC::JSUint8Array* outBuffer = outputIsUninitialized
         ?
         // all pages will be copied in, so we can use uninitialized buffer
         createUninitializedBuffer(lexicalGlobalObject, byteLength)
@@ -941,8 +942,9 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalO
     // If any input was detached between the sizing loop and the copy loop
     // (e.g. via a user-defined getter calling ArrayBuffer.prototype.transfer),
     // the tail of `outBuffer` was never written. Zero it so we don't leak
-    // uninitialized heap memory to JavaScript.
-    if (!output.empty()) [[unlikely]] {
+    // uninitialized heap memory to JavaScript. Skip when `allocBuffer` was
+    // used — that path already returned zero-initialized memory.
+    if (outputIsUninitialized && !output.empty()) [[unlikely]] {
         memset(output.data(), 0, output.size());
     }
 

@@ -621,6 +621,9 @@ const sql = new SQL({
   maxLifetime: 0, // Connection lifetime in seconds (0 = forever)
   connectionTimeout: 30, // Timeout when establishing new connections
 
+  // Decode DATE/DATETIME/TIMESTAMP as UTC instead of local time (default: false)
+  utcDate: false,
+
   // SSL/TLS options
   ssl: "prefer", // or "disable", "require", "verify-ca", "verify-full"
   // tls: {
@@ -1182,6 +1185,29 @@ console.log(typeof x, x); // "bigint" 9223372036854777n
 
 ---
 
+## UTC Dates (MySQL)
+
+MySQL's wire protocol carries no timezone information for `DATE`, `DATETIME`, and `TIMESTAMP` columns — the server sends naive `year/month/day/hour/minute/second` components. By default Bun interprets those components in the client's local timezone, which means the `Date` you read back can differ from the one you inserted when `process.env.TZ` isn't UTC.
+
+Set `utcDate: true` to interpret the components as UTC so values round-trip to the same `Date` regardless of the process timezone:
+
+```ts
+const sql = new SQL({
+  adapter: "mysql",
+  url: "mysql://user:pass@localhost/db",
+  utcDate: true,
+});
+
+const d = new Date("2024-01-15T05:30:45.678Z");
+await sql`INSERT INTO t (ts) VALUES (${d})`;
+const [{ ts }] = await sql`SELECT ts FROM t`;
+console.log(ts.toISOString() === d.toISOString()); // true, in any TZ
+```
+
+The default is `false` for backwards compatibility. This option currently only affects the MySQL / MariaDB adapter.
+
+---
+
 ## Roadmap
 
 There's still some things we haven't finished yet.
@@ -1265,8 +1291,8 @@ MySQL types are automatically converted to JavaScript types:
 | BIGINT                                  | string, number or BigInt | If the value fits in i32/u32 size will be number otherwise string or BigInt Based on `bigint` option |
 | DECIMAL, NUMERIC                        | string                   | To preserve precision                                                                                |
 | FLOAT, DOUBLE                           | number                   |                                                                                                      |
-| DATE                                    | Date                     | JavaScript Date object                                                                               |
-| DATETIME, TIMESTAMP                     | Date                     | With timezone handling                                                                               |
+| DATE                                    | Date                     | Components interpreted as local time, or UTC with the `utcDate` option                              |
+| DATETIME, TIMESTAMP                     | Date                     | Components interpreted as local time, or UTC with the `utcDate` option                              |
 | TIME                                    | number                   | Total of microseconds                                                                                |
 | YEAR                                    | number                   |                                                                                                      |
 | CHAR, VARCHAR, VARSTRING, STRING        | string                   |                                                                                                      |

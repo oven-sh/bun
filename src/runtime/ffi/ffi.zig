@@ -1608,6 +1608,12 @@ pub const FFI = struct {
             var source_code = std.array_list.Managed(u8).init(this.allocator);
             var source_code_writer = source_code.writer();
             const ffi_wrapper = Bun__createFFICallbackFunction(js_context, js_function);
+            // The wrapper holds JSC::Strong references to the callback and global object.
+            // If we fail to compile for any reason, ownership never transfers to
+            // `step.compiled` and we must destroy it here to avoid leaking those roots.
+            defer if (this.step != .compiled) {
+                FFICallbackFunctionWrapper_destroy(ffi_wrapper);
+            };
             try this.printCallbackSourceCode(js_context, ffi_wrapper, &source_code_writer);
 
             if (comptime Environment.isDebug and Environment.isPosix) {

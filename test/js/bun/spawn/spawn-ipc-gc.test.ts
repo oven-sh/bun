@@ -70,8 +70,11 @@ test("Subprocess with ipc is collectable after the child exits", async () => {
     .join("\n");
   expect(stderrLines).toBe("");
   const { collected, iters } = JSON.parse(stdout.trim());
-  // Without the fix, zero Subprocess wrappers are collected because
-  // `ipc_data != null` keeps the JSRef Strong forever.
-  expect(collected).toBe(iters);
+  // The regression is bimodal: without the fix, zero wrappers are collected
+  // (`ipc_data != null` keeps every JSRef Strong forever); with the fix,
+  // all-but-at-most-one are. The very last `proc` can remain conservatively
+  // rooted via the final async frame on some platforms (observed on Windows
+  // and with `Bun.sleep(0)` on POSIX), so tolerate N-1.
+  expect(collected).toBeGreaterThanOrEqual(iters - 1);
   expect(exitCode).toBe(0);
 }, 60_000);

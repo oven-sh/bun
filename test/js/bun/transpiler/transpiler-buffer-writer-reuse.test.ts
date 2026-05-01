@@ -1,15 +1,89 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 
 // transformSync caches its print buffer on the Transpiler instance and reuses
-// it across calls. The printer holds a by-value copy of that BufferWriter, so
-// when printing grows the buffer past its capacity the old allocation is
-// freed and only the printer's copy sees the new pointer. The cached
-// BufferWriter must be refreshed from printer.ctx on every return path;
-// previously the error path skipped that step, leaving a freed pointer in the
-// cache for the next call. These tests drive the reuse path hard with output
-// that forces reallocations so ASAN trips if the cached pointer ever goes
-// stale.
+// it across calls. BufferPrinter.init copies that BufferWriter *by value* into
+// printer.ctx, so when printing grows the underlying MutableString past its
+// capacity the old allocation is freed and only printer.ctx sees the new
+// pointer. The cached BufferWriter must be refreshed from printer.ctx on every
+// return path. Previously the error path returned before that sync happened,
+// so the defer stored the stale snapshot (freed pointer) into
+// this.buffer_writer for the next call to write through.
 describe("Transpiler transformSync buffer reuse", () => {
+  // The only way transpiler.print() can fail on this path is allocator OOM, so
+  // we pin mimalloc to a fixed reserved arena and disallow further OS
+  // allocations. After the print buffer reallocates at least once, a later
+  // growth returns NULL and transformSync throws. Without the fix, the next
+  // transformSync writes through the freed cached pointer — ASAN catches it as
+  // a SEGV on write inside BufferWriter.writeAll → MutableString.append.
+  //
+  // Requires an ASAN-instrumented mimalloc (MI_TRACK_ASAN) to observe the UAF;
+  // release builds keep freed large segments mapped so the stale write is
+  // silent there. Windows mimalloc reserve semantics differ enough that we
+  // skip it.
+  const hasASAN = isDebug || isASAN;
+  test.skipIf(!hasASAN || isWindows)(
+    "does not cache a freed print buffer after transformSync throws",
+    async () => {
+      const fixture = /* js */ `
+        const t = new Bun.Transpiler({ loader: "js" });
+        // Prime the cached BufferWriter with a ~500KB allocation so the first
+        // growth during the huge print below moves it (freeing this pointer).
+        t.transformSync(";");
+        const chunk = "a".repeat(500 * 1024);
+        t.transformSync('var m = "' + chunk + '";');
+        // Many statements: each string literal is one writeAll, so the buffer
+        // grows in ~500KB steps and getError() is checked after every statement
+        // (the first OOM is reported without millions of retry writes).
+        let huge = "";
+        for (let i = 0; i < 80; i++) huge += 'var h' + i + ' = "' + chunk + '";\\n';
+        let threw = false;
+        try { t.transformSync(huge); } catch { threw = true; }
+        if (!threw) { process.stdout.write("NO_OOM\\n"); process.exit(0); }
+        // With the fix, the cached BufferWriter is printer.ctx (the live buffer
+        // at the point of OOM). Without the fix, it is the freed ~500KB pointer
+        // and this write trips ASAN.
+        const out = t.transformSync("const ok = 1;");
+        process.stdout.write(out === "const ok = 1;\\n" ? "RECOVERED_OK\\n" : "BAD:" + JSON.stringify(out) + "\\n");
+      `;
+      using dir = tempDir("transpiler-buffer-writer", { "repro.js": fixture });
+
+      // 128MiB sits comfortably inside the 64–160MiB window where parse
+      // succeeds but the print buffer growth past ~20–30MiB exhausts the
+      // reserved arena on current debug/ASAN builds.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "repro.js"],
+        cwd: String(dir),
+        env: {
+          ...bunEnv,
+          MIMALLOC_RESERVE_OS_MEMORY: "128M",
+          MIMALLOC_DISALLOW_OS_ALLOC: "1",
+          MIMALLOC_SHOW_ERRORS: "0",
+          MIMALLOC_MAX_ERRORS: "0",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+
+      if (stdout.includes("NO_OOM")) {
+        // Could not drive the allocator to fail mid-print (e.g. mimalloc tuning
+        // changed). The bug is not exercised, but the buffer-reuse path below
+        // still is.
+        console.warn("transformSync OOM repro: allocator did not fail mid-print; skipping UAF assertion");
+      } else {
+        expect(stderr).not.toContain("AddressSanitizer");
+        expect(stdout.trim()).toBe("RECOVERED_OK");
+        expect(exitCode).toBe(0);
+      }
+    },
+    30_000,
+  );
+
   test("pooled print buffer survives repeated growth and shrink", () => {
     const transpiler = new Bun.Transpiler({ loader: "ts" });
 

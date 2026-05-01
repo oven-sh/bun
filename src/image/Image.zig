@@ -293,8 +293,10 @@ fn schedule(this: *Image, global: *jsc.JSGlobalObject, kind: PipelineTask.Kind, 
         .global = global,
         // Struct copy — the worker reads its own snapshot so further chained
         // calls on the JS side between schedule and completion don't race.
+        // `this.source` is *borrowed*, not duped: it's immutable after the
+        // constructor and `hasPendingActivity` keeps the Image (and its
+        // source buffer) alive until `then()` runs.
         .pipeline = this.pipeline,
-        .source = this.snapshotSource(),
         .kind = kind,
         .deliver = deliver,
         .max_pixels = this.max_pixels,
@@ -314,34 +316,23 @@ fn schedule(this: *Image, global: *jsc.JSGlobalObject, kind: PipelineTask.Kind, 
 ///
 /// A later refinement is to return a `.Locked` body and resolve it from the
 /// worker pool; this is the simple, correct first cut.
-pub fn encodeForBody(this: *Image, global: *jsc.JSGlobalObject) bun.JSError!struct { bytes: []u8, mime: [:0]const u8 } {
+pub fn encodeForBody(this: *Image, global: *jsc.JSGlobalObject) bun.JSError!struct { bytes: codecs.Encoded, mime: [:0]const u8 } {
     var task: PipelineTask = .{
         .image = this,
         .global = global,
         .pipeline = this.pipeline,
-        .source = this.snapshotSource(),
         .kind = .{ .encode = this.pipeline.output },
         .deliver = .uint8array,
         .max_pixels = this.max_pixels,
         .auto_orient = this.auto_orient,
     };
-    defer task.source.deinit();
     task.run();
     return switch (task.result) {
-        .encoded => |e| .{ .bytes = e.bytes, .mime = e.format.mime() },
+        .encoded => |e| .{ .bytes = e.out, .mime = e.format.mime() },
         .err => |e| global.throw("Image: {s}", .{@errorName(e)}),
         // Preserve errno/path/syscall instead of flattening to DecodeFailed.
         .io_err => |e| global.throwValue(try e.toJS(global)),
         .meta => unreachable,
-    };
-}
-
-/// The worker thread must not race the JS thread for `this.source`, and a
-/// path-backed source needs reading. Either way the worker gets an owned copy.
-fn snapshotSource(this: *Image) Source {
-    return switch (this.source) {
-        .bytes => |b| .{ .bytes = bun.handleOom(bun.default_allocator.dupe(u8, b)) },
-        .path => |p| .{ .path = bun.handleOom(bun.default_allocator.dupeZ(u8, p)) },
     };
 }
 
@@ -354,7 +345,6 @@ pub const PipelineTask = struct {
 
     image: *Image,
     global: *jsc.JSGlobalObject,
-    source: Source,
     pipeline: Pipeline,
     kind: Kind,
     deliver: Deliver,
@@ -371,7 +361,7 @@ pub const PipelineTask = struct {
     };
 
     pub const Result = union(enum) {
-        encoded: struct { bytes: []u8, format: codecs.Format, w: u32, h: u32 },
+        encoded: struct { out: codecs.Encoded, format: codecs.Format, w: u32, h: u32 },
         meta: struct { w: u32, h: u32, format: codecs.Format },
         err: codecs.Error,
         io_err: bun.sys.Error,
@@ -379,14 +369,16 @@ pub const PipelineTask = struct {
 
     /// Runs on a `WorkPool` thread. No JSC access.
     pub fn run(this: *PipelineTask) void {
-        const input = switch (this.source) {
+        // For `.bytes` we borrow the constructor's buffer (immutable, kept
+        // alive by hasPendingActivity). Only `.path` allocates here, and only
+        // for the file body — freed once decoded.
+        var owned_file: ?[]u8 = null;
+        defer if (owned_file) |f| bun.default_allocator.free(f);
+        const input: []const u8 = switch (this.image.source) {
             .bytes => |b| b,
             .path => |p| switch (bun.sys.File.readFrom(bun.FD.cwd(), p, bun.default_allocator)) {
                 .result => |bytes| blk: {
-                    // Replace the path with the bytes so deinit frees the
-                    // right thing.
-                    this.source.deinit();
-                    this.source = .{ .bytes = bytes };
+                    owned_file = bytes;
                     break :blk bytes;
                 },
                 .err => |e| {
@@ -429,7 +421,7 @@ pub const PipelineTask = struct {
             this.result = .{ .err = e };
             return;
         };
-        this.result = .{ .encoded = .{ .bytes = out, .format = enc.format, .w = decoded.width, .h = decoded.height } };
+        this.result = .{ .encoded = .{ .out = out, .format = enc.format, .w = decoded.width, .h = decoded.height } };
     }
 
     /// Back on the JS thread.
@@ -451,20 +443,27 @@ pub const PipelineTask = struct {
         }
         switch (this.result) {
             .encoded => |enc| switch (this.deliver) {
-                .uint8array => try promise.resolve(global, jsc.JSUint8Array.fromBytes(global, enc.bytes)),
-                .buffer => try promise.resolve(global, jsc.JSValue.createBuffer(global, enc.bytes)),
+                // The codec's own allocation is handed straight to JS with the
+                // codec's free as the finalizer — no dupe of the output.
+                .uint8array => try promise.resolve(global, jsc.ArrayBuffer.fromBytes(enc.out.bytes, .Uint8Array)
+                    .toJSWithContext(global, null, enc.out.free) catch
+                    return promise.reject(global, error.JSError)),
+                .buffer => try promise.resolve(global, jsc.JSValue.createBufferWithCtx(global, enc.out.bytes, null, enc.out.free)),
                 .blob => {
-                    var blob = jsc.WebCore.Blob.init(enc.bytes, bun.default_allocator, global);
+                    // Blob.Store frees via an Allocator; dupe for that path.
+                    const owned = bun.handleOom(bun.default_allocator.dupe(u8, enc.out.bytes));
+                    enc.out.deinit();
+                    var blob = jsc.WebCore.Blob.init(owned, bun.default_allocator, global);
                     blob.content_type = enc.format.mime();
                     blob.content_type_was_set = true;
                     try promise.resolve(global, jsc.WebCore.Blob.new(blob).toJS(global));
                 },
                 .base64 => {
-                    defer bun.default_allocator.free(enc.bytes);
-                    const b64_len = bun.base64.encodeLen(enc.bytes);
+                    defer enc.out.deinit();
+                    const b64_len = bun.base64.encodeLen(enc.out.bytes);
                     const b64 = bun.handleOom(bun.default_allocator.alloc(u8, b64_len));
                     defer bun.default_allocator.free(b64);
-                    const wrote = bun.base64.encode(b64, enc.bytes);
+                    const wrote = bun.base64.encode(b64, enc.out.bytes);
                     const str = bun.String.createUTF8ForJS(global, b64[0..wrote]) catch
                         return promise.reject(global, error.JSError);
                     try promise.resolve(global, str);
@@ -567,7 +566,6 @@ pub const PipelineTask = struct {
 
     fn deinit(this: *PipelineTask) void {
         _ = this.image.has_pending_activity.fetchSub(1, .seq_cst);
-        this.source.deinit();
         bun.destroy(this);
     }
 };

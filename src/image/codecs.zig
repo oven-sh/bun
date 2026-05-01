@@ -102,9 +102,40 @@ pub const EncodeOptions = struct {
     colors: u16 = 256,
 };
 
-pub fn encode(rgba: []const u8, width: u32, height: u32, opts: EncodeOptions) Error![]u8 {
+/// Encoded output paired with the free function for its allocator. The C
+/// codecs each malloc internally (turbojpeg's allocator, libwebp's, libc for
+/// libspng); rather than dupe into `bun.default_allocator` so JS can own it,
+/// we hand the original buffer to JS via `ArrayBuffer.toJSWithContext` with
+/// the matching free — one allocation, zero copies, for the final output.
+///
+/// `free` matches `jsc.C.JSTypedArrayBytesDeallocator` (bytes, ctx) so it can
+/// be passed straight through; the `ctx` arg is unused.
+pub const Encoded = struct {
+    bytes: []u8,
+    free: *const fn (*anyopaque, *anyopaque) callconv(.c) void,
+
+    pub fn deinit(self: Encoded) void {
+        self.free(self.bytes.ptr, undefined);
+    }
+
+    /// Adapt a 1-arg C free (`tj3Free`, `WebPFree`, `std.c.free`) to the
+    /// 2-arg JSC deallocator signature.
+    pub fn wrap(comptime f: anytype) *const fn (*anyopaque, *anyopaque) callconv(.c) void {
+        return &struct {
+            fn call(p: *anyopaque, _: *anyopaque) callconv(.c) void {
+                f(p);
+            }
+        }.call;
+    }
+
+    pub fn fromOwned(bytes: []u8) Encoded {
+        return .{ .bytes = bytes, .free = wrap(bun.mimalloc.mi_free) };
+    }
+};
+
+pub fn encode(rgba: []const u8, width: u32, height: u32, opts: EncodeOptions) Error!Encoded {
     if (system_backend) |b| {
-        if (b.encode(rgba, width, height, opts)) |out| return out else |e| switch (e) {
+        if (b.encode(rgba, width, height, opts)) |out| return Encoded.fromOwned(out) else |e| switch (e) {
             error.BackendUnavailable => {},
             else => |narrowed| return narrowed,
         }
@@ -176,7 +207,7 @@ pub const jpeg = struct {
     extern fn tj3DecompressHeader(h: tjhandle, buf: [*]const u8, len: usize) c_int;
     extern fn tj3Decompress8(h: tjhandle, buf: [*]const u8, len: usize, dst: [*]u8, pitch: c_int, pf: c_int) c_int;
     extern fn tj3Compress8(h: tjhandle, src: [*]const u8, w: c_int, pitch: c_int, height: c_int, pf: c_int, out: *?[*]u8, out_len: *usize) c_int;
-    extern fn tj3Free(ptr: ?*anyopaque) void;
+    pub extern fn tj3Free(ptr: ?*anyopaque) void;
     extern fn tj3GetErrorStr(h: tjhandle) [*:0]const u8;
 
     // tjparam / tjpf enum values from turbojpeg.h.
@@ -206,7 +237,7 @@ pub const jpeg = struct {
         return .{ .rgba = out, .width = w, .height = ht };
     }
 
-    pub fn encode(rgba: []const u8, w: u32, ht: u32, quality: u8) Error![]u8 {
+    pub fn encode(rgba: []const u8, w: u32, ht: u32, quality: u8) Error!Encoded {
         const h = tj3Init(0) orelse return error.OutOfMemory;
         defer tj3Destroy(h);
         _ = tj3Set(h, TJPARAM_QUALITY, @intCast(@min(@max(quality, 1), 100)));
@@ -215,11 +246,9 @@ pub const jpeg = struct {
         var out_len: usize = 0;
         if (tj3Compress8(h, rgba.ptr, @intCast(w), 0, @intCast(ht), TJPF_RGBA, &out_ptr, &out_len) != 0)
             return error.EncodeFailed;
-        defer tj3Free(out_ptr);
-        // tj3Compress8 allocates via the libjpeg-turbo allocator; copy into
-        // default_allocator so JS can own it.
-        const dup = try bun.default_allocator.dupe(u8, out_ptr.?[0..out_len]);
-        return dup;
+        // tj3Compress8 allocates via libjpeg-turbo's allocator; hand it to JS
+        // with `tj3Free` as the finalizer instead of duping.
+        return .{ .bytes = out_ptr.?[0..out_len], .free = Encoded.wrap(tj3Free) };
     }
 };
 
@@ -290,7 +319,7 @@ pub const png = struct {
         return .{ .rgba = out, .width = ihdr.width, .height = ihdr.height };
     }
 
-    pub fn encode(rgba: []const u8, w: u32, h: u32, level: i8) Error![]u8 {
+    pub fn encode(rgba: []const u8, w: u32, h: u32, level: i8) Error!Encoded {
         const ctx = spng_ctx_new(SPNG_CTX_ENCODER) orelse return error.OutOfMemory;
         defer spng_ctx_free(ctx);
         _ = spng_set_option(ctx, SPNG_ENCODE_TO_BUFFER, 1);
@@ -307,16 +336,15 @@ pub const png = struct {
         var len: usize = 0;
         var err: c_int = 0;
         const buf = spng_get_png_buffer(ctx, &len, &err) orelse return error.EncodeFailed;
-        // spng_get_png_buffer transfers ownership (libc malloc). Copy to
-        // default_allocator and free the libc one.
-        defer std.c.free(buf);
-        return try bun.default_allocator.dupe(u8, buf[0..len]);
+        // spng_get_png_buffer transfers ownership (libc malloc); hand to JS
+        // with libc `free` as the finalizer instead of duping.
+        return .{ .bytes = buf[0..len], .free = Encoded.wrap(std.c.free) };
     }
 
     /// Quantize RGBA to ≤ `colors` and emit an indexed (colour-type 3) PNG
     /// with PLTE + tRNS. The quantizer is a small median-cut — see
     /// quantize.zig.
-    pub fn encodeIndexed(rgba: []const u8, w: u32, h: u32, level: i8, colors: u16) Error![]u8 {
+    pub fn encodeIndexed(rgba: []const u8, w: u32, h: u32, level: i8, colors: u16) Error!Encoded {
         var q = try quantize.quantize(rgba, colors);
         defer q.deinit();
 
@@ -348,8 +376,7 @@ pub const png = struct {
         var len: usize = 0;
         var err: c_int = 0;
         const buf = spng_get_png_buffer(ctx, &len, &err) orelse return error.EncodeFailed;
-        defer std.c.free(buf);
-        return try bun.default_allocator.dupe(u8, buf[0..len]);
+        return .{ .bytes = buf[0..len], .free = Encoded.wrap(std.c.free) };
     }
 };
 
@@ -360,7 +387,7 @@ pub const webp = struct {
     extern fn WebPDecodeRGBA(data: [*]const u8, len: usize, w: *c_int, h: *c_int) ?[*]u8;
     extern fn WebPEncodeRGBA(rgba: [*]const u8, w: c_int, h: c_int, stride: c_int, q: f32, out: *?[*]u8) usize;
     extern fn WebPEncodeLosslessRGBA(rgba: [*]const u8, w: c_int, h: c_int, stride: c_int, out: *?[*]u8) usize;
-    extern fn WebPFree(ptr: ?*anyopaque) void;
+    pub extern fn WebPFree(ptr: ?*anyopaque) void;
 
     pub fn decode(bytes: []const u8, max_pixels: u64) Error!Decoded {
         var w: c_int = 0;
@@ -376,7 +403,7 @@ pub const webp = struct {
         return .{ .rgba = out, .width = @intCast(w), .height = @intCast(h) };
     }
 
-    pub fn encode(rgba: []const u8, w: u32, h: u32, quality: u8, lossless: bool) Error![]u8 {
+    pub fn encode(rgba: []const u8, w: u32, h: u32, quality: u8, lossless: bool) Error!Encoded {
         var out: ?[*]u8 = null;
         const stride: c_int = @intCast(w * 4);
         const len = if (lossless)
@@ -384,8 +411,7 @@ pub const webp = struct {
         else
             WebPEncodeRGBA(rgba.ptr, @intCast(w), @intCast(h), stride, @floatFromInt(quality), &out);
         if (len == 0 or out == null) return error.EncodeFailed;
-        defer WebPFree(out);
-        return try bun.default_allocator.dupe(u8, out.?[0..len]);
+        return .{ .bytes = out.?[0..len], .free = Encoded.wrap(WebPFree) };
     }
 };
 

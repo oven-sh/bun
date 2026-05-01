@@ -1,84 +1,67 @@
-//! macOS system codec backend for `Bun.Image`, via ImageIO + CoreGraphics.
+//! macOS ImageIO/CoreGraphics backend.
 //!
-//! This is an *optimisation* over the static codecs in codecs.zig — the
-//! frameworks are dlopen'd lazily on first use, and any failure (missing
-//! framework, missing symbol, sandboxed process) yields
-//! `error.BackendUnavailable`, which the dispatch in codecs.zig swallows and
-//! falls through to libjpeg-turbo / libspng / libwebp. The static path is the
-//! correctness baseline; this path is "use the OS's tuned codecs when we can".
-//!
-//! Decode:  CFDataCreateWithBytesNoCopy(input)
-//!          → CGImageSourceCreateWithData
-//!          → CGImageSourceCreateImageAtIndex(0)
-//!          → guard(width × height ≤ max_pixels)
-//!          → CGBitmapContextCreate(RGBA8, premultipliedLast)
-//!          → CGContextDrawImage   (CG does the colourspace + format convert)
-//!          → memcpy bitmap → bun.default_allocator slice
-//!
-//! Encode:  pre-multiply straight-alpha RGBA8 into a scratch buffer
-//!          → CGBitmapContextCreate(premultipliedLast) around that
-//!          → CGBitmapContextCreateImage
-//!          → CFDataCreateMutable + CGImageDestinationCreateWithData(uti)
-//!          → CGImageDestinationAddImage(+ kCGImageDestinationLossyCompressionQuality)
-//!          → CGImageDestinationFinalize
-//!          → CFDataGetBytePtr/Length → dupe to bun.default_allocator
-//!
-//! All CFTypeRef releases are scoped with `defer` so the early-return error
-//! paths don't leak. ImageIO formats we don't sniff (HEIC/TIFF/…) are still
-//! refused upstream by `Format.sniff` so the fallback story stays uniform.
+//! All framework calls live in `src/bun.js/bindings/image_coregraphics_shim.cpp`
+//! — see the header comment there for why (Zig→dlsym'd-function-pointer calls
+//! into CG segfaulted on x86_64 even after thunking the obvious by-value
+//! struct, so the whole dispatch is in C++ where clang owns the ABI). This
+//! file just allocates the RGBA/output buffers in `bun.default_allocator` and
+//! maps the C status codes back onto `codecs.Error`.
 
 pub const BackendError = codecs.Error || error{BackendUnavailable};
 
+extern fn bun_coregraphics_decode(
+    bytes: [*]const u8,
+    len: usize,
+    max_pixels: u64,
+    out_w: *u32,
+    out_h: *u32,
+    out: ?[*]u8,
+) i32;
+
+extern fn bun_coregraphics_encode(
+    rgba: [*]const u8,
+    width: u32,
+    height: u32,
+    format: i32,
+    quality: i32,
+    out: ?[*]u8,
+    out_len: *usize,
+) i32;
+
+const CG_OK = 0;
+const CG_UNAVAILABLE = 1;
+const CG_DECODE_FAILED = 2;
+const CG_ENCODE_FAILED = 3;
+const CG_TOO_MANY_PIXELS = 4;
+
+fn mapErr(rc: i32) BackendError {
+    return switch (rc) {
+        CG_UNAVAILABLE => error.BackendUnavailable,
+        CG_DECODE_FAILED => error.DecodeFailed,
+        CG_ENCODE_FAILED => error.EncodeFailed,
+        CG_TOO_MANY_PIXELS => error.TooManyPixels,
+        else => error.BackendUnavailable,
+    };
+}
+
 pub fn decode(bytes: []const u8, max_pixels: u64) BackendError!codecs.Decoded {
-    const s = try syms();
-
-    const data = s.CFDataCreateWithBytesNoCopy(null, bytes.ptr, @intCast(bytes.len), s.kCFAllocatorNull.*) orelse
-        return error.BackendUnavailable;
-    defer s.CFRelease(data);
-
-    const src = s.CGImageSourceCreateWithData(data, null) orelse return error.DecodeFailed;
-    defer s.CFRelease(src);
-
-    const img = s.CGImageSourceCreateImageAtIndex(src, 0, null) orelse return error.DecodeFailed;
-    defer s.CGImageRelease(img);
-
-    const w: u32 = @intCast(s.CGImageGetWidth(img));
-    const h: u32 = @intCast(s.CGImageGetHeight(img));
-    if (w == 0 or h == 0) return error.DecodeFailed;
-    if (@as(u64, w) * @as(u64, h) > max_pixels) return error.TooManyPixels;
-
+    var w: u32 = 0;
+    var h: u32 = 0;
+    // Phase 1: dimensions only (out=null) so we can allocate in
+    // bun.default_allocator like every other decode path.
+    switch (bun_coregraphics_decode(bytes.ptr, bytes.len, max_pixels, &w, &h, null)) {
+        CG_OK => {},
+        else => |rc| return mapErr(rc),
+    }
     const out = try bun.default_allocator.alloc(u8, @as(usize, w) * h * 4);
     errdefer bun.default_allocator.free(out);
-
-    const cs = s.CGColorSpaceCreateDeviceRGB() orelse return error.BackendUnavailable;
-    defer s.CGColorSpaceRelease(cs);
-
-    // kCGImageAlphaPremultipliedLast (1) | kCGBitmapByteOrderDefault (0).
-    // CG's bitmap contexts refuse to render to a non-premultiplied target
-    // (kCGImageAlphaLast → CGBitmapContextCreate returns null), so we draw
-    // premultiplied and undo it below to match the straight-alpha contract the
-    // rest of the pipeline (and the static codecs) work in.
-    const ctx = s.CGBitmapContextCreate(out.ptr, w, h, 8, @as(usize, w) * 4, cs, kCGImageAlphaPremultipliedLast) orelse
-        return error.DecodeFailed;
-    defer s.CGContextRelease(ctx);
-
-    // Thunked through C: CGRect is 32 bytes by value — SysV x86_64 passes it
-    // as MEMORY (caller-pushed), and the dlsym'd-function-pointer call from
-    // Zig mis-lays it on Intel macOS (segfaults on macOS 13/14 x64 CI; arm64,
-    // where it's an HFA in v0-v3, is fine). The shim takes scalars and lets
-    // clang do the struct-by-value emission.
-    bun_CGContextDrawImage(@ptrCast(@constCast(s.CGContextDrawImage)), ctx, img, 0, 0, @floatFromInt(w), @floatFromInt(h));
-
-    // Un-premultiply: c = round(c * 255 / a). a==0 leaves RGB as drawn (zero);
-    // a==255 is the identity. Integer divide with +a/2 for round-to-nearest.
-    var i: usize = 0;
-    while (i + 4 <= out.len) : (i += 4) {
-        const a: u32 = out[i + 3];
-        if (a != 0 and a != 255) {
-            inline for (0..3) |c| out[i + c] = @intCast(@min(255, (@as(u32, out[i + c]) * 255 + a / 2) / a));
-        }
+    // Phase 2: render. The C side re-creates the CGImageSource (cheap — the
+    // header parse is the only repeated work) so we don't have to thread an
+    // opaque handle across the boundary.
+    switch (bun_coregraphics_decode(bytes.ptr, bytes.len, max_pixels, &w, &h, out.ptr)) {
+        CG_OK => {},
+        else => |rc| return mapErr(rc),
     }
-
     return .{ .rgba = out, .width = w, .height = h };
 }
 
@@ -88,156 +71,22 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOpti
     if (opts.format == .png and opts.palette) return error.BackendUnavailable;
     if (opts.format == .webp and opts.lossless) return error.BackendUnavailable;
 
-    const s = try syms();
-
-    const cs = s.CGColorSpaceCreateDeviceRGB() orelse return error.BackendUnavailable;
-    defer s.CGColorSpaceRelease(cs);
-
-    // CG bitmap contexts only render to/from premultiplied; pipeline carries
-    // straight alpha, so pre-multiply into a scratch buffer and let ImageIO
-    // un-premultiply on write. (Wrapping the caller's straight-alpha buffer
-    // with kCGImageAlphaPremultipliedLast would mislabel it and corrupt every
-    // translucent pixel; kCGImageAlphaLast is rejected by CGBitmapContextCreate.)
-    const premul = try bun.default_allocator.alloc(u8, rgba.len);
-    defer bun.default_allocator.free(premul);
-    var i: usize = 0;
-    while (i + 4 <= rgba.len) : (i += 4) {
-        const a: u32 = rgba[i + 3];
-        // round(c * a / 255) — a==255 is identity, a==0 zeroes RGB.
-        inline for (0..3) |c| premul[i + c] = @intCast((@as(u32, rgba[i + c]) * a + 127) / 255);
-        premul[i + 3] = @intCast(a);
+    const fmt: i32 = @intFromEnum(opts.format);
+    var len: usize = 0;
+    // Phase 1: encode into a thread-local CFData inside the shim, return size.
+    switch (bun_coregraphics_encode(rgba.ptr, width, height, fmt, opts.quality, null, &len)) {
+        CG_OK => {},
+        else => |rc| return mapErr(rc),
     }
-
-    const ctx = s.CGBitmapContextCreate(premul.ptr, width, height, 8, @as(usize, width) * 4, cs, kCGImageAlphaPremultipliedLast) orelse
-        return error.EncodeFailed;
-    defer s.CGContextRelease(ctx);
-
-    const img = s.CGBitmapContextCreateImage(ctx) orelse return error.EncodeFailed;
-    defer s.CGImageRelease(img);
-
-    const uti = s.CFStringCreateWithCString(null, utiFor(opts.format), kCFStringEncodingUTF8) orelse
-        return error.BackendUnavailable;
-    defer s.CFRelease(uti);
-
-    const sink = s.CFDataCreateMutable(null, 0) orelse return error.OutOfMemory;
-    defer s.CFRelease(sink);
-
-    const dest = s.CGImageDestinationCreateWithData(sink, uti, 1, null) orelse return error.EncodeFailed;
-    defer s.CFRelease(dest);
-
-    // Optional quality dictionary for JPEG / lossy WebP. PNG ignores it.
-    var props: CFRef = null;
-    defer if (props) |p| s.CFRelease(p);
-    if (opts.format == .jpeg or (opts.format == .webp and !opts.lossless)) {
-        const q: f64 = @as(f64, @floatFromInt(opts.quality)) / 100.0;
-        const num = s.CFNumberCreate(null, kCFNumberDoubleType, &q) orelse return error.BackendUnavailable;
-        defer s.CFRelease(num);
-        var key = s.kCGImageDestinationLossyCompressionQuality.*;
-        var val: CFRef = num;
-        props = s.CFDictionaryCreate(null, @ptrCast(&key), @ptrCast(&val), 1, null, null);
+    const out = try bun.default_allocator.alloc(u8, len);
+    errdefer bun.default_allocator.free(out);
+    // Phase 2: copy out and release the CFData.
+    switch (bun_coregraphics_encode(rgba.ptr, width, height, fmt, opts.quality, out.ptr, &len)) {
+        CG_OK => {},
+        else => |rc| return mapErr(rc),
     }
-
-    s.CGImageDestinationAddImage(dest, img, props);
-    if (!s.CGImageDestinationFinalize(dest)) return error.EncodeFailed;
-
-    const len: usize = @intCast(s.CFDataGetLength(sink));
-    const ptr = s.CFDataGetBytePtr(sink) orelse return error.EncodeFailed;
-    return try bun.default_allocator.dupe(u8, ptr[0..len]);
-}
-
-// ───────────────────────────── lazy symbol table ────────────────────────────
-
-const CFRef = ?*anyopaque;
-const CGFloat = f64;
-extern fn bun_CGContextDrawImage(fn_ptr: *anyopaque, ctx: CFRef, img: CFRef, x: f64, y: f64, w: f64, h: f64) void;
-
-const CGRect = extern struct {
-    origin: extern struct { x: CGFloat, y: CGFloat },
-    size: extern struct { width: CGFloat, height: CGFloat },
-};
-
-const kCGImageAlphaPremultipliedLast: u32 = 1;
-const kCFStringEncodingUTF8: u32 = 0x08000100;
-const kCFNumberDoubleType: c_int = 13;
-
-fn utiFor(f: codecs.Format) [:0]const u8 {
-    // UTType identifiers — ImageIO accepts both legacy "public.*" and the
-    // newer org.webmproject for WebP (10.14+).
-    return switch (f) {
-        .jpeg => "public.jpeg",
-        .png => "public.png",
-        .webp => "org.webmproject.webp",
-    };
-}
-
-/// Function-pointer table populated once. Any dlopen/dlsym miss flips
-/// `available = false` and every subsequent call short-circuits to
-/// `error.BackendUnavailable`.
-const Syms = struct {
-    // CoreFoundation
-    CFRelease: *const fn (CFRef) callconv(.c) void,
-    CFDataCreateWithBytesNoCopy: *const fn (CFRef, [*]const u8, isize, CFRef) callconv(.c) CFRef,
-    CFDataCreateMutable: *const fn (CFRef, isize) callconv(.c) CFRef,
-    CFDataGetLength: *const fn (CFRef) callconv(.c) isize,
-    CFDataGetBytePtr: *const fn (CFRef) callconv(.c) ?[*]const u8,
-    CFStringCreateWithCString: *const fn (CFRef, [*:0]const u8, u32) callconv(.c) CFRef,
-    CFNumberCreate: *const fn (CFRef, c_int, *const anyopaque) callconv(.c) CFRef,
-    CFDictionaryCreate: *const fn (CFRef, [*]const CFRef, [*]const CFRef, isize, ?*const anyopaque, ?*const anyopaque) callconv(.c) CFRef,
-    kCFAllocatorNull: *const CFRef, // data symbol
-
-    // CoreGraphics
-    CGColorSpaceCreateDeviceRGB: *const fn () callconv(.c) CFRef,
-    CGColorSpaceRelease: *const fn (CFRef) callconv(.c) void,
-    CGBitmapContextCreate: *const fn (?*anyopaque, usize, usize, usize, usize, CFRef, u32) callconv(.c) CFRef,
-    CGBitmapContextCreateImage: *const fn (CFRef) callconv(.c) CFRef,
-    /// Never called directly — see `bun_CGContextDrawImage` for why this is
-    /// resolved via dlsym but invoked through a C thunk.
-    CGContextDrawImage: *const fn (CFRef, CGRect, CFRef) callconv(.c) void,
-    CGContextRelease: *const fn (CFRef) callconv(.c) void,
-    CGImageGetWidth: *const fn (CFRef) callconv(.c) usize,
-    CGImageGetHeight: *const fn (CFRef) callconv(.c) usize,
-    CGImageRelease: *const fn (CFRef) callconv(.c) void,
-
-    // ImageIO
-    CGImageSourceCreateWithData: *const fn (CFRef, CFRef) callconv(.c) CFRef,
-    CGImageSourceCreateImageAtIndex: *const fn (CFRef, usize, CFRef) callconv(.c) CFRef,
-    CGImageDestinationCreateWithData: *const fn (CFRef, CFRef, usize, CFRef) callconv(.c) CFRef,
-    CGImageDestinationAddImage: *const fn (CFRef, CFRef, CFRef) callconv(.c) void,
-    CGImageDestinationFinalize: *const fn (CFRef) callconv(.c) bool,
-    kCGImageDestinationLossyCompressionQuality: *const CFRef, // data symbol
-};
-
-var table: Syms = undefined;
-var available: bool = false;
-var once = std.once(load);
-
-fn syms() error{BackendUnavailable}!*const Syms {
-    once.call();
-    if (!available) return error.BackendUnavailable;
-    return &table;
-}
-
-fn load() void {
-    // RTLD_NOW|RTLD_GLOBAL — CoreFoundation symbols are reachable from the
-    // ImageIO handle on macOS, but we open all three explicitly to be robust
-    // against future framework re-layering.
-    const flags: std.c.RTLD = .{ .NOW = true };
-    const cf = bun.sys.dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", flags) orelse return;
-    const cg = bun.sys.dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", flags) orelse return;
-    const io = bun.sys.dlopen("/System/Library/Frameworks/ImageIO.framework/ImageIO", flags) orelse return;
-
-    inline for (@typeInfo(Syms).@"struct".fields) |f| {
-        // Field name == symbol name. Data symbols (the two k* constants) live
-        // in their owning framework; function symbols are looked up across all
-        // three handles so we don't hard-code which framework owns what.
-        const sym = bun.sys.dlsymImpl(io, f.name ++ "") orelse
-            bun.sys.dlsymImpl(cg, f.name ++ "") orelse
-            bun.sys.dlsymImpl(cf, f.name ++ "") orelse return;
-        @field(table, f.name) = @ptrCast(@alignCast(sym));
-    }
-    available = true;
+    return out[0..len];
 }
 
 const bun = @import("bun");
 const codecs = @import("./codecs.zig");
-const std = @import("std");

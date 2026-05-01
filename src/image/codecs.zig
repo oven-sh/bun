@@ -13,15 +13,7 @@
 /// written one for) so the dispatch in `decode`/`encode` compiles away. The
 /// backend module is only `@import`ed inside the matching arm so non-target
 /// platforms never see its symbols.
-///
-/// CoreGraphics is arm64-only: on x86_64 macOS the dlsym'd-function-pointer
-/// calls into ImageIO/CG segfault inside the framework even with the by-value
-/// CGRect routed through a C thunk (see image_coregraphics_shim.cpp — that
-/// moved the crash from a garbage address to a real framework frame, so at
-/// least one more call has an ABI mismatch). arm64 passes the full 115-test
-/// suite. Intel macOS uses the static codecs, which are the correctness
-/// baseline anyway; root-causing the remaining x64 call needs an Intel Mac.
-const system_backend: ?type = if (bun.Environment.isMac and bun.Environment.isAarch64)
+const system_backend: ?type = if (bun.Environment.isMac)
     @import("./backend_coregraphics.zig")
 else if (bun.Environment.isWindows)
     @import("./backend_wic.zig")

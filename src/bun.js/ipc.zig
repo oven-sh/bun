@@ -456,6 +456,11 @@ pub const SendQueue = struct {
     owner: SendQueueOwner,
 
     close_next_tick: ?jsc.Task = null,
+    /// Set while an `_onAfterIPCClosed` task is queued. Cleared when the task
+    /// runs. Tracked so `deinit` can cancel it; the task captures a raw
+    /// `*SendQueue` into the owner's inline storage, which is freed right
+    /// after `deinit` returns.
+    after_close_task: ?jsc.Task = null,
     write_in_progress: bool = false,
     close_event_sent: bool = false,
 
@@ -507,6 +512,15 @@ pub const SendQueue = struct {
         if (self.close_next_tick) |close_next_tick_task| {
             const managed: *bun.jsc.ManagedTask = close_next_tick_task.as(bun.jsc.ManagedTask);
             managed.cancel();
+        }
+        // Same for the close-notification task. `closeSocket` above may have
+        // just enqueued this (VM-shutdown path with the socket still open),
+        // or it may be left over from an earlier `_socketClosed` that hasn't
+        // drained yet; either way the owner is about to free our storage.
+        if (self.after_close_task) |after_close_task| {
+            const managed: *bun.jsc.ManagedTask = after_close_task.as(bun.jsc.ManagedTask);
+            managed.cancel();
+            self.after_close_task = null;
         }
     }
 
@@ -562,8 +576,9 @@ pub const SendQueue = struct {
         // can reach this path again with the socket already `.closed`; the
         // owner is about to free the memory that backs `this`, so scheduling
         // a task that points back into it would use-after-free.
-        if (was_open) {
-            this.getGlobalThis().bunVM().enqueueTask(jsc.ManagedTask.New(SendQueue, _onAfterIPCClosed).init(this));
+        if (was_open and this.after_close_task == null) {
+            this.after_close_task = jsc.ManagedTask.New(SendQueue, _onAfterIPCClosed).init(this);
+            this.getGlobalThis().bunVM().enqueueTask(this.after_close_task.?);
         }
     }
     fn _windowsClose(this: *SendQueue) void {
@@ -603,6 +618,7 @@ pub const SendQueue = struct {
 
     fn _onAfterIPCClosed(this: *SendQueue) void {
         log("SendQueue#_onAfterIPCClosed", .{});
+        this.after_close_task = null;
         if (this.close_event_sent) return;
         this.close_event_sent = true;
         switch (this.owner) {

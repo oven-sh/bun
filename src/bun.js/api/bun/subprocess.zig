@@ -150,13 +150,14 @@ pub fn hasExited(this: *const Subprocess) bool {
 }
 
 pub fn computeHasPendingActivity(this: *const Subprocess) bool {
-    // `ipc_data` is never set back to `null` after init, so checking only for
-    // `!= null` would keep the JSSubprocess strongly referenced for the
-    // lifetime of the VM. The IPC channel contributes pending activity until
-    // the socket has fully closed; after `_socketClosed()` runs and
-    // `handleIPCClose()` fires, the IPC side is done and must not keep this
-    // object alive.
-    if (this.ipc_data != null and this.ipc_data.?.socket != .closed) {
+    // `ipc_data` is never set back to `null` after init, so checking only
+    // for `!= null` would keep the JSSubprocess strongly referenced for the
+    // lifetime of the VM. The IPC side contributes pending activity until
+    // `_onAfterIPCClosed` has actually run: gating on `close_event_sent`
+    // (rather than `socket != .closed`) keeps the wrapper Strong across the
+    // window where the socket is already `.closed` but the task holding a
+    // raw `*SendQueue` into `ipc_data` is still queued.
+    if (this.ipc_data != null and !this.ipc_data.?.close_event_sent) {
         return true;
     }
 

@@ -67,3 +67,39 @@ test("spawnSync AbortSignal works as timeout", async () => {
   const end = performance.now();
   expect(end - start).toBeLessThan(100);
 });
+
+test("spawnSync with already-aborted AbortSignal kills the process", () => {
+  // On POSIX, Process.kill() previously no-op'd when the poller was still in its
+  // initial `.detached` state. Because the abort listener fires synchronously before
+  // watchOrReap() upgrades the poller, an already-aborted signal left the child
+  // running and spawnSync blocked until the child exited on its own.
+  const subprocess = Bun.spawnSync({
+    cmd: [bunExe(), "--eval", "await Bun.sleep(100000)"],
+    env: bunEnv,
+    stdout: "inherit",
+    stderr: "inherit",
+    stdin: "inherit",
+    signal: AbortSignal.abort(),
+  });
+
+  expect(subprocess.success).toBeFalse();
+  expect(subprocess.exitedDueToTimeout).toBeUndefined();
+  if (process.platform !== "win32") {
+    expect(subprocess.signalCode).toBe("SIGTERM");
+  }
+});
+
+test("spawnSync with already-aborted AbortSignal kills the process (piped stdio)", () => {
+  // Same as above but with default (piped) stdio to cover the non-inherit path.
+  const subprocess = Bun.spawnSync({
+    cmd: [bunExe(), "--eval", "await Bun.sleep(100000)"],
+    env: bunEnv,
+    signal: AbortSignal.abort(),
+  });
+
+  expect(subprocess.success).toBeFalse();
+  expect(subprocess.exitedDueToTimeout).toBeUndefined();
+  if (process.platform !== "win32") {
+    expect(subprocess.signalCode).toBe("SIGTERM");
+  }
+});

@@ -261,20 +261,24 @@ describe("globalThis.gc", () => {
 // https://github.com/oven-sh/bun/issues/30023
 // Paired with oven-sh/WebKit#207 — asserts the clearer TypeError wording
 // emitted by JavaScriptCore when matchAll/replaceAll get a non-global RegExp.
-// Skipped automatically against a WebKit build that still ships the old
-// wording so CI stays green until WEBKIT_VERSION is bumped.
+//
+// The block is skipped only when JSC emits the exact KNOWN OLD wording, so
+// CI stays green during the WEBKIT_VERSION transition but any unexpected
+// third wording still runs the assertions and fails loudly — i.e. a future
+// regression doesn't silently re-hide behind the skip.
 const EXPECTED_MATCH_ALL = "String.prototype.matchAll argument must contain the global (g) flag";
 const EXPECTED_REPLACE_ALL = "String.prototype.replaceAll argument must contain the global (g) flag";
-const hasNewWording = (() => {
+const OLD_MATCH_ALL = "String.prototype.matchAll argument must not be a non-global regular expression";
+const hasOldWording = (() => {
   try {
     "abc".matchAll(/a/);
   } catch (e) {
-    return e && e.message === EXPECTED_MATCH_ALL;
+    return e && e.message === OLD_MATCH_ALL;
   }
   return false;
 })();
 
-describe.skipIf(!hasNewWording)("non-global regexp TypeError wording", () => {
+describe.skipIf(hasOldWording)("non-global regexp TypeError wording", () => {
   it("String.prototype.matchAll rejects a non-global RegExp", () => {
     expect(() => "abc".matchAll(/a/)).toThrow(
       expect.objectContaining({ name: "TypeError", message: EXPECTED_MATCH_ALL }),

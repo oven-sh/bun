@@ -59,50 +59,49 @@ test("Bun.concatArrayBuffers throws OutOfMemoryError", () => {
   expect(() => Bun.concatArrayBuffers(buffers)).toThrow(/Failed to allocate/i);
 });
 
-describe("does not leak uninitialized memory when input is detached by a getter during iteration", () => {
-  // These tests exercise a TOCTOU between the sizing pass and the copy pass.
-  // A user-defined getter on the input array detaches a previously-measured
-  // buffer via ArrayBuffer.prototype.transfer(). The output allocation was
-  // sized for the original length, but the copy pass sees a 0-length span for
-  // the detached buffer. The tail of the output must be zeroed, not left as
-  // uninitialized heap.
+describe("does not leak uninitialized memory when a getter mutates input buffers during iteration", () => {
+  // These tests exercise a former TOCTOU between the sizing pass and the
+  // copy pass. A user-defined getter on the input array detaches or resizes
+  // a previously-read buffer via ArrayBuffer.prototype.transfer() /
+  // .resize(). All user code (getters) now runs before any byte lengths are
+  // read or the output buffer is allocated, so the detached/resized state is
+  // observed consistently and no uninitialized heap is exposed.
 
   const SIZE = 64 * 1024;
 
   function sprayHeap() {
     // Prime freed Gigacage pages with a recognizable pattern so that if the
     // implementation ever regresses to leaking uninitialized memory, the
-    // assertions below observe non-zero bytes rather than happening to pass
-    // on a freshly-zeroed heap.
+    // zero-content assertions below observe non-zero bytes rather than
+    // happening to pass on a freshly-zeroed heap.
     const spray = [];
     for (let i = 0; i < 64; i++) spray.push(Buffer.alloc(SIZE, 0xcc));
     spray.length = 0;
     Bun.gc(true);
   }
 
-  function makeDetachingArray(first: Uint8Array) {
-    const arr: Uint8Array[] = [first];
+  function makeDetachingArray<T extends { buffer: ArrayBuffer } | ArrayBuffer>(first: T, replacement: T) {
+    const arr: T[] = [first];
     Object.defineProperty(arr, 1, {
       enumerable: true,
       get() {
-        // Detach the element that was already measured at index 0.
-        first.buffer.transfer();
-        return new Uint8Array(0);
+        // Detach the element that was already read at index 0.
+        const ab = first instanceof ArrayBuffer ? first : first.buffer;
+        ab.transfer();
+        return replacement;
       },
     });
     arr.length = 2;
     return arr;
   }
 
-  test("Buffer.concat", () => {
+  test("Buffer.concat throws on buffer detached by later getter", () => {
     sprayHeap();
     const first = new Uint8Array(SIZE);
-    const out = Buffer.concat(makeDetachingArray(first));
-    expect(out.length).toBe(SIZE);
-    expect(out.every(b => b === 0)).toBe(true);
+    expect(() => Buffer.concat(makeDetachingArray(first, new Uint8Array(0)))).toThrow(TypeError);
   });
 
-  test("Buffer.concat preserves bytes copied before the detach", () => {
+  test("Buffer.concat throws on buffer detached by later getter (3 elements)", () => {
     sprayHeap();
     const head = Buffer.alloc(16, 0xaa);
     const victim = new Uint8Array(SIZE);
@@ -115,38 +114,43 @@ describe("does not leak uninitialized memory when input is detached by a getter 
       },
     });
     arr.length = 3;
-    const out = Buffer.concat(arr);
-    expect(out.length).toBe(16 + SIZE);
-    expect(out.subarray(0, 16).every(b => b === 0xaa)).toBe(true);
-    expect(out.subarray(16).every(b => b === 0)).toBe(true);
+    expect(() => Buffer.concat(arr)).toThrow(TypeError);
   });
 
-  test("Bun.concatArrayBuffers (TypedArray inputs)", () => {
+  test("Buffer.concat sizes output using post-getter length when a resizable buffer shrinks", () => {
     sprayHeap();
-    const first = new Uint8Array(SIZE);
-    const out = new Uint8Array(Bun.concatArrayBuffers(makeDetachingArray(first)));
-    expect(out.length).toBe(SIZE);
-    expect(out.every(b => b === 0)).toBe(true);
-  });
-
-  test("Bun.concatArrayBuffers (ArrayBuffer inputs)", () => {
-    sprayHeap();
-    const first = new ArrayBuffer(SIZE);
-    const arr: ArrayBuffer[] = [first];
+    // A shrink doesn't detach, so it must not throw — but the output must
+    // reflect the *final* length, not the pre-getter length, otherwise the
+    // tail would be uninitialized.
+    const ab = new ArrayBuffer(SIZE, { maxByteLength: SIZE });
+    const view = new Uint8Array(ab).fill(0xaa);
+    const arr: Uint8Array[] = [view];
     Object.defineProperty(arr, 1, {
       enumerable: true,
       get() {
-        first.transfer();
-        return new ArrayBuffer(0);
+        ab.resize(16);
+        return new Uint8Array(0);
       },
     });
     arr.length = 2;
-    const out = new Uint8Array(Bun.concatArrayBuffers(arr));
-    expect(out.length).toBe(SIZE);
-    expect(out.every(b => b === 0)).toBe(true);
+    const out = Buffer.concat(arr);
+    expect(out.length).toBe(16);
+    expect(out.every(b => b === 0xaa)).toBe(true);
   });
 
-  test("Bun.concatArrayBuffers (mixed inputs)", () => {
+  test("Bun.concatArrayBuffers throws on TypedArray detached by later getter", () => {
+    sprayHeap();
+    const first = new Uint8Array(SIZE);
+    expect(() => Bun.concatArrayBuffers(makeDetachingArray(first, new Uint8Array(0)))).toThrow();
+  });
+
+  test("Bun.concatArrayBuffers throws on ArrayBuffer detached by later getter", () => {
+    sprayHeap();
+    const first = new ArrayBuffer(SIZE);
+    expect(() => Bun.concatArrayBuffers(makeDetachingArray(first, new ArrayBuffer(0)))).toThrow();
+  });
+
+  test("Bun.concatArrayBuffers throws on mixed inputs with detach", () => {
     sprayHeap();
     const typed = new Uint8Array(SIZE);
     const ab = new ArrayBuffer(16);
@@ -159,17 +163,30 @@ describe("does not leak uninitialized memory when input is detached by a getter 
       },
     });
     arr.length = 3;
-    const out = new Uint8Array(Bun.concatArrayBuffers(arr));
-    expect(out.length).toBe(SIZE + 16);
-    expect(out.every(b => b === 0)).toBe(true);
+    expect(() => Bun.concatArrayBuffers(arr)).toThrow();
   });
 
-  test("Bun.concatArrayBuffers (asUint8Array = true)", () => {
+  test("Bun.concatArrayBuffers (asUint8Array = true) throws on detach", () => {
     sprayHeap();
     const first = new Uint8Array(SIZE);
-    const out = Bun.concatArrayBuffers(makeDetachingArray(first), Infinity, true);
-    expect(out).toBeInstanceOf(Uint8Array);
-    expect(out.length).toBe(SIZE);
-    expect(out.every(b => b === 0)).toBe(true);
+    expect(() => Bun.concatArrayBuffers(makeDetachingArray(first, new Uint8Array(0)), Infinity, true)).toThrow();
+  });
+
+  test("Bun.concatArrayBuffers sizes output using post-getter length when a resizable buffer shrinks", () => {
+    sprayHeap();
+    const ab = new ArrayBuffer(SIZE, { maxByteLength: SIZE });
+    new Uint8Array(ab).fill(0xbb);
+    const arr: ArrayBuffer[] = [ab];
+    Object.defineProperty(arr, 1, {
+      enumerable: true,
+      get() {
+        ab.resize(16);
+        return new ArrayBuffer(0);
+      },
+    });
+    arr.length = 2;
+    const out = new Uint8Array(Bun.concatArrayBuffers(arr));
+    expect(out.length).toBe(16);
+    expect(out.every(b => b === 0xbb)).toBe(true);
   });
 });

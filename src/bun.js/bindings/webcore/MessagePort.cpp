@@ -319,6 +319,8 @@ WebCoreOpaqueRoot root(MessagePort* port)
 
 void MessagePort::jsRef(JSGlobalObject*)
 {
+    // updateEventLoopRef()'s predicate already gates on !m_isDetached, so a
+    // closed or transferred-away port cannot take an event-loop ref here.
     m_hasRef = true;
     m_wantsExplicitRef = true;
     updateEventLoopRef();

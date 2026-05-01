@@ -2272,10 +2272,11 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         for (unsigned hops = 0; p && hops < 32; hops++) {
             if (p->status() != JSC::JSPromise::Status::Pending)
                 return nullptr;
+            JSC::JSValue reactionsValue = p->reactionsOrResult();
             JSC::JSPromiseReaction* reaction = nullptr;
-            if (!dynamicCastValue(p->reactionsOrResult(), &reaction))
+            if (!dynamicCastValue(reactionsValue, &reaction))
                 return nullptr;
-            JSC::JSValue context = reaction->context();
+            JSC::JSValue context = JSC::JSPromiseReaction::tryGetContext(reactionsValue);
             JSC::InternalFieldTuple* tuple = nullptr;
             if (dynamicCastValue(context, &tuple))
                 context = tuple->getInternalField(0);

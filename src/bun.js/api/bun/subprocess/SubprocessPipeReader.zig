@@ -171,8 +171,11 @@ pub fn onReaderError(this: *PipeReader, err: bun.sys.Error) void {
         bun.default_allocator.free(this.state.done);
     }
     this.state = .{ .err = err };
-    if (this.process) |process|
+    if (this.process) |process| {
+        this.process = null;
         process.onCloseIO(this.kind(process));
+        this.deref();
+    }
 }
 
 pub fn close(this: *PipeReader) void {
@@ -199,7 +202,7 @@ pub fn loop(this: *PipeReader) *bun.Async.Loop {
 
 fn deinit(this: *PipeReader) void {
     if (comptime Environment.isPosix) {
-        bun.assert(this.reader.isDone());
+        bun.assert(this.reader.isDone() or this.state == .err);
     }
 
     if (comptime Environment.isWindows) {

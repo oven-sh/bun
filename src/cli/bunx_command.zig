@@ -577,8 +577,10 @@ pub const BunxCommand = struct {
 
         const passthrough = opts.passthrough_list.items;
 
-        var do_cache_bust = update_request.version.tag == .dist_tag;
-        const look_for_existing_bin = update_request.version.literal.isEmpty() or update_request.version.tag != .dist_tag;
+        const is_github_head_ref = update_request.version.tag == .github and
+            strings.eqlComptime(update_request.version.value.github.committish.slice(update_request.version_buf), "HEAD");
+        var do_cache_bust = update_request.version.tag == .dist_tag or is_github_head_ref;
+        const look_for_existing_bin = update_request.version.literal.isEmpty() or (update_request.version.tag != .dist_tag and !is_github_head_ref);
 
         debug("try run existing? {}", .{look_for_existing_bin});
         if (look_for_existing_bin) try_run_existing: {

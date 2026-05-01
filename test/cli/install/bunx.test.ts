@@ -289,9 +289,49 @@ it.concurrent("should work for github repository with committish", async () => {
   expect(out.trim()).toContain("hello bun!");
   expect(exited).toBe(0);
 
-  // cached
+  // #HEAD should not use cache (like @latest), so --no-install should fail
   const cached = spawn({
     cmd: [bunExe(), "x", "--no-install", "github:piuccio/cowsay#HEAD", "hello bun!"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "inherit",
+    stderr: "pipe",
+    env,
+  });
+
+  [err, out, exited] = await Promise.all([
+    new Response(cached.stderr).text(),
+    new Response(cached.stdout).text(),
+    cached.exited,
+  ]);
+
+  expect(exited).toBe(1);
+});
+
+it("should work for github repository with non-HEAD committish and cache it", async () => {
+  // A specific commit SHA should still be cached
+  const withoutCache = spawn({
+    cmd: [bunExe(), "x", "github:piuccio/cowsay#master", "hello bun!"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "inherit",
+    stderr: "pipe",
+    env,
+  });
+
+  let [err, out, exited] = await Promise.all([
+    new Response(withoutCache.stderr).text(),
+    new Response(withoutCache.stdout).text(),
+    withoutCache.exited,
+  ]);
+
+  expect(err).not.toContain("error:");
+  expect(out.trim()).toContain("hello bun!");
+  expect(exited).toBe(0);
+
+  // Non-HEAD committish should use cache, so --no-install should work
+  const cached = spawn({
+    cmd: [bunExe(), "x", "--no-install", "github:piuccio/cowsay#master", "hello bun!"],
     cwd: x_dir,
     stdout: "pipe",
     stdin: "inherit",

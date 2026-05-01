@@ -75,20 +75,23 @@ const SHARPYUV = [
 ];
 
 // dsp/*_{sse2,sse41,avx2}.c each compile a single ISA variant. libwebp's
-// cpu.h gates them on `__SSE2__`/`__SSE4_1__`/`__AVX2__` *or* `_MSC_VER` —
-// real MSVC accepts AVX2 intrinsics without /arch, but clang-cl defines
-// _MSC_VER and still requires `-mavx2`, so the file builds on Linux baseline
-// (gate stays off) and explodes on Windows baseline (gate forced on, no ISA).
-// Match upstream cmake/cpu.cmake: pass the ISA flag per-file. Runtime CPU
-// dispatch in dsp/cpu.c picks the best available, so a baseline binary still
-// runs on pre-AVX2 hardware.
-function simd(path: string) {
-  for (const [suf, flag] of [
-    ["_avx2.c", "-mavx2"],
-    ["_sse41.c", "-msse4.1"],
-    ["_sse2.c", "-msse2"],
-  ] as const) {
-    if (path.endsWith(suf)) return { path, cflags: [flag] };
+// cpu.h gates them on `__SSE2__`/`__SSE4_1__`/`__AVX2__` *or* `_MSC_VER &&
+// _M_X64` — real MSVC accepts AVX2 intrinsics without /arch, but clang-cl
+// defines _MSC_VER and still requires `-mavx2`, so the file builds on Linux
+// baseline (gate stays off) and explodes on Windows baseline (gate forced on,
+// no ISA). Match upstream cmake/cpu.cmake: pass the ISA flag per-file on x64
+// (on arm64 these compile to the stub body and the x86 -m flags are invalid).
+// Runtime CPU dispatch in dsp/cpu.c picks the best available, so a baseline
+// binary still runs on pre-AVX2 hardware.
+function simd(path: string, x64: boolean) {
+  if (x64) {
+    for (const [suf, flag] of [
+      ["_avx2.c", "-mavx2"],
+      ["_sse41.c", "-msse4.1"],
+      ["_sse2.c", "-msse2"],
+    ] as const) {
+      if (path.endsWith(suf)) return { path, cflags: [flag] };
+    }
   }
   return path;
 }
@@ -103,14 +106,14 @@ export const libwebp: Dependency = {
     commit: LIBWEBP_COMMIT,
   }),
 
-  build: () => ({
+  build: cfg => ({
     kind: "direct",
     sources: [
       ...DEC.map(f => `src/dec/${f}.c`),
       ...ENC.map(f => `src/enc/${f}.c`),
-      ...DSP.map(f => simd(`src/dsp/${f}.c`)),
+      ...DSP.map(f => simd(`src/dsp/${f}.c`, cfg.x64)),
       ...UTILS.map(f => `src/utils/${f}.c`),
-      ...SHARPYUV.map(f => simd(`sharpyuv/${f}.c`)),
+      ...SHARPYUV.map(f => simd(`sharpyuv/${f}.c`, cfg.x64)),
     ],
     // src/webp/*.h is the public API; internal headers use "src/..."
     // includes from the repo root, sharpyuv uses "sharpyuv/...".

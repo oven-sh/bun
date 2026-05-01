@@ -1836,7 +1836,18 @@ pub const RunCommand = struct {
                 bun.options.defaultLoaders.get(path.name.ext) orelse .tsx;
             if (loader.canBeRunByBun() or loader == .html or loader == .md) {
                 log("Resolved to: `{s}`", .{path.text});
-                return _bootAndHandleError(ctx, path.text, loader);
+                // On Windows, the resolver may preserve the user-provided casing
+                // (e.g. "Aaa.ts" when the file is "aaa.ts") because the filesystem
+                // is case-insensitive. Canonicalize the path so that import.meta.path
+                // and Bun.main use consistent casing (fixes #28279).
+                const entry_path = if (comptime Environment.isWindows) brk: {
+                    const fd = bun.sys.openA(path.text, bun.O.RDONLY, 0).unwrap() catch
+                        break :brk path.text;
+                    defer fd.close();
+                    var fd_path_buf: bun.PathBuffer = undefined;
+                    break :brk bun.getFdPath(fd, &fd_path_buf) catch path.text;
+                } else path.text;
+                return _bootAndHandleError(ctx, entry_path, loader);
             } else {
                 log("Resolved file `{s}` but ignoring because loader is {s}", .{ path.text, @tagName(loader) });
                 resolved_to_unrunnable_file = .{ .path = path.text, .loader = loader };

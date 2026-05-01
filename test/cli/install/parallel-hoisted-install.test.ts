@@ -126,7 +126,7 @@ describe.skipIf(!isPosix)("parallel hoisted install", () => {
   /**
    * Parse the test-only "[ParallelHoistedInstall] N tasks" marker that
    * completeParallelInstalls() emits under
-   * BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING. Returns 0 if the marker is
+   * BUN_INTERNAL_PARALLEL_HOISTED_MARKER. Returns 0 if the marker is
    * absent (i.e. the parallel path was not taken, or doesn't exist).
    */
   function parallelTaskCount(stderr: string): number {

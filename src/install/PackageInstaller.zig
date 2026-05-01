@@ -767,11 +767,8 @@ pub const PackageInstaller = struct {
         // packages actually went through the parallel path without
         // relying on timing-sensitive CPU/wall ratios (which are too
         // noisy under ASAN). Without this codepath existing, the
-        // marker is never printed and the assertion fails. Gated on
-        // a dedicated env var (not the general INTERNAL_FOR_TESTING
-        // flag from bunEnv) so other install tests' stderr snapshots
-        // are unaffected.
-        if (bun.getenvZ("BUN_INTERNAL_PARALLEL_HOISTED_MARKER") != null) {
+        // marker is never printed and the assertion fails.
+        if (bun.feature_flag.BUN_INTERNAL_PARALLEL_HOISTED_MARKER.get()) {
             Output.prettyErrorln("[ParallelHoistedInstall] {d} tasks", .{this.parallel_tasks.items.len});
             Output.flush();
         }

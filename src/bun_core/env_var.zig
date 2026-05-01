@@ -211,6 +211,13 @@ pub const feature_flag = struct {
     pub const BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS = newFeatureFlag("BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS", .{});
     pub const BUN_INSTRUMENTS = newFeatureFlag("BUN_INSTRUMENTS", .{});
     pub const BUN_INTERNAL_BUNX_INSTALL = newFeatureFlag("BUN_INTERNAL_BUNX_INSTALL", .{});
+    /// Test-only: make completeParallelInstalls() emit a
+    /// "[ParallelHoistedInstall] N tasks" stderr marker so the
+    /// parallel-hoisted-install.test.ts suite can deterministically
+    /// assert the parallel path was taken. Dedicated flag (not
+    /// INTERNAL_FOR_TESTING) so other install tests' stderr snapshots
+    /// are unaffected.
+    pub const BUN_INTERNAL_PARALLEL_HOISTED_MARKER = newFeatureFlag("BUN_INTERNAL_PARALLEL_HOISTED_MARKER", .{});
     pub const BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN = newFeatureFlag("BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN", .{});
     pub const BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT = newFeatureFlag("BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT", .{});
     pub const BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF = newFeatureFlag("BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF", .{});

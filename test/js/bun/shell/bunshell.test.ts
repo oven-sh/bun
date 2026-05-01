@@ -467,6 +467,21 @@ describe("bunshell", () => {
         .stdout("lmao\nlmao/Documents\n")
         .runAsTest("2");
     });
+
+    describe("with command substitution", async () => {
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo ~/$(echo bin)/subdir`
+        .stdout("/home/user/bin/subdir\n")
+        .runAsTest("atom after cmd subst is preserved");
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo ~/$(echo a)/$(echo b)/c`
+        .stdout("/home/user/a/b/c\n")
+        .runAsTest("multiple cmd substs");
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo ~$(echo /bin)/sub`
+        .stdout("/home/user/bin/sub\n")
+        .runAsTest("cmd subst immediately after tilde");
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo ~/$(echo bin)`
+        .stdout("/home/user/bin\n")
+        .runAsTest("cmd subst as last atom");
+    });
   });
 
   // Ported from GNU bash "quote.tests"

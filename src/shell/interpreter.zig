@@ -606,17 +606,23 @@ pub const Interpreter = struct {
                 @compileError("Bad type for new_cwd " ++ @typeName(@TypeOf(new_cwd_)));
             }
             const is_sentinel = @TypeOf(new_cwd_) == [:0]const u8;
+            const is_abs = ResolvePath.Platform.auto.isAbsolute(new_cwd_);
 
-            // The path (absolute or joined) is copied into the 4096-byte threadlocal
-            // `ResolvePath.join_buf` below. Without this check, an attacker-controlled
-            // path longer than the buffer overflows adjacent TLS in ReleaseFast (where
-            // slice bounds are elided) and segfaults.
-            if (new_cwd_.len >= ResolvePath.join_buf.len) {
+            // Both branches below write into the 4096-byte threadlocal
+            // `ResolvePath.join_buf` with no bounds check: the absolute branch
+            // `@memcpy`s `new_cwd_` directly, and the relative branch normalizes
+            // `cwd + "/" + new_cwd_` into it via `joinZ`. In ReleaseFast (where
+            // slice bounds are elided) an oversized input overflows adjacent TLS
+            // and segfaults. Normalization never grows the path, so bounding the
+            // un-normalized length is sufficient (and matches POSIX `chdir`, which
+            // returns ENAMETOOLONG on argument length, not canonicalized length).
+            const required_len = if (is_abs) new_cwd_.len else this.cwd().len + 1 + new_cwd_.len;
+            if (required_len >= ResolvePath.join_buf.len) {
                 return Maybe(void).initErr(Syscall.Error.fromCode(.NAMETOOLONG, .chdir));
             }
 
             const new_cwd: [:0]const u8 = brk: {
-                if (ResolvePath.Platform.auto.isAbsolute(new_cwd_)) {
+                if (is_abs) {
                     if (is_sentinel) {
                         @memcpy(ResolvePath.join_buf[0..new_cwd_.len], new_cwd_[0..new_cwd_.len]);
                         ResolvePath.join_buf[new_cwd_.len] = 0;

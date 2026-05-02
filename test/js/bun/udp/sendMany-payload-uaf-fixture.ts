@@ -14,8 +14,8 @@
 // through and we simply verify the correct bytes arrive at the other socket.
 
 const mode = process.argv[2];
-if (mode !== "sendMany" && mode !== "send") {
-  console.error("usage: sendMany-payload-uaf-fixture.ts <sendMany|send>");
+if (mode !== "sendMany" && mode !== "sendMany-stringobj" && mode !== "send") {
+  console.error("usage: sendMany-payload-uaf-fixture.ts <sendMany|sendMany-stringobj|send>");
   process.exit(2);
 }
 
@@ -66,6 +66,20 @@ try {
     },
   };
 
+  // Bun's `isString()` is `isStringLike()` and accepts boxed/derived String
+  // objects; `toJSString()` on those goes through `toPrimitive` and invokes
+  // user `toString()`. sendMany must resolve them to primitive JSStrings in
+  // phase 1 so phase 2 never calls back into JS.
+  class EvilString extends String {
+    toString() {
+      if (!detached) {
+        detached = true;
+        buf.transfer(0);
+      }
+      return super.toString();
+    }
+  }
+
   // Unconnected socket: the port is coerced via `valueOf()` after the payload
   // JSValue has been captured, so by the time the native send path borrows a
   // raw pointer the buffer is already detached. Both send() and sendMany()
@@ -79,6 +93,12 @@ try {
   try {
     if (mode === "sendMany") {
       client.sendMany([payload, evilPort, "127.0.0.1"]);
+    } else if (mode === "sendMany-stringobj") {
+      // Second payload is a DerivedStringObject whose `toString()` detaches
+      // the first payload's backing store. If sendMany deferred the
+      // `toJSString()` to phase 2, payloads[0] would already hold a borrowed
+      // pointer into `buf` when `toString()` frees it.
+      client.sendMany([payload, server.port, "127.0.0.1", new EvilString("x") as any, server.port, "127.0.0.1"]);
     } else {
       client.send(payload, evilPort as never, "127.0.0.1");
     }
@@ -86,7 +106,7 @@ try {
     if (mode !== "send" || e?.code !== "EFAULT") throw e;
   }
 
-  if (!detached) throw new Error("valueOf() never ran");
+  if (!detached) throw new Error("re-entrant callback never ran");
 
   // Handle unreliable transmission in UDP: the first send already exercised
   // the UAF path; retries just let the correctness assertion complete if the

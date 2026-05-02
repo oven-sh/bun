@@ -339,7 +339,7 @@ describe("udpSocket()", () => {
   // user JS has run; send resolves the destination before capturing the
   // payload.
   describe("detaching an ArrayBuffer during port/address coercion does not use-after-free", () => {
-    for (const mode of ["sendMany", "send"] as const) {
+    for (const mode of ["sendMany", "sendMany-stringobj", "send"] as const) {
       test(
         mode,
         async () => {

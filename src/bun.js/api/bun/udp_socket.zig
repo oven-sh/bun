@@ -689,11 +689,20 @@ pub const UDPSocket = struct {
             }
             const slice_idx = if (connected) i else i / 3;
             if (connected or i % 3 == 0) {
-                if (val.asArrayBuffer(globalThis) == null and !val.isString()) {
+                const payload_val: JSValue = blk: {
+                    if (val.asArrayBuffer(globalThis) != null) break :blk val;
+                    // `isString()` is `isStringLike()` and accepts boxed
+                    // `StringObject` / `DerivedStringObject`; calling
+                    // `toJSString` on those in phase 2 would run user
+                    // `toString()`/`valueOf()` via `toPrimitive`. Resolve to
+                    // the primitive JSString here — where user-JS re-entrance
+                    // is expected — and root that, so phase 2 only ever sees
+                    // primitive JSString cells.
+                    if (val.isString()) break :blk (try val.toJSString(globalThis)).toJS();
                     return globalThis.throwInvalidArguments("Expected ArrayBufferView or string as payload", .{});
-                }
-                payload_roots.append(val);
-                payload_vals[slice_idx] = val;
+                };
+                payload_roots.append(payload_val);
+                payload_vals[slice_idx] = payload_val;
             }
             if (connected) {
                 addr_ptrs[slice_idx] = null;
@@ -715,12 +724,13 @@ pub const UDPSocket = struct {
         }
 
         // Phase 2: borrow byte slices now that no more user JS will run before
-        // `socket.send`. The payloads are rooted so GC cannot collect them; an
-        // ArrayBuffer that was detached during phase 1 now reports a
-        // zero-length slice rather than a dangling pointer into freed heap.
-        // String rope resolution / UTF-16 conversion here may allocate and GC,
-        // but every payload JSString is rooted so borrowed WTFStringImpl
-        // pointers stay valid.
+        // `socket.send`. Every `payload_vals` entry is either an
+        // ArrayBufferView or a *primitive* JSString (boxed strings were
+        // resolved in phase 1), so nothing here reaches `toPrimitive`. Rope
+        // resolution / UTF-16 conversion may allocate and GC, but every
+        // payload is rooted so borrowed WTFStringImpl / backing-store
+        // pointers stay valid. An ArrayBuffer detached during phase 1 now
+        // reports a zero-length slice rather than a dangling pointer.
         const empty: []const u8 = "";
         for (payload_vals, 0..) |val, slice_idx| {
             const slice: []const u8 = brk: {
@@ -732,8 +742,9 @@ pub const UDPSocket = struct {
                     if (arrayBuffer.isDetached()) break :brk empty;
                     break :brk arrayBuffer.slice();
                 }
-                // Already validated `isString()` in phase 1.
-                break :brk (try val.toJSString(globalThis)).toSlice(globalThis, alloc).slice();
+                // Phase 1 stored the primitive JSString; `asString()` is a
+                // plain cast (no `toPrimitive`, no user JS).
+                break :brk val.asString().toSlice(globalThis, alloc).slice();
             };
             payloads[slice_idx] = slice.ptr;
             lens[slice_idx] = slice.len;

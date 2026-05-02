@@ -127,7 +127,13 @@ public:
         // Fast path: direct children of currently-tracked pids. This is the
         // race-narrowing step — proc_listchildpids is one cheap syscall per
         // tracked pid, so it usually runs before a fast-exit intermediate
-        // can fork+exit and break the `p_puniqueid` chain.
+        // can fork+exit and break the `p_puniqueid` chain. Fixed-size buffer
+        // is intentional: a query-then-allocate round-trip would double the
+        // syscalls and widen the very race this exists to narrow; >256 direct
+        // children of a single tracked pid is pathological, and any overflow
+        // is caught by the full `proc_listallpids` sweep immediately below
+        // (`p_puniqueid` survives reparenting, so nothing is lost — only the
+        // latency advantage for the 257th+ child).
         {
             pid_t kids[256];
             // m_tracked may grow while iterating; index past the original end.

@@ -2464,10 +2464,10 @@ pub const sync = struct {
 
         // no-orphans: replace the blind `poll()`/`wait4()` with a wait loop
         // that also watches our parent (and on macOS, the script's whole
-        // spawn tree via the NOTE_TRACK kq above). Linux/macOS only — other POSIX
-        // (FreeBSD) falls through to the original `poll()`+`wait4()` below so
-        // buffered stdio still drains; the `defer` above still does the
-        // pgroup kill there.
+        // spawn tree via the NOTE_FORK kq + p_puniqueid scan above).
+        // Linux/macOS only — other POSIX (FreeBSD) falls through to the
+        // original `poll()`+`wait4()` below so buffered stdio still drains;
+        // the `defer` above still does the pgroup kill there.
         //
         // Do NOT return from here — Linux backs `.buffer` stdio with memfds
         // that are read *after* the wait, so falling through to the memfd block
@@ -2636,7 +2636,10 @@ pub const sync = struct {
             // that would drop output or deadlock on a full pipe. ESRCH on the
             // child PROC entry is impossible (our own unreaped child —
             // `filt_procattach` finds zombies), so any errno here is a real
-            // registration failure.
+            // registration failure. `begin()` has already seeded m_tracked
+            // with `child`; prune it so the caller's `reapChild()` doesn't
+            // leave a freed pid for `killTracked()` to SIGSTOP.
+            Bun__noOrphans_onExit(child);
             return null;
         }
         if (ppid > 1 and std.c.getppid() != ppid)

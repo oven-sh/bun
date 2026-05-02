@@ -244,10 +244,15 @@ pub fn onStart(this: *FileReader) streams.Start {
                 // and waiting_for_onReaderDone above so finalize() can
                 // bring the ref_count to 0, and close the fd we opened in
                 // openFileBlob() if the reader didn't take ownership of it
-                // (on Windows, Source.open() can fail before wrapping the fd).
+                // (on Windows, Source.open() can fail before wrapping the
+                // fd; if it succeeded the reader owns it and reader.deinit()
+                // closes it). Check getFd() == invalid rather than != this.fd
+                // because on Windows pipe/tty sources return a .system-kind
+                // FD while this.fd is .uv-kind — same kernel object, but
+                // bit-inequal.
                 this.waiting_for_onReaderDone = false;
                 _ = this.parent().decrementCount();
-                if (this.fd != bun.invalid_fd and this.reader.getFd() != this.fd) {
+                if (this.fd != bun.invalid_fd and this.reader.getFd() == bun.invalid_fd) {
                     this.fd.close();
                 }
                 this.fd = bun.invalid_fd;

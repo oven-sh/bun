@@ -231,9 +231,11 @@ const LibUVBackend = struct {
         port_buf[port_len] = 0;
         const portZ = port_buf[0..port_len :0];
         var hostname: bun.PathBuffer = undefined;
-        _ = strings.copy(hostname[0..], query.name);
-        hostname[query.name.len] = 0;
-        const host = hostname[0..query.name.len :0];
+        // Reserve the last byte for the NUL terminator so the index below can never
+        // exceed the buffer even if the upstream length guard in `doLookup` is bypassed.
+        const copied = strings.copy(hostname[0 .. hostname.len - 1], query.name);
+        hostname[copied.len] = 0;
+        const host = hostname[0..copied.len :0];
 
         request.backend.libc.uv.data = request;
         const promise = request.head.promise.value();
@@ -763,10 +765,13 @@ pub const GetAddrInfoRequest = struct {
                     port_buf[port_len] = 0;
                     const portZ = port_buf[0..port_len :0];
                     var hostname: bun.PathBuffer = undefined;
-                    _ = strings.copy(hostname[0..], query.name);
-                    hostname[query.name.len] = 0;
+                    // Reserve the last byte for the NUL terminator so the index below
+                    // can never exceed the buffer even if the upstream length guard in
+                    // `doLookup` is bypassed.
+                    const copied = strings.copy(hostname[0 .. hostname.len - 1], query.name);
+                    hostname[copied.len] = 0;
                     var addrinfo: ?*std.c.addrinfo = null;
-                    const host = hostname[0..query.name.len :0];
+                    const host = hostname[0..copied.len :0];
                     const debug_timer = bun.Output.DebugTimer.start();
                     const err = std.c.getaddrinfo(
                         host.ptr,
@@ -2866,6 +2871,17 @@ pub const Resolver = struct {
     }
 
     pub fn doLookup(this: *Resolver, name: []const u8, port: u16, options: GetAddrInfo.Options, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+        // The system backends copy the hostname into a fixed `bun.PathBuffer` on the
+        // stack before null-terminating it. Reject anything that cannot fit so we never
+        // index past that buffer. RFC 1035 caps hostnames at 253 octets and NI_MAXHOST
+        // is 1025, so this never rejects a name that could have resolved.
+        if (name.len >= bun.MAX_PATH_BYTES) {
+            var promise = jsc.JSPromise.Strong.init(globalThis);
+            const promise_value = promise.value();
+            c_ares.Error.ENOTFOUND.toDeferred("getaddrinfo", name, &promise).rejectLater(globalThis);
+            return promise_value;
+        }
+
         var opts = options;
         var backend = opts.backend;
         const normalized = normalizeDNSName(name, &backend);

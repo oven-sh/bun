@@ -1,6 +1,6 @@
 import { SystemError, dns } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isWindows, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isWindows, withoutAggressiveGC } from "harness";
 import { isIP, isIPv4, isIPv6 } from "node:net";
 
 const backends = ["system", "libc", "c-ares"];
@@ -111,6 +111,55 @@ describe("dns", () => {
         name: "DNSException",
       });
     });
+  });
+
+  // Hostnames longer than the fixed stack buffer used by the libc/system
+  // backends (bun.PathBuffer) previously overflowed when writing the NUL
+  // terminator. They must reject cleanly on every backend.
+  test.each(backends)("lookup() with oversized hostname rejects [backend: %s]", async backend => {
+    const long = Buffer.alloc(5000, "a").toString();
+    // @ts-expect-error
+    await expect(dns.lookup(long, { backend })).rejects.toMatchObject({
+      name: "DNSException",
+      code: "DNS_ENOTFOUND",
+      syscall: "getaddrinfo",
+    });
+  });
+
+  test("lookup() with oversized .local hostname rejects via system backend in subprocess", async () => {
+    // A `.local` suffix forces the c-ares backend to fall through to the
+    // system resolver, which is the path that wrote past its stack buffer.
+    // Run in a subprocess so the panic that the unfixed debug build raises on
+    // the worker thread shows up as a non-zero exit instead of aborting the
+    // whole test file.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const long = Buffer.alloc(5000, "a").toString() + ".local";
+          const settled = await Promise.allSettled([
+            Bun.dns.lookup(long, { backend: "system" }),
+            Bun.dns.lookup(long, { backend: "libc" }),
+            Bun.dns.lookup(long),
+          ]);
+          for (const result of settled) {
+            if (result.status !== "rejected") throw new Error("expected rejection");
+            if (result.reason?.code !== "DNS_ENOTFOUND") {
+              throw new Error("expected DNS_ENOTFOUND, got " + result.reason?.code);
+            }
+          }
+          console.log("ok");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
   });
 
   test("lookup with non-object second argument should not crash", async () => {

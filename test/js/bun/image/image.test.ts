@@ -155,6 +155,14 @@ describe("Bun.Image", () => {
     // (no re-read).
     const out = await img.png().bytes();
     expect(out[0]).toBe(0x89);
+    // Blob#image() is the same construction.
+    const via = Bun.file(p).image();
+    expect(via).toBeInstanceOf(Bun.Image);
+    expect(await via.metadata()).toEqual(meta);
+    // In-memory Blob too — covers the sharedView() branch.
+    expect(await new Blob([cornersPng]).image().metadata()).toEqual(meta);
+    // Options pass-through.
+    await expect(Bun.file(p).image({ maxPixels: 4 }).metadata()).rejects.toThrow(/maxPixels/);
     // Missing file rejects with a real fs error, not an Image-layer one.
     await expect(new Bun.Image(Bun.file(join(String(dir), "nope.png"))).metadata()).rejects.toThrow(/ENOENT/);
     // Synchronous Response-body path: path-backed BunFile falls back to

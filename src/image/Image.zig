@@ -129,21 +129,44 @@ pub fn constructor(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, this_
     const args = callframe.arguments();
     if (args.len < 1 or args[0].isUndefinedOrNull())
         return global.throwInvalidArguments("Image() expects a path, ArrayBuffer, TypedArray, Blob or data: URL", .{});
+    return fromInputJS(global, args[0], if (args.len > 1) args[1] else .js_undefined, this_value);
+}
 
+/// `Bun.file("…").image()` / `Bun.s3("…").image()` / `Blob#image()`. Same
+/// allocation as `new Bun.Image(blob, opts)`; the wrapper JS object is
+/// created here (vs. by the codegen for `constructor`) and the source is
+/// resolved against it so the `.js_buffer`/`.blob` cached-slot wiring is
+/// identical either way in.
+pub fn fromBlobJS(global: *jsc.JSGlobalObject, blob_value: jsc.JSValue, options: jsc.JSValue) bun.JSError!jsc.JSValue {
+    var img = Image.new(.{ .source = .js_buffer });
+    const this_value = img.toJS(global);
+    img.source = sourceFromJS(global, blob_value, this_value) catch |e| {
+        img.finalize();
+        return e;
+    };
+    applyOptions(img, global, options) catch |e| {
+        img.finalize();
+        return e;
+    };
+    return this_value;
+}
+
+fn fromInputJS(global: *jsc.JSGlobalObject, input: jsc.JSValue, options: jsc.JSValue, this_value: jsc.JSValue) bun.JSError!*Image {
     var img = Image.new(.{ .source = .js_buffer });
     // `opt.get` can throw (Proxy/getter); without this the heap-allocated
     // *Image and the duplicated source bytes leak.
     errdefer img.finalize();
-    img.source = try sourceFromJS(global, args[0], this_value);
-
-    if (args.len > 1 and args[1].isObject()) {
-        const opt = args[1];
-        if (try opt.get(global, "maxPixels")) |v| if (v.isNumber()) {
-            img.max_pixels = coerceInt(u64, v.asNumber(), 0, 1e15);
-        };
-        if (try opt.get(global, "autoOrient")) |v| img.auto_orient = v.toBoolean();
-    }
+    img.source = try sourceFromJS(global, input, this_value);
+    try applyOptions(img, global, options);
     return img;
+}
+
+fn applyOptions(img: *Image, global: *jsc.JSGlobalObject, opt: jsc.JSValue) bun.JSError!void {
+    if (!opt.isObject()) return;
+    if (try opt.get(global, "maxPixels")) |v| if (v.isNumber()) {
+        img.max_pixels = coerceInt(u64, v.asNumber(), 0, 1e15);
+    };
+    if (try opt.get(global, "autoOrient")) |v| img.auto_orient = v.toBoolean();
 }
 
 pub fn finalize(this: *Image) void {

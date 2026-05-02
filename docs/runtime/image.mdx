@@ -15,13 +15,14 @@ The API is shaped after [Sharp](https://sharp.pixelplumbing.com/): construct fro
 
 ## Input
 
-The constructor accepts a path, bytes, or a `Blob`:
+The constructor accepts a path, bytes, or a `Blob` — including `Bun.file()` and `Bun.s3()`. `Blob#image()` is shorthand for `new Bun.Image(blob)`:
 
 ```ts
 new Bun.Image("./photo.jpg"); // file path
-new Bun.Image(await Bun.file("photo.jpg").bytes()); // Uint8Array
 new Bun.Image(buffer); // Buffer / ArrayBuffer / TypedArray
-new Bun.Image(await fetch(url).then(r => r.blob())); // Blob
+new Bun.Image(Bun.file("photo.jpg")); // BunFile (read lazily, off-thread)
+Bun.file("photo.jpg").image(); // same as above
+Bun.s3("bucket/photo.jpg").image(); // S3File
 ```
 
 The format is sniffed from the bytes — extensions and `Content-Type` are ignored.

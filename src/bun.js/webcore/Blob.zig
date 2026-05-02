@@ -271,6 +271,14 @@ pub const ReadBytesResult = union(enum) {
     err: jsc.SystemError,
 };
 
+/// `Bun.file("…").image(opts?)` ≡ `new Bun.Image(this, opts?)`. Lives here so
+/// the proto entry covers Blob/BunFile/S3File in one place; the actual
+/// construction is `Image.fromBlobJS` so Blob.zig doesn't grow image
+/// knowledge.
+pub fn doImage(_: *Blob, global: *JSGlobalObject, cf: *jsc.CallFrame) bun.JSError!JSValue {
+    return @import("../../image/Image.zig").fromBlobJS(global, cf.this(), cf.argument(0));
+}
+
 pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, comptime Function: anytype, global: *JSGlobalObject) void {
     if (Environment.isWindows) {
         const ReadFileHandler = NewInternalReadFileHandler(Handler, Function);

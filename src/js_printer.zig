@@ -6071,6 +6071,21 @@ pub fn printAst(
         }
     }
 
+    if (opts.bundling and
+        opts.target == .bun and
+        tree.module_scope.contains_direct_eval)
+    {
+        // Some CommonJS-oriented packages intentionally hide `require` from
+        // bundlers using patterns like `eval("require")("buffer")`. Bun
+        // bundles transpile static `require` references to `import.meta.require`,
+        // but that leaves no global `require` binding for direct eval to reach.
+        //
+        // Expose a Bun-backed global require shim for bundle outputs that contain
+        // direct eval so hidden dynamic-require patterns keep the same Node-like
+        // behavior in bundled/compiled Bun.
+        printer.print("if(typeof globalThis.require==='undefined')globalThis.require=import.meta.require;");
+    }
+
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
             try printer.printStmt(stmt, PrinterType.TopLevel.init(.yes));

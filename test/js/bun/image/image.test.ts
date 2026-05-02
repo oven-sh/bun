@@ -288,11 +288,11 @@ describe("Bun.Image", () => {
         for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
       }
       dv.setUint32(29, ~c >>> 0);
-      expect(new Bun.Image(bomb).metadata()).rejects.toThrow(/maxPixels/);
+      await expect(new Bun.Image(bomb).metadata()).rejects.toThrow(/maxPixels/);
     });
 
     test("maxPixels can be lowered per-instance", async () => {
-      expect(new Bun.Image(gradientPng, { maxPixels: 10 }).metadata()).rejects.toThrow(/maxPixels/);
+      await expect(new Bun.Image(gradientPng, { maxPixels: 10 }).metadata()).rejects.toThrow(/maxPixels/);
       // …and the default still admits it.
       expect((await new Bun.Image(gradientPng).metadata()).width).toBe(16);
     });
@@ -307,7 +307,7 @@ describe("Bun.Image", () => {
       ["truncated WebP", Buffer.from("RIFF\x10\x00\x00\x00WEBPVP8 ", "binary")],
     ] as const) {
       test(`rejects cleanly on ${name}`, async () => {
-        expect(new Bun.Image(bad).bytes()).rejects.toThrow();
+        await expect(new Bun.Image(bad).bytes()).rejects.toThrow();
       });
     }
   });
@@ -405,7 +405,7 @@ describe("Bun.Image", () => {
   });
 
   test("rejects on unrecognised input", async () => {
-    expect(new Bun.Image(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9])).metadata()).rejects.toThrow(
+    await expect(new Bun.Image(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9])).metadata()).rejects.toThrow(
       /unrecognised|decode/i,
     );
   });
@@ -448,14 +448,14 @@ describe("Bun.Image", () => {
       // metadata() will fail (not a real image) but the FORMAT in the error
       // path proves the sniffer routed correctly. On Linux it's
       // UnsupportedOnPlatform; on macOS/Windows the system codec rejects.
-      expect(new Bun.Image(heicHdr).metadata()).rejects.toThrow();
-      expect(new Bun.Image(avifHdr).metadata()).rejects.toThrow();
+      await expect(new Bun.Image(heicHdr).metadata()).rejects.toThrow();
+      await expect(new Bun.Image(avifHdr).metadata()).rejects.toThrow();
     });
 
     if (!isMacOS && !isWindows) {
       test("encode .heic()/.avif() throws UnsupportedOnPlatform on Linux", async () => {
-        expect(new Bun.Image(cornersPng).heic().bytes()).rejects.toThrow(/not supported on this platform/);
-        expect(new Bun.Image(cornersPng).avif().bytes()).rejects.toThrow(/not supported on this platform/);
+        await expect(new Bun.Image(cornersPng).heic().bytes()).rejects.toThrow(/not supported on this platform/);
+        await expect(new Bun.Image(cornersPng).avif().bytes()).rejects.toThrow(/not supported on this platform/);
       });
     } else {
       // On macOS/Windows the system encoder may or may not have the codec
@@ -485,7 +485,7 @@ describe("Bun.Image", () => {
     expect((await new Bun.Image(gradientPng, { maxPixels: Infinity }).metadata()).width).toBe(16);
     // Infinity width clamps to the per-side cap; output then exceeds maxPixels
     // and rejects cleanly — the contract is "doesn't abort", not "succeeds".
-    expect(new Bun.Image(cornersPng).resize(Infinity).png().bytes()).rejects.toThrow(/maxPixels/);
+    await expect(new Bun.Image(cornersPng).resize(Infinity).png().bytes()).rejects.toThrow(/maxPixels/);
   });
 
   test("constructor cleans up on throwing options getter", () => {

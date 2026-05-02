@@ -100,6 +100,12 @@ fn parseTiff(tiff: []const u8) ?Orientation {
     }) {
         const tag = rd16(tiff, e, big) orelse return null;
         if (tag != 0x0112) continue;
+        // Type 3 (SHORT), count 1 — anything else is malformed for this tag
+        // and the value-field layout (packed in first 2 of 4 bytes) wouldn't
+        // hold; bail rather than read garbage.
+        const ty = rd16(tiff, e + 2, big) orelse return null;
+        const cnt = rd32(tiff, e + 4, big) orelse return null;
+        if (ty != 3 or cnt != 1) return null;
         const v = rd16(tiff, e + 8, big) orelse return null;
         return if (v >= 1 and v <= 8) @enumFromInt(v) else null;
     }

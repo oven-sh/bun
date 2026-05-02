@@ -527,7 +527,7 @@ describe("hostile option objects", () => {
     expect((await img.metadata()).width).toBe(2);
     structuredClone(ab, { transfer: [ab] }); // detach between calls
     // schedule() re-reads the buffer and sees byteLength 0.
-    expect(img.png().bytes()).rejects.toThrow(/detached/);
+    await expect(img.png().bytes()).rejects.toThrow(/detached/);
   });
 
   test("SharedArrayBuffer input", async () => {

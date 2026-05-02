@@ -5,7 +5,7 @@
 //! mutators (`resize`, `rotate`, `flip`, `flop`, `jpeg`/`png`/`webp`) each
 //! write one slot of `Pipeline` and return `this` — there is no op list, so
 //! calling a setter twice overwrites. The actual decode → transform → encode
-//! work happens off-thread when a terminal (`bytes`/`blob`/`toBuffer`/
+//! work happens off-thread when a terminal (`bytes`/`buffer`/`blob`/
 //! `toBase64`/`metadata`) is awaited, via `jsc.ConcurrentPromiseTask`.
 
 const Image = @This();

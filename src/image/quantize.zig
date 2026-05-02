@@ -101,6 +101,7 @@ pub fn quantize(rgba: []const u8, w: u32, h: u32, opts: Options) error{OutOfMemo
 
     const k: u16 = @intCast(boxes.items.len);
     var palette = try bun.default_allocator.alloc(u8, @as(usize, k) * 4);
+    errdefer bun.default_allocator.free(palette);
     var has_alpha = false;
     for (boxes.items, 0..) |b, i| {
         var sum: [4]u64 = .{ 0, 0, 0, 0 };

@@ -8216,7 +8216,7 @@ declare module "bun" {
    *
    * The constructor and every chainable method only *record* settings; the
    * decode → transform → encode pipeline runs on a worker thread when a
-   * terminal (`bytes`, `blob`, `toBuffer`, `toBase64`, `metadata`) is awaited.
+   * terminal (`bytes`, `buffer`, `blob`, `toBase64`, `metadata`) is awaited.
    *
    * Chainables overwrite (calling `.resize()` twice keeps the second). Order
    * of execution is fixed regardless of call order:

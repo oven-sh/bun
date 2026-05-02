@@ -161,7 +161,8 @@ pub fn probe(bytes: []const u8, max_pixels: u64) Error!struct { format: Format, 
         .webp => {
             var cw: c_int = 0;
             var ch: c_int = 0;
-            if (webp.WebPGetInfo(bytes.ptr, bytes.len, &cw, &ch) == 0) return error.DecodeFailed;
+            if (webp.WebPGetInfo(bytes.ptr, bytes.len, &cw, &ch) == 0 or cw <= 0 or ch <= 0)
+                return error.DecodeFailed;
             w = @intCast(cw);
             h = @intCast(ch);
         },
@@ -540,17 +541,21 @@ pub const webp = struct {
     pub extern fn WebPFree(ptr: ?*anyopaque) void;
 
     pub fn decode(bytes: []const u8, max_pixels: u64) Error!Decoded {
-        var w: c_int = 0;
-        var h: c_int = 0;
+        var cw: c_int = 0;
+        var ch: c_int = 0;
         // Header-only probe first so the pixel guard fires before libwebp
-        // allocates the full canvas internally.
-        if (WebPGetInfo(bytes.ptr, bytes.len, &w, &h) == 0) return error.DecodeFailed;
-        try guard(@intCast(w), @intCast(h), max_pixels);
-        const ptr = WebPDecodeRGBA(bytes.ptr, bytes.len, &w, &h) orelse return error.DecodeFailed;
+        // allocates the full canvas internally. WebPGetInfo can hand back
+        // non-positive on a malformed header; reject before @intCast traps.
+        if (WebPGetInfo(bytes.ptr, bytes.len, &cw, &ch) == 0 or cw <= 0 or ch <= 0)
+            return error.DecodeFailed;
+        const w: u32 = @intCast(cw);
+        const h: u32 = @intCast(ch);
+        try guard(w, h, max_pixels);
+        const ptr = WebPDecodeRGBA(bytes.ptr, bytes.len, &cw, &ch) orelse return error.DecodeFailed;
         defer WebPFree(ptr);
-        const len: usize = @as(usize, @intCast(w)) * @as(usize, @intCast(h)) * 4;
+        const len: usize = @as(usize, w) * h * 4;
         const out = try bun.default_allocator.dupe(u8, ptr[0..len]);
-        return .{ .rgba = out, .width = @intCast(w), .height = @intCast(h) };
+        return .{ .rgba = out, .width = w, .height = h };
     }
 
     pub fn encode(rgba: []const u8, w: u32, h: u32, quality: u8, lossless: bool) Error!Encoded {

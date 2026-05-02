@@ -680,7 +680,7 @@ describe("Bun.Archive", () => {
       expect(stderr).toBe("");
       expect(stdout).toContain("RSS growth:");
       expect(exitCode).toBe(0);
-    }, 60_000);
+    });
   });
 
   describe("path safety", () => {

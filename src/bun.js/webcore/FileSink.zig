@@ -140,10 +140,9 @@ pub fn onAttachedProcessExit(this: *FileSink, status: *const bun.spawn.Status) v
     this.pending.result = .{ .err = .fromCode(.PIPE, .write) };
     this.runPending();
 
-    if (this.must_be_kept_alive_until_eof) {
-        this.must_be_kept_alive_until_eof = false;
-        this.deref();
-    }
+    // `writer.close()` → `onClose` already released this above; kept for
+    // paths where `onClose` isn't reached (e.g. writer already closed).
+    this.clearKeepAliveRef();
 }
 
 fn runPending(this: *FileSink) void {
@@ -222,11 +221,8 @@ pub fn onWrite(this: *FileSink, amount: usize, status: bun.io.WriteStatus) void 
     }
 
     if (status == .end_of_file) {
-        if (this.must_be_kept_alive_until_eof) {
-            this.must_be_kept_alive_until_eof = false;
-            this.deref();
-        }
         this.signal.close(null);
+        this.clearKeepAliveRef();
     }
 }
 

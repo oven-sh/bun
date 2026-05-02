@@ -136,6 +136,9 @@ export const lsquic: Dependency = {
         HAVE_BORINGSSL: 1,
         ...(cfg.windows ? { WIN32: 1, WIN32_LEAN_AND_MEAN: 1 } : {}),
         XXH_HEADER_NAME: "xxhash.h",
+        // lsqpack.c defaults LS_QPACK_USE_LARGE_TABLES=1 internally; setting
+        // it here is defensive (mirrors lshpack.ts).
+        LS_QPACK_USE_LARGE_TABLES: 1,
         LS_HPACK_BSS_LARGE_TABLES: 1,
         LSQPACK_ENC_LOGGER_HEADER: "lsquic_qpack_enc_logger.h",
         LSQPACK_DEC_LOGGER_HEADER: "lsquic_qpack_dec_logger.h",

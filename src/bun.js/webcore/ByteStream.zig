@@ -410,8 +410,9 @@ pub fn drain(this: *@This()) bun.ByteList {
         // Bytes placed here before the JS stream was constructed (e.g.
         // the `.owned` drain_result from `onStartStreaming`) are handed
         // out via `handle.drain()` without going through `onPull`; report
-        // them so they don't become a permanent `unacked_bytes` floor in
-        // the HTTP/2 per-stream window accounting.
+        // them so they don't become a permanent floor in the transport's
+        // outstanding-bytes accounting (h2 `unacked_bytes`, h1/h3
+        // `outstanding_body_bytes`).
         this.didDrain(this.buffer.items.len);
         return bun.ByteList.moveFromList(&this.buffer);
     }

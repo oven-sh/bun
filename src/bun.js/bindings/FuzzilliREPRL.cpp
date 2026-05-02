@@ -19,8 +19,14 @@
 
 extern "C" {
 
-// Signal handler to ensure output is flushed before crash
-static void fuzzilliSignalHandler(int sig)
+// Previous handlers (JSC's jscSignalHandler, which itself chains to ASAN's
+// handler). We flush stdio so Fuzzilli captures buffered output, then forward
+// to the prior handler so JSC's VMTraps/WASM fault handling keeps working and
+// ASAN can print its report. Using signal()+SIG_DFL here used to swallow both,
+// leaving crash reports with just "TERMSIG: 11" and no stack.
+static struct sigaction fuzzilliOldActions[NSIG];
+
+static void fuzzilliSignalHandler(int sig, siginfo_t* info, void* ucontext)
 {
     // Flush all output
     fflush(stdout);
@@ -28,9 +34,29 @@ static void fuzzilliSignalHandler(int sig)
     fsync(STDOUT_FILENO);
     fsync(STDERR_FILENO);
 
-    // Re-raise the signal with default handler
+    struct sigaction& old = fuzzilliOldActions[sig];
+    if (old.sa_flags & SA_SIGINFO) {
+        if (old.sa_sigaction) {
+            old.sa_sigaction(sig, info, ucontext);
+            return;
+        }
+    } else if (old.sa_handler && old.sa_handler != SIG_DFL && old.sa_handler != SIG_IGN) {
+        old.sa_handler(sig);
+        return;
+    }
+
+    // No previous handler: re-raise with default handler.
     signal(sig, SIG_DFL);
     raise(sig);
+}
+
+static void installFuzzilliSignalHandler(int sig)
+{
+    struct sigaction action;
+    action.sa_sigaction = fuzzilliSignalHandler;
+    sigfillset(&action.sa_mask);
+    action.sa_flags = SA_SIGINFO;
+    sigaction(sig, &action, &fuzzilliOldActions[sig]);
 }
 
 // Implementation of the global fuzzilli() function for Bun
@@ -259,12 +285,13 @@ void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject* globalObject)
 {
     JSC::VM& vm = globalObject->vm();
 
-    // Install signal handlers to ensure output is flushed before crashes
-    // This is important for ASAN output to be captured
-    signal(SIGABRT, fuzzilliSignalHandler);
-    signal(SIGSEGV, fuzzilliSignalHandler);
-    signal(SIGILL, fuzzilliSignalHandler);
-    signal(SIGFPE, fuzzilliSignalHandler);
+    // Install signal handlers to ensure output is flushed before crashes.
+    // Chain to the previous handler (JSC's jscSignalHandler → ASAN) so
+    // VMTraps/WASM fault handling keeps working and ASAN reports are printed.
+    installFuzzilliSignalHandler(SIGABRT);
+    installFuzzilliSignalHandler(SIGSEGV);
+    installFuzzilliSignalHandler(SIGILL);
+    installFuzzilliSignalHandler(SIGFPE);
 
     globalObject->putDirectNativeFunction(
         vm,

@@ -62,22 +62,39 @@ describe("self.postMessage transfer list", () => {
   });
 
   test("postMessage(msg, [MessagePort]) transfers the port", async () => {
-    const results = await roundtrip(
-      `
-        const { port1, port2 } = new MessageChannel();
-        try {
-          self.postMessage(port1, [port1]);
+    // Don't reuse roundtrip() here: it terminates the worker as soon as the
+    // first message lands, which can race the port-channel delivery. Keep the
+    // worker alive until the transferred port has received its message.
+    const url = URL.createObjectURL(
+      new Blob([
+        `
+          const { port1, port2 } = new MessageChannel();
+          // Queue the message into port1's buffer *before* transferring it so
+          // it travels with the port regardless of worker-teardown timing.
           port2.postMessage("via-port");
-        } catch (err) {
-          self.postMessage({ err: String(err) });
-        }
-      `,
-      1,
+          try {
+            self.postMessage(port1, [port1]);
+          } catch (err) {
+            self.postMessage({ err: String(err) });
+          }
+        `,
+      ]),
     );
-    expect(results[0]).toBeInstanceOf(MessagePort);
-    const { promise, resolve } = Promise.withResolvers<string>();
-    results[0].onmessage = (e: MessageEvent) => resolve(e.data);
-    expect(await promise).toBe("via-port");
-    results[0].close();
+    const worker = new Worker(url);
+    try {
+      const first = await new Promise<any>((resolve, reject) => {
+        worker.onerror = e => reject(e.error ?? e.message ?? e);
+        worker.onmessage = e => resolve(e.data);
+      });
+      expect(first).toBeInstanceOf(MessagePort);
+      const received = await new Promise<string>(resolve => {
+        first.onmessage = (e: MessageEvent) => resolve(e.data);
+      });
+      expect(received).toBe("via-port");
+      first.close();
+    } finally {
+      worker.terminate();
+      URL.revokeObjectURL(url);
+    }
   });
 });

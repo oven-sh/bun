@@ -1025,8 +1025,18 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *jsc.JSGlobalObject, callFrame: *j
                 },
                 .none => {},
             }
-        } else {
-            //
+        } else if (handle.as(bun.api.TCPSocket)) |tcp_socket| {
+            log("got tcp socket", .{});
+            const fd = tcp_socket.socket.fd();
+            if (fd != bun.invalid_fd) {
+                zig_handle = .init(fd, handle);
+            }
+        } else if (handle.as(bun.api.TLSSocket)) |tls_socket| {
+            log("got tls socket", .{});
+            const fd = tls_socket.socket.fd();
+            if (fd != bun.invalid_fd) {
+                zig_handle = .init(fd, handle);
+            }
         }
     }
 

@@ -91,21 +91,12 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOpti
     //   • palette PNG — WIC's PNG encoder won't quantise for us;
     //   • lossless WebP — Windows ships a WebP *decoder* only, and even where
     //     an encoder exists there's no lossless flag in the property bag;
-    //   • JPEG/WebP/HEIC/AVIF quality — TODO: thread through IPropertyBag2
-    //     "ImageQuality" (VT_R4 0..1) on the IPropertyBag2* returned by
-    //     CreateNewFrame. Until that's wired, defer lossy formats so quality
-    //     matches across platforms (JPEG/WebP fall through to the static
-    //     codecs; HEIC/AVIF have no static fallback so they encode at WIC's
-    //     default quality — that's accepted for now and noted in the docs).
-    //   • PNG compressionLevel — WIC has no per-level zlib knob; fall through
-    //     to libspng when the user set one.
-    // That leaves WIC handling default-level PNG and (default-quality)
-    // HEIC/AVIF.
-    if (opts.format == .png and (opts.palette or opts.compression_level >= 0))
-        return error.BackendUnavailable;
-    if (opts.format == .webp or opts.format == .jpeg) return error.BackendUnavailable;
-    // WritePixels takes a UINT byte count; encode is only reached for
-    // heic/avif so this is the same maxPixels-raised edge as CopyPixels.
+    // codecs.encode() only routes .heic/.avif here; jpeg/png/webp use the
+    // static codecs unconditionally so output (and the quality scale) is
+    // identical across platforms.
+    bun.debugAssert(opts.format == .heic or opts.format == .avif);
+    // WritePixels/WriteSource take a UINT byte count — same DWORD ceiling
+    // as CopyPixels (maxPixels-raised edge).
     if (rgba.len > std.math.maxInt(u32)) return error.BackendUnavailable;
 
     const f = try factory();
@@ -126,12 +117,22 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOpti
     if (enc.?.vt.Initialize(enc.?, stream.?, 2) < 0) return error.EncodeFailed;
 
     var frame: ?*IWICBitmapFrameEncode = null;
-    var props: ?*IUnknown = null;
+    var props: ?*IPropertyBag2 = null;
     if (enc.?.vt.CreateNewFrame(enc.?, &frame, &props) < 0 or frame == null) return error.EncodeFailed;
     defer release(frame);
     defer release(props);
 
-    if (frame.?.vt.Initialize(frame.?, null) < 0) return error.EncodeFailed;
+    // Thread `quality` through the IPropertyBag2 the encoder hands back —
+    // WIC's "ImageQuality" is VT_R4 in [0,1]. The HEIF encoder honours it for
+    // both HEVC and AV1 sub-codecs. Ignore Write() failure: a missing knob
+    // (older codec) should fall through to default quality, not fail encode.
+    if (props) |p| {
+        var name = std.unicode.utf8ToUtf16LeStringLiteral("ImageQuality").*;
+        var bag: PROPBAG2 = .{ .pstrName = &name };
+        var val: VARIANT = .{ .vt = VT_R4, .data = .{ .fltVal = @as(f32, @floatFromInt(opts.quality)) / 100 } };
+        _ = p.vt.Write(p, 1, &bag, &val);
+    }
+    if (frame.?.vt.Initialize(frame.?, @ptrCast(props)) < 0) return error.EncodeFailed;
     if (frame.?.vt.SetSize(frame.?, width, height) < 0) return error.EncodeFailed;
     // SetPixelFormat is in/out — the codec rewrites `pf` to its native sink
     // (the HEIF encoder wants 32bppBGRA, not RGBA). When it doesn't move,
@@ -192,6 +193,42 @@ const IUnknownVTable = extern struct {
     Release: *const fn (*IUnknown) callconv(.winapi) u32,
 };
 const IUnknown = extern struct { vt: *const IUnknownVTable };
+
+// ── IPropertyBag2 — just enough to set "ImageQuality" on the encoder frame ──
+
+/// Only `Write` is typed; the encoder hands one of these back from
+/// CreateNewFrame and reads it on `Initialize`.
+const IPropertyBag2 = extern struct {
+    vt: *const VTable,
+    const VTable = extern struct {
+        unk: IUnknownVTable,
+        Read: *const anyopaque,
+        Write: *const fn (*IPropertyBag2, u32, *PROPBAG2, *VARIANT) callconv(.winapi) HRESULT,
+        // CountProperties..LoadObject unused.
+    };
+};
+
+/// Zero-init is the documented usage for the WIC option-bag pattern; only
+/// `pstrName` matters here.
+const PROPBAG2 = extern struct {
+    dwType: u32 = 0,
+    vt: u16 = 0,
+    cfType: u16 = 0,
+    dwHint: u32 = 0,
+    pstrName: ?[*:0]u16,
+    clsid: GUID = std.mem.zeroes(GUID),
+};
+
+/// Full VARIANT is 16/24-byte variant-record soup; we only ever write VT_R4,
+/// so the union is sized for the largest member and only `fltVal` is named.
+const VARIANT = extern struct {
+    vt: u16,
+    r1: u16 = 0,
+    r2: u16 = 0,
+    r3: u16 = 0,
+    data: extern union { fltVal: f32, _pad: [2]u64 },
+};
+const VT_R4: u16 = 4;
 
 /// Only `Seek` is typed — used to read the encoder stream's logical write
 /// position (== bytes emitted) instead of the rounded-up `GlobalSize()`.
@@ -300,7 +337,7 @@ const IWICBitmapEncoder = extern struct {
         SetPalette: *const anyopaque,
         SetThumbnail: *const anyopaque,
         SetPreview: *const anyopaque,
-        CreateNewFrame: *const fn (*IWICBitmapEncoder, *?*IWICBitmapFrameEncode, *?*IUnknown) callconv(.winapi) HRESULT,
+        CreateNewFrame: *const fn (*IWICBitmapEncoder, *?*IWICBitmapFrameEncode, *?*IPropertyBag2) callconv(.winapi) HRESULT,
         Commit: *const fn (*IWICBitmapEncoder) callconv(.winapi) HRESULT,
         // GetMetadataQueryWriter unused.
     };

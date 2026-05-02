@@ -1041,10 +1041,15 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
     // Find the Image Descriptor (0x2C) and insert the extension just before it.
     const at = base.indexOf(0x2c, 13);
     const g = Buffer.concat([base.subarray(0, at), ext, base.subarray(at)]);
-    const m = await new Bun.Image(g, { backend: "bun" }).metadata();
+    // Force the static decoder explicitly so this regression test still hits
+    // codec_gif.zig when run in isolation on macOS/Windows (the constructor
+    // has no per-instance backend option; the previous version relied on
+    // earlier tests' side-effect on the process-global).
+    Bun.Image.backend = "bun";
+    const m = await new Bun.Image(g).metadata();
     expect(m).toEqual({ width: 2, height: 2, format: "gif" });
     // And actually decode (exercises Bits.drain too).
-    const out = await new Bun.Image(g, { backend: "bun" }).png().bytes();
+    const out = await new Bun.Image(g).png().bytes();
     expect(out[0]).toBe(0x89);
   });
 

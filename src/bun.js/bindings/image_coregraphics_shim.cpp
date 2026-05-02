@@ -26,7 +26,7 @@ using CFRef = void*;
 // Prefixed: the macOS PCH transitively includes CF headers, so the real
 // `CGRect`/`kCFStringEncodingUTF8`/`kCFNumberDoubleType` are in scope and an
 // anonymous-namespace shadow is ambiguous at the use site.
-struct BunBunCGRect {
+struct BunCGRect {
     double x, y, w, h;
 };
 

@@ -191,7 +191,7 @@ For a passive "image in clipboard, press ⌘V" hint, poll `clipboardChangeCount(
 
 ¹ Windows requires the **HEIF Image Extensions** / **AV1 Video Extension** from the Microsoft Store.
 
-JPEG, PNG, and WebP go through the same statically-linked codecs on every platform, so encoded output is byte-identical across Linux, macOS, and Windows. To force the portable Highway path for geometry too — e.g. for golden-image tests — set the process-global backend:
+Formats handled by the system backend (TIFF, HEIC, AVIF, clipboard) inherit the **OS's** patch level — keep macOS / Windows updated. JPEG, PNG, and WebP go through the same statically-linked codecs on every platform, so encoded output is byte-identical across Linux, macOS, and Windows. To force the portable Highway path for geometry too — e.g. for golden-image tests — set the process-global backend:
 
 ```ts
 Bun.Image.backend = "bun"; // default is "system" on macOS/Windows

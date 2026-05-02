@@ -90,7 +90,13 @@ const Dict = struct {
         var code = code_;
         var n: usize = 0;
         while (code >= clear) : (n += 1) {
-            // 4096-deep chain max; scratch is sized for that.
+            // The chain is bounded ≤4096 because every entry was written with
+            // `prefix[avail] = p` where p < avail at the time (see the
+            // `if (avail < 4096)` block in decode), so following `prefix`
+            // strictly decreases. Hostile streams can't break that — `code >
+            // avail` is rejected before emit() is called. Asserted so a future
+            // edit that loosens the rejection trips loudly.
+            bun.debugAssert(n < 4096);
             scratch[n] = self.suffix[code];
             code = self.prefix[code];
         }

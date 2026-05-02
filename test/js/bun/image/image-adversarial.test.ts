@@ -230,6 +230,40 @@ describe("truncation sweep", () => {
     for (let i = 4; i < px.length; i += 4) expect([px[i], px[i + 1], px[i + 2], px[i + 3]]).toEqual([0, 0, 0, 255]);
   });
 
+  test("GIF LZW with code > avail rejects (GIFLIB-CVE-style table overrun)", async () => {
+    Bun.Image.backend = "bun";
+    // CVE-2016-3177 / CVE-2022-28506 pattern: an LZW code that references a
+    // dictionary entry that hasn't been written yet. In our decoder this hits
+    // the `code > avail` guard at codec_gif.zig:221 and must DecodeFailed,
+    // never reach Dict.emit(). Craft: 2-colour palette, 9-bit stream where
+    // the first code after clear is 511 (way past avail=6).
+    // prettier-ignore
+    const gif = Buffer.concat([
+      Buffer.from([0x47,0x49,0x46,0x38,0x39,0x61, 2,0, 1,0, 0x80, 0, 0]),  // 2-col GCT
+      Buffer.from([0,0,0, 255,255,255]),                                    // palette
+      Buffer.from([0x2c,0,0,0,0,2,0,1,0,0, 2]),                             // imgdesc, lzw_min=2
+      // sub-block: 2 bytes. At csize=3 after clear bumps to csize=3? No —
+      // lzw_min=2, csize starts at 3, clear=4. Send: clear(=4, 3 bits) then
+      // code 7 (max 3-bit, > avail which is 6 after clear). Packed LE:
+      // bits: 100 111 ... = 0b111100 = 0x3C, then EOI(=5): 101 → next byte 0x05
+      Buffer.from([2, 0x3c, 0x05, 0, 0x3b]),
+    ]);
+    expect(await survives(new Bun.Image(gif).png().bytes())).toBe("rejected");
+    // And a wider one: lzw_min=8, code 4095 immediately after clear (avail=258).
+    // prettier-ignore
+    const gif12 = Buffer.concat([
+      Buffer.from([0x47,0x49,0x46,0x38,0x39,0x61, 1,0, 1,0, 0xf7, 0, 0]),
+      Buffer.alloc(256 * 3),
+      Buffer.from([0x2c,0,0,0,0,1,0,1,0,0, 8]),
+      // csize=9, clear=256. Send clear (0x100, 9 bits) then 0x1FF (=511 > 258).
+      // LE-packed 18 bits: byte0=0x00 (low 8 of clear), byte1 bit0=1 (high
+      // bit of clear) | bits1-7=low 7 of 511 → 0xFF, byte2 bits0-1=high 2 of
+      // 511 → 0x03.
+      Buffer.from([3, 0x00, 0xff, 0x03, 0, 0x3b]),
+    ]);
+    expect(await survives(new Bun.Image(gif12).png().bytes())).toBe("rejected");
+  });
+
   test("BMP BI_BITFIELDS with hostile masks rejects, not panics", async () => {
     Bun.Image.backend = "bun";
     // V4HEADER (108) so the alpha mask slot exists; r_mask=0xFFFFFFFF

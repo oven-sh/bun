@@ -132,6 +132,10 @@ const noUnify: readonly string[] = [
   // so it doesn't pull a CoreGraphics load command; bundled with files that
   // include the real CF headers those names become ambiguous.
   "src/bun.js/bindings/image_coregraphics_shim.cpp",
+  // Includes <windows.h> + <ocidl.h> for the real VARIANT/IPropertyBag2 ABI;
+  // keeping it out of unified bundles avoids the macro pollution (`min`/`max`
+  // /`ERROR`/etc.) leaking into siblings.
+  "src/bun.js/bindings/image_wic_shim.cpp",
 ];
 
 /**

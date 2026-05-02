@@ -159,8 +159,9 @@ test("PipeReader is freed when a subprocess stdout read fails (injected)", async
     "fixture.js": `
 const { subprocessInternals } = require("bun:internal-for-testing");
 
+// timeout.exe refuses to run with redirected stdin; ping works regardless.
 const sleeper = process.platform === "win32"
-  ? ["cmd.exe", "/c", "timeout /t 120 /nobreak >nul"]
+  ? ["cmd.exe", "/c", "ping -n 120 127.0.0.1 >nul"]
   : ["sleep", "120"];
 
 let injected = 0;

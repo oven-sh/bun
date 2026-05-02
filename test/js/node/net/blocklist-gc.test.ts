@@ -20,18 +20,19 @@ test("BlockList survives GC after BroadcastChannel fan-out clone", async () => {
         const recvA = new BroadcastChannel("blocklist-gc");
         const recvB = new BroadcastChannel("blocklist-gc");
 
-        const received = [];
-        recvA.onmessage = e => received.push(e.data);
-        recvB.onmessage = e => received.push(e.data);
-
         let bl = new BlockList();
         bl.addAddress("127.0.0.1");
-        sender.postMessage(bl);
 
-        for (let i = 0; i < 100 && received.length < 2; i++) {
-          await new Promise(r => setTimeout(r, 10));
-        }
-        if (received.length !== 2) throw new Error("expected 2 messages, got " + received.length);
+        const received = [];
+        const { promise, resolve } = Promise.withResolvers();
+        const onmessage = e => {
+          received.push(e.data);
+          if (received.length === 2) resolve();
+        };
+        recvA.onmessage = onmessage;
+        recvB.onmessage = onmessage;
+        sender.postMessage(bl);
+        await promise;
 
         // Keep one clone reachable, drop the original and the other clone so
         // their finalizers run and deref the shared backing.
@@ -60,4 +61,4 @@ test("BlockList survives GC after BroadcastChannel fan-out clone", async () => {
   expect(stderr).not.toContain("AddressSanitizer");
   expect(stdout.trim()).toBe("ok");
   expect(exited).toBe(0);
-}, 30_000);
+});

@@ -1056,7 +1056,10 @@ pub const String = extern struct {
         return bun.strings.eqlLong(this.byteSlice(), value, true);
     }
 
-    /// Does not increment the reference count unless the StringImpl is cloned.
+    /// Replace the underlying StringImpl with an isolated copy that is safe to
+    /// hand to another thread. This **transfers** ownership: the reference this
+    /// String held on the previous StringImpl is released, and the String now
+    /// holds exactly one reference to the new (or unchanged) StringImpl.
     pub fn toThreadSafe(this: *String) void {
         jsc.markBinding(@src());
 
@@ -1065,18 +1068,14 @@ pub const String = extern struct {
         }
     }
 
-    /// We don't ref unless the underlying StringImpl is new.
-    ///
-    /// This will ref even if it doesn't change.
+    /// Like `toThreadSafe`, but leaves the result with one extra ref compared
+    /// to before the call (i.e. the caller wants `toThreadSafe` + `ref`).
     pub fn toThreadSafeEnsureRef(this: *String) void {
         jsc.markBinding(@src());
 
         if (this.tag == .WTFStringImpl) {
-            const orig = this.value.WTFStringImpl;
             bun.cpp.BunString__toThreadSafe(this);
-            if (this.value.WTFStringImpl == orig) {
-                orig.ref();
-            }
+            this.value.WTFStringImpl.ref();
         }
     }
 
@@ -1203,11 +1202,12 @@ pub const SliceWithUnderlyingString = struct {
 
     pub fn toThreadSafe(this: *SliceWithUnderlyingString) void {
         if (this.underlying.tag == .WTFStringImpl) {
-            var orig = this.underlying.value.WTFStringImpl;
+            const orig = this.underlying.value.WTFStringImpl;
+            // BunString__toThreadSafe transfers ownership: it derefs the
+            // previous impl and installs a new one. We only need to migrate
+            // the utf8 slice if it was a ref-counted view into the old impl.
             this.underlying.toThreadSafe();
             if (this.underlying.value.WTFStringImpl != orig) {
-                orig.deref();
-
                 if (this.utf8.allocator.get()) |allocator| {
                     if (String.isWTFAllocator(allocator)) {
                         this.utf8.deinit();

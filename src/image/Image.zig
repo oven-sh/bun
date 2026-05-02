@@ -123,6 +123,13 @@ inline fn coerceInt(comptime T: type, x: f64, lo: f64, hi: f64) T {
     return @intFromFloat(@min(@max(x, lo), hi));
 }
 
+/// Size cap for `.path` sources, applied at fstat time before reading
+/// anything. This is the *encoded* file, not the decoded RGBA — `maxPixels`
+/// covers the latter once we have a header. 256 MiB comfortably fits any
+/// real-world image (a 268 MP JPEG is ~80 MB) while keeping a single
+/// path-driven request from materialising gigabytes before any guard runs.
+const max_input_file_bytes: u64 = 256 << 20;
+
 // ───────────────────────────── lifecycle ────────────────────────────────────
 
 pub fn constructor(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, this_value: jsc.JSValue) bun.JSError!*Image {
@@ -218,9 +225,15 @@ fn sourceFromJS(global: *jsc.JSGlobalObject, value: jsc.JSValue, this_value: jsc
     }
     if (value.asArrayBuffer(global)) |ab| {
         // A resizable/growable buffer can shrink or reallocate underneath any
-        // slice we'd take; refuse it up front rather than UAF later.
-        if (ab.resizable)
-            return global.throwInvalidArguments("Image(): resizable/growable ArrayBuffer is not supported; pass a fixed-length view (e.g. buf.slice())", .{});
+        // slice we'd take; a SharedArrayBuffer can be mutated by another
+        // thread while the worker decodes (the codec layer parses the same
+        // bytes twice — header then body — so a TOCTOU swap can resize the
+        // implied output behind a guard that's already passed). We don't
+        // bother special-casing these: every off-thread use copies the input
+        // anyway (see `pinForTask`), so refuse them only because there's no
+        // upside to accepting and "pass a fixed view" is the obvious fix.
+        if (ab.resizable or ab.shared)
+            return global.throwInvalidArguments("Image(): resizable / shared ArrayBuffer is not supported; pass a fixed-length view (e.g. buf.slice())", .{});
         // Just remember the JS object — see Source.js_buffer for why we don't
         // cache the pointer or pin here.
         js.sourceJSSetCached(this_value, global, value);
@@ -378,6 +391,15 @@ fn jsThreadBytes(this: *Image, this_value: jsc.JSValue, global: *jsc.JSGlobalObj
 
 /// Pin the source ArrayBuffer for the duration of one off-thread task and
 /// return a slice that's safe for the worker to read. Unpinned in `then()`.
+///
+/// We deliberately DON'T copy: the encoded input can be tens of MB and
+/// nobody mutates a buffer they just handed to a decoder. The contract is
+/// documented and `.shared`/`.resizable` are refused at construction. The
+/// codec layer is hardened so a hostile mid-decode mutation degrades to
+/// `DecodeFailed`, not OOB/heap-leak — see `codec_jpeg.zig` cropping +
+/// post-check, `codec_webp.zig` dim re-check. (If the attacker already runs
+/// JS in-process the threat model is moot anyway; the surface that matters
+/// is hostile *bytes*, which the codec validation handles.)
 fn pinForTask(this: *Image, this_value: jsc.JSValue, global: *jsc.JSGlobalObject) error{Detached}!PipelineTask.Input {
     switch (this.source) {
         .js_buffer => {
@@ -817,19 +839,50 @@ pub const PipelineTask = struct {
         // buffer, or a path to read here.
         var owned_file: ?[]u8 = null;
         defer if (owned_file) |f| bun.default_allocator.free(f);
-        const input: []const u8 = if (this.input.path) |p|
-            switch (bun.sys.File.readFrom(bun.FD.cwd(), p, bun.default_allocator)) {
-                .result => |bytes| blk: {
-                    owned_file = bytes;
-                    break :blk bytes;
-                },
+        const input: []const u8 = if (this.input.path) |p| blk: {
+            // The path string came straight from the constructor, so treat
+            // it as untrusted: open + fstat first instead of `readFrom`.
+            //   • !S_ISREG → ENODEV. `/dev/zero`/`/dev/urandom` would
+            //     otherwise pread forever (st_size=0, never returns 0) until
+            //     the doubling ArrayList OOMs the process; a FIFO with no
+            //     writer would park this WorkPool thread in-kernel forever.
+            //   • st_size cap → file-based decompression-bomb fails up
+            //     front with a clear error instead of materialising a
+            //     multi-GB encoded buffer before `maxPixels` even runs.
+            // O_NONBLOCK so the open itself can't block on a FIFO.
+            const file = switch (bun.sys.File.openat(bun.FD.cwd(), p, bun.O.RDONLY | bun.O.NONBLOCK, 0)) {
+                .result => |f| f,
                 .err => |e| {
-                    this.result = .{ .io_err = e };
+                    this.result = .{ .io_err = e.withPath(p) };
                     return;
                 },
+            };
+            defer file.close();
+            const st = switch (file.stat()) {
+                .result => |s| s,
+                .err => |e| {
+                    this.result = .{ .io_err = e.withPath(p) };
+                    return;
+                },
+            };
+            if (!bun.S.ISREG(@intCast(st.mode))) {
+                this.result = .{ .io_err = .{ .errno = @intFromEnum(bun.sys.E.NODEV), .syscall = .read, .path = p } };
+                return;
             }
-        else
-            this.input.bytes;
+            if (@as(u64, @intCast(@max(st.size, 0))) > max_input_file_bytes) {
+                this.result = .{ .err = error.TooManyPixels };
+                return;
+            }
+            const r = file.readToEnd(bun.default_allocator);
+            if (r.err) |e| {
+                var bytes = r.bytes;
+                bytes.deinit();
+                this.result = .{ .io_err = e.withPath(p) };
+                return;
+            }
+            owned_file = r.bytes.items;
+            break :blk owned_file.?;
+        } else this.input.bytes;
 
         // Header-only fast path for `.metadata()` — Sharp parses just the
         // IHDR/SOF/VP8 header; we used to decode the full RGBA buffer first
@@ -1070,10 +1123,15 @@ pub const PipelineTask = struct {
         }
         if (p.resize) |r| {
             const t = resolveResize(r, d.width, d.height);
-            // Same guard as decode: cap output canvas so a clamped-but-huge
-            // target (e.g. `resize(Infinity)` → 262k×196k) rejects instead of
-            // attempting a multi-GB allocation.
-            if (@as(u64, t.w) * t.h > this.max_pixels) return error.TooManyPixels;
+            // Guard the output canvas AND the H-then-V intermediate (always
+            // dst_w × src_h — image_resize.cpp pass order is fixed). A 1×N
+            // source → resize(W,1) has tiny input AND output canvases yet a
+            // W×N intermediate; with W=262143, N=16383 that's a 17 GiB alloc
+            // from a ~200-byte PNG. The src_w×dst_h cross-product is bounded
+            // by max(input, output) so doesn't need its own check.
+            if (@as(u64, t.w) * t.h > this.max_pixels or
+                @as(u64, t.w) * d.height > this.max_pixels)
+                return error.TooManyPixels;
             if (t.w != d.width or t.h != d.height) {
                 const next = try codecs.resize(d.rgba, d.width, d.height, t.w, t.h, r.filter);
                 bun.default_allocator.free(d.rgba);

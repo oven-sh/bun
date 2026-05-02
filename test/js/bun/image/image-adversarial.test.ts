@@ -265,6 +265,27 @@ describe("hostile header dimensions", () => {
     }
   });
 
+  test("path source: non-regular file rejects with ENODEV (no infinite read / FIFO park)", async () => {
+    if (process.platform === "win32") return; // NUL behaves differently
+    // /dev/null is a char device everywhere; the fstat S_ISREG guard must
+    // refuse it before readToEnd loops.
+    await expect(new Bun.Image("/dev/null").metadata()).rejects.toThrow(/ENODEV|not a/i);
+  });
+
+  test("resize H-then-V intermediate (dst_w × src_h) is bounded by maxPixels", async () => {
+    // 1×8192 real source (8192px input — well under default cap), resize to
+    // 200000×1 (200k output — also under). Intermediate is 200000×8192 ≈
+    // 1.6 G, which the cross-product guard rejects against default maxPixels.
+    // Without the guard this would alloc 200000×8192×4 ≈ 6.5 GiB.
+    const tall = makePng(1, 8192, () => [0, 0, 0, 255]);
+    await expect(new Bun.Image(tall).resize(200000, 1).bytes()).rejects.toThrow(/maxPixels/);
+    // And with maxPixels low enough that even modest intermediates trip:
+    const small = makePng(1, 64, () => [0, 0, 0, 255]);
+    await expect(new Bun.Image(small, { maxPixels: 1000 }).resize(100, 1).bytes()).rejects.toThrow(/maxPixels/);
+    // Sanity: a small intermediate still works.
+    expect((await new Bun.Image(small).resize(4, 4).png().bytes())[0]).toBe(0x89);
+  });
+
   test("WebP VP8 frame header with absurd dims", async () => {
     // RIFF + WEBP + VP8 chunk header + 10-byte VP8 bitstream header where
     // bytes 6–9 encode width/height (14-bit each). Craft 16383×16383.
@@ -603,13 +624,14 @@ describe("hostile option objects", () => {
     await expect(img.png().bytes()).rejects.toThrow(/detached/);
   });
 
-  test("SharedArrayBuffer input", async () => {
+  test("SharedArrayBuffer input is refused (cross-thread mutation surface)", () => {
     const sab = new SharedArrayBuffer(tinyPng.byteLength);
     new Uint8Array(sab).set(tinyPng);
-    // SAB is non-detachable; the per-task pin is a no-op and the worker reads
-    // it directly. Concurrent mutation would just decode garbage, not UB.
-    const meta = await new Bun.Image(sab).metadata();
-    expect(meta.width).toBe(2);
+    // The borrow-not-copy contract means a cross-thread store between header
+    // parse and full decode could re-shape the implied output behind a guard
+    // that's already passed; refuse SAB so the contract is enforceable.
+    expect(() => new Bun.Image(sab)).toThrow(/shared/);
+    expect(() => new Bun.Image(new Uint8Array(sab))).toThrow(/shared/);
   });
 
   test("data: URL input (base64)", async () => {

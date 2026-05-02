@@ -25,6 +25,10 @@ Bun.s3("bucket/photo.jpg").image(); // S3File
 
 The format is sniffed from the bytes — extensions and `Content-Type` are ignored.
 
+**Path strings are filesystem paths.** Don't pass user-controlled strings directly to the constructor — that's an arbitrary-file-read primitive. Read untrusted input into a `Buffer` (e.g. via `fetch`/`Bun.file` with your own validation) and pass the bytes.
+
+When passing a `TypedArray`/`ArrayBuffer`, don't mutate it while a terminal is pending — decode runs off-thread and borrows the bytes. `SharedArrayBuffer` and resizable buffers are refused; use `buf.slice()` to pass a fixed view.
+
 A second `options` argument guards against decompression bombs and controls EXIF handling:
 
 ```ts

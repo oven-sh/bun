@@ -71,13 +71,16 @@ pub fn decode(bytes: []const u8, max_pixels: u64) BackendError!codecs.Decoded {
         return error.DecodeFailed;
     defer release(conv);
 
-    const stride: u32 = w * 4;
-    const out_len = @as(usize, stride) * h;
-    // CopyPixels takes a UINT byte count — same DWORD ceiling as the stream.
+    // Compute stride/size in u64 first: with `maxPixels` raised past ~1.07B,
+    // `w * 4` can wrap u32 (0x4000_0001×4 → 4) and Windows ships ReleaseSafe
+    // so the @intCast below is a process abort, not silent truncation.
+    const stride: u64 = @as(u64, w) * 4;
+    const out_len: u64 = stride * h;
+    // CopyPixels takes UINT byte-count + UINT stride — same DWORD ceiling.
     if (out_len > std.math.maxInt(u32)) return error.TooManyPixels;
-    const out = try bun.default_allocator.alloc(u8, out_len);
+    const out = try bun.default_allocator.alloc(u8, @intCast(out_len));
     errdefer bun.default_allocator.free(out);
-    if (conv.?.vt.CopyPixels(conv.?, null, stride, @intCast(out_len), out.ptr) < 0)
+    if (conv.?.vt.CopyPixels(conv.?, null, @intCast(stride), @intCast(out_len), out.ptr) < 0)
         return error.DecodeFailed;
 
     return .{ .rgba = out, .width = w, .height = h };

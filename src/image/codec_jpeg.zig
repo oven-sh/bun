@@ -11,11 +11,13 @@ pub extern fn tj3DecompressHeader(h: tjhandle, buf: [*]const u8, len: usize) c_i
 extern fn tj3Decompress8(h: tjhandle, buf: [*]const u8, len: usize, dst: [*]u8, pitch: c_int, pf: c_int) c_int;
 extern fn tj3Compress8(h: tjhandle, src: [*]const u8, w: c_int, pitch: c_int, height: c_int, pf: c_int, out: *?[*]u8, out_len: *usize) c_int;
 extern fn tj3SetScalingFactor(h: tjhandle, sf: ScalingFactor) c_int;
+extern fn tj3SetCroppingRegion(h: tjhandle, r: CropRegion) c_int;
 extern fn tj3GetScalingFactors(n: *c_int) ?[*]const ScalingFactor;
 pub extern fn tj3Free(ptr: ?*anyopaque) void;
 extern fn tj3GetErrorStr(h: tjhandle) [*:0]const u8;
 
 const ScalingFactor = extern struct { num: c_int, denom: c_int };
+const CropRegion = extern struct { x: c_int, y: c_int, w: c_int, h: c_int };
 /// TJSCALED: ceil(dim * num / denom).
 inline fn scaled(dim: u32, sf: ScalingFactor) u32 {
     return @intCast(@divFloor(@as(i64, dim) * sf.num + sf.denom - 1, sf.denom));
@@ -77,18 +79,28 @@ pub fn decode(bytes: []const u8, max_pixels: u64, hint: codecs.DecodeHint) codec
         }
     }
 
-    // `bytes` may alias a JS ArrayBuffer the caller can still WRITE while
-    // this runs on the work pool (the pin only blocks detach). Because
-    // tj3DecompressHeader ends with `jpeg_abort_decompress`, tj3Decompress8
-    // re-runs `jpeg_read_header` from scratch — so a hostile swap to a
-    // larger JPEG between the two calls would have it write past `out`.
-    // Bound the second parse with TJPARAM_MAXPIXELS (checked at
-    // turbojpeg-mp.c:183 against the freshly-parsed dims, before any output)
-    // and pass our pitch explicitly so the stride can't grow either.
+    // `bytes` may alias a JS ArrayBuffer; the contract is "don't mutate while
+    // a terminal is pending" (SharedArrayBuffer is refused at construction),
+    // so the honest path costs nothing. Hardening here is so a hostile
+    // mid-decode swap degrades to DecodeFailed, not OOB/heap-leak:
+    // tj3DecompressHeader ends with `jpeg_abort_decompress`, so
+    // tj3Decompress8 re-runs `jpeg_read_header` and derives row count /
+    // stride from a fresh parse. Bound the WRITE REGION to OUR alloc with
+    //   • TJPARAM_MAXPIXELS — second-parse w'·h' > w·h fails before output
+    //     (turbojpeg-mp.c:183)
+    //   • explicit pitch — stride can't grow with w'
+    //   • croppingRegion {0,0,w,ht} — `croppedHeight = ht` regardless of h'
+    //     (turbojpeg-mp.c:222), so an aspect-swap (4096×1→1×4096) that
+    //     passes the product check still can't write more rows than fit
+    // and post-check the second-parse dims so a smaller swap (which would
+    // leave rows unfilled with raw mimalloc bytes) is treated as corrupt.
     _ = tj3Set(h, TJPARAM_MAXPIXELS, std.math.cast(c_int, src_w * src_h) orelse std.math.maxInt(c_int));
+    _ = tj3SetCroppingRegion(h, .{ .x = 0, .y = 0, .w = @intCast(w), .h = @intCast(ht) });
     const out = try bun.default_allocator.alloc(u8, @as(usize, w) * ht * 4);
     errdefer bun.default_allocator.free(out);
     if (tj3Decompress8(h, bytes.ptr, bytes.len, out.ptr, @intCast(w * 4), TJPF_RGBA) != 0)
+        return error.DecodeFailed;
+    if (tj3Get(h, TJPARAM_JPEGWIDTH) != rw or tj3Get(h, TJPARAM_JPEGHEIGHT) != rh)
         return error.DecodeFailed;
     return .{ .rgba = out, .width = w, .height = ht };
 }

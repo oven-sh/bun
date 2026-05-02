@@ -67,8 +67,8 @@ pub const Format = enum(u8) {
     /// Decode-only via system backend (ImageIO/WIC); no static codec.
     /// macOS pasteboard's preferred representation for screenshots.
     tiff,
-    /// Decode-only via system backend (ImageIO/WIC); first frame only. No
-    /// static codec.
+    /// Decode-only, first frame. Static LZW decoder everywhere; system
+    /// backend tried first (handles disposal/animation we don't).
     gif,
 
     pub fn sniff(bytes: []const u8) ?Format {
@@ -170,14 +170,19 @@ pub fn decode(bytes: []const u8, max_pixels: u64, hint: DecodeHint) Error!Decode
         // system libz). The OS backend is purely a *capability* fallback for
         // containers we don't link a decoder for — and `backend == .bun` opts
         // out of even that so behaviour is identical to Linux.
-        .heic, .avif, .tiff, .gif => decodeViaSystem(bytes, max_pixels) catch |e| switch (e) {
+        .heic, .avif, .tiff => decodeViaSystem(bytes, max_pixels) catch |e| switch (e) {
             error.BackendUnavailable => error.UnsupportedOnPlatform,
             else => |narrowed| narrowed,
         },
-        // BMP gets a static fallback because the WSL2 clipboard surfaces
-        // CF_DIB on the Linux side where there is no system backend.
+        // BMP/GIF have static decoders so Linux (and `backend == .bun`) work;
+        // the system backend is tried first because ImageIO/WIC handle the
+        // long tail (RLE BMP, animated GIF disposal, etc.) we don't.
         .bmp => decodeViaSystem(bytes, max_pixels) catch |e| switch (e) {
             error.BackendUnavailable => bmp.decode(bytes, max_pixels),
+            else => |narrowed| narrowed,
+        },
+        .gif => decodeViaSystem(bytes, max_pixels) catch |e| switch (e) {
+            error.BackendUnavailable => gif.decode(bytes, max_pixels),
             else => |narrowed| narrowed,
         },
     };
@@ -436,6 +441,7 @@ pub const jpeg = @import("./codec_jpeg.zig");
 pub const png = @import("./codec_png.zig");
 pub const webp = @import("./codec_webp.zig");
 pub const bmp = @import("./codec_bmp.zig");
+pub const gif = @import("./codec_gif.zig");
 
 const bun = @import("bun");
 const std = @import("std");

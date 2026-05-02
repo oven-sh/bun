@@ -776,30 +776,71 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
     await expect(new Bun.Image(cut).png().bytes()).rejects.toThrow(/decode failed/);
   });
 
-  if (isMacOS || isWindows) {
-    test("GIF decode via system backend (hand-built 2×2, 2-colour)", async () => {
-      Bun.Image.backend = "system";
-      // GIF-LZW for a 2-colour 2×2 image is a handful of bytes; this is the
-      // smallest valid file that exercises a real palette + LZW frame.
-      // prettier-ignore
-      const gif = Buffer.from([
-        0x47,0x49,0x46,0x38,0x39,0x61,           // GIF89a
-        0x02,0x00,0x02,0x00,0x80,0x00,0x00,       // LSD 2×2, GCT 2 entries
-        0xff,0x00,0x00, 0x00,0x00,0xff,           // palette: red, blue
-        0x2c,0x00,0x00,0x00,0x00,0x02,0x00,0x02,0x00,0x00, // image desc
-        0x02,0x03,0x44,0x01,0x00,0x00,            // LZW min=2, sub-block len=3, codes, terminator
-        0x3b,                                     // trailer
-      ]);
-      const m = await new Bun.Image(gif).metadata();
-      expect(m).toEqual({ width: 2, height: 2, format: "gif" });
-      // Full decode → PNG (first frame).
-      const png = decodePngRaw(await new Bun.Image(gif).png().bytes());
-      expect({ w: png.w, h: png.h }).toEqual({ w: 2, h: 2 });
+  // Minimal valid GIF89a: 1×1, 2-colour GCT, single index 0. With min_code=2
+  // the LZW stream is `clear(4),0,eoi(5)` at constant 3-bit width — no
+  // width-growth, so the packing is unambiguous: bits 100·000·101 LSB-first
+  // → bytes 0x44 0x01.
+  // prettier-ignore
+  const gif1x1 = Buffer.from([
+    0x47,0x49,0x46,0x38,0x39,0x61,             // GIF89a
+    0x01,0x00,0x01,0x00,0x80,0x00,0x00,         // LSD 1×1, GCT 2 entries
+    0xff,0x80,0x40, 0x00,0x00,0x00,             // palette[0]=#ff8040
+    0x2c,0x00,0x00,0x00,0x00,0x01,0x00,0x01,0x00,0x00, // image desc 1×1
+    0x02, 0x02, 0x44,0x01, 0x00,                // min=2 · sub-block(2) · term
+    0x3b,
+  ]);
+
+  test.each(["bun", "system"] as const)("GIF decode: 1×1 minimal (backend=%s)", async be => {
+    Bun.Image.backend = be;
+    expect(await new Bun.Image(gif1x1).metadata()).toEqual({ width: 1, height: 1, format: "gif" });
+    const { data } = decodePngRaw(await new Bun.Image(gif1x1).png().bytes());
+    expect([...data.subarray(0, 4)]).toEqual([0xff, 0x80, 0x40, 0xff]);
+  });
+
+  test("static GIF decoder rejects out-of-range LZW code", async () => {
+    Bun.Image.backend = "bun";
+    // First code after clear is 7 (> avail=6): clear=100, 7=111 → bits
+    // [0..6)=001·111 → byte 0b00111100 = 0x3c.
+    // prettier-ignore
+    const bad = Buffer.from([
+      0x47,0x49,0x46,0x38,0x39,0x61, 0x02,0x00,0x02,0x00,0x80,0x00,0x00,
+      0x00,0x00,0x00, 0xff,0xff,0xff,
+      0x2c,0x00,0x00,0x00,0x00,0x02,0x00,0x02,0x00,0x00,
+      0x02, 0x01, 0x3c, 0x00, 0x3b,
+    ]);
+    await expect(new Bun.Image(bad).png().bytes()).rejects.toThrow(/decode failed/);
+  });
+
+  // Real-file parity: generate a GIF with macOS `sips` (uses ImageIO's
+  // encoder, exercises width growth + interlace=off + a full 256-colour
+  // table) and verify the static decoder matches ImageIO's own decode.
+  test.skipIf(!isMacOS)("static GIF decoder matches ImageIO on a sips-generated file", async () => {
+    using dir = tempDir("image-gif", {});
+    const pngPath = join(String(dir), "g.png");
+    const gifPath = join(String(dir), "g.gif");
+    await Bun.write(
+      pngPath,
+      makePng(17, 13, (x, y) => [(x * 15) & 255, (y * 19) & 255, ((x ^ y) * 31) & 255, 255]),
+    );
+    await using sips = Bun.spawn({
+      cmd: ["sips", "-s", "format", "gif", pngPath, "--out", gifPath],
+      stdio: ["ignore", "ignore", "pipe"],
     });
-  } else {
-    test("TIFF/GIF on Linux throw UnsupportedOnPlatform", async () => {
-      const gif = Buffer.from("GIF89a\x02\x00\x02\x00\x00\x00\x00\x3b", "binary");
-      await expect(new Bun.Image(gif).png().bytes()).rejects.toThrow(/not supported on this platform/);
+    expect(await sips.exited).toBe(0);
+    const gifBytes = await Bun.file(gifPath).bytes();
+    Bun.Image.backend = "system";
+    const ref = decodePngRaw(await new Bun.Image(gifBytes).png().bytes()).data;
+    Bun.Image.backend = "bun";
+    const got = decodePngRaw(await new Bun.Image(gifBytes).png().bytes()).data;
+    // GIF quantises, so both decoders see the SAME palette indices → byte-
+    // identical RGBA, no tolerance needed.
+    expect(Buffer.compare(got, ref)).toBe(0);
+  });
+
+  if (!isMacOS && !isWindows) {
+    test("TIFF on Linux throws UnsupportedOnPlatform", async () => {
+      const tiff = Buffer.from("II*\x00\x08\x00\x00\x00", "binary");
+      await expect(new Bun.Image(tiff).png().bytes()).rejects.toThrow(/not supported on this platform/);
     });
   }
 });

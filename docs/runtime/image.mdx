@@ -156,8 +156,8 @@ For a passive "image in clipboard, press ⌘V" hint, poll `clipboardChangeCount(
 |                        | Linux                             | macOS             | Windows      |
 | ---------------------- | --------------------------------- | ----------------- | ------------ |
 | JPEG / PNG / WebP      | libjpeg-turbo · spng · libwebp    | same              | same         |
-| BMP (decode)           | static BI_RGB/BITFIELDS           | ImageIO           | WIC          |
-| TIFF / GIF (decode)    | ❌                                | ImageIO           | WIC          |
+| BMP / GIF (decode)     | built-in                          | ImageIO           | WIC          |
+| TIFF (decode)          | ❌                                | ImageIO           | WIC          |
 | Resize / rotate / flip | Highway SIMD                      | Accelerate vImage | Highway SIMD |
 | HEIC / AVIF            | ❌ throws `UnsupportedOnPlatform` | ImageIO           | WIC ¹        |
 | Clipboard              | ❌ returns `null`                 | NSPasteboard      | Win32        |

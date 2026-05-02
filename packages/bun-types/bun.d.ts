@@ -8166,8 +8166,9 @@ declare module "bun" {
   namespace Image {
     /**
      * `bmp`/`tiff`/`gif` are decode-only — `metadata().format` may report them
-     * but there are no `.bmp()`/`.tiff()`/`.gif()` encoder methods. On Linux,
-     * `tiff`/`gif` decode throws `UnsupportedOnPlatform`.
+     * but there are no `.bmp()`/`.tiff()`/`.gif()` encoder methods. `tiff`
+     * decode throws `UnsupportedOnPlatform` on Linux; `gif` decodes the first
+     * frame everywhere.
      */
     type Format = "jpeg" | "png" | "webp" | "heic" | "avif" | "bmp" | "tiff" | "gif";
     type Filter =

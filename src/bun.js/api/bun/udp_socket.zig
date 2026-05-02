@@ -809,7 +809,15 @@ pub const UDPSocket = struct {
             if (payload_arg.asArrayBuffer(globalThis)) |array_buffer| {
                 break :brk array_buffer.slice();
             } else if (payload_arg.isString()) {
-                payload_str = payload_arg.asString().toSlice(globalThis, bun.default_allocator);
+                // `isString()` is `isStringLike()` and accepts boxed
+                // `StringObject`/`DerivedStringObject`; `asString()` is a raw
+                // `static_cast<JSString*>` that asserts/type-confuses on those.
+                // `toJSString` resolves them via `toPrimitive` — safe here:
+                // `parseAddr` already ran, there is only one payload so
+                // `toPrimitive` cannot invalidate an earlier captured pointer,
+                // and `this.socket orelse throw` below handles a
+                // close-during-`toPrimitive`.
+                payload_str = (try payload_arg.toJSString(globalThis)).toSlice(globalThis, bun.default_allocator);
                 break :brk payload_str.slice();
             } else {
                 return globalThis.throwInvalidArguments("Expected ArrayBufferView or string as first argument", .{});

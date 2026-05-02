@@ -100,3 +100,34 @@ describe("randomFill bounds checking", () => {
     expect(await promise).toBeNull();
   });
 });
+
+describe("randomFill default size with multi-byte typed arrays", () => {
+  // In the 3-arg form `randomFill(buf, offset, cb)`, the default size was computed
+  // as `buf.len - offset` where `buf.len` is the element count but `offset` had
+  // already been scaled to a byte offset by assertOffset. For element_size > 1 this
+  // either underflowed (panic in debug) or under-filled the buffer.
+  it("randomFill(Float64Array, offset, cb) does not underflow when byte offset > element count", async () => {
+    const buf = new Float64Array(10); // 80 bytes, 10 elements
+    const { promise, resolve } = Promise.withResolvers<Error | null>();
+    // offset 2 elements = 16 bytes; previously computed size as 10 - 16 -> underflow
+    randomFill(buf, 2, err => resolve(err));
+    expect(await promise).toBeNull();
+    expect(buf[0]).toBe(0);
+    expect(buf[1]).toBe(0);
+  });
+
+  it("randomFill(Float64Array, offset, cb) fills to the end of the buffer", async () => {
+    // Run several times since each byte has a 1/256 chance of being 0 anyway.
+    let tailFilled = false;
+    for (let i = 0; i < 8 && !tailFilled; i++) {
+      const buf = new Float64Array(100); // 800 bytes
+      const { promise, resolve } = Promise.withResolvers<Error | null>();
+      randomFill(buf, 1, err => resolve(err));
+      expect(await promise).toBeNull();
+      // Previously only bytes 8..744 were filled; bytes 744..800 stayed zero.
+      const bytes = new Uint8Array(buf.buffer);
+      if (bytes.subarray(744, 800).some(b => b !== 0)) tailFilled = true;
+    }
+    expect(tailFilled).toBe(true);
+  });
+});

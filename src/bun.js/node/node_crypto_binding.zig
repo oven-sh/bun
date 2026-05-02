@@ -393,7 +393,10 @@ const random = struct {
         } else if (size_value.isCallable()) {
             callback = size_value;
             offset = try assertOffset(global, offset_value, element_size, buf.byte_len);
-            size_value = JSValue.jsNumber(buf.len - offset);
+            // `offset` is a byte offset (already scaled by element_size) but `buf.len`
+            // is an element count, so `buf.len - offset` would mix units and can
+            // underflow. Defer to the `buf.byte_len - offset` default below instead.
+            size_value = .js_undefined;
         } else {
             _ = try validators.validateFunction(global, "callback", callback);
             offset = try assertOffset(global, offset_value, element_size, buf.byte_len);

@@ -53,12 +53,20 @@ pub const Source = union(enum) {
     owned: []u8,
     /// Owned by `bun.default_allocator`. Read on the worker thread.
     path: [:0]u8,
+    /// `Bun.file()`, `Bun.s3()`, an fd-backed Blob — anything whose bytes
+    /// don't exist until read. We hold a Strong on the JS Blob and, at
+    /// terminal time, just call its own `.bytes()` (whatever that means for
+    /// that kind of Blob — file, S3, pipe, slice) and chain the pipeline
+    /// task off the resulting Promise. After the first read completes the
+    /// source is swapped to `.owned` so subsequent terminals reuse the bytes.
+    blob: jsc.Strong.Optional,
 
     fn deinit(self: *Source) void {
         switch (self.*) {
             .js_buffer => {},
             .owned => |b| bun.default_allocator.free(b),
             .path => |p| bun.default_allocator.free(p),
+            .blob => |*s| s.deinit(),
         }
     }
 };
@@ -149,7 +157,7 @@ pub fn estimatedSize(this: *Image) usize {
     // counted via the cached value slot); the worker's RGBA scratch is
     // task-scoped and freed before any GC could observe it.
     return @sizeOf(Image) + switch (this.source) {
-        .js_buffer => 0,
+        .js_buffer, .blob => 0,
         .owned => |b| b.len,
         .path => |p| p.len,
     };
@@ -194,13 +202,20 @@ fn sourceFromJS(global: *jsc.JSGlobalObject, value: jsc.JSValue, this_value: jsc
         return .js_buffer;
     }
     if (value.as(jsc.WebCore.Blob)) |blob| {
-        // Only in-memory blobs for now; FileBlob/S3 callers can `await
-        // file.bytes()` first. Dupe — the Blob's store may be sliced/replaced.
+        // In-memory blob: dupe its bytes (the store may be sliced/replaced
+        // independently).
         const view = blob.sharedView();
         if (view.len > 0)
             return .{ .owned = try bun.default_allocator.dupe(u8, view) };
+        // Anything with a backing store but no in-memory view yet
+        // (`Bun.file()`, `Bun.s3()`, fd, …) — keep the JS object and read it
+        // through ITS OWN `.bytes()` at terminal time, so we inherit whatever
+        // that store type does (file → ReadFile, S3 → fetch, etc.) without
+        // knowing about it here.
+        if (blob.store != null)
+            return .{ .blob = .create(value, global) };
     }
-    return global.throwInvalidArguments("Image() input must be a path string, data: URL, ArrayBuffer, TypedArray or in-memory Blob", .{});
+    return global.throwInvalidArguments("Image() input must be a path string, data: URL, ArrayBuffer, TypedArray or Blob", .{});
 }
 
 // ───────────────────────────── chainable ops ────────────────────────────────
@@ -312,11 +327,11 @@ pub fn doFormatAvif(this: *Image, g: *jsc.JSGlobalObject, cf: *jsc.CallFrame) bu
 
 fn errorMessage(e: codecs.Error) [:0]const u8 {
     return switch (e) {
-        error.UnknownFormat => "Image: unrecognised format (expected JPEG, PNG or WebP)",
+        error.UnknownFormat => "Image: unrecognised format (expected JPEG, PNG, WebP, GIF, BMP, TIFF, HEIC or AVIF)",
         error.DecodeFailed => "Image: decode failed",
         error.EncodeFailed => "Image: encode failed",
         error.TooManyPixels => "Image: input exceeds maxPixels limit",
-        error.UnsupportedOnPlatform => "Image: format not supported on this platform (HEIC/AVIF require macOS or Windows)",
+        error.UnsupportedOnPlatform => "Image: format not supported on this platform (HEIC/AVIF/TIFF require macOS or Windows)",
         error.OutOfMemory => "Image: out of memory",
     };
 }
@@ -331,7 +346,7 @@ fn jsThreadBytes(this: *Image, this_value: jsc.JSValue, global: *jsc.JSGlobalObj
         else
             null,
         .owned => |b| b,
-        .path => null,
+        .path, .blob => null,
     };
 }
 
@@ -359,6 +374,8 @@ fn pinForTask(this: *Image, this_value: jsc.JSValue, global: *jsc.JSGlobalObject
         },
         .owned => |b| return .{ .bytes = b },
         .path => |p| return .{ .path = p },
+        // schedule() peels this off before pinForTask is reached.
+        .blob => unreachable,
     }
 }
 
@@ -470,34 +487,43 @@ pub fn doToBase64(this: *Image, global: *jsc.JSGlobalObject, cf: *jsc.CallFrame)
 }
 
 /// Terminal: encode and write to `path` on the work pool (no round-trip of
-/// encoded bytes through JS). Resolves with bytes written, like `Bun.write`.
-/// If no format method was chained, the encode format is inferred from the
-/// path's extension when it's one we can encode, falling back to the source
-/// format otherwise — so `img.resize(100).write("thumb.webp")` Just Works.
+/// then `Bun.write(dest, encoded)` — same path as `await Bun.write(...)`, so
+/// `dest` may be a path string, `Bun.file()`, `Bun.s3()`, or an fd. Resolves
+/// with bytes written. If no format method was chained and `dest` is a path
+/// string, the encode format is inferred from its extension, falling back to
+/// the source format — so `img.resize(100).write("thumb.webp")` Just Works.
 pub fn doWrite(this: *Image, global: *jsc.JSGlobalObject, cf: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const args = cf.arguments();
-    if (args.len < 1 or !args[0].isString())
-        return global.throwInvalidArguments("Image.write: expected a path string", .{});
-    const str = try args[0].toBunString(global);
-    defer str.deref();
-    const path = str.toOwnedSliceZ(bun.default_allocator) catch return global.throwOutOfMemory();
+    if (args.len < 1 or args[0].isUndefinedOrNull())
+        return global.throwInvalidArguments("Image.write(dest): expected a path, Bun.file, Bun.s3 or fd", .{});
 
     var output = this.pipeline.output;
-    if (output == null) if (codecs.Format.fromExtension(path)) |f| switch (f) {
-        // Only infer formats we can ENCODE; decode-only extensions
-        // (.bmp/.tiff/.gif) fall through to the source-format default
-        // rather than guaranteeing a runtime UnsupportedOnPlatform.
-        .jpeg, .png, .webp, .heic, .avif => output = .{ .format = f },
-        else => {},
-    };
-    return this.schedule(global, cf.this(), .{ .encode = output }, .{ .file = path });
+    // Extension inference only when dest is a plain string. BunFile/S3 dests
+    // carry no extension contract, so the explicit `.png()` etc. (or source
+    // format) decides.
+    if (output == null and args[0].isString()) {
+        const str = try args[0].toBunString(global);
+        defer str.deref();
+        const utf8 = str.toUTF8(bun.default_allocator);
+        defer utf8.deinit();
+        if (codecs.Format.fromExtension(utf8.slice())) |f| switch (f) {
+            // Only infer formats we can ENCODE; decode-only extensions
+            // (.bmp/.tiff/.gif) fall through to the source-format default.
+            .jpeg, .png, .webp, .heic, .avif => output = .{ .format = f },
+            else => {},
+        };
+    }
+    return this.schedule(global, cf.this(), .{ .encode = output }, .{ .write_dest = .create(args[0], global) });
 }
 
 fn schedule(this: *Image, global: *jsc.JSGlobalObject, this_value: jsc.JSValue, kind: PipelineTask.Kind, deliver: PipelineTask.Deliver) bun.JSError!jsc.JSValue {
+    if (this.source == .blob)
+        return BlobReadChain.start(this, global, this_value, kind, deliver);
     const input = this.pinForTask(this_value, global) catch {
-        // `deliver` owns its `.file` path; the task that would have freed it
-        // in deinit() is never created on this branch, so free here.
-        if (deliver == .file) bun.default_allocator.free(deliver.file);
+        // `deliver` may own a Strong; the task that would have freed it in
+        // deinit() is never created on this branch.
+        var d = deliver;
+        d.deinit();
         return jsc.JSPromise.rejectedPromise(
             global,
             global.createErrorInstance("Image: source ArrayBuffer was detached", .{}),
@@ -534,6 +560,20 @@ fn schedule(this: *Image, global: *jsc.JSGlobalObject, this_value: jsc.JSValue, 
 /// A later refinement is to return a `.Locked` body and resolve it from the
 /// worker pool; this is the simple, correct first cut.
 pub fn encodeForBody(this: *Image, global: *jsc.JSGlobalObject, this_value: jsc.JSValue) bun.JSError!struct { bytes: codecs.Encoded, mime: [:0]const u8 } {
+    // The body-init contract is synchronous, so a `.blob` source can't go
+    // through the async read chain here. For the common case (file by path)
+    // fall back to the `.path` source — `run()` reads it inline. fd/S3-backed
+    // BunFiles would block or need network; refuse with a clear message until
+    // the body path is made `.Locked`.
+    if (this.source == .blob) {
+        const blob_js = this.source.blob.get() orelse return global.throw("Image: Blob source was collected", .{});
+        const blob = blob_js.as(jsc.WebCore.Blob).?;
+        if (blob.store) |store| if (store.data == .file and store.data.file.pathlike == .path) {
+            const p = try bun.default_allocator.dupeZ(u8, store.data.file.pathlike.path.slice());
+            this.source.deinit();
+            this.source = .{ .path = p };
+        } else return global.throw("Image: fd/S3-backed Bun.file as a Response body — pass `await file.bytes()` or a path string", .{});
+    }
     const input = this.pinForTask(this_value, global) catch
         return global.throw("Image: source ArrayBuffer was detached", .{});
     defer if (input.pinned != .zero) JSC__JSValue__unpinArrayBuffer(input.pinned);
@@ -557,11 +597,87 @@ pub fn encodeForBody(this: *Image, global: *jsc.JSGlobalObject, this_value: jsc.
         .err => |e| global.throw("{s}", .{errorMessage(e)}),
         // Preserve errno/path/syscall instead of flattening to DecodeFailed.
         .io_err => |e| global.throwValue(try e.toJS(global)),
-        .meta, .written => unreachable,
+        .meta => unreachable,
     };
 }
 
 // ───────────────────────────── worker task ──────────────────────────────────
+
+/// `.blob` source: ask the Blob for its bytes via the store-agnostic
+/// `Blob.readBytesToHandler` (file → ReadFile/ReadFileUV, S3 → S3.download,
+/// memory → dupe), receive the owned `[]u8` directly — never wrapped in a
+/// JSValue — swap it into `image.source = .owned`, and re-enter `schedule()`.
+/// Promise-of-promise flattens, so the caller sees one `await` for
+/// read+decode+ops+encode. After the first read, subsequent terminals on the
+/// same instance reuse the `.owned` bytes without re-reading.
+const BlobReadChain = struct {
+    image: *Image,
+    global: *jsc.JSGlobalObject,
+    kind: PipelineTask.Kind,
+    deliver: PipelineTask.Deliver,
+    outer: jsc.JSPromise.Strong,
+
+    fn start(image: *Image, global: *jsc.JSGlobalObject, this_value: jsc.JSValue, kind: PipelineTask.Kind, deliver: PipelineTask.Deliver) bun.JSError!jsc.JSValue {
+        const blob_js = image.source.blob.get() orelse
+            return global.throw("Image: Blob source was collected", .{});
+        const blob = blob_js.as(jsc.WebCore.Blob) orelse
+            return global.throw("Image: Blob source is no longer a Blob", .{});
+
+        // Same Strong-ref contract as the regular pending_tasks bump — keeps
+        // the wrapper (and its sourceJS slot) alive until the read settles.
+        if (image.pending_tasks == 0) image.this_ref.setStrong(this_value, global);
+        image.pending_tasks += 1;
+
+        var chain = bun.new(BlobReadChain, .{
+            .image = image,
+            .global = global,
+            .kind = kind,
+            .deliver = deliver,
+            .outer = jsc.JSPromise.Strong.init(global),
+        });
+        const promise = chain.outer.value();
+        try blob.readBytesToHandler(BlobReadChain, chain, global);
+        return promise;
+    }
+
+    /// JS thread — `readBytesToHandler` guarantees this. `r.ok` is
+    /// `bun.default_allocator`-owned by us.
+    pub fn onReadBytes(self: *BlobReadChain, r: jsc.WebCore.Blob.ReadBytesResult) void {
+        const global = self.global;
+        const image = self.image;
+        var outer = self.outer;
+        const kind = self.kind;
+        var deliver = self.deliver;
+        bun.destroy(self);
+
+        image.pending_tasks -= 1;
+        if (image.pending_tasks == 0) image.this_ref.downgrade();
+        defer outer.deinit();
+
+        switch (r) {
+            .ok => |bytes| {
+                image.source.deinit();
+                image.source = .{ .owned = bytes };
+                const this_value = image.this_ref.tryGet() orelse {
+                    outer.reject(global, global.createErrorInstance("Image: collected before read completed", .{})) catch {};
+                    deliver.deinit();
+                    return;
+                };
+                // Source is now `.owned`; this re-entry takes the regular path.
+                const inner = image.schedule(global, this_value, kind, deliver) catch {
+                    deliver.deinit();
+                    outer.reject(global, global.createErrorInstance("Image: pipeline schedule failed", .{})) catch {};
+                    return;
+                };
+                outer.resolve(global, inner) catch {};
+            },
+            .err => |e| {
+                deliver.deinit();
+                outer.reject(global, e.toErrorInstance(global)) catch {};
+            },
+        }
+    }
+};
 
 pub const AsyncImageTask = jsc.ConcurrentPromiseTask(PipelineTask);
 
@@ -591,10 +707,14 @@ pub const PipelineTask = struct {
         buffer,
         blob,
         base64,
-        /// Write encoded output to this path on the worker thread, then free
-        /// it there — encoded bytes never touch JS. Path is allocator-owned;
-        /// freed in `deinit()`.
-        file: [:0]const u8,
+        /// `.write(dest)` — `then()` hands the encoded bytes to `Bun.write`'s
+        /// implementation with this as the destination. Anything `Bun.write`
+        /// accepts (path string / BunFile / S3 / fd) works here unchanged.
+        write_dest: jsc.Strong.Optional,
+
+        fn deinit(self: *Deliver) void {
+            if (self.* == .write_dest) self.write_dest.deinit();
+        }
     };
 
     pub const Kind = union(enum) {
@@ -605,8 +725,6 @@ pub const PipelineTask = struct {
 
     pub const Result = union(enum) {
         encoded: struct { out: codecs.Encoded, format: codecs.Format, w: u32, h: u32 },
-        /// `.write()` terminal — bytes already on disk, buffer already freed.
-        written: struct { len: usize, w: u32, h: u32 },
         meta: struct { w: u32, h: u32, format: codecs.Format },
         err: codecs.Error,
         io_err: bun.sys.Error,
@@ -706,40 +824,23 @@ pub const PipelineTask = struct {
             return;
         };
 
-        const enc: codecs.EncodeOptions = this.kind.encode orelse .{ .format = src_format };
+        // No format method chained ⇒ re-encode in the source format. For
+        // decode-only sources (bmp/tiff/gif) that would dead-end in the
+        // "HEIC/AVIF require macOS or Windows" message, which is wrong twice
+        // over. Emit PNG instead — it's the lossless, everywhere-supported
+        // default Sharp uses for the same case.
+        const enc: codecs.EncodeOptions = this.kind.encode orelse .{
+            .format = switch (src_format) {
+                .bmp, .tiff, .gif => .png,
+                else => src_format,
+            },
+        };
         const out = codecs.encode(decoded.rgba, decoded.width, decoded.height, enc) catch |e| {
             this.result = .{ .err = e };
             return;
         };
 
-        if (this.deliver == .file) {
-            // Still on the work pool: write straight from the codec's buffer,
-            // then free it here so it never hits JS. `writeFile` opens with
-            // CREAT|TRUNC (clobber semantics, like fs.writeFile). The path
-            // arrived as UTF-8 and is owned by this task until `deinit()`;
-            // the OS-path widening (Windows) is fully contained in
-            // `writeFileUtf8` so nothing here borrows a pooled buffer.
-            defer out.deinit();
-            switch (writeFileUtf8(this.deliver.file, out.bytes)) {
-                .result => this.result = .{ .written = .{ .len = out.bytes.len, .w = decoded.width, .h = decoded.height } },
-                .err => |e| this.result = .{ .io_err = e.withPath(this.deliver.file) },
-            }
-            return;
-        }
         this.result = .{ .encoded = .{ .out = out, .format = enc.format, .w = decoded.width, .h = decoded.height } };
-    }
-
-    /// `bun.sys.File.writeFile` with the OS-path conversion folded in. The
-    /// pooled wide-path buffer's whole lifetime is this function — it never
-    /// escapes into the returned error (which carries no path; the caller
-    /// attaches the original UTF-8 slice via `withPath`).
-    fn writeFileUtf8(path: [:0]const u8, data: []const u8) bun.sys.Maybe(void) {
-        if (comptime bun.Environment.isWindows) {
-            const wbuf = bun.os_path_buffer_pool.get();
-            defer bun.os_path_buffer_pool.put(wbuf);
-            return bun.sys.File.writeFile(bun.FD.cwd(), bun.strings.toNTPath(wbuf, path), data);
-        }
-        return bun.sys.File.writeFile(bun.FD.cwd(), path, data);
     }
 
     /// Back on the JS thread.
@@ -752,7 +853,7 @@ pub const PipelineTask = struct {
         // Stash final dims here (JS thread) — `run()` is on a WorkPool thread
         // so writing `this.image.*` there would race the synchronous getters.
         switch (this.result) {
-            inline .encoded, .meta, .written => |r| {
+            inline .encoded, .meta => |r| {
                 this.image.last_width = @intCast(r.w);
                 this.image.last_height = @intCast(r.h);
             },
@@ -788,12 +889,28 @@ pub const PipelineTask = struct {
                         return promise.reject(global, error.JSError);
                     try promise.resolve(global, str);
                 },
-                // Unreachable: `.file` delivery never produces `.encoded`;
-                // run() takes the writeFile branch and yields `.written`/
-                // `.io_err`. Exhaustiveness arm only.
-                .file => unreachable,
+                // `.write(dest)` — wrap the codec buffer as a Buffer (codec's
+                // own free is the finalizer; no dupe), hand it to the SAME
+                // implementation `Bun.write` uses, and resolve our promise
+                // with that Promise<number>. So `dest` may be a path string,
+                // `Bun.file()`, `Bun.s3()`, or an fd — anything `Bun.write`
+                // accepts — and we don't reimplement any of it.
+                .write_dest => |*dest| {
+                    const dest_js = dest.get() orelse {
+                        enc.out.deinit();
+                        return promise.reject(global, global.createErrorInstance("Image.write: destination was collected", .{}));
+                    };
+                    const data = jsc.JSValue.createBufferWithCtx(global, enc.out.bytes, null, enc.out.free);
+                    var arg_slice = jsc.CallFrame.ArgumentsSlice.init(global.bunVM(), &.{dest_js});
+                    defer arg_slice.deinit();
+                    var path_or_blob = jsc.Node.PathOrBlob.fromJSNoCopy(global, &arg_slice) catch
+                        return promise.reject(global, error.JSError);
+                    defer if (path_or_blob == .path) path_or_blob.path.deinit();
+                    const write_promise = jsc.WebCore.Blob.writeFileInternal(global, &path_or_blob, data, .{}) catch
+                        return promise.reject(global, error.JSError);
+                    try promise.resolve(global, write_promise);
+                },
             },
-            .written => |w| try promise.resolve(global, jsc.JSValue.jsNumber(w.len)),
             .meta => |m| {
                 const obj = jsc.JSValue.createEmptyObject(global, 3);
                 obj.put(global, jsc.ZigString.static("width"), jsc.JSValue.jsNumber(m.w));
@@ -885,7 +1002,7 @@ pub const PipelineTask = struct {
     fn deinit(this: *PipelineTask) void {
         // Always reached from `then()` on the JS thread, so the ref/count
         // touch is safe without atomics.
-        if (this.deliver == .file) bun.default_allocator.free(this.deliver.file);
+        this.deliver.deinit();
         this.image.pending_tasks -= 1;
         if (this.image.pending_tasks == 0) this.image.this_ref.downgrade();
         bun.destroy(this);

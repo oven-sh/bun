@@ -89,8 +89,12 @@ pub fn encode(rgba: []const u8, w: u32, ht: u32, quality: u8) codecs.Error!codec
     _ = tj3Set(h, TJPARAM_SUBSAMP, TJSAMP_420);
     var out_ptr: ?[*]u8 = null;
     var out_len: usize = 0;
-    if (tj3Compress8(h, rgba.ptr, @intCast(w), 0, @intCast(ht), TJPF_RGBA, &out_ptr, &out_len) != 0)
+    if (tj3Compress8(h, rgba.ptr, @intCast(w), 0, @intCast(ht), TJPF_RGBA, &out_ptr, &out_len) != 0) {
+        // tj3Compress8 may have allocated (or grown) `out_ptr` before
+        // failing mid-stream; the docs say the caller owns it on any return.
+        if (out_ptr) |p| tj3Free(p);
         return error.EncodeFailed;
+    }
     // tj3Compress8 allocates via libjpeg-turbo's allocator; hand it to JS
     // with `tj3Free` as the finalizer instead of duping.
     return .{ .bytes = out_ptr.?[0..out_len], .free = codecs.Encoded.wrap(tj3Free) };

@@ -142,6 +142,28 @@ describe("Bun.Image", () => {
     expect(() => new Bun.Image()).toThrow();
   });
 
+  test("Bun.file() input chains the async file read into the pipeline", async () => {
+    using dir = tempDir("image-bunfile", {});
+    const p = join(String(dir), "src.png");
+    await Bun.write(p, cornersPng);
+    // The constructor is sync (just refs the store); the read happens when
+    // the terminal is awaited, then the pipeline task runs — both off-thread.
+    const img = new Bun.Image(Bun.file(p));
+    const meta = await img.metadata();
+    expect(meta).toEqual({ width: 4, height: 3, format: "png" });
+    // Second terminal on the same instance reuses the now-.owned bytes
+    // (no re-read).
+    const out = await img.png().bytes();
+    expect(out[0]).toBe(0x89);
+    // Missing file rejects with a real fs error, not an Image-layer one.
+    await expect(new Bun.Image(Bun.file(join(String(dir), "nope.png"))).metadata()).rejects.toThrow(/ENOENT/);
+    // Synchronous Response-body path: path-backed BunFile falls back to
+    // .path source and runs inline.
+    const res = new Response(new Bun.Image(Bun.file(p)).resize(2, 2).webp());
+    expect(res.headers.get("content-type")).toBe("image/webp");
+    expect((await res.bytes()).subarray(8, 12)).toEqual(Buffer.from("WEBP"));
+  });
+
   test("metadata() reads PNG dimensions", async () => {
     const img = new Bun.Image(cornersPng);
     const meta = await img.metadata();
@@ -587,24 +609,24 @@ describe("Bun.Image", () => {
       expect(buf[0]).toBe(0x89);
     });
 
-    test(".write(path) infers format from extension and resolves bytes-written", async () => {
+    test(".write(dest) routes through Bun.write — path string, Bun.file, fs errors", async () => {
       using dir = tempDir("image-write", {});
+      // 1. Path string + extension-inferred format.
       const out = join(String(dir), "out.webp");
       const n = await new Bun.Image(cornersPng).resize(2, 2).write(out);
       const bytes = await Bun.file(out).bytes();
       expect(n).toBe(bytes.length);
-      // No .webp() chained — extension inferred it.
       expect(String.fromCharCode(...bytes.subarray(8, 12))).toBe("WEBP");
-      // Explicit format method overrides extension.
+      // 2. Explicit format method overrides extension.
       const out2 = join(String(dir), "wrong.png");
       await new Bun.Image(cornersPng).jpeg({ quality: 50 }).write(out2);
       expect((await Bun.file(out2).bytes())[0]).toBe(0xff); // SOI, not 0x89
-    });
-
-    test(".write(path) propagates fs errors via promise rejection", async () => {
-      using dir = tempDir("image-write-err", {});
-      // Directory path → EISDIR/EACCES depending on platform; either way the
-      // bun.sys.Error surfaces with errno + path, not a generic "encode failed".
+      // 3. Bun.file destination — same dest types Bun.write accepts.
+      const out3 = Bun.file(join(String(dir), "out3.png"));
+      const n3 = await new Bun.Image(cornersPng).png().write(out3);
+      expect(n3).toBeGreaterThan(0);
+      expect((await out3.bytes())[0]).toBe(0x89);
+      // 4. fs error propagates from Bun.write, not the Image layer.
       await expect(new Bun.Image(cornersPng).png().write(String(dir))).rejects.toThrow();
     });
 

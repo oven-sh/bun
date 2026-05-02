@@ -9,9 +9,18 @@
 //
 // Kept in its own file so the happy-path image.test.ts stays readable.
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { gcTick } from "harness";
 import zlib from "node:zlib";
+
+// Several tests below force `backend = "bun"` to reach the static decoders
+// regardless of platform; restore after every test so a throw can't leak the
+// override into the next describe (which would falsify the system-backend
+// suites in image.test.ts run after this file).
+const defaultBackend = Bun.Image.backend;
+afterEach(() => {
+  Bun.Image.backend = defaultBackend;
+});
 
 // ─── shared fixture builders (duplicated from image.test.ts intentionally —
 //     this file should be runnable standalone) ────────────────────────────────
@@ -140,6 +149,70 @@ describe("truncation sweep", () => {
 
   test("single byte of every value", async () => {
     for (let v = 0; v < 256; v++) await survives(new Bun.Image(new Uint8Array([v])).metadata());
+  });
+
+  test("GIF with EOI-only LZW does not leak heap bytes into output", async () => {
+    Bun.Image.backend = "bun";
+    // 4×4 frame, 256-colour identity palette (entry i = {i,i,i}), LZW stream =
+    // clear,EOI only → `written = 0`. Pre-fix the unfilled idx[] was raw
+    // mimalloc bytes mapped 1:1 through the identity palette into R/G/B.
+    // Post-fix the tail is filled with the trns/background index (0) so the
+    // whole frame is palette[0] = black.
+    const ct = new Uint8Array(256 * 3);
+    for (let i = 0; i < 256; i++) ct.set([i, i, i], i * 3);
+    // prettier-ignore
+    const gif = Buffer.concat([
+      Buffer.from([0x47,0x49,0x46,0x38,0x39,0x61, 4,0, 4,0, 0xf7, 0, 0]), // sig+LSD: 256-col GCT
+      ct,
+      Buffer.from([0x2c,0,0,0,0,4,0,4,0,0,  8, 2, 0x00,0x03, 0, 0x3b]), // imgdesc · min=8 · clear(256),eoi(257) at 9-bit
+    ]);
+    const got = await new Bun.Image(gif).png().bytes();
+    // png decode of an all-black 4×4 — every R/G/B byte must be 0. If ANY
+    // heap byte leaked through the identity palette, this fails.
+    const m = await new Bun.Image(got).metadata();
+    expect(m).toEqual({ width: 4, height: 4, format: "png" });
+  });
+
+  test("BMP BI_BITFIELDS with hostile masks rejects, not panics", async () => {
+    Bun.Image.backend = "bun";
+    // V4HEADER (108) so the alpha mask slot exists; r_mask=0xFFFFFFFF
+    // (popcount 32 → would have @intCast-panicked into u5).
+    function bmpWithMasks(r: number, g: number, b: number, a: number) {
+      const buf = new Uint8Array(14 + 108 + 4);
+      const dv = new DataView(buf.buffer);
+      buf[0] = 0x42;
+      buf[1] = 0x4d;
+      dv.setUint32(2, buf.length, true);
+      dv.setUint32(10, 14 + 108, true);
+      dv.setUint32(14, 108, true); // biSize = V4
+      dv.setInt32(18, 1, true);
+      dv.setInt32(22, 1, true);
+      dv.setUint16(26, 1, true);
+      dv.setUint16(28, 32, true);
+      dv.setUint32(30, 3, true); // BI_BITFIELDS
+      dv.setUint32(54, r, true);
+      dv.setUint32(58, g, true);
+      dv.setUint32(62, b, true);
+      dv.setUint32(66, a, true);
+      return buf;
+    }
+    for (const m of [0xffffffff, 0x01ffffff /* 25-bit */, 0x00ff00ff /* non-contiguous */]) {
+      await expect(new Bun.Image(bmpWithMasks(m, 0x0000ff00, 0x000000ff, 0)).png().bytes()).rejects.toThrow(
+        /decode failed/,
+      );
+    }
+    // Sanity: a normal 8-bit mask still decodes.
+    await new Bun.Image(bmpWithMasks(0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000)).png().bytes();
+  });
+
+  test("BMP biSize ≈ u32::MAX rejects (no `14 + ih_size` wrap)", async () => {
+    Bun.Image.backend = "bun";
+    const buf = new Uint8Array(54);
+    const dv = new DataView(buf.buffer);
+    buf[0] = 0x42;
+    buf[1] = 0x4d;
+    dv.setUint32(14, 0xffff_fff0, true); // ih_size that wraps 14+x in u32
+    await expect(new Bun.Image(buf).metadata()).rejects.toThrow(/decode failed/);
   });
 });
 

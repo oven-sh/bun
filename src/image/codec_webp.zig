@@ -20,6 +20,13 @@ pub fn decode(bytes: []const u8, max_pixels: u64) codecs.Error!codecs.Decoded {
     try codecs.guard(w, h, max_pixels);
     const ptr = WebPDecodeRGBA(bytes.ptr, bytes.len, &cw, &ch) orelse return error.DecodeFailed;
     defer WebPFree(ptr);
+    // `bytes` is a borrowed view of a JS ArrayBuffer the user can still WRITE
+    // (the pin only blocks detach), so a hostile caller can swap in a smaller
+    // WebP between WebPGetInfo and WebPDecodeRGBA. libwebp re-parses on the
+    // second call and writes the actual decoded dims back into cw/ch — reject
+    // any mismatch instead of trusting the probe and over-reading the
+    // smaller allocation. (Same race the CG shim guards at :298.)
+    if (cw != w or ch != h) return error.DecodeFailed;
     const len: usize = @as(usize, w) * h * 4;
     const out = try bun.default_allocator.dupe(u8, ptr[0..len]);
     return .{ .rgba = out, .width = w, .height = h };

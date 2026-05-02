@@ -418,24 +418,33 @@ pub fn clipboard() error{ BackendUnavailable, OutOfMemory }!?[]u8 {
         if (id != 0) if (GetClipboardData(id)) |h| if (try dupGlobal(h, 0)) |b| return b;
     }
     // 2. Packed DIB — needs a synthetic BITMAPFILEHEADER so the BMP sniffer
-    //    and decoder accept it. CF_DIBV5 first (carries alpha mask).
+    //    and decoder accept it. CF_DIBV5 first (carries alpha mask). The
+    //    clipboard is writable by any local process, so treat the payload as
+    //    hostile: a 1-byte CF_DIB or a header with biSize≈u32::MAX must drop
+    //    the format, not panic the process (Windows ships ReleaseSafe).
     for ([_]c_uint{ CF_DIBV5, CF_DIB }) |cf| {
         if (GetClipboardData(cf)) |h| if (try dupGlobal(h, 14)) |buf| {
+            if (buf.len < 14 + 40 or buf.len > std.math.maxInt(u32)) {
+                bun.default_allocator.free(buf);
+                continue;
+            }
             // BITMAPFILEHEADER: 'BM' · u32 file-size · 2×u16 reserved ·
             // u32 bfOffBits. bfOffBits = 14 + biSize + colour-table; for the
             // 24/32-bit DIBs clipboards emit there's no colour table, but a
             // 40-byte header with BI_BITFIELDS appends 12 bytes of masks.
-            const ih_size = std.mem.readInt(u32, buf[14..18], .little);
-            const compression = if (buf.len >= 14 + 20)
-                std.mem.readInt(u32, buf[14 + 16 ..][0..4], .little)
-            else
-                0;
-            const masks: u32 = if (ih_size == 40 and compression == 3) 12 else 0;
+            const ih_size: u64 = std.mem.readInt(u32, buf[14..18], .little);
+            const compression = std.mem.readInt(u32, buf[14 + 16 ..][0..4], .little);
+            const masks: u64 = if (ih_size == 40 and compression == 3) 12 else 0;
+            const off = 14 + ih_size + masks;
+            if (ih_size < 40 or off > buf.len) {
+                bun.default_allocator.free(buf);
+                continue;
+            }
             buf[0] = 'B';
             buf[1] = 'M';
             std.mem.writeInt(u32, buf[2..6], @intCast(buf.len), .little);
             std.mem.writeInt(u32, buf[6..10], 0, .little);
-            std.mem.writeInt(u32, buf[10..14], 14 + ih_size + masks, .little);
+            std.mem.writeInt(u32, buf[10..14], @intCast(off), .little);
             return buf;
         };
     }

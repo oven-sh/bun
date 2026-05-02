@@ -104,7 +104,7 @@ pub fn quantize(rgba: []const u8, w: u32, h: u32, opts: Options) error{OutOfMemo
     for (boxes.items, 0..) |b, i| {
         var sum: [4]u64 = .{ 0, 0, 0, 0 };
         for (order[b.lo..b.hi]) |px| inline for (0..4) |c| {
-            sum[c] += rgba[px * 4 + c];
+            sum[c] += rgba[@as(usize, px) * 4 + c];
         };
         const cnt: u64 = b.hi - b.lo;
         inline for (0..4) |c| palette[i * 4 + c] = @intCast((sum[c] + cnt / 2) / cnt);
@@ -212,7 +212,9 @@ const SortCtx = struct {
     rgba: []const u8,
     ch: u2,
     fn less(ctx: SortCtx, a: u32, b: u32) bool {
-        return ctx.rgba[a * 4 + ctx.ch] < ctx.rgba[b * 4 + ctx.ch];
+        // u32 ×4 overflows past ~1.07B pixels (allowed when the user raises
+        // `maxPixels`); the other order-index sites already widen first.
+        return ctx.rgba[@as(usize, a) * 4 + ctx.ch] < ctx.rgba[@as(usize, b) * 4 + ctx.ch];
     }
 };
 
@@ -221,7 +223,7 @@ fn shrink(rgba: []const u8, order: []const u32, lo: u32, hi: u32) Box {
     var min: [4]u8 = .{ 255, 255, 255, 255 };
     var max: [4]u8 = .{ 0, 0, 0, 0 };
     for (order[lo..hi]) |px| inline for (0..4) |c| {
-        const v = rgba[px * 4 + c];
+        const v = rgba[@as(usize, px) * 4 + c];
         if (v < min[c]) min[c] = v;
         if (v > max[c]) max[c] = v;
     };

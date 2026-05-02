@@ -226,6 +226,12 @@ fn decodeFrame(bytes: []const u8, lzw_off: usize, w: u32, h: u32, interlace: boo
         prev = code;
     }
     bits.drain();
+    // A short or truncated stream (early EOI/eof) leaves `idx[written..]` as
+    // raw mimalloc bytes. Those would be mapped through an attacker-controlled
+    // palette into the output — a heap-memory disclosure. Filling with the
+    // transparent index (or 0) makes the unfilled region transparent/background
+    // instead, which is what browsers do for short frames.
+    if (written < npix) @memset(idx[written..], trns orelse 0);
 
     // ── interlace reorder ──────────────────────────────────────────────────
     // GIF interlacing writes rows in 4 passes (every 8th from 0, every 8th

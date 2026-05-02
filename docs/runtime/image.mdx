@@ -120,9 +120,10 @@ await img.buffer(); // Buffer
 await img.blob(); // Blob with .type set to the output MIME
 await img.toBase64(); // string
 await img.write("out.webp"); // number (bytes written)
+await img.write(Bun.s3("bucket/out.webp"));
 ```
 
-`.write()` keeps the encode-then-writeFile on the thread pool so encoded bytes never touch the JS heap. If you didn't chain a format method, the extension picks one (`.jpg`/`.png`/`.webp`/`.heic`/`.avif`).
+`.write()` accepts the same destinations as `Bun.write` — a path string, `Bun.file()`, `Bun.s3()`, or an fd. If you didn't chain a format method and the destination is a path string, the extension picks one (`.jpg`/`.png`/`.webp`/`.heic`/`.avif`).
 
 After the first terminal resolves, `img.width` and `img.height` reflect the _output_ dimensions (they're `-1` before).
 
@@ -133,7 +134,7 @@ A `Bun.Image` pipeline is a valid `Response` body — Bun runs it on the thread 
 ```ts
 Bun.serve({
   routes: {
-    "/avatar/:id": async req => {
+    "/avatar/:id": req => {
       const src = Bun.file(`avatars/${req.params.id}.png`);
       return new Response(new Bun.Image(src).resize(128, 128).webp());
     },

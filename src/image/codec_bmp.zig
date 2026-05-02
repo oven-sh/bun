@@ -31,7 +31,8 @@ pub fn parseHeader(b: []const u8) codecs.Error!Header {
     const ih_size = std.mem.readInt(u32, b[14..18], .little);
     // OS/2 BITMAPCOREHEADER (12) and other oddities — let the system
     // backend (already tried) or caller deal; clipboards don't emit these.
-    if (ih_size < 40 or 14 + ih_size > b.len) return error.DecodeFailed;
+    // (usize add: `ih_size` is attacker bytes; u32 14+u32::MAX would wrap.)
+    if (ih_size < 40 or 14 + @as(usize, ih_size) > b.len) return error.DecodeFailed;
     const w_raw = std.mem.readInt(i32, b[18..22], .little);
     const h_raw = std.mem.readInt(i32, b[22..26], .little);
     if (w_raw <= 0 or h_raw == 0) return error.DecodeFailed;
@@ -65,6 +66,18 @@ pub fn parseHeader(b: []const u8) codecs.Error!Header {
             std.mem.readInt(u32, b[66..70], .little)
         else
             0;
+    }
+    // BITFIELDS masks come from the file; reject anything that isn't a
+    // single ≤8-bit-wide aligned run before `shiftWidth` @intCasts the
+    // popcount into u5 (and `to8` multiplies by 255 in u32). 5/6-bit masks
+    // are real (565 BMPs); >8-bit are nonsense for an 8-bit-per-channel out.
+    inline for (.{ h.r_mask, h.g_mask, h.b_mask, h.a_mask }) |m| {
+        if (m != 0) {
+            // Contiguous-run check: m >> ctz(m) must be 2^k - 1. The +1 wraps
+            // for the all-ones mask we're rejecting, hence `+%`.
+            const run = m >> @intCast(@ctz(m));
+            if ((run & (run +% 1)) != 0 or @popCount(m) > 8) return error.DecodeFailed;
+        }
     }
     return h;
 }

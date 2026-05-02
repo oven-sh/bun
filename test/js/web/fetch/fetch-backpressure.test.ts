@@ -532,12 +532,17 @@ describe("fetch() over HTTP/3 — lsquic wantRead backpressure", () => {
   const h3Client = (url: string, body: string) => `
     const { fetchH3Internals } = require("bun:internal-for-testing");
     const received = () => fetchH3Internals.liveCounts().bodyBytesReceived;
-    // Poll the onStreamData counter until it stops growing for two
-    // consecutive 100 ms samples — that's the point wantRead(false)
-    // took effect (or the body finished).
+    // Poll the onStreamData counter until it holds steady across two
+    // consecutive 100 ms gaps — that's the point wantRead(false) took
+    // effect (or the body finished). Two gaps so a transient QUIC
+    // scheduling hiccup isn't mistaken for the backpressure plateau.
     async function settle() {
-      let last = -1;
-      while (received() !== last) { last = received(); await Bun.sleep(100); }
+      let last = received(), stable = 0;
+      while (stable < 2) {
+        await Bun.sleep(100);
+        const cur = received();
+        if (cur === last) stable++; else { last = cur; stable = 0; }
+      }
       return last;
     }
     const res = await fetch("${url}/", {

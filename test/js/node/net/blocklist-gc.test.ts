@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 // BlockList.estimatedSize divided by ref_count which can be observed as 0
 // from the concurrent GC thread while another JS wrapper for the same

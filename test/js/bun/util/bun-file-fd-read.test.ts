@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { closeSync, openSync } from "fs";
-import { bunEnv, bunExe, isPosix, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 // Reading a Bun.file() backed by a file descriptor goes through
@@ -59,7 +59,10 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
 // the pending pull but never cleared waiting_for_onReaderDone or called
 // decrementCount(), so after JS finalize the refcount sat at 1, deinit never
 // ran, and the dup'd fd/poll leaked forever.
-test.skipIf(!isPosix)("Bun.file(fd).stream() does not leak fds when read fails (ECONNRESET)", async () => {
+//
+// Gated to Linux/macOS (not isPosix) because the fixture's countFds relies on
+// /proc/self/fd or /dev/fd, and procfs is not mounted by default on FreeBSD.
+test.skipIf(!isLinux && !isMacOS)("Bun.file(fd).stream() does not leak fds when read fails (ECONNRESET)", async () => {
   // Run in a subprocess so fd counting is not polluted by the test runner's
   // own descriptors and GC finalization is deterministic at exit.
   const fixture = /* js */ `

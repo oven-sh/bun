@@ -14,11 +14,12 @@ const LOLHTML_COMMIT = "77127cd2b8545998756e8d64e36ee2313c4bb312";
 /**
  * -Zbuild-std requires an explicit --target even when host == target.
  * Derive the Rust triple for the build target. Windows handled separately
- * (buildStd is unix-only). Android/FreeBSD set rustTarget explicitly below.
+ * (buildStd is unix-only). Android sets rustTarget explicitly below.
  */
-function rustHostTriple(cfg: Config): string {
+function rustTargetTriple(cfg: Config): string {
   const arch = cfg.arm64 ? "aarch64" : "x86_64";
   if (cfg.darwin) return `${arch}-apple-darwin`;
+  if (cfg.freebsd) return `${arch}-unknown-freebsd`;
   if (cfg.abi === "musl") return `${arch}-unknown-linux-musl`;
   return `${arch}-unknown-linux-gnu`;
 }
@@ -49,23 +50,6 @@ export const lolhtml: Dependency = {
     // binaries without them on 64-bit. So this is unix-only.
     if (!cfg.windows) {
       spec.rustflags = ["-Cpanic=abort", "-Cdebuginfo=0", "-Cforce-unwind-tables=no", "-Copt-level=s"];
-      // -Cpanic=abort alone still links the *precompiled* std, whose
-      // __rust_start_panic prints a backtrace before aborting — pulling in
-      // gimli/addr2line/rustc_demangle/miniz_oxide (~230 KB). For release,
-      // rebuild std with -Cpanic=immediate-abort so panic is a bare abort().
-      // Requires nightly + rust-src (CI has both); -Zbuild-std also requires
-      // an explicit --target even when host==target.
-      if (cfg.release) {
-        spec.buildStd = true;
-        spec.rustTarget ??= rustHostTriple(cfg);
-        spec.rustflags = [
-          "-Zunstable-options",
-          "-Cpanic=immediate-abort",
-          "-Cdebuginfo=0",
-          "-Cforce-unwind-tables=no",
-          "-Copt-level=s",
-        ];
-      }
     }
 
     // arm64-windows: cargo defaults to the host triple, but CI builds arm64
@@ -81,15 +65,32 @@ export const lolhtml: Dependency = {
       spec.rustTarget = cfg.arm64 ? "aarch64-linux-android" : "x86_64-linux-android";
     }
 
-    // FreeBSD: x86_64 is Tier 2 (prebuilt std). aarch64 is Tier 3 — no
-    // prebuilt, so build std from source via -Zbuild-std (requires nightly
-    // + rust-src) whether cross-compiling or native. rustTarget is only
-    // set when crossTarget is set (native uses cargo's host triple).
-    if (cfg.freebsd) {
-      if (cfg.crossTarget !== undefined) {
-        spec.rustTarget = cfg.arm64 ? "aarch64-unknown-freebsd" : "x86_64-unknown-freebsd";
-      }
-      spec.buildStd = cfg.arm64;
+    // FreeBSD aarch64 is Tier 3 — no prebuilt std, so -Zbuild-std is
+    // required regardless of release/debug.
+    if (cfg.freebsd && cfg.arm64) {
+      spec.buildStd = true;
+    }
+
+    // -Cpanic=abort alone still links the *precompiled* std, whose
+    // __rust_start_panic prints a backtrace before aborting — pulling in
+    // gimli/addr2line/rustc_demangle/miniz_oxide (~230 KB). For release,
+    // rebuild std with -Cpanic=immediate-abort so panic is a bare abort().
+    // Requires nightly + rust-src (CI has both). Runs last so it can't be
+    // un-set by platform overrides above.
+    if (cfg.release && !cfg.windows) {
+      spec.buildStd = true;
+      spec.rustflags = [
+        "-Zunstable-options",
+        "-Cpanic=immediate-abort",
+        "-Cdebuginfo=0",
+        "-Cforce-unwind-tables=no",
+        "-Copt-level=s",
+      ];
+    }
+
+    // -Zbuild-std requires an explicit --target even when host == target.
+    if (spec.buildStd) {
+      spec.rustTarget ??= rustTargetTriple(cfg);
     }
 
     return spec;

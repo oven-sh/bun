@@ -1,5 +1,5 @@
-// Bun.Image vs sharp — wall-clock + RSS for the operations Claude Code's
-// image pipeline actually runs (decode, fit-inside resize, JPEG/WebP encode).
+// Bun.Image vs sharp — wall-clock + RSS for the common server-side image
+// pipeline (decode, fit-inside resize, JPEG/WebP encode).
 //
 // Fixture is generated in-process so nothing binary is committed and the
 // numbers are reproducible across machines. Run with --sharp to include the

@@ -15,10 +15,12 @@
 
 #if defined(__APPLE__)
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <dlfcn.h>
+#include <mutex>
 
 namespace {
 
@@ -98,17 +100,17 @@ constexpr struct {
 #undef SYM
 
 Syms g {};
-int g_state = 0; // 0=unloaded, 1=ok, -1=unavailable
+std::atomic<int> g_state { 0 }; // 0=unloaded, 1=ok, -1=unavailable
+std::once_flag g_once;
 
-const Syms* load()
+void loadOnce()
 {
-    if (__builtin_expect(g_state, 1) != 0) return g_state > 0 ? &g : nullptr;
     void* cf = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", RTLD_NOW);
     void* cg = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW);
     void* io = dlopen("/System/Library/Frameworks/ImageIO.framework/ImageIO", RTLD_NOW);
     if (!cf || !cg || !io) {
-        g_state = -1;
-        return nullptr;
+        g_state.store(-1, std::memory_order_release);
+        return;
     }
     auto base = reinterpret_cast<char*>(&g);
     for (auto& f : kFields) {
@@ -116,13 +118,23 @@ const Syms* load()
         if (!p) p = dlsym(cg, f.name);
         if (!p) p = dlsym(cf, f.name);
         if (!p) {
-            g_state = -1;
-            return nullptr;
+            g_state.store(-1, std::memory_order_release);
+            return;
         }
         *reinterpret_cast<void**>(base + f.off) = p;
     }
-    g_state = 1;
-    return &g;
+    g_state.store(1, std::memory_order_release);
+}
+
+// Called from WorkPool threads — `call_once` makes the dlopen/dlsym pass
+// run exactly once with proper happens-before for `g`, and the atomic acquire
+// on the fast path ensures readers on ARM64 see the populated table.
+const Syms* load()
+{
+    int s = g_state.load(std::memory_order_acquire);
+    if (__builtin_expect(s, 1) != 0) return s > 0 ? &g : nullptr;
+    std::call_once(g_once, loadOnce);
+    return g_state.load(std::memory_order_acquire) > 0 ? &g : nullptr;
 }
 
 constexpr uint32_t kCGImageAlphaPremultipliedLast = 1;
@@ -174,9 +186,16 @@ int32_t bun_coregraphics_decode(const uint8_t* bytes, size_t len, uint64_t max_p
     size_t h = s->CGImageGetHeight(r.img);
     if (w == 0 || h == 0) return CG_DECODE_FAILED;
     if (static_cast<uint64_t>(w) * h > max_pixels) return CG_TOO_MANY_PIXELS;
-    *out_w = static_cast<uint32_t>(w);
-    *out_h = static_cast<uint32_t>(h);
-    if (!out) return CG_OK; // dimensions-only probe
+    if (!out) {
+        *out_w = static_cast<uint32_t>(w);
+        *out_h = static_cast<uint32_t>(h);
+        return CG_OK; // dimensions-only probe
+    }
+    // TOCTOU guard: the input is a borrowed-but-mutable JS slice and this runs
+    // on a WorkPool thread, so JS could rewrite it with a *larger* image
+    // between the size probe and this render. The caller's `out` is sized for
+    // *out_w × *out_h from phase 1; refuse to draw past it.
+    if (w != *out_w || h != *out_h) return CG_DECODE_FAILED;
 
     r.cs = s->CGColorSpaceCreateDeviceRGB();
     if (!r.cs) return CG_UNAVAILABLE;

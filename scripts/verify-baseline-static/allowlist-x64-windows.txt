@@ -800,7 +800,7 @@ bun_image::N_AVX3_ZEN4::VertPass  [AVX, AVX512BW, AVX512F, AVX512VL, FMA]
 # table. Only seen on Windows because cpu.h enables WEBP_USE_AVX2 under
 # _MSC_VER && _M_X64 even without __AVX2__; on Linux baseline the gate stays
 # off and the functions compile to WEBP_DSP_INIT_STUB.
-# (36 symbols)
+# (40 symbols)
 # ----------------------------------------------------------------------------
 AddGreenToBlueAndRed_AVX2  [AVX, AVX2]
 AddVectorEq_AVX2  [AVX, AVX2]

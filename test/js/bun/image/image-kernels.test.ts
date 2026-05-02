@@ -152,6 +152,15 @@ describe("resize filter properties", () => {
   });
 
   // Ringing test: a hard black/white step. lanczos3 has negative lobes →
+  // `nearest` must pick exactly ONE source sample at any scale — pixel art /
+  // label maps must keep discrete values. Regression: it used to share box's
+  // kernel-stretch on downscale and produced area-averaged greys.
+  test("nearest downscale keeps discrete values (B/W checker stays B/W)", async () => {
+    const checker = makePng(8, 8, (x, y) => ((x + y) & 1 ? [255, 255, 255, 255] : [0, 0, 0, 255]));
+    const out = await resizePixels(checker, 4, 4, "nearest");
+    for (let i = 0; i < out.length; i += 4) expect(out[i] === 0 || out[i] === 255).toBe(true);
+  });
+
   // overshoots; mitchell has none → must not. This is the property that
   // distinguishes the two.
   test("mitchell never overshoots a step (no negative lobes)", async () => {

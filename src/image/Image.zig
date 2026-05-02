@@ -227,10 +227,10 @@ pub fn doRotate(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallF
     const args = callframe.arguments();
     if (args.len < 1 or !args[0].isNumber())
         return global.throwInvalidArguments("rotate(degrees) expects 90, 180 or 270", .{});
-    const n = args[0].asNumber();
-    if (!std.math.isFinite(n))
-        return global.throwInvalidArguments("rotate(degrees) must be a finite number", .{});
-    const deg: u32 = @intCast(@mod(@mod(@as(i64, @intFromFloat(n)), 360) + 360, 360));
+    // coerceInt for the same NaN/Inf/huge-finite reasons as everywhere else;
+    // ±1e15 is plenty of headroom for "any multiple of 90 a user might pass".
+    const raw: i64 = coerceInt(i64, args[0].asNumber(), -1e15, 1e15);
+    const deg: u32 = @intCast(@mod(@mod(raw, 360) + 360, 360));
     if (deg != 0 and deg != 90 and deg != 180 and deg != 270)
         return global.throwInvalidArguments("rotate: only multiples of 90 are supported", .{});
     this.pipeline.rotate = @intCast(deg);
@@ -340,14 +340,20 @@ fn pinForTask(this: *Image, this_value: jsc.JSValue, global: *jsc.JSGlobalObject
     switch (this.source) {
         .js_buffer => {
             const v = js.sourceJSGetCached(this_value) orelse return error.Detached;
-            const ab = v.asArrayBuffer(global) orelse return error.Detached;
-            if (ab.byte_len == 0) return error.Detached;
-            // pin() bumps ArrayBuffer::m_pinCount so transfer()/detach throw
-            // until then() unpins. For inline-storage views this materialises
-            // the buffer (`possiblySharedBuffer`) — a one-time cost no worse
-            // than the dupe it replaces; the common inputs (Buffer, fetch
-            // results) already have a real backing buffer so it's free.
+            // pin() FIRST: for an inline-storage FastTypedArray it calls
+            // `possiblySharedBuffer()` → `slowDownAndWasteMemory()`, which
+            // copies into a fresh heap ArrayBuffer and repoints `m_vector`.
+            // If we'd already taken `byteSlice()` it'd be pointing at the old
+            // (now-unreferenced) GC-aux storage. Read the slice AFTER.
             _ = JSC__JSValue__pinArrayBuffer(v);
+            const ab = v.asArrayBuffer(global) orelse {
+                JSC__JSValue__unpinArrayBuffer(v);
+                return error.Detached;
+            };
+            if (ab.byte_len == 0) {
+                JSC__JSValue__unpinArrayBuffer(v);
+                return error.Detached;
+            }
             return .{ .bytes = ab.byteSlice(), .pinned = v };
         },
         .owned => |b| return .{ .bytes = b },
@@ -560,18 +566,22 @@ pub const PipelineTask = struct {
             }
         }
 
-        // Decode-time downscale hint. Only safe to feed JPEG's IDCT scaler
-        // when nothing BEFORE the resize stage cares about full-res pixels —
-        // i.e. no rotate/flip (rotate runs first; a 90° rotate would make the
-        // hint axes wrong, and rotate is cheap enough on the pre-scaled buffer
-        // anyway). For `fit:inside` the hint is the bounding box, which is
-        // exactly what the IDCT picker needs.
+        // Decode-time downscale hint. The IDCT picker constrains in *stored*
+        // axes, so any 90/270 rotate that runs before resize — explicit OR
+        // EXIF auto-orient — needs the hint axes swapped, otherwise one axis
+        // can be over-shrunk and then upscaled, throwing away detail.
         const hint: codecs.DecodeHint = if (this.pipeline.resize) |r| blk: {
-            if (this.pipeline.rotate != 0 or this.pipeline.flip or this.pipeline.flop)
-                break :blk .{};
-            // r.h==0 means "preserve aspect" — omit the hint's h so the picker
-            // only constrains on width.
-            break :blk .{ .target_w = r.w, .target_h = if (r.h != 0) r.h else r.w };
+            if (this.pipeline.flip or this.pipeline.flop) break :blk .{};
+            var tw = r.w;
+            // r.h==0 means "preserve aspect" — constrain on width only.
+            var th = if (r.h != 0) r.h else r.w;
+            const swap_explicit = this.pipeline.rotate == 90 or this.pipeline.rotate == 270;
+            const swap_exif = this.auto_orient and blk2: {
+                const t = exif.readJpeg(input).transform();
+                break :blk2 t.rotate == 90 or t.rotate == 270;
+            };
+            if (swap_explicit != swap_exif) std.mem.swap(u32, &tw, &th);
+            break :blk .{ .target_w = tw, .target_h = th };
         } else .{};
 
         var decoded = codecs.decode(input, this.max_pixels, hint) catch |e| {

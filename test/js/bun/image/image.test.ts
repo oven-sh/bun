@@ -476,9 +476,17 @@ describe("Bun.Image", () => {
   });
 
   // @intFromFloat on NaN/Inf is UB; these used to abort the process.
-  test("non-finite numeric inputs throw or clamp instead of panicking", async () => {
-    expect(() => new Bun.Image(cornersPng).rotate(Infinity)).toThrow(/finite/);
-    expect(() => new Bun.Image(cornersPng).rotate(NaN)).toThrow(/finite/);
+  test("non-finite / huge numeric inputs throw or clamp instead of panicking", async () => {
+    // rotate: NaN/Inf/1e300 all clamp via coerceInt then fail the multiple-
+    // of-90 check (or succeed if the clamp lands on a multiple) — never abort.
+    for (const v of [Infinity, -Infinity, NaN, 1e300, -1e300]) {
+      expect(() => new Bun.Image(cornersPng).rotate(v)).not.toThrow(/panic/);
+      try {
+        new Bun.Image(cornersPng).rotate(v);
+      } catch (e) {
+        expect(String(e)).toMatch(/multiples of 90/);
+      }
+    }
     // resize/quality/maxPixels clamp; NaN→lo bound, ±Inf→matching bound.
     const out = await new Bun.Image(cornersPng).resize(NaN, NaN).jpeg({ quality: NaN }).bytes();
     expect(out[0]).toBe(0xff);

@@ -423,8 +423,10 @@ int buildWeights(int kind, int32_t src_len, int32_t dst_len,
     const double scale = static_cast<double>(dst_len) / static_cast<double>(src_len);
     // When downscaling, stretch the kernel by 1/scale so it covers the whole
     // source footprint of a destination pixel (this is what makes box → area
-    // average and lanczos antialiased).
-    const double fscale = scale < 1.0 ? scale : 1.0;
+    // average and lanczos antialiased). `nearest` is the exception: it must
+    // pick exactly ONE source sample at any scale (pixel art, label maps),
+    // so don't stretch it — fscale=1 keeps support at 0.5 = single tap.
+    const double fscale = (kind == 4 || scale >= 1.0) ? 1.0 : scale;
     const double support = radius(kind) / fscale;
     int max_n = 0;
     for (int32_t i = 0; i < dst_len; i++) {

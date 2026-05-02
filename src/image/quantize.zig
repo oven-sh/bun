@@ -6,10 +6,8 @@
 //! Heckbert '82 algorithm: treat the RGBA pixels as points in a 4-D box,
 //! repeatedly split the box with the largest channel range at that channel's
 //! median until you have N boxes, then each box's mean becomes a palette
-//! entry. Mapping is nearest-entry by squared RGBA distance.
-//!
-//! No dithering. Floyd–Steinberg would be ~40 more lines if it turns out to
-//! matter for the screenshot use case.
+//! entry. Mapping is nearest-entry by squared RGBA distance, optionally with
+//! Floyd–Steinberg error diffusion (`dither: true`).
 
 pub const Result = struct {
     /// `[colors][4]u8` RGBA palette, `bun.default_allocator`-owned.
@@ -114,6 +112,7 @@ pub fn quantize(rgba: []const u8, w: u32, h: u32, opts: Options) error{OutOfMemo
     }
 
     var indices = try bun.default_allocator.alloc(u8, n);
+    errdefer bun.default_allocator.free(indices);
     if (opts.dither) {
         try mapFloydSteinberg(rgba, w, h, palette, k, indices);
     } else {

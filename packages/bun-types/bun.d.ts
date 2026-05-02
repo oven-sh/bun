@@ -8164,8 +8164,18 @@ declare module "bun" {
   }
 
   namespace Image {
-    type Format = "jpeg" | "png" | "webp";
-    type Filter = "box" | "bilinear" | "lanczos3" | "mitchell";
+    type Format = "jpeg" | "png" | "webp" | "heic" | "avif";
+    type Filter =
+      | "nearest"
+      | "box"
+      | "bilinear"
+      | "linear" // alias for bilinear (Sharp)
+      | "cubic"
+      | "mitchell"
+      | "lanczos2"
+      | "lanczos3"
+      | "mks2013"
+      | "mks2021";
 
     interface ConstructorOptions {
       /**

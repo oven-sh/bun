@@ -735,9 +735,20 @@ pub const Bin = extern struct {
             defer bunx_file.close();
 
             const rel_target = path.relativeBufZ(this.rel_buf, path.dirname(abs_dest, .auto), abs_target);
-            bun.assertWithLocation(strings.hasPrefixComptime(rel_target, "..\\"), @src());
+            const rel_target_w = rel_target_w: {
+                if (strings.hasPrefixComptime(rel_target, "..\\")) {
+                    break :rel_target_w strings.toWPathNormalized(&target_buf, rel_target["..\\".len..]);
+                }
 
-            const rel_target_w = strings.toWPathNormalized(&target_buf, rel_target["..\\".len..]);
+                if (std.fs.path.isAbsoluteWindows(rel_target)) {
+                    target_buf[0] = WinBinLinkingShim.absolute_path_marker;
+                    const abs_target_w = strings.toWPathNormalized(target_buf[1..], rel_target);
+                    break :rel_target_w target_buf[0 .. abs_target_w.len + 1 :0];
+                }
+
+                this.err = error.InvalidBinContent;
+                return;
+            };
 
             const shebang = shebang: {
                 const first_content_chunk = contents: {

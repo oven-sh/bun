@@ -4,6 +4,7 @@
 //! The format is as follows:
 //!
 //! [WSTR:bin_path][u16'"'][u16:0](shebang?)[flags:u16]
+//! `bin_path` is relative to the install root unless prefixed with `absolute_path_marker`.
 //!
 //! if shebang:
 //! [WSTR:program][u16:0][WSTR:args][u32:bin_path_byte_len][u32:arg_byte_len]
@@ -20,11 +21,13 @@ bin_path: []const u16,
 /// Information found within the target file's shebang
 shebang: ?Shebang,
 
+pub const absolute_path_marker: u16 = 0x1f;
+
 /// Random numbers are chosen for validation purposes
 /// These arbitrary numbers will probably not show up in the other fields.
 /// This will reveal off-by-one mistakes.
 pub const VersionFlag = enum(u13) {
-    pub const current = .v5;
+    pub const current = .v6;
 
     v1 = 5474,
     /// Fix bug where paths were not joined correctly
@@ -37,6 +40,9 @@ pub const VersionFlag = enum(u13) {
     v4 = 5477,
     /// Fixed bugs where passing arguments did not always work.
     v5 = 5478,
+    /// Added support for absolute bin paths when the bin dir and package store
+    /// are on different Windows volumes.
+    v6 = 5479,
     _,
 };
 

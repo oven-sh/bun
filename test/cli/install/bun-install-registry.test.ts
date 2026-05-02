@@ -2657,6 +2657,78 @@ describe("binaries", () => {
     }
   });
 
+  test.skipIf(!isWindows)("can globally link bins when BUN_INSTALL_BIN is on another drive", async () => {
+    const currentDrive = resolve(packageDir).slice(0, 2).toUpperCase();
+    let globalBinDir: string | null = null;
+
+    // subst-backed drives are canonicalized before shim encoding, so this
+    // regression needs a real second volume to exercise absolute targets.
+    for (const letter of "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+      const drive = `${letter}:`;
+      if (drive === currentDrive) continue;
+
+      const candidate = join(`${drive}\\`, `bun-cross-drive-bin-${process.pid}-${Date.now()}`);
+      try {
+        await mkdir(candidate, { recursive: true });
+        globalBinDir = candidate;
+        break;
+      } catch {}
+    }
+
+    if (globalBinDir === null) {
+      console.warn("skipping cross-drive Windows bin-linking regression: no writable second drive was available");
+      return;
+    }
+
+    const globalInstallDir = join(packageDir, "global-install-dir");
+
+    try {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "i", "--linker=hoisted", "-g", "what-bin"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...env,
+          BUN_INSTALL_BIN: globalBinDir,
+          BUN_INSTALL_GLOBAL_DIR: globalInstallDir,
+        },
+      });
+
+      const err = await stderr.text();
+      expect(err).not.toContain("panic");
+      expect(err).not.toContain("Internal assertion failure");
+      expect(err).not.toContain("error:");
+      const out = await stdout.text();
+      expect(out).toContain("what-bin@1.5.0");
+      expect(await exited).toBe(0);
+
+      expect(await exists(join(globalBinDir, "what-bin.exe"))).toBeTrue();
+      expect(await exists(join(globalBinDir, "what-bin.bunx"))).toBeTrue();
+      expect(await exists(join(globalInstallDir, "node_modules", "what-bin"))).toBeTrue();
+
+      const bunxBytes = new Uint16Array(await file(join(globalBinDir, "what-bin.bunx")).arrayBuffer());
+      const bunxPayload = new TextDecoder("utf-16le").decode(bunxBytes);
+      const expectedTarget = join(globalInstallDir, "node_modules", "what-bin", "what-bin.js");
+      expect(bunxBytes[0]).toBe(0x1f);
+      expect(bunxPayload).toContain(expectedTarget);
+
+      const run = spawn({
+        cmd: [join(globalBinDir, "what-bin.exe")],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      expect(await run.stdout.text()).toBeEmpty();
+      expect(await run.stderr.text()).toBeEmpty();
+      expect(await run.exited).toBe(0);
+      expect(await file(join(packageDir, "what-bin.txt")).text()).toBe("what-bin@1.5.0");
+    } finally {
+      await rm(globalBinDir, { recursive: true, force: true });
+    }
+  });
+
   for (const global of [false, true]) {
     test(`bin types${global ? " (global)" : ""}`, async () => {
       if (global) {

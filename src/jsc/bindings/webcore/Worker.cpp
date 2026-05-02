@@ -286,8 +286,12 @@ static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* gl
     // pre-online inbox when the entry script is
     // `self.onmessage = h; self.close();`, or a prior drain CppTask in
     // the same `vm.tick()` that set `requested_close` — discard the
-    // entire inbox per WHATWG "close a worker" step 1. On parent-thread
-    // drainToParent this is a no-op (parent VM has no worker).
+    // entire inbox per WHATWG "close a worker" step 1. For drainToParent
+    // the check is against the parent's VM: false when the parent is the
+    // main thread (no attached worker), and correctly true when the
+    // parent is itself a worker that has called self.close() — its
+    // queued child->parent message-event tasks are also discarded by
+    // the same spec step.
     if (WebWorker__hasRequestedClose(globalObject->bunVM())) {
         Locker locker { inbox.lock };
         inbox.queue.clear();

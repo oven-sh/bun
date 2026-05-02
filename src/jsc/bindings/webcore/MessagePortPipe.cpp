@@ -136,8 +136,10 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         // Cooperative close: if `self.close()` was set before this drain
         // started — e.g. a prior CppTask in the same `vm.tick()` ran
         // first and closed — discard the whole batch per WHATWG
-        // "close a worker" step 1. On a main-thread / non-worker VM
-        // this returns false, so it's a no-op.
+        // "close a worker" step 1. Returns false on the main thread
+        // (no attached worker); returns true when the VM is itself a
+        // worker that has called self.close(), which is also the
+        // spec-required outcome for that worker's queued ports.
         if (WebWorker__hasRequestedClose(globalObject->bunVM()))
             break;
         std::optional<MessageWithMessagePorts> message;

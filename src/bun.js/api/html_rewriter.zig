@@ -1514,14 +1514,38 @@ pub const EndTag = struct {
     pub const Handler = struct {
         callback: ?JSValue,
         global: *JSGlobalObject,
+        /// The `Element` this handler was registered on. The handler holds a
+        /// ref on the element so it stays alive until the end tag fires.
+        element: *Element,
 
-        pub const onEndTag = HandlerCallback(
+        /// Unprotects the JS callback, detaches from the owning `Element`
+        /// (releasing the ref held on it), and frees this struct.
+        pub fn deinit(this: *Handler) void {
+            if (this.callback) |cb| {
+                cb.unprotect();
+                this.callback = null;
+            }
+            const element = this.element;
+            element.end_tag_handler = null;
+            bun.default_allocator.destroy(this);
+            element.deref();
+        }
+
+        const callbackImpl = HandlerCallback(
             Handler,
             EndTag,
             LOLHTML.EndTag,
             "end_tag",
             "callback",
         );
+
+        /// lol-html's end tag handler is `FnOnce`: it is invoked at most once
+        /// per element and then dropped. Free ourselves after it runs so we
+        /// don't leak the heap struct and the protected JS callback.
+        pub fn onEndTag(this: *Handler, value: *LOLHTML.EndTag) bool {
+            defer this.deinit();
+            return callbackImpl(this, value);
+        }
 
         pub const onEndTagHandler = LOLHTML.DirectiveHandler(LOLHTML.EndTag, Handler, onEndTag);
     };
@@ -1692,6 +1716,10 @@ pub const Element = struct {
 
     ref_count: RefCount,
     element: ?*LOLHTML.Element = null,
+    /// The pending end-tag handler registered via `onEndTag`. The handler
+    /// holds a ref on this `Element`, so `deinit` is only reached after the
+    /// handler has detached itself.
+    end_tag_handler: ?*EndTag.Handler = null,
 
     pub const js = jsc.Codegen.JSElement;
     pub const toJS = js.toJS;
@@ -1711,6 +1739,7 @@ pub const Element = struct {
 
     fn deinit(this: *Element) void {
         this.element = null;
+        bun.debugAssert(this.end_tag_handler == null);
         bun.destroy(this);
     }
 
@@ -1726,8 +1755,15 @@ pub const Element = struct {
             return ZigString.init("Expected a function").withEncoding().toJS(globalObject);
         }
 
+        // `LOLHTML.Element.onEndTag` clears any previously-registered handler
+        // on the lol-html side, so drop our previous allocation here to avoid
+        // leaking it along with its protected JS callback.
+        if (this.end_tag_handler) |prev| {
+            prev.deinit();
+        }
+
         const end_tag_handler = bun.handleOom(bun.default_allocator.create(EndTag.Handler));
-        end_tag_handler.* = .{ .global = globalObject, .callback = function };
+        end_tag_handler.* = .{ .global = globalObject, .callback = function, .element = this };
 
         this.element.?.onEndTag(EndTag.Handler.onEndTagHandler, end_tag_handler) catch {
             bun.default_allocator.destroy(end_tag_handler);
@@ -1736,6 +1772,10 @@ pub const Element = struct {
         };
 
         function.protect();
+        // The handler owns a ref on us so this `Element` stays alive until the
+        // end tag fires and the handler detaches + frees itself.
+        this.ref();
+        this.end_tag_handler = end_tag_handler;
         return callFrame.this();
     }
 

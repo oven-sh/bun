@@ -6,10 +6,7 @@ description: Decode, transform, and encode images with a fast native pipeline
 `Bun.Image` is a chainable image pipeline for decoding, resizing, rotating, and re-encoding JPEG, PNG, WebP, HEIC, and AVIF — built on libjpeg-turbo, spng, libwebp, and SIMD geometry kernels, with zero npm dependencies and no native addon build step.
 
 ```ts
-const thumb = await new Bun.Image("photo.jpg")
-  .resize(400, 400, { fit: "inside" })
-  .webp({ quality: 80 })
-  .bytes();
+const thumb = await new Bun.Image("photo.jpg").resize(400, 400, { fit: "inside" }).webp({ quality: 80 }).bytes();
 
 await Bun.write("thumb.webp", thumb);
 ```
@@ -21,9 +18,9 @@ The API is shaped after [Sharp](https://sharp.pixelplumbing.com/): construct fro
 The constructor accepts a path, bytes, or a `Blob`:
 
 ```ts
-new Bun.Image("./photo.jpg");                       // file path
+new Bun.Image("./photo.jpg"); // file path
 new Bun.Image(await Bun.file("photo.jpg").bytes()); // Uint8Array
-new Bun.Image(buffer);                              // Buffer / ArrayBuffer / TypedArray
+new Bun.Image(buffer); // Buffer / ArrayBuffer / TypedArray
 new Bun.Image(await fetch(url).then(r => r.blob())); // Blob
 ```
 
@@ -53,39 +50,39 @@ const { width, height, format } = await new Bun.Image(input).metadata();
 ## Resize
 
 ```ts
-img.resize(800);               // width 800, keep aspect ratio
-img.resize(800, 600);          // exactly 800×600 (stretch)
-img.resize(800, 600, { fit: "inside" });           // fit within 800×600
+img.resize(800); // width 800, keep aspect ratio
+img.resize(800, 600); // exactly 800×600 (stretch)
+img.resize(800, 600, { fit: "inside" }); // fit within 800×600
 img.resize(800, 600, { withoutEnlargement: true }); // never upscale
 img.resize(800, 600, { filter: "mitchell" });
 ```
 
-| `fit` | Behavior |
-| --- | --- |
-| `"fill"` (default) | Stretch to exactly `width × height` |
-| `"inside"` | Preserve aspect ratio; result fits *within* the box |
+| `fit`              | Behavior                                            |
+| ------------------ | --------------------------------------------------- |
+| `"fill"` (default) | Stretch to exactly `width × height`                 |
+| `"inside"`         | Preserve aspect ratio; result fits _within_ the box |
 
 `filter` selects the resampling kernel. The default `"lanczos3"` is the right choice for photographs.
 
-| Filter | Use when |
-| --- | --- |
-| `"lanczos3"` *(default)* | General-purpose, sharpest for photos |
-| `"lanczos2"` | Slightly softer, fewer ringing artifacts |
-| `"mitchell"` | Smooth gradients; the classic bicubic compromise |
-| `"cubic"` | Catmull-Rom — sharper than Mitchell, can ring |
+| Filter                    | Use when                                         |
+| ------------------------- | ------------------------------------------------ |
+| `"lanczos3"` _(default)_  | General-purpose, sharpest for photos             |
+| `"lanczos2"`              | Slightly softer, fewer ringing artifacts         |
+| `"mitchell"`              | Smooth gradients; the classic bicubic compromise |
+| `"cubic"`                 | Catmull-Rom — sharper than Mitchell, can ring    |
 | `"mks2013"` / `"mks2021"` | "Magic Kernel Sharp"; used by Facebook/Instagram |
-| `"bilinear"` / `"linear"` | Fast, soft |
-| `"box"` | Area-average; good for large integer downscales |
-| `"nearest"` | Pixel art / hard edges |
+| `"bilinear"` / `"linear"` | Fast, soft                                       |
+| `"box"`                   | Area-average; good for large integer downscales  |
+| `"nearest"`               | Pixel art / hard edges                           |
 
 When the source is a JPEG and the target is at most half the source size, decode skips straight to the nearest M/8 IDCT scale, so generating a thumbnail from a 24 MP photo never materializes the full-resolution buffer.
 
 ## Rotate · flip
 
 ```ts
-img.rotate(90);    // 90° clockwise (multiples of 90 only)
-img.flip();        // mirror vertically (about the x-axis)
-img.flop();        // mirror horizontally (about the y-axis)
+img.rotate(90); // 90° clockwise (multiples of 90 only)
+img.flip(); // mirror vertically (about the x-axis)
+img.flop(); // mirror horizontally (about the y-axis)
 ```
 
 ## Modulate
@@ -93,7 +90,7 @@ img.flop();        // mirror horizontally (about the y-axis)
 ```ts
 img.modulate({
   brightness: 1.2, // 1 = unchanged
-  saturation: 0,   // 0 = greyscale, 1 = unchanged, >1 = boost
+  saturation: 0, // 0 = greyscale, 1 = unchanged, >1 = boost
 });
 ```
 
@@ -102,13 +99,13 @@ img.modulate({
 Calling a format method sets the encode target; without one, the source format is reused.
 
 ```ts
-img.jpeg({ quality: 85 });         // 1–100, default 80
-img.png({ compressionLevel: 6 });  // zlib level 0–9
+img.jpeg({ quality: 85 }); // 1–100, default 80
+img.png({ compressionLevel: 6 }); // zlib level 0–9
 img.png({ palette: true, colors: 64, dither: true }); // indexed PNG
 img.webp({ quality: 80 });
 img.webp({ lossless: true });
-img.heic({ quality: 80 });         // macOS / Windows only
-img.avif({ quality: 60 });         // macOS / Windows only
+img.heic({ quality: 80 }); // macOS / Windows only
+img.avif({ quality: 60 }); // macOS / Windows only
 ```
 
 `palette: true` quantizes to a ≤256-color palette and emits an indexed (color-type 3) PNG, optionally with Floyd–Steinberg `dither`. This is typically 3–5× smaller than truecolor for screenshots and UI assets.
@@ -118,13 +115,13 @@ img.avif({ quality: 60 });         // macOS / Windows only
 A pipeline does no work until one of these is awaited:
 
 ```ts
-await img.bytes();    // Uint8Array
-await img.buffer();   // Buffer
-await img.blob();     // Blob with .type set to the output MIME
+await img.bytes(); // Uint8Array
+await img.buffer(); // Buffer
+await img.blob(); // Blob with .type set to the output MIME
 await img.toBase64(); // string
 ```
 
-After the first terminal resolves, `img.width` and `img.height` reflect the *output* dimensions (they're `-1` before).
+After the first terminal resolves, `img.width` and `img.height` reflect the _output_ dimensions (they're `-1` before).
 
 ## `Bun.serve` integration
 
@@ -143,11 +140,11 @@ Bun.serve({
 
 ## Platform backends
 
-| | Linux | macOS | Windows |
-| --- | --- | --- | --- |
-| JPEG / PNG / WebP | libjpeg-turbo · spng · libwebp | same | same |
-| Resize / rotate / flip | Highway SIMD | Accelerate vImage | Highway SIMD |
-| HEIC / AVIF | ❌ throws `UnsupportedOnPlatform` | ImageIO | WIC ¹ |
+|                        | Linux                             | macOS             | Windows      |
+| ---------------------- | --------------------------------- | ----------------- | ------------ |
+| JPEG / PNG / WebP      | libjpeg-turbo · spng · libwebp    | same              | same         |
+| Resize / rotate / flip | Highway SIMD                      | Accelerate vImage | Highway SIMD |
+| HEIC / AVIF            | ❌ throws `UnsupportedOnPlatform` | ImageIO           | WIC ¹        |
 
 ¹ Windows requires the **HEIF Image Extensions** / **AV1 Video Extension** from the Microsoft Store.
 

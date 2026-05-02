@@ -133,6 +133,13 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
 
     ScriptExecutionContextIdentifier rescheduleCtx = 0;
     while (true) {
+        // Cooperative close: if `self.close()` was set before this drain
+        // started — e.g. a prior CppTask in the same `vm.tick()` ran
+        // first and closed — discard the whole batch per WHATWG
+        // "close a worker" step 1. On a main-thread / non-worker VM
+        // this returns false, so it's a no-op.
+        if (WebWorker__hasRequestedClose(globalObject->bunVM()))
+            break;
         std::optional<MessageWithMessagePorts> message;
         {
             Locker locker { s.lock };

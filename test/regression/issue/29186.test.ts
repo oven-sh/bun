@@ -628,3 +628,94 @@ test.concurrent("self.close() in a setImmediate discards sibling immediates queu
   expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
   expect(JSON.parse(stdout.trim())).toEqual(["a"]);
 });
+
+test.concurrent("parent messages buffered before the worker comes online are discarded if self.close() runs synchronously", async () => {
+  // Per WHATWG "close a worker" step 1: if close() runs in the entry
+  // script, any task already queued at the worker loop must be dropped —
+  // including parent->worker messages the parent sent while the worker
+  // was still spinning up. `fireEarlyMessages` would otherwise drain the
+  // pre-online inbox synchronously before spin()'s close-flag checks
+  // get a chance to run.
+  using dir = tempDir("issue-29186-early-messages-after-close", {
+    "worker.mjs": `
+      // Register onmessage so fireEarlyMessages takes the synchronous
+      // drain branch (it skips drain when there's no active listener),
+      // then close() before the loop starts.
+      self.onmessage = ({ data }) => { self.postMessage("got:" + data); };
+      self.close();
+    `,
+    "main.mjs": `
+      const worker = new Worker(new URL("./worker.mjs", import.meta.url).href, { type: "module" });
+      const events = [];
+      const { promise, resolve, reject } = Promise.withResolvers();
+
+      // Post before the worker has loaded — buffered in m_toWorker and
+      // drained via fireEarlyMessages once the worker is online.
+      worker.postMessage("early");
+      worker.onmessage = ({ data }) => { events.push(data); };
+      worker.onerror = (e) => reject(new Error("worker error: " + (e.message || e)));
+      worker.addEventListener("close", () => resolve());
+
+      await promise;
+      console.log(JSON.stringify(events));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
+  // Empty events — the buffered "early" message must be discarded per spec.
+  expect(JSON.parse(stdout.trim())).toEqual([]);
+});
+
+test.concurrent("self.postMessage then self.close() then top-level await delivers the message and exits cleanly", async () => {
+  // `error.WorkerClosed` path in spin() is taken when close() runs
+  // before a still-pending top-level `await`. If the worker already
+  // enqueued a parent drain task (via self.postMessage before close),
+  // shutdown must still run through dispatchOnline so the parent-side
+  // C++ Worker transitions Pending -> Running -> Closed rather than
+  // skipping straight to Closed — otherwise the drainToParent task that
+  // was already posted runs against a half-initialised state. This is
+  // the cooperative-close analogue of the synchronous-close path.
+  using dir = tempDir("issue-29186-post-close-await", {
+    "worker.mjs": `
+      self.postMessage("x");
+      self.close();
+      await new Promise(() => {});
+    `,
+    "main.mjs": `
+      const worker = new Worker(new URL("./worker.mjs", import.meta.url).href, { type: "module" });
+      const events = [];
+      const { promise, resolve, reject } = Promise.withResolvers();
+
+      worker.onmessage = ({ data }) => { events.push(data); };
+      worker.onerror = (e) => reject(new Error("worker error: " + (e.message || e)));
+      worker.addEventListener("close", () => resolve());
+
+      await promise;
+      console.log(JSON.stringify(events));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Exit 0 (clean) is the core assertion — a stale State::Pending race
+  // during shutdown previously crashed the process here.
+  expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
+  // "x" was posted before close, so it must be delivered.
+  expect(JSON.parse(stdout.trim())).toEqual(["x"]);
+});

@@ -670,7 +670,19 @@ fn spin(this: *WebWorker) void {
         // await. Exit cleanly (code 0, wasClean true). The module promise
         // may still be pending, so don't touch it; shutdown() posts the
         // close event to the parent.
+        //
+        // We still go through dispatchOnline so the parent C++ Worker
+        // transitions Pending → Running → Closed rather than jumping
+        // Pending → Closed. The posted close-event task and any
+        // drainToParent tasks the worker already enqueued (e.g.
+        // `self.postMessage("x"); self.close(); await neverResolves`)
+        // expect State::Running when they run on the parent.
+        // fireEarlyMessages would synchronously drain the parent→worker
+        // inbox here, but the inner-drain pre-close-flag check added to
+        // drainInbox discards the batch correctly per WHATWG step 1.
         error.WorkerClosed => {
+            WebWorker__dispatchOnline(this.cpp_worker, vm.global);
+            WebWorker__fireEarlyMessages(this.cpp_worker, vm.global);
             this.flushLogs(vm);
             this.shutdown();
         },

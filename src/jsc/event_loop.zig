@@ -242,14 +242,39 @@ pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) vo
     this.immediate_tasks = this.next_immediate_tasks;
     this.next_immediate_tasks = .{};
 
+    // If close() was set before this tick even began — e.g. an earlier
+    // phase of this same `autoTickActive()` (tickImmediateTasks is
+    // phase 1, drainTimers is phase 2) set the flag — every queued
+    // immediate is a "queued task" at the time the closing flag was
+    // set per WHATWG "close a worker" step 1. Release each without
+    // firing the callback.
+    const close_already_requested = if (virtual_machine.worker) |worker| worker.hasRequestedClose() else false;
+    if (close_already_requested) {
+        for (to_run_now.items) |task| {
+            task.internals.discardImmediateWithoutFiring(virtual_machine);
+        }
+    }
+
     var exception_thrown = false;
-    for (to_run_now.items) |task| {
-        exception_thrown = task.runImmediateTask(virtual_machine);
-        // If an immediate called `self.close()`, stop firing siblings that
-        // were already queued — WHATWG "close a worker" discards them.
-        // `self.close()` doesn't arm the JSC trap, so `scriptExecutionStatus`
-        // (checked per-task inside `runImmediateTask`) doesn't catch this.
-        if (virtual_machine.worker) |worker| if (worker.hasRequestedClose()) break;
+    if (!close_already_requested) {
+        for (to_run_now.items, 0..) |task, i| {
+            exception_thrown = task.runImmediateTask(virtual_machine);
+            // If an immediate called `self.close()`, stop firing siblings
+            // that were already queued — WHATWG "close a worker" step 1
+            // discards them. `self.close()` doesn't arm the JSC trap, so
+            // `scriptExecutionStatus` (checked per-task inside
+            // `runImmediateTask`) doesn't catch this. Release the
+            // skipped siblings explicitly — `clearRetainingCapacity`
+            // below drops their pointers without firing, so their
+            // enqueue-side refs (parent.ref() + keep-alive +
+            // this_value strong) would leak otherwise.
+            if (virtual_machine.worker) |worker| if (worker.hasRequestedClose()) {
+                for (to_run_now.items[i + 1 ..]) |skipped| {
+                    skipped.internals.discardImmediateWithoutFiring(virtual_machine);
+                }
+                break;
+            };
+        }
     }
 
     // make sure microtasks are drained if the last task had an exception

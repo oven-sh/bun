@@ -281,6 +281,19 @@ void Worker::enqueueToParent(MessageWithMessagePorts&& message)
 template<typename Dispatch>
 static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* globalObject, ScriptExecutionContext& context, Dispatch&& dispatch)
 {
+    // Cooperative close: if `self.close()` was called before this drain
+    // even started — e.g. fireEarlyMessages' synchronous drain of a
+    // pre-online inbox when the entry script is
+    // `self.onmessage = h; self.close();`, or a prior drain CppTask in
+    // the same `vm.tick()` that set `requested_close` — discard the
+    // entire inbox per WHATWG "close a worker" step 1. On parent-thread
+    // drainToParent this is a no-op (parent VM has no worker).
+    if (WebWorker__hasRequestedClose(globalObject->bunVM())) {
+        Locker locker { inbox.lock };
+        inbox.queue.clear();
+        inbox.drainScheduled.store(false, std::memory_order_relaxed);
+        return false;
+    }
     size_t limit;
     Deque<MessageWithMessagePorts> batch;
     {

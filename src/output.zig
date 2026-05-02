@@ -666,7 +666,7 @@ inline fn printElapsedToWithCtx(elapsed: f64, comptime printerFn: anytype, compt
     }
 }
 
-pub noinline fn printElapsedTo(elapsed: f64, comptime printerFn: anytype, ctx: anytype) void {
+pub inline fn printElapsedTo(elapsed: f64, comptime printerFn: anytype, ctx: anytype) void {
     printElapsedToWithCtx(elapsed, printerFn, true, ctx);
 }
 
@@ -710,25 +710,74 @@ pub fn printTimer(timer: *SystemTimer) void {
     printElapsed(@as(f64, @floatFromInt(elapsed)));
 }
 
-pub noinline fn printErrorable(comptime fmt: string, args: anytype) !void {
+// ──────────────────────────────────────────────────────────────────────────
+// Print routing
+//
+// `print` / `printError` / `pretty*` are called from thousands of sites with
+// distinct comptime format strings. They used to be `noinline`, which forced
+// one ~400-byte function body per (fmt, args-type) pair — about 2,650 of them,
+// or ~1 MB of .text in release builds. The bodies were nearly identical: pick
+// buffered-vs-unbuffered writer, then `Writer.print(fmt, args)`.
+//
+// Now the public entry points are `inline` and bottom out in two non-generic
+// helpers (`destWriter`, `writeBytes`). The only per-call-site code is either
+// a `writeBytes` call (when `args` is empty — ~40% of sites) or one
+// `Writer.print` call. The buffering branch lives in `destWriter` so each
+// site formats once instead of twice.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Pick the active writer for `dest`, honoring `enable_buffering`. Non-generic
+/// so the buffering branch isn't duplicated into every call site.
+noinline fn destWriter(dest: Destination) *std.Io.Writer {
+    bun.debugAssert(source_set);
+    return switch (dest) {
+        .stdout => if (enable_buffering) source.buffered_stream else source.stream,
+        .stderr => if (enable_buffering) source.buffered_error_stream else source.error_stream,
+    };
+}
+
+/// Single shared write path for pre-formatted bytes.
+noinline fn writeBytes(dest: Destination, bytes: []const u8) void {
+    destWriter(dest).writeAll(bytes) catch {};
+}
+
+inline fn hasNoArgs(comptime Args: type) bool {
+    return @typeInfo(Args).@"struct".fields.len == 0;
+}
+
+inline fn printTo(dest: Destination, comptime fmt: string, args: anytype) void {
     if (comptime Environment.isWasm) {
-        try source.stream.seekTo(0);
-        try source.stream.writer().print(fmt, args);
-        root.console_error(root.Uint8Array.fromSlice(source.stream.buffer[0..source.stream.pos]));
-    } else {
-        source.stream.writer().print(fmt, args) catch unreachable;
+        switch (dest) {
+            .stdout => {
+                source.stream.pos = 0;
+                source.stream.writer().print(fmt, args) catch unreachable;
+                root.console_log(root.Uint8Array.fromSlice(source.stream.buffer[0..source.stream.pos]));
+            },
+            .stderr => {
+                source.error_stream.seekTo(0) catch return;
+                source.error_stream.writer().print(fmt, args) catch unreachable;
+                root.console_error(root.Uint8Array.fromSlice(source.err_buffer[0..source.error_stream.pos]));
+            },
+        }
+        return;
     }
+    if (comptime hasNoArgs(@TypeOf(args))) {
+        return writeBytes(dest, fmt);
+    }
+    // There's not much we can do if this errors. Especially if it's something like BrokenPipe.
+    destWriter(dest).print(fmt, args) catch {};
+}
+
+pub inline fn printErrorable(comptime fmt: string, args: anytype) !void {
+    printTo(.stdout, fmt, args);
 }
 
 /// Print to stdout
 /// This will appear in the terminal, including in production.
 /// Text automatically buffers
-pub noinline fn println(comptime fmt: string, args: anytype) void {
-    if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
-        return print(fmt ++ "\n", args);
-    }
-
-    return print(fmt, args);
+pub inline fn println(comptime fmt: string, args: anytype) void {
+    const fmt_ = if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') fmt ++ "\n" else fmt;
+    return printTo(.stdout, fmt_, args);
 }
 
 /// Print to stdout, but only in debug builds.
@@ -744,22 +793,8 @@ pub inline fn _debug(comptime fmt: string, args: anytype) void {
     println(fmt, args);
 }
 
-// callconv is a workaround for a zig wasm bug?
-pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.CallingConvention.auto) void {
-    if (comptime Environment.isWasm) {
-        source.stream.pos = 0;
-        source.stream.writer().print(fmt, args) catch unreachable;
-        root.console_log(root.Uint8Array.fromSlice(source.stream.buffer[0..source.stream.pos]));
-    } else {
-        bun.debugAssert(source_set);
-
-        // There's not much we can do if this errors. Especially if it's something like BrokenPipe.
-        if (enable_buffering) {
-            source.buffered_stream.print(fmt, args) catch {};
-        } else {
-            writer().print(fmt, args) catch {};
-        }
-    }
+pub inline fn print(comptime fmt: string, args: anytype) void {
+    printTo(.stdout, fmt, args);
 }
 
 /// Debug-only logs which should not appear in release mode
@@ -1018,40 +1053,60 @@ pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) [:0]const u8 {
     return comptime (new_fmt[0..new_fmt_i].* ++ .{0})[0..new_fmt_i :0];
 }
 
-pub noinline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: anytype, comptime l: Destination) void {
-    if (if (comptime l == .stdout) enable_ansi_colors_stdout else enable_ansi_colors_stderr) {
+inline fn enableColorFor(dest: Destination) bool {
+    return switch (dest) {
+        .stdout => enable_ansi_colors_stdout,
+        .stderr => enable_ansi_colors_stderr,
+    };
+}
+
+inline fn prettyTo(dest: Destination, comptime fmt: string, args: anytype) void {
+    const colored = comptime prettyFmt(fmt, true);
+    const plain = comptime prettyFmt(fmt, false);
+    if (comptime hasNoArgs(@TypeOf(args))) {
+        return writeBytes(dest, if (enableColorFor(dest)) colored else plain);
+    }
+    const w = destWriter(dest);
+    if (enableColorFor(dest)) {
+        w.print(colored, args) catch {};
+    } else {
+        w.print(plain, args) catch {};
+    }
+}
+
+pub inline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: anytype, comptime l: Destination) void {
+    if (enableColorFor(l)) {
         printer(comptime prettyFmt(fmt, true), args);
     } else {
         printer(comptime prettyFmt(fmt, false), args);
     }
 }
 
-pub noinline fn pretty(comptime fmt: string, args: anytype) void {
-    prettyWithPrinter(fmt, args, print, .stdout);
+pub inline fn pretty(comptime fmt: string, args: anytype) void {
+    prettyTo(.stdout, fmt, args);
 }
 
 /// Like Output.println, except it will automatically strip ansi color codes if
 /// the terminal doesn't support them.
-pub fn prettyln(comptime fmt: string, args: anytype) void {
-    prettyWithPrinter(fmt, args, println, .stdout);
+pub inline fn prettyln(comptime fmt: string, args: anytype) void {
+    const fmt_ = if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') fmt ++ "\n" else fmt;
+    prettyTo(.stdout, fmt_, args);
 }
 
-pub noinline fn printErrorln(comptime fmt: string, args: anytype) void {
-    if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
-        return printError(fmt ++ "\n", args);
-    }
-
-    return printError(fmt, args);
+pub inline fn printErrorln(comptime fmt: string, args: anytype) void {
+    const fmt_ = if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') fmt ++ "\n" else fmt;
+    return printTo(.stderr, fmt_, args);
 }
 
-pub noinline fn prettyError(comptime fmt: string, args: anytype) void {
-    prettyWithPrinter(fmt, args, printError, .stderr);
+pub inline fn prettyError(comptime fmt: string, args: anytype) void {
+    prettyTo(.stderr, fmt, args);
 }
 
 /// Print to stderr with ansi color codes automatically stripped out if the
 /// terminal doesn't support them. Text is buffered
-pub fn prettyErrorln(comptime fmt: string, args: anytype) void {
-    prettyWithPrinter(fmt, args, printErrorln, .stderr);
+pub inline fn prettyErrorln(comptime fmt: string, args: anytype) void {
+    const fmt_ = if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') fmt ++ "\n" else fmt;
+    prettyTo(.stderr, fmt_, args);
 }
 
 /// Pretty-print a command that will be run.
@@ -1094,18 +1149,8 @@ pub const Destination = enum(u8) {
     stdout,
 };
 
-pub noinline fn printError(comptime fmt: string, args: anytype) void {
-    if (comptime Environment.isWasm) {
-        source.error_stream.seekTo(0) catch return;
-        source.error_stream.writer().print(fmt, args) catch unreachable;
-        root.console_error(root.Uint8Array.fromSlice(source.err_buffer[0..source.error_stream.pos]));
-    } else {
-        // There's not much we can do if this errors. Especially if it's something like BrokenPipe
-        if (enable_buffering)
-            source.buffered_error_stream.print(fmt, args) catch {}
-        else
-            source.error_stream.print(fmt, args) catch {};
-    }
+pub inline fn printError(comptime fmt: string, args: anytype) void {
+    printTo(.stderr, fmt, args);
 }
 
 pub const DebugTimer = struct {

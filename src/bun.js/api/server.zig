@@ -1135,7 +1135,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                     ws.globalObject = globalThis;
                     this.config.websocket = ws.*;
-                } // we don't remove it
+                } else {
+                    // We don't replace the existing websocket config here, but
+                    // the new one was already protected in WebSocketServerContext.onCreate.
+                    // Unprotect the discarded handlers so they don't leak.
+                    ws.unprotect();
+                }
             }
 
             // These get re-applied when we set the static routes again.

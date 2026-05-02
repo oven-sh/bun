@@ -38,7 +38,7 @@ extern fn Bun__REPL__getCompletions(
 
 const MAX_HISTORY_SIZE: usize = 1000;
 const MAX_LINE_LENGTH: usize = 16384;
-const HISTORY_FILENAME = ".bun_repl_history";
+const HISTORY_FILENAME = ".local/share/bun/.bun_repl_history";
 const TAB_WIDTH: usize = 2;
 
 // ANSI escape codes

@@ -570,6 +570,57 @@ devTest("css import before create project relative", {
   },
 });
 
+// Regression: multiple <link rel="stylesheet"> tags must be served in the
+// same order they appear in the source HTML. The CSS cascade's source-order
+// tiebreak (CSS Cascade Level 4 § 6.4.6) decides which of two equally
+// specific declarations wins; if the dev server emits the link tags in the
+// wrong order, the cascade resolves backward and the wrong rule wins.
+devTest("multiple stylesheet links preserve source order", {
+  files: {
+    "a.css": `
+      .target { color: red; }
+    `,
+    "b.css": `
+      .target { color: blue; }
+    `,
+    "index.html": emptyHtmlFile({
+      styles: ["a.css", "b.css"],
+      body: `<div class="target">hello</div>`,
+    }),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    // a.css declares red; b.css declares blue. Both have specificity
+    // (0,1,0) and are unlayered. Source-order tiebreak: b.css wins.
+    await c.style(".target").color.expect.toBe("#00f");
+  },
+});
+
+devTest("multiple stylesheet links preserve source order inside @layer", {
+  files: {
+    "a.css": `
+      @layer test {
+        .target { color: red; }
+      }
+    `,
+    "b.css": `
+      @layer test {
+        .target { color: blue; }
+      }
+    `,
+    "index.html": emptyHtmlFile({
+      styles: ["a.css", "b.css"],
+      body: `<div class="target">hello</div>`,
+    }),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    // Both rules sit inside the same @layer; source-order tiebreak still
+    // applies, so b.css wins.
+    await c.style(".target").color.expect.toBe("#00f");
+  },
+});
+
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);
   if (!url) {

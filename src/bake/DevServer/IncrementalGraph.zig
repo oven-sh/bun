@@ -761,11 +761,37 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             // removing edges.
             const quick_lookup_values_to_care_len = quick_lookup.count();
 
-            // A new import linked list is constructed. A side effect of this
-            // approach is that the order of the imports is reversed on every
-            // save. However, the ordering here doesn't matter.
+            // A new import linked list is constructed via head-insertion in
+            // `processEdgeAttachment` (and the equivalent inline path in
+            // `processChunkImportRecords`). Head-insertion produces a list in
+            // the *reverse* of the source order in which import records were
+            // visited. After processing we reverse the list once so that
+            // forward iteration of `first_import` matches the order the
+            // imports appear in the source file.
+            //
+            // This matters whenever the consumer of `first_import` cares
+            // about source order. The motivating case is HTML files with
+            // multiple `<link rel="stylesheet">` tags: when `traceImports`
+            // walks the imports for `.find_css`, it must visit them in the
+            // same order the author wrote them, otherwise the CSS cascade's
+            // source-order tiebreak resolves backwards and (e.g.) a rule in
+            // a later stylesheet stops winning over an equally-specific rule
+            // in an earlier stylesheet.
             var new_imports: EdgeIndex.Optional = .none;
-            defer g.first_import.items[file_index.get()] = new_imports;
+            defer {
+                // Reverse the head-inserted linked list in place so that
+                // iteration is in source order.
+                var prev: EdgeIndex.Optional = .none;
+                var cursor = new_imports;
+                while (cursor.unwrap()) |cursor_idx| {
+                    const cursor_edge = &g.edges.items[cursor_idx.get()];
+                    const next = cursor_edge.next_import;
+                    cursor_edge.next_import = prev;
+                    prev = cursor;
+                    cursor = next;
+                }
+                g.first_import.items[file_index.get()] = prev;
+            }
 
             // (CSS chunks are not present on the server side)
             if (mode == .normal and side == .server) {

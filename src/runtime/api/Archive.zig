@@ -811,7 +811,10 @@ const FilesContext = struct {
         while (archive.readNextHeader(&entry) == .ok) {
             if (entry.filetype() != @intFromEnum(lib.FileType.regular)) continue;
 
-            const pathname = entry.pathnameUtf8();
+            // libarchive returns null when the stored name cannot be converted to
+            // UTF-8. Fall back to the raw multibyte pathname so the entry is still
+            // reachable; skip only if libarchive has no name at all.
+            const pathname = entry.pathnameUtf8() orelse entry.pathname() orelse continue;
             // Apply glob pattern filtering (supports both positive and negative patterns)
             if (this.glob_patterns) |patterns| {
                 if (!matchGlobPatterns(patterns, pathname)) continue;
@@ -1018,7 +1021,10 @@ fn extractToDiskFiltered(
     var entry: *lib.Archive.Entry = undefined;
 
     while (archive.readNextHeader(&entry) == .ok) {
-        const pathname = entry.pathnameUtf8();
+        // libarchive returns null when the stored name cannot be converted to
+        // UTF-8. Fall back to the raw multibyte pathname so the entry is still
+        // reachable; skip only if libarchive has no name at all.
+        const pathname = entry.pathnameUtf8() orelse entry.pathname() orelse continue;
 
         // Validate path safety (reject absolute paths, path traversal)
         if (!isSafePath(pathname)) continue;
@@ -1111,7 +1117,7 @@ fn extractToDiskFiltered(
                 }
             },
             .sym_link => {
-                const link_target = entry.symlink();
+                const link_target = entry.symlink() orelse continue;
                 // Validate symlink target is also safe
                 if (!isSafePath(link_target)) continue;
                 // Symlinks are only extracted on POSIX systems (Linux/macOS).

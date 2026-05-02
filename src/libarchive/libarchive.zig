@@ -279,7 +279,7 @@ pub const Archiver = struct {
                     // do not use the utf8 name there
                     // it will require us to pull in libiconv
                     // though we should probably validate the utf8 here nonetheless
-                    var pathname = entry.pathname();
+                    var pathname = entry.pathname() orelse continue :loop;
                     var tokenizer = std.mem.tokenizeScalar(u8, bun.asByteSlice(pathname), std.fs.path.sep);
                     comptime var depth_i: usize = 0;
                     inline while (depth_i < depth_to_skip) : (depth_i += 1) {
@@ -373,10 +373,10 @@ pub const Archiver = struct {
                     //
                     // Ideally, we find a way to tell libarchive to not convert the strings to wide characters and also to not
                     // replace path separators. We can do both of these with our own normalization and utf8/utf16 string conversion code.
-                    var pathname: bun.OSPathSliceZ = if (comptime Environment.isWindows)
+                    var pathname: bun.OSPathSliceZ = (if (comptime Environment.isWindows)
                         entry.pathnameW()
                     else
-                        entry.pathname();
+                        entry.pathname()) orelse continue :loop;
 
                     if (comptime ContextType != void and @hasDecl(std.meta.Child(ContextType), "onFirstDirectoryName")) {
                         if (appender.needs_first_dirname) {
@@ -481,7 +481,7 @@ pub const Archiver = struct {
                             }
                         },
                         .sym_link => {
-                            const link_target = entry.symlink();
+                            const link_target = entry.symlink() orelse continue :loop;
                             if (Environment.isPosix) {
                                 // Validate that the symlink target doesn't escape the extraction directory.
                                 // This prevents path traversal attacks where a malicious tarball creates a symlink

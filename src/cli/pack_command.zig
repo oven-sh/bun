@@ -2725,12 +2725,12 @@ pub const bindings = struct {
                 },
                 else => {
                     const pathname_string = if (bun.Environment.isWindows) blk: {
-                        const pathname_w = archive_entry.pathnameW();
+                        const pathname_w = archive_entry.pathnameW() orelse continue;
                         const list = std.array_list.Managed(u8).init(bun.default_allocator);
                         var result = bun.handleOom(bun.strings.toUTF8ListWithType(list, pathname_w));
                         defer result.deinit();
                         break :blk String.cloneUTF8(result.items);
-                    } else String.cloneUTF8(archive_entry.pathname());
+                    } else String.cloneUTF8(archive_entry.pathname() orelse continue);
 
                     const kind = bun.sys.kindFromMode(archive_entry.filetype());
                     const perm = archive_entry.perm();

@@ -75,10 +75,10 @@ pub const PublishCommand = struct {
                     },
                     .result => |res| res,
                 }) |next| {
-                    const pathname = if (comptime Environment.isWindows)
+                    const pathname = (if (comptime Environment.isWindows)
                         next.entry.pathnameW()
                     else
-                        next.entry.pathname();
+                        next.entry.pathname()) orelse continue;
 
                     const size = next.entry.size();
 

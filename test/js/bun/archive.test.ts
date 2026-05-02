@@ -1752,4 +1752,95 @@ describe("Bun.Archive", () => {
       expect(bytes.length).toBe(uncompressedBytes.length);
     });
   });
+
+  describe("entries with non-UTF-8 pathnames", () => {
+    // libarchive's archive_entry_pathname_utf8() returns NULL when the stored
+    // pathname cannot be converted to UTF-8. Previously the Zig binding passed
+    // that NULL straight to bun.sliceTo and crashed with SIGSEGV at address 0.
+    //
+    // We build the ustar header by hand so we can put raw 0xFF 0xFE bytes
+    // (never valid UTF-8) directly into the 100-byte name field.
+    function rawUstarHeader(nameBytes: Buffer, size: number, typeflag: string, linkBytes?: Buffer): Buffer {
+      const h = Buffer.alloc(512);
+      nameBytes.copy(h, 0);
+      h.write("0000644\0", 100);
+      h.write("0000000\0", 108);
+      h.write("0000000\0", 116);
+      h.write(size.toString(8).padStart(11, "0") + "\0", 124);
+      h.write("00000000000\0", 136);
+      h.write("        ", 148);
+      h.write(typeflag, 156);
+      if (linkBytes) linkBytes.copy(h, 157);
+      h.write("ustar\0", 257);
+      h.write("00", 263);
+      let sum = 0;
+      for (let i = 0; i < 512; i++) sum += h[i];
+      h.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+      return h;
+    }
+
+    // "foo\xff\xfe.txt" — the 0xFF 0xFE sequence is never valid UTF-8.
+    const badName = Buffer.from([0x66, 0x6f, 0x6f, 0xff, 0xfe, 0x2e, 0x74, 0x78, 0x74]);
+    const body = Buffer.from("hello");
+    const bodyPad = Buffer.alloc((512 - (body.length % 512)) % 512);
+
+    test("files() does not crash on entry whose name is not valid UTF-8", async () => {
+      const tar = new Uint8Array(
+        Buffer.concat([
+          rawUstarHeader(badName, body.length, "0"),
+          body,
+          bodyPad,
+          ustarEntry("good.txt", Buffer.from("world")),
+          Buffer.alloc(1024),
+        ]),
+      );
+
+      const archive = new Bun.Archive(tar);
+      const files = await archive.files();
+      expect(files).toBeInstanceOf(Map);
+      // The well-formed entry must survive regardless of how the bad entry is handled.
+      expect(await files.get("good.txt")!.text()).toBe("world");
+      // The bad entry is surfaced under whatever bytes libarchive hands back; on
+      // platforms where conversion fails entirely it is skipped instead.
+      const badKey = [...files.keys()].find(k => k !== "good.txt");
+      if (badKey !== undefined) {
+        expect(await files.get(badKey)!.text()).toBe("hello");
+      }
+    });
+
+    test("extract() does not crash on entry whose name is not valid UTF-8", async () => {
+      const tar = new Uint8Array(
+        Buffer.concat([
+          rawUstarHeader(badName, body.length, "0"),
+          body,
+          bodyPad,
+          ustarEntry("good.txt", Buffer.from("world")),
+          Buffer.alloc(1024),
+        ]),
+      );
+
+      using dir = tempDir("archive-non-utf8-name", {});
+      const archive = new Bun.Archive(tar);
+      const count = await archive.extract(String(dir));
+      expect(count).toBeGreaterThanOrEqual(1);
+      expect(await Bun.file(join(String(dir), "good.txt")).text()).toBe("world");
+    });
+
+    test("extract() does not crash on symlink entry with non-UTF-8 target", async () => {
+      // typeflag "2" = symlink, linkname field holds the target bytes.
+      const tar = new Uint8Array(
+        Buffer.concat([
+          rawUstarHeader(Buffer.from("link"), 0, "2", badName),
+          ustarEntry("good.txt", Buffer.from("world")),
+          Buffer.alloc(1024),
+        ]),
+      );
+
+      using dir = tempDir("archive-non-utf8-link", {});
+      const archive = new Bun.Archive(tar);
+      const count = await archive.extract(String(dir));
+      expect(count).toBeGreaterThanOrEqual(1);
+      expect(await Bun.file(join(String(dir), "good.txt")).text()).toBe("world");
+    });
+  });
 });

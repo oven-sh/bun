@@ -276,7 +276,7 @@ pub const ReadBytesResult = union(enum) {
 /// construction is `Image.fromBlobJS` so Blob.zig doesn't grow image
 /// knowledge.
 pub fn doImage(_: *Blob, global: *JSGlobalObject, cf: *jsc.CallFrame) bun.JSError!JSValue {
-    return @import("../../image/Image.zig").fromBlobJS(global, cf.this(), cf.argument(0));
+    return Image.fromBlobJS(global, cf.this(), cf.argument(0));
 }
 
 pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, comptime Function: anytype, global: *JSGlobalObject) void {
@@ -5104,3 +5104,4 @@ const PathOrBlob = jsc.Node.PathOrBlob;
 
 const Request = jsc.WebCore.Request;
 const Response = jsc.WebCore.Response;
+const Image = @import("../../image/Image.zig");

@@ -669,10 +669,19 @@ const BlobReadChain = struct {
     outer: jsc.JSPromise.Strong,
 
     fn start(image: *Image, global: *jsc.JSGlobalObject, this_value: jsc.JSValue, kind: PipelineTask.Kind, deliver: PipelineTask.Deliver) bun.JSError!jsc.JSValue {
-        const blob_js = image.source.blob.get() orelse
+        // `deliver` may carry a `.write_dest` Strong; on these defensive
+        // early-returns the chain is never created so its deinit() can't
+        // free it. (Same contract as schedule()'s detached-buffer branch.)
+        const blob_js = image.source.blob.get() orelse {
+            var d = deliver;
+            d.deinit();
             return global.throw("Image: Blob source was collected", .{});
-        const blob = blob_js.as(jsc.WebCore.Blob) orelse
+        };
+        const blob = blob_js.as(jsc.WebCore.Blob) orelse {
+            var d = deliver;
+            d.deinit();
             return global.throw("Image: Blob source is no longer a Blob", .{});
+        };
 
         // Same Strong-ref contract as the regular pending_tasks bump — keeps
         // the wrapper (and its sourceJS slot) alive until the read settles.

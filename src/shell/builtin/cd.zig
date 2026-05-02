@@ -97,7 +97,17 @@ fn handleChangeCwdErr(this: *Cd, err: Syscall.Error, new_cwd_: []const u8) Yield
 
             return this.writeStderrNonBlocking("file name too long\n", .{});
         },
-        else => return .failed,
+        else => {
+            const errmsg = err.msg() orelse err.name();
+            if (this.bltn().stderr.needsIO() == null) {
+                const buf = this.bltn().fmtErrorArena(.cd, "{s}: {s}\n", .{ errmsg, new_cwd_ });
+                _ = this.bltn().writeNoIO(.stderr, buf);
+                this.state = .done;
+                return this.bltn().done(1);
+            }
+
+            return this.writeStderrNonBlocking("{s}: {s}\n", .{ errmsg, new_cwd_ });
+        },
     }
 }
 

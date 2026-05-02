@@ -908,7 +908,14 @@ fn HandlerCallback(
             // The init values are handled by bun.new with .init()
 
             defer {
-                @field(wrapper, field_name) = null;
+                if (comptime @hasDecl(ZigType, "invalidate")) {
+                    // Some wrapper types (Element) hand out sub-objects that
+                    // borrow from the underlying lol-html value and must be
+                    // detached along with the wrapper itself.
+                    wrapper.invalidate();
+                } else {
+                    @field(wrapper, field_name) = null;
+                }
                 wrapper.deref();
             }
 
@@ -1692,6 +1699,11 @@ pub const Element = struct {
 
     ref_count: RefCount,
     element: ?*LOLHTML.Element = null,
+    /// AttributeIterator instances created by `getAttributes()` that borrow
+    /// from `element`. They must be detached in `invalidate()` when the
+    /// handler returns so that JS cannot dereference the freed lol-html
+    /// attribute buffer.
+    attribute_iterators: std.ArrayListUnmanaged(*AttributeIterator) = .{},
 
     pub const js = jsc.Codegen.JSElement;
     pub const toJS = js.toJS;
@@ -1709,8 +1721,21 @@ pub const Element = struct {
         this.deref();
     }
 
-    fn deinit(this: *Element) void {
+    /// Called by `HandlerCallback` when the handler returns. The underlying
+    /// `*LOLHTML.Element` (and the attribute buffer any `AttributeIterator`
+    /// borrows from) is only valid during handler execution, so we must null
+    /// it out here along with any iterators we handed to JS.
+    pub fn invalidate(this: *Element) void {
         this.element = null;
+        for (this.attribute_iterators.items) |iter| {
+            iter.detach();
+            iter.deref();
+        }
+        this.attribute_iterators.clearAndFree(bun.default_allocator);
+    }
+
+    fn deinit(this: *Element) void {
+        this.invalidate();
         bun.destroy(this);
     }
 
@@ -1964,6 +1989,12 @@ pub const Element = struct {
             .ref_count = .init(),
             .iterator = iter,
         });
+        // Track this iterator so we can detach it when the handler returns.
+        // lol-html's attribute iterator borrows from the element's attribute
+        // buffer which is freed after the callback; leaking the iterator to
+        // JS without detaching it would be a use-after-free.
+        attr_iter.ref();
+        bun.handleOom(this.attribute_iterators.append(bun.default_allocator, attr_iter));
         return attr_iter.toJS(globalObject);
     }
 };

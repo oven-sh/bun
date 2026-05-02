@@ -189,6 +189,41 @@ describe("HTMLRewriter", () => {
     expect(expected.length).toBe(0);
   });
 
+  it("attribute iterator is detached after handler returns", async () => {
+    // The lol-html attribute iterator borrows from the element's attribute
+    // buffer, which is freed when the handler returns. Previously we leaked
+    // the raw iterator pointer to JS, so calling .next() after the transform
+    // read freed memory. Now the iterator is detached and reports done.
+    let leaked;
+    let partiallyConsumed;
+    const inside = [];
+    await new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          // A fresh iterator leaked without being touched.
+          leaked = el.attributes;
+          // A second iterator fully consumed inside the handler must still work.
+          for (const pair of el.attributes) inside.push(pair);
+          // A third iterator partially consumed then leaked.
+          partiallyConsumed = el.attributes;
+          partiallyConsumed.next();
+        },
+      })
+      .transform(new Response('<div a="1" b="2" c="3"></div>'))
+      .text();
+
+    expect(inside).toEqual([
+      ["a", "1"],
+      ["b", "2"],
+      ["c", "3"],
+    ]);
+
+    expect(leaked.next()).toEqual({ done: true, value: undefined });
+    expect(partiallyConsumed.next()).toEqual({ done: true, value: undefined });
+    // for..of over a detached iterator should simply not iterate.
+    expect([...leaked]).toEqual([]);
+  });
+
   it("handles element specific mutations", async () => {
     // prepend/append
     let res = new HTMLRewriter()

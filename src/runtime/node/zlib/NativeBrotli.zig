@@ -20,7 +20,6 @@ pub const finalize = impl.finalize;
 ref_count: RefCount,
 globalThis: *jsc.JSGlobalObject,
 stream: Context = .{},
-write_result: ?[*]u32 = null,
 poll_ref: CountedKeepAlive = .{},
 this_value: jsc.Strong.Optional = .empty,
 write_in_progress: bool = false,
@@ -70,12 +69,18 @@ pub fn init(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
         return globalThis.ERR(.MISSING_ARGS, "init(params, writeResult, writeCallback)", .{}).throw();
     }
 
-    // this does not get gc'd because it is stored in the JS object's `this._writeState`. and the JS object is tied to the native handle as `_handle[owner_symbol]`.
-    const writeResult = arguments[1].asArrayBuffer(globalThis).?.asU32().ptr;
+    // Cache the writeResult Uint32Array as a JSValue and re-resolve its backing
+    // store on each write completion. Storing a raw pointer here is unsafe: the
+    // typed array's vector can move or be freed if the buffer is detached.
+    const writeResult = arguments[1].asArrayBuffer(globalThis) orelse {
+        return globalThis.throwInvalidArgumentTypeValue("writeResult", "Uint32Array", arguments[1]);
+    };
+    if (writeResult.asU32().len < 2) {
+        return globalThis.throwInvalidArgumentTypeValue("writeResult", "Uint32Array of length >= 2", arguments[1]);
+    }
     const writeCallback = try validators.validateFunction(globalThis, "writeCallback", arguments[2]);
 
-    this.write_result = writeResult;
-
+    js.writeStateSetCached(this_value, globalThis, arguments[1]);
     js.writeCallbackSetCached(this_value, globalThis, writeCallback.withAsyncContextIfNeeded(globalThis));
 
     var err = this.stream.init();

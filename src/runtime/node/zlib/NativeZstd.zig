@@ -20,7 +20,6 @@ pub const finalize = impl.finalize;
 ref_count: RefCount,
 globalThis: *jsc.JSGlobalObject,
 stream: Context = .{},
-write_result: ?[*]u32 = null,
 poll_ref: CountedKeepAlive = .{},
 this_value: jsc.Strong.Optional = .empty,
 write_in_progress: bool = false,
@@ -71,9 +70,13 @@ pub fn init(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
     const writeState_value = arguments[2];
     const processCallback_value = arguments[3];
 
+    // Cache the writeState Uint32Array as a JSValue and re-resolve its backing
+    // store on each write completion. Storing a raw pointer here is unsafe: the
+    // typed array's vector can move or be freed if the buffer is detached.
     const writeState = writeState_value.asArrayBuffer(globalThis) orelse return globalThis.throwInvalidArgumentTypeValue("writeState", "Uint32Array", writeState_value);
     if (writeState.typed_array_type != .Uint32Array) return globalThis.throwInvalidArgumentTypeValue("writeState", "Uint32Array", writeState_value);
-    this.write_result = writeState.asU32().ptr;
+    if (writeState.asU32().len < 2) return globalThis.throwInvalidArgumentTypeValue("writeState", "Uint32Array of length >= 2", writeState_value);
+    js.writeStateSetCached(this_value, globalThis, writeState_value);
 
     const write_js_callback = try validators.validateFunction(globalThis, "processCallback", processCallback_value);
     js.writeCallbackSetCached(this_value, globalThis, write_js_callback.withAsyncContextIfNeeded(globalThis));

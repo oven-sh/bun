@@ -267,7 +267,8 @@ pub const FileSystemRouter = struct {
         var router = Router.init(vm.transpiler.fs, allocator, .{
             .dir = allocator.dupe(u8, this.router.config.dir) catch unreachable,
             .extensions = extensions,
-            .asset_prefix_path = this.router.config.asset_prefix_path,
+            // Same as `extensions`: the old value lives in the previous arena.
+            .asset_prefix_path = allocator.dupe(u8, this.router.config.asset_prefix_path) catch unreachable,
         }) catch unreachable;
         router.loadRoutes(&log, root_dir_info, Resolver, &vm.transpiler.resolver, router.config.dir) catch {
             // Build the JS error before freeing the arena: `log` is backed by the arena allocator.

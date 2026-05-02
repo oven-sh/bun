@@ -130,7 +130,12 @@ describe("element.onEndTag does not leak the handler allocation / protected call
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
+    const filteredStderr = stderr
+      .split("\n")
+      .filter(line => !line.startsWith("WARNING: ASAN interferes"))
+      .join("\n")
+      .trim();
+    expect(filteredStderr).toBe("");
     const { delta } = JSON.parse(stdout.trim());
 
     // Unfixed: delta == 500 (or 1000 when registering twice). Fixed: 0.

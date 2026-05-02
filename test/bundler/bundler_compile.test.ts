@@ -716,6 +716,24 @@ describe("bundler", () => {
     },
     run: { stdout: new Array(7).fill("true").join("\n") },
   });
+  // `import.meta?.main` (optional chain) is not constant-folded by the
+  // transpiler, so it falls through to the JS builtin at runtime. On Windows
+  // standalone binaries, `Bun.main` uses forward slashes (`B:/~BUN/root/...`)
+  // while `import.meta.path` uses backslashes (WebKit `URL::fileSystemPath()`
+  // converts `/` → `\`), so the builtin's string compare used to always
+  // return false. See https://github.com/oven-sh/bun/issues/30084.
+  itBundled("compile/ImportMetaMainOptionalChain", {
+    compile: true,
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        // Hit the runtime JS builtin, not the transpile-time inlining.
+        if (!import.meta?.main) throw new Error("import.meta?.main should be true, got " + import.meta?.main);
+        console.log("ok");
+      `,
+    },
+    run: { stdout: "ok" },
+  });
   itBundled("compile/SourceMap", {
     target: "bun",
     compile: true,

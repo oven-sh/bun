@@ -624,6 +624,26 @@ describe("hostile option objects", () => {
     await expect(img.png().bytes()).rejects.toThrow(/detached/);
   });
 
+  test("OversizeTypedArray input survives `.buffer` → transfer() while worker decodes (pin-after-adopt)", async () => {
+    // Fresh Uint8Array > fastSizeLimit elements with no .buffer touched yet =
+    // OversizeTypedArray. The borrow helper adopts its storage into a real
+    // ArrayBuffer (createAdopted — wraps in place, no byte copy) and pins.
+    // `transfer()` on a pinned buffer falls back to copyTo (JSC ArrayBuffer
+    // .cpp:500), so the call SUCCEEDS but the original storage is untouched
+    // — the worker keeps reading the same pointer.
+    const a = new Uint8Array(tinyPng.length + 4096);
+    a.set(tinyPng);
+    const p = new Bun.Image(a.subarray(0, tinyPng.length)).png().bytes();
+    const moved = a.buffer.transfer();
+    // While pinned: transfer() returned a COPY; `a` is NOT detached.
+    expect(moved.byteLength).toBe(tinyPng.length + 4096);
+    expect(a.byteLength).toBe(tinyPng.length + 4096);
+    expect((await p)[0]).toBe(0x89);
+    // After resolve the pin is released; now transfer() actually detaches.
+    a.buffer.transfer();
+    expect(a.byteLength).toBe(0);
+  });
+
   test("SharedArrayBuffer input is refused (cross-thread mutation surface)", () => {
     const sab = new SharedArrayBuffer(tinyPng.byteLength);
     new Uint8Array(sab).set(tinyPng);

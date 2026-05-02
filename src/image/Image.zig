@@ -72,9 +72,10 @@ pub const Source = union(enum) {
 };
 
 extern fn JSC__JSValue__unpinArrayBuffer(v: jsc.JSValue) void;
-/// 0 = detached/null, 1 = OversizeTypedArray (stable, no unpin),
-/// 2 = FastTypedArray (≤~1 KB, GC-movable — caller must dupe),
-/// 3 = real ArrayBuffer (pinned — caller must unpin).
+/// 0 = detached/null, 1 = FastTypedArray (≤~1 KB, GC-movable — dupe),
+/// 2 = pinned ArrayBuffer (caller must unpin). For OversizeTypedArray the
+/// helper adopts the storage in-place (createAdopted — no byte copy) and
+/// pins; once adopted it's detachable, so it MUST be pinned, not borrowed.
 extern fn JSC__JSValue__borrowBytesForOffThread(v: jsc.JSValue, out_ptr: *[*]const u8, out_len: *usize) i32;
 
 pub const Fit = enum {
@@ -419,15 +420,16 @@ fn pinForTask(this: *Image, this_value: jsc.JSValue, _: *jsc.JSGlobalObject) err
             var len: usize = 0;
             return switch (JSC__JSValue__borrowBytesForOffThread(v, &ptr, &len)) {
                 0 => error.Detached,
-                // Oversize: stable off-heap storage, undetachable. The Strong
-                // on the wrapper (this_ref) keeps the view alive; nothing to
-                // unpin.
-                1 => if (len == 0) error.Detached else .{ .bytes = ptr[0..len] },
-                // Fast (≤ fastSizeLimit elements, GC-movable): tiny by
-                // definition — dupe instead of forcing JSC to materialise.
-                2 => if (len == 0) error.Detached else .{ .copied = try bun.default_allocator.dupe(u8, ptr[0..len]) },
-                // Real ArrayBuffer: pinned by the helper, must unpin in then().
-                3 => if (len == 0) blk: {
+                // FastTypedArray (≤ fastSizeLimit elements, GC-movable): tiny
+                // by definition — dupe instead of forcing JSC to copy via
+                // tryCreate(span()) + allocate a butterfly.
+                1 => if (len == 0) error.Detached else .{ .copied = try bun.default_allocator.dupe(u8, ptr[0..len]) },
+                // Oversize/Wasteful/DataView/JSArrayBuffer: pinned by the
+                // helper. For Oversize, possiblySharedBuffer() adopts the
+                // existing fastMalloc storage in-place (zero byte copy);
+                // pinning then keeps it alive even if JS does `.buffer` →
+                // `transfer()` while the worker reads.
+                2 => if (len == 0) blk: {
                     JSC__JSValue__unpinArrayBuffer(v);
                     break :blk error.Detached;
                 } else .{ .bytes = ptr[0..len], .pinned = v },

@@ -134,7 +134,7 @@ const lqip = await Bun.file("hero.jpg").image().placeholder();
 // <img src={lqip} … /> — then swap to the real URL on load.
 ```
 
-For coarse-to-fine rendering of the image *itself*, encode a progressive JPEG:
+For coarse-to-fine rendering of the image _itself_, encode a progressive JPEG:
 
 ```ts
 img.jpeg({ progressive: true });

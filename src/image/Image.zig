@@ -1115,8 +1115,8 @@ pub const PipelineTask = struct {
 
 const codecs = @import("./codecs.zig");
 const exif = @import("./exif.zig");
-const thumbhash = @import("./thumbhash.zig");
 const std = @import("std");
+const thumbhash = @import("./thumbhash.zig");
 
 const bun = @import("bun");
 const jsc = bun.jsc;

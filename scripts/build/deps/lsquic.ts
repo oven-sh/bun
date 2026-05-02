@@ -63,6 +63,7 @@ const liblsquic: string[] = [
   "lsquic_packet_out.c",
   "lsquic_packet_resize.c",
   "lsquic_parse_common.c",
+  "lsquic_parse_gquic_common.c",
   "lsquic_parse_ietf_v1.c",
   "lsquic_parse_iquic_common.c",
   "lsquic_pr_queue.c",

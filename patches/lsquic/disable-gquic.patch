@@ -1,6 +1,6 @@
 --- a/src/liblsquic/lsquic_gquic_stubs.c
 +++ b/src/liblsquic/lsquic_gquic_stubs.c
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,108 @@
 +/* Bun: gQUIC (Google QUIC) is unreachable — Bun.serve and the H3 client only
 + * negotiate IETF QUIC versions (see packages/bun-usockets/src/quic.c, which
 + * masks es_versions with LSQUIC_IETF_VERSIONS). The real gQUIC sources pull
@@ -69,20 +69,6 @@
 +const struct parse_funcs lsquic_parse_funcs_gquic_Q046;
 +const struct parse_funcs lsquic_parse_funcs_gquic_Q050;
 +
-+int lsquic_gquic_gen_ver_nego_pkt (unsigned char *buf, size_t bufsz,
-+                                   const lsquic_cid_t *cid, unsigned versions)
-+{
-+    /* lsquic_prq_create asserts len > 0. The buffer is only copied out for
-+     * PACKET_REQ_VERNEG with a gQUIC version flag — never queued by Bun. */
-+    (void) cid; (void) versions;
-+    if (bufsz) buf[0] = 0;
-+    return bufsz ? 1 : 0;
-+}
-+
-+int lsquic_gquic_parse_packet_in_begin (lsquic_packet_in_t *p, size_t l,
-+        int s, unsigned c, struct packin_parse_state *st)
-+{ (void)p;(void)l;(void)s;(void)c;(void)st; return -1; }
-+
 +int lsquic_Q050_parse_packet_in_long_begin (struct lsquic_packet_in *p,
 +        size_t l, int s, unsigned c, struct packin_parse_state *st)
 +{ (void)p;(void)l;(void)s;(void)c;(void)st; return -1; }
@@ -116,3 +102,10 @@
 +struct lsquic_stream *
 +lsquic_headers_stream_get_stream (const struct headers_stream *hs)
 +{ (void)hs; return NULL; }
++
++/* lsquic_engine.c calls these unconditionally; the real impls allocate gQUIC
++ * X25519/TLS state. With no gQUIC versions enabled they're never used. */
++int lsquic_init_gquic_crypto (struct lsquic_engine_public *enpub)
++{ (void)enpub; return 0; }
++void lsquic_cleanup_gquic_crypto (struct lsquic_engine_public *enpub)
++{ (void)enpub; }

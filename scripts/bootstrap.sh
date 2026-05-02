@@ -1191,23 +1191,18 @@ install_gcc() {
 		return
 	fi
 
-	# Taken from WebKit's Dockerfile.
-	# https://github.com/oven-sh/WebKit/blob/816a3c02e0f8b53f8eec06b5ed911192589b51e2/Dockerfile
-
-	execute_sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
-	execute_sudo apt update -y
-	execute_sudo apt install -y \
-		"gcc-$gcc_version" \
-		"g++-$gcc_version" \
-		"libgcc-$gcc_version-dev" \
-		"libstdc++-$gcc_version-dev" \
-		libasan6 \
-		libubsan1 \
-		libatomic1 \
-		libtsan0 \
-		liblsan0 \
-		libgfortran5 \
-		libc6-dev
+	# gcc-13 on focal: Launchpad ppa:ubuntu-toolchain-r/test times out / 503s
+	# often enough to break image builds, so install from a mirrored snapshot
+	# of the PPA's .debs instead. See oven-sh/WebKit release gcc-13-focal-debs.
+	case "$arch" in
+	x64) gcc_deb_arch="amd64" ;;
+	aarch64) gcc_deb_arch="arm64" ;;
+	esac
+	gcc_deb_url="https://github.com/oven-sh/WebKit/releases/download/gcc-13-focal-debs/gcc-13-focal-$gcc_deb_arch.tar.gz"
+	gcc_deb_dir="$(create_tmp_directory)"
+	fetch "$gcc_deb_url" | execute tar -xz -C "$gcc_deb_dir"
+	execute_sudo apt-get install -y --no-install-recommends "$gcc_deb_dir"/*.deb libc6-dev
+	execute rm -rf "$gcc_deb_dir"
 
 	execute_sudo update-alternatives \
 		--install /usr/bin/gcc gcc "/usr/bin/gcc-$gcc_version" 130 \

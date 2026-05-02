@@ -18,6 +18,12 @@ import os from "node:os";
 import path from "node:path";
 import { describe, test } from "node:test";
 
+// On Windows the copied link's target comes from GetFinalPathNameByHandleW,
+// which returns the filesystem's canonical case (e.g. C:\Windows\Temp), while
+// paths built from os.tmpdir() carry the environment's case (e.g.
+// C:\Windows\TEMP). They name the same file, so compare case-insensitively.
+const normPath = process.platform === "win32" ? (p: string) => p.toLowerCase() : (p: string) => p;
+
 function makeFixture() {
   const base = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "cp-symlink-"));
   const origTarget = path.join(base, "target.txt");
@@ -48,13 +54,13 @@ function check(base: string, origTarget: string, srcAbs: string, srcRel: string)
     // symlink. With the bug, readlink(copiedLink) returned srcLink.
     const copiedTarget = fs.readlinkSync(copiedLink);
     assert.notStrictEqual(
-      copiedTarget,
-      srcLink,
+      normPath(copiedTarget),
+      normPath(srcLink),
       `copied ${which} target must not be the source symlink path (got ${copiedTarget})`,
     );
     assert.strictEqual(
-      fs.realpathSync(copiedLink),
-      fs.realpathSync(origTarget),
+      normPath(fs.realpathSync(copiedLink)),
+      normPath(fs.realpathSync(origTarget)),
       `copied ${which} must resolve to the original target`,
     );
   }

@@ -762,7 +762,10 @@ inline fn printTo(dest: Destination, comptime fmt: string, args: anytype) void {
         return;
     }
     if (comptime hasNoArgs(@TypeOf(args))) {
-        return writeBytes(dest, fmt);
+        // Format strings escape literal braces as `{{` / `}}`; comptimePrint
+        // resolves those (and validates the format string) so the output
+        // matches what `Writer.print(fmt, .{})` would have produced.
+        return writeBytes(dest, comptime std.fmt.comptimePrint(fmt, .{}));
     }
     // There's not much we can do if this errors. Especially if it's something like BrokenPipe.
     destWriter(dest).print(fmt, args) catch {};

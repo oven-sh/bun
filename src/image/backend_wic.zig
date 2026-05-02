@@ -122,11 +122,18 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOpti
     defer release(frame);
     defer release(props);
 
-    // Thread `quality` through the IPropertyBag2 the encoder hands back —
-    // WIC's "ImageQuality" is VT_R4 in [0,1]. The HEIF encoder honours it for
-    // both HEVC and AV1 sub-codecs. Goes through the C++ shim so the SDK's
-    // own VARIANT/PROPBAG2 layout is authoritative.
+    // Thread `quality` and the HEIF sub-codec through the IPropertyBag2 the
+    // encoder hands back. Both go via the C++ shim so the SDK's own VARIANT/
+    // PROPBAG2 layout is authoritative. ImageQuality (VT_R4 [0,1]) is best-
+    // effort; HeifCompressionMethod is load-bearing — see the comment on the
+    // constant — so a Write failure on it means the codec doesn't recognise
+    // the option (pre-21H2 encoder, or AV1 extension missing) and we surface
+    // BackendUnavailable → UnsupportedOnPlatform instead of risking the
+    // wrong container.
     _ = bun_wic_propbag_write_f32(props, bun.strings.literal(u16, "ImageQuality"), @as(f32, @floatFromInt(opts.quality)) / 100);
+    const method: u8 = if (opts.format == .avif) WICHeifCompressionAV1 else WICHeifCompressionHEVC;
+    if (bun_wic_propbag_write_u8(props, bun.strings.literal(u16, "HeifCompressionMethod"), method) == 0)
+        return error.BackendUnavailable;
     if (frame.?.vt.Initialize(frame.?, props) < 0) return error.EncodeFailed;
     if (frame.?.vt.SetSize(frame.?, width, height) < 0) return error.EncodeFailed;
     // SetPixelFormat is in/out — the codec rewrites `pf` to its native sink
@@ -193,6 +200,13 @@ const IUnknown = extern struct { vt: *const IUnknownVTable };
 /// arms) that hand-rolling it as `extern struct` is asking for an ABI drift.
 /// The C++ shim uses the SDK's own headers; we just hand it the bag pointer.
 extern fn bun_wic_propbag_write_f32(props: ?*anyopaque, name: [*:0]const u16, value: f32) i32;
+extern fn bun_wic_propbag_write_u8(props: ?*anyopaque, name: [*:0]const u16, value: u8) i32;
+
+/// WICHeifCompressionOption — the encoder defaults to `DontCare` (= picks
+/// whichever codec extension is installed), so without this `.avif()` could
+/// silently emit HEIC on a machine with only the HEVC extension.
+const WICHeifCompressionHEVC: u8 = 2;
+const WICHeifCompressionAV1: u8 = 3;
 
 /// Only `Seek` is typed — used to read the encoder stream's logical write
 /// position (== bytes emitted) instead of the rounded-up `GlobalSize()`.

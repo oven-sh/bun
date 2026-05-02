@@ -232,10 +232,9 @@ fn sourceFromJS(global: *jsc.JSGlobalObject, value: jsc.JSValue, this_value: jsc
         // slice we'd take; a SharedArrayBuffer can be mutated by another
         // thread while the worker decodes (the codec layer parses the same
         // bytes twice — header then body — so a TOCTOU swap can resize the
-        // implied output behind a guard that's already passed). We don't
-        // bother special-casing these: every off-thread use copies the input
-        // anyway (see `pinForTask`), so refuse them only because there's no
-        // upside to accepting and "pass a fixed view" is the obvious fix.
+        // implied output behind a guard that's already passed). The worker
+        // *borrows* the slice (see `pinForTask`), so this rejection is
+        // load-bearing — `buf.slice()` is the obvious workaround.
         if (ab.resizable or ab.shared)
             return global.throwInvalidArguments("Image(): resizable / shared ArrayBuffer is not supported; pass a fixed-length view (e.g. buf.slice())", .{});
         // Just remember the JS object — see Source.js_buffer for why we don't

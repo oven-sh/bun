@@ -10,17 +10,31 @@ signal: ?*AbortSignal = null,
 #js_ref: jsc.JSRef = .empty(),
 method: Method = Method.GET,
 flags: Flags = .{},
+/// Subresource integrity metadata. Empty means the default (no integrity).
+integrity: bun.String = bun.String.empty,
+/// Referrer state. Stored per the Fetch spec:
+/// - empty → "client" (default); getter returns "about:client"
+/// - equal to `no_referrer_sentinel` → getter returns ""
+/// - otherwise → the serialized URL; getter returns it as-is
+referrer: bun.String = bun.String.empty,
 request_context: jsc.API.AnyRequestContext = jsc.API.AnyRequestContext.Null,
 weak_ptr_data: WeakRef.Data = .empty,
 // We must report a consistent value for this
 reported_estimated_size: usize = 0,
 internal_event_callback: InternalJSEventCallback = .{},
 
-pub const Flags = packed struct(u8) {
+/// Sentinel value for `referrer` meaning "no-referrer"
+/// (the Fetch spec's request referrer state distinct from "client").
+/// When `referrer` is set to this, the getter returns "" per spec.
+const no_referrer_sentinel = "no-referrer";
+
+pub const Flags = packed struct(u16) {
     redirect: FetchRedirect = .follow,
     cache: FetchCacheMode = .default,
     mode: FetchRequestMode = .cors,
     https: bool = false,
+    keepalive: bool = false,
+    _padding: u7 = 0,
 };
 
 pub const js = jsc.Codegen.JSRequest;
@@ -43,7 +57,9 @@ pub const getBlobWithoutCallFrame = RequestMixin.getBlobWithoutCallFrame;
 pub const WeakRef = bun.ptr.WeakPtr(Request, "weak_ptr_data");
 
 pub fn memoryCost(this: *const Request) usize {
-    return @sizeOf(Request) + this.request_context.memoryCost() + this.url.byteSlice().len + this.#body.value.memoryCost();
+    return @sizeOf(Request) + this.request_context.memoryCost() + this.url.byteSlice().len +
+        this.integrity.byteSlice().len + this.referrer.byteSlice().len +
+        this.#body.value.memoryCost();
 }
 
 pub export fn Request__setCookiesOnRequestContext(this: *Request, cookieMap: ?*jsc.WebCore.CookieMap) void {
@@ -357,10 +373,18 @@ pub fn getDestination(
 }
 
 pub fn getIntegrity(
-    _: *Request,
+    this: *Request,
     globalThis: *jsc.JSGlobalObject,
+) bun.JSError!jsc.JSValue {
+    if (this.integrity.isEmpty()) return ZigString.Empty.toJS(globalThis);
+    return this.integrity.toJS(globalThis);
+}
+
+pub fn getKeepalive(
+    this: *Request,
+    _: *jsc.JSGlobalObject,
 ) jsc.JSValue {
-    return ZigString.Empty.toJS(globalThis);
+    return jsc.JSValue.jsBoolean(this.flags.keepalive);
 }
 
 pub fn getSignal(this: *Request, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
@@ -401,6 +425,12 @@ pub fn finalizeWithoutDeinit(this: *Request) void {
     this.url.deref();
     this.url = bun.String.empty;
 
+    this.integrity.deref();
+    this.integrity = bun.String.empty;
+
+    this.referrer.deref();
+    this.referrer = bun.String.empty;
+
     if (this.signal) |signal| {
         signal.unref();
         this.signal = null;
@@ -426,14 +456,18 @@ pub fn getRedirect(
 pub fn getReferrer(
     this: *Request,
     globalObject: *jsc.JSGlobalObject,
-) jsc.JSValue {
-    if (this.#headers) |headers_ref| {
-        if (headers_ref.get("referrer", globalObject)) |referrer| {
-            return ZigString.init(referrer).toJS(globalObject);
-        }
+) bun.JSError!jsc.JSValue {
+    // Fetch spec: the referrer getter returns
+    //   "about:client" when the referrer state is "client" (our default / empty),
+    //   ""             when the referrer state is "no-referrer",
+    //   the serialized URL otherwise.
+    if (this.referrer.isEmpty()) {
+        return ZigString.static("about:client").toJS(globalObject);
     }
-
-    return ZigString.init("").toJS(globalObject);
+    if (this.referrer.eqlComptime(no_referrer_sentinel)) {
+        return ZigString.Empty.toJS(globalObject);
+    }
+    return this.referrer.toJS(globalObject);
 }
 pub fn getReferrerPolicy(
     _: *Request,
@@ -565,14 +599,14 @@ const Fields = enum {
     method,
     headers,
     body,
-    // referrer,
+    referrer,
     // referrerPolicy,
     mode,
     // credentials,
     redirect,
     cache,
-    // integrity,
-    // keepalive,
+    integrity,
+    keepalive,
     signal,
     // proxy,
     // timeout,
@@ -677,6 +711,25 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
                 if (!fields.contains(.mode)) {
                     req.flags.mode = request.flags.mode;
                     fields.insert(.mode);
+                }
+
+                if (!fields.contains(.keepalive)) {
+                    req.flags.keepalive = request.flags.keepalive;
+                    fields.insert(.keepalive);
+                }
+
+                if (!fields.contains(.integrity)) {
+                    if (!request.integrity.isEmpty()) {
+                        req.integrity = request.integrity.dupeRef();
+                    }
+                    fields.insert(.integrity);
+                }
+
+                if (!fields.contains(.referrer)) {
+                    if (!request.referrer.isEmpty()) {
+                        req.referrer = request.referrer.dupeRef();
+                    }
+                    fields.insert(.referrer);
                 }
 
                 if (!fields.contains(.headers)) {
@@ -831,6 +884,61 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
                 req.flags.mode = mode_value;
                 fields.insert(.mode);
             }
+        }
+
+        // Extract keepalive option (spec: `init["keepalive"] !== undefined`
+        // then request.keepalive = Boolean(init.keepalive))
+        if (!fields.contains(.keepalive)) {
+            if (try value.get(globalThis, "keepalive")) |keepalive_value| {
+                if (!keepalive_value.isUndefined()) {
+                    req.flags.keepalive = keepalive_value.toBoolean();
+                    fields.insert(.keepalive);
+                }
+            }
+
+            if (globalThis.hasException()) return error.JSError;
+        }
+
+        // Extract integrity option (spec: `init["integrity"] !== undefined`
+        // then request.integrity = String(init.integrity))
+        if (!fields.contains(.integrity)) {
+            if (try value.get(globalThis, "integrity")) |integrity_value| {
+                if (!integrity_value.isUndefined()) {
+                    req.integrity.deref();
+                    req.integrity = try bun.String.fromJS(integrity_value, globalThis);
+                    fields.insert(.integrity);
+                }
+            }
+
+            if (globalThis.hasException()) return error.JSError;
+        }
+
+        // Extract referrer option (spec: `init["referrer"] !== undefined`
+        // then: "" → "no-referrer"; else parse as URL, failure throws TypeError)
+        if (!fields.contains(.referrer)) {
+            if (try value.get(globalThis, "referrer")) |referrer_value| {
+                if (!referrer_value.isUndefined()) {
+                    var referrer_str = try bun.String.fromJS(referrer_value, globalThis);
+                    if (referrer_str.isEmpty()) {
+                        referrer_str.deref();
+                        req.referrer.deref();
+                        req.referrer = bun.String.cloneUTF8(no_referrer_sentinel);
+                    } else {
+                        const parsed = bun.jsc.URL.hrefFromString(referrer_str);
+                        if (parsed.isEmpty()) {
+                            referrer_str.deref();
+                            parsed.deref();
+                            return globalThis.throwTypeError("Referrer is not a valid URL.", .{});
+                        }
+                        referrer_str.deref();
+                        req.referrer.deref();
+                        req.referrer = parsed;
+                    }
+                    fields.insert(.referrer);
+                }
+            }
+
+            if (globalThis.hasException()) return error.JSError;
         }
     }
 
@@ -1061,6 +1169,8 @@ pub fn cloneInto(
         .method = this.method,
         .flags = this.flags,
         .#headers = headers,
+        .integrity = this.integrity.dupeRef(),
+        .referrer = this.referrer.dupeRef(),
     };
 
     if (this.signal) |signal| {

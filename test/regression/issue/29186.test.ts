@@ -771,3 +771,47 @@ test.concurrent("self.close() in a beforeExit handler that also schedules a time
   // No timer fires — close was set in the same handler that scheduled it.
   expect(JSON.parse(stdout.trim())).toEqual([]);
 });
+
+test.concurrent("beforeExit handler scheduling a self-closing immediate runs exactly once", async () => {
+  // onBeforeExit runs the handler, then drives the event loop, then
+  // re-dispatches the handler if any new work was scheduled. A
+  //   process.on("beforeExit", () => { postMessage("bye"); setImmediate(() => self.close()); })
+  // previously fired the handler a SECOND time before shouldExitLoop()
+  // was checked: the inner while's close-check sits at the top of the
+  // body but the last-chance dispatch at VirtualMachine.zig:883 had
+  // no pre-dispatch guard. When the close-setting task also drops the
+  // last loop ref (setImmediate releases its keep-alive via
+  // runImmediateTask), the inner while exits via its condition, the
+  // second dispatch runs, and the parent receives "bye" twice.
+  using dir = tempDir("issue-29186-before-exit-immediate-close", {
+    "worker.mjs": `
+      process.on("beforeExit", () => {
+        self.postMessage("bye");
+        setImmediate(() => self.close());
+      });
+    `,
+    "main.mjs": `
+      const worker = new Worker(new URL("./worker.mjs", import.meta.url).href, { type: "module" });
+      const events = [];
+      const { promise, resolve } = Promise.withResolvers();
+      worker.onmessage = ({ data }) => { events.push(data); };
+      worker.addEventListener("close", () => resolve());
+      await promise;
+      console.log(JSON.stringify(events));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 10_000,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
+  // Exactly one "bye" — the handler must not re-dispatch after close.
+  expect(JSON.parse(stdout.trim())).toEqual(["bye"]);
+});

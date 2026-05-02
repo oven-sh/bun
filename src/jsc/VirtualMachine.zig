@@ -880,6 +880,15 @@ pub fn onBeforeExit(this: *VirtualMachine) void {
         }
 
         if (dispatch) {
+            // The inner while may have exited via its condition (last
+            // loop ref dropped) *after* a task set `requested_close` —
+            // e.g. a `beforeExit` handler that schedules a
+            // `setImmediate(() => self.close())`. Check before firing
+            // the last-chance `beforeExit` so the handler doesn't run
+            // a second time on a worker that has already closed
+            // (WHATWG "close a worker" step 1 discards queued tasks
+            // once the closing flag is set).
+            if (this.worker) |w| if (w.shouldExitLoop()) return;
             this.exit_handler.dispatchOnBeforeExit();
             dispatch = false;
 

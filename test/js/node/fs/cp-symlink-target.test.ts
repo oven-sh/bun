@@ -42,10 +42,7 @@ function check(base: string, origTarget: string, srcAbs: string, srcRel: string)
     ["rel_link", srcRel],
   ] as const) {
     const copiedLink = path.join(base, "to", which);
-    assert.ok(
-      fs.lstatSync(copiedLink).isSymbolicLink(),
-      `copied ${which} should be a symlink`,
-    );
+    assert.ok(fs.lstatSync(copiedLink).isSymbolicLink(), `copied ${which} should be a symlink`);
 
     // The copied link's target string must not be the path of the source
     // symlink. With the bug, readlink(copiedLink) returned srcLink.

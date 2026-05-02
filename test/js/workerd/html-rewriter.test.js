@@ -84,6 +84,21 @@ describe("HTMLRewriter", () => {
     }
   });
 
+  it("error thrown from document text handler during end() does not use-after-free", () => {
+    for (let i = 0; i < 100; i++) {
+      expect(() =>
+        new HTMLRewriter()
+          .onDocument({
+            text(chunk) {
+              if (chunk.lastInTextNode) throw new Error("fail in end");
+            },
+          })
+          .transform(new ArrayBuffer(64)),
+      ).toThrow();
+      Bun.gc(true);
+    }
+  });
+
   it("HTMLRewriter: async replacement", async () => {
     await gcTick();
     const res = new HTMLRewriter()

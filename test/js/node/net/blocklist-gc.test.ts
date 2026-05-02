@@ -58,7 +58,11 @@ test("BlockList survives GC after BroadcastChannel fan-out clone", async () => {
   });
 
   const [stdout, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
+  const cleanedStderr = stderr
+    .split("\n")
+    .filter(line => line && !line.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(cleanedStderr).toBe("");
   expect(stdout.trim()).toBe("ok");
   expect(exited).toBe(0);
 });

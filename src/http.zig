@@ -2064,7 +2064,13 @@ pub fn onData(
             this.handleOnDataHeaders(is_ssl, incoming_data, ctx, socket);
         },
         .body => {
-            this.setTimeout(socket, 5);
+            // Don't re-arm the idle timer while the reader has
+            // intentionally stalled: maybePauseReceive cleared it on
+            // the false→true transition, but uSockets' repeat-recv
+            // fast path can land more on_data calls in the same
+            // epoll tick after pauseStream(), and re-arming here
+            // would time out a reader that stalls >5 minutes.
+            if (!this.state.flags.receive_paused) this.setTimeout(socket, 5);
 
             const out = this.state.body_out_str.?;
             const before = out.list.items.len;
@@ -2101,7 +2107,7 @@ pub fn onData(
         },
 
         .body_chunk => {
-            this.setTimeout(socket, 5);
+            if (!this.state.flags.receive_paused) this.setTimeout(socket, 5);
 
             const out = this.state.body_out_str.?;
             const before = out.list.items.len;

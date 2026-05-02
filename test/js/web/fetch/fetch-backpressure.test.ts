@@ -436,10 +436,10 @@ describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
       // Pause/resume may or may not fire depending on relative
       // scheduling of the HTTP thread vs the JS reader; the invariant
       // is that every transition of `receive_paused` was matched so
-      // the body completed. `h1_socket_resumes` bumps at every
-      // false→true edge (consumeResponseBody, the isDone() branch,
-      // and the pre-release guard) so this holds regardless of
-      // which path cleared the last pause.
+      // the body completed. `h1_socket_resumes` bumps at every edge
+      // that clears `receive_paused` (consumeResponseBody, the
+      // isDone() branch, and the pre-release guard) so this holds
+      // regardless of which path cleared the last pause.
       expect(resumes).toBe(pauses);
       socket.destroy();
       proc.kill();
@@ -498,7 +498,7 @@ describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
         bunExe(),
         "-e",
         `
-          const buf = Buffer.alloc(4 * 1024 * 1024, 0x41);
+          const buf = Buffer.alloc(8 * 1024 * 1024, 0x41);
           using server = Bun.serve({
             port: 0,
             static: { "/big": new Response(buf) },

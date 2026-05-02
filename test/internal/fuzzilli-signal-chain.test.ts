@@ -19,10 +19,11 @@ const isFuzzilliBuild = typeof fuzzilli === "function";
 // Skip symbolization so ASAN writes its report and exits immediately instead
 // of shelling out to llvm-symbolizer for every frame (several seconds on the
 // fuzz binary). The presence of "AddressSanitizer: SEGV" is enough to prove
-// the handler chain reached ASAN.
+// the handler chain reached ASAN. allow_user_segv_handler keeps JSC from
+// disabling its own fault handling when it sees ASAN_OPTIONS is set.
 const fastCrashEnv = {
   ...bunEnv,
-  ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
+  ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allow_user_segv_handler=1", "symbolize=0"].filter(Boolean).join(":"),
 };
 
 test.skipIf(!isFuzzilliBuild)("fuzzilli crash signal handler chains to JSC/ASAN for SIGSEGV", async () => {
@@ -43,6 +44,29 @@ test.skipIf(!isFuzzilliBuild)("fuzzilli crash signal handler chains to JSC/ASAN 
   expect(stderr).toContain("AddressSanitizer: SEGV");
   // ASAN aborts after printing; a bare SIGSEGV would surface as signalCode
   // "SIGSEGV" with nothing useful on stderr.
+  expect(proc.signalCode).not.toBe("SIGSEGV");
+});
+
+test.skipIf(!isFuzzilliBuild)("fuzzilli crash signal handler survives Worker global creation", async () => {
+  // Bun__REPRL__registerFuzzilliFunctions runs for every GlobalObject (main,
+  // macros, Workers). Without a once-guard the Worker's call re-installs the
+  // handler, saving fuzzilliSignalHandler itself into fuzzilliOldActions and
+  // turning the next SIGSEGV into infinite self-recursion → bare TERMSIG 11.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      'const w = new Worker("data:text/javascript,postMessage(0)"); await new Promise(r => (w.onmessage = r)); w.terminate(); fuzzilli("FUZZILLI_CRASH", 5);',
+    ],
+    env: fastCrashEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain("FUZZILLI_CRASH: 5");
+  expect(stderr).toContain("AddressSanitizer: SEGV");
   expect(proc.signalCode).not.toBe("SIGSEGV");
 });
 

@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <mutex>
 #include <sanitizer/asan_interface.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -55,7 +56,10 @@ static void installFuzzilliSignalHandler(int sig)
     struct sigaction action;
     action.sa_sigaction = fuzzilliSignalHandler;
     sigfillset(&action.sa_mask);
-    action.sa_flags = SA_SIGINFO;
+    // SA_ONSTACK so stack-overflow faults are delivered on the sigaltstack
+    // ASAN/JSC already set up; otherwise the kernel can't push the frame and
+    // the process dies with a bare SIGSEGV before we reach the chain.
+    action.sa_flags = SA_SIGINFO | SA_ONSTACK;
     sigaction(sig, &action, &fuzzilliOldActions[sig]);
 }
 
@@ -288,10 +292,17 @@ void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject* globalObject)
     // Install signal handlers to ensure output is flushed before crashes.
     // Chain to the previous handler (JSC's jscSignalHandler → ASAN) so
     // VMTraps/WASM fault handling keeps working and ASAN reports are printed.
-    installFuzzilliSignalHandler(SIGABRT);
-    installFuzzilliSignalHandler(SIGSEGV);
-    installFuzzilliSignalHandler(SIGILL);
-    installFuzzilliSignalHandler(SIGFPE);
+    // Signal dispositions are process-wide; this function runs once per
+    // GlobalObject (main thread, macros, and every Worker), so guard with a
+    // once-flag — re-installing would save ourselves into fuzzilliOldActions
+    // and recurse on the next signal.
+    static std::once_flag installOnce;
+    std::call_once(installOnce, [] {
+        installFuzzilliSignalHandler(SIGABRT);
+        installFuzzilliSignalHandler(SIGSEGV);
+        installFuzzilliSignalHandler(SIGILL);
+        installFuzzilliSignalHandler(SIGFPE);
+    });
 
     globalObject->putDirectNativeFunction(
         vm,

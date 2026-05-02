@@ -507,14 +507,17 @@ pub const Route = struct {
             bun.debugAssert(this.is_response_pending == true);
             this.is_response_pending = false;
 
-            // Technically, this could be the final ref count, but we don't want to risk it
-            this.route.ref();
-            defer this.route.deref();
-
-            while (std.mem.indexOfScalar(*PendingResponse, this.route.pending_responses.items, this)) |index| {
+            // `this` holds a ref on `route` until deinit(), so it is safe to touch
+            // `this.route.pending_responses` here without an extra guard ref.
+            if (std.mem.indexOfScalar(*PendingResponse, this.route.pending_responses.items, this)) |index| {
                 _ = this.route.pending_responses.orderedRemove(index);
-                this.route.deref();
             }
+
+            // Release the route ref taken when this PendingResponse was queued
+            // and free the allocation. Without this, an aborted request would
+            // leak the PendingResponse: resumePendingResponses() only deinit()s
+            // entries still in the list, and we just removed ourselves.
+            this.deinit();
         }
     };
 };

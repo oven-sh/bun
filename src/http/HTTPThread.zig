@@ -717,20 +717,26 @@ pub fn scheduleResponseBodyDrain(this: *@This(), async_http_id: u32) void {
 pub fn scheduleResponseBodyConsumed(this: *@This(), async_http_id: u32, bytes: usize) void {
     const n: u32 = @truncate(@min(bytes, @as(usize, std.math.maxInt(u32))));
     if (n == 0) return;
-    {
+    const appended = brk: {
         this.queued_response_body_consumed_lock.lock();
         defer this.queued_response_body_consumed_lock.unlock();
         const items = this.queued_response_body_consumed.items;
         if (items.len > 0 and items[items.len - 1].async_http_id == async_http_id) {
             items[items.len - 1].bytes +|= n;
-        } else {
-            this.queued_response_body_consumed.append(bun.default_allocator, .{
-                .async_http_id = async_http_id,
-                .bytes = n,
-            }) catch |err| bun.handleOom(err);
+            break :brk false;
         }
-    }
-    if (this.has_awoken.load(.monotonic))
+        this.queued_response_body_consumed.append(bun.default_allocator, .{
+            .async_http_id = async_http_id,
+            .bytes = n,
+        }) catch |err| bun.handleOom(err);
+        break :brk true;
+    };
+    // Only wake on the append path: if we coalesced into an existing
+    // entry, the HTTP thread was already woken for that entry's
+    // original append and will see the updated `bytes` when it swaps
+    // the queue under the same lock. A tight `read()` loop over a
+    // multi-GiB body otherwise issues one eventfd write per pull.
+    if (appended and this.has_awoken.load(.monotonic))
         this.loop.loop.wakeup();
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "path";
 
@@ -612,6 +612,79 @@ describe("Bun.Archive", () => {
         // Throwing is also acceptable for empty/invalid data
       }
     });
+
+    test(
+      "files() does not leak entries when readData fails mid-stream",
+      async () => {
+        // Regression test: a tarball with two valid 64KB entries followed by a third
+        // entry whose header advertises 64KB but whose data is truncated. libarchive
+        // successfully reads the first two entries (allocating path + data for each),
+        // then readData() fails on the third. The already-collected entries must be
+        // freed on that error path; previously they were leaked on every call.
+        //
+        // Each leaked iteration costs ~128KB (2 entries × 64KB data), so 1500
+        // iterations would leak ~190MB. A 64MB threshold comfortably separates
+        // "fixed" (stable RSS) from "leaking".
+        const code = /* ts */ `
+          function ustarHeader(name, size) {
+            const h = Buffer.alloc(512);
+            h.write(name, 0, 100, "utf8");
+            h.write("0000644\\0", 100);
+            h.write("0000000\\0", 108);
+            h.write("0000000\\0", 116);
+            h.write(size.toString(8).padStart(11, "0") + "\\0", 124);
+            h.write("00000000000\\0", 136);
+            h.write("        ", 148);
+            h.write("0", 156);
+            h.write("ustar\\0", 257);
+            h.write("00", 263);
+            let sum = 0;
+            for (let i = 0; i < 512; i++) sum += h[i];
+            h.write(sum.toString(8).padStart(6, "0") + "\\0 ", 148);
+            return h;
+          }
+          function ustarEntry(name, data) {
+            const pad = Buffer.alloc((512 - (data.length % 512)) % 512);
+            return Buffer.concat([ustarHeader(name, data.length), data, pad]);
+          }
+          const payload = Buffer.alloc(64 * 1024, "A");
+          const corrupt = new Uint8Array(Buffer.concat([
+            ustarEntry("file1.txt", payload),
+            ustarEntry("file2.txt", payload),
+            ustarHeader("file3.txt", 64 * 1024),
+            Buffer.alloc(100),
+          ]));
+          const archive = new Bun.Archive(corrupt);
+
+          async function once() {
+            let rejected = false;
+            try { await archive.files(); } catch { rejected = true; }
+            if (!rejected) throw new Error("expected archive.files() to reject for truncated entry");
+          }
+
+          for (let i = 0; i < 100; i++) await once();
+          Bun.gc(true);
+          const before = process.memoryUsage.rss();
+          for (let i = 0; i < 1500; i++) await once();
+          Bun.gc(true);
+          const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+          console.log("RSS growth: " + growthMB.toFixed(1) + " MB");
+          if (growthMB > 64) throw new Error("leaked " + growthMB.toFixed(1) + " MB");
+        `;
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "--smol", "-e", code],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toContain("RSS growth:");
+        expect(exitCode).toBe(0);
+      },
+      60_000,
+    );
   });
 
   describe("path safety", () => {

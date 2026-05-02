@@ -1364,7 +1364,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             const server = this.server orelse {
                 // server detached?
                 this.renderMetadata();
-                resp.writeHeaderInt("content-length", 0);
+                if (!resp.state().hasWrittenContentLengthHeader()) {
+                    resp.writeHeaderInt("content-length", 0);
+                }
                 this.endWithoutBody(this.shouldCloseConnection());
                 return;
             };
@@ -1386,7 +1388,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     this.renderMetadata();
 
                     const len = std.fmt.parseInt(usize, content_length_str.slice(), 10) catch 0;
-                    resp.writeHeaderInt("content-length", len);
+                    if (!resp.state().hasWrittenContentLengthHeader()) {
+                        resp.writeHeaderInt("content-length", len);
+                    }
                     this.endWithoutBody(this.shouldCloseConnection());
                     return;
                 }
@@ -2193,6 +2197,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             defer if (content_type_needs_free) content_type.deinit(this.allocator);
             var has_content_disposition = false;
             var has_content_range = false;
+            // Save user-provided Content-Length before writeHeaders strips it.
+            // This is needed for ReadableStream bodies where the user knows the
+            // total size upfront (e.g. proxy responses). For known-size bodies
+            // (blob/string), tryEnd() will set Content-Length from the actual size.
+            var user_content_length: ?usize = null;
             if (response.swapInitHeaders()) |headers_| {
                 defer headers_.deref();
                 has_content_disposition = headers_.fastHas(.ContentDisposition);
@@ -2203,6 +2212,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 needs_content_range = needs_content_range and (this.sendfile.total > 0 or has_content_range);
                 if (needs_content_range) {
                     status = 206;
+                }
+
+                if (this.blob.isDetached() and !headers_.fastHas(.TransferEncoding)) {
+                    if (headers_.fastGet(.ContentLength)) |cl| {
+                        const cl_str = cl.toSlice(this.allocator);
+                        defer cl_str.deinit();
+                        user_content_length = std.fmt.parseInt(usize, cl_str.slice(), 10) catch null;
+                    }
                 }
 
                 this.doWriteStatus(status);
@@ -2256,6 +2273,12 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 resp.writeHeaderInt("content-length", size);
                 resp.markWroteContentLengthHeader();
                 this.flags.needs_content_length = false;
+            } else if (user_content_length) |cl| {
+                // For ReadableStream bodies where the user explicitly set
+                // Content-Length, write it and tell uWS to use content-length
+                // framing instead of chunked transfer encoding.
+                resp.writeHeaderInt("content-length", cl);
+                resp.markWroteContentLengthHeader();
             }
 
             if (needs_content_range and !has_content_range) {

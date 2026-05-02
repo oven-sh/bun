@@ -779,7 +779,7 @@ pub fn HTTPServerWritable(comptime ssl: bool, comptime http3: bool) type {
                 return false;
             };
 
-            if (this.requested_end and !res.state().isHttpWriteCalled()) {
+            if (this.requested_end and !res.state().isHttpWriteCalled() and !res.state().hasWrittenContentLengthHeader()) {
                 this.handleFirstWriteIfNecessary();
                 const success = res.tryEnd(buf, this.end_len, false);
                 if (success) {

@@ -235,6 +235,12 @@ export const structuredCloneAdvanced: (
 
 export const lsanDoLeakCheck = $newCppFunction("InternalForTesting.cpp", "jsFunction_lsanDoLeakCheck", 1);
 
+export const BunString_toThreadSafeRefCountDelta: () => number = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_BunString_toThreadSafeRefCountDelta",
+  0,
+);
+
 export const getEventLoopStats: () => { activeTasks: number; concurrentRef: number; numPolls: number } =
   $newZigFunction("event_loop.zig", "getActiveTasks", 0);
 

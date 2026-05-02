@@ -715,11 +715,23 @@ pub const PipelineTask = struct {
         if (this.deliver == .file) {
             // Still on the work pool: write straight from the codec's buffer,
             // then free it here so it never hits JS. `writeFile` opens with
-            // CREAT|TRUNC (clobber semantics, like fs.writeFile).
+            // CREAT|TRUNC (clobber semantics, like fs.writeFile). The path
+            // arrived as UTF-8; on Windows convert to NT-path UTF-16 here on
+            // the worker rather than carrying a wide string from `doWrite`.
             defer out.deinit();
-            switch (bun.sys.File.writeFile(bun.FD.cwd(), this.deliver.file, out.bytes)) {
+            const path = this.deliver.file;
+            // Buffer must outlive the writeFile call (os_path is a view into
+            // it on Windows), so the put is deferred at THIS scope, not the
+            // conversion block.
+            const wbuf = if (comptime bun.Environment.isWindows) bun.os_path_buffer_pool.get();
+            defer if (comptime bun.Environment.isWindows) bun.os_path_buffer_pool.put(wbuf);
+            const os_path: bun.OSPathSliceZ = if (comptime bun.Environment.isWindows)
+                bun.strings.toNTPath(wbuf, path)
+            else
+                path;
+            switch (bun.sys.File.writeFile(bun.FD.cwd(), os_path, out.bytes)) {
                 .result => this.result = .{ .written = .{ .len = out.bytes.len, .w = decoded.width, .h = decoded.height } },
-                .err => |e| this.result = .{ .io_err = e },
+                .err => |e| this.result = .{ .io_err = e.withPath(path) },
             }
             return;
         }

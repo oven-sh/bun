@@ -2198,6 +2198,26 @@ static napi_value test_issue_22259(const Napi::CallbackInfo &info) {
 
   puts("napi_create_error functions succeeded with VM-level exception pending");
 
+  // Loop test: call napi_create_error multiple times with VM exception still pending.
+  // This ensures the function is safe to call repeatedly without accumulating issues
+  // or corrupting the pending exception state.
+  for (int i = 0; i < 5; i++) {
+    napi_value loop_error_val;
+    status = napi_create_error(env, error_code, error_msg, &loop_error_val);
+    if (status != napi_ok) {
+      printf("napi_create_error loop iteration %d failed: %d\n", i, status);
+      return nullptr;
+    }
+    napi_valuetype loop_type;
+    status = napi_typeof(env, loop_error_val, &loop_type);
+    if (status != napi_ok || loop_type != napi_object) {
+      printf("napi_create_error loop iteration %d: unexpected type %d (status %d)\n", i, loop_type, status);
+      return nullptr;
+    }
+    napi_destroy(env, loop_error_val);
+  }
+  puts("napi_create_error loop test passed (5 iterations with VM exception pending)");
+
   // Clear the pending exception so we can validate the created objects
   napi_value pending_exception;
   status = napi_get_and_clear_last_exception(env, &pending_exception);

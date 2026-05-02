@@ -672,6 +672,7 @@ pub fn onResultRow(this: *@This(), request: *JSMySQLQuery, statement: *MySQLStat
         .binary = !request.isSimple(),
         .raw = result_mode == .raw,
         .bigint = request.isBigintSupported(),
+        .utc_date = request.isUtcDate(),
     };
     var structure: JSValue = .js_undefined;
     var cached_structure: ?CachedStructure = null;

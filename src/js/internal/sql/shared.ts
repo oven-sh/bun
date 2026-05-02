@@ -602,6 +602,7 @@ function parseOptions(
   let onclose: ((error?: Error | undefined) => void) | undefined;
   let max: number | null | undefined;
   let bigint: boolean | undefined;
+  let utcDate: boolean | undefined;
   let path: string;
   let prepare: boolean = true;
 
@@ -771,6 +772,7 @@ function parseOptions(
   maxLifetime ??= options.maxLifetime;
   maxLifetime ??= options.max_lifetime;
   bigint ??= options.bigint;
+  utcDate ??= options.utcDate;
 
   // we need to explicitly set prepare to false if it is false
   if (options.prepare === false) {
@@ -866,6 +868,7 @@ function parseOptions(
     tls,
     prepare,
     bigint,
+    utcDate,
     sslMode,
     query,
     max: max || 10,

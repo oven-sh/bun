@@ -9,7 +9,8 @@ const MySQLQuery = @This();
     simple: bool = false,
     pipelined: bool = false,
     result_mode: SQLQueryResultMode = .objects,
-    _padding: u3 = 0,
+    utc_date: bool = false,
+    _padding: u2 = 0,
 },
 
 fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject: *JSGlobalObject, binding_value: JSValue, columns_value: JSValue) AnyMySQLError.Error!void {
@@ -182,7 +183,7 @@ fn runPreparedQuery(
     }
 }
 
-pub fn init(query: bun.String, bigint: bool, simple: bool) @This() {
+pub fn init(query: bun.String, bigint: bool, simple: bool, utc_date: bool) @This() {
     query.ref();
     return .{
         .#query = query,
@@ -190,6 +191,7 @@ pub fn init(query: bun.String, bigint: bool, simple: bool) @This() {
         .#flags = .{
             .bigint = bigint,
             .simple = simple,
+            .utc_date = utc_date,
         },
     };
 }
@@ -260,6 +262,9 @@ pub inline fn isSimple(this: *const @This()) bool {
 }
 pub inline fn isBigintSupported(this: *const @This()) bool {
     return this.#flags.bigint;
+}
+pub inline fn isUtcDate(this: *const @This()) bool {
+    return this.#flags.utc_date;
 }
 pub inline fn getResultMode(this: *const @This()) SQLQueryResultMode {
     return this.#flags.result_mode;

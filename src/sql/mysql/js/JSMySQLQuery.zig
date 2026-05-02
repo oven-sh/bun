@@ -56,9 +56,11 @@ pub fn createInstance(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
     const columns: JSValue = args.nextEat() orelse .js_undefined;
     const js_bigint: JSValue = args.nextEat() orelse .false;
     const js_simple: JSValue = args.nextEat() orelse .false;
+    const js_utc_date: JSValue = args.nextEat() orelse .false;
 
     const bigint = js_bigint.isBoolean() and js_bigint.asBoolean();
     const simple = js_simple.isBoolean() and js_simple.asBoolean();
+    const utc_date = js_utc_date.isBoolean() and js_utc_date.asBoolean();
     if (simple) {
         if (try values.getLength(globalThis) > 0) {
             return globalThis.throwInvalidArguments("simple query cannot have parameters", .{});
@@ -76,6 +78,7 @@ pub fn createInstance(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
             try query.toBunString(globalThis),
             bigint,
             simple,
+            utc_date,
         ),
         .#globalObject = globalThis,
         .#vm = globalThis.bunVM(),
@@ -308,6 +311,9 @@ pub inline fn isSimple(this: *@This()) bool {
 }
 pub inline fn isBigintSupported(this: *@This()) bool {
     return this.#query.isBigintSupported();
+}
+pub inline fn isUtcDate(this: *@This()) bool {
+    return this.#query.isUtcDate();
 }
 pub inline fn getResultMode(this: *@This()) SQLQueryResultMode {
     return this.#query.getResultMode();

@@ -6,6 +6,7 @@ pub const Row = struct {
     binary: bool = false,
     raw: bool = false,
     bigint: bool = false,
+    utc_date: bool = false,
     globalObject: *jsc.JSGlobalObject,
 
     pub fn toJS(this: *Row, globalObject: *jsc.JSGlobalObject, array: JSValue, structure: JSValue, flags: SQLDataCell.Flags, result_mode: SQLQueryResultMode, cached_structure: ?CachedStructure) !JSValue {
@@ -120,9 +121,29 @@ pub const Row = struct {
                 cell.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
             },
             .MYSQL_TYPE_DATE, .MYSQL_TYPE_DATETIME, .MYSQL_TYPE_TIMESTAMP => {
-                var str = bun.String.init(value.slice());
-                defer str.deref();
+                // MySQL text protocol returns naive "YYYY-MM-DD[ HH:MM:SS[.ffffff]]"
+                // values with no timezone designator.
+                //
+                // `utcDate: true` — parse the components ourselves and
+                // interpret them as UTC, matching the binary-protocol path.
+                // Using the generic JS date parser would treat them as
+                // local time and shift the result by the client's UTC
+                // offset (issue #29208).
+                //
+                // `utcDate: false` (default) — keep Bun's historical
+                // behaviour and feed the string to the JS date parser,
+                // which interprets it as local time.
+                const slice = value.slice();
                 const date = brk: {
+                    if (this.utc_date) {
+                        const dt = DateTime.fromText(slice) catch break :brk std.math.nan(f64);
+                        break :brk dt.toJSTimestamp(this.globalObject, true) catch |err| {
+                            _ = this.globalObject.takeException(err);
+                            break :brk std.math.nan(f64);
+                        };
+                    }
+                    var str = bun.String.init(slice);
+                    defer str.deref();
                     break :brk str.parseDate(this.globalObject) catch |err| {
                         _ = this.globalObject.takeException(err);
                         break :brk std.math.nan(f64);
@@ -234,7 +255,7 @@ pub const Row = struct {
             }
 
             const column = this.columns[i];
-            value.* = try decodeBinaryValue(this.globalObject, column.column_type, column.column_length, this.raw, this.bigint, column.flags.UNSIGNED, column.flags.BINARY, column.character_set, Context, reader);
+            value.* = try decodeBinaryValue(this.globalObject, column.column_type, column.column_length, this.raw, this.bigint, this.utc_date, column.flags.UNSIGNED, column.flags.BINARY, column.character_set, Context, reader);
             value.index = switch (column.name_or_index) {
                 // The indexed columns can be out of order.
                 .index => |idx| idx,
@@ -265,6 +286,7 @@ const Data = @import("../../shared/Data.zig").Data;
 const SQLDataCell = @import("../../shared/SQLDataCell.zig").SQLDataCell;
 const SQLQueryResultMode = @import("../../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
 const decodeLengthInt = @import("./EncodeInt.zig").decodeLengthInt;
+const DateTime = @import("../MySQLTypes.zig").Value.DateTime;
 
 const DecodeBinaryValue = @import("./DecodeBinaryValue.zig");
 const decodeBinaryValue = DecodeBinaryValue.decodeBinaryValue;

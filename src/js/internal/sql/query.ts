@@ -335,6 +335,7 @@ const enum SQLQueryFlags {
   bigint = 1 << 2,
   simple = 1 << 3,
   notTagged = 1 << 4,
+  utcDate = 1 << 5,
 }
 
 const enum SQLQueryStatus {

@@ -132,19 +132,73 @@ function textResultSet(startSeq: number, nameValue: string, jsonValue: string): 
   return Buffer.concat(packets);
 }
 
+// COM_STMT_PREPARE response: OK header + 0 params + 2 result columns.
+function stmtPrepareOK(startSeq: number, statementId: number): Buffer {
+  const packets: Buffer[] = [];
+  let seq = startSeq;
+  // StmtPrepareOK: 0x00, stmt_id u32, num_columns u16, num_params u16,
+  // reserved u8 = 0x00, warning_count u16.
+  packets.push(
+    packet(
+      seq++,
+      Buffer.concat([
+        Buffer.from([0x00]),
+        u32le(statementId),
+        u16le(2), // num_columns
+        u16le(0), // num_params
+        Buffer.from([0x00]), // reserved
+        u16le(0), // warning_count
+      ]),
+    ),
+  );
+  // With num_params = 0, no param definitions + EOF follow. Just the column
+  // definitions + (with CLIENT_DEPRECATE_EOF) no trailing EOF.
+  packets.push(packet(seq++, columnDefinition("name", MYSQL_TYPE_VAR_STRING)));
+  packets.push(packet(seq++, columnDefinition("post", MYSQL_TYPE_JSON)));
+  return Buffer.concat(packets);
+}
+
+// Binary-protocol result-set for a single row with two non-null columns.
+function binaryResultSet(startSeq: number, nameValue: string, jsonValue: string): Buffer {
+  const packets: Buffer[] = [];
+  let seq = startSeq;
+
+  // Column count
+  packets.push(packet(seq++, Buffer.from([0x02])));
+  packets.push(packet(seq++, columnDefinition("name", MYSQL_TYPE_VAR_STRING)));
+  packets.push(packet(seq++, columnDefinition("post", MYSQL_TYPE_JSON)));
+  // Binary row: header 0x00, NULL bitmap, then each non-null value.
+  // Bitmap is ceil((n + 7 + 2) / 8) bytes with the first 2 bits reserved;
+  // 2 non-null columns → single 0x00 byte.
+  packets.push(
+    packet(
+      seq++,
+      Buffer.concat([
+        Buffer.from([0x00]), // packet header
+        Buffer.from([0x00]), // null bitmap: nothing null
+        lenencStr(nameValue),
+        lenencStr(jsonValue),
+      ]),
+    ),
+  );
+  // OK packet closing (CLIENT_DEPRECATE_EOF, header 0xfe).
+  packets.push(packet(seq++, Buffer.from([0xfe, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00])));
+  return Buffer.concat(packets);
+}
+
 // --- Test ------------------------------------------------------------------
 
-test(".raw() strips length-prefix bytes from length-encoded columns (#30039)", async () => {
-  // 866-byte JSON payload — encodes with the 3-byte length prefix
-  // (0xfc NN NN). The 8-byte VARCHAR exercises the 1-byte form. Both were
-  // observed as corrupted in the original issue report.
-  const jsonPayload = {
-    type: "doc",
-    content: Array.from({ length: 20 }, () => ({ type: "paragraph", text: "hello world" })),
-  };
-  const jsonText = JSON.stringify(jsonPayload);
-  const shortText = "testname";
+// 866-byte JSON payload — encodes with the 3-byte length prefix (0xfc NN NN).
+// The 8-byte VARCHAR exercises the 1-byte form. Both shapes appeared in the
+// original issue report.
+const jsonPayload = {
+  type: "doc",
+  content: Array.from({ length: 20 }, () => ({ type: "paragraph", text: "hello world" })),
+};
+const jsonText = JSON.stringify(jsonPayload);
+const shortText = "testname";
 
+function startMockServer() {
   const server = net.createServer(socket => {
     let buffered = Buffer.alloc(0);
     let authed = false;
@@ -169,6 +223,10 @@ test(".raw() strips length-prefix bytes from length-encoded columns (#30039)", a
         const cmd = payload[0];
         if (cmd === 0x03 /* COM_QUERY */) {
           socket.write(textResultSet(seq + 1, shortText, jsonText));
+        } else if (cmd === 0x16 /* COM_STMT_PREPARE */) {
+          socket.write(stmtPrepareOK(seq + 1, 1));
+        } else if (cmd === 0x17 /* COM_STMT_EXECUTE */) {
+          socket.write(binaryResultSet(seq + 1, shortText, jsonText));
         } else {
           // COM_QUIT / anything else — close.
           socket.end();
@@ -176,32 +234,55 @@ test(".raw() strips length-prefix bytes from length-encoded columns (#30039)", a
       }
     });
   });
-
   server.listen(0, "127.0.0.1");
+  return server;
+}
+
+function assertRawRow(name: unknown, post: unknown) {
+  expect(name).toBeInstanceOf(Uint8Array);
+  expect(post).toBeInstanceOf(Uint8Array);
+  // Defining assertion: first byte is the payload's first byte
+  // ('t' = 0x74 for the VARCHAR, '{' = 0x7b for the JSON), NOT the MySQL
+  // length-encoded-integer prefix (0x08 / 0xfc respectively).
+  expect((name as Uint8Array)[0]).toBe(0x74); // 't'
+  expect((post as Uint8Array)[0]).toBe(0x7b); // '{'
+  expect(Buffer.from(name as Uint8Array).toString("utf-8")).toBe(shortText);
+  expect(Buffer.from(post as Uint8Array).toString("utf-8")).toBe(jsonText);
+  expect((name as Uint8Array).length).toBe(shortText.length);
+  expect((post as Uint8Array).length).toBe(jsonText.length);
+}
+
+test(".raw() strips length-prefix bytes (#30039) — text protocol", async () => {
+  const server = startMockServer();
   await once(server, "listening");
   const { port } = server.address() as net.AddressInfo;
-
   try {
     await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
-
-    // `.simple().raw()` uses the text protocol — exercises the
-    // ResultSet.decodeText raw branch that used to call rawEncodeLenData
-    // and now calls encodeLenString.
+    // `.simple().raw()` exercises the ResultSet.decodeText raw branch
+    // (ResultSet.zig:177) that used to call rawEncodeLenData.
     const rows = (await sql`SELECT name, post FROM t`.simple().raw()) as unknown as [Uint8Array, Uint8Array][];
     expect(rows).toHaveLength(1);
     const [name, post] = rows[0];
+    assertRawRow(name, post);
+  } finally {
+    await new Promise<void>(r => server.close(() => r()));
+  }
+});
 
-    // Defining assertion: first byte is the payload's first byte
-    // ('t' = 0x74 for the VARCHAR, '{' = 0x7b for the JSON), NOT the MySQL
-    // length-encoded-integer prefix (0x08 / 0xfc respectively).
-    expect(name).toBeInstanceOf(Uint8Array);
-    expect(post).toBeInstanceOf(Uint8Array);
-    expect(name[0]).toBe(0x74); // 't'
-    expect(post[0]).toBe(0x7b); // '{'
-    expect(Buffer.from(name).toString("utf-8")).toBe(shortText);
-    expect(Buffer.from(post).toString("utf-8")).toBe(jsonText);
-    expect(name.length).toBe(shortText.length);
-    expect(post.length).toBe(jsonText.length);
+test(".raw() strips length-prefix bytes (#30039) — binary protocol", async () => {
+  const server = startMockServer();
+  await once(server, "listening");
+  const { port } = server.address() as net.AddressInfo;
+  try {
+    await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
+    // Without `.simple()`, the client uses a prepared statement and the
+    // binary-protocol row decoder — exercising the DecodeBinaryValue raw
+    // branches (DecodeBinaryValue.zig:153, :172) that used to call
+    // rawEncodeLenData for VAR_STRING and JSON.
+    const rows = (await sql`SELECT name, post FROM t`.raw()) as unknown as [Uint8Array, Uint8Array][];
+    expect(rows).toHaveLength(1);
+    const [name, post] = rows[0];
+    assertRawRow(name, post);
   } finally {
     await new Promise<void>(r => server.close(() => r()));
   }

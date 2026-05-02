@@ -22,7 +22,7 @@
 //   cd bench/image && bun install
 //   bun-release ../../test/js/bun/image/image-vs-sharp.test.ts --regenerate
 
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import zlib from "node:zlib";

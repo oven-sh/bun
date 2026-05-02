@@ -222,20 +222,37 @@ pub fn onStart(this: *FileReader) streams.Start {
     if (was_lazy) {
         _ = this.parent().incrementCount();
         this.waiting_for_onReaderDone = true;
-        if (this.start_offset) |offset| {
-            switch (this.reader.startFileOffset(this.fd, pollable, offset)) {
-                .result => {},
-                .err => |e| {
-                    return .{ .err = e };
-                },
+
+        const start_result: bun.sys.Maybe(void) = brk: {
+            if (TestingAPIs.fail_next_reader_start) {
+                // Test-only: simulate the Windows `Source.open` failure path
+                // (PosixBufferedReader.start() can never return `.err`).
+                TestingAPIs.fail_next_reader_start = false;
+                break :brk .{ .err = .fromCode(.BADF, .open) };
             }
-        } else {
-            switch (this.reader.start(this.fd, pollable)) {
-                .result => {},
-                .err => |e| {
-                    return .{ .err = e };
-                },
+            if (this.start_offset) |offset| {
+                break :brk this.reader.startFileOffset(this.fd, pollable, offset);
             }
+            break :brk this.reader.start(this.fd, pollable);
+        };
+
+        switch (start_result) {
+            .result => {},
+            .err => |e| {
+                // reader.start() failed before registering any I/O, so
+                // onReaderDone will never fire. Undo the incrementCount()
+                // and waiting_for_onReaderDone above so finalize() can
+                // bring the ref_count to 0, and close the fd we opened in
+                // openFileBlob() if the reader didn't take ownership of it
+                // (on Windows, Source.open() can fail before wrapping the fd).
+                this.waiting_for_onReaderDone = false;
+                _ = this.parent().decrementCount();
+                if (this.fd != bun.invalid_fd and this.reader.getFd() != this.fd) {
+                    this.fd.close();
+                }
+                this.fd = bun.invalid_fd;
+                return .{ .err = e };
+            },
         }
     } else if (comptime Environment.isPosix) {
         if (this.reader.flags.pollable and !this.reader.isDone()) {
@@ -655,6 +672,21 @@ pub fn memoryCost(this: *const FileReader) usize {
     // ReadableStreamSource covers @sizeOf(FileReader)
     return this.reader.memoryCost() + this.buffered.capacity;
 }
+
+pub const TestingAPIs = struct {
+    /// One-shot flag: when true, the next `onStart()` in the `was_lazy`
+    /// branch returns an error as if `reader.start()` failed, without
+    /// actually calling it. This lets tests exercise the start-failure
+    /// cleanup path on POSIX, where `PosixBufferedReader.start()` never
+    /// returns `.err` — the real failure is Windows-only, when libuv's
+    /// `Source.open()` rejects the fd (e.g. `uv_pipe_open` failure).
+    var fail_next_reader_start: bool = false;
+
+    pub fn failNextReaderStart(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        fail_next_reader_start = true;
+        return .js_undefined;
+    }
+};
 
 pub const Source = ReadableStream.NewSource(
     @This(),

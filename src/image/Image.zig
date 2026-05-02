@@ -655,13 +655,20 @@ pub fn encodeForBody(this: *Image, global: *jsc.JSGlobalObject, this_value: jsc.
     // BunFiles would block or need network; refuse with a clear message until
     // the body path is made `.Locked`.
     if (this.source == .blob) {
+        const refuse = "Image: fd/S3-backed Bun.file as a Response body — pass `await file.bytes()` or a path string";
         const blob_js = this.source.blob.get() orelse return global.throw("Image: Blob source was collected", .{});
-        const blob = blob_js.as(jsc.WebCore.Blob).?;
-        if (blob.store) |store| if (store.data == .file and store.data.file.pathlike == .path) {
-            const p = try bun.default_allocator.dupeZ(u8, store.data.file.pathlike.path.slice());
-            this.source.deinit();
-            this.source = .{ .path = p };
-        } else return global.throw("Image: fd/S3-backed Bun.file as a Response body — pass `await file.bytes()` or a path string", .{});
+        const blob = blob_js.as(jsc.WebCore.Blob) orelse return global.throw(refuse, .{});
+        // Braced so the `else` can't dangle onto the inner `if` — a null
+        // store would otherwise fall through to `pinForTask`'s `.blob =>
+        // unreachable`. (The Strong-held wrapper makes that nominally
+        // unreachable, but this path should throw, not abort, when it isn't.)
+        if (blob.store) |store| {
+            if (store.data == .file and store.data.file.pathlike == .path) {
+                const p = try bun.default_allocator.dupeZ(u8, store.data.file.pathlike.path.slice());
+                this.source.deinit();
+                this.source = .{ .path = p };
+            } else return global.throw(refuse, .{});
+        } else return global.throw(refuse, .{});
     }
     const input = this.pinForTask(this_value, global) catch
         return global.throw("Image: source ArrayBuffer was detached", .{});

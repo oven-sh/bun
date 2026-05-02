@@ -1,6 +1,7 @@
 /**
  * Automatically generates tasks from package.json scripts.
  */
+import * as path from "node:path";
 import * as vscode from "vscode";
 import { debugCommand } from "../debug";
 import { BunTask } from "./tasks";
@@ -91,19 +92,20 @@ function registerCodeLensProvider(context: vscode.ExtensionContext) {
         provideCodeLenses(document: vscode.TextDocument) {
           const { range } = extractScriptsFromPackageJson(document);
 
+          const documentUri = document.uri.toString();
           const codeLenses: vscode.CodeLens[] = [];
           codeLenses.push(
             new vscode.CodeLens(range, {
               title: "$(breakpoints-view-icon) Bun: Debug",
               tooltip: "Debug a script using bun",
               command: "extension.bun.codelens.run",
-              arguments: [{ type: "debug" }],
+              arguments: [{ type: "debug", documentUri }],
             }),
             new vscode.CodeLens(range, {
               title: "$(debug-start) Bun: Run",
               tooltip: "Run a script using bun",
               command: "extension.bun.codelens.run",
-              arguments: [{ type: "run" }],
+              arguments: [{ type: "run", documentUri }],
             }),
           );
           return codeLenses;
@@ -114,30 +116,52 @@ function registerCodeLensProvider(context: vscode.ExtensionContext) {
       },
     ),
     // Register the commands that are executed when clicking the CodeLens buttons
-    vscode.commands.registerCommand("extension.bun.codelens.run", async ({ type }: { type: "debug" | "run" }) => {
-      const tasks = (await vscode.tasks.fetchTasks({ type: "bun" })) as BunTask[];
-      if (tasks.length === 0) return;
+    vscode.commands.registerCommand(
+      "extension.bun.codelens.run",
+      async ({ type, documentUri }: { type: "debug" | "run"; documentUri?: string }) => {
+        let scripts: Record<string, string> | undefined;
+        let cwd: string | undefined;
 
-      const pick = await vscode.window.showQuickPick(
-        tasks
-          .filter(task => task.detail.endsWith("package.json"))
-          .map(task => ({
-            label: task.name,
-            detail: task.detail,
+        if (documentUri) {
+          try {
+            const uri = vscode.Uri.parse(documentUri);
+            cwd = path.dirname(uri.fsPath);
+            const contents = await vscode.workspace.fs.readFile(uri);
+            scripts = JSON.parse(contents.toString()).scripts;
+          } catch {
+            // fall through to task system
+          }
+        }
+
+        if (!scripts) {
+          const tasks = (await vscode.tasks.fetchTasks({ type: "bun" })) as BunTask[];
+          if (tasks.length === 0) return;
+          scripts = Object.fromEntries(
+            tasks
+              .filter(task => task.detail?.endsWith("package.json"))
+              .map(task => [task.name, task.definition.script]),
+          );
+        }
+
+        const entries = Object.entries(scripts);
+        if (entries.length === 0) return;
+
+        const pick = await vscode.window.showQuickPick(
+          entries.map(([name, script]) => ({
+            label: name,
+            detail: script,
           })),
-      );
-      if (!pick) return;
+        );
+        if (!pick) return;
 
-      const task = tasks.find(task => task.name === pick.label);
-      if (!task) return;
-
-      const command = type === "debug" ? "extension.bun.codelens.debug.task" : "extension.bun.codelens.run.task";
-
-      vscode.commands.executeCommand(command, {
-        script: task.definition.script,
-        name: task.name,
-      });
-    }),
+        const command = type === "debug" ? "extension.bun.codelens.debug.task" : "extension.bun.codelens.run.task";
+        vscode.commands.executeCommand(command, {
+          script: pick.detail,
+          name: pick.label,
+          cwd,
+        });
+      },
+    ),
   );
 }
 
@@ -148,6 +172,7 @@ function getActiveTerminal(name: string) {
 interface CommandArgs {
   script: string;
   name: string;
+  cwd?: string;
 }
 
 /**
@@ -159,12 +184,13 @@ function registerHoverProvider(context: vscode.ExtensionContext) {
     vscode.languages.registerHoverProvider("json", {
       provideHover(document, position) {
         const { scripts } = extractScriptsFromPackageJson(document);
+        const cwd = path.dirname(document.uri.fsPath);
 
         return {
           contents: scripts.map(script => {
             if (!script.range.contains(position)) return null;
 
-            const command = encodeURI(JSON.stringify({ script: script.command, name: script.name }));
+            const command = encodeURI(JSON.stringify({ script: script.command, name: script.name, cwd }));
 
             const markdownString = new vscode.MarkdownString(
               `[Debug](command:extension.bun.codelens.debug.task?${command}) | [Run](command:extension.bun.codelens.run.task?${command})`,
@@ -176,13 +202,13 @@ function registerHoverProvider(context: vscode.ExtensionContext) {
         };
       },
     }),
-    vscode.commands.registerCommand("extension.bun.codelens.debug.task", async ({ script, name }: CommandArgs) => {
+    vscode.commands.registerCommand("extension.bun.codelens.debug.task", async ({ script, name, cwd }: CommandArgs) => {
       if (script.startsWith("bun run ")) script = script.slice(8);
       if (script.startsWith("bun ")) script = script.slice(4);
 
-      debugCommand(script);
+      debugCommand(script, cwd);
     }),
-    vscode.commands.registerCommand("extension.bun.codelens.run.task", async ({ script, name }: CommandArgs) => {
+    vscode.commands.registerCommand("extension.bun.codelens.run.task", async ({ script, name, cwd }: CommandArgs) => {
       if (script.startsWith("bun run ")) script = script.slice(8);
 
       name = `Bun Task: ${name}`;
@@ -193,7 +219,7 @@ function registerHoverProvider(context: vscode.ExtensionContext) {
         return;
       }
 
-      const terminal = vscode.window.createTerminal({ name });
+      const terminal = vscode.window.createTerminal({ name, cwd });
       terminal.show();
       terminal.sendText(`bun run ${script}`);
     }),

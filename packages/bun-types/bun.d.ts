@@ -8300,7 +8300,12 @@ declare module "bun" {
     modulate(options: Image.ModulateOptions): this;
 
     /** Set output format to JPEG. */
-    jpeg(options?: { quality?: number }): this;
+    jpeg(options?: {
+      /** 1–100, default 80. */
+      quality?: number;
+      /** Emit a progressive (multi-scan) JPEG. Default `false`. */
+      progressive?: boolean;
+    }): this;
     /** Set output format to PNG. */
     png(options?: {
       /** zlib level 0–9. */
@@ -8345,6 +8350,24 @@ declare module "bun" {
      * reused.
      */
     write(dest: BunFile | S3File | Bun.PathLike): Promise<number>;
+    /**
+     * Like {@link toBase64} with a `data:image/{format};base64,` prefix.
+     * Drops straight into `<img src>`.
+     */
+    dataurl(): Promise<string>;
+    /**
+     * A [ThumbHash](https://github.com/evanw/thumbhash)-rendered low-quality
+     * placeholder of the *source* image as a `data:image/png;base64,…` URL —
+     * a ≤32px blur with the right average colour, aspect ratio and rough
+     * structure, ~400–700 bytes. Ready for `<img src>` or Next's
+     * `blurDataURL`; no client-side decoder needed.
+     *
+     * ```ts
+     * const lqip = await Bun.file("hero.jpg").image().placeholder();
+     * // "data:image/png;base64,iVBORw0KGgoAAAANSUhE…"
+     * ```
+     */
+    placeholder(as?: "dataurl"): Promise<string>;
     /** Run the pipeline and return a `Blob` with the matching `type`. */
     blob(): Promise<Blob>;
     /** Run the pipeline and return base64-encoded output. */

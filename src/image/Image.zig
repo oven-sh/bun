@@ -327,6 +327,7 @@ fn setFormat(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallFram
             enc.colors = coerceInt(u16, c.asNumber(), 2, 256);
         };
         if (try opt.get(global, "dither")) |d| enc.dither = d.toBoolean();
+        if (try opt.get(global, "progressive")) |p| enc.progressive = p.toBoolean();
     }
     this.pipeline.output = enc;
     return callframe.this();
@@ -507,6 +508,31 @@ pub fn doBlob(this: *Image, global: *jsc.JSGlobalObject, cf: *jsc.CallFrame) bun
 
 pub fn doToBase64(this: *Image, global: *jsc.JSGlobalObject, cf: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     return this.schedule(global, cf.this(), .{ .encode = this.pipeline.output }, .base64);
+}
+
+/// `data:image/{format};base64,{…}`. Same encode as `.toBase64()` plus the
+/// MIME prefix, so it drops straight into `<img src>`.
+pub fn doDataUrl(this: *Image, global: *jsc.JSGlobalObject, cf: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    return this.schedule(global, cf.this(), .{ .encode = this.pipeline.output }, .dataurl);
+}
+
+/// `.placeholder()` — ThumbHash-rendered ≤32px PNG `data:` URL. ~28 chars
+/// of hash → ~400-700 bytes of `data:image/png;base64,…` ready for `<img
+/// src>` / Next's `blurDataURL`. Runs entirely on the work pool; the
+/// pipeline ops (resize/rotate/…) are skipped — a placeholder is OF the
+/// source, not of the output.
+pub fn doPlaceholder(this: *Image, global: *jsc.JSGlobalObject, cf: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const args = cf.arguments();
+    // Single positional `"dataurl"` for now — leaves room for `"hash"` /
+    // `"color"` without growing methods. Anything else throws so the
+    // option space isn't accidentally squatted.
+    if (args.len > 0 and !args[0].isUndefinedOrNull()) {
+        const s = try args[0].toBunString(global);
+        defer s.deref();
+        if (!s.eqlComptime("dataurl"))
+            return global.throwInvalidArguments("Image.placeholder(): only \"dataurl\" is supported", .{});
+    }
+    return this.schedule(global, cf.this(), .placeholder, .dataurl);
 }
 
 /// Terminal: encode and write to `path` on the work pool (no round-trip of
@@ -730,6 +756,9 @@ pub const PipelineTask = struct {
         buffer,
         blob,
         base64,
+        /// Like `.base64` plus a `data:{mime};base64,` prefix — same encode
+        /// path, the prefix is the only difference.
+        dataurl,
         /// `.write(dest)` — `then()` hands the encoded bytes to `Bun.write`'s
         /// implementation with this as the destination. Anything `Bun.write`
         /// accepts (path string / BunFile / S3 / fd) works here unchanged.
@@ -744,6 +773,11 @@ pub const PipelineTask = struct {
         /// `null` ⇒ re-encode in the source format (resolved after decode).
         encode: ?codecs.EncodeOptions,
         metadata,
+        /// `.placeholder()` — decode → box-resize ≤100 → ThumbHash → render
+        /// → PNG → `data:` URL. The whole chain runs on the worker; the
+        /// hash itself never crosses the JS boundary unless we add an
+        /// `as: "hash"` option later.
+        placeholder,
     };
 
     pub const Result = union(enum) {
@@ -842,6 +876,11 @@ pub const PipelineTask = struct {
             return;
         }
 
+        if (this.kind == .placeholder) {
+            this.result = makePlaceholder(decoded.rgba, decoded.width, decoded.height) catch |e| .{ .err = e };
+            return;
+        }
+
         this.applyPipeline(&decoded) catch |e| {
             this.result = .{ .err = e };
             return;
@@ -864,6 +903,39 @@ pub const PipelineTask = struct {
         };
 
         this.result = .{ .encoded = .{ .out = out, .format = enc.format, .w = decoded.width, .h = decoded.height } };
+    }
+
+    /// `.placeholder()` body — runs on the worker. Input is the decoded RGBA
+    /// at source size; output is a PNG of the ThumbHash render, ready for the
+    /// `.dataurl` deliver. ThumbHash needs ≤100×100, so first downscale with
+    /// `box` (the only filter that's correct for "average everything in a
+    /// cell" — Lanczos would ring into the DCT). The hash itself stays on
+    /// the worker stack; only the rendered PNG crosses back.
+    fn makePlaceholder(rgba: []const u8, sw: u32, sh: u32) codecs.Error!Result {
+        const max_in: u32 = 100;
+        var w = sw;
+        var h = sh;
+        var owned: ?[]u8 = null;
+        defer if (owned) |o| bun.default_allocator.free(o);
+        var pixels = rgba;
+        if (w > max_in or h > max_in) {
+            const r = @as(f32, @floatFromInt(w)) / @as(f32, @floatFromInt(h));
+            if (r > 1) {
+                w = max_in;
+                h = @max(1, @as(u32, @intFromFloat(@round(max_in / r))));
+            } else {
+                h = max_in;
+                w = @max(1, @as(u32, @intFromFloat(@round(max_in * r))));
+            }
+            owned = try codecs.resize(rgba, sw, sh, w, h, .box);
+            pixels = owned.?;
+        }
+        var buf: [thumbhash.max_len]u8 = undefined;
+        const hash = thumbhash.encode(&buf, w, h, pixels);
+        const rendered = try thumbhash.decode(hash);
+        defer bun.default_allocator.free(rendered.rgba);
+        const png_out = try codecs.png.encode(rendered.rgba, rendered.w, rendered.h, -1);
+        return .{ .encoded = .{ .out = png_out, .format = .png, .w = rendered.w, .h = rendered.h } };
     }
 
     /// Back on the JS thread.
@@ -902,13 +974,20 @@ pub const PipelineTask = struct {
                     blob.content_type_was_set = true;
                     try promise.resolve(global, jsc.WebCore.Blob.new(blob).toJS(global));
                 },
-                .base64 => {
+                inline .base64, .dataurl => |_, tag| {
                     defer enc.out.deinit();
-                    const b64_len = bun.base64.encodeLen(enc.out.bytes);
-                    const b64 = bun.handleOom(bun.default_allocator.alloc(u8, b64_len));
-                    defer bun.default_allocator.free(b64);
-                    const wrote = bun.base64.encode(b64, enc.out.bytes);
-                    const str = bun.String.createUTF8ForJS(global, b64[0..wrote]) catch
+                    // `data:` and `;base64,` are both ASCII so the prefix
+                    // length is exact; one buffer holds prefix+payload.
+                    var pre_buf: [40]u8 = undefined;
+                    const pre: []const u8 = if (comptime tag == .dataurl)
+                        std.fmt.bufPrint(&pre_buf, "data:{s};base64,", .{enc.format.mime()}) catch unreachable
+                    else
+                        "";
+                    const buf = bun.handleOom(bun.default_allocator.alloc(u8, pre.len + bun.base64.encodeLen(enc.out.bytes)));
+                    defer bun.default_allocator.free(buf);
+                    @memcpy(buf[0..pre.len], pre);
+                    const wrote = pre.len + bun.base64.encode(buf[pre.len..], enc.out.bytes);
+                    const str = bun.String.createUTF8ForJS(global, buf[0..wrote]) catch
                         return promise.reject(global, error.JSError);
                     try promise.resolve(global, str);
                 },
@@ -1036,6 +1115,7 @@ pub const PipelineTask = struct {
 
 const codecs = @import("./codecs.zig");
 const exif = @import("./exif.zig");
+const thumbhash = @import("./thumbhash.zig");
 const std = @import("std");
 
 const bun = @import("bun");

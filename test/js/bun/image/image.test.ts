@@ -611,6 +611,57 @@ describe("Bun.Image", () => {
       expect(buf[0]).toBe(0x89);
     });
 
+    test(".dataurl() is .toBase64() with the MIME prefix", async () => {
+      const img = new Bun.Image(cornersPng).png();
+      const [b64, url] = await Promise.all([img.toBase64(), img.dataurl()]);
+      expect(url).toBe(`data:image/png;base64,${b64}`);
+      // Round-trip: the constructor accepts data: URLs.
+      expect(await new Bun.Image(url).metadata()).toEqual({ width: 4, height: 3, format: "png" });
+      // Format follows the chained encoder.
+      expect(await new Bun.Image(cornersPng).webp().dataurl()).toMatch(/^data:image\/webp;base64,/);
+    });
+
+    test(".placeholder() is a ThumbHash-rendered ≤32px PNG data: URL", async () => {
+      // Source big enough to force the ≤100 box-downscale before the DCT;
+      // colour gradient so the LPQ coefficients are non-degenerate.
+      const src = makePng(80, 60, (x, y) => [(x * 3) & 255, (y * 4) & 255, ((x ^ y) * 7) & 255, 255]);
+      const url = await new Bun.Image(src).placeholder();
+      expect(url).toMatch(/^data:image\/png;base64,/);
+      // Typical ThumbHash render PNG-encodes to a few hundred bytes.
+      expect(url.length).toBeLessThan(2000);
+      // The data: URL is itself a valid Bun.Image input — verify it decodes
+      // to ≤32px on the long side and preserves aspect (80:60 = 4:3).
+      const m = await new Bun.Image(url).metadata();
+      expect(m.format).toBe("png");
+      expect(Math.max(m.width, m.height)).toBeLessThanOrEqual(32);
+      expect(m.width / m.height).toBeCloseTo(80 / 60, 0);
+      // Average colour: the source's mean R≈118 G≈118 B≈something — sample
+      // the centre pixel of the placeholder; ThumbHash's DC term is exact.
+      const px = decodePngRaw(await new Bun.Image(url).png().bytes());
+      const cx = (px.w >> 1) + (px.h >> 1) * px.w;
+      // Wide tolerance — LPQ quantisation + 4-bit AC + 1.25× chroma boost.
+      expect(Math.abs(px.data[cx * 4] - 119)).toBeLessThan(40);
+      // Explicit "dataurl" arg accepted, anything else throws.
+      expect(await new Bun.Image(src).placeholder("dataurl")).toBe(url);
+      expect(() => new Bun.Image(src).placeholder("hash" as any)).toThrow(/dataurl/);
+    });
+
+    test(".jpeg({progressive: true}) emits SOF2 (multi-scan)", async () => {
+      const baseline = await new Bun.Image(gradientPng).jpeg({ quality: 80 }).bytes();
+      const prog = await new Bun.Image(gradientPng).jpeg({ quality: 80, progressive: true }).bytes();
+      // Baseline JPEG uses SOF0 (FF C0); progressive uses SOF2 (FF C2). Scan
+      // for the marker after SOI+APP0.
+      const hasMarker = (b: Uint8Array, m: number) => {
+        for (let i = 2; i + 1 < b.length; i++) if (b[i] === 0xff && b[i + 1] === m) return true;
+        return false;
+      };
+      expect(hasMarker(baseline, 0xc0)).toBe(true);
+      expect(hasMarker(baseline, 0xc2)).toBe(false);
+      expect(hasMarker(prog, 0xc2)).toBe(true);
+      // Both decode to the same pixels.
+      expect(await new Bun.Image(prog).metadata()).toEqual(await new Bun.Image(baseline).metadata());
+    });
+
     test(".toBuffer() is a Sharp-compat alias for .buffer()", async () => {
       const buf = await new Bun.Image(cornersPng).png().toBuffer();
       expect(Buffer.isBuffer(buf)).toBe(true);

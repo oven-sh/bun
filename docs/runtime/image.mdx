@@ -118,11 +118,27 @@ await img.bytes(); // Uint8Array
 await img.buffer(); // Buffer
 await img.blob(); // Blob with .type set to the output MIME
 await img.toBase64(); // string
+await img.dataurl(); // "data:image/png;base64,…"
 await img.write("out.webp"); // number (bytes written)
 await img.write(Bun.s3("bucket/out.webp"));
 ```
 
 `.write()` accepts the same destinations as `Bun.write` — a path string, `Bun.file()`, `Bun.s3()`, or an fd. If you didn't chain a format method and the destination is a path string, the extension picks one (`.jpg`/`.png`/`.webp`/`.heic`/`.avif`).
+
+## Placeholders
+
+For a low-quality placeholder to inline in HTML before the real image loads, `.placeholder()` returns a [ThumbHash](https://evanw.github.io/thumbhash/)-rendered ≤32px blur as a `data:` URL — ~400–700 bytes, no client-side decoder needed:
+
+```ts
+const lqip = await Bun.file("hero.jpg").image().placeholder();
+// <img src={lqip} … /> — then swap to the real URL on load.
+```
+
+For coarse-to-fine rendering of the image *itself*, encode a progressive JPEG:
+
+```ts
+img.jpeg({ progressive: true });
+```
 
 After the first terminal resolves, `img.width` and `img.height` reflect the _output_ dimensions (they're `-1` before).
 

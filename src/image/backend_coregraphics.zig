@@ -92,19 +92,18 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOpti
 // Highway path in `codecs.zig` so the dispatch site is `system_backend.x()
 // catch fallback.x()`.
 
-extern fn bun_coregraphics_scale(src: [*]const u8, sw: u32, sh: u32, dst: [*]u8, dw: u32, dh: u32, hq: i32) i32;
+extern fn bun_coregraphics_scale(src: [*]const u8, sw: u32, sh: u32, dst: [*]u8, dw: u32, dh: u32) i32;
 extern fn bun_coregraphics_rotate90(src: [*]const u8, w: u32, h: u32, dst: [*]u8, quarters: u32) i32;
 extern fn bun_coregraphics_reflect(src: [*]const u8, w: u32, h: u32, dst: [*]u8, horizontal: i32) i32;
 
-/// vImageScale only exposes Lanczos (Apple doesn't document the lobe count;
-/// the high-quality flag widens the kernel), so we only take this path for the
-/// lanczos3 default — explicit non-Lanczos filters fall through to the Highway
-/// kernel which honours them exactly.
+/// vImageScale's default kernel is Lanczos-3 (the HQ flag widens to L5), so
+/// we only take this path for the `.lanczos3` default — explicit non-Lanczos
+/// filters fall through to the Highway kernel which honours them exactly.
 pub fn scale(src: []const u8, sw: u32, sh: u32, dw: u32, dh: u32, filter: codecs.Filter) BackendError![]u8 {
     if (filter != .lanczos3) return error.BackendUnavailable;
     const out = try bun.default_allocator.alloc(u8, @as(usize, dw) * dh * 4);
     errdefer bun.default_allocator.free(out);
-    if (bun_coregraphics_scale(src.ptr, sw, sh, out.ptr, dw, dh, 0) != CG_OK)
+    if (bun_coregraphics_scale(src.ptr, sw, sh, out.ptr, dw, dh) != CG_OK)
         return error.BackendUnavailable;
     return out;
 }

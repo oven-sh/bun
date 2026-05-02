@@ -58,6 +58,11 @@ export default [
       write: { fn: "doWrite", length: 1, async: true },
       blob: { fn: "doBlob", length: 0, async: true },
       toBase64: { fn: "doToBase64", length: 0, async: true },
+      // toBase64() with the `data:{mime};base64,` prefix.
+      dataurl: { fn: "doDataUrl", length: 0, async: true },
+      // ThumbHash-rendered ≤32px PNG data: URL — ~400-700B, ready for
+      // <img src> / blurDataURL.
+      placeholder: { fn: "doPlaceholder", length: 0, async: true },
       metadata: { fn: "doMetadata", length: 0, async: true },
 
       // Read-only after a pipeline has run; -1 before.

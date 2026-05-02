@@ -289,6 +289,8 @@ pub const EncodeOptions = struct {
     colors: u16 = 256,
     /// PNG palette only: Floyd–Steinberg error-diffusion dither.
     dither: bool = false,
+    /// JPEG only: emit a progressive scan script (coarse-to-fine render).
+    progressive: bool = false,
 };
 
 /// Encoded output paired with the free function for its allocator. The C
@@ -324,7 +326,7 @@ pub const Encoded = struct {
 
 pub fn encode(rgba: []const u8, width: u32, height: u32, opts: EncodeOptions) Error!Encoded {
     return switch (opts.format) {
-        .jpeg => jpeg.encode(rgba, width, height, opts.quality),
+        .jpeg => jpeg.encode(rgba, width, height, opts.quality, opts.progressive),
         .png => if (opts.palette)
             png.encodeIndexed(rgba, width, height, opts.compression_level, opts.colors, opts.dither)
         else

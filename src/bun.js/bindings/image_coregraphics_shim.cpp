@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <cstring>
 #include <dlfcn.h>
+#include <mutex>
 
 namespace {
 
@@ -184,7 +185,8 @@ constexpr int kBunCFNumberDoubleType = 13;
 // and silently turned every CG decode into 0xAA garbage in debug builds.
 constexpr uint32_t kBunVImageEdgeExtend = 8;
 constexpr uint32_t kBunVImageDoNotTile = 16;
-constexpr uint32_t kBunVImageHighQualityResampling = 32;
+// (kvImageHighQualityResampling = 32 — unused; default kernel is already
+// Lanczos-3, which is what we route here.)
 constexpr uint32_t kBunVImageNoAllocate = 512;
 
 // RAII pool so every early-return drains. Declared first in each entry point —
@@ -435,15 +437,19 @@ int32_t bun_coregraphics_encode(const uint8_t* rgba, uint32_t width, uint32_t he
 // its own scratch.
 
 int32_t bun_coregraphics_scale(const uint8_t* src, uint32_t sw, uint32_t sh,
-    uint8_t* dst, uint32_t dw, uint32_t dh, int32_t high_quality)
+    uint8_t* dst, uint32_t dw, uint32_t dh)
 {
     auto s = load();
     if (!s) return CG_UNAVAILABLE;
     VBuf in { const_cast<uint8_t*>(src), sh, sw, static_cast<size_t>(sw) * 4 };
     VBuf out { dst, dh, dw, static_cast<size_t>(dw) * 4 };
-    uint32_t flags = kBunVImageEdgeExtend | kBunVImageDoNotTile
-        | (high_quality ? kBunVImageHighQualityResampling : 0);
-    return s->vImageScale_ARGB8888(&in, &out, nullptr, flags) == 0 ? CG_OK : CG_UNAVAILABLE;
+    // Apple's default vImageScale kernel is Lanczos-3; the high-quality flag
+    // widens to Lanczos-5. We only route `.lanczos3` here, so HQ stays off.
+    return s->vImageScale_ARGB8888(&in, &out, nullptr,
+               kBunVImageEdgeExtend | kBunVImageDoNotTile)
+            == 0
+        ? CG_OK
+        : CG_UNAVAILABLE;
 }
 
 // `quarters` is in CW quarter-turns (matching Sharp/CSS); vImage's constant is
@@ -553,7 +559,7 @@ int64_t bun_coregraphics_clipboard_change_count()
 // Environment.isMac so they're dead code, but LTO needs the definitions.
 extern "C" int bun_coregraphics_decode(const void*, unsigned long, unsigned long long, void*, void*, void*) { return 1; }
 extern "C" int bun_coregraphics_encode(const void*, unsigned, unsigned, int, int, void*, void*) { return 1; }
-extern "C" int bun_coregraphics_scale(const void*, unsigned, unsigned, void*, unsigned, unsigned, int) { return 1; }
+extern "C" int bun_coregraphics_scale(const void*, unsigned, unsigned, void*, unsigned, unsigned) { return 1; }
 extern "C" int bun_coregraphics_rotate90(const void*, unsigned, unsigned, void*, unsigned) { return 1; }
 extern "C" int bun_coregraphics_reflect(const void*, unsigned, unsigned, void*, int) { return 1; }
 extern "C" int bun_coregraphics_clipboard(void*, void*, int) { return 1; }

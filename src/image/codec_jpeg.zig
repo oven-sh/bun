@@ -26,6 +26,7 @@ const TJPARAM_QUALITY = 3;
 const TJPARAM_SUBSAMP = 4;
 pub const TJPARAM_JPEGWIDTH = 5;
 pub const TJPARAM_JPEGHEIGHT = 6;
+const TJPARAM_PROGRESSIVE = 12;
 const TJPF_RGBA = 7;
 const TJSAMP_420 = 2;
 
@@ -82,11 +83,15 @@ pub fn decode(bytes: []const u8, max_pixels: u64, hint: codecs.DecodeHint) codec
     return .{ .rgba = out, .width = w, .height = ht };
 }
 
-pub fn encode(rgba: []const u8, w: u32, ht: u32, quality: u8) codecs.Error!codecs.Encoded {
+pub fn encode(rgba: []const u8, w: u32, ht: u32, quality: u8, progressive: bool) codecs.Error!codecs.Encoded {
     const h = tj3Init(0) orelse return error.OutOfMemory;
     defer tj3Destroy(h);
     _ = tj3Set(h, TJPARAM_QUALITY, @intCast(@min(@max(quality, 1), 100)));
     _ = tj3Set(h, TJPARAM_SUBSAMP, TJSAMP_420);
+    // Progressive emits a multi-scan SOF2 stream; same size ±1%, decodes
+    // coarse-to-fine. Off by default (slower to encode, some old decoders
+    // mishandle it).
+    if (progressive) _ = tj3Set(h, TJPARAM_PROGRESSIVE, 1);
     var out_ptr: ?[*]u8 = null;
     var out_len: usize = 0;
     if (tj3Compress8(h, rgba.ptr, @intCast(w), 0, @intCast(ht), TJPF_RGBA, &out_ptr, &out_len) != 0) {

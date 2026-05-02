@@ -1721,16 +1721,26 @@ pub const Element = struct {
         this.deref();
     }
 
+    /// Detach every `AttributeIterator` we handed to JS. Called when the
+    /// underlying attribute buffer is about to become invalid — either
+    /// because the handler is returning, or because `setAttribute` /
+    /// `removeAttribute` is about to mutate the `Vec<Attribute>` the
+    /// iterators borrow from.
+    fn detachAttributeIterators(this: *Element) void {
+        for (this.attribute_iterators.items) |iter| {
+            iter.detach();
+            iter.deref();
+        }
+        this.attribute_iterators.clearRetainingCapacity();
+    }
+
     /// Called by `HandlerCallback` when the handler returns. The underlying
     /// `*LOLHTML.Element` (and the attribute buffer any `AttributeIterator`
     /// borrows from) is only valid during handler execution, so we must null
     /// it out here along with any iterators we handed to JS.
     pub fn invalidate(this: *Element) void {
         this.element = null;
-        for (this.attribute_iterators.items) |iter| {
-            iter.detach();
-            iter.deref();
-        }
+        this.detachAttributeIterators();
         this.attribute_iterators.clearAndFree(bun.default_allocator);
     }
 
@@ -1796,6 +1806,10 @@ pub const Element = struct {
         if (this.element == null)
             return .js_undefined;
 
+        // Mutating the attribute Vec (push → possible realloc) invalidates
+        // the slice::Iter any live AttributeIterator borrows from.
+        this.detachAttributeIterators();
+
         var name_slice = name_.toSlice(bun.default_allocator);
         defer name_slice.deinit();
 
@@ -1809,6 +1823,10 @@ pub const Element = struct {
     pub fn removeAttribute_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, name: ZigString) JSValue {
         if (this.element == null)
             return .js_undefined;
+
+        // Vec::remove shifts trailing elements and shrinks len, leaving any
+        // live slice::Iter's end pointer past the new end.
+        this.detachAttributeIterators();
 
         var name_slice = name.toSlice(bun.default_allocator);
         defer name_slice.deinit();

@@ -224,6 +224,38 @@ describe("HTMLRewriter", () => {
     expect([...leaked]).toEqual([]);
   });
 
+  it("attribute iterator is detached when attributes are mutated", async () => {
+    // setAttribute pushes onto the backing Vec<Attribute> (possible realloc);
+    // removeAttribute shifts elements. Either invalidates a live slice::Iter.
+    let afterSet, afterRemove;
+    let fresh = [];
+    await new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          const it1 = el.attributes;
+          el.setAttribute("x", "9");
+          afterSet = it1.next();
+
+          const it2 = el.attributes;
+          el.removeAttribute("a");
+          afterRemove = it2.next();
+
+          // An iterator obtained after the mutations still sees the final state.
+          fresh = [...el.attributes];
+        },
+      })
+      .transform(new Response('<div a="1" b="2" c="3"></div>'))
+      .text();
+
+    expect(afterSet).toEqual({ done: true, value: undefined });
+    expect(afterRemove).toEqual({ done: true, value: undefined });
+    expect(fresh).toEqual([
+      ["b", "2"],
+      ["c", "3"],
+      ["x", "9"],
+    ]);
+  });
+
   it("handles element specific mutations", async () => {
     // prepend/append
     let res = new HTMLRewriter()

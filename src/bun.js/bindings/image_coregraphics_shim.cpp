@@ -203,7 +203,7 @@ struct Pool {
 
 // `id`/`SEL` are already typedef'd via the PCH's objc headers; we erase to
 // CFRef everywhere else, so cast objc_msgSend per-site through this template.
-template <class R, class... A>
+template<class R, class... A>
 inline R msg(const Syms* s, CFRef recv, CFRef sel, A... a)
 {
     return reinterpret_cast<R (*)(CFRef, CFRef, A...)>(s->objc_msgSend)(recv, sel, a...);

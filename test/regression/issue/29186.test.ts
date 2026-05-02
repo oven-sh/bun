@@ -482,3 +482,68 @@ test.concurrent("self.close() in a Worker preload doesn't hang on top-level awai
   // point should run.
   expect(JSON.parse(stdout.trim())).toEqual([{ type: "close", code: 0, wasClean: true }]);
 });
+
+test.concurrent("self.close() in a MessagePort onmessage handler discards the rest of the batch", async () => {
+  // Structurally identical to the direct-channel version above, but over
+  // a transferred MessagePort. drainInbox (direct parent↔worker) and
+  // MessagePortPipe::drainAndDispatch (transferred ports) are separate
+  // loops; both must honor requested_close or messages after close()
+  // still fire.
+  using dir = tempDir("issue-29186-messageport-close", {
+    "worker.mjs": `
+      self.onmessage = ({ data }) => {
+        if (data && data.sidePort) {
+          const port = data.sidePort;
+          port.onmessage = ({ data }) => {
+            self.postMessage("handled-" + data);
+            if (data === 1) self.close();
+          };
+          port.start();
+          // Tell the parent we're ready to receive on the side port.
+          self.postMessage("ready");
+        }
+      };
+    `,
+    "main.mjs": `
+      const worker = new Worker(new URL("./worker.mjs", import.meta.url).href, { type: "module" });
+      const events = [];
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const ready = Promise.withResolvers();
+
+      worker.onmessage = ({ data }) => {
+        if (data === "ready") ready.resolve();
+        else events.push(data);
+      };
+      worker.onerror = (e) => reject(new Error("worker error: " + (e.message || e)));
+      worker.addEventListener("close", () => resolve());
+
+      // Transfer one end of a MessageChannel to the worker; keep the
+      // other on the parent.
+      const channel = new MessageChannel();
+      worker.postMessage({ sidePort: channel.port2 }, [channel.port2]);
+      await ready.promise;
+
+      // Now blast 3 messages at the worker via the *transferred* port
+      // (drainAndDispatch) — not the direct channel (drainInbox).
+      channel.port1.postMessage(1);
+      channel.port1.postMessage(2);
+      channel.port1.postMessage(3);
+
+      await promise;
+      console.log(JSON.stringify(events));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
+  // Only the first handler ran — 2 and 3 are discarded per WHATWG.
+  expect(JSON.parse(stdout.trim())).toEqual(["handled-1"]);
+});

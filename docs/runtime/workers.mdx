@@ -219,7 +219,7 @@ self.postMessage("goodbye");
 self.close();
 ```
 
-`self.close()` is only defined on Web Workers (`new Worker(url)`); it is not a global inside `node:worker_threads` workers, matching Node.js. On the main thread it is a no-op.
+`self.close()` is defined on Web Workers (`new Worker(url)`) and on the main thread (where it is a no-op); it is not a global inside `node:worker_threads` workers, matching Node.js.
 
 ### `"close"`
 

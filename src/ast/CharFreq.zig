@@ -61,11 +61,20 @@ fn scanBig(out: *align(1) Buffer, text: string, delta: i32) void {
         deltas[@as(usize, c)] += delta;
     }
 
-    freqs[0..26].* = deltas['a' .. 'a' + 26].*;
-    freqs[26 .. 26 * 2].* = deltas['A' .. 'A' + 26].*;
-    freqs[26 * 2 .. 62].* = deltas['0' .. '0' + 10].*;
-    freqs[62] = deltas['_'];
-    freqs[63] = deltas['$'];
+    const lower_freqs: @Vector(26, i32) = freqs[0..26].*;
+    const lower_deltas: @Vector(26, i32) = deltas['a' .. 'a' + 26].*;
+    freqs[0..26].* = lower_freqs + lower_deltas;
+
+    const upper_freqs: @Vector(26, i32) = freqs[26 .. 26 * 2].*;
+    const upper_deltas: @Vector(26, i32) = deltas['A' .. 'A' + 26].*;
+    freqs[26 .. 26 * 2].* = upper_freqs + upper_deltas;
+
+    const digit_freqs: @Vector(10, i32) = freqs[26 * 2 .. 62].*;
+    const digit_deltas: @Vector(10, i32) = deltas['0' .. '0' + 10].*;
+    freqs[26 * 2 .. 62].* = digit_freqs + digit_deltas;
+
+    freqs[62] += deltas['_'];
+    freqs[63] += deltas['$'];
 }
 
 fn scanSmall(out: *align(1) Buffer, text: string, delta: i32) void {

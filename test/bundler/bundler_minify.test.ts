@@ -1,4 +1,4 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { normalizeBunSnapshot } from "harness";
 import { itBundled } from "./expectBundled";
 
@@ -1191,5 +1191,69 @@ describe("bundler", () => {
     run: {
       stdout: "object\nobject\nobject",
     },
+  });
+
+  // Minified output must be byte-identical regardless of comment placement
+  // and length — comments are subtracted from the rename-frequency histogram
+  // so they should not influence which single-letter names get assigned.
+  describe("minify/HistogramStableUnderComments", () => {
+    const body =
+      "var aa = 1, bb = 2, cc = 3, dd = 4, ee = 5, ff = 6;\n" +
+      "export function go() { return aa + bb + cc + dd + ee + ff; }\n";
+
+    async function build(source: string): Promise<string> {
+      const result = await Bun.build({
+        entrypoints: ["/entry.js"],
+        minify: { identifiers: true, syntax: false, whitespace: false },
+        target: "browser",
+        plugins: [
+          {
+            name: "in-memory",
+            setup(build) {
+              build.onResolve({ filter: /^\/entry\.js$/ }, args => ({
+                path: args.path,
+                namespace: "in-memory",
+              }));
+              build.onLoad({ filter: /.*/, namespace: "in-memory" }, () => ({
+                contents: source,
+                loader: "js",
+              }));
+            },
+          },
+        ],
+      });
+      expect(result.success).toBe(true);
+      return await result.outputs[0].text();
+    }
+
+    test("leading short comment doesn't shift name assignment", async () => {
+      const baseline = await build(body);
+      const withLeading = await build("// short header\n" + body);
+      expect(withLeading).toBe(baseline);
+    });
+
+    test("leading long comment doesn't shift name assignment", async () => {
+      const baseline = await build(body);
+      const withLeading = await build("// " + "x".repeat(80) + "\n" + body);
+      expect(withLeading).toBe(baseline);
+    });
+
+    test("leading JSDoc block doesn't shift name assignment", async () => {
+      const baseline = await build(body);
+      const withLeading = await build("/**\n * @license MIT\n * @copyright 2026 contributors\n */\n" + body);
+      expect(withLeading).toBe(baseline);
+    });
+
+    test("mid-file long line comment doesn't shift name assignment", async () => {
+      const baseline = await build("var aa = 1;\n" + body);
+      const withMidLong = await build("var aa = 1;\n// " + "x".repeat(40) + "\n" + body);
+      expect(withMidLong).toBe(baseline);
+    });
+
+    test("mid-file long block comment doesn't shift name assignment", async () => {
+      const baseline = await build("var aa = 1;\n" + body);
+      const withMidBlock = await build("var aa = 1;\n/* " + "y".repeat(40) + " */\n" + body);
+      expect(withMidBlock).toBe(baseline);
+    });
   });
 });

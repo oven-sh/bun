@@ -8,7 +8,7 @@
 //   reports. `local_initial_window_size` = 16 MiB, 8 MiB replenish
 //   threshold. Connection-level credit stays receipt-based (asserted).
 // - HTTP/1.1: `us_socket_pause` once outstanding > `receive_body_high_water`
-//   (1 MiB), resumed below `receive_body_low_water` (256 KiB). TCP rwnd
+//   (4 MiB), resumed below `receive_body_low_water` (1 MiB). TCP rwnd
 //   does the rest.
 // - HTTP/3: `lsquic_stream_wantread(0)` at the same thresholds; lsquic
 //   withholds `MAX_STREAM_DATA`.
@@ -300,7 +300,7 @@ describe("fetch() over HTTP/2 — per-stream receive-window backpressure", () =>
 // directly — no dependency on the kernel's loopback sndbuf/rcvbuf
 // autotuning, which on some CI hosts let 64 MiB land in buffers without
 // the server seeing a `drain` stall. The server only needs to push enough
-// body bytes past `receive_body_high_water` (1 MiB) for the pause to fire.
+// body bytes past `receive_body_high_water` (4 MiB) for the pause to fire.
 
 describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
   const h1Prelude = `
@@ -373,7 +373,7 @@ describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
         const res = await fetch("${url}");
         const reader = res.body.getReader();
         process.stdout.write("reader\\n");
-        // maybePauseReceive fires once outstanding >= 1 MiB.
+        // maybePauseReceive fires once outstanding >= receive_body_high_water.
         const sawPause = await until(c => c.pauses, 1);
         const c = counts();
         process.stdout.write("paused:" + sawPause + ":" + c.pauses + ":" + c.resumes + "\\n");
@@ -382,11 +382,12 @@ describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
       const waitFor = lineReader(proc.stdout);
       await waitFor("reader");
       const socket = await gotSocket;
-      // Only need to push past 1 MiB for the client's maybePauseReceive
-      // to fire; 4 MiB gives comfortable margin for the headers-then-
-      // body split and the first progressUpdate to reach JS. The pump
-      // runs concurrently with the child's `until(pauses, 1)`.
-      void pump(socket, 4 * 1024 * 1024);
+      // Only need to push past receive_body_high_water (4 MiB) for the
+      // client's maybePauseReceive to fire; 8 MiB gives comfortable
+      // margin for the headers-then-body split and the first
+      // progressUpdate to reach JS. The pump runs concurrently with
+      // the child's `until(pauses, 1)`.
+      void pump(socket, 8 * 1024 * 1024);
       const line = await waitFor("paused:");
       const [, sawPause, pauses, resumes] = line.split(":");
       // Reader never read a byte: pauses > 0, resumes == 0 (the pause
@@ -423,17 +424,22 @@ describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
       const waitFor = lineReader(proc.stdout);
       await waitFor("reader");
       const socket = await gotSocket;
-      // 8 MiB crosses the high-water mark several times over; the
-      // reader is actively draining so every pause should be matched
+      // 16 MiB gives the HTTP thread room to pull ahead of the
+      // draining JS reader and cross the 4 MiB high-water mark at
+      // least once; the reader catches up so every pause is matched
       // by a resume and the full body reaches JS.
-      await pump(socket, 8 * 1024 * 1024);
+      await pump(socket, 16 * 1024 * 1024);
       socket.end();
       const line = await waitFor("read:");
       const [, total, pauses, resumes] = line.split(":").map(Number);
-      expect(total).toBe(8 * 1024 * 1024);
+      expect(total).toBe(16 * 1024 * 1024);
       // Pause/resume may or may not fire depending on relative
       // scheduling of the HTTP thread vs the JS reader; the invariant
-      // is that every pause was matched so the body completed.
+      // is that every transition of `receive_paused` was matched so
+      // the body completed. `h1_socket_resumes` bumps at every
+      // false→true edge (consumeResponseBody, the isDone() branch,
+      // and the pre-release guard) so this holds regardless of
+      // which path cleared the last pause.
       expect(resumes).toBe(pauses);
       socket.destroy();
       proc.kill();
@@ -465,7 +471,7 @@ describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
       const waitFor = lineReader(proc.stdout);
       await waitFor("reader");
       const socket = await gotSocket;
-      void pump(socket, 4 * 1024 * 1024);
+      void pump(socket, 8 * 1024 * 1024);
       const line = await waitFor("done:");
       const [, sawPause, sawResume, pauses, resumes] = line.split(":");
       expect({ sawPause, sawResume }).toEqual({ sawPause: "true", sawResume: "true" });
@@ -590,7 +596,7 @@ describe("fetch() over HTTP/3 — lsquic wantRead backpressure", () => {
   `;
 
   test("stalled getReader() bounds bytes delivered to the client", async () => {
-    await withH3Server(16 * 1024 * 1024, async url => {
+    await withH3Server(32 * 1024 * 1024, async url => {
       await using proc = spawnFetch(
         h3Client(
           url,
@@ -606,11 +612,12 @@ describe("fetch() over HTTP/3 — lsquic wantRead backpressure", () => {
         throw new Error(`${e.message}\nstderr: ${await stderrP}`);
       });
       const settled = Number((await waitFor("settled:")).slice(8));
-      // ~1 MiB high-water plus whatever lsquic's on_read loop delivered
-      // in the batch that crossed it (≤ one US_QUIC_READ_BUF pass).
-      // Without the gate this climbs to the full 16 MiB body.
-      expect(settled).toBeGreaterThan(512 * 1024);
-      expect(settled).toBeLessThan(4 * 1024 * 1024);
+      // ~4 MiB high-water plus whatever lsquic's on_read loop
+      // delivered in the batch that crossed it (≤ one
+      // US_QUIC_READ_BUF pass). Without the gate this climbs to the
+      // full 32 MiB body.
+      expect(settled).toBeGreaterThan(1024 * 1024);
+      expect(settled).toBeLessThan(10 * 1024 * 1024);
       proc.kill();
       await proc.exited;
     });
@@ -650,7 +657,7 @@ describe("fetch() over HTTP/3 — lsquic wantRead backpressure", () => {
   }, 30_000);
 
   test("reader.cancel() resumes a paused lsquic stream", async () => {
-    await withH3Server(16 * 1024 * 1024, async url => {
+    await withH3Server(32 * 1024 * 1024, async url => {
       await using proc = spawnFetch(
         h3Client(
           url,
@@ -678,7 +685,7 @@ describe("fetch() over HTTP/3 — lsquic wantRead backpressure", () => {
       });
       const [, stalledAt, moved] = (await waitFor("resumed:")).split(":").map(Number);
       expect(stalledAt).toBeGreaterThan(0);
-      expect(stalledAt).toBeLessThan(4 * 1024 * 1024);
+      expect(stalledAt).toBeLessThan(10 * 1024 * 1024);
       expect(moved).toBe(1);
       proc.kill();
       await proc.exited;

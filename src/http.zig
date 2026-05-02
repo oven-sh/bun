@@ -312,8 +312,8 @@ pub fn retryAfterH2Coalesce(this: *HTTPClient) void {
 /// `h2_client/ClientSession.replenishWindow`) so its limit is governed by
 /// `H2.local_initial_window_size` instead. Resumed once consumption
 /// reports bring the outstanding count below `receive_body_low_water`.
-pub const receive_body_high_water: usize = 1 << 20; // 1 MiB
-pub const receive_body_low_water: usize = 256 * 1024;
+pub const receive_body_high_water: usize = 4 << 20; // 4 MiB
+pub const receive_body_low_water: usize = 1 << 20; // 1 MiB
 
 /// Process-wide counters for the HTTP/1.1 `receive_paused` flag
 /// transitions: incremented at every `false→true` / `true→false` edge,

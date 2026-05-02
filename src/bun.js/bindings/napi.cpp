@@ -1082,8 +1082,7 @@ static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi
     // Do not check for pending exceptions here. This matches Node.js behavior
     // where napi_create_error and friends only create error values without
     // checking the VM exception state. The inputs are already validated as
-    // strings above, so getString() should not throw under normal conditions,
-    // though OOM could still produce a new exception.
+    // strings above, so getString() does not allocate and cannot throw.
     auto wtf_code = js_code.isEmpty() ? WTF::String() : js_code.getString(globalObject);
     auto wtf_message = js_message.getString(globalObject);
 

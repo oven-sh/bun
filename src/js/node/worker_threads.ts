@@ -504,10 +504,12 @@ class Worker extends EventEmitter {
 
   ref() {
     this.#worker.ref();
+    this.#stdioPort.ref();
   }
 
   unref() {
     this.#worker.unref();
+    this.#stdioPort.unref();
   }
 
   get stdin() {

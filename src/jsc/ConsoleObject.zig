@@ -1136,7 +1136,7 @@ pub const Formatter = struct {
 
         pub fn canHaveCircularReferences(tag: Tag) bool {
             return switch (tag) {
-                .Function, .Array, .Object, .Map, .Set, .Error, .Class, .Event => true,
+                .Function, .Array, .Object, .Map, .Set, .Error, .Class, .Event, .JSX => true,
                 else => false,
             };
         }

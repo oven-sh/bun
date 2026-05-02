@@ -740,14 +740,9 @@ pub const Bin = extern struct {
                     break :rel_target_w strings.toWPathNormalized(&target_buf, rel_target["..\\".len..]);
                 }
 
-                if (std.fs.path.isAbsoluteWindows(rel_target)) {
-                    target_buf[0] = WinBinLinkingShim.absolute_path_marker;
-                    const abs_target_w = strings.toWPathNormalized(target_buf[1..], rel_target);
-                    break :rel_target_w target_buf[0 .. abs_target_w.len + 1 :0];
-                }
-
-                this.err = error.InvalidBinContent;
-                return;
+                target_buf[0] = WinBinLinkingShim.absolute_path_marker;
+                const abs_target_w = strings.toWPathNormalized(target_buf[1..], abs_target);
+                break :rel_target_w target_buf[0 .. abs_target_w.len + 1 :0];
             };
 
             const shebang = shebang: {

@@ -252,11 +252,15 @@ pub fn doModulate(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.Cal
     var m: Modulate = this.pipeline.modulate orelse .{};
     if (args.len > 0 and args[0].isObject()) {
         const opt = args[0];
+        // Clamp finite + bounded so Infinity doesn't reach ModulateImpl as
+        // f32 +Inf (0×Inf = NaN → static_cast<u8>(NaN) is UB).
         if (try opt.get(global, "brightness")) |v| if (v.isNumber()) {
-            m.brightness = @floatCast(@max(0, v.asNumber()));
+            const x = v.asNumber();
+            m.brightness = if (std.math.isFinite(x)) @floatCast(@min(@max(x, 0.0), 1e4)) else 1.0;
         };
         if (try opt.get(global, "saturation")) |v| if (v.isNumber()) {
-            m.saturation = @floatCast(@max(0, v.asNumber()));
+            const x = v.asNumber();
+            m.saturation = if (std.math.isFinite(x)) @floatCast(@min(@max(x, 0.0), 1e4)) else 1.0;
         };
     }
     this.pipeline.modulate = m;
@@ -472,8 +476,12 @@ pub fn encodeForBody(this: *Image, global: *jsc.JSGlobalObject, this_value: jsc.
     };
     task.run();
     return switch (task.result) {
-        .encoded => |e| .{ .bytes = e.out, .mime = e.format.mime() },
-        .err => |e| global.throw("Image: {s}", .{@errorName(e)}),
+        .encoded => |e| {
+            this.last_width = @intCast(e.w);
+            this.last_height = @intCast(e.h);
+            return .{ .bytes = e.out, .mime = e.format.mime() };
+        },
+        .err => |e| global.throw("{s}", .{errorMessage(e)}),
         // Preserve errno/path/syscall instead of flattening to DecodeFailed.
         .io_err => |e| global.throwValue(try e.toJS(global)),
         .meta => unreachable,
@@ -720,12 +728,14 @@ pub const PipelineTask = struct {
     fn resolveResize(r: Resize, sw: u32, sh: u32) struct { w: u32, h: u32 } {
         var w = r.w;
         // Widen before multiplying — `r.w` is user-controlled and `sh` is
-        // bounded only by `max_pixels`, so the u32 product can wrap.
-        var h: u32 = if (r.h != 0) r.h else @intCast(@max(1, @as(u64, r.w) * sh / sw));
+        // bounded only by `max_pixels`, so the u32 product can wrap; and the
+        // quotient can exceed u32 for tall-thin sources (1×5M with .resize(1k)
+        // → 5e9), so clamp to the same per-side cap doResize uses before the
+        // @intCast. The maxPixels guard then rejects the product.
+        var h: u32 = if (r.h != 0) r.h else @intCast(@min(@as(u64, 0x3FFFF), @max(1, @as(u64, r.w) * sh / sw)));
         if (r.fit == .inside) {
             // Shrink the box so the source's aspect ratio is preserved and
-            // both sides fit. (Sharp's `fit:'inside'` — the only mode the
-            // Claude Code path uses.)
+            // both sides fit. (Sharp's `fit:'inside'`.)
             const sx = @as(f64, @floatFromInt(w)) / @as(f64, @floatFromInt(sw));
             const sy = @as(f64, @floatFromInt(h)) / @as(f64, @floatFromInt(sh));
             const s = @min(sx, sy);

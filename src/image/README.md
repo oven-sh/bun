@@ -48,9 +48,11 @@ The codecs themselves are vendored via `scripts/build/deps/{libjpeg-turbo,libspn
 
 - Pixel format is **RGBA8 everywhere** between decode and encode. Decoders are
   configured to emit it; encoders are fed it. Nothing branches on channels.
-- Every `[]u8` returned to `Image.zig` is owned by `bun.default_allocator` so
-  it can be handed to `JSUint8Array.fromBytes` or `Blob.init` without a custom
-  finalizer. C-allocated buffers are dup'd then freed at the boundary.
+- **Decode** output is `bun.default_allocator`-owned `[]u8`. **Encode** output
+  is `Encoded{bytes, free}` where `free` is the *codec's* deallocator
+  (`tj3Free`/`WebPFree`/`std.c.free`/`mi_free`); `then()` hands that buffer
+  straight to JS via `ArrayBuffer.toJSWithContext(..., free)` — no dupe. New
+  codecs return `Encoded` with the right `free`, not a default_allocator slice.
 - The `max_pixels` guard fires **after the header read, before the RGBA alloc**
   in every codec. New codecs must do the same.
 - `image_resize.cpp` must stay in `noUnify` (see `scripts/build/unified.ts`) —

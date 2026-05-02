@@ -15,17 +15,18 @@
 
 #if defined(__APPLE__)
 
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <dlfcn.h>
-#include <mutex>
 
 namespace {
 
 using CFRef = void*;
-struct CGRect {
+// Prefixed: the macOS PCH transitively includes CF headers, so the real
+// `CGRect`/`kCFStringEncodingUTF8`/`kCFNumberDoubleType` are in scope and an
+// anonymous-namespace shadow is ambiguous at the use site.
+struct BunBunCGRect {
     double x, y, w, h;
 };
 
@@ -46,7 +47,7 @@ struct Syms {
     void (*CGColorSpaceRelease)(CFRef);
     CFRef (*CGBitmapContextCreate)(void*, size_t, size_t, size_t, size_t, CFRef, uint32_t);
     CFRef (*CGBitmapContextCreateImage)(CFRef);
-    void (*CGContextDrawImage)(CFRef, CGRect, CFRef);
+    void (*CGContextDrawImage)(CFRef, BunCGRect, CFRef);
     void (*CGContextRelease)(CFRef);
     size_t (*CGImageGetWidth)(CFRef);
     size_t (*CGImageGetHeight)(CFRef);
@@ -99,47 +100,33 @@ constexpr struct {
 };
 #undef SYM
 
-Syms g {};
-std::atomic<int> g_state { 0 }; // 0=unloaded, 1=ok, -1=unavailable
-std::once_flag g_once;
-
-void loadOnce()
-{
-    void* cf = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", RTLD_NOW);
-    void* cg = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW);
-    void* io = dlopen("/System/Library/Frameworks/ImageIO.framework/ImageIO", RTLD_NOW);
-    if (!cf || !cg || !io) {
-        g_state.store(-1, std::memory_order_release);
-        return;
-    }
-    auto base = reinterpret_cast<char*>(&g);
-    for (auto& f : kFields) {
-        void* p = dlsym(io, f.name);
-        if (!p) p = dlsym(cg, f.name);
-        if (!p) p = dlsym(cf, f.name);
-        if (!p) {
-            g_state.store(-1, std::memory_order_release);
-            return;
-        }
-        *reinterpret_cast<void**>(base + f.off) = p;
-    }
-    g_state.store(1, std::memory_order_release);
-}
-
-// Called from WorkPool threads — `call_once` makes the dlopen/dlsym pass
-// run exactly once with proper happens-before for `g`, and the atomic acquire
-// on the fast path ensures readers on ARM64 see the populated table.
+// Called from WorkPool threads. Function-local static init is thread-safe in
+// C++11 (Itanium/MSVC ABI both guarantee it), so the dlopen/dlsym pass runs
+// exactly once with proper happens-before for the populated table.
 const Syms* load()
 {
-    int s = g_state.load(std::memory_order_acquire);
-    if (__builtin_expect(s, 1) != 0) return s > 0 ? &g : nullptr;
-    std::call_once(g_once, loadOnce);
-    return g_state.load(std::memory_order_acquire) > 0 ? &g : nullptr;
+    static const Syms* table = []() -> const Syms* {
+        static Syms s {};
+        void* cf = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", RTLD_LAZY | RTLD_LOCAL);
+        void* cg = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_LAZY | RTLD_LOCAL);
+        void* io = dlopen("/System/Library/Frameworks/ImageIO.framework/ImageIO", RTLD_LAZY | RTLD_LOCAL);
+        if (!cf || !cg || !io) return nullptr;
+        auto base = reinterpret_cast<char*>(&s);
+        for (auto& f : kFields) {
+            void* p = dlsym(io, f.name);
+            if (!p) p = dlsym(cg, f.name);
+            if (!p) p = dlsym(cf, f.name);
+            if (!p) return nullptr;
+            *reinterpret_cast<void**>(base + f.off) = p;
+        }
+        return &s;
+    }();
+    return table;
 }
 
-constexpr uint32_t kCGImageAlphaPremultipliedLast = 1;
-constexpr uint32_t kCFStringEncodingUTF8 = 0x08000100;
-constexpr int kCFNumberDoubleType = 13;
+constexpr uint32_t kBunCGImageAlphaPremultipliedLast = 1;
+constexpr uint32_t kBunCFStringEncodingUTF8 = 0x08000100;
+constexpr int kBunCFNumberDoubleType = 13;
 
 } // namespace
 
@@ -201,9 +188,9 @@ int32_t bun_coregraphics_decode(const uint8_t* bytes, size_t len, uint64_t max_p
     if (!r.cs) return CG_UNAVAILABLE;
     // CG bitmap contexts won't render to non-premultiplied; draw premultiplied
     // and undo it below so the rest of the pipeline sees straight alpha.
-    r.ctx = s->CGBitmapContextCreate(out, w, h, 8, w * 4, r.cs, kCGImageAlphaPremultipliedLast);
+    r.ctx = s->CGBitmapContextCreate(out, w, h, 8, w * 4, r.cs, kBunCGImageAlphaPremultipliedLast);
     if (!r.ctx) return CG_DECODE_FAILED;
-    s->CGContextDrawImage(r.ctx, CGRect { 0, 0, static_cast<double>(w), static_cast<double>(h) }, r.img);
+    s->CGContextDrawImage(r.ctx, BunCGRect { 0, 0, static_cast<double>(w), static_cast<double>(h) }, r.img);
 
     for (size_t i = 0, n = w * h * 4; i + 4 <= n; i += 4) {
         uint32_t a = out[i + 3];
@@ -289,12 +276,12 @@ int32_t bun_coregraphics_encode(const uint8_t* rgba, uint32_t width, uint32_t he
         r.premul[i + 3] = static_cast<uint8_t>(a);
     }
 
-    r.ctx = s->CGBitmapContextCreate(r.premul, width, height, 8, static_cast<size_t>(width) * 4, r.cs, kCGImageAlphaPremultipliedLast);
+    r.ctx = s->CGBitmapContextCreate(r.premul, width, height, 8, static_cast<size_t>(width) * 4, r.cs, kBunCGImageAlphaPremultipliedLast);
     if (!r.ctx) return CG_ENCODE_FAILED;
     r.img = s->CGBitmapContextCreateImage(r.ctx);
     if (!r.img) return CG_ENCODE_FAILED;
 
-    r.ustr = s->CFStringCreateWithCString(nullptr, uti, kCFStringEncodingUTF8);
+    r.ustr = s->CFStringCreateWithCString(nullptr, uti, kBunCFStringEncodingUTF8);
     if (!r.ustr) return CG_UNAVAILABLE;
     r.sink = s->CFDataCreateMutable(nullptr, 0);
     if (!r.sink) return CG_UNAVAILABLE;
@@ -309,7 +296,7 @@ int32_t bun_coregraphics_encode(const uint8_t* rgba, uint32_t width, uint32_t he
         double q = static_cast<double>(quality < 1 ? 1 : quality > 100 ? 100
                                                                        : quality)
             / 100.0;
-        r.num = s->CFNumberCreate(nullptr, kCFNumberDoubleType, &q);
+        r.num = s->CFNumberCreate(nullptr, kBunCFNumberDoubleType, &q);
         const void* k = *s->kCGImageDestinationLossyCompressionQuality;
         const void* v = r.num;
         // CFType callbacks (NOT null) so CF retains/hashes the CFString key

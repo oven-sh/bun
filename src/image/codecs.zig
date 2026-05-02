@@ -3,11 +3,10 @@
 //! told to emit RGBA, encoders are fed RGBA, so Image.zig never branches on
 //! channel layout.
 //!
-//! Memory ownership: every decode/encode returns a slice owned by
-//! `bun.default_allocator`. Where the C library allocates internally
-//! (turbojpeg, libwebp), the wrapper copies into a default_allocator slice
-//! and frees the C buffer immediately so the JS layer can hand the bytes to
-//! `JSUint8Array.fromBytes` without a custom finalizer.
+//! Memory ownership: decode returns `bun.default_allocator`-owned RGBA. Encode
+//! returns `Encoded{bytes, free}` carrying the codec's own deallocator so the
+//! JS layer can hand the buffer to `ArrayBuffer.toJSWithContext` without a
+//! dupe — see `Encoded` below.
 
 /// Optional OS-native backend. `null` on Linux (and any platform we haven't
 /// written one for) so the dispatch in `decode`/`encode` compiles away. The

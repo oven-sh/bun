@@ -115,6 +115,14 @@ comptime {
 
 pub fn onAttachedProcessExit(this: *FileSink, status: *const bun.spawn.Status) void {
     log("onAttachedProcessExit()", .{});
+
+    // `writer.close()` below re-enters `onClose` which releases the
+    // keep-alive ref, and `stream.cancel`/`runPending` drain microtasks
+    // which may drop the JS wrapper's ref. Hold a local ref so `this`
+    // stays valid for the rest of this function (same pattern as `onWrite`).
+    this.ref();
+    defer this.deref();
+
     this.done = true;
     var readable_stream = this.readable_stream;
     this.readable_stream = .{};

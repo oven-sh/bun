@@ -126,11 +126,24 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 tunnel.clearConnectedWebSocket();
                 tunnel.shutdown();
                 tunnel.deref();
+                // Release the I/O-layer ref taken in initWithTunnel() — the
+                // tunnel was this struct's socket-equivalent owner. In the
+                // non-tunnel path this same ref is released by handleClose()
+                // when the adopted uSockets socket fires its close event, but
+                // tunnel mode never adopts a socket so that callback never runs.
+                // Callers that touch `this` after clearData() must hold a local
+                // ref guard (see cancel/finalize).
+                this.deref();
             }
         }
 
         pub fn cancel(this: *WebSocket) callconv(.c) void {
             log("cancel", .{});
+            // clearData() may drop the tunnel's I/O-layer ref; keep `this`
+            // alive until we've finished closing the socket below.
+            this.ref();
+            defer this.deref();
+
             this.clearData();
 
             if (comptime ssl) {
@@ -1302,6 +1315,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         ) callconv(.c) ?*anyopaque {
             const tunnel: *WebSocketProxyTunnel = @ptrCast(@alignCast(tunnel_ptr));
 
+            // ref_count starts at 1: this is the I/O-layer ref, owned by the
+            // tunnel connection (analogous to the adopted-socket ref in init()
+            // that handleClose() releases). It is released in clearData() when
+            // proxy_tunnel is detached. The ws.ref() below adds the C++ ref
+            // paired with m_connectedWebSocket.
             var ws = bun.new(WebSocket, .{
                 .ref_count = .init(),
                 .tcp = .{ .socket = .{ .detached = {} } }, // No direct socket - using tunnel
@@ -1363,6 +1381,12 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         pub fn finalize(this: *WebSocket) callconv(.c) void {
             log("finalize", .{});
+            // clearData() may drop the tunnel's I/O-layer ref and the block
+            // below drops the C++ ref; keep `this` alive until we've finished
+            // the tcp close check.
+            this.ref();
+            defer this.deref();
+
             this.clearData();
 
             // This is only called by outgoing_websocket.

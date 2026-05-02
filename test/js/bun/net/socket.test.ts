@@ -831,3 +831,43 @@ it("reading fd of a TLS listener should not crash", () => {
   expect(typeof listener.fd).toBe("number");
   expect(listener.fd).toBeGreaterThanOrEqual(0);
 });
+
+it("getServername on a closed TLS socket should not crash", async () => {
+  using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls,
+    socket: {
+      data() {},
+      open() {},
+      close() {},
+    },
+  });
+
+  const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+  const client = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: listener.port,
+    tls: { ...tls, rejectUnauthorized: false },
+    socket: {
+      data() {},
+      open() {},
+      handshake(socket) {
+        socket.end();
+      },
+      close(socket) {
+        // The underlying SSL* is already gone by the time close fires;
+        // getServername must return undefined rather than deref a null SSL*.
+        try {
+          resolve(socket.getServername());
+        } catch (e) {
+          reject(e);
+        }
+      },
+      error() {},
+    },
+  });
+
+  expect(await promise).toBeUndefined();
+  expect(client.getServername()).toBeUndefined();
+});

@@ -1,6 +1,6 @@
 --- a/lshpack.c	2026-05-02 06:41:46.290110113 +0000
 +++ b/lshpack.c	2026-05-02 06:42:07.599902350 +0000
-@@ -53,6 +53,99 @@
+@@ -53,6 +53,103 @@
  
  #include "huff-tables.h"
  
@@ -25,7 +25,11 @@
 +void
 +lshpack_huff_tables_init (void)
 +{
-+    if (hpack_huff_tables_ready)
++    /* Init is idempotent (every thread writes the same values), so a race only
++     * does redundant work — but the release/acquire pair ensures the table
++     * stores are visible before any later encode/decode load on another
++     * thread sees ready==1. */
++    if (__atomic_load_n(&hpack_huff_tables_ready, __ATOMIC_ACQUIRE))
 +        return;
 +
 +    /* hencs: combine two encode_table entries. {64,0} marks pairs whose
@@ -93,7 +97,7 @@
 +        /* else: leave zeroed (.bss) — lens==0 triggers slow path */
 +    }
 +
-+    hpack_huff_tables_ready = 1;
++    __atomic_store_n(&hpack_huff_tables_ready, 1, __ATOMIC_RELEASE);
 +}
 +#endif
 +

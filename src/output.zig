@@ -1061,16 +1061,12 @@ inline fn enableColorFor(dest: Destination) bool {
 }
 
 inline fn prettyTo(dest: Destination, comptime fmt: string, args: anytype) void {
-    const colored = comptime prettyFmt(fmt, true);
-    const plain = comptime prettyFmt(fmt, false);
-    if (comptime hasNoArgs(@TypeOf(args))) {
-        return writeBytes(dest, if (enableColorFor(dest)) colored else plain);
-    }
-    const w = destWriter(dest);
+    // Route through `printTo` so the WASM console_log/console_error path stays
+    // covered (destWriter alone bypasses it).
     if (enableColorFor(dest)) {
-        w.print(colored, args) catch {};
+        printTo(dest, comptime prettyFmt(fmt, true), args);
     } else {
-        w.print(plain, args) catch {};
+        printTo(dest, comptime prettyFmt(fmt, false), args);
     }
 }
 

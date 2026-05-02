@@ -40,7 +40,14 @@ export const lshpack: Dependency = {
         ...(needCompatQueue ? ["compat/queue"] : []),
         ...(cfg.windows ? ["compat/windows"] : []),
       ],
-      defines: { XXH_HEADER_NAME: "xxhash.h", LS_HPACK_BSS_LARGE_TABLES: 1 },
+      defines: {
+        XXH_HEADER_NAME: "xxhash.h",
+        // lshpack.c defaults LS_HPACK_USE_LARGE_TABLES=1 internally; setting
+        // it here is purely defensive so the bss-huff-tables patch can't be
+        // silently disabled by a future upstream change to the default.
+        LS_HPACK_USE_LARGE_TABLES: 1,
+        LS_HPACK_BSS_LARGE_TABLES: 1,
+      },
     };
     if (cfg.windows) spec.cflags = ["-w"];
     return spec;

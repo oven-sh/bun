@@ -831,3 +831,51 @@ it("reading fd of a TLS listener should not crash", () => {
   expect(typeof listener.fd).toBe("number");
   expect(listener.fd).toBeGreaterThanOrEqual(0);
 });
+
+// Regression: on Windows (libuv), `.end()` from `open` on a TLS socket — which
+// fires on TCP-connect (pre-handshake) when a `handshake` handler is also
+// present — left a uv_poll_t with a freshly-submitted AFD request racing
+// uv_close in the same poll_cb frame. The handle never finished closing →
+// process hung. The fix moves uv_close from us_poll_stop to us_poll_free,
+// which runs from check_cb (outside poll_cb).
+it("TLS .end() inside open (mid-handshake) fires close and doesn't hang", async () => {
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls,
+    socket: { data() {}, open() {}, close() {}, error() {} },
+  });
+
+  const events: string[] = [];
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    tls: { rejectUnauthorized: false },
+    socket: {
+      open(s) {
+        events.push("open");
+        s.end();
+      },
+      // Presence of `handshake` is what makes `open` fire pre-handshake.
+      handshake(_s, ok, err) {
+        events.push(`handshake:${ok}:${err?.code ?? "-"}`);
+      },
+      close() {
+        events.push("close");
+        resolve();
+      },
+      data() {},
+      error(_s, e) {
+        reject(e);
+      },
+      connectError(_s, e) {
+        reject(e);
+      },
+    },
+  });
+  await promise;
+
+  // Closing mid-handshake surfaces ECONNRESET to `handshake` before `close`.
+  expect(events).toEqual(["open", "handshake:false:ECONNRESET", "close"]);
+});

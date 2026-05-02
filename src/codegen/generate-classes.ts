@@ -3025,6 +3025,12 @@ fn log_zig_class_getter(typename: []const u8, property_name: []const u8) callcon
   }
 }
 
+fn log_zig_class_setter(typename: []const u8, property_name: []const u8, value: jsc.JSValue) callconv(bun.callconv_inline) void {
+  if (comptime Environment.enable_logs) {
+    zig("<r><d>static<r> <blue>set<r> {s}<d>.<r>{s} = {?s}", .{typename, property_name, bun.tagName(jsc.JSValue, value)});
+  }
+}
+
   `,
 ]);
 

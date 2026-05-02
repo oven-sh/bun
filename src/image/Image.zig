@@ -368,6 +368,26 @@ fn pinForTask(this: *Image, this_value: jsc.JSValue, global: *jsc.JSGlobalObject
     }
 }
 
+// ───────────────────────── static `Bun.Image.backend` ───────────────────────
+
+pub fn getBackend(global: *jsc.JSGlobalObject, _: jsc.JSValue, _: jsc.JSValue) bun.JSError!jsc.JSValue {
+    return bun.String.static(@tagName(codecs.backend)).toJS(global);
+}
+
+pub fn setBackend(_: jsc.JSValue, global: *jsc.JSGlobalObject, value: jsc.JSValue) bool {
+    const str = value.toBunString(global) catch return false;
+    defer str.deref();
+    codecs.backend = if (str.eqlComptime("system"))
+        .system
+    else if (str.eqlComptime("bun"))
+        .bun
+    else {
+        global.throwInvalidArgumentTypeValue("Bun.Image.backend", "\"system\" or \"bun\"", value) catch {};
+        return false;
+    };
+    return true;
+}
+
 // ───────────────────────────── getters ──────────────────────────────────────
 
 pub fn getWidth(this: *Image, _: *jsc.JSGlobalObject) jsc.JSValue {

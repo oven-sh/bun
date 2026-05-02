@@ -395,12 +395,12 @@ describe("lossless roundtrip", () => {
 
 describe("memory hygiene", () => {
   // RSS is the wrong metric for the first N iterations: each WorkPool thread
-  // gets its own mimalloc arena, and libspng allocates a fresh ~256 KB zlib
-  // deflate state per encode that the arena retains. RSS climbs ~200 MB while
-  // those caches warm, then plateaus (verified: 3000 iters peaks at ~200 MB
-  // then *decreases*). To detect a real per-call leak, warm the caches first,
-  // THEN measure.
-  async function leakCheck(body: () => Promise<unknown>, warm = 800, run = 1500) {
+  // gets its own mimalloc arena, and on macOS ImageIO/vImage allocate per-call
+  // CF/CG temporaries that under ASAN sit in quarantine before reuse. RSS
+  // climbs a few hundred MB while those warm, then plateaus (release build is
+  // flat by ~200 iters; debug+ASAN takes ~2k). To detect a real per-call leak,
+  // warm the caches first, THEN measure.
+  async function leakCheck(body: () => Promise<unknown>, warm = 2000, run = 1500) {
     for (let i = 0; i < warm; i++) {
       await body();
       if ((i & 127) === 0) gcTick(true);

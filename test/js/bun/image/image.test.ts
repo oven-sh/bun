@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { isMacOS, isWindows, tempDir } from "harness";
 import zlib from "node:zlib";
 import { join } from "path";
@@ -657,5 +657,70 @@ describe("Bun.Image", () => {
       expect(buf[0]).toBe(0xff);
       expect(buf[1]).toBe(0xd8);
     });
+  });
+});
+
+describe("Bun.Image.backend", () => {
+  // Mutates a process-global; capture and restore around the block so the
+  // describe order doesn't leak the override into the suites above.
+  const original = Bun.Image.backend;
+  afterAll(() => {
+    Bun.Image.backend = original;
+  });
+
+  test("default reflects platform", () => {
+    expect(Bun.Image.backend).toBe(isMacOS || isWindows ? "system" : "bun");
+  });
+
+  test("rejects unknown values", () => {
+    expect(() => {
+      // @ts-expect-error
+      Bun.Image.backend = "wic";
+    }).toThrow(TypeError);
+    expect(Bun.Image.backend).toBe(original);
+  });
+
+  // Same input → both backends → both must round-trip pixels exactly. The
+  // system path goes through ImageIO/WIC + vImage; the bun path is
+  // spng/libwebp + Highway. Reflect/rotate are pure permutations so byte
+  // equality holds; resize uses lanczos3 (the only filter the system path
+  // accepts) so we just check dimensions and that it's not all-black.
+  test.each(["bun", "system"] as const)("backend=%s pipeline parity", async backend => {
+    Bun.Image.backend = backend;
+    expect(Bun.Image.backend).toBe(backend);
+
+    const round = decodePngRaw(await new Bun.Image(cornersPng).png().bytes());
+    expect([...round.data]).toEqual([...decodePngRaw(cornersPng).data]);
+
+    // .flop() is horizontal reflect; .flip() is vertical (Sharp naming).
+    const flopOnce = decodePngRaw(await new Bun.Image(cornersPng).flop().png().bytes());
+    const flopTwice = decodePngRaw(
+      await new Bun.Image(await new Bun.Image(cornersPng).flop().png().bytes()).flop().png().bytes(),
+    );
+    expect([...flopOnce.data.subarray(0, 4)]).toEqual([...round.data.subarray((4 - 1) * 4, 4 * 4)]);
+    expect([...flopTwice.data]).toEqual([...round.data]);
+
+    const r4 = async (deg: number) => decodePngRaw(await new Bun.Image(cornersPng).rotate(deg).png().bytes());
+    const r90 = await r4(90);
+    expect([r90.w, r90.h]).toEqual([3, 4]);
+    expect([...(await r4(180)).data.subarray(0, 4)]).toEqual([...round.data.subarray(-4)]);
+
+    const scaled = decodePngRaw(await new Bun.Image(cornersPng).resize(40, 30, { filter: "lanczos3" }).png().bytes());
+    expect([scaled.w, scaled.h]).toEqual([40, 30]);
+    // First corner is opaque red in the fixture; lanczos can ring ±a few LSB
+    // but it shouldn't be black (the regression this guards against).
+    expect(scaled.data[0]).toBeGreaterThan(200);
+    expect(scaled.data[3]).toBe(255);
+  });
+
+  test("backend='bun' surfaces the HEIC gap, backend='system' covers it", async () => {
+    Bun.Image.backend = "bun";
+    // No static HEIC encoder anywhere — should reject regardless of OS.
+    await expect(new Bun.Image(cornersPng).heic().bytes()).rejects.toThrow();
+    if (isMacOS) {
+      Bun.Image.backend = "system";
+      const out = await new Bun.Image(cornersPng).heic().bytes();
+      expect(out.length).toBeGreaterThan(0);
+    }
   });
 });

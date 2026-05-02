@@ -66,15 +66,10 @@ pub fn decode(bytes: []const u8, max_pixels: u64) BackendError!codecs.Decoded {
 }
 
 pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOptions) BackendError![]u8 {
-    // Defer to the static codec whenever the user asked for a knob ImageIO
-    // can't express, so behaviour matches across platforms:
-    //   • indexed-PNG quantisation (no kCGImagePropertyPNG* for palette)
-    //   • PNG zlib compressionLevel (no per-level property; only on/off)
-    //   • VP8L lossless WebP
-    if (opts.format == .png and (opts.palette or opts.compression_level >= 0))
-        return error.BackendUnavailable;
-    if (opts.format == .webp and opts.lossless) return error.BackendUnavailable;
-
+    // codecs.encode only routes heic/avif here, so the "knob ImageIO can't
+    // express" bailouts (palette/compressionLevel/lossless) are dead — kept
+    // only as a guard if a future caller passes png/webp directly.
+    bun.debugAssert(opts.format == .heic or opts.format == .avif);
     const fmt: i32 = @intFromEnum(opts.format);
     var len: usize = 0;
     // Phase 1: encode into a thread-local CFData inside the shim, return size.
@@ -90,6 +85,44 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOpti
         else => |rc| return mapErr(rc),
     }
     return out[0..len];
+}
+
+// ── vImage geometry ────────────────────────────────────────────────────────
+// AMX-backed kernels for the common pipeline ops. Signatures mirror the
+// Highway path in `codecs.zig` so the dispatch site is `system_backend.x()
+// catch fallback.x()`.
+
+extern fn bun_coregraphics_scale(src: [*]const u8, sw: u32, sh: u32, dst: [*]u8, dw: u32, dh: u32, hq: i32) i32;
+extern fn bun_coregraphics_rotate90(src: [*]const u8, w: u32, h: u32, dst: [*]u8, quarters: u32) i32;
+extern fn bun_coregraphics_reflect(src: [*]const u8, w: u32, h: u32, dst: [*]u8, horizontal: i32) i32;
+
+/// vImageScale only exposes Lanczos (Apple doesn't document the lobe count;
+/// the high-quality flag widens the kernel), so we only take this path for the
+/// lanczos3 default — explicit non-Lanczos filters fall through to the Highway
+/// kernel which honours them exactly.
+pub fn scale(src: []const u8, sw: u32, sh: u32, dw: u32, dh: u32, filter: codecs.Filter) BackendError![]u8 {
+    if (filter != .lanczos3) return error.BackendUnavailable;
+    const out = try bun.default_allocator.alloc(u8, @as(usize, dw) * dh * 4);
+    errdefer bun.default_allocator.free(out);
+    if (bun_coregraphics_scale(src.ptr, sw, sh, out.ptr, dw, dh, 0) != CG_OK)
+        return error.BackendUnavailable;
+    return out;
+}
+
+pub fn rotate(src: []const u8, w: u32, h: u32, quarters: u32) BackendError![]u8 {
+    const out = try bun.default_allocator.alloc(u8, @as(usize, w) * h * 4);
+    errdefer bun.default_allocator.free(out);
+    if (bun_coregraphics_rotate90(src.ptr, w, h, out.ptr, quarters) != CG_OK)
+        return error.BackendUnavailable;
+    return out;
+}
+
+pub fn flip(src: []const u8, w: u32, h: u32, horizontal: bool) BackendError![]u8 {
+    const out = try bun.default_allocator.alloc(u8, @as(usize, w) * h * 4);
+    errdefer bun.default_allocator.free(out);
+    if (bun_coregraphics_reflect(src.ptr, w, h, out.ptr, @intFromBool(horizontal)) != CG_OK)
+        return error.BackendUnavailable;
+    return out;
 }
 
 const bun = @import("bun");

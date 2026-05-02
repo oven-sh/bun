@@ -8241,6 +8241,20 @@ declare module "bun" {
    * ```
    */
   export class Image {
+    /**
+     * Process-global pipeline backend.
+     *
+     * - `"system"` (default on macOS/Windows) — static codecs for
+     *   JPEG/PNG/WebP (same bytes as Linux), Accelerate/vImage for `lanczos3`
+     *   resize · rotate · flip on macOS, and ImageIO/WIC for HEIC/AVIF.
+     * - `"bun"` — static codecs + Highway geometry only. Byte-identical to a
+     *   Linux build; HEIC/AVIF throw `UnsupportedOnPlatform`.
+     *
+     * Set before awaiting a pipeline; in-flight tasks read the value as of
+     * when they were scheduled.
+     */
+    static backend: "system" | "bun";
+
     constructor(
       input: string | ArrayBuffer | SharedArrayBuffer | NodeJS.TypedArray | Blob,
       options?: Image.ConstructorOptions,

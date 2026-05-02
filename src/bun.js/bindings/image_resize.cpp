@@ -107,19 +107,21 @@ static void HorizPass(const uint8_t* HWY_RESTRICT src, size_t src_w, size_t src_
             // sp is the only place that still needs a multiply (s.start is
             // non-monotone in x); it's one shift+add per output pixel.
             const uint8_t* sp = srow + static_cast<size_t>(s.start) * 4;
-            // Seed with the rounding term so the final >>kFixShift rounds to
-            // nearest without an extra add.
-            auto sum0 = vround;
+            auto sum0 = hn::Zero(di32);
             auto sum1 = hn::Zero(di32);
             for (int32_t k = 0; k < s.n; k++, sp += 4) {
-                // u8×4 → i16×4 in the low half of an i16×8 vector.
+                // u8×4 → i32×4 → reinterpret as i16×8 = [R,0,G,0,B,0,A,0].
+                // Paired with a broadcast i16 weight, each i32 lane's odd-slot
+                // product is zero, so RearrangeToOddPlusEven recovers
+                // [R·w,G·w,B·w,A·w]. (Plain Add(sum0,sum1) is wrong on NEON,
+                // where RWMA splits low/high i16 halves across the two sums.)
                 auto pix = hn::BitCast(di16, hn::PromoteTo(di32, hn::LoadU(du8, sp)));
                 auto wk = hn::Set(di16, w[k]);
                 sum0 = hn::ReorderWidenMulAccumulate(di32, pix, wk, sum0, sum1);
             }
-            auto acc = hn::ShiftRight<kFixShift>(hn::Add(sum0, sum1));
+            auto acc = hn::Add(hn::RearrangeToOddPlusEven(sum0, sum1), vround);
             // DemoteTo i32→u8 saturates [0,255].
-            hn::StoreU(hn::DemoteTo(du8, acc), du8, dp);
+            hn::StoreU(hn::DemoteTo(du8, hn::ShiftRight<kFixShift>(acc)), du8, dp);
         }
     }
 }
@@ -152,7 +154,7 @@ static void VertPass(const uint8_t* HWY_RESTRICT src, size_t src_h, size_t dst_w
         uint8_t* dp = drow;
         const uint8_t* end = drow + row_bytes;
         for (; dp + N <= end; dp += N, col0 += N) {
-            auto sum0 = vround;
+            auto sum0 = hn::Zero(di32);
             auto sum1 = hn::Zero(di32);
             const uint8_t* sp = col0;
             for (int32_t k = 0; k < s.n; k++, sp += row_bytes) {
@@ -160,8 +162,8 @@ static void VertPass(const uint8_t* HWY_RESTRICT src, size_t src_h, size_t dst_w
                 auto wk = hn::Set(di16, w[k]);
                 sum0 = hn::ReorderWidenMulAccumulate(di32, pix, wk, sum0, sum1);
             }
-            auto acc = hn::ShiftRight<kFixShift>(hn::Add(sum0, sum1));
-            hn::StoreU(hn::DemoteTo(du8, acc), du8, dp);
+            auto acc = hn::Add(hn::RearrangeToOddPlusEven(sum0, sum1), vround);
+            hn::StoreU(hn::DemoteTo(du8, hn::ShiftRight<kFixShift>(acc)), du8, dp);
         }
         for (; dp < end; dp++, col0++) {
             int32_t acc = kFixRound;

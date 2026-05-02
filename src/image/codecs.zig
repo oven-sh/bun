@@ -19,6 +19,35 @@ else if (bun.Environment.isWindows)
 else
     null;
 
+/// Process-global selector exposed as `Bun.Image.backend`.
+///
+/// `.system` (default on darwin/windows) is the perf-optimal hybrid:
+///   • jpeg/png/webp decode+encode → static codecs (turbo/spng/libwebp).
+///     Profiling on M-series found ImageIO no faster: Huffman/inflate
+///     dominate and aren't AMX-amenable, and ImageIO bottoms out in stock
+///     libz vs our zlib-ng. Keeping these static also makes output bytes
+///     and the `quality` scale match Linux.
+///   • lanczos3 resize, rotate90, flip → vImage (AMX, ~3-6× the Highway
+///     kernel on the geometry step).
+///   • heic/avif decode+encode → ImageIO/WIC (no static codec).
+///
+/// `.bun` skips the OS layer entirely (Highway geometry, heic/avif throw)
+/// so behaviour is byte-identical to a Linux build.
+///
+/// Unsynchronised: written from JS, read from WorkPool — a torn read of a
+/// 1-byte enum is fine and the worst case is one task using the previous
+/// mode.
+pub const Backend = enum { system, bun };
+pub var backend: Backend = if (system_backend != null) .system else .bun;
+
+/// Runtime half of the dispatch check; the comptime half is the
+/// `if (system_backend) |b|` capture at each call site (types can't be
+/// runtime-conditional, so the two stay separate). On platforms with no
+/// backend the capture is comptime-dead and this is never referenced.
+inline fn useSystem() bool {
+    return backend == .system;
+}
+
 pub const Format = enum(u8) {
     jpeg,
     png,
@@ -104,25 +133,23 @@ pub const DecodeHint = struct {
 
 pub fn decode(bytes: []const u8, max_pixels: u64, hint: DecodeHint) Error!Decoded {
     const fmt = Format.sniff(bytes) orelse return error.UnknownFormat;
-    // Try the OS codec first; the static path is the correctness baseline so
-    // BackendUnavailable AND DecodeFailed fall through — the system codec may
-    // be stricter or simply not recognise a sub-variant the static codec does
-    // (e.g. ImageIO without WebP). TooManyPixels and OOM are authoritative.
-    // Skip the system path for JPEG when we have a downscale hint — only
-    // libjpeg-turbo gives us DCT-domain scaling.
-    const want_dct_scale = fmt == .jpeg and hint.target_w != 0;
-    if (!want_dct_scale) if (system_backend) |b| {
-        if (b.decode(bytes, max_pixels)) |d| return d else |e| switch (e) {
-            error.BackendUnavailable, error.DecodeFailed => {},
-            else => |narrowed| return narrowed,
-        }
-    };
     return switch (fmt) {
         .jpeg => jpeg.decode(bytes, max_pixels, hint),
         .png => png.decode(bytes, max_pixels),
         .webp => webp.decode(bytes, max_pixels),
-        // No static codec — system backend was the only path.
-        .heic, .avif => error.UnsupportedOnPlatform,
+        // Static codecs cover everything we ship; profiling on M-series showed
+        // ImageIO is no faster (AppleJPEG ≈ libjpeg-turbo since Huffman is the
+        // bottleneck and isn't vectorisable; spng+zlib-ng beats ImageIO's
+        // system libz). The OS backend is purely a *capability* fallback for
+        // containers we don't link a decoder for — and `backend == .bun` opts
+        // out of even that so behaviour is identical to Linux.
+        .heic, .avif => if (system_backend) |b| if (useSystem())
+            b.decode(bytes, max_pixels) catch |e| switch (e) {
+                error.BackendUnavailable => error.UnsupportedOnPlatform,
+                else => |narrowed| narrowed,
+            }
+        else
+            error.UnsupportedOnPlatform else error.UnsupportedOnPlatform,
     };
 }
 
@@ -223,12 +250,6 @@ pub const Encoded = struct {
 };
 
 pub fn encode(rgba: []const u8, width: u32, height: u32, opts: EncodeOptions) Error!Encoded {
-    if (system_backend) |b| {
-        if (b.encode(rgba, width, height, opts)) |out| return Encoded.fromOwned(out) else |e| switch (e) {
-            error.BackendUnavailable => {},
-            else => |narrowed| return narrowed,
-        }
-    }
     return switch (opts.format) {
         .jpeg => jpeg.encode(rgba, width, height, opts.quality),
         .png => if (opts.palette)
@@ -236,7 +257,18 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: EncodeOptions) Er
         else
             png.encode(rgba, width, height, opts.compression_level),
         .webp => webp.encode(rgba, width, height, opts.quality, opts.lossless),
-        .heic, .avif => error.UnsupportedOnPlatform,
+        // Same routing rationale as decode(): the OS encoder is a capability
+        // fallback, not a fast path — ImageIO's quality scale doesn't match
+        // libjpeg-turbo's, and it can't honour compressionLevel/palette/
+        // lossless, so using it for jpeg/png/webp would make output bytes
+        // diverge from Linux for no speed win.
+        .heic, .avif => if (system_backend) |b| if (useSystem())
+            Encoded.fromOwned(b.encode(rgba, width, height, opts) catch |e| switch (e) {
+                error.BackendUnavailable => return error.UnsupportedOnPlatform,
+                else => |narrowed| return narrowed,
+            })
+        else
+            error.UnsupportedOnPlatform else error.UnsupportedOnPlatform,
     };
 }
 
@@ -277,6 +309,12 @@ pub fn modulate(rgba: []u8, brightness: f32, saturation: f32) void {
 }
 
 pub fn resize(src: []const u8, sw: u32, sh: u32, dw: u32, dh: u32, f: Filter) Error![]u8 {
+    if (system_backend) |b| if (@hasDecl(b, "scale")) if (useSystem()) {
+        if (b.scale(src, sw, sh, dw, dh, f)) |out| return out else |e| switch (e) {
+            error.BackendUnavailable => {},
+            else => |narrowed| return narrowed,
+        }
+    };
     // ONE allocation for output + the kernel's scratch arena (intermediate
     // dst_w×src_h×4 row buffer + spans/weights tables). Zero mallocs in the
     // C++; mimalloc here is faster than libc, and the over-allocation rounds
@@ -294,12 +332,26 @@ pub fn resize(src: []const u8, sw: u32, sh: u32, dw: u32, dh: u32, f: Filter) Er
 
 pub fn rotate(src: []const u8, w: u32, h: u32, degrees: u32) Error!Decoded {
     const dw: u32, const dh: u32 = if (degrees == 90 or degrees == 270) .{ h, w } else .{ w, h };
+    if (system_backend) |b| if (@hasDecl(b, "rotate")) if (useSystem()) {
+        if (b.rotate(src, w, h, degrees / 90)) |out|
+            return .{ .rgba = out, .width = dw, .height = dh }
+        else |e| switch (e) {
+            error.BackendUnavailable => {},
+            else => |narrowed| return narrowed,
+        }
+    };
     const out = try bun.default_allocator.alloc(u8, @as(usize, dw) * dh * 4);
     bun_image_rotate_rgba8(src.ptr, @intCast(w), @intCast(h), out.ptr, @intCast(degrees));
     return .{ .rgba = out, .width = dw, .height = dh };
 }
 
 pub fn flip(src: []const u8, w: u32, h: u32, horizontal: bool) Error![]u8 {
+    if (system_backend) |b| if (@hasDecl(b, "flip")) if (useSystem()) {
+        if (b.flip(src, w, h, horizontal)) |out| return out else |e| switch (e) {
+            error.BackendUnavailable => {},
+            else => |narrowed| return narrowed,
+        }
+    };
     const out = try bun.default_allocator.alloc(u8, @as(usize, w) * h * 4);
     bun_image_flip_rgba8(src.ptr, @intCast(w), @intCast(h), out.ptr, @intFromBool(horizontal));
     return out;

@@ -1087,6 +1087,110 @@ describe("Bun.Archive", () => {
       const content = await Bun.file(join(String(dir), "unicode.txt")).text();
       expect(content).toBe("Hello, 世界! Привет! Γειά σου!");
     });
+
+    test("handles non-ASCII Norwegian characters in filenames", async () => {
+      const archive = new Bun.Archive({
+        "package/Søreng.json": '{"ok": true}',
+        "package/blåbær.txt": "blueberry",
+        "package/ærlig.txt": "honest",
+      });
+
+      using dir = tempDir("archive-norwegian", {});
+      await archive.extract(String(dir));
+
+      expect(await Bun.file(join(String(dir), "package/Søreng.json")).text()).toBe('{"ok": true}');
+      expect(await Bun.file(join(String(dir), "package/blåbær.txt")).text()).toBe("blueberry");
+      expect(await Bun.file(join(String(dir), "package/ærlig.txt")).text()).toBe("honest");
+    });
+
+    test("handles non-ASCII Polish characters in filenames", async () => {
+      const archive = new Bun.Archive({
+        "zażółć.txt": "zażółć gęślą jaźń",
+        "gęślą.txt": "polish diacritics",
+        "jaźń.txt": "more polish",
+      });
+
+      using dir = tempDir("archive-polish", {});
+      await archive.extract(String(dir));
+
+      expect(await Bun.file(join(String(dir), "zażółć.txt")).text()).toBe("zażółć gęślą jaźń");
+      expect(await Bun.file(join(String(dir), "gęślą.txt")).text()).toBe("polish diacritics");
+      expect(await Bun.file(join(String(dir), "jaźń.txt")).text()).toBe("more polish");
+    });
+
+    test("handles non-ASCII CJK characters in filenames", async () => {
+      const archive = new Bun.Archive({
+        "日本語.txt": "Japanese",
+        "中文.txt": "Chinese",
+        "한국어.txt": "Korean",
+      });
+
+      using dir = tempDir("archive-cjk", {});
+      await archive.extract(String(dir));
+
+      expect(await Bun.file(join(String(dir), "日本語.txt")).text()).toBe("Japanese");
+      expect(await Bun.file(join(String(dir), "中文.txt")).text()).toBe("Chinese");
+      expect(await Bun.file(join(String(dir), "한국어.txt")).text()).toBe("Korean");
+    });
+
+    test("handles mixed ASCII and non-ASCII filenames in same archive", async () => {
+      const archive = new Bun.Archive({
+        "readme.txt": "hello",
+        "données.json": '{"data": 1}',
+        "config.yaml": "key: value",
+        "ñoño.txt": "spanish",
+      });
+
+      using dir = tempDir("archive-mixed", {});
+      await archive.extract(String(dir));
+
+      expect(await Bun.file(join(String(dir), "readme.txt")).text()).toBe("hello");
+      expect(await Bun.file(join(String(dir), "données.json")).text()).toBe('{"data": 1}');
+      expect(await Bun.file(join(String(dir), "config.yaml")).text()).toBe("key: value");
+      expect(await Bun.file(join(String(dir), "ñoño.txt")).text()).toBe("spanish");
+    });
+
+    test("non-ASCII filenames round-trip through bytes() and back", async () => {
+      const original = {
+        "Søreng.json": '{"ok": true}',
+        "日本語.txt": "Japanese",
+        "données.json": '{"data": 1}',
+      };
+
+      const archive1 = new Bun.Archive(original);
+      const bytes = await archive1.bytes();
+
+      const archive2 = new Bun.Archive(bytes);
+      const files = await archive2.files();
+
+      for (const [name, content] of Object.entries(original)) {
+        const file = files.get(name);
+        expect(file).toBeDefined();
+        expect(await file!.text()).toBe(content);
+      }
+    });
+
+    test("gzip-compressed archive with non-ASCII filenames", async () => {
+      const archive = new Bun.Archive(
+        {
+          "package/Søreng.json": '{"ok": true}',
+          "package/données.txt": "french data",
+        },
+        { compress: "gzip" },
+      );
+
+      // Produce actual gzip-compressed bytes via bytes()
+      const gzipBytes = await archive.bytes();
+
+      // Feed gzip bytes into a new Archive so extract() exercises the gzip decoder
+      const archive2 = new Bun.Archive(gzipBytes);
+
+      using dir = tempDir("archive-gzip-unicode", {});
+      await archive2.extract(String(dir));
+
+      expect(await Bun.file(join(String(dir), "package/Søreng.json")).text()).toBe('{"ok": true}');
+      expect(await Bun.file(join(String(dir), "package/données.txt")).text()).toBe("french data");
+    });
   });
 
   describe("archive.files()", () => {

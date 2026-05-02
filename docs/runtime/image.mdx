@@ -154,6 +154,8 @@ A `Bun.Image` pipeline is a valid `Response` body and sets `Content-Type` automa
 Bun.serve({
   routes: {
     "/avatar/:id": async req => {
+      // Validate before touching the filesystem (see the Input note above).
+      if (!/^[a-z0-9]+$/.test(req.params.id)) return new Response(null, { status: 400 });
       const out = await Bun.file(`avatars/${req.params.id}.png`).image().resize(128, 128).webp().blob();
       return new Response(out);
     },

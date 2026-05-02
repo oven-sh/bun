@@ -585,8 +585,10 @@ pub const HTMLRewriter = struct {
             };
 
             sink.rewriter.?.end() catch {
-                if (!is_async) response.finalize();
-                sink.response = undefined;
+                // Do not call response.finalize() here: by the time runOutputSink runs,
+                // sink.response has already been wrapped in a JS value (see init()) and is
+                // kept alive via sink.response_value. GC owns its lifetime now; manually
+                // finalizing it would double-free when the JS wrapper is later collected.
                 if (is_async) {
                     response.getBodyValue().toErrorInstance(.{ .Message = createLOLHTMLStringError() }, global) catch {}; // TODO: properly propagate exception upwards
                     return null;

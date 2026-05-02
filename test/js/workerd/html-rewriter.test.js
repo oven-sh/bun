@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { gcTick, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, gcTick, tls, tmpdirSync } from "harness";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
 var setTimeoutAsync = (fn, delay) => {
@@ -82,6 +82,55 @@ describe("HTMLRewriter", () => {
     } finally {
       expect(caught).toBeTrue();
     }
+  });
+
+  it("error thrown inside onDocument end handler does not double-free the output Response", async () => {
+    // The output Response is wrapped in a JS value before transform() runs the
+    // rewriter. When a document `end` handler throws synchronously, the error path
+    // used to manually call Response.finalize() on it, so GC would later finalize
+    // the same Response again via the JS wrapper -> use-after-free. Run in a
+    // subprocess so an ASAN abort shows up as a non-zero exit code instead of
+    // killing the test runner.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          let caught;
+          try {
+            new HTMLRewriter()
+              .onDocument({
+                end() {
+                  throw new Error("boom");
+                },
+              })
+              .transform(new Response("<p>hi</p>"));
+          } catch (e) {
+            caught = e;
+          }
+          Bun.gc(true);
+          Bun.gc(true);
+          if (!(caught instanceof Error) || caught.message !== "boom") {
+            throw new Error("expected handler error to propagate, got: " + caught);
+          }
+          console.log("ok");
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        // If the subprocess does crash under ASAN (the pre-fix behavior), skip
+        // symbolication so it exits promptly and the assertions below fire
+        // instead of hitting the test timeout. allow_user_segv_handler=1
+        // silences JSC's "ASAN interferes with signal handlers" warning.
+        ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1:symbolize=0",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
   });
 
   it("HTMLRewriter: async replacement", async () => {

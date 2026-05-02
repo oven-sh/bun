@@ -144,18 +144,24 @@ After the first terminal resolves, `img.width` and `img.height` reflect the _out
 
 ## `Bun.serve` integration
 
-A `Bun.Image` pipeline is a valid `Response` body — Bun runs it on the thread pool, sets `Content-Type`, and streams the result:
+A `Bun.Image` pipeline is a valid `Response` body and sets `Content-Type` automatically. To keep the encode off the JS thread in a server handler, await a terminal first:
 
 ```ts
 Bun.serve({
   routes: {
-    "/avatar/:id": req => {
-      const src = Bun.file(`avatars/${req.params.id}.png`);
-      return new Response(new Bun.Image(src).resize(128, 128).webp());
+    "/avatar/:id": async req => {
+      const out = await Bun.file(`avatars/${req.params.id}.png`)
+        .image()
+        .resize(128, 128)
+        .webp()
+        .blob();
+      return new Response(out);
     },
   },
 });
 ```
+
+Passing the pipeline directly (`new Response(img)`) also works, but currently runs the encode synchronously during body init.
 
 ## Clipboard
 

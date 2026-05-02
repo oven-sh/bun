@@ -130,19 +130,29 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOpti
 
     if (frame.?.vt.Initialize(frame.?, null) < 0) return error.EncodeFailed;
     if (frame.?.vt.SetSize(frame.?, width, height) < 0) return error.EncodeFailed;
+    // SetPixelFormat is in/out — the codec rewrites `pf` to its native sink
+    // (the HEIF encoder wants 32bppBGRA, not RGBA). When it doesn't move,
+    // WritePixels straight from our buffer; when it does, wrap our RGBA as a
+    // WIC bitmap, let WICConvertBitmapSource do the channel swap, and feed
+    // the result via WriteSource. This is the documented dance; without it
+    // .heic()/.avif() always rejected on Windows.
     var pf = GUID_WICPixelFormat32bppRGBA;
-    // SetPixelFormat is in/out — the codec rewrites `pf` to the closest format
-    // it can natively sink (e.g. JPEG → 24bppBGR). WritePixels with our RGBA
-    // buffer would then be reinterpreted as that layout and produce garbage.
-    // The full fix is CreateBitmapFromMemory(RGBA) → WICConvertBitmapSource(pf)
-    // → WriteSource; until that's wired, fall back to the static codec when
-    // the format moves so output is always correct.
     if (frame.?.vt.SetPixelFormat(frame.?, &pf) < 0) return error.EncodeFailed;
-    if (!std.meta.eql(pf, GUID_WICPixelFormat32bppRGBA)) return error.BackendUnavailable;
-
     const stride: u32 = width * 4;
-    if (frame.?.vt.WritePixels(frame.?, height, stride, @intCast(rgba.len), rgba.ptr) < 0)
-        return error.EncodeFailed;
+    if (std.meta.eql(pf, GUID_WICPixelFormat32bppRGBA)) {
+        if (frame.?.vt.WritePixels(frame.?, height, stride, @intCast(rgba.len), rgba.ptr) < 0)
+            return error.EncodeFailed;
+    } else {
+        var src: ?*IWICBitmapSource = null;
+        if (f.vt.CreateBitmapFromMemory(f, width, height, &GUID_WICPixelFormat32bppRGBA, stride, @intCast(rgba.len), rgba.ptr, &src) < 0 or src == null)
+            return error.EncodeFailed;
+        defer release(src);
+        const convertFn = wicConvertBitmapSource orelse return error.BackendUnavailable;
+        var conv: ?*IWICBitmapSource = null;
+        if (convertFn(&pf, src.?, &conv) < 0 or conv == null) return error.EncodeFailed;
+        defer release(conv);
+        if (frame.?.vt.WriteSource(frame.?, conv.?, null) < 0) return error.EncodeFailed;
+    }
     if (frame.?.vt.Commit(frame.?) < 0) return error.EncodeFailed;
     if (enc.?.vt.Commit(enc.?) < 0) return error.EncodeFailed;
 
@@ -220,6 +230,12 @@ const IWICImagingFactory = extern struct {
         CreateBitmapClipper: *const anyopaque,
         CreateBitmapFlipRotator: *const anyopaque,
         CreateStream: *const fn (*IWICImagingFactory, *?*IWICStream) callconv(.winapi) HRESULT,
+        CreateColorContext: *const anyopaque,
+        CreateColorTransformer: *const anyopaque,
+        CreateBitmap: *const anyopaque,
+        CreateBitmapFromSource: *const anyopaque,
+        CreateBitmapFromSourceRect: *const anyopaque,
+        CreateBitmapFromMemory: *const fn (*IWICImagingFactory, u32, u32, *const GUID, u32, u32, [*]const u8, *?*IWICBitmapSource) callconv(.winapi) HRESULT,
         // …remaining slots unused.
     };
 };
@@ -299,7 +315,7 @@ const IWICBitmapFrameEncode = extern struct {
         SetPalette: *const anyopaque,
         SetThumbnail: *const anyopaque,
         WritePixels: *const fn (*IWICBitmapFrameEncode, u32, u32, u32, [*]const u8) callconv(.winapi) HRESULT,
-        WriteSource: *const anyopaque,
+        WriteSource: *const fn (*IWICBitmapFrameEncode, *IWICBitmapSource, ?*const anyopaque) callconv(.winapi) HRESULT,
         Commit: *const fn (*IWICBitmapFrameEncode) callconv(.winapi) HRESULT,
         // GetMetadataQueryWriter unused.
     };

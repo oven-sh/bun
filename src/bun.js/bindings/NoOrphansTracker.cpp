@@ -5,26 +5,26 @@
 // `kill(-pgid)` nor a libproc child walk can reach it. macOS has no
 // PR_SET_CHILD_SUBREAPER.
 //
-// Solution: `EVFILT_PROC` + `NOTE_TRACK`. xnu auto-registers the same
-// `NOTE_TRACK|NOTE_EXIT` knote on every child *inside `fork1()`* before the
-// child is schedulable, recursively (kern_fork.c:592 → `kqueue_kern_proc`
-// `KNOTE_TRACK`). Each new pid produces a `NOTE_CHILD` event (`data` = parent
-// pid). Non-SETEXEC `posix_spawn` goes through `fork1()`, so arming
-// `NOTE_TRACK` on `getpid()` *before* `posix_spawn` means the script's knote
-// is created atomically with the script — zero seed window. We `EV_DELETE`
-// the self-knote right after spawn so unrelated bun-side forks aren't
-// tracked; the descendant knotes are independent and survive.
+// Solution: `EVFILT_PROC` `NOTE_FORK` + a `p_puniqueid` spawn-graph scan.
+// `p_puniqueid` (exposed via the private-but-ABI-stable
+// `proc_pidinfo(PROC_PIDUNIQIDENTIFIERINFO)`) is the *spawning* parent's
+// per-boot unique id — set inside `fork1()`, immutable across reparenting,
+// never recycled. Seeding `m_seen` with the script's `p_uniqueid` and
+// fixed-point-scanning `proc_listallpids` for any pid whose `p_puniqueid` is
+// in `m_seen` reconstructs the descendant set even after intermediates have
+// died and the daemon has reparented to launchd.
 //
-// We record `(pid, p_uniqueid)` for every `NOTE_CHILD`. At kill time identity
-// is verified by `p_uniqueid` (per-boot monotone, never recycled — exposed via
-// the private-but-ABI-stable `proc_pidinfo(PROC_PIDUNIQIDENTIFIERINFO)`),
-// which is strictly safer than the ppid recheck used elsewhere.
+// `NOTE_FORK` on each tracked pid wakes the wait loop to re-scan whenever
+// something forks. The scan registers `NOTE_FORK|NOTE_EXIT` on every newly
+// discovered pid so the chain continues.
 //
-// `NOTE_TRACKERR` fires on the parent's event if xnu couldn't allocate the
-// child's knote (kern_fork.c:601, ENOMEM). We fall back to a single
-// proc_listallpids fixed-point sweep over `m_seen` (the immutable
-// `p_puniqueid` spawn graph) and manually re-arm `NOTE_TRACK` on anything
-// found so its subtree rejoins the auto-tracked set. Best-effort; cold path.
+// xnu had `NOTE_TRACK` (auto-attach the same knote to every fork inside
+// `fork1()`, atomically) which would have closed the fast-exit race, but it
+// has been ENOTSUP since 10.5 (sys/event.h: "NOTE_TRACK, NOTE_TRACKERR, and
+// NOTE_CHILD are no longer supported as of 10.5"). The remaining race — an
+// intermediate that forks-and-exits before the scan triggered by its own
+// birth records its uniqueid — is narrowed by the freeze-then-rescan loop in
+// `killTracked()` but cannot be fully closed from userspace.
 //
 // All state is process-global; spawnSync is single-threaded by design (see
 // Bun__currentSyncPID), so no locking.
@@ -74,11 +74,11 @@ public:
         return instance;
     }
 
-    // Called once per spawnSync, after the kqueue's self-NOTE_TRACK is armed
-    // and the script has been spawned. Seeds with the *script's* uniqueid (not
-    // the current process's — we don't want to track or kill unrelated
-    // siblings) and stashes kq for the killTracked() drain and any TRACKERR
-    // fallback re-arms. The script's knote was kernel-created inside fork1().
+    // Called once per spawnSync after the script is spawned. Seeds the scan
+    // root with the *script's* uniqueid (not ours — we don't track or kill
+    // unrelated siblings) and stashes kq so `scan()` can EV_ADD on each
+    // discovered descendant. The script's own knote is registered by the
+    // wait loop's EV_RECEIPT batch.
     void begin(int kq, pid_t root)
     {
         m_seen.clear();
@@ -92,27 +92,13 @@ public:
     }
 
     // Detach from the borrowed kqueue before its owner closes it, so the
-    // drain in killTracked() / re-arm in fallbackScan() don't kevent() on a
-    // closed (or worse, reused) fd.
+    // EV_ADD in `scan()` and the drain in `killTracked()` don't kevent() on
+    // a closed (or worse, reused) fd.
     void releaseKq() { m_kq = -1; }
 
-    // NOTE_CHILD: kernel auto-attached NOTE_TRACK to `pid` inside fork1();
-    // record its uniqueid for kill-time identity verification. ESRCH (already
-    // gone) is fine — its own children's knotes were attached in-kernel, so
-    // the chain continues; we just won't have this link's uid in m_seen,
-    // which only matters for the TRACKERR fallback.
-    void onChild(pid_t pid)
-    {
-        ProcUniqIdentifierInfo u;
-        if (!ProcUniqIdentifierInfo::read(pid, u)) return;
-        // m_tracked may already have it via a TRACKERR fallback that ran
-        // before this NOTE_CHILD drained — m_seen dedups.
-        if (!m_seen.add(u.p_uniqueid).isNewEntry) return;
-        m_tracked.append({ pid, u.p_uniqueid });
-    }
-
     // A tracked pid sent NOTE_EXIT. Drop it from the live list so we don't
-    // try to signal a recycled pid later. Its uniqueid stays in `seen`.
+    // try to signal a recycled pid later. Its uniqueid stays in `m_seen` so
+    // the scan can still chain through it.
     void onExit(pid_t pid)
     {
         for (size_t i = 0; i < m_tracked.size(); ++i) {
@@ -123,38 +109,87 @@ public:
         }
     }
 
-    // NOTE_TRACKERR on `pid`: xnu couldn't allocate its child's knote
-    // (ENOMEM). The child — and its whole subtree — are now untracked. Do a
-    // bounded p_puniqueid fixed-point sweep over m_seen and manually re-arm
-    // NOTE_TRACK on anything found so it rejoins the auto-tracked set.
-    // Best-effort under memory pressure; cold path.
-    void onTrackErr(pid_t)
+    // Fixed-point sweep over the live process table for any pid whose
+    // `p_puniqueid` is in `m_seen`. For each new one: record it, and EV_ADD
+    // `NOTE_FORK|NOTE_EXIT` (udata 0) so its own forks wake the wait loop.
+    // Called on every NOTE_FORK from the wait loop and from `killTracked()`.
+    //
+    // Fast-path: `proc_listchildpids` on each tracked pid first. One syscall
+    // per tracked pid, returns only direct children — usually catches the
+    // new fork before the intermediate can exit. The full `proc_listallpids`
+    // sweep follows for anything that already reparented (its `p_puniqueid`
+    // is unchanged, so it's still linkable as long as the parent's uniqueid
+    // is in `m_seen`).
+    void scan()
     {
-        fallbackScan();
+        if (m_seen.isEmpty()) return;
+
+        // Fast path: direct children of currently-tracked pids. This is the
+        // race-narrowing step — proc_listchildpids is one cheap syscall per
+        // tracked pid, so it usually runs before a fast-exit intermediate
+        // can fork+exit and break the `p_puniqueid` chain. Fixed-size buffer
+        // is intentional: a query-then-allocate round-trip would double the
+        // syscalls and widen the very race this exists to narrow; >256 direct
+        // children of a single tracked pid is pathological, and any overflow
+        // is caught by the full `proc_listallpids` sweep immediately below
+        // (`p_puniqueid` survives reparenting, so nothing is lost — only the
+        // latency advantage for the 257th+ child).
+        {
+            pid_t kids[256];
+            // m_tracked may grow while iterating; index past the original end.
+            for (size_t i = 0; i < m_tracked.size(); ++i) {
+                int n = proc_listchildpids(m_tracked[i].pid, kids, sizeof kids);
+                for (int k = 0; k < n; ++k)
+                    addIfNew(kids[k]);
+            }
+        }
+
+        // Full sweep: catches anything that already reparented to launchd.
+        int cap = proc_listallpids(nullptr, 0);
+        if (cap <= 0) return;
+        const size_t want = static_cast<size_t>(cap) + 64;
+        if (m_pids.size() < want) m_pids.grow(want);
+
+        bool grew;
+        do {
+            grew = false;
+            int n = proc_listallpids(m_pids.mutableSpan().data(),
+                static_cast<int>(m_pids.size() * sizeof(pid_t)));
+            if (n <= 0) return;
+            for (int i = 0; i < n; ++i)
+                if (addIfNew(m_pids[static_cast<size_t>(i)])) grew = true;
+        } while (grew);
     }
 
-    // SIGKILL every tracked descendant. Freeze, drain the kq for any
-    // NOTE_CHILD that raced the SIGSTOPs, freeze the new ones, repeat until
-    // closed. Then verify each p_uniqueid still matches what we recorded
-    // (uniqueids never recycle, unlike pids) — mismatch ⇒ pid was reused
-    // between record and STOP; SIGCONT and skip.
+    // SIGKILL every tracked descendant. Freeze, drain any queued NOTE_FORK
+    // and rescan, freeze the new ones, repeat until closed. Then verify each
+    // `p_uniqueid` still matches what we recorded (uniqueids never recycle,
+    // unlike pids) — mismatch ⇒ pid was reused between record and STOP;
+    // SIGCONT and skip.
     void killTracked()
     {
         size_t frozen = 0;
+        // m_tracked[0] is the script root while it's alive; the wait loop
+        // calls `onExit(root)` before we get here on the normal path, so the
+        // first SIGSTOP target is a real descendant. On the parent-died /
+        // Global.exit path the root may still be at [0] — STOPping it is
+        // fine, it's about to be SIGKILLed.
         do {
             for (; frozen < m_tracked.size(); ++frozen)
                 kill(m_tracked[frozen].pid, SIGSTOP);
-            // Drain any NOTE_CHILD that landed between the last drain and the
-            // SIGSTOPs we just sent. Once a drain adds nothing, every tracked
-            // pid is stopped and cannot fork — set is closed.
-            if (m_kq < 0) break;
-            struct kevent ev[32];
-            struct timespec zero { 0, 0 };
-            int n;
-            while ((n = kevent(m_kq, nullptr, 0, ev, 32, &zero)) > 0)
-                for (int i = 0; i < n; ++i)
-                    if (ev[i].filter == EVFILT_PROC && (ev[i].fflags & NOTE_CHILD))
-                        onChild((pid_t)ev[i].ident);
+            // Drain queued NOTE_FORKs (descendant forked between the wait
+            // loop's last kevent and our SIGSTOPs) and rescan. A frozen
+            // process cannot fork, so once a pass adds nothing the set is
+            // closed. Unconditional first rescan: a fork may have raced the
+            // wait loop's kevent without leaving a queued NOTE_FORK on a pid
+            // we'd already drained.
+            if (m_kq >= 0) {
+                struct kevent ev[32];
+                struct timespec zero { 0, 0 };
+                while (kevent(m_kq, nullptr, 0, ev, 32, &zero) > 0) {
+                }
+            }
+            scan();
         } while (frozen < m_tracked.size());
 
         for (auto& t : m_tracked) {
@@ -173,55 +208,40 @@ public:
 private:
     NoOrphansTracker() = default;
 
-    // p_puniqueid fixed-point sweep over the live process table — only used
-    // on NOTE_TRACKERR (kernel ENOMEM). For any pid discovered, manually
-    // EV_ADD NOTE_TRACK|NOTE_EXIT (udata 0) so its subtree rejoins the
-    // auto-tracked set. Local pid buffer; this is a cold path.
-    void fallbackScan()
+    // Record `pid` if its spawning-parent uniqueid is in `m_seen` and we
+    // haven't seen it before. Registers NOTE_FORK|NOTE_EXIT so its forks
+    // wake the wait loop. Returns true iff `m_seen` grew.
+    bool addIfNew(pid_t pid)
     {
-        if (m_seen.isEmpty()) return;
+        if (pid <= 1 || pid == getpid()) return false;
+        ProcUniqIdentifierInfo u;
+        if (!ProcUniqIdentifierInfo::read(pid, u)) return false;
+        if (!m_seen.contains(u.p_puniqueid)) return false;
+        if (!m_seen.add(u.p_uniqueid).isNewEntry) return false;
 
-        int cap = proc_listallpids(nullptr, 0);
-        if (cap <= 0) return;
-        WTF::Vector<pid_t> pids;
-        pids.grow(static_cast<size_t>(cap) + 64);
+        m_tracked.append({ pid, u.p_uniqueid });
 
-        bool grew;
-        do {
-            grew = false;
-            int n = proc_listallpids(pids.mutableSpan().data(),
-                static_cast<int>(pids.size() * sizeof(pid_t)));
-            if (n <= 0) return;
-
-            for (int i = 0; i < n; ++i) {
-                pid_t pid = pids[static_cast<size_t>(i)];
-                if (pid <= 1 || pid == getpid()) continue;
-
-                ProcUniqIdentifierInfo u;
-                if (!ProcUniqIdentifierInfo::read(pid, u)) continue;
-                if (!m_seen.contains(u.p_puniqueid)) continue;
-                if (!m_seen.add(u.p_uniqueid).isNewEntry) continue;
-
-                m_tracked.append({ pid, u.p_uniqueid });
-                grew = true;
-
-                // Re-arm NOTE_TRACK so this pid's future forks rejoin the
-                // kernel-tracked set. Best-effort — ESRCH (died already) is
-                // fine, ENOMEM means we'll see another TRACKERR later.
-                if (m_kq >= 0) {
-                    struct kevent ch = {
-                        .ident = static_cast<uintptr_t>(pid),
-                        .filter = EVFILT_PROC,
-                        .flags = EV_ADD | EV_CLEAR,
-                        .fflags = NOTE_TRACK | NOTE_EXIT,
-                        .data = 0,
-                        .udata = nullptr,
-                    };
-                    struct timespec zero = { 0, 0 };
-                    kevent(m_kq, &ch, 1, nullptr, 0, &zero);
-                }
-            }
-        } while (grew);
+        // EV_ADD on the wait loop's kq so this pid's forks/exit wake it.
+        // udata 0 — same as the script root's knote — so the wait loop's
+        // dispatch treats it as a descendant event. ESRCH (already gone) is
+        // fine: its uniqueid is in m_seen so its children remain linkable,
+        // and `killTracked()`'s identity check will skip the dead pid.
+        // `m_kq < 0` after `releaseKq()` (we're inside `killTracked()`'s
+        // post-release rescan via `killSyncScriptTree`); the EV_ADD is moot
+        // there since nothing will drain it.
+        if (m_kq >= 0) {
+            struct kevent ch = {
+                .ident = static_cast<uintptr_t>(pid),
+                .filter = EVFILT_PROC,
+                .flags = EV_ADD | EV_CLEAR,
+                .fflags = NOTE_FORK | NOTE_EXIT,
+                .data = 0,
+                .udata = nullptr,
+            };
+            struct timespec zero = { 0, 0 };
+            kevent(m_kq, &ch, 1, nullptr, 0, &zero);
+        }
+        return true;
     }
 
     struct Tracked {
@@ -230,10 +250,13 @@ private:
     };
 
     // Uniqueids ever observed in our subtree. Never shrinks — dead
-    // intermediates must stay so the TRACKERR fallback can chain through.
+    // intermediates must stay so the scan can chain through them.
     WTF::HashSet<uint64_t> m_seen;
     // Live (pid, uniqueid) pairs we'll SIGKILL at cleanup. Pruned on NOTE_EXIT.
     WTF::Vector<Tracked> m_tracked;
+    // Scratch buffer for proc_listallpids; persisted across scans so a
+    // fork-heavy script (e.g. `make -j`) isn't reallocating every NOTE_FORK.
+    WTF::Vector<pid_t> m_pids;
     int m_kq = -1; // borrowed; owned by Zig's spawnPosix
 };
 
@@ -241,18 +264,16 @@ private:
 
 extern "C" void Bun__noOrphans_begin(int kq, pid_t root) { Bun::NoOrphansTracker::get().begin(kq, root); }
 extern "C" void Bun__noOrphans_releaseKq() { Bun::NoOrphansTracker::get().releaseKq(); }
-extern "C" void Bun__noOrphans_onChild(pid_t pid) { Bun::NoOrphansTracker::get().onChild(pid); }
+extern "C" void Bun__noOrphans_onFork() { Bun::NoOrphansTracker::get().scan(); }
 extern "C" void Bun__noOrphans_onExit(pid_t pid) { Bun::NoOrphansTracker::get().onExit(pid); }
-extern "C" void Bun__noOrphans_onTrackErr(pid_t pid) { Bun::NoOrphansTracker::get().onTrackErr(pid); }
 extern "C" void Bun__noOrphans_killTracked() { Bun::NoOrphansTracker::get().killTracked(); }
 
 #else // !OS(DARWIN)
 
 extern "C" void Bun__noOrphans_begin(int, int) {}
 extern "C" void Bun__noOrphans_releaseKq() {}
-extern "C" void Bun__noOrphans_onChild(int) {}
+extern "C" void Bun__noOrphans_onFork() {}
 extern "C" void Bun__noOrphans_onExit(int) {}
-extern "C" void Bun__noOrphans_onTrackErr(int) {}
 extern "C" void Bun__noOrphans_killTracked() {}
 
 #endif

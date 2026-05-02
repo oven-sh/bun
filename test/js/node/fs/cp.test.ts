@@ -1,6 +1,6 @@
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isArm64, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 const impls = [
@@ -322,6 +322,47 @@ test("cp with missing callback throws", () => {
     // @ts-expect-error
     fs.cp("a", "b" as any);
   }).toThrow(/"cb"/);
+});
+
+// On Windows, _copySingleFileSync's reparse-point branch opens a handle to the
+// source symlink to resolve its target via GetFinalPathNameByHandleW. Previously
+// that handle was never closed, leaking one OS handle per symlink copied. Over a
+// large tree (e.g. node_modules with junctions) this eventually exhausts the
+// process handle table. bun:ffi (TinyCC) is unavailable on Windows arm64.
+test.skipIf(!isWindows || isArm64)("cpSync over symlinks does not leak Windows handles", () => {
+  const { dlopen } = require("bun:ffi");
+  const k32 = dlopen("kernel32.dll", {
+    GetCurrentProcess: { args: [], returns: "ptr" },
+    GetProcessHandleCount: { args: ["ptr", "ptr"], returns: "i32" },
+  });
+  const out = new Uint32Array(1);
+  const handleCount = () => {
+    if (k32.symbols.GetProcessHandleCount(k32.symbols.GetCurrentProcess(), out) === 0) {
+      throw new Error("GetProcessHandleCount failed");
+    }
+    return out[0];
+  };
+
+  const N = 64;
+  const basename = tempDirWithFiles("cp-symlink-leak", {
+    "from/target.txt": "hello",
+  });
+  for (let i = 0; i < N; i++) {
+    fs.symlinkSync(join(basename, "from", "target.txt"), join(basename, "from", `link${i}.txt`));
+  }
+
+  // Warm up once so any lazy init (thread pool, path buffers, etc.) doesn't
+  // count against the measured delta.
+  fs.cpSync(join(basename, "from"), join(basename, "warmup"), { recursive: true });
+
+  const before = handleCount();
+  fs.cpSync(join(basename, "from"), join(basename, "result"), { recursive: true });
+  const after = handleCount();
+
+  // Without the fix every symlink leaks a handle, so `after - before` is >= N.
+  // With the fix the delta is ~0; allow generous slack for unrelated background
+  // activity while still catching a per-symlink leak.
+  expect(after - before).toBeLessThan(N / 2);
 });
 
 // On Windows the OS path buffer is 32768 wide chars, which is impractical to exceed

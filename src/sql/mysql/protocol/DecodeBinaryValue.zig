@@ -150,7 +150,7 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
         .MYSQL_TYPE_BLOB,
         => {
             if (raw) {
-                var data = try reader.rawEncodeLenData();
+                var data = try reader.encodeLenString();
                 defer data.deinit();
                 return SQLDataCell.raw(&data);
             }
@@ -169,7 +169,7 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
 
         .MYSQL_TYPE_JSON => {
             if (raw) {
-                var data = try reader.rawEncodeLenData();
+                var data = try reader.encodeLenString();
                 defer data.deinit();
                 return SQLDataCell.raw(&data);
             }

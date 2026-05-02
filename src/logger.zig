@@ -702,14 +702,9 @@ pub const Log = struct {
         };
     }
 
-    pub fn addDebugFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
-        if (Kind.shouldPrint(.debug, log.level)) {
-            @branchHint(.cold);
-            try log.addMsg(.{
-                .kind = .debug,
-                .data = try rangeData(source, Range{ .loc = l }, try allocPrint(allocator, text, args)).cloneLineText(log.clone_line_text, log.msgs.allocator),
-            });
-        }
+    pub inline fn addDebugFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
+        if (!Kind.shouldPrint(.debug, log.level)) return;
+        return log.addFormattedMsg(.debug, source, .{ .loc = l }, try allocPrint(allocator, text, args), &.{}, true, false);
     }
 
     pub fn addVerbose(log: *Log, source: ?*const Source, loc: Loc, text: string) OOM!void {
@@ -863,6 +858,37 @@ pub const Log = struct {
         };
     }
 
+    /// Shared, non-generic tail for the `add*Fmt` family. The public wrappers
+    /// are `inline` and only do the per-call-site `allocPrint(fmt, args)`; the
+    /// rest (counter bump, rangeData, cloneLineText, addMsg) lives here so it
+    /// isn't re-stamped for every distinct format string. ~165 callers of
+    /// `addErrorFmt` alone used to duplicate this body.
+    noinline fn addFormattedMsg(
+        log: *Log,
+        kind: Kind,
+        source: ?*const Source,
+        r: Range,
+        text: string,
+        notes: []Data,
+        clone: bool,
+        redact: bool,
+    ) OOM!void {
+        @branchHint(.cold);
+        switch (kind) {
+            .err => log.errors += 1,
+            .warn => log.warnings += 1,
+            else => {},
+        }
+        var data = rangeData(source, r, text);
+        if (clone) data = try data.cloneLineText(log.clone_line_text, log.msgs.allocator);
+        try log.addMsg(.{
+            .kind = kind,
+            .data = data,
+            .notes = notes,
+            .redact_sensitive_information = redact,
+        });
+    }
+
     inline fn addResolveErrorWithLevel(
         log: *Log,
         source: ?*const Source,
@@ -954,47 +980,21 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeErrorFmt(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
-        @branchHint(.cold);
-        log.errors += 1;
-        try log.addMsg(.{
-            .kind = .err,
-            .data = try rangeData(source, r, try allocPrint(allocator, text, args)).cloneLineText(log.clone_line_text, log.msgs.allocator),
-        });
+    pub inline fn addRangeErrorFmt(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
+        return log.addFormattedMsg(.err, source, r, try allocPrint(allocator, text, args), &.{}, true, false);
     }
 
-    pub fn addRangeErrorFmtWithNotes(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, notes: []Data, comptime fmt: string, args: anytype) OOM!void {
-        @branchHint(.cold);
-        log.errors += 1;
-        try log.addMsg(.{
-            .kind = .err,
-            .data = try rangeData(source, r, try allocPrint(allocator, fmt, args)).cloneLineText(log.clone_line_text, log.msgs.allocator),
-            .notes = notes,
-        });
+    pub inline fn addRangeErrorFmtWithNotes(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, notes: []Data, comptime fmt: string, args: anytype) OOM!void {
+        return log.addFormattedMsg(.err, source, r, try allocPrint(allocator, fmt, args), notes, true, false);
     }
 
-    pub fn addErrorFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
-        @branchHint(.cold);
-        log.errors += 1;
-        try log.addMsg(.{
-            .kind = .err,
-            .data = try rangeData(source, .{ .loc = l }, try allocPrint(allocator, text, args)).cloneLineText(log.clone_line_text, log.msgs.allocator),
-        });
+    pub inline fn addErrorFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
+        return log.addFormattedMsg(.err, source, .{ .loc = l }, try allocPrint(allocator, text, args), &.{}, true, false);
     }
 
     // TODO(dylan-conway): rename and replace `addErrorFmt`
-    pub fn addErrorFmtOpts(log: *Log, allocator: std.mem.Allocator, comptime fmt: string, args: anytype, opts: AddErrorOptions) OOM!void {
-        @branchHint(.cold);
-        log.errors += 1;
-        try log.addMsg(.{
-            .kind = .err,
-            .data = try rangeData(
-                opts.source,
-                .{ .loc = opts.loc, .len = opts.len },
-                try allocPrint(allocator, fmt, args),
-            ).cloneLineText(log.clone_line_text, log.msgs.allocator),
-            .redact_sensitive_information = opts.redact_sensitive_information,
-        });
+    pub inline fn addErrorFmtOpts(log: *Log, allocator: std.mem.Allocator, comptime fmt: string, args: anytype, opts: AddErrorOptions) OOM!void {
+        return log.addFormattedMsg(.err, opts.source, .{ .loc = opts.loc, .len = opts.len }, try allocPrint(allocator, fmt, args), &.{}, true, opts.redact_sensitive_information);
     }
 
     // Use a bun.sys.Error's message in addition to some extra context.
@@ -1036,14 +1036,9 @@ pub const Log = struct {
         });
     }
 
-    pub fn addWarningFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
-        @branchHint(.cold);
+    pub inline fn addWarningFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
         if (!Kind.shouldPrint(.warn, log.level)) return;
-        log.warnings += 1;
-        try log.addMsg(.{
-            .kind = .warn,
-            .data = try rangeData(source, Range{ .loc = l }, try allocPrint(allocator, text, args)).cloneLineText(log.clone_line_text, log.msgs.allocator),
-        });
+        return log.addFormattedMsg(.warn, source, .{ .loc = l }, try allocPrint(allocator, text, args), &.{}, true, false);
     }
 
     pub fn addWarningFmtLineCol(log: *Log, filepath: []const u8, line: u32, col: u32, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
@@ -1109,14 +1104,9 @@ pub const Log = struct {
     //     });
     // }
 
-    pub fn addRangeWarningFmt(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
-        @branchHint(.cold);
+    pub inline fn addRangeWarningFmt(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
         if (!Kind.shouldPrint(.warn, log.level)) return;
-        log.warnings += 1;
-        try log.addMsg(.{
-            .kind = .warn,
-            .data = try rangeData(source, r, try allocPrint(allocator, text, args)).cloneLineText(log.clone_line_text, log.msgs.allocator),
-        });
+        return log.addFormattedMsg(.warn, source, r, try allocPrint(allocator, text, args), &.{}, true, false);
     }
 
     pub fn addRangeWarningFmtWithNote(
@@ -1144,14 +1134,8 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeWarningFmtWithNotes(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, notes: []Data, comptime fmt: string, args: anytype) OOM!void {
-        @branchHint(.cold);
-        log.warnings += 1;
-        try log.addMsg(.{
-            .kind = .warn,
-            .data = try rangeData(source, r, try allocPrint(allocator, fmt, args)).cloneLineText(log.clone_line_text, log.msgs.allocator),
-            .notes = notes,
-        });
+    pub inline fn addRangeWarningFmtWithNotes(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, notes: []Data, comptime fmt: string, args: anytype) OOM!void {
+        return log.addFormattedMsg(.warn, source, r, try allocPrint(allocator, fmt, args), notes, true, false);
     }
 
     pub fn addRangeErrorFmtWithNote(

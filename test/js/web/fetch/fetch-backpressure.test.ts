@@ -427,7 +427,15 @@ describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
       const waitFor = lineReader(proc.stdout);
       await waitFor("reader");
       const socket = await gotSocket;
-      const first = await pumpUntilStall(socket, 64 * 1024 * 1024, 400);
+      // Same 64 MiB reasoning as the stalled-reader test, but keep
+      // going up to 256 MiB if needed: the debian-13 CI host has been
+      // observed soaking 64 MiB into loopback without the server
+      // seeing a drain stall even when the client is paused. The
+      // sibling "stalled getReader()" test already asserts the pause
+      // fires; this test's subject is the *resume* on cancel, so we
+      // only need the server to reach the stalled state once.
+      let first = await pumpUntilStall(socket, 64 * 1024 * 1024, 400);
+      if (!first.stalled) first = await pumpUntilStall(socket, 192 * 1024 * 1024, 400);
       expect(first.stalled).toBe(true);
       // Tell the child to cancel; `ignoreRemainingResponseBody` disarms
       // `body_consumption_tracked` and posts the sentinel consume

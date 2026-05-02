@@ -53,7 +53,7 @@ const fixture = /* js */ `
   console.log("OK");
 `;
 
-test("zlib: writeSync does not write through stale writeState pointer after detach", async () => {
+test.concurrent("zlib: writeSync does not write through stale writeState pointer after detach", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", fixture],
     env: bunEnv,
@@ -96,7 +96,7 @@ const asyncFixture = /* js */ `
   handle.write(zlib.constants.Z_NO_FLUSH, inBuf, 0, inBuf.length, outBuf, 0, outBuf.length);
 `;
 
-test("zlib: async write does not write through stale writeState pointer after detach", async () => {
+test.concurrent("zlib: async write does not write through stale writeState pointer after detach", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", asyncFixture],
     env: bunEnv,
@@ -139,7 +139,7 @@ const brotliFixture = /* js */ `
   console.log("OK");
 `;
 
-test("brotli: writeSync does not write through stale writeState pointer after detach", async () => {
+test.concurrent("brotli: writeSync does not write through stale writeState pointer after detach", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", brotliFixture],
     env: bunEnv,

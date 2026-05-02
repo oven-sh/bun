@@ -315,6 +315,24 @@ pub fn retryAfterH2Coalesce(this: *HTTPClient) void {
 pub const receive_body_high_water: usize = 1 << 20; // 1 MiB
 pub const receive_body_low_water: usize = 256 * 1024;
 
+/// Process-wide counters for the HTTP/1.1 `maybePauseReceive` /
+/// `consumeResponseBody` transitions. Exposed through
+/// `fetchInternals.h1BackpressureCounts()` so the backpressure test can
+/// observe pause/resume from the client subprocess directly instead of
+/// inferring it from a server-side `drain` timeout whose latency depends
+/// on the kernel's loopback sndbuf/rcvbuf autotuning.
+pub var h1_socket_pauses = std.atomic.Value(u32).init(0);
+pub var h1_socket_resumes = std.atomic.Value(u32).init(0);
+
+pub const TestingAPIs = struct {
+    pub fn h1BackpressureCounts(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const obj = jsc.JSValue.createEmptyObject(globalThis, 2);
+        obj.put(globalThis, jsc.ZigString.static("pauses"), .jsNumber(h1_socket_pauses.load(.monotonic)));
+        obj.put(globalThis, jsc.ZigString.static("resumes"), .jsNumber(h1_socket_resumes.load(.monotonic)));
+        return obj;
+    }
+};
+
 /// REFUSED_STREAM or graceful GOAWAY past our id: the server promises it
 /// did not process the request, so re-dispatch from the top. Only reached
 /// for `.bytes` bodies (replayable).
@@ -2045,7 +2063,8 @@ pub fn onData(
         .body => {
             this.setTimeout(socket, 5);
 
-            const before = this.state.total_body_received;
+            const out = this.state.body_out_str.?;
+            const before = out.list.items.len;
             const report_progress = this.handleResponseBody(incoming_data, false) catch |err| {
                 this.closeAndFail(err, is_ssl, socket);
                 return;
@@ -2056,17 +2075,21 @@ pub fn onData(
             // owns *this* HTTPClient inline on this thread, so `this`
             // is poisoned by the time progressUpdate returns.
             //
-            // Count the `total_body_received` delta, not
-            // `incoming_data.len`: for Transfer-Encoding: chunked the
-            // latter includes per-chunk framing (hex size + CRLFs) that
-            // never reaches JS, so `didDrain` can't credit it and it
-            // would accumulate as a permanent floor under
-            // `outstanding_body_bytes`. Once that floor passes the
-            // low-water mark, a long-lived SSE stream deadlocks on the
-            // first pause. The .body arm uses the same delta for
-            // symmetry (and to discard any trailing bytes past
-            // Content-Length).
-            this.maybePauseReceive(is_ssl, socket, this.state.total_body_received -| before);
+            // Count the `body_out_str` delta — i.e. exactly what
+            // progressUpdate hands to FetchTasklet and onward to
+            // `ByteStream.onData` → `didDrain`. `incoming_data.len`
+            // would include Transfer-Encoding: chunked framing;
+            // `total_body_received` is pre-decompression wire bytes.
+            // Either mismatch accumulates as a permanent floor under
+            // `outstanding_body_bytes` (framing for uncompressed
+            // chunked SSE; stored-block overhead for gzip on
+            // incompressible content) and eventually deadlocks a
+            // long-lived stream on the first pause past the low-water
+            // mark. For `body_consumption_tracked` consumers
+            // `report_progress` is true for every non-empty chunk and
+            // the callback resets `body_out_str`, so `before` is 0
+            // and the delta is this chunk's post-decompress length.
+            this.maybePauseReceive(is_ssl, socket, out.list.items.len -| before);
 
             if (report_progress) {
                 this.progressUpdate(is_ssl, ctx, socket);
@@ -2077,13 +2100,14 @@ pub fn onData(
         .body_chunk => {
             this.setTimeout(socket, 5);
 
-            const before = this.state.total_body_received;
+            const out = this.state.body_out_str.?;
+            const before = out.list.items.len;
             const report_progress = this.handleResponseBodyChunkedEncoding(incoming_data) catch |err| {
                 this.closeAndFail(err, is_ssl, socket);
                 return;
             };
 
-            this.maybePauseReceive(is_ssl, socket, this.state.total_body_received -| before);
+            this.maybePauseReceive(is_ssl, socket, out.list.items.len -| before);
 
             if (report_progress) {
                 this.progressUpdate(is_ssl, ctx, socket);
@@ -2281,6 +2305,7 @@ fn maybePauseReceive(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCo
     socket.setTimeoutMinutes(0);
     socket.timeout(0);
     _ = socket.pauseStream();
+    _ = h1_socket_pauses.fetchAdd(1, .monotonic);
     log("maybePauseReceive: paused at {d} bytes outstanding", .{this.state.outstanding_body_bytes});
 }
 
@@ -2303,6 +2328,7 @@ pub fn consumeResponseBody(this: *HTTPClient, comptime is_ssl: bool, socket: New
     this.state.flags.receive_paused = false;
     if (socket.isClosedOrHasError()) return;
     _ = socket.resumeStream();
+    _ = h1_socket_resumes.fetchAdd(1, .monotonic);
     this.setTimeout(socket, 5);
     log("consumeResponseBody: resumed, {d} bytes outstanding", .{this.state.outstanding_body_bytes});
 }

@@ -19,6 +19,7 @@
 
 import { test, expect, describe } from "bun:test";
 import { bunEnv, bunExe, tls } from "harness";
+import { setSocketOptions } from "bun:internal-for-testing";
 import { once } from "node:events";
 import net from "node:net";
 import nodetls from "node:tls";
@@ -293,37 +294,57 @@ describe("fetch() over HTTP/2 — per-stream receive-window backpressure", () =>
 });
 
 // --- HTTP/1.1 ----------------------------------------------------------------
-// A raw TCP server pumps response body bytes until `socket.write()` returns
-// false and `drain` stops firing — that point is where TCP rwnd has closed.
-// The client controls rwnd by reading (or not) from the socket; the fetch
-// h1 client pauses reads once 1 MiB is buffered for a stalled JS reader, so
-// the server stalls at 1 MiB + kernel send/recv buffers. Without the pause
-// the client drains the socket into ByteStream's internal buffer forever
-// and the server never stalls.
+// The client subprocess reads the process-wide `h1_socket_pauses` /
+// `h1_socket_resumes` counters via `fetchInternals.h1BackpressureCounts()`
+// so the test observes the `us_socket_pause` / `resumeStream` transitions
+// directly — no dependency on the kernel's loopback sndbuf/rcvbuf
+// autotuning, which on some CI hosts let 64 MiB land in buffers without
+// the server seeing a `drain` stall. The server only needs to push enough
+// body bytes past `receive_body_high_water` (1 MiB) for the pause to fire.
 
 describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
-  /** Pump 64 KiB chunks, respecting `drain`, until `drain` doesn't fire
-   *  within `stallMs` (= client stopped reading) or `cap` bytes sent.
-   *  Returns `{ written, stalled }`. */
-  async function pumpUntilStall(socket: net.Socket, cap: number, stallMs: number) {
+  const h1Prelude = `
+    const { fetchInternals } = require("bun:internal-for-testing");
+    const counts = () => fetchInternals.h1BackpressureCounts();
+    // Poll a counter until it reaches \`target\`, or bail after \`maxMs\`.
+    async function until(pick, target, maxMs = 10000) {
+      const deadline = Date.now() + maxMs;
+      while (pick(counts()) < target) {
+        if (Date.now() > deadline) return false;
+        await Bun.sleep(10);
+      }
+      return true;
+    }
+  `;
+
+  /** Write `cap` bytes in 64 KiB chunks, respecting `drain`, then resolve
+   *  with the total written. Stops early if the socket closes. */
+  async function pump(socket: net.Socket, cap: number) {
     const chunk = Buffer.alloc(64 * 1024, 0x61);
     let written = 0;
-    while (written < cap) {
+    const closed = once(socket, "close").then(() => false as const);
+    while (written < cap && !socket.destroyed) {
       if (!socket.write(chunk)) {
-        const drained = await Promise.race([
-          once(socket, "drain").then(() => true),
-          Bun.sleep(stallMs).then(() => false),
-        ]);
-        if (!drained) return { written, stalled: true };
+        const ok = await Promise.race([once(socket, "drain").then(() => true as const), closed]);
+        if (!ok) break;
       }
       written += chunk.length;
     }
-    return { written, stalled: false };
+    return written;
   }
 
   async function withH1Server(fn: (url: string, onReq: (h: (s: net.Socket) => void) => void) => Promise<void>) {
     let handler: ((s: net.Socket) => void) | undefined;
     const server = net.createServer(socket => {
+      // Pin SO_SNDBUF small so the server-side kernel buffer isn't a
+      // multi-MiB autotuned term in "how much the server can write
+      // past the client's pause". Not load-bearing for the
+      // counter-based assertions below — it just keeps the pump
+      // volume bounded for the draining test. `_handle` is the
+      // underlying Bun TCPSocket; posix-only.
+      if ((socket as any)._handle && process.platform !== "win32") {
+        setSocketOptions((socket as any)._handle, 1, 64 * 1024);
+      }
       socket.once("data", () => {
         // Don't parse; just respond. No Content-Length so the client
         // reads until close (body_out_str path, not the single-packet
@@ -348,29 +369,33 @@ describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
       const { promise: gotSocket, resolve } = Promise.withResolvers<net.Socket>();
       onReq(resolve);
       await using proc = spawnFetch(`
+        ${h1Prelude}
         const res = await fetch("${url}");
         const reader = res.body.getReader();
         process.stdout.write("reader\\n");
+        // maybePauseReceive fires once outstanding >= 1 MiB.
+        const sawPause = await until(c => c.pauses, 1);
+        const c = counts();
+        process.stdout.write("paused:" + sawPause + ":" + c.pauses + ":" + c.resumes + "\\n");
         await new Promise(() => {});
       `);
       const waitFor = lineReader(proc.stdout);
       await waitFor("reader");
       const socket = await gotSocket;
-      // Without the fix, the client's socket read never pauses so the
-      // ByteStream buffer grows without bound and the server reaches
-      // the cap (stalled=false). With the fix, the client pauses at
-      // ~1 MiB and the server stalls once the kernel send/recv buffers
-      // fill. Loopback TCP autotuning can push those into the tens of
-      // MiB on some Linux configs, so the cap is 64 MiB: comfortably
-      // above any plausible loopback sndbuf+rcvbuf, comfortably below
-      // what an unbounded ByteStream would soak up. 400 ms stall
-      // window is generous for a paused socket but short enough to
-      // not dominate the test.
-      const { written, stalled } = await pumpUntilStall(socket, 64 * 1024 * 1024, 400);
-      expect(stalled).toBe(true);
-      // The primary signal is `stalled == true`; the byte bound is a
-      // loose sanity check that we didn't reach the cap.
-      expect(written).toBeLessThan(64 * 1024 * 1024);
+      // Only need to push past 1 MiB for the client's maybePauseReceive
+      // to fire; 4 MiB gives comfortable margin for the headers-then-
+      // body split and the first progressUpdate to reach JS. The pump
+      // runs concurrently with the child's `until(pauses, 1)`.
+      void pump(socket, 4 * 1024 * 1024);
+      const line = await waitFor("paused:");
+      const [, sawPause, pauses, resumes] = line.split(":");
+      // Reader never read a byte: pauses > 0, resumes == 0 (the pause
+      // is still in effect when the child reports).
+      expect({ sawPause, pauses: Number(pauses), resumes: Number(resumes) }).toEqual({
+        sawPause: "true",
+        pauses: 1,
+        resumes: 0,
+      });
       socket.destroy();
       proc.kill();
       await proc.exited;
@@ -382,6 +407,7 @@ describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
       const { promise: gotSocket, resolve } = Promise.withResolvers<net.Socket>();
       onReq(resolve);
       await using proc = spawnFetch(`
+        ${h1Prelude}
         const res = await fetch("${url}");
         const reader = res.body.getReader();
         process.stdout.write("reader\\n");
@@ -390,20 +416,25 @@ describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
           const { value, done } = await reader.read();
           if (done) break;
           total += value.byteLength;
-          if (total >= 6 * 1024 * 1024) { process.stdout.write("read:" + total + "\\n"); break; }
         }
-        await new Promise(() => {});
+        const c = counts();
+        process.stdout.write("read:" + total + ":" + c.pauses + ":" + c.resumes + "\\n");
       `);
       const waitFor = lineReader(proc.stdout);
       await waitFor("reader");
       const socket = await gotSocket;
-      // The reader is actively draining, so every drain-wait should
-      // resolve and we reach the cap.
-      const { written, stalled } = await pumpUntilStall(socket, 8 * 1024 * 1024, 2000);
-      expect(stalled).toBe(false);
-      expect(written).toBe(8 * 1024 * 1024);
-      const read = await waitFor("read:");
-      expect(Number(read.slice(5))).toBeGreaterThanOrEqual(6 * 1024 * 1024);
+      // 8 MiB crosses the high-water mark several times over; the
+      // reader is actively draining so every pause should be matched
+      // by a resume and the full body reaches JS.
+      await pump(socket, 8 * 1024 * 1024);
+      socket.end();
+      const line = await waitFor("read:");
+      const [, total, pauses, resumes] = line.split(":").map(Number);
+      expect(total).toBe(8 * 1024 * 1024);
+      // Pause/resume may or may not fire depending on relative
+      // scheduling of the HTTP thread vs the JS reader; the invariant
+      // is that every pause was matched so the body completed.
+      expect(resumes).toBe(pauses);
       socket.destroy();
       proc.kill();
       await proc.exited;
@@ -415,36 +446,31 @@ describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
       const { promise: gotSocket, resolve } = Promise.withResolvers<net.Socket>();
       onReq(resolve);
       await using proc = spawnFetch(`
+        ${h1Prelude}
         const res = await fetch("${url}");
         const reader = res.body.getReader();
         process.stdout.write("reader\\n");
-        // Wait for the test to confirm the server is stalled, then cancel.
-        await new Promise(r => process.stdin.once("data", r));
+        // Wait for the pause to fire, then cancel.
+        const sawPause = await until(c => c.pauses, 1);
         await reader.cancel();
-        process.stdout.write("cancelled\\n");
+        // ignoreRemainingResponseBody disarms body_consumption_tracked
+        // and posts the maxInt sentinel; consumeResponseBody on the
+        // HTTP thread sees the signal cleared and resumes regardless
+        // of the low-water mark.
+        const sawResume = await until(c => c.resumes, 1);
+        const c = counts();
+        process.stdout.write("done:" + sawPause + ":" + sawResume + ":" + c.pauses + ":" + c.resumes + "\\n");
         await new Promise(() => {});
       `);
       const waitFor = lineReader(proc.stdout);
       await waitFor("reader");
       const socket = await gotSocket;
-      // Same 64 MiB reasoning as the stalled-reader test, but keep
-      // going up to 256 MiB if needed: the debian-13 CI host has been
-      // observed soaking 64 MiB into loopback without the server
-      // seeing a drain stall even when the client is paused. The
-      // sibling "stalled getReader()" test already asserts the pause
-      // fires; this test's subject is the *resume* on cancel, so we
-      // only need the server to reach the stalled state once.
-      let first = await pumpUntilStall(socket, 64 * 1024 * 1024, 400);
-      if (!first.stalled) first = await pumpUntilStall(socket, 192 * 1024 * 1024, 400);
-      expect(first.stalled).toBe(true);
-      // Tell the child to cancel; `ignoreRemainingResponseBody` disarms
-      // `body_consumption_tracked` and posts the sentinel consume
-      // message, which resumes the paused socket on the HTTP thread.
-      proc.stdin!.write("go\n");
-      await waitFor("cancelled");
-      // Server should now be able to keep writing.
-      const second = await pumpUntilStall(socket, 4 * 1024 * 1024, 2000);
-      expect(second.stalled).toBe(false);
+      void pump(socket, 4 * 1024 * 1024);
+      const line = await waitFor("done:");
+      const [, sawPause, sawResume, pauses, resumes] = line.split(":");
+      expect({ sawPause, sawResume }).toEqual({ sawPause: "true", sawResume: "true" });
+      expect(Number(pauses)).toBeGreaterThanOrEqual(1);
+      expect(Number(resumes)).toBeGreaterThanOrEqual(1);
       socket.destroy();
       proc.kill();
       await proc.exited;

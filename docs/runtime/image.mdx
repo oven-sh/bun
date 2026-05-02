@@ -150,11 +150,7 @@ A `Bun.Image` pipeline is a valid `Response` body and sets `Content-Type` automa
 Bun.serve({
   routes: {
     "/avatar/:id": async req => {
-      const out = await Bun.file(`avatars/${req.params.id}.png`)
-        .image()
-        .resize(128, 128)
-        .webp()
-        .blob();
+      const out = await Bun.file(`avatars/${req.params.id}.png`).image().resize(128, 128).webp().blob();
       return new Response(out);
     },
   },

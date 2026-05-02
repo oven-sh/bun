@@ -189,6 +189,59 @@ describe("HTMLRewriter", () => {
     expect(expected.length).toBe(0);
   });
 
+  it("attribute iterator is invalidated once the element handler returns", async () => {
+    // The lol-html attributes iterator borrows the element's attribute Vec,
+    // which is freed as soon as the handler returns. Retaining the iterator
+    // and calling .next() afterwards used to read freed Rust heap memory.
+    // After the fix the iterator is detached and simply reports done.
+    let saved;
+    let savedDuring;
+    let element;
+    const output = new HTMLRewriter()
+      .on("div", {
+        element(e) {
+          element = e;
+          saved = e.attributes;
+          // Grab a second iterator to make sure every iterator handed out
+          // by this element is tracked and invalidated, not just the last
+          // one.
+          savedDuring = [...e.attributes];
+        },
+      })
+      .transform('<div a="1" b="2" c="3">hello</div>');
+
+    expect(output).toBe('<div a="1" b="2" c="3">hello</div>');
+    // Iterating inside the handler still works.
+    expect(savedDuring).toEqual([
+      ["a", "1"],
+      ["b", "2"],
+      ["c", "3"],
+    ]);
+    // The retained iterator must not touch the freed attribute storage.
+    expect([...saved]).toEqual([]);
+    expect(saved.next()).toEqual({ done: true, value: undefined });
+    // Matching the existing behaviour for the element itself: once the
+    // handler has returned, the element is detached and `.attributes`
+    // returns undefined rather than a fresh dangling iterator.
+    expect(element.attributes).toBeUndefined();
+  });
+
+  it("attribute iterator is invalidated once the element handler returns (Response input)", async () => {
+    let saved;
+    const output = await new HTMLRewriter()
+      .on("div", {
+        element(e) {
+          saved = e.attributes;
+        },
+      })
+      .transform(new Response('<div a="1" b="2" c="3">hello</div>'))
+      .text();
+
+    expect(output).toBe('<div a="1" b="2" c="3">hello</div>');
+    expect([...saved]).toEqual([]);
+    expect(saved.next()).toEqual({ done: true, value: undefined });
+  });
+
   it("handles element specific mutations", async () => {
     // prepend/append
     let res = new HTMLRewriter()

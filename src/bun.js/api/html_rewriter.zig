@@ -908,6 +908,9 @@ fn HandlerCallback(
             // The init values are handled by bun.new with .init()
 
             defer {
+                if (comptime ZigType == Element) {
+                    wrapper.detachIterators();
+                }
                 @field(wrapper, field_name) = null;
                 wrapper.deref();
             }
@@ -1625,6 +1628,12 @@ pub const AttributeIterator = struct {
 
     ref_count: RefCount,
     iterator: ?*LOLHTML.Attribute.Iterator = null,
+    /// Intrusive singly-linked list of iterators spawned from the same
+    /// Element. The Element walks this list when the handler returns so it
+    /// can detach every iterator it handed out (the underlying Rust
+    /// `slice::Iter` borrows the element's attribute `Vec`, which is freed as
+    /// soon as the handler returns).
+    next_sibling: ?*AttributeIterator = null,
 
     pub fn init(iterator: *LOLHTML.Attribute.Iterator) *AttributeIterator {
         return bun.new(AttributeIterator, .{
@@ -1692,6 +1701,12 @@ pub const Element = struct {
 
     ref_count: RefCount,
     element: ?*LOLHTML.Element = null,
+    /// Head of an intrusive singly-linked list of AttributeIterator objects
+    /// created by `getAttributes`. Each entry carries a ref held by this
+    /// Element so the iterator wrapper cannot be destroyed while still
+    /// linked here. `detachIterators` walks the list, nulls each iterator's
+    /// lol-html pointer, drops the ref, and clears the list.
+    iterators: ?*AttributeIterator = null,
 
     pub const js = jsc.Codegen.JSElement;
     pub const toJS = js.toJS;
@@ -1710,8 +1725,26 @@ pub const Element = struct {
     }
 
     fn deinit(this: *Element) void {
+        this.detachIterators();
         this.element = null;
         bun.destroy(this);
+    }
+
+    /// Invalidate every AttributeIterator that was handed out from this
+    /// Element. Called from the handler-return defer in `HandlerCallback`
+    /// (and from `deinit` as a safety net) because the Rust-side iterator
+    /// borrows the element's attribute storage, which lol-html frees as soon
+    /// as the handler returns.
+    pub fn detachIterators(this: *Element) void {
+        var it = this.iterators;
+        this.iterators = null;
+        while (it) |iter| {
+            const next = iter.next_sibling;
+            iter.next_sibling = null;
+            iter.detach();
+            iter.deref();
+            it = next;
+        }
     }
 
     pub fn onEndTag_(
@@ -1963,7 +1996,13 @@ pub const Element = struct {
         var attr_iter = bun.new(AttributeIterator, .{
             .ref_count = .init(),
             .iterator = iter,
+            .next_sibling = this.iterators,
         });
+        // Track the iterator so we can invalidate it when the handler
+        // returns. The Element holds a ref for the list entry; it is
+        // released in `detachIterators`.
+        attr_iter.ref();
+        this.iterators = attr_iter;
         return attr_iter.toJS(globalObject);
     }
 };

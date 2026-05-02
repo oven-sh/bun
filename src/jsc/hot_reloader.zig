@@ -519,7 +519,18 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             }
                         }
 
-                        if (entries_option) |dir_ent| {
+                        if (entries_option) |dir_ent| locked: {
+                            // `bustEntriesCache` now marks the `DirEntry` stale in place
+                            // instead of orphaning the slot. That means a concurrent
+                            // resolve (under `entries_mutex`) can rewrite this exact
+                            // `DirEntry`/`EntryMap` via the `in_place` path — including
+                            // one triggered by a *previous* directory event's bust that
+                            // is still in flight. Serialize with those writers so the
+                            // `dir_ent.entries.get(...)` reads below see a consistent map.
+                            rfs.entries_mutex.lock();
+                            defer rfs.entries_mutex.unlock();
+                            if (dir_ent.* != .entries) break :locked;
+
                             var last_file_hash: Watcher.HashType = std.math.maxInt(Watcher.HashType);
 
                             for (affected) |changed_name_| {
@@ -586,13 +597,8 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             }
                         }
 
-                        // Bust *after* reading `dir_ent.entries` above. `bustEntriesCache`
-                        // now marks the `DirEntry` stale in place (instead of orphaning the
-                        // slot), so once busted a concurrent resolve on the JS thread can
-                        // rewrite the same `DirEntry`/`EntryMap` via the `in_place` path
-                        // while this watcher thread is still iterating it. Until the bust,
-                        // `dir_cache` still holds the entry and `stale` is false, so that
-                        // rewrite path is unreachable.
+                        // Bust after releasing `entries_mutex` — `bustEntriesCache` takes
+                        // it internally and `bun.Mutex` is non-recursive.
                         _ = this.ctx.bustDirCache(strings.withoutTrailingSlashWindowsPath(file_path));
 
                         if (this.verbose) {

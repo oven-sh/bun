@@ -1,6 +1,6 @@
+import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { fileDescriptorLeakChecker, isPosix, isWindows, tmpdirSync } from "harness";
-import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 

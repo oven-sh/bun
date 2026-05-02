@@ -9,12 +9,17 @@
 // Pixel format is RGBA8 throughout — the codec layer normalises to that on
 // decode so the kernels don't branch on channel count.
 //
-// Resize is separable two-pass (horizontal then vertical) with three filters:
-//   box       — area-average, only correct for downscale
-//   bilinear  — triangle, radius 1
-//   lanczos3  — sinc-windowed sinc, radius 3 (Sharp's default)
+// Resize is separable two-pass (horizontal then vertical). Filter kernels and
+// the half-pixel-centre convention `(i+0.5)*shrink - 0.5` were verified against
+// libvips' `templates.h`/`reduceh.cpp` (see PR #30032 discussion); the bcCubic/
+// sinc/lanczos formulas are identical. Two intentional differences vs libvips:
+//   - edge mode: we clamp the span to [0,src) and renormalise the truncated
+//     weights (stb_image_resize's approach); libvips embeds the input with
+//     VIPS_EXTEND_COPY and always evaluates the full kernel. Both preserve DC.
+//   - weights are f32 here; libvips uses i16 fixed-point for the uchar path
+//     (more lanes, imperceptible precision loss). Worth taking later.
 // Weights are precomputed per output column/row; the inner loop is a SIMD
-// gather-multiply-accumulate over u8→f32 lanes.
+// u8→f32 promote → FMA(broadcast) over taps.
 
 // clang-format off
 #undef HWY_TARGET_INCLUDE

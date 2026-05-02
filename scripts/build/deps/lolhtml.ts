@@ -75,9 +75,13 @@ export const lolhtml: Dependency = {
     // __rust_start_panic prints a backtrace before aborting — pulling in
     // gimli/addr2line/rustc_demangle/miniz_oxide (~230 KB). For release,
     // rebuild std with -Cpanic=immediate-abort so panic is a bare abort().
-    // Requires nightly + rust-src (CI has both). Runs last so it can't be
-    // un-set by platform overrides above.
-    if (cfg.release && !cfg.windows) {
+    // Requires nightly + rust-src; only enable where CI's Rust toolchain is
+    // known to have both and -Zbuild-std for the target is verified
+    // (linux-gnu, darwin, freebsd). musl/android keep the prebuilt-std
+    // -Cpanic=abort path.
+    const canBuildStdImmediateAbort =
+      cfg.darwin || cfg.freebsd || (cfg.linux && cfg.abi !== "musl" && cfg.abi !== "android");
+    if (cfg.release && canBuildStdImmediateAbort) {
       spec.buildStd = true;
       spec.rustflags = [
         "-Zunstable-options",
@@ -88,12 +92,12 @@ export const lolhtml: Dependency = {
       ];
     }
 
-    // Always set an explicit --target on non-Windows: -Zbuild-std requires
-    // it even when host == target, and cross-compiles (FreeBSD x64 debug
-    // included) need it so source.ts emits CARGO_TARGET_<TRIPLE>_LINKER /
-    // rustup target add. Android/Windows blocks above set theirs explicitly;
-    // ??= preserves those.
-    if (!cfg.windows) {
+    // -Zbuild-std and cross-compiles both need an explicit --target.
+    // Android/Windows set theirs above; ??= preserves those. For native
+    // non-buildStd builds (musl, debug gnu) leaving rustTarget unset is fine
+    // — cargo defaults to the host triple and source.ts uses the simpler
+    // output dir.
+    if (spec.buildStd || cfg.crossTarget !== undefined) {
       spec.rustTarget ??= rustTargetTriple(cfg);
     }
 

@@ -16,10 +16,9 @@
 //   - edge mode: we clamp the span to [0,src) and renormalise the truncated
 //     weights (stb_image_resize's approach); libvips embeds the input with
 //     VIPS_EXTEND_COPY and always evaluates the full kernel. Both preserve DC.
-//   - weights are f32 here; libvips uses i16 fixed-point for the uchar path
-//     (more lanes, imperceptible precision loss). Worth taking later.
-// Weights are precomputed per output column/row; the inner loop is a SIMD
-// u8→f32 promote → FMA(broadcast) over taps.
+// Like libvips' uchar path, weights are i16 fixed-point (1<<14) so the inner
+// loop is u8→i16 → ReorderWidenMulAccumulate(i16×i16→i32) — PMADDWD/SMLAL —
+// at 2× the lanes of the f32 version it replaced.
 
 // clang-format off
 #undef HWY_TARGET_INCLUDE

@@ -134,7 +134,8 @@ public:
             // m_tracked may grow while iterating; index past the original end.
             for (size_t i = 0; i < m_tracked.size(); ++i) {
                 int n = proc_listchildpids(m_tracked[i].pid, kids, sizeof kids);
-                for (int k = 0; k < n; ++k) addIfNew(kids[k]);
+                for (int k = 0; k < n; ++k)
+                    addIfNew(kids[k]);
             }
         }
 

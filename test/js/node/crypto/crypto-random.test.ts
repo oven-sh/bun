@@ -89,4 +89,14 @@ describe("randomFill bounds checking", () => {
       expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
     );
   });
+
+  it("randomFill (async) still accepts size + offset == length at the f32 precision boundary", async () => {
+    const length = 2 ** 24 + 2;
+    const offset = 2 ** 24 + 1;
+    const size = 1;
+    const buf = new Uint8Array(length);
+    const { promise, resolve } = Promise.withResolvers<Error | null>();
+    randomFill(buf, offset, size, err => resolve(err));
+    expect(await promise).toBeNull();
+  });
 });

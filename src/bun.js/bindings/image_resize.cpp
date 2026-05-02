@@ -170,7 +170,8 @@ static void VertPass(const uint8_t* HWY_RESTRICT src, size_t src_h, size_t dst_w
             for (int32_t k = 0; k < s.n; k++, sp += row_bytes)
                 acc += static_cast<int32_t>(*sp) * w[k];
             acc >>= kFixShift;
-            *dp = static_cast<uint8_t>(acc < 0 ? 0 : acc > 255 ? 255 : acc);
+            *dp = static_cast<uint8_t>(acc < 0 ? 0 : acc > 255 ? 255
+                                                               : acc);
         }
     }
 }
@@ -450,7 +451,8 @@ int buildWeights(int kind, int32_t src_len, int32_t dst_len,
         for (int32_t k = 0; k < n; k++) {
             int32_t q = static_cast<int32_t>(std::lrint(fw[k] * inv * kFixOne));
             // Clip — extreme aspect ratios can push a single tap past i16.
-            q = q < -32768 ? -32768 : q > 32767 ? 32767 : q;
+            q = q < -32768 ? -32768 : q > 32767 ? 32767
+                                                : q;
             w[k] = static_cast<int16_t>(q);
             isum += q;
             if (std::abs(q) > std::abs(w[big])) big = k;

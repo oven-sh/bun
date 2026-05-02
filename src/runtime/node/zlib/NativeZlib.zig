@@ -54,9 +54,9 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 }
 
 //// adding this didnt help much but leaving it here to compare the number with later
-pub fn estimatedSize(_: *const @This()) usize {
+pub fn estimatedSize(this: *const @This()) usize {
     const internal_state_size = 3309; // @sizeOf(@cImport(@cInclude("deflate.h")).internal_state) @ cloudflare/zlib @ 92530568d2c128b4432467b76a3b54d93d6350bd
-    return @sizeOf(@This()) + internal_state_size;
+    return @sizeOf(@This()) + internal_state_size + this.stream.dictionary.len;
 }
 
 pub fn init(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {

@@ -339,7 +339,7 @@ class Debugger {
         return Response.json(versionInfo());
       case "/json":
       case "/json/list":
-      // TODO?
+        return Response.json(this.#targetInfo(request));
     }
 
     if (!this.#url!.protocol.includes("unix") && this.#url!.pathname !== pathname) {
@@ -360,6 +360,26 @@ class Debugger {
         },
       });
     }
+  }
+
+  #targetInfo(request: Request): unknown[] {
+    const { pathname } = this.#url!;
+    const host = request.headers.get("host") || `${this.#url!.hostname}:${this.#url!.port}`;
+    const id = pathname.startsWith("/") ? pathname.slice(1) : pathname;
+    const scheme = this.#url!.protocol === "wss:" ? "wss" : "ws";
+    const webSocketDebuggerUrl = `${scheme}://${host}${pathname}`;
+    return [
+      {
+        description: "bun instance",
+        devtoolsFrontendUrl: `https://debug.bun.sh/#${host}${pathname}`,
+        faviconUrl: "https://bun.com/favicon.ico",
+        id,
+        title: `bun[${process.pid}]`,
+        type: "node",
+        url: `file://${process.cwd()}`,
+        webSocketDebuggerUrl,
+      },
+    ];
   }
 
   #open(connection: ConnectionOwner, writer: Writer): void {

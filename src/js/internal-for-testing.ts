@@ -286,3 +286,7 @@ export const fetchH3Internals = {
     streams: number;
   },
 };
+
+export const fileSinkInternals = {
+  liveCount: $newZigFunction("bun.js/webcore/FileSink.zig", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
+};

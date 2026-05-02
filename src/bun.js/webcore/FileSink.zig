@@ -38,6 +38,18 @@ pub const RefCount = bun.ptr.RefCount(FileSink, "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
+/// Count of live native FileSink instances. Incremented at allocation,
+/// decremented in `deinit`. Exposed to tests via `bun:internal-for-testing`
+/// so leak tests can detect native FileSink leaks that are invisible to
+/// `heapStats()` (which only counts JS wrapper objects).
+pub var live_count = std.atomic.Value(i32).init(0);
+
+pub const TestingAPIs = struct {
+    pub fn fileSinkLiveCount(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        return .jsNumber(live_count.load(.monotonic));
+    }
+};
+
 pub const IOWriter = bun.io.StreamingWriter(@This(), opaque {
     pub const onClose = FileSink.onClose;
     pub const onWritable = FileSink.onReady;
@@ -218,12 +230,25 @@ pub fn onError(this: *FileSink, err: bun.sys.Error) void {
         if (this.eventLoop().bunVM()) |vm| {
             if (vm.is_inside_deferred_task_queue) {
                 this.runPendingLater();
+                if (comptime Environment.isWindows) this.clearKeepAliveRef();
                 return;
             }
         }
 
         this.runPending();
     }
+
+    // On POSIX, the streaming writer always calls `close()` → `onClose`
+    // after `onError`, so `onClose` releases the keep-alive ref. Releasing
+    // it here could drop the last ref and free `this` before the writer's
+    // subsequent `close()` touches its (embedded) fields.
+    //
+    // On Windows, the pipe error paths call `closeWithoutReporting()` which
+    // skips `onClose`, so release here. This is safe because those paths
+    // always hold another ref (the in-flight write's ref via `defer
+    // parent.deref()` in `onWriteComplete`, or the JS caller's ref when
+    // reached synchronously from `write()`) through `closeWithoutReporting`.
+    if (comptime Environment.isWindows) this.clearKeepAliveRef();
 }
 
 pub fn onReady(this: *FileSink) void {
@@ -243,6 +268,21 @@ pub fn onClose(this: *FileSink) void {
     }
 
     this.signal.close(null);
+
+    // The writer is fully closed; no further callbacks will arrive. Release
+    // the ref taken when a write returned `.pending`. This must be the last
+    // thing we do as it may free `this`.
+    this.clearKeepAliveRef();
+}
+
+/// Release the ref taken in `toResult`/`end`/`endFromJS` when a write
+/// returned `.pending` and we needed to stay alive until it completed.
+/// Idempotent via the flag check. May free `this`.
+fn clearKeepAliveRef(this: *FileSink) void {
+    if (this.must_be_kept_alive_until_eof) {
+        this.must_be_kept_alive_until_eof = false;
+        this.deref();
+    }
 }
 
 pub fn createWithPipe(
@@ -263,6 +303,7 @@ pub fn createWithPipe(
         .event_loop_handle = jsc.EventLoopHandle.init(evtloop),
         .fd = pipe.fd(),
     });
+    _ = live_count.fetchAdd(1, .monotonic);
     this.writer.setPipe(pipe);
     this.writer.setParent(this);
     return this;
@@ -281,6 +322,7 @@ pub fn create(
         .event_loop_handle = jsc.EventLoopHandle.init(evtloop),
         .fd = fd,
     });
+    _ = live_count.fetchAdd(1, .monotonic);
     this.writer.setParent(this);
     return this;
 }
@@ -504,6 +546,7 @@ pub fn init(fd: bun.FD, event_loop_handle: anytype) *FileSink {
         .fd = fd,
         .event_loop_handle = jsc.EventLoopHandle.init(event_loop_handle),
     });
+    _ = live_count.fetchAdd(1, .monotonic);
     this.writer.setParent(this);
 
     return this;
@@ -514,6 +557,7 @@ pub fn construct(this: *FileSink, _: std.mem.Allocator) void {
         .ref_count = .init(),
         .event_loop_handle = jsc.EventLoopHandle.init(jsc.VirtualMachine.get().eventLoop()),
     };
+    _ = live_count.fetchAdd(1, .monotonic);
 }
 
 pub fn write(this: *@This(), data: streams.Result) streams.Result.Writable {
@@ -572,6 +616,7 @@ pub fn end(this: *FileSink, _: ?bun.sys.Error) bun.sys.Maybe(void) {
 }
 
 fn deinit(this: *FileSink) void {
+    _ = live_count.fetchSub(1, .monotonic);
     this.pending.deinit();
     this.writer.deinit();
     this.readable_stream.deinit();

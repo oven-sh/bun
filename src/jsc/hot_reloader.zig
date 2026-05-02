@@ -519,8 +519,6 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             }
                         }
 
-                        _ = this.ctx.bustDirCache(strings.withoutTrailingSlashWindowsPath(file_path));
-
                         if (entries_option) |dir_ent| {
                             var last_file_hash: Watcher.HashType = std.math.maxInt(Watcher.HashType);
 
@@ -587,6 +585,15 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                 }
                             }
                         }
+
+                        // Bust *after* reading `dir_ent.entries` above. `bustEntriesCache`
+                        // now marks the `DirEntry` stale in place (instead of orphaning the
+                        // slot), so once busted a concurrent resolve on the JS thread can
+                        // rewrite the same `DirEntry`/`EntryMap` via the `in_place` path
+                        // while this watcher thread is still iterating it. Until the bust,
+                        // `dir_cache` still holds the entry and `stale` is false, so that
+                        // rewrite path is unreachable.
+                        _ = this.ctx.bustDirCache(strings.withoutTrailingSlashWindowsPath(file_path));
 
                         if (this.verbose) {
                             debug("Dir change: {s} (affecting {d})", .{ fs.relativeTo(file_path), affected.len });

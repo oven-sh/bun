@@ -3332,6 +3332,63 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
         buf->unpin();
 }
 
+// Borrow `v`'s byte storage for off-thread reading WITHOUT promoting a
+// FastTypedArray/OversizeTypedArray to a WastefulTypedArray. The point is
+// to avoid `possiblySharedBuffer()`'s `slowDownAndWasteMemory()` copy on a
+// fresh `new Uint8Array(N)` (the common path — `await res.bytes()` etc.),
+// which has no JSArrayBuffer wrapper yet.
+//
+//   0  Detached/null — nothing to read.
+//   1  `OversizeTypedArray` — `vector()` is fastMalloc, off the GC heap, and
+//      there's no ArrayBuffer to detach. Stable for the worker as long as the
+//      view is kept alive (the caller's Strong does that). No unpin needed.
+//   2  `FastTypedArray` — bytes live in CopiedSpace alongside the JSCell and
+//      CAN be moved by GC. ≤ fastSizeLimit elements (≈1 KB), so the caller
+//      should just dupe; that's cheaper than slowDownAndWasteMemory().
+//   3  Real ArrayBuffer (Wasteful/DataView/JSArrayBuffer) — `pin()`ed; the
+//      caller MUST `unpinArrayBuffer(v)` when done.
+//
+// `out_ptr`/`out_len` describe the VIEW's byte range (offset+length), not the
+// whole buffer.
+CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, const uint8_t** out_ptr, size_t* out_len)
+{
+    auto value = JSC::JSValue::decode(v);
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
+        if (view->isDetached()) return 0;
+        switch (view->mode()) {
+        case JSC::OversizeTypedArray:
+            *out_ptr = static_cast<const uint8_t*>(view->vector());
+            *out_len = view->byteLength();
+            return 1;
+        case JSC::FastTypedArray:
+            *out_ptr = static_cast<const uint8_t*>(view->vector());
+            *out_len = view->byteLength();
+            return 2;
+        default: {
+            // Already Wasteful/DataView — has a real ArrayBuffer; pin it.
+            // existingBufferInButterfly()/possiblySharedBuffer() is just a
+            // getter here (no slowDown — that branch is unreachable from
+            // the modes left after the two cases above).
+            auto* buf = view->possiblySharedBuffer();
+            if (!buf) return 0;
+            buf->pin();
+            *out_ptr = static_cast<const uint8_t*>(view->vector());
+            *out_len = view->byteLength();
+            return 3;
+        }
+        }
+    }
+    if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
+        auto* buf = jb->impl();
+        if (!buf || buf->isDetached()) return 0;
+        buf->pin();
+        *out_ptr = static_cast<const uint8_t*>(buf->data());
+        *out_len = buf->byteLength();
+        return 3;
+    }
+    return 0;
+}
+
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__createEmptyArray(JSC::JSGlobalObject* arg0, size_t length)
 {
     return JSC::JSValue::encode(JSC::constructEmptyArray(arg0, nullptr, length));

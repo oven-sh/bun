@@ -71,8 +71,11 @@ pub const Source = union(enum) {
     }
 };
 
-extern fn JSC__JSValue__pinArrayBuffer(v: jsc.JSValue) bool;
 extern fn JSC__JSValue__unpinArrayBuffer(v: jsc.JSValue) void;
+/// 0 = detached/null, 1 = OversizeTypedArray (stable, no unpin),
+/// 2 = FastTypedArray (≤~1 KB, GC-movable — caller must dupe),
+/// 3 = real ArrayBuffer (pinned — caller must unpin).
+extern fn JSC__JSValue__borrowBytesForOffThread(v: jsc.JSValue, out_ptr: *[*]const u8, out_len: *usize) i32;
 
 pub const Fit = enum {
     fill,
@@ -400,25 +403,36 @@ fn jsThreadBytes(this: *Image, this_value: jsc.JSValue, global: *jsc.JSGlobalObj
 /// post-check, `codec_webp.zig` dim re-check. (If the attacker already runs
 /// JS in-process the threat model is moot anyway; the surface that matters
 /// is hostile *bytes*, which the codec validation handles.)
-fn pinForTask(this: *Image, this_value: jsc.JSValue, global: *jsc.JSGlobalObject) error{Detached}!PipelineTask.Input {
+fn pinForTask(this: *Image, this_value: jsc.JSValue, _: *jsc.JSGlobalObject) error{ Detached, OutOfMemory }!PipelineTask.Input {
     switch (this.source) {
         .js_buffer => {
             const v = js.sourceJSGetCached(this_value) orelse return error.Detached;
-            // pin() FIRST: for an inline-storage FastTypedArray it calls
-            // `possiblySharedBuffer()` → `slowDownAndWasteMemory()`, which
-            // copies into a fresh heap ArrayBuffer and repoints `m_vector`.
-            // If we'd already taken `byteSlice()` it'd be pointing at the old
-            // (now-unreferenced) GC-aux storage. Read the slice AFTER.
-            _ = JSC__JSValue__pinArrayBuffer(v);
-            const ab = v.asArrayBuffer(global) orelse {
-                JSC__JSValue__unpinArrayBuffer(v);
-                return error.Detached;
+            // Classify the storage mode WITHOUT promoting it. A fresh
+            // `new Uint8Array(N)` (the common path — `await res.bytes()`,
+            // `Buffer.from(file)`) is `OversizeTypedArray`: bytes in
+            // fastMalloc, no JSArrayBuffer wrapper, can't be detached or
+            // moved. Calling `possiblySharedBuffer()` on that would
+            // `slowDownAndWasteMemory()` → copy + allocate a wrapper for
+            // every input. The classifier returns the slice directly and
+            // tells us whether anything actually needs pinning.
+            var ptr: [*]const u8 = undefined;
+            var len: usize = 0;
+            return switch (JSC__JSValue__borrowBytesForOffThread(v, &ptr, &len)) {
+                0 => error.Detached,
+                // Oversize: stable off-heap storage, undetachable. The Strong
+                // on the wrapper (this_ref) keeps the view alive; nothing to
+                // unpin.
+                1 => if (len == 0) error.Detached else .{ .bytes = ptr[0..len] },
+                // Fast (≤ fastSizeLimit elements, GC-movable): tiny by
+                // definition — dupe instead of forcing JSC to materialise.
+                2 => if (len == 0) error.Detached else .{ .copied = try bun.default_allocator.dupe(u8, ptr[0..len]) },
+                // Real ArrayBuffer: pinned by the helper, must unpin in then().
+                3 => if (len == 0) blk: {
+                    JSC__JSValue__unpinArrayBuffer(v);
+                    break :blk error.Detached;
+                } else .{ .bytes = ptr[0..len], .pinned = v },
+                else => unreachable,
             };
-            if (ab.byte_len == 0) {
-                JSC__JSValue__unpinArrayBuffer(v);
-                return error.Detached;
-            }
-            return .{ .bytes = ab.byteSlice(), .pinned = v };
         },
         .owned => |b| return .{ .bytes = b },
         .path => |p| return .{ .path = p },
@@ -649,7 +663,7 @@ pub fn encodeForBody(this: *Image, global: *jsc.JSGlobalObject, this_value: jsc.
     }
     const input = this.pinForTask(this_value, global) catch
         return global.throw("Image: source ArrayBuffer was detached", .{});
-    defer if (input.pinned != .zero) JSC__JSValue__unpinArrayBuffer(input.pinned);
+    defer input.release();
     var task: PipelineTask = .{
         .image = this,
         .global = global,
@@ -793,7 +807,19 @@ pub const PipelineTask = struct {
     pub const Input = struct {
         bytes: []const u8 = &.{},
         path: ?[:0]const u8 = null,
+        /// JS value to `unpinArrayBuffer` in `then()`. `.zero` for sources
+        /// with no ArrayBuffer to pin (Oversize TA, owned, path, copied).
         pinned: jsc.JSValue = .zero,
+        /// Our own dupe of a FastTypedArray's bytes — freed in `then()`.
+        copied: ?[]u8 = null,
+
+        fn slice(self: @This()) []const u8 {
+            return self.copied orelse self.bytes;
+        }
+        fn release(self: @This()) void {
+            if (self.pinned != .zero) JSC__JSValue__unpinArrayBuffer(self.pinned);
+            if (self.copied) |c| bun.default_allocator.free(c);
+        }
     };
 
     pub const Deliver = union(enum) {
@@ -882,7 +908,7 @@ pub const PipelineTask = struct {
             }
             owned_file = r.bytes.items;
             break :blk owned_file.?;
-        } else this.input.bytes;
+        } else this.input.slice();
 
         // Header-only fast path for `.metadata()` — Sharp parses just the
         // IHDR/SOF/VP8 header; we used to decode the full RGBA buffer first
@@ -1019,7 +1045,7 @@ pub const PipelineTask = struct {
         defer this.deinit();
         // JS thread again — release the per-task pin so user code can
         // transfer/detach the source now.
-        if (this.input.pinned != .zero) JSC__JSValue__unpinArrayBuffer(this.input.pinned);
+        this.input.release();
         const global = this.global;
         // Stash final dims here (JS thread) — `run()` is on a WorkPool thread
         // so writing `this.image.*` there would race the synchronous getters.

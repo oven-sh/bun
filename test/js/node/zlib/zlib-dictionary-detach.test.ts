@@ -21,7 +21,9 @@ import { bunEnv, bunExe } from "harness";
 // symbolize=0: when this test is run against an unfixed build, ASAN aborts
 // and symbolizing the debug binary takes longer than the default test
 // timeout. We only care that the subprocess prints "OK" and exits 0.
-const asanOptions = bunEnv.ASAN_OPTIONS ? bunEnv.ASAN_OPTIONS + ":symbolize=0" : "symbolize=0";
+// allow_user_segv_handler=1 suppresses JSC's "ASAN interferes with JSC
+// signal handlers" stderr banner on ASAN builds where bunEnv didn't set it.
+const asanOptions = [bunEnv.ASAN_OPTIONS, "allow_user_segv_handler=1", "symbolize=0"].filter(Boolean).join(":");
 const env = { ...bunEnv, Malloc: "1", ASAN_OPTIONS: asanOptions };
 
 const inflateFixture = /* js */ `

@@ -79,11 +79,6 @@ pub fn init(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
     this.write_result = writeResult;
     js.writeCallbackSetCached(this_value, globalThis, writeCallback.withAsyncContextIfNeeded(globalThis));
 
-    // Keep the dictionary alive by keeping a reference to it in the JS object.
-    if (dictionary != null) {
-        js.dictionarySetCached(this_value, globalThis, arguments[6]);
-    }
-
     this.stream.init(level, windowBits, memLevel, strategy, dictionary);
 
     return .js_undefined;
@@ -122,6 +117,13 @@ const Context = struct {
     state: c.z_stream = std.mem.zeroes(c.z_stream),
     err: c.ReturnCode = .Ok,
     flush: c.FlushValue = .NoFlush,
+    /// Owned copy of the user-supplied dictionary. The user's ArrayBuffer can
+    /// be detached (e.g. `buf.transfer()` / `postMessage` transfer) after
+    /// `init()`, freeing its backing store while inflate still needs to call
+    /// `inflateSetDictionary()` lazily from the threadpool on `Z_NEED_DICT`
+    /// (and on `reset()`). Holding a raw pointer into the JS buffer is a
+    /// use-after-free, so we copy. Node.js does the same
+    /// (`ZlibContext::dictionary_` is a `std::vector<unsigned char>`).
     dictionary: []const u8 = "",
     gzip_id_bytes_read: u8 = 0,
 
@@ -139,7 +141,11 @@ const Context = struct {
             .ZSTD_COMPRESS, .ZSTD_DECOMPRESS => unreachable,
         };
 
-        this.dictionary = dictionary orelse "";
+        this.freeDictionary();
+        this.dictionary = if (dictionary) |d|
+            if (d.len > 0) bun.handleOom(bun.default_allocator.dupe(u8, d)) else ""
+        else
+            "";
 
         switch (this.mode) {
             .NONE => unreachable,
@@ -355,6 +361,14 @@ const Context = struct {
         }
         bun.assert(status == .Ok or status == .DataError);
         this.mode = .NONE;
+        this.freeDictionary();
+    }
+
+    fn freeDictionary(this: *Context) void {
+        if (this.dictionary.len > 0) {
+            bun.default_allocator.free(@constCast(this.dictionary));
+            this.dictionary = "";
+        }
     }
 };
 

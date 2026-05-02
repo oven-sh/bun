@@ -192,8 +192,6 @@ pub fn PosixBufferedWriter(Parent: type, function_table: anytype) type {
             return @sizeOf(@This());
         }
 
-        pub const auto_poll = if (@hasDecl(Parent, "auto_poll")) Parent.auto_poll else true;
-
         pub fn createPoll(this: *@This(), fd: bun.FD) *Async.FilePoll {
             return Async.FilePoll.init(@as(*Parent, @ptrCast(this.parent)).eventLoop(), fd, .{}, PosixWriter, this);
         }

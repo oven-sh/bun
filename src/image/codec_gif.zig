@@ -77,7 +77,8 @@ const Bits = struct {
 /// One node per dictionary entry. The classic LZW dict is "string = previous
 /// string + one byte"; we store `(prefix, suffix)` and reconstruct each string
 /// by walking `prefix` back to a root code (< clear). 4096 codes is the GIF
-/// hard cap (12-bit codes), so the table is fixed-size and lives on the stack.
+/// hard cap (12-bit codes), so the table is fixed-size — heap-allocated in
+/// `decodeFrame` (12 KiB) to keep WorkPool stacks small.
 const Dict = struct {
     prefix: [4096]u16,
     suffix: [4096]u8,

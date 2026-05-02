@@ -77,6 +77,58 @@ function makePng(
 }
 
 const tinyPng = makePng(2, 2, (x, y) => [x * 255, y * 255, 128, 255]);
+
+/// Decode any image to RGBA via Bun.Image→PNG, then walk the PNG ourselves
+/// (filter de-prediction included) so assertions are against ground truth,
+/// not against another Bun.Image call. Hoisted to file scope so the
+/// heap-leak / hostile-input tests can use it.
+async function rgbaOf(bytes: Uint8Array): Promise<Uint8Array> {
+  const png = await new Bun.Image(bytes).png().bytes();
+  const dv = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  let off = 8;
+  let pw = 0;
+  let ph = 0;
+  const idats: Uint8Array[] = [];
+  while (off < png.length) {
+    const len = dv.getUint32(off);
+    const type = String.fromCharCode(png[off + 4], png[off + 5], png[off + 6], png[off + 7]);
+    const data = png.subarray(off + 8, off + 8 + len);
+    if (type === "IHDR") {
+      pw = dv.getUint32(off + 8);
+      ph = dv.getUint32(off + 12);
+    } else if (type === "IDAT") idats.push(data);
+    else if (type === "IEND") break;
+    off += 12 + len;
+  }
+  const raw = zlib.inflateSync(Buffer.concat(idats));
+  const stride = pw * 4;
+  const out = new Uint8Array(pw * ph * 4);
+  let p = 0;
+  for (let y = 0; y < ph; y++) {
+    const f = raw[p++];
+    const ro = y * stride;
+    const po = (y - 1) * stride;
+    for (let i = 0; i < stride; i++) {
+      const x = raw[p++];
+      const a = i >= 4 ? out[ro + i - 4] : 0;
+      const b = y > 0 ? out[po + i] : 0;
+      const c = y > 0 && i >= 4 ? out[po + i - 4] : 0;
+      let v = x;
+      if (f === 1) v = (x + a) & 255;
+      else if (f === 2) v = (x + b) & 255;
+      else if (f === 3) v = (x + ((a + b) >> 1)) & 255;
+      else if (f === 4) {
+        const pp = a + b - c;
+        const pa = Math.abs(pp - a);
+        const pb = Math.abs(pp - b);
+        const pc = Math.abs(pp - c);
+        v = (x + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c)) & 255;
+      }
+      out[ro + i] = v;
+    }
+  }
+  return out;
+}
 const tinyJpeg = await new Bun.Image(tinyPng).jpeg({ quality: 80 }).bytes();
 const tinyWebp = await new Bun.Image(tinyPng).webp({ quality: 80 }).bytes();
 const tinyWebpLossless = await new Bun.Image(tinyPng).webp({ lossless: true }).bytes();
@@ -167,11 +219,15 @@ describe("truncation sweep", () => {
       ct,
       Buffer.from([0x2c,0,0,0,0,4,0,4,0,0,  8, 2, 0x00,0x03, 0, 0x3b]), // imgdesc · min=8 · clear(256),eoi(257) at 9-bit
     ]);
-    const got = await new Bun.Image(gif).png().bytes();
-    // png decode of an all-black 4×4 — every R/G/B byte must be 0. If ANY
-    // heap byte leaked through the identity palette, this fails.
-    const m = await new Bun.Image(got).metadata();
-    expect(m).toEqual({ width: 4, height: 4, format: "png" });
+    const px = await rgbaOf(gif);
+    expect(px.length).toBe(4 * 4 * 4);
+    // The fixture's two LZW bytes decode as `clear` then a spurious literal
+    // `1` (the leftover 7 bits) before EOF, so idx[0]=1 and the security-
+    // relevant region is idx[1..16) — the `@memset(idx[written..], 0)` tail.
+    // If that regresses, those 15 indices are raw mimalloc bytes mapped 1:1
+    // through the identity palette and at least one R/G/B sample ≠ 0.
+    expect([...px.subarray(0, 4)]).toEqual([1, 1, 1, 255]);
+    for (let i = 4; i < px.length; i += 4) expect([px[i], px[i + 1], px[i + 2], px[i + 3]]).toEqual([0, 0, 0, 255]);
   });
 
   test("BMP BI_BITFIELDS with hostile masks rejects, not panics", async () => {
@@ -409,57 +465,6 @@ describe("lossless roundtrip", () => {
     }
     return out;
   })();
-
-  async function rgbaOf(bytes: Uint8Array): Promise<Uint8Array> {
-    // Route back to PNG and decode with the test's own minimal decoder so we
-    // compare against ground truth, not against another Bun.Image call.
-    const png = await new Bun.Image(bytes).png().bytes();
-    // (use the inflate-based reader from image.test.ts logic)
-    const dv = new DataView(png.buffer, png.byteOffset, png.byteLength);
-    let off = 8;
-    let pw = 0;
-    let ph = 0;
-    const idats: Uint8Array[] = [];
-    while (off < png.length) {
-      const len = dv.getUint32(off);
-      const type = String.fromCharCode(png[off + 4], png[off + 5], png[off + 6], png[off + 7]);
-      const data = png.subarray(off + 8, off + 8 + len);
-      if (type === "IHDR") {
-        pw = dv.getUint32(off + 8);
-        ph = dv.getUint32(off + 12);
-      } else if (type === "IDAT") idats.push(data);
-      else if (type === "IEND") break;
-      off += 12 + len;
-    }
-    const raw = zlib.inflateSync(Buffer.concat(idats));
-    const stride = pw * 4;
-    const out = new Uint8Array(pw * ph * 4);
-    let p = 0;
-    for (let y = 0; y < ph; y++) {
-      const f = raw[p++];
-      const ro = y * stride;
-      const po = (y - 1) * stride;
-      for (let i = 0; i < stride; i++) {
-        const x = raw[p++];
-        const a = i >= 4 ? out[ro + i - 4] : 0;
-        const b = y > 0 ? out[po + i] : 0;
-        const c = y > 0 && i >= 4 ? out[po + i - 4] : 0;
-        let v = x;
-        if (f === 1) v = (x + a) & 255;
-        else if (f === 2) v = (x + b) & 255;
-        else if (f === 3) v = (x + ((a + b) >> 1)) & 255;
-        else if (f === 4) {
-          const pp = a + b - c;
-          const pa = Math.abs(pp - a);
-          const pb = Math.abs(pp - b);
-          const pc = Math.abs(pp - c);
-          v = (x + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c)) & 255;
-        }
-        out[ro + i] = v;
-      }
-    }
-    return out;
-  }
 
   test("PNG → PNG preserves every byte of noise", async () => {
     const out = await new Bun.Image(noise).png().bytes();

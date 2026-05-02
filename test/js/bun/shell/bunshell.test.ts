@@ -6,6 +6,7 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import { chmodSync, mkdirSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import { bunExe, isPosix, isWindows, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
@@ -868,6 +869,23 @@ booga"
       expect(stderr).toBe("");
       expect(stdout.trim()).toBe("ENAMETOOLONG");
       expect(exitCode).toBe(0);
+    });
+
+    // handleChangeCwdErr's `else` arm previously returned `.failed` without writing
+    // to stderr or calling done(), so any errno other than NOTDIR/NOENT/NAMETOOLONG
+    // (e.g. EACCES, ELOOP) left the shell promise unresolved forever.
+    test.if(isPosix)("cd with EACCES fails with exit code 1 instead of hanging", async () => {
+      const dir = tempDirWithFiles("cd-eacces", { "placeholder.txt": "" });
+      const noaccess = join(dir, "noaccess");
+      mkdirSync(noaccess);
+      chmodSync(noaccess, 0o000);
+      try {
+        const { stderr, exitCode } = await $`cd ${noaccess}`.quiet().nothrow();
+        expect(stderr.toString()).toBe(`cd: Permission denied: ${noaccess}\n`);
+        expect(exitCode).toBe(1);
+      } finally {
+        chmodSync(noaccess, 0o755);
+      }
     });
   });
 

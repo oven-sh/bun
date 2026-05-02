@@ -93,17 +93,12 @@ test.skipIf(isDebug)(
 // protected-Function count returns to its pre-loop baseline; before the fix
 // it grows by exactly one per onEndTag() call.
 describe("element.onEndTag does not leak the handler allocation / protected callback", () => {
-  async function run(registerTwice: boolean) {
+  async function run(setup: string) {
     const code = /* js */ `
       const { heapStats } = require("bun:jsc");
       const protectedFns = () => heapStats().protectedObjectTypeCounts.Function ?? 0;
 
-      const rw = new HTMLRewriter().on("div", {
-        element(el) {
-          ${registerTwice ? "el.onEndTag(() => {});" : ""}
-          el.onEndTag(() => {});
-        },
-      });
+      ${setup}
 
       async function pass(n) {
         for (let i = 0; i < n; i++) {
@@ -138,17 +133,39 @@ describe("element.onEndTag does not leak the handler allocation / protected call
     expect(filteredStderr).toBe("");
     const { delta } = JSON.parse(stdout.trim());
 
-    // Unfixed: delta == 500 (or 1000 when registering twice). Fixed: 0.
+    // Unfixed: delta == 500 per onEndTag() call per iteration. Fixed: 0.
     // Allow a little slack for unrelated protected functions.
     expect(delta).toBeLessThan(10);
     expect(exitCode).toBe(0);
   }
 
   test("single registration", async () => {
-    await run(false);
+    await run(`
+      const rw = new HTMLRewriter().on("div", {
+        element(el) { el.onEndTag(() => {}); },
+      });
+    `);
   });
 
   test("re-registration on the same element", async () => {
-    await run(true);
+    await run(`
+      const rw = new HTMLRewriter().on("div", {
+        element(el) {
+          el.onEndTag(() => {});
+          el.onEndTag(() => {});
+        },
+      });
+    `);
+  });
+
+  // Each matching selector gets its own Zig Element wrapper around the same
+  // underlying lol-html element; the second wrapper's onEndTag must still be
+  // able to find and free the first wrapper's handler.
+  test("re-registration across overlapping selectors", async () => {
+    await run(`
+      const rw = new HTMLRewriter()
+        .on("div", { element(el) { el.onEndTag(() => {}); } })
+        .on("*",   { element(el) { el.onEndTag(() => {}); } });
+    `);
   });
 });

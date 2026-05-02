@@ -1514,21 +1514,14 @@ pub const EndTag = struct {
     pub const Handler = struct {
         callback: ?JSValue,
         global: *JSGlobalObject,
-        /// The `Element` this handler was registered on. The handler holds a
-        /// ref on the element so it stays alive until the end tag fires.
-        element: *Element,
 
-        /// Unprotects the JS callback, detaches from the owning `Element`
-        /// (releasing the ref held on it), and frees this struct.
+        /// Unprotects the JS callback and frees this struct.
         pub fn deinit(this: *Handler) void {
             if (this.callback) |cb| {
                 cb.unprotect();
                 this.callback = null;
             }
-            const element = this.element;
-            element.end_tag_handler = null;
             bun.default_allocator.destroy(this);
-            element.deref();
         }
 
         const callbackImpl = HandlerCallback(
@@ -1716,10 +1709,6 @@ pub const Element = struct {
 
     ref_count: RefCount,
     element: ?*LOLHTML.Element = null,
-    /// The pending end-tag handler registered via `onEndTag`. The handler
-    /// holds a ref on this `Element`, so `deinit` is only reached after the
-    /// handler has detached itself.
-    end_tag_handler: ?*EndTag.Handler = null,
 
     pub const js = jsc.Codegen.JSElement;
     pub const toJS = js.toJS;
@@ -1739,7 +1728,6 @@ pub const Element = struct {
 
     fn deinit(this: *Element) void {
         this.element = null;
-        bun.debugAssert(this.end_tag_handler == null);
         bun.destroy(this);
     }
 
@@ -1756,14 +1744,17 @@ pub const Element = struct {
         }
 
         // `LOLHTML.Element.onEndTag` clears any previously-registered handler
-        // on the lol-html side, so drop our previous allocation here to avoid
-        // leaking it along with its protected JS callback.
-        if (this.end_tag_handler) |prev| {
+        // on the lol-html side. The pending `*EndTag.Handler` is stashed in
+        // the underlying element's user_data (shared across all Zig wrappers
+        // created for overlapping selectors), so fetch and drop it here to
+        // avoid leaking the struct and its protected JS callback.
+        if (this.element.?.getUserData(EndTag.Handler)) |prev| {
             prev.deinit();
+            this.element.?.setUserData(null);
         }
 
         const end_tag_handler = bun.handleOom(bun.default_allocator.create(EndTag.Handler));
-        end_tag_handler.* = .{ .global = globalObject, .callback = function, .element = this };
+        end_tag_handler.* = .{ .global = globalObject, .callback = function };
 
         this.element.?.onEndTag(EndTag.Handler.onEndTagHandler, end_tag_handler) catch {
             bun.default_allocator.destroy(end_tag_handler);
@@ -1772,10 +1763,10 @@ pub const Element = struct {
         };
 
         function.protect();
-        // The handler owns a ref on us so this `Element` stays alive until the
-        // end tag fires and the handler detaches + frees itself.
-        this.ref();
-        this.end_tag_handler = end_tag_handler;
+        // Record the pending handler on the underlying element so a later
+        // `onEndTag` call (from this or another matching selector) can free
+        // it before replacing. The handler frees itself after it fires.
+        this.element.?.setUserData(end_tag_handler);
         return callFrame.this();
     }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { randomBytes, randomInt } from "crypto";
+import { randomBytes, randomFill, randomFillSync, randomInt } from "crypto";
 
 describe("randomInt args validation", () => {
   it("default min is 0 so max should be greater than 0", () => {
@@ -55,5 +55,38 @@ describe("randomBytes", () => {
     });
 
     await promise;
+  });
+});
+
+describe("randomFill bounds checking", () => {
+  // f32 can only represent integers exactly up to 2**24 (16777216). Previously the
+  // bounds check in assertSize cast the u32 offset to f32 before adding, so an offset
+  // of 16777217 rounded down to 16777216 and `size + offset > length` passed when the
+  // true sum exceeded the buffer length, leading to a heap write past the end.
+  it("randomFillSync rejects size + offset > length when offset exceeds 2**24", () => {
+    const length = 2 ** 24 + 2; // 16777218
+    const offset = 2 ** 24 + 1; // 16777217 -> rounds to 16777216 as f32
+    const size = 2; // offset + size = 16777219 > 16777218
+    expect(() => randomFillSync(new ArrayBuffer(length), offset, size)).toThrow(
+      expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+    );
+  });
+
+  it("randomFillSync still accepts size + offset == length at the f32 precision boundary", () => {
+    const length = 2 ** 24 + 2;
+    const offset = 2 ** 24 + 1;
+    const size = 1; // offset + size = 16777218 == length, should be fine
+    const buf = new Uint8Array(length);
+    expect(() => randomFillSync(buf, offset, size)).not.toThrow();
+  });
+
+  it("randomFill (async) rejects size + offset > length when offset exceeds 2**24", () => {
+    const length = 2 ** 24 + 2;
+    const offset = 2 ** 24 + 1;
+    const size = 2;
+    // Validation errors are thrown synchronously even for the async API.
+    expect(() => randomFill(new ArrayBuffer(length), offset, size, () => {})).toThrow(
+      expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+    );
   });
 });

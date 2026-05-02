@@ -293,7 +293,7 @@ const random = struct {
         if (!offset_value.isNumber()) {
             return global.throwInvalidArgumentTypeValue("offset", "number", offset_value);
         }
-        const offset = offset_value.asNumber() * @as(f32, @floatFromInt(element_size));
+        const offset = offset_value.asNumber() * @as(f64, @floatFromInt(element_size));
 
         const max_length = @min(length, max_possible_length);
         if (std.math.isNan(offset) or offset > @as(f64, @floatFromInt(max_length)) or offset < 0) {
@@ -304,14 +304,14 @@ const random = struct {
     }
     fn assertSize(global: *JSGlobalObject, size_value: JSValue, element_size: u8, offset: u32, length: usize) JSError!u32 {
         var size = try validators.validateNumber(global, size_value, "size", null, null);
-        size *= @as(f32, @floatFromInt(element_size));
+        size *= @as(f64, @floatFromInt(element_size));
 
         if (std.math.isNan(size) or size > max_possible_length or size < 0) {
             return global.throwRangeError(size, .{ .field_name = "size", .min = 0, .max = max_possible_length });
         }
 
-        if (size + @as(f32, @floatFromInt(offset)) > @as(f64, @floatFromInt(length))) {
-            return global.throwRangeError(size + @as(f32, @floatFromInt(offset)), .{ .field_name = "size + offset", .max = @intCast(length) });
+        if (size + @as(f64, @floatFromInt(offset)) > @as(f64, @floatFromInt(length))) {
+            return global.throwRangeError(size + @as(f64, @floatFromInt(offset)), .{ .field_name = "size + offset", .max = @intCast(length) });
         }
 
         return @intFromFloat(size);

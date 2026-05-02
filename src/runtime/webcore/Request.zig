@@ -918,7 +918,8 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
                     if (referrer_str.isEmpty()) {
                         referrer_str.deref();
                         req.referrer.deref();
-                        req.referrer = bun.String.cloneUTF8(no_referrer_sentinel);
+                        // Static: no allocation. Getter maps this sentinel to "".
+                        req.referrer = bun.String.static(no_referrer_sentinel);
                     } else {
                         const parsed = bun.jsc.URL.hrefFromString(referrer_str);
                         if (parsed.isEmpty()) {

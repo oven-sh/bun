@@ -79,13 +79,14 @@ test("FileReader releases its ref and fd when reader.start() fails", async () =>
       exitCode: 0,
     });
   }
+  expect(stderr).toBe("");
   const result = JSON.parse(stdout.trim());
 
   if (isLinux) {
     // Without the fix each iteration leaks the fd that openFileBlob()
-    // opened, so `leaked` would be ~iterations. A small amount of slack
-    // tolerates unrelated background fds (e.g. epoll, procfs dir handle).
-    expect(result.leaked).toBeLessThan(result.iterations / 2);
+    // opened, so `leaked` would equal `iterations` (50). A small constant
+    // slack tolerates unrelated background fds (e.g. procfs dir handle).
+    expect(result.leaked).toBeLessThanOrEqual(5);
   }
   expect(exitCode).toBe(0);
 });

@@ -256,8 +256,19 @@ pub const FileSystemRouter = struct {
 
         var router = Router.init(vm.transpiler.fs, allocator, .{
             .dir = allocator.dupe(u8, this.router.config.dir) catch unreachable,
-            .extensions = allocator.dupe(string, this.router.config.extensions) catch unreachable,
-            .asset_prefix_path = this.router.config.asset_prefix_path,
+            // Deep-copy each extension string into the new arena. A shallow `dupe(string, ...)`
+            // only copies the outer slice; the inner `[]const u8` would still point into the
+            // previous arena, which is freed below — causing a use-after-free on the *next*
+            // reload() when RouteLoader compares file extensions.
+            .extensions = brk: {
+                const old = this.router.config.extensions;
+                const new = allocator.alloc(string, old.len) catch unreachable;
+                for (old, new) |ext, *out| {
+                    out.* = allocator.dupe(u8, ext) catch unreachable;
+                }
+                break :brk new;
+            },
+            .asset_prefix_path = allocator.dupe(u8, this.router.config.asset_prefix_path) catch unreachable,
         }) catch unreachable;
         router.loadRoutes(&log, root_dir_info, Resolver, &vm.transpiler.resolver, router.config.dir) catch {
             // Build the JS error before freeing the arena: `log` is backed by the arena allocator.

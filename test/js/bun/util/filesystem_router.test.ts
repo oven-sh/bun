@@ -368,6 +368,46 @@ it("reload() works", () => {
   expect(router.match("/posts")!.name).toBe("/posts");
 });
 
+it("reload() preserves custom fileExtensions across multiple reloads (no use-after-free)", async () => {
+  // reload() rebuilds the router in a fresh arena and frees the old one. The extension
+  // strings must be deep-copied into the new arena; a shallow copy of the outer slice
+  // leaves the inner bytes pointing into the freed arena, so the *second* reload() reads
+  // freed memory when RouteLoader compares file extensions. Run in a subprocess so an
+  // ASAN crash doesn't take down the test runner.
+  using dir = tempDir("fsr-reload-ext", {
+    "pages/index.tsx": "export default 1;",
+    "pages/posts.jsx": "export default 1;",
+    "pages/skip.md": "nope",
+  });
+
+  const code = /* ts */ `
+    const router = new Bun.FileSystemRouter({
+      dir: ${JSON.stringify(path.join(String(dir), "pages"))},
+      style: "nextjs",
+      fileExtensions: [".tsx", ".jsx"],
+    });
+    for (let i = 0; i < 4; i++) {
+      router.reload();
+      const routes = Object.keys(router.routes).sort();
+      if (routes.length !== 2 || routes[0] !== "/" || routes[1] !== "/posts") {
+        throw new Error("reload " + i + ": wrong routes " + JSON.stringify(routes));
+      }
+    }
+    console.log("ok");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("ok");
+  expect(exitCode).toBe(0);
+}, 30_000);
+
 it("reload() works with new dirs/files", () => {
   const { dir } = make(["posts.tsx"]);
 

@@ -54,6 +54,8 @@ export default [
       buffer: { fn: "doBuffer", length: 0, async: true },
       // Sharp-compat alias for `buffer()`; same Zig fn, no overhead.
       toBuffer: { fn: "doBuffer", length: 0, async: true },
+      // Encode → fs.writeFile, both off-thread; resolves bytes-written.
+      write: { fn: "doWrite", length: 1, async: true },
       blob: { fn: "doBlob", length: 0, async: true },
       toBase64: { fn: "doToBase64", length: 0, async: true },
       metadata: { fn: "doMetadata", length: 0, async: true },

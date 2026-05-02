@@ -119,7 +119,10 @@ await img.bytes(); // Uint8Array
 await img.buffer(); // Buffer
 await img.blob(); // Blob with .type set to the output MIME
 await img.toBase64(); // string
+await img.write("out.webp"); // number (bytes written)
 ```
+
+`.write()` keeps the encode-then-writeFile on the thread pool so encoded bytes never touch the JS heap. If you didn't chain a format method, the extension picks one (`.jpg`/`.png`/`.webp`/`.heic`/`.avif`).
 
 After the first terminal resolves, `img.width` and `img.height` reflect the _output_ dimensions (they're `-1` before).
 

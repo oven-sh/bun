@@ -109,6 +109,23 @@ pub const Format = enum(u8) {
         return null;
     }
 
+    /// Best-effort extension → format for `.write(path)`'s default. Only the
+    /// final dotted segment is considered; case-insensitive. Returns `null`
+    /// when there's no extension or it's not one we recognise.
+    pub fn fromExtension(path: []const u8) ?Format {
+        const dot = std.mem.lastIndexOfScalar(u8, path, '.') orelse return null;
+        var buf: [5]u8 = undefined;
+        const ext = std.ascii.lowerString(&buf, path[dot + 1 ..][0..@min(path.len - dot - 1, buf.len)]);
+        return ExtMap.get(ext);
+    }
+
+    const ExtMap = bun.ComptimeStringMap(Format, .{
+        .{ "jpg", .jpeg },  .{ "jpeg", .jpeg }, .{ "png", .png },
+        .{ "webp", .webp }, .{ "heic", .heic }, .{ "heif", .heic },
+        .{ "avif", .avif }, .{ "bmp", .bmp },   .{ "gif", .gif },
+        .{ "tif", .tiff },  .{ "tiff", .tiff },
+    });
+
     pub fn mime(self: Format) [:0]const u8 {
         return switch (self) {
             .jpeg => "image/jpeg",

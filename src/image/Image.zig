@@ -469,12 +469,40 @@ pub fn doToBase64(this: *Image, global: *jsc.JSGlobalObject, cf: *jsc.CallFrame)
     return this.schedule(global, cf.this(), .{ .encode = this.pipeline.output }, .base64);
 }
 
+/// Terminal: encode and write to `path` on the work pool (no round-trip of
+/// encoded bytes through JS). Resolves with bytes written, like `Bun.write`.
+/// If no format method was chained, the encode format is inferred from the
+/// path's extension when it's one we can encode, falling back to the source
+/// format otherwise — so `img.resize(100).write("thumb.webp")` Just Works.
+pub fn doWrite(this: *Image, global: *jsc.JSGlobalObject, cf: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const args = cf.arguments();
+    if (args.len < 1 or !args[0].isString())
+        return global.throwInvalidArguments("Image.write: expected a path string", .{});
+    const str = try args[0].toBunString(global);
+    defer str.deref();
+    const path = str.toOwnedSliceZ(bun.default_allocator) catch return global.throwOutOfMemory();
+
+    var output = this.pipeline.output;
+    if (output == null) if (codecs.Format.fromExtension(path)) |f| switch (f) {
+        // Only infer formats we can ENCODE; decode-only extensions
+        // (.bmp/.tiff/.gif) fall through to the source-format default
+        // rather than guaranteeing a runtime UnsupportedOnPlatform.
+        .jpeg, .png, .webp, .heic, .avif => output = .{ .format = f },
+        else => {},
+    };
+    return this.schedule(global, cf.this(), .{ .encode = output }, .{ .file = path });
+}
+
 fn schedule(this: *Image, global: *jsc.JSGlobalObject, this_value: jsc.JSValue, kind: PipelineTask.Kind, deliver: PipelineTask.Deliver) bun.JSError!jsc.JSValue {
-    const input = this.pinForTask(this_value, global) catch
+    const input = this.pinForTask(this_value, global) catch {
+        // `deliver` owns its `.file` path; the task that would have freed it
+        // in deinit() is never created on this branch, so free here.
+        if (deliver == .file) bun.default_allocator.free(deliver.file);
         return jsc.JSPromise.rejectedPromise(
             global,
             global.createErrorInstance("Image: source ArrayBuffer was detached", .{}),
         ).asValue(global);
+    };
     const job = PipelineTask.new(.{
         .image = this,
         .global = global,
@@ -529,7 +557,7 @@ pub fn encodeForBody(this: *Image, global: *jsc.JSGlobalObject, this_value: jsc.
         .err => |e| global.throw("{s}", .{errorMessage(e)}),
         // Preserve errno/path/syscall instead of flattening to DecodeFailed.
         .io_err => |e| global.throwValue(try e.toJS(global)),
-        .meta => unreachable,
+        .meta, .written => unreachable,
     };
 }
 
@@ -558,7 +586,16 @@ pub const PipelineTask = struct {
         pinned: jsc.JSValue = .zero,
     };
 
-    pub const Deliver = enum { uint8array, buffer, blob, base64 };
+    pub const Deliver = union(enum) {
+        uint8array,
+        buffer,
+        blob,
+        base64,
+        /// Write encoded output to this path on the worker thread, then free
+        /// it there — encoded bytes never touch JS. Path is allocator-owned;
+        /// freed in `deinit()`.
+        file: [:0]const u8,
+    };
 
     pub const Kind = union(enum) {
         /// `null` ⇒ re-encode in the source format (resolved after decode).
@@ -568,6 +605,8 @@ pub const PipelineTask = struct {
 
     pub const Result = union(enum) {
         encoded: struct { out: codecs.Encoded, format: codecs.Format, w: u32, h: u32 },
+        /// `.write()` terminal — bytes already on disk, buffer already freed.
+        written: struct { len: usize, w: u32, h: u32 },
         meta: struct { w: u32, h: u32, format: codecs.Format },
         err: codecs.Error,
         io_err: bun.sys.Error,
@@ -672,6 +711,18 @@ pub const PipelineTask = struct {
             this.result = .{ .err = e };
             return;
         };
+
+        if (this.deliver == .file) {
+            // Still on the work pool: write straight from the codec's buffer,
+            // then free it here so it never hits JS. `writeFile` opens with
+            // CREAT|TRUNC (clobber semantics, like fs.writeFile).
+            defer out.deinit();
+            switch (bun.sys.File.writeFile(bun.FD.cwd(), this.deliver.file, out.bytes)) {
+                .result => this.result = .{ .written = .{ .len = out.bytes.len, .w = decoded.width, .h = decoded.height } },
+                .err => |e| this.result = .{ .io_err = e },
+            }
+            return;
+        }
         this.result = .{ .encoded = .{ .out = out, .format = enc.format, .w = decoded.width, .h = decoded.height } };
     }
 
@@ -685,13 +736,9 @@ pub const PipelineTask = struct {
         // Stash final dims here (JS thread) — `run()` is on a WorkPool thread
         // so writing `this.image.*` there would race the synchronous getters.
         switch (this.result) {
-            .encoded => |e| {
-                this.image.last_width = @intCast(e.w);
-                this.image.last_height = @intCast(e.h);
-            },
-            .meta => |m| {
-                this.image.last_width = @intCast(m.w);
-                this.image.last_height = @intCast(m.h);
+            inline .encoded, .meta, .written => |r| {
+                this.image.last_width = @intCast(r.w);
+                this.image.last_height = @intCast(r.h);
             },
             else => {},
         }
@@ -725,7 +772,12 @@ pub const PipelineTask = struct {
                         return promise.reject(global, error.JSError);
                     try promise.resolve(global, str);
                 },
+                // Unreachable: `.file` delivery never produces `.encoded`;
+                // run() takes the writeFile branch and yields `.written`/
+                // `.io_err`. Exhaustiveness arm only.
+                .file => unreachable,
             },
+            .written => |w| try promise.resolve(global, jsc.JSValue.jsNumber(w.len)),
             .meta => |m| {
                 const obj = jsc.JSValue.createEmptyObject(global, 3);
                 obj.put(global, jsc.ZigString.static("width"), jsc.JSValue.jsNumber(m.w));
@@ -817,6 +869,7 @@ pub const PipelineTask = struct {
     fn deinit(this: *PipelineTask) void {
         // Always reached from `then()` on the JS thread, so the ref/count
         // touch is safe without atomics.
+        if (this.deliver == .file) bun.default_allocator.free(this.deliver.file);
         this.image.pending_tasks -= 1;
         if (this.image.pending_tasks == 0) this.image.this_ref.downgrade();
         bun.destroy(this);

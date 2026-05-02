@@ -587,6 +587,27 @@ describe("Bun.Image", () => {
       expect(buf[0]).toBe(0x89);
     });
 
+    test(".write(path) infers format from extension and resolves bytes-written", async () => {
+      using dir = tempDir("image-write", {});
+      const out = join(String(dir), "out.webp");
+      const n = await new Bun.Image(cornersPng).resize(2, 2).write(out);
+      const bytes = await Bun.file(out).bytes();
+      expect(n).toBe(bytes.length);
+      // No .webp() chained — extension inferred it.
+      expect(String.fromCharCode(...bytes.subarray(8, 12))).toBe("WEBP");
+      // Explicit format method overrides extension.
+      const out2 = join(String(dir), "wrong.png");
+      await new Bun.Image(cornersPng).jpeg({ quality: 50 }).write(out2);
+      expect((await Bun.file(out2).bytes())[0]).toBe(0xff); // SOI, not 0x89
+    });
+
+    test(".write(path) propagates fs errors via promise rejection", async () => {
+      using dir = tempDir("image-write-err", {});
+      // Directory path → EISDIR/EACCES depending on platform; either way the
+      // bun.sys.Error surfaces with errno + path, not a generic "encode failed".
+      await expect(new Bun.Image(cornersPng).png().write(String(dir))).rejects.toThrow();
+    });
+
     test(".toBase64() produces valid base64", async () => {
       const b64 = await new Bun.Image(cornersPng).png().toBase64();
       expect(typeof b64).toBe("string");

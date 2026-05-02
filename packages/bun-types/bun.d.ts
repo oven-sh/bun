@@ -8334,6 +8334,16 @@ declare module "bun" {
     buffer(): Promise<Buffer>;
     /** Sharp-compatible alias for {@link buffer}. */
     toBuffer(): Promise<Buffer>;
+    /**
+     * Run the pipeline and write the encoded result to `path` on the work
+     * pool — encoded bytes never touch the JS heap. Resolves to the number
+     * of bytes written, like {@link Bun.write}.
+     *
+     * If no format method was chained, the format is inferred from `path`'s
+     * extension when it's one Bun can encode (`.jpg`/`.png`/`.webp`/`.heic`/
+     * `.avif`); otherwise the source format is reused.
+     */
+    write(path: string): Promise<number>;
     /** Run the pipeline and return a `Blob` with the matching `type`. */
     blob(): Promise<Blob>;
     /** Run the pipeline and return base64-encoded output. */

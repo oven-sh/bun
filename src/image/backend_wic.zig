@@ -126,7 +126,7 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOpti
     // WIC's "ImageQuality" is VT_R4 in [0,1]. The HEIF encoder honours it for
     // both HEVC and AV1 sub-codecs. Goes through the C++ shim so the SDK's
     // own VARIANT/PROPBAG2 layout is authoritative.
-    _ = bun_wic_propbag_write_f32(props, std.unicode.utf8ToUtf16LeStringLiteral("ImageQuality"), @as(f32, @floatFromInt(opts.quality)) / 100);
+    _ = bun_wic_propbag_write_f32(props, bun.strings.literal(u16, "ImageQuality"), @as(f32, @floatFromInt(opts.quality)) / 100);
     if (frame.?.vt.Initialize(frame.?, props) < 0) return error.EncodeFailed;
     if (frame.?.vt.SetSize(frame.?, width, height) < 0) return error.EncodeFailed;
     // SetPixelFormat is in/out — the codec rewrites `pf` to its native sink

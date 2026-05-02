@@ -458,6 +458,16 @@ pub fn toBufferedValue(this: *@This(), globalThis: *jsc.JSGlobalObject, action: 
         return blob.toPromise(globalThis, action);
     }
 
+    // Bytes parked in `this.buffer` (the `.owned` drain_result from
+    // `onStartStreaming`, plus any `onData` calls that fell through to
+    // `append()` before this ran) will be folded into the eventual blob
+    // by the buffer_action resolution path without going through
+    // `onPull` or `drain()`. Credit them now — same rationale as the
+    // `onData` buffer_action arm ("wants the whole body; treat every
+    // append as consumed") and the `drain()` call site, but on the
+    // `tryUseReadableStreamBufferedFastPath` route that skips both.
+    this.didDrain(this.buffer.items.len);
+
     this.buffer_action = switch (action) {
         .blob => .{ .blob = .init(globalThis) },
         .bytes => .{ .bytes = .init(globalThis) },

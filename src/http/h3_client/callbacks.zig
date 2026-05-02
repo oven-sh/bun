@@ -120,7 +120,6 @@ fn onStreamData(s: *quic.Stream, data: [*]const u8, len: c_uint, fin: c_int) cal
     const stream = s.ext(Stream).* orelse return;
     if (len > 0) {
         bun.handleOom(stream.body_buffer.appendSlice(bun.default_allocator, data[0..len]));
-        stream.outstanding_body_bytes +|= len;
         _ = H3.body_bytes_received.fetchAdd(len, .monotonic);
     }
     stream.session.deliver(stream, fin != 0);
@@ -129,7 +128,14 @@ fn onStreamData(s: *quic.Stream, data: [*]const u8, len: c_uint, fin: c_int) cal
     const still = s.ext(Stream).* orelse return;
     if (fin != 0 or still.read_paused) return;
     const client = still.client orelse return;
+    // Only count bytes that arrived while a JS reader is wired to
+    // report consumption. Pre-armed bytes would otherwise become a
+    // permanent floor under `outstanding_body_bytes` (their `didDrain`
+    // credit saturates against nothing counted), and if that floor is
+    // above `receive_body_low_water` the first wantRead(false) pause
+    // never resumes. Matches h1's `maybePauseReceive` early-return.
     if (!client.signals.get(.body_consumption_tracked)) return;
+    still.outstanding_body_bytes +|= len;
     if (still.outstanding_body_bytes < bun.http.receive_body_high_water) return;
     still.read_paused = true;
     s.wantRead(false);

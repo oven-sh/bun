@@ -2403,19 +2403,25 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
         else
             true;
 
+        // Defensive: maybePauseReceive's isDone() branch resumes for
+        // the normal .body/.body_chunk onData path, but a
+        // close-delimited body or an early server reply can reach
+        // here without another onData. The uSockets `is_paused` flag
+        // survives state.reset(), so a paused socket released to the
+        // pool would hang the next request that adopts it. Lives
+        // above the keepalive check so `h1_socket_resumes` tracks
+        // `h1_socket_pauses` on the close branch too (where
+        // state.reset() would otherwise clear `receive_paused`
+        // without a counter bump); resumeStream on a closed socket
+        // is a no-op in uSockets.
+        if (this.state.flags.receive_paused) {
+            this.state.flags.receive_paused = false;
+            _ = h1_socket_resumes.fetchAdd(1, .monotonic);
+            if (!socket.isClosedOrHasError()) _ = socket.resumeStream();
+        }
+
         if (this.isKeepAlivePossible() and !socket.isClosedOrHasError() and tunnel_poolable) {
             log("release socket", .{});
-            // Defensive: maybePauseReceive's isDone() branch resumes for
-            // the normal .body/.body_chunk onData path, but a
-            // close-delimited body or an early server reply can reach
-            // here without another onData. The uSockets `is_paused`
-            // flag survives state.reset(), so a paused socket released
-            // to the pool would hang the next request that adopts it.
-            if (this.state.flags.receive_paused) {
-                this.state.flags.receive_paused = false;
-                _ = h1_socket_resumes.fetchAdd(1, .monotonic);
-                _ = socket.resumeStream();
-            }
             const tunnel = this.proxy_tunnel;
             this.proxy_tunnel = null;
             if (tunnel) |t| t.detachOwner(this);

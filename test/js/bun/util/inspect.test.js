@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { normalizeBunSnapshot, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -316,22 +316,33 @@ it("jsx with fragment", () => {
   expect(input).toBe(output);
 });
 
-it("jsx with circular key", () => {
-  const el = { $$typeof: Symbol.for("react.element"), type: "div", key: null, props: {} };
-  el.key = el;
-  expect(Bun.inspect(el)).toBe("<div key=[Circular] />");
-});
-
-it("jsx with circular children", () => {
-  const el = { $$typeof: Symbol.for("react.element"), type: "div", key: null, props: {} };
-  el.props.children = el;
-  expect(Bun.inspect(el)).toBe("<div>\n  [Circular]\n</div>");
-});
-
-it("jsx with circular prop", () => {
-  const el = { $$typeof: Symbol.for("react.element"), type: "div", key: null, props: {} };
-  el.props.foo = el;
-  expect(Bun.inspect(el)).toBe("<div foo=[Circular] />");
+it("jsx with circular references does not stack overflow", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const sym = Symbol.for("react.element");
+        const a = { $$typeof: sym, type: "div", key: null, props: {} };
+        a.key = a;
+        console.log(Bun.inspect(a));
+        const b = { $$typeof: sym, type: "div", key: null, props: {} };
+        b.props.children = b;
+        console.log(Bun.inspect(b));
+        const c = { $$typeof: sym, type: "div", key: null, props: {} };
+        c.props.foo = c;
+        console.log(Bun.inspect(c));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(exitCode).toBe(0);
+  expect(stdout).toBe(
+    "<div key=[Circular] />\n" + "<div>\n  [Circular]\n</div>\n" + "<div foo=[Circular] />\n",
+  );
 });
 
 it("inspect", () => {

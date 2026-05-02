@@ -11,12 +11,14 @@
 // matching Node.js (ZlibContext::dictionary_ is a std::vector).
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 // Malloc=1 routes JSC ArrayBuffer allocations through system malloc instead
 // of bmalloc/libpas so that ASAN poisons freed ArrayBuffer backing stores.
 // Without it bmalloc keeps the freed region in its own free list and ASAN
-// never sees the UAF.
+// never sees the UAF. bmalloc's SystemHeap is unimplemented on Windows
+// (RELEASE_BASSERT_NOT_REACHED), so skip it there — Windows CI isn't ASAN
+// anyway, and the test still verifies correctness.
 //
 // detect_leaks=0: Malloc=1 also exposes pre-existing small runtime leaks
 // (parser/transpiler allocations normally hidden behind bmalloc) to
@@ -30,7 +32,7 @@ import { bunEnv, bunExe } from "harness";
 const asanOptions = [bunEnv.ASAN_OPTIONS, "allow_user_segv_handler=1", "symbolize=0", "detect_leaks=0"]
   .filter(Boolean)
   .join(":");
-const env = { ...bunEnv, Malloc: "1", ASAN_OPTIONS: asanOptions };
+const env = { ...bunEnv, ...(isWindows ? {} : { Malloc: "1" }), ASAN_OPTIONS: asanOptions };
 
 const inflateFixture = /* js */ `
   const zlib = require("zlib");

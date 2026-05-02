@@ -55,16 +55,23 @@ test.skipIf(!isMacOS)(
         const w = new Worker(path.join(root, "worker.js"), {
           workerData: { dir: path.join(root, "d" + i) },
         });
-        w.on("message", () => {
-          if (++done === N && !failed) {
-            console.log("OK");
-            process.exit(0);
-          }
-        });
         w.on("error", err => {
           failed = true;
           console.error("worker error:", err);
           process.exit(1);
+        });
+        // Track completion via 'exit' (fires exactly once per worker no matter
+        // how it ends) so a worker that dies without posting can't hang us.
+        w.on("exit", code => {
+          if (code !== 0 && !failed) {
+            failed = true;
+            console.error("worker exited with code", code);
+            process.exit(1);
+          }
+          if (++done === N && !failed) {
+            console.log("OK");
+            process.exit(0);
+          }
         });
       }
     `;

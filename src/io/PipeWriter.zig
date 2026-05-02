@@ -110,15 +110,14 @@ pub fn PosixPipeWriter(
                     }
                 },
                 .wrote => |amt| {
+                    // `.drained`: the buffer was fully written before the
+                    // callback. If the callback buffers more data via
+                    // `write()`, that path already calls `registerPoll()`.
+                    // Don't touch `parent` after the callback returns — the
+                    // `.drained` callback is allowed to close/free the writer
+                    // (e.g. `FileSink.onWrite` → `writer.end()` → `onClose`
+                    // may drop the last ref).
                     onWrite(parent, amt, .drained);
-                    if (@hasDecl(This, "auto_poll")) {
-                        if (!This.auto_poll) return;
-                    }
-                    if (getBuffer(parent).len > 0) {
-                        if (comptime registerPoll) |register| {
-                            register(parent);
-                        }
-                    }
                 },
                 .err => |err| {
                     onError(parent, err);

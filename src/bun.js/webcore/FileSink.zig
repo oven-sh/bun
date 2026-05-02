@@ -166,6 +166,13 @@ fn runPending(this: *FileSink) void {
 pub fn onWrite(this: *FileSink, amount: usize, status: bun.io.WriteStatus) void {
     log("onWrite({d}, {any})", .{ amount, status });
 
+    // `runPending()` below drains microtasks and may drop the JS wrapper's
+    // ref, and `writer.end()`/`writer.close()` re-enter `onClose` which
+    // releases the keep-alive ref. Hold a local ref so `this` stays valid
+    // for the rest of this function (same pattern as `runPending`/`onAutoFlush`).
+    this.ref();
+    defer this.deref();
+
     this.written += amount;
 
     // TODO: on windows done means ended (no pending data on the buffer) on unix we can still have pending data on the buffer

@@ -2260,6 +2260,18 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
                 },
                 else => {},
             }
+        } else if (this.worker) |worker| {
+            // Worker preloads: use the termination-aware wait so a preload
+            // that does `self.close()` — or `self.close(); await neverResolves`
+            // — doesn't hang the worker forever (`waitForPromise` only
+            // exits on promise settlement or `executionForbidden()`, and
+            // `self.close()` deliberately arms neither). Bail on close so
+            // the caller's `error.WorkerClosed` branch handles shutdown.
+            this.eventLoop().performGC();
+            this.eventLoop().waitForPromiseWithTermination(jsc.AnyPromise{
+                .internal = promise,
+            });
+            if (worker.shouldExitLoop()) return promise;
         } else {
             this.eventLoop().performGC();
             this.waitForPromise(jsc.AnyPromise{

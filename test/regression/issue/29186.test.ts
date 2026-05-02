@@ -423,3 +423,60 @@ test.concurrent("self.close() followed by throw reports the exception to the par
   expect(events[0].type).toBe("error");
   expect(events[0].message).toContain("oops");
 });
+
+test.concurrent("self.close() in a Worker preload doesn't hang on top-level await", async () => {
+  // Worker preloads are driven by `loadPreloads` → `waitForPromise`, which
+  // exits only on promise settlement or `executionForbidden()`.
+  // `self.close()` in a preload sets `requested_close` (no JSC trap), so
+  // without a termination-aware wait a preload like
+  // `self.close(); await neverResolves` would hang the worker thread
+  // forever — same WHATWG "close a worker" violation already guarded for
+  // the entry-point path.
+  using dir = tempDir("issue-29186-preload-close", {
+    "preload.mjs": `
+      self.close();
+      // Schedule a timer that must be discarded per the spec.
+      setTimeout(() => { self.postMessage("preload-timer-fired"); }, 0);
+      // Await a never-resolving promise. Pre-fix this hung the worker.
+      await new Promise(() => {});
+      self.postMessage("after-preload-await");
+    `,
+    "entry.mjs": `
+      // Should never run — the preload closed the worker before the entry
+      // point had a chance to evaluate.
+      self.postMessage("entry-ran");
+    `,
+    "main.mjs": `
+      const worker = new Worker(new URL("./entry.mjs", import.meta.url).href, {
+        type: "module",
+        preload: [new URL("./preload.mjs", import.meta.url).href],
+      });
+      const events = [];
+      const { promise, resolve, reject } = Promise.withResolvers();
+
+      worker.onmessage = ({ data }) => { events.push(data); };
+      worker.onerror = (e) => reject(new Error("worker error: " + (e.message || e)));
+      worker.addEventListener("close", (e) => {
+        events.push({ type: "close", code: e.code, wasClean: e.wasClean });
+        resolve();
+      });
+
+      await promise;
+      console.log(JSON.stringify(events));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
+  // Only the clean close event — neither the preload timer nor the entry
+  // point should run.
+  expect(JSON.parse(stdout.trim())).toEqual([{ type: "close", code: 0, wasClean: true }]);
+});

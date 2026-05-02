@@ -187,6 +187,17 @@ fn buildTarballFromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun
         return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveFormatError", .{});
     }
 
+    // On POSIX, use binary header charset to bypass iconv charset conversion.
+    // Filenames from JS are already valid UTF-8, so raw byte pass-through is correct.
+    // On Windows, we must NOT set hdrcharset=BINARY because the PAX writer would
+    // call archive_entry_pathname() which fails for non-ASCII wide strings, causing a segfault.
+    // Instead, on Windows we use setPathnameUtf8 and accept ARCHIVE_WARN from writeHeader.
+    if (comptime !bun.Environment.isWindows) {
+        if (archive.writeSetOptions("hdrcharset=BINARY") != .ok) {
+            return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveOptionsError: {s}", .{archive.errorString()});
+        }
+    }
+
     if (lib.archive_write_open2(
         @ptrCast(archive),
         @ptrCast(&growing_buffer),
@@ -229,25 +240,29 @@ fn buildTarballFromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun
         // Write entry to archive
         const data = data_slice.slice();
         _ = entry.clear();
-        entry.setPathnameUtf8(key_str);
+        if (comptime bun.Environment.isWindows)
+            entry.setPathnameUtf8(key_str)
+        else
+            entry.setPathname(key_str);
         entry.setSize(@intCast(data.len));
         entry.setFiletype(@intFromEnum(lib.FileType.regular));
         entry.setPerm(0o644);
         entry.setMtime(now_secs, 0);
 
-        if (archive.writeHeader(entry) != .ok) {
-            return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveHeaderError", .{});
+        const header_result = archive.writeHeader(entry);
+        if (header_result != .ok and header_result != .warn) {
+            return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveHeaderError: {s}", .{archive.errorString()});
         }
         if (archive.writeData(data) < 0) {
-            return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveWriteError", .{});
+            return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveWriteError: {s}", .{archive.errorString()});
         }
         if (archive.writeFinishEntry() != .ok) {
-            return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveFinishEntryError", .{});
+            return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveFinishEntryError: {s}", .{archive.errorString()});
         }
     }
 
     if (archive.writeClose() != .ok) {
-        return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveCloseError", .{});
+        return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveCloseError: {s}", .{archive.errorString()});
     }
 
     return growing_buffer.toOwnedSlice() catch {
@@ -812,10 +827,17 @@ const FilesContext = struct {
         }
 
         var entry: *lib.Archive.Entry = undefined;
+        const pathname_buf = if (bun.Environment.isWindows) bun.path_buffer_pool.get() else {};
+        defer if (bun.Environment.isWindows) bun.path_buffer_pool.put(pathname_buf);
         while (archive.readNextHeader(&entry) == .ok) {
             if (entry.filetype() != @intFromEnum(lib.FileType.regular)) continue;
 
-            const pathname = entry.pathnameUtf8();
+            // On Windows, libarchive converts paths to wide strings internally, so
+            // archive_entry_pathname returns null for non-ASCII filenames.
+            const pathname: [:0]const u8 = if (comptime bun.Environment.isWindows)
+                bun.strings.fromWPath(pathname_buf, entry.pathnameW() orelse continue)
+            else
+                entry.pathname();
             // Apply glob pattern filtering (supports both positive and negative patterns)
             if (this.glob_patterns) |patterns| {
                 if (!matchGlobPatterns(patterns, pathname)) continue;
@@ -1017,9 +1039,16 @@ fn extractToDiskFiltered(
 
     var count: u32 = 0;
     var entry: *lib.Archive.Entry = undefined;
+    const pathname_buf = if (bun.Environment.isWindows) bun.path_buffer_pool.get() else {};
+    defer if (bun.Environment.isWindows) bun.path_buffer_pool.put(pathname_buf);
 
     while (archive.readNextHeader(&entry) == .ok) {
-        const pathname = entry.pathnameUtf8();
+        // On Windows, libarchive converts paths to wide strings internally, so
+        // archive_entry_pathname returns null for non-ASCII filenames.
+        const pathname: [:0]const u8 = if (comptime bun.Environment.isWindows)
+            bun.strings.fromWPath(pathname_buf, entry.pathnameW() orelse continue)
+        else
+            entry.pathname();
 
         // Validate path safety (reject absolute paths, path traversal)
         if (!isSafePath(pathname)) continue;

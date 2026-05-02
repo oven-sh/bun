@@ -3259,3 +3259,41 @@ describe("*Write methods with NaN/invalid offset and length", () => {
     });
   }
 });
+
+describe("Buffer.copyBytesFrom", () => {
+  it("copies the correct bytes from a Uint8Array view with a non-zero byteOffset", () => {
+    const ab = new ArrayBuffer(10);
+    const full = new Uint8Array(ab);
+    for (let i = 0; i < 10; i++) full[i] = i;
+
+    // byteOffset (2) < byteLength (6)
+    const view = new Uint8Array(ab, 2, 6);
+    const buf = Buffer.copyBytesFrom(view);
+    expect([...buf]).toEqual([2, 3, 4, 5, 6, 7]);
+
+    // ensure it's an independent copy
+    full[2] = 0xff;
+    expect(buf[0]).toBe(2);
+  });
+
+  it("handles a view where byteOffset > byteLength without underflowing", () => {
+    const ab = new ArrayBuffer(10);
+    const full = new Uint8Array(ab);
+    for (let i = 0; i < 10; i++) full[i] = i;
+
+    // byteOffset (6) > byteLength (4) -> previously underflowed to ~SIZE_MAX and threw OOM
+    const view = new Uint8Array(ab, 6, 4);
+    const buf = Buffer.copyBytesFrom(view);
+    expect([...buf]).toEqual([6, 7, 8, 9]);
+  });
+
+  it("copies the correct bytes from a multi-byte TypedArray view with a non-zero byteOffset", () => {
+    const ab = new ArrayBuffer(16);
+    const full = new Uint8Array(ab);
+    for (let i = 0; i < 16; i++) full[i] = i;
+
+    const view = new Uint16Array(ab, 8, 4); // bytes 8..15
+    const buf = Buffer.copyBytesFrom(view);
+    expect([...buf]).toEqual([8, 9, 10, 11, 12, 13, 14, 15]);
+  });
+});

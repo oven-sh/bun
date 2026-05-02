@@ -1821,7 +1821,11 @@ describe("Bun.Archive", () => {
 
       using dir = tempDir("archive-non-utf8-name", {});
       const archive = new Bun.Archive(tar);
-      const count = await archive.extract(String(dir));
+      // Passing a glob routes through extractToDiskFiltered (the code path that
+      // previously dereferenced the null pathnameUtf8 result). It also skips
+      // entries whose file cannot be created, which matters on macOS/Windows
+      // where the filesystem rejects non-UTF-8 filenames.
+      const count = await archive.extract(String(dir), { glob: "**" });
       expect(count).toBeGreaterThanOrEqual(1);
       expect(await Bun.file(join(String(dir), "good.txt")).text()).toBe("world");
     });
@@ -1838,7 +1842,7 @@ describe("Bun.Archive", () => {
 
       using dir = tempDir("archive-non-utf8-link", {});
       const archive = new Bun.Archive(tar);
-      const count = await archive.extract(String(dir));
+      const count = await archive.extract(String(dir), { glob: "**" });
       expect(count).toBeGreaterThanOrEqual(1);
       expect(await Bun.file(join(String(dir), "good.txt")).text()).toBe("world");
     });

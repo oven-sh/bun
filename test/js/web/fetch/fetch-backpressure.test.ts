@@ -356,19 +356,21 @@ describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
       const waitFor = lineReader(proc.stdout);
       await waitFor("reader");
       const socket = await gotSocket;
-      // 16 MiB cap: without the fix, the client's socket read never
-      // pauses so the server reaches this and stalled=false. With the
-      // fix, the client pauses at ~1 MiB and the server stalls well
-      // before the cap. 400 ms stall window is generous for a paused
-      // socket but short enough to not dominate the test.
-      const { written, stalled } = await pumpUntilStall(socket, 16 * 1024 * 1024, 400);
+      // Without the fix, the client's socket read never pauses so the
+      // ByteStream buffer grows without bound and the server reaches
+      // the cap (stalled=false). With the fix, the client pauses at
+      // ~1 MiB and the server stalls once the kernel send/recv buffers
+      // fill. Loopback TCP autotuning can push those into the tens of
+      // MiB on some Linux configs, so the cap is 64 MiB: comfortably
+      // above any plausible loopback sndbuf+rcvbuf, comfortably below
+      // what an unbounded ByteStream would soak up. 400 ms stall
+      // window is generous for a paused socket but short enough to
+      // not dominate the test.
+      const { written, stalled } = await pumpUntilStall(socket, 64 * 1024 * 1024, 400);
       expect(stalled).toBe(true);
-      // 1 MiB high-water + both kernel send/recv buffers (loopback
-      // defaults can be several MiB on Linux) + LIBUS_RECV_BUFFER_LENGTH
-      // (512 KiB) of in-flight before the pause is observed. The
-      // primary signal is `stalled == true`; the byte bound is a loose
-      // sanity check that we didn't reach the cap.
-      expect(written).toBeLessThan(16 * 1024 * 1024);
+      // The primary signal is `stalled == true`; the byte bound is a
+      // loose sanity check that we didn't reach the cap.
+      expect(written).toBeLessThan(64 * 1024 * 1024);
       socket.destroy();
       proc.kill();
       await proc.exited;
@@ -425,7 +427,7 @@ describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
       const waitFor = lineReader(proc.stdout);
       await waitFor("reader");
       const socket = await gotSocket;
-      const first = await pumpUntilStall(socket, 8 * 1024 * 1024, 400);
+      const first = await pumpUntilStall(socket, 64 * 1024 * 1024, 400);
       expect(first.stalled).toBe(true);
       // Tell the child to cancel; `ignoreRemainingResponseBody` disarms
       // `body_consumption_tracked` and posts the sentinel consume
@@ -440,6 +442,54 @@ describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
       await proc.exited;
     });
   }, 30_000);
+
+  // Regression: uSockets' repeat-recv fast path keeps calling recv() in
+  // the same epoll tick while the buffer comes back full, so a
+  // us_socket_pause() issued mid-stream doesn't stop the final chunk
+  // arriving. The socket was then released to the keep-alive pool with
+  // `is_paused` still set at the uSockets level; the next request on it
+  // never saw any data. `res.body; res.arrayBuffer()` is the trigger —
+  // accessing `.body` arms `body_consumption_tracked` and the
+  // buffer-action path consumes the body without a reader loop, so the
+  // pause/resume accounting has to be exact.
+  test("res.body then arrayBuffer() on a keep-alive socket doesn't wedge the pooled socket", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const buf = Buffer.alloc(4 * 1024 * 1024, 0x41);
+          using server = Bun.serve({
+            port: 0,
+            static: { "/big": new Response(buf) },
+            fetch: () => new Response("no"),
+          });
+          const route = server.url.href + "big";
+          for (let iter = 0; iter < 10; iter++) {
+            const batch = [];
+            for (let i = 0; i < 48; i++) {
+              batch.push(fetch(route).then(res => {
+                res.body;
+                return res.arrayBuffer();
+              }).then(ab => {
+                if (ab.byteLength !== buf.byteLength) throw new Error("short: " + ab.byteLength);
+              }));
+            }
+            await Promise.all(batch);
+            Bun.gc();
+          }
+          process.stdout.write("ok\\n");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  }, 60_000);
 });
 
 // --- HTTP/3 ------------------------------------------------------------------

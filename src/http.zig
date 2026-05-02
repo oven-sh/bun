@@ -2237,18 +2237,28 @@ pub fn setTimeout(this: *HTTPClient, socket: anytype, minutes: c_uint) void {
 fn maybePauseReceive(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, n: usize) void {
     if (!this.signals.get(.body_consumption_tracked)) return;
     if (this.state.stage == .done or this.state.stage == .fail) return;
-    if (this.state.flags.receive_paused) {
-        this.state.outstanding_body_bytes +|= n;
+    this.state.outstanding_body_bytes +|= n;
+    // handleResponseBody just ran: if the body is complete (or a redirect
+    // is pending) the socket is about to be released to the keep-alive
+    // pool — or closed — inside progressUpdate. Leaving it paused would
+    // hand the next pooled request a socket with LIBUS_SOCKET_READABLE
+    // cleared and no consumeResponseBody to re-enable it.
+    //
+    // We can reach here with `receive_paused` already true because
+    // uSockets' repeat-recv fast path (loop.c) keeps calling recv() in
+    // the same epoll tick while the buffer comes back full, without
+    // re-consulting poll flags; a us_socket_pause() issued from a
+    // previous on_data in that loop doesn't stop the next recv(). The
+    // final chunk can therefore arrive while receive_paused is set.
+    if (this.state.isDone() or this.state.flags.is_redirect_pending) {
+        if (this.state.flags.receive_paused) {
+            this.state.flags.receive_paused = false;
+            if (!socket.isClosedOrHasError()) _ = socket.resumeStream();
+        }
         return;
     }
-    this.state.outstanding_body_bytes +|= n;
+    if (this.state.flags.receive_paused) return;
     if (this.state.outstanding_body_bytes < receive_body_high_water) return;
-    // handleResponseBody just ran: if the body is complete the socket is
-    // about to be released to the keep-alive pool (or closed) inside
-    // progressUpdate. Pausing it here would hand the next pooled request
-    // a socket with LIBUS_SOCKET_READABLE cleared and no one to call
-    // consumeResponseBody on its behalf.
-    if (this.state.isDone() or this.state.flags.is_redirect_pending) return;
     if (this.proxy_tunnel != null) return;
     if (socket.isClosedOrHasError()) return;
     this.state.flags.receive_paused = true;
@@ -2347,6 +2357,16 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
 
         if (this.isKeepAlivePossible() and !socket.isClosedOrHasError() and tunnel_poolable) {
             log("release socket", .{});
+            // Defensive: maybePauseReceive's isDone() branch resumes for
+            // the normal .body/.body_chunk onData path, but a
+            // close-delimited body or an early server reply can reach
+            // here without another onData. The uSockets `is_paused`
+            // flag survives state.reset(), so a paused socket released
+            // to the pool would hang the next request that adopts it.
+            if (this.state.flags.receive_paused) {
+                this.state.flags.receive_paused = false;
+                _ = socket.resumeStream();
+            }
             const tunnel = this.proxy_tunnel;
             this.proxy_tunnel = null;
             if (tunnel) |t| t.detachOwner(this);

@@ -875,8 +875,9 @@ pub const FetchTasklet = struct {
             // Both Body.toReadableStream and Body.tee wire `drain_handler`
             // on the ByteStream they construct after this returns, so
             // `scheduleResponseBodyConsumed` will fire for every reader
-            // pull. Arm the signal so the HTTP/2 client gates per-stream
-            // WINDOW_UPDATE on those reports instead of on receipt.
+            // pull. Arm the signal so the transport gates receive
+            // flow-control on those reports instead of on receipt (h2
+            // per-stream WINDOW_UPDATE, h1 socket pause, h3 wantRead).
             this.signal_store.body_consumption_tracked.store(true, .release);
 
             // If the server sent the headers and the response body in two separate socket writes
@@ -943,10 +944,11 @@ pub const FetchTasklet = struct {
         this.ignoreRemainingResponseBody();
     }
 
-    /// ByteStream delivered `bytes` to the JS reader. Forward to the HTTP
-    /// thread so the HTTP/2 client can release per-stream flow-control
-    /// window proportional to what JS has actually drained; no-op for
-    /// HTTP/1.1 sockets.
+    /// ByteStream delivered `bytes` to the JS reader. Forward to the
+    /// HTTP thread so the transport can release response-body receive
+    /// backpressure: HTTP/2 emits per-stream WINDOW_UPDATE, HTTP/1.1
+    /// resumes a paused socket read, HTTP/3 re-enables
+    /// `lsquic_stream_wantread`.
     fn onStreamConsumedCallback(ctx: ?*anyopaque, bytes: usize) void {
         const this = bun.cast(*FetchTasklet, ctx.?);
         if (this.signal_store.aborted.load(.monotonic)) return;

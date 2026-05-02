@@ -51,11 +51,16 @@ pub fn parseHeader(b: []const u8) codecs.Error!Header {
         .top_down = h_raw < 0,
         .bpp = bpp,
         .pix_off = pix_off,
-        // BI_RGB defaults — Windows-native byte order is BGR(A).
+        // BI_RGB defaults — Windows-native byte order is BGR(X). For 32-bit
+        // BI_RGB the high byte is *reserved* per the BITMAPINFOHEADER spec
+        // and real-world producers (CF_DIB clipboard, GetDIBits, Pillow BGRX)
+        // write 0 there; treating it as alpha would make every such image
+        // fully transparent. Alpha is only honoured below for BI_BITFIELDS
+        // with an explicit V4+ mask, matching libgd/Pillow/stb_image.
         .r_mask = 0x00FF0000,
         .g_mask = 0x0000FF00,
         .b_mask = 0x000000FF,
-        .a_mask = if (bpp == 32) 0xFF000000 else 0,
+        .a_mask = 0,
     };
     // BI_BITFIELDS: masks live either in the V4/V5 header at +40 or, for a
     // plain 40-byte INFOHEADER, immediately after it. Same offset both ways.

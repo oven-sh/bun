@@ -882,6 +882,27 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
     }
   });
 
+  test("BMP 32-bit BI_RGB is XRGB: high byte ignored, alpha=255", async () => {
+    // BITMAPINFOHEADER spec marks the 32-bit BI_RGB high byte as reserved;
+    // CF_DIB clipboard / GetDIBits / Pillow BGRX all write 0 there. A naïve
+    // decoder that treats it as alpha returns a fully-transparent image.
+    // 2×1, pixels: [B,G,R,X] = [0,0,255,0] [0,255,0,0].
+    // prettier-ignore
+    const bmp = Buffer.concat([
+      Buffer.from([0x42, 0x4d]),                                   // BM
+      Buffer.from(new Uint32Array([14 + 40 + 8, 0, 14 + 40]).buffer), // bfSize, reserved, bfOffBits
+      Buffer.from(new Uint32Array([40]).buffer),                   // biSize
+      Buffer.from(new Int32Array([2, 1]).buffer),                  // biWidth, biHeight
+      Buffer.from(new Uint16Array([1, 32]).buffer),                // biPlanes, biBitCount
+      Buffer.from(new Uint32Array([0, 8, 0, 0, 0, 0]).buffer),     // BI_RGB, biSizeImage, ppm×2, clrUsed, clrImportant
+      Buffer.from([0, 0, 255, 0,  0, 255, 0, 0]),                  // BGRX × 2
+    ]);
+    const png = await new Bun.Image(bmp, { backend: "bun" }).png().bytes();
+    const { data } = decodePngRaw(png);
+    expect([...data.subarray(0, 4)]).toEqual([255, 0, 0, 255]);
+    expect([...data.subarray(4, 8)]).toEqual([0, 255, 0, 255]);
+  });
+
   test("static BMP decoder rejects truncated pixel data (no OOB read)", async () => {
     // ImageIO/WIC tolerate a short last row, so force the static path. Copy
     // (`.slice`, not `.subarray`) so the Image source can't see past the

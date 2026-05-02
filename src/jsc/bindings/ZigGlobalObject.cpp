@@ -424,9 +424,11 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
 
 extern "C" size_t Bun__reported_memory_size;
 
-// executionContextId: -1 for main thread
-// executionContextId: maxInt32 for macros
-// executionContextId: >-1 for workers
+// executionContextId: 1 for the main thread, worker.execution_context_id for
+// workers (>1), std::numeric_limits<int32_t>::max() for macros. Always > -1
+// (the `executionContextId > -1` gate below is effectively "we have a usable
+// ScriptExecutionContext"; the disambiguation between main thread and worker
+// is `worker_ptr == nullptr`).
 extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;

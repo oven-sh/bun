@@ -352,7 +352,7 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
             // Unlinked for the whole graph), so do it for each dependency as
             // we wire it in.
             if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(resolvedRecord); cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::New)
-                cyclic->status(JSC::CyclicModuleRecord::Status::Unlinked);
+                cyclic->setStatus(JSC::CyclicModuleRecord::Status::Unlinked);
 
             // specifiers/moduleNatives were built from requestedModules() in
             // [kLink], so the indices line up — pass the original ModuleRequest
@@ -364,7 +364,13 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
             else
                 record->setImportedModule(globalObject, JSC::AbstractModuleRecord::ModuleRequest { Identifier::fromString(vm, specifier), nullptr }, resolvedRecord);
             RETURN_IF_EXCEPTION(scope, {});
-            m_resolveCache.set(WTF::move(specifier), WriteBarrier<JSObject> { vm, this, moduleNative });
+            {
+                // NodeVMModule::visitChildrenImpl iterates m_resolveCache.values()
+                // on the GC thread under cellLock(); take the same lock here so a
+                // set()-triggered rehash can't free the bucket array mid-iteration.
+                WTF::Locker locker { cellLock() };
+                m_resolveCache.set(WTF::move(specifier), WriteBarrier<JSObject> { vm, this, moduleNative });
+            }
             RETURN_IF_EXCEPTION(scope, {});
         }
     }
@@ -378,7 +384,7 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
     // innerModuleLinking now would walk into a record whose loadedModules()
     // are still empty (cyclic case).
     if (record->status() == JSC::CyclicModuleRecord::Status::New)
-        record->status(JSC::CyclicModuleRecord::Status::Unlinked);
+        record->setStatus(JSC::CyclicModuleRecord::Status::Unlinked);
 
     UNUSED_PARAM(scriptFetcher);
     status(Status::Linked);

@@ -110,10 +110,10 @@ pub fn NewApp(comptime ssl: bool) type {
 
         pub const ListenSocket = opaque {
             pub inline fn close(this: *ThisApp.ListenSocket) void {
-                return @as(*uws.ListenSocket, @ptrCast(this)).close(ssl);
+                return @as(*uws.ListenSocket, @ptrCast(this)).close();
             }
             pub inline fn getLocalPort(this: *ThisApp.ListenSocket) i32 {
-                return @as(*uws.ListenSocket, @ptrCast(this)).getLocalPort(ssl);
+                return @as(*uws.ListenSocket, @ptrCast(this)).getLocalPort();
             }
 
             pub fn socket(this: *ThisApp.ListenSocket) uws.NewSocketHandler(ssl) {

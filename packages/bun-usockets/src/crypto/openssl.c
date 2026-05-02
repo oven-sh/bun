@@ -17,10 +17,10 @@
 // clang-format off
 #if (defined(LIBUS_USE_OPENSSL) || defined(LIBUS_USE_WOLFSSL))
 
-
 #include "internal/internal.h"
 #include "libusockets.h"
 #include <string.h>
+#include <stdatomic.h>
 
 /* These are in sni_tree.cpp */
 void *sni_new();
@@ -29,8 +29,6 @@ int sni_add(void *sni, const char *hostname, void *user);
 void *sni_remove(void *sni, const char *hostname);
 void *sni_find(void *sni, const char *hostname);
 
-/* This module contains the entire OpenSSL implementation
- * of the SSL socket and socket context interfaces. */
 #ifdef LIBUS_USE_OPENSSL
 #include <openssl/bio.h>
 #include <openssl/dh.h>
@@ -46,6 +44,21 @@ void *sni_find(void *sni, const char *hostname);
 
 #include "./root_certs_header.h"
 #include "./default_ciphers.h"
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Per-socket SSL model.
+ *
+ * SSL_CTX is owned externally (SecureContext / listener) and
+ * never created here outside of us_ssl_ctx_from_options(). Each TLS socket carries a
+ * heap-allocated us_ssl_socket_data_t at s->ssl, which owns one SSL* built
+ * from a borrowed SSL_CTX. The loop dispatch path is:
+ *
+ *   loop.c readable → s->ssl ? us_internal_ssl_on_data : us_dispatch_data
+ *
+ * and us_internal_ssl_on_data decrypts then re-enters us_dispatch_data with
+ * plaintext. Same shape for open/writable/close/end.
+ * ────────────────────────────────────────────────────────────────────────── */
+
 struct loop_ssl_data {
   char *ssl_read_input, *ssl_read_output;
   unsigned int ssl_read_input_length;
@@ -57,74 +70,162 @@ struct loop_ssl_data {
   BIO_METHOD *shared_biom;
 };
 
-struct us_internal_ssl_socket_context_t {
-  struct us_socket_context_t sc;
-
-  // this thing can be shared with other socket contexts via socket transfer!
-  // maybe instead of holding once you hold many, a vector or set
-  // when a socket that belongs to another socket context transfers to a new
-  // socket context
-  SSL_CTX *ssl_context;
-  int is_parent;
-  /* These decorate the base implementation */
-  struct us_internal_ssl_socket_t *(*on_open)(struct us_internal_ssl_socket_t *,
-                                              int is_client, char *ip,
-                                              int ip_length);
-  struct us_internal_ssl_socket_t *(*on_data)(struct us_internal_ssl_socket_t *,
-                                              char *data, int length);
-  struct us_internal_ssl_socket_t *(*on_writable)(
-      struct us_internal_ssl_socket_t *);
-  struct us_internal_ssl_socket_t *(*on_close)(
-      struct us_internal_ssl_socket_t *, int code, void *reason);
-
-  struct us_internal_ssl_socket_t *(*on_timeout)(
-      struct us_internal_ssl_socket_t *);
-      struct us_internal_ssl_socket_t *(*on_long_timeout)(struct us_internal_ssl_socket_t *);
-
-  /* Called for missing SNI hostnames, if not NULL */
-  void (*on_server_name)(struct us_internal_ssl_socket_context_t *,
-                         const char *hostname);
-
-  /* Pointer to sni tree, created when the context is created and freed likewise
-   * when freed */
-  void *sni;
-
-  us_internal_on_handshake_t on_handshake;
-  void *handshake_data;
-};
-
-// same here, should or shouldn't it
 enum {
   HANDSHAKE_PENDING = 0,
   HANDSHAKE_COMPLETED = 1,
   HANDSHAKE_RENEGOTIATION_PENDING = 2,
 };
 
-struct us_internal_ssl_socket_t {
-  struct us_socket_t s;
-  SSL *ssl; // this _must_ be the first member after s
-  unsigned int ssl_write_wants_read : 1; // we use this for now
-  unsigned int ssl_read_wants_write : 1;
-  unsigned int handshake_state : 2;
-  unsigned int fatal_error : 1;
+/* No per-socket SSL struct: `s->ssl` IS the BoringSSL `SSL*`, and the 6 state
+ * bits live in `us_socket_t`'s pointer-alignment padding (see internal.h).
+ * Per-connection reneg counters and SNI userdata, when needed at all, hang off
+ * SSL ex_data so the common path (client connect, no reneg) does zero extra
+ * allocation. */
+#define s_ssl(s) ((SSL *)(s)->ssl)
+
+/* SNI tree leaf — stored as the void* user in sni_tree.cpp. */
+struct sni_node_t {
+  SSL_CTX *ctx;
+  void *user;
 };
+
+static _Atomic long ssl_ctx_live = 0;
+
+long us_ssl_ctx_live_count(void) {
+  return atomic_load(&ssl_ctx_live);
+}
+
+/* ex_data indices, registered once at first SSL_CTX/SSL touch:
+ *   - us_ctx_ex_idx (SSL_CTX): packed reneg {limit:u32,window:u32}; its
+ *     free_func also decrements ssl_ctx_live so the counter tracks ACTUAL
+ *     destruction (refcount→0), not every SSL_CTX_free.
+ *   - us_sni_ex_idx (SSL_CTX): per-domain userdata (uWS HttpRouter*).
+ *   - us_ssl_reneg_state_idx (SSL): per-connection reneg counter, malloc'd on
+ *     first reneg attempt only — never on the hot path.
+ *   - us_ssl_listener_ex_idx (SSL): the accepting us_listen_socket_t*. The
+ *     SSL_CTX is shared and can outlive any one listener, so storing ls as the
+ *     CTX-level servername_arg is a UAF after listener close (and overwritten
+ *     on multi-listen).
+ *
+ * SSL_CTX creation runs from both the JS thread (SecureContext, Bun.connect/
+ * listen) and the HTTP-client thread (HTTPContext.initWithOpts). A racy `<0`
+ * check would let two threads each register the ctx_ex_idx free_func, double-
+ * decrementing ssl_ctx_live forever after. (BoringSSL's CRYPTO_once is
+ * internal-only, so use the platform primitive directly; root_certs.cpp does
+ * the same via std::call_once.) */
+static int us_ctx_ex_idx = -1;
+static int us_sni_ex_idx = -1;
+static int us_ctx_cache_ex_idx = -1;
+static int us_ssl_reneg_state_idx = -1;
+static int us_ssl_listener_ex_idx = -1;
+#ifdef _WIN32
+static INIT_ONCE us_ex_idx_once = INIT_ONCE_STATIC_INIT;
+#else
+#include <pthread.h>
+static pthread_once_t us_ex_idx_once = PTHREAD_ONCE_INIT;
+#endif
+
+#define US_RENEG_PACK(limit, window) ((void *)(uintptr_t)(((uint64_t)(limit) << 32) | (uint32_t)(window)))
+#define US_RENEG_LIMIT(p)  ((uint32_t)((uint64_t)(uintptr_t)(p) >> 32))
+#define US_RENEG_WINDOW(p) ((uint32_t)((uint64_t)(uintptr_t)(p)))
+
+struct us_ssl_reneg_state_t {
+  uint64_t window_start_ms;
+  uint32_t count;
+};
+
+static void us_ctx_ex_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                           int index, long argl, void *argp) {
+  (void)parent; (void)ptr; (void)ad; (void)index; (void)argl; (void)argp;
+  atomic_fetch_sub(&ssl_ctx_live, 1);
+}
+static void us_ssl_reneg_state_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                                    int index, long argl, void *argp) {
+  (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
+  us_free(ptr);
+}
+
+/* Defined in Zig (`SSLContextCache.zig`): tombstones the cache entry on
+ * SSL_CTX refcount→0 so the per-VM weak SSL_CTX cache learns the pointer is
+ * dead without holding a ref of its own. */
+extern void bun_ssl_ctx_cache_on_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                                      int index, long argl, void *argp);
+
+static void us_ex_idx_init(void) {
+  us_ctx_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, us_ctx_ex_free);
+  us_sni_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ctx_cache_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, bun_ssl_ctx_cache_on_free);
+  us_ssl_reneg_state_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_reneg_state_free);
+  us_ssl_listener_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+}
+
+#ifdef _WIN32
+static BOOL CALLBACK us_ex_idx_init_win(PINIT_ONCE o, PVOID p, PVOID *c) {
+  (void)o; (void)p; (void)c;
+  us_ex_idx_init();
+  return TRUE;
+}
+#endif
+
+static inline void us_ex_idx_ensure(void) {
+#ifdef _WIN32
+  InitOnceExecuteOnce(&us_ex_idx_once, us_ex_idx_init_win, NULL, NULL);
+#else
+  pthread_once(&us_ex_idx_once, us_ex_idx_init);
+#endif
+}
+
+static inline int us_ssl_ctx_ex_idx(void) {
+  us_ex_idx_ensure();
+  return us_ctx_ex_idx;
+}
+
+int us_ssl_ctx_cache_ex_idx(void) {
+  us_ex_idx_ensure();
+  return us_ctx_cache_ex_idx;
+}
+
+static inline void us_reneg_policy(SSL *ssl, uint32_t *limit, uint32_t *window) {
+  void *packed = us_ctx_ex_idx >= 0
+      ? SSL_CTX_get_ex_data(SSL_get_SSL_CTX(ssl), us_ctx_ex_idx) : NULL;
+  *limit = packed ? US_RENEG_LIMIT(packed) : 3;
+  *window = packed ? US_RENEG_WINDOW(packed) : 600;
+}
+
+static inline struct us_ssl_reneg_state_t *us_reneg_state(SSL *ssl) {
+  us_ex_idx_ensure();
+  struct us_ssl_reneg_state_t *st = SSL_get_ex_data(ssl, us_ssl_reneg_state_idx);
+  if (!st) {
+    st = us_calloc(1, sizeof(*st));
+    SSL_set_ex_data(ssl, us_ssl_reneg_state_idx, st);
+  }
+  return st;
+}
+
+/* socket.c — raw TCP FIN that does NOT re-enter the SSL layer. */
+extern void us_internal_socket_raw_shutdown(struct us_socket_t *s);
+
+static void ssl_update_handshake(struct us_socket_t *s);
+
+/* ── BIO plumbing ─────────────────────────────────────────────────────────
+ * The same shared mem-BIO pair is reused for every SSL* on a loop. The write
+ * BIO sends ciphertext straight to the wire via raw_write (which never
+ * re-enters the SSL layer). */
 
 int passphrase_cb(char *buf, int size, int rwflag, void *u) {
   const char *passphrase = (const char *)u;
   size_t passphrase_length = strlen(passphrase);
-  // BoringSSL calls us with a stack buf[PEM_BUFSIZE]; copying past `size`
-  // overflows it. Match Node's PasswordCallback: fail rather than truncate.
   if (passphrase_length > (size_t)size) return -1;
   memcpy(buf, passphrase, passphrase_length);
   return (int)passphrase_length;
 }
 
-int BIO_s_custom_create(BIO *bio) {
+static int BIO_s_custom_create(BIO *bio) {
   BIO_set_init(bio, 1);
   return 1;
 }
 
-long BIO_s_custom_ctrl(BIO *bio, int cmd, long num, void *user) {
+static long BIO_s_custom_ctrl(BIO *bio, int cmd, long num, void *user) {
   switch (cmd) {
   case BIO_CTRL_FLUSH:
     return 1;
@@ -133,24 +234,21 @@ long BIO_s_custom_ctrl(BIO *bio, int cmd, long num, void *user) {
   }
 }
 
-int BIO_s_custom_write(BIO *bio, const char *data, int length) {
-  struct loop_ssl_data *loop_ssl_data =
-      (struct loop_ssl_data *)BIO_get_data(bio);
+static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)BIO_get_data(bio);
 
-  int written = us_socket_write(0, loop_ssl_data->ssl_socket, data, length);
+  int written = us_socket_raw_write(loop_ssl_data->ssl_socket, data, length);
 
   BIO_clear_retry_flags(bio);
   if (!written) {
     BIO_set_retry_write(bio);
     return -1;
   }
-
   return written;
 }
 
-int BIO_s_custom_read(BIO *bio, char *dst, int length) {
-  struct loop_ssl_data *loop_ssl_data =
-      (struct loop_ssl_data *)BIO_get_data(bio);
+static int BIO_s_custom_read(BIO *bio, char *dst, int length) {
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)BIO_get_data(bio);
 
   BIO_clear_retry_flags(bio);
   if (!loop_ssl_data->ssl_read_input_length) {
@@ -162,521 +260,26 @@ int BIO_s_custom_read(BIO *bio, char *dst, int length) {
     length = loop_ssl_data->ssl_read_input_length;
   }
 
-  memcpy(dst,
-         loop_ssl_data->ssl_read_input + loop_ssl_data->ssl_read_input_offset,
-         length);
+  memcpy(dst, loop_ssl_data->ssl_read_input + loop_ssl_data->ssl_read_input_offset, length);
 
   loop_ssl_data->ssl_read_input_offset += length;
   loop_ssl_data->ssl_read_input_length -= length;
   return length;
 }
 
-
-struct loop_ssl_data * us_internal_set_loop_ssl_data(struct us_internal_ssl_socket_t *s) {
-   // note: this context can change when we adopt the socket!
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-
-  struct us_loop_t *loop = us_socket_context_loop(0, &context->sc);
-  struct loop_ssl_data *loop_ssl_data =
-      (struct loop_ssl_data *)loop->data.ssl_data;
-
-  // note: if we put data here we should never really clear it (not in write
-  // either, it still should be available for SSL_write to read from!)
+static struct loop_ssl_data *ssl_set_loop_data(struct us_socket_t *s) {
+  struct us_loop_t *loop = s->group->loop;
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
 
   loop_ssl_data->ssl_read_input_length = 0;
   loop_ssl_data->ssl_read_input_offset = 0;
-  loop_ssl_data->ssl_socket = &s->s;
+  loop_ssl_data->ssl_socket = s;
   return loop_ssl_data;
 }
 
-struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
-                                             int is_client, char *ip,
-                                             int ip_length, const char* sni) {
-
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-
-  struct loop_ssl_data *loop_ssl_data = us_internal_set_loop_ssl_data(s);
-
-  s->ssl = SSL_new(context->ssl_context);
-  s->ssl_write_wants_read = 0;
-  s->ssl_read_wants_write = 0;
-  s->fatal_error = 0;
-  s->handshake_state = HANDSHAKE_PENDING;
-
-
-  SSL_set_bio(s->ssl, loop_ssl_data->shared_rbio, loop_ssl_data->shared_wbio);
-// if we allow renegotiation, we need to set the mode here
-// https://github.com/oven-sh/bun/issues/6197
-// https://github.com/oven-sh/bun/issues/5363
-// renegotiation is only valid for <= TLS1_2_VERSION
-// this can be a DoS vector for servers, so we enable it using a limit
-// we do not use ssl_renegotiate_freely, since ssl_renegotiate_explicit is
-// more performant when using BoringSSL
-
-
-  BIO_up_ref(loop_ssl_data->shared_rbio);
-  BIO_up_ref(loop_ssl_data->shared_wbio);
-
-  if (is_client) {
-    SSL_set_renegotiate_mode(s->ssl, ssl_renegotiate_explicit);
-    SSL_set_connect_state(s->ssl);
-
-    if (sni) {
-      SSL_set_tlsext_host_name(s->ssl, sni);
-    }
-  } else {
-    SSL_set_accept_state(s->ssl);
-    // we do not allow renegotiation on the server side (should be the default for BoringSSL, but we set to make openssl compatible)
-    SSL_set_renegotiate_mode(s->ssl, ssl_renegotiate_never);
-  }
-
-  struct us_internal_ssl_socket_t *result =
-      (struct us_internal_ssl_socket_t *)context->on_open(s, is_client, ip,
-                                                          ip_length);
-
-  // Hello Message!
-  // always handshake after open
-  // this is important because some servers/clients can get stuck waiting for
-  // this
-  us_internal_update_handshake(s);
-
-  return result;
-}
-
-/// @brief Complete the shutdown or do a fast shutdown when needed, this should only be called before closing the socket
-/// @param s
-int us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s, int force_fast_shutdown) {
-  // if we are already shutdown or in the middle of a handshake we dont need to do anything
-  // Scenarios:
-  // 1 - SSL is not initialized yet (null)
-  // 2 - socket is alread shutdown
-  // 3 - we already sent a shutdown
-  // 4 - we are in the middle of a handshake
-  // 5 - we received a fatal error
-  if(us_internal_ssl_socket_is_shut_down(s) || s->fatal_error || !SSL_is_init_finished(s->ssl)) return 1;
-
-  // we are closing the socket but did not sent a shutdown yet
-  int state = SSL_get_shutdown(s->ssl);
-  int sent_shutdown = state & SSL_SENT_SHUTDOWN;
-  int received_shutdown = state & SSL_RECEIVED_SHUTDOWN;
-  // if we are missing a shutdown call, we need to do a fast shutdown here
-  if(!sent_shutdown || !received_shutdown) {
-    // make sure that the ssl loop data is set
-    us_internal_set_loop_ssl_data(s);
-    // Zero means that we should wait for the peer to close the connection
-    // but we are already closing the connection so we do a fast shutdown here
-    int ret = SSL_shutdown(s->ssl);
-    if(ret == 0 && force_fast_shutdown) {
-      // do a fast shutdown (dont wait for peer)
-      ret = SSL_shutdown(s->ssl);
-    }
-    if(ret < 0) {
-      // we got some error here, but we dont care about it, we are closing the socket
-      int err = SSL_get_error(s->ssl, ret);
-      if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
-        // clear
-        ERR_clear_error();
-        s->fatal_error = 1;
-        // Fatal error occurred, we should close the socket imeadiatly
-        return 1;
-      }
-      if(err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
-        // We are waiting to be readable or writable this will come in SSL_read to complete the shutdown
-        // if we are forcing a fast shutdown we should return 1 here to imeadiatly close the socket
-        // Scenarios:
-        // 1 - We called abort but the socket is not writable or reable anymore (force_fast_shutdown = 1)
-        // 2 - We called close but wanna to wait until close_notify is received (force_fast_shutdown = 0)
-        return force_fast_shutdown ? 1 : 0;
-      }
-      // If we error we probably do not even start the first handshake or have a critical error so just close the socket
-      // Scenarios:
-      // 1 - We abort the connection to fast and we did not even start the first handshake
-      // 2 - SSL is in a broken state
-      // 3 - SSL is not broken but is in a state that we cannot recover from
-      s->fatal_error = 1;
-      return 1;
-    }
-    return ret == 1;
-  }
-  return 1;
-}
-
-void us_internal_on_ssl_handshake(
-    struct us_internal_ssl_socket_context_t *context,
-    void (*on_handshake)(struct us_internal_ssl_socket_t *, int success,
-                         struct us_bun_verify_error_t verify_error,
-                         void *custom_data),
-    void *custom_data) {
-  context->on_handshake = on_handshake;
-  context->handshake_data = custom_data;
-}
-
-int us_internal_ssl_socket_is_closed(struct us_internal_ssl_socket_t *s) {
-  return us_socket_is_closed(0, &s->s);
-}
-
-int us_internal_ssl_socket_is_handshake_finished(struct us_internal_ssl_socket_t *s) {
-  if (!s || !s->ssl) return 0;
-  return SSL_is_init_finished(s->ssl);
-}
-
-int us_internal_ssl_socket_handshake_callback_has_fired(struct us_internal_ssl_socket_t *s) {
-  if (!s) return 0;
-  return s->handshake_state == HANDSHAKE_COMPLETED;
-}
-
-void us_internal_trigger_handshake_callback_econnreset(struct us_internal_ssl_socket_t *s) {
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-
-  // always set the handshake state to completed
-  s->handshake_state = HANDSHAKE_COMPLETED;
-  if (context->on_handshake != NULL) {
-    struct us_bun_verify_error_t verify_error = (struct us_bun_verify_error_t){ .error = -46, .code = "ECONNRESET", .reason = "Client network socket disconnected before secure TLS connection was established"};
-    context->on_handshake(s, 0, verify_error, context->handshake_data);
-  }
-}
-void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
-                                            int success) {
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-
-  // always set the handshake state to completed
-  s->handshake_state = HANDSHAKE_COMPLETED;
-
-  if (context->on_handshake != NULL) {
-    struct us_bun_verify_error_t verify_error = us_internal_verify_error(s);
-    context->on_handshake(s, success, verify_error, context->handshake_data);
-  }
-}
-struct us_internal_ssl_socket_t *
-us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
-                             void *reason) {
-
-  // check if we are already closed
-  if (us_internal_ssl_socket_is_closed(s)) return s;
-  us_internal_set_loop_ssl_data(s);
-  us_internal_update_handshake(s);
-
-  if (s->handshake_state != HANDSHAKE_COMPLETED) {
-    // if we have some pending handshake we cancel it and try to check the
-    // latest handshake error this way we will always call on_handshake with the
-    // ECONNRESET error  if we remove this here, we will need
-    // to do this check on every on_close event on sockets, fetch etc and will
-    // increase complexity on a lot of places
-    us_internal_trigger_handshake_callback_econnreset(s);
-  }
-
-  // if we are in the middle of a close_notify we need to finish it (code != 0 forces a fast shutdown)
-  int can_close = us_internal_handle_shutdown(s, code != 0);
-
-  // only close the socket if we are not in the middle of a handshake
-  if(can_close) {
-    return (struct us_internal_ssl_socket_t *)us_socket_close(0, (struct us_socket_t *)s, code, reason);
-  }
-  return s;
-}
-int us_internal_ssl_renegotiate(struct us_internal_ssl_socket_t *s) {
-  // handle renegotation here since we are using ssl_renegotiate_explicit
-
-  // if is a server and we have no pending renegotiation we can check
-  // the limits
-  s->handshake_state = HANDSHAKE_RENEGOTIATION_PENDING;
-
-  if (!SSL_renegotiate(s->ssl)) {
-    // we failed to renegotiate
-    us_internal_trigger_handshake_callback(s, 0);
-    return 0;
-  }
-  return 1;
-}
-
-void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
-
-  // nothing todo here, renegotiation must be handled in SSL_read
-  if (s->handshake_state != HANDSHAKE_PENDING)
-    return;
-
-  if (us_internal_ssl_socket_is_closed(s) || us_internal_ssl_socket_is_shut_down(s) ||
-     (s->ssl && SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN)) {
-
-    us_internal_trigger_handshake_callback(s, 0);
-    return;
-  }
-
-  int result = SSL_do_handshake(s->ssl);
-  
-  if (SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
-    us_internal_ssl_socket_close(s, 0, NULL);
-    return;
-  }
-
-  if (result <= 0) {
-    int err = SSL_get_error(s->ssl, result);
-    // as far as I know these are the only errors we want to handle
-    if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
-      // clear per thread error queue if it may contain something
-      if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
-        ERR_clear_error();
-        s->fatal_error = 1;
-      }
-      us_internal_trigger_handshake_callback(s, 0);
-
-      return;
-    }
-    s->handshake_state = HANDSHAKE_PENDING;
-    s->ssl_write_wants_read = 1;
-    s->s.flags.last_write_failed = 1;
-    return;
-  }
-  // success
-  us_internal_trigger_handshake_callback(s, 1);
-  s->ssl_write_wants_read = 1;
-}
-
-struct us_internal_ssl_socket_t *
-ssl_on_close(struct us_internal_ssl_socket_t *s, int code, void *reason) {
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-
-  us_internal_set_loop_ssl_data(s);
-  struct us_internal_ssl_socket_t * ret = context->on_close(s, code, reason);
-  SSL_free(s->ssl); // free SSL after on_close
-  s->ssl = NULL; // set to NULL
-
-  return ret;
-}
-
-struct us_internal_ssl_socket_t * ssl_on_timeout(struct us_internal_ssl_socket_t *s) {
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-
-  us_internal_set_loop_ssl_data(s);
-  return context->on_timeout(s);
-}
-
-struct us_internal_ssl_socket_t * ssl_on_long_timeout(struct us_internal_ssl_socket_t *s) {
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-
-  us_internal_set_loop_ssl_data(s);
-  return context->on_long_timeout(s);
-}
-
-struct us_internal_ssl_socket_t *
-ssl_on_end(struct us_internal_ssl_socket_t *s) {
-  us_internal_set_loop_ssl_data(s);
-  // whatever state we are in, a TCP FIN is always an answered shutdown
-  return us_internal_ssl_socket_close(s, 0, NULL);
-}
-
-// this whole function needs a complete clean-up
-struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
-                                             void *data, int length) {
-
-  // note: this context can change when we adopt the socket!
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-
-  struct loop_ssl_data *loop_ssl_data = us_internal_set_loop_ssl_data(s);
-
-  // note: if we put data here we should never really clear it (not in write
-  // either, it still should be available for SSL_write to read from!)
-  loop_ssl_data->ssl_read_input = data;
-  loop_ssl_data->ssl_read_input_length = length;
-
-  if (us_internal_ssl_socket_is_closed(s)) {
-    return NULL;
-  }
-
-  if (us_internal_ssl_socket_is_shut_down(s)) {
-      us_internal_ssl_socket_close(s, 0, NULL);
-      return NULL;
-  }
-
-  // bug checking: this loop needs a lot of attention and clean-ups and
-  // check-ups
-  int read = 0;
-restart:
-  // read until shutdown
-  while (1) {
-    int just_read = SSL_read(s->ssl,
-                             loop_ssl_data->ssl_read_output +
-                                 LIBUS_RECV_BUFFER_PADDING + read,
-                             LIBUS_RECV_BUFFER_LENGTH - read);
-
-    if (just_read <= 0) {
-      int err = SSL_get_error(s->ssl, just_read);
-      // as far as I know these are the only errors we want to handle
-      if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
-        if (err == SSL_ERROR_WANT_RENEGOTIATE) {
-          if (us_internal_ssl_renegotiate(s)) {
-            // ok, we are done here, we need to call SSL_read again
-            // this dont mean that we are done with the handshake renegotiation
-            // we need to call SSL_read again
-            continue;
-          }
-          // clean and close renegotiation failed
-          err = SSL_ERROR_SSL;
-        } else if (err == SSL_ERROR_ZERO_RETURN) {
-          // Remotely-Initiated Shutdown
-          // See: https://www.openssl.org/docs/manmaster/man3/SSL_shutdown.html
-
-          if (read) {
-            context =
-                (struct us_internal_ssl_socket_context_t *)us_socket_context(
-                    0, &s->s);
-
-            s = context->on_data(
-                s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING,
-                read);
-            if (!s || us_internal_ssl_socket_is_closed(s)) {
-              return NULL;  // stop processing data
-            }
-          }
-          // terminate connection here
-          us_internal_ssl_socket_close(s, 0, NULL);
-          return NULL;  // stop processing data
-        }
-
-        if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
-          // clear per thread error queue if it may contain something
-          ERR_clear_error();
-          s->fatal_error = 1;
-        }
-
-        // terminate connection here
-        us_internal_ssl_socket_close(s, 0, NULL);
-        return NULL; // stop processing data
-      } else {
-        // emit the data we have and exit
-
-        if (err == SSL_ERROR_WANT_WRITE) {
-          // here we need to trigger writable event next ssl_read!
-          s->ssl_read_wants_write = 1;
-        }
-
-        // assume we emptied the input buffer fully or error here as well!
-        if (loop_ssl_data->ssl_read_input_length) {
-          return us_internal_ssl_socket_close(s, 0, NULL);
-        }
-
-        // cannot emit zero length to app
-        if (!read) {
-          break;
-        }
-
-        context = (struct us_internal_ssl_socket_context_t *)us_socket_context(
-            0, &s->s);
-
-        s = context->on_data(
-            s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING,
-            read);
-        if (!s || us_internal_ssl_socket_is_closed(s)) {
-          return NULL; // stop processing data
-        }
-
-        break;
-      }
-    } else if (s->handshake_state == HANDSHAKE_RENEGOTIATION_PENDING) {
-      // renegotiation ended successfully call on_handshake
-      us_internal_trigger_handshake_callback(s, 1);
-      // the on_handshake callback runs user code which may close this socket
-      // (us_internal_ssl_socket_close -> ssl_on_close frees s->ssl). if that
-      // happened, bail out instead of looping back to SSL_read(NULL, ...).
-      if (us_internal_ssl_socket_is_closed(s)) {
-        return NULL;
-      }
-    }
-
-    read += just_read;
-
-    // at this point we might be full and need to emit the data to application
-    // and start over
-    if (read == LIBUS_RECV_BUFFER_LENGTH) {
-
-      context = (struct us_internal_ssl_socket_context_t *)us_socket_context(
-          0, &s->s);
-
-      // emit data and restart
-      s = context->on_data(
-          s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
-      if (!s || us_internal_ssl_socket_is_closed(s)) {
-        return NULL;
-      }
-
-      read = 0;
-      goto restart;
-    }
-  }
-  // Trigger writable if we failed last SSL_write with SSL_ERROR_WANT_READ
-  // If we failed SSL_read because we need to write more data (SSL_ERROR_WANT_WRITE) we are not going to trigger on_writable, we will wait until the next on_data or on_writable event
-  // SSL_read will try to flush the write buffer and if fails with SSL_ERROR_WANT_WRITE means the socket is not in a writable state anymore and only makes sense to trigger on_writable if we can write more data
-  // Otherwise we possible would trigger on_writable -> on_data event in a recursive loop
-  if (s->ssl_write_wants_read && !s->ssl_read_wants_write) {
-    s->ssl_write_wants_read = 0;
-
-    // make sure to update context before we call (context can change if the
-    // user adopts the socket!)
-    context =
-        (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-
-    s = (struct us_internal_ssl_socket_t *)context->sc.on_writable(
-        &s->s); // cast here!
-    // if we are closed here, then exit
-    if (!s || us_internal_ssl_socket_is_closed(s)) {
-      return NULL;
-    }
-  }
-
-  return s;
-}
-
-struct us_internal_ssl_socket_t *
-ssl_on_writable(struct us_internal_ssl_socket_t *s) {
-  us_internal_set_loop_ssl_data(s);
-  us_internal_update_handshake(s);
-
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-
-  // todo: cork here so that we efficiently output both from reading and from
-  // writing?
-  if (s->ssl_read_wants_write) {
-    s->ssl_read_wants_write = 0;
-
-    // make sure to update context before we call (context can change if the
-    // user adopts the socket!)
-    context =
-        (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-
-    // if this one fails to write data, it sets ssl_read_wants_write again
-    s = (struct us_internal_ssl_socket_t *)context->sc.on_data(&s->s, "",
-                                                               0); // cast here!
-  }
-  // Do not call on_writable if the socket is closed.
-  // on close means the socket data is no longer accessible
-  if (!s || us_internal_ssl_socket_is_closed(s) || us_internal_ssl_socket_is_shut_down(s)) {
-    return s;
-  }
-
-  if (s->handshake_state == HANDSHAKE_COMPLETED) {
-    s = context->on_writable(s);
-  }
-
-  return s;
-}
-
-/* Lazily inits loop ssl data first time */
 void us_internal_init_loop_ssl_data(struct us_loop_t *loop) {
   if (!loop->data.ssl_data) {
-    struct loop_ssl_data *loop_ssl_data =
-        us_calloc(1, sizeof(struct loop_ssl_data));
-    loop_ssl_data->ssl_read_input_length = 0;
-    loop_ssl_data->ssl_read_input_offset = 0;
-
+    struct loop_ssl_data *loop_ssl_data = us_calloc(1, sizeof(struct loop_ssl_data));
     loop_ssl_data->ssl_read_output =
         us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
 
@@ -697,208 +300,20 @@ void us_internal_init_loop_ssl_data(struct us_loop_t *loop) {
   }
 }
 
-/* Called by loop free, clears any loop ssl data */
 void us_internal_free_loop_ssl_data(struct us_loop_t *loop) {
-  struct loop_ssl_data *loop_ssl_data =
-      (struct loop_ssl_data *)loop->data.ssl_data;
-
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
   if (loop_ssl_data) {
     us_free(loop_ssl_data->ssl_read_output);
-
     BIO_free(loop_ssl_data->shared_rbio);
     BIO_free(loop_ssl_data->shared_wbio);
-
     BIO_meth_free(loop_ssl_data->shared_biom);
-
     us_free(loop_ssl_data);
   }
 }
 
-// we throttle reading data for ssl sockets that are in init state. here we
-// actually use the kernel buffering to our advantage
-int ssl_is_low_prio(struct us_internal_ssl_socket_t *s) {
-  /* We use SSL_in_before() instead of SSL_in_init(), because only the first
-   * step is CPU intensive, and we want to speed up the rest of connection
-   * establishing if the CPU intensive work is already done, so fully
-   * established connections increase lineary over time under high load */
-  return SSL_in_init(s->ssl);
-}
+/* ── SSL_CTX construction ────────────────────────────────────────────────── */
 
-/* Per-context functions */
-void *us_internal_ssl_socket_context_get_native_handle(
-    struct us_internal_ssl_socket_context_t *context) {
-  return context->ssl_context;
-}
-
-struct us_internal_ssl_socket_context_t *
-us_internal_create_child_ssl_socket_context(
-    struct us_internal_ssl_socket_context_t *context, int context_ext_size) {
-  /* Create a new non-SSL context */
-  struct us_socket_context_options_t options = {0};
-  struct us_internal_ssl_socket_context_t *child_context =
-      (struct us_internal_ssl_socket_context_t *)us_create_socket_context(
-          0, context->sc.loop,
-          sizeof(struct us_internal_ssl_socket_context_t) + context_ext_size,
-          options);
-
-  /* The only thing we share is SSL_CTX */
-  child_context->ssl_context = context->ssl_context;
-  child_context->is_parent = 0;
-
-  return child_context;
-}
-
-/* Common function for creating a context from options.
- * We must NOT free a SSL_CTX with only SSL_CTX_free! Also free any password */
-void free_ssl_context(SSL_CTX *ssl_context) {
-  if (!ssl_context) {
-    return;
-  }
-
-  /* If we have set a password string, free it here */
-  void *password = SSL_CTX_get_default_passwd_cb_userdata(ssl_context);
-  /* OpenSSL returns NULL if we have no set password */
-  us_free(password);
-
-  SSL_CTX_free(ssl_context);
-}
-
-/* This function should take any options and return SSL_CTX - which has to be
- * free'd with our destructor function - free_ssl_context() */
-SSL_CTX *
-create_ssl_context_from_options(struct us_socket_context_options_t options) {
-  /* Create the context */
-  SSL_CTX *ssl_context = SSL_CTX_new(TLS_method());
-
-  /* Default options we rely on - changing these will break our logic */
-  SSL_CTX_set_read_ahead(ssl_context, 1);
-  /* we should always accept moving write buffer so we can retry writes with a
-   * buffer allocated in a different address */
-  SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
-
-  /* Anything below TLS 1.2 is disabled */
-  SSL_CTX_set_min_proto_version(ssl_context, TLS1_2_VERSION);
-
-  /* The following are helpers. You may easily implement whatever you want by
-   * using the native handle directly */
-
-  /* Important option for lowering memory usage, but lowers performance slightly
-   */
-  if (options.ssl_prefer_low_memory_usage) {
-    SSL_CTX_set_mode(ssl_context, SSL_MODE_RELEASE_BUFFERS);
-  }
-
-  if (options.passphrase) {
-    #ifdef _WIN32
-    /* When freeing the CTX we need to check
-     * SSL_CTX_get_default_passwd_cb_userdata and free it if set */
-    SSL_CTX_set_default_passwd_cb_userdata(ssl_context,
-                                           (void *)_strdup(options.passphrase));
-    SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
-
-    #else
-    /* When freeing the CTX we need to check
-     * SSL_CTX_get_default_passwd_cb_userdata and free it if set */
-    SSL_CTX_set_default_passwd_cb_userdata(ssl_context,
-                                           (void *)strdup(options.passphrase));
-    SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
-    #endif
-  }
-
-  /* This one most probably do not need the cert_file_name string to be kept
-   * alive */
-  if (options.cert_file_name) {
-    if (SSL_CTX_use_certificate_chain_file(ssl_context,
-                                           options.cert_file_name) != 1) {
-      free_ssl_context(ssl_context);
-      return NULL;
-    }
-  }
-
-  /* Same as above - we can discard this string afterwards I suppose */
-  if (options.key_file_name) {
-    if (SSL_CTX_use_PrivateKey_file(ssl_context, options.key_file_name,
-                                    SSL_FILETYPE_PEM) != 1) {
-      free_ssl_context(ssl_context);
-      return NULL;
-    }
-  }
-
-  if (options.ca_file_name) {
-    STACK_OF(X509_NAME) * ca_list;
-    ca_list = SSL_load_client_CA_file(options.ca_file_name);
-    if (ca_list == NULL) {
-      free_ssl_context(ssl_context);
-      return NULL;
-    }
-    SSL_CTX_set_client_CA_list(ssl_context, ca_list);
-    if (SSL_CTX_load_verify_locations(ssl_context, options.ca_file_name,
-                                      NULL) != 1) {
-      free_ssl_context(ssl_context);
-      return NULL;
-    }
-    SSL_CTX_set_verify(ssl_context, SSL_VERIFY_PEER, NULL);
-  }
-
-  if (options.dh_params_file_name) {
-    /* Set up ephemeral DH parameters. */
-    DH *dh_2048 = NULL;
-    FILE *paramfile;
-    paramfile = fopen(options.dh_params_file_name, "r");
-
-    if (paramfile) {
-      dh_2048 = PEM_read_DHparams(paramfile, NULL, NULL, NULL);
-      fclose(paramfile);
-    } else {
-      free_ssl_context(ssl_context);
-      return NULL;
-    }
-
-    if (dh_2048 == NULL) {
-      free_ssl_context(ssl_context);
-      return NULL;
-    }
-
-    const long set_tmp_dh = SSL_CTX_set_tmp_dh(ssl_context, dh_2048);
-    DH_free(dh_2048);
-
-    if (set_tmp_dh != 1) {
-      free_ssl_context(ssl_context);
-      return NULL;
-    }
-
-    if (!SSL_CTX_set_cipher_list(ssl_context, DEFAULT_CIPHER_LIST)) {
-      free_ssl_context(ssl_context);
-      return NULL;
-    }
-  }
-
-  if (options.ssl_ciphers) {
-    if (!SSL_CTX_set_cipher_list(ssl_context, options.ssl_ciphers)) {
-      unsigned long ssl_err = ERR_get_error(); 
-      if (!(strlen(options.ssl_ciphers) == 0 && ERR_GET_REASON(ssl_err) == SSL_R_NO_CIPHER_MATCH)) {
-        // TLS1.2 ciphers were deliberately cleared, so don't consider
-        // SSL_R_NO_CIPHER_MATCH to be an error (this is how _set_cipher_suites()
-        // works). If the user actually sets a value (like "no-such-cipher"), then
-        // that's actually an error.
-        free_ssl_context(ssl_context);
-        return NULL;
-      }
-      ERR_clear_error();
-    }
-  }
-
-  if (ERR_peek_error() != 0) {
-    free_ssl_context(ssl_context);
-    return NULL;
-  }
-
-  /* This must be free'd with free_ssl_context, not SSL_CTX_free */
-  return ssl_context;
-}
-
-int us_ssl_ctx_use_privatekey_content(SSL_CTX *ctx, const char *content,
-                                      int type) {
+static int us_ssl_ctx_use_privatekey_content(SSL_CTX *ctx, const char *content, int type) {
   int reason_code, ret = 0;
   BIO *in;
   EVP_PKEY *pkey = NULL;
@@ -927,17 +342,14 @@ int us_ssl_ctx_use_privatekey_content(SSL_CTX *ctx, const char *content,
   }
   ret = SSL_CTX_use_PrivateKey(ctx, pkey);
   EVP_PKEY_free(pkey);
-
 end:
   BIO_free(in);
   return ret;
 }
 
-int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content,
-                             X509_STORE *store) {
-
+static int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content, X509_STORE *store) {
   X509 *x = NULL;
-  ERR_clear_error(); // clear error stack for SSL_CTX_use_certificate()
+  ERR_clear_error();
   int count = 0;
   if (content == NULL) return 0;
   BIO *in = BIO_new_mem_buf(content, strlen(content));
@@ -948,9 +360,7 @@ int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content,
 
   while ((x = PEM_read_bio_X509(in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
                                 SSL_CTX_get_default_passwd_cb_userdata(ctx)))) {
-
     X509_STORE_add_cert(store, x);
-
     if (!SSL_CTX_add_client_CA(ctx, x)) {
       X509_free(x);
       BIO_free(in);
@@ -959,20 +369,17 @@ int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content,
     count++;
     X509_free(x);
   }
-
 end:
   BIO_free(in);
-
   return count > 0;
 }
 
-int us_ssl_ctx_use_certificate_chain(SSL_CTX *ctx, const char *content) {
+static int us_ssl_ctx_use_certificate_chain(SSL_CTX *ctx, const char *content) {
   BIO *in;
   int ret = 0;
   X509 *x = NULL;
 
-  ERR_clear_error(); // clear error stack for SSL_CTX_use_certificate()
-
+  ERR_clear_error();
   if (content == NULL) return 0;
   in = BIO_new_mem_buf(content, strlen(content));
   if (in == NULL) {
@@ -988,20 +395,14 @@ int us_ssl_ctx_use_certificate_chain(SSL_CTX *ctx, const char *content) {
   }
 
   ret = SSL_CTX_use_certificate(ctx, x);
-
-  if (ERR_peek_error() != 0) {
-    ret = 0; // Key/certificate mismatch doesn't imply ret==0 ...
-  }
+  if (ERR_peek_error() != 0) ret = 0;
 
   if (ret) {
-    // If we could set up our certificate, now proceed to the CA
-    // certificates.
     X509 *ca;
     int r;
     uint32_t err;
 
     SSL_CTX_clear_chain_certs(ctx);
-
     while ((ca = PEM_read_bio_X509(
                 in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
                 SSL_CTX_get_default_passwd_cb_userdata(ctx))) != NULL) {
@@ -1011,36 +412,298 @@ int us_ssl_ctx_use_certificate_chain(SSL_CTX *ctx, const char *content) {
         ret = 0;
         goto end;
       }
-      // Note that we must not free r if it was successfully added to the chain
-      // (while we must free the main certificate, since its reference count is
-      // increased by SSL_CTX_use_certificate).
     }
-
-    // When the while loop ends, it's usually just EOF.
     err = ERR_peek_last_error();
     if (ERR_GET_LIB(err) == ERR_LIB_PEM &&
         ERR_GET_REASON(err) == PEM_R_NO_START_LINE) {
       ERR_clear_error();
     } else {
-      ret = 0; // some real error
+      ret = 0;
     }
   }
-
 end:
   X509_free(x);
   BIO_free(in);
   return ret;
 }
 
-const char *us_X509_error_code(long err) { // NOLINT(runtime/int)
+static int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
+  /* Always continue; the user inspects via us_socket_verify_error after
+   * on_handshake. See SSL_verify_cb docs — returning 1 lets us defer the
+   * decision to JS without aborting mid-handshake. */
+  return 1;
+}
+
+/* Drop the strdup'd passphrase. Called as soon as private-key load completes
+ * (the only consumer of the passwd_cb), so the secret never outlives ctx
+ * construction and SSL_CTX_free() is sufficient on every later path. Also
+ * called on the build-error path before SSL_CTX_free. */
+static void ssl_ctx_drop_passphrase(SSL_CTX *ctx) {
+  void *password = SSL_CTX_get_default_passwd_cb_userdata(ctx);
+  if (password) {
+    us_free(password);
+    SSL_CTX_set_default_passwd_cb_userdata(ctx, NULL);
+  }
+}
+
+static void ssl_ctx_build_fail(SSL_CTX *ctx) {
+  ssl_ctx_drop_passphrase(ctx);
+  /* ex_data slot already set right after SSL_CTX_new, so the free_func will
+   * decrement ssl_ctx_live on this SSL_CTX_free. */
+  SSL_CTX_free(ctx);
+}
+
+/* Exported for quic.c (lsquic configures ALPN/transport-params on the SSL_CTX
+ * directly) and as the body of us_ssl_ctx_from_options. */
+SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
+                              enum create_bun_socket_error_t *err) {
+  ERR_clear_error();
+
+  SSL_CTX *ssl_context = SSL_CTX_new(TLS_method());
+  atomic_fetch_add(&ssl_ctx_live, 1);
+  /* Register the live-count free_func first thing so every exit (including
+   * build_fail) balances. The packed reneg policy reuses the same slot. */
+  SSL_CTX_set_ex_data(ssl_context, us_ssl_ctx_ex_idx(), NULL);
+
+  /* Default options we rely on — changing these breaks the BIO logic. */
+  SSL_CTX_set_read_ahead(ssl_context, 1);
+  SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+  SSL_CTX_set_min_proto_version(ssl_context, TLS1_2_VERSION);
+
+  if (options.ssl_prefer_low_memory_usage) {
+    SSL_CTX_set_mode(ssl_context, SSL_MODE_RELEASE_BUFFERS);
+  }
+
+  if (options.passphrase) {
+#ifdef _WIN32
+    SSL_CTX_set_default_passwd_cb_userdata(ssl_context, (void *)_strdup(options.passphrase));
+#else
+    SSL_CTX_set_default_passwd_cb_userdata(ssl_context, (void *)strdup(options.passphrase));
+#endif
+    SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
+  }
+
+  if (options.cert_file_name) {
+    if (SSL_CTX_use_certificate_chain_file(ssl_context, options.cert_file_name) != 1) {
+      ssl_ctx_build_fail(ssl_context);
+      return NULL;
+    }
+  } else if (options.cert && options.cert_count > 0) {
+    for (unsigned int i = 0; i < options.cert_count; i++) {
+      if (us_ssl_ctx_use_certificate_chain(ssl_context, options.cert[i]) != 1) {
+        ssl_ctx_build_fail(ssl_context);
+        return NULL;
+      }
+    }
+  }
+
+  if (options.key_file_name) {
+    if (SSL_CTX_use_PrivateKey_file(ssl_context, options.key_file_name, SSL_FILETYPE_PEM) != 1) {
+      ssl_ctx_build_fail(ssl_context);
+      return NULL;
+    }
+  } else if (options.key && options.key_count > 0) {
+    for (unsigned int i = 0; i < options.key_count; i++) {
+      if (us_ssl_ctx_use_privatekey_content(ssl_context, options.key[i], SSL_FILETYPE_PEM) != 1) {
+        ssl_ctx_build_fail(ssl_context);
+        return NULL;
+      }
+    }
+  }
+  /* passwd_cb is only consulted by SSL_CTX_use_PrivateKey* above; the secret
+   * is dead now. Dropping it here means SSL_CTX_free() is sufficient cleanup
+   * everywhere downstream — no special "owner" path. */
+  ssl_ctx_drop_passphrase(ssl_context);
+
+  if (options.ca_file_name) {
+    SSL_CTX_set_cert_store(ssl_context, us_get_default_ca_store());
+
+    STACK_OF(X509_NAME) *ca_list = SSL_load_client_CA_file(options.ca_file_name);
+    if (ca_list == NULL) {
+      *err = CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
+      ssl_ctx_build_fail(ssl_context);
+      return NULL;
+    }
+    SSL_CTX_set_client_CA_list(ssl_context, ca_list);
+    if (SSL_CTX_load_verify_locations(ssl_context, options.ca_file_name, NULL) != 1) {
+      *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE;
+      ssl_ctx_build_fail(ssl_context);
+      return NULL;
+    }
+    SSL_CTX_set_verify(ssl_context,
+        options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
+                                    : SSL_VERIFY_PEER,
+        us_verify_callback);
+
+  } else if (options.ca && options.ca_count > 0) {
+    X509_STORE *cert_store = NULL;
+    for (unsigned int i = 0; i < options.ca_count; i++) {
+      if (cert_store == NULL) {
+        cert_store = us_get_default_ca_store();
+        SSL_CTX_set_cert_store(ssl_context, cert_store);
+      }
+      if (!add_ca_cert_to_ctx_store(ssl_context, options.ca[i], cert_store)) {
+        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA;
+        ssl_ctx_build_fail(ssl_context);
+        return NULL;
+      }
+      ERR_clear_error();
+      SSL_CTX_set_verify(ssl_context,
+          options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
+                                      : SSL_VERIFY_PEER,
+          us_verify_callback);
+    }
+  } else if (options.request_cert) {
+    SSL_CTX_set_cert_store(ssl_context, us_get_default_ca_store());
+    SSL_CTX_set_verify(ssl_context,
+        options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
+                                    : SSL_VERIFY_PEER,
+        us_verify_callback);
+  }
+
+  if (options.dh_params_file_name) {
+    DH *dh_2048 = NULL;
+    FILE *paramfile = fopen(options.dh_params_file_name, "r");
+    if (paramfile) {
+      dh_2048 = PEM_read_DHparams(paramfile, NULL, NULL, NULL);
+      fclose(paramfile);
+    } else {
+      ssl_ctx_build_fail(ssl_context);
+      return NULL;
+    }
+    if (dh_2048 == NULL) {
+      ssl_ctx_build_fail(ssl_context);
+      return NULL;
+    }
+    const long set_tmp_dh = SSL_CTX_set_tmp_dh(ssl_context, dh_2048);
+    DH_free(dh_2048);
+    if (set_tmp_dh != 1) {
+      ssl_ctx_build_fail(ssl_context);
+      return NULL;
+    }
+    if (!SSL_CTX_set_cipher_list(ssl_context, DEFAULT_CIPHER_LIST)) {
+      ssl_ctx_build_fail(ssl_context);
+      return NULL;
+    }
+  }
+
+  if (options.ssl_ciphers) {
+    if (!SSL_CTX_set_cipher_list(ssl_context, options.ssl_ciphers)) {
+      unsigned long ssl_err = ERR_get_error();
+      if (!(strlen(options.ssl_ciphers) == 0 && ERR_GET_REASON(ssl_err) == SSL_R_NO_CIPHER_MATCH)) {
+        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS;
+        ssl_ctx_build_fail(ssl_context);
+        return NULL;
+      }
+      ERR_clear_error();
+    }
+  }
+
+  if (options.secure_options) {
+    SSL_CTX_set_options(ssl_context, options.secure_options);
+  }
+
+  return ssl_context;
+}
+
+SSL_CTX *us_ssl_ctx_from_options(struct us_bun_socket_context_options_t options,
+                                 enum create_bun_socket_error_t *err) {
+  SSL_CTX *ctx = us_ssl_ctx_build_raw(options, err);
+  if (!ctx) return NULL;
+
+  /* SecureContext is mode-neutral (Node lets one back both tls.connect and
+   * tls.createServer), so we can't bake client-vs-server into the CTX. CTX
+   * verify_mode comes purely from options (ca/request_cert/reject_unauthorized)
+   * in build_raw — for a server that decides whether CertificateRequest is
+   * sent, so we MUST NOT force VERIFY_PEER here. The per-SSL client override
+   * (verify mode + trust store) lives in us_internal_ssl_attach. */
+
+  /* Reneg policy is the only Bun-specific config BoringSSL has nowhere to
+   * store. Packed into one ex_data slot (no malloc; the void* IS the value)
+   * so it dies with the SSL_CTX refcount. The slot was already registered in
+   * build_raw for the live counter; this just overwrites its NULL value. */
+  if (options.client_renegotiation_limit || options.client_renegotiation_window) {
+    SSL_CTX_set_ex_data(ctx, us_ssl_ctx_ex_idx(),
+        US_RENEG_PACK(options.client_renegotiation_limit,
+                      options.client_renegotiation_window));
+  }
+
+  return ctx;
+}
+
+/* SSL_CTX's own refcount IS the refcount; SSL_new() takes one more per socket
+ * internally, so a socket outlives its SecureContext without help from us.
+ * Exported so context.c / socket.c stay free of OpenSSL headers. */
+void us_internal_ssl_ctx_up_ref(SSL_CTX *p) {
+  if (p) SSL_CTX_up_ref(p);
+}
+void us_internal_ssl_ctx_unref(SSL_CTX *p) {
+  if (p) SSL_CTX_free(p);
+}
+
+/* ── Per-socket SSL attach/detach ────────────────────────────────────────── */
+
+void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
+                            int is_client, const char *sni,
+                            struct us_listen_socket_t *listener) {
+  us_internal_init_loop_ssl_data(s->group->loop);
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+
+  SSL *ssl = SSL_new(ctx);
+  SSL_set_bio(ssl, loop_ssl_data->shared_rbio, loop_ssl_data->shared_wbio);
+  BIO_up_ref(loop_ssl_data->shared_rbio);
+  BIO_up_ref(loop_ssl_data->shared_wbio);
+
+  /* renegotiation: ssl_renegotiate_explicit lets us bound it on the client
+   * (issues #6197/#5363); never on the server (DoS vector). */
+  if (is_client) {
+    SSL_set_renegotiate_mode(ssl, ssl_renegotiate_explicit);
+    SSL_set_connect_state(ssl);
+    if (sni) SSL_set_tlsext_host_name(ssl, sni);
+    /* The CTX is mode-neutral and may have verify_mode == NONE (no
+     * ca/requestCert in options). Clients must always run verification so
+     * verify_error is populated for the JS rejectUnauthorized check — but
+     * setting VERIFY_PEER on the CTX would make a server using the same
+     * SecureContext send CertificateRequest. SSL_set_verify scopes the mode to
+     * this socket; SSL_set0_verify_cert_store gives it the process-shared root
+     * bundle without touching the CTX (servers using the same CTX never pay
+     * the ~150-root build). us_verify_callback returns 1 so the handshake
+     * never aborts here — JS reads verify_error and decides. */
+    if (SSL_CTX_get_verify_mode(ctx) == SSL_VERIFY_NONE) {
+      SSL_set_verify(ssl, SSL_VERIFY_PEER, us_verify_callback);
+      X509_STORE *roots = us_get_shared_default_ca_store();
+      if (roots) SSL_set0_verify_cert_store(ssl, roots);
+    }
+  } else {
+    SSL_set_accept_state(ssl);
+    SSL_set_renegotiate_mode(ssl, ssl_renegotiate_never);
+    /* sni_cb recovers ls per-SSL — never via the shared SSL_CTX. */
+    us_ex_idx_ensure();
+    SSL_set_ex_data(ssl, us_ssl_listener_ex_idx, listener);
+  }
+
+  s->ssl = ssl;
+  s->ssl_handshake_state = HANDSHAKE_PENDING;
+  s->ssl_write_wants_read = 0;
+  s->ssl_read_wants_write = 0;
+  s->ssl_fatal_error = 0;
+  s->ssl_raw_tap = 0;
+  s->ssl_is_server = is_client ? 0 : 1;
+}
+
+void us_internal_ssl_detach(struct us_socket_t *s) {
+  if (s->ssl) {
+    SSL_free(s_ssl(s));
+    s->ssl = NULL;
+  }
+}
+
+/* ── Verify error reporting ──────────────────────────────────────────────── */
+
+const char *us_X509_error_code(long err) {
   const char *code = "UNSPECIFIED";
-#define CASE_X509_ERR(CODE)                                                    \
-  case X509_V_ERR_##CODE:                                                      \
-    code = #CODE;                                                              \
-    break;
+#define CASE_X509_ERR(CODE) case X509_V_ERR_##CODE: code = #CODE; break;
   switch (err) {
-    // if you modify anything in here, *please* update the respective section in
-    // doc/api/tls.md as well
     CASE_X509_ERR(UNABLE_TO_GET_ISSUER_CERT)
     CASE_X509_ERR(UNABLE_TO_GET_CRL)
     CASE_X509_ERR(UNABLE_TO_DECRYPT_CERT_SIGNATURE)
@@ -1074,23 +737,16 @@ const char *us_X509_error_code(long err) { // NOLINT(runtime/int)
   return code;
 }
 
-long us_internal_verify_peer_certificate( // NOLINT(runtime/int)
-    const SSL *ssl,
-    long def) { // NOLINT(runtime/int)
-  if (!ssl)
-    return def;
-  long err = def; // NOLINT(runtime/int)
+static long us_internal_verify_peer_certificate(const SSL *ssl, long def) {
+  if (!ssl) return def;
+  long err = def;
   X509 *peer_cert = SSL_get_peer_certificate(ssl);
   if (peer_cert) {
     X509_free(peer_cert);
     err = SSL_get_verify_result(ssl);
   } else {
     const SSL_CIPHER *curr_cipher = SSL_get_current_cipher(ssl);
-
     const SSL_SESSION *sess = SSL_get_session(ssl);
-    // Allow no-cert for PSK authentication in TLS1.2 and lower.
-    // In TLS1.3 check that session was reused because TLS1.3 PSK
-    // looks like session resumption.
     if ((curr_cipher && SSL_CIPHER_get_auth_nid(curr_cipher) == NID_auth_psk) ||
         (sess && SSL_SESSION_get_protocol_version(sess) == TLS1_3_VERSION &&
          SSL_session_reused(ssl))) {
@@ -1099,1105 +755,580 @@ long us_internal_verify_peer_certificate( // NOLINT(runtime/int)
   }
   return err;
 }
+
 struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl) {
-
-  long x509_verify_error = // NOLINT(runtime/int)
-      us_internal_verify_peer_certificate(ssl,
-                                          X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT);
-
+  long x509_verify_error =
+      us_internal_verify_peer_certificate(ssl, X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT);
   if (x509_verify_error == X509_V_OK)
-    return (struct us_bun_verify_error_t){
-        .error = x509_verify_error, .code = NULL, .reason = NULL};
-
+    return (struct us_bun_verify_error_t){.error = 0, .code = NULL, .reason = NULL};
   const char *reason = X509_verify_cert_error_string(x509_verify_error);
   const char *code = us_X509_error_code(x509_verify_error);
-
-  return (struct us_bun_verify_error_t){
-      .error = x509_verify_error, .code = code, .reason = reason};
+  return (struct us_bun_verify_error_t){.error = x509_verify_error, .code = code, .reason = reason};
 }
 
-struct us_bun_verify_error_t
-us_internal_verify_error(struct us_internal_ssl_socket_t *s) {
-  if (!s->ssl || us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
-    return (struct us_bun_verify_error_t){
-        .error = 0, .code = NULL, .reason = NULL};
+struct us_bun_verify_error_t us_internal_ssl_verify_error(struct us_socket_t *s) {
+  if (!s->ssl || !s_ssl(s) || us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s)) {
+    return (struct us_bun_verify_error_t){.error = 0, .code = NULL, .reason = NULL};
   }
-
-  return us_ssl_socket_verify_error_from_ssl(s->ssl);
+  return us_ssl_socket_verify_error_from_ssl(s_ssl(s));
 }
 
+/* ── Handshake state machine ─────────────────────────────────────────────── */
 
-int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
-  // From https://www.openssl.org/docs/man1.1.1/man3/SSL_verify_cb:
-  //
-  //   If VerifyCallback returns 1, the verification process is continued. If
-  //   VerifyCallback always returns 1, the TLS/SSL handshake will not be
-  //   terminated with respect to verification failures and the connection will
-  //   be established. The calling process can however retrieve the error code
-  //   of the last verification error using SSL_get_verify_result(3) or by
-  //   maintaining its own error storage managed by VerifyCallback.
-  //
-  // Since we cannot perform I/O quickly enough with X509_STORE_CTX_ APIs in
-  // this callback, we ignore all preverify_ok errors and let the handshake
-  // continue. It is imperative that the user use Connection::VerifyError after
-  // the 'secure' callback has been made.
+/* The on_handshake callback runs JS which may us_socket_close(s) — that frees
+ * s->ssl. Every caller MUST check ssl_gone(s) immediately after this returns
+ * and bail before touching s->ssl again. */
+static void ssl_trigger_handshake(struct us_socket_t *s, int success) {
+  s->ssl_handshake_state = HANDSHAKE_COMPLETED;
+  struct us_bun_verify_error_t verify_error = us_internal_ssl_verify_error(s);
+  us_dispatch_handshake(s, success, verify_error);
+}
+
+static void ssl_trigger_handshake_econnreset(struct us_socket_t *s) {
+  s->ssl_handshake_state = HANDSHAKE_COMPLETED;
+  struct us_bun_verify_error_t verify_error = {
+      .error = -46, .code = "ECONNRESET",
+      .reason = "Client network socket disconnected before secure TLS connection was established"};
+  us_dispatch_handshake(s, 0, verify_error);
+}
+
+/* True once a re-entrant us_socket_close() has run inside a dispatch. Any
+ * `s->ssl` is NULL at that point. */
+static inline int ssl_gone(struct us_socket_t *s) {
+  return us_socket_is_closed(s) || s->ssl == NULL;
+}
+
+static int ssl_renegotiate(struct us_socket_t *s) {
+  s->ssl_handshake_state = HANDSHAKE_RENEGOTIATION_PENDING;
+  if (!SSL_renegotiate(s_ssl(s))) {
+    ssl_trigger_handshake(s, 0);
+    return 0;
+  }
   return 1;
 }
 
-SSL_CTX *create_ssl_context_from_bun_options(
-    struct us_bun_socket_context_options_t options,
-    enum create_bun_socket_error_t *err) {
-  ERR_clear_error();
+/* Returns 1 if shutdown is complete (or impossible) and the TCP socket may be
+ * closed; 0 if we sent close_notify but must wait for the peer's. */
+static int ssl_handle_shutdown(struct us_socket_t *s, int force_fast_shutdown) {
+    if (!s->ssl || us_internal_ssl_is_shut_down(s) || s->ssl_fatal_error || !SSL_is_init_finished(s_ssl(s)))
+    return 1;
 
-  /* Create the context */
-  SSL_CTX *ssl_context = SSL_CTX_new(TLS_method());
-
-  /* Default options we rely on - changing these will break our logic */
-  SSL_CTX_set_read_ahead(ssl_context, 1);
-  /* we should always accept moving write buffer so we can retry writes with a
-   * buffer allocated in a different address */
-  SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
-
-  /* Anything below TLS 1.2 is disabled */
-  SSL_CTX_set_min_proto_version(ssl_context, TLS1_2_VERSION);
-
-  /* The following are helpers. You may easily implement whatever you want by
-   * using the native handle directly */
-
-  /* Important option for lowering memory usage, but lowers performance slightly
-   */
-  if (options.ssl_prefer_low_memory_usage) {
-    SSL_CTX_set_mode(ssl_context, SSL_MODE_RELEASE_BUFFERS);
-  }
-
-  if (options.passphrase) {
-    #ifdef _WIN32
-    /* When freeing the CTX we need to check
-     * SSL_CTX_get_default_passwd_cb_userdata and free it if set */
-    SSL_CTX_set_default_passwd_cb_userdata(ssl_context,
-                                           (void *)_strdup(options.passphrase));
-    SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
-    #else
-    /* When freeing the CTX we need to check
-     * SSL_CTX_get_default_passwd_cb_userdata and free it if set */
-    SSL_CTX_set_default_passwd_cb_userdata(ssl_context,
-                                           (void *)strdup(options.passphrase));
-    SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
-    #endif
-  }
-
-  /* This one most probably do not need the cert_file_name string to be kept
-   * alive */
-  if (options.cert_file_name) {
-    if (SSL_CTX_use_certificate_chain_file(ssl_context,
-                                           options.cert_file_name) != 1) {
-      free_ssl_context(ssl_context);
-      return NULL;
-    }
-  } else if (options.cert && options.cert_count > 0) {
-    for (unsigned int i = 0; i < options.cert_count; i++) {
-      if (us_ssl_ctx_use_certificate_chain(ssl_context, options.cert[i]) != 1) {
-        free_ssl_context(ssl_context);
-        return NULL;
+  int state = SSL_get_shutdown(s_ssl(s));
+  int sent_shutdown = state & SSL_SENT_SHUTDOWN;
+  int received_shutdown = state & SSL_RECEIVED_SHUTDOWN;
+  if (!sent_shutdown || !received_shutdown) {
+    ssl_set_loop_data(s);
+    int ret = SSL_shutdown(s_ssl(s));
+    if (ret == 0 && force_fast_shutdown) ret = SSL_shutdown(s_ssl(s));
+    if (ret < 0) {
+      int err = SSL_get_error(s_ssl(s), ret);
+      if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
+        ERR_clear_error();
+        s->ssl_fatal_error = 1;
+        return 1;
       }
-    }
-  }
-
-  /* Same as above - we can discard this string afterwards I suppose */
-  if (options.key_file_name) {
-    if (SSL_CTX_use_PrivateKey_file(ssl_context, options.key_file_name,
-                                    SSL_FILETYPE_PEM) != 1) {
-      free_ssl_context(ssl_context);
-      return NULL;
-    }
-  } else if (options.key && options.key_count > 0) {
-    for (unsigned int i = 0; i < options.key_count; i++) {
-      if (us_ssl_ctx_use_privatekey_content(ssl_context, options.key[i],
-                                            SSL_FILETYPE_PEM) != 1) {
-        free_ssl_context(ssl_context);
-        return NULL;
+      if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+        return force_fast_shutdown ? 1 : 0;
       }
+      s->ssl_fatal_error = 1;
+      return 1;
     }
+    return ret == 1;
+  }
+  return 1;
+}
+
+struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void *reason) {
+  /* SEMI_SOCKET never connected — SSL was attached eagerly on the fast-path
+   * connect, but no bytes were ever exchanged. Firing on_handshake(0) here
+   * lands in JS after onConnectError already tore down `this`/its handlers. */
+  if (ssl_gone(s) || (us_internal_poll_type(&s->p) & POLL_TYPE_KIND_MASK) == POLL_TYPE_SEMI_SOCKET) {
+    return us_internal_socket_close_raw(s, code, reason);
+  }
+  ssl_set_loop_data(s);
+  ssl_update_handshake(s);
+  if (ssl_gone(s)) return s;
+
+  if (s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
+    /* Surface ECONNRESET-style handshake failure exactly once so callers
+     * (fetch, sockets) don't each have to check on_close themselves. */
+    ssl_trigger_handshake_econnreset(s);
+    if (ssl_gone(s)) return s;
   }
 
-  if (options.ca_file_name) {
-    SSL_CTX_set_cert_store(ssl_context, us_get_default_ca_store());
-
-    STACK_OF(X509_NAME) * ca_list;
-    ca_list = SSL_load_client_CA_file(options.ca_file_name);
-    if (ca_list == NULL) {
-      *err = CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
-      free_ssl_context(ssl_context);
-      return NULL;
-    }
-
-    SSL_CTX_set_client_CA_list(ssl_context, ca_list);
-    if (SSL_CTX_load_verify_locations(ssl_context, options.ca_file_name,
-                                      NULL) != 1) {
-      *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE;
-      free_ssl_context(ssl_context);
-      return NULL;
-    }
-
-    if (options.reject_unauthorized) {
-      SSL_CTX_set_verify(ssl_context,
-                         SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
-                         us_verify_callback);
-    } else {
-      SSL_CTX_set_verify(ssl_context, SSL_VERIFY_PEER, us_verify_callback);
-    }
-
-  } else if (options.ca && options.ca_count > 0) {
-    X509_STORE *cert_store = NULL;
-
-    for (unsigned int i = 0; i < options.ca_count; i++) {
-      if (cert_store == NULL) {
-        cert_store = us_get_default_ca_store();
-        SSL_CTX_set_cert_store(ssl_context, cert_store);
-      }
-
-      if (!add_ca_cert_to_ctx_store(ssl_context, options.ca[i], cert_store)) {
-        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA;
-        free_ssl_context(ssl_context);
-        return NULL;
-      }
-
-      // It may return spurious errors here.
-      ERR_clear_error();
-
-      if (options.reject_unauthorized) {
-        SSL_CTX_set_verify(ssl_context,
-                           SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
-                           us_verify_callback);
-      } else {
-        SSL_CTX_set_verify(ssl_context, SSL_VERIFY_PEER, us_verify_callback);
-      }
-    }
-  } else {
-    if (options.request_cert) {
-      SSL_CTX_set_cert_store(ssl_context, us_get_default_ca_store());
-
-      if (options.reject_unauthorized) {
-        SSL_CTX_set_verify(ssl_context,
-                           SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
-                           us_verify_callback);
-      } else {
-        SSL_CTX_set_verify(ssl_context, SSL_VERIFY_PEER, us_verify_callback);
-      }
-    }
-  }
-  if (options.dh_params_file_name) {
-    /* Set up ephemeral DH parameters. */
-    DH *dh_2048 = NULL;
-    FILE *paramfile;
-    paramfile = fopen(options.dh_params_file_name, "r");
-
-    if (paramfile) {
-      dh_2048 = PEM_read_DHparams(paramfile, NULL, NULL, NULL);
-      fclose(paramfile);
-    } else {
-      free_ssl_context(ssl_context);
-      return NULL;
-    }
-
-    if (dh_2048 == NULL) {
-      free_ssl_context(ssl_context);
-      return NULL;
-    }
-
-    const long set_tmp_dh = SSL_CTX_set_tmp_dh(ssl_context, dh_2048);
-    DH_free(dh_2048);
-
-    if (set_tmp_dh != 1) {
-      free_ssl_context(ssl_context);
-      return NULL;
-    }
-
-    if (!SSL_CTX_set_cipher_list(ssl_context, DEFAULT_CIPHER_LIST)) {
-      free_ssl_context(ssl_context);
-      return NULL;
-    }
-  }
-
-  if (options.ssl_ciphers) {
-    if (!SSL_CTX_set_cipher_list(ssl_context, options.ssl_ciphers)) {
-      unsigned long ssl_err = ERR_get_error(); 
-      if (!(strlen(options.ssl_ciphers) == 0 && ERR_GET_REASON(ssl_err) == SSL_R_NO_CIPHER_MATCH)) {
-        char error_msg[256];
-        ERR_error_string_n(ERR_peek_last_error(), error_msg, sizeof(error_msg));
-        // TLS1.2 ciphers were deliberately cleared, so don't consider
-        // SSL_R_NO_CIPHER_MATCH to be an error (this is how _set_cipher_suites()
-        // works). If the user actually sets a value (like "no-such-cipher"), then
-        // that's actually an error.
-        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS;  
-        free_ssl_context(ssl_context);
-        return NULL;
-      }
-      ERR_clear_error();
-    }
-  }
-
-  if (options.secure_options) {
-    SSL_CTX_set_options(ssl_context, options.secure_options);
-  }
-
-  /* This must be free'd with free_ssl_context, not SSL_CTX_free */
-  return ssl_context;
-}
-
-/* Returns a servername's userdata if any */
-void *us_internal_ssl_socket_context_find_server_name_userdata(
-    struct us_internal_ssl_socket_context_t *context,
-    const char *hostname_pattern) {
-
-  /* We can use sni_find because looking up a "wildcard pattern" will match the
-   * exact literal "wildcard pattern" first, before it matches by the very
-   * wildcard itself, so it works fine (exact match is the only thing we care
-   * for here) */
-  SSL_CTX *ssl_context = sni_find(context->sni, hostname_pattern);
-
-  if (ssl_context) {
-    return SSL_CTX_get_ex_data(ssl_context, 0);
-  }
-
-  return 0;
-}
-
-/* Returns either nullptr or the previously set user data attached to this SSL's
- * selected SNI context */
-void *
-us_internal_ssl_socket_get_sni_userdata(struct us_internal_ssl_socket_t *s) {
-  return SSL_CTX_get_ex_data(SSL_get_SSL_CTX(s->ssl), 0);
-}
-
-/* Todo: return error on failure? */
-void us_internal_ssl_socket_context_add_server_name(
-    struct us_internal_ssl_socket_context_t *context,
-    const char *hostname_pattern, struct us_socket_context_options_t options,
-    void *user) {
-
-  /* Try and construct an SSL_CTX from options */
-  SSL_CTX *ssl_context = create_ssl_context_from_options(options);
-
-  if (ssl_context) {
-    /* Attach the user data to this context */
-    if (1 != SSL_CTX_set_ex_data(ssl_context, 0, user)) {
-#if ASSERT_ENABLED
-      printf("CANNOT SET EX DATA!\n");
-      abort();
-#endif
-    }
-
-    /* * We do not want to hold any nullptr's in our SNI tree */
-    if (sni_add(context->sni, hostname_pattern, ssl_context)) {
-      /* If we already had that name, ignore */
-      free_ssl_context(ssl_context);
-    }
-  }
-}
-
-int us_bun_internal_ssl_socket_context_add_server_name(
-    struct us_internal_ssl_socket_context_t *context,
-    const char *hostname_pattern,
-    struct us_bun_socket_context_options_t options, void *user) {
-
-  /* Try and construct an SSL_CTX from options */
-  enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
-  SSL_CTX *ssl_context = create_ssl_context_from_bun_options(options, &err);
-  if (ssl_context == NULL) {
-    return -1;
-  }
-
-  /* Attach the user data to this context */
-  if (1 != SSL_CTX_set_ex_data(ssl_context, 0, user)) {
-#if ASSERT_ENABLED
-    printf("CANNOT SET EX DATA!\n");
-    abort();
-#endif
-    return -1;
-  }
-
-  if (sni_add(context->sni, hostname_pattern, ssl_context)) {
-    /* If we already had that name, ignore */
-    free_ssl_context(ssl_context);
-  }
-
-  return 0;
-}
-
-void us_internal_ssl_socket_context_on_server_name(
-    struct us_internal_ssl_socket_context_t *context,
-    void (*cb)(struct us_internal_ssl_socket_context_t *,
-               const char *hostname)) {
-  context->on_server_name = cb;
-}
-
-void us_internal_ssl_socket_context_remove_server_name(
-    struct us_internal_ssl_socket_context_t *context,
-    const char *hostname_pattern) {
-
-  /* The same thing must happen for sni_free, that's why we have a callback */
-  SSL_CTX *sni_node_ssl_context =
-      (SSL_CTX *)sni_remove(context->sni, hostname_pattern);
-  free_ssl_context(sni_node_ssl_context);
-}
-
-/* Returns NULL or SSL_CTX. May call missing server name callback */
-SSL_CTX *resolve_context(struct us_internal_ssl_socket_context_t *context,
-                         const char *hostname) {
-
-  /* Try once first */
-  void *user = sni_find(context->sni, hostname);
-  if (!user) {
-    /* Emit missing hostname then try again */
-    if (!context->on_server_name) {
-      /* We have no callback registered, so fail */
-      return NULL;
-    }
-
-    context->on_server_name(context, hostname);
-
-    /* Last try */
-    user = sni_find(context->sni, hostname);
-  }
-
-  return user;
-}
-
-// arg is context
-int sni_cb(SSL *ssl, int *al, void *arg) {
-
-  if (ssl) {
-    const char *hostname = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
-    if (hostname && hostname[0]) {
-      /* Try and resolve (match) required hostname with what we have registered
-       */
-      SSL_CTX *resolved_ssl_context = resolve_context(
-          (struct us_internal_ssl_socket_context_t *)arg, hostname);
-      if (resolved_ssl_context) {
-        SSL_set_SSL_CTX(ssl, resolved_ssl_context);
-      } else {
-        /* Call a blocking callback notifying of missing context */
-      }
-    }
-
-    return SSL_TLSEXT_ERR_OK;
-  }
-
-  /* Can we even come here ever? */
-  return SSL_TLSEXT_ERR_NOACK;
-}
-
-struct us_internal_ssl_socket_context_t *us_internal_create_ssl_socket_context(
-    struct us_loop_t *loop, int context_ext_size,
-    struct us_socket_context_options_t options) {
-  /* If we haven't initialized the loop data yet, do so .
-   * This is needed because loop data holds shared OpenSSL data and
-   * the function is also responsible for initializing OpenSSL */
-  us_internal_init_loop_ssl_data(loop);
-
-  /* First of all we try and create the SSL context from options */
-  SSL_CTX *ssl_context = create_ssl_context_from_options(options);
-  if (!ssl_context) {
-    /* We simply fail early if we cannot even create the OpenSSL context */
-    return NULL;
-  }
-
-  /* Otherwise ee continue by creating a non-SSL context, but with larger ext to
-   * hold our SSL stuff */
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_create_socket_context(
-          0, loop,
-          sizeof(struct us_internal_ssl_socket_context_t) + context_ext_size,
-          options);
-
-  /* I guess this is the only optional callback */
-  context->on_server_name = NULL;
-
-  /* Then we extend its SSL parts */
-  context->ssl_context =
-      ssl_context; // create_ssl_context_from_options(options);
-  context->is_parent = 1;
-
-  context->on_handshake = NULL;
-  context->handshake_data = NULL;
-  /* We, as parent context, may ignore data */
-  context->sc.is_low_prio = (int (*)(struct us_socket_t *))ssl_is_low_prio;
-
-  /* Parent contexts may use SNI */
-  SSL_CTX_set_tlsext_servername_callback(context->ssl_context, sni_cb);
-  SSL_CTX_set_tlsext_servername_arg(context->ssl_context, context);
-
-  /* Also create the SNI tree */
-  context->sni = sni_new();
-
-  return context;
-}
-struct us_internal_ssl_socket_context_t *
-us_internal_bun_create_ssl_socket_context(
-    struct us_loop_t *loop, int context_ext_size,
-    struct us_bun_socket_context_options_t options,
-    enum create_bun_socket_error_t *err) {
-  /* If we haven't initialized the loop data yet, do so .
-   * This is needed because loop data holds shared OpenSSL data and
-   * the function is also responsible for initializing OpenSSL */
-  us_internal_init_loop_ssl_data(loop);
-
-  /* First of all we try and create the SSL context from options */
-  SSL_CTX *ssl_context = create_ssl_context_from_bun_options(options, err);
-  if (!ssl_context) {
-    /* We simply fail early if we cannot even create the OpenSSL context */
-    return NULL;
-  }
-
-  /* Otherwise ee continue by creating a non-SSL context, but with larger ext to
-   * hold our SSL stuff */
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_create_bun_nossl_socket_context(
-          loop,
-          sizeof(struct us_internal_ssl_socket_context_t) + context_ext_size);
-
-  /* I guess this is the only optional callback */
-  context->on_server_name = NULL;
-  /* Then we extend its SSL parts */
-  context->ssl_context =
-      ssl_context; // create_ssl_context_from_options(options);
-  context->is_parent = 1;
-
-  context->on_handshake = NULL;
-  context->handshake_data = NULL;
-  /* We, as parent context, may ignore data */
-  context->sc.is_low_prio = (int (*)(struct us_socket_t *))ssl_is_low_prio;
-
-  /* Parent contexts may use SNI */
-  SSL_CTX_set_tlsext_servername_callback(context->ssl_context, sni_cb);
-  SSL_CTX_set_tlsext_servername_arg(context->ssl_context, context);
-
-  /* Also create the SNI tree */
-  context->sni = sni_new();
-
-  return context;
-}
-
-/* Our destructor for hostnames, used below */
-void sni_hostname_destructor(void *user) {
-  /* Some nodes hold null, so this one must ignore this case */
-  free_ssl_context((SSL_CTX *)user);
-}
-
-void us_internal_ssl_socket_context_free(
-    struct us_internal_ssl_socket_context_t *context) {
-  /* If we are parent then we need to free our OpenSSL context */
-  if (context->is_parent) {
-    free_ssl_context(context->ssl_context);
-
-    /* Here we need to register a temporary callback for all still-existing
-     * hostnames and their contexts. Only parents have an SNI tree */
-    sni_free(context->sni, sni_hostname_destructor);
-  }
-
-  us_internal_socket_context_free(0, &context->sc);
-}
-
-struct us_listen_socket_t *us_internal_ssl_socket_context_listen(
-    struct us_internal_ssl_socket_context_t *context, const char *host,
-    int port, int options, int socket_ext_size, int* error) {
-  return us_socket_context_listen(0, &context->sc, host, port, options,
-                                  sizeof(struct us_internal_ssl_socket_t) -
-                                      sizeof(struct us_socket_t) +
-                                      socket_ext_size, error);
-}
-
-struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
-    struct us_internal_ssl_socket_context_t *context, const char *path,
-    size_t pathlen, int options, int socket_ext_size, int* error) {
-  return us_socket_context_listen_unix(0, &context->sc, path, pathlen, options,
-                                       sizeof(struct us_internal_ssl_socket_t) -
-                                           sizeof(struct us_socket_t) +
-                                           socket_ext_size, error);
-}
-
-// https://github.com/oven-sh/bun/issues/16995
-static void us_internal_zero_ssl_data_for_connected_socket_before_onopen(struct us_internal_ssl_socket_t *s) {
-  s->ssl = NULL;
-  s->ssl_write_wants_read = 0;
-  s->ssl_read_wants_write = 0;
-  s->fatal_error = 0;
-  s->handshake_state = HANDSHAKE_PENDING;
-}
-
-// TODO does this need more changes?
-struct us_socket_t *us_internal_ssl_socket_context_connect(
-    struct us_internal_ssl_socket_context_t *context, const char *host,
-    int port, int options, int socket_ext_size, int* is_connecting) {
-  struct us_internal_ssl_socket_t *s = (struct us_internal_ssl_socket_t *)us_socket_context_connect(
-      2, &context->sc, host, port, options,
-      sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
-          socket_ext_size, is_connecting);
-  if (*is_connecting && s) {
-    us_internal_zero_ssl_data_for_connected_socket_before_onopen(s);
-  }
-
-  return (struct us_socket_t*)s;
-}
-struct us_socket_t *us_internal_ssl_socket_context_connect_unix(
-    struct us_internal_ssl_socket_context_t *context, const char *server_path,
-    size_t pathlen, int options, int socket_ext_size) {
-  struct us_socket_t *s = (struct us_socket_t *)us_socket_context_connect_unix(
-      0, &context->sc, server_path, pathlen, options,
-      sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
-          socket_ext_size);
-  if (s) {
-    us_internal_zero_ssl_data_for_connected_socket_before_onopen((struct us_internal_ssl_socket_t*) s);
+  /* code != 0 (forceful — `_destroy()` / `_handle.close()` / abort): send
+   * close_notify best-effort and raw-close now. The Zig destroy path detaches
+   * + poll_ref.unref() right after, so deferring would orphan the us_socket_t.
+   *
+   * code == 0 (graceful — `end()` → markInactive → closeAndDetach(.normal)):
+   * send close_notify and DEFER the fd close until the peer replies. The
+   * graceful path keeps `poll_ref` held until onClose runs, so the loop stays
+   * alive to receive the peer's close_notify/FIN; raw-closing here would let
+   * the client resolve `close` before the server has even seen our Finished
+   * under low-prio fan-out (connectionListener race). The actual raw-close
+   * happens via on_end/ZERO_RETURN re-entering this function with
+   * SSL_SENT_SHUTDOWN already set (ssl_handle_shutdown then returns 1). */
+  if (ssl_handle_shutdown(s, code != 0)) {
+    return us_internal_socket_close_raw(s, code, reason);
   }
   return s;
 }
+#define ssl_close us_internal_ssl_close
 
-static void ssl_on_open_without_sni(struct us_internal_ssl_socket_t *s, int is_client, char *ip, int ip_length) {
-  ssl_on_open(s, is_client, ip, ip_length, NULL);
-}
+static void ssl_update_handshake(struct us_socket_t *s) {
+    if (!s->ssl || s->ssl_handshake_state != HANDSHAKE_PENDING) return;
 
-void us_internal_ssl_socket_context_on_open(
-    struct us_internal_ssl_socket_context_t *context,
-    struct us_internal_ssl_socket_t *(*on_open)(
-        struct us_internal_ssl_socket_t *s, int is_client, char *ip,
-        int ip_length)) {
-  us_socket_context_on_open(
-      0, &context->sc,
-      (struct us_socket_t * (*)(struct us_socket_t *, int, char *, int))
-          ssl_on_open_without_sni);
-  context->on_open = on_open;
-}
-
-void us_internal_ssl_socket_context_on_close(
-    struct us_internal_ssl_socket_context_t *context,
-    struct us_internal_ssl_socket_t *(*on_close)(
-        struct us_internal_ssl_socket_t *s, int code, void *reason)) {
-  us_socket_context_on_close(
-      0, (struct us_socket_context_t *)context,
-      (struct us_socket_t * (*)(struct us_socket_t *, int, void *))
-          ssl_on_close);
-  context->on_close = on_close;
-}
-
-void us_internal_ssl_socket_context_on_data(
-    struct us_internal_ssl_socket_context_t *context,
-    struct us_internal_ssl_socket_t *(*on_data)(
-        struct us_internal_ssl_socket_t *s, char *data, int length)) {
-  us_socket_context_on_data(
-      0, (struct us_socket_context_t *)context,
-      (struct us_socket_t * (*)(struct us_socket_t *, char *, int))
-          ssl_on_data);
-  context->on_data = on_data;
-}
-
-void us_internal_ssl_socket_context_on_writable(
-    struct us_internal_ssl_socket_context_t *context,
-    struct us_internal_ssl_socket_t *(*on_writable)(
-        struct us_internal_ssl_socket_t *s)) {
-  us_socket_context_on_writable(0, (struct us_socket_context_t *)context,
-                                (struct us_socket_t * (*)(struct us_socket_t *))
-                                    ssl_on_writable);
-  context->on_writable = on_writable;
-}
-
-void us_internal_ssl_socket_context_on_timeout(
-    struct us_internal_ssl_socket_context_t *context,
-    struct us_internal_ssl_socket_t *(*on_timeout)(
-        struct us_internal_ssl_socket_t *s)) {
-  us_socket_context_on_timeout(0, (struct us_socket_context_t *)context,
-                               (struct us_socket_t * (*)(struct us_socket_t *))
-                                   ssl_on_timeout);
-  context->on_timeout = on_timeout;
-}
-
-void us_internal_ssl_socket_context_on_long_timeout(
-    struct us_internal_ssl_socket_context_t *context,
-    struct us_internal_ssl_socket_t *(*on_long_timeout)(
-        struct us_internal_ssl_socket_t *s)) {
-  us_socket_context_on_long_timeout(
-      0, (struct us_socket_context_t *)context,
-      (struct us_socket_t * (*)(struct us_socket_t *)) ssl_on_long_timeout);
-  context->on_long_timeout = on_long_timeout;
-}
-
-/* We do not really listen to passed FIN-handler, we entirely override it with
- * our handler since SSL doesn't really have support for half-closed sockets */
-void us_internal_ssl_socket_context_on_end(
-    struct us_internal_ssl_socket_context_t *context,
-    struct us_internal_ssl_socket_t *(*on_end)(
-        struct us_internal_ssl_socket_t *)) {
-  us_socket_context_on_end(0, (struct us_socket_context_t *)context,
-                           (struct us_socket_t * (*)(struct us_socket_t *))
-                               ssl_on_end);
-}
-
-void us_internal_ssl_socket_context_on_connect_error(
-    struct us_internal_ssl_socket_context_t *context,
-    struct us_internal_ssl_socket_t *(*on_connect_error)(
-        struct us_internal_ssl_socket_t *, int code)) {
-  us_socket_context_on_connect_error(
-      0, (struct us_socket_context_t *)context,
-      (struct us_connecting_socket_t * (*)(struct us_connecting_socket_t *, int)) on_connect_error);
-}
-
-void us_internal_ssl_socket_context_on_socket_connect_error(
-    struct us_internal_ssl_socket_context_t *context,
-    struct us_internal_ssl_socket_t *(*on_connect_error)(
-        struct us_internal_ssl_socket_t *, int code)) {
-  us_socket_context_on_socket_connect_error(
-      0, (struct us_socket_context_t *)context,
-      (struct us_socket_t * (*)(struct us_socket_t *, int)) on_connect_error);
-}
-
-void *us_internal_ssl_socket_context_ext(
-    struct us_internal_ssl_socket_context_t *context) {
-  return context + 1;
-}
-
-/* Per socket functions */
-void *
-us_internal_ssl_socket_get_native_handle(struct us_internal_ssl_socket_t *s) {
-  return s->ssl;
-}
-
-int us_internal_ssl_socket_raw_write(struct us_internal_ssl_socket_t *s,
-                                     const char *data, int length) {
-
-  if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
-    return 0;
-  }
-  return us_socket_write(0, &s->s, data, length);
-}
-
-int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,
-                                 const char *data, int length) {
-
-  if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s) || length == 0) {
-    return 0;
+  /* SSL_read may have driven the handshake to completion before we got here
+   * (TLS 1.3 server: client's Finished + close_notify in one segment lands as
+   * ZERO_RETURN with init already finished). Report success based on what
+   * BoringSSL actually negotiated, not on whether the peer happens to have
+   * already closed — RECEIVED_SHUTDOWN after a completed handshake is a clean
+   * close, not a handshake failure. */
+  if (SSL_is_init_finished(s_ssl(s))) {
+    ssl_trigger_handshake(s, 1);
+    return;
   }
 
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-
-  struct us_loop_t *loop = us_socket_context_loop(0, &context->sc);
-  struct loop_ssl_data *loop_ssl_data =
-      (struct loop_ssl_data *)loop->data.ssl_data;
-
-  // it makes literally no sense to touch this here! it should start at 0 and
-  // ONLY be set and reset by the on_data function! the way is is now,
-  // triggering a write from a read will essentially delete all input data! what
-  // we need to do is to check if this ever is non-zero and print a warning
-
-  loop_ssl_data->ssl_read_input_length = 0;
-
-  loop_ssl_data->ssl_socket = &s->s;
-
-  int written = SSL_write(s->ssl, data, length);
-
-  if (written > 0) {
-    return written;
+  if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s) ||
+      (s_ssl(s) && SSL_get_shutdown(s_ssl(s)) & SSL_RECEIVED_SHUTDOWN)) {
+    ssl_trigger_handshake(s, 0);
+    return;
   }
 
-  int err = SSL_get_error(s->ssl, written);
-  if (err == SSL_ERROR_WANT_READ) {
-    // here we need to trigger writable event next ssl_read!
-    s->ssl_write_wants_read = 1;
-  } else if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
-    // these two errors may add to the error queue, which is per thread and
-    // must be cleared
-    ERR_clear_error();
-    s->fatal_error = 1;
+  int result = SSL_do_handshake(s_ssl(s));
 
-    // all errors here except for want write are critical and should not
-    // happen
+  if (SSL_get_shutdown(s_ssl(s)) & SSL_RECEIVED_SHUTDOWN) {
+    ssl_close(s, 0, NULL);
+    return;
   }
 
-  return 0;
-}
-
-void *us_internal_ssl_socket_ext(struct us_internal_ssl_socket_t *s) {
-  return s + 1;
-}
-
-void *us_internal_connecting_ssl_socket_ext(struct us_connecting_socket_t *s) {
-  return (char*)(s + 1) + sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t);
-}
-
-int us_internal_ssl_socket_is_shut_down(struct us_internal_ssl_socket_t *s) {
-  return !s->ssl || us_socket_is_shut_down(0, &s->s) ||
-         SSL_get_shutdown(s->ssl) & SSL_SENT_SHUTDOWN || s->fatal_error;
-}
-
-void us_internal_ssl_socket_shutdown(struct us_internal_ssl_socket_t *s) {
-  if (!us_internal_ssl_socket_is_closed(s) &&
-      !us_internal_ssl_socket_is_shut_down(s)) {
-    struct us_internal_ssl_socket_context_t *context =
-        (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-    struct us_loop_t *loop = us_socket_context_loop(0, &context->sc);
-    struct loop_ssl_data *loop_ssl_data =
-        (struct loop_ssl_data *)loop->data.ssl_data;
-
-    // also makes no sense to touch this here!
-    // however the idea is that if THIS socket is not the same as ssl_socket
-    // then this data is not for me but this is not correct as it is currently
-    // anyways, any data available should be properly reset
-    loop_ssl_data->ssl_read_input_length = 0;
-
-    // essentially we need two of these: one for CURRENT CALL and one for
-    // CURRENT SOCKET WITH DATA if those match in the BIO function then you may
-    // read, if not then you may not read we need ssl_read_socket to be set in
-    // on_data and checked in the BIO
-    loop_ssl_data->ssl_socket = &s->s;
-
-    // sets SSL_SENT_SHUTDOWN and waits for the other side to do the same
-    int ret = SSL_shutdown(s->ssl);
-
-    if (SSL_in_init(s->ssl) || SSL_get_quiet_shutdown(s->ssl)) {
-      // when SSL_in_init or quiet shutdown in BoringSSL, we call shutdown
-      // directly
-      us_socket_shutdown(0, &s->s);
+  if (result <= 0) {
+    int err = SSL_get_error(s_ssl(s), result);
+    if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
+      if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
+        ERR_clear_error();
+        s->ssl_fatal_error = 1;
+      }
+      ssl_trigger_handshake(s, 0);
       return;
     }
+    s->ssl_handshake_state = HANDSHAKE_PENDING;
+    s->ssl_write_wants_read = 1;
+    s->flags.last_write_failed = 1;
+    return;
+  }
 
-    if (ret < 0) {
-      int err = SSL_get_error(s->ssl, ret);
-      if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
-        // clear
-        ERR_clear_error();
-        s->fatal_error = 1;
+  ssl_trigger_handshake(s, 1);
+  if (ssl_gone(s)) return;
+  s->ssl_write_wants_read = 1;
+}
+
+/* ── Event hooks (called from loop.c / socket.c when s->ssl != NULL) ────── */
+
+struct us_socket_t *us_internal_ssl_on_open(struct us_socket_t *s, int is_client,
+                                            char *ip, int ip_length) {
+  ssl_set_loop_data(s);
+  struct us_socket_t *result = us_dispatch_open(s, is_client, ip, ip_length);
+  if (!result || ssl_gone(result)) return result;
+  /* Kick the handshake immediately — some peers stall waiting for ClientHello. */
+  ssl_update_handshake(result);
+  return result;
+}
+
+struct us_socket_t *us_internal_ssl_on_close(struct us_socket_t *s, int code, void *reason) {
+  ssl_set_loop_data(s);
+  struct us_socket_t *ret = us_dispatch_close(s, code, reason);
+  /* Free SSL after on_close so user code can still inspect ALPN / cert. */
+  us_internal_ssl_detach(s);
+  return ret;
+}
+
+struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
+  ssl_set_loop_data(s);
+  /* TCP FIN under TLS — send our close_notify (if not already) and raw-close. */
+  return ssl_close(s, 0, NULL);
+}
+
+struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
+  ssl_set_loop_data(s);
+  ssl_update_handshake(s);
+  if (ssl_gone(s)) return s;
+
+  if (s->ssl_read_wants_write) {
+    s->ssl_read_wants_write = 0;
+    /* Re-enter the data path with an empty buffer; SSL_read will pull from
+     * the kernel via the next readable event but this lets it flush any
+     * pending decrypt that was blocked on a write. */
+    s = us_internal_ssl_on_data(s, "", 0);
+    if (!s || ssl_gone(s)) return s;
+  }
+  if (us_internal_ssl_is_shut_down(s)) return s;
+
+  if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) {
+    s = us_dispatch_writable(s);
+  }
+  return s;
+}
+
+struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *s, char *data, int length) {
+  /* upgradeTLS [raw, _] half observes ciphertext before SSL_read consumes it.
+   * Skip the empty-flush call from on_writable (length==0 → no real wire bytes). */
+  if (s->ssl_raw_tap && length > 0) {
+    s = us_dispatch_ssl_raw_tap(s, data, length);
+    if (!s || us_socket_is_closed(s) || !s->ssl) return s;
+  }
+
+  struct loop_ssl_data *loop_ssl_data = ssl_set_loop_data(s);
+
+  loop_ssl_data->ssl_read_input = data;
+  loop_ssl_data->ssl_read_input_length = length;
+
+  if (us_socket_is_closed(s)) return NULL;
+  if (us_internal_ssl_is_shut_down(s)) {
+    ssl_close(s, 0, NULL);
+    return NULL;
+  }
+
+  /* DO NOT call ssl_update_handshake() before the SSL_read loop. SSL_read
+   * drives the handshake itself; firing on_handshake here lets the JS callback
+   * write() → ssl_set_loop_data() → clobber the BIO buffer that still holds
+   * piggybacked application data. The on_writable tail-call below (gated on
+   * ssl_write_wants_read, which on_open()'s update_handshake set) is what
+   * pulls the server's handshake event through after each round-trip. */
+
+  int read = 0;
+restart:
+  while (1) {
+    int just_read = SSL_read(s_ssl(s),
+                             loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING + read,
+                             LIBUS_RECV_BUFFER_LENGTH - read);
+
+    if (just_read <= 0) {
+      int err = SSL_get_error(s_ssl(s), just_read);
+      if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
+        if (err == SSL_ERROR_WANT_RENEGOTIATE) {
+          if (ssl_renegotiate(s)) continue;
+          if (ssl_gone(s)) return NULL;
+          err = SSL_ERROR_SSL;
+        } else if (err == SSL_ERROR_ZERO_RETURN) {
+          /* Remote close_notify. Flush what we decrypted, then close. */
+          if (read) {
+            s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
+            if (!s || ssl_gone(s)) return NULL;
+          }
+          ssl_close(s, 0, NULL);
+          return NULL;
+        }
+
+        if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
+          ERR_clear_error();
+          s->ssl_fatal_error = 1;
+        }
+        ssl_close(s, 0, NULL);
+        return NULL;
+      } else {
+        if (err == SSL_ERROR_WANT_WRITE) s->ssl_read_wants_write = 1;
+
+        /* If the BIO still has unread ciphertext at this point, the TLS
+         * framing is broken — close. */
+        if (loop_ssl_data->ssl_read_input_length) {
+          return ssl_close(s, 0, NULL);
+        }
+        /* SSL_read drove the handshake to completion but returned no app
+         * data (peer's Finished arrived alone). Fire on_handshake here —
+         * deferring to the on_writable tail-call lets the low-prio queue
+         * (SSL_in_init throttles to 5/tick) reorder the server's
+         * secureConnection event past the client's close under fan-out
+         * loads. The save/restore below makes this safe even if the JS
+         * callback writes; with read==0 the buffer is empty anyway. */
+        if (s->ssl_handshake_state == HANDSHAKE_PENDING && SSL_is_init_finished(s_ssl(s))) {
+          ssl_trigger_handshake(s, 1);
+          if (ssl_gone(s)) return NULL;
+          loop_ssl_data->ssl_socket = s;
+        }
+        if (!read) break;
+
+        s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
+        if (!s || ssl_gone(s)) return NULL;
+        break;
       }
+    } else if (s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
+      /* SSL_read returned application data with the handshake having
+       * finished inside it. Fire on_handshake before delivering data so the
+       * caller can inspect ALPN and re-tag the socket. The save/restore lets
+       * the JS callback write() without clobbering the BIO buffer that may
+       * still hold ciphertext for the next SSL_read. (PR #25946 gated this to
+       * clients because the server-side fire reordered node:http2/grpc-js
+       * session setup; the save/restore here is what was missing — those
+       * suites are re-verified below.) */
+      char *saved_input = loop_ssl_data->ssl_read_input;
+      unsigned int saved_length = loop_ssl_data->ssl_read_input_length;
+      unsigned int saved_offset = loop_ssl_data->ssl_read_input_offset;
+      ssl_trigger_handshake(s, 1);
+      if (ssl_gone(s)) return NULL;
+      loop_ssl_data->ssl_read_input = saved_input;
+      loop_ssl_data->ssl_read_input_length = saved_length;
+      loop_ssl_data->ssl_read_input_offset = saved_offset;
+      loop_ssl_data->ssl_socket = s;
+    }
 
-      // we get here if we are shutting down while still in init
-      us_socket_shutdown(0, &s->s);
+    read += just_read;
+
+    if (read == LIBUS_RECV_BUFFER_LENGTH) {
+      s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
+      if (!s || ssl_gone(s)) return NULL;
+      read = 0;
+      goto restart;
     }
   }
-}
 
-struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_adopt_socket(
-    struct us_internal_ssl_socket_context_t *context,
-    struct us_internal_ssl_socket_t *s, int old_ext_size, int ext_size) {
-  // todo: this is completely untested
-  int new_old_ext_size = sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) + old_ext_size;
-  int new_ext_size = ext_size;
-  if (ext_size != -1) {
-    new_ext_size = sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) + ext_size;
-  }
-  return (struct us_internal_ssl_socket_t *)us_socket_context_adopt_socket(
-      0, &context->sc, &s->s,
-      new_old_ext_size, new_ext_size);
-}
-
-struct us_internal_ssl_socket_t *
-ssl_wrapped_context_on_close(struct us_internal_ssl_socket_t *s, int code,
-                             void *reason) {
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-  struct us_wrapped_socket_context_t *wrapped_context =
-      (struct us_wrapped_socket_context_t *)us_internal_ssl_socket_context_ext(
-          context);
-
-
-  // writting here can cause the context to not be writable anymore but its the
-  // user responsability to check for that
-  if (wrapped_context->old_events.on_close) {
-    wrapped_context->old_events.on_close((struct us_socket_t *)s, code, reason);
-  }
-
-  if (wrapped_context->events.on_close) {
-    wrapped_context->events.on_close((struct us_socket_t *)s, code, reason);
-  }
-
-  us_socket_context_unref(0, wrapped_context->tcp_context);
-  return s;
-}
-
-struct us_internal_ssl_socket_t *
-ssl_wrapped_context_on_writable(struct us_internal_ssl_socket_t *s) {
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-  struct us_wrapped_socket_context_t *wrapped_context =
-      (struct us_wrapped_socket_context_t *)us_internal_ssl_socket_context_ext(
-          context);
-
-
-  // writting here can cause the context to not be writable anymore but its the
-  // user responsability to check for that
-  if (wrapped_context->old_events.on_writable) {
-    wrapped_context->old_events.on_writable((struct us_socket_t *)s);
-  }
-
-  if (wrapped_context->events.on_writable) {
-    wrapped_context->events.on_writable((struct us_socket_t *)s);
+  /* If the last SSL_write failed with WANT_READ and we've now read, give the
+   * application a writable callback — but not if SSL_read just told us it
+   * needs to write first (would recurse). Re-check s->ssl: any dispatch above may
+   * have closed and freed s->ssl. */
+  if (ssl_gone(s)) return NULL;
+  if (s->ssl_write_wants_read && !s->ssl_read_wants_write) {
+    s->ssl_write_wants_read = 0;
+    s = us_internal_ssl_on_writable(s);
+    if (!s || ssl_gone(s)) return NULL;
   }
 
   return s;
 }
 
-struct us_internal_ssl_socket_t *
-ssl_wrapped_context_on_data(struct us_internal_ssl_socket_t *s, char *data,
-                            int length) {
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-  struct us_wrapped_socket_context_t *wrapped_context =
-      (struct us_wrapped_socket_context_t *)us_internal_ssl_socket_context_ext(
-          context);
-          // raw data if needed
-  if (wrapped_context->old_events.on_data) {
-    wrapped_context->old_events.on_data((struct us_socket_t *)s, data, length);
-  }
-  
-  // ssl wrapped data
-  return ssl_on_data(s, data, length);
+/* Throttle reading for sockets still in TLS init — the kernel buffers for us
+ * and the expensive crypto work is the first step, so deprioritising
+ * mid-handshake sockets keeps fully-established ones responsive under load. */
+int us_internal_ssl_is_low_prio(struct us_socket_t *s) {
+  return SSL_in_init(s_ssl(s));
 }
 
-struct us_internal_ssl_socket_t *
-ssl_wrapped_context_on_timeout(struct us_internal_ssl_socket_t *s) {
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-  struct us_wrapped_socket_context_t *wrapped_context =
-      (struct us_wrapped_socket_context_t *)us_internal_ssl_socket_context_ext(
-          context);
-  if (wrapped_context->old_events.on_timeout) {
-    wrapped_context->old_events.on_timeout((struct us_socket_t *)s);
-  }
+/* ── Socket-level accessors / write / shutdown ───────────────────────────── */
 
-  if (wrapped_context->events.on_timeout) {
-    wrapped_context->events.on_timeout((struct us_socket_t *)s);
-  }
-
-
-  return s;
+int us_internal_ssl_is_shut_down(struct us_socket_t *s) {
+    /* Check the TCP poll-type directly; us_socket_is_shut_down() is TCP-level
+   * and does not re-dispatch to SSL. */
+  if (us_internal_poll_type(&s->p) == POLL_TYPE_SOCKET_SHUT_DOWN) return 1;
+  return !s->ssl || !s_ssl(s) || (SSL_get_shutdown(s_ssl(s)) & SSL_SENT_SHUTDOWN) || s->ssl_fatal_error;
 }
 
-struct us_internal_ssl_socket_t *
-ssl_wrapped_context_on_long_timeout(struct us_internal_ssl_socket_t *s) {
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-  struct us_wrapped_socket_context_t *wrapped_context =
-      (struct us_wrapped_socket_context_t *)us_internal_ssl_socket_context_ext(
-          context);
-  if (wrapped_context->old_events.on_long_timeout) {
-    wrapped_context->old_events.on_long_timeout((struct us_socket_t *)s);
-  }
-
-  if (wrapped_context->events.on_long_timeout) {
-    wrapped_context->events.on_long_timeout((struct us_socket_t *)s);
-  }
-
-  return s;
+int us_internal_ssl_is_handshake_finished(struct us_socket_t *s) {
+  if (!s->ssl || !s_ssl(s)) return 0;
+  return SSL_is_init_finished(s_ssl(s));
 }
 
-struct us_internal_ssl_socket_t *
-ssl_wrapped_context_on_end(struct us_internal_ssl_socket_t *s) {
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-  struct us_wrapped_socket_context_t *wrapped_context =
-      (struct us_wrapped_socket_context_t *)us_internal_ssl_socket_context_ext(
-          context);
-  if (wrapped_context->old_events.on_end) {
-    wrapped_context->old_events.on_end((struct us_socket_t *)s);
-  }
-  if (wrapped_context->events.on_end) {
-    wrapped_context->events.on_end((struct us_socket_t *)s);
-  }
-
-  return s;
+int us_internal_ssl_handshake_callback_has_fired(struct us_socket_t *s) {
+  return s->ssl && s->ssl_handshake_state == HANDSHAKE_COMPLETED;
 }
 
-struct us_internal_ssl_socket_t *
-ssl_wrapped_on_connect_error(struct us_internal_ssl_socket_t *s, int code) {
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-  struct us_wrapped_socket_context_t *wrapped_context =
-      (struct us_wrapped_socket_context_t *)us_internal_ssl_socket_context_ext(
-          context);
-
-  if (wrapped_context->old_events.on_connect_error) {
-    wrapped_context->old_events.on_connect_error((struct us_connecting_socket_t *)s, code);
-  }
-  if (wrapped_context->events.on_connect_error) {
-    wrapped_context->events.on_connect_error((struct us_connecting_socket_t *)s, code);
-  }
-
-  return s;
+void *us_internal_ssl_get_native_handle(struct us_socket_t *s) {
+  return s->ssl ? s_ssl(s) : NULL;
 }
 
-struct us_internal_ssl_socket_t *
-ssl_wrapped_on_socket_connect_error(struct us_internal_ssl_socket_t *s, int code) {
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-  struct us_wrapped_socket_context_t *wrapped_context =
-      (struct us_wrapped_socket_context_t *)us_internal_ssl_socket_context_ext(
-          context);
-  if (wrapped_context->old_events.on_connecting_socket_error) {
-    wrapped_context->old_events.on_connecting_socket_error((struct us_socket_t *)s, code);
-  }
-  if (wrapped_context->events.on_connecting_socket_error) {
-    wrapped_context->events.on_connecting_socket_error((struct us_socket_t *)s, code);
-  }
+int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
+  if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s) || length == 0) return 0;
 
+    struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
 
-  return s;
+  loop_ssl_data->ssl_read_input_length = 0;
+  loop_ssl_data->ssl_socket = s;
+
+  int written = SSL_write(s_ssl(s), data, length);
+  if (written > 0) return written;
+
+  int err = SSL_get_error(s_ssl(s), written);
+  if (err == SSL_ERROR_WANT_READ) {
+    s->ssl_write_wants_read = 1;
+  } else if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
+    ERR_clear_error();
+    s->ssl_fatal_error = 1;
+  }
+  return 0;
 }
 
-struct us_internal_ssl_socket_t *
-us_internal_ssl_socket_open(struct us_internal_ssl_socket_t *s, int is_client,
-                            char *ip, int ip_length) {
-  // closed
-  if (us_socket_is_closed(0, &s->s)) {
-    return s;
+void us_internal_ssl_shutdown(struct us_socket_t *s) {
+  if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s)) return;
+
+    struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+  loop_ssl_data->ssl_read_input_length = 0;
+  loop_ssl_data->ssl_socket = s;
+
+  int ret = SSL_shutdown(s_ssl(s));
+
+  if (SSL_in_init(s_ssl(s)) || SSL_get_quiet_shutdown(s_ssl(s))) {
+    us_internal_socket_raw_shutdown(s);
+    return;
   }
-  // already opened
-  if (s->ssl)
-    return s;
-  
-  // start SSL open
-  return ssl_on_open(s, is_client, ip, ip_length, NULL);
+  if (ret < 0) {
+    int err = SSL_get_error(s_ssl(s), ret);
+    if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
+      ERR_clear_error();
+      s->ssl_fatal_error = 1;
+    }
+    us_internal_socket_raw_shutdown(s);
+  }
 }
 
-struct us_socket_t *us_socket_upgrade_to_tls(us_socket_r s, us_socket_context_r new_context, const char *sni) {
-  // Resize to tls + ext size
-  void** prev_ext_ptr = (void**)us_socket_ext(0, s);
-  void* prev_ext = *prev_ext_ptr;
-  struct us_internal_ssl_socket_t *socket =
-      (struct us_internal_ssl_socket_t *)us_socket_context_adopt_socket(
-          0, new_context, s,
-          sizeof(void*),
-          (sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t)) + sizeof(void*));
-  socket->ssl = NULL;
-  socket->ssl_write_wants_read = 0;
-  socket->ssl_read_wants_write = 0;
-  socket->fatal_error = 0;
-  socket->handshake_state = HANDSHAKE_PENDING;
-
-  void** new_ext_ptr = (void**)us_socket_ext(1, (struct us_socket_t *)socket);
-  *new_ext_ptr = prev_ext;
-
-  ssl_on_open(socket, 1, NULL, 0, sni);
-
-
-  return (struct us_socket_t *)socket;
+void us_internal_ssl_handshake_abort(struct us_socket_t *s) {
+  s->ssl_fatal_error = 1;
+  ssl_close(s, 0, NULL);
 }
 
-struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
-    struct us_socket_t *s, struct us_bun_socket_context_options_t options,
-    struct us_socket_events_t events, int old_socket_ext_size, int socket_ext_size) {
-  /* Cannot wrap a closed socket */
-  if (us_socket_is_closed(0, s)) {
-    return NULL;
+/* ── Adopt-TLS (STARTTLS / Bun.connect upgrade) ──────────────────────────── */
+
+struct us_socket_t *us_socket_adopt_tls(struct us_socket_t *s,
+                                        struct us_socket_group_t *group,
+                                        unsigned char kind, struct ssl_ctx_st *ssl_ctx,
+                                        const char *sni, int old_ext_size,
+                                        int ext_size) {
+  if (us_socket_is_closed(s)) return NULL;
+
+  struct us_socket_t *new_s = us_socket_adopt(s, group, kind, old_ext_size, ext_size);
+  if (!new_s) return NULL;
+
+  us_internal_ssl_attach(new_s, ssl_ctx, /*is_client*/1, sni, NULL);
+  us_socket_resume(new_s);
+  /* Do NOT kick the handshake or dispatch on_open here — the caller hasn't
+   * repointed the ext slot yet, so any dispatch (open/handshake/close) would
+   * land in the old (TCP) owner. Caller stashes ext, sets kind, fires its own
+   * onOpen, then calls us_socket_start_tls_handshake() to send ClientHello. */
+  return new_s;
+}
+
+void us_socket_start_tls_handshake(struct us_socket_t *s) {
+  if (!s->ssl || us_socket_is_closed(s)) return;
+  ssl_set_loop_data(s);
+  ssl_update_handshake(s);
+}
+
+/* ── SNI on listen sockets ───────────────────────────────────────────────── */
+
+static void sni_node_destructor(void *user) {
+  struct sni_node_t *node = (struct sni_node_t *)user;
+  if (!node) return;
+  SSL_CTX_free(node->ctx);
+  us_free(node);
+}
+
+static struct sni_node_t *resolve_listener_ctx(struct us_listen_socket_t *ls, const char *hostname) {
+  if (!ls->sni) return NULL;
+  struct sni_node_t *node = (struct sni_node_t *)sni_find(ls->sni, hostname);
+  if (!node) {
+    if (!ls->on_server_name) return NULL;
+    ls->on_server_name(ls, hostname);
+    node = (struct sni_node_t *)sni_find(ls->sni, hostname);
+  }
+  return node;
+}
+
+static int sni_cb(SSL *ssl, int *al, void *arg) {
+  (void)al; (void)arg;
+  if (!ssl || us_ssl_listener_ex_idx < 0) return SSL_TLSEXT_ERR_NOACK;
+  /* The listener is per-SSL (set at accept), not the CTX-level arg — the
+   * SSL_CTX is shared and may outlive any one listener. */
+  struct us_listen_socket_t *ls =
+      (struct us_listen_socket_t *)SSL_get_ex_data(ssl, us_ssl_listener_ex_idx);
+  if (!ls) return SSL_TLSEXT_ERR_OK;
+  const char *hostname = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
+  if (hostname && hostname[0]) {
+    struct sni_node_t *node = resolve_listener_ctx(ls, hostname);
+    if (node) SSL_set_SSL_CTX(ssl, node->ctx);
+  }
+  return SSL_TLSEXT_ERR_OK;
+}
+
+int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
+                                     const char *hostname_pattern,
+                                     SSL_CTX *ctx, void *user) {
+  SSL_CTX *default_ctx = ls->ssl_ctx;
+  if (!default_ctx) return -1;
+
+  if (!ls->sni) {
+    ls->sni = sni_new();
+    /* Idempotent across listeners sharing this SSL_CTX — the callback reads
+     * the listener off the SSL, not the arg. */
+    SSL_CTX_set_tlsext_servername_callback(default_ctx, sni_cb);
   }
 
-  struct us_socket_context_t *old_context = us_socket_context(0, s);
-  us_socket_context_ref(0,old_context);
+  struct sni_node_t *node = us_malloc(sizeof(struct sni_node_t));
+  node->ctx = ctx;
+  node->user = user;
+  SSL_CTX_up_ref(ctx);
+  /* Stash userdata on the SSL_CTX too so per-socket lookup via
+   * SSL_get_SSL_CTX works regardless of which ctx the SNI cb selected. */
+  us_ex_idx_ensure();
+  SSL_CTX_set_ex_data(ctx, us_sni_ex_idx, user);
 
-  enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
-  struct us_socket_context_t *context = us_create_bun_ssl_socket_context(
-      old_context->loop, sizeof(struct us_wrapped_socket_context_t),
-      options, &err);
-
-  // Handle SSL context creation failure
-  if (UNLIKELY(!context)) {
-    return NULL;
+  if (sni_add(ls->sni, hostname_pattern, node)) {
+    /* Duplicate hostname — propagate so App.h's `if (result != 0)` rollback
+     * (which frees the per-domain HttpRouter it just built) actually fires. */
+    sni_node_destructor(node);
+    return 1;
   }
+  return 0;
+}
 
-  struct us_internal_ssl_socket_context_t *tls_context =
-      (struct us_internal_ssl_socket_context_t *)context;
+void us_listen_socket_remove_server_name(struct us_listen_socket_t *ls,
+                                         const char *hostname_pattern) {
+  if (!ls->sni) return;
+  struct sni_node_t *node = (struct sni_node_t *)sni_remove(ls->sni, hostname_pattern);
+  sni_node_destructor(node);
+}
 
-  struct us_wrapped_socket_context_t *wrapped_context =
-      (struct us_wrapped_socket_context_t *)us_internal_ssl_socket_context_ext(
-          tls_context);
-  // we need to fire this events on the old context
-  struct us_socket_events_t old_events = (struct us_socket_events_t){
-      .on_close = old_context->on_close,
-      .on_data = old_context->on_data,
-      .on_writable = old_context->on_writable,
-      .on_timeout = old_context->on_socket_timeout,
-      .on_long_timeout = old_context->on_socket_long_timeout,
-      .on_end = old_context->on_end,
-      .on_connect_error = old_context->on_connect_error,
-  };
-  wrapped_context->old_events = old_events;
-  wrapped_context->events = events;
-  wrapped_context->tcp_context = old_context;
+void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
+                                                 const char *hostname_pattern) {
+  if (!ls->sni) return NULL;
+  struct sni_node_t *node = (struct sni_node_t *)sni_find(ls->sni, hostname_pattern);
+  return node ? node->user : NULL;
+}
 
-  // no need to wrap open because socket is already open (only new context will
-  // be called so we can configure hostname and ssl stuff normally here before
-  // handshake)
-  tls_context->on_open =
-      (struct us_internal_ssl_socket_t *
-       (*)(struct us_internal_ssl_socket_t *, int, char *, int)) events.on_open;
+void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
+                                     void (*cb)(struct us_listen_socket_t *, const char *)) {
+  ls->on_server_name = cb;
+}
 
-  // on handshake is not available on the old context so we just add this
-  if (events.on_handshake) {
-    us_internal_on_ssl_handshake(
-        tls_context,
-        (void (*)(struct us_internal_ssl_socket_t *, int,
-                  struct us_bun_verify_error_t, void *))events.on_handshake,
-        NULL);
+void *us_socket_server_name_userdata(struct us_socket_t *s) {
+  if (!s->ssl || !s_ssl(s) || us_sni_ex_idx < 0) return NULL;
+  return SSL_CTX_get_ex_data(SSL_get_SSL_CTX(s_ssl(s)), us_sni_ex_idx);
+}
+
+void *us_internal_ssl_sni_userdata(struct us_socket_t *s) {
+  return us_socket_server_name_userdata(s);
+}
+
+void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls) {
+  /* Accepted sockets carry `ls` in per-SSL ex_data so sni_cb can reach the
+   * listener's SNI tree. Those sockets may outlive the listener (server.close()
+   * keeps existing connections per Node semantics), so wipe the back-ref now —
+   * sni_cb returns OK on NULL. Walk only sockets accepted INTO this listener's
+   * group; uWS apps with multiple listeners on one group are scoped by the
+   * `== ls` check. */
+  if (us_ssl_listener_ex_idx >= 0 && ls->accept_group) {
+    for (struct us_socket_t *s = ls->accept_group->head_sockets; s; s = s->next) {
+      if (s->ssl && SSL_get_ex_data((SSL *)s->ssl, us_ssl_listener_ex_idx) == ls) {
+        SSL_set_ex_data((SSL *)s->ssl, us_ssl_listener_ex_idx, NULL);
+      }
+    }
+    /* Mid-handshake sockets (SSL_in_init → low_prio) are *unlinked* from
+     * head_sockets while parked in loop->data.low_prio_head, and they're
+     * exactly the population that will run sni_cb on the next tick. Miss them
+     * here and sni_cb dereferences `ls` after it's freed. Same group-filter as
+     * close_all's drain. */
+    for (struct us_socket_t *s = ls->accept_group->loop->data.low_prio_head; s; s = s->next) {
+      if (s->group == ls->accept_group && s->ssl &&
+          SSL_get_ex_data((SSL *)s->ssl, us_ssl_listener_ex_idx) == ls) {
+        SSL_set_ex_data((SSL *)s->ssl, us_ssl_listener_ex_idx, NULL);
+      }
+    }
   }
-
-  // we need to wrap these events because we need to call the old context events
-  // as well
-  us_socket_context_on_connect_error(
-      0, context,
-      (struct us_connecting_socket_t * (*)(struct us_connecting_socket_t *, int))
-          ssl_wrapped_on_connect_error);
-us_socket_context_on_socket_connect_error(
-      0, context,
-      (struct us_socket_t * (*)(struct us_socket_t *, int))
-          ssl_wrapped_on_socket_connect_error);
-  us_socket_context_on_end(0, context,
-                           (struct us_socket_t * (*)(struct us_socket_t *))
-                               ssl_wrapped_context_on_end);
-  us_socket_context_on_long_timeout(
-      0, context,
-      (struct us_socket_t * (*)(struct us_socket_t *))
-          ssl_wrapped_context_on_long_timeout);
-  us_socket_context_on_timeout(0, context,
-                               (struct us_socket_t * (*)(struct us_socket_t *))
-                                   ssl_wrapped_context_on_timeout);
-
-  // special case this will be called after ssl things are done
-
-  // called from ssl_on_data handler is called inside
-  // ssl_wrapped_context_on_data
-  tls_context->on_data =
-      (struct us_internal_ssl_socket_t *
-       (*)(struct us_internal_ssl_socket_t *, char *, int)) events.on_data;
-  us_socket_context_on_data(
-      0, context,
-      (struct us_socket_t * (*)(struct us_socket_t *, char *, int))
-          ssl_wrapped_context_on_data);
-
-  // here is the inverse of the above ssl_on_writable will call
-  // ssl_wrapped_context_on_writable
-  tls_context->on_writable = ssl_wrapped_context_on_writable;
-  us_socket_context_on_writable(0, context,
-                                (struct us_socket_t * (*)(struct us_socket_t *))
-                                    ssl_on_writable);
-
-  tls_context->on_close = ssl_wrapped_context_on_close;
-  us_socket_context_on_close(
-      0, context,
-      (struct us_socket_t * (*)(struct us_socket_t *, int, void *))
-          ssl_on_close);
-
-  // will resize to tls + ext size
-  struct us_internal_ssl_socket_t *socket =
-      (struct us_internal_ssl_socket_t *)us_socket_context_adopt_socket(
-          0, context, s,
-          old_socket_ext_size,
-          sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
-              socket_ext_size);
-  socket->ssl = NULL;
-  socket->ssl_write_wants_read = 0;
-  socket->ssl_read_wants_write = 0;
-  socket->fatal_error = 0;
-  socket->handshake_state = HANDSHAKE_PENDING;
-  // always resume the socket
-  us_socket_resume(1, &socket->s);
-  return socket;
+  if (ls->ssl_ctx) {
+    us_internal_ssl_ctx_unref(ls->ssl_ctx);
+    ls->ssl_ctx = NULL;
+  }
+  if (ls->sni) {
+    sni_free(ls->sni, sni_node_destructor);
+    ls->sni = NULL;
+  }
 }
 
 #endif

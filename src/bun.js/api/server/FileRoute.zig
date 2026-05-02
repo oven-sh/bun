@@ -114,10 +114,12 @@ fn writeHeaders(this: *FileRoute, resp: AnyResponse) void {
     const buf = this.headers.buf.items;
 
     switch (resp) {
-        inline .SSL, .TCP => |s| {
+        inline else => |s, tag| {
             for (names, values) |name, value| {
                 s.writeHeader(name.slice(buf), value.slice(buf));
             }
+            if (comptime tag != .H3) if (this.server) |srv| if (srv.h3AltSvc()) |alt|
+                s.writeHeader("alt-svc", alt);
         },
     }
 
@@ -136,20 +138,24 @@ fn writeStatusCode(_: *FileRoute, status: u16, resp: AnyResponse) void {
     switch (resp) {
         .SSL => |r| writeStatus(true, r, status),
         .TCP => |r| writeStatus(false, r, status),
+        .H3 => |r| {
+            var b: [16]u8 = undefined;
+            r.writeStatus(std.fmt.bufPrint(&b, "{d}", .{status}) catch unreachable);
+        },
     }
 }
 
-pub fn onHEADRequest(this: *FileRoute, req: *uws.Request, resp: AnyResponse) void {
+pub fn onHEADRequest(this: *FileRoute, req: uws.AnyRequest, resp: AnyResponse) void {
     bun.debugAssert(this.server != null);
 
     this.on(req, resp, .HEAD);
 }
 
-pub fn onRequest(this: *FileRoute, req: *uws.Request, resp: AnyResponse) void {
+pub fn onRequest(this: *FileRoute, req: uws.AnyRequest, resp: AnyResponse) void {
     this.on(req, resp, bun.http.Method.find(req.method()) orelse .GET);
 }
 
-pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.http.Method) void {
+pub fn on(this: *FileRoute, req: uws.AnyRequest, resp: AnyResponse, method: bun.http.Method) void {
     bun.debugAssert(this.server != null);
     this.ref();
     if (this.server) |server| {

@@ -164,6 +164,7 @@ pub const FilePoll = struct {
     const Request = bun.api.dns.internal.Request;
     const LifecycleScriptSubprocessOutputReader = bun.install.LifecycleScriptSubprocess.OutputReader;
     const BufferedReader = bun.io.BufferedReader;
+    const ParentDeathWatchdog = bun.ParentDeathWatchdog;
 
     pub const Owner = bun.TaggedPointerUnion(.{
         FileSink,
@@ -192,6 +193,7 @@ pub const FilePoll = struct {
         Process,
         ShellBufferedWriter, // i do not know why, but this has to be here otherwise compiler will complain about dependency loop
         TerminalPoll,
+        ParentDeathWatchdog,
     });
 
     pub const AllocatorType = enum {
@@ -433,6 +435,11 @@ pub const FilePoll = struct {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {f}) Terminal", .{poll.fd});
                 var handler: *TerminalPoll = ptr.as(TerminalPoll);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
+            },
+            @field(Owner.Tag, @typeName(ParentDeathWatchdog)) => {
+                if (comptime !Environment.isMac) unreachable;
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {f}) ParentDeathWatchdog", .{poll.fd});
+                ptr.as(ParentDeathWatchdog).onParentExit();
             },
             else => {
                 const possible_name = Owner.typeNameFromTag(@intFromEnum(ptr.tag()));
@@ -826,13 +833,25 @@ pub const FilePoll = struct {
         if (comptime Environment.isLinux) {
             const one_shot_flag: u32 = if (!this.flags.contains(.one_shot)) 0 else linux.EPOLL.ONESHOT;
 
-            const flags: u32 = switch (flag) {
+            var flags: u32 = switch (flag) {
                 .process,
                 .readable,
                 => linux.EPOLL.IN | linux.EPOLL.HUP | one_shot_flag,
                 .writable => linux.EPOLL.OUT | linux.EPOLL.HUP | linux.EPOLL.ERR | one_shot_flag,
                 else => unreachable,
             };
+            // epoll keys on fd alone; if the other direction is already
+            // registered on this poll, preserve it in the CTL_MOD mask.
+            // (EPOLLONESHOT disarms the whole fd after the first event in
+            // either direction, so bidirectional one-shot is not supported.)
+            if (flag == .readable and this.flags.contains(.poll_writable)) {
+                bun.debugAssert(!this.flags.contains(.one_shot));
+                flags |= linux.EPOLL.OUT | linux.EPOLL.ERR;
+            }
+            if (flag == .writable and this.flags.contains(.poll_readable)) {
+                bun.debugAssert(!this.flags.contains(.one_shot));
+                flags |= linux.EPOLL.IN;
+            }
 
             var event = linux.epoll_event{ .events = flags, .data = .{ .u64 = @intFromPtr(Pollable.init(this).ptr()) } };
 
@@ -929,8 +948,9 @@ pub const FilePoll = struct {
             // If an error occurs while
             // processing an element of the changelist and there is enough room
             // in the eventlist, then the event will be placed in the eventlist
-            // with EV_ERROR set in flags and the system error in data.
-            if (changelist[0].flags == std.c.EV.ERROR and changelist[0].data != 0) {
+            // with EV_ERROR set in flags and the system error in data. xnu ORs
+            // EV_ERROR into the existing action bits, so test the bit.
+            if ((changelist[0].flags & std.c.EV.ERROR) != 0 and changelist[0].data != 0) {
                 return bun.sys.Maybe(void).errnoSys(changelist[0].data, .kevent).?;
                 // Otherwise, -1 will be returned, and errno will be set to
                 // indicate the error condition.
@@ -1042,6 +1062,7 @@ pub const FilePoll = struct {
 
         bun.assert(fd != invalid_fd);
         const watcher_fd = loop.fd;
+        const both_directions = this.flags.contains(.poll_readable) and this.flags.contains(.poll_writable);
         const flag: Flags = brk: {
             if (this.flags.contains(.poll_readable))
                 break :brk .readable;
@@ -1059,14 +1080,15 @@ pub const FilePoll = struct {
             log("unregister: {s} ({f}) skipped due to needs_rearm", .{ @tagName(flag), fd });
             this.flags.remove(.poll_process);
             this.flags.remove(.poll_readable);
-            this.flags.remove(.poll_process);
+            this.flags.remove(.poll_writable);
             this.flags.remove(.poll_machport);
             return .success;
         }
 
-        log("unregister: FilePoll(0x{x}, generation_number={d}) {s} ({f})", .{ @intFromPtr(this), this.generation_number, @tagName(flag), fd });
+        log("unregister: FilePoll(0x{x}, generation_number={d}) {s}{s} ({f})", .{ @intFromPtr(this), this.generation_number, @tagName(flag), if (both_directions) "+writable" else "", fd });
 
         if (comptime Environment.isLinux) {
+            // CTL_DEL keys on fd alone, so both directions are removed together.
             const ctl = linux.epoll_ctl(
                 watcher_fd,
                 linux.EPOLL.CTL_DEL,
@@ -1120,6 +1142,21 @@ pub const FilePoll = struct {
                 else => unreachable,
             };
 
+            var nchanges: c_int = 1;
+            if (both_directions) {
+                // kqueue keys on (fd, filter); delete EVFILT_WRITE as a second change.
+                changelist[1] = .{
+                    .ident = @intCast(fd.cast()),
+                    .filter = std.posix.system.EVFILT.WRITE,
+                    .data = 0,
+                    .fflags = 0,
+                    .udata = @intFromPtr(Pollable.init(this).ptr()),
+                    .flags = std.c.EV.DELETE,
+                    .ext = .{ 0, 0 },
+                };
+                nchanges = 2;
+            }
+
             // output events only include change errors
             const KEVENT_FLAG_ERROR_EVENTS = 0x000002;
 
@@ -1129,30 +1166,38 @@ pub const FilePoll = struct {
             const rc = std.posix.system.kevent64(
                 watcher_fd,
                 &changelist,
-                1,
+                nchanges,
                 // The same array may be used for the changelist and eventlist.
                 &changelist,
-                1,
+                nchanges,
                 KEVENT_FLAG_ERROR_EVENTS,
                 &timeout,
             );
-            // If an error occurs while
-            // processing an element of the changelist and there is enough room
-            // in the eventlist, then the event will be placed in the eventlist
-            // with EV_ERROR set in flags and the system error in data.
-            if (changelist[0].flags == std.c.EV.ERROR) {
-                return bun.sys.Maybe(void).errnoSys(changelist[0].data, .kevent).?;
-                // Otherwise, -1 will be returned, and errno will be set to
-                // indicate the error condition.
-            }
 
             const errno = bun.sys.getErrno(rc);
             switch (rc) {
+                // Global failure (e.g. EBADF on the kqueue fd): the eventlist
+                // was not written, so per-entry checks below would read our
+                // own input. Report errno and stop.
                 std.math.minInt(@TypeOf(rc))...-1 => return bun.sys.Maybe(void).errnoSys(@intFromEnum(errno), .kevent).?,
                 else => {},
             }
+
+            // If an error occurs while processing an element of the changelist
+            // and there is enough room in the eventlist, then the event will be
+            // placed in the eventlist with EV_ERROR set in flags and the system
+            // error in data. With KEVENT_FLAG_ERROR_EVENTS, rc is the count of
+            // such error events; they are packed from index 0 regardless of
+            // which change failed. xnu ORs EV_ERROR into the existing action
+            // bits (EV_DELETE|EV_ERROR = 0x4002), so test the bit, not equality.
+            if (rc >= 1 and (changelist[0].flags & std.c.EV.ERROR) != 0 and changelist[0].data != 0) {
+                return bun.sys.Maybe(void).errnoSys(changelist[0].data, .kevent).?;
+            }
+            if (rc >= 2 and (changelist[1].flags & std.c.EV.ERROR) != 0 and changelist[1].data != 0) {
+                return bun.sys.Maybe(void).errnoSys(changelist[1].data, .kevent).?;
+            }
         } else if (comptime Environment.isFreeBSD) {
-            var changelist = std.mem.zeroes([1]std.c.Kevent);
+            var changelist = std.mem.zeroes([2]std.c.Kevent);
             changelist[0] = switch (flag) {
                 .readable => .{
                     .ident = @intCast(fd.cast()),
@@ -1182,10 +1227,26 @@ pub const FilePoll = struct {
                 else => unreachable,
             };
 
+            var nchanges: c_int = 1;
+            if (both_directions) {
+                changelist[1] = .{
+                    .ident = @intCast(fd.cast()),
+                    .filter = std.c.EVFILT.WRITE,
+                    .data = 0,
+                    .fflags = 0,
+                    .udata = @intFromPtr(Pollable.init(this).ptr()),
+                    .flags = std.c.EV.DELETE,
+                };
+                nchanges = 2;
+            }
+
+            // nevents=0: per-entry errors surface as rc=-1/errno for the
+            // first failing change. For EV_DELETE (typically ENOENT) a silent
+            // miss on the second entry is harmless.
             const rc = std.c.kevent(
                 watcher_fd,
                 &changelist,
-                1,
+                nchanges,
                 @constCast(&changelist),
                 0,
                 null,
@@ -1199,8 +1260,6 @@ pub const FilePoll = struct {
 
         this.flags.remove(.needs_rearm);
         this.flags.remove(.one_shot);
-        // we don't support both right now
-        bun.assert(!(this.flags.contains(.poll_readable) and this.flags.contains(.poll_writable)));
         this.flags.remove(.poll_readable);
         this.flags.remove(.poll_writable);
         this.flags.remove(.poll_process);

@@ -33,7 +33,9 @@ options_buf: []const u8 = "",
 
 authentication_state: AuthenticationState = .{ .pending = {} },
 
-tls_ctx: ?*uws.SocketContext = null,
+/// `us_ssl_ctx_t` built from `tls_config` at construct time. Applied via
+/// `us_socket_adopt_tls` when the server replies `S` to the SSLRequest.
+secure: ?*uws.SslCtx = null,
 tls_config: jsc.API.ServerConfig.SSLConfig = .{},
 tls_status: TLSStatus = .none,
 ssl_mode: SSLMode = .disable,
@@ -170,18 +172,22 @@ pub fn setOnClose(_: *PostgresSQLConnection, thisValue: jsc.JSValue, globalObjec
 
 pub fn setupTLS(this: *PostgresSQLConnection) void {
     debug("setupTLS", .{});
-    const new_socket = this.socket.SocketTCP.socket.connected.upgrade(this.tls_ctx.?, this.tls_config.server_name) orelse {
+    const tls_group = this.vm.rareData().postgresGroup(this.vm, true);
+    const new_socket = this.socket.SocketTCP.socket.connected.adoptTLS(
+        tls_group,
+        .postgres_tls,
+        this.secure.?,
+        this.tls_config.server_name,
+        @sizeOf(?*PostgresSQLConnection),
+        @sizeOf(?*PostgresSQLConnection),
+    ) orelse {
         this.fail("Failed to upgrade to TLS", error.TLSUpgradeFailed);
         return;
     };
-    this.socket = .{
-        .SocketTLS = .{
-            .socket = .{
-                .connected = new_socket,
-            },
-        },
-    };
-
+    new_socket.ext(?*PostgresSQLConnection).* = this;
+    this.socket = .{ .SocketTLS = .{ .socket = .{ .connected = new_socket } } };
+    // ext is now repointed; safe to kick the handshake (any dispatch lands here).
+    new_socket.startTLSHandshake();
     this.start();
 }
 fn setupMaxLifetimeTimerIfNecessary(this: *PostgresSQLConnection) void {
@@ -239,7 +245,17 @@ pub fn hasPendingActivity(this: *PostgresSQLConnection) bool {
 
 fn updateHasPendingActivity(this: *PostgresSQLConnection) void {
     const a: u32 = if (this.requests.readableLength() > 0) 1 else 0;
-    const b: u32 = if (this.status != .disconnected) 1 else 0;
+    const b: u32 = switch (this.status) {
+        // Terminal states: nothing more will happen on this connection, so
+        // allow GC to collect the JS wrapper (and ultimately call deinit()).
+        // We must still outlive the socket's onClose callback — for SSL
+        // sockets `close(.normal)` defers the actual close until the peer's
+        // close_notify arrives, so the struct must stay alive until then.
+        // The socket's onClose re-enters here (via failWithJSValue's defer)
+        // with isClosed() == true, at which point GC can proceed.
+        .disconnected, .failed => @intFromBool(!this.socket.isClosed()),
+        else => 1,
+    };
     this.pending_activity_count.store(a + b, .release);
 }
 
@@ -603,7 +619,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     const tls_object = arguments[6];
 
     var tls_config: jsc.API.ServerConfig.SSLConfig = .{};
-    var tls_ctx: ?*uws.SocketContext = null;
+    var secure: ?*uws.SslCtx = null;
     if (ssl_mode != .disable) {
         tls_config = if (tls_object.isBoolean() and tls_object.toBoolean())
             .{}
@@ -618,26 +634,24 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             return .zero;
         }
 
-        // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match.
-        // We create it right here so we can throw errors early.
-        const context_options = tls_config.asUSocketsForClientVerification();
+        // We always request the cert so we can verify it and also we manually
+        // abort the connection if the hostname doesn't match. Built here (not
+        // at STARTTLS time) so cert/CA errors throw synchronously. Goes
+        // through the per-VM weak `SSLContextCache` so every connection in the
+        // pool — and every reconnect — shares one `SSL_CTX*` per distinct
+        // config instead of building a fresh one per `PostgresSQLConnection`.
         var err: uws.create_bun_socket_error_t = .none;
-        tls_ctx = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*PostgresSQLConnection), context_options, &err) orelse {
-            if (err != .none) {
-                return globalObject.throw("failed to create TLS context", .{});
-            } else {
-                return globalObject.throwValue(err.toJS(globalObject));
-            }
-        };
-        if (err != .none) {
+        secure = vm.rareData().sslCtxCache().getOrCreateOpts(tls_config.asUSocketsForClientVerification(), &err) orelse {
             tls_config.deinit();
-            if (tls_ctx) |ctx| {
-                ctx.deinit(true);
-            }
             return globalObject.throwValue(err.toJS(globalObject));
-        }
-
-        uws.NewSocketHandler(true).configure(tls_ctx.?, true, *PostgresSQLConnection, SocketHandler(true));
+        };
+    }
+    // Covers `try arguments[7/8].toBunString()` and the null-byte rejection
+    // below. Ownership passes into `ptr.*` once allocated — locals are nulled
+    // there so the connect-fail path's `ptr.deinit()` is the sole cleanup.
+    errdefer {
+        if (secure) |s| bun.BoringSSL.c.SSL_CTX_free(s);
+        tls_config.deinit();
     }
 
     var username: []const u8 = "";
@@ -686,10 +700,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     inline for (.{ .{ username, "username" }, .{ password, "password" }, .{ database, "database" }, .{ path, "path" } }) |entry| {
         if (entry[0].len > 0 and std.mem.indexOfScalar(u8, entry[0], 0) != null) {
             bun.default_allocator.free(options_buf);
-            tls_config.deinit();
-            if (tls_ctx) |tls| {
-                tls.deinit(true);
-            }
+            // tls_config / secure released by the errdefer above.
             return globalObject.throwInvalidArguments(entry[1] ++ " must not contain null bytes", .{});
         }
     }
@@ -716,7 +727,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         .requests = PostgresRequest.Queue.init(bun.default_allocator),
         .statements = PreparedStatementsMap{},
         .tls_config = tls_config,
-        .tls_ctx = tls_ctx,
+        .secure = secure,
         .ssl_mode = ssl_mode,
         .tls_status = if (ssl_mode != .disable) .pending else .none,
         .idle_timeout_interval_ms = @intCast(idle_timeout),
@@ -726,41 +737,27 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             .use_unnamed_prepared_statements = use_unnamed_prepared_statements,
         },
     };
+    // Ownership transferred into `ptr`; disarm the errdefer.
+    secure = null;
+    tls_config = .{};
 
     {
         const hostname = hostname_str.toUTF8(bun.default_allocator);
         defer hostname.deinit();
 
-        const ctx = vm.rareData().postgresql_context.tcp orelse brk: {
-            const ctx_ = uws.SocketContext.createNoSSLContext(vm.uwsLoop(), @sizeOf(*PostgresSQLConnection)).?;
-            uws.NewSocketHandler(false).configure(ctx_, true, *PostgresSQLConnection, SocketHandler(false));
-            vm.rareData().postgresql_context.tcp = ctx_;
-            break :brk ctx_;
-        };
+        // Postgres always opens plain TCP first (SSLRequest happens in-band),
+        // so even `ssl_mode != .disable` lands in the TCP group; `setupTLS()`
+        // adopts into `postgres_tls_group` after the server's `S`.
+        const group = vm.rareData().postgresGroup(vm, false);
+        const result = if (path.len > 0)
+            uws.SocketTCP.connectUnixGroup(group, .postgres, null, path, ptr, false)
+        else
+            uws.SocketTCP.connectGroup(group, .postgres, null, hostname.slice(), port, ptr, false);
 
-        if (path.len > 0) {
-            ptr.socket = .{
-                .SocketTCP = uws.SocketTCP.connectUnixAnon(path, ctx, ptr, false) catch |err| {
-                    tls_config.deinit();
-                    if (tls_ctx) |tls| {
-                        tls.deinit(true);
-                    }
-                    ptr.deinit();
-                    return globalObject.throwError(err, "failed to connect to postgresql");
-                },
-            };
-        } else {
-            ptr.socket = .{
-                .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
-                    tls_config.deinit();
-                    if (tls_ctx) |tls| {
-                        tls.deinit(true);
-                    }
-                    ptr.deinit();
-                    return globalObject.throwError(err, "failed to connect to postgresql");
-                },
-            };
-        }
+        ptr.socket = .{ .SocketTCP = result catch |err| {
+            ptr.deinit();
+            return globalObject.throwError(err, "failed to connect to postgresql");
+        } };
     }
 
     // only call toJS if connectUnixAnon does not fail immediately
@@ -776,7 +773,9 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     return js_value;
 }
 
-fn SocketHandler(comptime ssl: bool) type {
+/// Referenced by `dispatch.zig` (kind = `.postgres[_tls]`). Now the only
+/// caller — `configure()` is gone.
+pub fn SocketHandler(comptime ssl: bool) type {
     return struct {
         const SocketType = uws.NewSocketHandler(ssl);
         fn _socket(s: SocketType) Socket {
@@ -904,6 +903,7 @@ pub fn deinit(this: *@This()) void {
         stmt.deref();
     }
     this.statements.deinit(bun.default_allocator);
+    this.requests.deinit();
     this.write_buffer.deinit(bun.default_allocator);
     this.read_buffer.deinit(bun.default_allocator);
     this.backend_parameters.deinit();
@@ -911,6 +911,7 @@ pub fn deinit(this: *@This()) void {
     bun.freeSensitive(bun.default_allocator, this.options_buf);
 
     this.tls_config.deinit();
+    if (this.secure) |s| bun.BoringSSL.c.SSL_CTX_free(s);
     bun.default_allocator.destroy(this);
 }
 
@@ -1592,8 +1593,12 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
         .ParameterDescription => {
             var description: protocol.ParameterDescription = undefined;
             try description.decodeInternal(Context, reader);
+            errdefer bun.default_allocator.free(description.parameters);
             const request = this.current() orelse return error.ExpectedRequest;
             var statement = request.statement orelse return error.ExpectedStatement;
+            if (statement.parameters.len > 0) {
+                bun.default_allocator.free(statement.parameters);
+            }
             statement.parameters = description.parameters;
             if (statement.status == .parsing) {
                 statement.status = .prepared;
@@ -1606,6 +1611,22 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             errdefer description.deinit();
             const request = this.current() orelse return error.ExpectedRequest;
             var statement = request.statement orelse return error.ExpectedStatement;
+            // A simple-mode query containing multiple statements (e.g.
+            // "SELECT 1; SELECT a, b FROM t") receives one RowDescription per
+            // result set while the same statement stays current() until
+            // ReadyForQuery. Free any previous fields before overwriting and
+            // invalidate state derived from them so the next DataRow builds
+            // the correct structure instead of reusing a stale cached one.
+            if (statement.fields.len > 0) {
+                for (statement.fields) |*field| {
+                    field.deinit();
+                }
+                bun.default_allocator.free(statement.fields);
+                statement.cached_structure.deinit();
+                statement.cached_structure = .{};
+                statement.needs_duplicate_check = true;
+                statement.fields_flags = .{};
+            }
             statement.fields = description.fields;
         },
         .Authentication => {

@@ -2018,8 +2018,9 @@ extern "C" napi_status napi_create_buffer(napi_env env, size_t length,
 }
 
 // SharedTask subclass with an armed flag so that the destructor can be
-// armed only after JSUint8Array::create succeeds.  If creation throws,
-// the destructor runs disarmed and skips finalize_cb.
+// armed only after the wrapping JS object (JSUint8Array / JSArrayBuffer)
+// is successfully created. If creation throws, the destructor runs
+// disarmed and skips finalize_cb so the caller retains ownership.
 class NapiExternalBufferDestructor final : public SharedTask<void(void*)> {
 public:
     NapiExternalBufferDestructor(WTF::Ref<NapiEnv>&& env, napi_finalize cb, void* hint)
@@ -2054,6 +2055,13 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, result);
+    // Match Node.js: reject while a napi exception is pending before
+    // adopting data. NAPI_RETURN_IF_EXCEPTION below also consults
+    // hasPendingException(), so without this early return a stashed
+    // napi_throw* exception would pass the preamble, let createFromBytes
+    // adopt data, then bail after JSUint8Array::create succeeded but
+    // before arm(), orphaning a GC cell with a disarmed destructor.
+    NAPI_RETURN_EARLY_IF_FALSE(env, !env->hasPendingException(), napi_pending_exception);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
@@ -2099,16 +2107,33 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, result);
+    // Match Node.js: reject while a napi exception is pending before
+    // adopting external_data, so the caller cleanly retains ownership.
+    // Checking after JSArrayBuffer::create would orphan a GC cell that
+    // still points at external_data with a disarmed destructor.
+    NAPI_RETURN_EARLY_IF_FALSE(env, !env->hasPendingException(), napi_pending_exception);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
 
-    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(external_data), byte_length }, createSharedTask<void(void*)>([env = WTF::Ref<NapiEnv>(*env), finalize_hint, finalize_cb](void* p) {
-        NAPI_LOG("external ArrayBuffer finalizer");
-        env->doFinalizer(finalize_cb, p, finalize_hint);
-    }));
+    // Uses NapiExternalBufferDestructor instead of createSharedTask so that
+    // finalize_cb is only invoked once JSArrayBuffer::create has succeeded.
+    // Per the Node-API contract, the caller retains ownership of
+    // external_data when this function fails, so calling finalize_cb on a
+    // failure path would cause a double-free. JSArrayBuffer::create(vm, ...)
+    // currently asserts on OOM rather than throwing, so there is no
+    // reachable failure between createFromBytes and arm() today; the
+    // pattern is kept for parity with napi_create_external_buffer and to
+    // guard any future early return added in between.
+    Ref<NapiExternalBufferDestructor> destructor = adoptRef(*new NapiExternalBufferDestructor(WTF::Ref<NapiEnv>(*env), finalize_cb, finalize_hint));
+    // Get pointer before using WTF::move
+    auto* destructorPtr = destructor.ptr();
+    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(external_data), byte_length }, WTF::move(destructor));
 
     auto* buffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTF::move(arrayBuffer));
+    // Arm only after successful creation so that if a future change makes
+    // create() throw, the destructor runs disarmed and skips finalize_cb.
+    destructorPtr->arm();
 
     *result = toNapi(buffer, globalObject);
     NAPI_RETURN_SUCCESS(env);

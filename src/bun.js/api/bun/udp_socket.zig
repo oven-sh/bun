@@ -295,8 +295,12 @@ pub const UDPSocket = struct {
                 this.socket = null;
                 socket.close();
             }
-
-            // Do not deinit, rely on GC to free it.
+            // Release the strong reference so the JS wrapper can be garbage
+            // collected, which will in turn call finalize() to free this struct.
+            // Without this, failed config parsing or bind would leave the wrapper
+            // pinned forever by the Strong handle and leak. This is idempotent, so
+            // it is safe even if onClose() already downgraded via socket.close().
+            this.this_value.downgrade();
         }
         const thisValue = this.toJS(globalThis);
         thisValue.ensureStillAlive();
@@ -586,7 +590,8 @@ pub const UDPSocket = struct {
         }
 
         const ttl = try arguments[0].coerceToInt32(globalThis);
-        const res = function(this.socket.?, ttl);
+        const socket = this.socket orelse return globalThis.throw("Socket is closed", .{});
+        const res = function(socket, ttl);
 
         if (getUSError(res, .setsockopt, true)) |err| {
             return globalThis.throwValue(try err.toJS(globalThis));
@@ -609,12 +614,21 @@ pub const UDPSocket = struct {
             return globalThis.throwInvalidArgumentType("sendMany", "first argument", "array");
         }
 
+        // Cache the connection state before doing anything that can run user JS.
+        // Array index getters, `port.valueOf()`, and `address.toString()` can all
+        // call back into JS and connect/disconnect/close this socket. If we re-read
+        // `this.connect_info` on every iteration, a mid-loop flip changes how
+        // `slice_idx` is computed and which branch writes into `payloads`/`lens`/
+        // `addr_ptrs`, producing out-of-bounds writes (unconnected -> connected) or
+        // uninitialized slots (connected -> disconnected) in the arena buffers.
+        const connected = this.connect_info != null;
+
         const array_len = try arg.getLength(globalThis);
-        if (this.connect_info == null and array_len % 3 != 0) {
+        if (!connected and array_len % 3 != 0) {
             return globalThis.throwInvalidArguments("Expected 3 arguments for each packet", .{});
         }
 
-        const len = if (this.connect_info == null) array_len / 3 else array_len;
+        const len = if (connected) array_len else array_len / 3;
 
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
@@ -627,14 +641,14 @@ pub const UDPSocket = struct {
 
         var iter = try arg.arrayIterator(globalThis);
 
-        var i: u16 = 0;
+        var i: u32 = 0;
         var port: JSValue = .zero;
         while (try iter.next()) |val| : (i += 1) {
             if (i >= array_len) {
                 return globalThis.throwInvalidArguments("Mismatch between array length property and number of items", .{});
             }
-            const slice_idx = if (this.connect_info == null) i / 3 else i;
-            if (this.connect_info != null or i % 3 == 0) {
+            const slice_idx = if (connected) i else i / 3;
+            if (connected or i % 3 == 0) {
                 const slice = brk: {
                     if (val.asArrayBuffer(globalThis)) |arrayBuffer| {
                         break :brk arrayBuffer.slice();
@@ -647,7 +661,7 @@ pub const UDPSocket = struct {
                 payloads[slice_idx] = slice.ptr;
                 lens[slice_idx] = slice.len;
             }
-            if (this.connect_info != null) {
+            if (connected) {
                 addr_ptrs[slice_idx] = null;
                 continue;
             }
@@ -939,7 +953,8 @@ pub const UDPSocket = struct {
         const connect_port = connect_port_js.asInt32();
         const port: u16 = if (connect_port < 1 or connect_port > 0xffff) 0 else @as(u16, @intCast(connect_port));
 
-        if (this.socket.?.connect(connect_host, port) == -1) {
+        const socket = this.socket orelse return globalThis.throw("Socket is closed", .{});
+        if (socket.connect(connect_host, port) == -1) {
             return globalThis.throw("Failed to connect socket", .{});
         }
         this.connect_info = .{

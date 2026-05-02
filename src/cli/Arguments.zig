@@ -108,6 +108,8 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("-u, --origin <STR>") catch unreachable,
     clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
     clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
+    clap.parseParam("--experimental-http2-fetch        Offer h2 in fetch() TLS ALPN. Same as BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT=1") catch unreachable,
+    clap.parseParam("--experimental-http3-fetch        Honor Alt-Svc: h3 in fetch() and upgrade to HTTP/3. Same as BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT=1") catch unreachable,
     clap.parseParam("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB") catch unreachable,
     clap.parseParam("--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first") catch unreachable,
     clap.parseParam("--expose-gc                       Expose gc() on the global object. Has no effect on Bun.gc().") catch unreachable,
@@ -131,6 +133,7 @@ pub const runtime_params_ = [_]ParamType{
 pub const auto_or_run_params = [_]ParamType{
     clap.parseParam("-F, --filter <STR>...             Run a script in all workspace packages matching the pattern") catch unreachable,
     clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
+    clap.parseParam("--no-orphans                      Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only.") catch unreachable,
     clap.parseParam("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'") catch unreachable,
     clap.parseParam("--workspaces                      Run a script in all workspace packages (from the \"workspaces\" field in package.json)") catch unreachable,
     clap.parseParam("--parallel                        Run multiple scripts concurrently with Foreman-style output") catch unreachable,
@@ -221,6 +224,7 @@ pub const build_params = build_only_params ++ transpiler_params_ ++ base_params_
 
 // TODO: update test completions
 pub const test_only_params = [_]ParamType{
+    clap.parseParam("--no-orphans                     Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only.") catch unreachable,
     clap.parseParam("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
     clap.parseParam("-u, --update-snapshots           Update snapshot files") catch unreachable,
     clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
@@ -463,6 +467,13 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         };
     } else {
         cwd = try bun.getcwdAlloc(allocator);
+    }
+
+    // Not gated on .BunxCommand: bunx skips Arguments.parse entirely
+    // (uses_global_options=false). bunx picks up no-orphans via the
+    // BUN_FEATURE_FLAG_NO_ORPHANS env var in main()→install() instead.
+    if (cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand) {
+        if (args.flag("--no-orphans")) bun.ParentDeathWatchdog.enable();
     }
 
     if (cmd == .RunCommand or cmd == .AutoCommand) {
@@ -878,6 +889,8 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.runtime_options.if_present = args.flag("--if-present");
         ctx.runtime_options.smol = args.flag("--smol");
         ctx.runtime_options.preconnect = args.options("--fetch-preconnect");
+        ctx.runtime_options.experimental_http2_fetch = args.flag("--experimental-http2-fetch");
+        ctx.runtime_options.experimental_http3_fetch = args.flag("--experimental-http3-fetch");
         ctx.runtime_options.expose_gc = args.flag("--expose-gc");
 
         if (args.option("--console-depth")) |depth_str| {

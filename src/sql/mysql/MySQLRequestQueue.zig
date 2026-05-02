@@ -178,10 +178,20 @@ pub inline fn current(this: *const @This()) ?*JSMySQLQuery {
 }
 
 pub fn clean(this: *@This(), reason: ?JSValue, queries_array: JSValue) void {
-    while (this.current()) |request| {
+    // reject()/rejectWithJSValue() run JS which can synchronously call .close()
+    // (or otherwise fail the connection) and re-enter clean(). Swap the queue
+    // into a local first so the re-entrant call sees an empty queue instead of
+    // deref()'ing + discard()'ing the same requests out from under us.
+    var requests = this.#requests;
+    this.#requests = Queue.init(bun.default_allocator);
+    this.#pipelined_requests = 0;
+    this.#nonpipelinable_requests = 0;
+    this.#waiting_to_prepare = false;
+    defer requests.deinit();
+
+    while (requests.readItem()) |request| {
+        defer request.deref();
         if (request.isCompleted()) {
-            request.deref();
-            this.#requests.discard(1);
             continue;
         }
         if (reason) |r| {
@@ -189,13 +199,7 @@ pub fn clean(this: *@This(), reason: ?JSValue, queries_array: JSValue) void {
         } else {
             request.reject(queries_array, error.ConnectionClosed);
         }
-        this.#requests.discard(1);
-        request.deref();
-        continue;
     }
-    this.#pipelined_requests = 0;
-    this.#nonpipelinable_requests = 0;
-    this.#waiting_to_prepare = false;
 }
 
 pub fn deinit(this: *@This()) void {

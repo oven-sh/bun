@@ -66,6 +66,8 @@
 #include "GeneratedBunObject.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"
+#include "BunSecureContextCache.h"
+#include "ProcessIdentifier.h"
 #include "BunWorkerGlobalScope.h"
 #include "CallSite.h"
 #include "CallSitePrototype.h"
@@ -979,6 +981,18 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
 
 GlobalObject::~GlobalObject()
 {
+    // Break the Performance <-> PerformanceObserver reference cycle before the
+    // ScriptExecutionContext is torn down. Performance holds RefPtr<PerformanceObserver>
+    // in its registered-observer list and each PerformanceObserver holds RefPtr<Performance>,
+    // so neither is released unless the cycle is explicitly broken. WebKit does this from
+    // WorkerGlobalScope / LocalDOMWindow on removeAllEventListeners(); Bun has no equivalent
+    // hook, so this is the last point where the context is still fully alive. Doing it in
+    // Performance::contextDestroyed() instead is too late: dropping the last observer ref
+    // there cascades into ~ContextDestructionObserver() unregistering from the context while
+    // the context is already iterating observers in its own destructor.
+    if (m_performance)
+        m_performance->removeAllObservers();
+
     if (auto* ctx = scriptExecutionContext()) {
         ctx->removeFromContextsMap();
         ctx->deref();
@@ -2450,6 +2464,16 @@ void GlobalObject::finishCreation(VM& vm)
             init.setConstructor(constructor);
         });
 
+    m_JSH3ResponseSinkClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::H3ResponseSink);
+            auto* structure = JSH3ResponseSink::createStructure(init.vm, init.global, prototype);
+            auto* constructor = JSH3ResponseSinkConstructor::create(init.vm, init.global, JSH3ResponseSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
     m_JSBufferClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = WebCore::createBufferPrototype(init.vm, init.global);
@@ -3693,6 +3717,22 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__CronJob__onPromiseResolve;
     } else if (handler == Bun__CronJob__onPromiseReject) {
         return GlobalObject::PromiseFunctions::Bun__CronJob__onPromiseReject;
+    } else if (handler == Bun__HTTPRequestContextH3__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextH3__onReject;
+    } else if (handler == Bun__HTTPRequestContextH3__onRejectStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextH3__onRejectStream;
+    } else if (handler == Bun__HTTPRequestContextH3__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextH3__onResolve;
+    } else if (handler == Bun__HTTPRequestContextH3__onResolveStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextH3__onResolveStream;
+    } else if (handler == Bun__HTTPRequestContextDebugH3__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onReject;
+    } else if (handler == Bun__HTTPRequestContextDebugH3__onRejectStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onRejectStream;
+    } else if (handler == Bun__HTTPRequestContextDebugH3__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onResolve;
+    } else if (handler == Bun__HTTPRequestContextDebugH3__onResolveStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onResolveStream;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

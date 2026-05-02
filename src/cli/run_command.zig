@@ -822,6 +822,14 @@ pub const RunCommand = struct {
 
         this_transpiler.env.map.putDefault("npm_config_local_prefix", this_transpiler.fs.top_level_dir) catch unreachable;
 
+        // Propagate --no-orphans / [run] noOrphans to the script's env so any
+        // Bun process the script spawns enables its own watchdog. The env
+        // loader snapshots `environ` before flag parsing runs, so the
+        // `setenv()` in `enable()` isn't reflected here.
+        if (bun.ParentDeathWatchdog.isEnabled()) {
+            this_transpiler.env.map.put("BUN_FEATURE_FLAG_NO_ORPHANS", "1") catch unreachable;
+        }
+
         // we have no way of knowing what version they're expecting without running the node executable
         // running the node executable is too slow
         // so we will just hardcode it to LTS
@@ -1116,8 +1124,14 @@ pub const RunCommand = struct {
                             }
                         }
 
-                        if (strings.startsWith(key, "post") or strings.startsWith(key, "pre")) {
-                            continue :loop;
+                        // npm-style lifecycle hooks: a script named `pre<X>` or `post<X>` runs
+                        // automatically around `<X>`, so there's no reason to list it as a
+                        // completion target. But `prettier`, `prebuild`-with-no-`build`,
+                        // `postgres`, etc. are standalone scripts — keep them.
+                        if (strings.hasPrefixComptime(key, "pre")) {
+                            if (scripts.contains(key["pre".len..])) continue :loop;
+                        } else if (strings.hasPrefixComptime(key, "post")) {
+                            if (scripts.contains(key["post".len..])) continue :loop;
                         }
 
                         const entry_item = results.getOrPutAssumeCapacity(key);

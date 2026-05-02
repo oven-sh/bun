@@ -127,8 +127,11 @@ pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObje
 
     const Handler = NewReadFileHandler(Function);
 
+    // The callback may read context.content_type (e.g. toFormDataWithBytes),
+    // which is heap-owned by the source JS Blob and freed on finalize(). Take
+    // an owning dupe so the handler outliving the source can't dangle.
     var handler = bun.new(Handler, .{
-        .context = this.*,
+        .context = this.dupe(),
         .globalThis = global,
     });
 
@@ -514,7 +517,23 @@ fn _onStructuredCloneDeserialize(
     }
 
     bun.assertf(blob.isHeapAllocated(), "expected blob to be heap-allocated", .{});
-    blob.offset = @as(u52, @intCast(offset));
+
+    // `offset` comes from untrusted bytes. Clamp it so a crafted payload cannot
+    // make sharedView() slice past the end of the backing store (OOB heap read
+    // in ReleaseFast). For bytes stores this also keeps `size` within bounds;
+    // file/s3 stores report `max_size` here and are bounded by the filesystem
+    // read path instead.
+    blob.offset = @as(SizeType, @truncate(offset));
+    if (blob.store) |store| {
+        const store_size = store.size();
+        if (store_size != Blob.max_size) {
+            blob.offset = @min(blob.offset, store_size);
+            blob.size = @min(blob.size, store_size - blob.offset);
+        }
+    } else {
+        blob.offset = 0;
+    }
+
     if (content_type.len > 0) {
         blob.content_type = content_type;
         blob.content_type_allocated = true;
@@ -597,6 +616,15 @@ pub fn fromDOMFormData(
 
     form_data.forEach(FormDataContext, &context, FormDataContext.onEntry);
     if (context.failed) {
+        // The joiner's Node structs are owned by the arena (freed by the
+        // `defer arena.deinit()` above), but each node's data carries its own
+        // owner allocator — `bun.default_allocator` for non-ASCII name/value
+        // slices and the NodeFS readFile result buffer for file entries that
+        // succeeded before the failing one. Those owners are only invoked from
+        // `StringJoiner.done` (success path) or `StringJoiner.deinit`, so we
+        // must call deinit() here or every heap-owned slice already pushed is
+        // leaked.
+        context.joiner.deinit();
         return Blob.initEmpty(globalThis);
     }
 
@@ -606,7 +634,10 @@ pub fn fromDOMFormData(
 
     const store = Blob.Store.init(bun.handleOom(context.joiner.done(allocator)), allocator);
     var blob = Blob.initWithStore(store, globalThis);
-    blob.content_type = std.fmt.allocPrint(allocator, "multipart/form-data; boundary={s}", .{boundary}) catch |err| bun.handleOom(err);
+    // Always allocate content_type with the default allocator so deinit() can
+    // free it unconditionally; the only caller passes bun.default_allocator
+    // anyway, but don't rely on that.
+    blob.content_type = std.fmt.allocPrint(bun.default_allocator, "multipart/form-data; boundary={s}", .{boundary}) catch |err| bun.handleOom(err);
     blob.content_type_allocated = true;
     blob.content_type_was_set = true;
 
@@ -2258,11 +2289,12 @@ const S3BlobDownloadTask = struct {
     }
 
     pub fn init(globalThis: *jsc.JSGlobalObject, blob: *Blob, handler: S3BlobDownloadTask.S3ReadHandler) bun.JSTerminated!JSValue {
-        blob.store.?.ref();
-
+        // The callback may read this.blob.content_type (e.g. toFormDataWithBytes),
+        // which is heap-owned by the source JS Blob and freed on finalize(). Take
+        // an owning dupe so the task outliving the source can't dangle.
         const this = S3BlobDownloadTask.new(.{
             .globalThis = globalThis,
-            .blob = blob.*,
+            .blob = blob.dupe(),
             .promise = jsc.JSPromise.Strong.init(globalThis),
             .handler = handler,
         });
@@ -2288,7 +2320,7 @@ const S3BlobDownloadTask = struct {
     }
 
     pub fn deinit(this: *S3BlobDownloadTask) void {
-        this.blob.store.?.deref();
+        this.blob.deinit();
         this.poll_ref.unref(this.globalThis.bunVM());
         this.promise.deinit();
         bun.destroy(this);
@@ -2329,6 +2361,7 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
                 if (strings.isAllASCII(slice)) {
                     if (this.content_type_allocated) {
                         bun.default_allocator.free(this.content_type);
+                        this.content_type_allocated = false;
                     }
                     this.content_type_was_set = true;
 
@@ -2672,6 +2705,7 @@ pub fn getWriter(
                     if (strings.isAllASCII(slice)) {
                         if (this.content_type_allocated) {
                             bun.default_allocator.free(this.content_type);
+                            this.content_type_allocated = false;
                         }
                         this.content_type_was_set = true;
 
@@ -2841,6 +2875,12 @@ pub fn getSliceFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, relativeStart:
     var blob = this.dupe();
     blob.offset = offset;
     blob.size = len;
+
+    // dupe() deep-copies an allocated content_type; we're about to replace it,
+    // so release that copy first to avoid leaking it.
+    if (blob.content_type_allocated) {
+        bun.default_allocator.free(blob.content_type);
+    }
 
     // infer the content type if it was not specified
     if (content_type.len == 0 and this.content_type.len > 0 and !this.content_type_allocated) {
@@ -3523,27 +3563,19 @@ pub fn dupe(this: *const Blob) Blob {
 }
 
 pub fn dupeWithContentType(this: *const Blob, include_content_type: bool) Blob {
+    _ = include_content_type;
     if (this.store != null) this.store.?.ref();
     var duped = this.*;
     duped.setNotHeapAllocated();
-    if (duped.content_type_allocated and duped.isHeapAllocated() and !include_content_type) {
-
-        // for now, we just want to avoid a use-after-free here
-        if (jsc.VirtualMachine.get().mimeType(duped.content_type)) |mime| {
-            duped.content_type = mime.value;
-        } else {
-            // TODO: fix this
-            // this is a bug.
-            // it means whenever
-            duped.content_type = "";
-        }
-
-        duped.content_type_allocated = false;
-        duped.content_type_was_set = false;
-        if (this.content_type_was_set) {
-            duped.content_type_was_set = duped.content_type.len > 0;
-        }
-    } else if (duped.content_type_allocated and duped.isHeapAllocated() and include_content_type) {
+    // If the source's content_type is heap-allocated, the bitwise copy above aliases
+    // the same allocation with content_type_allocated == true. Take our own copy so
+    // that freeing one side does not leave the other with a dangling pointer.
+    //
+    // Historically the !include_content_type path tried to avoid this allocation by
+    // resolving to a static mime string and falling back to "" on a miss. That miss
+    // case drops user-supplied types with parameters (e.g. the multipart boundary for
+    // FormData bodies), so both paths now deep-copy and the parameter is ignored.
+    if (duped.content_type_allocated) {
         duped.content_type = bun.handleOom(bun.default_allocator.dupe(u8, this.content_type));
     }
     duped.name = duped.name.dupeRef();
@@ -3568,6 +3600,12 @@ pub fn deinit(this: *Blob) void {
     this.name.deref();
     this.name = .dead;
 
+    if (this.content_type_allocated) {
+        bun.default_allocator.free(this.content_type);
+        this.content_type = "";
+        this.content_type_allocated = false;
+    }
+
     if (this.isHeapAllocated()) {
         bun.destroy(this);
     }
@@ -3577,7 +3615,9 @@ pub fn sharedView(this: *const Blob) []const u8 {
     if (this.size == 0 or this.store == null) return "";
     var slice_ = this.store.?.sharedView();
     if (slice_.len == 0) return "";
-    slice_ = slice_[this.offset..];
+    // Defensive: `offset` may originate from untrusted structured-clone data.
+    // Never index past the store's actual length regardless of caller state.
+    slice_ = slice_[@min(@as(usize, this.offset), slice_.len)..];
 
     return slice_[0..@min(slice_.len, @as(usize, this.size))];
 }
@@ -4006,22 +4046,26 @@ fn fromJSWithoutDeferGC(
                 if (!fail_if_top_value_is_not_typed_array_like) {
                     if (top_value.as(Blob)) |blob| {
                         if (comptime move) {
+                            // Move the store without bumping its refcount, but take
+                            // independent ownership of name/content_type so the
+                            // source's eventual finalize() doesn't double-free them.
                             var _blob = blob.*;
                             _blob.setNotHeapAllocated();
+                            _blob.name = blob.name.dupeRef();
+                            if (blob.content_type_allocated) {
+                                _blob.content_type = bun.handleOom(bun.default_allocator.dupe(u8, blob.content_type));
+                            }
                             blob.transfer();
                             return _blob;
                         } else {
                             return blob.dupe();
                         }
                     } else if (top_value.as(jsc.API.BuildArtifact)) |build| {
-                        if (comptime move) {
-                            // I don't think this case should happen?
-                            var blob = build.blob;
-                            blob.transfer();
-                            return blob;
-                        } else {
-                            return build.blob.dupe();
-                        }
+                        // The previous "move" path here only nulled the store on a
+                        // local copy and left `build.blob` fully intact, so it was
+                        // never a real move. Share the store and deep-copy owned
+                        // buffers instead.
+                        return build.blob.dupe();
                     } else {
                         const sliced = try current.toSliceClone(global);
                         if (sliced.allocator.get()) |allocator| {

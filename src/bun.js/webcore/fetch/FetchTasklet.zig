@@ -749,6 +749,16 @@ pub const FetchTasklet = struct {
             return .{ .AbortReason = reason };
         }
 
+        // Fetch-spec "network error" cases that callers feature-detect via
+        // `instanceof TypeError`. Keep this list narrow; the catch-all
+        // SystemError below is still a plain Error for backwards compat.
+        switch (this.result.fail.?) {
+            error.RequestBodyNotReusable => return .{
+                .TypeError = bun.String.static("Request body is a ReadableStream and cannot be replayed for this redirect"),
+            },
+            else => {},
+        }
+
         // some times we don't have metadata so we also check http.url
         const path = if (this.metadata) |metadata|
             bun.String.cloneUTF8(metadata.url)
@@ -1166,6 +1176,9 @@ pub const FetchTasklet = struct {
         // enable streaming the write side
         const isStream = fetch_tasklet.request_body == .ReadableStream;
         fetch_tasklet.http.?.client.flags.is_streaming_request_body = isStream;
+        fetch_tasklet.http.?.client.flags.force_http2 = fetch_options.force_http2;
+        fetch_tasklet.http.?.client.flags.force_http3 = fetch_options.force_http3;
+        fetch_tasklet.http.?.client.flags.force_http1 = fetch_options.force_http1;
         fetch_tasklet.is_waiting_request_stream_start = isStream;
         if (isStream) {
             const buffer = http.ThreadSafeStreamBuffer.new(.{});
@@ -1209,6 +1222,16 @@ pub const FetchTasklet = struct {
             sink.cancel(reason);
             return;
         }
+        // Abort fired before the HTTP thread asked for the body, so the
+        // ReadableStream was never wired into a sink. Cancel it directly so
+        // the underlying source's cancel(reason) callback still observes the
+        // signal's reason (https://fetch.spec.whatwg.org/#abort-fetch step 5).
+        if (this.is_waiting_request_stream_start and this.request_body == .ReadableStream) {
+            this.is_waiting_request_stream_start = false;
+            if (this.request_body.ReadableStream.get(this.global_this)) |stream| {
+                stream.cancelWithReason(this.global_this, reason);
+            }
+        }
     }
 
     /// This is ALWAYS called from the http thread and we cannot touch the buffer here because is locked
@@ -1241,6 +1264,7 @@ pub const FetchTasklet = struct {
     /// set Content-Length without setting Transfer-Encoding.
     fn skipChunkedFraming(this: *const FetchTasklet) bool {
         return this.upgraded_connection or
+            this.result.is_http2 or
             (this.request_headers.get("content-length") != null and this.request_headers.get("transfer-encoding") == null);
     }
 
@@ -1343,6 +1367,9 @@ pub const FetchTasklet = struct {
         unix_socket_path: ZigString.Slice,
         ssl_config: ?SSLConfig.SharedPtr = null,
         upgraded_connection: bool = false,
+        force_http2: bool = false,
+        force_http3: bool = false,
+        force_http1: bool = false,
     };
 
     pub fn queue(

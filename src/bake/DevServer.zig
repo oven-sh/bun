@@ -593,14 +593,31 @@ pub fn deinit(dev: *DevServer) void {
         .ssr_transpiler = {},
         .vm = {},
 
-        // WebSockets should be deinitialized before other parts
+        // WebSockets should be deinitialized before other parts.
+        //
+        // `websocket.close()` synchronously dispatches `HmrSocket.onClose`,
+        // which calls `dev.active_websocket_connections.remove(s)` and
+        // destroys the `HmrSocket`. Iterating the map directly while calling
+        // `close()` would therefore mutate the map mid-iteration and free the
+        // pointer the iterator just yielded. Snapshot the keys first so that
+        // `onClose` is free to mutate the live map.
         .active_websocket_connections = {
-            var it = dev.active_websocket_connections.keyIterator();
-            while (it.next()) |item| {
-                const s: *HmrSocket = item.*;
-                if (s.underlying) |websocket|
-                    websocket.close();
+            const count = dev.active_websocket_connections.count();
+            if (count > 0) {
+                const sockets = bun.handleOom(alloc.alloc(*HmrSocket, count));
+                defer alloc.free(sockets);
+                {
+                    var it = dev.active_websocket_connections.keyIterator();
+                    var i: usize = 0;
+                    while (it.next()) |item| : (i += 1) sockets[i] = item.*;
+                    bun.assert(i == count);
+                }
+                for (sockets) |s| {
+                    if (s.underlying) |websocket|
+                        websocket.close();
+                }
             }
+            bun.debugAssert(dev.active_websocket_connections.count() == 0);
             dev.active_websocket_connections.deinit(alloc);
         },
 
@@ -905,7 +922,7 @@ fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
             .mime_type = &.json,
         });
         defer response.deref();
-        response.onRequest(req, resp);
+        response.onRequest(.{ .h1 = req }, resp);
         return;
     }
 
@@ -2041,6 +2058,14 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
 
     // Run tracing
     dev.client_graph.reset();
+    // `current_chunk_parts`/`current_chunk_len` are scratch buffers shared with
+    // the HMR pipeline. `startAsyncBundle` resets them and `finalizeBundle`
+    // expects them to still be empty when it begins appending hot-update
+    // chunks. Because `onJsRequest` can run between those two (the route is
+    // already `.loaded` so it does not go through `ensureRouteIsBundled`),
+    // we must leave the buffers cleared on every exit path so the next
+    // hot-update does not pick up the files we traced here.
+    defer dev.client_graph.reset();
     try dev.traceAllRouteImports(route_bundle, &gts, .find_client_modules);
 
     var react_fast_refresh_id: []const u8 = "";
@@ -3787,7 +3812,7 @@ pub fn onWebSocketUpgrade(
     dev: *DevServer,
     res: anytype,
     req: *Request,
-    upgrade_ctx: *uws.SocketContext,
+    upgrade_ctx: *uws.WebSocketUpgradeContext,
     id: usize,
 ) void {
     assert(id == 0);

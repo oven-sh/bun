@@ -6,9 +6,23 @@
  * the root is the pure-rust library (which we don't use directly).
  */
 
+import type { Config } from "../config.ts";
 import type { CargoBuild, Dependency } from "../source.ts";
 
 const LOLHTML_COMMIT = "77127cd2b8545998756e8d64e36ee2313c4bb312";
+
+/**
+ * -Zbuild-std requires an explicit --target even when host == target.
+ * Derive the Rust triple for the build target. Windows handled separately
+ * (buildStd is unix-only). Android sets rustTarget explicitly below.
+ */
+function rustTargetTriple(cfg: Config): string {
+  const arch = cfg.arm64 ? "aarch64" : "x86_64";
+  if (cfg.darwin) return `${arch}-apple-darwin`;
+  if (cfg.freebsd) return `${arch}-unknown-freebsd`;
+  if (cfg.abi === "musl") return `${arch}-unknown-linux-musl`;
+  return `${arch}-unknown-linux-gnu`;
+}
 
 export const lolhtml: Dependency = {
   name: "lolhtml",
@@ -51,15 +65,40 @@ export const lolhtml: Dependency = {
       spec.rustTarget = cfg.arm64 ? "aarch64-linux-android" : "x86_64-linux-android";
     }
 
-    // FreeBSD: x86_64 is Tier 2 (prebuilt std). aarch64 is Tier 3 — no
-    // prebuilt, so build std from source via -Zbuild-std (requires nightly
-    // + rust-src) whether cross-compiling or native. rustTarget is only
-    // set when crossTarget is set (native uses cargo's host triple).
-    if (cfg.freebsd) {
-      if (cfg.crossTarget !== undefined) {
-        spec.rustTarget = cfg.arm64 ? "aarch64-unknown-freebsd" : "x86_64-unknown-freebsd";
-      }
-      spec.buildStd = cfg.arm64;
+    // FreeBSD aarch64 is Tier 3 — no prebuilt std, so -Zbuild-std is
+    // required regardless of release/debug.
+    if (cfg.freebsd && cfg.arm64) {
+      spec.buildStd = true;
+    }
+
+    // -Cpanic=abort alone still links the *precompiled* std, whose
+    // __rust_start_panic prints a backtrace before aborting — pulling in
+    // gimli/addr2line/rustc_demangle/miniz_oxide (~230 KB). For release,
+    // rebuild std with -Cpanic=immediate-abort so panic is a bare abort().
+    // Requires nightly + rust-src; only enable where CI's Rust toolchain is
+    // known to have both and -Zbuild-std for the target is verified
+    // (linux-gnu, darwin, freebsd). musl/android keep the prebuilt-std
+    // -Cpanic=abort path.
+    const canBuildStdImmediateAbort =
+      cfg.darwin || cfg.freebsd || (cfg.linux && cfg.abi !== "musl" && cfg.abi !== "android");
+    if (cfg.release && canBuildStdImmediateAbort) {
+      spec.buildStd = true;
+      spec.rustflags = [
+        "-Zunstable-options",
+        "-Cpanic=immediate-abort",
+        "-Cdebuginfo=0",
+        "-Cforce-unwind-tables=no",
+        "-Copt-level=s",
+      ];
+    }
+
+    // -Zbuild-std and cross-compiles both need an explicit --target.
+    // Android/Windows set theirs above; ??= preserves those. For native
+    // non-buildStd builds (musl, debug gnu) leaving rustTarget unset is fine
+    // — cargo defaults to the host triple and source.ts uses the simpler
+    // output dir.
+    if (spec.buildStd || cfg.crossTarget !== undefined) {
+      spec.rustTarget ??= rustTargetTriple(cfg);
     }
 
     return spec;

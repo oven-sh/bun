@@ -44,8 +44,12 @@ public:
     JSC::JSValue getWriter(JSC::JSGlobalObject&);
 
 private:
+    // InternalWritableStream is exclusively owned by WritableStream, which
+    // is exclusively owned by JSWritableStream. Liveness of the guarded
+    // internal stream object is driven by JSWritableStream::visitChildren,
+    // not by the global object's m_guardedObjects set.
     InternalWritableStream(JSDOMGlobalObject& globalObject, JSC::JSObject& jsObject)
-        : DOMGuarded<JSC::JSObject>(globalObject, jsObject)
+        : DOMGuarded<JSC::JSObject>(globalObject, jsObject, DoNotRegisterWithGlobalObjectTag {})
     {
     }
 };

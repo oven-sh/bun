@@ -1,6 +1,6 @@
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
-import { tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isArm64, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 const impls = [
@@ -323,3 +323,118 @@ test("cp with missing callback throws", () => {
     fs.cp("a", "b" as any);
   }).toThrow(/"cb"/);
 });
+
+// On Windows, _copySingleFileSync's reparse-point branch opens a handle to the
+// source symlink to resolve its target via GetFinalPathNameByHandleW. Previously
+// that handle was never closed, leaking one OS handle per symlink copied. Over a
+// large tree (e.g. node_modules with junctions) this eventually exhausts the
+// process handle table. bun:ffi (TinyCC) is unavailable on Windows arm64.
+test.skipIf(!isWindows || isArm64)("cpSync over symlinks does not leak Windows handles", () => {
+  const { dlopen } = require("bun:ffi");
+  const k32 = dlopen("kernel32.dll", {
+    GetCurrentProcess: { args: [], returns: "ptr" },
+    GetProcessHandleCount: { args: ["ptr", "ptr"], returns: "i32" },
+  });
+  const out = new Uint32Array(1);
+  const handleCount = () => {
+    if (k32.symbols.GetProcessHandleCount(k32.symbols.GetCurrentProcess(), out) === 0) {
+      throw new Error("GetProcessHandleCount failed");
+    }
+    return out[0];
+  };
+
+  const N = 64;
+  const basename = tempDirWithFiles("cp-symlink-leak", {
+    "from/target.txt": "hello",
+  });
+  for (let i = 0; i < N; i++) {
+    fs.symlinkSync(join(basename, "from", "target.txt"), join(basename, "from", `link${i}.txt`));
+  }
+
+  // Warm up once so any lazy init (thread pool, path buffers, etc.) doesn't
+  // count against the measured delta.
+  fs.cpSync(join(basename, "from"), join(basename, "warmup"), { recursive: true });
+
+  const before = handleCount();
+  fs.cpSync(join(basename, "from"), join(basename, "result"), { recursive: true });
+  const after = handleCount();
+
+  // Without the fix every symlink leaks a handle, so `after - before` is >= N.
+  // With the fix the delta is ~0; allow generous slack for unrelated background
+  // activity while still catching a per-symlink leak.
+  expect(after - before).toBeLessThan(N / 2);
+});
+
+// On Windows the OS path buffer is 32768 wide chars, which is impractical to exceed
+// with on-disk directories, so this test targets POSIX where MAX_PATH_BYTES is small
+// enough to reach via relative mkdir + chdir.
+describe.skipIf(isWindows).each(["cp", "cpSync"] as const)(
+  "fs.%s recursive returns ENAMETOOLONG instead of overflowing path buffer",
+  which => {
+    test(which, async () => {
+      using dir = tempDir("cp-enametoolong", { s: {}, d: {} });
+      const base = String(dir);
+      const src = join(base, "s");
+      const dst = join(base, "d");
+
+      // Build a directory tree whose full path exceeds MAX_PATH_BYTES by creating each
+      // level with a short relative path from a shell; the kernel never sees the whole
+      // path so it never rejects it. We do this in /bin/sh rather than via process.chdir
+      // so the test process's cwd is unaffected.
+      //
+      // The same tree is mirrored under dst so that on macOS — where both cpSyncInner and
+      // _cpAsyncDirectory retry clonefile() at every recursion level — clonefile hits
+      // EEXIST at every level and falls through to the manual iteration path containing
+      // the bounds check (clonefile would otherwise clone the whole subtree at the vnode
+      // level without ever building interior path strings).
+      const seg = Buffer.alloc(200, "a").toString();
+      for (const root of [src, dst]) {
+        await using mktree = Bun.spawn({
+          cmd: [
+            "/bin/sh",
+            "-c",
+            `cd "$1" && i=0 && while [ $i -lt 64 ]; do mkdir "$2" && cd "$2" || exit 0; i=$((i+1)); done`,
+            "sh",
+            root,
+            seg,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        await mktree.exited;
+      }
+
+      // Run the cp in a subprocess: before the fix this corrupts the stack and segfaults.
+      const script = `
+        const fs = require("fs");
+        const src = ${JSON.stringify(src)};
+        const dst = ${JSON.stringify(dst)};
+        const done = e => {
+          if (e && e.code === "ENAMETOOLONG") {
+            console.log("ENAMETOOLONG");
+          } else if (e) {
+            console.log("ERR:" + (e.code || e.message));
+          } else {
+            console.log("OK");
+          }
+        };
+        if (${JSON.stringify(which)} === "cpSync") {
+          try { fs.cpSync(src, dst, { recursive: true }); done(); } catch (e) { done(e); }
+        } else {
+          fs.promises.cp(src, dst, { recursive: true }).then(() => done(), done);
+        }
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("ENAMETOOLONG");
+      expect(exitCode).toBe(0);
+    });
+  },
+);

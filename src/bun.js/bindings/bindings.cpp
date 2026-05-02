@@ -100,6 +100,7 @@
 
 #include <string_view>
 #include <bun-uws/src/App.h>
+#include <bun-uws/src/Http3Request.h>
 #include <bun-usockets/src/internal/internal.h>
 #include "IDLTypes.h"
 #include "JSDOMBinding.h"
@@ -2007,6 +2008,31 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
     headers->setInternalHeaders(WTF::move(map));
     return headers;
 }
+WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
+{
+    auto* req = reinterpret_cast<uWS::Http3Request*>(arg1);
+
+    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement();
+
+    HTTPHeaderMap map = HTTPHeaderMap();
+    req->forEachHeader([&](std::string_view name, std::string_view val) {
+        StringView nameView = StringView(std::span { reinterpret_cast<const Latin1Character*>(name.data()), name.length() });
+        std::span<Latin1Character> data;
+        auto value = String::createUninitialized(val.length(), data);
+        if (val.length() > 0)
+            memcpy(data.data(), val.data(), val.length());
+
+        HTTPHeaderName hn;
+        if (WebCore::findHTTPHeaderName(nameView, hn)) {
+            map.add(hn, WTF::move(value));
+        } else {
+            map.setUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
+        }
+    });
+    headers->setInternalHeaders(WTF::move(map));
+    return headers;
+}
 void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0)
 {
     arg0->deref();
@@ -2246,10 +2272,11 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         for (unsigned hops = 0; p && hops < 32; hops++) {
             if (p->status() != JSC::JSPromise::Status::Pending)
                 return nullptr;
+            JSC::JSValue reactionsValue = p->reactionsOrResult();
             JSC::JSPromiseReaction* reaction = nullptr;
-            if (!dynamicCastValue(p->reactionsOrResult(), &reaction))
+            if (!dynamicCastValue(reactionsValue, &reaction))
                 return nullptr;
-            JSC::JSValue context = reaction->context();
+            JSC::JSValue context = JSC::JSPromiseReaction::tryGetContext(reactionsValue);
             JSC::InternalFieldTuple* tuple = nullptr;
             if (dynamicCastValue(context, &tuple))
                 context = tuple->getInternalField(0);

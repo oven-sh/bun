@@ -555,15 +555,25 @@ test.concurrent("self.close() in a timer callback discards sibling timers due in
   // both fire — browsers discard the second per WHATWG "close a worker".
   using dir = tempDir("issue-29186-timer-batch-close", {
     "worker.mjs": `
-      // Two timers with the same delay end up in the same drain batch.
-      setTimeout(() => { self.postMessage("a"); self.close(); }, 5);
-      setTimeout(() => { self.postMessage("b"); }, 5);
+      // Arm both timers synchronously from one JS task so they land in
+      // the same drain batch regardless of OS timer resolution (Windows
+      // uv timers have ~15ms granularity — relying on "same delay"
+      // alone is flaky there). The kick message from the parent
+      // guarantees the worker is fully set up first.
+      self.onmessage = () => {
+        setTimeout(() => { self.postMessage("a"); self.close(); }, 0);
+        setTimeout(() => { self.postMessage("b"); }, 0);
+      };
+      self.postMessage("ready");
     `,
     "main.mjs": `
       const worker = new Worker(new URL("./worker.mjs", import.meta.url).href, { type: "module" });
       const events = [];
       const { promise, resolve, reject } = Promise.withResolvers();
-      worker.onmessage = ({ data }) => { events.push(data); };
+      worker.onmessage = ({ data }) => {
+        if (data === "ready") { worker.postMessage("go"); return; }
+        events.push(data);
+      };
       worker.onerror = (e) => reject(new Error("worker error: " + (e.message || e)));
       worker.addEventListener("close", () => resolve());
       await promise;

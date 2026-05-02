@@ -6,11 +6,7 @@ description: Decode, transform, and encode images with a fast native pipeline
 `Bun.Image` is a chainable image pipeline for decoding, resizing, rotating, and re-encoding JPEG, PNG, WebP, HEIC, and AVIF — built on libjpeg-turbo, spng, libwebp, and SIMD geometry kernels, with zero npm dependencies and no native addon build step.
 
 ```ts
-await Bun.file("photo.jpg")
-  .image()
-  .resize(400, 400, { fit: "inside" })
-  .webp({ quality: 80 })
-  .write("thumb.webp");
+await Bun.file("photo.jpg").image().resize(400, 400, { fit: "inside" }).webp({ quality: 80 }).write("thumb.webp");
 ```
 
 The API is shaped after [Sharp](https://sharp.pixelplumbing.com/): construct from an input, chain transforms, pick an output format, then `await` a terminal method. Nothing runs until the terminal is awaited, and the work executes off the JavaScript thread.

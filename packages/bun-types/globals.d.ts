@@ -1385,8 +1385,7 @@ declare function postMessage(message: any, transfer?: Bun.Transferable[]): void;
  *
  * WHATWG DedicatedWorkerGlobalScope#close. Only useful in a Web Worker;
  * calling this from the main thread does nothing. Not available inside
- * `node:worker_threads` workers — use `process.exit()` or
- * `parentPort.close()` there instead.
+ * `node:worker_threads` workers — use `process.exit()` there instead.
  */
 declare function close(): void;
 

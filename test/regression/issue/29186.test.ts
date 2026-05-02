@@ -416,8 +416,10 @@ test.concurrent("self.close() followed by throw reports the exception to the par
     stderr: "pipe",
   });
 
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Match the `toMatchObject({exitCode:0})` pattern used by the rest of
+  // the file so a regression here shows the worker's stderr in the diff.
+  expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
   const events = JSON.parse(stdout.trim());
   expect(events).toHaveLength(1);
   expect(events[0].type).toBe("error");

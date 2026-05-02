@@ -698,19 +698,25 @@ fn spin(this: *WebWorker) void {
     this.flushLogs(vm);
     log("[{d}] event loop start", .{this.execution_context_id});
 
-    // The catch arms above already handle close()/exit()/terminate() that
-    // fired during entry-point evaluation (intercepted by the
-    // hasRequestedTerminate/hasRequestedClose checks in
-    // loadEntryPointForWebWorker). This guard catches the narrower cases
-    // where the flag flipped between then and now: a `self.close()` or
+    // This guard's primary trigger: a *synchronous* top-level `self.close()`.
+    // `loadEntryPointForWebWorker` only returns `error.WorkerClosed` when the
+    // module promise is still pending (e.g. `self.close(); await neverResolves`).
+    // When close() is called without a top-level await, the module promise
+    // fulfills, the catch arms above don't fire, `promise.result(...)` runs
+    // normally, and control falls through here — which is the common case in
+    // the regression tests.
+    //
+    // Also catches the narrower late-flip cases: a `self.close()` or
     // `process.exit()` inside the rejected-promise `uncaughtException`
     // handler above, a `self.close()` inside a worker-side 'error' listener
     // dispatched by `flushLogs`, or a parent-side `worker.terminate()`
-    // racing in before we reach this point. Skip `dispatchOnline` and
-    // `fireEarlyMessages` in those cases so the parent doesn't observe an
-    // 'open' event for a worker that is already shutting down, and the
-    // queued 'message' events and `setTimeout(fn, 0)` callbacks the
-    // WHATWG "close a worker" algorithm requires us to discard never fire.
+    // racing in before we reach this point. (Abrupt terminate/exit during
+    // load is already caught above via `error.WorkerTerminated`.)
+    //
+    // Skipping `dispatchOnline` / `fireEarlyMessages` here keeps the parent
+    // from observing an 'open' event for a worker that is already shutting
+    // down, and the queued 'message' events and `setTimeout(fn, 0)` callbacks
+    // the WHATWG "close a worker" algorithm requires us to discard never fire.
     if (this.shouldExitLoop()) {
         this.shutdown();
     }

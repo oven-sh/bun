@@ -25,7 +25,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) b
 
 /// May be called from any thread.
 pub fn estimatedSize(this: *@This()) usize {
-    return (@sizeOf(@This()) + this.estimated_size.load(.seq_cst)) / this.ref_count.get();
+    return (@sizeOf(@This()) + this.estimated_size.load(.seq_cst)) / @max(this.ref_count.get(), 1);
 }
 
 pub fn finalize(this: *@This()) void {

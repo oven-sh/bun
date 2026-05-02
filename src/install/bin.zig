@@ -735,9 +735,16 @@ pub const Bin = extern struct {
             defer bunx_file.close();
 
             const rel_target = path.relativeBufZ(this.rel_buf, path.dirname(abs_dest, .auto), abs_target);
-            bun.assertWithLocation(strings.hasPrefixComptime(rel_target, "..\\"), @src());
 
-            const rel_target_w = strings.toWPathNormalized(&target_buf, rel_target["..\\".len..]);
+            // Strip the "..\" prefix when present to get a path relative to node_modules
+            // instead of relative to .bin. In most cases the relative path goes up from .bin,
+            // but this isn't guaranteed (e.g. global installs, cross-drive paths).
+            const rel_target_for_shim = if (strings.hasPrefixComptime(rel_target, "..\\"))
+                rel_target["..\\".len..]
+            else
+                rel_target;
+
+            const rel_target_w = strings.toWPathNormalized(&target_buf, rel_target_for_shim);
 
             const shebang = shebang: {
                 const first_content_chunk = contents: {
@@ -803,8 +810,6 @@ pub const Bin = extern struct {
 
             const abs_dest_dir = path.dirname(abs_dest, .auto);
             const rel_target = path.relativeBufZ(this.rel_buf, abs_dest_dir, abs_target);
-
-            bun.assertWithLocation(strings.hasPrefixComptime(rel_target, ".."), @src());
 
             switch (bun.sys.symlinkRunningExecutable(rel_target, abs_dest)) {
                 .err => |err| {

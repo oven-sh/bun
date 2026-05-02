@@ -5075,6 +5075,7 @@ const string = []const u8;
 
 const Archive = @import("../api/Archive.zig");
 const Environment = @import("../../env.zig");
+const Image = @import("../../image/Image.zig");
 const S3File = @import("./S3File.zig");
 const std = @import("std");
 
@@ -5104,4 +5105,3 @@ const PathOrBlob = jsc.Node.PathOrBlob;
 
 const Request = jsc.WebCore.Request;
 const Response = jsc.WebCore.Response;
-const Image = @import("../../image/Image.zig");

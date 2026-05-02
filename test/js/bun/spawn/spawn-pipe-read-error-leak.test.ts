@@ -154,11 +154,9 @@ process.exit(0);
 // Without the fix, the leaked poll keep-alive refs (Posix) / uv.Pipe handles
 // (Windows) prevent the event loop from exiting after the loop completes, so
 // the fixture hangs and the spawn timeout kills it.
-test(
-  "PipeReader is freed when a subprocess stdout read fails (injected)",
-  async () => {
-    using dir = tempDir("spawn-pipe-read-error-leak-inject", {
-      "fixture.js": `
+test("PipeReader is freed when a subprocess stdout read fails (injected)", async () => {
+  using dir = tempDir("spawn-pipe-read-error-leak-inject", {
+    "fixture.js": `
 const { subprocessInternals } = require("bun:internal-for-testing");
 
 const sleeper = process.platform === "win32"
@@ -188,27 +186,25 @@ console.log(JSON.stringify({ injected }));
 // (Posix) / open uv.Pipe handles (Windows) keep it alive and the parent's
 // spawn timeout fires.
 `,
-    });
+  });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-      // Without the fix the fixture never exits; bound it so the assertion
-      // below shows a clear failure instead of the test itself timing out.
-      timeout: isWindows ? 25_000 : 15_000,
-    });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    // Without the fix the fixture never exits; bound it so the assertion
+    // below shows a clear failure instead of the test itself timing out.
+    timeout: isWindows ? 25_000 : 15_000,
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const stderrLines = stderr.split("\n").filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes"));
-    expect(stderrLines).toEqual([]);
-    expect(stdout.trim()).toBe(JSON.stringify({ injected: 10 }));
-    // SIGKILL from the spawn timeout is the failure signal here.
-    expect(proc.signalCode).toBeNull();
-    expect(exitCode).toBe(0);
-  },
-  60_000,
-);
+  const stderrLines = stderr.split("\n").filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes"));
+  expect(stderrLines).toEqual([]);
+  expect(stdout.trim()).toBe(JSON.stringify({ injected: 10 }));
+  // SIGKILL from the spawn timeout is the failure signal here.
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+}, 60_000);

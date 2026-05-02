@@ -397,12 +397,17 @@ export const globalFlags: Flag[] = [
 
   // ─── LTO (compile-side) ───
   {
-    flag: "-flto=thin",
+    // -fsplit-lto-unit: -fwhole-program-vtables (cxx-only, below) implicitly
+    // sets EnableSplitLTOUnit=1 on C++ modules; C modules without it default
+    // to 0. lld's ThinLTO rejects mixed values ("inconsistent LTO Unit
+    // splitting"). Passing it explicitly here makes every ThinLTO module —
+    // bun C, bun C++, C deps, and the WebKit prebuilt — agree on split=1.
+    flag: ["-flto=thin", "-fsplit-lto-unit"],
     when: c => c.unix && c.lto,
     desc: "ThinLTO (parallel, summary-based; matches WebKit prebuilt bitcode)",
   },
   {
-    flag: "-flto=thin",
+    flag: ["-flto=thin", "-fsplit-lto-unit"],
     when: c => c.windows && c.lto,
     desc: "ThinLTO (clang-cl)",
   },

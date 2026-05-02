@@ -227,7 +227,7 @@ export const webkit: Dependency = {
     // (macOS: Homebrew headers + system libs; Linux: libicu-dev) — cmake
     // auto-detects.
     const optFlags: string[] = computeCpuTargetFlags(cfg);
-    if (cfg.lto) optFlags.push("-flto=thin");
+    if (cfg.lto) optFlags.push("-flto=thin", "-fsplit-lto-unit");
     if (cfg.pgoGenerate) optFlags.push(`-fprofile-generate=${cfg.pgoGenerate}`);
     if (cfg.pgoUse) {
       optFlags.push(

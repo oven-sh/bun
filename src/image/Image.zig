@@ -608,11 +608,12 @@ pub fn doWrite(this: *Image, global: *jsc.JSGlobalObject, cf: *jsc.CallFrame) bu
 fn schedule(this: *Image, global: *jsc.JSGlobalObject, this_value: jsc.JSValue, kind: PipelineTask.Kind, deliver: PipelineTask.Deliver) bun.JSError!jsc.JSValue {
     if (this.source == .blob)
         return BlobReadChain.start(this, global, this_value, kind, deliver);
-    const input = this.pinForTask(this_value, global) catch {
+    const input = this.pinForTask(this_value, global) catch |e| {
         // `deliver` may own a Strong; the task that would have freed it in
         // deinit() is never created on this branch.
         var d = deliver;
         d.deinit();
+        if (e == error.OutOfMemory) bun.outOfMemory();
         return jsc.JSPromise.rejectedPromise(
             global,
             global.createErrorInstance("Image: source ArrayBuffer was detached", .{}),
@@ -670,8 +671,10 @@ pub fn encodeForBody(this: *Image, global: *jsc.JSGlobalObject, this_value: jsc.
             } else return global.throw(refuse, .{});
         } else return global.throw(refuse, .{});
     }
-    const input = this.pinForTask(this_value, global) catch
+    const input = this.pinForTask(this_value, global) catch |e| {
+        if (e == error.OutOfMemory) bun.outOfMemory();
         return global.throw("Image: source ArrayBuffer was detached", .{});
+    };
     defer input.release();
     var task: PipelineTask = .{
         .image = this,

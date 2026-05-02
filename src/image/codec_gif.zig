@@ -63,7 +63,10 @@ const Bits = struct {
     fn drain(self: *Bits) void {
         var i = self.i + self.block;
         while (i < self.src.len) {
-            const n = self.src[i];
+            // Widen before the add: `1 + u8(255)` overflows u8 (peer-type
+            // resolution) before reaching the usize lhs — Debug panics,
+            // ReleaseFast wraps to 0 and loops forever.
+            const n: usize = self.src[i];
             i += 1 + n;
             if (n == 0) break;
         }
@@ -126,9 +129,12 @@ pub fn decode(bytes: []const u8, max_pixels: u64) codecs.Error!codecs.Decoded {
                     // delay(u16) · trns-idx · 0
                     if (bytes[i + 1] & 1 != 0) trns = bytes[i + 4];
                 }
-                // Skip sub-blocks regardless of label.
+                // Skip sub-blocks regardless of label. Widen `n` first — a
+                // legal max-size 255-byte sub-block (XMP/ICC application
+                // extensions emit these) would overflow `1 + u8` and either
+                // panic or spin a WorkPool thread forever.
                 while (i < bytes.len) {
-                    const n = bytes[i];
+                    const n: usize = bytes[i];
                     i += 1 + n;
                     if (n == 0) break;
                 }

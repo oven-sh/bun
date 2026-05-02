@@ -1023,6 +1023,31 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
     expect([...(await gifPixels(g)).data.subarray(0, 3)]).toEqual([9, 8, 7]);
   });
 
+  test("GIF: 255-byte extension sub-block (XMP-style) parses without overflow", async () => {
+    // Regression: `i += 1 + n` with u8 n=255 overflowed before widening to
+    // usize — Debug panic, ReleaseFast spun a WorkPool thread forever. Real
+    // GIFs hit this via XMP/ICC application extensions that emit max-size
+    // sub-blocks. Splice a 0x21 0xFF application-extension block (11-byte
+    // header + one 255-byte sub-block + terminator) before the first frame.
+    const base = makeGif(2, 2, [[7, 7, 7]], () => 0);
+    // 0x21 0xFF <11> "BUNTESTXMP " <255> <…255 bytes…> <0>
+    const ext = Buffer.concat([
+      Buffer.from([0x21, 0xff, 11]),
+      Buffer.from("BUNTESTXMP "),
+      Buffer.from([255]),
+      Buffer.alloc(255, 0x41),
+      Buffer.from([0]),
+    ]);
+    // Find the Image Descriptor (0x2C) and insert the extension just before it.
+    const at = base.indexOf(0x2c, 13);
+    const g = Buffer.concat([base.subarray(0, at), ext, base.subarray(at)]);
+    const m = await new Bun.Image(g, { backend: "bun" }).metadata();
+    expect(m).toEqual({ width: 2, height: 2, format: "gif" });
+    // And actually decode (exercises Bits.drain too).
+    const out = await new Bun.Image(g, { backend: "bun" }).png().bytes();
+    expect(out[0]).toBe(0x89);
+  });
+
   test("GIF: 256-colour palette + multi-sub-block (>255 LZW bytes)", async () => {
     const pal: [number, number, number][] = Array.from({ length: 256 }, (_, i) => [i, 255 - i, i ^ 0x55]);
     // 64×8=512 pixels at ≥9-bit codes ⇒ well over one 255-byte sub-block.

@@ -8349,7 +8349,7 @@ declare module "bun" {
      * (`.jpg`/`.png`/`.webp`/`.heic`/`.avif`); otherwise the source format is
      * reused.
      */
-    write(dest: BunFile | S3File | Bun.PathLike): Promise<number>;
+    write(dest: BunFile | S3File | Bun.PathLike | number): Promise<number>;
     /**
      * Like {@link toBase64} with a `data:image/{format};base64,` prefix.
      * Drops straight into `<img src>`.

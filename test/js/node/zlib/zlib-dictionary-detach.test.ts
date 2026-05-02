@@ -18,12 +18,18 @@ import { bunEnv, bunExe } from "harness";
 // Without it bmalloc keeps the freed region in its own free list and ASAN
 // never sees the UAF.
 //
+// detect_leaks=0: Malloc=1 also exposes pre-existing small runtime leaks
+// (parser/transpiler allocations normally hidden behind bmalloc) to
+// LeakSanitizer, which would print them to stderr at exit. We only care
+// about the heap-use-after-free here.
 // symbolize=0: when this test is run against an unfixed build, ASAN aborts
 // and symbolizing the debug binary takes longer than the default test
 // timeout. We only care that the subprocess prints "OK" and exits 0.
 // allow_user_segv_handler=1 suppresses JSC's "ASAN interferes with JSC
 // signal handlers" stderr banner on ASAN builds where bunEnv didn't set it.
-const asanOptions = [bunEnv.ASAN_OPTIONS, "allow_user_segv_handler=1", "symbolize=0"].filter(Boolean).join(":");
+const asanOptions = [bunEnv.ASAN_OPTIONS, "allow_user_segv_handler=1", "symbolize=0", "detect_leaks=0"]
+  .filter(Boolean)
+  .join(":");
 const env = { ...bunEnv, Malloc: "1", ASAN_OPTIONS: asanOptions };
 
 const inflateFixture = /* js */ `

@@ -2403,20 +2403,30 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     resp.clearOnData();
                     this.flags.is_waiting_for_request_body = false;
 
-                    if (!resp.hasResponded()) {
-                        resp.writeStatus("413 Payload Too Large");
-                        resp.endWithoutBody(comptime !http3);
-                    }
-
                     var loop = vm.eventLoop();
                     loop.enter();
                     defer loop.exit();
-                    // toErrorInstance handles .Locked itself (rejects the
-                    // promise, deinits the readable, calls onReceiveValue),
-                    // so don't re-resolve a stale copy afterwards.
+                    // Reject the pending body first so endRequestStreaming()
+                    // below (via this.endWithoutBody) doesn't substitute a
+                    // generic ConnectionClosed. toErrorInstance handles
+                    // .Locked itself (rejects the promise, deinits the
+                    // readable, calls onReceiveValue).
                     body.value.toErrorInstance(.{
                         .Message = bun.String.static("Request body exceeded maxRequestBodySize"),
                     }, globalThis) catch {};
+
+                    // Route through the normal end path so this.resp is
+                    // detached and the base ref released. Writing directly on
+                    // the raw uWS response left this.resp pointing at a
+                    // completed (and soon freed) response — uWS markDone()
+                    // clears onAborted so no abort ever fires to release the
+                    // ref, and a later handleResolve()/handleReject() from an
+                    // async handler would dereference the stale pointer.
+                    if (this.resp != null and !resp.hasResponded()) {
+                        this.flags.has_written_status = true;
+                        resp.writeStatus("413 Payload Too Large");
+                    }
+                    this.endWithoutBody(comptime !http3);
                     return;
                 }
 

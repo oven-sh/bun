@@ -65,6 +65,13 @@ process.stderr.write(`${(pngFixture.length / 1024).toFixed(0)} KB PNG, `);
 const jpegFixture = await new Bun.Image(pngFixture).jpeg({ quality: 92 }).bytes();
 process.stderr.write(`${(jpegFixture.length / 1024).toFixed(0)} KB JPEG\n`);
 
+// 4K + phone-camera sizes — JPEG only (PNG at 4K is ~50 MB and just measures
+// zlib). 4032×3024 is what an iPhone hands you.
+process.stderr.write(`building 3840×2160 + 4032×3024 JPEG fixtures… `);
+const jpeg4k = await new Bun.Image(makePng(3840, 2160)).jpeg({ quality: 92 }).bytes();
+const jpegPhone = await new Bun.Image(makePng(4032, 3024)).jpeg({ quality: 92 }).bytes();
+process.stderr.write(`${(jpeg4k.length / 1024).toFixed(0)} KB / ${(jpegPhone.length / 1024).toFixed(0)} KB\n`);
+
 // ─── runners ────────────────────────────────────────────────────────────────
 
 const wantSharp = process.argv.includes("--sharp");
@@ -117,6 +124,26 @@ const ops = {
     fixture: jpegFixture,
     bun: buf => new Bun.Image(buf).webp({ quality: 80 }).bytes(),
     sharp: buf => sharp(buf).webp({ quality: 80 }).toBuffer(),
+  },
+  "4K JPEG → 800×450 → jpeg": {
+    fixture: jpeg4k,
+    bun: buf => new Bun.Image(buf).resize(800, 450, { fit: "inside" }).jpeg({ quality: 80 }).bytes(),
+    sharp: buf => sharp(buf).resize(800, 450, { fit: "inside" }).jpeg({ quality: 80 }).toBuffer(),
+  },
+  "4K JPEG → 1920×1080 → jpeg": {
+    fixture: jpeg4k,
+    bun: buf => new Bun.Image(buf).resize(1920, 1080, { fit: "inside" }).jpeg({ quality: 80 }).bytes(),
+    sharp: buf => sharp(buf).resize(1920, 1080, { fit: "inside" }).jpeg({ quality: 80 }).toBuffer(),
+  },
+  "12MP JPEG → 400×300 → jpeg": {
+    fixture: jpegPhone,
+    bun: buf => new Bun.Image(buf).resize(400, 300, { fit: "inside" }).jpeg({ quality: 80 }).bytes(),
+    sharp: buf => sharp(buf).resize(400, 300, { fit: "inside" }).jpeg({ quality: 80 }).toBuffer(),
+  },
+  "12MP JPEG → 1024×768 → webp": {
+    fixture: jpegPhone,
+    bun: buf => new Bun.Image(buf).resize(1024, 768, { fit: "inside" }).webp({ quality: 80 }).bytes(),
+    sharp: buf => sharp(buf).resize(1024, 768, { fit: "inside" }).webp({ quality: 80 }).toBuffer(),
   },
 };
 

@@ -7,9 +7,10 @@ response_body_streaming: ?*std.atomic.Value(bool) = null,
 /// `response_body_streaming` is also set by paths that never report
 /// consumption (S3 streaming download, abandoned bodies via
 /// `ignoreRemainingResponseBody`); gating flow-control on that would
-/// deadlock those streams. The h2 client uses this signal — not
-/// `response_body_streaming` — to decide whether per-stream WINDOW_UPDATE
-/// should be consumption-gated or receipt-based.
+/// deadlock those streams. All three transports key receive-side
+/// backpressure on this signal — not `response_body_streaming` — to
+/// decide whether flow control is consumption-gated or receipt-based
+/// (h1 `maybePauseReceive`, h2 `replenishWindow`, h3 `onStreamData`).
 body_consumption_tracked: ?*std.atomic.Value(bool) = null,
 aborted: ?*std.atomic.Value(bool) = null,
 cert_errors: ?*std.atomic.Value(bool) = null,

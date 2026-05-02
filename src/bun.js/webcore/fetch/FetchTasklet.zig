@@ -1023,14 +1023,14 @@ pub const FetchTasklet = struct {
         // `drain_handler` is about to be cleared and incoming chunks will
         // be dropped without ever reaching the ByteStream, so no more
         // `scheduleResponseBodyConsumed` reports. Disarm the tracking
-        // signal so the HTTP/2 client falls back to receipt-based
-        // per-stream WINDOW_UPDATE and the abandoned body can drain
-        // instead of stalling the stream at the initial window. The
-        // sentinel consume message both wakes the HTTP thread (so
-        // `replenishWindow` re-runs — its only other trigger is inbound
-        // DATA, and a server that has exhausted the window sends none)
-        // and saturates `consumed_bytes` to `unacked_bytes` so the first
-        // re-run releases whatever is already outstanding regardless of
+        // signal so the transport falls back to receipt-based flow
+        // control (h2 per-stream WINDOW_UPDATE, h1 socket resume, h3
+        // `wantRead(true)`) and the abandoned body can drain instead of
+        // stalling. The maxInt sentinel consume both wakes the HTTP
+        // thread (the only other consume trigger is inbound body data,
+        // and a window-stalled / socket-paused server sends none) and
+        // saturates the transport's outstanding counter so the first
+        // re-run releases whatever is already buffered regardless of
         // which order the atomic store and the queue drain land in.
         this.signal_store.body_consumption_tracked.store(false, .release);
         if (this.http) |http_| {

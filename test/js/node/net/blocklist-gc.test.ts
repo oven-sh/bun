@@ -28,7 +28,9 @@ test("BlockList survives GC after BroadcastChannel fan-out clone", async () => {
         bl.addAddress("127.0.0.1");
         sender.postMessage(bl);
 
-        await new Promise(r => setTimeout(r, 10));
+        for (let i = 0; i < 100 && received.length < 2; i++) {
+          await new Promise(r => setTimeout(r, 10));
+        }
         if (received.length !== 2) throw new Error("expected 2 messages, got " + received.length);
 
         // Keep one clone reachable, drop the original and the other clone so

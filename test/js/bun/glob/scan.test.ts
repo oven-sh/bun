@@ -23,7 +23,7 @@
 import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fg from "fast-glob";
-import { tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -852,4 +852,54 @@ test.skipIf(process.platform === "win32")("patterns with many components", () =>
       .join("/") +
     "/*.txt";
   expect([...new Bun.Glob(sandwich).scanSync({ cwd: dir })].length).toBe(1);
+});
+
+// The literal-tail statat optimization returns an error whose `path` is a
+// slice into `Glob.pattern`. The Glob must stay alive (via hasPendingActivity)
+// until `then()` consumes that error on the JS thread — previously
+// pending-activity was dropped on the threadpool in `run()`, so GC could free
+// `Glob.pattern` before `then()` read `err.path`, causing a heap-use-after-free.
+// Skipped on Windows: relies on fstatat ENAMETOOLONG for a >255-byte component.
+test.skipIf(isWindows)("scan: error path borrowing Glob.pattern survives until promise settles", async () => {
+  const cwd = tempDirWithFiles("glob-uaf", { "placeholder.txt": "" });
+  const longName = Buffer.alloc(300, "a").toString();
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const longName = ${JSON.stringify(longName)};
+        const cwd = ${JSON.stringify(cwd)};
+        // No reference to the Glob is kept; the returned async generator
+        // closes over the internal promise only.
+        const iter = new Bun.Glob(longName).scan({ cwd, onlyFiles: false });
+        // Let the threadpool finish walk() so the (buggy) run() would have
+        // dropped pending-activity to 0.
+        Bun.sleepSync(50);
+        // With pending-activity at 0 and no JS refs, this collects the Glob
+        // and frees its pattern buffer before then() runs.
+        Bun.gc(true);
+        let caught;
+        try {
+          for await (const _ of iter) {}
+        } catch (e) {
+          caught = e;
+        }
+        if (!caught) throw new Error("expected ENAMETOOLONG from statat");
+        if (caught.path !== longName) {
+          throw new Error("err.path mismatch: " + JSON.stringify(caught.path));
+        }
+        process.stdout.write("ok " + caught.code);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ok ENAMETOOLONG");
+  expect(exitCode).toBe(0);
 });

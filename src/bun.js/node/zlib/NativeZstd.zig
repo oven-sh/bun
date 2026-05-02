@@ -23,6 +23,9 @@ stream: Context = .{},
 write_result: ?[*]u32 = null,
 poll_ref: CountedKeepAlive = .{},
 this_value: jsc.Strong.Optional = .empty,
+/// Strong references to input/output buffers to prevent GC during async WorkPool operations.
+in_buf_value: jsc.Strong.Optional = .empty,
+out_buf_value: jsc.Strong.Optional = .empty,
 write_in_progress: bool = false,
 pending_close: bool = false,
 pending_reset: bool = false,
@@ -112,6 +115,9 @@ pub fn params(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.C
 }
 
 fn deinit(this: *@This()) void {
+    this.this_value.deinit();
+    this.in_buf_value.deinit();
+    this.out_buf_value.deinit();
     this.poll_ref.deinit();
     switch (this.stream.mode) {
         .ZSTD_COMPRESS, .ZSTD_DECOMPRESS => this.stream.close(),

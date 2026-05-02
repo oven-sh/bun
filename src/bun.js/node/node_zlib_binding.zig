@@ -117,6 +117,14 @@ pub fn CompressionStream(comptime T: type) type {
             // And make sure to clear it when we are done.
             this.this_value.set(globalThis, this_value);
 
+            // Hold strong references to the input/output buffers to prevent
+            // GC from collecting them while the WorkPool thread is using the
+            // underlying memory.
+            if (!arguments[1].isNull()) {
+                this.in_buf_value.set(globalThis, arguments[1]);
+            }
+            this.out_buf_value.set(globalThis, arguments[4]);
+
             const vm = globalThis.bunVM();
             this.task = .{ .callback = &AsyncJob.runTask };
             this.poll_ref.ref(vm);
@@ -148,6 +156,11 @@ pub fn CompressionStream(comptime T: type) type {
             defer this.poll_ref.unref(vm);
 
             this.write_in_progress = false;
+
+            // Release the strong references to the input/output buffers now
+            // that the WorkPool thread is done using them.
+            this.in_buf_value.deinit();
+            this.out_buf_value.deinit();
 
             // Clear the strong handle before we call any callbacks.
             const this_value = this.this_value.trySwap() orelse {
@@ -282,6 +295,8 @@ pub fn CompressionStream(comptime T: type) type {
             this.pending_close = false;
             this.closed = true;
             this.this_value.deinit();
+            this.in_buf_value.deinit();
+            this.out_buf_value.deinit();
             this.stream.close();
         }
 

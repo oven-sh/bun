@@ -302,7 +302,7 @@ pub fn retryAfterH2Coalesce(this: *HTTPClient) void {
 }
 
 /// Response-body receive backpressure for streaming consumers
-/// (`signals.body_consumption_tracked` set). Once the wire bytes handed
+/// (`signals.body_consumption_tracked` set). Once the body bytes handed
 /// to JS but not yet reported drained via `scheduleResponseBodyConsumed`
 /// exceed `receive_body_high_water`, the transport applies backpressure:
 /// HTTP/1.1 pauses the socket read (`us_socket_pause` → TCP rwnd closes),
@@ -315,8 +315,11 @@ pub fn retryAfterH2Coalesce(this: *HTTPClient) void {
 pub const receive_body_high_water: usize = 1 << 20; // 1 MiB
 pub const receive_body_low_water: usize = 256 * 1024;
 
-/// Process-wide counters for the HTTP/1.1 `maybePauseReceive` /
-/// `consumeResponseBody` transitions. Exposed through
+/// Process-wide counters for the HTTP/1.1 `receive_paused` flag
+/// transitions: incremented at every `false→true` / `true→false` edge,
+/// regardless of which path clears it (`consumeResponseBody`,
+/// `maybePauseReceive`'s done/redirect branch, the pre-pool-release
+/// defensive resume). Exposed through
 /// `fetchInternals.h1BackpressureCounts()` so the backpressure test can
 /// observe pause/resume from the client subprocess directly instead of
 /// inferring it from a server-side `drain` timeout whose latency depends
@@ -2263,12 +2266,13 @@ pub fn setTimeout(this: *HTTPClient, socket: anytype, minutes: c_uint) void {
     socket.setTimeoutMinutes(minutes);
 }
 
-/// Called from `onData` after body bytes have been appended and (if
-/// streaming) delivered to JS. Counts `n` wire bytes towards
-/// `outstanding_body_bytes` and, if the JS reader is reporting
-/// consumption and the outstanding total has crossed the high-water
-/// mark, pauses the socket read so TCP rwnd backpressures the server.
-/// The proxy-tunnel path is excluded: its inner TLS session needs the
+/// Called from `onData` after body bytes have been decoded and (if
+/// streaming) queued for JS. Counts `n` post-dechunk/post-decompress
+/// body bytes towards `outstanding_body_bytes` — the same currency
+/// `didDrain` credits — and, if the JS reader is reporting consumption
+/// and the outstanding total has crossed the high-water mark, pauses
+/// the socket read so TCP rwnd backpressures the server. The
+/// proxy-tunnel path is excluded: its inner TLS session needs the
 /// socket readable to complete handshake/close_notify regardless of the
 /// application body, and pausing the carrier socket would wedge that.
 fn maybePauseReceive(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, n: usize) void {
@@ -2290,6 +2294,7 @@ fn maybePauseReceive(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCo
     if (this.state.isDone() or this.state.flags.is_redirect_pending) {
         if (this.state.flags.receive_paused) {
             this.state.flags.receive_paused = false;
+            _ = h1_socket_resumes.fetchAdd(1, .monotonic);
             if (!socket.isClosedOrHasError()) _ = socket.resumeStream();
         }
         return;
@@ -2314,9 +2319,13 @@ fn maybePauseReceive(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCo
 /// socket read that `maybePauseReceive` paused. HTTP/2 and HTTP/3 have
 /// dedicated handlers that reach here via their session dispatch.
 pub fn consumeResponseBody(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, bytes: u32) void {
-    // `bytes` is post-decompression; clamp so a compression surplus
-    // doesn't leave `outstanding_body_bytes` underflowed — same rule as
-    // the h2 `consumed_bytes` clamp.
+    // Both sides count the `body_out_str` delta so increment and
+    // decrement are the same currency; the saturating subtract is
+    // still needed for the `maxInt(u32)` sentinel from
+    // `ignoreRemainingResponseBody` and for `ByteStream.drain()`
+    // reporting bytes that arrived before `body_consumption_tracked`
+    // was armed (those were never counted here because the first
+    // line of maybePauseReceive early-returns on the unset signal).
     this.state.outstanding_body_bytes -|= @min(@as(usize, bytes), this.state.outstanding_body_bytes);
     if (!this.state.flags.receive_paused) return;
     // Disarming `body_consumption_tracked` (e.g. reader.cancel()) posts a
@@ -2326,9 +2335,9 @@ pub fn consumeResponseBody(this: *HTTPClient, comptime is_ssl: bool, socket: New
         !this.signals.get(.body_consumption_tracked);
     if (!should_resume) return;
     this.state.flags.receive_paused = false;
+    _ = h1_socket_resumes.fetchAdd(1, .monotonic);
     if (socket.isClosedOrHasError()) return;
     _ = socket.resumeStream();
-    _ = h1_socket_resumes.fetchAdd(1, .monotonic);
     this.setTimeout(socket, 5);
     log("consumeResponseBody: resumed, {d} bytes outstanding", .{this.state.outstanding_body_bytes});
 }
@@ -2404,6 +2413,7 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
             // to the pool would hang the next request that adopts it.
             if (this.state.flags.receive_paused) {
                 this.state.flags.receive_paused = false;
+                _ = h1_socket_resumes.fetchAdd(1, .monotonic);
                 _ = socket.resumeStream();
             }
             const tunnel = this.proxy_tunnel;

@@ -27,11 +27,12 @@ body_out_str: ?*MutableString = null,
 compressed_body: MutableString = undefined,
 content_length: ?usize = null,
 total_body_received: usize = 0,
-/// Wire bytes handed to JS via `progressUpdate` that haven't been
-/// reported drained via `scheduleResponseBodyConsumed`. Drives the
-/// HTTP/1.1 read-side pause once over `receive_body_high_water`. HTTP/2
-/// and HTTP/3 track the equivalent per-stream
-/// (`h2_client/Stream.unacked_bytes`, `h3_client/Stream.outstanding_body_bytes`).
+/// Post-dechunk/decompress body bytes (`body_out_str` delta) handed to
+/// JS via `progressUpdate` that haven't been reported drained via
+/// `scheduleResponseBodyConsumed`. Drives the HTTP/1.1 read-side pause
+/// once over `receive_body_high_water`. HTTP/2 and HTTP/3 track the
+/// equivalent per-stream (`h2_client/Stream.unacked_bytes`,
+/// `h3_client/Stream.outstanding_body_bytes`).
 outstanding_body_bytes: usize = 0,
 request_body: []const u8 = "",
 original_request_body: HTTPRequestBody = .{ .bytes = "" },

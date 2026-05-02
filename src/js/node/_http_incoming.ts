@@ -161,7 +161,18 @@ function IncomingMessage(req, options = defaultIncomingOpts) {
         : false;
 
     if (getIsNextIncomingMessageHTTPS()) {
-      this.socket.encrypted = true;
+      const socket = this.socket;
+      socket.encrypted = true;
+      socket.authorized = true;
+      // Define socket as an own data property so that
+      // response.hasOwnProperty('socket') returns true (matching Node.js).
+      // Libraries like postman-request check this for SSL verification.
+      Object.defineProperty(this, "socket", {
+        value: socket,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
       setIsNextIncomingMessageHTTPS(false);
     }
   }

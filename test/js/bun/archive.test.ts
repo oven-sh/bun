@@ -613,19 +613,17 @@ describe("Bun.Archive", () => {
       }
     });
 
-    test(
-      "files() does not leak entries when readData fails mid-stream",
-      async () => {
-        // Regression test: a tarball with two valid 64KB entries followed by a third
-        // entry whose header advertises 64KB but whose data is truncated. libarchive
-        // successfully reads the first two entries (allocating path + data for each),
-        // then readData() fails on the third. The already-collected entries must be
-        // freed on that error path; previously they were leaked on every call.
-        //
-        // Each leaked iteration costs ~128KB (2 entries × 64KB data), so 1500
-        // iterations would leak ~190MB. A 64MB threshold comfortably separates
-        // "fixed" (stable RSS) from "leaking".
-        const code = /* ts */ `
+    test("files() does not leak entries when readData fails mid-stream", async () => {
+      // Regression test: a tarball with two valid 64KB entries followed by a third
+      // entry whose header advertises 64KB but whose data is truncated. libarchive
+      // successfully reads the first two entries (allocating path + data for each),
+      // then readData() fails on the third. The already-collected entries must be
+      // freed on that error path; previously they were leaked on every call.
+      //
+      // Each leaked iteration costs ~128KB (2 entries × 64KB data), so 1500
+      // iterations would leak ~190MB. A 64MB threshold comfortably separates
+      // "fixed" (stable RSS) from "leaking".
+      const code = /* ts */ `
           function ustarHeader(name, size) {
             const h = Buffer.alloc(512);
             h.write(name, 0, 100, "utf8");
@@ -672,19 +670,17 @@ describe("Bun.Archive", () => {
           if (growthMB > 64) throw new Error("leaked " + growthMB.toFixed(1) + " MB");
         `;
 
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "--smol", "-e", code],
-          env: bunEnv,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stderr).toBe("");
-        expect(stdout).toContain("RSS growth:");
-        expect(exitCode).toBe(0);
-      },
-      60_000,
-    );
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--smol", "-e", code],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("RSS growth:");
+      expect(exitCode).toBe(0);
+    }, 60_000);
   });
 
   describe("path safety", () => {

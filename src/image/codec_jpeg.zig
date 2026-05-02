@@ -27,6 +27,7 @@ const TJPARAM_SUBSAMP = 4;
 pub const TJPARAM_JPEGWIDTH = 5;
 pub const TJPARAM_JPEGHEIGHT = 6;
 const TJPARAM_PROGRESSIVE = 12;
+const TJPARAM_MAXPIXELS = 24;
 const TJPF_RGBA = 7;
 const TJSAMP_420 = 2;
 
@@ -76,9 +77,18 @@ pub fn decode(bytes: []const u8, max_pixels: u64, hint: codecs.DecodeHint) codec
         }
     }
 
+    // `bytes` may alias a JS ArrayBuffer the caller can still WRITE while
+    // this runs on the work pool (the pin only blocks detach). Because
+    // tj3DecompressHeader ends with `jpeg_abort_decompress`, tj3Decompress8
+    // re-runs `jpeg_read_header` from scratch — so a hostile swap to a
+    // larger JPEG between the two calls would have it write past `out`.
+    // Bound the second parse with TJPARAM_MAXPIXELS (checked at
+    // turbojpeg-mp.c:183 against the freshly-parsed dims, before any output)
+    // and pass our pitch explicitly so the stride can't grow either.
+    _ = tj3Set(h, TJPARAM_MAXPIXELS, std.math.cast(c_int, src_w * src_h) orelse std.math.maxInt(c_int));
     const out = try bun.default_allocator.alloc(u8, @as(usize, w) * ht * 4);
     errdefer bun.default_allocator.free(out);
-    if (tj3Decompress8(h, bytes.ptr, bytes.len, out.ptr, 0, TJPF_RGBA) != 0)
+    if (tj3Decompress8(h, bytes.ptr, bytes.len, out.ptr, @intCast(w * 4), TJPF_RGBA) != 0)
         return error.DecodeFailed;
     return .{ .rgba = out, .width = w, .height = ht };
 }
@@ -107,3 +117,4 @@ pub fn encode(rgba: []const u8, w: u32, ht: u32, quality: u8, progressive: bool)
 
 const bun = @import("bun");
 const codecs = @import("./codecs.zig");
+const std = @import("std");

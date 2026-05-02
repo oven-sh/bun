@@ -35,6 +35,12 @@ pub const BackendError = codecs.Error || error{BackendUnavailable};
 
 pub fn decode(bytes: []const u8, max_pixels: u64) BackendError!codecs.Decoded {
     const f = try factory();
+    // IWICStream::InitializeFromMemory takes a DWORD count; Windows ships
+    // ReleaseSafe so the @intCast below is a process abort, not silent
+    // truncation. Drop to BackendUnavailable so codecs.decode() falls
+    // through to the static decoder (bmp/gif) or surfaces UnsupportedOn
+    // Platform (tiff/heic/avif) instead of crashing on a >4 GiB input.
+    if (bytes.len > std.math.maxInt(u32)) return error.BackendUnavailable;
 
     var stream: ?*IWICStream = null;
     if (f.vt.CreateStream(f, &stream) < 0 or stream == null) return error.BackendUnavailable;
@@ -66,9 +72,12 @@ pub fn decode(bytes: []const u8, max_pixels: u64) BackendError!codecs.Decoded {
     defer release(conv);
 
     const stride: u32 = w * 4;
-    const out = try bun.default_allocator.alloc(u8, @as(usize, stride) * h);
+    const out_len = @as(usize, stride) * h;
+    // CopyPixels takes a UINT byte count — same DWORD ceiling as the stream.
+    if (out_len > std.math.maxInt(u32)) return error.TooManyPixels;
+    const out = try bun.default_allocator.alloc(u8, out_len);
     errdefer bun.default_allocator.free(out);
-    if (conv.?.vt.CopyPixels(conv.?, null, stride, @intCast(out.len), out.ptr) < 0)
+    if (conv.?.vt.CopyPixels(conv.?, null, stride, @intCast(out_len), out.ptr) < 0)
         return error.DecodeFailed;
 
     return .{ .rgba = out, .width = w, .height = h };
@@ -92,6 +101,9 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOpti
     if (opts.format == .png and (opts.palette or opts.compression_level >= 0))
         return error.BackendUnavailable;
     if (opts.format == .webp or opts.format == .jpeg) return error.BackendUnavailable;
+    // WritePixels takes a UINT byte count; encode is only reached for
+    // heic/avif so this is the same maxPixels-raised edge as CopyPixels.
+    if (rgba.len > std.math.maxInt(u32)) return error.BackendUnavailable;
 
     const f = try factory();
 

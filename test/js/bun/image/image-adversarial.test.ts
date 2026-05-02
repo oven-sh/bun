@@ -10,7 +10,8 @@
 // Kept in its own file so the happy-path image.test.ts stays readable.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { gcTick } from "harness";
+import { gcTick, tempDir } from "harness";
+import { join } from "node:path";
 import zlib from "node:zlib";
 
 // Several tests below force `backend = "bun"` to reach the static decoders
@@ -237,6 +238,16 @@ describe("hostile header dimensions", () => {
     ["1 × 2^31-1", 1, 0x7fffffff],
   ])("PNG IHDR %s rejects via maxPixels or codec, no alloc", async (_name, w, h) => {
     expect(await survives(new Bun.Image(pngWithDims(w, h)).metadata())).toBe("rejected");
+  });
+
+  // Same headers with maxPixels raised past the default — probe must reject
+  // out-of-spec >2³¹-1 dims itself, not let them reach the i32 last_width
+  // cast. (PNG spec §11.2.2 caps each dimension at 2³¹-1.)
+  test.each([
+    ["2^32-1 × 1", 0xffffffff, 1],
+    ["2^31 × 1 (one past spec cap)", 0x80000000, 1],
+  ])("PNG IHDR %s rejects even with maxPixels: 1e15", async (_name, w, h) => {
+    await expect(new Bun.Image(pngWithDims(w, h), { maxPixels: 1e15 }).metadata()).rejects.toThrow(/decode failed/);
   });
 
   test("PNG IHDR claiming bit-depth 0 / colour-type 99", async () => {
@@ -619,6 +630,19 @@ describe("concurrent terminals on one Image", () => {
     const img = new Bun.Image(tinyPng).png();
     const all = await Promise.all(Array.from({ length: 100 }, () => img.bytes()));
     // Each must be a valid, identical PNG (deterministic encode).
+    for (const b of all) expect(Buffer.compare(Buffer.from(b), Buffer.from(all[0]))).toBe(0);
+  });
+
+  test("concurrent terminals on a Bun.file source — first BlobReadChain wins, later resolvers don't free it", async () => {
+    // The .blob source path used to UAF: two BlobReadChains both swap source
+    // to .owned, the second one's source.deinit() frees what a worker thread
+    // is mid-decode on. With the fix, only the first swap takes effect; later
+    // resolvers drop their redundant read and re-enter on the existing .owned.
+    using dir = tempDir("image-blob-race", {});
+    const p = join(String(dir), "src.png");
+    await Bun.write(p, tinyPng);
+    const img = new Bun.Image(Bun.file(p)).png();
+    const all = await Promise.all(Array.from({ length: 32 }, () => img.bytes()));
     for (const b of all) expect(Buffer.compare(Buffer.from(b), Buffer.from(all[0]))).toBe(0);
   });
 

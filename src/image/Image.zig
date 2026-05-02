@@ -133,22 +133,24 @@ pub fn constructor(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, this_
 }
 
 /// `Bun.file("…").image()` / `Bun.s3("…").image()` / `Blob#image()`. Same
-/// allocation as `new Bun.Image(blob, opts)`; the wrapper JS object is
-/// created here (vs. by the codegen for `constructor`) and the source is
-/// resolved against it so the `.js_buffer`/`.blob` cached-slot wiring is
-/// identical either way in.
+/// allocation as `new Bun.Image(blob, opts)`. Everything that can throw runs
+/// BEFORE `toJS()` — once the wrapper exists its `m_ctx` owns the *Image and
+/// the generated `~JSImage` will `finalize()` on GC, so a manual `finalize()`
+/// after `toJS()` is a double-free. (Contrast `fromInputJS` where the codegen
+/// constructor only wires `m_ctx` after the Zig fn returns, so its `errdefer`
+/// is safe.)
 pub fn fromBlobJS(global: *jsc.JSGlobalObject, blob_value: jsc.JSValue, options: jsc.JSValue) bun.JSError!jsc.JSValue {
     var img = Image.new(.{ .source = .js_buffer });
-    const this_value = img.toJS(global);
-    img.source = sourceFromJS(global, blob_value, this_value) catch |e| {
-        img.finalize();
-        return e;
-    };
-    applyOptions(img, global, options) catch |e| {
-        img.finalize();
-        return e;
-    };
-    return this_value;
+    errdefer img.finalize();
+    try applyOptions(img, global, options);
+    // For Blob receivers `sourceFromJS` either dupes (in-memory blob) or
+    // creates a Strong (file/S3); the cached `sourceJS` slot is only used
+    // for the `.js_buffer` path, which a Blob never produces. The only
+    // reason `sourceFromJS` takes `this_value` at all is to set that slot
+    // for ArrayBuffer inputs — pass `.zero` and assert below.
+    img.source = try sourceFromJS(global, blob_value, .zero);
+    bun.debugAssert(img.source != .js_buffer);
+    return img.toJS(global);
 }
 
 fn fromInputJS(global: *jsc.JSGlobalObject, input: jsc.JSValue, options: jsc.JSValue, this_value: jsc.JSValue) bun.JSError!*Image {
@@ -705,8 +707,20 @@ const BlobReadChain = struct {
 
         switch (r) {
             .ok => |bytes| {
-                image.source.deinit();
-                image.source = .{ .owned = bytes };
+                // Concurrent terminals can have started multiple BlobReadChains
+                // (no in-flight serialisation — `start()` re-enters every time
+                // it sees `.blob`). The FIRST resolver wins and swaps to
+                // `.owned`; that buffer is then *borrowed* by `pinForTask`
+                // into a worker-thread PipelineTask. A later resolver MUST NOT
+                // `source.deinit()` (it would free what the worker is reading)
+                // — drop the redundant read instead and re-enter `schedule()`
+                // on the already-swapped source.
+                if (image.source == .blob) {
+                    image.source.deinit();
+                    image.source = .{ .owned = bytes };
+                } else {
+                    bun.default_allocator.free(bytes);
+                }
                 const this_value = image.this_ref.tryGet() orelse {
                     outer.reject(global, global.createErrorInstance("Image: collected before read completed", .{})) catch {};
                     deliver.deinit();

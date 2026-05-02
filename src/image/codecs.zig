@@ -271,7 +271,12 @@ pub fn probe(bytes: []const u8, max_pixels: u64) Error!struct { format: Format, 
             return error.UnsupportedOnPlatform;
         },
     }
-    if (w == 0 or h == 0) return error.DecodeFailed;
+    // The PNG/JPEG/BMP specs all cap each dimension at 2³¹−1; a header with
+    // a larger u32 value is corrupt regardless of `maxPixels`. Reject here so
+    // the i32 `last_width`/`last_height` casts downstream can't trap on a
+    // 24-byte hostile IHDR.
+    if (w == 0 or h == 0 or w > std.math.maxInt(i32) or h > std.math.maxInt(i32))
+        return error.DecodeFailed;
     try guard(w, h, max_pixels);
     return .{ .format = fmt, .width = w, .height = h };
 }

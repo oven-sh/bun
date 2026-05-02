@@ -35,7 +35,10 @@ pub fn parseHeader(b: []const u8) codecs.Error!Header {
     if (ih_size < 40 or 14 + @as(usize, ih_size) > b.len) return error.DecodeFailed;
     const w_raw = std.mem.readInt(i32, b[18..22], .little);
     const h_raw = std.mem.readInt(i32, b[22..26], .little);
-    if (w_raw <= 0 or h_raw == 0) return error.DecodeFailed;
+    // i32::MIN biHeight would make `@abs` yield 2³¹, which then doesn't fit
+    // back into i32 anywhere downstream — reject it as the corrupt header it
+    // is rather than letting safety-checked casts trap.
+    if (w_raw <= 0 or h_raw == 0 or h_raw == std.math.minInt(i32)) return error.DecodeFailed;
     const bpp = std.mem.readInt(u16, b[28..30], .little);
     const compression = std.mem.readInt(u32, b[30..34], .little);
     if (bpp != 24 and bpp != 32) return error.DecodeFailed;

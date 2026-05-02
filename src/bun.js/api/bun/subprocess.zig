@@ -948,14 +948,11 @@ pub const TestingAPIs = struct {
     /// Returns true if an error was injected, false if the given stdio is
     /// not (or no longer) a buffered pipe reader.
     pub fn injectStdioReadError(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments = callframe.arguments_old(2).slice();
-        if (arguments.len < 2) {
-            return globalThis.throw("injectStdioReadError(subprocess, 'stdout'|'stderr')", .{});
-        }
-        const subprocess = Subprocess.fromJS(arguments[0]) orelse {
+        const subprocess_value, const kind_value = callframe.argumentsAsArray(2);
+        const subprocess = Subprocess.fromJS(subprocess_value) orelse {
             return globalThis.throw("first argument must be a Subprocess", .{});
         };
-        const kind_str = try arguments[1].toBunString(globalThis);
+        const kind_str = try kind_value.toBunString(globalThis);
         defer kind_str.deref();
 
         const out: *Readable = if (kind_str.eqlComptime("stdout"))

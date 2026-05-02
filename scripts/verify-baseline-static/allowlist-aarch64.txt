@@ -142,6 +142,6 @@ adler32_arm_neon_dotprod  [DotProd]
 # ----------------------------------------------------------------------------
 _ZN9bun_image10N_SVE2_128L12ModulateImplEPhmff                                [SVE]
 _ZN9bun_image10N_SVE2_128L13Rotate180ImplEPKhiiPh                             [SVE]
-_ZN9bun_image10N_SVE2_128L8VertPassEPKhiiPhiPKNS_4SpanEPKfi                   [SVE]
+_ZN9bun_image10N_SVE2_128L8VertPassEPKhmmPhmPKNS_4SpanEPKsm                   [SVE]
 _ZN9bun_image10N_SVE2_128L9FlipHImplEPKhiiPh                                  [SVE]
-_ZN9bun_image10N_SVE2_128L9HorizPassEPKhiiPhiPKNS_4SpanEPKfi                  [SVE]
+_ZN9bun_image10N_SVE2_128L9HorizPassEPKhmmPhmPKNS_4SpanEPKsm                  [SVE]

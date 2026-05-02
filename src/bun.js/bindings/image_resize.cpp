@@ -426,7 +426,13 @@ int buildWeights(int kind, int32_t src_len, int32_t dst_len,
     // pick exactly ONE source sample at any scale (pixel art, label maps),
     // so don't stretch it — fscale=1 keeps support at 0.5 = single tap.
     const double fscale = (kind == 4 || scale >= 1.0) ? 1.0 : scale;
-    const double support = radius(kind) / fscale;
+    // Cap support so the per-pixel span fits the 256-tap stack buffer below.
+    // Capping HERE (before start/end are derived) keeps the window centred on
+    // `center`; the previous post-hoc `if (n > 256) n = 256` left `start`
+    // anchored at center-support, biasing the truncated span left and shifting
+    // the output. The cap kicks in only past ~42× (lanczos3) / ~28× (mks2021),
+    // where it reduces antialias radius rather than produce geometric error.
+    const double support = std::min(radius(kind) / fscale, 127.0);
     int max_n = 0;
     for (int32_t i = 0; i < dst_len; i++) {
         const double center = (i + 0.5) / scale - 0.5;
@@ -437,9 +443,7 @@ int buildWeights(int kind, int32_t src_len, int32_t dst_len,
         int32_t n = end - start + 1;
         if (n > wstride) n = wstride;
         // Evaluate in f64, normalise, then quantise.
-        double fw[256]; // wstride upper bound is 2*radius/fscale + 2; even
-                        // mks2021 at 16× downscale is 2*4.5*16+2 = 146.
-        if (n > 256) n = 256;
+        double fw[256];
         double sum = 0.0;
         for (int32_t k = 0; k < n; k++) {
             fw[k] = filter(kind, ((start + k) - center) * fscale);
@@ -480,8 +484,9 @@ struct ScratchLayout {
     {
         const double xs = static_cast<double>(dst_w) / src_w;
         const double ys = static_cast<double>(dst_h) / src_h;
-        wsx = static_cast<size_t>(std::ceil(radius(kind) / (xs < 1.0 ? xs : 1.0))) * 2 + 2;
-        wsy = static_cast<size_t>(std::ceil(radius(kind) / (ys < 1.0 ? ys : 1.0))) * 2 + 2;
+        // 256 mirrors buildWeights' support cap (see comment there).
+        wsx = std::min<size_t>(256, static_cast<size_t>(std::ceil(radius(kind) / (xs < 1.0 ? xs : 1.0))) * 2 + 2);
+        wsy = std::min<size_t>(256, static_cast<size_t>(std::ceil(radius(kind) / (ys < 1.0 ? ys : 1.0))) * 2 + 2);
         const size_t tmp_sz = dst_w * src_h * 4;
         off_xs = alignUp(tmp_sz, alignof(Span));
         off_ys = off_xs + sizeof(Span) * dst_w;

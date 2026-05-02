@@ -146,14 +146,17 @@ fn mapFloydSteinberg(
     k: u16,
     indices: []u8,
 ) error{OutOfMemory}!void {
-    // Two rows of accumulated error, ×4 channels, in i16 (range fits: max
-    // |err| per channel per step is 255, weights sum to 1 so it stays bounded
-    // across the row). `cur` carries error pushed *into* the current row from
-    // the row above; `nxt` collects error for the row below.
+    // Two rows of accumulated error, ×4 channels. i32 not i16: when the
+    // palette doesn't span the source range (e.g. colors:2, both entries near
+    // 0, source has 255s) the residual grows without bound across the row —
+    // each pixel's error is `cand − nearest`, and `cand = src + carried` keeps
+    // climbing. i16 overflows there; two w×4 i32 rows are still negligible.
+    // `cur` carries error pushed *into* the current row from the row above;
+    // `nxt` collects error for the row below.
     const stride: usize = @as(usize, w) * 4;
-    var cur = try bun.default_allocator.alloc(i16, stride);
+    var cur = try bun.default_allocator.alloc(i32, stride);
     defer bun.default_allocator.free(cur);
-    var nxt = try bun.default_allocator.alloc(i16, stride);
+    var nxt = try bun.default_allocator.alloc(i32, stride);
     defer bun.default_allocator.free(nxt);
     @memset(cur, 0);
     @memset(nxt, 0);
@@ -189,14 +192,14 @@ fn mapFloydSteinberg(
                 const dir = step;
                 const xr = x + dir;
                 const xl = x - dir;
-                if (xr >= 0 and xr < w) cur[@as(usize, @intCast(xr)) * 4 + c] += @intCast((err * 7) >> 4);
-                if (xl >= 0 and xl < w) nxt[@as(usize, @intCast(xl)) * 4 + c] += @intCast((err * 3) >> 4);
-                nxt[off + c] += @intCast((err * 5) >> 4);
-                if (xr >= 0 and xr < w) nxt[@as(usize, @intCast(xr)) * 4 + c] += @intCast(err >> 4);
+                if (xr >= 0 and xr < w) cur[@as(usize, @intCast(xr)) * 4 + c] += (err * 7) >> 4;
+                if (xl >= 0 and xl < w) nxt[@as(usize, @intCast(xl)) * 4 + c] += (err * 3) >> 4;
+                nxt[off + c] += (err * 5) >> 4;
+                if (xr >= 0 and xr < w) nxt[@as(usize, @intCast(xr)) * 4 + c] += err >> 4;
             }
         }
         // Slide: next row's error becomes current; clear next.
-        std.mem.swap([]i16, &cur, &nxt);
+        std.mem.swap([]i32, &cur, &nxt);
         @memset(nxt, 0);
     }
 }

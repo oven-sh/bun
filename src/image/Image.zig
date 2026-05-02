@@ -208,7 +208,10 @@ pub fn doResize(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallF
             const s = try f.toBunString(global);
             defer s.deref();
             r.filter = parseFilter(s) orelse
-                return global.throwInvalidArguments("resize: filter must be 'nearest' | 'box' | 'bilinear' | 'cubic' | 'mitchell' | 'lanczos2' | 'lanczos3'", .{});
+                return global.throwInvalidArguments(
+                    "resize: filter must be 'nearest' | 'box' | 'bilinear' | 'cubic' | 'mitchell' | 'lanczos2' | 'lanczos3' | 'mks2013' | 'mks2021'",
+                    .{},
+                );
         };
         if (try opt.get(global, "fit")) |f| if (f.isString()) {
             const s = try f.toBunString(global);
@@ -578,8 +581,9 @@ pub const PipelineTask = struct {
         // axes, so any 90/270 rotate that runs before resize — explicit OR
         // EXIF auto-orient — needs the hint axes swapped, otherwise one axis
         // can be over-shrunk and then upscaled, throwing away detail.
+        // (flip/flop are pure mirrors that never change w/h, so the hint
+        //  stays valid through them.)
         const hint: codecs.DecodeHint = if (this.pipeline.resize) |r| blk: {
-            if (this.pipeline.flip or this.pipeline.flop) break :blk .{};
             var tw = r.w;
             // r.h==0 means "preserve aspect" — constrain on width only.
             var th = if (r.h != 0) r.h else r.w;

@@ -8272,6 +8272,16 @@ declare module "bun" {
     }): this;
     /** Set output format to WebP. */
     webp(options?: { quality?: number; lossless?: boolean }): this;
+    /**
+     * Set output format to HEIC. macOS/Windows only — throws
+     * `UnsupportedOnPlatform` elsewhere.
+     */
+    heic(options?: { quality?: number }): this;
+    /**
+     * Set output format to AVIF. macOS/Windows only — throws
+     * `UnsupportedOnPlatform` elsewhere.
+     */
+    avif(options?: { quality?: number }): this;
 
     /**
      * Run the pipeline and return the encoded bytes. If no format setter was

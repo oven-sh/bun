@@ -79,13 +79,19 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOpti
     //   • palette PNG — WIC's PNG encoder won't quantise for us;
     //   • lossless WebP — Windows ships a WebP *decoder* only, and even where
     //     an encoder exists there's no lossless flag in the property bag;
-    //   • JPEG/WebP quality — TODO: thread through IPropertyBag2 "ImageQuality"
-    //     (VT_R4 0..1) on the IPropertyBag2* returned by CreateNewFrame. Until
-    //     that's wired, defer lossy encodes so quality matches across platforms.
-    // That leaves WIC handling PNG (no quality knob needed) for now.
-    if (opts.format == .png and opts.palette) return error.BackendUnavailable;
-    if (opts.format == .webp) return error.BackendUnavailable;
-    if (opts.format == .jpeg) return error.BackendUnavailable;
+    //   • JPEG/WebP/HEIC/AVIF quality — TODO: thread through IPropertyBag2
+    //     "ImageQuality" (VT_R4 0..1) on the IPropertyBag2* returned by
+    //     CreateNewFrame. Until that's wired, defer lossy formats so quality
+    //     matches across platforms (JPEG/WebP fall through to the static
+    //     codecs; HEIC/AVIF have no static fallback so they encode at WIC's
+    //     default quality — that's accepted for now and noted in the docs).
+    //   • PNG compressionLevel — WIC has no per-level zlib knob; fall through
+    //     to libspng when the user set one.
+    // That leaves WIC handling default-level PNG and (default-quality)
+    // HEIC/AVIF.
+    if (opts.format == .png and (opts.palette or opts.compression_level >= 0))
+        return error.BackendUnavailable;
+    if (opts.format == .webp or opts.format == .jpeg) return error.BackendUnavailable;
 
     const f = try factory();
 

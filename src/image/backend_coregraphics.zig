@@ -66,9 +66,13 @@ pub fn decode(bytes: []const u8, max_pixels: u64) BackendError!codecs.Decoded {
 }
 
 pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOptions) BackendError![]u8 {
-    // ImageIO has no knob for indexed-PNG quantisation or VP8L lossless; let
-    // the static codecs handle those so behaviour matches across platforms.
-    if (opts.format == .png and opts.palette) return error.BackendUnavailable;
+    // Defer to the static codec whenever the user asked for a knob ImageIO
+    // can't express, so behaviour matches across platforms:
+    //   • indexed-PNG quantisation (no kCGImagePropertyPNG* for palette)
+    //   • PNG zlib compressionLevel (no per-level property; only on/off)
+    //   • VP8L lossless WebP
+    if (opts.format == .png and (opts.palette or opts.compression_level >= 0))
+        return error.BackendUnavailable;
     if (opts.format == .webp and opts.lossless) return error.BackendUnavailable;
 
     const fmt: i32 = @intFromEnum(opts.format);

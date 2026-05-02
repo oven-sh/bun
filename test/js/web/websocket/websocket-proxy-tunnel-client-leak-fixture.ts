@@ -110,7 +110,7 @@ const proxy = net.createServer(clientSocket => {
 await new Promise<void>(r => proxy.listen(0, "127.0.0.1", () => r()));
 const proxyPort = (proxy.address() as net.AddressInfo).port;
 
-async function roundTrip(mode: "clean" | "abrupt") {
+async function roundTrip(mode: "clean" | "terminate" | "abrupt") {
   const ws = new WebSocket(`wss://127.0.0.1:${wssPort}/`, {
     // @ts-ignore Bun-specific options
     tls: { rejectUnauthorized: false },
@@ -134,16 +134,29 @@ async function roundTrip(mode: "clean" | "abrupt") {
   if (mode === "clean") {
     // Client-initiated close → sendCloseWithBody → clearData → dispatchClose.
     ws.close();
+    await closed.promise;
+  } else if (mode === "terminate") {
+    // C++ WebSocket::terminate() → cancel() → clearData. terminate() then
+    // sets m_connectedWebSocketKind = None so the destructor's finalize()
+    // never runs — cancel() must drop the C++ ref itself. On the unfixed
+    // path onclose never fired, so don't block on it here; the alloc-log
+    // new/destroy count still proves the leak.
+    // @ts-ignore Bun-specific method
+    ws.terminate();
+    // Tear down the proxy side so the upgrade client's socket ref drops too.
+    for (const s of clientSockets.splice(0)) s.destroy();
+    closed.promise.catch(() => {});
   } else {
     // Proxy-socket teardown → HTTPClient.handleClose → tunnel.onClose → ws.fail
     // → cancel → clearData.
     for (const s of clientSockets.splice(0)) s.destroy();
+    await closed.promise;
   }
-  await closed.promise;
 }
 
-// Exercise both close paths; either one leaked before the fix.
+// Exercise all three close paths; each leaked before the fix.
 for (let i = 0; i < 3; i++) await roundTrip("clean");
+for (let i = 0; i < 3; i++) await roundTrip("terminate");
 for (let i = 0; i < 3; i++) await roundTrip("abrupt");
 
 // dispatchClose/dispatchAbruptClose fire `onclose` from inside the ref-drop

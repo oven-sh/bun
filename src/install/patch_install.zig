@@ -147,6 +147,12 @@ pub const PatchTask = struct {
         // need to switch on version.tag and handle each case appropriately
         const calc_hash = &this.callback.calc_hash;
         const hash = calc_hash.result orelse {
+            // For pre-calculation tasks, a null result means the patch file was not
+            // found on disk. This is not fatal — the patched package may not be in
+            // the current dependency graph (e.g. pruned monorepo / turbo prune).
+            // If the package IS later resolved, determinePreinstallState will
+            // trigger a new (non-pre) hash calculation that will properly error.
+            if (this.pre) return;
             if (log_level != .silent) {
                 if (calc_hash.logger.hasErrors()) {
                     calc_hash.logger.print(Output.errorWriter()) catch {};
@@ -419,6 +425,13 @@ pub const PatchTask = struct {
         const stat: bun.Stat = switch (bun.sys.stat(absolute_patchfile_path)) {
             .err => |e| {
                 if (e.getErrno() == .NOENT) {
+                    // If this is a pre-calculation task (no associated package in the
+                    // dependency graph yet), the patch file being missing is not an error —
+                    // the patched package may simply not be part of the current dependency
+                    // graph (e.g. in a pruned monorepo). If the package IS later resolved,
+                    // determinePreinstallState will trigger a non-pre hash calculation
+                    // that will properly report the error.
+                    if (this.pre) return null;
                     bun.handleOom(log.addErrorFmt(null, Loc.Empty, this.manager.allocator, "Couldn't find patch file: '{s}'\n\nTo create a new patch file run:\n\n  <cyan>bun patch {s}<r>", .{
                         this.callback.calc_hash.patchfile_path,
                         this.manager.lockfile.patched_dependencies.get(this.callback.calc_hash.name_and_version_hash).?.path.slice(this.manager.lockfile.buffers.string_bytes.items),

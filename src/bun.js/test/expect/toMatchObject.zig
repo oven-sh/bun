@@ -34,10 +34,15 @@ pub fn toMatchObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Cal
 
     const property_matchers = args[0];
 
-    var pass = try received_object.jestDeepMatch(property_matchers, globalThis, true);
+    var pass = try received_object.jestDeepMatch(property_matchers, globalThis, false);
 
     if (not) pass = !pass;
     if (pass) return .js_undefined;
+
+    // Re-run with replacement enabled to prepare objects for diff formatting.
+    // This mutates the objects so the diff shows asymmetric matchers in place
+    // of matched values, but only on the failure path where we're about to throw.
+    _ = try received_object.jestDeepMatch(property_matchers, globalThis, true);
 
     // handle failure
     const diff_formatter = DiffFormatter{

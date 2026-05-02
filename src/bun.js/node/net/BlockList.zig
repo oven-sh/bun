@@ -219,6 +219,9 @@ pub fn onStructuredCloneDeserialize(globalThis: *jsc.JSGlobalObject, ptr: *[*]u8
     ptr.* = ptr.* + buffer_stream.pos;
 
     const this: *@This() = @ptrFromInt(int);
+    // A single SerializedScriptValue can be deserialized multiple times
+    // (e.g. BroadcastChannel fan-out), so each wrapper must own its own ref.
+    this.ref();
     return this.toJS(globalThis);
 }
 

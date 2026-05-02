@@ -94,7 +94,7 @@ describe("HTMLRewriter", () => {
             },
           })
           .transform(new ArrayBuffer(64)),
-      ).toThrow();
+      ).toThrow("fail in end");
       Bun.gc(true);
     }
   });

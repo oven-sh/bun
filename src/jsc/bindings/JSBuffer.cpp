@@ -394,6 +394,19 @@ static JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlobalObjec
         return {};
     }
 
+    // Callers compute offset/length before running user JS (parseEncoding's
+    // toString, argument coercion) that can detach or resize the backing
+    // ArrayBuffer. Re-read byteLength here and clamp so we never compute
+    // vector()+offset past the current bounds. A detached buffer has
+    // byteLength 0 → offset >= 0 → return 0 without touching the null
+    // vector(). Callers are still responsible for throwing the
+    // Node-compatible ERR_BUFFER_OUT_OF_BOUNDS; this is the safety floor.
+    uint32_t byteLength = castedThis->byteLength();
+    if (offset >= byteLength) [[unlikely]]
+        return JSC::JSValue::encode(JSC::jsNumber(0));
+    if (length > byteLength - offset) [[unlikely]]
+        length = byteLength - offset;
+
     size_t written = 0;
 
     switch (encoding) {
@@ -2414,6 +2427,18 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
 
     auto encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, false);
     RETURN_IF_EXCEPTION(scope, {});
+
+    // parseEncoding calls toStringOrNull() on encodingValue which invokes
+    // user toString() if it's an object. That can detach or resize the
+    // backing ArrayBuffer after offset/length were computed above. Node's
+    // per-encoding write functions (utf8Write et al in internal/buffer.js)
+    // re-validate against the current byteLength after encoding
+    // normalization, so do the same here.
+    uint32_t byteLength = castedThis->byteLength();
+    if (offset > byteLength) [[unlikely]]
+        return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
+    if (length > byteLength - offset) [[unlikely]]
+        return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "length"_s);
 
     RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
 }

@@ -781,6 +781,12 @@ pub const FileSystem = struct {
 
         /// Returns `true` if a cached entry was invalidated.
         pub fn bustEntriesCache(rfs: *RealFS, file_path: string) bool {
+            // `readDirectoryWithIterator` and `dirInfoCachedMaybeLog` hold this
+            // while reading/overwriting slot contents; take it here so the tag
+            // check and `.stale` write can't race with an in-place overwrite.
+            rfs.entries_mutex.lock();
+            defer rfs.entries_mutex.unlock();
+
             // `BSSMap.remove()` only drops the hash→index mapping; the backing
             // slot (and the heap `*DirEntry` it points at) are orphaned, and the
             // next lookup allocates a fresh slot + fresh `DirEntry`. That skips

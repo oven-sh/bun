@@ -88,8 +88,12 @@ export const lolhtml: Dependency = {
       ];
     }
 
-    // -Zbuild-std requires an explicit --target even when host == target.
-    if (spec.buildStd) {
+    // Always set an explicit --target on non-Windows: -Zbuild-std requires
+    // it even when host == target, and cross-compiles (FreeBSD x64 debug
+    // included) need it so source.ts emits CARGO_TARGET_<TRIPLE>_LINKER /
+    // rustup target add. Android/Windows blocks above set theirs explicitly;
+    // ??= preserves those.
+    if (!cfg.windows) {
       spec.rustTarget ??= rustTargetTriple(cfg);
     }
 

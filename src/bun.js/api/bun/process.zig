@@ -2688,6 +2688,12 @@ pub const sync = struct {
                         else {
                             child_status = Status.from(child, &r);
                             child_exited = true;
+                            // wait4 just freed `child`'s pid; if NOTE_EXIT for
+                            // it isn't in this batch we'd return with the root
+                            // still in m_tracked and `killTracked()` would
+                            // SIGSTOP a (potentially recycled) freed pid.
+                            // Idempotent with the NOTE_EXIT handler above.
+                            Bun__noOrphans_onExit(child);
                         }
                     }
                 } else if (ev.filter == std.c.EVFILT.READ) {

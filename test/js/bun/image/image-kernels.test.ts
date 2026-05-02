@@ -151,7 +151,6 @@ describe("resize filter properties", () => {
     expect(Buffer.compare(out, decodePng(src).data)).toBe(0);
   });
 
-  // Ringing test: a hard black/white step. lanczos3 has negative lobes →
   // `nearest` must pick exactly ONE source sample at any scale — pixel art /
   // label maps must keep discrete values. Regression: it used to share box's
   // kernel-stretch on downscale and produced area-averaged greys.
@@ -161,6 +160,7 @@ describe("resize filter properties", () => {
     for (let i = 0; i < out.length; i += 4) expect(out[i] === 0 || out[i] === 255).toBe(true);
   });
 
+  // Ringing test: a hard black/white step. lanczos3 has negative lobes →
   // overshoots; mitchell has none → must not. This is the property that
   // distinguishes the two.
   test("mitchell never overshoots a step (no negative lobes)", async () => {

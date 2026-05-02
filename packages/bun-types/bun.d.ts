@@ -8283,10 +8283,7 @@ declare module "bun" {
      */
     static clipboardChangeCount(): number;
 
-    constructor(
-      input: string | ArrayBuffer | SharedArrayBuffer | NodeJS.TypedArray | Blob,
-      options?: Image.ConstructorOptions,
-    );
+    constructor(input: string | ArrayBuffer | NodeJS.TypedArray | Blob, options?: Image.ConstructorOptions);
 
     /** Set target dimensions. Omit `height` to keep the source aspect ratio. */
     resize(width: number, height?: number, options?: Image.ResizeOptions): this;

@@ -340,9 +340,7 @@ it("jsx with circular references does not stack overflow", async () => {
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(exitCode).toBe(0);
-  expect(stdout).toBe(
-    "<div key=[Circular] />\n" + "<div>\n  [Circular]\n</div>\n" + "<div foo=[Circular] />\n",
-  );
+  expect(stdout).toBe("<div key=[Circular] />\n" + "<div>\n  [Circular]\n</div>\n" + "<div foo=[Circular] />\n");
 });
 
 it("inspect", () => {

@@ -142,22 +142,16 @@ test.concurrent(
   },
 );
 
-test.concurrent(
-  "inflateRaw: reset() after detaching the dictionary ArrayBuffer does not use-after-free",
-  async () => {
-    const { stdout, stderr, exitCode } = await run(resetFixture);
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("OK");
-    expect(exitCode).toBe(0);
-  },
-);
+test.concurrent("inflateRaw: reset() after detaching the dictionary ArrayBuffer does not use-after-free", async () => {
+  const { stdout, stderr, exitCode } = await run(resetFixture);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+});
 
-test.concurrent(
-  "deflate: reset() after detaching the dictionary ArrayBuffer does not use-after-free",
-  async () => {
-    const { stdout, stderr, exitCode } = await run(deflateResetFixture);
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("OK");
-    expect(exitCode).toBe(0);
-  },
-);
+test.concurrent("deflate: reset() after detaching the dictionary ArrayBuffer does not use-after-free", async () => {
+  const { stdout, stderr, exitCode } = await run(deflateResetFixture);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+});

@@ -866,7 +866,15 @@ pub fn onBeforeExit(this: *VirtualMachine) void {
     this.exit_handler.dispatchOnBeforeExit();
     var dispatch = false;
     while (true) {
+        // Observe worker abrupt-terminate / cooperative-close here too.
+        // A `self.close()` or `process.exit()` inside the beforeExit
+        // handler — or one called from a timer / immediate that fires
+        // inside this loop — must break us out. `drainTimers` /
+        // `tickImmediateTasks` early-return on the close flag without
+        // popping due timers, so `isEventLoopAlive()` alone would keep
+        // looping forever.
         while (this.isEventLoopAlive()) : (dispatch = true) {
+            if (this.worker) |w| if (w.shouldExitLoop()) return;
             this.tick();
             this.eventLoop().autoTickActive();
         }
@@ -875,6 +883,7 @@ pub fn onBeforeExit(this: *VirtualMachine) void {
             this.exit_handler.dispatchOnBeforeExit();
             dispatch = false;
 
+            if (this.worker) |w| if (w.shouldExitLoop()) return;
             if (this.isEventLoopAlive()) continue;
         }
 

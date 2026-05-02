@@ -725,3 +725,49 @@ test.concurrent(
     expect(JSON.parse(stdout.trim())).toEqual(["x"]);
   },
 );
+
+test.concurrent("self.close() in a beforeExit handler that also schedules a timer doesn't busy-loop", async () => {
+  // `VirtualMachine.onBeforeExit()` has its own inner while-loop that
+  // drives the event loop one more time once the main loop has drained
+  // (for a last-chance 'beforeExit' handler to reschedule work). Without
+  // a close-flag gate inside that loop, the combination
+  //   process.on('beforeExit', () => { setTimeout(()=>{}, 0); self.close(); })
+  // creates a hang: drainTimers early-returns on the close flag without
+  // popping the due timer, so its uws-loop keep-alive stays ref'd,
+  // `isEventLoopAlive()` stays true, and the loop spins forever. Even a
+  // parent-side worker.terminate() can't rescue it — no JS safepoint
+  // runs between iterations. With the fix, onBeforeExit observes
+  // shouldExitLoop() and returns, shutdown() posts the close event
+  // cleanly.
+  using dir = tempDir("issue-29186-before-exit-close", {
+    "worker.mjs": `
+      process.on("beforeExit", () => {
+        setTimeout(() => { self.postMessage("timer-fired"); }, 0);
+        self.close();
+      });
+    `,
+    "main.mjs": `
+      const worker = new Worker(new URL("./worker.mjs", import.meta.url).href, { type: "module" });
+      const events = [];
+      const { promise, resolve } = Promise.withResolvers();
+      worker.onmessage = ({ data }) => { events.push(data); };
+      worker.addEventListener("close", () => resolve());
+      await promise;
+      console.log(JSON.stringify(events));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 10_000,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
+  // No timer fires — close was set in the same handler that scheduled it.
+  expect(JSON.parse(stdout.trim())).toEqual([]);
+});

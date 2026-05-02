@@ -1,0 +1,118 @@
+--- a/src/liblsquic/lsquic_gquic_stubs.c
++++ b/src/liblsquic/lsquic_gquic_stubs.c
+@@ -0,0 +1,115 @@
++/* Bun: gQUIC (Google QUIC) is unreachable — Bun.serve and the H3 client only
++ * negotiate IETF QUIC versions (see packages/bun-usockets/src/quic.c, which
++ * masks es_versions with LSQUIC_IETF_VERSIONS). The real gQUIC sources pull
++ * in ~130 KB of common_cert_set tables plus the legacy handshake/parser. We
++ * compile this stub instead so the few unconditional references from
++ * lsquic_engine.c / lsquic_global.c / lsquic_pr_queue.c / lsquic_stream.c
++ * still link, while LTO drops everything behind them. None of these are
++ * reached at runtime when no gQUIC version bit is set. */
++
++#include <errno.h>
++#include <stddef.h>
++#include <sys/queue.h>
++
++#include "lsquic.h"
++#include "lsquic_types.h"
++#include "lsquic_int_types.h"
++#include "lsquic_packet_common.h"
++#include "lsquic_packet_gquic.h"
++#include "lsquic_packet_in.h"
++#include "lsquic_parse_common.h"
++#include "lsquic_parse.h"
++#include "lsquic_enc_sess.h"
++#include "lsquic_headers_stream.h"
++
++struct lsquic_engine_public;
++
++static int gquic_stub_global_init (int flags) { (void) flags; return 0; }
++static void gquic_stub_global_cleanup (void) { }
++
++#ifdef NDEBUG
++const
++#endif
++struct enc_session_funcs_common lsquic_enc_session_common_gquic_1 = {
++    .esf_global_init    = gquic_stub_global_init,
++    .esf_global_cleanup = gquic_stub_global_cleanup,
++};
++
++#ifdef NDEBUG
++const
++#endif
++struct enc_session_funcs_common lsquic_enc_session_common_gquic_2 = {
++    .esf_global_init    = gquic_stub_global_init,
++    .esf_global_cleanup = gquic_stub_global_cleanup,
++};
++
++#ifdef NDEBUG
++const
++#endif
++struct enc_session_funcs_gquic lsquic_enc_session_gquic_gquic_1;
++
++/* lsquic_pr_queue.c pre-builds a gQUIC reset packet at server init via
++ * select_pf_by_ver(LSQVER_043)->pf_generate_simple_prst. Return a one-byte
++ * placeholder so the assert(len > 0)/len < 0 checks pass; the buffer is only
++ * sent for PACKET_REQ_PUBRES which is never queued without a gQUIC version. */
++static ssize_t gquic_stub_generate_simple_prst (const lsquic_cid_t *cid,
++                                                unsigned char *buf, size_t sz)
++{
++    (void) cid;
++    if (sz) buf[0] = 0;
++    return sz ? 1 : 0;
++}
++
++const struct parse_funcs lsquic_parse_funcs_gquic_Q043 = {
++    .pf_generate_simple_prst = gquic_stub_generate_simple_prst,
++};
++const struct parse_funcs lsquic_parse_funcs_gquic_Q046;
++const struct parse_funcs lsquic_parse_funcs_gquic_Q050;
++
++int lsquic_gquic_gen_ver_nego_pkt (unsigned char *buf, size_t bufsz,
++                                   const lsquic_cid_t *cid, unsigned versions)
++{
++    /* lsquic_prq_create asserts len > 0. The buffer is only copied out for
++     * PACKET_REQ_VERNEG with a gQUIC version flag — never queued by Bun. */
++    (void) cid; (void) versions;
++    if (bufsz) buf[0] = 0;
++    return bufsz ? 1 : 0;
++}
++
++int lsquic_gquic_parse_packet_in_begin (lsquic_packet_in_t *p, size_t l,
++        int s, unsigned c, struct packin_parse_state *st)
++{ (void)p;(void)l;(void)s;(void)c;(void)st; return -1; }
++
++int lsquic_Q050_parse_packet_in_long_begin (struct lsquic_packet_in *p,
++        size_t l, int s, unsigned c, struct packin_parse_state *st)
++{ (void)p;(void)l;(void)s;(void)c;(void)st; return -1; }
++
++struct lsquic_conn *
++lsquic_gquic_full_conn_client_new (struct lsquic_engine_public *e,
++        unsigned v, unsigned f, const char *h, unsigned short m, int i,
++        const unsigned char *r, size_t rl)
++{ (void)e;(void)v;(void)f;(void)h;(void)m;(void)i;(void)r;(void)rl;
++  errno = EPROTONOSUPPORT; return NULL; }
++
++struct lsquic_conn *
++lsquic_gquic_full_conn_server_new (struct lsquic_engine_public *e,
++        unsigned f, struct lsquic_conn *m)
++{ (void)e;(void)f;(void)m; errno = EPROTONOSUPPORT; return NULL; }
++
++lsquic_conn_t *
++lsquic_mini_conn_new (struct lsquic_engine_public *e,
++        const struct lsquic_packet_in *p, enum lsquic_version v)
++{ (void)e;(void)p;(void)v; return NULL; }
++
++int lsquic_headers_stream_send_headers (struct headers_stream *hs,
++        lsquic_stream_id_t id, const struct lsquic_http_headers *h, int eos,
++        unsigned w)
++{ (void)hs;(void)id;(void)h;(void)eos;(void)w; return -1; }
++
++int lsquic_headers_stream_send_priority (struct headers_stream *hs,
++        lsquic_stream_id_t id, int ex, lsquic_stream_id_t dep, unsigned w)
++{ (void)hs;(void)id;(void)ex;(void)dep;(void)w; return -1; }
++
++struct lsquic_stream *
++lsquic_headers_stream_get_stream (const struct headers_stream *hs)
++{ (void)hs; return NULL; }

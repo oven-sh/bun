@@ -2,8 +2,10 @@
  * Zstandard — fast compression with a good ratio/speed tradeoff. Backs
  * bun's install cache and the `zstd` Content-Encoding in fetch.
  *
- * DirectBuild: globbed common/compress/decompress/dictBuilder + the legacy
- * decoders (parity with cmake's ZSTD_LEGACY_SUPPORT default). The amd64
+ * DirectBuild: globbed common/compress/decompress/dictBuilder. Legacy-format
+ * decoders (zstd v0.5-v0.7, pre-1.0) are NOT built — Bun never reads
+ * pre-1.0 frames (install cache, fetch Content-Encoding, and Bun.zstd all
+ * use the current format). The amd64
  * Huffman kernel ships as a .S file that clang assembles directly; on other
  * targets ZSTD_DISABLE_ASM falls through to the C implementation.
  */
@@ -27,10 +29,6 @@ const SOURCES = [
   "decompress/zstd_decompress", "decompress/zstd_decompress_block",
   "dictBuilder/cover", "dictBuilder/divsufsort", "dictBuilder/fastcover",
   "dictBuilder/zdict",
-  // ZSTD_LEGACY_SUPPORT=5 → zstd_legacy.h only dispatches to v05+;
-  // v01–v04 would compile but never be reached. cmake's build does the
-  // same (it loops `RANGE ZSTD_LEGACY_LEVEL 7`).
-  "legacy/zstd_v05", "legacy/zstd_v06", "legacy/zstd_v07",
 ].map(s => `lib/${s}.c`);
 
 export const zstd: Dependency = {
@@ -47,7 +45,7 @@ export const zstd: Dependency = {
     const sources = [...SOURCES];
     const defines: Record<string, number | true> = {
       ZSTD_MULTITHREAD: true,
-      ZSTD_LEGACY_SUPPORT: 5,
+      ZSTD_LEGACY_SUPPORT: 0,
     };
 
     // Upstream's if(MSVC) block sets these for the static target.
@@ -71,7 +69,7 @@ export const zstd: Dependency = {
       kind: "direct",
       sources,
       defines,
-      includes: ["lib", "lib/common", "lib/legacy"],
+      includes: ["lib", "lib/common"],
       pic: true,
       // XXH_NAMESPACE must be a bare token prefix (xxhash pastes it onto
       // symbol names), not a string literal — DirectBuild.defines would

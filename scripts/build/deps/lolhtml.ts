@@ -6,9 +6,22 @@
  * the root is the pure-rust library (which we don't use directly).
  */
 
+import type { Config } from "../config.ts";
 import type { CargoBuild, Dependency } from "../source.ts";
 
 const LOLHTML_COMMIT = "77127cd2b8545998756e8d64e36ee2313c4bb312";
+
+/**
+ * -Zbuild-std requires an explicit --target even when host == target.
+ * Derive the Rust triple for the build target. Windows handled separately
+ * (buildStd is unix-only). Android/FreeBSD set rustTarget explicitly below.
+ */
+function rustHostTriple(cfg: Config): string {
+  const arch = cfg.arm64 ? "aarch64" : "x86_64";
+  if (cfg.darwin) return `${arch}-apple-darwin`;
+  if (cfg.abi === "musl") return `${arch}-unknown-linux-musl`;
+  return `${arch}-unknown-linux-gnu`;
+}
 
 export const lolhtml: Dependency = {
   name: "lolhtml",
@@ -36,6 +49,23 @@ export const lolhtml: Dependency = {
     // binaries without them on 64-bit. So this is unix-only.
     if (!cfg.windows) {
       spec.rustflags = ["-Cpanic=abort", "-Cdebuginfo=0", "-Cforce-unwind-tables=no", "-Copt-level=s"];
+      // -Cpanic=abort alone still links the *precompiled* std, whose
+      // __rust_start_panic prints a backtrace before aborting — pulling in
+      // gimli/addr2line/rustc_demangle/miniz_oxide (~230 KB). For release,
+      // rebuild std with -Cpanic=immediate-abort so panic is a bare abort().
+      // Requires nightly + rust-src (CI has both); -Zbuild-std also requires
+      // an explicit --target even when host==target.
+      if (cfg.release) {
+        spec.buildStd = true;
+        spec.rustTarget ??= rustHostTriple(cfg);
+        spec.rustflags = [
+          "-Zunstable-options",
+          "-Cpanic=immediate-abort",
+          "-Cdebuginfo=0",
+          "-Cforce-unwind-tables=no",
+          "-Copt-level=s",
+        ];
+      }
     }
 
     // arm64-windows: cargo defaults to the host triple, but CI builds arm64

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isPosix } from "harness";
+import { isPosix, isWindows } from "harness";
 import fs from "node:fs";
 
 // On POSIX systems, MAX_PATH_BYTES is 4096.
@@ -50,5 +50,25 @@ describe.if(isPosix)("path length validation with multi-byte characters", () => 
     // 1500 emoji = 3000 UTF-16 code units but 6000 UTF-8 bytes > 4096
     const emojiPath = "\u{1F600}".repeat(1500);
     expect(() => fs.statSync(emojiPath)).toThrow("ENAMETOOLONG");
+  });
+});
+
+// On Windows, PATH_MAX_WIDE is 32767 u16 code units. normalizePathWindows
+// joins the dirfd's resolved path with the relative input path into a pooled
+// [32767]u16 buffer. A relative path that fits in a WPathBuffer on its own but
+// overflows once the cwd is prepended must return ENAMETOOLONG rather than
+// writing past the buffer.
+describe.if(isWindows)("path length validation when joining cwd + relative path on Windows", () => {
+  // 32765 ASCII chars → 32765 u16 after UTF-8→UTF-16 conversion (fits in the
+  // 32767-u16 conversion buffer). Even a minimal cwd like "C:\" (3 chars)
+  // brings the joined length to 3 + 1 + 32765 = 32769 > 32767.
+  const longRelative = "./" + Buffer.alloc(32763, "a").toString();
+
+  it("rejects overly long relative paths in readdirSync", () => {
+    expect(() => fs.readdirSync(longRelative)).toThrow("ENAMETOOLONG");
+  });
+
+  it("rejects overly long relative paths in writeFileSync", () => {
+    expect(() => fs.writeFileSync(longRelative, "")).toThrow("ENAMETOOLONG");
   });
 });

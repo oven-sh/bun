@@ -1060,10 +1060,19 @@ pub fn normalizePathWindows(
 
     const buf1 = bun.w_path_buffer_pool.get();
     defer bun.w_path_buffer_pool.put(buf1);
+    const joined_len = base_path.len + 1 + path.len;
+    if (joined_len > buf1.len) {
+        return .{
+            .err = .{
+                .errno = @intFromEnum(E.NAMETOOLONG),
+                .syscall = .open,
+            },
+        };
+    }
     @memcpy(buf1[0..base_path.len], base_path);
     buf1[base_path.len] = '\\';
-    @memcpy(buf1[base_path.len + 1 .. base_path.len + 1 + path.len], path);
-    const norm = bun.path.normalizeStringGenericTZ(u16, buf1[0 .. base_path.len + 1 + path.len], buf, .{ .add_nt_prefix = true, .zero_terminate = true });
+    @memcpy(buf1[base_path.len + 1 .. joined_len], path);
+    const norm = bun.path.normalizeStringGenericTZ(u16, buf1[0..joined_len], buf, .{ .add_nt_prefix = true, .zero_terminate = true });
     return .{
         .result = norm,
     };

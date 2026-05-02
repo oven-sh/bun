@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, libcPathForDlopen, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, libcPathForDlopen, tempDir } from "harness";
 
 // PipeReader.onReaderError() was missing the this.deref() that balances the
 // this.ref() from start(), so when a read on a subprocess stdout/stderr pipe
@@ -143,4 +143,72 @@ process.exit(0);
     expect(exitCode).toBe(0);
   },
   30_000,
+);
+
+// Cross-platform version that uses an internal-for-testing hook to inject a
+// synthetic EBADF directly into the reader, instead of relying on Linux epoll
+// semantics. On Windows, normal subprocess termination maps to UV_EOF (not an
+// error), and the uv.Pipe HANDLE isn't JS-accessible, so there's no way to
+// trigger a real read error from JS — hence the hook.
+//
+// Without the fix, the leaked poll keep-alive refs (Posix) / uv.Pipe handles
+// (Windows) prevent the event loop from exiting after the loop completes, so
+// the fixture hangs and the spawn timeout kills it.
+test(
+  "PipeReader is freed when a subprocess stdout read fails (injected)",
+  async () => {
+    using dir = tempDir("spawn-pipe-read-error-leak-inject", {
+      "fixture.js": `
+const { subprocessInternals } = require("bun:internal-for-testing");
+
+const sleeper = process.platform === "win32"
+  ? ["cmd.exe", "/c", "timeout /t 120 /nobreak >nul"]
+  : ["sleep", "120"];
+
+let injected = 0;
+for (let i = 0; i < 10; i++) {
+  const proc = Bun.spawn({
+    cmd: sleeper,
+    stdin: "ignore",
+    stdout: "pipe", // PipeReader - never access proc.stdout from JS
+    stderr: "ignore",
+  });
+
+  // Inject EBADF into the stdout PipeReader as if read()/uv_read_cb had
+  // failed. This tears down the PipeReader via onReaderError.
+  if (subprocessInternals.injectStdioReadError(proc, "stdout")) injected++;
+
+  proc.kill();
+  await proc.exited;
+}
+Bun.gc(true);
+console.log(JSON.stringify({ injected }));
+// No explicit process.exit(): if the fix works, the event loop exits on its
+// own once the script finishes. Without the fix, the leaked keep-alive refs
+// (Posix) / open uv.Pipe handles (Windows) keep it alive and the parent's
+// spawn timeout fires.
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      // Without the fix the fixture never exits; bound it so the assertion
+      // below shows a clear failure instead of the test itself timing out.
+      timeout: isWindows ? 25_000 : 15_000,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const stderrLines = stderr.split("\n").filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes"));
+    expect(stderrLines).toEqual([]);
+    expect(stdout.trim()).toBe(JSON.stringify({ injected: 10 }));
+    // SIGKILL from the spawn timeout is the failure signal here.
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  },
+  60_000,
 );

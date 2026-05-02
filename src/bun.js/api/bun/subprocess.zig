@@ -937,6 +937,48 @@ pub fn getGlobalThis(this: *Subprocess) ?*jsc.JSGlobalObject {
 
 const IPClog = Output.scoped(.IPC, .visible);
 
+pub const TestingAPIs = struct {
+    /// Inject a synthetic read error into a subprocess's stdout/stderr
+    /// PipeReader, as if the underlying read() syscall (Posix) or libuv read
+    /// callback (Windows) had failed with EBADF. Used by tests to exercise
+    /// the onReaderError cleanup path, which is otherwise very hard to
+    /// trigger deterministically — on Windows in particular, peer death on
+    /// a named pipe maps to UV_EOF rather than an error.
+    ///
+    /// Returns true if an error was injected, false if the given stdio is
+    /// not (or no longer) a buffered pipe reader.
+    pub fn injectStdioReadError(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const arguments = callframe.arguments_old(2).slice();
+        if (arguments.len < 2) {
+            return globalThis.throw("injectStdioReadError(subprocess, 'stdout'|'stderr')", .{});
+        }
+        const subprocess = Subprocess.fromJS(arguments[0]) orelse {
+            return globalThis.throw("first argument must be a Subprocess", .{});
+        };
+        const kind_str = try arguments[1].toBunString(globalThis);
+        defer kind_str.deref();
+
+        const out: *Readable = if (kind_str.eqlComptime("stdout"))
+            &subprocess.stdout
+        else if (kind_str.eqlComptime("stderr"))
+            &subprocess.stderr
+        else
+            return globalThis.throw("second argument must be 'stdout' or 'stderr'", .{});
+
+        if (out.* != .pipe) return .false;
+        const pipe = out.pipe;
+
+        // Mirror what the real error path does (onStreamRead on Windows,
+        // read() on Posix) so the teardown exercised is identical.
+        const fake_err = bun.sys.Error.fromCode(.BADF, .read);
+        if (comptime Environment.isWindows) {
+            _ = pipe.reader.stopReading();
+        }
+        pipe.reader.onError(fake_err);
+        return .true;
+    }
+};
+
 pub const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FD;
 pub const Writable = @import("./subprocess/Writable.zig").Writable;
 

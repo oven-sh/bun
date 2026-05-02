@@ -2206,22 +2206,8 @@ pub const sync = struct {
     // macOS p_puniqueid descendant tracker — see NoOrphansTracker.cpp.
     extern "c" fn Bun__noOrphans_begin(kq: c_int, root: std.c.pid_t) void;
     extern "c" fn Bun__noOrphans_releaseKq() void;
-    extern "c" fn Bun__noOrphans_onChild(pid: std.c.pid_t) void;
+    extern "c" fn Bun__noOrphans_onFork() void;
     extern "c" fn Bun__noOrphans_onExit(pid: std.c.pid_t) void;
-    extern "c" fn Bun__noOrphans_onTrackErr(pid: std.c.pid_t) void;
-
-    /// `EVFILT_PROC` `fflags` not in `std.c.NOTE` (sys/event.h).
-    const NOTE = struct {
-        /// xnu auto-registers the same `NOTE_TRACK|NOTE_EXIT` knote on every
-        /// child inside `fork1()` before the child is schedulable; recursive.
-        /// `udata` is inherited from the parent knote.
-        pub const TRACK: u32 = 0x00000001;
-        /// Kernel couldn't allocate the child's knote (ENOMEM); fires on the
-        /// *parent's* event.
-        pub const TRACKERR: u32 = 0x00000002;
-        /// Fires once on the auto-created child knote; `data` = parent pid.
-        pub const CHILD: u32 = 0x00000004;
-    };
 
     /// TTY job-control bridge for `--no-orphans` `bun run`. We put the script
     /// in its own pgroup so `kill(-pgid)` reaches every descendant on cleanup,
@@ -2355,49 +2341,29 @@ pub const sync = struct {
             _ = std.posix.prctl(.SET_CHILD_SUBREAPER, .{0}) catch {};
         };
 
-        // macOS no_orphans: create kq and arm NOTE_TRACK on *ourselves*
-        // BEFORE spawn so xnu auto-attaches the same NOTE_TRACK|NOTE_EXIT
-        // knote to the script inside `fork1()` before it's schedulable —
-        // zero seed window, recursive. Non-SETEXEC `posix_spawn` goes through
-        // `fork1()`. We `EV_DELETE` the self-knote right after spawn so
-        // unrelated bun-side forks (none today in spawnSync, but
-        // belt-and-braces) aren't tracked; descendant knotes are independent
-        // and survive the delete. Passed into `waitMacKqueue` as its kq;
-        // closed by the defer immediately below so spawn-failure early
-        // returns don't leak the fd.
+        // macOS no_orphans: kqueue passed to `waitMacKqueue` for ppid/child
+        // NOTE_EXIT and per-descendant NOTE_FORK. NOTE_TRACK (auto-attach to
+        // forks) has been ENOTSUP since macOS 10.5 — see sys/event.h:356 — so
+        // we cannot get atomic in-kernel descendant tracking. Instead the
+        // wait loop reacts to NOTE_FORK by running a `p_puniqueid` scan
+        // (`NoOrphansTracker::scan()`) to discover and re-arm new
+        // descendants. `p_puniqueid` is the *spawning* parent's per-boot
+        // uniqueid — immutable across reparenting — so the scan finds
+        // setsid+double-fork escapees as long as each intermediate's uniqueid
+        // was recorded before it died. The `begin()` call below seeds the
+        // scan root after spawn.
         var no_orphans_kq: bun.FD = bun.invalid_fd;
-        if (comptime Environment.isMac) if (no_orphans) blk: {
-            const kq = std.posix.kqueue() catch break :blk;
-            no_orphans_kq = bun.FD.fromNative(kq);
-            var ch = [_]std.c.Kevent{.{
-                .ident = @intCast(std.c.getpid()),
-                .filter = std.c.EVFILT.PROC,
-                .flags = std.c.EV.ADD | std.c.EV.CLEAR,
-                // EXIT so the knote has something to fire on; TRACK is the
-                // point. NOTE_TRACK = 0x1, NOTE_TRACKERR = 0x2, NOTE_CHILD =
-                // 0x4 (sys/event.h; not in std.c.NOTE).
-                .fflags = NOTE.TRACK | std.c.NOTE.EXIT,
-                .data = 0,
-                .udata = 0,
-            }};
-            var ts = std.c.timespec{ .sec = 0, .nsec = 0 };
-            // eventlist must be a non-null `[*]Kevent`; nevents=0 ⇒ not written.
-            // ENOMEM here means no auto-knote on the script ⇒ waitMacKqueue
-            // would have nothing to fire NOTE_EXIT and (non-TTY, .inherit
-            // stdio) block forever. Same policy as `kqueue()` above and the
-            // EV_RECEIPT loop in waitMacKqueue: invalidate so the caller
-            // falls through to the plain `poll()`+`wait4()` loop.
-            if (std.c.kevent(kq, &ch, 1, &ch, 0, &ts) < 0) {
-                no_orphans_kq.close();
-                no_orphans_kq = bun.invalid_fd;
-            }
+        if (comptime Environment.isMac) if (no_orphans) {
+            if (std.posix.kqueue()) |kq| {
+                no_orphans_kq = bun.FD.fromNative(kq);
+            } else |_| {}
         };
-        // LIFO: this runs LAST — after killSyncScriptTree() (which drains
+        // LIFO: this runs LAST — after killSyncScriptTree() (which scans via
         // m_kq) and releaseKq().
         defer if (comptime Environment.isMac) if (no_orphans_kq != bun.invalid_fd)
             no_orphans_kq.close();
         // LIFO: runs after killSyncScriptTree() (which needs m_kq live for
-        // its NOTE_CHILD drain), before the close above.
+        // its NOTE_FORK-drain rescan), before the close above.
         defer if (comptime Environment.isMac) if (no_orphans_kq != bun.invalid_fd)
             Bun__noOrphans_releaseKq();
 
@@ -2424,23 +2390,12 @@ pub const sync = struct {
             // bridged by `JobControl.onChildStopped` in the wait loop. No-op on
             // non-TTY stdin (the supervisor / CI case this feature targets).
             jc.give(process.pid);
-            if (comptime Environment.isMac) if (no_orphans_kq != bun.invalid_fd) {
-                // Drop the self-knote; the script's auto-created knote (and
-                // its whole subtree) stays. `begin()` records the script's
-                // uniqueid for kill-time identity verification and stashes kq
-                // for killTracked()'s drain + the TRACKERR fallback re-arm.
-                var ch = [_]std.c.Kevent{.{
-                    .ident = @intCast(std.c.getpid()),
-                    .filter = std.c.EVFILT.PROC,
-                    .flags = std.c.EV.DELETE,
-                    .fflags = 0,
-                    .data = 0,
-                    .udata = 0,
-                }};
-                var ts = std.c.timespec{ .sec = 0, .nsec = 0 };
-                _ = std.c.kevent(no_orphans_kq.native(), &ch, 1, &ch, 0, &ts);
+            // `begin()` records the script's `p_uniqueid` as the scan root
+            // and stashes kq so `scan()` can EV_ADD NOTE_FORK|NOTE_EXIT on
+            // each discovered descendant. waitMacKqueue registers the
+            // script's own knote.
+            if (comptime Environment.isMac) if (no_orphans_kq != bun.invalid_fd)
                 Bun__noOrphans_begin(no_orphans_kq.native(), process.pid);
-            };
         }
         defer if (no_orphans) {
             jc.restore();
@@ -2509,10 +2464,10 @@ pub const sync = struct {
 
         // no-orphans: replace the blind `poll()`/`wait4()` with a wait loop
         // that also watches our parent (and on macOS, the script's whole
-        // spawn tree via the NOTE_TRACK kq above). Linux/macOS only — other POSIX
-        // (FreeBSD) falls through to the original `poll()`+`wait4()` below so
-        // buffered stdio still drains; the `defer` above still does the
-        // pgroup kill there.
+        // spawn tree via the NOTE_FORK kq + p_puniqueid scan above).
+        // Linux/macOS only — other POSIX (FreeBSD) falls through to the
+        // original `poll()`+`wait4()` below so buffered stdio still drains;
+        // the `defer` above still does the pgroup kill there.
         //
         // Do NOT return from here — Linux backs `.buffer` stdio with memfds
         // that are read *after* the wait, so falling through to the memfd block
@@ -2582,10 +2537,12 @@ pub const sync = struct {
     /// blocking `wait4()` so that:
     ///   - we notice our parent dying and run cleanup before PDEATHSIG / never
     ///     (macOS) — `Global.exit(129)` → `kill(-pgid)` + deep walk
-    ///   - macOS: kernel-side `NOTE_TRACK` (armed on `getpid()` *before*
-    ///     spawn — see `spawnPosix`) auto-attaches to every descendant
-    ///     inside `fork1()`, so `setsid()`+double-fork escapees are tracked
-    ///     atomically and killed via `Bun__noOrphans_killTracked()`
+    ///   - macOS: `NOTE_FORK` on the script (and recursively on each
+    ///     discovered descendant) triggers a `p_puniqueid` scan
+    ///     (`NoOrphansTracker::scan()`) so `setsid()`+double-fork escapees
+    ///     are tracked and killed via `Bun__noOrphans_killTracked()`.
+    ///     `NOTE_TRACK` would have made this atomic, but it has been
+    ///     ENOTSUP since macOS 10.5.
     ///   - Linux: subreaper (armed in `spawnPosix`) makes those reparent to us,
     ///     so the procfs walk finds them; this loop just needs to run
     ///     cleanup *before* our own SIGKILL-PDEATHSIG fires
@@ -2613,9 +2570,8 @@ pub const sync = struct {
         // defers (pgroup-kill, killTracked() — empty set) still run.
         if (kq_fd == bun.invalid_fd) return null;
 
-        // udata tag for the ppid PROC filter — the only PROC knote we EV_ADD
-        // here. Auto-created NOTE_TRACK descendant knotes inherit udata=0
-        // from the self-knote spawnPosix armed before spawn. EVFILT_READ
+        // udata tag for the ppid PROC filter. Descendant PROC knotes
+        // (`child` here, plus any `scan()` adds) use udata=0; EVFILT_READ
         // udata 0/1 are a separate filter, so the dispatch checks `filter`
         // before `udata`.
         const TAG_PPID: usize = 2;
@@ -2637,18 +2593,14 @@ pub const sync = struct {
         }.f;
         if (ppid > 1)
             add(&changes, @intCast(ppid), std.c.EVFILT.PROC, std.c.NOTE.EXIT, TAG_PPID);
-        // Belt-and-braces: EV_ADD PROC on `child` with the SAME fflags as the
-        // auto-knote xnu creates inside `fork1()`. Idempotent if that knote
-        // exists (EV_ADD on an existing ident+filter updates sfflags — same
-        // value here — and preserves pending `kn_fflags`, so a queued
-        // NOTE_CHILD survives); creates it if the auto-attach was skipped —
-        // NOTE_TRACKERR on the self-knote fires *there* and we `EV_DELETE` it
-        // in `spawnPosix` before ever draining, so the failure is invisible.
-        // Without this the non-TTY `.inherit`-stdio path has no knote on
-        // `child` and `kevent(timeout=null)` below blocks forever (observed
-        // as a whole-file timeout on darwin-14-x64 in CI). Using the same
-        // NOTE_TRACK keeps descendant auto-tracking intact.
-        add(&changes, @intCast(child), std.c.EVFILT.PROC, NOTE.TRACK | std.c.NOTE.EXIT, 0);
+        // NOTE_FORK so the wait loop wakes to scan whenever the script (or
+        // any registered descendant) forks. NOTE_TRACK would have let xnu
+        // auto-attach to the new child atomically, but it returns ENOTSUP on
+        // every macOS since 10.5 — which previously made *this* registration
+        // fail, the receipt loop below `return null`, and the caller fall
+        // through to a plain `wait4()` that watches neither ppid nor
+        // descendants (the `runDied=false` failure on darwin in CI).
+        add(&changes, @intCast(child), std.c.EVFILT.PROC, std.c.NOTE.FORK | std.c.NOTE.EXIT, 0);
         // TTY job-control: EVFILT_PROC has no "stopped" note, so wake on
         // SIGCHLD and `wait4(WUNTRACED|WNOHANG)` to catch Ctrl-Z. Only when
         // stdin is a TTY — non-TTY callers never see stops, matching plain
@@ -2684,11 +2636,19 @@ pub const sync = struct {
             // that would drop output or deadlock on a full pipe. ESRCH on the
             // child PROC entry is impossible (our own unreaped child —
             // `filt_procattach` finds zombies), so any errno here is a real
-            // registration failure.
+            // registration failure. `begin()` has already seeded m_tracked
+            // with `child`; prune it so the caller's `reapChild()` doesn't
+            // leave a freed pid for `killTracked()` to SIGSTOP.
+            Bun__noOrphans_onExit(child);
             return null;
         }
         if (ppid > 1 and std.c.getppid() != ppid)
             bun.Global.exit(bun.ParentDeathWatchdog.exit_code);
+        // Initial scan: `child` may have forked between `posix_spawn`
+        // returning (in spawnPosix) and the NOTE_FORK registration above
+        // taking effect; that fork produced no event. `begin()` already
+        // seeded `m_seen` with `child`'s uniqueid, so this picks them up.
+        Bun__noOrphans_onFork();
 
         var events: [16]std.c.Kevent = undefined;
         var child_exited = false;
@@ -2698,22 +2658,20 @@ pub const sync = struct {
                 .err => |err| return .{ .err = err },
                 .result => |c| c,
             };
+            var saw_fork = false;
             for (events[0..got]) |ev| {
                 if (ev.filter == std.c.EVFILT.PROC) {
-                    // ppid is the only PROC knote with udata != 0; every
-                    // auto-created descendant knote inherits udata 0 from the
-                    // self-knote spawnPosix armed before spawn.
+                    // ppid is the only PROC knote with udata != 0; descendant
+                    // knotes (`child` above + any `scan()` added) use udata 0.
                     if (ev.udata == TAG_PPID) {
                         if (ev.fflags & std.c.NOTE.EXIT != 0)
                             bun.Global.exit(bun.ParentDeathWatchdog.exit_code);
                         continue;
                     }
-                    // NOTE_CHILD and NOTE_EXIT can share one event (forked
-                    // and died between kevent calls) — handle both, no else.
-                    if (ev.fflags & NOTE.CHILD != 0)
-                        Bun__noOrphans_onChild(@intCast(ev.ident));
-                    if (ev.fflags & NOTE.TRACKERR != 0)
-                        Bun__noOrphans_onTrackErr(@intCast(ev.ident));
+                    // NOTE_FORK and NOTE_EXIT can share one event (forked and
+                    // died between kevent calls) — handle both, no else.
+                    if (ev.fflags & std.c.NOTE.FORK != 0)
+                        saw_fork = true;
                     if (ev.fflags & std.c.NOTE.EXIT != 0) {
                         // Drop from the live set (root included — `begin()`
                         // seeded it into `m_tracked`, and `reapChild()` is
@@ -2733,6 +2691,12 @@ pub const sync = struct {
                         else {
                             child_status = Status.from(child, &r);
                             child_exited = true;
+                            // wait4 just freed `child`'s pid; if NOTE_EXIT for
+                            // it isn't in this batch we'd return with the root
+                            // still in m_tracked and `killTracked()` would
+                            // SIGSTOP a (potentially recycled) freed pid.
+                            // Idempotent with the NOTE_EXIT handler above.
+                            Bun__noOrphans_onExit(child);
                         }
                     }
                 } else if (ev.filter == std.c.EVFILT.READ) {
@@ -2740,6 +2704,17 @@ pub const sync = struct {
                     if (drainFd(&out_fds_to_wait_for[i], &out_fds[i], &out[i])) |err| return .{ .err = err };
                 }
             }
+            // After the batch so a single scan covers every NOTE_FORK in it.
+            // `scan()` walks `proc_listallpids` for any pid whose
+            // `p_puniqueid` (immutable spawning-parent uniqueid) is in our
+            // seen set, adds it to m_tracked, and EV_ADDs NOTE_FORK|NOTE_EXIT
+            // on it (udata 0) so its own forks wake this loop. Race: a
+            // fast-exit intermediate (fork+setsid+fork+exit) can die before
+            // this scan records its uniqueid, leaving its child's
+            // `p_puniqueid` unlinkable. NOTE_TRACK closed that atomically;
+            // without it the freeze-then-rescan loop in `killTracked()` is
+            // the best-effort backstop.
+            if (saw_fork) Bun__noOrphans_onFork();
             if (child_exited) {
                 // Intentionally don't wait for pipe EOF (unlike the `poll()`
                 // path): a grandchild holding the write end is exactly what

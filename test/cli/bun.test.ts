@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 
@@ -67,6 +67,63 @@ describe("bun", () => {
       });
       expect(exitCode).toBe(0);
       expect(stdout.toString()).not.toBeEmpty();
+    });
+
+    // https://github.com/oven-sh/bun/issues/30086
+    test("getcompletes keeps scripts whose names start with 'pre'/'post' when no sibling script exists", () => {
+      using dir = tempDir("getcompletes-pre-post", {
+        "package.json": JSON.stringify({
+          name: "test",
+          scripts: {
+            // standalone scripts — nothing named `ttier`, `pare-release`, `gres`, `css`, `view`
+            "prettier": "echo prettier",
+            "prettier:fix": "echo prettier:fix",
+            "prepare-release": "echo prepare-release",
+            "postgres": "echo postgres",
+            "postcss": "echo postcss",
+            "preview": "echo preview",
+            // plain scripts
+            "build": "echo build",
+            "dev": "echo dev",
+            "lint": "echo lint",
+            "lint:fix": "echo lint:fix",
+            "fix": "echo fix",
+            "test": "echo test",
+            // real lifecycle hooks — these SHOULD be hidden (sibling exists)
+            "prebuild": "echo prebuild",
+            "postbuild": "echo postbuild",
+            "pretest": "echo pretest",
+          },
+        }),
+      });
+
+      for (const filter of ["s", "i", "r", "g", "z"]) {
+        const { stdout, exitCode } = spawnSync({
+          cmd: [bunExe(), "getcompletes", filter],
+          env: bunEnv,
+          cwd: String(dir),
+        });
+        const lines = stdout
+          .toString()
+          .split("\n")
+          .map(l => l.split("\t")[0]) // "z" filter emits "name\tdescription"
+          .filter(Boolean);
+
+        // standalone pre/post-prefixed scripts must be present
+        expect(lines).toContain("prettier");
+        expect(lines).toContain("prettier:fix");
+        expect(lines).toContain("prepare-release");
+        expect(lines).toContain("postgres");
+        expect(lines).toContain("postcss");
+        expect(lines).toContain("preview");
+
+        // real npm lifecycle hooks (sibling `build`/`test` exists) must still be hidden
+        expect(lines).not.toContain("prebuild");
+        expect(lines).not.toContain("postbuild");
+        expect(lines).not.toContain("pretest");
+
+        expect(exitCode).toBe(0);
+      }
     });
   });
   describe("test command line arguments", () => {

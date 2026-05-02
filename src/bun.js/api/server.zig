@@ -894,10 +894,38 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             var sec_websocket_extensions = ZigString.Empty;
 
+            // Owned backing storage for sec_websocket_key/protocol/extensions.
+            //
+            // fastGet on request.headers returns a ZigString that borrows from the header map
+            // entry's StringImpl. Before we use these values we call opts.data / opts.headers
+            // getters, which run arbitrary user JS — that JS can mutate request.headers
+            // (set/delete Sec-WebSocket-*), freeing the StringImpl out from under the borrowed
+            // slice. Clone into owned storage so the bytes stay valid across the getter calls
+            // below and the later resp.upgrade().
+            //
+            // The options.headers path reuses the protocol/extensions slots (and frees the
+            // previous clone first) since fastRemove there would likewise free the backing
+            // StringImpl.
+            var sec_websocket_key_owned = ZigString.Slice.empty;
+            defer sec_websocket_key_owned.deinit();
+            var sec_websocket_protocol_owned = ZigString.Slice.empty;
+            defer sec_websocket_protocol_owned.deinit();
+            var sec_websocket_extensions_owned = ZigString.Slice.empty;
+            defer sec_websocket_extensions_owned.deinit();
+
             if (request.getFetchHeaders()) |head| {
-                sec_websocket_key_str = head.fastGet(.SecWebSocketKey) orelse ZigString.Empty;
-                sec_websocket_protocol = head.fastGet(.SecWebSocketProtocol) orelse ZigString.Empty;
-                sec_websocket_extensions = head.fastGet(.SecWebSocketExtensions) orelse ZigString.Empty;
+                if (head.fastGet(.SecWebSocketKey)) |key| {
+                    sec_websocket_key_owned = bun.handleOom(key.toSliceClone(bun.default_allocator));
+                    sec_websocket_key_str = sec_websocket_key_owned.toZigString();
+                }
+                if (head.fastGet(.SecWebSocketProtocol)) |protocol| {
+                    sec_websocket_protocol_owned = bun.handleOom(protocol.toSliceClone(bun.default_allocator));
+                    sec_websocket_protocol = sec_websocket_protocol_owned.toZigString();
+                }
+                if (head.fastGet(.SecWebSocketExtensions)) |extensions| {
+                    sec_websocket_extensions_owned = bun.handleOom(extensions.toSliceClone(bun.default_allocator));
+                    sec_websocket_extensions = sec_websocket_extensions_owned.toZigString();
+                }
             }
 
             if (upgrader.req) |req| {
@@ -935,15 +963,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     fh.deref();
                 }
             }
-
-            // Owned backing storage for sec_websocket_protocol/extensions when they come
-            // from options.headers. fastGet returns a ZigString that borrows from the header
-            // map entry's StringImpl, which fastRemove then frees — so we must copy the
-            // bytes before removing the entry.
-            var sec_websocket_protocol_owned = ZigString.Slice.empty;
-            defer sec_websocket_protocol_owned.deinit();
-            var sec_websocket_extensions_owned = ZigString.Slice.empty;
-            defer sec_websocket_extensions_owned.deinit();
 
             var fetch_headers_to_use: ?*WebCore.FetchHeaders = null;
 
@@ -991,6 +1010,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                         if (fetch_headers_to_use.?.fastGet(.SecWebSocketProtocol)) |protocol| {
                             // Clone before fastRemove frees the backing StringImpl.
+                            sec_websocket_protocol_owned.deinit();
                             sec_websocket_protocol_owned = bun.handleOom(protocol.toSliceClone(bun.default_allocator));
                             sec_websocket_protocol = sec_websocket_protocol_owned.toZigString();
                             // Remove from headers so it's not written twice (once here and once by upgrade())
@@ -999,6 +1019,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                         if (fetch_headers_to_use.?.fastGet(.SecWebSocketExtensions)) |extensions| {
                             // Clone before fastRemove frees the backing StringImpl.
+                            sec_websocket_extensions_owned.deinit();
                             sec_websocket_extensions_owned = bun.handleOom(extensions.toSliceClone(bun.default_allocator));
                             sec_websocket_extensions = sec_websocket_extensions_owned.toZigString();
                             // Remove from headers so it's not written twice (once here and once by upgrade())
@@ -1114,7 +1135,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                     ws.globalObject = globalThis;
                     this.config.websocket = ws.*;
-                } // we don't remove it
+                } else {
+                    // We don't replace the existing websocket config here, but
+                    // the new one was already protected in WebSocketServerContext.onCreate.
+                    // Unprotect the discarded handlers so they don't leak.
+                    ws.unprotect();
+                }
             }
 
             // These get re-applied when we set the static routes again.

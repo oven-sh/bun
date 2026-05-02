@@ -17,7 +17,12 @@ import { bunEnv, bunExe } from "harness";
 // of bmalloc/libpas so that ASAN poisons freed ArrayBuffer backing stores.
 // Without it bmalloc keeps the freed region in its own free list and ASAN
 // never sees the UAF.
-const env = { ...bunEnv, Malloc: "1" };
+//
+// symbolize=0: when this test is run against an unfixed build, ASAN aborts
+// and symbolizing the debug binary takes longer than the default test
+// timeout. We only care that the subprocess prints "OK" and exits 0.
+const asanOptions = bunEnv.ASAN_OPTIONS ? bunEnv.ASAN_OPTIONS + ":symbolize=0" : "symbolize=0";
+const env = { ...bunEnv, Malloc: "1", ASAN_OPTIONS: asanOptions };
 
 const inflateFixture = /* js */ `
   const zlib = require("zlib");

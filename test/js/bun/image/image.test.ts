@@ -264,6 +264,15 @@ describe("Bun.Image", () => {
       expect(meta.w).toBe(8);
       expect(meta.h).toBe(8);
     });
+
+    test("resize(w, 0) ≡ resize(w) — explicit zero is the aspect-ratio sentinel", async () => {
+      // 16×8 source → width 4 should yield 4×2, not the 4×1 a clamp-to-1 would.
+      const wide = makePng(16, 8, (x, y) => [(x * 16) & 255, (y * 32) & 255, 0, 255]);
+      const a = decodePngRaw(await new Bun.Image(wide).resize(4, 0).png().bytes());
+      const b = decodePngRaw(await new Bun.Image(wide).resize(4).png().bytes());
+      expect({ w: a.w, h: a.h }).toEqual({ w: 4, h: 2 });
+      expect({ w: a.w, h: a.h }).toEqual({ w: b.w, h: b.h });
+    });
   });
 
   test("path string input reads from disk", async () => {
@@ -457,42 +466,55 @@ describe("Bun.Image", () => {
         await expect(new Bun.Image(cornersPng).heic().bytes()).rejects.toThrow(/not supported on this platform/);
         await expect(new Bun.Image(cornersPng).avif().bytes()).rejects.toThrow(/not supported on this platform/);
       });
+    } else if (isMacOS) {
+      // ImageIO ships HEVC and (since 13.0, our minimum target) AV1: both
+      // formats encode unconditionally.
+      test.each(["heic", "avif"] as const)(".%s() encodes and round-trips through the sniffer", async fmt => {
+        const out = await new Bun.Image(cornersPng)[fmt]({ quality: 50 }).bytes();
+        expect(String.fromCharCode(...out.subarray(4, 8))).toBe("ftyp");
+        // ImageIO emits major_brand=mif1 with the codec brand only in
+        // compatibles; the sniffer used to misroute that to .heic for AVIF.
+        const meta = await new Bun.Image(out).metadata();
+        expect(meta.format).toBe(fmt);
+      });
     } else {
-      // On macOS/Windows the system encoder may or may not have the codec
-      // installed (HEVC license on Windows, AVIF only on macOS 13+). Either
-      // outcome is fine; just no crash.
-      test(".heic()/.avif() either encode or fall through cleanly", async () => {
-        for (const fmt of ["heic", "avif"] as const) {
-          try {
-            const out = await new Bun.Image(cornersPng)[fmt]({ quality: 50 }).bytes();
-            // If it succeeded, it must be an ISO BMFF.
-            expect(String.fromCharCode(...out.subarray(4, 8))).toBe("ftyp");
-          } catch (e) {
-            expect(String(e)).toMatch(/not supported|BackendUnavailable|encode/i);
-          }
+      // Windows: WIC's HEIF/AV1 encoders are optional Store packages. We can't
+      // control install state from here, so the test branches on the *probe*
+      // and then asserts the specific outcome for that branch — both paths are
+      // pinned, neither is "whatever happens".
+      test.each(["heic", "avif"] as const)(".%s() honours WIC codec install state", async fmt => {
+        const probe = await new Bun.Image(cornersPng)
+          [fmt]({ quality: 50 })
+          .bytes()
+          .then(
+            b => ({ ok: true as const, bytes: b }),
+            e => ({ ok: false as const, err: String(e) }),
+          );
+        if (probe.ok) {
+          expect(String.fromCharCode(...probe.bytes.subarray(4, 8))).toBe("ftyp");
+          expect((await new Bun.Image(probe.bytes).metadata()).format).toBe(fmt);
+        } else {
+          // CreateEncoder → WINCODEC_ERR_COMPONENTNOTFOUND → BackendUnavailable
+          // → UnsupportedOnPlatform. Anything else is a regression.
+          expect(probe.err).toMatch(/not supported on this platform/);
         }
       });
     }
   });
 
   // @intFromFloat on NaN/Inf is UB; these used to abort the process.
-  test("non-finite / huge numeric inputs throw or clamp instead of panicking", async () => {
-    // rotate: NaN/Inf/1e300 all clamp via coerceInt then fail the multiple-
-    // of-90 check (or succeed if the clamp lands on a multiple) — never abort.
+  test("non-finite / huge numeric inputs are clamped by coerceInt", async () => {
+    // rotate: coerceInt clamps to ±1e15, neither of which is a multiple of 90,
+    // and NaN clamps to the low bound — so every case throws the SAME error.
     for (const v of [Infinity, -Infinity, NaN, 1e300, -1e300]) {
-      expect(() => new Bun.Image(cornersPng).rotate(v)).not.toThrow(/panic/);
-      try {
-        new Bun.Image(cornersPng).rotate(v);
-      } catch (e) {
-        expect(String(e)).toMatch(/multiples of 90/);
-      }
+      expect(() => new Bun.Image(cornersPng).rotate(v)).toThrow(/only multiples of 90/);
     }
     // resize/quality/maxPixels clamp; NaN→lo bound, ±Inf→matching bound.
     const out = await new Bun.Image(cornersPng).resize(NaN, NaN).jpeg({ quality: NaN }).bytes();
     expect(out[0]).toBe(0xff);
     expect((await new Bun.Image(gradientPng, { maxPixels: Infinity }).metadata()).width).toBe(16);
     // Infinity width clamps to the per-side cap; output then exceeds maxPixels
-    // and rejects cleanly — the contract is "doesn't abort", not "succeeds".
+    // and rejects with the bomb-guard error.
     await expect(new Bun.Image(cornersPng).resize(Infinity).png().bytes()).rejects.toThrow(/maxPixels/);
   });
 

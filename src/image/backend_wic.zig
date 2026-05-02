@@ -100,8 +100,11 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOpti
     defer release(stream);
 
     var enc: ?*IWICBitmapEncoder = null;
+    // WINCODEC_ERR_COMPONENTNOTFOUND when the HEIF/AV1 store extension isn't
+    // installed → BackendUnavailable so codecs.encode() falls through to
+    // UnsupportedOnPlatform instead of a generic "encode failed".
     if (f.vt.CreateEncoder(f, containerGuid(opts.format), null, &enc) < 0 or enc == null)
-        return error.EncodeFailed;
+        return error.BackendUnavailable;
     defer release(enc);
     // WICBitmapEncoderNoCache = 2.
     if (enc.?.vt.Initialize(enc.?, stream.?, 2) < 0) return error.EncodeFailed;

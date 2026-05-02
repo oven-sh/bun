@@ -222,22 +222,11 @@ describe("resize filter properties", () => {
   // (Separability is structural — H pass then V pass — so this is what's
   // observable from outside.)
   test.each(["lanczos3", "mitchell"] as const)("%s W-only resize leaves columns identical", async filter => {
-    const src = makePng(16, 4, (x, y) => [(x * 16 + y * 60) & 255, 0, 0, 255]);
-    const out = await resizePixels(src, 8, 4, filter);
-    // Every column should be unchanged across y (the V pass had nothing to do).
-    for (let x = 0; x < 8; x++) {
-      const ref = decodePng(src).data;
-      // Can't compare to source columns directly (x changed), but each output
-      // column must vary across y the same way the source did at every x:
-      // since the H pass is per-row independent, out[y][x] depends only on
-      // row y of the source — so out[x, y] = f(row_y). With identical row
-      // shapes per y… not quite. Simpler: H-only resize on a source where
-      // every ROW is identical → output rows identical.
-      void ref;
-    }
-    const flat = makePng(16, 5, x => [(x * 16) & 255, 0, 0, 255]); // y-invariant
-    const o2 = await resizePixels(flat, 8, 5, filter);
-    for (let x = 0; x < 8; x++) for (let y = 1; y < 5; y++) expect(o2[(y * 8 + x) * 4]).toBe(o2[x * 4]);
+    // H-only resize on a y-invariant source ⇒ every output row identical
+    // (the V pass has nothing to mix).
+    const flat = makePng(16, 5, x => [(x * 16) & 255, 0, 0, 255]);
+    const out = await resizePixels(flat, 8, 5, filter);
+    for (let x = 0; x < 8; x++) for (let y = 1; y < 5; y++) expect(out[(y * 8 + x) * 4]).toBe(out[x * 4]);
   });
 });
 

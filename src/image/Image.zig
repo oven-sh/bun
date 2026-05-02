@@ -66,7 +66,11 @@ pub const Source = union(enum) {
 extern fn JSC__JSValue__pinArrayBuffer(v: jsc.JSValue) bool;
 extern fn JSC__JSValue__unpinArrayBuffer(v: jsc.JSValue) void;
 
-pub const Fit = enum { fill, inside };
+pub const Fit = enum {
+    fill,
+    inside,
+    pub const Map = bun.ComptimeEnumMap(Fit);
+};
 
 pub const Resize = struct {
     w: u32,
@@ -200,26 +204,12 @@ pub fn doResize(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallF
         .w = coerceInt(u32, args[0].asNumber(), 1, 0x3FFFF),
         // 0 height = preserve aspect ratio (resolved at execute time once the
         // source dimensions are known).
-        .h = if (args.len > 1 and args[1].isNumber()) coerceInt(u32, args[1].asNumber(), 1, 0x3FFFF) else 0,
+        .h = if (args.len > 1 and args[1].isNumber()) coerceInt(u32, args[1].asNumber(), 0, 0x3FFFF) else 0,
     };
     if (args.len > 2 and args[2].isObject()) {
         const opt = args[2];
-        if (try opt.get(global, "filter")) |f| if (f.isString()) {
-            const s = try f.toBunString(global);
-            defer s.deref();
-            r.filter = parseFilter(s) orelse
-                return global.throwInvalidArguments(
-                    "resize: filter must be 'nearest' | 'box' | 'bilinear' | 'cubic' | 'mitchell' | 'lanczos2' | 'lanczos3' | 'mks2013' | 'mks2021'",
-                    .{},
-                );
-        };
-        if (try opt.get(global, "fit")) |f| if (f.isString()) {
-            const s = try f.toBunString(global);
-            defer s.deref();
-            if (s.eqlComptime("inside")) r.fit = .inside //
-            else if (s.eqlComptime("fill")) r.fit = .fill //
-            else return global.throwInvalidArguments("resize: fit must be 'fill' | 'inside'", .{});
-        };
+        if (try opt.getOptionalEnum(global, "filter", codecs.Filter)) |v| r.filter = v;
+        if (try opt.getOptionalEnum(global, "fit", Fit)) |v| r.fit = v;
         if (try opt.get(global, "withoutEnlargement")) |v| r.without_enlargement = v.toBoolean();
     }
     this.pipeline.resize = r;
@@ -320,13 +310,6 @@ fn errorMessage(e: codecs.Error) [:0]const u8 {
     };
 }
 
-fn parseFilter(s: bun.String) ?codecs.Filter {
-    inline for (@typeInfo(codecs.Filter).@"enum".fields) |f|
-        if (s.eqlComptime(f.name)) return @enumFromInt(f.value);
-    if (s.eqlComptime("linear")) return .bilinear; // Sharp alias
-    return null;
-}
-
 /// Fresh slice into the input bytes for use ON THE JS THREAD ONLY (re-reads
 /// the ArrayBuffer's vector each call so a detach between construction and
 /// here surfaces as `null` instead of UAF). For off-thread, see `pinForTask`.
@@ -375,16 +358,7 @@ pub fn getBackend(global: *jsc.JSGlobalObject, _: jsc.JSValue, _: jsc.JSValue) b
 }
 
 pub fn setBackend(_: jsc.JSValue, global: *jsc.JSGlobalObject, value: jsc.JSValue) bool {
-    const str = value.toBunString(global) catch return false;
-    defer str.deref();
-    codecs.backend = if (str.eqlComptime("system"))
-        .system
-    else if (str.eqlComptime("bun"))
-        .bun
-    else {
-        global.throwInvalidArgumentTypeValue("Bun.Image.backend", "\"system\" or \"bun\"", value) catch {};
-        return false;
-    };
+    codecs.backend = value.toEnum(global, "Bun.Image.backend", codecs.Backend) catch return false;
     return true;
 }
 
@@ -680,6 +654,9 @@ pub const PipelineTask = struct {
                 .uint8array => try promise.resolve(global, jsc.ArrayBuffer.fromBytes(enc.out.bytes, .Uint8Array)
                     .toJSWithContext(global, null, enc.out.free) catch
                     return promise.reject(global, error.JSError)),
+                // createBufferWithCtx returns plain JSValue (its C++ side asserts
+                // the no-throw contract), so the .uint8array catch is unmatched
+                // here by construction, not omission.
                 .buffer => try promise.resolve(global, jsc.JSValue.createBufferWithCtx(global, enc.out.bytes, null, enc.out.free)),
                 .blob => {
                     // Blob.Store frees via an Allocator; dupe for that path.

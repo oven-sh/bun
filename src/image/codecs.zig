@@ -37,7 +37,11 @@ else
 /// Unsynchronised: written from JS, read from WorkPool — a torn read of a
 /// 1-byte enum is fine and the worst case is one task using the previous
 /// mode.
-pub const Backend = enum { system, bun };
+pub const Backend = enum {
+    system,
+    bun,
+    pub const Map = bun.ComptimeEnumMap(Backend);
+};
 pub var backend: Backend = if (system_backend != null) .system else .bun;
 
 /// Runtime half of the dispatch check; the comptime half is the
@@ -66,10 +70,12 @@ pub const Format = enum(u8) {
             return .webp;
         // ISO BMFF: u32be box-size · "ftyp" · major-brand · minor-version ·
         // compatible-brands… HEIC and AVIF share this container; the brands
-        // distinguish them. Check the major brand at [8..12) and the
-        // compatible brands at [16..box).
+        // distinguish them. `mif1`/`msf1` are codec-agnostic MIAF structural
+        // brands that appear in BOTH, so they can't decide on first sight —
+        // scan the whole brand list and let a codec-specific brand win.
         if (bytes.len >= 16 and std.mem.eql(u8, bytes[4..8], "ftyp")) {
             const box: usize = @min(bytes.len, @max(16, std.mem.readInt(u32, bytes[0..4], .big)));
+            var miaf = false;
             var off: usize = 8;
             while (off + 4 <= box) : (off += 4) {
                 if (off == 12) continue; // minor_version
@@ -77,10 +83,12 @@ pub const Format = enum(u8) {
                 if (std.mem.eql(u8, b, "avif") or std.mem.eql(u8, b, "avis"))
                     return .avif;
                 if (std.mem.eql(u8, b, "heic") or std.mem.eql(u8, b, "heix") or
-                    std.mem.eql(u8, b, "mif1") or std.mem.eql(u8, b, "msf1") or
                     std.mem.eql(u8, b, "hevc") or std.mem.eql(u8, b, "hevx"))
                     return .heic;
+                if (std.mem.eql(u8, b, "mif1") or std.mem.eql(u8, b, "msf1"))
+                    miaf = true;
             }
+            if (miaf) return .heic; // MIAF with no codec brand → assume HEVC
         }
         return null;
     }
@@ -284,6 +292,22 @@ pub const Filter = enum(i32) {
     lanczos2 = 6,
     mks2013 = 7, // Magic Kernel Sharp
     mks2021 = 8,
+
+    /// `JSValue.toEnum` lookup table. Hand-listed (not `ComptimeEnumMap`) so
+    /// Sharp's `'linear'` alias can map to `.bilinear`; the auto-generated
+    /// error message still lists only the canonical tags.
+    pub const Map = bun.ComptimeStringMap(Filter, .{
+        .{ "box", .box },
+        .{ "bilinear", .bilinear },
+        .{ "linear", .bilinear },
+        .{ "lanczos3", .lanczos3 },
+        .{ "mitchell", .mitchell },
+        .{ "nearest", .nearest },
+        .{ "cubic", .cubic },
+        .{ "lanczos2", .lanczos2 },
+        .{ "mks2013", .mks2013 },
+        .{ "mks2021", .mks2021 },
+    });
 };
 
 extern fn bun_image_resize_scratch_size(src_w: i32, src_h: i32, dst_w: i32, dst_h: i32, filter: i32) usize;

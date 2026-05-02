@@ -202,18 +202,15 @@ describe("malformed PNG structure", () => {
     expect(await survives(new Bun.Image(buf).bytes())).toBe("rejected");
   });
 
-  test("IHDR CRC mismatch", async () => {
+  test("IHDR CRC mismatch is tolerated (spng default ignores CRC)", async () => {
     const buf = Buffer.from(tinyPng);
     buf[29] ^= 0xff;
-    // libspng default ignores CRC by spec — either resolves or rejects, not crash.
-    await survives(new Bun.Image(buf).metadata());
+    expect(await new Bun.Image(buf).metadata()).toEqual({ width: 2, height: 2, format: "png" });
   });
 
-  test("missing IEND", async () => {
+  test("missing IEND is tolerated (spec recovery: stream ending after a complete IDAT is valid)", async () => {
     const buf = tinyPng.subarray(0, tinyPng.length - 12);
-    // libspng accepts a stream that ends after a complete IDAT — that's
-    // permitted by the spec recovery rules. Either outcome is fine; no crash.
-    await survives(new Bun.Image(buf).metadata());
+    expect(await new Bun.Image(buf).metadata()).toEqual({ width: 2, height: 2, format: "png" });
   });
 
   test("IDAT with zlib bomb (header says small, IDAT inflates huge)", async () => {
@@ -464,26 +461,18 @@ describe("hostile option objects", () => {
     expect(() => new Bun.Image(tinyPng, p as any)).toThrow();
   });
 
-  test("Proxy that returns garbage types", async () => {
-    const p = new Proxy(
-      {},
-      {
-        get(_t, k) {
-          // Booleans where numbers expected, arrays where strings expected, etc.
-          if (k === "quality") return Symbol("nope");
-          if (k === "filter") return 12345;
-          if (k === "fit") return { toString: () => "inside" };
-          return undefined;
-        },
-      },
+  test("garbage option types: enum slots throw, numeric slots ignore non-numbers", async () => {
+    // Non-string enum option → getOptionalEnum throws synchronously.
+    expect(() => new Bun.Image(tinyPng).resize(2, 2, { filter: 12345 } as any)).toThrow(/filter must be a string/);
+    expect(() => new Bun.Image(tinyPng).resize(2, 2, { fit: [] } as any)).toThrow(/fit must be a string/);
+    // A string-coercible object isn't a JS string — refused, not coerced.
+    expect(() => new Bun.Image(tinyPng).resize(2, 2, { fit: { toString: () => "inside" } } as any)).toThrow(
+      /fit must be a string/,
     );
-    // Should either throw or ignore — never crash.
-    await survives(
-      new Bun.Image(tinyPng)
-        .resize(2, 2, p as any)
-        .jpeg(p as any)
-        .bytes(),
-    );
+    // Numeric options are gated on isNumber(); a Symbol is ignored and the
+    // default applies, so the pipeline still produces a valid JPEG.
+    const out = await new Bun.Image(tinyPng).jpeg({ quality: Symbol() } as any).bytes();
+    expect(out.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]));
   });
 
   test("getter that mutates the same Image mid-parse", async () => {

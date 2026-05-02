@@ -6403,8 +6403,24 @@ pub const NodeFS = struct {
             // than pointing the copied link back at the source path.
             return Syscall.symlink(link_target, dest);
         };
-        const resolved = bun.path.joinAbsStringBufZ(cwd, &resolved_buf, &.{ src_dir, link_target }, .posix);
-        return Syscall.symlink(resolved, dest);
+        // link_target is user-controlled and can approach PATH_MAX on its own,
+        // so prepending src_dir may exceed resolved_buf. Use the bounds-checked
+        // join and surface ENAMETOOLONG instead of corrupting the stack.
+        const resolved = bun.path.joinAbsStringBufChecked(
+            cwd,
+            resolved_buf[0 .. resolved_buf.len - 1],
+            &.{ src_dir, link_target },
+            .posix,
+        ) orelse {
+            @memcpy(this.sync_error_buf[0..src.len], src);
+            return .{ .err = .{
+                .errno = @intFromEnum(E.NAMETOOLONG),
+                .syscall = .symlink,
+                .path = this.sync_error_buf[0..src.len],
+            } };
+        };
+        resolved_buf[resolved.len] = 0;
+        return Syscall.symlink(resolved_buf[0..resolved.len :0], dest);
     }
 
     /// This is `copyFile`, but it copies symlinks as-is

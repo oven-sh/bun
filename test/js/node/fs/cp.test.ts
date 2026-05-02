@@ -227,26 +227,36 @@ for (const [name, copy] of impls) {
         "from/keep": "",
       });
 
-      const srcLink = join(basename, "from", "link");
       const origTarget = join(basename, "target.txt");
-      fs.symlinkSync(origTarget, srcLink);
+
+      // Absolute target — exercises the isAbsolute fast path.
+      const srcAbs = join(basename, "from", "abs_link");
+      fs.symlinkSync(origTarget, srcAbs);
+
+      // Relative target — exercises the dirname(src) resolve path.
+      const srcRel = join(basename, "from", "rel_link");
+      fs.symlinkSync(join("..", "target.txt"), srcRel);
 
       await copy(basename + "/from", basename + "/to", { recursive: true });
 
-      const copiedLink = join(basename, "to", "link");
-      expect(fs.lstatSync(copiedLink).isSymbolicLink()).toBe(true);
+      for (const [which, srcLink] of [
+        ["abs_link", srcAbs],
+        ["rel_link", srcRel],
+      ] as const) {
+        const copiedLink = join(basename, "to", which);
+        expect(fs.lstatSync(copiedLink).isSymbolicLink()).toBe(true);
 
-      // The copied link's target string must not be the path of the source
-      // symlink. With the bug, readlink(copiedLink) returned srcLink.
-      const copiedTarget = fs.readlinkSync(copiedLink);
-      expect(copiedTarget).not.toBe(srcLink);
-      expect(fs.realpathSync(copiedLink)).toBe(fs.realpathSync(origTarget));
+        // The copied link's target string must not be the path of the source
+        // symlink. With the bug, readlink(copiedLink) returned srcLink.
+        expect(fs.readlinkSync(copiedLink)).not.toBe(srcLink);
+        expect(fs.realpathSync(copiedLink)).toBe(fs.realpathSync(origTarget));
+      }
 
-      // Deleting the source tree must not break the copied link, since the
-      // link target lives outside the source tree. With the bug, the copied
-      // link pointed at from/link and would dangle once from/ was removed.
+      // Deleting the source tree must not break the absolute link, since its
+      // target lives outside the source tree. With the bug, the copied link
+      // pointed at from/abs_link and would dangle once from/ was removed.
       fs.rmSync(join(basename, "from"), { recursive: true, force: true });
-      expect(fs.readFileSync(copiedLink, "utf8")).toBe("hello");
+      expect(fs.readFileSync(join(basename, "to", "abs_link"), "utf8")).toBe("hello");
     });
 
     test("filter - works", async () => {

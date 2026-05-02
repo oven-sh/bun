@@ -84,7 +84,6 @@ public:
         m_seen.clear();
         m_tracked.clear();
         m_kq = kq;
-        m_root = root;
         ProcUniqIdentifierInfo r;
         if (ProcUniqIdentifierInfo::read(root, r)) {
             m_seen.add(r.p_uniqueid);
@@ -253,7 +252,6 @@ private:
     // fork-heavy script (e.g. `make -j`) isn't reallocating every NOTE_FORK.
     WTF::Vector<pid_t> m_pids;
     int m_kq = -1; // borrowed; owned by Zig's spawnPosix
-    pid_t m_root = 0;
 };
 
 } // namespace Bun

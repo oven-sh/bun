@@ -118,9 +118,18 @@ async function roundTrip(mode: "clean" | "abrupt") {
   });
   const opened = Promise.withResolvers<void>();
   const closed = Promise.withResolvers<void>();
-  ws.onopen = () => opened.resolve();
-  ws.onclose = () => closed.resolve();
-  ws.onerror = () => {};
+  let isOpen = false;
+  ws.onopen = () => {
+    isOpen = true;
+    opened.resolve();
+  };
+  ws.onclose = ev => {
+    if (!isOpen) opened.reject(new Error(`closed before open: ${ev.code} ${ev.reason}`));
+    closed.resolve();
+  };
+  ws.onerror = ev => {
+    if (!isOpen) opened.reject(new Error(`error before open: ${(ev as ErrorEvent).message ?? ev.type}`));
+  };
   await opened.promise;
   if (mode === "clean") {
     // Client-initiated close → sendCloseWithBody → clearData → dispatchClose.

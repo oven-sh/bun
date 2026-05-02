@@ -37,9 +37,11 @@ test.skipIf(!isDebug)(
     // `bun.new`/`bun.destroy` log via Output.scoped(.alloc) in debug builds:
     //   [alloc] new(http.websocket_client.NewWebSocketClient(false)) = …
     //   [alloc] destroy(http.websocket_client.NewWebSocketClient(false)) = …
+    // Tunnel mode always uses the non-TLS client (TLS is handled by the
+    // tunnel itself), so match the (false) variant explicitly.
     const lines = (stdout + stderr)
       .split("\n")
-      .filter(l => l.startsWith("[alloc] ") && l.includes("NewWebSocketClient"));
+      .filter(l => l.startsWith("[alloc] ") && l.includes("NewWebSocketClient(false)"));
     const created = lines.filter(l => l.startsWith("[alloc] new(")).length;
     const destroyed = lines.filter(l => l.startsWith("[alloc] destroy(")).length;
 

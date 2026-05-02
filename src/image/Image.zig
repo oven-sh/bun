@@ -144,6 +144,17 @@ pub fn finalize(this: *Image) void {
     bun.destroy(this);
 }
 
+pub fn estimatedSize(this: *Image) usize {
+    // Only the bytes WE own. .js_buffer is the caller's ArrayBuffer (already
+    // counted via the cached value slot); the worker's RGBA scratch is
+    // task-scoped and freed before any GC could observe it.
+    return @sizeOf(Image) + switch (this.source) {
+        .js_buffer => 0,
+        .owned => |b| b.len,
+        .path => |p| p.len,
+    };
+}
+
 fn sourceFromJS(global: *jsc.JSGlobalObject, value: jsc.JSValue, this_value: jsc.JSValue) bun.JSError!Source {
     // String → file path or data:/base64 URL. Everything else → bytes.
     if (value.isString()) {
@@ -360,6 +371,43 @@ pub fn getBackend(global: *jsc.JSGlobalObject, _: jsc.JSValue, _: jsc.JSValue) b
 pub fn setBackend(_: jsc.JSValue, global: *jsc.JSGlobalObject, value: jsc.JSValue) bool {
     codecs.backend = value.toEnum(global, "Bun.Image.backend", codecs.Backend) catch return false;
     return true;
+}
+
+// ───────────── static `Bun.Image.fromClipboard()` / `.hasClipboardImage()` ──
+//
+// JS-thread synchronous read of the system clipboard for an image
+// representation, returning a fresh `Bun.Image` wrapping the raw container
+// bytes. Decode/encode still go through the normal off-thread pipeline; only
+// the pasteboard fetch is synchronous, and that's a memcpy of bytes the OS
+// already has in-process. `null` ⇔ no image present. Linux returns `null`
+// unconditionally — there's no stable native API to dlopen and shelling out
+// to `wl-paste`/`xclip` from inside `Bun.Image` is the wrong layer.
+
+pub fn fromClipboard(global: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    if (comptime codecs.system_backend) |sb| {
+        const bytes = sb.clipboard() catch |e| switch (e) {
+            error.OutOfMemory => return global.throwOutOfMemory(),
+            error.BackendUnavailable => return .null,
+        } orelse return .null;
+        var img = Image.new(.{ .source = .{ .owned = bytes } });
+        return img.toJS(global);
+    }
+    return .null;
+}
+
+pub fn hasClipboardImage(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    if (comptime codecs.system_backend) |sb| return jsc.JSValue.jsBoolean(sb.hasClipboardImage());
+    return .false;
+}
+
+/// Monotone counter that increments on every system-wide clipboard write
+/// (NSPasteboard.changeCount / GetClipboardSequenceNumber). macOS has no
+/// clipboard-change notification, so polling this and calling
+/// `hasClipboardImage()` only when it moves is the cheapest hint-UI pattern.
+/// `-1` on Linux.
+pub fn clipboardChangeCount(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    if (comptime codecs.system_backend) |sb| return jsc.JSValue.jsNumber(sb.clipboardChangeCount());
+    return jsc.JSValue.jsNumber(@as(i64, -1));
 }
 
 // ───────────────────────────── getters ──────────────────────────────────────

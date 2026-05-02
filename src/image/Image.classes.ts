@@ -6,6 +6,11 @@ export default [
     construct: true,
     constructNeedsThis: true,
     finalize: true,
+    // Report owned input (Blob dupe / data:-URL / path string) so a heap of
+    // idle Image objects shows up in the GC's accounting. The js_buffer source
+    // is the user's ArrayBuffer and already counted via the cached value slot;
+    // off-thread RGBA scratch lives only for the task's duration so isn't.
+    estimatedSize: true,
     // Strong-ref slot for the input ArrayBuffer/TypedArray so we BORROW its
     // bytes instead of duping in the constructor. While a task is in flight
     // the JSRef on the Zig side holds a Strong ref to this wrapper, the
@@ -22,6 +27,12 @@ export default [
       // Highway resize, byte-identical across platforms). Set BEFORE awaiting a
       // pipeline; in-flight tasks read whatever was set when they launched.
       backend: { getter: "getBackend", setter: "setBackend" },
+      // System clipboard image reader. `Image | null` — null on Linux (no
+      // native API) and when there's no image present. The probe is the
+      // cheap "should I show a paste-an-image hint?" check.
+      fromClipboard: { fn: "fromClipboard", length: 0 },
+      hasClipboardImage: { fn: "hasClipboardImage", length: 0 },
+      clipboardChangeCount: { fn: "clipboardChangeCount", length: 0 },
     },
     proto: {
       // Chainable mutators — record an op and return `this`.
@@ -41,6 +52,8 @@ export default [
       // Terminal async ops — run decode → pipeline → encode on the work pool.
       bytes: { fn: "doBytes", length: 0, async: true },
       buffer: { fn: "doBuffer", length: 0, async: true },
+      // Sharp-compat alias for `buffer()`; same Zig fn, no overhead.
+      toBuffer: { fn: "doBuffer", length: 0, async: true },
       blob: { fn: "doBlob", length: 0, async: true },
       toBase64: { fn: "doToBase64", length: 0, async: true },
       metadata: { fn: "doMetadata", length: 0, async: true },

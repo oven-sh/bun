@@ -57,6 +57,12 @@ struct Syms {
     // every call leaks a few KB into the thread's never-drained top-level pool.
     void* (*objc_autoreleasePoolPush)();
     void (*objc_autoreleasePoolPop)(void*);
+    // libobjc runtime — used only by the NSPasteboard clipboard reader. The
+    // actual `objc_msgSend` is variadic-shaped in the ABI but we cast per call
+    // site to the receiver/SEL/args signature we need.
+    void* (*objc_getClass)(const char*);
+    void* (*sel_registerName)(const char*);
+    void* objc_msgSend; // cast at use site
     // CoreFoundation
     void (*CFRelease)(CFRef);
     CFRef (*CFDataCreateWithBytesNoCopy)(CFRef, const uint8_t*, long, CFRef);
@@ -102,6 +108,9 @@ constexpr struct {
 } kFields[] = {
     SYM(objc_autoreleasePoolPush),
     SYM(objc_autoreleasePoolPop),
+    SYM(objc_getClass),
+    SYM(sel_registerName),
+    SYM(objc_msgSend),
     SYM(CFRelease),
     SYM(CFDataCreateWithBytesNoCopy),
     SYM(CFDataCreateMutable),
@@ -191,6 +200,50 @@ struct Pool {
     }
     ~Pool() { s->objc_autoreleasePoolPop(p); }
 };
+
+// `id`/`SEL` are already typedef'd via the PCH's objc headers; we erase to
+// CFRef everywhere else, so cast objc_msgSend per-site through this template.
+template <class R, class... A>
+inline R msg(const Syms* s, CFRef recv, CFRef sel, A... a)
+{
+    return reinterpret_cast<R (*)(CFRef, CFRef, A...)>(s->objc_msgSend)(recv, sel, a...);
+}
+
+// Image UTIs in preference order. PNG first (lossless, compact); then formats
+// the source app may have placed natively (heic from Photos, jpeg/webp from a
+// browser); TIFF last because the system's automatic-PNG→TIFF conversion makes
+// it a guaranteed fallback but it's huge. `public.image` isn't a concrete
+// type, so we don't list it — apps put concrete UTIs.
+constexpr const char* kImageUti[] = {
+    "public.png",
+    "public.heic",
+    "public.heif",
+    "public.avif",
+    "public.jpeg",
+    "org.webmproject.webp",
+    "com.compuserve.gif",
+    "com.microsoft.bmp",
+    "public.tiff",
+};
+
+// `[NSPasteboard generalPasteboard]`. AppKit is not auto-loaded in a CLI
+// process (only Foundation is), so dlopen it the first time the clipboard is
+// touched. RTLD_GLOBAL so its classes register with the objc runtime; RTLD_LAZY
+// because AppKit drags in ~40 MB of frameworks and we only need one class.
+inline CFRef generalPasteboard(const Syms* s)
+{
+    CFRef cls = s->objc_getClass("NSPasteboard");
+    if (!cls) {
+        static std::once_flag once;
+        std::call_once(once, [] {
+            dlopen("/System/Library/Frameworks/AppKit.framework/AppKit",
+                RTLD_LAZY | RTLD_GLOBAL);
+        });
+        cls = s->objc_getClass("NSPasteboard");
+        if (!cls) return nullptr;
+    }
+    return msg<CFRef>(s, cls, s->sel_registerName("generalPasteboard"));
+}
 
 } // namespace
 
@@ -421,6 +474,78 @@ int32_t bun_coregraphics_reflect(const uint8_t* src, uint32_t w, uint32_t h,
     return fn(&in, &out, kBunVImageDoNotTile) == 0 ? CG_OK : CG_UNAVAILABLE;
 }
 
+// ── NSPasteboard image reader ──────────────────────────────────────────────
+//
+// `[NSPasteboard generalPasteboard]` lives in AppKit, so it's resolved through
+// objc-runtime calls (`objc_getClass` / `objc_msgSend`) rather than adding
+// AppKit to the dlopen list — `NSPasteboard` is the only symbol we need from
+// it, and AppKit is already loaded in any GUI process. We never decode here:
+// the pasteboard hands back a container (PNG, TIFF, HEIC, …) and Bun.Image's
+// regular decode path handles it. NSPasteboard is documented as main-thread
+// safe to *read*; we still call it on the JS thread (via the static
+// `fromClipboard` accessor), not the WorkPool.
+//
+// Two-phase like encode: `out=nullptr` → probe (returns length, 0 = no image),
+// stashes the matched NSData in a thread-local; second call copies and
+// releases it. `probe_only` skips the data fetch entirely for the cheap
+// `hasClipboardImage()` check.
+
+int32_t bun_coregraphics_clipboard(uint8_t* out, size_t* out_len, int32_t probe_only)
+{
+    auto s = load();
+    if (!s) return CG_UNAVAILABLE;
+    Pool pool(s);
+    thread_local CFRef pending = nullptr;
+
+    if (out && pending) {
+        long n = s->CFDataGetLength(pending);
+        std::memcpy(out, s->CFDataGetBytePtr(pending), static_cast<size_t>(n));
+        *out_len = static_cast<size_t>(n);
+        s->CFRelease(pending);
+        pending = nullptr;
+        return CG_OK;
+    }
+    if (pending) {
+        s->CFRelease(pending);
+        pending = nullptr;
+    }
+
+    CFRef pb = generalPasteboard(s);
+    if (!pb) return CG_UNAVAILABLE;
+    CFRef dataForType = s->sel_registerName("dataForType:");
+
+    for (auto uti : kImageUti) {
+        CFRef ustr = s->CFStringCreateWithCString(nullptr, uti, kBunCFStringEncodingUTF8);
+        if (!ustr) continue;
+        CFRef nsdata = msg<CFRef>(s, pb, dataForType, ustr);
+        s->CFRelease(ustr);
+        if (!nsdata) continue;
+        long n = s->CFDataGetLength(nsdata); // NSData is toll-free bridged
+        if (n <= 0) continue;
+        *out_len = static_cast<size_t>(n);
+        if (probe_only) return CG_OK;
+        // dataForType: returns autoreleased; retain so it survives the pool
+        // drain between the two calls.
+        pending = msg<CFRef>(s, nsdata, s->sel_registerName("retain"));
+        return CG_OK;
+    }
+    *out_len = 0;
+    return CG_OK; // no image present — not an error
+}
+
+// `[[NSPasteboard generalPasteboard] changeCount]` — increments on every
+// pasteboard write system-wide. macOS has no clipboard-change notification, so
+// the documented pattern is to poll this and act only when it moves. -1 ⇔
+// AppKit unavailable (treat as "never changes").
+int64_t bun_coregraphics_clipboard_change_count()
+{
+    auto s = load();
+    if (!s) return -1;
+    Pool pool(s);
+    CFRef pb = generalPasteboard(s);
+    return pb ? msg<long>(s, pb, s->sel_registerName("changeCount")) : -1;
+}
+
 } // extern "C"
 
 #else
@@ -431,4 +556,6 @@ extern "C" int bun_coregraphics_encode(const void*, unsigned, unsigned, int, int
 extern "C" int bun_coregraphics_scale(const void*, unsigned, unsigned, void*, unsigned, unsigned, int) { return 1; }
 extern "C" int bun_coregraphics_rotate90(const void*, unsigned, unsigned, void*, unsigned) { return 1; }
 extern "C" int bun_coregraphics_reflect(const void*, unsigned, unsigned, void*, int) { return 1; }
+extern "C" int bun_coregraphics_clipboard(void*, void*, int) { return 1; }
+extern "C" long long bun_coregraphics_clipboard_change_count() { return -1; }
 #endif

@@ -138,13 +138,29 @@ Bun.serve({
 });
 ```
 
+## Clipboard
+
+```ts
+const img = Bun.Image.fromClipboard();
+if (img) {
+  const png = await img.resize(800, 800, { fit: "inside" }).png().bytes();
+}
+```
+
+`fromClipboard()` reads PNG, TIFF, HEIC, JPEG, WebP, GIF, or BMP from the system pasteboard on macOS and Windows; the regular decode pipeline takes it from there. Returns `null` if there's no image, and always `null` on Linux — call `wl-paste`/`xclip` yourself and pass the bytes to the constructor.
+
+For a passive "image in clipboard, press ⌘V" hint, poll `clipboardChangeCount()` (a single integer read) and call `hasClipboardImage()` only when it moves; macOS has no clipboard-change notification, so this is the documented pattern.
+
 ## Platform backends
 
 |                        | Linux                             | macOS             | Windows      |
 | ---------------------- | --------------------------------- | ----------------- | ------------ |
 | JPEG / PNG / WebP      | libjpeg-turbo · spng · libwebp    | same              | same         |
+| BMP (decode)           | static BI_RGB/BITFIELDS           | ImageIO           | WIC          |
+| TIFF / GIF (decode)    | ❌                                | ImageIO           | WIC          |
 | Resize / rotate / flip | Highway SIMD                      | Accelerate vImage | Highway SIMD |
 | HEIC / AVIF            | ❌ throws `UnsupportedOnPlatform` | ImageIO           | WIC ¹        |
+| Clipboard              | ❌ returns `null`                 | NSPasteboard      | Win32        |
 
 ¹ Windows requires the **HEIF Image Extensions** / **AV1 Video Extension** from the Microsoft Store.
 

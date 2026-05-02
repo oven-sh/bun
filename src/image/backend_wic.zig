@@ -103,7 +103,8 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOpti
     // WINCODEC_ERR_COMPONENTNOTFOUND when the HEIF/AV1 store extension isn't
     // installed → BackendUnavailable so codecs.encode() falls through to
     // UnsupportedOnPlatform instead of a generic "encode failed".
-    if (f.vt.CreateEncoder(f, containerGuid(opts.format), null, &enc) < 0 or enc == null)
+    const guid = containerGuid(opts.format) orelse return error.BackendUnavailable;
+    if (f.vt.CreateEncoder(f, guid, null, &enc) < 0 or enc == null)
         return error.BackendUnavailable;
     defer release(enc);
     // WICBitmapEncoderNoCache = 2.
@@ -302,7 +303,7 @@ const GUID_ContainerFormatPng: GUID = .{ .d1 = 0x1b7cfaf4, .d2 = 0x713f, .d3 = 0
 const GUID_ContainerFormatWebp: GUID = .{ .d1 = 0xe094b0e2, .d2 = 0x67f2, .d3 = 0x45b3, .d4 = .{ 0xb0, 0xea, 0x11, 0x53, 0x37, 0xca, 0x7c, 0xf3 } };
 const GUID_ContainerFormatHeif: GUID = .{ .d1 = 0xe1e62521, .d2 = 0x6787, .d3 = 0x405b, .d4 = .{ 0xa3, 0x39, 0x50, 0x07, 0x15, 0xb5, 0x76, 0x3f } };
 
-fn containerGuid(f: codecs.Format) *const GUID {
+fn containerGuid(f: codecs.Format) ?*const GUID {
     return switch (f) {
         .jpeg => &GUID_ContainerFormatJpeg,
         .png => &GUID_ContainerFormatPng,
@@ -312,6 +313,9 @@ fn containerGuid(f: codecs.Format) *const GUID {
         // returns WINCODEC_ERR_COMPONENTNOTFOUND if the extension isn't
         // present, which surfaces as BackendUnavailable.
         .heic, .avif => &GUID_ContainerFormatHeif,
+        // Decode-only formats — codecs.encode() short-circuits before this
+        // path, so this arm exists for switch exhaustiveness only.
+        .bmp, .tiff, .gif => null,
     };
 }
 
@@ -360,6 +364,94 @@ fn loadFactory() void {
     var out: ?*anyopaque = null;
     if (CoCreateInstance(&CLSID_WICImagingFactory, null, CLSCTX_INPROC_SERVER, &IID_IWICImagingFactory, &out) < 0) return;
     factory_ptr = @ptrCast(@alignCast(out));
+}
+
+// ───────────────────────────── Win32 clipboard ──────────────────────────────
+//
+// JS-thread only — `OpenClipboard` is process-serialised and the static
+// `fromClipboard()` accessor calls this synchronously, so no cross-thread
+// HGLOBAL hand-off. We prefer the registered "PNG" format (Chrome/Edge/
+// Snipping Tool put it; no transcode loss) and fall back to CF_DIBV5/CF_DIB,
+// which we re-wrap as a BMP file by prepending the 14-byte BITMAPFILEHEADER
+// the clipboard omits. Either way the result is bytes the regular Bun.Image
+// decoder understands; nothing is decoded here.
+
+extern "user32" fn OpenClipboard(hwnd: ?*anyopaque) callconv(.winapi) c_int;
+extern "user32" fn CloseClipboard() callconv(.winapi) c_int;
+extern "user32" fn IsClipboardFormatAvailable(format: c_uint) callconv(.winapi) c_int;
+extern "user32" fn GetClipboardData(format: c_uint) callconv(.winapi) ?*anyopaque;
+extern "user32" fn RegisterClipboardFormatA(name: [*:0]const u8) callconv(.winapi) c_uint;
+extern "user32" fn GetClipboardSequenceNumber() callconv(.winapi) u32;
+extern "kernel32" fn GlobalSize(h: *anyopaque) callconv(.winapi) usize;
+
+const CF_DIB: c_uint = 8;
+const CF_DIBV5: c_uint = 17;
+
+/// Registered formats we'll take as-is (already a valid file). Preference
+/// order matters: PNG/JFIF/WebP need no header surgery and preserve whatever
+/// the source app wrote.
+const named_formats = [_][:0]const u8{ "PNG", "image/png", "JFIF", "image/webp" };
+
+pub fn clipboardChangeCount() i64 {
+    return GetClipboardSequenceNumber();
+}
+
+pub fn hasClipboardImage() bool {
+    // IsClipboardFormatAvailable doesn't require OpenClipboard.
+    if (IsClipboardFormatAvailable(CF_DIBV5) != 0 or IsClipboardFormatAvailable(CF_DIB) != 0)
+        return true;
+    for (named_formats) |name| {
+        const id = RegisterClipboardFormatA(name);
+        if (id != 0 and IsClipboardFormatAvailable(id) != 0) return true;
+    }
+    return false;
+}
+
+pub fn clipboard() error{ BackendUnavailable, OutOfMemory }!?[]u8 {
+    // hwnd=null associates the open with the current task; fine for read-only.
+    if (OpenClipboard(null) == 0) return error.BackendUnavailable;
+    defer _ = CloseClipboard();
+
+    // 1. Registered file-format chunks — copy verbatim.
+    for (named_formats) |name| {
+        const id = RegisterClipboardFormatA(name);
+        if (id != 0) if (GetClipboardData(id)) |h| if (try dupGlobal(h, 0)) |b| return b;
+    }
+    // 2. Packed DIB — needs a synthetic BITMAPFILEHEADER so the BMP sniffer
+    //    and decoder accept it. CF_DIBV5 first (carries alpha mask).
+    for ([_]c_uint{ CF_DIBV5, CF_DIB }) |cf| {
+        if (GetClipboardData(cf)) |h| if (try dupGlobal(h, 14)) |buf| {
+            // BITMAPFILEHEADER: 'BM' · u32 file-size · 2×u16 reserved ·
+            // u32 bfOffBits. bfOffBits = 14 + biSize + colour-table; for the
+            // 24/32-bit DIBs clipboards emit there's no colour table, but a
+            // 40-byte header with BI_BITFIELDS appends 12 bytes of masks.
+            const ih_size = std.mem.readInt(u32, buf[14..18], .little);
+            const compression = if (buf.len >= 14 + 20)
+                std.mem.readInt(u32, buf[14 + 16 ..][0..4], .little)
+            else
+                0;
+            const masks: u32 = if (ih_size == 40 and compression == 3) 12 else 0;
+            buf[0] = 'B';
+            buf[1] = 'M';
+            std.mem.writeInt(u32, buf[2..6], @intCast(buf.len), .little);
+            std.mem.writeInt(u32, buf[6..10], 0, .little);
+            std.mem.writeInt(u32, buf[10..14], 14 + ih_size + masks, .little);
+            return buf;
+        };
+    }
+    return null;
+}
+
+/// Copy a clipboard HGLOBAL into bun.default_allocator, optionally leaving
+/// `prefix` zero bytes at the front for the caller to fill (BITMAPFILEHEADER).
+fn dupGlobal(h: *anyopaque, comptime prefix: usize) error{OutOfMemory}!?[]u8 {
+    const size = GlobalSize(h);
+    if (size == 0) return null;
+    const ptr: [*]const u8 = @ptrCast(GlobalLock(h) orelse return null);
+    defer _ = GlobalUnlock(h);
+    const out = try bun.default_allocator.alloc(u8, prefix + size);
+    @memcpy(out[prefix..], ptr[0..size]);
+    return out;
 }
 
 const bun = @import("bun");

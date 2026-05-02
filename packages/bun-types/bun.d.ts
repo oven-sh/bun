@@ -8164,7 +8164,12 @@ declare module "bun" {
   }
 
   namespace Image {
-    type Format = "jpeg" | "png" | "webp" | "heic" | "avif";
+    /**
+     * `bmp`/`tiff`/`gif` are decode-only — `metadata().format` may report them
+     * but there are no `.bmp()`/`.tiff()`/`.gif()` encoder methods. On Linux,
+     * `tiff`/`gif` decode throws `UnsupportedOnPlatform`.
+     */
+    type Format = "jpeg" | "png" | "webp" | "heic" | "avif" | "bmp" | "tiff" | "gif";
     type Filter =
       | "nearest"
       | "box"
@@ -8255,6 +8260,28 @@ declare module "bun" {
      */
     static backend: "system" | "bun";
 
+    /**
+     * Read an image from the system clipboard.
+     *
+     * Returns a `Bun.Image` wrapping whatever container the clipboard holds
+     * (PNG, TIFF, HEIC, JPEG, BMP, …); call {@link metadata}, {@link resize},
+     * etc. as usual. `null` if no image is present.
+     *
+     * - **macOS**: NSPasteboard
+     * - **Windows**: registered `"PNG"` / `CF_DIBV5` / `CF_DIB`
+     * - **Linux**: always `null` (use `wl-paste`/`xclip` and pass the bytes
+     *   to `new Bun.Image(...)`)
+     */
+    static fromClipboard(): Image | null;
+    /** Cheap probe — true if {@link fromClipboard} would return non-null. */
+    static hasClipboardImage(): boolean;
+    /**
+     * Monotone counter that increments on every system-wide clipboard write.
+     * Poll this and only call {@link hasClipboardImage} when it moves. `-1`
+     * on Linux.
+     */
+    static clipboardChangeCount(): number;
+
     constructor(
       input: string | ArrayBuffer | SharedArrayBuffer | NodeJS.TypedArray | Blob,
       options?: Image.ConstructorOptions,
@@ -8304,6 +8331,8 @@ declare module "bun" {
     bytes(): Promise<Uint8Array>;
     /** Like {@link bytes} but as a Node `Buffer`. */
     buffer(): Promise<Buffer>;
+    /** Sharp-compatible alias for {@link buffer}. */
+    toBuffer(): Promise<Buffer>;
     /** Run the pipeline and return a `Blob` with the matching `type`. */
     blob(): Promise<Blob>;
     /** Run the pipeline and return base64-encoded output. */

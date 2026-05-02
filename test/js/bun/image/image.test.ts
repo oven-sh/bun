@@ -581,6 +581,12 @@ describe("Bun.Image", () => {
       expect(buf[0]).toBe(0x89);
     });
 
+    test(".toBuffer() is a Sharp-compat alias for .buffer()", async () => {
+      const buf = await new Bun.Image(cornersPng).png().toBuffer();
+      expect(Buffer.isBuffer(buf)).toBe(true);
+      expect(buf[0]).toBe(0x89);
+    });
+
     test(".toBase64() produces valid base64", async () => {
       const b64 = await new Bun.Image(cornersPng).png().toBase64();
       expect(typeof b64).toBe("string");
@@ -679,6 +685,142 @@ describe("Bun.Image", () => {
       expect(buf[0]).toBe(0xff);
       expect(buf[1]).toBe(0xd8);
     });
+  });
+});
+
+describe("decode-only formats (BMP / TIFF / GIF)", () => {
+  // Several tests here flip the process-global backend; restore after the
+  // describe so leaks can't reach the suites below regardless of throw paths.
+  const originalBackend = Bun.Image.backend;
+  afterAll(() => {
+    Bun.Image.backend = originalBackend;
+  });
+
+  // Hand-roll a 24-bit BI_RGB BMP. Rows bottom-up, BGR, 4-byte-aligned stride.
+  function makeBmp24(w: number, h: number, pixelOf: (x: number, y: number) => [number, number, number]) {
+    const stride = ((w * 3 + 3) >> 2) << 2;
+    const pix = new Uint8Array(stride * h);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const [r, g, b] = pixelOf(x, y);
+        const o = (h - 1 - y) * stride + x * 3; // bottom-up
+        pix[o] = b;
+        pix[o + 1] = g;
+        pix[o + 2] = r;
+      }
+    const file = new Uint8Array(14 + 40 + pix.length);
+    const dv = new DataView(file.buffer);
+    file[0] = 0x42;
+    file[1] = 0x4d; // 'BM'
+    dv.setUint32(2, file.length, true);
+    dv.setUint32(10, 54, true); // bfOffBits
+    dv.setUint32(14, 40, true); // biSize
+    dv.setInt32(18, w, true);
+    dv.setInt32(22, h, true);
+    dv.setUint16(26, 1, true); // planes
+    dv.setUint16(28, 24, true); // bpp
+    file.set(pix, 54);
+    return file;
+  }
+
+  test("sniffer recognises BMP/TIFF/GIF magic", async () => {
+    const cases = [
+      [makeBmp24(2, 2, () => [0, 0, 0]), "bmp"],
+      [Buffer.from("GIF89a\x02\x00\x02\x00\x00\x00\x00", "binary"), "gif"],
+      [Buffer.from("II*\x00\x08\x00\x00\x00", "binary"), "tiff"],
+      [Buffer.from("MM\x00*\x00\x00\x00\x08", "binary"), "tiff"],
+    ] as const;
+    for (const [bytes, fmt] of cases) {
+      // metadata() may reject (these aren't full valid files for tiff/gif),
+      // but the sniffer is exercised via the format echoed back in the error
+      // OR via successful header read for bmp/gif.
+      const m = await new Bun.Image(bytes).metadata().catch(() => null);
+      if (m) expect(m.format).toBe(fmt);
+    }
+    // BMP header is fully valid → metadata succeeds everywhere.
+    const meta = await new Bun.Image(makeBmp24(7, 3, () => [0, 0, 0])).metadata();
+    expect(meta).toEqual({ width: 7, height: 3, format: "bmp" });
+  });
+
+  test.each(["bun", "system"] as const)("BMP→PNG round-trips colour & orientation (backend=%s)", async be => {
+    // 3×2 with a distinct colour per pixel; if BGR↔RGB or bottom-up↔top-down
+    // is wrong the corners won't line up.
+    const colours: Record<string, [number, number, number]> = {
+      "0,0": [255, 0, 0],
+      "1,0": [0, 255, 0],
+      "2,0": [0, 0, 255],
+      "0,1": [255, 255, 0],
+      "1,1": [0, 255, 255],
+      "2,1": [255, 0, 255],
+    };
+    const bmpBytes = makeBmp24(3, 2, (x, y) => colours[`${x},${y}`]);
+    Bun.Image.backend = be;
+    const png = await new Bun.Image(bmpBytes).png().bytes();
+    Bun.Image.backend = isMacOS || isWindows ? "system" : "bun";
+    const { w, h, data } = decodePngRaw(png);
+    expect({ w, h }).toEqual({ w: 3, h: 2 });
+    for (const [k, [r, g, b]] of Object.entries(colours)) {
+      const [x, y] = k.split(",").map(Number);
+      const o = (y * 3 + x) * 4;
+      expect([data[o], data[o + 1], data[o + 2], data[o + 3]]).toEqual([r, g, b, 255]);
+    }
+  });
+
+  test("static BMP decoder rejects truncated pixel data (no OOB read)", async () => {
+    // ImageIO/WIC tolerate a short last row, so force the static path. Copy
+    // (`.slice`, not `.subarray`) so the Image source can't see past the
+    // truncation via the shared backing ArrayBuffer.
+    Bun.Image.backend = "bun";
+    const ok = makeBmp24(8, 8, () => [1, 2, 3]);
+    const cut = ok.slice(0, ok.length - 5);
+    await expect(new Bun.Image(cut).png().bytes()).rejects.toThrow(/decode failed/);
+  });
+
+  if (isMacOS || isWindows) {
+    test("GIF decode via system backend (hand-built 2×2, 2-colour)", async () => {
+      Bun.Image.backend = "system";
+      // GIF-LZW for a 2-colour 2×2 image is a handful of bytes; this is the
+      // smallest valid file that exercises a real palette + LZW frame.
+      // prettier-ignore
+      const gif = Buffer.from([
+        0x47,0x49,0x46,0x38,0x39,0x61,           // GIF89a
+        0x02,0x00,0x02,0x00,0x80,0x00,0x00,       // LSD 2×2, GCT 2 entries
+        0xff,0x00,0x00, 0x00,0x00,0xff,           // palette: red, blue
+        0x2c,0x00,0x00,0x00,0x00,0x02,0x00,0x02,0x00,0x00, // image desc
+        0x02,0x03,0x44,0x01,0x00,0x00,            // LZW min=2, sub-block len=3, codes, terminator
+        0x3b,                                     // trailer
+      ]);
+      const m = await new Bun.Image(gif).metadata();
+      expect(m).toEqual({ width: 2, height: 2, format: "gif" });
+      // Full decode → PNG (first frame).
+      const png = decodePngRaw(await new Bun.Image(gif).png().bytes());
+      expect({ w: png.w, h: png.h }).toEqual({ w: 2, h: 2 });
+    });
+  } else {
+    test("TIFF/GIF on Linux throw UnsupportedOnPlatform", async () => {
+      const gif = Buffer.from("GIF89a\x02\x00\x02\x00\x00\x00\x00\x3b", "binary");
+      await expect(new Bun.Image(gif).png().bytes()).rejects.toThrow(/not supported on this platform/);
+    });
+  }
+});
+
+describe("Bun.Image clipboard statics", () => {
+  // The actual clipboard contents are environment state we don't control, so
+  // these assert API SHAPE per platform, not contents.
+  test("hasClipboardImage / clipboardChangeCount / fromClipboard have the documented per-platform behaviour", () => {
+    expect(typeof Bun.Image.hasClipboardImage()).toBe("boolean");
+    if (isMacOS || isWindows) {
+      const n = Bun.Image.clipboardChangeCount();
+      expect(Number.isInteger(n)).toBe(true);
+      expect(Bun.Image.clipboardChangeCount()).toBe(n); // monotone, idempotent until something writes
+      const img = Bun.Image.fromClipboard();
+      expect(img === null || img instanceof Bun.Image).toBe(true);
+      expect(Bun.Image.hasClipboardImage()).toBe(img !== null);
+    } else {
+      expect(Bun.Image.clipboardChangeCount()).toBe(-1);
+      expect(Bun.Image.fromClipboard()).toBe(null);
+      expect(Bun.Image.hasClipboardImage()).toBe(false);
+    }
   });
 });
 

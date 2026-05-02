@@ -125,5 +125,32 @@ pub fn flip(src: []const u8, w: u32, h: u32, horizontal: bool) BackendError![]u8
     return out;
 }
 
+// ── NSPasteboard ───────────────────────────────────────────────────────────
+// JS-thread only (NSPasteboard is documented main-thread-safe to *read*, and
+// the static `Bun.Image.fromClipboard()` accessor calls this synchronously
+// before constructing the Image — the heavy decode still goes to WorkPool).
+
+extern fn bun_coregraphics_clipboard(out: ?[*]u8, out_len: *usize, probe_only: i32) i32;
+
+/// `null` ⇔ no image on the pasteboard. Returned bytes are an opaque container
+/// (PNG/TIFF/HEIC/…); feed straight to `new Bun.Image(…)`.
+pub fn clipboard() error{ BackendUnavailable, OutOfMemory }!?[]u8 {
+    var len: usize = 0;
+    if (bun_coregraphics_clipboard(null, &len, 0) != CG_OK) return error.BackendUnavailable;
+    if (len == 0) return null;
+    const out = try bun.default_allocator.alloc(u8, len);
+    errdefer bun.default_allocator.free(out);
+    if (bun_coregraphics_clipboard(out.ptr, &len, 0) != CG_OK) return error.BackendUnavailable;
+    return out[0..len];
+}
+
+pub fn hasClipboardImage() bool {
+    var len: usize = 0;
+    return bun_coregraphics_clipboard(null, &len, 1) == CG_OK and len > 0;
+}
+
+extern fn bun_coregraphics_clipboard_change_count() i64;
+pub const clipboardChangeCount = bun_coregraphics_clipboard_change_count;
+
 const bun = @import("bun");
 const codecs = @import("./codecs.zig");

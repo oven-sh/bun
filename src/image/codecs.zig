@@ -11,8 +11,8 @@
 /// Optional OS-native backend. `null` on Linux (and any platform we haven't
 /// written one for) so the dispatch in `decode`/`encode` compiles away. The
 /// backend module is only `@import`ed inside the matching arm so non-target
-/// platforms never see its symbols.
-const system_backend: ?type = if (bun.Environment.isMac)
+/// platforms never see its symbols. Exposed for `Image.fromClipboard()`.
+pub const system_backend: ?type = if (bun.Environment.isMac)
     @import("./backend_coregraphics.zig")
 else if (bun.Environment.isWindows)
     @import("./backend_wic.zig")
@@ -60,6 +60,16 @@ pub const Format = enum(u8) {
     heic,
     /// System-backend-only on macOS/Windows; no static codec.
     avif,
+    /// Decode-only. Static `BI_RGB`/`BI_BITFIELDS` parser everywhere; the
+    /// system backend is tried first (covers RLE/JPEG-in-BMP). The Windows
+    /// clipboard's `CF_DIB`/`CF_DIBV5` is exactly this.
+    bmp,
+    /// Decode-only via system backend (ImageIO/WIC); no static codec.
+    /// macOS pasteboard's preferred representation for screenshots.
+    tiff,
+    /// Decode-only via system backend (ImageIO/WIC); first frame only. No
+    /// static codec.
+    gif,
 
     pub fn sniff(bytes: []const u8) ?Format {
         if (bytes.len >= 3 and bytes[0] == 0xFF and bytes[1] == 0xD8 and bytes[2] == 0xFF)
@@ -68,6 +78,12 @@ pub const Format = enum(u8) {
             return .png;
         if (bytes.len >= 12 and std.mem.eql(u8, bytes[0..4], "RIFF") and std.mem.eql(u8, bytes[8..12], "WEBP"))
             return .webp;
+        if (bytes.len >= 2 and bytes[0] == 'B' and bytes[1] == 'M')
+            return .bmp;
+        if (bytes.len >= 4 and (std.mem.eql(u8, bytes[0..4], "II*\x00") or std.mem.eql(u8, bytes[0..4], "MM\x00*")))
+            return .tiff;
+        if (bytes.len >= 6 and (std.mem.eql(u8, bytes[0..6], "GIF87a") or std.mem.eql(u8, bytes[0..6], "GIF89a")))
+            return .gif;
         // ISO BMFF: u32be box-size · "ftyp" · major-brand · minor-version ·
         // compatible-brands… HEIC and AVIF share this container; the brands
         // distinguish them. `mif1`/`msf1` are codec-agnostic MIAF structural
@@ -100,6 +116,9 @@ pub const Format = enum(u8) {
             .webp => "image/webp",
             .heic => "image/heic",
             .avif => "image/avif",
+            .bmp => "image/bmp",
+            .tiff => "image/tiff",
+            .gif => "image/gif",
         };
     }
 };
@@ -151,17 +170,25 @@ pub fn decode(bytes: []const u8, max_pixels: u64, hint: DecodeHint) Error!Decode
         // system libz). The OS backend is purely a *capability* fallback for
         // containers we don't link a decoder for — and `backend == .bun` opts
         // out of even that so behaviour is identical to Linux.
-        .heic, .avif => if (system_backend) |b| if (useSystem())
-            b.decode(bytes, max_pixels) catch |e| switch (e) {
-                error.BackendUnavailable => error.UnsupportedOnPlatform,
-                else => |narrowed| narrowed,
-            }
-        else
-            error.UnsupportedOnPlatform else error.UnsupportedOnPlatform,
+        .heic, .avif, .tiff, .gif => decodeViaSystem(bytes, max_pixels) catch |e| switch (e) {
+            error.BackendUnavailable => error.UnsupportedOnPlatform,
+            else => |narrowed| narrowed,
+        },
+        // BMP gets a static fallback because the WSL2 clipboard surfaces
+        // CF_DIB on the Linux side where there is no system backend.
+        .bmp => decodeViaSystem(bytes, max_pixels) catch |e| switch (e) {
+            error.BackendUnavailable => bmp.decode(bytes, max_pixels),
+            else => |narrowed| narrowed,
+        },
     };
 }
 
-inline fn guard(w: u32, h: u32, max_pixels: u64) Error!void {
+fn decodeViaSystem(bytes: []const u8, max_pixels: u64) (Error || error{BackendUnavailable})!Decoded {
+    if (system_backend) |b| if (useSystem()) return b.decode(bytes, max_pixels);
+    return error.BackendUnavailable;
+}
+
+pub inline fn guard(w: u32, h: u32, max_pixels: u64) Error!void {
     // u64 mul cannot overflow from two u32 factors.
     if (@as(u64, w) * @as(u64, h) > max_pixels) return error.TooManyPixels;
 }
@@ -199,6 +226,22 @@ pub fn probe(bytes: []const u8, max_pixels: u64) Error!struct { format: Format, 
                 return error.DecodeFailed;
             w = @intCast(cw);
             h = @intCast(ch);
+        },
+        .bmp => {
+            const ih = try bmp.parseHeader(bytes);
+            w = ih.width;
+            h = ih.height;
+        },
+        .gif => {
+            // sig(6) · LSD: w(u16le) h(u16le) …
+            if (bytes.len < 10) return error.DecodeFailed;
+            w = std.mem.readInt(u16, bytes[6..8], .little);
+            h = std.mem.readInt(u16, bytes[8..10], .little);
+        },
+        .tiff => {
+            // IFD walk would be a full TIFF parser; defer to whoever
+            // actually decodes it (system backend on mac/win, else error).
+            return error.UnsupportedOnPlatform;
         },
         .heic, .avif => {
             // System backend handles these; fall through to a full decode if
@@ -277,6 +320,10 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: EncodeOptions) Er
             })
         else
             error.UnsupportedOnPlatform else error.UnsupportedOnPlatform,
+        // Decode-only formats — no .bmp()/.tiff()/.gif() chain methods, so the
+        // pipeline never sets these on EncodeOptions.format. Exhaustiveness
+        // arm only.
+        .bmp, .tiff, .gif => error.UnsupportedOnPlatform,
     };
 }
 
@@ -381,272 +428,14 @@ pub fn flip(src: []const u8, w: u32, h: u32, horizontal: bool) Error![]u8 {
     return out;
 }
 
-// ───────────────────────────── libjpeg-turbo ────────────────────────────────
+// ───────────────────────────── format codecs ────────────────────────────────
+// Per-format implementations live in their own files; codecs.zig is the
+// dispatch surface only.
 
-pub const jpeg = struct {
-    const tjhandle = ?*anyopaque;
-    // TurboJPEG 3 API. TJINIT_COMPRESS=0, TJINIT_DECOMPRESS=1.
-    extern fn tj3Init(init_type: c_int) tjhandle;
-    extern fn tj3Destroy(h: tjhandle) void;
-    extern fn tj3Set(h: tjhandle, param: c_int, value: c_int) c_int;
-    extern fn tj3Get(h: tjhandle, param: c_int) c_int;
-    extern fn tj3DecompressHeader(h: tjhandle, buf: [*]const u8, len: usize) c_int;
-    extern fn tj3Decompress8(h: tjhandle, buf: [*]const u8, len: usize, dst: [*]u8, pitch: c_int, pf: c_int) c_int;
-    extern fn tj3Compress8(h: tjhandle, src: [*]const u8, w: c_int, pitch: c_int, height: c_int, pf: c_int, out: *?[*]u8, out_len: *usize) c_int;
-    extern fn tj3SetScalingFactor(h: tjhandle, sf: ScalingFactor) c_int;
-    extern fn tj3GetScalingFactors(n: *c_int) ?[*]const ScalingFactor;
-    pub extern fn tj3Free(ptr: ?*anyopaque) void;
-    extern fn tj3GetErrorStr(h: tjhandle) [*:0]const u8;
-
-    const ScalingFactor = extern struct { num: c_int, denom: c_int };
-    /// TJSCALED: ceil(dim * num / denom).
-    inline fn scaled(dim: u32, sf: ScalingFactor) u32 {
-        return @intCast(@divFloor(@as(i64, dim) * sf.num + sf.denom - 1, sf.denom));
-    }
-
-    // tjparam / tjpf enum values from turbojpeg.h.
-    const TJPARAM_QUALITY = 3;
-    const TJPARAM_SUBSAMP = 4;
-    const TJPARAM_JPEGWIDTH = 5;
-    const TJPARAM_JPEGHEIGHT = 6;
-    const TJPF_RGBA = 7;
-    const TJSAMP_420 = 2;
-
-    pub fn decode(bytes: []const u8, max_pixels: u64, hint: DecodeHint) Error!Decoded {
-        const h = tj3Init(1) orelse return error.OutOfMemory;
-        defer tj3Destroy(h);
-        if (tj3DecompressHeader(h, bytes.ptr, bytes.len) != 0) return error.DecodeFailed;
-        const rw = tj3Get(h, TJPARAM_JPEGWIDTH);
-        const rh = tj3Get(h, TJPARAM_JPEGHEIGHT);
-        // tj3Get returns -1 on error; treat any non-positive dim as a decode
-        // failure rather than letting @intCast trap on hostile input.
-        if (rw <= 0 or rh <= 0) return error.DecodeFailed;
-        const src_w: u32 = @intCast(rw);
-        const src_h: u32 = @intCast(rh);
-        try guard(src_w, src_h, max_pixels);
-
-        var w = src_w;
-        var ht = src_h;
-        // DCT-domain scaling: if the pipeline will downscale, ask libjpeg-turbo
-        // for the smallest M/8 IDCT that still ≥ target. The IDCT is where the
-        // decode time goes, so this is roughly (8/M)² faster AND the RGBA
-        // buffer shrinks by the same factor — both speed and RSS win in one
-        // place. The subsequent resize pass takes it the rest of the way.
-        if (hint.target_w != 0 and hint.target_h != 0 and
-            (hint.target_w < src_w or hint.target_h < src_h))
-        {
-            var n: c_int = 0;
-            if (tj3GetScalingFactors(&n)) |sfs| {
-                var best: ScalingFactor = .{ .num = 1, .denom = 1 };
-                for (sfs[0..@intCast(n)]) |sf| {
-                    // Only consider downscale factors.
-                    if (sf.num >= sf.denom) continue;
-                    const sw = scaled(src_w, sf);
-                    const sh = scaled(src_h, sf);
-                    // Never go BELOW target — that would force upscale and
-                    // throw away detail the user asked for.
-                    if (sw < hint.target_w or sh < hint.target_h) continue;
-                    // Pick the smallest output (= largest reduction).
-                    if (@as(u64, sw) * sh < @as(u64, scaled(src_w, best)) * scaled(src_h, best))
-                        best = sf;
-                }
-                if (best.num != best.denom) {
-                    _ = tj3SetScalingFactor(h, best);
-                    w = scaled(src_w, best);
-                    ht = scaled(src_h, best);
-                }
-            }
-        }
-
-        const out = try bun.default_allocator.alloc(u8, @as(usize, w) * ht * 4);
-        errdefer bun.default_allocator.free(out);
-        if (tj3Decompress8(h, bytes.ptr, bytes.len, out.ptr, 0, TJPF_RGBA) != 0)
-            return error.DecodeFailed;
-        return .{ .rgba = out, .width = w, .height = ht };
-    }
-
-    pub fn encode(rgba: []const u8, w: u32, ht: u32, quality: u8) Error!Encoded {
-        const h = tj3Init(0) orelse return error.OutOfMemory;
-        defer tj3Destroy(h);
-        _ = tj3Set(h, TJPARAM_QUALITY, @intCast(@min(@max(quality, 1), 100)));
-        _ = tj3Set(h, TJPARAM_SUBSAMP, TJSAMP_420);
-        var out_ptr: ?[*]u8 = null;
-        var out_len: usize = 0;
-        if (tj3Compress8(h, rgba.ptr, @intCast(w), 0, @intCast(ht), TJPF_RGBA, &out_ptr, &out_len) != 0)
-            return error.EncodeFailed;
-        // tj3Compress8 allocates via libjpeg-turbo's allocator; hand it to JS
-        // with `tj3Free` as the finalizer instead of duping.
-        return .{ .bytes = out_ptr.?[0..out_len], .free = Encoded.wrap(tj3Free) };
-    }
-};
-
-// ───────────────────────────── libspng ──────────────────────────────────────
-
-pub const png = struct {
-    const spng_ctx = opaque {};
-    extern fn spng_ctx_new(flags: c_int) ?*spng_ctx;
-    extern fn spng_ctx_free(ctx: *spng_ctx) void;
-    extern fn spng_set_png_buffer(ctx: *spng_ctx, buf: [*]const u8, len: usize) c_int;
-    extern fn spng_decoded_image_size(ctx: *spng_ctx, fmt: c_int, out: *usize) c_int;
-    extern fn spng_decode_image(ctx: *spng_ctx, out: [*]u8, len: usize, fmt: c_int, flags: c_int) c_int;
-    extern fn spng_get_ihdr(ctx: *spng_ctx, ihdr: *Ihdr) c_int;
-    extern fn spng_set_ihdr(ctx: *spng_ctx, ihdr: *const Ihdr) c_int;
-    extern fn spng_set_plte(ctx: *spng_ctx, plte: *const Plte) c_int;
-    extern fn spng_set_trns(ctx: *spng_ctx, trns: *const Trns) c_int;
-    extern fn spng_encode_image(ctx: *spng_ctx, img: [*]const u8, len: usize, fmt: c_int, flags: c_int) c_int;
-    extern fn spng_get_png_buffer(ctx: *spng_ctx, len: *usize, err: *c_int) ?[*]u8;
-    extern fn spng_set_option(ctx: *spng_ctx, opt: c_int, value: c_int) c_int;
-
-    const Ihdr = extern struct {
-        width: u32,
-        height: u32,
-        bit_depth: u8,
-        color_type: u8,
-        compression_method: u8 = 0,
-        filter_method: u8 = 0,
-        interlace_method: u8 = 0,
-    };
-
-    const SPNG_CTX_ENCODER = 2;
-    const SPNG_FMT_RGBA8 = 1;
-    const SPNG_FMT_PNG = 256;
-    const SPNG_DECODE_TRNS = 1; // apply tRNS chunk so paletted/grey get real alpha
-    const SPNG_ENCODE_FINALIZE = 2;
-    // spng_option enum
-    const SPNG_IMG_COMPRESSION_LEVEL = 2;
-    const SPNG_ENCODE_TO_BUFFER = 12;
-    const SPNG_COLOR_TYPE_INDEXED = 3;
-    const SPNG_COLOR_TYPE_TRUECOLOR_ALPHA = 6;
-
-    const Plte = extern struct {
-        n_entries: u32,
-        entries: [256][4]u8, // r,g,b,alpha(reserved)
-    };
-    const Trns = extern struct {
-        gray: u16 = 0,
-        red: u16 = 0,
-        green: u16 = 0,
-        blue: u16 = 0,
-        n_type3_entries: u32,
-        type3_alpha: [256]u8,
-    };
-
-    pub fn decode(bytes: []const u8, max_pixels: u64) Error!Decoded {
-        const ctx = spng_ctx_new(0) orelse return error.OutOfMemory;
-        defer spng_ctx_free(ctx);
-        if (spng_set_png_buffer(ctx, bytes.ptr, bytes.len) != 0) return error.DecodeFailed;
-        var ihdr: Ihdr = undefined;
-        if (spng_get_ihdr(ctx, &ihdr) != 0) return error.DecodeFailed;
-        try guard(ihdr.width, ihdr.height, max_pixels);
-        var size: usize = 0;
-        if (spng_decoded_image_size(ctx, SPNG_FMT_RGBA8, &size) != 0) return error.DecodeFailed;
-        const out = try bun.default_allocator.alloc(u8, size);
-        errdefer bun.default_allocator.free(out);
-        if (spng_decode_image(ctx, out.ptr, out.len, SPNG_FMT_RGBA8, SPNG_DECODE_TRNS) != 0)
-            return error.DecodeFailed;
-        return .{ .rgba = out, .width = ihdr.width, .height = ihdr.height };
-    }
-
-    pub fn encode(rgba: []const u8, w: u32, h: u32, level: i8) Error!Encoded {
-        const ctx = spng_ctx_new(SPNG_CTX_ENCODER) orelse return error.OutOfMemory;
-        defer spng_ctx_free(ctx);
-        _ = spng_set_option(ctx, SPNG_ENCODE_TO_BUFFER, 1);
-        if (level >= 0) _ = spng_set_option(ctx, SPNG_IMG_COMPRESSION_LEVEL, @min(level, 9));
-        var ihdr: Ihdr = .{
-            .width = w,
-            .height = h,
-            .bit_depth = 8,
-            .color_type = SPNG_COLOR_TYPE_TRUECOLOR_ALPHA,
-        };
-        if (spng_set_ihdr(ctx, &ihdr) != 0) return error.EncodeFailed;
-        if (spng_encode_image(ctx, rgba.ptr, rgba.len, SPNG_FMT_PNG, SPNG_ENCODE_FINALIZE) != 0)
-            return error.EncodeFailed;
-        var len: usize = 0;
-        var err: c_int = 0;
-        const buf = spng_get_png_buffer(ctx, &len, &err) orelse return error.EncodeFailed;
-        // spng_get_png_buffer transfers ownership (libc malloc); hand to JS
-        // with libc `free` as the finalizer instead of duping.
-        return .{ .bytes = buf[0..len], .free = Encoded.wrap(std.c.free) };
-    }
-
-    /// Quantize RGBA to ≤ `colors` and emit an indexed (colour-type 3) PNG
-    /// with PLTE + tRNS. The quantizer is a small median-cut — see
-    /// quantize.zig.
-    pub fn encodeIndexed(rgba: []const u8, w: u32, h: u32, level: i8, colors: u16, dither: bool) Error!Encoded {
-        var q = try quantize.quantize(rgba, w, h, .{ .max_colors = colors, .dither = dither });
-        defer q.deinit();
-
-        const ctx = spng_ctx_new(SPNG_CTX_ENCODER) orelse return error.OutOfMemory;
-        defer spng_ctx_free(ctx);
-        _ = spng_set_option(ctx, SPNG_ENCODE_TO_BUFFER, 1);
-        if (level >= 0) _ = spng_set_option(ctx, SPNG_IMG_COMPRESSION_LEVEL, @min(level, 9));
-
-        var ihdr: Ihdr = .{
-            .width = w,
-            .height = h,
-            .bit_depth = 8,
-            .color_type = SPNG_COLOR_TYPE_INDEXED,
-        };
-        if (spng_set_ihdr(ctx, &ihdr) != 0) return error.EncodeFailed;
-
-        var plte: Plte = .{ .n_entries = q.colors, .entries = undefined };
-        var trns: Trns = .{ .n_type3_entries = q.colors, .type3_alpha = undefined };
-        for (0..q.colors) |i| {
-            plte.entries[i] = .{ q.palette[i * 4], q.palette[i * 4 + 1], q.palette[i * 4 + 2], 255 };
-            trns.type3_alpha[i] = q.palette[i * 4 + 3];
-        }
-        if (spng_set_plte(ctx, &plte) != 0) return error.EncodeFailed;
-        if (q.has_alpha and spng_set_trns(ctx, &trns) != 0) return error.EncodeFailed;
-
-        if (spng_encode_image(ctx, q.indices.ptr, q.indices.len, SPNG_FMT_PNG, SPNG_ENCODE_FINALIZE) != 0)
-            return error.EncodeFailed;
-
-        var len: usize = 0;
-        var err: c_int = 0;
-        const buf = spng_get_png_buffer(ctx, &len, &err) orelse return error.EncodeFailed;
-        return .{ .bytes = buf[0..len], .free = Encoded.wrap(std.c.free) };
-    }
-};
-
-// ───────────────────────────── libwebp ──────────────────────────────────────
-
-pub const webp = struct {
-    extern fn WebPGetInfo(data: [*]const u8, len: usize, w: *c_int, h: *c_int) c_int;
-    extern fn WebPDecodeRGBA(data: [*]const u8, len: usize, w: *c_int, h: *c_int) ?[*]u8;
-    extern fn WebPEncodeRGBA(rgba: [*]const u8, w: c_int, h: c_int, stride: c_int, q: f32, out: *?[*]u8) usize;
-    extern fn WebPEncodeLosslessRGBA(rgba: [*]const u8, w: c_int, h: c_int, stride: c_int, out: *?[*]u8) usize;
-    pub extern fn WebPFree(ptr: ?*anyopaque) void;
-
-    pub fn decode(bytes: []const u8, max_pixels: u64) Error!Decoded {
-        var cw: c_int = 0;
-        var ch: c_int = 0;
-        // Header-only probe first so the pixel guard fires before libwebp
-        // allocates the full canvas internally. WebPGetInfo can hand back
-        // non-positive on a malformed header; reject before @intCast traps.
-        if (WebPGetInfo(bytes.ptr, bytes.len, &cw, &ch) == 0 or cw <= 0 or ch <= 0)
-            return error.DecodeFailed;
-        const w: u32 = @intCast(cw);
-        const h: u32 = @intCast(ch);
-        try guard(w, h, max_pixels);
-        const ptr = WebPDecodeRGBA(bytes.ptr, bytes.len, &cw, &ch) orelse return error.DecodeFailed;
-        defer WebPFree(ptr);
-        const len: usize = @as(usize, w) * h * 4;
-        const out = try bun.default_allocator.dupe(u8, ptr[0..len]);
-        return .{ .rgba = out, .width = w, .height = h };
-    }
-
-    pub fn encode(rgba: []const u8, w: u32, h: u32, quality: u8, lossless: bool) Error!Encoded {
-        var out: ?[*]u8 = null;
-        const stride: c_int = @intCast(w * 4);
-        const len = if (lossless)
-            WebPEncodeLosslessRGBA(rgba.ptr, @intCast(w), @intCast(h), stride, &out)
-        else
-            WebPEncodeRGBA(rgba.ptr, @intCast(w), @intCast(h), stride, @floatFromInt(quality), &out);
-        if (len == 0 or out == null) return error.EncodeFailed;
-        return .{ .bytes = out.?[0..len], .free = Encoded.wrap(WebPFree) };
-    }
-};
+pub const jpeg = @import("./codec_jpeg.zig");
+pub const png = @import("./codec_png.zig");
+pub const webp = @import("./codec_webp.zig");
+pub const bmp = @import("./codec_bmp.zig");
 
 const bun = @import("bun");
-const quantize = @import("./quantize.zig");
 const std = @import("std");

@@ -1236,6 +1236,16 @@ describe("deno_task", () => {
   describe("redirects", async function igodf() {
     TestBuilder.command`echo 5 6 7 > test.txt`.fileEquals("test.txt", "5 6 7\n").runAsTest("basic redirect");
 
+    // A trailing digit on a word adjacent to `>` must stay part of the word;
+    // it is not an fd-prefix. `echo abc1>test.txt` should write "abc1\n".
+    TestBuilder.command`echo abc1>test.txt`
+      .fileEquals("test.txt", "abc1\n")
+      .runAsTest("digit at end of word is not an fd prefix");
+
+    TestBuilder.command`echo test100>test.txt`
+      .fileEquals("test.txt", "test100\n")
+      .runAsTest("multi-digit tail is not an fd prefix");
+
     TestBuilder.command`echo 1 2 3 && echo 1 > test.txt`
       .stdout("1 2 3\n")
       .fileEquals("test.txt", "1\n")

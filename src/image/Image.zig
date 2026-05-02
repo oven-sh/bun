@@ -884,8 +884,13 @@ pub const PipelineTask = struct {
             //   • st_size cap → file-based decompression-bomb fails up
             //     front with a clear error instead of materialising a
             //     multi-GB encoded buffer before `maxPixels` even runs.
-            // O_NONBLOCK so the open itself can't block on a FIFO.
-            const file = switch (bun.sys.File.openat(bun.FD.cwd(), p, bun.O.RDONLY | bun.O.NONBLOCK, 0)) {
+            // O_NONBLOCK so the open itself can't block on a FIFO. POSIX-only:
+            // on Windows it omits FILE_SYNCHRONOUS_IO_NONALERT (overlapped
+            // handle) and the subsequent sync read fails EINVAL. Windows has
+            // no open-blocking FIFOs in the same sense; the !S_ISREG check
+            // below still rejects pipes/devices.
+            const oflags = bun.O.RDONLY | if (bun.Environment.isPosix) bun.O.NONBLOCK else @as(@TypeOf(bun.O.RDONLY), 0);
+            const file = switch (bun.sys.File.openat(bun.FD.cwd(), p, oflags, 0)) {
                 .result => |f| f,
                 .err => |e| {
                     this.result = .{ .io_err = e.withPath(p) };

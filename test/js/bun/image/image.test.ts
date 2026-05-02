@@ -497,16 +497,30 @@ describe("Bun.Image", () => {
         await expect(new Bun.Image(cornersPng).avif().bytes()).rejects.toThrow(/not supported on this platform/);
       });
     } else if (isMacOS) {
-      // ImageIO ships HEVC and (since 13.0, our minimum target) AV1: both
-      // formats encode unconditionally.
-      test.each(["heic", "avif"] as const)(".%s() encodes and round-trips through the sniffer", async fmt => {
-        const out = await new Bun.Image(cornersPng)[fmt]({ quality: 50 }).bytes();
+      // ImageIO ships HEVC unconditionally; AV1 *decode* is in 13.0+, but
+      // *encode* goes through VideoToolbox/AVE which only exists on Apple
+      // Silicon — Intel Macs return kVTCouldNotFindVideoEncoderErr (-12908)
+      // and we surface that as UnsupportedOnPlatform. So HEIC is asserted
+      // unconditionally, AVIF is asserted on arm64 and asserted-to-reject
+      // on x64.
+      test(".heic() encodes and round-trips through the sniffer", async () => {
+        const out = await new Bun.Image(cornersPng).heic({ quality: 50 }).bytes();
         expect(String.fromCharCode(...out.subarray(4, 8))).toBe("ftyp");
-        // ImageIO emits major_brand=mif1 with the codec brand only in
-        // compatibles; the sniffer used to misroute that to .heic for AVIF.
-        const meta = await new Bun.Image(out).metadata();
-        expect(meta.format).toBe(fmt);
+        expect((await new Bun.Image(out).metadata()).format).toBe("heic");
       });
+      if (process.arch === "arm64") {
+        test(".avif() encodes and round-trips through the sniffer", async () => {
+          const out = await new Bun.Image(cornersPng).avif({ quality: 50 }).bytes();
+          expect(String.fromCharCode(...out.subarray(4, 8))).toBe("ftyp");
+          // ImageIO emits major_brand=mif1 with the codec brand only in
+          // compatibles; the sniffer used to misroute that to .heic for AVIF.
+          expect((await new Bun.Image(out).metadata()).format).toBe("avif");
+        });
+      } else {
+        test(".avif() rejects with UnsupportedOnPlatform on Intel macOS", async () => {
+          await expect(new Bun.Image(cornersPng).avif().bytes()).rejects.toThrow(/not supported on this platform/);
+        });
+      }
     } else {
       // Windows: WIC's HEIF/AV1 encoders are optional Store packages. We can't
       // control install state from here, so the test branches on the *probe*

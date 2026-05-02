@@ -619,6 +619,17 @@ pub fn doResume(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, _: *
     return result;
 }
 
+pub fn markAsUpgraded(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) jsc.JSValue {
+    log("markAsUpgraded", .{});
+    if (this.raw_response) |resp| {
+        // Mark the uWS response as a connect request so that subsequent data
+        // is forwarded as raw bytes instead of going through the HTTP parser.
+        // This enables bidirectional streaming after an HTTP upgrade.
+        resp.markAsConnectRequest();
+    }
+    return .js_undefined;
+}
+
 pub fn onRequestComplete(this: *NodeHTTPResponse) void {
     if (this.flags.request_has_completed) {
         return;

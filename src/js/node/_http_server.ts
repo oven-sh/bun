@@ -621,15 +621,28 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           http_res.end();
           socket.destroy();
         } else if (is_upgrade) {
-          server.emit("upgrade", http_req, socket, kEmptyBuffer);
-          if (!socket._httpMessage) {
-            if (canUseInternalAssignSocket) {
-              // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
-              assignSocketInternal(http_res, socket);
-            } else {
-              http_res.assignSocket(socket);
-            }
+          if (server.listenerCount("upgrade") > 0) {
+            // Mark the underlying uWS response as a connect-like request so that
+            // subsequent data is forwarded as raw bytes (not parsed as HTTP).
+            // This enables bidirectional streaming after the upgrade handshake.
+            handle.markAsUpgraded();
+            // Enable raw socket streaming so that socket.write() actually sends data
+            socket[kEnableStreaming](true);
+            const { promise, resolve } = $newPromiseCapability(Promise);
+            socket.once("close", resolve);
+            // Pass the pipelined data (head buffer) if any was received with the upgrade request
+            const head = connectHead ? connectHead : kEmptyBuffer;
+            server.emit("upgrade", http_req, socket, head);
+            return promise;
           }
+          // No upgrade listener — fall through to normal "request" event,
+          // matching Node.js behavior (treats it as a regular HTTP request).
+          if (canUseInternalAssignSocket) {
+            assignSocketInternal(http_res, socket);
+          } else {
+            http_res.assignSocket(socket);
+          }
+          server.emit("request", http_req, http_res);
         } else if (http_req.headers.expect !== undefined) {
           if (http_req.headers.expect === "100-continue") {
             if (server.listenerCount("checkContinue") > 0) {
@@ -853,9 +866,11 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
 
   get bytesWritten() {
     const handle = this[kHandle];
-    return handle
-      ? (handle.response?.getBytesWritten?.() ?? handle.bytesWritten ?? this[kBytesWritten] ?? 0)
-      : (this[kBytesWritten] ?? 0);
+    if (!handle) return this[kBytesWritten] ?? 0;
+    // Response tracks bytes from HTTP response writes (normal path),
+    // handle.bytesWritten tracks bytes from raw socket writes (upgrade/CONNECT streaming path).
+    // These are mutually exclusive write paths, so sum them.
+    return (handle.response?.getBytesWritten?.() ?? 0) + (handle.bytesWritten ?? 0);
   }
   set bytesWritten(value) {
     this[kBytesWritten] = value;
@@ -875,7 +890,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
   #onDrain() {
     const handle = this[kHandle];
-    this[kBytesWritten] = handle ? (handle.response?.getBytesWritten?.() ?? handle.bytesWritten ?? 0) : 0;
+    this[kBytesWritten] = handle ? (handle.response?.getBytesWritten?.() ?? 0) + (handle.bytesWritten ?? 0) : 0;
     const callback = this.#pendingCallback;
     if (callback) {
       this.#pendingCallback = null;

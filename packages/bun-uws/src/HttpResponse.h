@@ -766,6 +766,15 @@ public:
         return httpResponseData->isConnectRequest;
     }
 
+    /* Mark this response as a connect-like request so that subsequent data
+     * is forwarded as raw bytes instead of going through the HTTP parser.
+     * Used for HTTP upgrade (e.g. WebSocket) when the application takes
+     * ownership of the socket via the node:http upgrade event. */
+    void markAsConnectRequest() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        httpResponseData->isConnectRequest = true;
+    }
+
     void setWriteOffset(uint64_t offset) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 

@@ -42,6 +42,10 @@ pub fn NewResponse(ssl_flag: i32) type {
             return c.uws_res_is_connect_request(ssl_flag, res.downcast());
         }
 
+        pub fn markAsConnectRequest(res: *Response) void {
+            c.uws_res_mark_as_connect_request(ssl_flag, res.downcast());
+        }
+
         pub fn flushHeaders(res: *Response, flushImmediately: bool) void {
             c.uws_res_flush_headers(ssl_flag, res.downcast(), flushImmediately);
         }
@@ -625,6 +629,12 @@ pub const AnyResponse = union(enum) {
         };
     }
 
+    pub fn markAsConnectRequest(this: AnyResponse) void {
+        switch (this) {
+            inline else => |resp| resp.markAsConnectRequest(),
+        }
+    }
+
     pub fn endStream(this: AnyResponse, close_connection: bool) void {
         switch (this) {
             inline else => |resp| resp.endStream(close_connection),
@@ -713,6 +723,7 @@ const c = struct {
     pub extern fn us_socket_mark_needs_more_not_ssl(socket: ?*c.uws_res) void;
     pub extern fn uws_res_state(ssl: c_int, res: *const c.uws_res) State;
     pub extern fn uws_res_is_connect_request(ssl: i32, res: *c.uws_res) bool;
+    pub extern fn uws_res_mark_as_connect_request(ssl: i32, res: *c.uws_res) void;
     pub extern fn uws_res_get_remote_address_info(res: *c.uws_res, dest: *[*]const u8, port: *i32, is_ipv6: *bool) usize;
     pub extern fn uws_res_uncork(ssl: i32, res: *c.uws_res) void;
     pub extern fn uws_res_end(ssl: i32, res: *c.uws_res, data: [*c]const u8, length: usize, close_connection: bool) void;

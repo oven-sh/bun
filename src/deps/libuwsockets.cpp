@@ -1845,6 +1845,18 @@ __attribute__((callback (corker, ctx)))
       return uwsRes->isConnectRequest();
     }
   }
+
+  void uws_res_mark_as_connect_request(int ssl, uws_res_r res)
+  {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->markAsConnectRequest();
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->markAsConnectRequest();
+    }
+  }
+
   void *uws_res_get_native_handle(int ssl, uws_res_r res)
   {
     if (ssl)

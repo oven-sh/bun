@@ -155,6 +155,10 @@ export default [
         fn: "doResume",
         length: 0,
       },
+      markAsUpgraded: {
+        fn: "markAsUpgraded",
+        length: 0,
+      },
       bufferedAmount: {
         getter: "getBufferedAmount",
       },

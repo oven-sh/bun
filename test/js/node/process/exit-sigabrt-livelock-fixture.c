@@ -7,6 +7,7 @@
 // before exit(), the first raise() terminates the process with SIGABRT.
 #include <signal.h>
 #include <stdlib.h>
+#include <sys/resource.h>
 
 static void raise_abort_loop(void) {
     for (;;) {
@@ -15,6 +16,13 @@ static void raise_abort_loop(void) {
 }
 
 void setup_exit_abort(void) {
+    // The intentional SIGABRT below has default action "terminate + core";
+    // suppress the core so the CI runner's coresDir scan doesn't flag this
+    // test as "core dumped" (see scripts/runner.node.mjs and the precedent
+    // in test/napi/napi-app/main.cpp).
+    struct rlimit zero = {0, 0};
+    setrlimit(RLIMIT_CORE, &zero);
+
     // Bun calls exit() on macOS and ASAN-enabled Linux, quick_exit()
     // elsewhere — register with whichever is available so the callback
     // always fires regardless of build configuration.

@@ -743,9 +743,6 @@ const bloblog = bun.Output.scoped(.WriteFile, .hidden);
 
 const std = @import("std");
 
-const ZigString = jsc.ZigString;
-const Body = jsc.WebCore.Body;
-
 const bun = @import("bun");
 const Environment = bun.Environment;
 const invalid_fd = bun.invalid_fd;
@@ -756,6 +753,8 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSPromise = jsc.JSPromise;
 const SystemError = jsc.SystemError;
+const ZigString = jsc.ZigString;
+const Body = jsc.WebCore.Body;
 
 const Blob = jsc.WebCore.Blob;
 const ClosingState = Blob.ClosingState;

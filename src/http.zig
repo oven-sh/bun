@@ -2045,6 +2045,7 @@ pub fn onData(
         .body => {
             this.setTimeout(socket, 5);
 
+            const before = this.state.total_body_received;
             const report_progress = this.handleResponseBody(incoming_data, false) catch |err| {
                 this.closeAndFail(err, is_ssl, socket);
                 return;
@@ -2054,7 +2055,18 @@ pub fn onData(
             // onAsyncHTTPCallback destroy the ThreadlocalAsyncHTTP that
             // owns *this* HTTPClient inline on this thread, so `this`
             // is poisoned by the time progressUpdate returns.
-            this.maybePauseReceive(is_ssl, socket, incoming_data.len);
+            //
+            // Count the `total_body_received` delta, not
+            // `incoming_data.len`: for Transfer-Encoding: chunked the
+            // latter includes per-chunk framing (hex size + CRLFs) that
+            // never reaches JS, so `didDrain` can't credit it and it
+            // would accumulate as a permanent floor under
+            // `outstanding_body_bytes`. Once that floor passes the
+            // low-water mark, a long-lived SSE stream deadlocks on the
+            // first pause. The .body arm uses the same delta for
+            // symmetry (and to discard any trailing bytes past
+            // Content-Length).
+            this.maybePauseReceive(is_ssl, socket, this.state.total_body_received -| before);
 
             if (report_progress) {
                 this.progressUpdate(is_ssl, ctx, socket);
@@ -2065,12 +2077,13 @@ pub fn onData(
         .body_chunk => {
             this.setTimeout(socket, 5);
 
+            const before = this.state.total_body_received;
             const report_progress = this.handleResponseBodyChunkedEncoding(incoming_data) catch |err| {
                 this.closeAndFail(err, is_ssl, socket);
                 return;
             };
 
-            this.maybePauseReceive(is_ssl, socket, incoming_data.len);
+            this.maybePauseReceive(is_ssl, socket, this.state.total_body_received -| before);
 
             if (report_progress) {
                 this.progressUpdate(is_ssl, ctx, socket);

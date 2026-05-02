@@ -786,6 +786,69 @@ describe("minimum-release-age", () => {
           return Response.json(packageData);
         }
 
+        // TEST PACKAGE: parent-package (has exact transitive dep on recent-child-package)
+        if (url.pathname === "/parent-package") {
+          const packageData = {
+            name: "parent-package",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "parent-package",
+                version: "1.0.0",
+                dependencies: {
+                  "recent-child-package": "1.0.0", // exact pin on a recent version
+                },
+                dist: {
+                  tarball: `${mockRegistryUrl}/parent-package/-/parent-package-1.0.0.tgz`,
+                  integrity: "sha512-parent1==",
+                },
+              },
+            },
+            time: {
+              "1.0.0": daysAgo(10), // old enough to pass filter
+            },
+          };
+
+          if (req.headers.get("accept")?.includes("application/vnd.npm.install-v1+json")) {
+            return Response.json({
+              name: packageData.name,
+              "dist-tags": packageData["dist-tags"],
+              versions: packageData.versions,
+            });
+          }
+          return Response.json(packageData);
+        }
+
+        // TEST PACKAGE: recent-child-package (transitive dep that is too recent)
+        if (url.pathname === "/recent-child-package") {
+          const packageData = {
+            name: "recent-child-package",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "recent-child-package",
+                version: "1.0.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/recent-child-package/-/recent-child-package-1.0.0.tgz`,
+                  integrity: "sha512-child1==",
+                },
+              },
+            },
+            time: {
+              "1.0.0": daysAgo(1), // too recent - would fail if filtered
+            },
+          };
+
+          if (req.headers.get("accept")?.includes("application/vnd.npm.install-v1+json")) {
+            return Response.json({
+              name: packageData.name,
+              "dist-tags": packageData["dist-tags"],
+              versions: packageData.versions,
+            });
+          }
+          return Response.json(packageData);
+        }
+
         // Serve tarballs
         if (url.pathname.includes(".tgz")) {
           // Match both regular and scoped package tarballs
@@ -1692,6 +1755,38 @@ registry = "${mockRegistryUrl}"`,
       const lockfile = await Bun.file(`${dir}/bun.lock`).text();
       // Direct dependency should be filtered
       expect(lockfile).toContain("regular-package@2.1.0");
+    });
+
+    test("exact-pinned transitive dependencies that are too recent should not be filtered (#27004)", async () => {
+      // parent-package@1.0.0 (10 days old, passes filter) depends on
+      // recent-child-package@1.0.0 (1 day old, would fail if filtered).
+      // The child should NOT be filtered because it's a transitive dependency.
+      using dir = tempDir("transitive-exact-pin", {
+        "package.json": JSON.stringify({
+          dependencies: {
+            "parent-package": "*",
+          },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).not.toContain("minimum release age");
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // Both packages should be installed
+      expect(lockfile).toContain("parent-package");
+      expect(lockfile).toContain("recent-child-package");
     });
   });
 

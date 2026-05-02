@@ -25,29 +25,26 @@ const fastCrashEnv = {
   ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
 };
 
-test.skipIf(!isFuzzilliBuild)(
-  "fuzzilli crash signal handler chains to JSC/ASAN for SIGSEGV",
-  async () => {
-    // FUZZILLI_CRASH type 5 writes to a volatile null pointer. With a working
-    // handler chain the fault reaches jscSignalHandler → ASAN and we get an
-    // "AddressSanitizer: SEGV" report on stderr; with signal()+SIG_DFL the
-    // process dies with stderr containing only the [COV] banner.
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", 'fuzzilli("FUZZILLI_CRASH", 5);'],
-      env: fastCrashEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+test.skipIf(!isFuzzilliBuild)("fuzzilli crash signal handler chains to JSC/ASAN for SIGSEGV", async () => {
+  // FUZZILLI_CRASH type 5 writes to a volatile null pointer. With a working
+  // handler chain the fault reaches jscSignalHandler → ASAN and we get an
+  // "AddressSanitizer: SEGV" report on stderr; with signal()+SIG_DFL the
+  // process dies with stderr containing only the [COV] banner.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", 'fuzzilli("FUZZILLI_CRASH", 5);'],
+    env: fastCrashEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toContain("FUZZILLI_CRASH: 5");
-    expect(stderr).toContain("AddressSanitizer: SEGV");
-    // ASAN aborts after printing; a bare SIGSEGV would surface as signalCode
-    // "SIGSEGV" with nothing useful on stderr.
-    expect(proc.signalCode).not.toBe("SIGSEGV");
-  },
-);
+  expect(stdout).toContain("FUZZILLI_CRASH: 5");
+  expect(stderr).toContain("AddressSanitizer: SEGV");
+  // ASAN aborts after printing; a bare SIGSEGV would surface as signalCode
+  // "SIGSEGV" with nothing useful on stderr.
+  expect(proc.signalCode).not.toBe("SIGSEGV");
+});
 
 test.skipIf(!isFuzzilliBuild)("fuzzilli crash signal handler still terminates for SIGABRT", async () => {
   // FUZZILLI_CRASH type 0 is std::abort(). No JSC/ASAN handler is registered

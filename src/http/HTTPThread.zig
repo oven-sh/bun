@@ -531,14 +531,21 @@ fn drainQueuedHTTPResponseBodyConsumed(this: *@This()) void {
                         const is_tls = tag == .SocketTLS;
                         const HTTPContext = HTTPThread.NewHTTPContext(comptime is_tls);
                         const tagged = HTTPContext.getTaggedFromSocket(socket);
-                        // Only HTTP/2 has per-stream receive windows; for
-                        // HTTP/1.1 the tagged ptr is an HTTPClient and the
-                        // message is a no-op.
+                        if (tagged.get(HTTPClient)) |client| {
+                            // HTTP/1.1: may resume a paused socket read.
+                            client.consumeResponseBody(comptime is_tls, socket, msg.bytes);
+                        }
                         if (tagged.get(bun.http.H2.ClientSession)) |session| {
+                            // HTTP/2: releases per-stream WINDOW_UPDATE.
                             session.consumeResponseBodyByHttpId(msg.async_http_id, msg.bytes);
                         }
                     },
                 }
+            } else {
+                // HTTP/3: QUIC streams aren't in the TCP-socket tracker;
+                // dispatch via the session registry. May resume a
+                // lsquic `wantRead(0)` pause.
+                bun.http.H3.ClientContext.consumeResponseBodyByHttpId(msg.async_http_id, msg.bytes);
             }
         }
         if (queued.items.len == 0) {

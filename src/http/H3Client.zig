@@ -26,15 +26,22 @@ pub const AltSvc = @import("./h3_client/AltSvc.zig");
 /// via TestingAPIs.quicLiveCounts so they must be atomic.
 pub var live_sessions = std.atomic.Value(u32).init(0);
 pub var live_streams = std.atomic.Value(u32).init(0);
+/// Cumulative response-body bytes delivered via `onStreamData` across all
+/// h3 client streams in this process. Exposed for the backpressure tests:
+/// a stalled JS reader should cap this near `receive_body_high_water` once
+/// `wantRead(false)` lands, whereas without the gate it tracks whatever
+/// the server pushes.
+pub var body_bytes_received = std.atomic.Value(u64).init(0);
 
 pub const TestingAPIs = struct {
     /// Named distinctly from H2's `liveCounts` because generate-js2native.ts
     /// mangles `[^A-Za-z]` to `_`, so `H2Client.zig` and `H3Client.zig` produce
     /// the same path prefix and the function name has to differ.
     pub fn quicLiveCounts(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const obj = jsc.JSValue.createEmptyObject(globalThis, 2);
+        const obj = jsc.JSValue.createEmptyObject(globalThis, 3);
         obj.put(globalThis, jsc.ZigString.static("sessions"), .jsNumber(live_sessions.load(.monotonic)));
         obj.put(globalThis, jsc.ZigString.static("streams"), .jsNumber(live_streams.load(.monotonic)));
+        obj.put(globalThis, jsc.ZigString.static("bodyBytesReceived"), .jsNumber(body_bytes_received.load(.monotonic)));
         return obj;
     }
 };

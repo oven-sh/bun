@@ -27,6 +27,11 @@ body_out_str: ?*MutableString = null,
 compressed_body: MutableString = undefined,
 content_length: ?usize = null,
 total_body_received: usize = 0,
+/// Wire bytes handed to JS via `progressUpdate` that haven't been
+/// reported drained via `scheduleResponseBodyConsumed`. Drives the
+/// HTTP/1.1 and HTTP/3 read-side pause once over `receive_body_high_water`.
+/// HTTP/2 tracks this per-stream instead (`h2_client/Stream.unacked_bytes`).
+outstanding_body_bytes: usize = 0,
 request_body: []const u8 = "",
 original_request_body: HTTPRequestBody = .{ .bytes = "" },
 request_sent_len: usize = 0,
@@ -42,7 +47,12 @@ pub const InternalStateFlags = packed struct(u8) {
     is_redirect_pending: bool = false,
     is_libdeflate_fast_path_disabled: bool = false,
     resend_request_body_on_redirect: bool = false,
-    _padding: u2 = 0,
+    /// The underlying read has been paused (h1: `us_socket_pause`; h3:
+    /// `lsquic_stream_wantread(0)`) because `outstanding_body_bytes` is
+    /// above `receive_body_high_water`. Cleared when consumption reports
+    /// bring it below `receive_body_low_water`.
+    receive_paused: bool = false,
+    _padding: u1 = 0,
 };
 
 pub fn init(body: HTTPRequestBody, body_out_str: *MutableString) InternalState {

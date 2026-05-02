@@ -120,8 +120,20 @@ fn onStreamData(s: *quic.Stream, data: [*]const u8, len: c_uint, fin: c_int) cal
     const stream = s.ext(Stream).* orelse return;
     if (len > 0) {
         bun.handleOom(stream.body_buffer.appendSlice(bun.default_allocator, data[0..len]));
+        stream.outstanding_body_bytes +|= len;
+        _ = H3.body_bytes_received.fetchAdd(len, .monotonic);
     }
     stream.session.deliver(stream, fin != 0);
+    // `deliver` may have detached (fin/error); re-resolve from the quic
+    // stream's ext slot before touching the Stream again.
+    const still = s.ext(Stream).* orelse return;
+    if (fin != 0 or still.read_paused) return;
+    const client = still.client orelse return;
+    if (!client.signals.get(.body_consumption_tracked)) return;
+    if (still.outstanding_body_bytes < bun.http.receive_body_high_water) return;
+    still.read_paused = true;
+    s.wantRead(false);
+    log("stream read paused at {d} bytes outstanding", .{still.outstanding_body_bytes});
 }
 
 fn onStreamWritable(s: *quic.Stream) callconv(.c) void {

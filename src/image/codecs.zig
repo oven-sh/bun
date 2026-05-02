@@ -251,6 +251,8 @@ pub const Filter = enum(i32) {
     nearest = 4,
     cubic = 5, // Catmull-Rom
     lanczos2 = 6,
+    mks2013 = 7, // Magic Kernel Sharp
+    mks2021 = 8,
 };
 
 extern fn bun_image_resize_scratch_size(src_w: i32, src_h: i32, dst_w: i32, dst_h: i32, filter: i32) usize;

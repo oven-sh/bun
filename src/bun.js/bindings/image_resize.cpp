@@ -54,14 +54,6 @@ namespace HWY_NAMESPACE {
 namespace hn = hwy::HWY_NAMESPACE;
 using bun_image::Span;
 
-static HWY_INLINE uint8_t ClampU8(float v)
-{
-    // +0.5 for round-to-nearest before truncation.
-    if (v <= 0.0f) return 0;
-    if (v >= 255.0f) return 255;
-    return static_cast<uint8_t>(v + 0.5f);
-}
-
 // `__builtin_assume` lets clang drop the loop's zero-trip check / sign-extend
 // when we know a bound is positive — `s.n` is always ≥ 1 (buildWeights ensures
 // at least one tap) and ≤ wstride. Dimensions are all > 0 (checked at entry).
@@ -71,37 +63,43 @@ static HWY_INLINE uint8_t ClampU8(float v)
 #define BUN_ASSUME(x) ((void)0)
 #endif
 
+// Fixed-point shift. Weights are i16 with Σw = 1<<kFixShift; products go into
+// i32 (max |255 · Σ|w| · (1<<14)| ≈ 5.4M for lanczos3, well inside i32). The
+// win over f32 isn't "integer add is faster" — it's that an i16 vector holds
+// 2× the lanes of an f32 vector, and `ReorderWidenMulAccumulate` (PMADDWD on
+// x86, SMLAL on arm64) does the i16×i16→i32 widen-and-accumulate in one go.
+constexpr int kFixShift = 14;
+constexpr int32_t kFixRound = 1 << (kFixShift - 1);
+
 // Horizontal pass: src_w×src_h → dst_w×src_h. spans/weights index by dst x.
 //
-// One output pixel's RGBA is a 4-lane f32 accumulator; each tap is a 4-byte
-// load → u8×4 → i32×4 → f32×4 → FMA(broadcast wk). Fixed to a 4-lane tag so
-// the channel vector fits one SSE/NEON register and isn't 12-lanes-wasted on
+// One output pixel's RGBA is 4 i32 lanes; each tap is u8×4 → i16×4 →
+// ReorderWidenMulAccumulate(broadcast i16 wk) → i32×4. Fixed to 4 lanes so the
+// channel vector fits one SSE/NEON register and isn't 12-lanes-wasted on
 // AVX-512. Vectorising across OUTPUT pixels would need a gather (each x has
 // its own span.start); the per-pixel 4-lane body keeps loads contiguous and
-// is the same shape libvips' `reduceh` uses.
+// is the same shape libvips' `reduceh_hwy` uses.
 //
 // All addressing is via running pointers (`+= stride`) — no index*stride
 // multiplies in any inner loop. Iterators are `size_t` so there's no
 // sign-extension on each pointer add.
 static void HorizPass(const uint8_t* HWY_RESTRICT src, size_t src_w, size_t src_h,
     uint8_t* HWY_RESTRICT dst, size_t dst_w,
-    const Span* HWY_RESTRICT spans, const float* HWY_RESTRICT weights, size_t wstride)
+    const Span* HWY_RESTRICT spans, const int16_t* HWY_RESTRICT weights, size_t wstride)
 {
-    using D = hn::FixedTag<float, 4>;
-    const D df;
-    const hn::Rebind<int32_t, D> di32;
-    const hn::Rebind<uint8_t, D> du8;
-    const auto half = hn::Set(df, 0.5f);
-    const auto lo = hn::Zero(df);
-    const auto hi = hn::Set(df, 255.0f);
+    using D32 = hn::FixedTag<int32_t, 4>;
+    const D32 di32;
+    const hn::Repartition<int16_t, D32> di16; // 8× i16 over the same 128 bits
+    const hn::Rebind<uint8_t, D32> du8; // 4× u8
 
     BUN_ASSUME(src_w > 0 && src_h > 0 && dst_w > 0);
     const size_t src_row = src_w * 4;
     const size_t dst_row = dst_w * 4;
+    const auto vround = hn::Set(di32, kFixRound);
     const uint8_t* srow = src;
     uint8_t* drow = dst;
     for (size_t y = 0; y < src_h; y++, srow += src_row, drow += dst_row) {
-        const float* w = weights;
+        const int16_t* w = weights;
         uint8_t* dp = drow;
         for (size_t x = 0; x < dst_w; x++, w += wstride, dp += 4) {
             const Span s = spans[x];
@@ -110,11 +108,19 @@ static void HorizPass(const uint8_t* HWY_RESTRICT src, size_t src_w, size_t src_
             // sp is the only place that still needs a multiply (s.start is
             // non-monotone in x); it's one shift+add per output pixel.
             const uint8_t* sp = srow + static_cast<size_t>(s.start) * 4;
-            auto acc = hn::Zero(df);
-            for (int32_t k = 0; k < s.n; k++, sp += 4)
-                acc = hn::MulAdd(hn::ConvertTo(df, hn::PromoteTo(di32, hn::LoadU(du8, sp))), hn::Set(df, w[k]), acc);
-            acc = hn::Min(hn::Max(hn::Add(acc, half), lo), hi);
-            hn::StoreU(hn::DemoteTo(du8, hn::ConvertTo(di32, acc)), du8, dp);
+            // Seed with the rounding term so the final >>kFixShift rounds to
+            // nearest without an extra add.
+            auto sum0 = vround;
+            auto sum1 = hn::Zero(di32);
+            for (int32_t k = 0; k < s.n; k++, sp += 4) {
+                // u8×4 → i16×4 in the low half of an i16×8 vector.
+                auto pix = hn::BitCast(di16, hn::PromoteTo(di32, hn::LoadU(du8, sp)));
+                auto wk = hn::Set(di16, w[k]);
+                sum0 = hn::ReorderWidenMulAccumulate(di32, pix, wk, sum0, sum1);
+            }
+            auto acc = hn::ShiftRight<kFixShift>(hn::Add(sum0, sum1));
+            // DemoteTo i32→u8 saturates [0,255].
+            hn::StoreU(hn::DemoteTo(du8, acc), du8, dp);
         }
     }
 }
@@ -124,21 +130,19 @@ static void HorizPass(const uint8_t* HWY_RESTRICT src, size_t src_w, size_t src_
 // loop walks down columns with `sp += row_bytes` — no per-tap multiply.
 static void VertPass(const uint8_t* HWY_RESTRICT src, size_t src_h, size_t dst_w,
     uint8_t* HWY_RESTRICT dst, size_t dst_h,
-    const Span* HWY_RESTRICT spans, const float* HWY_RESTRICT weights, size_t wstride)
+    const Span* HWY_RESTRICT spans, const int16_t* HWY_RESTRICT weights, size_t wstride)
 {
-    const hn::ScalableTag<float> df;
-    const hn::Rebind<int32_t, decltype(df)> di32;
-    const hn::Rebind<uint8_t, decltype(df)> du8;
-    const auto half = hn::Set(df, 0.5f);
-    const auto vlo = hn::Zero(df);
-    const auto vhi = hn::Set(df, 255.0f);
-    const size_t N = hn::Lanes(df);
+    const hn::ScalableTag<int32_t> di32;
+    const hn::Repartition<int16_t, decltype(di32)> di16;
+    const hn::Rebind<uint8_t, decltype(di32)> du8;
+    const size_t N = hn::Lanes(du8); // bytes processed per vector step
     const size_t row_bytes = dst_w * 4;
+    const auto vround = hn::Set(di32, kFixRound);
     (void)src_h;
 
     BUN_ASSUME(dst_w > 0 && dst_h > 0);
     uint8_t* drow = dst;
-    const float* w = weights;
+    const int16_t* w = weights;
     for (size_t y = 0; y < dst_h; y++, drow += row_bytes, w += wstride) {
         const Span s = spans[y];
         BUN_ASSUME(s.n > 0);
@@ -149,19 +153,24 @@ static void VertPass(const uint8_t* HWY_RESTRICT src, size_t src_h, size_t dst_w
         uint8_t* dp = drow;
         const uint8_t* end = drow + row_bytes;
         for (; dp + N <= end; dp += N, col0 += N) {
-            auto acc = hn::Zero(df);
+            auto sum0 = vround;
+            auto sum1 = hn::Zero(di32);
             const uint8_t* sp = col0;
-            for (int32_t k = 0; k < s.n; k++, sp += row_bytes)
-                acc = hn::MulAdd(hn::ConvertTo(df, hn::PromoteTo(di32, hn::LoadU(du8, sp))), hn::Set(df, w[k]), acc);
-            acc = hn::Min(hn::Max(hn::Add(acc, half), vlo), vhi);
-            hn::StoreU(hn::DemoteTo(du8, hn::ConvertTo(di32, acc)), du8, dp);
+            for (int32_t k = 0; k < s.n; k++, sp += row_bytes) {
+                auto pix = hn::BitCast(di16, hn::PromoteTo(di32, hn::LoadU(du8, sp)));
+                auto wk = hn::Set(di16, w[k]);
+                sum0 = hn::ReorderWidenMulAccumulate(di32, pix, wk, sum0, sum1);
+            }
+            auto acc = hn::ShiftRight<kFixShift>(hn::Add(sum0, sum1));
+            hn::StoreU(hn::DemoteTo(du8, acc), du8, dp);
         }
         for (; dp < end; dp++, col0++) {
-            float acc = 0.0f;
+            int32_t acc = kFixRound;
             const uint8_t* sp = col0;
             for (int32_t k = 0; k < s.n; k++, sp += row_bytes)
-                acc += static_cast<float>(*sp) * w[k];
-            *dp = ClampU8(acc);
+                acc += static_cast<int32_t>(*sp) * w[k];
+            acc >>= kFixShift;
+            *dp = static_cast<uint8_t>(acc < 0 ? 0 : acc > 255 ? 255 : acc);
         }
     }
 }
@@ -354,6 +363,24 @@ double filter(int kind, double x)
     case 6: // lanczos2
         x = std::fabs(x);
         return x < 2.0 ? sinc(x) * sinc(x / 2.0) : 0.0;
+    case 7: { // mks2013 — Magic Kernel Sharp 2013 (Costella). Facebook's
+        // long-time thumbnail kernel: lanczos-like with the sharpening
+        // folded in, slightly crisper with less ringing on photo content.
+        x = std::fabs(x);
+        if (x >= 2.5) return 0.0;
+        if (x >= 1.5) return -(x - 2.5) * (x - 2.5) / 8.0;
+        if (x >= 0.5) return (4.0 * x * x - 11.0 * x + 7.0) / 4.0;
+        return 17.0 / 16.0 - 7.0 * x * x / 4.0;
+    }
+    case 8: { // mks2021 — refined MKS, radius 4.5.
+        x = std::fabs(x);
+        if (x >= 4.5) return 0.0;
+        if (x >= 3.5) return -(4.0 * x * x - 36.0 * x + 81.0) / 1152.0;
+        if (x >= 2.5) return (4.0 * x * x - 27.0 * x + 45.0) / 144.0;
+        if (x >= 1.5) return -(24.0 * x * x - 113.0 * x + 130.0) / 144.0;
+        if (x >= 0.5) return (140.0 * x * x - 379.0 * x + 239.0) / 144.0;
+        return 577.0 / 576.0 - 239.0 * x * x / 144.0;
+    }
     default: // lanczos3
         x = std::fabs(x);
         return x < 3.0 ? sinc(x) * sinc(x / 3.0) : 0.0;
@@ -372,15 +399,25 @@ double radius(int kind)
     case 5: // cubic
     case 6: // lanczos2
         return 2.0;
+    case 7: // mks2013
+        return 2.5;
+    case 8: // mks2021
+        return 4.5;
     default: // lanczos3
         return 3.0;
     }
 }
 
 // Precompute spans + normalised weights for one axis. Returns max taps so the
-// caller can lay weights out as a dense [out_len × wstride] matrix.
+// caller can lay weights out as a dense [out_len × wstride] matrix. Weights
+// are i16 fixed-point with Σw = 1<<kFixShift exactly: each set is normalised
+// in f64, scaled, rounded, then the largest tap absorbs the rounding residual
+// so DC gain is bit-exact (a flat field comes back flat).
+constexpr int kFixOne = 1 << 14; // = 1<<kFixShift; mirrored here in the
+                                 // HWY_ONCE block (the constexpr above lives
+                                 // in HWY_NAMESPACE).
 int buildWeights(int kind, int32_t src_len, int32_t dst_len,
-    Span* spans, float* weights, int32_t wstride)
+    Span* spans, int16_t* weights, int32_t wstride)
 {
     const double scale = static_cast<double>(dst_len) / static_cast<double>(src_len);
     // When downscaling, stretch the kernel by 1/scale so it covers the whole
@@ -397,18 +434,29 @@ int buildWeights(int kind, int32_t src_len, int32_t dst_len,
         if (end >= src_len) end = src_len - 1;
         int32_t n = end - start + 1;
         if (n > wstride) n = wstride;
+        // Evaluate in f64, normalise, then quantise.
+        double fw[256]; // wstride upper bound is 2*radius/fscale + 2; even
+                        // mks2021 at 16× downscale is 2*4.5*16+2 = 146.
+        if (n > 256) n = 256;
         double sum = 0.0;
-        float* w = weights + static_cast<size_t>(i) * wstride;
         for (int32_t k = 0; k < n; k++) {
-            const double v = filter(kind, ((start + k) - center) * fscale);
-            w[k] = static_cast<float>(v);
-            sum += v;
+            fw[k] = filter(kind, ((start + k) - center) * fscale);
+            sum += fw[k];
         }
-        // Normalise so brightness is preserved even where the kernel was
-        // clipped at the image edge.
-        if (sum != 0.0)
-            for (int32_t k = 0; k < n; k++)
-                w[k] = static_cast<float>(w[k] / sum);
+        const double inv = sum != 0.0 ? 1.0 / sum : 0.0;
+        int16_t* w = weights + static_cast<size_t>(i) * wstride;
+        int32_t isum = 0;
+        int32_t big = 0;
+        for (int32_t k = 0; k < n; k++) {
+            int32_t q = static_cast<int32_t>(std::lrint(fw[k] * inv * kFixOne));
+            // Clip — extreme aspect ratios can push a single tap past i16.
+            q = q < -32768 ? -32768 : q > 32767 ? 32767 : q;
+            w[k] = static_cast<int16_t>(q);
+            isum += q;
+            if (std::abs(q) > std::abs(w[big])) big = k;
+        }
+        // Make the integer sum exact so a flat field stays flat.
+        w[big] = static_cast<int16_t>(w[big] + (kFixOne - isum));
         spans[i] = { start, n };
         if (n > max_n) max_n = n;
     }
@@ -434,9 +482,9 @@ struct ScratchLayout {
         const size_t tmp_sz = dst_w * src_h * 4;
         off_xs = alignUp(tmp_sz, alignof(Span));
         off_ys = off_xs + sizeof(Span) * dst_w;
-        off_xw = alignUp(off_ys + sizeof(Span) * dst_h, alignof(float));
-        off_yw = off_xw + sizeof(float) * dst_w * wsx;
-        total = off_yw + sizeof(float) * dst_h * wsy;
+        off_xw = alignUp(off_ys + sizeof(Span) * dst_h, alignof(int16_t));
+        off_yw = off_xw + sizeof(int16_t) * dst_w * wsx;
+        total = off_yw + sizeof(int16_t) * dst_h * wsy;
     }
 };
 
@@ -464,8 +512,8 @@ int bun_image_resize_rgba8(const uint8_t* src, int32_t src_w, int32_t src_h,
     auto* tmp = scratch;
     auto* xspans = reinterpret_cast<Span*>(scratch + L.off_xs);
     auto* yspans = reinterpret_cast<Span*>(scratch + L.off_ys);
-    auto* xw = reinterpret_cast<float*>(scratch + L.off_xw);
-    auto* yw = reinterpret_cast<float*>(scratch + L.off_yw);
+    auto* xw = reinterpret_cast<int16_t*>(scratch + L.off_xw);
+    auto* yw = reinterpret_cast<int16_t*>(scratch + L.off_yw);
 
     buildWeights(filter_kind, src_w, dst_w, xspans, xw, static_cast<int32_t>(L.wsx));
     buildWeights(filter_kind, src_h, dst_h, yspans, yw, static_cast<int32_t>(L.wsy));

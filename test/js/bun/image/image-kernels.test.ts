@@ -110,7 +110,17 @@ async function resizePixels(
 // ─── resize filters ─────────────────────────────────────────────────────────
 
 describe("resize filter properties", () => {
-  const allFilters = ["nearest", "box", "bilinear", "cubic", "mitchell", "lanczos2", "lanczos3"] as const;
+  const allFilters = [
+    "nearest",
+    "box",
+    "bilinear",
+    "cubic",
+    "mitchell",
+    "lanczos2",
+    "lanczos3",
+    "mks2013",
+    "mks2021",
+  ] as const;
 
   // DC gain: a flat field must come back flat under every filter (weights are
   // renormalised to sum to 1 even where the kernel was clipped at an edge).

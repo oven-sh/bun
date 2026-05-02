@@ -1,7 +1,10 @@
 import type { S3Options } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, getSecret, tempDirWithFiles } from "harness";
+import child_process from "child_process";
+import { bunEnv, bunExe, dockerExe, getSecret, isDockerEnabled, tempDirWithFiles } from "harness";
 import path from "path";
+import * as dockerCompose from "../../../docker/index.ts";
+
 const s3Options: S3Options = {
   accessKeyId: getSecret("S3_R2_ACCESS_KEY"),
   secretAccessKey: getSecret("S3_R2_SECRET_KEY"),
@@ -9,6 +12,71 @@ const s3Options: S3Options = {
 };
 
 const S3Bucket = getSecret("S3_R2_BUCKET");
+
+let minioOptions: S3Options | undefined;
+
+if (isDockerEnabled()) {
+  const minioInfo = await dockerCompose.ensure("minio");
+  const dockerCLI = dockerExe() as string;
+  const containerName = child_process
+    .execFileSync(
+      dockerCLI,
+      ["ps", "--filter", "ancestor=minio/minio:latest", "--filter", "status=running", "--format", "{{.Names}}"],
+      { encoding: "utf-8" },
+    )
+    .split("\n")[0]
+    .trim();
+
+  if (containerName) {
+    child_process.spawnSync(dockerCLI, ["exec", containerName, "mc", "mb", "--ignore-existing", "data/buntest"], {
+      stdio: "ignore",
+    });
+  }
+
+  minioOptions = {
+    accessKeyId: "minioadmin",
+    secretAccessKey: "minioadmin",
+    endpoint: `http://${minioInfo.host}:${minioInfo.ports[9000]}`,
+  };
+}
+
+describe.skipIf(!minioOptions)("s3 local leak tests", () => {
+  it(
+    "s3().arrayBuffer() should not retain downloaded buffers",
+    async () => {
+      const dir = tempDirWithFiles("s3-arraybuffer-leak-fixture", {
+        "s3-arraybuffer-leak-fixture.js": await Bun.file(
+          path.join(import.meta.dir, "s3-arraybuffer-leak-fixture.js"),
+        ).text(),
+      });
+
+      const { exitCode, stderr } = Bun.spawnSync(
+        [bunExe(), "--smol", path.join(dir, "s3-arraybuffer-leak-fixture.js")],
+        {
+          env: {
+            ...bunEnv,
+            BUN_JSC_gcMaxHeapSize: "503316",
+            AWS_ACCESS_KEY_ID: minioOptions!.accessKeyId as string,
+            AWS_SECRET_ACCESS_KEY: minioOptions!.secretAccessKey as string,
+            AWS_ENDPOINT: minioOptions!.endpoint as string,
+            AWS_BUCKET: "buntest",
+            PAYLOAD_MIB: "1",
+            WARMUP_ITERATIONS: "8",
+            ITERATIONS: "80",
+            MAX_ALLOWED_RSS_INCREMENT_MB: "64",
+          },
+          stderr: "pipe",
+          stdout: "inherit",
+          stdin: "ignore",
+        },
+      );
+
+      expect(stderr.toString()).toBe("");
+      expect(exitCode).toBe(0);
+    },
+    30 * 1000,
+  );
+});
 
 describe.skipIf(!s3Options.accessKeyId)("s3", () => {
   describe("leak tests", () => {

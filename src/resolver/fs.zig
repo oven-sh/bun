@@ -626,7 +626,7 @@ pub const FileSystem = struct {
                     };
                     defer handle.close();
 
-                    const new_entry = this.readdir(
+                    var new_entry = this.readdir(
                         false,
                         &existing.entries.data,
                         existing.entries.dir,
@@ -640,6 +640,11 @@ pub const FileSystem = struct {
                         return this.readDirectoryError(existing.entries.dir, err) catch unreachable;
                     };
                     existing.entries.data.clearAndFree(bun.default_allocator);
+                    // `readdir(store_fd=false, ...)` leaves `new_entry.fd = .invalid`;
+                    // carry over any previously-stored descriptor so callers that
+                    // cached it (e.g. `DirInfo.getFileDescriptor`) keep working and
+                    // the old handle isn't silently leaked.
+                    new_entry.fd = existing.entries.fd;
                     existing.entries.* = new_entry;
                 }
             }

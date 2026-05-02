@@ -716,26 +716,30 @@ pub const PipelineTask = struct {
             // Still on the work pool: write straight from the codec's buffer,
             // then free it here so it never hits JS. `writeFile` opens with
             // CREAT|TRUNC (clobber semantics, like fs.writeFile). The path
-            // arrived as UTF-8; on Windows convert to NT-path UTF-16 here on
-            // the worker rather than carrying a wide string from `doWrite`.
+            // arrived as UTF-8 and is owned by this task until `deinit()`;
+            // the OS-path widening (Windows) is fully contained in
+            // `writeFileUtf8` so nothing here borrows a pooled buffer.
             defer out.deinit();
-            const path = this.deliver.file;
-            // Buffer must outlive the writeFile call (os_path is a view into
-            // it on Windows), so the put is deferred at THIS scope, not the
-            // conversion block.
-            const wbuf = if (comptime bun.Environment.isWindows) bun.os_path_buffer_pool.get();
-            defer if (comptime bun.Environment.isWindows) bun.os_path_buffer_pool.put(wbuf);
-            const os_path: bun.OSPathSliceZ = if (comptime bun.Environment.isWindows)
-                bun.strings.toNTPath(wbuf, path)
-            else
-                path;
-            switch (bun.sys.File.writeFile(bun.FD.cwd(), os_path, out.bytes)) {
+            switch (writeFileUtf8(this.deliver.file, out.bytes)) {
                 .result => this.result = .{ .written = .{ .len = out.bytes.len, .w = decoded.width, .h = decoded.height } },
-                .err => |e| this.result = .{ .io_err = e.withPath(path) },
+                .err => |e| this.result = .{ .io_err = e.withPath(this.deliver.file) },
             }
             return;
         }
         this.result = .{ .encoded = .{ .out = out, .format = enc.format, .w = decoded.width, .h = decoded.height } };
+    }
+
+    /// `bun.sys.File.writeFile` with the OS-path conversion folded in. The
+    /// pooled wide-path buffer's whole lifetime is this function — it never
+    /// escapes into the returned error (which carries no path; the caller
+    /// attaches the original UTF-8 slice via `withPath`).
+    fn writeFileUtf8(path: [:0]const u8, data: []const u8) bun.sys.Maybe(void) {
+        if (comptime bun.Environment.isWindows) {
+            const wbuf = bun.os_path_buffer_pool.get();
+            defer bun.os_path_buffer_pool.put(wbuf);
+            return bun.sys.File.writeFile(bun.FD.cwd(), bun.strings.toNTPath(wbuf, path), data);
+        }
+        return bun.sys.File.writeFile(bun.FD.cwd(), path, data);
     }
 
     /// Back on the JS thread.

@@ -797,25 +797,170 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
     await expect(new Bun.Image(cut).png().bytes()).rejects.toThrow(/decode failed/);
   });
 
-  // Minimal valid GIF89a: 1×1, 2-colour GCT, single index 0. With min_code=2
-  // the LZW stream is `clear(4),0,eoi(5)` at constant 3-bit width — no
-  // width-growth, so the packing is unambiguous: bits 100·000·101 LSB-first
-  // → bytes 0x44 0x01.
-  // prettier-ignore
-  const gif1x1 = Buffer.from([
-    0x47,0x49,0x46,0x38,0x39,0x61,             // GIF89a
-    0x01,0x00,0x01,0x00,0x80,0x00,0x00,         // LSD 1×1, GCT 2 entries
-    0xff,0x80,0x40, 0x00,0x00,0x00,             // palette[0]=#ff8040
-    0x2c,0x00,0x00,0x00,0x00,0x01,0x00,0x01,0x00,0x00, // image desc 1×1
-    0x02, 0x02, 0x44,0x01, 0x00,                // min=2 · sub-block(2) · term
-    0x3b,
-  ]);
+  // Reference GIF89a writer — naive LZW (one code per pixel, no string
+  // matching) so the bit-packing is the only thing under test; the decoder
+  // sees the same code/width sequence a real encoder would emit because
+  // dict growth depends on codes-seen, not on whether they were matches.
+  function makeGif(
+    w: number,
+    h: number,
+    palette: [number, number, number][],
+    indexOf: (x: number, y: number) => number,
+    opts: { interlace?: boolean; trns?: number; lct?: boolean } = {},
+  ) {
+    const bits = Math.max(2, 32 - Math.clz32((palette.length - 1) | 1));
+    const tbl = 1 << bits;
+    const ct = new Uint8Array(tbl * 3);
+    palette.forEach((c, i) => ct.set(c, i * 3));
 
-  test.each(["bun", "system"] as const)("GIF decode: 1×1 minimal (backend=%s)", async be => {
-    Bun.Image.backend = be;
-    expect(await new Bun.Image(gif1x1).metadata()).toEqual({ width: 1, height: 1, format: "gif" });
-    const { data } = decodePngRaw(await new Bun.Image(gif1x1).png().bytes());
-    expect([...data.subarray(0, 4)]).toEqual([0xff, 0x80, 0x40, 0xff]);
+    // ── LZW pack ──────────────────────────────────────────────────────────
+    // The encoder/decoder width-bump rule: width starts at min+1; after the
+    // *encoder* has emitted enough codes that the next dict slot would need
+    // an extra bit (avail > (1<<size)-1), bump. With one literal per code
+    // and no clears mid-stream, the encoder adds a dict entry for every
+    // output AFTER the first, so width grows at exactly the points the
+    // decoder expects.
+    const clear = 1 << bits,
+      eoi = clear + 1;
+    let size = bits + 1,
+      avail = eoi + 1,
+      acc = 0,
+      nbits = 0;
+    const lzw: number[] = [];
+    const put = (c: number) => {
+      acc |= c << nbits;
+      nbits += size;
+      while (nbits >= 8) {
+        lzw.push(acc & 0xff);
+        acc >>>= 8;
+        nbits -= 8;
+      }
+    };
+    put(clear);
+    // Row order: scan-order or interlace pass-order, so the decoder's
+    // de-interlace is what we're actually testing.
+    const rows: number[] = [];
+    if (opts.interlace)
+      for (const [s, st] of [
+        [0, 8],
+        [4, 8],
+        [2, 4],
+        [1, 2],
+      ])
+        for (let y = s; y < h; y += st) rows.push(y);
+    else for (let y = 0; y < h; y++) rows.push(y);
+    let first = true;
+    for (const y of rows)
+      for (let x = 0; x < w; x++) {
+        put(indexOf(x, y));
+        if (!first && avail < 4096) {
+          if (++avail > (1 << size) - 1 && size < 12) size++;
+        }
+        first = false;
+      }
+    put(eoi);
+    if (nbits) lzw.push(acc & 0xff);
+
+    // ── container ─────────────────────────────────────────────────────────
+    const out: number[] = [0x47, 0x49, 0x46, 0x38, 0x39, 0x61, w & 255, w >> 8, h & 255, h >> 8];
+    out.push((opts.lct ? 0 : 0x80) | (bits - 1), 0, 0); // LSD: GCT present (unless lct), size
+    if (!opts.lct) out.push(...ct);
+    if (opts.trns != null) out.push(0x21, 0xf9, 4, 1, 0, 0, opts.trns, 0); // GCE
+    out.push(0x2c, 0, 0, 0, 0, w & 255, w >> 8, h & 255, h >> 8);
+    out.push((opts.lct ? 0x80 : 0) | (opts.interlace ? 0x40 : 0) | (opts.lct ? bits - 1 : 0));
+    if (opts.lct) out.push(...ct);
+    out.push(bits); // LZW min code size
+    for (let i = 0; i < lzw.length; i += 255) {
+      const n = Math.min(255, lzw.length - i);
+      out.push(n, ...lzw.slice(i, i + n));
+    }
+    out.push(0, 0x3b);
+    return new Uint8Array(out);
+  }
+
+  async function gifPixels(gif: Uint8Array, backend: "bun" | "system" = "bun") {
+    Bun.Image.backend = backend;
+    return decodePngRaw(await new Bun.Image(gif).png().bytes());
+  }
+
+  test.each(["bun", "system"] as const)("GIF: 1×1 minimal (backend=%s)", async be => {
+    const g = makeGif(1, 1, [[0xff, 0x80, 0x40]], () => 0);
+    expect(await new Bun.Image(g).metadata()).toEqual({ width: 1, height: 1, format: "gif" });
+    expect([...(await gifPixels(g, be)).data.subarray(0, 4)]).toEqual([0xff, 0x80, 0x40, 0xff]);
+  });
+
+  test("GIF: width-growth boundary (forces 3→4→5-bit transitions mid-row)", async () => {
+    // 4-colour palette, 20 pixels: avail walks 6→26 so size crosses 3→4 at
+    // avail=8 and 4→5 at avail=16. Each pixel is its index mod 4; check
+    // every pixel round-trips.
+    const pal: [number, number, number][] = [
+      [10, 0, 0],
+      [0, 20, 0],
+      [0, 0, 30],
+      [40, 40, 40],
+    ];
+    const g = makeGif(20, 1, pal, x => x % 4);
+    const { data } = await gifPixels(g);
+    for (let x = 0; x < 20; x++) expect([...data.subarray(x * 4, x * 4 + 3)]).toEqual(pal[x % 4]);
+  });
+
+  test("GIF: GCE transparency index zeroes alpha for that index only", async () => {
+    const pal: [number, number, number][] = [
+      [255, 0, 0],
+      [0, 255, 0],
+    ];
+    const g = makeGif(2, 1, pal, x => x, { trns: 1 });
+    const { data } = await gifPixels(g);
+    expect([...data]).toEqual([255, 0, 0, 255, 0, 0, 0, 0]);
+  });
+
+  test("GIF: interlaced rows reorder to scan order", async () => {
+    // 1×9 column where index = y; if de-interlace is wrong the colours come
+    // out in pass order (0,8,4,2,6,1,3,5,7) instead of 0..8.
+    const pal: [number, number, number][] = Array.from({ length: 9 }, (_, i) => [i * 28, 0, 0]);
+    const g = makeGif(1, 9, pal, (_x, y) => y, { interlace: true });
+    const { data } = await gifPixels(g);
+    for (let y = 0; y < 9; y++) expect(data[y * 4]).toBe(y * 28);
+  });
+
+  test("GIF: local colour table overrides GCT", async () => {
+    const g = makeGif(1, 1, [[9, 8, 7]], () => 0, { lct: true });
+    expect([...(await gifPixels(g)).data.subarray(0, 3)]).toEqual([9, 8, 7]);
+  });
+
+  test("GIF: 256-colour palette + multi-sub-block (>255 LZW bytes)", async () => {
+    const pal: [number, number, number][] = Array.from({ length: 256 }, (_, i) => [i, 255 - i, i ^ 0x55]);
+    // 64×8=512 pixels at ≥9-bit codes ⇒ well over one 255-byte sub-block.
+    const g = makeGif(64, 8, pal, (x, y) => (x * 4 + y * 32) & 255);
+    const { w, h, data } = await gifPixels(g);
+    expect({ w, h }).toEqual({ w: 64, h: 8 });
+    for (const [x, y] of [
+      [0, 0],
+      [63, 0],
+      [0, 7],
+      [63, 7],
+      [31, 4],
+    ]) {
+      const i = (x * 4 + y * 32) & 255;
+      expect([...data.subarray((y * 64 + x) * 4, (y * 64 + x) * 4 + 3)]).toEqual(pal[i]);
+    }
+  });
+
+  test.skipIf(!isMacOS && !isWindows)("GIF: makeGif fixtures parity-check against system backend", async () => {
+    // The reference encoder above is the test's own code — guard against it
+    // and the static decoder agreeing on a shared bug by cross-checking
+    // every fixture against ImageIO/WIC.
+    const pal: [number, number, number][] = Array.from({ length: 16 }, (_, i) => [
+      i * 16,
+      255 - i * 16,
+      (i * 37) & 255,
+    ]);
+    for (const opts of [{}, { interlace: true }, { trns: 3 }, { lct: true }]) {
+      const g = makeGif(13, 7, pal, (x, y) => (x + y * 3) & 15, opts);
+      const a = await gifPixels(g, "bun");
+      const b = await gifPixels(g, "system");
+      expect(Buffer.compare(a.data, b.data)).toBe(0);
+    }
   });
 
   test("static GIF decoder rejects out-of-range LZW code", async () => {

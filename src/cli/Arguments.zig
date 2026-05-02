@@ -1028,7 +1028,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             Bun__Node__ProcessThrowDeprecation = true;
         }
         if (args.option("--title")) |title| {
-            CLI.Bun__Node__ProcessTitle = title;
+            CLI.Bun__Node__ProcessTitle = bun.default_allocator.dupeZ(u8, title) catch null;
         }
         if (args.flag("--zero-fill-buffers")) {
             Bun__Node__ZeroFillBuffers = true;

@@ -4024,7 +4024,7 @@ JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC:
     RELEASE_AND_RETURN(scope, JSValue::encode(result));
 #else
     char title[1024];
-    title[0] = '\0'; // Initialize buffer to empty string
+    title[0] = '\0';
     if (uv_get_process_title(title, sizeof(title)) != 0 || title[0] == '\0') {
         RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, String("bun"_s))));
     }
@@ -4044,16 +4044,11 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
     if (!thisObject || !jsString) {
         return false;
     }
-#if !OS(WINDOWS)
     BunString str = Bun::toStringRef(globalObject, jsString);
-    Bun__Process__setTitle(globalObject, &str);
-    return true;
-#else
-    WTF::String str = jsString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
-    CString cstr = str.utf8();
-    return uv_set_process_title(cstr.data()) == 0;
-#endif
+    Bun__Process__setTitle(globalObject, &str);
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
 }
 
 static inline JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)

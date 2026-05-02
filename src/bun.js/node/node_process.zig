@@ -21,20 +21,25 @@ pub fn getTitle(_: *JSGlobalObject, title: *bun.String) callconv(.c) void {
     title.* = bun.String.cloneUTF8(str orelse "bun");
 }
 
-// TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
 pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *bun.String) callconv(.c) void {
     defer newvalue.deref();
     title_mutex.lock();
     defer title_mutex.unlock();
 
-    const new_title = newvalue.toOwnedSlice(bun.default_allocator) catch {
+    const new_title_z = newvalue.toOwnedSliceZ(bun.default_allocator) catch {
         globalObject.throwOutOfMemory() catch {};
         return;
     };
 
-    if (bun.cli.Bun__Node__ProcessTitle) |slice| bun.default_allocator.free(slice);
-    bun.cli.Bun__Node__ProcessTitle = new_title;
+    if (bun.cli.Bun__Node__ProcessTitle) |old| bun.default_allocator.free(old);
+    bun.cli.Bun__Node__ProcessTitle = new_title_z;
+
+    // Update the OS-visible process title (Activity Monitor on macOS,
+    // /proc/self/comm on Linux).
+    _ = Bun__setProcessTitle(new_title_z.ptr);
 }
+
+extern fn Bun__setProcessTitle(title: [*:0]const u8) c_int;
 
 pub fn createArgv0(globalObject: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
     return jsc.ZigString.fromUTF8(bun.argv[0]).toJS(globalObject);

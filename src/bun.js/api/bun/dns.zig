@@ -1681,9 +1681,20 @@ pub const internal = struct {
                 break :retry;
             }
 
-            // The retry allocates a new reply port. Store it and re-register the
-            // poll on it — otherwise we'd keep polling the first request's port
-            // and the retry's reply would never be received.
+            // Each getaddrinfo_async_start() call allocates a fresh receive
+            // port via mach_port_allocate(MACH_PORT_RIGHT_RECEIVE) inside
+            // libinfo's si_async_workunit_create() (si_module.c) — it is NOT
+            // the per-thread MIG reply port and is not reused across calls.
+            // libinfo's "async" API is just a libdispatch worker running sync
+            // getaddrinfo and signalling completion via a send-once right on
+            // this port; getaddrinfo_async_handle_reply() then destroys the
+            // receive right after invoking us. So by the time we are here:
+            //   - the first request's port is already dead (no leak, no need
+            //     to mach_port_deallocate it ourselves), and
+            //   - its kqueue knote is gone (it was EV_ONESHOT, and EVFILT_
+            //     MACHPORT knotes are dropped when the receive right dies).
+            // Store the new port and re-register the existing FilePoll on it,
+            // otherwise we'd never see the retry's reply.
             req.libinfo.machport = machport;
             const poll = req.libinfo.file_poll.?;
             poll.fd = .fromNative(@bitCast(machport));

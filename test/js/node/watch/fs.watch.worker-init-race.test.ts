@@ -36,13 +36,12 @@ test.skipIf(!isMacOS)(
     for (let i = 0; i < WORKERS; i++) files[`d${i}/f.txt`] = "x";
     files["worker.js"] = `
       const fs = require("fs");
-      const { parentPort, workerData } = require("worker_threads");
+      const { workerData } = require("worker_threads");
       // First thing this thread does: hit FSEvents.watch() via Darwin.addWatch
       // with manager.mutex released. Multiple Workers race here on a fresh
       // process so fsevents_default_loop starts null.
       const w = fs.watch(workerData.dir, () => {});
       w.close();
-      parentPort.postMessage("ok");
     `;
     files["main.js"] = `
       const path = require("path");

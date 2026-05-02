@@ -351,6 +351,12 @@ pub const All = struct {
 
         while (this.next(&has_set_now, &now)) |t| {
             t.fire(&now, vm);
+            // If a timer callback called `self.close()`, discard remaining
+            // due timers per WHATWG "close a worker" step 1. `self.close()`
+            // doesn't arm the JSC termination trap, so the per-callback
+            // `scriptExecutionStatus()` gate (keyed on `requested_terminate`
+            // only) doesn't fire — we check the separate close flag here.
+            if (vm.worker) |worker| if (worker.hasRequestedClose()) break;
         }
     }
 

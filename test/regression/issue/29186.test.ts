@@ -547,3 +547,74 @@ test.concurrent("self.close() in a MessagePort onmessage handler discards the re
   // Only the first handler ran — 2 and 3 are discarded per WHATWG.
   expect(JSON.parse(stdout.trim())).toEqual(["handled-1"]);
 });
+
+test.concurrent("self.close() in a timer callback discards sibling timers due in the same tick", async () => {
+  // `drainTimers` fires every due timer back-to-back in one
+  // `autoTickActive()` call. Without a close check between iterations,
+  // two simultaneously-due timers where the first calls `self.close()`
+  // both fire — browsers discard the second per WHATWG "close a worker".
+  using dir = tempDir("issue-29186-timer-batch-close", {
+    "worker.mjs": `
+      // Two timers with the same delay end up in the same drain batch.
+      setTimeout(() => { self.postMessage("a"); self.close(); }, 5);
+      setTimeout(() => { self.postMessage("b"); }, 5);
+    `,
+    "main.mjs": `
+      const worker = new Worker(new URL("./worker.mjs", import.meta.url).href, { type: "module" });
+      const events = [];
+      const { promise, resolve, reject } = Promise.withResolvers();
+      worker.onmessage = ({ data }) => { events.push(data); };
+      worker.onerror = (e) => reject(new Error("worker error: " + (e.message || e)));
+      worker.addEventListener("close", () => resolve());
+      await promise;
+      console.log(JSON.stringify(events));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
+  // Only "a" — "b" must be discarded.
+  expect(JSON.parse(stdout.trim())).toEqual(["a"]);
+});
+
+test.concurrent("self.close() in a setImmediate discards sibling immediates queued in the same tick", async () => {
+  // `tickImmediateTasks` runs every queued setImmediate back-to-back.
+  // If one calls `self.close()`, the rest of the batch must be discarded
+  // per WHATWG "close a worker".
+  using dir = tempDir("issue-29186-immediate-batch-close", {
+    "worker.mjs": `
+      setImmediate(() => { self.postMessage("a"); self.close(); });
+      setImmediate(() => { self.postMessage("b"); });
+    `,
+    "main.mjs": `
+      const worker = new Worker(new URL("./worker.mjs", import.meta.url).href, { type: "module" });
+      const events = [];
+      const { promise, resolve, reject } = Promise.withResolvers();
+      worker.onmessage = ({ data }) => { events.push(data); };
+      worker.onerror = (e) => reject(new Error("worker error: " + (e.message || e)));
+      worker.addEventListener("close", () => resolve());
+      await promise;
+      console.log(JSON.stringify(events));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
+  expect(JSON.parse(stdout.trim())).toEqual(["a"]);
+});

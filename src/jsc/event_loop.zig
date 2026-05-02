@@ -245,6 +245,11 @@ pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) vo
     var exception_thrown = false;
     for (to_run_now.items) |task| {
         exception_thrown = task.runImmediateTask(virtual_machine);
+        // If an immediate called `self.close()`, stop firing siblings that
+        // were already queued — WHATWG "close a worker" discards them.
+        // `self.close()` doesn't arm the JSC trap, so `scriptExecutionStatus`
+        // (checked per-task inside `runImmediateTask`) doesn't catch this.
+        if (virtual_machine.worker) |worker| if (worker.hasRequestedClose()) break;
     }
 
     // make sure microtasks are drained if the last task had an exception

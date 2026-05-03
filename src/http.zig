@@ -1875,6 +1875,12 @@ pub fn handleOnDataHeaders(
         ) catch |err| {
             switch (err) {
                 error.ShortRead => {
+                    // All data received so far is header data (headers aren't
+                    // complete yet). Reject early if it already exceeds the limit.
+                    if (to_read.len > max_http_header_size) {
+                        this.closeAndFail(error.HeaderSizeExceeded, is_ssl, socket);
+                        return;
+                    }
                     this.handleShortRead(is_ssl, incoming_data, socket, needs_move);
                 },
                 else => {
@@ -1883,6 +1889,12 @@ pub fn handleOnDataHeaders(
             }
             return;
         };
+
+        // Enforce the configured max header size limit on the parsed response.
+        if (@as(usize, @intCast(response.bytes_read)) > max_http_header_size) {
+            this.closeAndFail(error.HeaderSizeExceeded, is_ssl, socket);
+            return;
+        }
 
         // we save the successful parsed response
         this.state.pending_response = response;

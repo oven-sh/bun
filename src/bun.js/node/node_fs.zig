@@ -1298,10 +1298,12 @@ pub const Arguments = struct {
             const old_path = try PathLike.fromJS(ctx, arguments) orelse {
                 return ctx.throwInvalidArgumentTypeValue("oldPath", "string or an instance of Buffer or URL", arguments.next() orelse .js_undefined);
             };
+            errdefer old_path.deinit();
 
             const new_path = try PathLike.fromJS(ctx, arguments) orelse {
                 return ctx.throwInvalidArgumentTypeValue("newPath", "string or an instance of Buffer or URL", arguments.next() orelse .js_undefined);
             };
+            errdefer new_path.deinit();
 
             return Rename{ .old_path = old_path, .new_path = new_path };
         }
@@ -1811,10 +1813,12 @@ pub const Arguments = struct {
             const old_path = try PathLike.fromJS(ctx, arguments) orelse {
                 return ctx.throwInvalidArguments("oldPath must be a string or TypedArray", .{});
             };
+            errdefer old_path.deinit();
 
             const new_path = try PathLike.fromJS(ctx, arguments) orelse {
                 return ctx.throwInvalidArguments("newPath must be a string or TypedArray", .{});
             };
+            errdefer new_path.deinit();
 
             return Link{ .old_path = old_path, .new_path = new_path };
         }
@@ -1854,10 +1858,12 @@ pub const Arguments = struct {
             const old_path = try PathLike.fromJS(ctx, arguments) orelse {
                 return ctx.throwInvalidArguments("target must be a string or TypedArray", .{});
             };
+            errdefer old_path.deinit();
 
             const new_path = try PathLike.fromJS(ctx, arguments) orelse {
                 return ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
             };
+            errdefer new_path.deinit();
 
             // The type argument is only available on Windows and
             // ignored on other platforms. It can be set to 'dir',

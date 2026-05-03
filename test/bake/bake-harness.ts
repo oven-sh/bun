@@ -557,9 +557,9 @@ export class Dev extends EventEmitter {
 
     // On Windows CI in particular, the Node client subprocess occasionally
     // dies during spawn/happy-dom-import before producing any output. This
-    // is transient (passes on retry), so retry the subprocess once here
-    // instead of bubbling it up as a test failure. A genuine bundle or
-    // runtime error reproduces on the retry and fails the test normally.
+    // is transient (passes on retry), so retry the subprocess up to twice
+    // here instead of bubbling it up as a test failure. A genuine bundle
+    // or runtime error reproduces on retry and fails the test normally.
     let client: Client;
     let onPanic: () => void;
     let lastError: unknown;

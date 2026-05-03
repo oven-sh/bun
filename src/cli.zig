@@ -610,7 +610,7 @@ pub const Command = struct {
 
         return switch (RootCommandMatcher.match(first_arg_name)) {
             RootCommandMatcher.case("init") => .InitCommand,
-            RootCommandMatcher.case("build"), RootCommandMatcher.case("bun") => .BuildCommand,
+            RootCommandMatcher.case("build") => .BuildCommand,
             RootCommandMatcher.case("discord") => .DiscordCommand,
             RootCommandMatcher.case("upgrade") => .UpgradeCommand,
             RootCommandMatcher.case("completions") => .InstallCompletionsCommand,
@@ -695,7 +695,6 @@ pub const Command = struct {
         "unlink",
         "remove",
         "create",
-        "bun",
         "upgrade",
         "discord",
         "test",

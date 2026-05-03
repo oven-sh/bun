@@ -18,6 +18,11 @@ declare module "*.yml" {
   export = contents;
 }
 
+declare module "*.xml" {
+  var contents: any;
+  export = contents;
+}
+
 declare module "*.jsonc" {
   var contents: any;
   export = contents;

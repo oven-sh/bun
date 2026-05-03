@@ -23,6 +23,7 @@
     macro(SHA512) \
     macro(SHA512_256) \
     macro(TOML) \
+    macro(XML) \
     macro(YAML) \
     macro(Terminal) \
     macro(Transpiler) \

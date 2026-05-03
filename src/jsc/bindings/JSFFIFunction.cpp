@@ -26,6 +26,7 @@
 #include "root.h"
 #include "JSFFIFunction.h"
 
+#include <JavaScriptCore/JSBigInt.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/VM.h>
 #include "ZigGlobalObject.h"
@@ -203,22 +204,61 @@ FFI_Callback_call(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::Enc
     return JSC::JSValue::encode(result);
 }
 
+// Must match FFI.ABIType in src/bun.js/api/ffi.zig.
+enum class FFIABIType : uint8_t {
+    int64_t_ = 7,
+    uint64_t_ = 8,
+    i64_fast = 15,
+    u64_fast = 16,
+};
+
+// For threadsafe callbacks, 64-bit integer arguments are passed through as
+// raw bits because the TCC-generated trampoline may run on an arbitrary OS
+// thread and must not heap-allocate a JSBigInt there. Convert them here,
+// which always runs on the JS thread.
+static inline JSC::JSValue decodeThreadsafeCallbackArgument(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue raw, uint8_t abiType)
+{
+    switch (static_cast<FFIABIType>(abiType)) {
+    case FFIABIType::int64_t_:
+        return JSC::JSBigInt::createFrom(globalObject, static_cast<int64_t>(raw));
+    case FFIABIType::uint64_t_:
+        return JSC::JSBigInt::createFrom(globalObject, static_cast<uint64_t>(raw));
+    case FFIABIType::i64_fast: {
+        int64_t val = static_cast<int64_t>(raw);
+        if (val >= JSC::minSafeInteger() && val <= JSC::maxSafeInteger())
+            return JSC::jsNumber(val);
+        return JSC::JSBigInt::createFrom(globalObject, val);
+    }
+    case FFIABIType::u64_fast: {
+        uint64_t val = static_cast<uint64_t>(raw);
+        if (val <= static_cast<uint64_t>(JSC::maxSafeInteger()))
+            return JSC::jsNumber(static_cast<double>(val));
+        return JSC::JSBigInt::createFrom(globalObject, val);
+    }
+    default:
+        return JSC::JSValue::decode(raw);
+    }
+}
+
 extern "C" void
-FFI_Callback_threadsafe_call(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
+FFI_Callback_threadsafe_call(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args, const uint8_t* argTypes)
 {
 
     auto* globalObject = wrapper.globalObject.get();
     WTF::Vector<JSC::EncodedJSValue, 8> argsVec;
-    for (size_t i = 0; i < argCount; ++i)
+    WTF::Vector<uint8_t, 8> argTypesVec;
+    for (size_t i = 0; i < argCount; ++i) {
         argsVec.append(args[i]);
+        argTypesVec.append(argTypes[i]);
+    }
 
-    WebCore::ScriptExecutionContext::postTaskTo(globalObject->scriptExecutionContext()->identifier(), [argsVec = WTF::move(argsVec), wrapper](WebCore::ScriptExecutionContext& ctx) mutable {
+    WebCore::ScriptExecutionContext::postTaskTo(globalObject->scriptExecutionContext()->identifier(), [argsVec = WTF::move(argsVec), argTypesVec = WTF::move(argTypesVec), wrapper](WebCore::ScriptExecutionContext& ctx) mutable {
         auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(ctx.jsGlobalObject());
         auto& vm = JSC::getVM(globalObject);
         JSC::MarkedArgumentBuffer arguments;
         auto* function = wrapper.m_function.get();
         for (size_t i = 0; i < argsVec.size(); ++i)
-            arguments.appendWithCrashOnOverflow(JSC::JSValue::decode(argsVec[i]));
+            arguments.appendWithCrashOnOverflow(decodeThreadsafeCallbackArgument(globalObject, argsVec[i], argTypesVec[i]));
         WTF::NakedPtr<JSC::Exception> exception;
         JSC::profiledCall(globalObject, JSC::ProfilingReason::API, function, JSC::getCallData(function), JSC::jsUndefined(), arguments, exception);
         if (exception) [[unlikely]] {

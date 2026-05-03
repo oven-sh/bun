@@ -637,7 +637,7 @@ fn schedule(this: *Image, global: *jsc.JSGlobalObject, this_value: jsc.JSValue, 
         if (e == error.OutOfMemory) bun.outOfMemory();
         return jsc.JSPromise.rejectedPromise(
             global,
-            errorWithCode(global, "ERR_IMAGE_BUFFER_DETACHED", "Image: source ArrayBuffer was detached"),
+            errorWithCode(global, "ERR_INVALID_STATE", "Image: source ArrayBuffer was detached"),
         ).asValue(global);
     };
     const job = PipelineTask.new(.{

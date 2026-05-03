@@ -8175,8 +8175,8 @@ declare module "bun" {
      *   exceed `maxPixels`, or a path-backed input is over the 256 MiB cap.
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
-     * - `ERR_IMAGE_BUFFER_DETACHED` — the input ArrayBuffer was transferred
-     *   between construction and the terminal call.
+     * - `ERR_INVALID_STATE` — the input ArrayBuffer was transferred between
+     *   construction and the terminal call.
      * - File-backed inputs surface the underlying syscall code (`ENOENT`,
      *   `EACCES`, …) directly.
      */
@@ -8186,7 +8186,7 @@ declare module "bun" {
       | "ERR_IMAGE_DECODE_FAILED"
       | "ERR_IMAGE_ENCODE_FAILED"
       | "ERR_IMAGE_UNKNOWN_FORMAT"
-      | "ERR_IMAGE_BUFFER_DETACHED";
+      | "ERR_INVALID_STATE";
 
     /**
      * `bmp`/`tiff`/`gif` are decode-only — `metadata().format` may report them

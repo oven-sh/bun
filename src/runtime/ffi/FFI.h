@@ -141,6 +141,15 @@ typedef void* JSContext;
 
 #ifdef IS_CALLBACK
 void* callback_ctx;
+#ifdef IS_THREADSAFE
+// Threadsafe callbacks may be invoked from an arbitrary OS thread. Converting
+// 64-bit integer arguments to JSValue may need to heap-allocate a JSBigInt,
+// which must only happen on the JS thread. The trampoline therefore passes
+// the raw 64-bit bits for such arguments along with a per-argument ABIType
+// tag so FFI_Callback_threadsafe_call can perform the conversion inside the
+// task it posts to the JS thread.
+BUN_FFI_IMPORT ZIG_REPR_TYPE FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args, const uint8_t* argTypes);
+#else
 BUN_FFI_IMPORT ZIG_REPR_TYPE FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args);
 // We wrap 
 static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args)  __attribute__((__always_inline__));
@@ -149,6 +158,7 @@ static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TY
   return_value.asZigRepr = FFI_Callback_call(ctx, argCount, args);
   return return_value;
 }
+#endif
 #endif
 
 static bool JSVALUE_IS_CELL(EncodedJSValue val) __attribute__((__always_inline__));

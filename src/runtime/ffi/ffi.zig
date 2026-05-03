@@ -1660,17 +1660,17 @@ pub const FFI = struct {
                 "FFI_Callback_call",
                 // TODO: stage2 - make these ptrs
                 if (is_threadsafe)
-                    FFI_Callback_threadsafe_call
+                    @as(*const anyopaque, @ptrCast(&FFI_Callback_threadsafe_call))
                 else switch (this.arg_types.items.len) {
-                    0 => FFI_Callback_call_0,
-                    1 => FFI_Callback_call_1,
-                    2 => FFI_Callback_call_2,
-                    3 => FFI_Callback_call_3,
-                    4 => FFI_Callback_call_4,
-                    5 => FFI_Callback_call_5,
-                    6 => FFI_Callback_call_6,
-                    7 => FFI_Callback_call_7,
-                    else => FFI_Callback_call,
+                    0 => @as(*const anyopaque, @ptrCast(&FFI_Callback_call_0)),
+                    1 => @as(*const anyopaque, @ptrCast(&FFI_Callback_call_1)),
+                    2 => @as(*const anyopaque, @ptrCast(&FFI_Callback_call_2)),
+                    3 => @as(*const anyopaque, @ptrCast(&FFI_Callback_call_3)),
+                    4 => @as(*const anyopaque, @ptrCast(&FFI_Callback_call_4)),
+                    5 => @as(*const anyopaque, @ptrCast(&FFI_Callback_call_5)),
+                    6 => @as(*const anyopaque, @ptrCast(&FFI_Callback_call_6)),
+                    7 => @as(*const anyopaque, @ptrCast(&FFI_Callback_call_7)),
+                    else => @as(*const anyopaque, @ptrCast(&FFI_Callback_call)),
                 },
             ) catch {
                 this.fail("Failed to add FFI callback symbol");
@@ -1883,7 +1883,7 @@ pub const FFI = struct {
         extern fn FFI_Callback_call_3(*anyopaque, usize, [*]JSValue) JSValue;
         extern fn FFI_Callback_call_4(*anyopaque, usize, [*]JSValue) JSValue;
         extern fn FFI_Callback_call_5(*anyopaque, usize, [*]JSValue) JSValue;
-        extern fn FFI_Callback_threadsafe_call(*anyopaque, usize, [*]JSValue) JSValue;
+        extern fn FFI_Callback_threadsafe_call(*anyopaque, usize, [*]JSValue, ?[*]const u8) void;
         extern fn FFI_Callback_call_6(*anyopaque, usize, [*]JSValue) JSValue;
         extern fn FFI_Callback_call_7(*anyopaque, usize, [*]JSValue) JSValue;
         extern fn Bun__createFFICallbackFunction(*jsc.JSGlobalObject, JSValue) *anyopaque;
@@ -1901,6 +1901,9 @@ pub const FFI = struct {
             }
 
             try writer.writeAll("#define IS_CALLBACK 1\n");
+            if (this.threadsafe) {
+                try writer.writeAll("#define IS_THREADSAFE 1\n");
+            }
 
             brk: {
                 if (this.return_type.isFloatingPoint()) {
@@ -1952,7 +1955,27 @@ pub const FFI = struct {
                 for (this.arg_types.items, 0..) |arg, i| {
                     const printed = std.fmt.printInt(arg_buf["arg".len..], i, 10, .lower, .{});
                     const arg_name = arg_buf[0 .. "arg".len + printed];
-                    try writer.print("arguments[{d}] = {f}.asZigRepr;\n", .{ i, arg.toJS(arg_name) });
+                    if (this.threadsafe and arg.mayAllocateBigIntWhenConvertedToJS()) {
+                        // The trampoline for a threadsafe callback may run on an
+                        // arbitrary OS thread. Converting a 64-bit integer here
+                        // would call {U,}INT64_TO_JSVALUE_SLOW, which allocates a
+                        // JSBigInt on the calling thread without the JS lock and
+                        // corrupts the GC heap. Pass the raw bits through instead
+                        // and let FFI_Callback_threadsafe_call convert them on the
+                        // JS thread using the argTypes table emitted below.
+                        try writer.print("arguments[{d}] = (ZIG_REPR_TYPE)(int64_t){s};\n", .{ i, arg_name });
+                    } else {
+                        try writer.print("arguments[{d}] = {f}.asZigRepr;\n", .{ i, arg.toJS(arg_name) });
+                    }
+                }
+
+                if (this.threadsafe) {
+                    try writer.print("static const uint8_t argTypes[{d}] = {{", .{this.arg_types.items.len});
+                    for (this.arg_types.items, 0..) |arg, i| {
+                        if (i > 0) try writer.writeAll(", ");
+                        try writer.print("{d}", .{@intFromEnum(arg)});
+                    }
+                    try writer.writeAll("};\n");
                 }
             }
 
@@ -1964,7 +1987,21 @@ pub const FFI = struct {
                 const ptr = @intFromPtr(context_ptr);
                 const fmt = bun.fmt.hexIntUpper(ptr);
 
-                if (this.arg_types.items.len > 0) {
+                if (this.threadsafe) {
+                    if (this.arg_types.items.len > 0) {
+                        inner_buf = try std.fmt.bufPrint(
+                            inner_buf_[1..],
+                            "FFI_Callback_call((void*)0x{f}ULL, {d}, arguments, argTypes)",
+                            .{ fmt, this.arg_types.items.len },
+                        );
+                    } else {
+                        inner_buf = try std.fmt.bufPrint(
+                            inner_buf_[1..],
+                            "FFI_Callback_call((void*)0x{f}ULL, 0, (ZIG_REPR_TYPE*)0, (const uint8_t*)0)",
+                            .{fmt},
+                        );
+                    }
+                } else if (this.arg_types.items.len > 0) {
                     inner_buf = try std.fmt.bufPrint(
                         inner_buf_[1..],
                         "FFI_Callback_call((void*)0x{f}ULL, {d}, arguments)",
@@ -2043,6 +2080,17 @@ pub const FFI = struct {
             return switch (this) {
                 .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t, .uint32_t => false,
                 else => true,
+            };
+        }
+
+        /// Returns true if converting this type to a JSValue may heap-allocate
+        /// a JS object (a JSBigInt). For threadsafe callbacks the trampoline
+        /// may run on an arbitrary OS thread, so the allocation must be
+        /// deferred to the JS thread inside FFI_Callback_threadsafe_call.
+        pub fn mayAllocateBigIntWhenConvertedToJS(this: ABIType) bool {
+            return switch (this) {
+                .int64_t, .uint64_t, .i64_fast, .u64_fast => true,
+                else => false,
             };
         }
 

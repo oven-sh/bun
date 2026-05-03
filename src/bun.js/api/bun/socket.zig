@@ -444,13 +444,22 @@ pub fn NewSocket(comptime ssl: bool) type {
                     return;
                 }
                 const handlers = this.getHandlers();
+                // Non-`.server` `Handlers` are heap-allocated per-socket and
+                // `Handlers.markInactive` frees that allocation once
+                // `active_connections` hits zero. Capture the mode first and
+                // null our pointer after so JS-facing accessors (`.listener`,
+                // `setServername` → `isServer`) and the reconnection path in
+                // `Listener.connect` don't dereference freed memory on a
+                // closed socket.
+                const listener_owned = handlers.mode == .server;
                 handlers.markInactive();
+                if (!listener_owned) this.handlers = null;
                 this.poll_ref.unref(vm);
             }
         }
 
         pub fn isServer(this: *const This) bool {
-            const handlers = this.getHandlers();
+            const handlers = this.handlers orelse return false;
             return handlers.mode.isServer();
         }
 

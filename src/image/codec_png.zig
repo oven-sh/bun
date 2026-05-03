@@ -83,15 +83,17 @@ pub fn decode(bytes: []const u8, max_pixels: u64) codecs.Error!codecs.Decoded {
     if (spng_decode_image(ctx, out.ptr, out.len, SPNG_FMT_RGBA8, SPNG_DECODE_TRNS) != 0)
         return error.DecodeFailed;
 
-    // iCCP after decode so the chunk has definitely been parsed. A chunk
-    // that isn't present returns SPNG_ECHUNKAVAIL — that's the no-profile
-    // case, not an error. Malformed iCCP (name/compression errors) also
-    // shouldn't fail the decode; we just drop the profile and the pixels
-    // are still valid RGBA. `profile` is context-owned memory, so copy it
-    // out before `spng_ctx_free` runs at function exit.
+    // iCCP after decode so the chunk has definitely been parsed. A non-zero
+    // return here means "no iCCP" or "iCCP was malformed" — treat both as
+    // the no-profile case; the pixels are still valid RGBA. `profile` is
+    // context-owned memory, so copy it out before `spng_ctx_free` runs at
+    // function exit. Propagate OutOfMemory on allocator failure rather
+    // than silently degrading colour fidelity — the pixels may be Display
+    // P3 / Adobe RGB / XYB, and a "no profile" result there is a visible
+    // colour shift, which is the exact bug #30197 is about.
     var iccp: Iccp = std.mem.zeroes(Iccp);
     const icc: ?[]u8 = if (spng_get_iccp(ctx, &iccp) == 0 and iccp.profile_len > 0 and iccp.profile != null)
-        bun.default_allocator.dupe(u8, iccp.profile.?[0..iccp.profile_len]) catch null
+        try bun.default_allocator.dupe(u8, iccp.profile.?[0..iccp.profile_len])
     else
         null;
     return .{ .rgba = out, .width = ihdr.width, .height = ihdr.height, .icc_profile = icc };

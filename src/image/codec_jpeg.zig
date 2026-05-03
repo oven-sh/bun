@@ -126,14 +126,17 @@ pub fn decode(bytes: []const u8, max_pixels: u64, hint: codecs.DecodeHint) codec
     // allocator; re-home into `bun.default_allocator` so the rest of the
     // pipeline can free it uniformly. A decode that simply has no profile
     // returns non-zero with iccSize==0 — treat that as "no profile", not an
-    // error.
+    // error. OutOfMemory on the dupe is propagated (not swallowed) — the
+    // pixels may be Display P3 / Adobe RGB / XYB, where "no profile"
+    // silently reinterprets them as sRGB and shifts colour, which is the
+    // exact bug #30197 is about.
     var icc_ptr: ?[*]u8 = null;
     var icc_size: usize = 0;
     const icc: ?[]u8 = blk: {
         if (tj3GetICCProfile(h, &icc_ptr, &icc_size) != 0 or icc_size == 0) break :blk null;
         defer if (icc_ptr) |p| tj3Free(p);
         const p = icc_ptr orelse break :blk null;
-        break :blk bun.default_allocator.dupe(u8, p[0..icc_size]) catch null;
+        break :blk try bun.default_allocator.dupe(u8, p[0..icc_size]);
     };
     return .{ .rgba = out, .width = w, .height = ht, .icc_profile = icc };
 }

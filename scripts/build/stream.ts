@@ -103,6 +103,35 @@ function main(): void {
   let consoleMode = false;
   let stampPath: string | undefined;
   const envOverrides: Record<string, string> = {};
+
+  // Bun's bundled BoringSSL doesn't consult the system trust store, so
+  // fetch-cli.ts can't download deps behind a TLS-intercepting proxy whose
+  // root is installed into the OS bundle (curl works; bun's fetch() doesn't).
+  // Point child Bun processes at the system bundle via NODE_EXTRA_CA_CERTS
+  // so dep downloads trust the same roots curl does. Mirror it to
+  // CARGO_HTTP_CAINFO so cargo (libcurl) sees the same roots. Each var is
+  // only defaulted if the user hasn't set it; no-op if the bundle doesn't
+  // exist. Has to be in the child's env (not ours) because Bun snapshots
+  // NODE_EXTRA_CA_CERTS at process start.
+  {
+    let systemCA: string | undefined;
+    for (const p of [
+      "/etc/ssl/certs/ca-certificates.crt", // Debian/Ubuntu/Alpine
+      "/etc/pki/tls/certs/ca-bundle.crt", // Fedora/RHEL
+      "/etc/ssl/cert.pem", // macOS/BSD
+    ]) {
+      try {
+        closeSync(openSync(p, "r"));
+        systemCA = p;
+        break;
+      } catch {}
+    }
+    if (systemCA !== undefined) {
+      if (process.env.NODE_EXTRA_CA_CERTS === undefined) envOverrides.NODE_EXTRA_CA_CERTS = systemCA;
+      if (process.env.CARGO_HTTP_CAINFO === undefined) envOverrides.CARGO_HTTP_CAINFO = systemCA;
+    }
+  }
+
   while (argv[0]?.startsWith("--")) {
     const opt = argv.shift()!;
     if (opt.startsWith("--cwd=")) {

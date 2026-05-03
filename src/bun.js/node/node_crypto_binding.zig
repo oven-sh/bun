@@ -296,7 +296,7 @@ const random = struct {
         if (!offset_value.isNumber()) {
             return global.throwInvalidArgumentTypeValue("offset", "number", offset_value);
         }
-        const offset = offset_value.asNumber() * @as(f32, @floatFromInt(element_size));
+        const offset = offset_value.asNumber() * @as(f64, @floatFromInt(element_size));
 
         const max_length = @min(length, max_possible_length);
         if (std.math.isNan(offset) or offset > @as(f64, @floatFromInt(max_length)) or offset < 0) {
@@ -307,14 +307,14 @@ const random = struct {
     }
     fn assertSize(global: *JSGlobalObject, size_value: JSValue, element_size: u8, offset: u32, length: usize) JSError!u32 {
         var size = try validators.validateNumber(global, size_value, "size", null, null);
-        size *= @as(f32, @floatFromInt(element_size));
+        size *= @as(f64, @floatFromInt(element_size));
 
         if (std.math.isNan(size) or size > max_possible_length or size < 0) {
             return global.throwRangeError(size, .{ .field_name = "size", .min = 0, .max = max_possible_length });
         }
 
-        if (size + @as(f32, @floatFromInt(offset)) > @as(f64, @floatFromInt(length))) {
-            return global.throwRangeError(size + @as(f32, @floatFromInt(offset)), .{ .field_name = "size + offset", .max = @intCast(length) });
+        if (size + @as(f64, @floatFromInt(offset)) > @as(f64, @floatFromInt(length))) {
+            return global.throwRangeError(size + @as(f64, @floatFromInt(offset)), .{ .field_name = "size + offset", .max = @intCast(length) });
         }
 
         return @intFromFloat(size);
@@ -396,7 +396,10 @@ const random = struct {
         } else if (size_value.isCallable()) {
             callback = size_value;
             offset = try assertOffset(global, offset_value, element_size, buf.byte_len);
-            size_value = JSValue.jsNumber(buf.len - offset);
+            // `offset` is a byte offset (already scaled by element_size) but `buf.len`
+            // is an element count, so `buf.len - offset` would mix units and can
+            // underflow. Defer to the `buf.byte_len - offset` default below instead.
+            size_value = .js_undefined;
         } else {
             _ = try validators.validateFunction(global, "callback", callback);
             offset = try assertOffset(global, offset_value, element_size, buf.byte_len);
@@ -408,7 +411,7 @@ const random = struct {
             try assertSize(global, size_value, element_size, offset, buf.byte_len);
 
         if (size == 0) {
-            _ = try callback.call(global, .js_undefined, &.{ .null, JSValue.jsNumber(0) });
+            _ = try callback.call(global, .js_undefined, &.{ .null, buf_value });
             return .js_undefined;
         }
 

@@ -469,12 +469,15 @@ describe("structuredClone with Blob and File", () => {
       }
       const afterContentType = endOfRun(0x74); // 't'
       const afterBytes = endOfRun(0x42); // 'B'
+      // After the body the wire format carries stored_name_len (u32) +
+      // stored_name ("leak.bin", 8 bytes) before the Blob is heap-promoted.
+      const afterStoredName = afterBytes + 4 + "leak.bin".length;
       const cuts = [
         afterContentType, // content_type allocated, next read fails
         afterContentType + 2, // store_tag + bytes_len partially read
         afterBytes, // bytes + Store allocated, stored_name len read fails
-        afterBytes + 4, // heap Blob allocated, is_jsdom_file read fails
-        full.length - 1, // File name read fails (last byte missing)
+        afterStoredName, // heap *Blob allocated, is_jsdom_file read fails
+        full.length - 1, // v3 File name read fails (last byte missing)
       ];
       const payloads = cuts.map(n => full.slice(0, n));
       // All of these must hit the error path; if one accidentally succeeds

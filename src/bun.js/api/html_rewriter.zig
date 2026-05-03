@@ -573,7 +573,7 @@ pub const HTMLRewriter = struct {
         ) ?JSValue {
             bun.handleOom(sink.bytes.growBy(bytes.len));
             const global = sink.global;
-            var response = sink.response;
+            const response = sink.response;
 
             sink.rewriter.?.write(bytes) catch {
                 if (is_async) {
@@ -585,8 +585,6 @@ pub const HTMLRewriter = struct {
             };
 
             sink.rewriter.?.end() catch {
-                if (!is_async) response.finalize();
-                sink.response = undefined;
                 if (is_async) {
                     response.getBodyValue().toErrorInstance(.{ .Message = createLOLHTMLStringError() }, global) catch {}; // TODO: properly propagate exception upwards
                     return null;

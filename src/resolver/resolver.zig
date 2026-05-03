@@ -2723,6 +2723,10 @@ pub const Resolver = struct {
             if (prev.name.len > 0) alloc.free(prev.name);
             if (prev.version.len > 0) alloc.free(prev.version);
             prev.main_fields.deinit();
+            // browser_map has dupe_keys=false but its keys are caller-duped
+            // via allocator.dupe(u8, fs.normalize(...)) in PackageJSON.parse;
+            // main_fields keys are static slices from r.opts.main_fields.
+            for (prev.browser_map.map.keys()) |k| alloc.free(k);
             prev.browser_map.deinit();
             prev.dependencies.map.deinit(alloc);
             switch (prev.side_effects) {

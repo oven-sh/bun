@@ -840,6 +840,23 @@ pub const H2FrameParser = struct {
                 log("PendingQueue.enqueue {}", .{self.len});
             }
 
+            /// Put a frame back at the front of the queue. Used by flushQueue
+            /// when it has dequeued a frame, written only part of it due to
+            /// flow control, and needs to retain the remainder for the next
+            /// flush. Reuses the slot vacated by the immediately-preceding
+            /// dequeue() where possible, otherwise inserts at index 0.
+            pub fn pushFront(self: *PendingQueue, value: PendingFrame, allocator: Allocator) void {
+                if (self.front > 0) {
+                    self.front -= 1;
+                    self.data.items[self.front] = value;
+                    self.len += 1;
+                } else {
+                    bun.handleOom(self.data.insert(allocator, 0, value));
+                    self.len += 1;
+                }
+                log("PendingQueue.pushFront {}", .{self.len});
+            }
+
             pub fn peek(self: *PendingQueue) ?*PendingFrame {
                 if (self.len == 0) {
                     return null;
@@ -927,131 +944,153 @@ pub const H2FrameParser = struct {
             }
         }
         pub fn flushQueue(this: *Stream, client: *H2FrameParser, written: *usize) FlushState {
-            if (this.canSendData()) {
-                // try to flush one frame
-                if (this.dataFrameQueue.peekFront()) |frame| {
-                    const no_backpressure = brk: {
-                        var is_flow_control_limited = false;
-                        defer {
-                            if (!is_flow_control_limited) {
-                                // only call the callback + free the frame if we write to the socket the full frame
-                                var _frame = this.dataFrameQueue.dequeue().?;
-                                client.outboundQueueSize -= 1;
+            if (!this.canSendData()) {
+                // cannot send data
+                return .no_action;
+            }
+            // Take ownership of the front frame before doing any socket write.
+            // With a non-native socket, writer.write() ends up in _write() which
+            // calls the JS onWrite callback synchronously. That callback can call
+            // back into the parser (e.g. rstStream -> endStream -> freeResources
+            // -> cleanQueue), which frees every queued frame.buffer and replaces
+            // dataFrameQueue with an empty one. Holding the frame on the stack
+            // means cleanQueue cannot free it out from under us, and we never
+            // unwrap null on a queue that was just emptied by re-entry.
+            var frame = this.dataFrameQueue.dequeue() orelse return .no_action;
+            client.outboundQueueSize -= 1;
 
-                                if (_frame.callback.get()) |callback_value| client.dispatchWriteCallback(callback_value);
-                                if (this.dataFrameQueue.isEmpty()) {
-                                    if (_frame.end_stream) {
-                                        if (this.waitForTrailers) {
-                                            client.dispatch(.onWantTrailers, this.getIdentifier());
-                                        } else {
-                                            const identifier = this.getIdentifier();
-                                            identifier.ensureStillAlive();
-                                            if (this.state == .HALF_CLOSED_REMOTE) {
-                                                this.state = .CLOSED;
-                                            } else {
-                                                this.state = .HALF_CLOSED_LOCAL;
-                                            }
-                                            client.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(this.state)));
-                                        }
-                                    }
-                                }
-                                _frame.deinit(client.allocator);
-                            }
-                        }
+            const writer = client.toWriter();
 
-                        const writer = client.toWriter();
+            if (frame.len == 0) {
+                // flush a zero payload frame
+                var dataHeader: FrameHeader = .{
+                    .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),
+                    .flags = if (frame.end_stream and !this.waitForTrailers) @intFromEnum(DataFrameFlags.END_STREAM) else 0,
+                    .streamIdentifier = @intCast(this.id),
+                    .length = 0,
+                };
+                // may re-enter JS; `frame` is stack-owned so this is safe.
+                const no_backpressure = dataHeader.write(@TypeOf(writer), writer);
+                this.finishFlushedFrame(client, &frame);
+                return if (no_backpressure) .flushed else .backpressure;
+            }
 
-                        if (frame.len == 0) {
+            const frame_slice = frame.slice();
+            const max_size = @min(@min(frame_slice.len, this.remoteWindowSize -| this.remoteUsedWindowSize, client.remoteWindowSize -| client.remoteUsedWindowSize), MAX_PAYLOAD_SIZE_WITHOUT_FRAME);
+            if (max_size == 0) {
+                log("dataFrame flow control limited {} {} {} {} {} {}", .{ frame_slice.len, this.remoteWindowSize, this.remoteUsedWindowSize, client.remoteWindowSize, client.remoteUsedWindowSize, max_size });
+                // Nothing was written (no JS re-entry possible here), put the
+                // frame back exactly where it was for the next flush attempt.
+                this.dataFrameQueue.pushFront(frame, client.allocator);
+                client.outboundQueueSize += 1;
+                // we are flow control limited lets return backpressure if is limited in the connection so we short circuit the flush
+                return if (client.remoteWindowSize == client.remoteUsedWindowSize) .backpressure else .no_action;
+            }
 
-                            // flush a zero payload frame
-                            var dataHeader: FrameHeader = .{
-                                .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),
-                                .flags = if (frame.end_stream and !this.waitForTrailers) @intFromEnum(DataFrameFlags.END_STREAM) else 0,
-                                .streamIdentifier = @intCast(this.id),
-                                .length = 0,
-                            };
-                            break :brk dataHeader.write(@TypeOf(writer), writer);
-                        } else {
-                            const frame_slice = frame.slice();
-                            const max_size = @min(@min(frame_slice.len, this.remoteWindowSize -| this.remoteUsedWindowSize, client.remoteWindowSize -| client.remoteUsedWindowSize), MAX_PAYLOAD_SIZE_WITHOUT_FRAME);
-                            if (max_size == 0) {
-                                is_flow_control_limited = true;
-                                log("dataFrame flow control limited {} {} {} {} {} {}", .{ frame_slice.len, this.remoteWindowSize, this.remoteUsedWindowSize, client.remoteWindowSize, client.remoteUsedWindowSize, max_size });
-                                // we are flow control limited lets return backpressure if is limited in the connection so we short circuit the flush
-                                return if (client.remoteWindowSize == client.remoteUsedWindowSize) .backpressure else .no_action;
-                            }
-                            if (max_size < frame_slice.len) {
-                                is_flow_control_limited = true;
-                                // we need to break the frame into smaller chunks
-                                frame.offset += @intCast(max_size);
-                                const able_to_send = frame_slice[0..max_size];
-                                client.queuedDataSize -= able_to_send.len;
-                                written.* += able_to_send.len;
+            if (max_size < frame_slice.len) {
+                // we need to break the frame into smaller chunks
+                const able_to_send = frame_slice[0..max_size];
+                client.queuedDataSize -= able_to_send.len;
+                written.* += able_to_send.len;
 
-                                const padding = this.getPadding(able_to_send.len, max_size - 1);
-                                const payload_size = able_to_send.len + (if (padding != 0) @as(usize, @intCast(padding)) + 1 else 0);
-                                log("padding: {d} size: {d} max_size: {d} payload_size: {d}", .{ padding, able_to_send.len, max_size, payload_size });
-                                this.remoteUsedWindowSize += payload_size;
-                                client.remoteUsedWindowSize += payload_size;
+                const padding = this.getPadding(able_to_send.len, max_size - 1);
+                const payload_size = able_to_send.len + (if (padding != 0) @as(usize, @intCast(padding)) + 1 else 0);
+                log("padding: {d} size: {d} max_size: {d} payload_size: {d}", .{ padding, able_to_send.len, max_size, payload_size });
+                this.remoteUsedWindowSize += payload_size;
+                client.remoteUsedWindowSize += payload_size;
 
-                                var flags: u8 = 0; // we ignore end_stream for now because we know we have more data to send
-                                if (padding != 0) {
-                                    flags |= @intFromEnum(DataFrameFlags.PADDED);
-                                }
-                                var dataHeader: FrameHeader = .{
-                                    .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),
-                                    .flags = flags,
-                                    .streamIdentifier = @intCast(this.id),
-                                    .length = @intCast(payload_size),
-                                };
-                                _ = dataHeader.write(@TypeOf(writer), writer);
-                                if (padding != 0) {
-                                    var buffer = shared_request_buffer[0..];
-                                    bun.memmove(buffer[1..][0..able_to_send.len], able_to_send);
-                                    buffer[0] = padding;
-                                    break :brk (writer.write(buffer[0..payload_size]) catch 0) != 0;
-                                } else {
-                                    break :brk (writer.write(able_to_send) catch 0) != 0;
-                                }
-                            } else {
+                var flags: u8 = 0; // we ignore end_stream for now because we know we have more data to send
+                if (padding != 0) {
+                    flags |= @intFromEnum(DataFrameFlags.PADDED);
+                }
+                var dataHeader: FrameHeader = .{
+                    .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),
+                    .flags = flags,
+                    .streamIdentifier = @intCast(this.id),
+                    .length = @intCast(payload_size),
+                };
+                // Copy into the shared buffer BEFORE any write() that can
+                // re-enter JS; after re-entry frame.buffer may have been freed
+                // by cleanQueue if we hadn't taken ownership, and even with
+                // ownership we prefer not to interleave reads across the
+                // callback boundary.
+                const out_bytes: []const u8 = if (padding != 0) blk: {
+                    var buffer = shared_request_buffer[0..];
+                    bun.memmove(buffer[1..][0..able_to_send.len], able_to_send);
+                    buffer[0] = padding;
+                    break :blk buffer[0..payload_size];
+                } else able_to_send;
+                _ = dataHeader.write(@TypeOf(writer), writer);
+                const no_backpressure = (writer.write(out_bytes) catch 0) != 0;
 
-                                // flush with some payload
-                                client.queuedDataSize -= frame_slice.len;
-                                written.* += frame_slice.len;
+                // Record how much of this frame has been sent and decide what
+                // to do with the remainder AFTER all re-entrant JS has run.
+                frame.offset += @intCast(max_size);
+                if (this.canSendData()) {
+                    // stream still open: keep remainder for next flush
+                    this.dataFrameQueue.pushFront(frame, client.allocator);
+                    client.outboundQueueSize += 1;
+                } else {
+                    // stream was reset/closed from inside onWrite; drop the
+                    // remainder, matching cleanQueue's accounting.
+                    client.queuedDataSize -= frame.slice().len;
+                    if (frame.callback.get()) |callback_value| client.dispatchWriteCallback(callback_value);
+                    frame.deinit(client.allocator);
+                }
+                return if (no_backpressure) .flushed else .backpressure;
+            }
 
-                                const padding = this.getPadding(frame_slice.len, max_size - 1);
-                                const payload_size = frame_slice.len + (if (padding != 0) @as(usize, @intCast(padding)) + 1 else 0);
-                                log("padding: {d} size: {d} max_size: {d} payload_size: {d}", .{ padding, frame_slice.len, max_size, payload_size });
-                                this.remoteUsedWindowSize += payload_size;
-                                client.remoteUsedWindowSize += payload_size;
-                                var flags: u8 = if (frame.end_stream and !this.waitForTrailers) @intFromEnum(DataFrameFlags.END_STREAM) else 0;
-                                if (padding != 0) {
-                                    flags |= @intFromEnum(DataFrameFlags.PADDED);
-                                }
-                                var dataHeader: FrameHeader = .{
-                                    .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),
-                                    .flags = flags,
-                                    .streamIdentifier = @intCast(this.id),
-                                    .length = @intCast(payload_size),
-                                };
-                                _ = dataHeader.write(@TypeOf(writer), writer);
-                                if (padding != 0) {
-                                    var buffer = shared_request_buffer[0..];
-                                    bun.memmove(buffer[1..][0..frame_slice.len], frame_slice);
-                                    buffer[0] = padding;
-                                    break :brk (writer.write(buffer[0..payload_size]) catch 0) != 0;
-                                } else {
-                                    break :brk (writer.write(frame_slice) catch 0) != 0;
-                                }
-                            }
-                        }
-                    };
+            // flush with some payload (entire remaining slice fits)
+            client.queuedDataSize -= frame_slice.len;
+            written.* += frame_slice.len;
 
-                    return if (no_backpressure) .flushed else .backpressure;
+            const padding = this.getPadding(frame_slice.len, max_size - 1);
+            const payload_size = frame_slice.len + (if (padding != 0) @as(usize, @intCast(padding)) + 1 else 0);
+            log("padding: {d} size: {d} max_size: {d} payload_size: {d}", .{ padding, frame_slice.len, max_size, payload_size });
+            this.remoteUsedWindowSize += payload_size;
+            client.remoteUsedWindowSize += payload_size;
+            var flags: u8 = if (frame.end_stream and !this.waitForTrailers) @intFromEnum(DataFrameFlags.END_STREAM) else 0;
+            if (padding != 0) {
+                flags |= @intFromEnum(DataFrameFlags.PADDED);
+            }
+            var dataHeader: FrameHeader = .{
+                .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),
+                .flags = flags,
+                .streamIdentifier = @intCast(this.id),
+                .length = @intCast(payload_size),
+            };
+            const out_bytes: []const u8 = if (padding != 0) blk: {
+                var buffer = shared_request_buffer[0..];
+                bun.memmove(buffer[1..][0..frame_slice.len], frame_slice);
+                buffer[0] = padding;
+                break :blk buffer[0..payload_size];
+            } else frame_slice;
+            _ = dataHeader.write(@TypeOf(writer), writer);
+            const no_backpressure = (writer.write(out_bytes) catch 0) != 0;
+            this.finishFlushedFrame(client, &frame);
+            return if (no_backpressure) .flushed else .backpressure;
+        }
+
+        /// Runs after a frame has been fully written to the socket. Mirrors the
+        /// previous defer block but is tolerant of the stream having been reset
+        /// from inside the JS onWrite callback.
+        fn finishFlushedFrame(this: *Stream, client: *H2FrameParser, frame: *PendingFrame) void {
+            if (frame.callback.get()) |callback_value| client.dispatchWriteCallback(callback_value);
+            if (this.dataFrameQueue.isEmpty() and frame.end_stream and this.canSendData()) {
+                if (this.waitForTrailers) {
+                    client.dispatch(.onWantTrailers, this.getIdentifier());
+                } else {
+                    const identifier = this.getIdentifier();
+                    identifier.ensureStillAlive();
+                    if (this.state == .HALF_CLOSED_REMOTE) {
+                        this.state = .CLOSED;
+                    } else {
+                        this.state = .HALF_CLOSED_LOCAL;
+                    }
+                    client.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(this.state)));
                 }
             }
-            // empty or cannot send data
-            return .no_action;
+            frame.deinit(client.allocator);
         }
 
         pub fn queueFrame(this: *Stream, client: *H2FrameParser, bytes: []const u8, callback: jsc.JSValue, end_stream: bool) void {

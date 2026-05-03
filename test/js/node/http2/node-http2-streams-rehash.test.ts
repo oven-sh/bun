@@ -106,3 +106,19 @@ test("http2 client write callback that opens new streams during flushQueue does 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "ok", exitCode: 0 });
 });
+
+// With a non-native socket, flushQueue's writer.write() reaches JS onWrite
+// synchronously. If that callback resets the stream being flushed (rstStream
+// -> cleanQueue), the old code would read freed frame.buffer and then unwrap
+// null from dequeue().?. flushQueue now dequeues the frame to the stack
+// before any write that can re-enter.
+test("rstStream from inside the non-native onWrite callback during flushQueue does not UAF", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "node-http2-flush-rststream.fixture.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "ok", exitCode: 0 });
+});

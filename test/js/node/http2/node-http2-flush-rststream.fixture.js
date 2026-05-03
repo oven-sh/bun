@@ -61,12 +61,22 @@ server.listen(0, "127.0.0.1", () => {
           chunk[3] === 0 /* HTTP_FRAME_DATA */ &&
           (chunk.readUInt32BE(5) & 0x7fffffff) === rstTarget
         ) {
-          fired = true;
           // Re-enter the parser synchronously from inside onWrite: this frees
-          // the queued frame currently being flushed.
+          // the queued frame currently being flushed. Fail fast if the
+          // internal handle is gone or rstStream() rejects the call, so a
+          // broken hook surfaces as a clear error rather than a timeout.
+          const nativeSession = session[kNative];
+          if (!nativeSession || typeof nativeSession.rstStream !== "function") {
+            console.error("missing native http2 session handle");
+            process.exit(1);
+          }
           try {
-            session[kNative]?.rstStream(rstTarget, 8 /* CANCEL */);
-          } catch {}
+            nativeSession.rstStream(rstTarget, 8 /* CANCEL */);
+            fired = true;
+          } catch (err) {
+            console.error("rstStream failed", err);
+            process.exit(1);
+          }
         }
         raw.write(chunk, encoding);
         // Signal completion immediately so the Duplex does not queue chunks

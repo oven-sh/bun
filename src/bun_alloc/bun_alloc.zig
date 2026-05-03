@@ -697,6 +697,10 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             const _key = bun.hash(key);
             const kv = self.index.fetchRemove(_key) orelse return false;
             if (kv.value.index != NotFound.index and kv.value.index != Unassigned.index) {
+                // Best-effort: if we can't stash the hint, degrade to the
+                // pre-reclaim behavior (leak one slot) rather than crash
+                // mid–cache-bust. Unlike index.put in markNotFound above,
+                // this is a leak-reduction hint, not load-bearing state.
                 self.reclaimable.put(self.allocator, _key, kv.value) catch {};
             }
             return true;

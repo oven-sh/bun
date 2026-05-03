@@ -2256,12 +2256,10 @@ static napi_value test_issue_22259(const Napi::CallbackInfo &info) {
       printf("napi_create_error loop iteration %d: unexpected type %d (status %d)\n", i, loop_type, status);
       return nullptr;
     }
-    napi_destroy(env, loop_error_val);
   }
   puts("napi_create_error loop test passed (5 iterations with VM exception pending)");
 
   // Clear the pending exception so we can validate the created objects
-  napi_value pending_exception;
   status = napi_get_and_clear_last_exception(env, &pending_exception);
   if (status != napi_ok) {
     printf("napi_get_and_clear_last_exception failed: %d\n", status);

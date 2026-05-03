@@ -508,7 +508,10 @@ pub fn constructFromU16(input: [*]const u16, len: usize, allocator: std.mem.Allo
         },
 
         .hex => {
-            var to = allocator.alloc(u8, len * 2) catch return &[_]u8{};
+            if (len < 2)
+                return &[_]u8{};
+
+            var to = allocator.alloc(u8, len / 2) catch return &[_]u8{};
             const wrote = strings.decodeHexToBytesTruncate(to, u16, input[0..len]);
             if (wrote == 0) {
                 allocator.free(to);

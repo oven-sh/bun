@@ -28,3 +28,27 @@ describe.skipIf(isWindows)("process.setgroups", () => {
     expect(() => process.setgroups(groups)).toThrow(TypeError);
   });
 });
+
+describe("process.hrtime", () => {
+  test("does not crash when array has an accessor property", () => {
+    const time = [1, 2];
+    Object.defineProperty(time, 0, {
+      configurable: true,
+      get: () => 0,
+    });
+    const result = process.hrtime(time);
+    expect(Array.isArray(result)).toBe(true);
+    expect(result.length).toBe(2);
+  });
+
+  test("propagates exceptions thrown from an accessor", () => {
+    const time = [1, 2];
+    Object.defineProperty(time, 0, {
+      configurable: true,
+      get: () => {
+        throw new Error("getter threw");
+      },
+    });
+    expect(() => process.hrtime(time)).toThrow("getter threw");
+  });
+});

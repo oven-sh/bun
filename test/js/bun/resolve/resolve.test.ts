@@ -567,9 +567,10 @@ describe("wildcard exports with @ in matched subpath", () => {
     );
   });
 
-  // Regression guard for the scoped-package version split: `@scope/pkg@ver/sub`
-  // must still strip the version (the `@` delimiter sits at index 10, inside
-  // the 16-char name span, so the version branch still fires).
+  // Regression guard for the scoped-package version split: the `@version`
+  // delimiter still falls inside the name span `parseName` returns (between
+  // the leading `@` and the second `/`), so the version branch must still
+  // fire for `@scope/pkg@ver/sub`.
   it.concurrent("still strips @version after a scoped package name", () => {
     using dir = tempDir("resolver-wildcard-scoped-versioned", {
       "package.json": JSON.stringify({ name: "host" }),

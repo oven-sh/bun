@@ -3607,6 +3607,48 @@ pub const ExistsAtType = enum {
 };
 pub fn existsAtType(fd: bun.FD, subpath: anytype) Maybe(ExistsAtType) {
     if (comptime Environment.isWindows) {
+        // Path-only queries (no directory FD) use Win32 GetFileAttributesW
+        // rather than NtQueryAttributesFile. Win32 resolves relative paths
+        // — including ones with `..` — against the current directory via
+        // `RtlDosPathNameToNtPathName_U` before going to the kernel; the
+        // NT-namespace API used in the FD branch below cannot, and rejects
+        // names containing `..` with STATUS_OBJECT_NAME_INVALID. Symmetric
+        // with `mkdirOSPath` (CreateDirectoryW) and matches the stat-by-path
+        // implementations in libuv (fs__access), .NET (GetFileAttributesEx),
+        // Go (GetFileAttributesEx), and Rust (CreateFileW + handle query).
+        if (fd == bun.invalid_fd) {
+            const T = std.meta.Child(@TypeOf(subpath));
+            const attrs = getFileAttributes(subpath) orelse {
+                const errno = bun.windows.getLastErrno();
+                syslog("GetFileAttributesW({f}) = {s}", .{ bun.fmt.fmtPath(T, subpath, .{}), @tagName(errno) });
+                return .{ .err = .{
+                    .errno = @intFromEnum(errno),
+                    .syscall = .access,
+                } };
+            };
+
+            // libuv: Windows directories should never carry FILE_ATTRIBUTE_READONLY;
+            // an entry with both DIRECTORY+READONLY set is treated as not-a-directory
+            // (typically a reparse point).
+            // https://github.com/libuv/libuv/blob/eb5af8e3c0ea19a6b0196d5db3212dae1785739b/src/win/fs.c#L2144-L2146
+            if (attrs.is_directory and !attrs.is_readonly) {
+                syslog("GetFileAttributesW({f}) = directory", .{bun.fmt.fmtPath(T, subpath, .{})});
+                return .{ .result = .directory };
+            }
+            if (!attrs.is_directory) {
+                syslog("GetFileAttributesW({f}) = file", .{bun.fmt.fmtPath(T, subpath, .{})});
+                return .{ .result = .file };
+            }
+            syslog("GetFileAttributesW({f}) = read-only directory (treated as error)", .{bun.fmt.fmtPath(T, subpath, .{})});
+            return .{ .err = Error.fromCode(.UNKNOWN, .access) };
+        }
+
+        // FD-relative case: must use NT API. Win32 has no fstatat equivalent —
+        // there is no way to express "stat path P relative to directory handle H"
+        // through `kernel32`. This path inherits the NT-namespace limitation:
+        // relative `subpath`s that contain `..` are rejected with
+        // STATUS_OBJECT_NAME_INVALID. No current FD-relative caller passes such
+        // paths.
         const wbuf = bun.w_path_buffer_pool.get();
         defer bun.w_path_buffer_pool.put(wbuf);
         var path = if (std.meta.Child(@TypeOf(subpath)) == u16)
@@ -3630,8 +3672,6 @@ pub fn existsAtType(fd: bun.FD, subpath: anytype) Maybe(ExistsAtType) {
             .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
             .RootDirectory = if (std.fs.path.isAbsoluteWindowsWTF16(path))
                 null
-            else if (fd == bun.invalid_fd)
-                std.fs.cwd().fd
             else
                 fd.cast(),
             .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.

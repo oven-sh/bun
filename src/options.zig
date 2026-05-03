@@ -1815,6 +1815,7 @@ pub const BundleOptions = struct {
     asset_naming: []const u8 = "",
     chunk_naming: []const u8 = "",
     public_path: []const u8 = "",
+    compress: CompressionOptions = .{},
     extension_order: ResolveFileExtensions = .{},
     main_field_extension_order: []const string = &Defaults.MainFieldExtensionOrder,
     /// This list applies to all extension resolution cases. The runtime uses
@@ -2596,6 +2597,78 @@ pub const RouteConfig = struct {
 };
 
 pub const GlobalCache = @import("./resolver/resolver.zig").GlobalCache;
+
+pub const CompressionOptions = struct {
+    gzip: bool = false,
+    brotli: bool = false,
+    zstd: bool = false,
+    level: Level = .default,
+
+    pub const Level = union(enum) {
+        default,
+        max,
+        value: u8,
+
+        pub fn @"for"(this: Level, comptime algo: Algorithm) c_int {
+            return switch (this) {
+                .default => switch (algo) {
+                    .gzip => 6,
+                    .brotli => 6,
+                    .zstd => 3,
+                },
+                .max => switch (algo) {
+                    .gzip => 12,
+                    .brotli => 11,
+                    .zstd => 19,
+                },
+                .value => |v| std.math.clamp(@as(c_int, v), 1, switch (algo) {
+                    .gzip => 12,
+                    .brotli => 11,
+                    .zstd => 19,
+                }),
+            };
+        }
+    };
+
+    pub const Algorithm = enum {
+        gzip,
+        brotli,
+        zstd,
+
+        pub fn suffix(this: Algorithm) [:0]const u8 {
+            return switch (this) {
+                .gzip => ".gz",
+                .brotli => ".br",
+                .zstd => ".zst",
+            };
+        }
+
+        pub const map = bun.ComptimeStringMap(Algorithm, .{
+            .{ "gzip", .gzip },
+            .{ "gz", .gzip },
+            .{ "brotli", .brotli },
+            .{ "br", .brotli },
+            .{ "zstd", .zstd },
+            .{ "zst", .zstd },
+        });
+    };
+
+    pub fn enable(this: *CompressionOptions, algo: Algorithm) void {
+        switch (algo) {
+            .gzip => this.gzip = true,
+            .brotli => this.brotli = true,
+            .zstd => this.zstd = true,
+        }
+    }
+
+    pub fn any(this: CompressionOptions) bool {
+        return this.gzip or this.brotli or this.zstd;
+    }
+
+    pub fn count(this: CompressionOptions) u32 {
+        return @as(u32, @intFromBool(this.gzip)) + @as(u32, @intFromBool(this.brotli)) + @as(u32, @intFromBool(this.zstd));
+    }
+};
 
 pub const PathTemplate = struct {
     data: string = "",

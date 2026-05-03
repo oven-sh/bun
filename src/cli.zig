@@ -473,6 +473,7 @@ pub const Command = struct {
             entry_naming: []const u8 = "[dir]/[name].[ext]",
             chunk_naming: []const u8 = "./[name]-[hash].[ext]",
             asset_naming: []const u8 = "./[name]-[hash].[ext]",
+            compress: options.CompressionOptions = .{},
             server_components: bool = false,
             react_fast_refresh: bool = false,
             code_splitting: bool = false,

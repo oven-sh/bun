@@ -63,12 +63,19 @@ pub const BuildCommand = struct {
         var outfile = ctx.bundler_options.outfile;
         const output_to_stdout = !ctx.bundler_options.compile and outfile.len == 0 and ctx.bundler_options.outdir.len == 0;
 
+        if (ctx.bundler_options.compress.any() and ctx.bundler_options.outdir.len == 0) {
+            Output.prettyErrorln("<r><red>error<r><d>:<r> --compress requires --outdir", .{});
+            Global.exit(1);
+            return;
+        }
+
         this_transpiler.options.supports_multiple_outputs = !(output_to_stdout or outfile.len > 0);
 
         this_transpiler.options.public_path = ctx.bundler_options.public_path;
         this_transpiler.options.entry_naming = ctx.bundler_options.entry_naming;
         this_transpiler.options.chunk_naming = ctx.bundler_options.chunk_naming;
         this_transpiler.options.asset_naming = ctx.bundler_options.asset_naming;
+        this_transpiler.options.compress = ctx.bundler_options.compress;
         this_transpiler.options.server_components = ctx.bundler_options.server_components;
         this_transpiler.options.react_fast_refresh = ctx.bundler_options.react_fast_refresh;
         this_transpiler.options.inline_entrypoint_import_meta_main = ctx.bundler_options.inline_entrypoint_import_meta_main;
@@ -669,6 +676,7 @@ pub const BuildCommand = struct {
                     .bytecode => Output.prettyFmt("<d>", true),
                     .module_info => Output.prettyFmt("<d>", true),
                     .@"metafile-json", .@"metafile-markdown" => Output.prettyFmt("<green>", true),
+                    .compressed => Output.prettyFmt("<d>", true),
                 });
 
                 try writer.writeAll(rel_path);
@@ -702,6 +710,7 @@ pub const BuildCommand = struct {
                     .module_info => "module info",
                     .@"metafile-json" => "metafile json",
                     .@"metafile-markdown" => "metafile markdown",
+                    .compressed => "compressed",
                 }});
                 if (Output.enable_ansi_colors_stdout)
                     try writer.writeAll("\x1b[0m");

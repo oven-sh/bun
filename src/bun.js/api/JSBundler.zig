@@ -229,6 +229,7 @@ pub const JSBundler = struct {
         force_node_env: options.BundleOptions.ForceNodeEnv = .unspecified,
         code_splitting: bool = false,
         minify: Minify = .{},
+        compress: options.CompressionOptions = .{},
         no_macros: bool = false,
         ignore_dce_annotations: bool = false,
         emit_dce_annotations: ?bool = null,
@@ -711,6 +712,53 @@ pub const JSBundler = struct {
                     }
                 } else {
                     return globalThis.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
+                }
+            }
+
+            if (try config.getTruthy(globalThis, "compress")) |compress| {
+                const enableOne = struct {
+                    fn enableOne(out: *options.CompressionOptions, global: *jsc.JSGlobalObject, str: ZigString.Slice) bun.JSError!void {
+                        defer str.deinit();
+                        if (options.CompressionOptions.Algorithm.map.get(str.slice())) |algo| {
+                            out.enable(algo);
+                        } else {
+                            return global.throwInvalidArguments("compress: invalid algorithm \"{s}\". Must be one of \"gzip\", \"br\", \"zstd\"", .{str.slice()});
+                        }
+                    }
+                }.enableOne;
+
+                if (compress.isBoolean()) {
+                    this.compress.gzip = compress.toBoolean();
+                } else if (compress.isString()) {
+                    try enableOne(&this.compress, globalThis, try compress.toSliceOrNull(globalThis));
+                } else if (compress.jsType().isArray()) {
+                    var iter = try compress.arrayIterator(globalThis);
+                    while (try iter.next()) |item| {
+                        if (!item.isString()) return globalThis.throwInvalidArguments("compress: expected array of strings", .{});
+                        try enableOne(&this.compress, globalThis, try item.toSliceOrNull(globalThis));
+                    }
+                } else if (compress.isObject()) {
+                    if (try compress.getBooleanLoose(globalThis, "gzip")) |v| this.compress.gzip = v;
+                    if (try compress.getBooleanLoose(globalThis, "brotli")) |v| this.compress.brotli = v;
+                    if (try compress.getBooleanLoose(globalThis, "br")) |v| this.compress.brotli = v;
+                    if (try compress.getBooleanLoose(globalThis, "zstd")) |v| this.compress.zstd = v;
+                    if (try compress.getTruthy(globalThis, "level")) |level| {
+                        if (level.isString()) {
+                            const slice = try level.toSliceOrNull(globalThis);
+                            defer slice.deinit();
+                            if (bun.strings.eqlComptime(slice.slice(), "max")) {
+                                this.compress.level = .max;
+                            } else {
+                                return globalThis.throwInvalidArguments("compress.level must be a number or \"max\"", .{});
+                            }
+                        } else if (level.isNumber()) {
+                            this.compress.level = .{ .value = @intFromFloat(@max(0, @min(255, level.asNumber()))) };
+                        } else {
+                            return globalThis.throwInvalidArguments("compress.level must be a number or \"max\"", .{});
+                        }
+                    }
+                } else {
+                    return globalThis.throwInvalidArguments("Expected compress to be a boolean, string, array, or object", .{});
                 }
             }
 
@@ -1794,9 +1842,20 @@ pub const BuildArtifact = struct {
         module_info,
         @"metafile-json",
         @"metafile-markdown",
+        compressed,
 
         pub fn isFileInStandaloneMode(this: OutputKind) bool {
-            return this != .sourcemap and this != .bytecode and this != .module_info and this != .@"metafile-json" and this != .@"metafile-markdown";
+            return switch (this) {
+                .sourcemap, .bytecode, .module_info, .@"metafile-json", .@"metafile-markdown", .compressed => false,
+                else => true,
+            };
+        }
+
+        pub fn isCompressible(this: OutputKind) bool {
+            return switch (this) {
+                .chunk, .asset, .@"entry-point", .sourcemap => true,
+                else => false,
+            };
         }
     };
 

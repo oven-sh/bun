@@ -2404,7 +2404,16 @@ fn NewPrinter(
                     }
 
                     p.print("(");
-                    p.printStringLiteralUTF8(p.importRecord(e.import_record_index).path.text, true);
+                    const record = p.importRecord(e.import_record_index);
+                    // Use the original specifier if available, so that require.resolve()
+                    // calls are resolved at runtime rather than being hardcoded to
+                    // an absolute path from the build machine. This is critical for
+                    // `bun build --compile` where the binary runs on different machines.
+                    const path_to_print = if (record.original_path.len > 0)
+                        record.original_path
+                    else
+                        record.path.text;
+                    p.printStringLiteralUTF8(path_to_print, true);
                     p.print(")");
 
                     if (wrap) {

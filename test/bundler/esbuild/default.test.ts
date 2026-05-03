@@ -3991,6 +3991,34 @@ describe.concurrent("bundler", () => {
     },
     external: ["external-pkg", "@scope/external-pkg", "{{root}}/external-file"],
   });
+  // https://github.com/oven-sh/bun/issues/27530
+  itBundled("default/RequireResolvePreservesOriginalSpecifier", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require.resolve('my-pkg/package.json'))
+        console.log(require.resolve('my-pkg'))
+        console.log(require.resolve('@scope/my-pkg/subpath'))
+      `,
+      "/node_modules/my-pkg/package.json": JSON.stringify({ name: "my-pkg", version: "1.0.0", main: "index.js" }),
+      "/node_modules/my-pkg/index.js": `module.exports = {}`,
+      "/node_modules/@scope/my-pkg/package.json": JSON.stringify({
+        name: "@scope/my-pkg",
+        version: "1.0.0",
+        main: "index.js",
+      }),
+      "/node_modules/@scope/my-pkg/index.js": `module.exports = {}`,
+      "/node_modules/@scope/my-pkg/subpath.js": `module.exports = {}`,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      // require.resolve() should preserve the original specifier, not an absolute path
+      api.expectFile("/out.js").toContain('require.resolve("my-pkg/package.json")');
+      api.expectFile("/out.js").toContain('require.resolve("my-pkg")');
+      api.expectFile("/out.js").toContain('require.resolve("@scope/my-pkg/subpath")');
+      // Must not contain absolute paths from the build machine
+      api.expectFile("/out.js").not.toMatch(/require\.resolve\("\/[^"]*node_modules/);
+    },
+  });
   itBundled("default/InjectMissing", {
     files: {
       "/entry.js": ``,

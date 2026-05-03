@@ -1013,7 +1013,10 @@ pub fn normalizePathWindows(
     var path = if (T == u16) path_ else bun.strings.convertUTF8toUTF16InBuffer(wbuf, path_);
 
     if (std.fs.path.isAbsoluteWindowsWTF16(path)) {
-        if (path_.len >= 4) {
+        // `path_.len` guards the `path_[path_.len - 4 ..]` slice below; `path.len`
+        // guards `path[1]`/`path[3]`. For T == u8 these can differ when the input
+        // contains multi-byte UTF-8 (e.g. "\\\\é" is 4 bytes but 3 u16).
+        if (path_.len >= 4 and path.len >= 4) {
             if ((bun.strings.eqlComptimeT(T, path_[path_.len - "\\nul".len ..], "\\nul") or
                 bun.strings.eqlComptimeT(T, path_[path_.len - "\\NUL".len ..], "\\NUL")))
             {

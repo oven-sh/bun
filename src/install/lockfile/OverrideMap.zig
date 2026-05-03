@@ -13,8 +13,9 @@ pub const ScopedOverrideContext = struct {
         return @truncate(@as(u64, key.parent_name_hash) * 33 +% @as(u64, key.child_name_hash));
     }
 
-    pub fn eql(self: @This(), a: ScopedOverrideKey, b: ScopedOverrideKey) bool {
+    pub fn eql(self: @This(), a: ScopedOverrideKey, b: ScopedOverrideKey, b_index: usize) bool {
         _ = self;
+        _ = b_index;
         return a.parent_name_hash == b.parent_name_hash and a.child_name_hash == b.child_name_hash;
     }
 };

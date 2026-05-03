@@ -331,6 +331,7 @@ pub fn enqueueDependencyToRoot(
             &dependency,
             invalid_package_id,
             false,
+            null,
             assignRootResolution,
             failRootResolution,
         ) catch |err| {

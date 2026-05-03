@@ -494,6 +494,10 @@ pub const SendQueue = struct {
     }
     pub fn deinit(self: *@This()) void {
         log("SendQueue#deinit", .{});
+        // `self` is about to become invalid; ensure closeSocket/_socketClosed
+        // do not schedule an _onAfterIPCClosed task that would run on freed
+        // memory.
+        self.close_event_sent = true;
         // must go first
         self.closeSocket(.failure, .deinit);
 
@@ -548,6 +552,13 @@ pub const SendQueue = struct {
     }
     fn _socketClosed(this: *SendQueue) void {
         log("SendQueue#_socketClosed", .{});
+        // Idempotent: on POSIX, s.close() can synchronously invoke the
+        // usocket onClose handler (which calls this), and closeSocket() then
+        // calls this again on the next line. Without this guard we would
+        // enqueue two _onAfterIPCClosed tasks; the second would run after
+        // handleIPCClose has already torn down and nulled `ipc_data`, and
+        // would dereference freed/undefined SendQueue memory.
+        if (this.socket == .closed) return;
         if (Environment.isWindows) {
             if (this.windows.windows_write) |windows_write| {
                 windows_write.owner = null; // so _windowsOnWriteComplete doesn't try to continue writing
@@ -556,6 +567,10 @@ pub const SendQueue = struct {
         }
         this.keep_alive.disable();
         this.socket = .closed;
+        // Once the close event has fired (or we are in deinit()), the owner
+        // may tear down this SendQueue at any time. Do not enqueue a task
+        // pointing at `this`.
+        if (this.close_event_sent) return;
         this.getGlobalThis().bunVM().enqueueTask(jsc.ManagedTask.New(SendQueue, _onAfterIPCClosed).init(this));
     }
     fn _windowsClose(this: *SendQueue) void {
@@ -565,6 +580,7 @@ pub const SendQueue = struct {
         pipe.data = pipe;
         pipe.close(&_windowsOnClosed);
         this._socketClosed();
+        if (this.close_event_sent) return;
         this.getGlobalThis().bunVM().enqueueTask(jsc.ManagedTask.New(SendQueue, _onAfterIPCClosed).init(this));
     }
     fn _windowsOnClosed(windows: *uv.Pipe) callconv(.c) void {

@@ -815,8 +815,12 @@ pub fn finalize(this: *Subprocess) callconv(.c) void {
     MaxBuf.removeFromSubprocess(&this.stdout_maxbuf);
     MaxBuf.removeFromSubprocess(&this.stderr_maxbuf);
 
-    if (this.ipc_data != null) {
-        this.disconnectIPC(false);
+    if (this.ipc_data) |*ipc_data| {
+        // Reaches here only during VM shutdown (see assert above). Deinit the
+        // SendQueue directly rather than going through disconnectIPC, which
+        // would enqueue tasks that outlive this Subprocess.
+        ipc_data.deinit();
+        this.ipc_data = null;
     }
 
     this.flags.finalized = true;
@@ -915,6 +919,17 @@ pub fn handleIPCClose(this: *Subprocess) void {
     const this_jsvalue = this.this_value.tryGet() orelse .zero;
     defer this_jsvalue.ensureStillAlive();
     const globalThis = this.globalThis;
+
+    // Tear down the IPC SendQueue and clear `ipc_data` *before* recomputing
+    // pending activity. computeHasPendingActivity() keys on `ipc_data != null`
+    // to keep the JSRef Strong while IPC is live; if we leave it set, the
+    // JSSubprocess is never collected and every spawn with `ipc:` leaks the
+    // Subprocess, its Process, stdio pipes, and the SendQueue buffers.
+    if (this.ipc_data) |*ipc_data| {
+        ipc_data.deinit();
+    }
+    this.ipc_data = null;
+
     this.updateHasPendingActivity();
 
     if (this_jsvalue != .zero) {

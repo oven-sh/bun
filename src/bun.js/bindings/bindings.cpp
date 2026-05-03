@@ -3024,6 +3024,93 @@ JSC::EncodedJSValue JSC__JSValue__getDirectIndex(JSC::EncodedJSValue jsValue, JS
     return JSC::JSValue::encode(object->getDirectIndex(arg1, arg3));
 }
 
+// Returns the index of the next populated element in [start, end) for an
+// indexed JSObject, or `end` if every slot in the range is a hole. Used by
+// the console formatter to skip runs of holes in O(1) for `new Array(N)`
+// style sparse arrays.
+extern "C" uint32_t JSC__JSValue__findNextPopulatedIndex(JSC::EncodedJSValue jsValue,
+    uint32_t start, uint32_t end)
+{
+    if (start >= end)
+        return end;
+
+    JSC::JSValue value = JSC::JSValue::decode(jsValue);
+    if (!value.isObject())
+        return end;
+
+    JSC::JSObject* object = JSC::asObject(value);
+    const JSC::Butterfly* butterfly = object->butterfly();
+
+    switch (object->indexingType()) {
+    case JSC::ArrayClass:
+    case JSC::ArrayWithUndecided:
+        // No element storage at all — every index is a hole.
+        return end;
+
+    case JSC::ArrayWithInt32:
+    case JSC::ArrayWithContiguous:
+    case JSC::CopyOnWriteArrayWithInt32:
+    case JSC::CopyOnWriteArrayWithContiguous: {
+        uint32_t vectorLength = butterfly->vectorLength();
+        uint32_t limit = std::min(end, vectorLength);
+        auto data = butterfly->contiguous().data();
+        for (uint32_t i = start; i < limit; ++i) {
+            if (data[i])
+                return i;
+        }
+        return end;
+    }
+
+    case JSC::ArrayWithDouble:
+    case JSC::CopyOnWriteArrayWithDouble: {
+        // Holes and user values like `Number.NaN` are bit-identical in a
+        // double butterfly, so this helper can't safely disambiguate them
+        // from here. Anything inside the vector's populated range has to
+        // be resolved per-index by the caller via getDirectIndex (which
+        // is what the pre-fix code did), so return `start` immediately
+        // without scanning — scanning and returning `start` on
+        // exhaustion would be O(N²) in the caller's hole-skipping loop.
+        // We can still answer the O(1) case: any index past the vector
+        // length is definitely a hole.
+        uint32_t vectorLength = butterfly->vectorLength();
+        if (start >= vectorLength)
+            return end;
+        return start;
+    }
+
+    case JSC::ArrayWithArrayStorage:
+    case JSC::ArrayWithSlowPutArrayStorage: {
+        const JSC::ArrayStorage* storage = butterfly->arrayStorage();
+        // Fast path: vector is empty and there's no sparse map → every
+        // slot in the range is a hole. `new Array(N)` for very large N
+        // lands here, so this is the common case we care about.
+        if (storage->m_numValuesInVector == 0 && !storage->m_sparseMap)
+            return end;
+
+        // Otherwise, scan the dense vector first. Anything past the
+        // vector length may be in the sparse map, which we can't walk
+        // from here — return `start` (conservative) and let the caller
+        // fall back to per-index getDirectIndex.
+        if (storage->m_sparseMap)
+            return start;
+
+        uint32_t vectorLength = storage->vectorLength();
+        uint32_t limit = std::min(end, vectorLength);
+        for (uint32_t i = start; i < limit; ++i) {
+            if (storage->m_vector[i])
+                return i;
+        }
+        // All vector slots in range are holes; with no sparse map, the
+        // rest of the range is also guaranteed hole.
+        return end;
+    }
+
+    default:
+        // Typed arrays and anything else: let the caller fall back.
+        return start;
+    }
+}
+
 JSC::EncodedJSValue JSC__JSObject__getDirect(JSC::JSObject* arg0, JSC::JSGlobalObject* arg1,
     const ZigString* arg2)
 {

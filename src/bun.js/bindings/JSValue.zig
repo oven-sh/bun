@@ -67,6 +67,15 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__getDirectIndex(this, globalThis, i);
     }
 
+    extern fn JSC__JSValue__findNextPopulatedIndex(JSValue, u32, u32) u32;
+    /// For an indexed JSObject, returns the next index in `[start, end)` that
+    /// actually holds a value, or `end` if every slot in the range is a hole.
+    /// Inspects the butterfly directly, so `new Array(N)` style sparse arrays
+    /// are handled in O(1) instead of O(N).
+    pub fn findNextPopulatedIndex(this: JSValue, start: u32, end: u32) u32 {
+        return JSC__JSValue__findNextPopulatedIndex(this, start, end);
+    }
+
     pub fn isFalsey(this: JSValue) bool {
         return !this.toBoolean();
     }

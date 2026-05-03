@@ -32,7 +32,7 @@ async function runPoc(script: string): Promise<{ stdout: string; stderr: string;
   return { stdout, stderr, exitCode };
 }
 
-describe("Buffer.write with detach / resize via encoding toString", () => {
+describe.concurrent("Buffer.write with detach / resize via encoding toString", () => {
   test("write throws ERR_BUFFER_OUT_OF_BOUNDS(offset) when buffer is detached via encoding toString (crash repro)", async () => {
     const { stdout, stderr, exitCode } = await runPoc(`
       const ab = new ArrayBuffer(16);

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix } from "harness";
 
 test("pipe does the right thing", async () => {
@@ -162,126 +162,97 @@ test("stdin should not allow process to exit when not paused", async () => {
 // stayed inside a microtask chain and never yielded to the event loop.
 // `Bun__onPosixSignal` kept enqueuing into the signal ring, but
 // `tickConcurrentWithCount` never ran to drain it.
-test.skipIf(!isPosix)("SIGTERM is delivered with flowing stdin on /dev/zero", async () => {
-  const proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-      const fs = require("fs");
-      process.on("SIGTERM", () => {
-        fs.writeSync(2, "SIGTERM\\n");
-        process.exit(42);
-      });
-      process.stdin.on("data", () => {});
-      fs.writeSync(1, "READY\\n");
-      `,
-    ],
-    stdin: Bun.file("/dev/zero"),
-    stdout: "pipe",
-    stderr: "pipe",
-    env: bunEnv,
-  });
-
-  // Wait for the child to finish registering the signal handler + data
-  // listener. Sending SIGTERM before the handler is installed hits the
-  // default disposition (terminate) and the handler never runs.
-  const readyPromise = (async () => {
-    const reader = proc.stdout.getReader();
-    let seen = "";
-    while (!seen.includes("READY")) {
+async function waitForLine(proc: Bun.Subprocess, needle: string): Promise<string> {
+  const reader = proc.stdout.getReader();
+  let seen = "";
+  try {
+    while (!seen.includes(needle)) {
       const { value, done } = await reader.read();
-      if (done) return false;
+      if (done) break;
       seen += new TextDecoder().decode(value);
     }
+  } finally {
     reader.releaseLock();
-    return true;
-  })();
-  expect(await readyPromise).toBe(true);
+  }
+  return seen;
+}
 
-  proc.kill("SIGTERM");
-  const exitCode = await proc.exited;
-  expect(exitCode).toBe(42);
-  expect(await proc.stderr.text()).toContain("SIGTERM");
-});
+// Parameterized across SIGTERM/SIGINT/SIGUSR1/SIGUSR2 — a break that only
+// affected one signal type would sneak through single-signal coverage.
+describe.skipIf(!isPosix)("signals with flowing stdin on /dev/zero", () => {
+  const cases = [
+    { signal: "SIGTERM", exit: 42 },
+    { signal: "SIGINT", exit: 43 },
+    { signal: "SIGUSR1", exit: 44 },
+    { signal: "SIGUSR2", exit: 45 },
+  ] as const;
 
-test.skipIf(!isPosix)("SIGINT is delivered with flowing stdin on /dev/zero", async () => {
-  const proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-      const fs = require("fs");
-      process.on("SIGINT", () => {
-        fs.writeSync(2, "SIGINT\\n");
-        process.exit(43);
-      });
-      process.stdin.on("data", () => {});
-      fs.writeSync(1, "READY\\n");
-      `,
-    ],
-    stdin: Bun.file("/dev/zero"),
-    stdout: "pipe",
-    stderr: "pipe",
-    env: bunEnv,
+  test.each(cases)("$signal handler fires", async ({ signal, exit }) => {
+    const proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const fs = require("fs");
+        process.on(${JSON.stringify(signal)}, () => {
+          fs.writeSync(2, ${JSON.stringify(signal)} + "\\n");
+          process.exit(${exit});
+        });
+        process.stdin.on("data", () => {});
+        fs.writeSync(1, "READY\\n");
+        `,
+      ],
+      stdin: Bun.file("/dev/zero"),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    // Wait for the child to finish registering the signal handler + data
+    // listener. Sending the signal before the handler is installed would hit
+    // the default disposition (terminate) and the handler would never run.
+    expect(await waitForLine(proc, "READY")).toContain("READY");
+
+    proc.kill(signal);
+    const exitCode = await proc.exited;
+    expect(exitCode).toBe(exit);
+    expect(await proc.stderr.text()).toContain(signal);
   });
 
-  const reader = proc.stdout.getReader();
-  let seen = "";
-  while (!seen.includes("READY")) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    seen += new TextDecoder().decode(value);
-  }
-  reader.releaseLock();
-  expect(seen).toContain("READY");
+  // Timer callbacks share the same starvation path — setInterval stalled
+  // whenever tick() never returned.
+  test("setInterval fires", async () => {
+    const proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const fs = require("fs");
+        let ticks = 0;
+        process.on("SIGTERM", () => {
+          fs.writeSync(1, "ticks=" + ticks + "\\n");
+          process.exit(46);
+        });
+        setInterval(() => {
+          ticks++;
+          if (ticks === 3) fs.writeSync(1, "TICKED\\n");
+        }, 10);
+        process.stdin.on("data", () => {});
+        fs.writeSync(1, "READY\\n");
+        `,
+      ],
+      stdin: Bun.file("/dev/zero"),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
 
-  proc.kill("SIGINT");
-  const exitCode = await proc.exited;
-  expect(exitCode).toBe(43);
-  expect(await proc.stderr.text()).toContain("SIGINT");
-});
+    // Wait for the timer to tick at least 3 times — proves setInterval is
+    // firing despite the flowing stdin read loop.
+    expect(await waitForLine(proc, "TICKED")).toContain("TICKED");
 
-// Timer callbacks must fire too: the same read-loop stall froze setInterval.
-test.skipIf(!isPosix)("setInterval fires with flowing stdin on /dev/zero", async () => {
-  const proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-      const fs = require("fs");
-      let ticks = 0;
-      process.on("SIGTERM", () => {
-        fs.writeSync(1, "ticks=" + ticks + "\\n");
-        process.exit(44);
-      });
-      setInterval(() => {
-        ticks++;
-        if (ticks === 3) fs.writeSync(1, "TICKED\\n");
-      }, 10);
-      process.stdin.on("data", () => {});
-      fs.writeSync(1, "READY\\n");
-      `,
-    ],
-    stdin: Bun.file("/dev/zero"),
-    stdout: "pipe",
-    stderr: "pipe",
-    env: bunEnv,
+    proc.kill("SIGTERM");
+    const exitCode = await proc.exited;
+    expect(exitCode).toBe(46);
   });
-
-  // Wait for the timer to tick at least 3 times — proves setInterval is
-  // firing despite the flowing stdin read loop.
-  const reader = proc.stdout.getReader();
-  let seen = "";
-  while (!seen.includes("TICKED")) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    seen += new TextDecoder().decode(value);
-  }
-  reader.releaseLock();
-  expect(seen).toContain("TICKED");
-
-  proc.kill("SIGTERM");
-  const exitCode = await proc.exited;
-  expect(exitCode).toBe(44);
 });

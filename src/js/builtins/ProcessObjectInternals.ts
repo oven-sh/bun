@@ -274,7 +274,15 @@ export function getStdinStream(
         // unref()d because the underlying `source` already holds a ref
         // while flowing; the immediate is just a tick-yield mechanism and
         // must not keep the process alive on its own.
-        setImmediate(internalRead, this).unref();
+        //
+        // The guard re-checks ownership: `pause`/`close` schedule disown()
+        // via process.nextTick, which drains before the immediate, so the
+        // reader may already be released by the time this fires.
+        const self = this;
+        setImmediate(() => {
+          if (!reader || shouldDisown || stream_destroyed) return;
+          internalRead(self);
+        }).unref();
       } else {
         internalRead(this);
       }

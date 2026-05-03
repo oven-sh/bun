@@ -255,14 +255,18 @@ FFI_Callback_threadsafe_call(FFICallbackFunctionWrapper& wrapper, size_t argCoun
     WebCore::ScriptExecutionContext::postTaskTo(globalObject->scriptExecutionContext()->identifier(), [argsVec = WTF::move(argsVec), argTypesVec = WTF::move(argTypesVec), wrapper](WebCore::ScriptExecutionContext& ctx) mutable {
         auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(ctx.jsGlobalObject());
         auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         JSC::MarkedArgumentBuffer arguments;
         auto* function = wrapper.m_function.get();
-        for (size_t i = 0; i < argsVec.size(); ++i)
-            arguments.appendWithCrashOnOverflow(decodeThreadsafeCallbackArgument(globalObject, argsVec[i], argTypesVec[i]));
+        for (size_t i = 0; i < argsVec.size(); ++i) {
+            // JSBigInt::createFrom can throw (e.g. OOM).
+            JSC::JSValue arg = decodeThreadsafeCallbackArgument(globalObject, argsVec[i], argTypesVec[i]);
+            RETURN_IF_EXCEPTION(scope, void());
+            arguments.appendWithCrashOnOverflow(arg);
+        }
         WTF::NakedPtr<JSC::Exception> exception;
         JSC::profiledCall(globalObject, JSC::ProfilingReason::API, function, JSC::getCallData(function), JSC::jsUndefined(), arguments, exception);
         if (exception) [[unlikely]] {
-            auto scope = DECLARE_THROW_SCOPE(vm);
             scope.throwException(globalObject, exception);
             return;
         }

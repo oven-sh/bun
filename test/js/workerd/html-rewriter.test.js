@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { gcTick, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, gcTick, tls, tmpdirSync } from "harness";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
 var setTimeoutAsync = (fn, delay) => {
@@ -137,6 +137,56 @@ describe("HTMLRewriter", () => {
       expect(await fetch(url).then(res => res.text())).toBe(`<div>${content}</div>`);
       await gcTick();
     }
+  });
+
+  it("transform(response) does not crash when the fetch signal was aborted before body was accessed", async () => {
+    // When a fetch Response body is still .Locked (headers received, body pending)
+    // and its AbortSignal has already fired, HTMLRewriter.transform calls
+    // toReadableStream which drains via onStartStreaming, gets `.aborted`, and
+    // replaces the body value with .Null. Previously bufferLockedBodyValue would
+    // then recurse into itself reading stale .Locked fields forever.
+    const src = `
+      const { promise: headersSent, resolve: resolveHeadersSent } = Promise.withResolvers();
+      const server = Bun.serve({
+        port: 0,
+        idleTimeout: 0,
+        async fetch() {
+          return new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(controller) {
+                controller.write("<");
+                await controller.flush();
+                resolveHeadersSent();
+                await new Promise(() => {});
+              },
+            }),
+            { headers: { "content-type": "text/html" } },
+          );
+        },
+      });
+      const controller = new AbortController();
+      const response = await fetch("http://localhost:" + server.port + "/", { signal: controller.signal });
+      await headersSent;
+      controller.abort();
+      try {
+        const out = new HTMLRewriter().transform(response);
+        await out.text().catch(() => {});
+      } catch {}
+      await server.stop(true);
+      console.log("OK");
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
   });
 
   for (let input of [new Response("<div>hello</div>"), "<div>hello</div>"]) {

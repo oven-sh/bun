@@ -1368,6 +1368,10 @@ pub fn VisitStmt(
                 const old_fold_numeric_constants_unconditionally = p.fold_numeric_constants_unconditionally;
                 p.should_fold_typescript_constant_expressions = true;
                 p.fold_numeric_constants_unconditionally = true;
+                defer {
+                    p.should_fold_typescript_constant_expressions = old_should_fold_typescript_constant_expressions;
+                    p.fold_numeric_constants_unconditionally = old_fold_numeric_constants_unconditionally;
+                }
 
                 // Create an assignment for each enum value
                 for (data.values) |*value| {
@@ -1490,9 +1494,6 @@ pub fn VisitStmt(
                         p.recordUsage(data.arg);
                     }
                 }
-
-                p.should_fold_typescript_constant_expressions = old_should_fold_typescript_constant_expressions;
-                p.fold_numeric_constants_unconditionally = old_fold_numeric_constants_unconditionally;
 
                 var value_stmts = ListManaged(Stmt).initCapacity(allocator, value_exprs.items.len) catch unreachable;
                 // Generate statements from expressions

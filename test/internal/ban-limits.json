@@ -24,7 +24,7 @@
   "allocator.ptr ==": 0,
   "global.hasException": 29,
   "globalObject.hasException": 46,
-  "globalThis.hasException": 126,
+  "globalThis.hasException": 125,
   "std.StringArrayHashMap(": 1,
   "std.StringArrayHashMapUnmanaged(": 11,
   "std.StringHashMap(": 0,

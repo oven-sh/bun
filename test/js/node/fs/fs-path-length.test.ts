@@ -90,9 +90,12 @@ describe.if(isWindows)("path length validation in normalizePathWindows", () => {
 
   // Absolute drive-letter paths are normalized into `buf` with an NT object
   // prefix (\??\ or \??\UNC\) and NUL terminator added by
-  // normalizeStringGenericTZ, which does not bounds-check.
+  // normalizeStringGenericTZ, which does not bounds-check. node:fs prepends
+  // a \\?\ long-path prefix before reaching normalizePathWindows, so size
+  // the input so that prefixed length (+4) still fits the 32767-u16
+  // conversion buffer and the headroom guard is what rejects it.
   it("rejects overly long absolute drive-letter paths", () => {
-    const absLong = "C:\\" + Buffer.alloc(32762, "a").toString();
+    const absLong = "C:\\" + Buffer.alloc(32757, "a").toString();
     expect(() => fs.readdirSync(absLong)).toThrow("ENAMETOOLONG");
   });
 

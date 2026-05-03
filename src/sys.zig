@@ -1004,9 +1004,10 @@ pub fn normalizePathWindows(
     defer if (T != u16) bun.w_path_buffer_pool.put(wbuf);
     // convertUTF8toUTF16InBuffer forwards only `output.ptr` to simdutf, which
     // performs no output bounds checking. UTF-16 output length is always <=
-    // UTF-8 input byte length, so bounding `path_.len` by `wbuf.len` is
-    // sufficient to keep the conversion in-bounds.
-    if (T != u16 and path_.len > wbuf.len) {
+    // UTF-8 input byte length, so `path_.len` is a cheap upper bound; when it
+    // exceeds `wbuf.len`, compute the exact post-conversion length to avoid
+    // over-rejecting multi-byte inputs whose UTF-16 representation fits.
+    if (T != u16 and path_.len > wbuf.len and bun.simdutf.length.utf16.from.utf8(path_) > wbuf.len) {
         return name_too_long;
     }
     var path = if (T == u16) path_ else bun.strings.convertUTF8toUTF16InBuffer(wbuf, path_);

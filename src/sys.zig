@@ -1047,7 +1047,10 @@ pub fn normalizePathWindows(
             }
         }
 
-        if (path.len > buf.len -| (if (opts.add_nt_prefix) nt_prefix_headroom else 1)) {
+        // With .add_nt_prefix = false, normalizeStringGenericTZ can still grow
+        // the input by one u16 (it appends a trailing '\' after a bare UNC
+        // volume name) plus the NUL terminator.
+        if (path.len > buf.len -| (if (opts.add_nt_prefix) nt_prefix_headroom else 2)) {
             return name_too_long;
         }
         const norm = bun.path.normalizeStringGenericTZ(u16, path, buf, .{ .add_nt_prefix = opts.add_nt_prefix, .zero_terminate = true });

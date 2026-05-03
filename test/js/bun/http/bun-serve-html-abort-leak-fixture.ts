@@ -4,18 +4,49 @@
 // fires HTTP requests at it, then closes the sockets while the route is
 // still `.building` so HTMLBundle.PendingResponse.onAborted runs.
 //
-// Run under BUN_DEBUG_alloc=1; the parent test counts
-// `[alloc] new(PendingResponse)` vs `[alloc] destroy(PendingResponse)`.
+// Run with BUN_DEBUG_alloc=1 and BUN_DEBUG=<log file>. The fixture polls that
+// file for `[alloc] new(PendingResponse)` / `[alloc] destroy(PendingResponse)`
+// lines so every ordering constraint is a real condition wait, not a
+// tick-count sleep. The parent test reads the same file after exit to do the
+// final balance check.
 //
 // Invoked with cwd = a temp dir containing index.html, app.js, plugin.js
 // and bunfig.toml (`[serve.static] plugins = ["./plugin.js"]`).
 
+import { readFileSync } from "node:fs";
 import { connect } from "node:net";
 import path from "node:path";
 
 declare global {
   var __gateStarted: PromiseWithResolvers<void> | undefined;
   var __gateRelease: PromiseWithResolvers<void> | undefined;
+}
+
+const allocLog = process.env.ALLOC_LOG;
+if (!allocLog) throw new Error("ALLOC_LOG env var is required");
+
+function countAlloc(verb: "new" | "destroy"): number {
+  let text: string;
+  try {
+    text = readFileSync(allocLog!, "utf8");
+  } catch {
+    return 0;
+  }
+  let n = 0;
+  const needle = `[alloc] ${verb}(PendingResponse)`;
+  for (let i = text.indexOf(needle); i !== -1; i = text.indexOf(needle, i + needle.length)) n++;
+  return n;
+}
+
+// Poll `cond` once per event-loop turn. Falls through to a hard error after
+// `deadline` iterations so a regressed build fails fast with a clear message
+// instead of hanging until the parent test times out.
+async function until(cond: () => boolean, what: string, deadline = 2_000) {
+  for (let i = 0; i < deadline; i++) {
+    if (cond()) return;
+    await new Promise(r => setImmediate(r));
+  }
+  throw new Error(`gave up waiting for: ${what}`);
 }
 
 // plugin.js awaits __gateRelease.promise and resolves __gateStarted when
@@ -36,13 +67,6 @@ const server = Bun.serve({
   },
 });
 
-// Yield to the event loop a fixed number of times. Client and server share
-// the same loop, so after a few ticks any locally-written socket data has
-// been delivered to uWS and processed.
-async function spin(ticks = 8) {
-  for (let i = 0; i < ticks; i++) await new Promise(r => setImmediate(r));
-}
-
 // Fire the first request to kick the route from `pending` → `building`
 // (triggers plugin load; plugin.setup() blocks on __gateRelease).
 const first = fetch(`http://127.0.0.1:${server.port}/`)
@@ -55,25 +79,33 @@ await globalThis.__gateStarted!.promise;
 
 // Open raw TCP connections, send an HTTP request on each (queued as a
 // PendingResponse), then close the socket before the build completes.
+// Connect in parallel — debug+ASAN node:net is slow per-socket.
 const ABORTED = 5;
-const sockets: import("node:net").Socket[] = [];
-for (let i = 0; i < ABORTED; i++) {
-  const sock = connect({ port: server.port, host: "127.0.0.1" });
-  await new Promise<void>((resolve, reject) => {
-    sock.once("connect", () => resolve());
-    sock.once("error", reject);
-  });
-  sock.write(`GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n`);
-  sockets.push(sock);
-}
+const sockets: import("node:net").Socket[] = await Promise.all(
+  Array.from({ length: ABORTED }, () => {
+    const sock = connect({ port: server.port, host: "127.0.0.1" });
+    return new Promise<import("node:net").Socket>((resolve, reject) => {
+      sock.once("connect", () => {
+        sock.write(`GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n`);
+        resolve(sock);
+      });
+      sock.once("error", reject);
+    });
+  }),
+);
 
-// Let the server read + route every request before we abort.
-await spin();
+// Wait until every request has been routed and queued (first fetch + the
+// ABORTED raw sockets). Without this the destroy() below could race the
+// server reading the request line.
+await until(() => countAlloc("new") >= ABORTED + 1, `${ABORTED + 1}x new(PendingResponse)`);
 
 for (const sock of sockets) sock.destroy();
 
-// Let onAborted fire for each closed socket.
-await spin();
+// Wait until onAborted has fired (and, with the fix, freed the allocation)
+// for every closed socket *before* releasing the build. If we released the
+// gate first, resumePendingResponses() would clearAborted()+deinit() the
+// still-queued entries itself and the test would pass even without the fix.
+await until(() => countAlloc("destroy") >= ABORTED, `${ABORTED}x destroy(PendingResponse) via onAborted`);
 
 // Release the build so the first (non-aborted) request completes and
 // resumePendingResponses() runs on whatever is left in the list.
@@ -81,7 +113,4 @@ globalThis.__gateRelease!.resolve();
 await first;
 
 await server.stop(true);
-
-// Give the scoped logger a chance to flush.
-await spin(2);
 process.exit(0);

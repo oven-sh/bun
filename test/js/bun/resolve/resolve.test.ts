@@ -495,14 +495,21 @@ it.skipIf(isWindows)("browser map resolution handles relative paths longer than 
   // Linux we drop to `nobody` via runuser (and chown the temp dir so the
   // fixture can chmod it back). Otherwise we run the fixture directly.
   const isRoot = !isWindows && process.getuid?.() === 0;
-  const hasNobody = (() => {
+  const nobody = (() => {
     try {
-      return /^nobody:/m.test(readFileSync("/etc/passwd", "utf8"));
+      // /etc/passwd format: name:x:uid:gid:gecos:home:shell
+      const line = readFileSync("/etc/passwd", "utf8")
+        .split("\n")
+        .find(l => l.startsWith("nobody:"));
+      if (!line) return null;
+      const [, , uid, gid] = line.split(":");
+      if (!Number.isInteger(+uid) || !Number.isInteger(+gid)) return null;
+      return { uid: +uid, gid: +gid };
     } catch {
-      return false;
+      return null;
     }
   })();
-  const canUseRunuser = isLinux && isRoot && !!Bun.which("runuser") && hasNobody;
+  const canUseRunuser = isLinux && isRoot && !!Bun.which("runuser") && nobody !== null;
   const canTriggerEACCES = !isWindows && (!isRoot || canUseRunuser);
 
   it.skipIf(!canTriggerEACCES)(
@@ -546,7 +553,7 @@ it.skipIf(isWindows)("browser map resolution handles relative paths longer than 
         // open up perms so `nobody` can traverse/read everything it needs.
         for (const p of [root, join(root, "fixture.js"), join(root, "bad"), join(root, "bad", "index.js")]) {
           chmodSync(p, 0o777);
-          chownSync(p, 65534, 65534);
+          chownSync(p, nobody!.uid, nobody!.gid);
         }
         cmd = ["runuser", "-u", "nobody", "--", bunExe(), join(root, "fixture.js"), root];
       } else {
@@ -573,6 +580,5 @@ it.skipIf(isWindows)("browser map resolution handles relative paths longer than 
         } catch {}
       }
     },
-    30_000,
   );
 }

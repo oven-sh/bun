@@ -26,6 +26,7 @@
 #include "root.h"
 #include "JSFFIFunction.h"
 
+#include <JavaScriptCore/JSBigInt.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/VM.h>
 #include "ZigGlobalObject.h"
@@ -205,24 +206,64 @@ FFI_Callback_call(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::Enc
     return invokeFFICallback(wrapper.globalObject.get(), wrapper.m_function.get(), arguments);
 }
 
+// Must match FFI.ABIType in src/bun.js/api/ffi.zig.
+enum class FFIABIType : uint8_t {
+    int64_t_ = 7,
+    uint64_t_ = 8,
+    i64_fast = 15,
+    u64_fast = 16,
+};
+
+// For threadsafe callbacks, 64-bit integer arguments are passed through as
+// raw bits because the TCC-generated trampoline may run on an arbitrary OS
+// thread and must not heap-allocate a JSBigInt there. Convert them here,
+// which always runs on the JS thread.
+static inline JSC::JSValue decodeThreadsafeCallbackArgument(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue raw, uint8_t abiType)
+{
+    switch (static_cast<FFIABIType>(abiType)) {
+    case FFIABIType::int64_t_:
+        return JSC::JSBigInt::createFrom(globalObject, static_cast<int64_t>(raw));
+    case FFIABIType::uint64_t_:
+        return JSC::JSBigInt::createFrom(globalObject, static_cast<uint64_t>(raw));
+    case FFIABIType::i64_fast: {
+        int64_t val = static_cast<int64_t>(raw);
+        if (val >= JSC::minSafeInteger() && val <= JSC::maxSafeInteger())
+            return JSC::jsNumber(val);
+        return JSC::JSBigInt::createFrom(globalObject, val);
+    }
+    case FFIABIType::u64_fast: {
+        uint64_t val = static_cast<uint64_t>(raw);
+        if (val <= static_cast<uint64_t>(JSC::maxSafeInteger()))
+            return JSC::jsNumber(static_cast<double>(val));
+        return JSC::JSBigInt::createFrom(globalObject, val);
+    }
+    default:
+        return JSC::JSValue::decode(raw);
+    }
+}
+
 extern "C" void
-FFI_Callback_threadsafe_call(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
+FFI_Callback_threadsafe_call(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args, const uint8_t* argTypes)
 {
     // Runs on a foreign thread: do not touch the wrapper's JSC::Strong members here.
     WTF::Vector<JSC::EncodedJSValue, 8> argsVec;
-    for (size_t i = 0; i < argCount; ++i)
+    WTF::Vector<uint8_t, 8> argTypesVec;
+    for (size_t i = 0; i < argCount; ++i) {
         argsVec.append(args[i]);
+        argTypesVec.append(argTypes[i]);
+    }
 
     // Ref only once the context is found live (inside the map lock) and release via
     // adoptRef in the task, so the last deref — destroying two JSC::Strong members —
     // can only happen on the JS thread. On a dead/terminating context nothing is destroyed here.
-    WebCore::ScriptExecutionContext::postTaskTo(wrapper.m_contextId, [&wrapper] { wrapper.ref(); }, [argsVec = WTF::move(argsVec), wrapper = &wrapper](WebCore::ScriptExecutionContext& ctx) mutable {
+    WebCore::ScriptExecutionContext::postTaskTo(wrapper.m_contextId, [&wrapper] { wrapper.ref(); }, [argsVec = WTF::move(argsVec), argTypesVec = WTF::move(argTypesVec), wrapper = &wrapper](WebCore::ScriptExecutionContext& ctx) mutable {
         auto protectedWrapper = adoptRef(*wrapper);
         auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(ctx.jsGlobalObject());
         JSC::MarkedArgumentBuffer arguments;
         for (size_t i = 0; i < argsVec.size(); ++i)
-            arguments.appendWithCrashOnOverflow(JSC::JSValue::decode(argsVec[i]));
-        invokeFFICallback(globalObject, protectedWrapper->m_function.get(), arguments); });
+            arguments.appendWithCrashOnOverflow(decodeThreadsafeCallbackArgument(globalObject, argsVec[i], argTypesVec[i]));
+        invokeFFICallback(globalObject, protectedWrapper->m_function.get(), arguments);
+    });
 }
 
 extern "C" JSC::EncodedJSValue

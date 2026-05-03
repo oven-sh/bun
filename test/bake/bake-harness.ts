@@ -531,21 +531,54 @@ export class Dev extends EventEmitter {
     } = {},
   ) {
     await maybeWaitInteractive("open client " + url);
-    const client = new Client(new URL(url, this.baseUrl).href, {
-      storeHotChunks: options.storeHotChunks,
-      hmr: this.nodeEnv === "development",
-      expectErrors: !!options.errors,
-      allowUnlimitedReloads: options.allowUnlimitedReloads,
-    });
-    const onPanic = () => client.output.emit("panic");
-    this.output.on("panic", onPanic);
-    if (this.nodeEnv === "development") {
-      try {
-        await client.output.waitForLine(hmrClientInitRegex);
-      } catch (e) {
-        client[Symbol.asyncDispose]();
-        throw e;
+    const href = new URL(url, this.baseUrl).href;
+    const spawnAndWait = async () => {
+      const client = new Client(href, {
+        storeHotChunks: options.storeHotChunks,
+        hmr: this.nodeEnv === "development",
+        expectErrors: !!options.errors,
+        allowUnlimitedReloads: options.allowUnlimitedReloads,
+      });
+      const onPanic = () => client.output.emit("panic");
+      this.output.on("panic", onPanic);
+      if (this.nodeEnv === "development") {
+        try {
+          await client.output.waitForLine(hmrClientInitRegex);
+        } catch (e) {
+          this.output.off("panic", onPanic);
+          try {
+            await client[Symbol.asyncDispose]();
+          } catch {}
+          throw e;
+        }
       }
+      return { client, onPanic };
+    };
+
+    // On Windows CI in particular, the Node client subprocess occasionally
+    // dies during spawn/happy-dom-import before producing any output. This
+    // is transient (passes on retry), so retry the subprocess once here
+    // instead of bubbling it up as a test failure. A genuine bundle or
+    // runtime error reproduces on the retry and fails the test normally.
+    let client: Client;
+    let onPanic: () => void;
+    let lastError: unknown;
+    let attempt = 0;
+    while (true) {
+      try {
+        ({ client, onPanic } = await spawnAndWait());
+        break;
+      } catch (e) {
+        lastError = e;
+        attempt++;
+        if (this.panicked || attempt > 2) throw lastError;
+        console.warn(
+          `\x1b[33m[bake-harness] client subprocess failed to connect (attempt ${attempt}): ${(e as Error)?.message}. Retrying.\x1b[0m`,
+        );
+      }
+    }
+
+    if (this.nodeEnv === "development") {
       await client.expectErrorOverlay(options.errors ?? []);
     }
     this.connectedClients.add(client);
@@ -1659,11 +1692,22 @@ class OutputLineStream extends EventEmitter {
       };
       const onClose = () => {
         reset();
-        if (exitCodeMapStrings[this.exitCode]) {
-          reject(new Error(exitCodeMapStrings[this.exitCode]));
-        } else {
-          reject(new Error("Process exited before line " + JSON.stringify(regex.toString()) + " was found"));
-        }
+        // The stdout/stderr readers often see EOF a tick before
+        // `proc.exited` resolves and writes `this.exitCode`, so defer
+        // the read to get the real code instead of `null`.
+        queueMicrotask(() => {
+          if (exitCodeMapStrings[this.exitCode]) {
+            reject(new Error(exitCodeMapStrings[this.exitCode]));
+          } else {
+            const tail = this.lines.slice(-10).join("\n");
+            reject(
+              new Error(
+                `Process exited (code=${this.exitCode}) before line ${JSON.stringify(regex.toString())} was found.` +
+                  (tail ? ` Last output:\n${tail}` : " No output."),
+              ),
+            );
+          }
+        });
       };
       let panicked = false;
       this.on("line", onLine);

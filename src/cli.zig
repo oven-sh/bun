@@ -459,6 +459,7 @@ pub const Command = struct {
         parallel: bool = false,
         sequential: bool = false,
         no_exit_on_error: bool = false,
+        concurrency: ?usize = null,
 
         preloads: []const string = &.{},
         has_loaded_global_config: bool = false,

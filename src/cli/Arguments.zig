@@ -139,6 +139,7 @@ pub const auto_or_run_params = [_]ParamType{
     clap.parseParam("--parallel                        Run multiple scripts concurrently with Foreman-style output") catch unreachable,
     clap.parseParam("--sequential                      Run multiple scripts sequentially with Foreman-style output") catch unreachable,
     clap.parseParam("--no-exit-on-error                Continue running other scripts when one fails (with --parallel/--sequential)") catch unreachable,
+    clap.parseParam("--concurrency <NUMBER>            Maximum number of scripts to run concurrently with --filter, --parallel, or --sequential (default: unlimited)") catch unreachable,
 };
 
 pub const auto_only_params = [_]ParamType{
@@ -483,6 +484,20 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.parallel = args.flag("--parallel");
         ctx.sequential = args.flag("--sequential");
         ctx.no_exit_on_error = args.flag("--no-exit-on-error");
+
+        if (args.option("--concurrency")) |concurrency| {
+            if (concurrency.len > 0) {
+                const value = std.fmt.parseInt(usize, concurrency, 10) catch {
+                    Output.prettyErrorln("<r><red>error<r>: Invalid concurrency: \"{s}\"", .{concurrency});
+                    Global.exit(1);
+                };
+                if (value == 0) {
+                    Output.prettyErrorln("<r><red>error<r>: --concurrency must be at least 1", .{});
+                    Global.exit(1);
+                }
+                ctx.concurrency = value;
+            }
+        }
 
         if (args.option("--elide-lines")) |elide_lines| {
             if (elide_lines.len > 0) {

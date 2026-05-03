@@ -113,6 +113,12 @@ pub const caching_sha2_password = struct {
             if (this.nonce.len == 0) {
                 return error.MissingAuthData;
             }
+            // `&this.public_key[0]` below would index past a zero-length
+            // slice if the server answered the public-key request with an
+            // empty payload.
+            if (this.public_key.len == 0) {
+                return error.InvalidPublicKey;
+            }
             // 1024 is overkill but lets cover all cases
             var password_buf: [1024]u8 = undefined;
             var needs_to_free_password = false;

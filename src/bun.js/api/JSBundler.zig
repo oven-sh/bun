@@ -949,23 +949,31 @@ pub const JSBundler = struct {
                 var loader_values = try allocator.alloc(api.Loader, loader_iter.len);
                 errdefer allocator.free(loader_values);
 
+                // `loader_iter.i` is the property position, not a dense index of yielded
+                // entries. With `skip_empty_name = true` (or a skipped property getter),
+                // writing at `loader_iter.i` would leave earlier slots uninitialized and
+                // later freed as garbage. Track a dense counter instead.
+                var written: usize = 0;
+                errdefer for (loader_names[0..written]) |name| bun.default_allocator.free(name);
+
                 while (try loader_iter.next()) |prop| {
                     if (!prop.hasPrefixComptime(".") or prop.length() < 2) {
                         return globalThis.throwInvalidArguments("loader property names must be file extensions, such as '.txt'", .{});
                     }
 
-                    loader_values[loader_iter.i] = try loader_iter.value.toEnumFromMap(
+                    loader_values[written] = try loader_iter.value.toEnumFromMap(
                         globalThis,
                         "loader",
                         api.Loader,
                         options.Loader.api_names,
                     );
-                    loader_names[loader_iter.i] = try prop.toOwnedSlice(bun.default_allocator);
+                    loader_names[written] = try prop.toOwnedSlice(bun.default_allocator);
+                    written += 1;
                 }
 
                 this.loaders = api.LoaderMap{
-                    .extensions = loader_names,
-                    .loaders = loader_values,
+                    .extensions = loader_names[0..written],
+                    .loaders = loader_values[0..written],
                 };
             }
 

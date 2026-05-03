@@ -734,7 +734,7 @@ pub fn deinit(dev: *DevServer) void {
         .testing_batch_events = switch (dev.testing_batch_events) {
             .disabled => {},
             .enabled => |*batch| {
-                batch.entry_points.deinit(alloc);
+                batch.deinit(alloc);
             },
             .enable_after_bundle => {},
         },
@@ -4130,7 +4130,18 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
                 // INotifyWatcher stores sub paths into `changed_files`
                 // the other platforms do not appear to write anything into `changed_files` ever.
                 if (Environment.isLinux) {
-                    ev.appendDir(dev.allocator(), file_path, if (event.name_len > 0) changed_files[event.name_off] else null);
+                    // A merged WatchEvent may carry multiple sub-path names
+                    // (e.g. CREATE a.tmp + MOVED_TO a.ts in one coalesced
+                    // batch). Forward every name; indexing only the first
+                    // would drop the rename target and leave it un-watched.
+                    const names = event.names(changed_files);
+                    if (names.len > 0) {
+                        for (names) |maybe_sub_path| {
+                            ev.appendDir(dev.allocator(), file_path, maybe_sub_path);
+                        }
+                    } else {
+                        ev.appendDir(dev.allocator(), file_path, null);
+                    }
                 } else {
                     ev.appendDir(dev.allocator(), file_path, null);
                 }
@@ -4459,15 +4470,34 @@ pub fn readString32(reader: anytype, alloc: Allocator) ![]const u8 {
 }
 
 const TestingBatch = struct {
+    /// Keys are owned by this struct. They must be duped on insert because
+    /// the incoming keys are borrowed slices into `HotReloadEvent.extra_files`
+    /// (via `processFileList`), which is cleared and may be reallocated before
+    /// the batch is consumed by `startAsyncBundle`.
     entry_points: EntryPointList,
 
     pub const empty: @This() = .{ .entry_points = .empty };
 
     pub fn append(self: *@This(), dev: *DevServer, entry_points: EntryPointList) !void {
         assert(entry_points.set.count() > 0);
+        const alloc = dev.allocator();
         for (entry_points.set.keys(), entry_points.set.values()) |k, v| {
-            try self.entry_points.append(dev.allocator(), k, v);
+            const gop = try self.entry_points.set.getOrPut(alloc, k);
+            if (gop.found_existing) {
+                const T = @typeInfo(EntryPointList.Flags).@"struct".backing_integer.?;
+                gop.value_ptr.* = @bitCast(@as(T, @bitCast(gop.value_ptr.*)) | @as(T, @bitCast(v)));
+            } else {
+                gop.key_ptr.* = try alloc.dupe(u8, k);
+                gop.value_ptr.* = v;
+            }
         }
+    }
+
+    pub fn deinit(self: *@This(), alloc: Allocator) void {
+        for (self.entry_points.set.keys()) |k| {
+            alloc.free(k);
+        }
+        self.entry_points.deinit(alloc);
     }
 };
 

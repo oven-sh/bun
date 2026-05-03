@@ -1020,7 +1020,7 @@ export const stripFlags: Flag[] = [
   {
     // musl: no eh_frame handling differences, but CMake gates on NOT musl so we do too.
     //
-    // Gated on LTO to match -Wl,--no-eh-frame-hdr in linkFlags above. GNU
+    // Gated on LTO to match -Wl,--no-eh-frame-hdr in linkerFlags above. GNU
     // strip does not rewrite the program header table, so on a non-LTO
     // build (which links WITH --eh-frame-hdr) removing .eh_frame_hdr here
     // would leave an orphan PT_GNU_EH_FRAME phdr pointing at unmapped

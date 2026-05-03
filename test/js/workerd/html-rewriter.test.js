@@ -217,11 +217,14 @@ describe("HTMLRewriter", () => {
     const response = await fetch(`http://localhost:${server.port}/`);
     await headersSent;
     response.text().catch(() => {});
-    expect(() => new HTMLRewriter().transform(response)).toThrow(
-      expect.objectContaining({ code: "ERR_STREAM_ALREADY_FINISHED" }),
-    );
-    resolveDone();
-    await server.stop(true);
+    try {
+      expect(() => new HTMLRewriter().transform(response)).toThrow(
+        expect.objectContaining({ code: "ERR_STREAM_ALREADY_FINISHED" }),
+      );
+    } finally {
+      resolveDone();
+      await server.stop(true);
+    }
   });
 
   for (let input of [new Response("<div>hello</div>"), "<div>hello</div>"]) {

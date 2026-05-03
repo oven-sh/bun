@@ -14,26 +14,28 @@ const canRun = !isWindows;
 // thread that meant calling JSBigInt::createFrom without holding the JS
 // lock, corrupting the GC heap. The trampoline now marshals the raw 64-bit
 // bits and FFI_Callback_threadsafe_call converts them on the JS thread.
-test.skipIf(!canRun)("threadsafe JSCallback with int64_t/uint64_t args invoked from a native thread", async () => {
-  const srcDir = import.meta.dir;
-  const libName = isMacOS ? "libtscbbigint.dylib" : "libtscbbigint.so";
+test.skipIf(!canRun)(
+  "threadsafe JSCallback with int64_t/uint64_t args invoked from a native thread",
+  async () => {
+    const srcDir = import.meta.dir;
+    const libName = isMacOS ? "libtscbbigint.dylib" : "libtscbbigint.so";
 
-  using dir = tempDir("ffi-threadsafe-cb-bigint", {});
-  const outDir = String(dir);
-  const libPath = path.join(outDir, libName);
+    using dir = tempDir("ffi-threadsafe-cb-bigint", {});
+    const outDir = String(dir);
+    const libPath = path.join(outDir, libName);
 
-  {
-    const cmd = ["cc", "-shared", "-fPIC", "-o", libPath];
-    if (!isMacOS) cmd.push("-pthread");
-    cmd.push(path.join(srcDir, "threadsafe-callback-bigint.c"));
-    await using cc = Bun.spawn({ cmd, stderr: "pipe", stdout: "pipe" });
-    const [stderr, exitCode] = await Promise.all([cc.stderr.text(), cc.exited]);
-    if (exitCode !== 0) {
-      throw new Error("failed to compile threadsafe-callback-bigint.c: " + stderr);
+    {
+      const cmd = ["cc", "-shared", "-fPIC", "-o", libPath];
+      if (!isMacOS) cmd.push("-pthread");
+      cmd.push(path.join(srcDir, "threadsafe-callback-bigint.c"));
+      await using cc = Bun.spawn({ cmd, stderr: "pipe", stdout: "pipe" });
+      const [stderr, exitCode] = await Promise.all([cc.stderr.text(), cc.exited]);
+      if (exitCode !== 0) {
+        throw new Error("failed to compile threadsafe-callback-bigint.c: " + stderr);
+      }
     }
-  }
 
-  const fixture = /* js */ `
+    const fixture = /* js */ `
     const { dlopen, JSCallback } = require("bun:ffi");
 
     const lib = dlopen(${JSON.stringify(libPath)}, {
@@ -114,15 +116,17 @@ test.skipIf(!canRun)("threadsafe JSCallback with int64_t/uint64_t args invoked f
     console.log("OK");
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture],
-    env: bunEnv,
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("OK");
-  expect(exitCode).toBe(0);
-}, 30_000);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);

@@ -1196,6 +1196,7 @@ pub const ESMConditions = struct {
             import_condition_map.putAssumeCapacity(condition, {});
             require_condition_map.putAssumeCapacity(condition, {});
             default_condition_amp.putAssumeCapacity(condition, {});
+            style_condition_map.putAssumeCapacity(condition, {});
         }
 
         for (defaults) |default| {

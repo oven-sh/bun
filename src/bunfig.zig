@@ -1188,6 +1188,25 @@ pub const Bunfig = struct {
                 }
             }
 
+            if (json.get("resolve")) |expr| {
+                try this.expect(expr, .e_object);
+
+                if (expr.get("conditions")) |conds_expr| {
+                    try this.expect(conds_expr, .e_array);
+                    const items = conds_expr.data.e_array.items.slice();
+                    // Append to any existing conditions (e.g. from a previously loaded
+                    // global bunfig) so multiple configs stack rather than clobber.
+                    const existing_len = this.bunfig.conditions.len;
+                    const combined = try this.allocator.alloc(string, existing_len + items.len);
+                    @memcpy(combined[0..existing_len], this.bunfig.conditions);
+                    for (items, 0..) |item, i| {
+                        try this.expectString(item);
+                        combined[existing_len + i] = try item.data.e_string.string(allocator);
+                    }
+                    this.bunfig.conditions = combined;
+                }
+            }
+
             if (json.get("loader")) |expr| {
                 try this.expect(expr, .e_object);
                 const properties = expr.data.e_object.properties.slice();

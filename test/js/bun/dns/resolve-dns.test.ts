@@ -1,6 +1,6 @@
 import { SystemError, dns } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isWindows, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isWindows, withoutAggressiveGC } from "harness";
 import { isIP, isIPv4, isIPv6 } from "node:net";
 
 const backends = ["system", "libc", "c-ares"];
@@ -110,6 +110,33 @@ describe("dns", () => {
         code: expect.stringMatching(/^DNS_ENOTFOUND|DNS_ESERVFAIL|DNS_ENOTIMP$/),
         name: "DNSException",
       });
+    });
+  });
+
+  // A hostname longer than the backend's stack buffer used to write a NUL
+  // terminator out of bounds (`hostname[query.name.len] = 0`). On posix the
+  // buffer is bun.PathBuffer (4096 bytes); on Windows it is ~98302 bytes. Run
+  // in a subprocess because the old code panics on a thread-pool worker and
+  // would take the test runner down with it.
+  describe.concurrent.each(["system", "libc"])("lookup() [backend: %s] with hostname longer than PathBuffer", backend => {
+    test("rejects without crashing", async () => {
+      const script = `
+        const hostname = Buffer.alloc(100000, "a").toString();
+        Bun.dns.lookup(hostname, { backend: ${JSON.stringify(backend)} }).then(
+          () => console.log("RESOLVED"),
+          (e) => console.log("REJECTED", e.code ?? e.message),
+        );
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toStartWith("REJECTED");
+      expect(exitCode).toBe(0);
     });
   });
 

@@ -230,10 +230,15 @@ const LibUVBackend = struct {
         const port_len = std.fmt.printInt(&port_buf, query.port, 10, .lower, .{});
         port_buf[port_len] = 0;
         const portZ = port_buf[0..port_len :0];
-        var hostname: bun.PathBuffer = undefined;
-        _ = strings.copy(hostname[0..], query.name);
-        hostname[query.name.len] = 0;
-        const host = hostname[0..query.name.len :0];
+        // The hostname comes from JS and may exceed any fixed-size stack buffer
+        // (e.g. "a".repeat(100000)). Use a stack-fallback allocator so reasonable
+        // hostnames stay on the stack while arbitrarily long inputs heap-allocate
+        // instead of writing past a stack array. libuv copies `node` into its own
+        // allocation before returning, so freeing after uv_getaddrinfo is safe.
+        var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
+        const name_allocator = stack_fallback.get();
+        const host = bun.handleOom(name_allocator.dupeZ(u8, query.name));
+        defer name_allocator.free(host);
 
         request.backend.libc.uv.data = request;
         const promise = request.head.promise.value();
@@ -762,11 +767,15 @@ pub const GetAddrInfoRequest = struct {
                     const port_len = std.fmt.printInt(&port_buf, query.port, 10, .lower, .{});
                     port_buf[port_len] = 0;
                     const portZ = port_buf[0..port_len :0];
-                    var hostname: bun.PathBuffer = undefined;
-                    _ = strings.copy(hostname[0..], query.name);
-                    hostname[query.name.len] = 0;
+                    // The hostname comes from JS and may exceed any fixed-size stack
+                    // buffer. Use a stack-fallback allocator so reasonable hostnames
+                    // stay on the stack while arbitrarily long inputs heap-allocate
+                    // instead of writing past a stack array.
+                    var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
+                    const name_allocator = stack_fallback.get();
+                    const host = bun.handleOom(name_allocator.dupeZ(u8, query.name));
+                    defer name_allocator.free(host);
                     var addrinfo: ?*std.c.addrinfo = null;
-                    const host = hostname[0..query.name.len :0];
                     const debug_timer = bun.Output.DebugTimer.start();
                     const err = std.c.getaddrinfo(
                         host.ptr,

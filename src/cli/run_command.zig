@@ -1715,38 +1715,7 @@ pub const RunCommand = struct {
         // check for stdin
 
         if (target_name.len == 1 and target_name[0] == '-') {
-            log("Executing from stdin", .{});
-
-            // read from stdin
-            var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
-            var list = std.Io.Writer.Allocating.init(stack_fallback.get());
-            errdefer list.deinit();
-
-            var file_reader = std.fs.File.stdin().readerStreaming(&.{});
-            _ = file_reader.interface.streamRemaining(&list.writer) catch return false;
-            ctx.runtime_options.eval.script = list.written();
-
-            const trigger = bun.pathLiteral("/[stdin]");
-            var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
-            const cwd = try std.posix.getcwd(&entry_point_buf);
-            @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
-            const entry_path = entry_point_buf[0 .. cwd.len + trigger.len];
-
-            var passthrough_list = try std.array_list.Managed(string).initCapacity(ctx.allocator, ctx.passthrough.len + 1);
-            passthrough_list.appendAssumeCapacity("-");
-            passthrough_list.appendSliceAssumeCapacity(ctx.passthrough);
-            ctx.passthrough = passthrough_list.items;
-
-            Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch return false, null) catch |err| {
-                ctx.log.print(Output.errorWriter()) catch {};
-
-                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
-                    std.fs.path.basename(target_name),
-                    @errorName(err),
-                });
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                Global.exit(1);
-            };
+            try bootFromStdin(ctx, true);
             return true;
         }
 
@@ -1944,6 +1913,61 @@ pub const RunCommand = struct {
         }
 
         return false;
+    }
+
+    /// Read JavaScript from stdin and execute it. Used when bun is invoked
+    /// with no arguments and stdin is piped (not a TTY), matching Node.js
+    /// behavior. When `is_explicit_dash` is true (explicit `bun run -`),
+    /// prepends "-" to argv so scripts can distinguish it from implicit
+    /// piped stdin.
+    pub fn bootFromStdin(ctx: Command.Context, is_explicit_dash: bool) !void {
+        log("Executing from stdin", .{});
+
+        var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
+        var list = std.Io.Writer.Allocating.init(stack_fallback.get());
+
+        var file_reader = std.fs.File.stdin().readerStreaming(&.{});
+        _ = file_reader.interface.streamRemaining(&list.writer) catch {
+            Output.errGeneric("Failed to read from stdin", .{});
+            Global.exit(1);
+        };
+        const script = list.written();
+
+        // Empty stdin — exit successfully, matching Node.js behavior.
+        if (script.len == 0) {
+            Global.exit(0);
+        }
+
+        const trigger = bun.pathLiteral("/[stdin]");
+        var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
+        const cwd = try bun.getcwd(&entry_point_buf);
+        @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
+        const entry_path = entry_point_buf[0 .. cwd.len + trigger.len];
+
+        // Only prepend "-" to argv for explicit `bun run -`. Implicit
+        // piped stdin (e.g. `echo code | bun`) should not add it.
+        if (is_explicit_dash) {
+            var passthrough_list = try std.array_list.Managed(string).initCapacity(ctx.allocator, ctx.passthrough.len + 1);
+            passthrough_list.appendAssumeCapacity("-");
+            passthrough_list.appendSliceAssumeCapacity(ctx.passthrough);
+            ctx.passthrough = passthrough_list.items;
+        }
+
+        // Assign eval.script only after all failable operations. The
+        // script slice may point into stack-allocated memory (scripts
+        // ≤2048 bytes live in stack_fallback's on-stack buffer), so
+        // storing it in the global ctx before a potential error return
+        // would leave a dangling pointer.
+        ctx.runtime_options.eval.script = script;
+
+        Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch return error.OutOfMemory, null) catch |err| {
+            ctx.log.print(Output.errorWriter()) catch {};
+            Output.prettyErrorln("<r><red>error<r>: Failed to run <b>stdin<r> due to error <b>{s}<r>", .{
+                @errorName(err),
+            });
+            bun.handleErrorReturnTrace(err, @errorReturnTrace());
+            Global.exit(1);
+        };
     }
 
     pub fn execAsIfNode(ctx: Command.Context) !void {

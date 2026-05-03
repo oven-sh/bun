@@ -50,6 +50,26 @@ pub fn CreateBinaryExpressionVisitor(
             }, e_.left.loc);
         }
 
+        /// Should numeric arithmetic be folded given `folded_value = left op right`?
+        ///
+        /// Always true inside TypeScript enum bodies (`tsc` computes enum values
+        /// eagerly and subsequent members can depend on prior numeric members).
+        /// Otherwise, when `minify_syntax` is on, only fold when the printed
+        /// literal is no longer than the source expression — folding `1/3` into
+        /// `0.3333333333333333` would inflate the output.
+        ///
+        /// `op_len` is the byte length of the operator as printed (1 for `+`,
+        /// `-`, `*`, `/`, `%`; 2 for `**`). Unary `-` on a negative operand
+        /// is already folded into its `lenOfNumber`.
+        fn shouldFoldArithmetic(p: *P, folded_value: f64, left: f64, right: f64, op_len: u32) bool {
+            if (p.fold_numeric_constants_unconditionally) return true;
+            if (!p.options.features.minify_syntax) return true;
+
+            const folded_len = js_printer.lenOfNumber(folded_value);
+            const source_len = js_printer.lenOfNumber(left) + op_len + js_printer.lenOfNumber(right);
+            return folded_len <= source_len;
+        }
+
         pub const BinaryExpressionVisitor = struct {
             e: *E.Binary,
             loc: logger.Loc,
@@ -317,7 +337,10 @@ pub fn CreateBinaryExpressionVisitor(
                     .bin_add => {
                         if (p.should_fold_typescript_constant_expressions) {
                             if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                return p.newExpr(E.Number{ .value = vals[0] + vals[1] }, v.loc);
+                                const folded = vals[0] + vals[1];
+                                if (shouldFoldArithmetic(p, folded, vals[0], vals[1], 1)) {
+                                    return p.newExpr(E.Number{ .value = folded }, v.loc);
+                                }
                             }
 
                             // "'abc' + 'xyz'" => "'abcxyz'"
@@ -342,21 +365,30 @@ pub fn CreateBinaryExpressionVisitor(
                     .bin_sub => {
                         if (p.should_fold_typescript_constant_expressions) {
                             if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                return p.newExpr(E.Number{ .value = vals[0] - vals[1] }, v.loc);
+                                const folded = vals[0] - vals[1];
+                                if (shouldFoldArithmetic(p, folded, vals[0], vals[1], 1)) {
+                                    return p.newExpr(E.Number{ .value = folded }, v.loc);
+                                }
                             }
                         }
                     },
                     .bin_mul => {
                         if (p.should_fold_typescript_constant_expressions) {
                             if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                return p.newExpr(E.Number{ .value = vals[0] * vals[1] }, v.loc);
+                                const folded = vals[0] * vals[1];
+                                if (shouldFoldArithmetic(p, folded, vals[0], vals[1], 1)) {
+                                    return p.newExpr(E.Number{ .value = folded }, v.loc);
+                                }
                             }
                         }
                     },
                     .bin_div => {
                         if (p.should_fold_typescript_constant_expressions) {
                             if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                return p.newExpr(E.Number{ .value = vals[0] / vals[1] }, v.loc);
+                                const folded = vals[0] / vals[1];
+                                if (shouldFoldArithmetic(p, folded, vals[0], vals[1], 1)) {
+                                    return p.newExpr(E.Number{ .value = folded }, v.loc);
+                                }
                             }
                         }
                     },
@@ -364,19 +396,22 @@ pub fn CreateBinaryExpressionVisitor(
                         if (p.should_fold_typescript_constant_expressions) {
                             if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
                                 const fmod = @extern(*const fn (f64, f64) callconv(.c) f64, .{ .name = "fmod" });
-                                return p.newExpr(
-                                    // Use libc fmod here to be consistent with what JavaScriptCore does
-                                    // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
-                                    E.Number{ .value = if (comptime Environment.isNative) fmod(vals[0], vals[1]) else std.math.mod(f64, vals[0], vals[1]) catch 0 },
-                                    v.loc,
-                                );
+                                // Use libc fmod here to be consistent with what JavaScriptCore does
+                                // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
+                                const folded = if (comptime Environment.isNative) fmod(vals[0], vals[1]) else std.math.mod(f64, vals[0], vals[1]) catch 0;
+                                if (shouldFoldArithmetic(p, folded, vals[0], vals[1], 1)) {
+                                    return p.newExpr(E.Number{ .value = folded }, v.loc);
+                                }
                             }
                         }
                     },
                     .bin_pow => {
                         if (p.should_fold_typescript_constant_expressions) {
                             if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                return p.newExpr(E.Number{ .value = jsc.math.pow(vals[0], vals[1]) }, v.loc);
+                                const folded = jsc.math.pow(vals[0], vals[1]);
+                                if (shouldFoldArithmetic(p, folded, vals[0], vals[1], 2)) {
+                                    return p.newExpr(E.Number{ .value = folded }, v.loc);
+                                }
                             }
                         }
                     },
@@ -580,6 +615,7 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const jsc = bun.jsc;
+const js_printer = bun.js_printer;
 const logger = bun.logger;
 const strings = bun.strings;
 

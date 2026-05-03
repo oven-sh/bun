@@ -572,6 +572,56 @@ describe("bundler", () => {
       '+"æ"',
     ],
   });
+  // https://github.com/oven-sh/bun/issues/30203
+  // Only fold numeric arithmetic when the folded literal is no longer than
+  // the source expression — `1/3` is shorter than `0.3333333333333333`.
+  itBundled("minify/ConstantFoldingNumericBinarySizeAware", {
+    files: {
+      "/entry.js": `
+        // Expansive folds must be kept as-is
+        capture(1 / 3);
+        capture(2 / 3);
+        capture(1 / 7);
+        capture(10 / 3);
+        // Integer math still folds when it shrinks
+        capture(1 + 2);
+        capture(10 * 10);
+        capture(100 - 50);
+        capture(3 ** 4);
+        // Equal-length folds are allowed (result is <= source)
+        capture(1.1 + 0.2);
+        // Large powers that would inflate should be preserved
+        capture(10 ** 20);
+      `,
+    },
+    minifySyntax: true,
+    capture: [
+      "1 / 3",
+      "2 / 3",
+      "1 / 7",
+      "10 / 3",
+      "3",
+      "100",
+      "50",
+      "81",
+      "1.3",
+      "10 ** 20",
+    ],
+  });
+  // https://github.com/oven-sh/bun/issues/30203
+  // Enum bodies must still fully fold so the emitted table has numeric
+  // values, and so later members can reference earlier numeric members.
+  itBundled("minify/ConstantFoldingEnumBodyAlwaysFolds", {
+    files: {
+      "/entry.ts": `
+        enum E { A = 1 / 3, B = A + 1 }
+        capture(E.A);
+        capture(E.B);
+      `,
+    },
+    minifySyntax: true,
+    capture: ["0.3333333333333333 /* A */", "1.3333333333333333 /* B */"],
+  });
   itBundled("minify/ImportMetaHotTreeShaking", {
     files: {
       "/entry.ts": `

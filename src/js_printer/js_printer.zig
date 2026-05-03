@@ -34,6 +34,53 @@ pub fn canPrintWithoutEscape(comptime CodePointType: type, c: CodePointType, com
     }
 }
 
+/// Number of bytes the printer would emit for `value` via
+/// `printNonNegativeFloat` plus one extra byte for the leading `-` when
+/// `value` is negative. Mirrors the special cases in `printNonNegativeFloat`
+/// (e.g. `1e4` instead of `10000`) so comparisons for size-aware constant
+/// folding line up with the actual output.
+pub fn lenOfNumber(value: f64) u32 {
+    if (std.math.isNan(value)) return 3; // "NaN"
+    if (std.math.isInf(value)) return if (std.math.isNegativeInf(value)) 4 else 3; // "1/0" or "-1/0"
+
+    const neg_prefix: u32 = if (std.math.signbit(value)) 1 else 0;
+    const abs_value = @abs(value);
+
+    const floored: f64 = @floor(abs_value);
+    const is_integer = (abs_value - floored) == 0;
+    if (abs_value < std.math.maxInt(u52) and is_integer) {
+        const val = @as(u64, @intFromFloat(abs_value));
+        const int_len: u32 = switch (val) {
+            0...9 => 1,
+            10...99 => 2,
+            100...999 => 3,
+            1_000...9_999 => 4,
+            10_000 => 3, // "1e4"
+            100_000 => 3, // "1e5"
+            1_000_000 => 3, // "1e6"
+            10_000_000 => 3, // "1e7"
+            100_000_000 => 3, // "1e8"
+            1_000_000_000 => 3, // "1e9"
+            10_001...99_999 => 5,
+            100_001...999_999 => 6,
+            1_000_001...9_999_999 => 7,
+            10_000_001...99_999_999 => 8,
+            100_000_001...999_999_999 => 9,
+            1_000_000_001...9_999_999_999 => 10,
+            else => blk: {
+                var buf: [32]u8 = undefined;
+                const s = std.fmt.bufPrint(&buf, "{d}", .{val}) catch break :blk 20;
+                break :blk @intCast(s.len);
+            },
+        };
+        return neg_prefix + int_len;
+    }
+
+    var buf: [64]u8 = undefined;
+    const s = std.fmt.bufPrint(&buf, "{d}", .{abs_value}) catch return neg_prefix + 24;
+    return neg_prefix + @as(u32, @intCast(s.len));
+}
+
 const indentation_space_buf = [_]u8{' '} ** 128;
 const indentation_tab_buf = [_]u8{'\t'} ** 128;
 

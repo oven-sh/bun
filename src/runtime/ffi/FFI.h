@@ -148,7 +148,7 @@ void* callback_ctx;
 // the raw 64-bit bits for such arguments along with a per-argument ABIType
 // tag so FFI_Callback_threadsafe_call can perform the conversion inside the
 // task it posts to the JS thread.
-BUN_FFI_IMPORT ZIG_REPR_TYPE FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args, const uint8_t* argTypes);
+BUN_FFI_IMPORT void FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args, const uint8_t* argTypes);
 #else
 BUN_FFI_IMPORT ZIG_REPR_TYPE FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args);
 // We wrap 
@@ -346,7 +346,7 @@ static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) {
     return INT32_TO_JSVALUE((int32_t)val);
   }
 
-  if (val < MAX_INT52) {
+  if (val <= MAX_INT52) {
     return DOUBLE_TO_JSVALUE((double)val);
   }
 

@@ -674,6 +674,7 @@ it.skipIf(isWindows)(
     // string.
     const script = `
       const net = require("node:net");
+      const { heapStats } = require("bun:jsc");
       const path = "/tmp/bun-test-nonexistent-" + process.pid + ".sock";
 
       function once() {
@@ -691,22 +692,25 @@ it.skipIf(isWindows)(
           await Promise.all(batch);
         }
         Bun.gc(true);
-        await Bun.sleep(10);
+        await Bun.sleep(20);
         Bun.gc(true);
       }
 
-      // Sample RSS after equal-sized work units. A real per-iteration leak
-      // grows linearly with the sample index; allocator/GC noise plateaus.
-      const samples = [];
-      for (let i = 0; i < 8; i++) {
-        await run(2500);
-        samples.push(process.memoryUsage.rss());
+      // Count live mimalloc pages across all size bins. Each leaked
+      // TCPSocket struct is ~300-400 bytes; 8k of them fill ~25 pages
+      // (release) / ~160 pages (debug+ASAN). Unlike RSS this is the
+      // allocator's own bookkeeping, so it's independent of OS page
+      // reclamation and JSC heap oscillation — same result on every
+      // platform, every run.
+      function pageCount() {
+        return heapStats().mimalloc.page_bins.reduce((a, b) => a + b.current, 0);
       }
-      // Discard first two as warmup; compare the last sample against the
-      // first steady-state sample.
-      const base = samples[2];
-      const last = samples[samples.length - 1];
-      console.log(JSON.stringify({ samples, delta: last - base }));
+
+      await run(2000);
+      const before = pageCount();
+      await run(8000);
+      const after = pageCount();
+      console.log(JSON.stringify({ before, after, delta: after - before }));
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
@@ -716,12 +720,11 @@ it.skipIf(isWindows)(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const { delta, samples } = JSON.parse(stdout.trim().split("\n").pop()!);
-    // 12.5k post-warmup iterations leak ~4 MB on release / ~15 MB on
-    // debug+ASAN when the ref is not balanced. With the fix, delta is
-    // allocator noise (±1 MB).
-    expect(delta, `RSS samples (bytes): ${JSON.stringify(samples)}`).toBeLessThan(3 * 1024 * 1024);
+    const { before, after, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
+    // Without the balancing deref: +25 pages (release) / +163 pages
+    // (debug+ASAN). With it: 0 ± 2. The threshold sits well clear of both.
+    expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(10);
     expect(exitCode).toBe(0);
   },
-  120_000,
+  60_000,
 );

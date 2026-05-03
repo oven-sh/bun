@@ -119,4 +119,7 @@ test("MySQL: query string is not leaked across query lifecycle", async () => {
   // strings are freed as each MySQLQuery is finalized and growth stays small.
   expect(deltaMiB).toBeLessThan(50);
   expect(exitCode).toBe(0);
+  // 200 × 512 KiB round-trips plus ~20 Bun.gc(true) calls in an ASAN debug
+  // subprocess take ~6–17s; the 5s default is too tight. Same reason as
+  // postgres-tls-ctx-leak.test.ts.
 }, 60_000);

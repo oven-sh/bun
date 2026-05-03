@@ -512,10 +512,8 @@ it.skipIf(isWindows)("browser map resolution handles relative paths longer than 
   const canUseRunuser = isLinux && isRoot && !!Bun.which("runuser") && nobody !== null;
   const canTriggerEACCES = !isWindows && (!isRoot || canUseRunuser);
 
-  it.skipIf(!canTriggerEACCES)(
-    "resolving a directory whose entries cache holds .err does not crash",
-    async () => {
-      const fixture = `
+  it.skipIf(!canTriggerEACCES)("resolving a directory whose entries cache holds .err does not crash", async () => {
+    const fixture = `
       const { chmodSync } = require("fs");
       const { join } = require("path");
       const root = process.argv[2];
@@ -541,44 +539,43 @@ it.skipIf(isWindows)("browser map resolution handles relative paths longer than 
       console.log("OK");
     `;
 
-      using dir = tempDir("resolver-cached-err", {
-        "fixture.js": fixture,
-        "bad/index.js": "module.exports = 1;\n",
+    using dir = tempDir("resolver-cached-err", {
+      "fixture.js": fixture,
+      "bad/index.js": "module.exports = 1;\n",
+    });
+    const root = String(dir);
+
+    let cmd: string[];
+    if (canUseRunuser) {
+      // Give `nobody` ownership so the fixture's chmodSync calls succeed, and
+      // open up perms so `nobody` can traverse/read everything it needs.
+      for (const p of [root, join(root, "fixture.js"), join(root, "bad"), join(root, "bad", "index.js")]) {
+        chmodSync(p, 0o777);
+        chownSync(p, nobody!.uid, nobody!.gid);
+      }
+      cmd = ["runuser", "-u", "nobody", "--", bunExe(), join(root, "fixture.js"), root];
+    } else {
+      cmd = [bunExe(), join(root, "fixture.js"), root];
+    }
+
+    try {
+      await using proc = Bun.spawn({
+        cmd,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
       });
-      const root = String(dir);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      let cmd: string[];
-      if (canUseRunuser) {
-        // Give `nobody` ownership so the fixture's chmodSync calls succeed, and
-        // open up perms so `nobody` can traverse/read everything it needs.
-        for (const p of [root, join(root, "fixture.js"), join(root, "bad"), join(root, "bad", "index.js")]) {
-          chmodSync(p, 0o777);
-          chownSync(p, nobody!.uid, nobody!.gid);
-        }
-        cmd = ["runuser", "-u", "nobody", "--", bunExe(), join(root, "fixture.js"), root];
-      } else {
-        cmd = [bunExe(), join(root, "fixture.js"), root];
-      }
-
+      expect(stderr).toBe("");
+      expect(stdout).toBe("OK\n");
+      expect(exitCode).toBe(0);
+    } finally {
+      // Ensure tempDir cleanup can remove the directory even if the fixture
+      // crashed between the two chmod calls.
       try {
-        await using proc = Bun.spawn({
-          cmd,
-          env: bunEnv,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-        expect(stderr).toBe("");
-        expect(stdout).toBe("OK\n");
-        expect(exitCode).toBe(0);
-      } finally {
-        // Ensure tempDir cleanup can remove the directory even if the fixture
-        // crashed between the two chmod calls.
-        try {
-          chmodSync(join(root, "bad"), 0o755);
-        } catch {}
-      }
-    },
-  );
+        chmodSync(join(root, "bad"), 0o755);
+      } catch {}
+    }
+  });
 }

@@ -468,7 +468,12 @@ pub fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn isServer(this: *const This) bool {
-            const handlers = this.getHandlers();
+            // `handlers` is null on detached sockets and on closed client
+            // sockets (markInactive nulls it once the allocation is freed).
+            // JS-callable TLS accessors (`setServername`, `getPeerCertificate`,
+            // `getEphemeralKeyInfo`, `setVerifyMode`) consult this on sockets
+            // whose connection may already be gone.
+            const handlers = this.handlers orelse return false;
             return handlers.mode.isServer();
         }
 

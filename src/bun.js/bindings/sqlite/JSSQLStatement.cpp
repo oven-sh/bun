@@ -1364,7 +1364,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
     }
 
     int32_t handle = callFrame->argument(0).toInt32(lexicalGlobalObject);
-    if (databases().size() < handle) {
+    if (handle < 0 || handle >= databases().size()) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
     }
@@ -1513,7 +1513,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementIsInTransactionFunction, (JSC::JSGlobalOb
 
     int32_t handle = dbNumber.toInt32(lexicalGlobalObject);
 
-    if (handle < 0 || handle > databases().size()) {
+    if (handle < 0 || handle >= databases().size()) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
     }
@@ -1552,7 +1552,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     }
 
     int32_t handle = dbNumber.toInt32(lexicalGlobalObject);
-    if (handle < 0 || handle > databases().size()) {
+    if (handle < 0 || handle >= databases().size()) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
     }

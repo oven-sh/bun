@@ -566,6 +566,26 @@ describe("wildcard exports with @ in matched subpath", () => {
       join(root, "node_modules/test-pkg/dist/packages/plain/index.js"),
     );
   });
+
+  // Regression guard for the scoped-package version split: `@scope/pkg@ver/sub`
+  // must still strip the version (the `@` delimiter sits at index 10, inside
+  // the 16-char name span, so the version branch still fires).
+  it.concurrent("still strips @version after a scoped package name", () => {
+    using dir = tempDir("resolver-wildcard-scoped-versioned", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/@my/pkg/package.json": JSON.stringify({
+        name: "@my/pkg",
+        version: "1.0.0",
+        exports: { "./*": "./dist/*" },
+      }),
+      "node_modules/@my/pkg/dist/sub/index.js": "export default 'sub';",
+    });
+    const root = String(dir);
+
+    expect(Bun.resolveSync("@my/pkg@1.0.0/sub/index.js", root)).toBe(
+      join(root, "node_modules/@my/pkg/dist/sub/index.js"),
+    );
+  });
 });
 
 // dirInfoCachedMaybeLog reads the rfs.entries cache without checking the union

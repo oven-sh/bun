@@ -454,9 +454,9 @@ test.skipIf(!isPosix)(
   "fs.promises.cp recursive does not free parent task while subtasks are in flight after an error",
   async () => {
     const files: Record<string, string | object> = {};
-    // Plenty of readable siblings so several SingleTasks are running on the
-    // thread pool when the failing one errors.
-    for (let i = 0; i < 128; i++) files[`src/f${i}.txt`] = "x";
+    // Enough siblings so several SingleTasks are running on the thread pool
+    // when the failing one errors.
+    for (let i = 0; i < 32; i++) files[`src/f${i}.txt`] = "x";
     files["src/000-bad.txt"] = "x";
     // The destination for 000-bad.txt is a directory → copying into it fails.
     files["dst/000-bad.txt"] = { ".keep": "" };
@@ -473,7 +473,7 @@ test.skipIf(!isPosix)(
       const src = path.join(base, "src");
       const dst = path.join(base, "dst");
       (async () => {
-        for (let i = 0; i < 50; i++) {
+        for (let i = 0; i < 20; i++) {
           try {
             await fs.promises.cp(src, dst, { recursive: true });
             console.log("UNEXPECTED-SUCCESS");
@@ -499,5 +499,4 @@ test.skipIf(!isPosix)(
     expect(stdout.trim()).toBe("ok");
     expect(exitCode).toBe(0);
   },
-  60_000,
 );

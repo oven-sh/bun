@@ -1,0 +1,35 @@
+--- a/src/turbojpeg.c
++++ b/src/turbojpeg.c
+@@ -1220,12 +1220,14 @@
+ #define BITS_IN_JSAMPLE  8
+ #include "turbojpeg-mp.c"
+ #undef BITS_IN_JSAMPLE
++#ifndef BUN_8BIT_ONLY
+ #define BITS_IN_JSAMPLE  12
+ #include "turbojpeg-mp.c"
+ #undef BITS_IN_JSAMPLE
+ #define BITS_IN_JSAMPLE  16
+ #include "turbojpeg-mp.c"
+ #undef BITS_IN_JSAMPLE
++#endif
+ 
+ /* TurboJPEG 1.2+ */
+ DLLEXPORT int tjCompress2(tjhandle handle, const unsigned char *srcBuf,
+--- a/src/turbojpeg-mp.c
++++ b/src/turbojpeg-mp.c
+@@ -280,6 +280,7 @@
+ 
+ /*************************** Packed-Pixel Image I/O **************************/
+ 
++#ifndef BUN_8BIT_ONLY
+ #if BITS_IN_JSAMPLE != 16 || defined(C_LOSSLESS_SUPPORTED)
+ 
+ /* TurboJPEG 3.0+ */
+@@ -561,6 +562,7 @@
+ 
+ #endif
+ }
++#endif /* BUN_8BIT_ONLY */
+ 
+ 
+ #undef _JSAMPLE

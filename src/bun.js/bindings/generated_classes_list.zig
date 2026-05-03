@@ -27,6 +27,7 @@ pub const Classes = struct {
     pub const DoneCallback = jsc.Jest.bun_test.DoneCallback;
     pub const FileSystemRouter = api.FileSystemRouter;
     pub const Glob = api.Glob;
+    pub const Image = api.Image;
     pub const SecureContext = api.SecureContext;
     pub const ShellInterpreter = api.Shell.Interpreter;
     pub const ParsedShellScript = api.Shell.ParsedShellScript;

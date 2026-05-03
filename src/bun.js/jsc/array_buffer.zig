@@ -5,6 +5,9 @@ pub const ArrayBuffer = extern struct {
     value: jsc.JSValue = jsc.JSValue.zero,
     typed_array_type: jsc.JSValue.JSType = .Cell,
     shared: bool = false,
+    /// True for resizable ArrayBuffer or growable SharedArrayBuffer — borrowing
+    /// a slice from one is unsafe (it can shrink/reallocate underneath you).
+    resizable: bool = false,
 
     pub fn isDetached(this: *const ArrayBuffer) bool {
         return this.ptr == null;
@@ -587,20 +590,15 @@ pub const MarkedArrayBuffer = struct {
         return this.buffer.byteSlice();
     }
 
+    /// Releases the owned byte buffer if this `MarkedArrayBuffer` was created with an
+    /// allocator (e.g. via `fromString`/`fromBytes`). Does not free the struct itself;
+    /// `MarkedArrayBuffer` is passed and stored by value, so callers own its storage.
     pub fn destroy(this: *MarkedArrayBuffer) void {
         const content = this.*;
         if (this.allocator) |allocator| {
             this.allocator = null;
             allocator.free(content.buffer.slice());
-            allocator.destroy(this);
         }
-    }
-
-    pub fn init(allocator: std.mem.Allocator, size: u32, typed_array_type: jsc.JSValue.JSType) !*MarkedArrayBuffer {
-        const bytes = try allocator.alloc(u8, size);
-        const container = try allocator.create(MarkedArrayBuffer);
-        container.* = MarkedArrayBuffer.fromBytes(bytes, allocator, typed_array_type);
-        return container;
     }
 
     pub fn toNodeBuffer(this: *const MarkedArrayBuffer, ctx: *jsc.JSGlobalObject) jsc.JSValue {

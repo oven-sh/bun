@@ -126,11 +126,25 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 tunnel.clearConnectedWebSocket();
                 tunnel.shutdown();
                 tunnel.deref();
+                // Release the I/O-layer ref taken in initWithTunnel() — the
+                // tunnel was this struct's socket-equivalent owner. In the
+                // non-tunnel path this same ref is released by handleClose()
+                // when the adopted uSockets socket fires its close event, but
+                // tunnel mode never adopts a socket so that callback never runs.
+                // Callers that touch `this` after clearData() must hold a local
+                // ref guard (see cancel/finalize).
+                this.deref();
             }
         }
 
         pub fn cancel(this: *WebSocket) callconv(.c) void {
             log("cancel", .{});
+            // clearData() may drop the tunnel's I/O-layer ref; keep `this`
+            // alive until we've finished closing the socket below.
+            this.ref();
+            defer this.deref();
+
+            const had_tunnel = this.proxy_tunnel != null;
             this.clearData();
 
             if (comptime ssl) {
@@ -138,6 +152,17 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 this.tcp.close(.normal);
             } else {
                 this.tcp.close(.failure);
+            }
+
+            // In tunnel mode tcp is .detached so close() above is a no-op and
+            // handleClose() never fires. Mirror what handleClose() does for
+            // the non-tunnel path: drop the C++ ref (if still held) via
+            // dispatchAbruptClose so e.g. ws.terminate() — which calls
+            // cancel() then sets m_connectedWebSocketKind = None, bypassing
+            // the destructor's finalize() — does not leak. When reached via
+            // fail(), outgoing_websocket is already null and this is a no-op.
+            if (had_tunnel) {
+                this.dispatchAbruptClose(ErrorCode.ended);
             }
         }
 
@@ -1031,6 +1056,12 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             len: usize,
             op: u8,
         ) callconv(.c) void {
+            // In tunnel mode, SSLWrapper.writeData() can synchronously fire
+            // onClose → ws.fail() → cancel() → clearData() and free `this`
+            // before the catch block in enqueueEncodedBytes/sendBuffer runs.
+            this.ref();
+            defer this.deref();
+
             if (!this.hasTCP() or op > 0xF) {
                 this.dispatchAbruptClose(ErrorCode.ended);
                 return;
@@ -1061,6 +1092,10 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             blob_value: jsc.JSValue,
             op: u8,
         ) callconv(.c) void {
+            // See writeBinaryData() — tunnel.write() can re-enter fail().
+            this.ref();
+            defer this.deref();
+
             if (!this.hasTCP() or op > 0xF) {
                 this.dispatchAbruptClose(ErrorCode.ended);
                 return;
@@ -1103,6 +1138,10 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             str_: *const jsc.ZigString,
             op: u8,
         ) callconv(.c) void {
+            // See writeBinaryData() — tunnel.write() can re-enter fail().
+            this.ref();
+            defer this.deref();
+
             const str = str_.*;
             if (!this.hasTCP()) {
                 this.dispatchAbruptClose(ErrorCode.ended);
@@ -1167,6 +1206,13 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn close(this: *WebSocket, code: u16, reason: ?*const jsc.ZigString) callconv(.c) void {
+            // In tunnel mode, SSLWrapper.writeData() (via sendCloseWithBody →
+            // enqueueEncodedBytes → tunnel.write) can synchronously fire
+            // onClose → ws.fail() → cancel() → clearData() and free `this`
+            // before sendCloseWithBody's own clearData/dispatchClose run.
+            this.ref();
+            defer this.deref();
+
             if (!this.hasTCP())
                 return;
             const tcp = this.tcp;
@@ -1302,6 +1348,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         ) callconv(.c) ?*anyopaque {
             const tunnel: *WebSocketProxyTunnel = @ptrCast(@alignCast(tunnel_ptr));
 
+            // ref_count starts at 1: this is the I/O-layer ref, owned by the
+            // tunnel connection (analogous to the adopted-socket ref in init()
+            // that handleClose() releases). It is released in clearData() when
+            // proxy_tunnel is detached. The ws.ref() below adds the C++ ref
+            // paired with m_connectedWebSocket.
             var ws = bun.new(WebSocket, .{
                 .ref_count = .init(),
                 .tcp = .{ .socket = .{ .detached = {} } }, // No direct socket - using tunnel
@@ -1356,6 +1407,12 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         /// Flushes any buffered plaintext data through the tunnel.
         pub fn handleTunnelWritable(this: *WebSocket) void {
             if (this.close_received) return;
+            // sendBuffer → tunnel.write() can re-enter fail() synchronously
+            // (see writeBinaryData). The tunnel ref-guards itself in
+            // onWritable() but not this struct.
+            this.ref();
+            defer this.deref();
+
             const send_buf = this.send_buffer.readableSlice(0);
             if (send_buf.len == 0) return;
             _ = this.sendBuffer(send_buf);
@@ -1363,6 +1420,12 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         pub fn finalize(this: *WebSocket) callconv(.c) void {
             log("finalize", .{});
+            // clearData() may drop the tunnel's I/O-layer ref and the block
+            // below drops the C++ ref; keep `this` alive until we've finished
+            // the tcp close check.
+            this.ref();
+            defer this.deref();
+
             this.clearData();
 
             // This is only called by outgoing_websocket.

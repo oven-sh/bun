@@ -341,15 +341,13 @@ pub fn getCache(
     this: *Request,
     globalThis: *jsc.JSGlobalObject,
 ) jsc.JSValue {
-    return switch (this.flags.cache) {
-        inline else => |tag| ZigString.static(@tagName(tag)).toJS(globalThis),
-    };
+    return this.flags.cache.toJS(globalThis);
 }
 pub fn getCredentials(
     _: *Request,
     globalThis: *jsc.JSGlobalObject,
 ) jsc.JSValue {
-    return ZigString.init("include").toJS(globalThis);
+    return globalThis.commonStrings().include();
 }
 pub fn getDestination(
     _: *Request,
@@ -391,9 +389,7 @@ pub fn getMode(
     this: *Request,
     globalThis: *jsc.JSGlobalObject,
 ) jsc.JSValue {
-    return switch (this.flags.mode) {
-        inline else => |tag| ZigString.static(@tagName(tag)).toJS(globalThis),
-    };
+    return this.flags.mode.toJS(globalThis);
 }
 
 pub fn finalizeWithoutDeinit(this: *Request) void {
@@ -425,9 +421,7 @@ pub fn getRedirect(
     this: *Request,
     globalThis: *jsc.JSGlobalObject,
 ) jsc.JSValue {
-    return switch (this.flags.redirect) {
-        inline else => |tag| ZigString.static(@tagName(tag)).toJS(globalThis),
-    };
+    return this.flags.redirect.toJS(globalThis);
 }
 pub fn getReferrer(
     this: *Request,

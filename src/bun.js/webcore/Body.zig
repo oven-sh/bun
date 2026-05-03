@@ -618,6 +618,22 @@ pub const Value = union(Tag) {
                     .Blob = blob.dupeWithContentType(true),
                 };
             }
+
+            if (value.as(jsc.API.Image)) |image| {
+                // Body init is synchronous, so encode now and wrap as a Blob
+                // with the right MIME type. The off-thread path is still
+                // available via `await image.blob()`.
+                const out = try image.encodeForBody(globalThis, value);
+                // Blob.Store frees via an Allocator, so dupe out of the
+                // codec's allocator here. The hot path (`.bytes()`) hands the
+                // codec buffer to JS without this copy.
+                const owned = bun.handleOom(bun.default_allocator.dupe(u8, out.bytes.bytes));
+                out.bytes.deinit();
+                var blob = Blob.init(owned, bun.default_allocator, globalThis);
+                blob.content_type = out.mime;
+                blob.content_type_was_set = true;
+                return Body.Value{ .Blob = blob };
+            }
         }
 
         value.ensureStillAlive();

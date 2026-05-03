@@ -32,6 +32,7 @@
 #include "Event.h"
 #include "EventNames.h"
 #include "StructuredSerializeOptions.h"
+#include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Scope.h>
@@ -691,21 +692,25 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     Vector<JSC::Strong<JSC::JSObject>> transferList;
 
     if (options.isObject()) {
-        JSC::JSObject* optionsObject = options.getObject();
-        JSC::JSValue transferListValue = optionsObject->get(globalObject, vm.propertyNames->transfer);
+        JSC::JSValue transferListValue;
+        // postMessage(message, sequence<object>) overload — second argument is the transfer list itself.
+        bool isSequence = hasIteratorMethod(globalObject, options);
         RETURN_IF_EXCEPTION(scope, {});
+        if (isSequence) {
+            transferListValue = options;
+        } else {
+            // postMessage(message, { transfer }) overload.
+            JSC::JSObject* optionsObject = options.getObject();
+            transferListValue = optionsObject->get(globalObject, vm.propertyNames->transfer);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
         if (transferListValue.isObject()) {
-            JSC::JSObject* transferListObject = transferListValue.getObject();
-            if (auto* transferListArray = dynamicDowncast<JSC::JSArray>(transferListObject)) {
-                for (unsigned i = 0; i < transferListArray->length(); i++) {
-                    JSC::JSValue transferListValue = transferListArray->get(globalObject, i);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    if (transferListValue.isObject()) {
-                        JSC::JSObject* transferListObject = transferListValue.getObject();
-                        transferList.append(JSC::Strong<JSC::JSObject>(vm, transferListObject));
-                    }
+            forEachInIterable(globalObject, transferListValue, [&transferList](JSC::VM& vm, JSC::JSGlobalObject*, JSC::JSValue nextValue) {
+                if (nextValue.isObject()) {
+                    transferList.append(JSC::Strong<JSC::JSObject>(vm, nextValue.getObject()));
                 }
-            }
+            });
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 

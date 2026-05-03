@@ -390,11 +390,9 @@ pub fn address(this: *SocketAddress) bun.String {
 /// NOTE: node's `net.SocketAddress` wants `"ipv4"` and `"ipv6"` while Bun's APIs
 /// use `"IPv4"` and `"IPv6"`. This is annoying.
 pub fn getFamily(this: *SocketAddress, global: *jsc.JSGlobalObject) bun.JSError!JSValue {
-    // NOTE: cannot use global.commonStrings().IPv[4,6]() b/c this needs to be
-    // lower case.
     return switch (this.family()) {
-        AF.INET => bun.String.static("ipv4").toJS(global),
-        AF.INET6 => bun.String.static("ipv6").toJS(global),
+        AF.INET => global.commonStrings().ipv4(),
+        AF.INET6 => global.commonStrings().ipv6(),
     };
 }
 

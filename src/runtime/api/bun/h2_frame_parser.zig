@@ -956,8 +956,17 @@ pub const H2FrameParser = struct {
             // dataFrameQueue with an empty one. Holding the frame on the stack
             // means cleanQueue cannot free it out from under us, and we never
             // unwrap null on a queue that was just emptied by re-entry.
+            //
+            // outboundQueueSize is NOT decremented here: sendData() uses
+            // `outboundQueueSize > 0` to decide whether new DATA must queue or
+            // may write straight to the socket. Keeping the count >= 1 across
+            // the two writer.write() calls below forces any re-entrant
+            // sendData() onto the queueFrame path instead of interleaving a
+            // fresh DATA header+payload between this frame's header and its
+            // payload on the wire. The count is settled only once the frame
+            // is fully disposed of (finishFlushedFrame / the reset-drop path);
+            // requeue paths leave it untouched.
             var frame = this.dataFrameQueue.dequeue() orelse return .no_action;
-            client.outboundQueueSize -= 1;
 
             const writer = client.toWriter();
 
@@ -981,8 +990,8 @@ pub const H2FrameParser = struct {
                 log("dataFrame flow control limited {} {} {} {} {} {}", .{ frame_slice.len, this.remoteWindowSize, this.remoteUsedWindowSize, client.remoteWindowSize, client.remoteUsedWindowSize, max_size });
                 // Nothing was written (no JS re-entry possible here), put the
                 // frame back exactly where it was for the next flush attempt.
+                // outboundQueueSize was never decremented for this frame.
                 this.dataFrameQueue.pushFront(frame, client.allocator);
-                client.outboundQueueSize += 1;
                 // we are flow control limited lets return backpressure if is limited in the connection so we short circuit the flush
                 return if (client.remoteWindowSize == client.remoteUsedWindowSize) .backpressure else .no_action;
             }
@@ -1026,13 +1035,14 @@ pub const H2FrameParser = struct {
                 // to do with the remainder AFTER all re-entrant JS has run.
                 frame.offset += @intCast(max_size);
                 if (this.canSendData()) {
-                    // stream still open: keep remainder for next flush
+                    // stream still open: keep remainder for next flush.
+                    // outboundQueueSize was never decremented for this frame.
                     this.dataFrameQueue.pushFront(frame, client.allocator);
-                    client.outboundQueueSize += 1;
                 } else {
                     // stream was reset/closed from inside onWrite; drop the
                     // remainder, matching cleanQueue's accounting.
                     client.queuedDataSize -= frame.slice().len;
+                    client.outboundQueueSize -= 1;
                     if (frame.callback.get()) |callback_value| client.dispatchWriteCallback(callback_value);
                     frame.deinit(client.allocator);
                 }
@@ -1078,6 +1088,10 @@ pub const H2FrameParser = struct {
         /// previous defer block but is tolerant of the stream having been reset
         /// from inside the JS onWrite callback.
         fn finishFlushedFrame(this: *Stream, client: *H2FrameParser, frame: *PendingFrame) void {
+            // Only now release this frame's slot in the outbound count; kept
+            // >= 1 across both writer.write() calls so re-entrant sendData()
+            // takes the queueFrame path instead of interleaving on the wire.
+            client.outboundQueueSize -= 1;
             if (frame.callback.get()) |callback_value| client.dispatchWriteCallback(callback_value);
             if (this.dataFrameQueue.isEmpty() and frame.end_stream and this.canSendData()) {
                 if (this.waitForTrailers) {

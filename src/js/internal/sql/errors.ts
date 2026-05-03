@@ -25,7 +25,7 @@ export interface PostgresErrorOptions {
   routine?: string | undefined;
 }
 
-// oxlint-disable-next-line typescript-eslint(no-unsafe-declaration-merging)
+// oxlint-disable-next-line typescript/no-unsafe-declaration-merging
 interface PostgresError {
   detail?: string | undefined;
   hint?: string | undefined;
@@ -79,7 +79,7 @@ export interface SQLiteErrorOptions {
   byteOffset?: number | undefined;
 }
 
-// oxlint-disable-next-line typescript-eslint(no-unsafe-declaration-merging)
+// oxlint-disable-next-line typescript/no-unsafe-declaration-merging
 interface SQLiteError {
   byteOffset?: number | undefined;
 }
@@ -106,7 +106,7 @@ export interface MySQLErrorOptions {
   sqlState?: string | undefined;
 }
 
-// oxlint-disable-next-line typescript-eslint(no-unsafe-declaration-merging)
+// oxlint-disable-next-line typescript/no-unsafe-declaration-merging
 interface MySQLError {
   errno?: number | undefined;
   sqlState?: string | undefined;

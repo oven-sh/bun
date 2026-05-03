@@ -421,25 +421,17 @@ pub const FetchTasklet = struct {
             // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
             buffer_reset = false;
             if (!this.result.has_more) {
-                var scheduled_response_buffer = this.scheduled_response_buffer.list;
                 const body = response.getBodyValue();
                 // done resolve body
                 var old = body.*;
+                const cloned_bytes = this.cloneResponseBufferToMainThread();
                 const body_value = Body.Value{
                     .InternalBlob = .{
-                        .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
+                        .bytes = cloned_bytes,
                     },
                 };
                 body.* = body_value;
-                log("onBodyReceived body_value length={}", .{body_value.InternalBlob.bytes.items.len});
-
-                this.scheduled_response_buffer = .{
-                    .allocator = bun.default_allocator,
-                    .list = .{
-                        .items = &.{},
-                        .capacity = 0,
-                    },
-                };
+                log("onBodyReceived body_value length={}", .{cloned_bytes.items.len});
 
                 if (old == .Locked) {
                     log("onBodyReceived old.resolve", .{});
@@ -935,6 +927,27 @@ pub const FetchTasklet = struct {
         this.ignoreRemainingResponseBody();
     }
 
+    /// The `scheduled_response_buffer` is written to on the HTTP thread, so
+    /// its backing memory lives in the HTTP thread's mimalloc heap. When this
+    /// memory is later freed from the main JS thread (during GC finalization),
+    /// mimalloc cannot return those pages to the OS because cross-thread frees
+    /// go to a delayed-free list that only the allocating thread processes.
+    /// Cloning the data here (on the main thread) ensures the body buffer is
+    /// owned by the main thread's heap and can be properly reclaimed by GC.
+    fn cloneResponseBufferToMainThread(this: *FetchTasklet) std.array_list.Managed(u8) {
+        const items = this.scheduled_response_buffer.list.items;
+        const cloned = bun.handleOom(bun.default_allocator.dupe(u8, items));
+        this.scheduled_response_buffer.deinit();
+        this.scheduled_response_buffer = .{
+            .allocator = bun.default_allocator,
+            .list = .{
+                .items = &.{},
+                .capacity = 0,
+            },
+        };
+        return std.array_list.Managed(u8).fromOwnedSlice(bun.default_allocator, cloned);
+    }
+
     fn toBodyValue(this: *FetchTasklet) Body.Value {
         if (this.getAbortError()) |err| {
             return .{ .Error = err };
@@ -953,17 +966,9 @@ pub const FetchTasklet = struct {
             return response;
         }
 
-        var scheduled_response_buffer = this.scheduled_response_buffer.list;
         const response = Body.Value{
             .InternalBlob = .{
-                .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
-            },
-        };
-        this.scheduled_response_buffer = .{
-            .allocator = bun.default_allocator,
-            .list = .{
-                .items = &.{},
-                .capacity = 0,
+                .bytes = this.cloneResponseBufferToMainThread(),
             },
         };
 

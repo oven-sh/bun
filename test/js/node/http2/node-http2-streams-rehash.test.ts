@@ -14,19 +14,25 @@ import path from "node:path";
 // takes 3-5s, so give these more than the default 5s.
 const TIMEOUT = 30_000;
 
-test("session.request() from a stream 'timeout' listener during forEachStream does not UAF on hashmap rehash", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--smol", path.join(import.meta.dir, "node-http2-foreach-rehash.fixture.js")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "OK", exitCode: 0 });
-}, TIMEOUT);
+test(
+  "session.request() from a stream 'timeout' listener during forEachStream does not UAF on hashmap rehash",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", path.join(import.meta.dir, "node-http2-foreach-rehash.fixture.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "OK", exitCode: 0 });
+  },
+  TIMEOUT,
+);
 
-test("http2 client request() does not hold *Stream across user-controlled options getters", async () => {
-  const script = /* js */ `
+test(
+  "http2 client request() does not hold *Stream across user-controlled options getters",
+  async () => {
+    const script = /* js */ `
     const http2 = require("node:http2");
 
     const server = http2.createServer();
@@ -91,39 +97,49 @@ test("http2 client request() does not hold *Stream across user-controlled option
     });
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "done", exitCode: 0 });
-}, TIMEOUT);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "done", exitCode: 0 });
+  },
+  TIMEOUT,
+);
 
-test("http2 client write callback that opens new streams during flushQueue does not UAF", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), path.join(import.meta.dir, "node-http2-flush-rehash.fixture.js")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "ok", exitCode: 0 });
-}, TIMEOUT);
+test(
+  "http2 client write callback that opens new streams during flushQueue does not UAF",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "node-http2-flush-rehash.fixture.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "ok", exitCode: 0 });
+  },
+  TIMEOUT,
+);
 
 // With a non-native socket, flushQueue's writer.write() reaches JS onWrite
 // synchronously. If that callback resets the stream being flushed (rstStream
 // -> cleanQueue), the old code would read freed frame.buffer and then unwrap
 // null from dequeue().?. flushQueue now dequeues the frame to the stack
 // before any write that can re-enter.
-test("rstStream from inside the non-native onWrite callback during flushQueue does not UAF", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), path.join(import.meta.dir, "node-http2-flush-rststream.fixture.js")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "ok", exitCode: 0 });
-}, TIMEOUT);
+test(
+  "rstStream from inside the non-native onWrite callback during flushQueue does not UAF",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "node-http2-flush-rststream.fixture.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "ok", exitCode: 0 });
+  },
+  TIMEOUT,
+);

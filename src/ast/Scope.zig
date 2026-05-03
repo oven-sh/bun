@@ -137,7 +137,10 @@ pub fn canMergeSymbols(
     if (Symbol.isKindHoistedOrFunction(new) and
         Symbol.isKindHoistedOrFunction(existing) and
         (scope.kind == .entry or scope.kind == .function_body or scope.kind == .function_args or
-            (new == existing and Symbol.isKindHoisted(existing))))
+            (new == existing and Symbol.isKindHoisted(existing) and
+                // In strict mode, block-scoped function declarations behave like `let` bindings
+                // and duplicates are a SyntaxError (ES2015+ B.3.2.1, 14.1.2).
+                !(scope.strict_mode != .sloppy_mode and new == .hoisted_function))))
     {
         return .replace_with_new;
     }

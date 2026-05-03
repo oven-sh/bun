@@ -318,10 +318,10 @@ pub fn getResponseType(
     globalThis: *jsc.JSGlobalObject,
 ) bun.JSError!jsc.JSValue {
     if (this.#init.status_code < 200) {
-        return bun.String.static("error").toJS(globalThis);
+        return globalThis.commonStrings().@"error"();
     }
 
-    return bun.String.static("default").toJS(globalThis);
+    return globalThis.commonStrings().default();
 }
 
 pub fn getStatusText(

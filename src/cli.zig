@@ -409,6 +409,7 @@ pub const Command = struct {
         } = .{},
         preconnect: []const []const u8 = &[_][]const u8{},
         experimental_http2_fetch: bool = false,
+        experimental_http3_fetch: bool = false,
         dns_result_order: []const u8 = "verbatim",
         /// `--expose-gc` makes `globalThis.gc()` available. Added for Node
         /// compatibility.

@@ -22,6 +22,7 @@
 #include <JavaScriptCore/JSONObject.h>
 #include "wtf/SIMDUTF.h"
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/JSObjectInlines.h>
 #include "headers.h"
 #include "BunObject.h"
 #include "WebCoreJSBuiltins.h"
@@ -122,7 +123,6 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
         return {};
     }
 
-    size_t arrayLength = array->length();
     const auto returnEmptyArrayBufferView = [&]() -> EncodedJSValue {
         if (asUint8Array) {
             RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), 0)));
@@ -130,54 +130,53 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
 
         RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), JSC::ArrayBuffer::create(static_cast<size_t>(0), 1))));
     };
-    RETURN_IF_EXCEPTION(throwScope, {});
 
-    if (arrayLength < 1) {
-        return returnEmptyArrayBufferView();
-    }
-
-    size_t byteLength = 0;
-    bool any_buffer = false;
-    bool any_typed = false;
-
-    // Use an argument buffer to avoid calling `getIndex` more than once per element.
-    // This is a small optimization
+    // Resolve every element of the input array into a MarkedArgumentBuffer
+    // first so that all user-observable side effects (index getters) run to
+    // completion before we read any byte lengths or allocate the output
+    // buffer. This avoids a TOCTOU where a getter at index N detaches or
+    // resizes the buffer backing index M < N after M's length was measured,
+    // which previously left uninitialized bytes in the output.
     MarkedArgumentBuffer args;
-    args.ensureCapacity(arrayLength);
+    args.ensureCapacity(array->length());
     if (args.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(lexicalGlobalObject, throwScope);
         return {};
     }
 
-    for (size_t i = 0; i < arrayLength; i++) {
-        auto element = array->getIndex(lexicalGlobalObject, i);
-        RETURN_IF_EXCEPTION(throwScope, {});
+    JSC::forEachInArrayLike(lexicalGlobalObject, array, [&](JSValue element) -> bool {
+        args.append(element);
+        return true;
+    });
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (args.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(lexicalGlobalObject, throwScope);
+        return {};
+    }
 
+    // All user code is done running. Validate each element and sum their
+    // byte lengths. Nothing between here and the final memcpy loop can call
+    // back into JavaScript, so the lengths we measure now are the lengths we
+    // copy below.
+    size_t byteLength = 0;
+    bool any_buffer = false;
+    bool any_typed = false;
+
+    for (size_t i = 0; i < args.size(); i++) {
+        JSValue element = args.at(i);
         if (auto* typedArray = dynamicDowncast<JSC::JSArrayBufferView>(element)) {
             if (typedArray->isDetached()) [[unlikely]] {
                 return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject, "Cannot validate on a detached buffer"_s);
             }
-            size_t current = typedArray->byteLength();
             any_typed = true;
-            byteLength += current;
-
-            if (current > 0) {
-                args.append(typedArray);
-            }
+            byteLength += typedArray->byteLength();
         } else if (auto* arrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(element)) {
             auto* impl = arrayBuffer->impl();
-            if (!impl) [[unlikely]] {
+            if (!impl || impl->isDetached()) [[unlikely]] {
                 return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject, "Cannot validate on a detached buffer"_s);
             }
-
-            size_t current = impl->byteLength();
             any_buffer = true;
-
-            if (current > 0) {
-                args.append(arrayBuffer);
-            }
-
-            byteLength += current;
+            byteLength += impl->byteLength();
         } else {
             throwTypeError(lexicalGlobalObject, throwScope, "Expected TypedArray"_s);
             return {};
@@ -199,43 +198,43 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
     auto* head = reinterpret_cast<char*>(buffer->data());
 
     if (!any_buffer) {
-        for (size_t i = 0; i < args.size(); i++) {
-            auto element = args.at(i);
-            RETURN_IF_EXCEPTION(throwScope, {});
-            auto* view = uncheckedDowncast<JSC::JSArrayBufferView>(element);
+        for (size_t i = 0; i < args.size() && remain > 0; i++) {
+            auto* view = uncheckedDowncast<JSC::JSArrayBufferView>(args.at(i));
             size_t length = std::min(remain, view->byteLength());
-            memcpy(head, view->vector(), length);
+            if (length > 0)
+                memcpy(head, view->vector(), length);
             remain -= length;
             head += length;
         }
     } else if (!any_typed) {
-        for (size_t i = 0; i < args.size(); i++) {
-            auto element = args.at(i);
-            RETURN_IF_EXCEPTION(throwScope, {});
-            auto* view = uncheckedDowncast<JSC::JSArrayBuffer>(element);
+        for (size_t i = 0; i < args.size() && remain > 0; i++) {
+            auto* view = uncheckedDowncast<JSC::JSArrayBuffer>(args.at(i));
             size_t length = std::min(remain, view->impl()->byteLength());
-            memcpy(head, view->impl()->data(), length);
+            if (length > 0)
+                memcpy(head, view->impl()->data(), length);
             remain -= length;
             head += length;
         }
     } else {
-        for (size_t i = 0; i < args.size(); i++) {
+        for (size_t i = 0; i < args.size() && remain > 0; i++) {
             auto element = args.at(i);
-            RETURN_IF_EXCEPTION(throwScope, {});
             size_t length = 0;
             if (auto* view = dynamicDowncast<JSC::JSArrayBuffer>(element)) {
                 length = std::min(remain, view->impl()->byteLength());
-                memcpy(head, view->impl()->data(), length);
+                if (length > 0)
+                    memcpy(head, view->impl()->data(), length);
             } else {
                 auto* typedArray = uncheckedDowncast<JSC::JSArrayBufferView>(element);
                 length = std::min(remain, typedArray->byteLength());
-                memcpy(head, typedArray->vector(), length);
+                if (length > 0)
+                    memcpy(head, typedArray->vector(), length);
             }
-
             remain -= length;
             head += length;
         }
     }
+
+    ASSERT(remain == 0);
 
     if (asUint8Array) {
         auto uint8array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), WTF::move(buffer), 0, byteLength);
@@ -666,7 +665,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
 
     if (millisecondsValue.inherits<JSC::DateInstance>()) {
         auto now = MonotonicTime::now();
-        double milliseconds = uncheckedDowncast<JSC::DateInstance>(millisecondsValue)->internalNumber() - now.approximateWallTime().secondsSinceEpoch().milliseconds();
+        double milliseconds = uncheckedDowncast<JSC::DateInstance>(millisecondsValue)->internalNumber() - now.approximate<WTF::WallTime>().secondsSinceEpoch().milliseconds();
         millisecondsValue = JSC::jsNumber(milliseconds > 0 ? std::ceil(milliseconds) : 0);
     }
 
@@ -954,6 +953,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     FFI                                            BunObject_lazyPropCb_wrap_FFI                                       DontDelete|PropertyCallback
     FileSystemRouter                               BunObject_lazyPropCb_wrap_FileSystemRouter                          DontDelete|PropertyCallback
     Glob                                           BunObject_lazyPropCb_wrap_Glob                                      DontDelete|PropertyCallback
+    Image                                          BunObject_lazyPropCb_wrap_Image                                     DontDelete|PropertyCallback
     MD4                                            BunObject_lazyPropCb_wrap_MD4                                       DontDelete|PropertyCallback
     MD5                                            BunObject_lazyPropCb_wrap_MD5                                       DontDelete|PropertyCallback
     SHA1                                           BunObject_lazyPropCb_wrap_SHA1                                      DontDelete|PropertyCallback

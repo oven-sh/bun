@@ -563,8 +563,8 @@ pub const Route = struct {
     threadlocal var normalized_abs_path_buf: bun.windows.PathBuffer = undefined;
 
     pub const Sorter = struct {
-        const sort_table: [std.math.maxInt(u8)]u8 = brk: {
-            var table: [std.math.maxInt(u8)]u8 = undefined;
+        const sort_table: [256]u8 = brk: {
+            var table: [256]u8 = undefined;
             for (&table, 0..) |*t, i| t.* = @as(u8, @intCast(i));
 
             // move dynamic routes to the bottom

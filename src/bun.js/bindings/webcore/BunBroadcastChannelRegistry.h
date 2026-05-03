@@ -1,33 +1,49 @@
+// Process-global subscriber map for BroadcastChannel.
+//
+// Unlike the WebKit design, which bounces every operation through the main
+// thread, this registry is directly thread-safe: subscribe/unsubscribe/post
+// take a single lock, and fan-out posts tasks straight to each subscriber's
+// own context. There is no MainThreadBridge and no per-context registry —
+// one singleton serves the whole process.
+
 #pragma once
 
-#include "BroadcastChannelRegistry.h"
-#include <wtf/CallbackAggregator.h>
-#include <wtf/Vector.h>
+#include "ScriptExecutionContext.h"
 #include <wtf/HashMap.h>
+#include <wtf/Lock.h>
+#include <wtf/NeverDestroyed.h>
+#include <wtf/ThreadSafeWeakPtr.h>
+#include <wtf/Vector.h>
+#include <wtf/text/StringHash.h>
+#include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
-struct MessageWithMessagePorts;
+class BroadcastChannel;
+class SerializedScriptValue;
 
-class BunBroadcastChannelRegistry final : public BroadcastChannelRegistry {
+class BunBroadcastChannelRegistry {
 public:
-    BunBroadcastChannelRegistry() = default;
-    static Ref<BunBroadcastChannelRegistry> create()
-    {
-        return adoptRef(*new BunBroadcastChannelRegistry);
-    }
+    static BunBroadcastChannelRegistry& singleton();
 
-    void registerChannel(const String& name, BroadcastChannelIdentifier) final;
-    void unregisterChannel(const String& name, BroadcastChannelIdentifier) final;
-    void postMessage(const String& name, BroadcastChannelIdentifier source, Ref<SerializedScriptValue>&&) final;
-
-    // void didReceivedMessage(IPC::Connection&, IPC::Decoder&);
-
-    HashMap<String, Vector<BroadcastChannelIdentifier>> m_channelsForName;
+    void subscribe(const String& name, ScriptExecutionContextIdentifier, BroadcastChannel&);
+    void unsubscribe(const String& name, BroadcastChannel&);
+    void post(const String& name, BroadcastChannel& source, Ref<SerializedScriptValue>&&);
 
 private:
-    void postMessageToRemote(const String& name, MessageWithMessagePorts&&);
-    void postMessageLocally(const String& name, BroadcastChannelIdentifier sourceInProgress, Ref<SerializedScriptValue>&&);
+    friend class WTF::NeverDestroyed<BunBroadcastChannelRegistry>;
+    BunBroadcastChannelRegistry() = default;
+
+    struct Subscriber {
+        ScriptExecutionContextIdentifier ctxId;
+        ThreadSafeWeakPtr<BroadcastChannel> channel;
+        // Raw pointer used only for identity comparison under the lock;
+        // never dereferenced.
+        BroadcastChannel* identity;
+    };
+
+    WTF::Lock m_lock;
+    HashMap<String, Vector<Subscriber>> m_subscribers WTF_GUARDED_BY_LOCK(m_lock);
 };
 
-}
+} // namespace WebCore

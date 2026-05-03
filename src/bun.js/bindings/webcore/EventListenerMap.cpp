@@ -115,20 +115,24 @@ void EventListenerMap::replace(const AtomString& eventType, EventListener& oldLi
     registeredListener = RegisteredEventListener::create(WTF::move(newListener), options);
 }
 
-bool EventListenerMap::add(const AtomString& eventType, Ref<EventListener>&& listener, const RegisteredEventListener::Options& options)
+RegisteredEventListener* EventListenerMap::add(const AtomString& eventType, Ref<EventListener>&& listener, const RegisteredEventListener::Options& options)
 {
     releaseAssertOrSetThreadUID();
     Locker locker { m_lock };
 
     if (auto* listeners = find(eventType)) {
         if (findListener(*listeners, listener, options.capture) != notFound)
-            return false; // Duplicate listener.
-        listeners->append(RegisteredEventListener::create(WTF::move(listener), options));
-        return true;
+            return nullptr; // Duplicate listener.
+        auto registeredListener = RegisteredEventListener::create(WTF::move(listener), options);
+        auto* result = registeredListener.ptr();
+        listeners->append(WTF::move(registeredListener));
+        return result;
     }
 
-    m_entries.append({ eventType, EventListenerVector { RegisteredEventListener::create(WTF::move(listener), options) } });
-    return true;
+    auto registeredListener = RegisteredEventListener::create(WTF::move(listener), options);
+    auto* result = registeredListener.ptr();
+    m_entries.append({ eventType, EventListenerVector { WTF::move(registeredListener) } });
+    return result;
 }
 
 static bool removeListenerFromVector(EventListenerVector& listeners, EventListener& listener, bool useCapture)

@@ -124,8 +124,7 @@ pub fn postgresErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8
             return globalObject.takeException(error.JSTerminated);
         },
         error.OutOfMemory => {
-            // TODO: add binding for creating an out of memory error?
-            return globalObject.takeException(globalObject.throwOutOfMemory());
+            return globalObject.createOutOfMemoryError();
         },
         error.ShortRead => {
             bun.unreachablePanic("Assertion failed: ShortRead should be handled by the caller in postgres", .{});

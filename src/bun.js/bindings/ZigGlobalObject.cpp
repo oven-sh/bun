@@ -66,6 +66,8 @@
 #include "GeneratedBunObject.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"
+#include "BunSecureContextCache.h"
+#include "ProcessIdentifier.h"
 #include "BunWorkerGlobalScope.h"
 #include "CallSite.h"
 #include "CallSitePrototype.h"
@@ -979,6 +981,18 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
 
 GlobalObject::~GlobalObject()
 {
+    // Break the Performance <-> PerformanceObserver reference cycle before the
+    // ScriptExecutionContext is torn down. Performance holds RefPtr<PerformanceObserver>
+    // in its registered-observer list and each PerformanceObserver holds RefPtr<Performance>,
+    // so neither is released unless the cycle is explicitly broken. WebKit does this from
+    // WorkerGlobalScope / LocalDOMWindow on removeAllEventListeners(); Bun has no equivalent
+    // hook, so this is the last point where the context is still fully alive. Doing it in
+    // Performance::contextDestroyed() instead is too late: dropping the last observer ref
+    // there cascades into ~ContextDestructionObserver() unregistering from the context while
+    // the context is already iterating observers in its own destructor.
+    if (m_performance)
+        m_performance->removeAllObservers();
+
     if (auto* ctx = scriptExecutionContext()) {
         ctx->removeFromContextsMap();
         ctx->deref();
@@ -3309,14 +3323,16 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         }
     }
 
-    ZigString queryString = { 0, 0 };
+    BunString queryString = { BunStringTag::Empty, nullptr };
     Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryString);
     keyZ.deref();
     referrerZ.deref();
 
     if (res.success) {
-        if (queryString.len > 0) {
-            return JSC::Identifier::fromString(globalObject->vm(), makeString(res.result.value.toWTFString(BunString::ZeroCopy), Zig::toString(queryString)));
+        if (!queryString.isEmpty()) {
+            auto result = JSC::Identifier::fromString(globalObject->vm(), makeString(res.result.value.toWTFString(BunString::ZeroCopy), queryString.toWTFString(BunString::ZeroCopy)));
+            queryString.deref();
+            return result;
         }
 
         return Identifier::fromString(globalObject->vm(), res.result.value.toWTFString(BunString::ZeroCopy));
@@ -3381,7 +3397,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
             moduleNameZ = Bun::toStringRef(moduleName);
         }
 
-        ZigString queryString = { 0, 0 };
+        BunString queryString = { BunStringTag::Empty, nullptr };
         String sourceOriginStringHolder;
 
         if (sourceURL.isEmpty()) {
@@ -3412,10 +3428,11 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
         }
 
-        if (queryString.len == 0) {
+        if (queryString.isEmpty()) {
             resolvedIdentifier = JSC::Identifier::fromString(vm, resolved.result.value.toWTFString());
         } else {
-            resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(resolved.result.value.toWTFString(BunString::ZeroCopy), Zig::toString(queryString)));
+            resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(resolved.result.value.toWTFString(BunString::ZeroCopy), queryString.toWTFString(BunString::ZeroCopy)));
+            queryString.deref();
         }
 
         moduleNameZ.deref();

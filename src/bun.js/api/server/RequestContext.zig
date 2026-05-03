@@ -51,7 +51,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         flags: NewFlags(debug_mode) = .{},
 
-        upgrade_context: ?*uws.SocketContext = null,
+        upgrade_context: ?*uws.WebSocketUpgradeContext = null,
 
         /// We can only safely free once the request body promise is finalized
         /// and the response is rejected
@@ -1194,6 +1194,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 response_stream.sink.onFirstWrite = null;
 
                 response_stream.sink.finalize();
+                this.sink = null;
+                response_stream.sink.destroy();
                 return;
             }
             var response_body_readable_stream_ref = this.response_body_readable_stream_ref;
@@ -1207,6 +1209,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 if (jsc.WebCore.ReadableStream.fromJS(stream.value, globalThis) catch null) |comparator| { // TODO: properly propagate exception upwards
                     if (std.meta.activeTag(comparator.ptr) == std.meta.activeTag(stream.ptr)) {
                         streamLog("is not locked", .{});
+                        response_stream.sink.onFirstWrite = null;
+                        response_stream.sink.ctx = null;
+                        response_stream.detach(globalThis);
+                        response_stream.sink.markDone();
+                        response_stream.sink.finalize();
+                        this.sink = null;
+                        response_stream.sink.destroy();
                         this.renderMissing();
                         return;
                     }
@@ -1219,6 +1228,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             response_stream.detach(globalThis);
             stream.cancel(globalThis);
             response_stream.sink.markDone();
+            response_stream.sink.finalize();
+            this.sink = null;
+            response_stream.sink.destroy();
             this.renderMissing();
         }
 
@@ -1634,7 +1646,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             streamLog("handleRejectStream", .{});
 
             if (req.sink) |wrapper| {
-                wrapper.sink.pending_flush = null;
+                if (wrapper.sink.pending_flush) |prom| {
+                    // The promise value was protected when pending_flush was
+                    // assigned (flushFromJS / endFromJS). Drop that root before
+                    // abandoning the pointer, otherwise it leaks for the
+                    // lifetime of the VM.
+                    prom.toJS().unprotect();
+                    wrapper.sink.pending_flush = null;
+                }
                 wrapper.sink.done = true;
                 req.flags.aborted = req.flags.aborted or wrapper.sink.aborted;
                 wrapper.sink.finalize();
@@ -2384,20 +2403,30 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     resp.clearOnData();
                     this.flags.is_waiting_for_request_body = false;
 
-                    if (!resp.hasResponded()) {
-                        resp.writeStatus("413 Payload Too Large");
-                        resp.endWithoutBody(comptime !http3);
-                    }
-
                     var loop = vm.eventLoop();
                     loop.enter();
                     defer loop.exit();
-                    // toErrorInstance handles .Locked itself (rejects the
-                    // promise, deinits the readable, calls onReceiveValue),
-                    // so don't re-resolve a stale copy afterwards.
+                    // Reject the pending body first so endRequestStreaming()
+                    // below (via this.endWithoutBody) doesn't substitute a
+                    // generic ConnectionClosed. toErrorInstance handles
+                    // .Locked itself (rejects the promise, deinits the
+                    // readable, calls onReceiveValue).
                     body.value.toErrorInstance(.{
                         .Message = bun.String.static("Request body exceeded maxRequestBodySize"),
                     }, globalThis) catch {};
+
+                    // Route through the normal end path so this.resp is
+                    // detached and the base ref released. Writing directly on
+                    // the raw uWS response left this.resp pointing at a
+                    // completed (and soon freed) response — uWS markDone()
+                    // clears onAborted so no abort ever fires to release the
+                    // ref, and a later handleResolve()/handleReject() from an
+                    // async handler would dereference the stale pointer.
+                    if (this.resp != null and !resp.hasResponded()) {
+                        this.flags.has_written_status = true;
+                        resp.writeStatus("413 Payload Too Large");
+                    }
+                    this.endWithoutBody(comptime !http3);
                     return;
                 }
 

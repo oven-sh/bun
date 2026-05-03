@@ -859,3 +859,14 @@ The number of lines of script output shown per script when using `--filter`. Def
 [run]
 elide-lines = 10
 ```
+
+### `run.noOrphans` - don't leave orphan processes behind
+
+When `true`, Bun watches the process that spawned it and exits as soon as that parent goes away — even if the parent was `SIGKILL`ed and never got a chance to forward a signal. On its own exit, Bun also recursively `SIGKILL`s every descendant process so nothing it spawned outlives it. Useful when Bun is launched by a supervisor (Electron, a CI runner, a thin shim) that may be force-killed.
+
+Linux and macOS only (no-op on Windows and other platforms). Equivalent to the `--no-orphans` CLI flag or the `BUN_FEATURE_FLAG_NO_ORPHANS=1` environment variable.
+
+```toml title="bunfig.toml" icon="settings"
+[run]
+noOrphans = true
+```

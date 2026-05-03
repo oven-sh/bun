@@ -445,6 +445,7 @@ const ServePlugins = struct {
         bun.assert(this.state == .pending);
         const pending = &this.state.pending;
         const plugin = pending.plugin;
+        const dev_server = pending.dev_server;
         var html_bundle_routes = pending.html_bundle_routes;
         pending.html_bundle_routes = .empty;
         defer html_bundle_routes.deinit(bun.default_allocator);
@@ -457,7 +458,7 @@ const ServePlugins = struct {
             bun.handleOom(route.onPluginsResolved(plugin));
             route.deref();
         }
-        if (pending.dev_server) |server| {
+        if (dev_server) |server| {
             bun.handleOom(server.onPluginsResolved(plugin));
         }
     }
@@ -467,6 +468,7 @@ const ServePlugins = struct {
 
         const error_js, const plugin_js = callframe.argumentsAsArray(2);
         const plugins = plugin_js.asPromisePtr(ServePlugins);
+        defer plugins.deref();
         handleOnReject(plugins, globalThis, error_js);
 
         return .js_undefined;
@@ -475,6 +477,7 @@ const ServePlugins = struct {
     pub fn handleOnReject(this: *ServePlugins, global: *jsc.JSGlobalObject, err: JSValue) void {
         bun.assert(this.state == .pending);
         const pending = &this.state.pending;
+        const dev_server = pending.dev_server;
         var html_bundle_routes = pending.html_bundle_routes;
         pending.html_bundle_routes = .empty;
         defer html_bundle_routes.deinit(bun.default_allocator);
@@ -487,7 +490,7 @@ const ServePlugins = struct {
             bun.handleOom(route.onPluginsRejected());
             route.deref();
         }
-        if (pending.dev_server) |server| {
+        if (dev_server) |server| {
             bun.handleOom(server.onPluginsRejected());
         }
 
@@ -781,6 +784,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 var sec_websocket_protocol = ZigString.Empty;
                 var sec_websocket_extensions = ZigString.Empty;
 
+                // Owned backing storage for the above when they come from options.headers.
+                // fastGet returns a ZigString that borrows from the header map entry's
+                // StringImpl, which fastRemove then frees — so we must copy the bytes
+                // before removing the entry.
+                var sec_websocket_protocol_owned = ZigString.Slice.empty;
+                defer sec_websocket_protocol_owned.deinit();
+                var sec_websocket_extensions_owned = ZigString.Slice.empty;
+                defer sec_websocket_extensions_owned.deinit();
+
                 if (optional) |opts| {
                     getter: {
                         if (opts.isEmptyOrUndefinedOrNull()) {
@@ -824,13 +836,17 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             }
 
                             if (fetch_headers_to_use.fastGet(.SecWebSocketProtocol)) |protocol| {
-                                sec_websocket_protocol = protocol;
+                                // Clone before fastRemove frees the backing StringImpl.
+                                sec_websocket_protocol_owned = bun.handleOom(protocol.toSliceClone(bun.default_allocator));
+                                sec_websocket_protocol = sec_websocket_protocol_owned.toZigString();
                                 // Remove from headers so it's not written twice (once here and once by upgrade())
                                 fetch_headers_to_use.fastRemove(.SecWebSocketProtocol);
                             }
 
-                            if (fetch_headers_to_use.fastGet(.SecWebSocketExtensions)) |protocol| {
-                                sec_websocket_extensions = protocol;
+                            if (fetch_headers_to_use.fastGet(.SecWebSocketExtensions)) |extensions| {
+                                // Clone before fastRemove frees the backing StringImpl.
+                                sec_websocket_extensions_owned = bun.handleOom(extensions.toSliceClone(bun.default_allocator));
+                                sec_websocket_extensions = sec_websocket_extensions_owned.toZigString();
                                 // Remove from headers so it's not written twice (once here and once by upgrade())
                                 fetch_headers_to_use.fastRemove(.SecWebSocketExtensions);
                             }
@@ -866,16 +882,50 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const resp = upgrader.resp.?;
             const ctx = upgrader.upgrade_context.?;
 
+            // Keep the upgrader alive across option getters below, which run
+            // arbitrary user JS. A re-entrant server.upgrade(req) from a getter
+            // would otherwise be able to deref this context out from under us.
+            upgrader.ref();
+            defer upgrader.deref();
+
             var sec_websocket_key_str = ZigString.Empty;
 
             var sec_websocket_protocol = ZigString.Empty;
 
             var sec_websocket_extensions = ZigString.Empty;
 
+            // Owned backing storage for sec_websocket_key/protocol/extensions.
+            //
+            // fastGet on request.headers returns a ZigString that borrows from the header map
+            // entry's StringImpl. Before we use these values we call opts.data / opts.headers
+            // getters, which run arbitrary user JS — that JS can mutate request.headers
+            // (set/delete Sec-WebSocket-*), freeing the StringImpl out from under the borrowed
+            // slice. Clone into owned storage so the bytes stay valid across the getter calls
+            // below and the later resp.upgrade().
+            //
+            // The options.headers path reuses the protocol/extensions slots (and frees the
+            // previous clone first) since fastRemove there would likewise free the backing
+            // StringImpl.
+            var sec_websocket_key_owned = ZigString.Slice.empty;
+            defer sec_websocket_key_owned.deinit();
+            var sec_websocket_protocol_owned = ZigString.Slice.empty;
+            defer sec_websocket_protocol_owned.deinit();
+            var sec_websocket_extensions_owned = ZigString.Slice.empty;
+            defer sec_websocket_extensions_owned.deinit();
+
             if (request.getFetchHeaders()) |head| {
-                sec_websocket_key_str = head.fastGet(.SecWebSocketKey) orelse ZigString.Empty;
-                sec_websocket_protocol = head.fastGet(.SecWebSocketProtocol) orelse ZigString.Empty;
-                sec_websocket_extensions = head.fastGet(.SecWebSocketExtensions) orelse ZigString.Empty;
+                if (head.fastGet(.SecWebSocketKey)) |key| {
+                    sec_websocket_key_owned = bun.handleOom(key.toSliceClone(bun.default_allocator));
+                    sec_websocket_key_str = sec_websocket_key_owned.toZigString();
+                }
+                if (head.fastGet(.SecWebSocketProtocol)) |protocol| {
+                    sec_websocket_protocol_owned = bun.handleOom(protocol.toSliceClone(bun.default_allocator));
+                    sec_websocket_protocol = sec_websocket_protocol_owned.toZigString();
+                }
+                if (head.fastGet(.SecWebSocketExtensions)) |extensions| {
+                    sec_websocket_extensions_owned = bun.handleOom(extensions.toSliceClone(bun.default_allocator));
+                    sec_websocket_extensions = sec_websocket_extensions_owned.toZigString();
+                }
             }
 
             if (upgrader.req) |req| {
@@ -959,13 +1009,19 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         }
 
                         if (fetch_headers_to_use.?.fastGet(.SecWebSocketProtocol)) |protocol| {
-                            sec_websocket_protocol = protocol;
+                            // Clone before fastRemove frees the backing StringImpl.
+                            sec_websocket_protocol_owned.deinit();
+                            sec_websocket_protocol_owned = bun.handleOom(protocol.toSliceClone(bun.default_allocator));
+                            sec_websocket_protocol = sec_websocket_protocol_owned.toZigString();
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use.?.fastRemove(.SecWebSocketProtocol);
                         }
 
-                        if (fetch_headers_to_use.?.fastGet(.SecWebSocketExtensions)) |protocol| {
-                            sec_websocket_extensions = protocol;
+                        if (fetch_headers_to_use.?.fastGet(.SecWebSocketExtensions)) |extensions| {
+                            // Clone before fastRemove frees the backing StringImpl.
+                            sec_websocket_extensions_owned.deinit();
+                            sec_websocket_extensions_owned = bun.handleOom(extensions.toSliceClone(bun.default_allocator));
+                            sec_websocket_extensions = sec_websocket_extensions_owned.toZigString();
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use.?.fastRemove(.SecWebSocketExtensions);
                         }
@@ -975,6 +1031,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         return error.JSError;
                     }
                 }
+            }
+
+            // Option getters above may have run arbitrary JS, including a
+            // re-entrant server.upgrade(req) on this same request. If that
+            // happened the upgrade has already been consumed and the cached
+            // `resp`/`ctx` locals now point at a socket that has been turned
+            // into a WebSocket — using them again would be UB.
+            if (upgrader.isAbortedOrEnded() or upgrader.didUpgradeWebSocket()) {
+                return .false;
             }
 
             var cookies_to_write: ?*WebCore.CookieMap = null;
@@ -1006,7 +1071,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // See https://github.com/oven-sh/bun/issues/1339
 
             // obviously invalid pointer marks it as used
-            upgrader.upgrade_context = @as(*uws.SocketContext, @ptrFromInt(std.math.maxInt(usize)));
+            upgrader.upgrade_context = @ptrFromInt(std.math.maxInt(usize));
             const signal = upgrader.signal;
             upgrader.signal = null;
             upgrader.resp = null;
@@ -1070,7 +1135,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                     ws.globalObject = globalThis;
                     this.config.websocket = ws.*;
-                } // we don't remove it
+                } else {
+                    // We don't replace the existing websocket config here, but
+                    // the new one was already protected in WebSocketServerContext.onCreate.
+                    // Unprotect the discarded handlers so they don't leak.
+                    ws.unprotect();
+                }
             }
 
             // These get re-applied when we set the static routes again.
@@ -1195,7 +1265,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             if (first_arg.isString()) {
                 const url_zig_str = try arguments[0].toSlice(ctx, bun.default_allocator);
                 defer url_zig_str.deinit();
-                var temp_url_str = url_zig_str.slice();
+                const temp_url_str = url_zig_str.slice();
 
                 if (temp_url_str.len == 0) {
                     const fetch_error = jsc.WebCore.Fetch.fetch_error_blank_url;
@@ -1204,14 +1274,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                 var url = URL.parse(temp_url_str);
 
-                if (url.hostname.len == 0) {
-                    url = URL.parse(
-                        strings.append(this.allocator, this.base_url_string_for_joining, url.pathname) catch unreachable,
-                    );
-                } else {
-                    temp_url_str = this.allocator.dupe(u8, temp_url_str) catch unreachable;
-                    url = URL.parse(temp_url_str);
-                }
+                // Both branches produce a heap-owned buffer that `url.href` borrows.
+                // `bun.String.cloneUTF8(url.href)` below makes its own copy, so this
+                // buffer must be freed before we leave the block.
+                const owned_url_buf: []const u8 = if (url.hostname.len == 0)
+                    bun.handleOom(strings.append(this.allocator, this.base_url_string_for_joining, url.pathname))
+                else
+                    bun.handleOom(this.allocator.dupe(u8, temp_url_str));
+                defer this.allocator.free(owned_url_buf);
+                url = URL.parse(owned_url_buf);
 
                 if (arguments.len >= 2 and arguments[1].isObject()) {
                     var opts = arguments[1];
@@ -1739,7 +1810,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 .config = config.*,
                 .base_url_string_for_joining = base_url,
                 .vm = jsc.VirtualMachine.get(),
-                .allocator = Arena.getThreadLocalDefault(),
+                .allocator = bun.default_allocator,
                 .dev_server = dev_server,
             });
 
@@ -1984,7 +2055,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.pending_requests += 1;
         }
 
-        pub fn onNodeHTTPRequestWithUpgradeCtx(this: *ThisServer, req: *uws.Request, resp: *App.Response, upgrade_ctx: ?*uws.SocketContext) void {
+        pub fn onNodeHTTPRequestWithUpgradeCtx(this: *ThisServer, req: *uws.Request, resp: *App.Response, upgrade_ctx: ?*uws.WebSocketUpgradeContext) void {
             this.onPendingRequest();
             if (comptime Environment.isDebug) {
                 this.vm.eventLoop().debug.enter();
@@ -2504,7 +2575,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             };
         }
 
-        fn upgradeWebSocketUserRoute(this: *UserRoute, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.SocketContext, method: ?bun.http.Method) void {
+        fn upgradeWebSocketUserRoute(this: *UserRoute, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.WebSocketUpgradeContext, method: ?bun.http.Method) void {
             const server = this.server;
             const index = this.id;
 
@@ -2517,7 +2588,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             server.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
 
-        pub fn onWebSocketUpgrade(this: *ThisServer, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.SocketContext, id: usize) void {
+        pub fn onWebSocketUpgrade(this: *ThisServer, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.WebSocketUpgradeContext, id: usize) void {
             jsc.markBinding(@src());
             if (id == 1) {
                 // This is actually a UserRoute if id is 1 so it's safe to cast
@@ -3677,7 +3748,7 @@ extern fn NodeHTTPServer__onRequest_http(
     methodString: jsc.JSValue,
     request: *uws.Request,
     response: *uws.NewApp(false).Response,
-    upgrade_ctx: ?*uws.SocketContext,
+    upgrade_ctx: ?*uws.WebSocketUpgradeContext,
     node_response_ptr: *?*NodeHTTPResponse,
 ) jsc.JSValue;
 
@@ -3689,7 +3760,7 @@ extern fn NodeHTTPServer__onRequest_https(
     methodString: jsc.JSValue,
     request: *uws.Request,
     response: *uws.NewApp(true).Response,
-    upgrade_ctx: ?*uws.SocketContext,
+    upgrade_ctx: ?*uws.WebSocketUpgradeContext,
     node_response_ptr: *?*NodeHTTPResponse,
 ) jsc.JSValue;
 
@@ -3760,7 +3831,6 @@ const js_printer = bun.js_printer;
 const logger = bun.logger;
 const strings = bun.strings;
 const uws = bun.uws;
-const Arena = bun.allocators.MimallocArena;
 const BoringSSL = bun.BoringSSL.c;
 const SocketAddress = bun.api.socket.SocketAddress;
 

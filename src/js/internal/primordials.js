@@ -44,26 +44,37 @@ const copyProps = (src, dest) => {
   });
 };
 
+// The known built-in iterator-returning method keys for Set and Map.
+// We hardcode these to avoid iterating user-added prototype methods,
+// which could have side effects when called. (see: #18890)
+const iteratorMethods = ["entries", "keys", "values", Symbol.iterator];
+
 const makeSafe = (unsafe, safe) => {
   if (Symbol.iterator in unsafe.prototype) {
     const dummy = new unsafe();
     let next; // We can reuse the same `next` method.
 
+    // First, wrap the known iterator-returning methods with SafeIterator.
+    ArrayPrototypeForEach(iteratorMethods, key => {
+      const desc = Reflect.getOwnPropertyDescriptor(unsafe.prototype, key);
+      if (desc && typeof desc.value === "function") {
+        const createIterator = uncurryThis(desc.value);
+        next ??= uncurryThis(createIterator(dummy).next);
+        const SafeIterator = createSafeIterator(createIterator, next);
+        desc.value = function () {
+          return new SafeIterator(this);
+        };
+        Reflect.defineProperty(safe.prototype, key, desc);
+      }
+    });
+
+    // Then, copy remaining built-in properties (skip already-defined and user-added keys).
     ArrayPrototypeForEach(Reflect.ownKeys(unsafe.prototype), key => {
       if (!Reflect.getOwnPropertyDescriptor(safe.prototype, key)) {
         const desc = Reflect.getOwnPropertyDescriptor(unsafe.prototype, key);
-        if (typeof desc.value === "function" && desc.value.length === 0) {
-          const called = desc.value.$call(dummy) || {};
-          if (Symbol.iterator in (typeof called === "object" ? called : {})) {
-            const createIterator = uncurryThis(desc.value);
-            next ??= uncurryThis(createIterator(dummy).next);
-            const SafeIterator = createSafeIterator(createIterator, next);
-            desc.value = function () {
-              return new SafeIterator(this);
-            };
-          }
+        if (desc) {
+          Reflect.defineProperty(safe.prototype, key, desc);
         }
-        Reflect.defineProperty(safe.prototype, key, desc);
       }
     });
   } else copyProps(unsafe.prototype, safe.prototype);

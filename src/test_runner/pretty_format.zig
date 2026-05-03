@@ -1316,7 +1316,7 @@ pub const JestPrettyFormat = struct {
 
                     const map_name = if (value.jsType() == .WeakMap) "WeakMap" else "Map";
 
-                    if (length == 0) {
+                    if (length == 0 or value.jsType() == .WeakMap) {
                         return writer.print("{s} {{}}", .{map_name});
                     }
 
@@ -1346,7 +1346,7 @@ pub const JestPrettyFormat = struct {
 
                     const set_name = if (value.jsType() == .WeakSet) "WeakSet" else "Set";
 
-                    if (length == 0) {
+                    if (length == 0 or value.jsType() == .WeakSet) {
                         return writer.print("{s} {{}}", .{set_name});
                     }
 

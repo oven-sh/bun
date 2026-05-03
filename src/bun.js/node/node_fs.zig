@@ -4562,11 +4562,7 @@ pub const NodeFS = struct {
                             item.deref();
                         },
                         Buffer => {
-                            // The MarkedArrayBuffer struct is stored by-value in `entries.items`,
-                            // so only free the owned byte slice. `item.destroy()` would attempt
-                            // `allocator.destroy(item)` on an interior ArrayList pointer, corrupting
-                            // the heap (and for index 0, double-freeing `entries.items.ptr`).
-                            bun.default_allocator.free(item.buffer.byteSlice());
+                            item.destroy();
                         },
                         bun.String => {
                             item.deref();
@@ -5011,14 +5007,10 @@ pub const NodeFS = struct {
                     for (entries.items) |*result| {
                         switch (ExpectedType) {
                             bun.jsc.Node.Dirent => {
-                                result.name.deref();
+                                result.deref();
                             },
                             Buffer => {
-                                // The MarkedArrayBuffer struct is stored by-value in `entries.items`,
-                                // so only free the owned byte slice. `result.destroy()` would attempt
-                                // `allocator.destroy(result)` on an interior ArrayList pointer, corrupting
-                                // the heap (and for index 0, double-freeing `entries.items.ptr`).
-                                bun.default_allocator.free(result.buffer.byteSlice());
+                                result.destroy();
                             },
                             bun.String => {
                                 result.deref();

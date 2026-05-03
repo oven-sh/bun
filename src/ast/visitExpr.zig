@@ -550,6 +550,27 @@ pub fn VisitExpr(
                 });
                 e_.target = target_visited;
 
+                // Remove unnecessary optional chains
+                if (p.options.features.minify_syntax) {
+                    if (e_.optional_chain == .start) {
+                        const result = SideEffects.toNullOrUndefined(p, e_.target.data);
+                        if (result.ok and !result.value) {
+                            e_.optional_chain = null;
+                        }
+                    } else if (e_.optional_chain == .continuation) {
+                        // Strip orphaned continuations whose target's chain was already removed
+                        const target_chain = switch (e_.target.data) {
+                            .e_dot => |dot| dot.optional_chain,
+                            .e_index => |idx| idx.optional_chain,
+                            .e_call => |call| call.optional_chain,
+                            else => null,
+                        };
+                        if (target_chain == null) {
+                            e_.optional_chain = null;
+                        }
+                    }
+                }
+
                 switch (e_.index.data) {
                     .e_private_identifier => |_private| {
                         var private = _private;
@@ -877,6 +898,27 @@ pub fn VisitExpr(
                     .property_access_for_method_call_maybe_should_replace_with_undefined = in.property_access_for_method_call_maybe_should_replace_with_undefined,
                 });
 
+                // Remove unnecessary optional chains
+                if (p.options.features.minify_syntax) {
+                    if (e_.optional_chain == .start) {
+                        const result = SideEffects.toNullOrUndefined(p, e_.target.data);
+                        if (result.ok and !result.value) {
+                            e_.optional_chain = null;
+                        }
+                    } else if (e_.optional_chain == .continuation) {
+                        // Strip orphaned continuations whose target's chain was already removed
+                        const target_chain = switch (e_.target.data) {
+                            .e_dot => |dot| dot.optional_chain,
+                            .e_index => |idx| idx.optional_chain,
+                            .e_call => |call| call.optional_chain,
+                            else => null,
+                        };
+                        if (target_chain == null) {
+                            e_.optional_chain = null;
+                        }
+                    }
+                }
+
                 // 'require.resolve' -> .e_require_resolve_call_target
                 if (e_.target.data == .e_require_call_target and
                     strings.eqlComptime(e_.name, "resolve"))
@@ -1197,6 +1239,27 @@ pub fn VisitExpr(
                     .has_chain_parent = e_.optional_chain == .continuation,
                     .property_access_for_method_call_maybe_should_replace_with_undefined = true,
                 });
+
+                // Remove unnecessary optional chains
+                if (p.options.features.minify_syntax) {
+                    if (e_.optional_chain == .start) {
+                        const result = SideEffects.toNullOrUndefined(p, e_.target.data);
+                        if (result.ok and !result.value) {
+                            e_.optional_chain = null;
+                        }
+                    } else if (e_.optional_chain == .continuation) {
+                        // Strip orphaned continuations whose target's chain was already removed
+                        const target_chain = switch (e_.target.data) {
+                            .e_dot => |dot| dot.optional_chain,
+                            .e_index => |idx| idx.optional_chain,
+                            .e_call => |call| call.optional_chain,
+                            else => null,
+                        };
+                        if (target_chain == null) {
+                            e_.optional_chain = null;
+                        }
+                    }
+                }
 
                 // Copy the call side effect flag over if this is a known target
                 switch (e_.target.data) {

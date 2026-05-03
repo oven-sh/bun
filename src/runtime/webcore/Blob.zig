@@ -227,9 +227,23 @@ pub fn readBytesToHandler(this: *Blob, comptime Handler: type, ctx: *Handler, gl
             fn cb(result: S3.S3DownloadResult, opaque_self: *anyopaque) bun.JSTerminated!void {
                 const t: *@This() = @ptrCast(@alignCast(opaque_self));
                 switch (result) {
-                    // `body` is owned by us (simple_request.zig:20); take the
-                    // ArrayList's items as-is.
-                    .success => |response| t.done(.{ .ok = response.body.list.items }),
+                    // `body` is owned by us (simple_request.zig:20). Convert
+                    // to a plain `bun.default_allocator` slice so the
+                    // downstream `free()` handles both len and capacity
+                    // correctly. Empty bodies need the explicit `deinit`
+                    // path because `toOwnedSlice()` on a 0-length-but-16
+                    // -capacity buffer leaves a live 16-byte allocation
+                    // behind a `{ptr, len=0}` slice — and Zig's
+                    // `Allocator.free` short-circuits on `len==0` before
+                    // calling `mi_free`. See #29083.
+                    .success => |response| {
+                        var body = response.body;
+                        const owned: []u8 = if (body.list.items.len == 0) blk: {
+                            body.deinit();
+                            break :blk &.{};
+                        } else body.toOwnedSlice();
+                        t.done(.{ .ok = owned });
+                    },
                     // S3Error has its own JS-error builder; flatten to a
                     // SystemError so the callback has one shape to handle.
                     inline .not_found, .failure => |e| t.done(.{ .err = .{

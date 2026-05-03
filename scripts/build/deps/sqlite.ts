@@ -1,12 +1,14 @@
 /**
- * SQLite — embedded SQL database. Backs bun:sqlite.
+ * SQLite — embedded SQL database. Backs bun:sqlite and node:sqlite.
  *
  * Source lives IN THE BUN REPO at src/bun.js/bindings/sqlite/ — it's the
  * sqlite3 amalgamation (single .c file). No fetch step; tracked in git.
  *
- * Only built when staticSqlite=true. Otherwise bun dlopen()s the system
- * sqlite at runtime (macOS ships a recent sqlite; most linux distros don't,
- * so static is the default on linux).
+ * Always built: node:sqlite uses the bundled copy unconditionally (matching
+ * Node.js). bun:sqlite additionally supports dlopen()ing the system sqlite
+ * on macOS when staticSqlite=false (LAZY_LOAD_SQLITE=1), but NodeSqlite.cpp
+ * includes sqlite3_local.h directly and links against these symbols on
+ * every platform.
  */
 
 import type { Dependency } from "../source.ts";
@@ -14,7 +16,7 @@ import type { Dependency } from "../source.ts";
 export const sqlite: Dependency = {
   name: "sqlite",
 
-  enabled: cfg => cfg.staticSqlite,
+  enabled: () => true,
 
   source: () => ({
     kind: "in-tree",
@@ -36,6 +38,15 @@ export const sqlite: Dependency = {
       SQLITE_ENABLE_MATH_FUNCTIONS: 1,
       SQLITE_ENABLE_UPDATE_DELETE_LIMIT: 1,
       SQLITE_UDL_CAPABLE_PARSER: 1,
+      // node:sqlite exposes createSession/applyChangeset + columns()
+      // metadata. Match Node.js's compile-time feature set so those
+      // APIs work identically. PREUPDATE_HOOK is a prerequisite for the
+      // session extension.
+      SQLITE_ENABLE_SESSION: 1,
+      SQLITE_ENABLE_PREUPDATE_HOOK: 1,
+      SQLITE_ENABLE_DBSTAT_VTAB: 1,
+      SQLITE_ENABLE_GEOPOLY: 1,
+      SQLITE_ENABLE_RBU: 1,
     },
     cflags: [
       "-Wno-incompatible-pointer-types-discards-qualifiers",

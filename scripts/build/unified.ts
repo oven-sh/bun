@@ -72,6 +72,7 @@ const noUnify: readonly string[] = [
   "src/bun.js/bindings/webcore/JSDOMPromiseDeferred.cpp",
   "src/bun.js/bindings/webcore/JSMessageEventCustom.cpp",
   "src/bun.js/bindings/sqlite/JSSQLStatement.cpp",
+  "src/bun.js/bindings/sqlite/NodeSqlite.cpp",
 
   // WebKit-derived crypto algorithm impls share file-static helper names
   // (`aesAlgorithm`, `cryptEncrypt`, `ALG128`, `IVSIZE`, ...) — upstream

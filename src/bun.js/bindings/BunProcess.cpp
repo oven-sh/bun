@@ -167,6 +167,7 @@ extern "C" bool Bun__GlobalObject__connectedIPC(JSGlobalObject*);
 extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
 extern "C" bool Bun__ensureProcessIPCInitialized(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
+extern "C" const char* Bun__sqlite3_version();
 BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
 
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global);
@@ -255,6 +256,7 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "icu"_s), JSValue(JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(U_ICU_VERSION)))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "unicode"_s), JSValue(JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(U_UNICODE_VERSION)))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "sqlite"_s), JSValue(JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(Bun__sqlite3_version())))), 0);
 
 #define STRINGIFY_IMPL(x) #x
 #define STRINGIFY(x) STRINGIFY_IMPL(x)

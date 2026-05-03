@@ -23,7 +23,7 @@ using namespace JSC;
 #define BUN_COMMON_STRINGS_LAZY_PROPERTY_DEFINITION_NOT_BUILTIN_NAMES(methodName, stringLiteral) \
     this->m_commonString_##methodName.initLater(                                                 \
         [](const JSC::LazyProperty<JSGlobalObject, JSString>::Initializer& init) {               \
-            init.set(jsOwnedString(init.vm, stringLiteral##_s));                                 \
+            init.set(jsString(init.vm, AtomString(stringLiteral##_s)));                          \
         });
 
 #define BUN_COMMON_STRINGS_LAZY_PROPERTY_VISITOR(name) this->m_commonString_##name.visit(visitor);
@@ -148,19 +148,47 @@ enum class CommonStringsForZig : uint8_t {
     IPv6 = 1,
     IN4Loopback = 2,
     IN6Any = 3,
+    ipv4Lower = 4,
+    ipv6Lower = 5,
+    fetchDefault = 6,
+    fetchError = 7,
+    fetchInclude = 8,
+    buffer = 9,
+    binaryTypeArrayBuffer = 10,
+    binaryTypeNodeBuffer = 11,
+    binaryTypeUint8Array = 12,
 };
 
 static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForZig commonString)
 {
+    auto& commonStrings = globalObject->commonStrings();
     switch (commonString) {
     case CommonStringsForZig::IPv4:
-        return globalObject->commonStrings().IPv4String(globalObject);
+        return commonStrings.IPv4String(globalObject);
     case CommonStringsForZig::IPv6:
-        return globalObject->commonStrings().IPv6String(globalObject);
+        return commonStrings.IPv6String(globalObject);
     case CommonStringsForZig::IN4Loopback:
-        return globalObject->commonStrings().IN4LoopbackString(globalObject);
+        return commonStrings.IN4LoopbackString(globalObject);
     case CommonStringsForZig::IN6Any:
-        return globalObject->commonStrings().IN6AnyString(globalObject);
+        return commonStrings.IN6AnyString(globalObject);
+    case CommonStringsForZig::ipv4Lower:
+        return commonStrings.ipv4LowerString(globalObject);
+    case CommonStringsForZig::ipv6Lower:
+        return commonStrings.ipv6LowerString(globalObject);
+    case CommonStringsForZig::fetchDefault:
+        return commonStrings.fetchDefaultString(globalObject);
+    case CommonStringsForZig::fetchError:
+        return commonStrings.fetchErrorString(globalObject);
+    case CommonStringsForZig::fetchInclude:
+        return commonStrings.fetchIncludeString(globalObject);
+    case CommonStringsForZig::buffer:
+        return commonStrings.bufferString(globalObject);
+    case CommonStringsForZig::binaryTypeArrayBuffer:
+        return commonStrings.binaryTypeArrayBufferString(globalObject);
+    case CommonStringsForZig::binaryTypeNodeBuffer:
+        return commonStrings.binaryTypeNodeBufferString(globalObject);
+    case CommonStringsForZig::binaryTypeUint8Array:
+        return commonStrings.binaryTypeUint8ArrayString(globalObject);
     default: {
         ASSERT_NOT_REACHED();
         return jsUndefined();
@@ -171,6 +199,90 @@ static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForZig co
 extern "C" JSC::EncodedJSValue Bun__CommonStringsForZig__toJS(CommonStringsForZig commonString, Zig::GlobalObject* globalObject)
 {
     return JSValue::encode(toJS(globalObject, commonString));
+}
+
+// Must be kept in sync with src/http/FetchCacheMode.zig
+enum class FetchCacheMode : uint8_t {
+    Default = 0,
+    NoStore = 1,
+    Reload = 2,
+    NoCache = 3,
+    ForceCache = 4,
+    OnlyIfCached = 5,
+};
+
+extern "C" JSC::EncodedJSValue Bun__FetchCacheMode__toJS(FetchCacheMode mode, Zig::GlobalObject* globalObject)
+{
+    auto& commonStrings = globalObject->commonStrings();
+    switch (mode) {
+    case FetchCacheMode::Default:
+        return JSValue::encode(commonStrings.fetchDefaultString(globalObject));
+    case FetchCacheMode::NoStore:
+        return JSValue::encode(commonStrings.fetchNoStoreString(globalObject));
+    case FetchCacheMode::Reload:
+        return JSValue::encode(commonStrings.fetchReloadString(globalObject));
+    case FetchCacheMode::NoCache:
+        return JSValue::encode(commonStrings.fetchNoCacheString(globalObject));
+    case FetchCacheMode::ForceCache:
+        return JSValue::encode(commonStrings.fetchForceCacheString(globalObject));
+    case FetchCacheMode::OnlyIfCached:
+        return JSValue::encode(commonStrings.fetchOnlyIfCachedString(globalObject));
+    default: {
+        ASSERT_NOT_REACHED();
+        return JSValue::encode(jsUndefined());
+    }
+    }
+}
+
+// Must be kept in sync with src/http/FetchRedirect.zig
+enum class FetchRedirect : uint8_t {
+    Follow = 0,
+    Manual = 1,
+    Error = 2,
+};
+
+extern "C" JSC::EncodedJSValue Bun__FetchRedirect__toJS(FetchRedirect redirect, Zig::GlobalObject* globalObject)
+{
+    auto& commonStrings = globalObject->commonStrings();
+    switch (redirect) {
+    case FetchRedirect::Follow:
+        return JSValue::encode(commonStrings.fetchFollowString(globalObject));
+    case FetchRedirect::Manual:
+        return JSValue::encode(commonStrings.fetchManualString(globalObject));
+    case FetchRedirect::Error:
+        return JSValue::encode(commonStrings.fetchErrorString(globalObject));
+    default: {
+        ASSERT_NOT_REACHED();
+        return JSValue::encode(jsUndefined());
+    }
+    }
+}
+
+// Must be kept in sync with src/http/FetchRequestMode.zig
+enum class FetchRequestMode : uint8_t {
+    SameOrigin = 0,
+    NoCors = 1,
+    Cors = 2,
+    Navigate = 3,
+};
+
+extern "C" JSC::EncodedJSValue Bun__FetchRequestMode__toJS(FetchRequestMode mode, Zig::GlobalObject* globalObject)
+{
+    auto& commonStrings = globalObject->commonStrings();
+    switch (mode) {
+    case FetchRequestMode::SameOrigin:
+        return JSValue::encode(commonStrings.fetchSameOriginString(globalObject));
+    case FetchRequestMode::NoCors:
+        return JSValue::encode(commonStrings.fetchNoCorsString(globalObject));
+    case FetchRequestMode::Cors:
+        return JSValue::encode(commonStrings.fetchCorsString(globalObject));
+    case FetchRequestMode::Navigate:
+        return JSValue::encode(commonStrings.fetchNavigateString(globalObject));
+    default: {
+        ASSERT_NOT_REACHED();
+        return JSValue::encode(jsUndefined());
+    }
+    }
 }
 
 } // namespace Bun

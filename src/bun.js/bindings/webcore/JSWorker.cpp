@@ -686,6 +686,14 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
     // worker thread never touches the parent VM's HandleSet (Strong<T> has no
     // move ctor; capturing it by value would copy-construct/destroy it on the
     // worker thread, racing the parent VM's "Strong Handles" GC constraint).
+    //
+    // Leak windows (accepted trade-off vs the crash above):
+    //   - task queued but worker terminated before it runs: the lambda is
+    //     destroyed on the worker thread; the raw pointer is dropped and
+    //     promiseHandle leaks in the (still-live) parent VM. Freeing it
+    //     there would be exactly the cross-thread HandleSet mutation we're
+    //     avoiding. Pre-fix the promise already hung in this case.
+    //   - postTaskTo(parentId, …) on the return trip fails: see below.
     auto* promiseHandle = new Strong<JSPromise>(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     bool accepted = worker.postTaskToWorkerGlobalScope([promiseHandle, parentId](ScriptExecutionContext& workerCtx) {

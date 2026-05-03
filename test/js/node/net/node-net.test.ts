@@ -427,6 +427,43 @@ describe("net.Socket write", () => {
   // `getListener` read `handlers.mode` through the same dangling pointer.
   // These only fault under ASAN/debug-poison, so they are gated accordingly.
   it.skipIf(!isDebug && !isASAN)(
+    "native handle does not retain a dangling handlers pointer after connectError (scope.exit path)",
+    async () => {
+      const fixture = `
+        const net = require("node:net");
+        const s = new net.Socket();
+        let handle;
+        s.on("error", () => {});
+        // Capture the native handle before _destroy nulls s._handle.
+        s.once("connectionAttemptFailed", () => { handle = s._handle; });
+        s.on("close", () => {
+          // handleConnectError never reached markActive (is_active == false),
+          // so the socket-level markInactive is a no-op. The Handlers were
+          // freed by scope.exit() — which must also null the socket's field.
+          for (let i = 0; i < 100; i++) {
+            if (handle.listener !== undefined) {
+              console.error("unexpected listener");
+              process.exit(1);
+            }
+          }
+          console.log("ok");
+        });
+        s.connect(1, "127.0.0.1");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("ok");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it.skipIf(!isDebug && !isASAN)(
     "native handle does not retain a dangling handlers pointer after close (getListener)",
     async () => {
       const fixture = `

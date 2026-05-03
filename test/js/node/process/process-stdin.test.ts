@@ -176,24 +176,22 @@ describe.skipIf(!isPosix)("signals with flowing stdin on /dev/zero", () => {
     // is wedged in the synchronous read loop and neither waitpid nor the
     // signal handler resolves, so we want each case to fail fast instead
     // of eating 5s and truncating the rest of the suite's output.
-    test(
-      "handler fires",
-      async () => {
-        // await using: on regression the child is a CPU-bound infinite
-        // /dev/zero reader. An early expect() throw has to still terminate
-        // the subprocess or we leak a busy-looping process into the rest
-        // of the run.
-        await using proc = Bun.spawn({
-          cmd: [
-            bunExe(),
-            "-e",
-            // Order matters: without the fix, `process.stdin.on("data")`
-            // synchronously enters the blocking read loop, so any writes
-            // that come AFTER it never flush. Emit READY and install the
-            // signal handler FIRST, then attach the listener that arms
-            // the bug. The readiness ping proves the child got far enough
-            // to have the handler registered before we send the signal.
-            `
+    test("handler fires", async () => {
+      // await using: on regression the child is a CPU-bound infinite
+      // /dev/zero reader. An early expect() throw has to still terminate
+      // the subprocess or we leak a busy-looping process into the rest
+      // of the run.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          // Order matters: without the fix, `process.stdin.on("data")`
+          // synchronously enters the blocking read loop, so any writes
+          // that come AFTER it never flush. Emit READY and install the
+          // signal handler FIRST, then attach the listener that arms
+          // the bug. The readiness ping proves the child got far enough
+          // to have the handler registered before we send the signal.
+          `
             const fs = require("fs");
             process.on(${JSON.stringify(signal)}, () => {
               fs.writeSync(2, ${JSON.stringify(signal)} + "\\n");
@@ -202,51 +200,47 @@ describe.skipIf(!isPosix)("signals with flowing stdin on /dev/zero", () => {
             fs.writeSync(1, "READY\\n");
             process.stdin.on("data", () => {});
             `,
-          ],
-          stdin: Bun.file("/dev/zero"),
-          stdout: "pipe",
-          stderr: "pipe",
-          env: bunEnv,
-        });
+        ],
+        stdin: Bun.file("/dev/zero"),
+        stdout: "pipe",
+        stderr: "pipe",
+        env: bunEnv,
+      });
 
-        // Wait for READY so the child has definitely installed the signal
-        // handler before we kill it. READY precedes the data listener that
-        // arms the regression — on regression the child still prints
-        // READY, proc.kill delivers via the default disposition, and the
-        // tail assertions surface that the JS handler never ran.
-        await waitForLine(proc, "READY");
+      // Wait for READY so the child has definitely installed the signal
+      // handler before we kill it. READY precedes the data listener that
+      // arms the regression — on regression the child still prints
+      // READY, proc.kill delivers via the default disposition, and the
+      // tail assertions surface that the JS handler never ran.
+      await waitForLine(proc, "READY");
 
-        proc.kill(signal);
+      proc.kill(signal);
 
-        // stderr first: on regression the child is killed by the default
-        // disposition, exitCode is null and stderr is empty — asserting
-        // stderr first surfaces `expected "" to contain "SIGTERM"`, which
-        // points at the real cause (handler never fired).
-        expect(await proc.stderr.text()).toContain(signal);
-        expect(await proc.exited).toBe(exit);
-      },
-      // 5s timeout: debug-build subprocess startup is ~1s on its own, and
-      // READY takes another ~0.5-1s. Tight timeouts made the suite flaky.
-      5000,
-    );
+      // stderr first: on regression the child is killed by the default
+      // disposition, exitCode is null and stderr is empty — asserting
+      // stderr first surfaces `expected "" to contain "SIGTERM"`, which
+      // points at the real cause (handler never fired).
+      expect(await proc.stderr.text()).toContain(signal);
+      expect(await proc.exited).toBe(exit);
+    }, // 5s timeout: debug-build subprocess startup is ~1s on its own, and
+    // READY takes another ~0.5-1s. Tight timeouts made the suite flaky.
+    5000);
   });
 
   // Timer callbacks share the same starvation path — setInterval stalled
   // whenever tick() never returned.
-  test(
-    "setInterval fires",
-    async () => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          // Same ordering as above: handler + timer first, then READY,
-          // then the data listener that arms the bug. The interval emits
-          // TICKED on its first tick so the parent can synchronize on an
-          // observed condition instead of a wall-clock delay — on
-          // regression the event loop is wedged and TICKED never arrives,
-          // so waitForLine() fails deterministically.
-          `
+  test("setInterval fires", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        // Same ordering as above: handler + timer first, then READY,
+        // then the data listener that arms the bug. The interval emits
+        // TICKED on its first tick so the parent can synchronize on an
+        // observed condition instead of a wall-clock delay — on
+        // regression the event loop is wedged and TICKED never arrives,
+        // so waitForLine() fails deterministically.
+        `
           const fs = require("fs");
           let ticked = false;
           process.on("SIGTERM", () => {
@@ -262,27 +256,25 @@ describe.skipIf(!isPosix)("signals with flowing stdin on /dev/zero", () => {
           fs.writeSync(1, "READY\\n");
           process.stdin.on("data", () => {});
           `,
-        ],
-        stdin: Bun.file("/dev/zero"),
-        stdout: "pipe",
-        stderr: "pipe",
-        env: bunEnv,
-      });
+      ],
+      stdin: Bun.file("/dev/zero"),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
 
-      // Timer must fire at least once while stdin is flowing. waitForLine
-      // throws on EOF so a child that dies before ticking surfaces as a
-      // clear startup failure rather than a later assertion mismatch.
-      await waitForLine(proc, "TICKED");
-      proc.kill("SIGTERM");
+    // Timer must fire at least once while stdin is flowing. waitForLine
+    // throws on EOF so a child that dies before ticking surfaces as a
+    // clear startup failure rather than a later assertion mismatch.
+    await waitForLine(proc, "TICKED");
+    proc.kill("SIGTERM");
 
-      // Confirm the SIGTERM handler fired (not just the default
-      // disposition) by checking the handler's distinctive marker.
-      const stdout = await proc.stdout.text();
-      expect(stdout).toContain("SAW_SIGTERM");
-      expect(await proc.exited).toBe(46);
-    },
-    5000,
-  );
+    // Confirm the SIGTERM handler fired (not just the default
+    // disposition) by checking the handler's distinctive marker.
+    const stdout = await proc.stdout.text();
+    expect(stdout).toContain("SAW_SIGTERM");
+    expect(await proc.exited).toBe(46);
+  }, 5000);
 });
 
 // waitForLine reads from proc.stdout until `needle` appears. Throws on EOF

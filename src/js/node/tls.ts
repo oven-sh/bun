@@ -3,6 +3,8 @@ const { isArrayBufferView, isTypedArray } = require("node:util/types");
 const net = require("node:net");
 const Duplex = require("internal/streams/duplex");
 const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
+const _getTicketKeys = $newZigFunction("Listener.zig", "jsGetTicketKeys", 1);
+const _setTicketKeys = $newZigFunction("Listener.zig", "jsSetTicketKeys", 2);
 const { throwNotImplemented } = require("internal/shared");
 const { throwOnInvalidTLSArray } = require("internal/tls");
 const { validateString } = require("internal/validators");
@@ -813,14 +815,6 @@ function Server(options, secureConnectionListener): void {
     }
   };
 
-  Server.prototype.getTicketKeys = function () {
-    throw Error("Not implented in Bun yet");
-  };
-
-  Server.prototype.setTicketKeys = function () {
-    throw Error("Not implented in Bun yet");
-  };
-
   this[buntls] = function (port, host, isClient) {
     return [
       {
@@ -845,6 +839,25 @@ function Server(options, secureConnectionListener): void {
   this.setSecureContext(options);
 }
 $toClass(Server, "Server", NetServer);
+
+Server.prototype.getTicketKeys = function () {
+  if (this._handle) {
+    return _getTicketKeys(this._handle);
+  }
+  throw $ERR_SERVER_NOT_RUNNING();
+};
+
+Server.prototype.setTicketKeys = function (keys) {
+  if (!isArrayBufferView(keys)) {
+    throw $ERR_INVALID_ARG_TYPE("keys", ["Buffer", "TypedArray", "DataView"], keys);
+  }
+  if (keys.byteLength !== 48) {
+    throw $ERR_INVALID_ARG_VALUE("keys", keys.byteLength, "must be exactly 48 bytes");
+  }
+  if (this._handle) {
+    _setTicketKeys(this._handle, keys);
+  }
+};
 
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);

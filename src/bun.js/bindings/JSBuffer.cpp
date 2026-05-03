@@ -990,9 +990,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_copyBytesFromBody(JSC::JS
         RELEASE_AND_RETURN(throwScope, JSValue::encode(createBuffer(lexicalGlobalObject, span.data(), span.size())));
     }
 
-    auto boffset = view->byteOffset();
-    auto blength = view->byteLength();
-    auto span = view->span().subspan(boffset, blength - boffset);
+    auto span = view->span();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(createBuffer(lexicalGlobalObject, span.data(), span.size())));
 }
 

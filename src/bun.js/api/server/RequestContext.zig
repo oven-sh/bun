@@ -58,7 +58,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         response_jsvalue: jsc.JSValue = jsc.JSValue.zero,
         ref_count: u8 = 1,
 
-        response_ptr: ?*jsc.WebCore.Response = null,
+        /// Weak: for plain Blob/InternalBlob bodies the Response JSValue is
+        /// not protected (hot path), so GC may finalize it while we're parked
+        /// on tryEnd() backpressure. onAbort / handleResolveStream /
+        /// handleRejectStream only use this for best-effort readable-stream
+        /// cleanup and safely observe null instead of UAF. File/.Locked
+        /// bodies still protect() response_jsvalue, so the pointer stays
+        /// valid for renderMetadata() on those paths.
+        response_weakref: Response.WeakRef = .empty,
         blob: jsc.WebCore.Blob.Any = jsc.WebCore.Blob.Any{ .Blob = .{} },
 
         sendfile: SendfileContext = undefined,
@@ -282,6 +289,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             this.request_body_buf.clearAndFree(this.allocator);
             this.response_buf_owned.clearAndFree(this.allocator);
+            this.response_weakref.deref();
 
             if (this.request_body) |body| {
                 _ = body.unref();
@@ -689,7 +697,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     any_js_calls = true;
                 }
 
-                if (this.response_ptr) |response| {
+                if (this.response_weakref.get()) |response| {
                     if (response.getBodyReadableStream(globalThis)) |stream| {
                         defer stream.value.ensureStillAlive();
                         response.detachReadableStream(globalThis);
@@ -721,6 +729,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 }
                 this.response_jsvalue = jsc.JSValue.zero;
             }
+            this.response_weakref.deref();
 
             this.request_body_readable_stream_ref.deinit();
 
@@ -920,7 +929,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             // `.slice(0, n)` blob has `n < stat_size`. Skip if the user
             // already set Content-Range or a non-200 status — they're
             // managing partial responses themselves.
-            const user_handles_range = if (this.response_ptr) |r|
+            const user_handles_range = if (this.response_weakref.get()) |r|
                 r.statusCode() != 200 or (if (r.getInitHeaders()) |h| h.fastHas(.ContentRange) else false)
             else
                 false;
@@ -940,7 +949,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         if (auto_close) fd.close();
                         var crbuf: [64]u8 = undefined;
                         this.doWriteStatus(416);
-                        if (this.response_ptr) |response| {
+                        if (this.response_weakref.get()) |response| {
                             if (response.swapInitHeaders()) |headers_| {
                                 defer headers_.deref();
                                 this.doWriteHeaders(headers_);
@@ -1134,7 +1143,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                             }
 
                             // TODO: should this timeout?
-                            const bodyValue = this.response_ptr.?.getBodyValue();
+                            const bodyValue = this.response_weakref.get().?.getBodyValue();
                             bodyValue.* = .{
                                 .Locked = .{
                                     .readable = jsc.WebCore.ReadableStream.Strong.init(stream, globalThis),
@@ -1360,7 +1369,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             // Always this.renderMetadata() before sending the content-length or transfer-encoding header so status is sent first
 
             const resp = this.resp.?;
-            this.response_ptr = response;
+            this.setResponse(response);
             const server = this.server orelse {
                 // server detached?
                 this.renderMetadata();
@@ -1550,7 +1559,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         ctx.response_jsvalue = fulfilled_value;
                         ctx.response_jsvalue.ensureStillAlive();
                         ctx.flags.response_protected = false;
-                        ctx.response_ptr = response;
                         if (ctx.method == .HEAD) {
                             if (ctx.resp) |resp| {
                                 var pair = HeaderResponsePair{ .this = ctx, .response = response };
@@ -1598,7 +1606,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 wrapper.sink.destroy();
             }
 
-            if (req.response_ptr) |resp| {
+            if (req.response_weakref.get()) |resp| {
                 assert(req.server != null);
                 const globalThis = req.server.?.globalThis;
                 const bodyValue = resp.getBodyValue();
@@ -1662,7 +1670,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 wrapper.sink.destroy();
             }
 
-            if (req.response_ptr) |resp| {
+            if (req.response_weakref.get()) |resp| {
                 const bodyValue = resp.getBodyValue();
 
                 if (resp.getBodyReadableStream(globalThis)) |stream| {
@@ -1957,7 +1965,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (this.isAbortedOrEnded()) {
                 return;
             }
-            var response = this.response_ptr.?;
+            var response = this.response_weakref.get().?;
             this.doRenderWithBody(response.getBodyValue(), response.getBodyReadableStream(this.server.?.globalThis));
         }
 
@@ -2129,7 +2137,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     ctx.response_jsvalue = fulfilled_value;
                     ctx.response_jsvalue.ensureStillAlive();
                     ctx.flags.response_protected = false;
-                    ctx.response_ptr = response;
 
                     const bodyValue = response.getBodyValue();
                     bodyValue.toBlobIfPossible();
@@ -2171,7 +2178,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (this.resp == null) return;
             const resp = this.resp.?;
 
-            var response: *jsc.WebCore.Response = this.response_ptr.?;
+            // For plain in-memory bodies this runs synchronously from
+            // render() before any backpressure gap, so the Response is
+            // always live here. File / stream bodies that call this after
+            // an async hop keep the Response rooted via response_protected.
+            var response: *jsc.WebCore.Response = this.response_weakref.get().?;
             var status = response.statusCode();
             var needs_content_range = this.flags.needs_content_range and (this.sendfile.total > 0 or this.sendfile.remain < this.blob.size());
 
@@ -2331,9 +2342,18 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             this.deref();
         }
 
+        /// Replace the tracked Response. Drops the previous weak ref (if any)
+        /// before taking a new one so the old Response's allocation can be
+        /// freed once its own strong refs go to zero.
+        fn setResponse(this: *RequestContext, response: *jsc.WebCore.Response) void {
+            if (this.response_weakref.raw_ptr == response) return;
+            this.response_weakref.deref();
+            this.response_weakref = .initRef(response);
+        }
+
         pub fn render(this: *RequestContext, response: *jsc.WebCore.Response) void {
             ctxLog("render", .{});
-            this.response_ptr = response;
+            this.setResponse(response);
 
             this.doRender();
         }

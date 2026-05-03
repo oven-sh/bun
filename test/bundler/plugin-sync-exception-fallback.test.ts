@@ -13,7 +13,7 @@ import { join } from "path";
 // onLoad crashes (null deref in JSGlobalObject under ASAN, SIGSEGV on release) and
 // onResolve hangs (wrong completion handler leaves the resolve counter un-decremented).
 describe.each(["onLoad", "onResolve"] as const)("Bun.build plugin %s builtin throws synchronously", hook => {
-  test("addError receives the correct context type", async () => {
+  test.concurrent("addError receives the correct context type", async () => {
     const fixture = /* js */ `
       const originalThen = Promise.prototype.then;
       let armed = false;

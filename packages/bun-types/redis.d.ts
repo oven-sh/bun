@@ -3337,6 +3337,617 @@ declare module "bun" {
       numkeys: number,
       ...args: (string | number)[]
     ): Promise<[string, [string, number][]] | null>;
+
+    /**
+     * Perform a bitwise NOT on a key and store the result in the destination key
+     * @param operation The bitwise operation (NOT takes exactly one source key)
+     * @param destkey The destination key to store the result
+     * @param key The source key
+     * @returns Promise that resolves with the size of the string stored in the destination key
+     *
+     * @example
+     * ```ts
+     * await redis.set("key1", "foobar");
+     * await redis.bitop("NOT", "dest", "key1");
+     * ```
+     */
+    bitop(operation: "NOT" | "not", destkey: RedisClient.KeyLike, key: RedisClient.KeyLike): Promise<number>;
+    /**
+     * Perform a bitwise operation between multiple keys and store the result in the destination key
+     * @param operation The bitwise operation to perform (AND, OR, XOR)
+     * @param destkey The destination key to store the result
+     * @param key The first source key
+     * @param moreKeys Additional source keys
+     * @returns Promise that resolves with the size of the string stored in the destination key
+     *
+     * @example
+     * ```ts
+     * await redis.set("key1", "foobar");
+     * await redis.set("key2", "abcdef");
+     * await redis.bitop("AND", "dest", "key1", "key2");
+     * ```
+     */
+    bitop(
+      operation: "AND" | "OR" | "XOR" | "and" | "or" | "xor",
+      destkey: RedisClient.KeyLike,
+      key: RedisClient.KeyLike,
+      ...moreKeys: RedisClient.KeyLike[]
+    ): Promise<number>;
+
+    /**
+     * Find the position of the first bit set to 1 or 0 in a string
+     * @param key The key to search
+     * @param bit The bit value to search for (0 or 1)
+     * @param options Optional start, end, and index unit (BYTE or BIT)
+     * @returns Promise that resolves with the position of the first bit, or -1 if not found
+     *
+     * @example
+     * ```ts
+     * await redis.set("mykey", "\xff\xf0\x00");
+     * await redis.bitpos("mykey", 0); // 12
+     * await redis.bitpos("mykey", 1, 2); // -1
+     * ```
+     */
+    bitpos(key: RedisClient.KeyLike, bit: 0 | 1, ...options: (string | number)[]): Promise<number>;
+
+    /**
+     * Perform arbitrary bitfield integer operations on strings
+     * @param key The key to operate on
+     * @param operations GET, SET, INCRBY, and OVERFLOW subcommands
+     * @returns Promise that resolves with an array of results, one per subcommand
+     *
+     * @example
+     * ```ts
+     * await redis.bitfield("mykey", "SET", "u8", 0, 255, "GET", "u8", 0);
+     * // [0, 255]
+     * ```
+     */
+    bitfield(key: RedisClient.KeyLike, ...operations: (string | number)[]): Promise<(number | null)[]>;
+
+    /**
+     * Return the approximated cardinality of the set(s) observed by the HyperLogLog at key(s)
+     * @param keys The HyperLogLog keys
+     * @returns Promise that resolves with the approximated number of unique elements
+     *
+     * @example
+     * ```ts
+     * await redis.pfadd("hll", "a");
+     * await redis.pfadd("hll", "b");
+     * await redis.pfcount("hll"); // 2
+     * ```
+     */
+    pfcount(key: RedisClient.KeyLike, ...moreKeys: RedisClient.KeyLike[]): Promise<number>;
+
+    /**
+     * Merge multiple HyperLogLog values into a single one
+     * @param destkey The destination key
+     * @param sourcekeys The source HyperLogLog keys
+     * @returns Promise that resolves with "OK"
+     *
+     * @example
+     * ```ts
+     * await redis.pfadd("hll1", "a");
+     * await redis.pfadd("hll2", "b");
+     * await redis.pfmerge("merged", "hll1", "hll2");
+     * await redis.pfcount("merged"); // 2
+     * ```
+     */
+    pfmerge(destkey: RedisClient.KeyLike, ...sourcekeys: RedisClient.KeyLike[]): Promise<"OK">;
+
+    /**
+     * Add one or more geospatial items to the specified key
+     * @param key The key of the geo set
+     * @param args Longitude, latitude, member triples (optionally preceded by NX/XX/CH)
+     * @returns Promise that resolves with the number of elements added
+     *
+     * @example
+     * ```ts
+     * await redis.geoadd("Sicily", 13.361389, 38.115556, "Palermo");
+     * await redis.geoadd("Sicily", 15.087269, 37.502669, "Catania");
+     * ```
+     */
+    geoadd(key: RedisClient.KeyLike, ...args: (string | number)[]): Promise<number>;
+
+    /**
+     * Return the distance between two members in the geospatial index
+     * @param key The key of the geo set
+     * @param member1 The first member
+     * @param member2 The second member
+     * @param unit The unit of the returned distance (m, km, mi, ft)
+     * @returns Promise that resolves with the distance as a string, or null if one or both members are missing
+     *
+     * @example
+     * ```ts
+     * await redis.geodist("Sicily", "Palermo", "Catania", "km"); // "166.2742"
+     * ```
+     */
+    geodist(
+      key: RedisClient.KeyLike,
+      member1: string,
+      member2: string,
+      unit?: "m" | "km" | "mi" | "ft" | "M" | "KM" | "MI" | "FT",
+    ): Promise<string | null>;
+
+    /**
+     * Return valid Geohash strings representing the position of members
+     * @param key The key of the geo set
+     * @param members The members to get hashes for
+     * @returns Promise that resolves with an array of geohash strings
+     *
+     * @example
+     * ```ts
+     * await redis.geohash("Sicily", "Palermo", "Catania");
+     * // ["sqc8b49rny0", "sqdtr74hyu0"]
+     * ```
+     */
+    geohash(key: RedisClient.KeyLike, ...members: string[]): Promise<(string | null)[]>;
+
+    /**
+     * Return the longitude/latitude of members of a geospatial index
+     * @param key The key of the geo set
+     * @param members The members to get positions for
+     * @returns Promise that resolves with an array of [longitude, latitude] pairs
+     *
+     * @example
+     * ```ts
+     * await redis.geopos("Sicily", "Palermo");
+     * // [[13.36138933897018433, 38.11555639549629859]]
+     * ```
+     */
+    geopos(key: RedisClient.KeyLike, ...members: string[]): Promise<([number, number] | null)[]>;
+
+    /**
+     * Query a geospatial index for members inside an area of a box or circle
+     * @param key The key of the geo set
+     * @param args FROMMEMBER/FROMLONLAT, BYRADIUS/BYBOX, and optional modifiers
+     * @returns Promise that resolves with matching members (and optional coordinates/distances/hashes)
+     *
+     * @example
+     * ```ts
+     * await redis.geosearch("Sicily", "FROMLONLAT", 15, 37, "BYRADIUS", 200, "km", "ASC");
+     * // ["Catania", "Palermo"]
+     * ```
+     */
+    geosearch(key: RedisClient.KeyLike, ...args: (string | number)[]): Promise<unknown[]>;
+
+    /**
+     * Query a geospatial index and store the result in a destination key
+     * @param destination The destination key
+     * @param source The source geo set key
+     * @param args FROMMEMBER/FROMLONLAT, BYRADIUS/BYBOX, and optional modifiers
+     * @returns Promise that resolves with the number of elements in the resulting set
+     */
+    geosearchstore(
+      destination: RedisClient.KeyLike,
+      source: RedisClient.KeyLike,
+      ...args: (string | number)[]
+    ): Promise<number>;
+
+    /**
+     * Execute a Lua script server side
+     * @param script The Lua script source
+     * @param numkeys The number of keys in the keys array
+     * @param keysAndArgs The keys followed by additional arguments
+     * @returns Promise that resolves with the script's return value
+     *
+     * @example
+     * ```ts
+     * await redis.eval("return ARGV[1]", 0, "hello"); // "hello"
+     * await redis.eval("return redis.call('GET', KEYS[1])", 1, "mykey");
+     * ```
+     */
+    eval(script: string, numkeys: number, ...keysAndArgs: (string | number)[]): Promise<any>;
+
+    /**
+     * Execute a Lua script server side using the script's SHA1 digest
+     * @param sha1 The SHA1 digest of the script (from SCRIPT LOAD)
+     * @param numkeys The number of keys in the keys array
+     * @param keysAndArgs The keys followed by additional arguments
+     * @returns Promise that resolves with the script's return value
+     *
+     * @example
+     * ```ts
+     * const sha = await redis.script("LOAD", "return ARGV[1]");
+     * await redis.evalsha(sha, 0, "hello"); // "hello"
+     * ```
+     */
+    evalsha(sha1: string, numkeys: number, ...keysAndArgs: (string | number)[]): Promise<any>;
+
+    /**
+     * Manage the Lua script cache
+     * @param args Subcommand and its arguments (LOAD, EXISTS, FLUSH, KILL)
+     * @returns Promise that resolves with the subcommand's result
+     *
+     * @example
+     * ```ts
+     * const sha = await redis.script("LOAD", "return ARGV[1]");
+     * await redis.script("EXISTS", sha); // [1]
+     * await redis.script("FLUSH");
+     * ```
+     */
+    script(...args: string[]): Promise<any>;
+
+    /**
+     * Invoke a function from a loaded library
+     * @param name The fully-qualified function name
+     * @param numkeys The number of keys
+     * @param keysAndArgs The keys followed by additional arguments
+     * @returns Promise that resolves with the function's return value
+     */
+    fcall(name: string, numkeys: number, ...keysAndArgs: (string | number)[]): Promise<any>;
+
+    /**
+     * Manage Redis functions (libraries of Lua functions)
+     * @param args Subcommand and its arguments (LOAD, DELETE, LIST, DUMP, FLUSH, etc.)
+     * @returns Promise that resolves with the subcommand's result
+     *
+     * @example
+     * ```ts
+     * await redis.function("LOAD", "#!lua name=mylib\nredis.register_function('myfunc', function() return 1 end)");
+     * await redis.fcall("myfunc", 0); // 1
+     * await redis.function("DELETE", "mylib");
+     * ```
+     */
+    function(...args: string[]): Promise<any>;
+
+    /**
+     * Return the number of keys in the currently-selected database
+     * @returns Promise that resolves with the number of keys
+     */
+    dbsize(): Promise<number>;
+
+    /**
+     * Remove all keys from the current database
+     * @param mode Optional ASYNC or SYNC modifier
+     * @returns Promise that resolves with "OK"
+     */
+    flushdb(mode?: "ASYNC" | "SYNC" | "async" | "sync"): Promise<"OK">;
+
+    /**
+     * Remove all keys from all databases
+     * @param mode Optional ASYNC or SYNC modifier
+     * @returns Promise that resolves with "OK"
+     */
+    flushall(mode?: "ASYNC" | "SYNC" | "async" | "sync"): Promise<"OK">;
+
+    /**
+     * Get information and statistics about the server
+     * @param sections Optional section name(s) to filter the output
+     * @returns Promise that resolves with the info string
+     *
+     * @example
+     * ```ts
+     * const info = await redis.info("server");
+     * ```
+     */
+    info(...sections: string[]): Promise<string>;
+
+    /**
+     * Return the server time
+     * @returns Promise that resolves with [unixTimeSeconds, microseconds] as strings
+     */
+    time(): Promise<[string, string]>;
+
+    /**
+     * Echo the given string
+     * @param message The message to echo
+     * @returns Promise that resolves with the same message
+     */
+    echo(message: string): Promise<string>;
+
+    /**
+     * Get the Unix timestamp of the last successful save to disk
+     * @returns Promise that resolves with the timestamp
+     */
+    lastsave(): Promise<number>;
+
+    /**
+     * Manage client connections
+     * @param args Subcommand and its arguments (ID, GETNAME, SETNAME, LIST, KILL, etc.)
+     * @returns Promise that resolves with the subcommand's result
+     *
+     * @example
+     * ```ts
+     * await redis.client("SETNAME", "myconnection");
+     * const name = await redis.client("GETNAME"); // "myconnection"
+     * ```
+     */
+    client(...args: (string | number)[]): Promise<any>;
+
+    /**
+     * Get or set server configuration parameters
+     * @param args Subcommand and its arguments (GET, SET, REWRITE, RESETSTAT)
+     * @returns Promise that resolves with the subcommand's result
+     *
+     * @example
+     * ```ts
+     * await redis.config("GET", "maxmemory");
+     * ```
+     */
+    config(...args: (string | number)[]): Promise<any>;
+
+    /**
+     * Run a debugging command. Most subcommands are intended for internal use.
+     * @param args Subcommand and its arguments
+     * @returns Promise that resolves with the subcommand's result
+     */
+    debug(...args: (string | number)[]): Promise<any>;
+
+    /**
+     * Get details about all Redis commands or specific commands
+     * @param args Optional subcommand and arguments (COUNT, DOCS, INFO, LIST, GETKEYS, etc.)
+     * @returns Promise that resolves with command information
+     *
+     * @example
+     * ```ts
+     * const count = await redis.command("COUNT");
+     * ```
+     */
+    command(...args: string[]): Promise<any>;
+
+    /**
+     * Inspect the internals of Redis objects
+     * @param subcommand The subcommand (ENCODING, FREQ, IDLETIME, REFCOUNT, HELP)
+     * @param key The key to inspect
+     * @returns Promise that resolves with the subcommand's result
+     *
+     * @example
+     * ```ts
+     * await redis.set("mykey", "hello");
+     * await redis.object("ENCODING", "mykey"); // "embstr"
+     * ```
+     */
+    object(subcommand: string, ...args: RedisClient.KeyLike[]): Promise<any>;
+
+    /**
+     * Sort the elements in a list, set or sorted set
+     * @param key The key to sort
+     * @param args Optional BY, LIMIT, GET, ASC/DESC, ALPHA, STORE modifiers
+     * @returns Promise that resolves with the sorted elements (or count if STORE is used)
+     *
+     * @example
+     * ```ts
+     * await redis.rpush("mylist", "3", "1", "2");
+     * await redis.sort("mylist"); // ["1", "2", "3"]
+     * await redis.sort("mylist", "DESC"); // ["3", "2", "1"]
+     * ```
+     */
+    sort(key: RedisClient.KeyLike, ...args: (string | number)[]): Promise<string[] | number>;
+
+    /**
+     * Block until all write commands are acknowledged by at least the specified number of replicas
+     * @param numreplicas The number of replicas to wait for
+     * @param timeout The timeout in milliseconds (0 = wait forever)
+     * @returns Promise that resolves with the number of replicas that acknowledged the writes
+     */
+    wait(numreplicas: number, timeout: number): Promise<number>;
+
+    /**
+     * Find the longest common subsequence between two string values
+     * @param key1 The first key
+     * @param key2 The second key
+     * @param options Optional LEN, IDX, MINMATCHLEN, WITHMATCHLEN modifiers
+     * @returns Promise that resolves with the LCS (string), its length (number), or match details
+     *
+     * @example
+     * ```ts
+     * await redis.set("key1", "ohmytext");
+     * await redis.set("key2", "mynewtext");
+     * await redis.lcs("key1", "key2"); // "mytext"
+     * await redis.lcs("key1", "key2", "LEN"); // 6
+     * ```
+     */
+    lcs(key1: RedisClient.KeyLike, key2: RedisClient.KeyLike, ...options: (string | number)[]): Promise<any>;
+
+    /**
+     * Append a new entry to a stream
+     * @param key The stream key
+     * @param args Optional NOMKSTREAM/MAXLEN/MINID, the entry ID (use "*" for auto-generate), and field-value pairs
+     * @returns Promise that resolves with the ID of the added entry
+     *
+     * @example
+     * ```ts
+     * const id = await redis.xadd("mystream", "*", "field1", "value1", "field2", "value2");
+     * ```
+     */
+    xadd(key: RedisClient.KeyLike, ...args: (string | number)[]): Promise<string | null>;
+
+    /**
+     * Get the number of entries in a stream
+     * @param key The stream key
+     * @returns Promise that resolves with the number of entries
+     */
+    xlen(key: RedisClient.KeyLike): Promise<number>;
+
+    /**
+     * Get a range of entries from a stream
+     * @param key The stream key
+     * @param start The start ID (use "-" for the minimum ID)
+     * @param end The end ID (use "+" for the maximum ID)
+     * @param options Optional COUNT modifier
+     * @returns Promise that resolves with an array of [id, [field, value, ...]] entries
+     *
+     * @example
+     * ```ts
+     * await redis.xrange("mystream", "-", "+");
+     * await redis.xrange("mystream", "-", "+", "COUNT", 10);
+     * ```
+     */
+    xrange(
+      key: RedisClient.KeyLike,
+      start: string,
+      end: string,
+      ...options: (string | number)[]
+    ): Promise<[string, string[]][]>;
+
+    /**
+     * Get a range of entries from a stream in reverse order
+     * @param key The stream key
+     * @param end The end ID (use "+" for the maximum ID)
+     * @param start The start ID (use "-" for the minimum ID)
+     * @param options Optional COUNT modifier
+     * @returns Promise that resolves with an array of [id, [field, value, ...]] entries
+     */
+    xrevrange(
+      key: RedisClient.KeyLike,
+      end: string,
+      start: string,
+      ...options: (string | number)[]
+    ): Promise<[string, string[]][]>;
+
+    /**
+     * Read entries from one or more streams
+     * @param args COUNT/BLOCK options, STREAMS keyword, stream keys, and starting IDs
+     * @returns Promise that resolves with stream entries, or null if BLOCK timed out
+     *
+     * @example
+     * ```ts
+     * await redis.xread("COUNT", 2, "STREAMS", "mystream", "0");
+     * ```
+     */
+    xread(...args: (string | number)[]): Promise<any>;
+
+    /**
+     * Read entries from one or more streams using a consumer group
+     * @param args GROUP groupname consumername, optional COUNT/BLOCK/NOACK, STREAMS keyword, keys, and IDs
+     * @returns Promise that resolves with stream entries, or null if BLOCK timed out
+     *
+     * @example
+     * ```ts
+     * await redis.xreadgroup("GROUP", "mygroup", "consumer1", "COUNT", 10, "STREAMS", "mystream", ">");
+     * ```
+     */
+    xreadgroup(...args: (string | number)[]): Promise<any>;
+
+    /**
+     * Delete one or more entries from a stream
+     * @param key The stream key
+     * @param ids The IDs of the entries to delete
+     * @returns Promise that resolves with the number of entries actually deleted
+     */
+    xdel(key: RedisClient.KeyLike, id: string, ...moreIds: string[]): Promise<number>;
+
+    /**
+     * Trim a stream to a given size or minimum ID
+     * @param key The stream key
+     * @param strategy MAXLEN (trim by length) or MINID (trim by minimum ID)
+     * @param threshold The threshold value, or "~"/"=" followed by the threshold in `options`
+     * @param options Optional ~/= operator (as the threshold), actual threshold, and LIMIT count
+     * @returns Promise that resolves with the number of entries deleted
+     *
+     * @example
+     * ```ts
+     * await redis.xtrim("mystream", "MAXLEN", 1000);
+     * await redis.xtrim("mystream", "MAXLEN", "~", 1000);
+     * ```
+     */
+    xtrim(
+      key: RedisClient.KeyLike,
+      strategy: "MAXLEN" | "MINID" | "maxlen" | "minid",
+      threshold: string | number,
+      ...options: (string | number)[]
+    ): Promise<number>;
+
+    /**
+     * Acknowledge one or more messages as processed for a consumer group
+     * @param key The stream key
+     * @param group The consumer group name
+     * @param ids The IDs of the messages to acknowledge
+     * @returns Promise that resolves with the number of messages successfully acknowledged
+     */
+    xack(key: RedisClient.KeyLike, group: string, id: string, ...moreIds: string[]): Promise<number>;
+
+    /**
+     * Change the ownership of pending messages in a consumer group
+     * @param key The stream key
+     * @param group The consumer group name
+     * @param consumer The consumer that will claim the messages
+     * @param minIdleTime Claim only messages idle for at least this many milliseconds
+     * @param id The first message ID to claim
+     * @param rest Additional message IDs and optional IDLE/TIME/RETRYCOUNT/FORCE/JUSTID modifiers
+     * @returns Promise that resolves with the claimed entries
+     */
+    xclaim(
+      key: RedisClient.KeyLike,
+      group: string,
+      consumer: string,
+      minIdleTime: number,
+      id: string,
+      ...rest: (string | number)[]
+    ): Promise<any>;
+
+    /**
+     * Transfer ownership of pending messages idle longer than the threshold to a consumer
+     * @param key The stream key
+     * @param group The consumer group name
+     * @param consumer The consumer that will claim the messages
+     * @param minIdleTime Claim only messages idle for at least this many milliseconds
+     * @param start The starting ID for the scan
+     * @param options Optional COUNT and JUSTID modifiers
+     * @returns Promise that resolves with [nextCursor, entries, deletedIds]
+     */
+    xautoclaim(
+      key: RedisClient.KeyLike,
+      group: string,
+      consumer: string,
+      minIdleTime: number,
+      start: string,
+      ...options: (string | number)[]
+    ): Promise<any>;
+
+    /**
+     * Inspect the list of pending messages for a consumer group
+     * @param key The stream key
+     * @param group The consumer group name
+     * @param args Optional IDLE, start, end, count, consumer filters
+     * @returns Promise that resolves with pending entries information
+     *
+     * @example
+     * ```ts
+     * // Summary form
+     * await redis.xpending("mystream", "mygroup");
+     * // Extended form
+     * await redis.xpending("mystream", "mygroup", "-", "+", 10);
+     * ```
+     */
+    xpending(key: RedisClient.KeyLike, group: string, ...args: (string | number)[]): Promise<any>;
+
+    /**
+     * Get information about a stream or its consumer groups
+     * @param subcommand STREAM, GROUPS, CONSUMERS, or HELP
+     * @param args The stream key and any additional arguments
+     * @returns Promise that resolves with the requested information
+     *
+     * @example
+     * ```ts
+     * await redis.xinfo("STREAM", "mystream");
+     * await redis.xinfo("GROUPS", "mystream");
+     * ```
+     */
+    xinfo(subcommand: string, ...args: (string | number)[]): Promise<any>;
+
+    /**
+     * Manage consumer groups for a stream
+     * @param subcommand CREATE, CREATECONSUMER, DELCONSUMER, DESTROY, SETID
+     * @param args The stream key and subcommand-specific arguments
+     * @returns Promise that resolves with the subcommand's result
+     *
+     * @example
+     * ```ts
+     * await redis.xgroup("CREATE", "mystream", "mygroup", "$", "MKSTREAM");
+     * await redis.xgroup("DESTROY", "mystream", "mygroup");
+     * ```
+     */
+    xgroup(subcommand: string, ...args: (string | number)[]): Promise<any>;
+
+    /**
+     * Set the last-delivered-ID for a stream
+     * @param key The stream key
+     * @param lastId The new last-delivered-ID
+     * @param options Optional ENTRIESADDED and MAXDELETEDID modifiers
+     * @returns Promise that resolves with "OK"
+     */
+    xsetid(key: RedisClient.KeyLike, lastId: string, ...options: (string | number)[]): Promise<"OK">;
   }
 
   /**

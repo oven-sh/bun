@@ -1381,7 +1381,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (response.getFetchHeaders()) |headers| {
                 // first respect the headers
                 if (comptime !http3) if (headers.fastGet(.TransferEncoding)) |transfer_encoding| {
-                    const transfer_encoding_str = transfer_encoding.toSlice(server.allocator);
+                    // fastGet() borrows the header map's StringImpl; renderMetadata() ->
+                    // doWriteHeaders() calls fastRemove(.TransferEncoding) and derefs the
+                    // FetchHeaders, freeing that StringImpl before we write it. Clone so
+                    // the bytes outlive renderMetadata().
+                    const transfer_encoding_str = bun.handleOom(transfer_encoding.toSliceClone(server.allocator));
                     defer transfer_encoding_str.deinit();
                     this.renderMetadata();
                     resp.writeHeader("transfer-encoding", transfer_encoding_str.slice());
@@ -1390,11 +1394,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     return;
                 };
                 if (headers.fastGet(.ContentLength)) |content_length| {
+                    // Parse before renderMetadata(): doWriteHeaders() will fastRemove(.ContentLength)
+                    // and deref the FetchHeaders, freeing the borrowed StringImpl.
                     const content_length_str = content_length.toSlice(server.allocator);
-                    defer content_length_str.deinit();
-                    this.renderMetadata();
-
                     const len = std.fmt.parseInt(usize, content_length_str.slice(), 10) catch 0;
+                    content_length_str.deinit();
+
+                    this.renderMetadata();
                     resp.writeHeaderInt("content-length", len);
                     this.endWithoutBody(this.shouldCloseConnection());
                     return;

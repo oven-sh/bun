@@ -554,7 +554,14 @@ pub const StandaloneModuleGraph = struct {
                 .loader = output_file.loader,
                 .contents = string_builder.appendCountZ(output_file.value.buffer.bytes),
                 .encoding = switch (output_file.loader) {
-                    .js, .jsx, .ts, .tsx => .latin1,
+                    // Bundler output is usually pure ASCII, which lets us use
+                    // the zero-copy .latin1 path at load time. Only fall back
+                    // to .utf8 when the output actually contains non-ASCII
+                    // bytes from tagged template literals or regex source.
+                    .js, .jsx, .ts, .tsx => if (bun.strings.isAllASCII(output_file.value.buffer.bytes))
+                        .latin1
+                    else
+                        .utf8,
                     else => .binary,
                 },
                 .module_format = if (output_file.loader.isJavaScriptLike()) switch (output_format) {

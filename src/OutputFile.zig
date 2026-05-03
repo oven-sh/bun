@@ -129,6 +129,17 @@ pub const Value = union(Kind) {
         return switch (v) {
             .noop => bun.String.empty,
             .buffer => |buf| {
+                // Bundler output may contain raw UTF-8 bytes from tagged
+                // template literals or regex source with non-ASCII characters.
+                // createExternal with isLatin1=true can't handle multi-byte
+                // UTF-8, so fall back to cloneUTF8 when non-ASCII is present.
+                // This function transfers ownership of buf.bytes — the ASCII
+                // path hands it to FreeContext.onFree, so the non-ASCII path
+                // must free it explicitly after cloning.
+                if (!bun.strings.isAllASCII(buf.bytes)) {
+                    defer buf.allocator.free(buf.bytes);
+                    return bun.String.cloneUTF8(buf.bytes);
+                }
                 // Use ExternalStringImpl to avoid cloning the string, at
                 // the cost of allocating space to remember the allocator.
                 const FreeContext = struct {

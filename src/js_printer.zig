@@ -1990,62 +1990,10 @@ fn NewPrinter(
         }
 
         fn printRawTemplateLiteral(p: *Printer, bytes: []const u8) void {
-            if (comptime is_json or !ascii_only) {
-                p.print(bytes);
-                return;
-            }
-
-            // Translate any non-ASCII to unicode escape sequences
-            // Note that this does not correctly handle malformed template literal strings
-            // template literal strings can contain invalid unicode code points
-            // and pretty much anything else
-            //
-            // we use WTF-8 here, but that's still not good enough.
-            //
-            var ascii_start: usize = 0;
-            var is_ascii = false;
-            var iter = CodepointIterator.init(bytes);
-            var cursor = CodepointIterator.Cursor{};
-
-            while (iter.next(&cursor)) {
-                switch (cursor.c) {
-                    // unlike other versions, we only want to mutate > 0x7F
-                    0...last_ascii => {
-                        if (!is_ascii) {
-                            ascii_start = cursor.i;
-                            is_ascii = true;
-                        }
-                    },
-                    else => {
-                        if (is_ascii) {
-                            p.print(bytes[ascii_start..cursor.i]);
-                            is_ascii = false;
-                        }
-
-                        switch (cursor.c) {
-                            0...0xFFFF => {
-                                p.print([_]u8{
-                                    '\\',
-                                    'u',
-                                    hex_chars[cursor.c >> 12],
-                                    hex_chars[(cursor.c >> 8) & 15],
-                                    hex_chars[(cursor.c >> 4) & 15],
-                                    hex_chars[cursor.c & 15],
-                                });
-                            },
-                            else => {
-                                p.print("\\u{");
-                                p.fmt("{x}", .{cursor.c}) catch unreachable;
-                                p.print("}");
-                            },
-                        }
-                    },
-                }
-            }
-
-            if (is_ascii) {
-                p.print(bytes[ascii_start..]);
-            }
+            // Raw template literals must preserve bytes verbatim because they are
+            // exposed to JavaScript via the .raw property and String.raw. Escaping
+            // non-ASCII characters to \uXXXX would change the runtime string value.
+            p.print(bytes);
         }
 
         pub fn printExpr(p: *Printer, expr: Expr, level: Level, in_flags: ExprFlag.Set) void {
@@ -3252,70 +3200,10 @@ fn NewPrinter(
                 p.print(" ");
             }
 
-            if (comptime is_bun_platform) {
-                // Translate any non-ASCII to unicode escape sequences
-                var ascii_start: usize = 0;
-                var is_ascii = false;
-                var iter = CodepointIterator.init(e.value);
-                var cursor = CodepointIterator.Cursor{};
-                while (iter.next(&cursor)) {
-                    switch (cursor.c) {
-                        first_ascii...last_ascii => {
-                            if (!is_ascii) {
-                                ascii_start = cursor.i;
-                                is_ascii = true;
-                            }
-                        },
-                        else => {
-                            if (is_ascii) {
-                                p.print(e.value[ascii_start..cursor.i]);
-                                is_ascii = false;
-                            }
-
-                            switch (cursor.c) {
-                                0...0xFFFF => {
-                                    p.print([_]u8{
-                                        '\\',
-                                        'u',
-                                        hex_chars[cursor.c >> 12],
-                                        hex_chars[(cursor.c >> 8) & 15],
-                                        hex_chars[(cursor.c >> 4) & 15],
-                                        hex_chars[cursor.c & 15],
-                                    });
-                                },
-
-                                else => |c| {
-                                    const k = c - 0x10000;
-                                    const lo = @as(usize, @intCast(first_high_surrogate + ((k >> 10) & 0x3FF)));
-                                    const hi = @as(usize, @intCast(first_low_surrogate + (k & 0x3FF)));
-
-                                    p.print(&[_]u8{
-                                        '\\',
-                                        'u',
-                                        hex_chars[lo >> 12],
-                                        hex_chars[(lo >> 8) & 15],
-                                        hex_chars[(lo >> 4) & 15],
-                                        hex_chars[lo & 15],
-                                        '\\',
-                                        'u',
-                                        hex_chars[hi >> 12],
-                                        hex_chars[(hi >> 8) & 15],
-                                        hex_chars[(hi >> 4) & 15],
-                                        hex_chars[hi & 15],
-                                    });
-                                },
-                            }
-                        },
-                    }
-                }
-
-                if (is_ascii) {
-                    p.print(e.value[ascii_start..]);
-                }
-            } else {
-                // UTF8 sequence is fine
-                p.print(e.value);
-            }
+            // RegExp literals cannot be printed ascii-only because they expose a
+            // .source property to JavaScript. Escaping non-ASCII would change the
+            // runtime value of that property.
+            p.print(e.value);
 
             // Need a space before the next identifier to avoid it turning into flags
             p.prev_reg_exp_end = p.writer.written;

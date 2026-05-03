@@ -1522,13 +1522,30 @@ pub const EndTag = struct {
         callback: ?JSValue,
         global: *JSGlobalObject,
 
-        pub const onEndTag = HandlerCallback(
+        /// Unprotects the JS callback and frees this struct.
+        pub fn deinit(this: *Handler) void {
+            if (this.callback) |cb| {
+                cb.unprotect();
+                this.callback = null;
+            }
+            bun.default_allocator.destroy(this);
+        }
+
+        const callbackImpl = HandlerCallback(
             Handler,
             EndTag,
             LOLHTML.EndTag,
             "end_tag",
             "callback",
         );
+
+        /// lol-html's end tag handler is `FnOnce`: it is invoked at most once
+        /// per element and then dropped. Free ourselves after it runs so we
+        /// don't leak the heap struct and the protected JS callback.
+        pub fn onEndTag(this: *Handler, value: *LOLHTML.EndTag) bool {
+            defer this.deinit();
+            return callbackImpl(this, value);
+        }
 
         pub const onEndTagHandler = LOLHTML.DirectiveHandler(LOLHTML.EndTag, Handler, onEndTag);
     };
@@ -1761,6 +1778,16 @@ pub const Element = struct {
             return ZigString.init("Expected a function").withEncoding().toJS(globalObject);
         }
 
+        // `LOLHTML.Element.onEndTag` clears any previously-registered handler
+        // on the lol-html side. The pending `*EndTag.Handler` is stashed in
+        // the underlying element's user_data (shared across all Zig wrappers
+        // created for overlapping selectors), so fetch and drop it here to
+        // avoid leaking the struct and its protected JS callback.
+        if (this.element.?.getUserData(EndTag.Handler)) |prev| {
+            prev.deinit();
+            this.element.?.setUserData(null);
+        }
+
         const end_tag_handler = bun.handleOom(bun.default_allocator.create(EndTag.Handler));
         end_tag_handler.* = .{ .global = globalObject, .callback = function };
 
@@ -1771,6 +1798,10 @@ pub const Element = struct {
         };
 
         function.protect();
+        // Record the pending handler on the underlying element so a later
+        // `onEndTag` call (from this or another matching selector) can free
+        // it before replacing. The handler frees itself after it fires.
+        this.element.?.setUserData(end_tag_handler);
         return callFrame.this();
     }
 

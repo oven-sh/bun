@@ -101,6 +101,7 @@
 #include <string_view>
 #include <bun-uws/src/App.h>
 #include <bun-uws/src/Http3Request.h>
+#include <bun-uws/src/Http2Request.h>
 #include <bun-usockets/src/internal/internal.h>
 #include "IDLTypes.h"
 #include "JSDOMBinding.h"
@@ -2008,10 +2009,14 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
     headers->setInternalHeaders(WTF::move(map));
     return headers;
 }
-WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
-{
-    auto* req = reinterpret_cast<uWS::Http3Request*>(arg1);
 
+} // extern "C"
+
+/* Shared H2/H3 path — both expose the same forEachHeader() surface.
+ * Templates can't have C linkage; the extern "C" wrappers below forward. */
+template<typename Req>
+static WebCore::FetchHeaders* createFetchHeadersFromMultiplexedRequest(Req* req)
+{
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
     headers->relaxAdoptionRequirement();
 
@@ -2032,6 +2037,17 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
     });
     headers->setInternalHeaders(WTF::move(map));
     return headers;
+}
+
+extern "C" {
+
+WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
+{
+    return createFetchHeadersFromMultiplexedRequest(reinterpret_cast<uWS::Http3Request*>(arg1));
+}
+WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH2(void* arg1)
+{
+    return createFetchHeadersFromMultiplexedRequest(reinterpret_cast<uWS::Http2Request*>(arg1));
 }
 void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0)
 {

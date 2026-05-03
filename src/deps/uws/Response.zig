@@ -331,20 +331,19 @@ pub const AnyResponse = union(enum) {
     SSL: *uws.NewApp(true).Response,
     TCP: *uws.NewApp(false).Response,
     H3: *H3Response,
+    H2: *H2Response,
 
     pub fn assertSSL(this: AnyResponse) *uws.NewApp(true).Response {
         return switch (this) {
             .SSL => |resp| resp,
-            .TCP => bun.Output.panic("Expected SSL response, got TCP response", .{}),
-            .H3 => bun.Output.panic("Expected SSL response, got H3 response", .{}),
+            inline else => |_, tag| bun.Output.panic("Expected SSL response, got {s} response", .{@tagName(tag)}),
         };
     }
 
     pub fn assertNoSSL(this: AnyResponse) *uws.NewApp(false).Response {
         return switch (this) {
-            .SSL => bun.Output.panic("Expected TCP response, got SSL response", .{}),
             .TCP => |resp| resp,
-            .H3 => bun.Output.panic("Expected TCP response, got H3 response", .{}),
+            inline else => |_, tag| bun.Output.panic("Expected TCP response, got {s} response", .{@tagName(tag)}),
         };
     }
 
@@ -375,6 +374,7 @@ pub const AnyResponse = union(enum) {
     pub fn socket(this: AnyResponse) *c.uws_res {
         return switch (this) {
             .H3 => bun.Output.panic("socket() is not available for HTTP/3 responses", .{}),
+            .H2 => bun.Output.panic("socket() is not available for HTTP/2 responses", .{}),
             inline else => |resp| resp.downcast(),
         };
     }
@@ -432,6 +432,7 @@ pub const AnyResponse = union(enum) {
             *uws.NewApp(true).Response => .{ .SSL = response },
             *uws.NewApp(false).Response => .{ .TCP = response },
             *H3Response => .{ .H3 = response },
+            *H2Response => .{ .H2 = response },
             else => @compileError("unreachable"),
         };
     }
@@ -451,6 +452,11 @@ pub const AnyResponse = union(enum) {
             }.onDataCallback, optional_data),
             .H3 => |resp| resp.onData(UserDataType, struct {
                 pub fn onDataCallback(user_data: UserDataType, _: *H3Response, data: []const u8, last: bool) void {
+                    @call(bun.callmod_inline, handler, .{ user_data, data, last });
+                }
+            }.onDataCallback, optional_data),
+            .H2 => |resp| resp.onData(UserDataType, struct {
+                pub fn onDataCallback(user_data: UserDataType, _: *H2Response, data: []const u8, last: bool) void {
                     @call(bun.callmod_inline, handler, .{ user_data, data, last });
                 }
             }.onDataCallback, optional_data),
@@ -522,12 +528,13 @@ pub const AnyResponse = union(enum) {
             .SSL => |resp| resp.downcastSocket().close(.failure),
             .TCP => |resp| resp.downcastSocket().close(.failure),
             .H3 => |resp| resp.forceClose(),
+            .H2 => |resp| resp.forceClose(),
         }
     }
 
     pub fn getNativeHandle(this: AnyResponse) bun.FD {
         return switch (this) {
-            .H3 => bun.invalid_fd,
+            .H3, .H2 => bun.invalid_fd,
             inline else => |resp| resp.getNativeHandle(),
         };
     }
@@ -549,11 +556,15 @@ pub const AnyResponse = union(enum) {
             pub fn h3_handler(user_data: UserDataType, offset: u64, resp: *H3Response) bool {
                 return handler(user_data, offset, .{ .H3 = resp });
             }
+            pub fn h2_handler(user_data: UserDataType, offset: u64, resp: *H2Response) bool {
+                return handler(user_data, offset, .{ .H2 = resp });
+            }
         };
         switch (this) {
             .SSL => |resp| resp.onWritable(UserDataType, wrapper.ssl_handler, optional_data),
             .TCP => |resp| resp.onWritable(UserDataType, wrapper.tcp_handler, optional_data),
             .H3 => |resp| resp.onWritable(UserDataType, wrapper.h3_handler, optional_data),
+            .H2 => |resp| resp.onWritable(UserDataType, wrapper.h2_handler, optional_data),
         }
     }
 
@@ -568,12 +579,16 @@ pub const AnyResponse = union(enum) {
             pub fn h3_handler(user_data: UserDataType, resp: *H3Response) void {
                 handler(user_data, .{ .H3 = resp });
             }
+            pub fn h2_handler(user_data: UserDataType, resp: *H2Response) void {
+                handler(user_data, .{ .H2 = resp });
+            }
         };
 
         switch (this) {
             .SSL => |resp| resp.onTimeout(UserDataType, wrapper.ssl_handler, optional_data),
             .TCP => |resp| resp.onTimeout(UserDataType, wrapper.tcp_handler, optional_data),
             .H3 => |resp| resp.onTimeout(UserDataType, wrapper.h3_handler, optional_data),
+            .H2 => |resp| resp.onTimeout(UserDataType, wrapper.h2_handler, optional_data),
         }
     }
 
@@ -588,11 +603,15 @@ pub const AnyResponse = union(enum) {
             pub fn h3_handler(user_data: UserDataType, resp: *H3Response) void {
                 handler(user_data, .{ .H3 = resp });
             }
+            pub fn h2_handler(user_data: UserDataType, resp: *H2Response) void {
+                handler(user_data, .{ .H2 = resp });
+            }
         };
         switch (this) {
             .SSL => |resp| resp.onAborted(UserDataType, wrapper.ssl_handler, optional_data),
             .TCP => |resp| resp.onAborted(UserDataType, wrapper.tcp_handler, optional_data),
             .H3 => |resp| resp.onAborted(UserDataType, wrapper.h3_handler, optional_data),
+            .H2 => |resp| resp.onAborted(UserDataType, wrapper.h2_handler, optional_data),
         }
     }
 
@@ -653,15 +672,16 @@ pub const AnyResponse = union(enum) {
         ctx: ?*uws.WebSocketUpgradeContext,
     ) *Socket {
         return switch (this) {
-            // server.upgrade() returns false before reaching here for H3
-            // (request_context.get(RequestContext) is null — the H3 ctx is a
-            // different type and upgrade_context is never set).
-            .H3 => unreachable,
+            // server.upgrade() returns false before reaching here for H2/H3
+            // (request_context.get(RequestContext) is null — the H2/H3 ctx
+            // is a different type and upgrade_context is never set).
+            .H3, .H2 => unreachable,
             inline else => |resp| resp.upgrade(Data, data, sec_web_socket_key, sec_web_socket_protocol, sec_web_socket_extensions, ctx),
         };
     }
 };
 
+pub const H2Response = uws.H2.Response;
 pub const H3Response = uws.H3.Response;
 
 pub const State = enum(u8) {

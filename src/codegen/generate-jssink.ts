@@ -6,6 +6,7 @@ const classes = [
   "HTTPResponseSink",
   "HTTPSResponseSink",
   "H3ResponseSink",
+  "H2ResponseSink",
   "NetworkSink",
 ];
 

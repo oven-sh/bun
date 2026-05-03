@@ -11,6 +11,7 @@ pub const Start = union(Tag) {
     HTTPSResponseSink: void,
     HTTPResponseSink: void,
     H3ResponseSink: void,
+    H2ResponseSink: void,
     NetworkSink: void,
     ready: void,
     owned_and_done: bun.ByteList,
@@ -25,6 +26,7 @@ pub const Start = union(Tag) {
         HTTPSResponseSink,
         HTTPResponseSink,
         H3ResponseSink,
+        H2ResponseSink,
         NetworkSink,
         ready,
         owned_and_done,
@@ -172,7 +174,7 @@ pub const Start = union(Tag) {
                     },
                 };
             },
-            .NetworkSink, .HTTPSResponseSink, .HTTPResponseSink, .H3ResponseSink => {
+            .NetworkSink, .HTTPSResponseSink, .HTTPResponseSink, .H3ResponseSink, .H2ResponseSink => {
                 var empty = true;
                 var chunk_size: Blob.SizeType = 2048;
 
@@ -700,9 +702,13 @@ pub const Signal = struct {
     };
 };
 
-pub fn HTTPServerWritable(comptime ssl: bool, comptime http3: bool) type {
+pub fn HTTPServerWritable(comptime ssl: bool, comptime transport: RequestContextTransport) type {
     return struct {
-        const UWSResponse = if (http3) uws.H3.Response else uws.NewApp(ssl).Response;
+        const UWSResponse = switch (transport) {
+            .h3 => uws.H3.Response,
+            .h2 => uws.H2.Response,
+            .h1 => uws.NewApp(ssl).Response,
+        };
         res: ?*UWSResponse,
         buffer: bun.ByteList,
         pooled_buffer: ?*WebCore.ByteListPool.Node = null,
@@ -1329,13 +1335,18 @@ pub fn HTTPServerWritable(comptime ssl: bool, comptime http3: bool) type {
             }
         }
 
-        pub const name = if (http3) "H3ResponseSink" else if (ssl) "HTTPSResponseSink" else "HTTPResponseSink";
+        pub const name = switch (transport) {
+            .h3 => "H3ResponseSink",
+            .h2 => "H2ResponseSink",
+            .h1 => if (ssl) "HTTPSResponseSink" else "HTTPResponseSink",
+        };
         pub const JSSink = Sink.JSSink(@This(), name);
     };
 }
-pub const HTTPSResponseSink = HTTPServerWritable(true, false);
-pub const HTTPResponseSink = HTTPServerWritable(false, false);
-pub const H3ResponseSink = HTTPServerWritable(true, true);
+pub const HTTPSResponseSink = HTTPServerWritable(true, .h1);
+pub const HTTPResponseSink = HTTPServerWritable(false, .h1);
+pub const H3ResponseSink = HTTPServerWritable(true, .h3);
+pub const H2ResponseSink = HTTPServerWritable(true, .h2);
 pub const NetworkSink = struct {
     pub const new = bun.TrivialNew(@This());
     pub const deinit = bun.TrivialDeinit(@This());
@@ -1634,6 +1645,7 @@ pub const ReadResult = union(enum) {
 };
 
 const std = @import("std");
+const RequestContextTransport = @import("../api/server/RequestContext.zig").Transport;
 
 const bun = @import("bun");
 const FeatureFlags = bun.FeatureFlags;

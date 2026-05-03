@@ -15,6 +15,7 @@
 #include "JSDOMExceptionHandling.h"
 #include <bun-uws/src/App.h>
 #include <bun-uws/src/Http3Response.h>
+#include <bun-uws/src/Http2App.h>
 #include "ZigGeneratedClasses.h"
 #include "ScriptExecutionContext.h"
 #include "AsyncContextFrame.h"
@@ -1021,7 +1022,11 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
     return obj;
 }
 
-static void writeFetchHeadersToH3Response(WebCore::FetchHeaders& headers, uWS::Http3Response* res)
+/* Shared H2/H3 path — both expose the same getHttpResponseData()/
+ * writeHeader()/writeMark() surface and the same state-flag enum, so
+ * only the ResponseData type differs. */
+template<typename ResponseData, typename Response>
+static void writeFetchHeadersToH3Response(WebCore::FetchHeaders& headers, Response* res)
 {
     auto& internalHeaders = headers.internalHeaders();
     auto* data = res->getHttpResponseData();
@@ -1058,13 +1063,13 @@ static void writeFetchHeadersToH3Response(WebCore::FetchHeaders& headers, uWS::H
 
     for (const auto& header : internalHeaders.commonHeaders()) {
         if (header.key == WebCore::HTTPHeaderName::ContentLength) {
-            if (!(data->state & uWS::Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
-                data->state |= uWS::Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+            if (!(data->state & ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+                data->state |= ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
                 res->writeMark();
             }
         }
         if (header.key == WebCore::HTTPHeaderName::Date) {
-            data->state |= uWS::Http3ResponseData::HTTP_WROTE_DATE_HEADER;
+            data->state |= ResponseData::HTTP_WROTE_DATE_HEADER;
         }
         // HTTP/3 has no Transfer-Encoding; if a user header reaches here it
         // was already stripped by doWriteHeaders().
@@ -1086,7 +1091,10 @@ extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0
         writeFetchHeadersToUWSResponse<true>(*arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
         break;
     case UWSResponseKind::H3:
-        writeFetchHeadersToH3Response(*arg0, reinterpret_cast<uWS::Http3Response*>(arg2));
+        writeFetchHeadersToH3Response<uWS::Http3ResponseData>(*arg0, reinterpret_cast<uWS::Http3Response*>(arg2));
+        break;
+    case UWSResponseKind::H2:
+        writeFetchHeadersToH3Response<uWS::Http2ResponseData>(*arg0, reinterpret_cast<uWS::Http2Response*>(arg2));
         break;
     }
 }

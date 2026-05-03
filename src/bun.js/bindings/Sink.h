@@ -11,9 +11,10 @@ enum SinkID : uint8_t {
     HTTPSResponseSink = 5,
     NetworkSink = 6,
     H3ResponseSink = 7,
+    H2ResponseSink = 8,
 
 };
 static constexpr unsigned numberOfSinkIDs
-    = 8;
+    = 9;
 
 }

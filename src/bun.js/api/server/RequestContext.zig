@@ -18,26 +18,59 @@ pub const AdditionalOnAbortCallback = struct {
     }
 };
 
-pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comptime ThisServer: type, comptime http3: bool) type {
+pub const Transport = enum { h1, h2, h3 };
+
+pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comptime ThisServer: type, comptime transport: Transport) type {
+    // Shared stream-multiplexed semantics: H2 and H3 both deliver request
+    // bodies via per-stream frames terminated by the peer's END_STREAM/FIN
+    // (RFC 9113 §8.1, RFC 9114 §4.1), forbid connection-specific headers
+    // (Transfer-Encoding, Connection, Upgrade), and fire onAborted once
+    // the stream object is torn down even after a completed response.
+    // `http3` here means exactly that shared contract; `is_h3`/`is_h2`
+    // pick the concrete Response/Request types and the few lines that
+    // really are protocol-specific (Alt-Svc, export names, pool slot).
+    const http3 = transport != .h1;
     return struct {
         const RequestContext = @This();
 
-        const App = if (http3) struct {
-            pub const Response = uws.H3.Response;
-        } else uws.NewApp(ssl_enabled);
-        /// uWS request type for this transport. The H3 wrapper mirrors
+        const App = switch (transport) {
+            .h3 => struct {
+                pub const Response = uws.H3.Response;
+            },
+            .h2 => struct {
+                pub const Response = uws.H2.Response;
+            },
+            .h1 => uws.NewApp(ssl_enabled),
+        };
+        /// uWS request type for this transport. The H2/H3 wrappers mirror
         /// uws.Request's surface so callers stay duck-typed.
-        pub const Req = if (http3) uws.H3.Request else uws.Request;
+        pub const Req = switch (transport) {
+            .h3 => uws.H3.Request,
+            .h2 => uws.H2.Request,
+            .h1 => uws.Request,
+        };
         pub const Resp = App.Response;
-        pub const is_h3 = http3;
-        const resp_kind = uws.ResponseKind.from(ssl_enabled, http3);
+        pub const is_h3 = transport == .h3;
+        pub const is_h2 = transport == .h2;
+        /// Shared stream-multiplexed semantics flag — see the block comment
+        /// on `http3` above for what the H2/H3 codepaths share.
+        pub const is_stream = transport != .h1;
+        const resp_kind: uws.ResponseKind = switch (transport) {
+            .h3 => .h3,
+            .h2 => .h2,
+            .h1 => if (ssl_enabled) .ssl else .tcp,
+        };
         pub threadlocal var pool: ?*RequestContext.RequestContextStackAllocator = null;
-        pub const ResponseStream = jsc.WebCore.HTTPServerWritable(ssl_enabled, http3);
+        pub const ResponseStream = jsc.WebCore.HTTPServerWritable(ssl_enabled, transport);
 
         // This pre-allocates up to 2,048 RequestContext structs.
         // It costs about 655,632 bytes.
         pub const RequestContextStackAllocator = bun.HiveArray(RequestContext, if (bun.heap_breakdown.enabled) 0 else 2048).Fallback;
 
+        /// NativePromiseContext.DeferredDerefTask packs a 4-bit tag into
+        /// this pointer's low bits; bumped from 3 when the ninth
+        /// transport variant (H2) was added.
+        _align: void align(16) = {},
         server: ?*ThisServer,
         resp: ?*App.Response,
         /// thread-local default heap allocator
@@ -295,7 +328,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (this.server) |server| {
                 this.server = null;
-                if (comptime http3) server.h3_request_pool_allocator.put(this) else server.request_pool_allocator.put(this);
+                switch (comptime transport) {
+                    .h3 => server.h3_request_pool_allocator.put(this),
+                    .h2 => server.h2_request_pool_allocator.put(this),
+                    .h1 => server.request_pool_allocator.put(this),
+                }
                 server.onRequestComplete();
             }
         }
@@ -577,7 +614,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         }
 
         inline fn anyResponse(r: *App.Response) uws.AnyResponse {
-            return if (comptime http3) .{ .H3 = r } else if (comptime ssl_enabled) .{ .SSL = r } else .{ .TCP = r };
+            return switch (comptime transport) {
+                .h3 => .{ .H3 = r },
+                .h2 => .{ .H2 = r },
+                .h1 => if (comptime ssl_enabled) .{ .SSL = r } else .{ .TCP = r },
+            };
         }
 
         pub fn create(this: *RequestContext, server: *ThisServer, req: *Req, resp: *App.Response, should_deinit_context: ?*bool, method: ?bun.http.Method) void {
@@ -588,7 +629,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 .method = method orelse HTTP.Method.which(req.method()) orelse .GET,
                 .server = server,
                 .defer_deinit_until_callback_completes = should_deinit_context,
-                .range = RangeRequest.rawFromRequest(if (comptime http3) .{ .h3 = req } else .{ .h1 = req }),
+                .range = RangeRequest.rawFromRequest(switch (comptime transport) {
+                    .h3 => .{ .h3 = req },
+                    .h2 => .{ .h2 = req },
+                    .h1 => .{ .h1 = req },
+                }),
             };
 
             ctxLog("create<d> ({*})<r>", .{this});
@@ -784,7 +829,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             const this: *RequestContext = @ptrCast(@alignCast(ctx));
             // Route through the real onAbort so flags.aborted, request.signal,
             // and additional_on_abort fire exactly as they did pre-consolidation.
-            this.onAbort(if (comptime http3) resp.H3 else if (comptime ssl_enabled) resp.SSL else resp.TCP);
+            this.onAbort(switch (comptime transport) {
+                .h3 => resp.H3,
+                .h2 => resp.H2,
+                .h1 => if (comptime ssl_enabled) resp.SSL else resp.TCP,
+            });
         }
 
         fn onFileStreamError(ctx: *anyopaque, resp: uws.AnyResponse, _: bun.sys.Error) void {
@@ -2231,7 +2280,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             // Advertise the QUIC endpoint on H1/H2 responses so browsers can
             // discover it (RFC 7838). Multiple Alt-Svc fields are valid, so a
             // user-supplied one composes rather than conflicts.
-            if (comptime !http3 and @hasDecl(ThisServer, "h3AltSvc")) {
+            if (comptime transport != .h3 and @hasDecl(ThisServer, "h3AltSvc")) {
                 if (this.server.?.h3AltSvc()) |alt| resp.writeHeader("alt-svc", alt);
             }
 
@@ -2573,7 +2622,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         }
 
         comptime {
-            const export_prefix = "Bun__HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ (if (http3) "H3" else if (ThisServer.ssl_enabled) "TLS" else "");
+            const export_prefix = "Bun__HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ switch (transport) {
+                .h3 => "H3",
+                .h2 => "H2",
+                .h1 => if (ThisServer.ssl_enabled) "TLS" else "",
+            };
             if (bun.Environment.export_cpp_apis) {
                 @export(&jsc.toJSHostFn(onResolve), .{ .name = export_prefix ++ "__onResolve" });
                 @export(&jsc.toJSHostFn(onReject), .{ .name = export_prefix ++ "__onReject" });

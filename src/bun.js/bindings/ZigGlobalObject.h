@@ -250,6 +250,10 @@ public:
     JSC::Structure* H3ResponseSinkStructure() const { return m_JSH3ResponseSinkClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* H3ResponseSink() { return m_JSH3ResponseSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue H3ResponseSinkPrototype() const { return m_JSH3ResponseSinkClassStructure.prototypeInitializedOnMainThread(this); }
+
+    JSC::Structure* H2ResponseSinkStructure() const { return m_JSH2ResponseSinkClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* H2ResponseSink() { return m_JSH2ResponseSinkClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue H2ResponseSinkPrototype() const { return m_JSH2ResponseSinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableNetworkSinkControllerPrototype() const { return m_JSFetchTaskletChunkedRequestControllerPrototype.getInitializedOnMainThread(this); }
 
     JSC::Structure* JSBufferListStructure() const { return m_JSBufferListClassStructure.getInitializedOnMainThread(this); }
@@ -413,8 +417,16 @@ public:
         Bun__HTTPRequestContextDebugH3__onRejectStream,
         Bun__HTTPRequestContextDebugH3__onResolve,
         Bun__HTTPRequestContextDebugH3__onResolveStream,
+        Bun__HTTPRequestContextH2__onReject,
+        Bun__HTTPRequestContextH2__onRejectStream,
+        Bun__HTTPRequestContextH2__onResolve,
+        Bun__HTTPRequestContextH2__onResolveStream,
+        Bun__HTTPRequestContextDebugH2__onReject,
+        Bun__HTTPRequestContextDebugH2__onRejectStream,
+        Bun__HTTPRequestContextDebugH2__onResolve,
+        Bun__HTTPRequestContextDebugH2__onResolveStream,
     };
-    static constexpr size_t promiseFunctionsSize = 42;
+    static constexpr size_t promiseFunctionsSize = 50;
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
 
@@ -563,6 +575,7 @@ public:
     V(private, LazyClassStructure, m_JSHTTPSResponseSinkClassStructure)                                      \
     V(private, LazyClassStructure, m_JSNetworkSinkClassStructure)                                            \
     V(private, LazyClassStructure, m_JSH3ResponseSinkClassStructure)                                         \
+    V(private, LazyClassStructure, m_JSH2ResponseSinkClassStructure)                                         \
                                                                                                              \
     V(private, LazyClassStructure, m_JSStringDecoderClassStructure)                                          \
     V(private, LazyClassStructure, m_NapiClassStructure)                                                     \

@@ -5,6 +5,7 @@
 #include <JavaScriptCore/Structure.h>
 #include <bun-uws/src/App.h>
 #include <bun-uws/src/Http3Request.h>
+#include <bun-uws/src/Http2Request.h>
 #include "ZigGeneratedClasses.h"
 #include "AsyncContextFrame.h"
 #include "ServerRouteList.h"
@@ -287,6 +288,20 @@ extern "C" JSC::EncodedJSValue Bun__ServerRouteList__callRouteH3(
     JSC::EncodedJSValue routeListObject,
     JSC::EncodedJSValue* requestObject,
     uWS::Http3Request* req)
+{
+    JSValue routeListValue = JSValue::decode(routeListObject);
+    ServerRouteList* routeList = uncheckedDowncast<ServerRouteList>(routeListValue);
+    return JSValue::encode(routeList->callRoute(globalObject, index, requestPtr, serverObject, requestObject, req));
+}
+
+extern "C" JSC::EncodedJSValue Bun__ServerRouteList__callRouteH2(
+    Zig::GlobalObject* globalObject,
+    uint32_t index,
+    void* requestPtr,
+    JSC::EncodedJSValue serverObject,
+    JSC::EncodedJSValue routeListObject,
+    JSC::EncodedJSValue* requestObject,
+    uWS::Http2Request* req)
 {
     JSValue routeListValue = JSValue::decode(routeListObject);
     ServerRouteList* routeList = uncheckedDowncast<ServerRouteList>(routeListValue);

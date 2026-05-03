@@ -53,6 +53,7 @@ id: []const u8 = "",
 allow_hot: bool = true,
 ipv6_only: bool = false,
 h3: bool = false,
+h2: bool = false,
 h1: bool = true,
 
 is_node_http: bool = false,
@@ -253,6 +254,26 @@ pub fn applyStaticRouteH3(server: AnyServer, app: *uws.H3.App, comptime T: type,
         }
         pub fn HEAD(route: T, req: *uws.H3.Request, resp: *uws.H3.Response) void {
             route.onHEADRequest(.{ .h3 = req }, .{ .H3 = resp });
+        }
+    };
+    app.head(path, T, entry, handler_wrap.HEAD);
+    switch (method) {
+        .any => app.any(path, T, entry, handler_wrap.handler),
+        .method => |*m| {
+            var iter = m.iterator();
+            while (iter.next()) |method_| app.method(method_, path, T, entry, handler_wrap.handler);
+        },
+    }
+}
+
+pub fn applyStaticRouteH2(server: AnyServer, app: *uws.H2.App, comptime T: type, entry: T, path: []const u8, method: HTTP.Method.Optional) void {
+    entry.server = server;
+    const handler_wrap = struct {
+        pub fn handler(route: T, req: *uws.H2.Request, resp: *uws.H2.Response) void {
+            route.onRequest(.{ .h2 = req }, .{ .H2 = resp });
+        }
+        pub fn HEAD(route: T, req: *uws.H2.Request, resp: *uws.H2.Response) void {
+            route.onHEADRequest(.{ .h2 = req }, .{ .H2 = resp });
         }
     };
     app.head(path, T, entry, handler_wrap.HEAD);
@@ -867,6 +888,10 @@ pub fn fromJS(
         }
         if (global.hasException()) return error.JSError;
 
+        if (try arg.get(global, "h2")) |v| {
+            args.h2 = v.toBoolean();
+        }
+
         if (try arg.get(global, "h1")) |v| {
             args.h1 = v.toBoolean();
         }
@@ -989,6 +1014,16 @@ pub fn fromJS(
             }
         } else if (!args.h1) {
             return global.throwInvalidArguments("Cannot disable h1 without enabling h3", .{});
+        }
+        if (args.h2) {
+            if (args.ssl_config == null) {
+                return global.throwInvalidArguments("HTTP/2 requires 'tls' to be set (h2c is not supported)", .{});
+            }
+            // h2 shares the h1 TLS listener via ALPN; one without the other
+            // has no socket to adopt from.
+            if (!args.h1) {
+                return global.throwInvalidArguments("h2 requires h1: it shares the HTTP/1.1 TLS listener via ALPN", .{});
+            }
         }
         if (!args.h1 and args.address == .unix) {
             return global.throwInvalidArguments("Cannot disable h1 with a unix socket — HTTP/3 over AF_UNIX is not supported", .{});

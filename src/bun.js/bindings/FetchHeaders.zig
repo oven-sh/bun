@@ -22,6 +22,7 @@ pub const FetchHeaders = opaque {
     extern fn WebCore__FetchHeaders__toJS(arg0: *FetchHeaders, arg1: *JSGlobalObject) JSValue;
     extern fn WebCore__FetchHeaders__toUWSResponse(arg0: *FetchHeaders, kind: bun.uws.ResponseKind, arg2: ?*anyopaque) void;
     extern fn WebCore__FetchHeaders__createFromH3(arg0: *anyopaque) *FetchHeaders;
+    extern fn WebCore__FetchHeaders__createFromH2(arg0: *anyopaque) *FetchHeaders;
 
     pub fn createValue(
         global: *JSGlobalObject,
@@ -110,6 +111,14 @@ pub const FetchHeaders = opaque {
     ) *FetchHeaders {
         return WebCore__FetchHeaders__createFromH3(
             h3_request,
+        );
+    }
+
+    pub fn createFromH2(
+        h2_request: *anyopaque,
+    ) *FetchHeaders {
+        return WebCore__FetchHeaders__createFromH2(
+            h2_request,
         );
     }
 

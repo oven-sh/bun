@@ -13,21 +13,27 @@ import net from "node:net";
 async function createProxy() {
   const log: string[] = [];
   const server = net.createServer(client => {
-    client.once("data", data => {
-      const request = data.toString("latin1");
-      const newline = request.indexOf("\r\n");
-      const [method, target] = request.slice(0, newline).split(" ");
+    let head = Buffer.alloc(0);
+    const onData = (chunk: Buffer) => {
+      head = Buffer.concat([head, chunk]);
+      const newline = head.indexOf("\r\n");
+      if (newline === -1) return;
+      client.removeListener("data", onData);
+
+      const [method, target] = head.toString("latin1", 0, newline).split(" ");
       log.push(`${method} ${target}`);
 
       const url = new URL(target);
+      const rest = head.subarray(newline + 2);
       const upstream = net.connect(Number(url.port), url.hostname, () => {
         upstream.write(`${method} ${url.pathname}${url.search} HTTP/1.1\r\n`);
-        upstream.write(data.subarray(newline + 2));
+        upstream.write(rest);
         upstream.pipe(client);
         client.pipe(upstream);
       });
       upstream.on("error", () => client.destroy());
-    });
+    };
+    client.on("data", onData);
     client.on("error", () => {});
   });
   server.listen(0, "127.0.0.1");

@@ -71,4 +71,13 @@ describe.if(isWindows)("path length validation when joining cwd + relative path 
   it("rejects overly long relative paths in writeFileSync", () => {
     expect(() => fs.writeFileSync(longRelative, "")).toThrow("ENAMETOOLONG");
   });
+
+  // A relative path containing no '\\', '/', or '.' takes the early-return
+  // branch in normalizePathWindows that copies the path directly into `buf`
+  // and appends a NUL. When path.len == buf.len the NUL write lands one past
+  // the end of the buffer; this must be rejected with ENAMETOOLONG instead.
+  it("rejects a PATH_MAX_WIDE-length separator-free relative path in readdirSync", () => {
+    const noSep = Buffer.alloc(32767, "a").toString();
+    expect(() => fs.readdirSync(noSep)).toThrow("ENAMETOOLONG");
+  });
 });

@@ -1025,10 +1025,10 @@ pub fn normalizePathWindows(
     }
 
     if (bun.strings.indexOfAnyT(T, path_, &.{ '\\', '/', '.' }) == null) {
-        if (buf.len < path.len) {
+        if (path.len >= buf.len) {
             return .{
                 .err = .{
-                    .errno = @intFromEnum(E.NOMEM),
+                    .errno = @intFromEnum(E.NAMETOOLONG),
                     .syscall = .open,
                 },
             };
@@ -1061,7 +1061,13 @@ pub fn normalizePathWindows(
     const buf1 = bun.w_path_buffer_pool.get();
     defer bun.w_path_buffer_pool.put(buf1);
     const joined_len = base_path.len + 1 + path.len;
-    if (joined_len > buf1.len) {
+    // normalizeStringGenericTZ below writes into `buf` (same size as `buf1`)
+    // with .add_nt_prefix = true and .zero_terminate = true but performs no
+    // bounds checking. GetFinalPathNameByHandle strips the long-path prefix,
+    // so normalization re-adds up to 6 u16 ("\\" -> "\??\UNC\") plus a NUL.
+    // Reserve that headroom in addition to fitting the join in `buf1`.
+    const nt_prefix_headroom = 8;
+    if (joined_len > buf1.len -| nt_prefix_headroom) {
         return .{
             .err = .{
                 .errno = @intFromEnum(E.NAMETOOLONG),

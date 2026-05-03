@@ -582,4 +582,48 @@ describe("bundler files option", () => {
     const output = await result.outputs[0].text();
     expect(output).toContain("injected by plugin");
   });
+
+  test("Uint8Array file contents are snapshotted (mutation after Bun.build does not affect build)", async () => {
+    const source = `export const MARKER = "typed-array-file-contents-are-copied";\nconsole.log(MARKER);\n`;
+    const buf = new TextEncoder().encode(source);
+
+    const promise = Bun.build({
+      entrypoints: ["/entry.js"],
+      files: { "/entry.js": buf },
+      throw: false,
+    });
+
+    // The bundler reads this file on a worker thread after Bun.build() has
+    // returned. If it kept a pointer into the live ArrayBuffer instead of
+    // copying, overwriting the bytes here would make the worker read garbage.
+    buf.fill("(".charCodeAt(0));
+
+    const result = await promise;
+    expect(result.logs.map(String)).toEqual([]);
+    expect(result.success).toBe(true);
+    const output = await result.outputs[0].text();
+    expect(output).toContain("typed-array-file-contents-are-copied");
+  });
+
+  test("ArrayBuffer file contents survive transfer() during build", async () => {
+    const source = `export const MARKER = "detached-arraybuffer-file-contents-survive";\nconsole.log(MARKER);\n`;
+    const buf = new TextEncoder().encode(source);
+
+    const promise = Bun.build({
+      entrypoints: ["/entry.js"],
+      files: { "/entry.js": buf },
+      throw: false,
+    });
+
+    // Detaching the backing store frees memory that a borrowed pointer would
+    // still reference (use-after-free on the bundler worker thread).
+    const transferred = buf.buffer.transfer();
+    new Uint8Array(transferred).fill("(".charCodeAt(0));
+
+    const result = await promise;
+    expect(result.logs.map(String)).toEqual([]);
+    expect(result.success).toBe(true);
+    const output = await result.outputs[0].text();
+    expect(output).toContain("detached-arraybuffer-file-contents-survive");
+  });
 });

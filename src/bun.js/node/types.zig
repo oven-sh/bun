@@ -277,7 +277,16 @@ pub const StringOrBuffer = union(enum) {
                 const buffer = Buffer.fromArrayBuffer(global, value);
 
                 if (is_async) {
-                    buffer.buffer.value.protect();
+                    // The backing store of an ArrayBuffer can be detached
+                    // (e.g. via `transfer()`) or mutated by JS after this call
+                    // returns while the async work is still running on another
+                    // thread. `protect()` only prevents GC, not detachment, so
+                    // we must copy the bytes into memory we own. This matches
+                    // how Blob and String inputs are handled for async use.
+                    const bytes = buffer.slice();
+                    const owned = try allocator.dupe(u8, bytes);
+                    global.vm().reportExtraMemory(owned.len);
+                    return .{ .encoded_slice = jsc.ZigString.Slice.init(allocator, owned) };
                 }
 
                 return .{ .buffer = buffer };
@@ -298,7 +307,12 @@ pub const StringOrBuffer = union(enum) {
         if (value.isCell() and value.jsType().isArrayBufferLike()) {
             const buffer = Buffer.fromArrayBuffer(global, value);
             if (is_async) {
-                buffer.buffer.value.protect();
+                // See fromJSMaybeAsync: copy so JS-side detach/mutation cannot
+                // race with the off-thread consumer.
+                const bytes = buffer.slice();
+                const owned = try allocator.dupe(u8, bytes);
+                global.vm().reportExtraMemory(owned.len);
+                return .{ .encoded_slice = jsc.ZigString.Slice.init(allocator, owned) };
             }
             return .{ .buffer = buffer };
         }

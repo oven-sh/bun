@@ -87,6 +87,10 @@ pub fn onData(
             if (stream == .owned) allocator.free(stream.owned.slice());
             if (stream == .owned_and_done) allocator.free(stream.owned_and_done.slice());
         }
+        if (stream == .err and stream.err == .JSValue) {
+            // Producer protected it; we're discarding, so balance.
+            stream.err.JSValue.unprotect();
+        }
         this.has_received_last_chunk = stream.isDone();
 
         log("ByteStream.onData already done... do nothing", .{});
@@ -241,6 +245,9 @@ pub fn append(
                 this.buffer.appendSliceAssumeCapacity(chunk);
             },
             .err => {
+                // Release any previously-stored error (its JSValue was
+                // protected when it was stored) before overwriting.
+                this.pending.result.deinit();
                 this.pending.result = .{ .err = stream.err };
             },
             .done => {},
@@ -262,6 +269,7 @@ pub fn append(
                 @panic("Expected buffer action to be null");
             }
 
+            this.pending.result.deinit();
             this.pending.result = .{ .err = stream.err };
         },
         .done => {},

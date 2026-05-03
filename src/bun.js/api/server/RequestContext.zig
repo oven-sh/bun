@@ -1908,6 +1908,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 }
             }
 
+            if (stream == .err and stream.err == .JSValue) {
+                // Producer protected it per StreamError.JSValue contract; this
+                // pipe handler does not surface the JS error to the client,
+                // so balance the protect here to avoid a leak.
+                stream.err.JSValue.unprotect();
+            }
+
             if (this.isAbortedOrEnded()) {
                 return;
             }

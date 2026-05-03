@@ -326,6 +326,11 @@ pub const FetchTasklet = struct {
                 if (readable.ptr == .Bytes) {
                     js_err = err.toJS(globalThis);
                     js_err.ensureStillAlive();
+                    // StreamError.JSValue's contract: producer protects, the
+                    // consumer that retires the value unprotects. ByteStream
+                    // may park this on the heap in `pending.result` across GC
+                    // with no other root once `err` is deinit'd below.
+                    js_err.protect();
                     try readable.ptr.Bytes.onData(
                         .{
                             .err = .{ .JSValue = js_err },

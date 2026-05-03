@@ -651,8 +651,13 @@ pub fn readableStream(
             if (self.readable_stream_ref.get(self.global)) |readable| {
                 if (readable.ptr == .Bytes) {
                     if (request_err) |err| {
+                        const js_err = err.toJS(self.global, self.path);
+                        // StreamError.JSValue's contract: producer protects,
+                        // consumer unprotects. ByteStream may park this on
+                        // the heap in `pending.result` with no other root.
+                        js_err.protect();
                         try readable.ptr.Bytes.onData(
-                            .{ .err = .{ .JSValue = err.toJS(self.global, self.path) } },
+                            .{ .err = .{ .JSValue = js_err } },
                             bun.default_allocator,
                         );
                         return;

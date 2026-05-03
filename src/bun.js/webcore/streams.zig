@@ -224,7 +224,12 @@ pub const Result = union(Tag) {
         Error: Syscall.Error,
         AbortReason: jsc.CommonAbortReason,
 
-        // TODO: use an explicit jsc.Strong.Optional here.
+        /// The producer must `protect()` this value before constructing the
+        /// StreamError. Consumers (`Result.deinit`, `Result.toJS`,
+        /// `Result.fulfillPromise`, `BufferAction.reject`, pipe handlers) are
+        /// responsible for the matching `unprotect()`. A `StreamError.JSValue`
+        /// may be parked on the heap (e.g. `ByteStream.pending.result`) across
+        /// GC cycles with no other root, so this is load-bearing.
         JSValue: jsc.JSValue,
         WeakJSValue: jsc.JSValue,
 
@@ -1563,7 +1568,10 @@ pub const BufferAction = union(enum) {
     }
 
     pub fn reject(this: *BufferAction, global: *jsc.JSGlobalObject, err: Result.StreamError) bun.JSTerminated!void {
-        return this.swap().reject(global, err.toJSWeak(global)[0]);
+        const js_err, const was_strong = err.toJSWeak(global);
+        js_err.ensureStillAlive();
+        if (was_strong == .Strong) js_err.unprotect();
+        return this.swap().reject(global, js_err);
     }
 
     pub fn resolve(this: *BufferAction, global: *jsc.JSGlobalObject, result: jsc.JSValue) bun.JSTerminated!void {

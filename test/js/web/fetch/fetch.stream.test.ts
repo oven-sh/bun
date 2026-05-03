@@ -1,7 +1,7 @@
 import { Socket } from "bun";
 import { describe, expect, it } from "bun:test";
 import { createReadStream, readFileSync } from "fs";
-import { gcTick, isWindows, tempDirWithFilesAnon } from "harness";
+import { bunEnv, bunExe, gcTick, isWindows, tempDirWithFilesAnon } from "harness";
 import http from "http";
 import type { AddressInfo } from "net";
 import path, { join } from "path";
@@ -1403,4 +1403,27 @@ describe.concurrent("fetch() with streaming", () => {
     expect(new TextDecoder().decode(result.value!)).toBe("hello\n");
     server.kill("SIGTERM");
   });
+
+  it(
+    "keeps the stream error rooted when parked in ByteStream.pending.result across GC",
+    async () => {
+      // FetchTasklet.onBodyReceived hands a StreamError.JSValue to
+      // ByteStream.onData without protecting it. With no read in flight and
+      // no buffer_action, onData parks the raw JSValue on the heap in
+      // `pending.result`. Once the Response is collected (releasing the only
+      // Strong), a later `body.text()` would surface a freed JSCell and
+      // crash. The fixture forces that exact sequence under GC pressure.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), path.join(import.meta.dir, "fetch-stream-err-gc-fixture.ts")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("OK");
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
 });

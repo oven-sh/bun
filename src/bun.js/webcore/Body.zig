@@ -293,14 +293,19 @@ pub const Value = union(Tag) {
         JSValue: jsc.Strong.Optional,
 
         pub fn toStreamError(this: *@This(), globalObject: *jsc.JSGlobalObject) streams.Result.StreamError {
-            return switch (this.*) {
-                .AbortReason => .{
+            switch (this.*) {
+                .AbortReason => return .{
                     .AbortReason = this.AbortReason,
                 },
-                else => .{
-                    .JSValue = this.toJS(globalObject),
+                else => {
+                    const js_err = this.toJS(globalObject);
+                    // StreamError.JSValue's contract: producer protects,
+                    // consumer unprotects. The receiving ByteStream may park
+                    // this on the heap with no other root.
+                    js_err.protect();
+                    return .{ .JSValue = js_err };
                 },
-            };
+            }
         }
 
         pub fn toJS(this: *@This(), globalObject: *jsc.JSGlobalObject) jsc.JSValue {
@@ -1570,6 +1575,12 @@ pub const ValueBufferer = struct {
                     else => unreachable,
                 }
             }
+        }
+
+        if (stream == .err and stream.err == .JSValue) {
+            // Producer protected it per StreamError.JSValue contract; this
+            // pipe handler discards the error, so balance the protect here.
+            stream.err.JSValue.unprotect();
         }
 
         const chunk = stream.slice();

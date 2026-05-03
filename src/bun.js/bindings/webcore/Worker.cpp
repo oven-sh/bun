@@ -388,7 +388,7 @@ void Worker::dispatchEvent(Event& event)
     EventTargetWithInlineData::dispatchEvent(event);
 }
 
-void Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&& task)
+bool Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&& task)
 {
     {
         Locker lock(m_pendingTasksMutex);
@@ -396,7 +396,7 @@ void Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>
         case State::Pending:
             // Worker VM not up yet; queue for fireEarlyMessages().
             m_pendingTasks.append(WTF::move(task));
-            return;
+            return true;
         case State::Running:
             break;
         case State::Closing:
@@ -404,10 +404,10 @@ void Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>
             // Worker VM is gone; drop immediately (silent no-op).
             // postMessage() goes through enqueueToWorker(), not here — the
             // only user is getHeapSnapshot().
-            return;
+            return false;
         }
     }
-    ScriptExecutionContext::postTaskTo(m_clientIdentifier, WTF::move(task));
+    return ScriptExecutionContext::postTaskTo(m_clientIdentifier, WTF::move(task));
 }
 
 // ---- Worker-thread entry points ---------------------------------------------

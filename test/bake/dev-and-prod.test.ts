@@ -1,6 +1,6 @@
 // Tests which apply to both dev and prod. They are run twice.
 import { writeFileSync } from "node:fs";
-import { devAndProductionTest, devTest, emptyHtmlFile } from "./bake-harness";
+import { devAndProductionTest, devTest, emptyHtmlFile, WAIT_MULTIPLIER } from "./bake-harness";
 
 const hmrSelfAcceptingModule = (label: string) => `
   console.log(${JSON.stringify(label)});
@@ -210,20 +210,30 @@ devTest("hmr handles rapid consecutive edits", {
     "index.ts": hmrSelfAcceptingModule("render initial"),
   },
   async test(dev) {
-    // allowUnlimitedReloads: on Windows, writeFileSync is CreateFile(truncate)
-    // + WriteFile + CloseHandle as separate syscalls; ReadDirectoryChangesW in
-    // the dev-server process can fire between the first two and bundle a
-    // 0-byte module that never calls accept(), tripping fullReload(). Rather
-    // than skip Windows entirely, let the client absorb the reload — the
-    // reloaded page still logs the expected value and the test proceeds. The
-    // #19736 regression path (same-sourceMapId queueing) is exercised
-    // deterministically on every POSIX platform regardless.
-    await using client = await dev.client("/", { allowUnlimitedReloads: true });
+    // allowUnlimitedReloads (Windows-only): writeFileSync on Windows is
+    // CreateFile(truncate) + WriteFile + CloseHandle as separate syscalls;
+    // ReadDirectoryChangesW in the dev-server process can fire between the
+    // first two and bundle a 0-byte module that never calls accept(),
+    // tripping fullReload(). Rather than skip Windows entirely, let the
+    // client absorb the reload there — the reloaded page still logs the
+    // expected value and the test proceeds. On POSIX leave it off so an
+    // unexpected fullReload still fails the test.
+    await using client = await dev.client("/", {
+      allowUnlimitedReloads: process.platform === "win32",
+    });
     await client.expectMessage("render initial");
 
     const waitForMessage = (value: string) =>
       new Promise<void>((resolve, reject) => {
+        let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+          timer = null;
+          cleanup();
+          reject(
+            new Error(`Timed out waiting for ${JSON.stringify(value)}; buffered: ${JSON.stringify(client.messages)}`),
+          );
+        }, 5_000 * WAIT_MULTIPLIER);
         const cleanup = () => {
+          if (timer !== null) clearTimeout(timer);
           client.off("message", onMessage);
           client.off("exit", onExit);
         };

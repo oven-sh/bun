@@ -31,7 +31,7 @@ const isDebugBuild = Bun.version.includes("debug");
  * happy-dom, fetch the page, parse HTML, run the bundle, and connect a
  * WebSocket — 1 second is not enough headroom.
  */
-const WAIT_MULTIPLIER = (isDebugBuild ? 3 : 1) * (isASAN ? 3 : 1) * (isCI ? 2 : 1);
+export const WAIT_MULTIPLIER = (isDebugBuild ? 3 : 1) * (isASAN ? 3 : 1) * (isCI ? 2 : 1);
 
 const verboseSynchronization = process.env.BUN_DEV_SERVER_VERBOSE_SYNC
   ? (arg: string) => {

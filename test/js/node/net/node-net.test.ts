@@ -656,3 +656,72 @@ it.if(isWindows)(
   },
   20_000,
 );
+
+// On Windows, unix paths route through the named-pipe codepath which reports
+// failure asynchronously; this test targets the synchronous-failure branch in
+// Listener.connectInner.
+it.skipIf(isWindows)(
+  "should not leak when connect({path}) fails synchronously on a reused handle",
+  async () => {
+    // node:net creates a detached native socket (`_handle`) and passes it as
+    // `prev` to connectInner. connectInner unconditionally `socket.ref()`s
+    // before `doConnect`. A nonexistent unix path makes `doConnect` throw
+    // synchronously while the socket is still `.detached`, so
+    // `handleConnectError`'s own deref (gated on `!isDetached()`) does not
+    // fire — the ref taken here must be released by the caller for reused
+    // sockets too, not only freshly-allocated ones. Without that, every
+    // failed reconnect leaks one native TCPSocket struct + its connection
+    // string.
+    const script = `
+      const net = require("node:net");
+      const path = "/tmp/bun-test-nonexistent-" + process.pid + ".sock";
+
+      function once() {
+        return new Promise(resolve => {
+          const s = new net.Socket();
+          s.on("error", () => {});
+          s.on("close", resolve);
+          s.connect({ path });
+        });
+      }
+      async function run(n) {
+        for (let i = 0; i < n; i += 100) {
+          const batch = [];
+          for (let j = 0; j < 100; j++) batch.push(once());
+          await Promise.all(batch);
+        }
+        Bun.gc(true);
+        await Bun.sleep(10);
+        Bun.gc(true);
+      }
+
+      // Sample RSS after equal-sized work units. A real per-iteration leak
+      // grows linearly with the sample index; allocator/GC noise plateaus.
+      const samples = [];
+      for (let i = 0; i < 8; i++) {
+        await run(2500);
+        samples.push(process.memoryUsage.rss());
+      }
+      // Discard first two as warmup; compare the last sample against the
+      // first steady-state sample.
+      const base = samples[2];
+      const last = samples[samples.length - 1];
+      console.log(JSON.stringify({ samples, delta: last - base }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { delta, samples } = JSON.parse(stdout.trim().split("\n").pop()!);
+    // 12.5k post-warmup iterations leak ~4 MB on release / ~15 MB on
+    // debug+ASAN when the ref is not balanced. With the fix, delta is
+    // allocator noise (±1 MB).
+    expect(delta, `RSS samples (bytes): ${JSON.stringify(samples)}`).toBeLessThan(3 * 1024 * 1024);
+    expect(exitCode).toBe(0);
+  },
+  120_000,
+);

@@ -851,7 +851,12 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
             socket.flags.allow_half_open = socket_config.allowHalfOpen;
             socket.doConnect(connection) catch {
                 socket.handleConnectError(@intFromEnum(if (port == null) bun.sys.SystemErrno.ENOENT else bun.sys.SystemErrno.ECONNREFUSED)) catch {};
-                if (maybe_previous == null) socket.deref();
+                // Balance the unconditional `socket.ref()` above. `handleConnectError`
+                // only derefs when the socket was attached (`needs_deref`), which is
+                // never true on this synchronous-failure path — the socket is still
+                // `.detached`. This applies to reused (`prev`) sockets as well; the
+                // guard that skipped them leaked one ref per failed reconnect.
+                socket.deref();
                 return promise_value;
             };
 

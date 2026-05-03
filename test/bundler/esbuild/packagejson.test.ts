@@ -1738,19 +1738,15 @@ describe("bundler", () => {
       "/Users/user/project/src/entry.js": [`Could not resolve: "#". Maybe you need to "bun install"?`],
     },
   });
-  itBundled("packagejson/ImportsErrorStartsWithHashSlash", {
-    files: {
-      "/Users/user/project/src/entry.js": `import '#/foo'`,
-      "/Users/user/project/src/package.json": /* json */ `
-        {
-          "imports": {}
-        }
-      `,
-    },
-    bundleErrors: {
-      "/Users/user/project/src/entry.js": [`Could not resolve: "#/foo". Maybe you need to "bun install"?`],
-    },
-  });
+  // Removed: `packagejson/ImportsErrorStartsWithHashSlash` asserted that
+  // every specifier starting with `#/` was rejected before the imports map
+  // was consulted. That behaviour is no longer spec-compliant — Node.js
+  // (nodejs/node#60864) and TypeScript 6.0 allow root wildcard entries
+  // like `"imports": { "#/*": "./*" }`. The resolver now lets `#/…`
+  // specifiers fall through to `resolveImportsExports`, where they produce
+  // a normal `PackageImportNotDefined` when no key matches. See
+  // test/regression/issue/28995.test.ts for the positive and negative
+  // coverage of the new behaviour.
   itBundled("packagejson/MainFieldsErrorMessageDefault", {
     files: {
       "/Users/user/project/src/entry.js": `import 'foo'`,

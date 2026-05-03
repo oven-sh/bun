@@ -1661,7 +1661,18 @@ pub const ESModule = struct {
                     const pattern_base = expansion.key[0..star];
                     // If patternBase is not null and matchKey starts with but is not equal
                     // to patternBase, then
-                    if (strings.startsWith(match_key, pattern_base)) {
+                    //
+                    // The "strictly longer" check is only applied to the imports path
+                    // (is_imports=true) so that `import "#/"` against
+                    // `{"imports": {"#/*": "./*"}}` returns PackageImportNotDefined
+                    // rather than silently loading the package root. The exports
+                    // path preserves its historical behaviour of allowing an
+                    // empty-subpath wildcard match (e.g. `"./foo*": "./file*.js"`
+                    // resolving `./foo` → `./file.js`) so the existing
+                    // `packagejson/ExportsWildcard` test keeps passing; tightening
+                    // exports here would be a separate spec-alignment change
+                    // unrelated to issue #28995.
+                    if (strings.startsWith(match_key, pattern_base) and (!is_imports or match_key.len > pattern_base.len)) {
                         // Let patternTrailer be the substring of expansionKey from the index
                         // after the first "*" character.
                         const pattern_trailer = expansion.key[star + 1 ..];

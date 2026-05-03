@@ -3179,9 +3179,13 @@ pub const Resolver = struct {
         }
         const imports_map = package_json.imports.?;
 
-        if (import_path.len == 1 or strings.hasPrefix(import_path, "#/")) {
+        // Node.js historically rejected "#" and specifiers starting with "#/",
+        // but since https://github.com/nodejs/node/pull/60864 (and TypeScript 6.0)
+        // "#/..." specifiers are allowed so packages can declare a root wildcard
+        // like `"imports": { "#/*": "./*" }`. A bare "#" is still disallowed.
+        if (import_path.len == 1) {
             if (r.debug_logs) |*debug| {
-                debug.addNoteFmt("The path \"{s}\" must not equal \"#\" and must not start with \"#/\"", .{import_path});
+                debug.addNoteFmt("The path \"{s}\" must not equal \"#\"", .{import_path});
             }
             return .{ .not_found = {} };
         }

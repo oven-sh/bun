@@ -69,6 +69,7 @@ pub const Classes = struct {
     pub const HTTPSServer = api.HTTPSServer;
     pub const DebugHTTPServer = api.DebugHTTPServer;
     pub const DebugHTTPSServer = api.DebugHTTPSServer;
+    pub const CronJob = cron.CronJob;
     pub const Crypto = webcore.Crypto;
     pub const FFI = api.FFI;
     pub const H2FrameParser = api.H2FrameParser;
@@ -95,6 +96,8 @@ pub const Classes = struct {
     pub const NativeZstd = api.NativeZstd;
     pub const SourceMap = bun.SourceMap.JSSourceMap;
 };
+
+const cron = @import("../api/cron.zig");
 
 const bun = @import("bun");
 const jsc = bun.jsc;

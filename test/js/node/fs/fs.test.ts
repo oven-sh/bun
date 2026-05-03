@@ -1661,6 +1661,38 @@ it("readlink", () => {
   expect(readlinkSync(actual)).toBe(realpathSync(import.meta.path));
 });
 
+// On FUSE / some network filesystems a symlink target can exceed PATH_MAX,
+// and POSIX readlink() may return exactly buf.len (truncated). Bun used to
+// write the NUL terminator at buf[rc] which would be one past the end of the
+// stack PathBuffer in that case. We can't create a >= PATH_MAX target on a
+// normal filesystem, but we can exercise the longest-possible target to make
+// sure the bounds check in sys.readlink doesn't fire early.
+it.skipIf(isWindows)("readlink with PATH_MAX-1 target", () => {
+  const dir = tmpdirSync();
+  // Find the longest target the local filesystem will accept for symlink(2).
+  // On Linux this is 4095, on macOS 1023. Bun's own path validation silently
+  // replaces the target with "" when it is exactly MAX_PATH_BYTES long (and
+  // Darwin accepts symlink("", link)), so start just below that boundary on
+  // each platform rather than probing through it.
+  let len = process.platform === "darwin" ? 1023 : 4095;
+  let link: string;
+  let target: string;
+  while (true) {
+    link = join(dir, "l" + len);
+    target = Buffer.alloc(len, "x").toString();
+    try {
+      symlinkSync(target, link);
+      break;
+    } catch {
+      if (len <= 1) throw new Error("could not create any symlink");
+      len--;
+    }
+  }
+  // readlinkSync must return the exact target, not error and not truncate.
+  expect(readlinkSync(link).length).toBe(len);
+  expect(readlinkSync(link)).toBe(target);
+});
+
 it.if(isWindows)("symlink on windows with forward slashes", async () => {
   const r = tmpdirSync();
   await fs.promises.rm(join(r, "files/2024"), { recursive: true, force: true });

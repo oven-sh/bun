@@ -579,7 +579,15 @@ export class Dev extends EventEmitter {
     }
 
     if (this.nodeEnv === "development") {
-      await client.expectErrorOverlay(options.errors ?? []);
+      try {
+        await client.expectErrorOverlay(options.errors ?? []);
+      } catch (e) {
+        this.output.off("panic", onPanic);
+        try {
+          await client[Symbol.asyncDispose]();
+        } catch {}
+        throw e;
+      }
     }
     this.connectedClients.add(client);
     client.on("exit", () => {
@@ -1099,10 +1107,13 @@ export class Client extends EventEmitter {
         }
         this.once("message", onEvent);
         this.once("exit", onEvent);
-        let t: any = setTimeout(() => {
-          t = null;
-          resolver.resolve();
-        }, 2000 * WAIT_MULTIPLIER);
+        let t: any = setTimeout(
+          () => {
+            t = null;
+            resolver.resolve();
+          },
+          interactive ? interactive_timeout : 2000 * WAIT_MULTIPLIER,
+        );
         await resolver.promise;
         if (t) clearTimeout(t);
         this.off("message", onEvent);

@@ -675,6 +675,21 @@ pub const H2FrameParser = struct {
     outStandingPings: u64 = 0,
     maxSendHeaderBlockLength: u32 = 0,
     lastStreamID: u32 = 0,
+    // RFC 7540 Section 5.1.1: server push stream IDs (even) are a separate
+    // monotonically-increasing namespace from client-initiated (odd) IDs.
+    // Track them independently so push allocation never collides with nor
+    // pollutes lastStreamID (which is used for GOAWAY Last-Stream-ID and for
+    // allocating the next client-initiated stream).
+    lastPushStreamID: u32 = 0,
+    // RFC 7540 Section 6.10: CONTINUATION frames after PUSH_PROMISE carry the
+    // parent stream identifier, but the header block belongs to the promised
+    // stream. Track both the promised stream ID (decode target) and the
+    // parent stream ID (expected CONTINUATION stream identifier) so we only
+    // take the push-promise decode path when the CONTINUATION arrives on the
+    // correct parent — a different waiting stream must not be misrouted here.
+    // 0 means no pending PUSH_PROMISE continuation.
+    continuation_promised_stream_id: u32 = 0,
+    continuation_parent_stream_id: u32 = 0,
     isServer: bool = false,
     prefaceReceivedLen: u8 = 0,
     // we buffer requests until we get the first settings ACK
@@ -2091,7 +2106,10 @@ pub const H2FrameParser = struct {
                 const identifier = stream.getIdentifier();
                 identifier.ensureStillAlive();
 
-                if (stream.state == .HALF_CLOSED_LOCAL) {
+                // Client-side push streams start in RESERVED_REMOTE and can
+                // only receive from the server. END_STREAM from the remote
+                // transitions them directly to CLOSED.
+                if (stream.state == .HALF_CLOSED_LOCAL or stream.state == .RESERVED_REMOTE) {
                     stream.state = .CLOSED;
                     stream.freeResources(this, false);
                 } else {
@@ -2337,6 +2355,62 @@ pub const H2FrameParser = struct {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Continuation without headers", this.lastStreamID, true);
             return data.len;
         }
+
+        // RFC 7540 Section 6.10: If this CONTINUATION follows a PUSH_PROMISE,
+        // the decoded header block belongs to the promised stream, not the
+        // parent stream that the CONTINUATION frame is addressed to. Only
+        // take this path when the CONTINUATION arrived on the parent stream
+        // we actually saw the PUSH_PROMISE on — otherwise a CONTINUATION for
+        // a different mid-header-block stream could be misrouted into the
+        // push-promise decode, corrupting HPACK state.
+        if (this.continuation_promised_stream_id != 0 and frame.streamIdentifier == this.continuation_parent_stream_id) {
+            const promised_entry = this.streams.getEntry(this.continuation_promised_stream_id);
+            if (promised_entry) |entry| {
+                const promised_stream = entry.value_ptr;
+                const parent_id = frame.streamIdentifier;
+                if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
+                    const payload = content.data;
+                    this.readBuffer.reset();
+                    const maybe_result = try this.decodeHeaderBlock(payload[0..payload.len], promised_stream, frame.flags);
+                    // decodeHeaderBlock fires JS callbacks which may grow the
+                    // streams HashMap and invalidate any prior *Stream pointer.
+                    // Always re-fetch the parent by id before touching it.
+                    if (maybe_result == null) {
+                        // Promised stream removed during callbacks — clear all
+                        // continuation state so future frames aren't misrouted.
+                        this.continuation_promised_stream_id = 0;
+                        this.continuation_parent_stream_id = 0;
+                        if (this.streams.getPtr(parent_id)) |p| {
+                            p.isWaitingMoreHeaders = false;
+                        }
+                        return content.end;
+                    }
+                    if (frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) != 0) {
+                        if (this.streams.getPtr(parent_id)) |p| {
+                            p.isWaitingMoreHeaders = false;
+                        }
+                        this.continuation_promised_stream_id = 0;
+                        this.continuation_parent_stream_id = 0;
+                    }
+                    return content.end;
+                }
+                return data.len;
+            }
+            // Promised stream vanished before the CONTINUATION arrived.
+            // We can't decode the header block into that stream, and
+            // silently dropping the bytes would desynchronize HPACK's
+            // connection-wide dynamic table against the remote encoder,
+            // corrupting every subsequent header block. Treat this as a
+            // connection-level compression error.
+            this.continuation_promised_stream_id = 0;
+            this.continuation_parent_stream_id = 0;
+            if (this.streams.getPtr(frame.streamIdentifier)) |p| {
+                p.isWaitingMoreHeaders = false;
+            }
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.COMPRESSION_ERROR, "PUSH_PROMISE CONTINUATION for gone stream", this.lastStreamID, true);
+            return data.len;
+        }
+
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
             const payload = content.data;
             this.readBuffer.reset();
@@ -2358,6 +2432,142 @@ pub const H2FrameParser = struct {
                     }
                     this.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(stream.state)));
                 }
+            }
+
+            return content.end;
+        }
+
+        // needs more data
+        return data.len;
+    }
+
+    /// RFC 7540 Section 6.6: Handle PUSH_PROMISE frame (type=0x5).
+    /// PUSH_PROMISE frames are sent by the server to notify the client that
+    /// it intends to initiate a new stream for a server push.
+    /// Format: [Pad Length (1)?] [R + Promised Stream ID (4)] [Header Block Fragment (*)] [Padding (*)]
+    pub fn handlePushPromiseFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) bun.JSError!usize {
+        log("handlePushPromiseFrame {s}", .{if (this.isServer) "server" else "client"});
+        // NOTE: Do NOT hold on to the parent_stream pointer — calling
+        // handleReceivedStreamID() below can grow the streams HashMap and
+        // invalidate it. We re-fetch by id when we need to write to the parent.
+        const parent_stream = stream_ orelse {
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "PUSH_PROMISE on connection stream", this.lastStreamID, true);
+            return data.len;
+        };
+        const parent_stream_id = frame.streamIdentifier;
+
+        // RFC 7540 Section 6.10: After a frame without END_HEADERS the only
+        // permissible next frame type is CONTINUATION. Reject a PUSH_PROMISE
+        // that arrives mid-CONTINUATION sequence.
+        if (parent_stream.isWaitingMoreHeaders) {
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "PUSH_PROMISE mid-CONTINUATION", this.lastStreamID, true);
+            return data.len;
+        }
+
+        // RFC 7540 Section 6.6: PUSH_PROMISE MUST only be received on a stream
+        // that is in the "open" or "half-closed (local)" state.
+        if (parent_stream.state != .OPEN and parent_stream.state != .HALF_CLOSED_LOCAL) {
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "PUSH_PROMISE on non-open parent stream", this.lastStreamID, true);
+            return data.len;
+        }
+
+        // Servers must not receive PUSH_PROMISE frames
+        if (this.isServer) {
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Server received PUSH_PROMISE", this.lastStreamID, true);
+            return data.len;
+        }
+
+        // Check if push is enabled. Per RFC 7540 Section 6.5.3, settings take
+        // effect only after being acknowledged by the peer, so we can only
+        // reject PUSH_PROMISE once our SETTINGS frame has been ACKed.
+        if (this.outstandingSettings == 0 and this.localSettings.enablePush == 0) {
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Push is disabled", this.lastStreamID, true);
+            return data.len;
+        }
+
+        const settings = this.remoteSettings orelse this.localSettings;
+        if (frame.length > settings.maxFrameSize) {
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid PUSH_PROMISE frame size", this.lastStreamID, true);
+            return data.len;
+        }
+
+        if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
+            const payload = content.data;
+            var offset: usize = 0;
+            var padding: usize = 0;
+            this.readBuffer.reset();
+
+            if (frame.flags & @intFromEnum(HeadersFrameFlags.PADDED) != 0) {
+                if (payload.len == 0) {
+                    this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid PUSH_PROMISE frame size", this.lastStreamID, true);
+                    return content.end;
+                }
+                padding = payload[0];
+                offset += 1;
+            }
+
+            // Parse the 4-byte promised stream ID
+            if (payload.len < offset + 4 or payload.len -| (offset + 4) < padding) {
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "PUSH_PROMISE too short for promised stream ID", this.lastStreamID, true);
+                return content.end;
+            }
+            const promised_id = UInt31WithReserved.fromBytes(payload[offset..][0..4]);
+            offset += 4;
+
+            const end = payload.len - padding;
+            if (offset > end) {
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid PUSH_PROMISE frame size", this.lastStreamID, true);
+                return content.end;
+            }
+
+            // RFC 7540 Section 6.6: Validate promised stream ID
+            // Must be non-zero, even (server-initiated), and not already in use
+            const promised_stream_id = promised_id.uint31;
+            if (promised_stream_id == 0 or promised_stream_id % 2 != 0) {
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Invalid promised stream ID", this.lastStreamID, true);
+                return content.end;
+            }
+            if (this.streams.getEntry(promised_stream_id) != null) {
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Promised stream ID already in use", this.lastStreamID, true);
+                return content.end;
+            }
+
+            // Create the promised stream. Save/restore this.lastStreamID
+            // around the call: that field tracks the highest client-initiated
+            // (odd) stream ID for GOAWAY/stream-ID-allocation purposes, and a
+            // peer-supplied push id (even, potentially very large) must not
+            // be allowed to advance it. Otherwise a server sending a large
+            // promised id could exhaust our client stream ID space.
+            const saved_last_stream_id = this.lastStreamID;
+            const promised_stream = this.handleReceivedStreamID(promised_stream_id) orelse {
+                this.lastStreamID = saved_last_stream_id;
+                return content.end;
+            };
+            this.lastStreamID = saved_last_stream_id;
+            promised_stream.state = .RESERVED_REMOTE;
+
+            // Decode the header block on the promised stream
+            _ = (try this.decodeHeaderBlock(payload[offset..end], promised_stream, frame.flags)) orelse {
+                return content.end;
+            };
+
+            // CONTINUATION frames after PUSH_PROMISE are keyed by the parent
+            // stream's identifier (RFC 7540 Section 6.10). Mark the parent
+            // stream as waiting so that the dispatch in handleContinuationFrame
+            // does not treat them as orphaned. We also record the promised
+            // stream so continuation header blocks are routed to it.
+            // Re-fetch the parent stream by id because handleReceivedStreamID
+            // above may have grown the HashMap and invalidated any prior
+            // pointer we held.
+            if (frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) == 0) {
+                if (this.streams.getPtr(parent_stream_id)) |p| {
+                    p.isWaitingMoreHeaders = true;
+                }
+                this.continuation_promised_stream_id = promised_stream_id;
+                this.continuation_parent_stream_id = parent_stream_id;
+            } else {
+                this.continuation_promised_stream_id = 0;
+                this.continuation_parent_stream_id = 0;
             }
 
             return content.end;
@@ -2426,6 +2636,14 @@ pub const H2FrameParser = struct {
                 return content.end;
             };
             stream.isWaitingMoreHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) == 0;
+            // RFC 7540 Section 5.1: receiving HEADERS on a RESERVED_REMOTE
+            // push stream transitions it to HALF_CLOSED_LOCAL, independent of
+            // whether END_STREAM is set. Without this the stream state says
+            // the client can still send data on a server push, which is
+            // always wrong.
+            if (!stream.endAfterHeaders and stream.state == .RESERVED_REMOTE) {
+                stream.state = .HALF_CLOSED_LOCAL;
+            }
             if (stream.endAfterHeaders) {
                 const identifier = stream.getIdentifier();
                 identifier.ensureStillAlive();
@@ -2433,8 +2651,9 @@ pub const H2FrameParser = struct {
                 if (stream.isWaitingMoreHeaders) {
                     stream.state = .HALF_CLOSED_REMOTE;
                 } else {
-                    // no more continuation headers we can call it closed
-                    if (stream.state == .HALF_CLOSED_LOCAL) {
+                    // Client-side push streams start in RESERVED_REMOTE and
+                    // go straight to CLOSED on END_STREAM from the remote.
+                    if (stream.state == .HALF_CLOSED_LOCAL or stream.state == .RESERVED_REMOTE) {
                         stream.state = .CLOSED;
                         stream.freeResources(this, false);
                     } else {
@@ -2631,6 +2850,7 @@ pub const H2FrameParser = struct {
                 @intFromEnum(FrameType.HTTP_FRAME_RST_STREAM) => this.handleRSTStreamFrame(header, bytes, stream),
                 @intFromEnum(FrameType.HTTP_FRAME_ALTSVC) => this.handleAltsvcFrame(header, bytes, stream),
                 @intFromEnum(FrameType.HTTP_FRAME_ORIGIN) => this.handleOriginFrame(header, bytes, stream),
+                @intFromEnum(FrameType.HTTP_FRAME_PUSH_PROMISE) => this.handlePushPromiseFrame(header, bytes, stream),
                 else => {
                     this.sendGoAway(header.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Unknown frame type", this.lastStreamID, true);
                     return bytes.len;
@@ -2680,6 +2900,7 @@ pub const H2FrameParser = struct {
                 @intFromEnum(FrameType.HTTP_FRAME_RST_STREAM) => this.handleRSTStreamFrame(header, bytes[needed..], stream) + needed,
                 @intFromEnum(FrameType.HTTP_FRAME_ALTSVC) => (try this.handleAltsvcFrame(header, bytes[needed..], stream)) + needed,
                 @intFromEnum(FrameType.HTTP_FRAME_ORIGIN) => (try this.handleOriginFrame(header, bytes[needed..], stream)) + needed,
+                @intFromEnum(FrameType.HTTP_FRAME_PUSH_PROMISE) => (try this.handlePushPromiseFrame(header, bytes[needed..], stream)) + needed,
                 else => {
                     this.sendGoAway(header.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Unknown frame type", this.lastStreamID, true);
                     return bytes.len;
@@ -2713,6 +2934,7 @@ pub const H2FrameParser = struct {
             @intFromEnum(FrameType.HTTP_FRAME_RST_STREAM) => this.handleRSTStreamFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_ALTSVC) => (try this.handleAltsvcFrame(header, bytes[FrameHeader.byteSize..], stream)) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_ORIGIN) => (try this.handleOriginFrame(header, bytes[FrameHeader.byteSize..], stream)) + FrameHeader.byteSize,
+            @intFromEnum(FrameType.HTTP_FRAME_PUSH_PROMISE) => (try this.handlePushPromiseFrame(header, bytes[FrameHeader.byteSize..], stream)) + FrameHeader.byteSize,
             else => {
                 this.sendGoAway(header.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Unknown frame type", this.lastStreamID, true);
                 return bytes.len;
@@ -4522,15 +4744,31 @@ pub const H2FrameParser = struct {
             }
         }
 
+        // RFC 7540 Section 5.1: A push stream starts in RESERVED_LOCAL. Sending
+        // HEADERS on a RESERVED_LOCAL stream transitions it to HALF_CLOSED_REMOTE
+        // because the client cannot send data on a promised stream.
+        const was_reserved_local = stream.state == .RESERVED_LOCAL;
         if (end_stream) {
             stream.endAfterHeaders = true;
-            stream.state = .HALF_CLOSED_LOCAL;
+            stream.state = if (was_reserved_local) .CLOSED else .HALF_CLOSED_LOCAL;
+
+            if (was_reserved_local) {
+                const identifier = stream.getIdentifier();
+                identifier.ensureStillAlive();
+                stream.freeResources(this, false);
+                this.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(stream.state)));
+            }
 
             if (waitForTrailers) {
                 this.dispatch(.onWantTrailers, stream.getIdentifier());
                 return jsc.JSValue.jsNumber(stream_id);
             }
         } else {
+            if (was_reserved_local) {
+                // Transition to HALF_CLOSED_REMOTE so subsequent sendData(close=true)
+                // correctly moves to CLOSED and the JS layer decrements connections.
+                stream.state = .HALF_CLOSED_REMOTE;
+            }
             stream.waitForTrailers = waitForTrailers;
         }
 
@@ -4539,6 +4777,261 @@ pub const H2FrameParser = struct {
         }
 
         return jsc.JSValue.jsNumber(stream_id);
+    }
+
+    /// RFC 7540 Section 6.6: Send a PUSH_PROMISE frame from the server.
+    /// Takes: original_stream_id, headers, sensitiveHeaders
+    /// Returns: the promised stream ID (even-numbered), or -1 on error.
+    pub fn sendPushPromise(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+        jsc.markBinding(@src());
+        log("sendPushPromise", .{});
+
+        const args_list = callframe.arguments_old(3);
+        if (args_list.len < 3) {
+            return globalObject.throw("Expected original_stream_id, headers and sensitiveHeaders arguments", .{});
+        }
+
+        const orig_stream_id_arg = args_list.ptr[0];
+        const headers_arg = args_list.ptr[1];
+        const sensitive_arg = args_list.ptr[2];
+
+        if (!orig_stream_id_arg.isNumber()) {
+            return globalObject.throw("Expected original_stream_id to be a number", .{});
+        }
+        const orig_stream_id: u32 = orig_stream_id_arg.to(u32);
+
+        // Verify original stream exists and is client-initiated (odd id).
+        // RFC 7540 Section 6.6: PUSH_PROMISE MUST only be sent on a
+        // peer-initiated stream. A server's peer is the client, so the
+        // parent id must be odd.
+        if (orig_stream_id % 2 != 1) {
+            return globalObject.throw("PUSH_PROMISE must be sent on a client-initiated (odd) stream", .{});
+        }
+        _ = this.streams.getPtr(orig_stream_id) orelse {
+            return globalObject.throw("Invalid original stream id", .{});
+        };
+
+        // Check remote settings allow push
+        if (this.remoteSettings) |rs| {
+            if (rs.enablePush == 0) {
+                return jsc.JSValue.jsNumber(-1);
+            }
+        }
+
+        const headers_obj = headers_arg.getObject() orelse {
+            return globalObject.throw("Expected headers to be an object", .{});
+        };
+
+        if (!sensitive_arg.isObject()) {
+            return globalObject.throw("Expected sensitiveHeaders to be an object", .{});
+        }
+
+        // Encode headers with HPACK
+        var buf_fallback = bun.allocators.BufferFallbackAllocator.init(&shared_request_buffer, bun.default_allocator);
+        const alloc = buf_fallback.allocator();
+        var encoded_headers = std.ArrayListUnmanaged(u8){};
+        defer encoded_headers.deinit(alloc);
+        encoded_headers.ensureTotalCapacity(alloc, shared_request_buffer.len) catch {
+            return globalObject.throw("Failed to allocate header buffer", .{});
+        };
+        var name_buffer: [4096]u8 = undefined;
+        @memset(&name_buffer, 0);
+
+        // Allocate the next even-numbered push stream ID from the dedicated
+        // push counter so successive PUSH_PROMISEs get monotonically
+        // increasing ids (RFC 7540 Section 5.1.1) without touching
+        // lastStreamID (which tracks client-initiated streams and feeds
+        // GOAWAY Last-Stream-ID per Section 6.8).
+        // Return -2 to signal stream ID exhaustion (distinct from -1 = push
+        // disabled) so the JS layer can report ERR_HTTP2_OUT_OF_STREAMS.
+        const promised_stream_id: u32 = blk: {
+            var id: u32 = if (this.lastPushStreamID == 0) 2 else this.lastPushStreamID + 2;
+            // In case a PUSH_PROMISE was previously accepted through another
+            // code path, don't collide with any even id already registered.
+            while (this.streams.getEntry(id) != null) : (id += 2) {}
+            break :blk id;
+        };
+        if (promised_stream_id > MAX_STREAM_ID) {
+            return jsc.JSValue.jsNumber(-2);
+        }
+
+        // Encode headers - pseudo-headers first, then regular headers
+        var iter = try jsc.JSPropertyIterator(.{
+            .skip_empty_name = false,
+            .include_value = true,
+        }).init(globalObject, headers_obj);
+        defer iter.deinit();
+        var single_value_headers: [SingleValueHeaders.keys().len]bool = undefined;
+        @memset(&single_value_headers, false);
+
+        for (0..2) |ignore_pseudo_headers| {
+            iter.reset();
+            while (try iter.next()) |header_name| {
+                if (header_name.length() == 0) continue;
+                const name_slice = header_name.toUTF8(bun.default_allocator);
+                defer name_slice.deinit();
+                const name = name_slice.slice();
+                const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
+                    const exception = globalObject.toTypeError(.INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received \"{s}\"", .{name});
+                    return globalObject.throwValue(exception);
+                };
+
+                if (header_name.charAt(0) == ':') {
+                    if (ignore_pseudo_headers == 1) continue;
+                    // Push promise headers are request pseudo-headers
+                    if (!ValidRequestPseudoHeaders.has(validated_name)) {
+                        if (!globalObject.hasException()) {
+                            return globalObject.ERR(.HTTP2_INVALID_PSEUDOHEADER, "\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}).throw();
+                        }
+                        return .zero;
+                    }
+                } else if (ignore_pseudo_headers == 0) {
+                    continue;
+                }
+
+                const js_value = iter.value;
+                if (js_value.isUndefinedOrNull()) {
+                    const exception = globalObject.toTypeError(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name});
+                    return globalObject.throwValue(exception);
+                }
+
+                if (js_value.jsType().isArray()) {
+                    var value_iter = try js_value.arrayIterator(globalObject);
+
+                    if (SingleValueHeaders.indexOf(validated_name)) |idx| {
+                        if (value_iter.len > 1 or single_value_headers[idx]) {
+                            if (!globalObject.hasException()) {
+                                const exception = globalObject.toTypeError(.HTTP2_HEADER_SINGLE_VALUE, "Header field \"{s}\" must only have a single value", .{validated_name});
+                                return globalObject.throwValue(exception);
+                            }
+                            return .zero;
+                        }
+                        single_value_headers[idx] = true;
+                    }
+
+                    while (try value_iter.next()) |item| {
+                        if (item.isEmptyOrUndefinedOrNull()) {
+                            if (!globalObject.hasException()) {
+                                return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{validated_name}).throw();
+                            }
+                            return .zero;
+                        }
+                        const arr_value_str = item.toJSString(globalObject) catch {
+                            globalObject.clearException();
+                            return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{validated_name}).throw();
+                        };
+                        const never_index = (try sensitive_arg.getTruthyPropertyValue(globalObject, validated_name) orelse try sensitive_arg.getTruthyPropertyValue(globalObject, name)) != null;
+                        const arr_value_slice = arr_value_str.toSlice(globalObject, bun.default_allocator);
+                        defer arr_value_slice.deinit();
+                        const arr_value = arr_value_slice.slice();
+                        _ = this.encodeHeaderIntoList(&encoded_headers, alloc, validated_name, arr_value, never_index) catch {
+                            return globalObject.throw("Failed to encode header", .{});
+                        };
+                    }
+                } else if (!js_value.isEmptyOrUndefinedOrNull()) {
+                    if (SingleValueHeaders.indexOf(validated_name)) |idx| {
+                        if (single_value_headers[idx]) {
+                            const exception = globalObject.toTypeError(.HTTP2_HEADER_SINGLE_VALUE, "Header field \"{s}\" must only have a single value", .{validated_name});
+                            return globalObject.throwValue(exception);
+                        }
+                        single_value_headers[idx] = true;
+                    }
+                    const value_str = js_value.toJSString(globalObject) catch {
+                        globalObject.clearException();
+                        return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}).throw();
+                    };
+                    const never_index = (try sensitive_arg.getTruthyPropertyValue(globalObject, validated_name) orelse try sensitive_arg.getTruthyPropertyValue(globalObject, name)) != null;
+                    const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
+                    defer value_slice.deinit();
+                    const value = value_slice.slice();
+
+                    _ = this.encodeHeaderIntoList(&encoded_headers, alloc, validated_name, value, never_index) catch {
+                        return globalObject.throw("Failed to encode header", .{});
+                    };
+                }
+            }
+        }
+
+        const encoded_data = encoded_headers.items;
+        const encoded_size = encoded_data.len;
+
+        // Create the promised stream in RESERVED_LOCAL state.
+        // handleReceivedStreamID advances this.lastStreamID to any id larger
+        // than the current value; on the server side that field tracks the
+        // highest client-initiated (odd) stream and feeds GOAWAY Last-Stream-ID
+        // per RFC 7540 Section 6.8. Save/restore it so an even push id never
+        // pollutes the client-stream accounting. We still advance
+        // lastPushStreamID below so the next sendPushPromise picks the next
+        // even id instead of re-using the same one.
+        const saved_last_stream_id = this.lastStreamID;
+        const promised_stream = this.handleReceivedStreamID(promised_stream_id) orelse {
+            this.lastStreamID = saved_last_stream_id;
+            return jsc.JSValue.jsNumber(-1);
+        };
+        this.lastStreamID = saved_last_stream_id;
+        this.lastPushStreamID = promised_stream_id;
+        promised_stream.state = .RESERVED_LOCAL;
+
+        // Build and send PUSH_PROMISE frame
+        const actual_max_frame_size = (this.remoteSettings orelse this.localSettings).maxFrameSize;
+        // PUSH_PROMISE payload: 4 bytes promised stream ID + encoded headers
+        const promised_id_size: usize = 4;
+        const available_payload = actual_max_frame_size - promised_id_size;
+
+        const writer = this.toWriter();
+
+        if (encoded_size <= available_payload) {
+            // Single PUSH_PROMISE frame
+            const payload_size = promised_id_size + encoded_size;
+            var frame: FrameHeader = .{
+                .type = @intFromEnum(FrameType.HTTP_FRAME_PUSH_PROMISE),
+                .flags = @intFromEnum(HeadersFrameFlags.END_HEADERS),
+                .streamIdentifier = orig_stream_id,
+                .length = @intCast(payload_size),
+            };
+            _ = frame.write(@TypeOf(writer), writer);
+
+            // Write promised stream ID (4 bytes)
+            var promised_id = UInt31WithReserved.init(@intCast(promised_stream_id), false);
+            _ = promised_id.write(@TypeOf(writer), writer);
+
+            // Write encoded headers
+            _ = writer.write(encoded_data) catch 0;
+        } else {
+            // PUSH_PROMISE + CONTINUATION frames
+            const first_chunk_size = available_payload;
+            var pp_frame: FrameHeader = .{
+                .type = @intFromEnum(FrameType.HTTP_FRAME_PUSH_PROMISE),
+                .flags = 0, // no END_HEADERS yet
+                .streamIdentifier = orig_stream_id,
+                .length = @intCast(promised_id_size + first_chunk_size),
+            };
+            _ = pp_frame.write(@TypeOf(writer), writer);
+
+            var promised_id = UInt31WithReserved.init(@intCast(promised_stream_id), false);
+            _ = promised_id.write(@TypeOf(writer), writer);
+            _ = writer.write(encoded_data[0..first_chunk_size]) catch 0;
+
+            // CONTINUATION frames for remaining data
+            var offset: usize = first_chunk_size;
+            while (offset < encoded_size) {
+                const remaining = encoded_size - offset;
+                const chunk_size = @min(remaining, actual_max_frame_size);
+                const is_last = (offset + chunk_size >= encoded_size);
+
+                var cont_frame: FrameHeader = .{
+                    .type = @intFromEnum(FrameType.HTTP_FRAME_CONTINUATION),
+                    .flags = if (is_last) @intFromEnum(HeadersFrameFlags.END_HEADERS) else 0,
+                    .streamIdentifier = orig_stream_id,
+                    .length = @intCast(chunk_size),
+                };
+                _ = cont_frame.write(@TypeOf(writer), writer);
+                _ = writer.write(encoded_data[offset..][0..chunk_size]) catch 0;
+                offset += chunk_size;
+            }
+        }
+
+        return jsc.JSValue.jsNumber(promised_stream_id);
     }
 
     pub fn read(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {

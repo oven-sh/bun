@@ -1935,6 +1935,7 @@ enum StreamState {
   Closed = 1 << 3, // 01000 = 8
   StreamResponded = 1 << 4, // 10000 = 16
   WritableClosed = 1 << 5, // 100000 = 32
+  PushPromiseReceived = 1 << 6, // 1000000 = 64
 }
 function markWritableDone(stream: Http2Stream) {
   const _final = stream[bunHTTP2StreamFinal];
@@ -2113,8 +2114,14 @@ class Http2Stream extends Duplex {
   }
 
   get pushAllowed() {
-    // not implemented yet aka server side
-    return false;
+    const session = this[bunHTTP2Session];
+    if (!session) return false;
+    // RFC 7540 Section 6.5.2: SETTINGS_ENABLE_PUSH has an initial value of 1.
+    // If we have not yet received a SETTINGS frame from the peer, assume push
+    // is enabled — the peer may still disable it in the first SETTINGS frame.
+    const remoteSettings = session.remoteSettings;
+    if (!remoteSettings) return true;
+    return remoteSettings.enablePush !== false;
   }
   close(code, callback) {
     if ((this[bunHTTP2StreamStatus] & StreamState.Closed) === 0) {
@@ -2466,8 +2473,67 @@ class ServerHttp2Stream extends Http2Stream {
   constructor(streamId, session, headers) {
     super(streamId, session, headers);
   }
-  pushStream() {
-    throw $ERR_HTTP2_PUSH_DISABLED();
+  pushStream(headers, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
+      options = {};
+    }
+
+    validateFunction(callback, "callback");
+
+    if (this.destroyed || this.closed) {
+      throw $ERR_HTTP2_INVALID_STREAM();
+    }
+
+    const session = this[bunHTTP2Session];
+    assertSession(session);
+
+    // RFC 7540 Section 6.5.2: SETTINGS_ENABLE_PUSH defaults to 1.
+    // Only reject if the peer has explicitly disabled push via SETTINGS.
+    const remoteSettings = session.remoteSettings;
+    if (remoteSettings && remoteSettings.enablePush === false) {
+      throw $ERR_HTTP2_PUSH_DISABLED();
+    }
+
+    if (!$isObject(headers)) {
+      throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
+    }
+
+    // Ensure required pseudo-headers for push promise
+    const pushHeaders = { ...headers };
+    if (pushHeaders[":method"] === undefined) {
+      pushHeaders[":method"] = "GET";
+    }
+    if (pushHeaders[":path"] === undefined) {
+      throw $ERR_INVALID_ARG_VALUE("headers[:path]", undefined);
+    }
+    if (pushHeaders[":scheme"] === undefined) {
+      pushHeaders[":scheme"] = session.encrypted ? "https" : "http";
+    }
+    if (pushHeaders[":authority"] === undefined) {
+      // RFC 7540 Section 8.1.2.3 allows clients to use either :authority or
+      // the host header. Use getAuthority() which handles both forms.
+      const reqHeaders = this[bunHTTP2Headers];
+      pushHeaders[":authority"] = (reqHeaders ? getAuthority(reqHeaders) : undefined) ?? "localhost";
+    }
+
+    const parser = session[bunHTTP2Native];
+    const streamId = parser.sendPushPromise(this.id, pushHeaders, {});
+    if (streamId === -2) {
+      // Stream ID space exhausted — push is still enabled, we just ran out of IDs.
+      process.nextTick(callback, $ERR_HTTP2_OUT_OF_STREAMS());
+      return;
+    }
+    if (streamId < 0) {
+      process.nextTick(callback, $ERR_HTTP2_PUSH_DISABLED());
+      return;
+    }
+
+    // The streamStart handler already created a ServerHttp2Stream and
+    // incremented #connections via handleReceivedStreamID -> onStreamStart
+    const pushStream = parser.getStreamContext(streamId);
+
+    process.nextTick(callback, null, pushStream, pushHeaders, options || {});
   }
 
   respondWithFile(path, headers, options) {
@@ -3384,8 +3450,8 @@ class ClientHttp2Session extends Http2Session {
       if (!self) return;
       self.#connections++;
       if (stream_id % 2 === 0) {
-        // pushStream
-        const stream = new ClientHttp2Session(stream_id, self, null);
+        // pushStream - even-numbered stream IDs are server-initiated push streams
+        const stream = new ClientHttp2Stream(stream_id, self, null);
         self.#parser?.setStreamContext(stream_id, stream);
       }
     },
@@ -3454,6 +3520,34 @@ class ClientHttp2Session extends Http2Session {
       const headers = toHeaderObject(rawheaders, sensitiveHeadersValue || []);
       const status = stream[bunHTTP2StreamStatus];
       const header_status = headers[HTTP2_HEADER_STATUS];
+
+      // Push promise request headers: even stream ID, no PushPromiseReceived yet, no :status
+      if (stream.id % 2 === 0 && (status & StreamState.PushPromiseReceived) === 0 && header_status === undefined) {
+        stream[bunHTTP2StreamStatus] = status | StreamState.PushPromiseReceived;
+        self.emit("stream", stream, headers, flags, rawheaders);
+        return;
+      }
+
+      // Push stream response headers: has PushPromiseReceived, not yet responded
+      if ((status & StreamState.PushPromiseReceived) !== 0 && (status & StreamState.StreamResponded) === 0) {
+        if (header_status === HTTP_STATUS_CONTINUE) {
+          stream.emit("continue");
+        }
+        // CONTINUATION fragments of a multi-frame header block can arrive here
+        // without a :status (partial block). Don't consume StreamResponded yet.
+        if (header_status === undefined) {
+          return;
+        }
+        // Informational 1xx headers don't count as final response
+        if (header_status >= 100 && header_status < 200) {
+          stream.emit("headers", headers, flags, rawheaders);
+          return;
+        }
+        stream[bunHTTP2StreamStatus] = status | StreamState.StreamResponded;
+        stream.emit("response", headers, flags, rawheaders);
+        return;
+      }
+
       if (header_status === HTTP_STATUS_CONTINUE) {
         stream.emit("continue");
       }
@@ -3473,7 +3567,10 @@ class ClientHttp2Session extends Http2Session {
             // 421 Misdirected Request
             removeOriginFromSet(self, stream);
           }
-          self.emit("stream", stream, headers, flags, rawheaders);
+          // Don't emit session 'stream' again for push streams (already emitted for push promise)
+          if ((status & StreamState.PushPromiseReceived) === 0) {
+            self.emit("stream", stream, headers, flags, rawheaders);
+          }
           stream.emit("response", headers, flags, rawheaders);
         }
       }

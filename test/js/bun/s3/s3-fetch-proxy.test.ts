@@ -75,7 +75,7 @@ async function fetchS3ViaProxy(proxyUrl: string, endpointPort: number) {
   return { stdout, stderr, exitCode };
 }
 
-describe("fetch s3:// through an HTTP proxy", () => {
+describe.concurrent("fetch s3:// through an HTTP proxy", () => {
   for (const [label, proxyPath] of [
     // Proxy href is shorter than the signed "http://127.0.0.1:PORT/bucket/key"
     // URL: the broken offset meant the bytes parsed as the proxy were never

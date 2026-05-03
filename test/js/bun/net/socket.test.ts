@@ -3,7 +3,7 @@ import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 import { createSocketPair } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
 import { closeSync } from "fs";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, getMaxFD, isWindows, tls } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, getMaxFD, isWindows, tempDir, tls } from "harness";
 describe.concurrent("socket", () => {
   it("should throw when a socket from a file descriptor has a bad file descriptor", async () => {
     const open = jest.fn();
@@ -821,6 +821,59 @@ it("should throw on empty unix path from truthy non-string value", () => {
   expect(() => Bun.connect({ unix: [] as any, socket })).toThrow("SocketOptions.unix must be a string");
 });
 
+it("reading .listener on a closed client socket does not use-after-free handlers", async () => {
+  // Client-mode Handlers is heap-allocated per-connect and freed in
+  // markInactive once the socket closes. `socket.listener` read
+  // `handlers.mode` through the dangling pointer before the isDetached()
+  // check. Run in a subprocess so the ASAN abort is observable as a
+  // non-zero exit instead of killing the test runner.
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { promise: closed, resolve: onClosed } = Promise.withResolvers();
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open(s) { s.end(); },
+            data() {},
+          },
+        });
+        const client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: {
+            data() {},
+            close() { onClosed(); },
+          },
+        });
+        await closed;
+        server.stop(true);
+        // The close callback resolves while native onClose is still on the
+        // stack; markInactive (which frees the client Handlers) runs in the
+        // deferred unwind after scope.exit() drains this microtask. Hop one
+        // event-loop turn so the free has actually happened.
+        await new Promise(r => setImmediate(r));
+        console.log("listener:" + client.listener);
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      // llvm-symbolizer on the debug binary takes several seconds; the raw
+      // ASAN report line + exit code are enough to flag the regression.
+      ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:symbolize=0",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("listener:undefined\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 it("reading fd of a TLS listener should not crash", () => {
   using listener = Bun.listen({
     hostname: "localhost",
@@ -831,3 +884,109 @@ it("reading fd of a TLS listener should not crash", () => {
   expect(typeof listener.fd).toBe("number");
   expect(listener.fd).toBeGreaterThanOrEqual(0);
 });
+
+it("getServername on a closed TLS socket should not crash", async () => {
+  using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls,
+    socket: {
+      data() {},
+      open() {},
+      close() {},
+    },
+  });
+
+  const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+  const client = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: listener.port,
+    tls: { ...tls, rejectUnauthorized: false },
+    socket: {
+      data() {},
+      open() {},
+      handshake(socket) {
+        socket.end();
+      },
+      close(socket) {
+        // The underlying SSL* is already gone by the time close fires;
+        // getServername must return undefined rather than deref a null SSL*.
+        try {
+          resolve(socket.getServername());
+        } catch (e) {
+          reject(e);
+        }
+      },
+      error(_socket, err) {
+        reject(err);
+      },
+    },
+  });
+
+  expect(await promise).toBeUndefined();
+  expect(client.getServername()).toBeUndefined();
+});
+it("TLS client: flush() after end() does not double-teardown before deferred onClose", async () => {
+  // `end()` on a TLS client sends close_notify and defers the raw close until the
+  // peer replies, leaving `is_active` set so the eventual onClose can release the
+  // Handlers. A `flush()` in that window must not re-enter markInactive and free
+  // the Handlers early — when the peer's close_notify then arrives, onClose would
+  // deref freed memory (ASAN heap-use-after-free). Run in a subprocess so an ASAN
+  // abort surfaces as a clean test failure rather than taking down the runner.
+  using dir = tempDir("tls-flush-after-end", {
+    "run.ts": `
+      const tls = JSON.parse(process.env.TLS_JSON!);
+
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls,
+        socket: {
+          open() {},
+          data() {},
+          // reply to the client's close_notify so its deferred onClose fires
+          end(s) { s.end(); },
+          close() {},
+          error() {},
+        },
+      });
+
+      const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+      const { promise: handshook, resolve: onHandshook } = Promise.withResolvers<void>();
+
+      const client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls,
+        socket: {
+          handshake() { onHandshook(); },
+          data() {},
+          close() { onClosed(); },
+          error() { onClosed(); },
+        },
+      });
+
+      await handshook;
+      client.end("x");
+      // Previously this re-entered markInactive while the TLS raw close was
+      // still deferred, freeing *Handlers before onClose ran.
+      client.flush();
+      client.flush();
+      await closed;
+      console.log("OK");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.ts"],
+    env: { ...bunEnv, TLS_JSON: JSON.stringify(tls) },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+}, 30_000); // debug subprocess startup + ASAN symbolication on failure is slow

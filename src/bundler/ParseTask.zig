@@ -1256,6 +1256,8 @@ fn runWithSourceCode(
 
     opts.ignore_dce_annotations = transpiler.options.ignore_dce_annotations and !source.index.isRuntime();
 
+    opts.compile = transpiler.options.compile;
+
     // For files that are not user-specified entrypoints, set `import.meta.main` to `false`.
     // Entrypoints will have `import.meta.main` set as "unknown", unless we use `--compile`,
     // in which we inline `true`.

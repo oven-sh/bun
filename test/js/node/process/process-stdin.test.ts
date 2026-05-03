@@ -222,8 +222,7 @@ describe.skipIf(!isPosix)("signals with flowing stdin on /dev/zero", () => {
       // points at the real cause (handler never fired).
       expect(await proc.stderr.text()).toContain(signal);
       expect(await proc.exited).toBe(exit);
-    }, // 5s timeout: debug-build subprocess startup is ~1s on its own, and
-    // READY takes another ~0.5-1s. Tight timeouts made the suite flaky.
+    }, // READY takes another ~0.5-1s. Tight timeouts made the suite flaky. // 5s timeout: debug-build subprocess startup is ~1s on its own, and
     5000);
   });
 

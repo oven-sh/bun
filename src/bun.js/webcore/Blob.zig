@@ -506,9 +506,10 @@ fn readSlice(
     len: usize,
     allocator: std.mem.Allocator,
 ) ![]u8 {
-    var slice = try allocator.alloc(u8, len);
-    slice = slice[0..try reader.read(slice)];
-    if (slice.len != len) return error.TooSmall;
+    const slice = try allocator.alloc(u8, len);
+    errdefer allocator.free(slice);
+    const n = try reader.read(slice);
+    if (n != len) return error.TooSmall;
     return slice;
 }
 
@@ -525,7 +526,14 @@ fn _onStructuredCloneDeserialize(
 
     const content_type_len = try reader.readInt(u32, .little);
 
-    const content_type = try readSlice(reader, content_type_len, allocator);
+    var content_type: []u8 = try readSlice(reader, content_type_len, allocator);
+    // Ownership transfers to `blob.content_type` at the end of the success
+    // path below; until then this errdefer is responsible for it. Once the
+    // blob takes ownership we null the slice out so an error between that
+    // point and the final return (there is none today — `toJS` is
+    // infallible — but this keeps it structurally safe) cannot double-free
+    // via both this errdefer and `blob.deinit()`.
+    errdefer allocator.free(content_type);
 
     const content_type_was_set: bool = try reader.readInt(u8, .little) != 0;
 
@@ -536,7 +544,11 @@ fn _onStructuredCloneDeserialize(
             const bytes_len = try reader.readInt(u32, .little);
             const bytes = try readSlice(reader, bytes_len, allocator);
 
-            const blob = Blob.init(bytes, allocator, globalThis);
+            var blob = Blob.init(bytes, allocator, globalThis);
+            // `blob` now owns `bytes` (via its Store when non-empty). If any
+            // of the remaining reads fail before we heap-promote it, release
+            // the store so the payload bytes don't leak.
+            errdefer blob.deinit();
 
             versions: {
                 if (version == 1) break :versions;
@@ -544,10 +556,15 @@ fn _onStructuredCloneDeserialize(
                 const name_len = try reader.readInt(u32, .little);
                 const name = try readSlice(reader, name_len, allocator);
 
+                var name_consumed = false;
                 if (blob.store) |store| switch (store.data) {
-                    .bytes => |*bytes_store| bytes_store.stored_name = bun.PathString.init(name),
+                    .bytes => |*bytes_store| {
+                        bytes_store.stored_name = bun.PathString.init(name);
+                        name_consumed = true;
+                    },
                     else => {},
                 };
+                if (!name_consumed) allocator.free(name);
 
                 if (version == 2) break :versions;
             }
@@ -595,6 +612,11 @@ fn _onStructuredCloneDeserialize(
         },
         .empty => Blob.new(Blob.initEmpty(globalThis)),
     };
+    // `blob` is heap-allocated past this point; on any remaining error
+    // (truncated trailer fields) tear down both the heap object and its
+    // store. `content_type` is handled by its own errdefer above since it
+    // hasn't been attached to `blob` yet.
+    errdefer blob.deinit();
 
     versions: {
         if (version == 1) break :versions;
@@ -638,6 +660,8 @@ fn _onStructuredCloneDeserialize(
         blob.content_type_allocated = true;
         blob.content_type_was_set = content_type_was_set;
     }
+    // Ownership handed to `blob` (or it was empty); disarm the errdefer.
+    content_type = &.{};
 
     return blob.toJS(globalThis);
 }

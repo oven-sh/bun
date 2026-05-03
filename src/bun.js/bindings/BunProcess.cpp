@@ -3093,7 +3093,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObje
     if (count > 64) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "groups.length"_s, 0, 64, groups);
 
     for (unsigned i = 0; i < count; i++) {
-        auto item = groupsArray->getIndexQuickly(i);
+        auto item = groupsArray->getIndex(globalObject, i);
+        RETURN_IF_EXCEPTION(scope, {});
         auto name = makeString("groups["_s, i, "]"_s);
 
         if (item.isNumber()) {

@@ -545,12 +545,32 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
 
     if (dbg) debug("BufferAfterRead: '{f}'", .{fmt16(buf1_u16[0 .. ((@intFromPtr(read_ptr) - @intFromPtr(buf1_u8)) + read_len) / 2])});
 
+    // Sanity check: the read must include at least the Flags struct at the end.
+    // Otherwise the pointer arithmetic below would underflow.
+    if (read_len < @sizeOf(Flags)) {
+        return mode.fail(.InvalidShimDataSize);
+    }
+
+    // `metadata_start_ptr` points at the first byte NtReadFile wrote into buf1.
+    // For the relative-target case (the default) the encoded bin_path at offset
+    // 0 of the metadata file naturally completes the absolute target path
+    // because `read_ptr` sits one byte past the `\` that precedes the basename
+    // in the shim's own image path.
+    //
+    // For the cross-volume (absolute-target) case, that trick is impossible —
+    // the target lives on a different drive. So the encoder stores the
+    // complete absolute path as `bin_path`, and below we relocate the metadata
+    // so it starts at `buf1_u8[2 * nt_object_prefix.len]` (i.e. right after the
+    // `\??\` prefix). That makes the rest of the decode logic see an absolute
+    // path beginning at the same offset the relative case would have produced.
+    const metadata_start_ptr: [*]u8 = @ptrCast(read_ptr);
+
     read_ptr = @ptrFromInt(@intFromPtr(read_ptr) + read_len - @sizeOf(Flags));
     const flags: Flags = @as(*align(1) Flags, @ptrCast(read_ptr)).*;
 
     if (dbg) {
-        const flags_u16: u16 = @as(*align(1) u16, @ptrCast(read_ptr)).*;
-        debug("FlagsInt: {d}", .{flags_u16});
+        const flags_u32: u32 = @as(*align(1) u32, @ptrCast(read_ptr)).*;
+        debug("FlagsInt: {d}", .{flags_u32});
 
         debug("Flags:", .{});
         inline for (comptime std.meta.fieldNames(Flags)) |name| {
@@ -565,6 +585,39 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             return;
 
         return mode.fail(.InvalidShimValidation);
+    }
+
+    if (flags.is_absolute_target) {
+        // Relocate the read metadata from its current position to
+        // `buf1_u8[2 * nt_object_prefix.len]`. The new start offset is
+        // strictly smaller than the original (the walked-back `\` always sits
+        // past the NT prefix), so a forward-direction copy is safe even when
+        // the source and destination ranges overlap.
+        const new_offset = 2 * nt_object_prefix.len;
+        const current_offset = @intFromPtr(metadata_start_ptr) - @intFromPtr(buf1_u8);
+        assert(current_offset >= new_offset);
+
+        // Destination must fit inside the `buf1_u8[0..buf1.len]` logical
+        // range. Metadata files are small in practice, but defensively fail
+        // the shim rather than corrupt adjacent memory.
+        if (read_len > buf1.len - new_offset) {
+            return mode.fail(.InvalidShimDataSize);
+        }
+
+        if (current_offset != new_offset) {
+            std.mem.copyForwards(
+                u8,
+                buf1_u8[new_offset..][0..read_len],
+                buf1_u8[current_offset..][0..read_len],
+            );
+        }
+        // Re-anchor `read_ptr` to the new Flags location.
+        read_ptr = @ptrCast(@alignCast(&buf1_u8[new_offset + read_len - @sizeOf(Flags)]));
+        // Sanity check that Flags still decodes identically after the move.
+        if (dbg) {
+            const moved_flags: Flags = @as(*align(1) Flags, @ptrCast(read_ptr)).*;
+            assert(@as(u32, @bitCast(moved_flags)) == @as(u32, @bitCast(flags)));
+        }
     }
 
     var spawn_command_line: [*:0]u16 = switch (flags.has_shebang) {
@@ -626,9 +679,15 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
                 debug("args_len_bytes: {}", .{shebang_metadata.args_len_bytes});
             }
 
-            // magic number related to how BinLinkingShim.zig writes the metadata
-            // i'm sorry, i don't have a good explanation for why this number is this number. it just is.
-            const validation_length_offset = 14;
+            // magic number related to how BinLinkingShim.zig writes the metadata.
+            // bytes that appear in the metadata file AROUND the bin_path and
+            // shebang arg content:
+            //   `"`  + `\0` after bin_path                             = 4 bytes
+            //   ` ` (space) after shebang launcher                     = 2 bytes (counted in shebang_arg_len_u8)
+            //   u32 bin_path_len_bytes + u32 args_len_bytes            = 8 bytes
+            //   @sizeOf(Flags)                                         = 4 bytes (was 2 before v6)
+            // total extra = 4 + 8 + @sizeOf(Flags) = 16 bytes
+            const validation_length_offset = 4 + 8 + @sizeOf(Flags);
 
             // very careful here to not overflow u32, so that we properly error if you hijack the file
             if (shebang_arg_len_u8 == 0 or

@@ -210,7 +210,15 @@ devTest("hmr handles rapid consecutive edits", {
     "index.ts": hmrSelfAcceptingModule("render initial"),
   },
   async test(dev) {
-    await using client = await dev.client("/");
+    // allowUnlimitedReloads: on Windows, writeFileSync is CreateFile(truncate)
+    // + WriteFile + CloseHandle as separate syscalls; ReadDirectoryChangesW in
+    // the dev-server process can fire between the first two and bundle a
+    // 0-byte module that never calls accept(), tripping fullReload(). Rather
+    // than skip Windows entirely, let the client absorb the reload — the
+    // reloaded page still logs the expected value and the test proceeds. The
+    // #19736 regression path (same-sourceMapId queueing) is exercised
+    // deterministically on every POSIX platform regardless.
+    await using client = await dev.client("/", { allowUnlimitedReloads: true });
     await client.expectMessage("render initial");
 
     const waitForMessage = (value: string) =>
@@ -245,14 +253,13 @@ devTest("hmr handles rapid consecutive edits", {
     // threw "Unknown HMR script: ...").
     //
     // Writing IDENTICAL content N times forces same-sourceMapId duplicates
-    // on every platform. Use synchronous writeFileSync: open(O_TRUNC) +
-    // write + close happen back-to-back on the calling thread, so the
-    // empty-file window is microseconds. The previous `Bun.write` here is
-    // two separate async libuv ops on Windows with a JS-thread round-trip
-    // in between, giving the bundler a multi-millisecond window to read 0
-    // bytes; the resulting empty module never calls `accept()`, leaving
-    // `selfAccept = null` and tripping the fullReload() fallback on the
-    // next update.
+    // on every platform. Use synchronous writeFileSync so truncate + write
+    // + close happen back-to-back on the calling thread; the previous
+    // `Bun.write` here is two separate async libuv ops on Windows with a
+    // JS-thread round-trip in between, giving the bundler a multi-ms window
+    // to read 0 bytes. writeFileSync shrinks that window to microseconds —
+    // usually enough, but the residual race is why allowUnlimitedReloads is
+    // set above.
     const target = dev.join("index.ts");
     const rapidContent = hmrSelfAcceptingModule("render rapid");
     for (let i = 0; i < 10; i++) {

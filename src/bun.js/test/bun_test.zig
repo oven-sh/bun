@@ -77,10 +77,18 @@ pub const js_fns = struct {
                     .execution => {
                         const active = bunTest.getCurrentStateData();
                         const sequence, _ = bunTest.execution.getCurrentAndValidExecutionSequence(active) orelse {
+                            // We only reach this branch when `current_callback_stack` is
+                            // empty *and* the active concurrent group has more than one
+                            // sequence in flight. The common way to hit this is calling
+                            // the hook after the first `await` in a concurrent test —
+                            // by then the synchronous push/pop has already been popped
+                            // and we can no longer tell which sequence the caller
+                            // belongs to. Tell the user to hoist the call above the
+                            // first `await`, which is the only actionable fix here.
                             const message = if (tag == .onTestFinished)
-                                "Cannot call {s}() here. It cannot be called inside a concurrent test. Use test.serial or remove test.concurrent."
+                                "Cannot call {s}() here. In a concurrent test, call it synchronously before the first `await`."
                             else
-                                "Cannot call {s}() here. It cannot be called inside a concurrent test. Call it inside describe() instead.";
+                                "Cannot call {s}() here. In a concurrent test, call it synchronously before the first `await`, or move it into a describe() block.";
                             return globalThis.throw(message, .{@tagName(tag)});
                         };
 
@@ -235,6 +243,17 @@ pub const BunTest = struct {
     first_last: BunTestRoot.FirstLast,
     extra_execution_entries: std.array_list.Managed(*ExecutionEntry),
     wants_wakeup: bool = false,
+    /// Stack of concurrent-sequence contexts whose JS callback is currently
+    /// being executed synchronously. Pushed by `Execution.stepSequenceOne`
+    /// before invoking `runTestCallback` and popped after it returns.
+    ///
+    /// During synchronous JS execution (including drained microtasks), the
+    /// top of this stack tells `getCurrentStateData` which concurrent
+    /// sequence the calling code belongs to, so `onTestFinished()` resolves
+    /// to the correct test. `expect.assertions()` / `expect.hasAssertions()`
+    /// / snapshot matchers intentionally do not use this stack — see
+    /// `expect.zig` for why they reject concurrent-test calls outright.
+    current_callback_stack: std.array_list.Managed(RefDataValue),
 
     phase: enum {
         collection,
@@ -269,6 +288,7 @@ pub const BunTest = struct {
             .default_concurrent = default_concurrent,
             .first_last = first_last,
             .extra_execution_entries = .init(this.gpa),
+            .current_callback_stack = .init(this.gpa),
         };
     }
     pub fn deinit(this: *BunTest) void {
@@ -284,6 +304,10 @@ pub const BunTest = struct {
             entry.destroy(this.gpa);
         }
         this.extra_execution_entries.deinit();
+        // every pushCurrentCallback must be paired with popCurrentCallback —
+        // a non-empty stack at teardown means we leaked a frame.
+        bun.debugAssert(this.current_callback_stack.items.len == 0);
+        this.current_callback_stack.deinit();
 
         this.execution.deinit();
         this.collection.deinit();
@@ -366,6 +390,16 @@ pub const BunTest = struct {
         return switch (this.phase) {
             .collection => .{ .collection = .{ .active_scope = this.collection.active_scope } },
             .execution => blk: {
+                // If a JS callback is currently executing synchronously (including
+                // during drained microtasks), the innermost push on
+                // `current_callback_stack` tells us exactly which sequence/entry
+                // we're inside. This disambiguates the concurrent case, where
+                // multiple sequences may be in-flight at the same time.
+                if (this.current_callback_stack.items.len > 0) {
+                    const top = this.current_callback_stack.items[this.current_callback_stack.items.len - 1];
+                    if (top == .execution) break :blk top;
+                }
+
                 const active_group = this.execution.activeGroup() orelse {
                     bun.debugAssert(false); // should have switched phase if we're calling getCurrentStateData, but it could happen with re-entry maybe
                     break :blk .{ .done = .{} };
@@ -399,6 +433,25 @@ pub const BunTest = struct {
             },
             .done => .{ .done = .{} },
         };
+    }
+
+    /// Push an entry onto the callback-execution stack. Must be paired with
+    /// `popCurrentCallback`. Call this immediately before invoking user JS
+    /// from a concurrent-safe context so nested hooks (`onTestFinished`,
+    /// `expect.assertions`) can recover which sequence they belong to.
+    pub fn pushCurrentCallback(this: *BunTest, data: RefDataValue) void {
+        bun.handleOom(this.current_callback_stack.append(data));
+    }
+
+    /// Pop the innermost callback-execution entry. Cheaply tolerates an
+    /// out-of-order pop during teardown — the only correct caller is the
+    /// defer that paired a preceding `pushCurrentCallback`.
+    pub fn popCurrentCallback(this: *BunTest) void {
+        if (this.current_callback_stack.items.len == 0) {
+            bun.debugAssert(false);
+            return;
+        }
+        _ = this.current_callback_stack.pop();
     }
     pub fn ref(this_strong: BunTestPtr, phase: RefDataValue) *RefData {
         group.begin(@src());

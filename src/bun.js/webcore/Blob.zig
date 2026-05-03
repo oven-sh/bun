@@ -180,6 +180,105 @@ pub fn NewInternalReadFileHandler(comptime Context: type, comptime Function: any
     };
 }
 
+/// Read this Blob's bytes — file (`ReadFile`/`ReadFileUV`), S3 (`S3.download`),
+/// or in-memory — and deliver them to `Handler.onReadBytes(ctx, result)` on the
+/// JS thread without ever materialising a JSValue. `.ok` bytes are
+/// `bun.default_allocator`-OWNED by the callback. The point is to give callers
+/// the same store-agnostic dispatch as `.bytes()` while staying in Zig land,
+/// so e.g. `Bun.Image` can read a `Bun.file`/`Bun.s3` source straight into its
+/// `.owned` buffer with no JS-heap copy in between.
+///
+/// In-memory stores are duped before the callback so the ownership contract is
+/// uniform (and so the source Blob can outlive or be re-sliced independently);
+/// callers that already special-case `sharedView()` can keep doing that and
+/// only call this when it's empty.
+pub fn readBytesToHandler(this: *Blob, comptime Handler: type, ctx: *Handler, global: *JSGlobalObject) bun.JSTerminated!void {
+    if (this.needsToReadFile()) {
+        const Adapter = struct {
+            fn run(c: *Handler, r: read_file.ReadFileResultType) void {
+                Handler.onReadBytes(c, switch (r) {
+                    // `.is_temporary` ⇒ `r.buf` is the ReadFile ArrayList's
+                    // items handed over (default_allocator) — we own it.
+                    .result => |b| .{ .ok = b.buf },
+                    .err => |e| .{ .err = e },
+                });
+            }
+        };
+        return this.doReadFileInternal(*Handler, ctx, Adapter.run, global);
+    }
+    if (this.isS3()) {
+        const Task = struct {
+            ctx: *Handler,
+            blob: Blob, // dupe for store ref + offset/size
+            poll: bun.Async.KeepAlive = .{},
+            vm: *jsc.VirtualMachine,
+
+            fn done(t: *@This(), r: ReadBytesResult) void {
+                t.poll.unref(t.vm);
+                t.blob.deinit();
+                const c = t.ctx;
+                bun.destroy(t);
+                Handler.onReadBytes(c, r);
+            }
+            fn cb(result: S3.S3DownloadResult, opaque_self: *anyopaque) bun.JSTerminated!void {
+                const t: *@This() = @ptrCast(@alignCast(opaque_self));
+                switch (result) {
+                    // `body` is owned by us (simple_request.zig:20); take the
+                    // ArrayList's items as-is.
+                    .success => |response| t.done(.{ .ok = response.body.list.items }),
+                    // S3Error has its own JS-error builder; flatten to a
+                    // SystemError so the callback has one shape to handle.
+                    inline .not_found, .failure => |e| t.done(.{ .err = .{
+                        .code = bun.String.cloneUTF8(e.code),
+                        .message = bun.String.cloneUTF8(e.message),
+                        .path = bun.String.cloneUTF8(t.blob.store.?.getPath() orelse ""),
+                        .syscall = bun.String.static("fetch"),
+                    } }),
+                }
+            }
+        };
+        var t = bun.new(Task, .{ .ctx = ctx, .blob = this.dupe(), .vm = global.bunVM() });
+        t.poll.ref(t.vm);
+        const env = t.vm.transpiler.env;
+        const cred = t.blob.store.?.data.s3.getCredentials();
+        const path = t.blob.store.?.data.s3.path();
+        const proxy = if (env.getHttpProxy(true, null, null)) |p| p.href else null;
+        const payer = t.blob.store.?.data.s3.request_payer;
+        if (this.offset > 0 or this.size != Blob.max_size) {
+            const len: ?usize = if (this.size != Blob.max_size) @intCast(this.size) else null;
+            try S3.downloadSlice(cred, path, @intCast(this.offset), len, @ptrCast(&Task.cb), t, proxy, payer);
+        } else {
+            try S3.download(cred, path, @ptrCast(&Task.cb), t, proxy, payer);
+        }
+        return;
+    }
+    // In-memory or detached.
+    const view = this.sharedView();
+    const owned = bun.default_allocator.dupe(u8, view) catch {
+        Handler.onReadBytes(ctx, .{ .err = .{
+            .code = bun.String.static("ENOMEM"),
+            .message = bun.String.static("Out of memory"),
+            .syscall = bun.String.static("read"),
+        } });
+        return;
+    };
+    Handler.onReadBytes(ctx, .{ .ok = owned });
+}
+
+pub const ReadBytesResult = union(enum) {
+    /// `bun.default_allocator`-owned by the callback.
+    ok: []u8,
+    err: jsc.SystemError,
+};
+
+/// `Bun.file("…").image(opts?)` ≡ `new Bun.Image(this, opts?)`. Lives here so
+/// the proto entry covers Blob/BunFile/S3File in one place; the actual
+/// construction is `Image.fromBlobJS` so Blob.zig doesn't grow image
+/// knowledge.
+pub fn doImage(_: *Blob, global: *JSGlobalObject, cf: *jsc.CallFrame) bun.JSError!JSValue {
+    return Image.fromBlobJS(global, cf.this(), cf.argument(0));
+}
+
 pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, comptime Function: anytype, global: *JSGlobalObject) void {
     if (Environment.isWindows) {
         const ReadFileHandler = NewInternalReadFileHandler(Handler, Function);
@@ -5000,6 +5099,7 @@ const string = []const u8;
 
 const Archive = @import("../api/Archive.zig");
 const Environment = @import("../../env.zig");
+const Image = @import("../../image/Image.zig");
 const S3File = @import("./S3File.zig");
 const std = @import("std");
 

@@ -5,6 +5,9 @@ pub const ArrayBuffer = extern struct {
     value: jsc.JSValue = jsc.JSValue.zero,
     typed_array_type: jsc.JSValue.JSType = .Cell,
     shared: bool = false,
+    /// True for resizable ArrayBuffer or growable SharedArrayBuffer — borrowing
+    /// a slice from one is unsafe (it can shrink/reallocate underneath you).
+    resizable: bool = false,
 
     pub fn isDetached(this: *const ArrayBuffer) bool {
         return this.ptr == null;

@@ -132,6 +132,23 @@ export const globalFlags: Flag[] = [
     lang: "cxx",
     desc: "FreeBSD: explicit sysroot include paths only (suppress host GCC C++ detection)",
   },
+  // When not cross-compiling with a sysroot, add the host GCC C++ headers.
+  // clang@21 via mise (conda) lacks its own C++ standard library headers;
+  // the system has them at /usr/include/c++/N. This replaces the missing
+  // conda libc++ headers without affecting cross-compilation sysroot builds.
+  {
+    flag: [
+      "-isystem",
+      "/usr/include/c++/15.2.1",
+      "-isystem",
+      "/usr/include/c++/15.2.1/x86_64-pc-linux-gnu",
+      "-isystem",
+      "/usr/include/x86_64-pc-linux-gnu/c++/15",
+    ],
+    when: c => c.sysroot === undefined && !c.windows && !c.darwin,
+    lang: "cxx",
+    desc: "Non-cross-compile Linux: add host GCC C++ headers (mise clang lacks libc++)",
+  },
   {
     // C compiles don't have the host-C++-path leak, so --sysroot's default
     // search is fine — but it omits __BSD_VISIBLE when no feature-test macro
@@ -556,6 +573,7 @@ export const bunOnlyFlags: Flag[] = [
       "-Wno-c++23-lambda-attributes",
       "-Wno-nullability-completeness",
       "-Wno-character-conversion",
+      "-Wno-ignored-attributes",
       "-Werror",
     ],
     when: c => c.unix,

@@ -525,6 +525,40 @@ pub const UpdateInteractiveCommand = struct {
                     try updatePackageJsonFilesFromUpdates(manager, package_updates.items);
                 }
 
+                // Populate updating_packages with the selected packages so that
+                // PackageManagerEnqueue.zig only updates these packages.
+                // This is critical - without this, all packages would be updated.
+                for (package_updates.items) |update| {
+                    const entry = bun.handleOom(manager.updating_packages.getOrPut(manager.allocator, update.name));
+                    if (!entry.found_existing) {
+                        entry.value_ptr.* = .{
+                            .original_version_literal = update.original_version,
+                            .is_alias = false,
+                            .original_version = null,
+                        };
+                    }
+                }
+
+                // Also populate for catalog updates
+                if (has_catalog_updates) {
+                    var catalog_it = catalog_updates.iterator();
+                    while (catalog_it.next()) |entry| {
+                        const catalog_key = entry.key_ptr.*;
+                        // Parse catalog_key (format: "package_name" or "package_name:catalog_name")
+                        const colon_index = std.mem.indexOf(u8, catalog_key, ":");
+                        const package_name = if (colon_index) |idx| catalog_key[0..idx] else catalog_key;
+
+                        const pkg_entry = bun.handleOom(manager.updating_packages.getOrPut(manager.allocator, package_name));
+                        if (!pkg_entry.found_existing) {
+                            pkg_entry.value_ptr.* = .{
+                                .original_version_literal = "",
+                                .is_alias = false,
+                                .original_version = null,
+                            };
+                        }
+                    }
+                }
+
                 manager.to_update = true;
 
                 // Reset the timer to show actual install time instead of total command time

@@ -173,7 +173,6 @@ describe("HTMLRewriter", () => {
         const out = new HTMLRewriter().transform(response);
         await out.text().catch(() => {});
       } catch {}
-      await server.stop(true);
       console.log("OK");
       process.exit(0);
     `;
@@ -196,6 +195,7 @@ describe("HTMLRewriter", () => {
     // StreamAlreadyUsed rather than recursing (which previously spun ~1000+ times
     // allocating throwaway streams before giving up with a misleading error).
     const { promise: headersSent, resolve: resolveHeadersSent } = Promise.withResolvers();
+    const { promise: done, resolve: resolveDone } = Promise.withResolvers();
     await using server = Bun.serve({
       port: 0,
       idleTimeout: 0,
@@ -207,7 +207,7 @@ describe("HTMLRewriter", () => {
               controller.write("<");
               await controller.flush();
               resolveHeadersSent();
-              await new Promise(() => {});
+              await done;
             },
           }),
           { headers: { "content-type": "text/html" } },
@@ -220,6 +220,7 @@ describe("HTMLRewriter", () => {
     expect(() => new HTMLRewriter().transform(response)).toThrow(
       expect.objectContaining({ code: "ERR_STREAM_ALREADY_FINISHED" }),
     );
+    resolveDone();
     await server.stop(true);
   });
 

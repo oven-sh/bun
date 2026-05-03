@@ -1750,14 +1750,54 @@ pub const Command = struct {
             example_tag != CreateCommandExample.Tag.local_folder;
 
         if (use_bunx) {
-            const bunx_args = try allocator.alloc([:0]const u8, 2 + args.len - template_name_start + @intFromBool(dash_dash_bun));
+            // Forward everything after the template name to the create
+            // script, but:
+            //   1. drop a single leading `--` — the npm/yarn convention
+            //      is that the first bare `--` is an argument separator
+            //      (so `bun create foo -- -t v3` is equivalent to
+            //      `bun create foo -t v3`). Any subsequent `--` is a
+            //      literal argument and must be preserved.
+            //   2. consume `--bun` that appears before the separator —
+            //      the positional-scanning loop may have exited before
+            //      seeing it, so we consume it here into `dash_dash_bun`
+            //      (which re-inserts it as a real bunx arg below).
+            //      A `--bun` after the separator is a literal argument
+            //      intended for the create script and must be preserved.
+            const forwarded = args[template_name_start..];
+
+            var forwarded_count: usize = 0;
+            var seen_separator = false;
+            for (forwarded) |arg| {
+                const slice = bun.asByteSlice(arg);
+                if (!seen_separator and strings.eqlComptime(slice, "--")) {
+                    seen_separator = true;
+                    continue;
+                }
+                if (!seen_separator and strings.eqlComptime(slice, "--bun")) {
+                    dash_dash_bun = true;
+                    continue;
+                }
+                forwarded_count += 1;
+            }
+
+            const bunx_args = try allocator.alloc([:0]const u8, 2 + forwarded_count + @intFromBool(dash_dash_bun));
             bunx_args[0] = "bunx";
             if (dash_dash_bun) {
                 bunx_args[1] = "--bun";
             }
             bunx_args[1 + @as(usize, @intFromBool(dash_dash_bun))] = try BunxCommand.addCreatePrefix(allocator, template_name);
-            for (bunx_args[2 + @as(usize, @intFromBool(dash_dash_bun)) ..], args[template_name_start..]) |*dest, src| {
-                dest.* = src;
+
+            var dest_i: usize = 2 + @as(usize, @intFromBool(dash_dash_bun));
+            seen_separator = false;
+            for (forwarded) |arg| {
+                const slice = bun.asByteSlice(arg);
+                if (!seen_separator and strings.eqlComptime(slice, "--")) {
+                    seen_separator = true;
+                    continue;
+                }
+                if (!seen_separator and strings.eqlComptime(slice, "--bun")) continue;
+                bunx_args[dest_i] = arg;
+                dest_i += 1;
             }
 
             try BunxCommand.exec(ctx, bunx_args);

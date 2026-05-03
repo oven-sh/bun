@@ -985,9 +985,9 @@ pub const UDPSocket = struct {
         globalThis: *JSGlobalObject,
     ) bun.JSError!JSValue {
         return switch (this.config.binary_type) {
-            .Buffer => bun.String.static("buffer").toJS(globalThis),
-            .Uint8Array => bun.String.static("uint8array").toJS(globalThis),
-            .ArrayBuffer => bun.String.static("arraybuffer").toJS(globalThis),
+            .Buffer => globalThis.commonStrings().buffer(),
+            .Uint8Array => globalThis.commonStrings().uint8array(),
+            .ArrayBuffer => globalThis.commonStrings().arraybuffer(),
             else => @panic("Invalid binary type"),
         };
     }

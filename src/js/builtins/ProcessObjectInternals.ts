@@ -271,9 +271,17 @@ export function getStdinStream(
         // autoTick() (after timers and I/O). Using it here forces tick() to
         // return before the next read begins.
         //
-        // unref()d because the underlying `source` already holds a ref
-        // while flowing; the immediate is just a tick-yield mechanism and
-        // must not keep the process alive on its own.
+        // NOT unref()d: for non-pollable fds, `source.updateRef(true)` in
+        // `own()` is a no-op (PosixBufferedReader.updateRef early-returns
+        // when there's no poll handle — see src/io/PipeReader.zig), so the
+        // native source contributes zero to event-loop liveness. If this
+        // immediate were unref'd, a plain `bun script.js < file` with only
+        // a `'data'` listener would exit before the first read completes
+        // because `runImmediateTask` skips unref'd immediates when the
+        // event loop is otherwise idle. The immediate is one-shot per
+        // `_read` call and the chain stops naturally at EOF (Readable
+        // won't call `_read` again after `push(null)`), so keeping it
+        // ref'd does not leak the process beyond stdin close.
         //
         // The guard re-checks ownership on the immediate tick: a `pause`/
         // `close` that lands between triggerRead() and the immediate will
@@ -289,7 +297,7 @@ export function getStdinStream(
           } else {
             needsInternalReadRefresh = true;
           }
-        }).unref();
+        });
       } else {
         internalRead(this);
       }

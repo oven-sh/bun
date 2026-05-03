@@ -1376,7 +1376,7 @@ pub const FFI = struct {
             return ZigString.static("Cannot return a buffer to JavaScript (since byteLength and byteOffset are unknown)").toErrorInstance(global);
         }
 
-        if (function.threadsafe and return_type != ABIType.void) {
+        if (threadsafe and return_type != ABIType.void) {
             abi_types.clearAndFree(allocator);
             return ZigString.static("Threadsafe functions must return void").toErrorInstance(global);
         }

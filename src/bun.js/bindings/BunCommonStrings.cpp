@@ -176,7 +176,7 @@ static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForZig co
     case CommonStringsForZig::ipv6Lower:
         return commonStrings.ipv6LowerString(globalObject);
     case CommonStringsForZig::fetchDefault:
-        return commonStrings.fetchDefaultString(globalObject);
+        return globalObject->vm().smallStrings.defaultString();
     case CommonStringsForZig::fetchError:
         return commonStrings.fetchErrorString(globalObject);
     case CommonStringsForZig::fetchInclude:
@@ -216,7 +216,7 @@ extern "C" JSC::EncodedJSValue Bun__FetchCacheMode__toJS(FetchCacheMode mode, Zi
     auto& commonStrings = globalObject->commonStrings();
     switch (mode) {
     case FetchCacheMode::Default:
-        return JSValue::encode(commonStrings.fetchDefaultString(globalObject));
+        return JSValue::encode(globalObject->vm().smallStrings.defaultString());
     case FetchCacheMode::NoStore:
         return JSValue::encode(commonStrings.fetchNoStoreString(globalObject));
     case FetchCacheMode::Reload:

@@ -65,7 +65,6 @@
     macro(ec, "ec") \
     macro(ed25519, "ed25519") \
     macro(fetchCors, "cors") \
-    macro(fetchDefault, "default") \
     macro(fetchError, "error") \
     macro(fetchFollow, "follow") \
     macro(fetchForceCache, "force-cache") \

@@ -461,8 +461,15 @@ pub fn onProgressUpdate(this: *EventSource) void {
     }
 
     const is_done = !has_more;
-    // Balance the ref taken in `connect()` once the request fully ends.
-    defer if (is_done) this.deref();
+    // Once the HTTP thread has delivered its terminal callback it will not
+    // touch `async_http` again, so this is the safe point to free it. Doing
+    // it here (rather than waiting for the next `connect()` or `deinit()`)
+    // means a closed-but-still-referenced EventSource doesn't retain the
+    // heap `AsyncHTTP` until GC. Also balances the ref taken in `connect()`.
+    defer if (is_done) {
+        this.clearHttp();
+        this.deref();
+    };
 
     if (this.ready_state == .closed) return;
 

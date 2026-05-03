@@ -116,6 +116,15 @@ describe("randomFill default size with multi-byte typed arrays", () => {
     expect(buf[1]).toBe(0);
   });
 
+  it("randomFill passes the buffer (not 0) to the callback when size is 0", async () => {
+    const buf = new Uint8Array(0);
+    const { promise, resolve } = Promise.withResolvers<[Error | null, unknown]>();
+    randomFill(buf, (err, b) => resolve([err, b]));
+    const [err, b] = await promise;
+    expect(err).toBeNull();
+    expect(b).toBe(buf);
+  });
+
   it("randomFill(Float64Array, offset, cb) fills to the end of the buffer", async () => {
     // Run several times since each byte has a 1/256 chance of being 0 anyway.
     let tailFilled = false;

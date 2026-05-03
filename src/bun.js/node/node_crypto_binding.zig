@@ -408,7 +408,7 @@ const random = struct {
             try assertSize(global, size_value, element_size, offset, buf.byte_len);
 
         if (size == 0) {
-            _ = try callback.call(global, .js_undefined, &.{ .null, JSValue.jsNumber(0) });
+            _ = try callback.call(global, .js_undefined, &.{ .null, buf_value });
             return .js_undefined;
         }
 

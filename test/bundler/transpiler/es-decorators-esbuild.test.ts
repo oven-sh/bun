@@ -10,7 +10,9 @@ import { join } from "path";
 // decorators are used.
 
 const testBoilerplate = `
-// Polyfill Symbol.metadata (not natively available in JSC)
+// Symbol.metadata and Function.prototype[Symbol.metadata] are exposed by Bun
+// (see https://github.com/oven-sh/bun/issues/29724). The block below keeps the
+// boilerplate self-contained against older bun binaries during bisects.
 const metaKey = Symbol.metadata || Symbol.for("Symbol.metadata");
 if (!(metaKey in Function.prototype)) {
   Object.defineProperty(Function.prototype, metaKey, { value: null });
@@ -184,14 +186,22 @@ describe("ES Decorators (esbuild test suite)", () => {
     if (shouldTodo(name)) {
       test.todo(name);
     } else {
-      test.concurrent(name, async () => {
-        const { stdout, stderr, exitCode } = await runDecoratorTest(testCode);
-        if (exitCode !== 0) {
-          throw new Error(
-            `Test "${name}" failed with exit code ${exitCode}\n` + `stdout: ${stdout}\n` + `stderr: ${stderr}`,
-          );
-        }
-      });
+      // 30s timeout: each case spawns a bun subprocess to run the decorator
+      // snippet, and under ASAN + parallel execution the default 5s is too
+      // tight (a single subprocess cold start is ~0.5s, and `test.concurrent`
+      // here runs ~140 of them at once).
+      test.concurrent(
+        name,
+        async () => {
+          const { stdout, stderr, exitCode } = await runDecoratorTest(testCode);
+          if (exitCode !== 0) {
+            throw new Error(
+              `Test "${name}" failed with exit code ${exitCode}\n` + `stdout: ${stdout}\n` + `stderr: ${stderr}`,
+            );
+          }
+        },
+        30_000,
+      );
     }
   }
 });

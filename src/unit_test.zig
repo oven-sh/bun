@@ -1,6 +1,7 @@
 test {
     _ = @import("./shell/braces.zig");
     _ = @import("./bun.js/node/assert/myers_diff.zig");
+    _ = @import("./env_loader.zig");
 }
 
 test "basic string usage" {

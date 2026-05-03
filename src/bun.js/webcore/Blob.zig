@@ -3757,7 +3757,11 @@ pub fn toJSON(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime)
 
 pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const u8, comptime lifetime: Lifetime) bun.JSError!JSValue {
     const bom, const buf = strings.BOM.detectAndSplit(raw_bytes);
-    if (buf.len == 0) return global.createSyntaxErrorInstance("Unexpected end of JSON input", .{});
+    if (buf.len == 0) {
+        // If all it contained was the bom, we still need to free the bytes
+        if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
+        return global.createSyntaxErrorInstance("Unexpected end of JSON input", .{});
+    }
 
     if (bom == .utf16_le) {
         var out = bun.String.cloneUTF16(bun.reinterpretSlice(u16, buf));
@@ -3769,7 +3773,9 @@ pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const 
     // null == unknown
     // false == can't be
     const could_be_all_ascii = this.isAllASCII() orelse this.store.?.is_all_ascii;
-    defer if (comptime lifetime == .temporary) bun.default_allocator.free(@constCast(buf));
+    // When a BOM is present `buf` is an interior slice of `raw_bytes`; we must
+    // free the original allocation, not the offset pointer.
+    defer if (comptime lifetime == .temporary) bun.default_allocator.free(raw_bytes);
 
     if (could_be_all_ascii == null or !could_be_all_ascii.?) {
         var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);

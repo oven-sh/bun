@@ -675,7 +675,16 @@ pub const Transpiler = struct {
                 const buffer_writer = js_printer.BufferWriter.init(transpiler.allocator);
                 var writer = js_printer.BufferPrinter.init(buffer_writer);
 
-                output_file.size = switch (transpiler.options.target) {
+                output_file.size = if (transpiler.options.output_format == .cjs)
+                    // `bun build --no-bundle --format cjs`: rewrite ESM
+                    // imports/exports to CommonJS `require` / `exports`.
+                    try transpiler.print(
+                        result,
+                        *js_printer.BufferPrinter,
+                        &writer,
+                        .cjs,
+                    )
+                else switch (transpiler.options.target) {
                     .browser, .node => try transpiler.print(
                         result,
                         *js_printer.BufferPrinter,
@@ -819,6 +828,15 @@ pub const Transpiler = struct {
                     .minify_syntax = transpiler.options.minify_syntax,
                     .minify_identifiers = transpiler.options.minify_identifiers,
                     .transform_only = transpiler.options.transform_only,
+                    // `module_type = .cjs` so `computeInitialReservedNames`
+                    // reserves `module` / `exports` under `--minify-identifiers`
+                    // (otherwise the MinifyRenamer could assign those strings to
+                    // user locals and poison `module.exports` at runtime).
+                    .module_type = .cjs,
+                    // Actual target so `e_import_meta_main` rewrites
+                    // `import.meta.main` to `require.main == module` in node
+                    // output instead of emitting raw ESM.
+                    .target = transpiler.options.target,
                     .runtime_transpiler_cache = runtime_transpiler_cache,
                     .print_dce_annotations = transpiler.options.emit_dce_annotations,
                     .hmr_ref = ast.wrapper_ref,

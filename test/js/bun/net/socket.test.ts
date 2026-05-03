@@ -864,7 +864,9 @@ it("getServername on a closed TLS socket should not crash", async () => {
           reject(e);
         }
       },
-      error() {},
+      error(_socket, err) {
+        reject(err);
+      },
     },
   });
 

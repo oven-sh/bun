@@ -195,6 +195,15 @@ pub const FileSystemRouter = struct {
             return;
         };
 
+        // Snapshot the subdirectory `*Entry` pointers before recursing. With
+        // the `DirEntry.stale` mechanism a concurrent watcher-thread bust of
+        // `path` can cause the `readDirInfo(child)` call below (on this same
+        // thread) to rewrite `entries.data` in place while we're mid-iteration.
+        // `*Entry` values live in the append-only `EntryStore`, so the
+        // pointers (and their `dir`/`base` strings) stay valid across that.
+        var subdirs: std.ArrayList(*Fs.FileSystem.Entry) = .empty;
+        defer subdirs.deinit(bun.default_allocator);
+
         if (root_dir_info) |dir| {
             if (dir.getEntriesConst()) |entries| {
                 var iter = entries.data.iterator();
@@ -209,15 +218,18 @@ pub const FileSystemRouter = struct {
                                 continue :outer;
                             }
                         }
-
-                        var abs_parts_con = [_]string{ entry.dir, entry.base() };
-                        const full_path = vm.transpiler.fs.abs(&abs_parts_con);
-
-                        _ = vm.transpiler.resolver.bustDirCache(strings.withoutTrailingSlashWindowsPath(full_path));
-                        bustDirCacheRecursive(this, globalThis, full_path);
+                        subdirs.append(bun.default_allocator, entry) catch bun.outOfMemory();
                     }
                 }
             }
+        }
+
+        for (subdirs.items) |entry| {
+            var abs_parts_con = [_]string{ entry.dir, entry.base() };
+            const full_path = vm.transpiler.fs.abs(&abs_parts_con);
+
+            _ = vm.transpiler.resolver.bustDirCache(strings.withoutTrailingSlashWindowsPath(full_path));
+            bustDirCacheRecursive(this, globalThis, full_path);
         }
 
         _ = vm.transpiler.resolver.bustDirCache(path);

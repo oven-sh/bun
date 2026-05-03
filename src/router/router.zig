@@ -405,6 +405,17 @@ const RouteLoader = struct {
     ) void {
         var fs = this.fs;
 
+        // Subdirectory recursion is deferred until after the `entries.data`
+        // iteration completes. `bustEntriesCache` now marks the `DirEntry`
+        // stale in place (instead of orphaning the slot), so if the watcher
+        // thread busts this directory mid-scan, the `readDirInfoIgnoreError`
+        // call below — on this same thread — can rewrite `entries.data` in
+        // place via the resolver's `in_place` path while we're still
+        // iterating it. `*Entry` values live in the append-only `EntryStore`,
+        // so snapshotting the pointers is sufficient.
+        var subdirs: std.ArrayList(*FileSystem.Entry) = .empty;
+        defer subdirs.deinit(this.allocator);
+
         if (root_dir_info.getEntriesConst()) |entries| {
             var iter = entries.data.iterator();
             outer: while (iter.next()) |entry_ptr| {
@@ -420,18 +431,7 @@ const RouteLoader = struct {
                                 continue :outer;
                             }
                         }
-
-                        var abs_parts = [_]string{ entry.dir, entry.base() };
-                        if (resolver.readDirInfoIgnoreError(fs.abs(&abs_parts))) |_dir_info| {
-                            const dir_info: *const DirInfo = _dir_info;
-
-                            this.load(
-                                ResolverType,
-                                resolver,
-                                dir_info,
-                                base_dir,
-                            );
-                        }
+                        subdirs.append(this.allocator, entry) catch bun.outOfMemory();
                     },
 
                     .file => {
@@ -465,6 +465,20 @@ const RouteLoader = struct {
                         }
                     },
                 }
+            }
+        }
+
+        for (subdirs.items) |entry| {
+            var abs_parts = [_]string{ entry.dir, entry.base() };
+            if (resolver.readDirInfoIgnoreError(fs.abs(&abs_parts))) |_dir_info| {
+                const dir_info: *const DirInfo = _dir_info;
+
+                this.load(
+                    ResolverType,
+                    resolver,
+                    dir_info,
+                    base_dir,
+                );
             }
         }
     }

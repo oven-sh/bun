@@ -390,15 +390,42 @@ pub const Value = union(enum) {
 
     string: JSC.ZigString.Slice,
     string_data: Data,
-    bytes: JSC.ZigString.Slice,
+    bytes: Bytes,
     bytes_data: Data,
     date: DateTime,
     time: Time,
     // decimal: Decimal,
 
+    /// BLOB parameter bytes. `MySQLQuery.bind()` fills every `Value` before
+    /// `execute.write()` reads any of them, and converting later parameters
+    /// can run user JS (array index getters, toJSON, toString coercion). That
+    /// JS could `transfer()`/detach an earlier ArrayBuffer, or drop the last
+    /// JS reference to it and force GC, while we still hold a borrowed slice
+    /// into it. Pinning the backing `ArrayBuffer` makes it non-detachable for
+    /// the duration (`transfer()` then hands the user a copy), and the
+    /// caller's stack-scoped `MarkedArgumentBuffer` roots the wrapper so GC
+    /// can't sweep the cell whose `RefPtr<ArrayBuffer>` keeps the storage
+    /// alive — `params` is on the malloc heap and isn't scanned. `deinit()`
+    /// unpins.
+    pub const Bytes = struct {
+        slice: JSC.ZigString.Slice = .empty,
+        /// JS ArrayBuffer/view to `unpinArrayBuffer` in `deinit()`. `.zero`
+        /// when the slice is owned (FastTypedArray dupe), borrowed from a
+        /// Blob store (nothing to unpin), or empty. GC rooting of this value
+        /// is the caller's responsibility via the `MarkedArgumentBuffer`
+        /// passed to `fromJS`.
+        pinned: JSC.JSValue = .zero,
+
+        pub fn deinit(this: *Bytes) void {
+            if (this.pinned != .zero) JSC__JSValue__unpinArrayBuffer(this.pinned);
+            this.slice.deinit();
+        }
+    };
+
     pub fn deinit(this: *Value, _: std.mem.Allocator) void {
         switch (this.*) {
-            inline .string, .bytes => |*slice| slice.deinit(),
+            .string => |*slice| slice.deinit(),
+            .bytes => |*b| b.deinit(),
             inline .string_data, .bytes_data => |*data| data.deinit(),
             // .decimal => |*decimal| decimal.deinit(allocator),
             else => {},
@@ -428,13 +455,14 @@ pub const Value = union(enum) {
             },
             // .decimal => |dec| return try dec.toBinary(field_type),
             .string_data, .bytes_data => |data| return data,
-            .string, .bytes => |slice| return if (slice.len > 0) Data{ .temporary = slice.slice() } else Data{ .empty = {} },
+            .string => |slice| return if (slice.len > 0) Data{ .temporary = slice.slice() } else Data{ .empty = {} },
+            .bytes => |b| return if (b.slice.len > 0) Data{ .temporary = b.slice.slice() } else Data{ .empty = {} },
         }
 
         return try Data.create(buffer[0..stream.pos], bun.default_allocator);
     }
 
-    pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, field_type: FieldType, unsigned: bool) AnyMySQLError.Error!Value {
+    pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, field_type: FieldType, unsigned: bool, roots: *JSC.MarkedArgumentBuffer) AnyMySQLError.Error!Value {
         if (value.isEmptyOrUndefinedOrNull()) {
             return Value{ .null = {} };
         }
@@ -464,15 +492,43 @@ pub const Value = union(enum) {
             .MYSQL_TYPE_TIME => Value{ .time = try Time.fromJS(value, globalObject) },
             .MYSQL_TYPE_DATE, .MYSQL_TYPE_TIMESTAMP, .MYSQL_TYPE_DATETIME => Value{ .date = try DateTime.fromJS(value, globalObject) },
             .MYSQL_TYPE_TINY_BLOB, .MYSQL_TYPE_MEDIUM_BLOB, .MYSQL_TYPE_LONG_BLOB, .MYSQL_TYPE_BLOB => {
-                if (value.asArrayBuffer(globalObject)) |array_buffer| {
-                    return Value{ .bytes = JSC.ZigString.Slice.fromUTF8NeverFree(array_buffer.slice()) };
+                if (value.jsType().isArrayBufferLike()) {
+                    // Later parameters in the same bind loop may run user
+                    // JS (toString/toJSON/getters) that can transfer() or
+                    // detach this buffer before execute.write() reads it.
+                    // Pin the backing ArrayBuffer so it stays non-detachable
+                    // until Value.deinit() unpins it; borrowing the slice is
+                    // then safe without a copy. See `Value.Bytes`.
+                    var ptr: [*]const u8 = undefined;
+                    var len: usize = 0;
+                    return switch (JSC__JSValue__borrowBytesForOffThread(value, &ptr, &len)) {
+                        // detached / null
+                        0 => Value{ .bytes = .{} },
+                        // FastTypedArray — tiny, GC-movable vector; dupe.
+                        1 => Value{ .bytes = .{ .slice = try JSC.ZigString.Slice.initDupe(bun.default_allocator, ptr[0..len]) } },
+                        // Oversize/Wasteful/DataView/JSArrayBuffer — pinned
+                        // by the helper. Root the wrapper so GC can't
+                        // collect it (and free the backing store despite
+                        // the pin) if user JS drops the last reference from
+                        // a later parameter.
+                        2 => blk: {
+                            roots.append(value);
+                            break :blk Value{ .bytes = .{ .slice = JSC.ZigString.Slice.fromUTF8NeverFree(ptr[0..len]), .pinned = value } };
+                        },
+                        else => unreachable,
+                    };
                 }
 
                 if (value.as(JSC.WebCore.Blob)) |blob| {
                     if (blob.needsToReadFile()) {
                         return globalObject.throwInvalidArguments("File blobs are not supported", .{});
                     }
-                    return Value{ .bytes = JSC.ZigString.Slice.fromUTF8NeverFree(blob.sharedView()) };
+                    // Blob byte stores are immutable from JS (no detach),
+                    // but user JS running for a later parameter could drop
+                    // the last reference and force GC. Root the wrapper so
+                    // the store survives until execute.write() has read it.
+                    roots.append(value);
+                    return Value{ .bytes = .{ .slice = JSC.ZigString.Slice.fromUTF8NeverFree(blob.sharedView()) } };
                 }
 
                 if (value.isString()) {
@@ -865,6 +921,11 @@ pub const int2 = u16;
 pub const int3 = u24;
 pub const int4 = u32;
 pub const int8 = u64;
+
+extern fn JSC__JSValue__unpinArrayBuffer(v: JSC.JSValue) void;
+/// 0 = detached/null, 1 = FastTypedArray (GC-movable — caller should dupe;
+/// no unpin needed), 2 = pinned ArrayBuffer (caller must `unpinArrayBuffer`).
+extern fn JSC__JSValue__borrowBytesForOffThread(v: JSC.JSValue, out_ptr: *[*]const u8, out_len: *usize) i32;
 
 const AnyMySQLError = @import("./protocol/AnyMySQLError.zig");
 const std = @import("std");

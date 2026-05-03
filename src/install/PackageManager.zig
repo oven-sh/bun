@@ -1045,12 +1045,17 @@ pub fn initWithRuntimeOnce(
         }),
         .lockfile = undefined,
         .root_package_json_file = undefined,
-        .event_loop = .{
-            .js = jsc.VirtualMachine.get().eventLoop(),
-        },
+        .event_loop = if (jsc.VirtualMachine.getOrNull()) |vm|
+            .{ .js = vm.eventLoop() }
+        else
+            .{ .mini = jsc.MiniEventLoop.init(bun.default_allocator) },
         .original_package_json_path = original_package_json_path[0..original_package_json_path.len :0],
         .subcommand = .install,
     };
+    if (manager.event_loop == .mini) {
+        manager.event_loop.mini.loop.internal_loop_data.setParentEventLoop(bun.jsc.EventLoopHandle.init(&manager.event_loop));
+        jsc.MiniEventLoop.global = &manager.event_loop.mini;
+    }
     manager.lockfile = bun.handleOom(allocator.create(Lockfile));
 
     if (Output.enable_ansi_colors_stderr) {

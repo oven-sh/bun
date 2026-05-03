@@ -517,7 +517,7 @@ pub const Bunfig = struct {
                 }
             }
 
-            if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand) {
+            if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand or cmd == .BuildCommand) {
                 if (json.getObject("install")) |install_obj| {
                     var install: *api.BunInstall = this.ctx.install orelse brk: {
                         const install = try this.allocator.create(api.BunInstall);
@@ -1029,7 +1029,7 @@ pub const Bunfig = struct {
             }
 
             if (json.get("bundle")) |_bun| {
-                if (comptime cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BuildCommand) {
+                if (comptime cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand) {
                     if (_bun.get("outdir")) |dir| {
                         try this.expectString(dir);
                         this.bunfig.output_dir = try dir.data.e_string.string(allocator);

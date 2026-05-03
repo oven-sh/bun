@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick } from "harness";
 import path from "path";
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
@@ -57,21 +57,16 @@ describe("ipc mode advanced", () => {
     // checked `data.len < header_length + message_len`, which is u32 arithmetic: a child
     // sending length 0xFFFFFFFB makes the sum wrap to 0, the guard passes, and the receiver
     // slices `data[5..0]` (length ~SIZE_MAX) straight into the deserializer.
-    using dir = tempDir("ipc-advanced-overflow", {
-      "child.js": `
-        const fs = require("fs");
-        // type = SerializedMessage (0x02), length = 0xFFFFFFFB (little-endian).
-        // header_length (5) + 0xFFFFFFFB wraps to 0 in u32.
-        fs.writeSync(3, Buffer.from([0x02, 0xfb, 0xff, 0xff, 0xff]));
-        process.exit(0);
-      `,
-    });
-
     let receivedMessage: unknown;
     await using child = spawn({
-      cmd: [bunExe(), "child.js"],
+      cmd: [
+        bunExe(),
+        "-e",
+        // type = SerializedMessage (0x02), length = 0xFFFFFFFB (little-endian).
+        // header_length (5) + 0xFFFFFFFB wraps to 0 in u32.
+        `require("fs").writeSync(3, Buffer.from([0x02, 0xfb, 0xff, 0xff, 0xff]))`,
+      ],
       env: bunEnv,
-      cwd: String(dir),
       stdio: ["ignore", "pipe", "pipe"],
       serialization: "advanced",
       ipc(msg) {

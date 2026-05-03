@@ -899,9 +899,19 @@ export const linkerFlags: Flag[] = [
     desc: "Garbage-collect unused sections (release only; debug keeps Zig dbHelper symbols)",
   },
   {
-    flag: c => ["-Wl,-icf=safe", `-Wl,-Map=${c.buildDir}/${bunExeName(c)}.linker-map`],
+    // ICF disabled under LTO. -icf=safe relies on .llvm_addrsig (emitted via
+    // -faddrsig) to skip address-significant symbols, but ThinLTO's parallel
+    // codegen backends do not propagate addrsig to their output objects, so
+    // lld degrades to -icf=all for LTO-produced sections. Observed fold:
+    //   JSStrictFunction::s_info → BooleanConstructor::s_info
+    // ClassInfo address identity is the basis of jsDynamicCast/inherits(),
+    // so every JS builtin (a JSStrictFunction) then type-checks as
+    // BooleanConstructor — DFG inlines String.match() as ToBoolean(re) and
+    // returns `true`. Full LTO's single-backend addrsig survives, hence
+    // -icf=safe was fine there. Non-LTO release keeps -icf=safe.
+    flag: c => [c.lto ? "-Wl,-icf=none" : "-Wl,-icf=safe", `-Wl,-Map=${c.buildDir}/${bunExeName(c)}.linker-map`],
     when: c => c.linux && c.release && !c.asan && !c.valgrind,
-    desc: "Safe identical-code-folding + linker map (release only)",
+    desc: "Identical-code-folding (none under LTO — ThinLTO drops addrsig) + linker map",
   },
 
   // ─── Symbols / exports ───

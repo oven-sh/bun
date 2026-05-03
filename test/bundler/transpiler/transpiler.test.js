@@ -3036,17 +3036,17 @@ console.log(foo, array);
 
       expectPrinted("1 === 1", "!0");
       expectPrinted("1 === 2", "!1");
-      expectPrinted("1 === '1'", '1 === "1"');
+      expectPrinted("1 === '1'", "!1"); // strict: different types
       expectPrinted("1 == 1", "!0");
       expectPrinted("1 == 2", "!1");
-      expectPrinted("1 == '1'", '1 == "1"');
+      expectPrinted("1 == '1'", "!0"); // loose: 1 == "1" is true
 
       expectPrinted("1 !== 1", "!1");
       expectPrinted("1 !== 2", "!0");
-      expectPrinted("1 !== '1'", '1 !== "1"');
+      expectPrinted("1 !== '1'", "!0"); // strict: different types → !== is true
       expectPrinted("1 != 1", "!1");
       expectPrinted("1 != 2", "!0");
-      expectPrinted("1 != '1'", '1 != "1"');
+      expectPrinted("1 != '1'", "!1"); // loose: 1 != "1" is false
 
       expectPrinted('"" == 0', "!0");
       expectPrinted("1n == 1n", "!0");

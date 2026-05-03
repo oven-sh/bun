@@ -615,6 +615,58 @@ describe("workspaces", () => {
       { "pathname": "package/root.js" },
     ]);
   });
+
+  for (const { input, prefix } of [
+    { input: "workspace:^", prefix: "^" },
+    { input: "workspace:~", prefix: "~" },
+    { input: "workspace:*", prefix: "" },
+  ]) {
+    test(`uses current package.json version after bump (${input})`, async () => {
+      // Set up a workspace where pkg2 depends on pkg1
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "pack-ws-version-bump",
+            version: "1.0.0",
+            workspaces: ["pkgs/*"],
+          }),
+        ),
+        write(join(packageDir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.0.0" })),
+        write(
+          join(packageDir, "pkgs", "pkg2", "package.json"),
+          JSON.stringify({
+            name: "pkg2",
+            version: "1.0.0",
+            dependencies: {
+              "pkg1": input,
+            },
+          }),
+        ),
+      ]);
+
+      // Install to create the lockfile with pkg1@1.0.0
+      await runBunInstall(bunEnv, packageDir);
+
+      // Bump pkg1's version WITHOUT re-running bun install
+      await write(join(packageDir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "2.0.0" }));
+
+      // Pack pkg2 (a workspace member, not the root).
+      // It should resolve pkg1's version from pkg1's package.json on disk,
+      // not from the stale lockfile.
+      await pack(join(packageDir, "pkgs", "pkg2"), bunEnv);
+
+      const tarball = readTarball(join(packageDir, "pkgs", "pkg2", "pkg2-1.0.0.tgz"));
+      expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }]);
+      expect(JSON.parse(tarball.entries[0].contents)).toEqual({
+        name: "pkg2",
+        version: "1.0.0",
+        dependencies: {
+          "pkg1": `${prefix}2.0.0`,
+        },
+      });
+    });
+  }
 });
 
 test("lifecycle scripts execution order", async () => {

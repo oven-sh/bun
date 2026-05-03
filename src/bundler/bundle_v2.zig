@@ -4300,9 +4300,24 @@ pub const BundleV2 = struct {
                     ((result.use_directive == .client) == (result.ast.target == .browser))
                 else
                     ((result.use_directive == .client) != (result.ast.target == .browser)))
-                {
-                    if (result.use_directive == .server)
-                        bun.todoPanic(@src(), "\"use server\"", .{});
+                skip_cross_graph: {
+                    if (result.use_directive == .server) {
+                        // The server-side wrap is emitted by the parser, so server-to-server
+                        // action calls work. The client-side proxy (createServerReference)
+                        // that lets a "use client" module dispatch to an action is still
+                        // unimplemented — warn instead of crashing the build. Using
+                        // Output.warn rather than the log because the bake production path
+                        // never flushes log warnings to stderr on success.
+                        bun.Output.warn(
+                            "\"use server\" is partially implemented: the server-side wrap is applied, " ++
+                                "but client-side server-action proxies are not yet generated. " ++
+                                "Calling these exports from a client module will fail at runtime. " ++
+                                "(file: {s})",
+                            .{result.source.path.pretty},
+                        );
+                        bun.Output.flush();
+                        break :skip_cross_graph;
+                    }
 
                     const reference_source_index, const ssr_index = if (this.framework.?.server_components.?.separate_ssr_graph) brk: {
                         // Enqueue two files, one in server graph, one in ssr graph.

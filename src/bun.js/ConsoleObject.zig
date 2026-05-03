@@ -1006,6 +1006,10 @@ pub const Formatter = struct {
     ordered_properties: bool = false,
     custom_formatted_object: CustomFormattedObject = .{},
     disable_inspect_custom: bool = false,
+    /// When true, exceptions from custom inspect functions are caught and the value
+    /// is formatted with default formatting. Used in error message construction paths
+    /// where exceptions must not leak (e.g. createErrorInstance).
+    suppress_custom_inspect_exceptions: bool = false,
     stack_check: bun.StackCheck = .{ .cached_stack_end = std.math.maxInt(usize) },
     can_throw_stack_overflow: bool = false,
     error_display_level: FormatOptions.ErrorDisplayLevel = .full,
@@ -2278,14 +2282,23 @@ pub const Formatter = struct {
             .CustomFormattedObject => {
                 // Call custom inspect function. Will return the error if there is one
                 // we'll need to pass the callback through to the "this" value in here
-                const result = try bun.jsc.fromJSHostCall(this.globalThis, @src(), JSC__JSValue__callCustomInspectFunction, .{
+                const result = bun.jsc.fromJSHostCall(this.globalThis, @src(), JSC__JSValue__callCustomInspectFunction, .{
                     this.globalThis,
                     this.custom_formatted_object.function,
                     this.custom_formatted_object.this,
                     this.max_depth -| this.depth,
                     this.max_depth,
                     enable_ansi_colors,
-                });
+                }) catch {
+                    if (!this.suppress_custom_inspect_exceptions) return error.JSError;
+                    // In error-formatting contexts, catch the exception and fall back to
+                    // type-aware formatting to avoid assertion failures from leaked exceptions.
+                    if (!this.globalThis.clearExceptionExceptTermination()) return error.JSError;
+                    const fallback_value = this.custom_formatted_object.this;
+                    const fallback_tag = try ConsoleObject.Formatter.Tag.getAdvanced(fallback_value, this.globalThis, .{ .disable_inspect_custom = true });
+                    try this.format(fallback_tag, Writer, writer_, fallback_value, this.globalThis, enable_ansi_colors);
+                    return;
+                };
                 // Strings are printed directly, otherwise we recurse. It is possible to end up in an infinite loop.
                 if (result.isString()) {
                     writer.print("{f}", .{result.fmtString(this.globalThis)});

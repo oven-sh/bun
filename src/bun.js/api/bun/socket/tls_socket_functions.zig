@@ -1,5 +1,5 @@
 pub fn getServername(this: *This, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
-    const ssl_ptr = this.socket.ssl();
+    const ssl_ptr = this.socket.ssl() orelse return .js_undefined;
 
     const servername = BoringSSL.SSL_get_servername(ssl_ptr, BoringSSL.TLSEXT_NAMETYPE_host_name);
     if (servername == null) {

@@ -885,6 +885,47 @@ it("reading fd of a TLS listener should not crash", () => {
   expect(listener.fd).toBeGreaterThanOrEqual(0);
 });
 
+it("getServername on a closed TLS socket should not crash", async () => {
+  using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls,
+    socket: {
+      data() {},
+      open() {},
+      close() {},
+    },
+  });
+
+  const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+  const client = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: listener.port,
+    tls: { ...tls, rejectUnauthorized: false },
+    socket: {
+      data() {},
+      open() {},
+      handshake(socket) {
+        socket.end();
+      },
+      close(socket) {
+        // The underlying SSL* is already gone by the time close fires;
+        // getServername must return undefined rather than deref a null SSL*.
+        try {
+          resolve(socket.getServername());
+        } catch (e) {
+          reject(e);
+        }
+      },
+      error(_socket, err) {
+        reject(err);
+      },
+    },
+  });
+
+  expect(await promise).toBeUndefined();
+  expect(client.getServername()).toBeUndefined();
+});
 it("TLS client: flush() after end() does not double-teardown before deferred onClose", async () => {
   // `end()` on a TLS client sends close_notify and defers the raw close until the
   // peer replies, leaving `is_active` set so the eventual onClose can release the

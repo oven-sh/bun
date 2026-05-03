@@ -22,7 +22,14 @@ pub fn toBeInstanceOf(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Ca
     const value: JSValue = try this.getValue(globalThis, thisValue, "toBeInstanceOf", "<green>expected<r>");
 
     const not = this.flags.not;
-    var pass = value.isInstanceOf(globalThis, expected_value);
+    var pass = blk: {
+        var scope: jsc.TopExceptionScope = undefined;
+        scope.init(globalThis, @src());
+        defer scope.deinit();
+        const result = value.isInstanceOf(globalThis, expected_value);
+        try scope.returnIfException();
+        break :blk result;
+    };
     if (not) pass = !pass;
     if (pass) return .js_undefined;
 

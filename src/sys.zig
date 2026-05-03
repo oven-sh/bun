@@ -1044,7 +1044,7 @@ pub fn normalizePathWindows(
             }
         }
 
-        if (path.len > buf.len -| nt_prefix_headroom) {
+        if (path.len > buf.len -| (if (opts.add_nt_prefix) nt_prefix_headroom else 1)) {
             return name_too_long;
         }
         const norm = bun.path.normalizeStringGenericTZ(u16, path, buf, .{ .add_nt_prefix = opts.add_nt_prefix, .zero_terminate = true });

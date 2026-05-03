@@ -2166,6 +2166,48 @@ static napi_value test_issue_22259(const Napi::CallbackInfo &info) {
     return nullptr;
   }
 
+  // Verify the VM exception is pending and is the "vm-level" error.
+  // After running throw_script and BEFORE clearing the exception, explicitly verify:
+  // 1) napi_is_exception_pending returns true
+  // 2) napi_get_and_clear_last_exception returns the original "vm-level" error
+  bool is_pending = false;
+  status = napi_is_exception_pending(env, &is_pending);
+  if (status != napi_ok || !is_pending) {
+    printf("napi_is_exception_pending: expected true, got false (status %d)\n", status);
+    return nullptr;
+  }
+
+  // Now clear and validate the pending exception
+  napi_value pending_exception;
+  status = napi_get_and_clear_last_exception(env, &pending_exception);
+  if (status != napi_ok) {
+    printf("napi_get_and_clear_last_exception failed: %d\n", status);
+    return nullptr;
+  }
+
+  napi_value message_prop;
+  status = napi_get_named_property(env, pending_exception, "message", &message_prop);
+  if (status != napi_ok) {
+    printf("Failed to get 'message' property of pending exception\n");
+    return nullptr;
+  }
+
+  char msg[64] = {0};
+  size_t len;
+  status = napi_get_value_string_utf8(env, message_prop, msg, sizeof(msg), &len);
+  if (status != napi_ok || strcmp(msg, "vm-level") != 0) {
+    printf("Pending exception has wrong message: '%s' (expected 'vm-level', status %d)\n", msg, status);
+    return nullptr;
+  }
+  puts("Verified VM exception is pending with 'vm-level' message");
+
+  // Re-create the VM exception for the napi_create_* tests
+  status = napi_run_script(env, throw_script, &throw_result);
+  if (status != napi_pending_exception) {
+    printf("Re-creating VM exception failed: status %d (expected %d)\n", status, napi_pending_exception);
+    return nullptr;
+  }
+
   // Now with a VM-level exception pending, napi_create_error must still succeed.
   // Before the fix, RETURN_IF_EXCEPTION would return napi_pending_exception here.
   napi_value error_val;

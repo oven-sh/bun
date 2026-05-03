@@ -2959,6 +2959,95 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObje
     }
     return JSValue::encode(groups);
 }
+// process.initgroups(user, extraGroup) implementation
+JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 2) {
+        throwScope.throwException(globalObject, createError(globalObject, "initgroups() requires two arguments: user and extraGroup"_s));
+        return {};
+    }
+
+    JSValue userValue = callFrame->argument(0);
+    JSValue extraGroupValue = callFrame->argument(1);
+
+    if (!userValue.isNumber() && !userValue.isString()) {
+        throwScope.throwException(globalObject, createError(globalObject, "user argument must be a number or string"_s));
+        return {};
+    }
+
+    uid_t uid = -1;
+    if (userValue.isNumber()) {
+        uid = static_cast<uid_t>(userValue.toInt32(globalObject));
+        RETURN_IF_EXCEPTION(throwScope, {});
+    } else {
+        auto str = userValue.toString(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        auto utf8 = str.utf8();
+        auto name = utf8.data();
+        struct passwd pwd;
+        struct passwd* pp = nullptr;
+        char buf[8192];
+        if (getpwnam_r(name, &pwd, buf, sizeof(buf), &pp) != 0 || pp == nullptr) {
+            auto message = makeString("User identifier does not exist: "_s, str);
+            throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+            return {};
+        }
+        uid = pp->pw_uid;
+    }
+
+    if (!extraGroupValue.isNumber() && !extraGroupValue.isString()) {
+        throwScope.throwException(globalObject, createError(globalObject, "extraGroup argument must be a number or string"_s));
+        return {};
+    }
+
+    gid_t gid = -1;
+    if (extraGroupValue.isNumber()) {
+        gid = static_cast<gid_t>(extraGroupValue.toInt32(globalObject));
+        RETURN_IF_EXCEPTION(throwScope, {});
+    } else {
+        auto str = extraGroupValue.toString(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        auto utf8 = str.utf8();
+        auto name = utf8.data();
+        struct group grp;
+        struct group* gp = nullptr;
+        char buf[8192];
+        if (getgrnam_r(name, &grp, buf, sizeof(buf), &gp) != 0 || gp == nullptr) {
+            auto message = makeString("Group identifier does not exist: "_s, str);
+            throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+            return {};
+        }
+        gid = gp->gr_gid;
+    }
+
+    if (initgroups(nullptr, uid, gid) != 0) {
+        throwSystemError(throwScope, globalObject, "initgroups"_s, errno);
+        return {};
+    }
+
+    int ngroups = getgroups(0, nullptr);
+    if (ngroups == -1) {
+        throwSystemError(throwScope, globalObject, "getgroups"_s, errno);
+        return {};
+    }
+
+    JSArray* groups = constructEmptyArray(globalObject, nullptr, ngroups);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    Vector<gid_t> groupVector(ngroups);
+    if (getgroups(ngroups, groupVector.begin()) == -1) {
+        throwSystemError(throwScope, globalObject, "getgroups"_s, errno);
+        return {};
+    }
+    for (unsigned i = 0; i < ngroups; i++) {
+        groups->putDirectIndex(globalObject, i, jsNumber(groupVector[i]));
+    }
+    return JSValue::encode(groups);
+}
+
+
 
 static JSValue maybe_uid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* globalObject, JSValue value)
 {
@@ -3264,6 +3353,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_execArgv);
 
     thisObject->m_cpuUsageStructure.visit(visitor);
+    thisObject->m_threadCpuUsageStructure.visit(visitor);
     thisObject->m_resourceUsageStructure.visit(visitor);
     thisObject->m_memoryUsageStructure.visit(visitor);
     thisObject->m_bindingUV.visit(visitor);
@@ -3479,6 +3569,120 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * global
 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
 }
+// process.threadCpuUsage([previousValue]) implementation
+constexpr uint32_t threadCpuUsageStructureInlineCapacity = std::min<uint32_t>(JSFinalObject::maxInlineCapacity, std::max<uint32_t>(2, JSFinalObject::defaultInlineCapacity));
+
+static Structure* constructThreadCpuUsageStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), threadCpuUsageStructureInlineCapacity);
+    PropertyOffset offset;
+    structure = structure->addPropertyTransition(
+        vm,
+        structure,
+        JSC::Identifier::fromString(vm, "user"_s),
+        0,
+        offset);
+    structure = structure->addPropertyTransition(
+        vm,
+        structure,
+        JSC::Identifier::fromString(vm, "system"_s),
+        0,
+        offset);
+    return structure;
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionthreadCpuUsage, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    double user = 0;
+    double system = 0;
+
+#if defined(__APPLE__)
+    thread_basic_info_data_t info;
+    mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+    kern_return_t err = thread_info(mach_thread_self(),
+        THREAD_BASIC_INFO,
+        reinterpret_cast<thread_info_t>(&info),
+        &count);
+
+    if (err != KERN_SUCCESS) {
+        throwScope.throwException(globalObject, createError(globalObject, "Failed to get thread CPU usage"_s));
+        return {};
+    }
+
+    user = std::chrono::microseconds::period::den * info.user_time.seconds + info.user_time.microseconds;
+    system = std::chrono::microseconds::period::den * info.system_time.seconds + info.system_time.microseconds;
+#elif defined(__linux__)
+    struct timespec ts;
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) != 0) {
+        throwScope.throwException(globalObject, createError(globalObject, "Failed to get thread CPU usage"_s));
+        return {};
+    }
+    user = std::chrono::nanoseconds::period::den * ts.tv_sec + ts.tv_nsec;
+    system = 0;
+#else
+    throwScope.throwException(globalObject, createError(globalObject, "threadCpuUsage is not supported on this platform"_s));
+    return {};
+#endif
+
+    if (callFrame->argumentCount() > 0) {
+        JSValue comparatorValue = callFrame->argument(0);
+        if (!comparatorValue.isUndefined()) {
+            JSC::JSObject* comparator = comparatorValue.getObject();
+            if (!comparator) [[unlikely]] {
+                return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "prevValue"_s, "object"_s, comparatorValue);
+            }
+
+            auto* process = getProcessObject(globalObject, callFrame->thisValue());
+            Structure* threadCpuUsageStructure = process->threadCpuUsageStructure();
+
+            JSValue userValue;
+            JSValue systemValue;
+
+            if (comparator->structureID() == threadCpuUsageStructure->id()) [[likely]] {
+                userValue = comparator->getDirect(0);
+                systemValue = comparator->getDirect(1);
+            } else {
+                userValue = comparator->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "user"_s));
+                RETURN_IF_EXCEPTION(throwScope, {});
+                if (userValue.isEmpty()) userValue = jsUndefined();
+
+                systemValue = comparator->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "system"_s));
+                RETURN_IF_EXCEPTION(throwScope, {});
+                if (systemValue.isEmpty()) systemValue = jsUndefined();
+            }
+
+            double userComparator = userValue.toNumber(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            double systemComparator = systemValue.toNumber(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
+
+            if (!(userComparator >= 0 && userComparator <= JSC::maxSafeInteger())) {
+                return Bun::ERR::INVALID_ARG_VALUE_RangeError(throwScope, globalObject, "prevValue.user"_s, userValue, "is invalid"_s);
+            }
+            if (!(systemComparator >= 0 && systemComparator <= JSC::maxSafeInteger())) {
+                return Bun::ERR::INVALID_ARG_VALUE_RangeError(throwScope, globalObject, "prevValue.system"_s, systemValue, "is invalid"_s);
+            }
+
+            user -= userComparator;
+            system -= systemComparator;
+        }
+    }
+
+    auto* process = getProcessObject(globalObject, callFrame->thisValue());
+    Structure* threadCpuUsageStructure = process->threadCpuUsageStructure();
+    JSC::JSObject* result = JSC::constructEmptyObject(vm, threadCpuUsageStructure);
+    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
+
+    result->putDirectOffset(vm, 0, JSC::jsNumber(user));
+    result->putDirectOffset(vm, 1, JSC::jsNumber(system));
+
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
+}
+
+
 
 extern "C" int getRSS(size_t* rss)
 {
@@ -4279,6 +4483,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   connected                        processConnected                                    CustomAccessor
   constrainedMemory                Process_functionConstrainedMemory                   Function 0
   cpuUsage                         Process_functionCpuUsage                            Function 1
+  threadCpuUsage                   Process_functionthreadCpuUsage                       Function 0
   cwd                              Process_functionCwd                                 Function 1
   debugPort                        processDebugPort                                    CustomAccessor
   disconnect                       constructProcessDisconnect                          PropertyCallback
@@ -4331,6 +4536,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   geteuid                          Process_functiongeteuid                             Function 0
   getgid                           Process_functiongetgid                              Function 0
   getgroups                        Process_functiongetgroups                           Function 0
+  initgroups                        Process_functioninitgroups                          Function 0
   getuid                           Process_functiongetuid                              Function 0
 
   setegid                          Process_functionsetegid                             Function 1
@@ -4355,6 +4561,10 @@ void Process::finishCreation(JSC::VM& vm)
 
     m_cpuUsageStructure.initLater([](const JSC::LazyProperty<Process, JSC::Structure>::Initializer& init) {
         init.set(constructCPUUsageStructure(init.vm, init.owner->globalObject()));
+    });
+
+    m_threadCpuUsageStructure.initLater([](const JSC::LazyProperty<Process, JSC::Structure>::Initializer& init) {
+        init.set(constructThreadCpuUsageStructure(init.vm, init.owner->globalObject()));
     });
 
     m_resourceUsageStructure.initLater([](const JSC::LazyProperty<Process, JSC::Structure>::Initializer& init) {

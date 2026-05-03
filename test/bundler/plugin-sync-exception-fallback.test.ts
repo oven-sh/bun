@@ -69,12 +69,15 @@ describe.each(["onLoad", "onResolve"] as const)("Bun.build plugin %s builtin thr
       stderr: "pipe",
       // If the build hangs (the onResolve bug), kill it so the assertion below reports
       // a useful diff instead of the test runner timing out.
-      timeout: 30_000,
+      timeout: 10_000,
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    // Receiver includes stdout/stderr so the diff on failure shows the crash output
+    // (UBSan/SIGSEGV under the old code) instead of a bare "expected 0, got 1".
     expect({
+      stdout: stdout.trim(),
       stderr: stderr.trim(),
       exitCode,
       signalCode: proc.signalCode ?? null,
@@ -86,5 +89,5 @@ describe.each(["onLoad", "onResolve"] as const)("Bun.build plugin %s builtin thr
     const parsed = JSON.parse(stdout.trim());
     expect(parsed.success).toBe(false);
     expect(parsed.logs.join("\n")).toContain(`synchronous throw from ${hook} builtin`);
-  }, 60_000);
+  });
 });

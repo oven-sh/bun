@@ -111,7 +111,10 @@ public:
     void terminate();
     void setKeepAlive(bool);
     void dispatchEvent(Event&);
-    void postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&&);
+    // Returns true if the task was accepted (queued to Pending or posted to
+    // Running). Returns false if the worker is Closing/Closed or its context
+    // is already gone — the caller must handle cleanup itself.
+    bool postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&&);
 
     // -- State queries (safe from any thread; all loads are atomic) ----------
     bool wasTerminated() const { return m_state.load() >= State::Closing; }

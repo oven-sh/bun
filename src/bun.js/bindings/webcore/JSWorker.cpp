@@ -681,9 +681,22 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
         return JSValue::encode(promise);
     }
 
-    Strong<JSPromise> strong(vm, promise);
+    // Keep the promise alive across the round-trip. Heap-allocate the Strong
+    // and pass only the raw pointer through the cross-thread lambdas so the
+    // worker thread never touches the parent VM's HandleSet (Strong<T> has no
+    // move ctor; capturing it by value would copy-construct/destroy it on the
+    // worker thread, racing the parent VM's "Strong Handles" GC constraint).
+    //
+    // Leak windows (accepted trade-off vs the crash above):
+    //   - task queued but worker terminated before it runs: the lambda is
+    //     destroyed on the worker thread; the raw pointer is dropped and
+    //     promiseHandle leaks in the (still-live) parent VM. Freeing it
+    //     there would be exactly the cross-thread HandleSet mutation we're
+    //     avoiding. Pre-fix the promise already hung in this case.
+    //   - postTaskTo(parentId, …) on the return trip fails: see below.
+    auto* promiseHandle = new Strong<JSPromise>(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
-    worker.postTaskToWorkerGlobalScope([strong, parentId](ScriptExecutionContext& workerCtx) {
+    bool accepted = worker.postTaskToWorkerGlobalScope([promiseHandle, parentId](ScriptExecutionContext& workerCtx) {
         auto& vm = workerCtx.vm();
         vm.ensureHeapProfiler();
         auto& heapProfiler = *vm.heapProfiler();
@@ -691,11 +704,25 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
         JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
         String snapshot = builder.json();
 
+        // Post the result back. If the parent context is gone this returns
+        // false and promiseHandle leaks; we cannot safely destroy a
+        // parent-VM Strong from the worker thread, and the parent VM is
+        // tearing down anyway.
         ScriptExecutionContext::postTaskTo(parentId,
-            [strong, snapshot = snapshot.isolatedCopy()](ScriptExecutionContext& parentCtx) {
-                strong.get()->resolve(parentCtx.globalObject(), parentCtx.vm(), jsString(parentCtx.vm(), snapshot));
+            [promiseHandle, snapshot = snapshot.isolatedCopy()](ScriptExecutionContext& parentCtx) {
+                std::unique_ptr<Strong<JSPromise>> handle(promiseHandle);
+                handle->get()->resolve(parentCtx.globalObject(), parentCtx.vm(), jsString(parentCtx.vm(), snapshot));
             });
     });
+    if (!accepted) {
+        // Worker raced to Closing/Closed between isOnline() and the post.
+        // Still on the parent thread — safe to destroy the handle here.
+        delete promiseHandle;
+        promise->reject(vm, globalObject,
+            Bun::createError(globalObject,
+                Bun::ErrorCode::ERR_WORKER_NOT_RUNNING,
+                "Worker instance not running"_s));
+    }
     return JSValue::encode(promise);
 }
 

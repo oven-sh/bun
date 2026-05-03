@@ -987,8 +987,28 @@ pub fn normalizePathWindows(
     if (comptime T != u8 and T != u16) {
         @compileError("normalizePathWindows only supports u8 and u16 character types");
     }
+
+    const name_too_long: Maybe([:0]const u16) = .{
+        .err = .{
+            .errno = @intFromEnum(E.NAMETOOLONG),
+            .syscall = .open,
+        },
+    };
+    // normalizeStringGenericTZ writes into `buf` with .add_nt_prefix = true and
+    // .zero_terminate = true but performs no bounds checking of its own. The NT
+    // prefix adds up to 6 u16 ("\\" -> "\??\UNC\") plus a NUL. Reserve enough
+    // headroom wherever we feed it a path that could approach `buf.len`.
+    const nt_prefix_headroom = 8;
+
     const wbuf = if (T != u16) bun.w_path_buffer_pool.get();
     defer if (T != u16) bun.w_path_buffer_pool.put(wbuf);
+    // convertUTF8toUTF16InBuffer forwards only `output.ptr` to simdutf, which
+    // performs no output bounds checking. UTF-16 output length is always <=
+    // UTF-8 input byte length, so bounding `path_.len` by `wbuf.len` is
+    // sufficient to keep the conversion in-bounds.
+    if (T != u16 and path_.len > wbuf.len) {
+        return name_too_long;
+    }
     var path = if (T == u16) path_ else bun.strings.convertUTF8toUTF16InBuffer(wbuf, path_);
 
     if (std.fs.path.isAbsoluteWindowsWTF16(path)) {
@@ -1006,6 +1026,9 @@ pub fn normalizePathWindows(
                 // Preserve the device path, instead of resolving '.' as a relative
                 // path. This prevents simplifying the path '\\.\pipe' into '\pipe'
                 if (path[2] == '.') {
+                    if (path.len >= buf.len) {
+                        return name_too_long;
+                    }
                     buf[0..4].* = .{ '\\', '\\', '.', '\\' };
                     const rest = path[4..];
                     @memcpy(buf[4..][0..rest.len], rest);
@@ -1020,18 +1043,16 @@ pub fn normalizePathWindows(
             }
         }
 
+        if (path.len > buf.len -| nt_prefix_headroom) {
+            return name_too_long;
+        }
         const norm = bun.path.normalizeStringGenericTZ(u16, path, buf, .{ .add_nt_prefix = opts.add_nt_prefix, .zero_terminate = true });
         return .{ .result = norm };
     }
 
     if (bun.strings.indexOfAnyT(T, path_, &.{ '\\', '/', '.' }) == null) {
         if (path.len >= buf.len) {
-            return .{
-                .err = .{
-                    .errno = @intFromEnum(E.NAMETOOLONG),
-                    .syscall = .open,
-                },
-            };
+            return name_too_long;
         }
 
         // Skip the system call to get the final path name if it doesn't have any of the above characters.
@@ -1061,19 +1082,8 @@ pub fn normalizePathWindows(
     const buf1 = bun.w_path_buffer_pool.get();
     defer bun.w_path_buffer_pool.put(buf1);
     const joined_len = base_path.len + 1 + path.len;
-    // normalizeStringGenericTZ below writes into `buf` (same size as `buf1`)
-    // with .add_nt_prefix = true and .zero_terminate = true but performs no
-    // bounds checking. GetFinalPathNameByHandle strips the long-path prefix,
-    // so normalization re-adds up to 6 u16 ("\\" -> "\??\UNC\") plus a NUL.
-    // Reserve that headroom in addition to fitting the join in `buf1`.
-    const nt_prefix_headroom = 8;
     if (joined_len > buf1.len -| nt_prefix_headroom) {
-        return .{
-            .err = .{
-                .errno = @intFromEnum(E.NAMETOOLONG),
-                .syscall = .open,
-            },
-        };
+        return name_too_long;
     }
     @memcpy(buf1[0..base_path.len], base_path);
     buf1[base_path.len] = '\\';

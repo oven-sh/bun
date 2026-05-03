@@ -54,14 +54,13 @@ describe.if(isPosix)("path length validation with multi-byte characters", () => 
 });
 
 // On Windows, PATH_MAX_WIDE is 32767 u16 code units. normalizePathWindows
-// joins the dirfd's resolved path with the relative input path into a pooled
-// [32767]u16 buffer. A relative path that fits in a WPathBuffer on its own but
-// overflows once the cwd is prepended must return ENAMETOOLONG rather than
-// writing past the buffer.
-describe.if(isWindows)("path length validation when joining cwd + relative path on Windows", () => {
+// copies the input and/or the joined cwd + input into pooled [32767]u16
+// buffers at several points. Each copy site must return ENAMETOOLONG rather
+// than writing past the buffer when the input would not fit.
+describe.if(isWindows)("path length validation in normalizePathWindows", () => {
   // 32765 ASCII chars → 32765 u16 after UTF-8→UTF-16 conversion (fits in the
   // 32767-u16 conversion buffer). Even a minimal cwd like "C:\" (3 chars)
-  // brings the joined length to 3 + 1 + 32765 = 32769 > 32767.
+  // brings the joined length past 32767.
   const longRelative = "./" + Buffer.alloc(32763, "a").toString();
 
   it("rejects overly long relative paths in readdirSync", () => {
@@ -73,11 +72,33 @@ describe.if(isWindows)("path length validation when joining cwd + relative path 
   });
 
   // A relative path containing no '\\', '/', or '.' takes the early-return
-  // branch in normalizePathWindows that copies the path directly into `buf`
-  // and appends a NUL. When path.len == buf.len the NUL write lands one past
-  // the end of the buffer; this must be rejected with ENAMETOOLONG instead.
-  it("rejects a PATH_MAX_WIDE-length separator-free relative path in readdirSync", () => {
+  // branch that copies the path directly into `buf` and appends a NUL. When
+  // path.len == buf.len the NUL write would land one past the end.
+  it("rejects a PATH_MAX_WIDE-length separator-free relative path", () => {
     const noSep = Buffer.alloc(32767, "a").toString();
     expect(() => fs.readdirSync(noSep)).toThrow("ENAMETOOLONG");
+  });
+
+  // The UTF-8→UTF-16 conversion at the top of normalizePathWindows forwards
+  // only the output pointer to simdutf, which performs no bounds checking.
+  // Upstream path validation caps at MAX_PATH_BYTES (~98302 on Windows), not
+  // PATH_MAX_WIDE, so inputs in (32767, 98302] bytes reach the conversion.
+  it("rejects relative paths longer than the UTF-16 conversion buffer", () => {
+    const tooLong = Buffer.alloc(40000, "a").toString();
+    expect(() => fs.readdirSync(tooLong)).toThrow("ENAMETOOLONG");
+  });
+
+  // Absolute drive-letter paths are normalized into `buf` with an NT object
+  // prefix (\??\ or \??\UNC\) and NUL terminator added by
+  // normalizeStringGenericTZ, which does not bounds-check.
+  it("rejects overly long absolute drive-letter paths", () => {
+    const absLong = "C:\\" + Buffer.alloc(32762, "a").toString();
+    expect(() => fs.readdirSync(absLong)).toThrow("ENAMETOOLONG");
+  });
+
+  // Device paths (\\.\...) are copied verbatim into `buf` with a trailing NUL.
+  it("rejects overly long device paths", () => {
+    const devLong = "\\\\.\\" + Buffer.alloc(32763, "a").toString();
+    expect(() => fs.readdirSync(devLong)).toThrow("ENAMETOOLONG");
   });
 });

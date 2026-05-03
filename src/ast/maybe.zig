@@ -410,6 +410,34 @@ pub fn AstMaybe(
                         }, .loc = loc };
                     }
 
+                    // Lower import.meta.env to process.env when bundling for bun/node targets.
+                    // Skip for assignment/delete targets to avoid destructive semantics on
+                    // `delete import.meta.env` or `import.meta.env = x` becoming operations
+                    // on the real `process.env`. Also skip if `process` is shadowed by a
+                    // local binding in the current scope chain — leaving `import.meta.env`
+                    // as-is lets Bun's runtime resolve it correctly.
+                    if (p.options.lower_import_meta_env_to_process_env and
+                        strings.eqlComptime(name, "env") and
+                        identifier_opts.assign_target == .none and
+                        !identifier_opts.is_delete_target)
+                    {
+                        const process_ref = (p.findSymbol(target.loc, "process") catch unreachable).ref;
+                        if (p.symbols.items[process_ref.innerIndex()].kind == .unbound) {
+                            return p.newExpr(
+                                E.Dot{
+                                    .target = p.newExpr(E.Identifier{ .ref = process_ref }, target.loc),
+                                    .name = "env",
+                                    .name_loc = name_loc,
+                                    .can_be_removed_if_unused = true,
+                                },
+                                loc,
+                            );
+                        }
+                        // findSymbol recorded a usage on the local `process` binding; undo it
+                        // since we're not actually emitting a reference to it.
+                        p.ignoreUsage(process_ref);
+                    }
+
                     // Inline import.meta properties for Bake
                     if (p.options.framework != null or (p.options.bundle and p.options.output_format == .cjs)) {
                         if (strings.eqlComptime(name, "dir") or strings.eqlComptime(name, "dirname")) {

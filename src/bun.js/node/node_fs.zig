@@ -5007,7 +5007,7 @@ pub const NodeFS = struct {
                     for (entries.items) |*result| {
                         switch (ExpectedType) {
                             bun.jsc.Node.Dirent => {
-                                result.name.deref();
+                                result.deref();
                             },
                             Buffer => {
                                 result.destroy();

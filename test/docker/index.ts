@@ -12,6 +12,7 @@ export type ServiceName =
   | "postgres_auth"
   | "mysql_plain"
   | "mysql_native_password"
+  | "mysql_caching_sha2"
   | "mysql_tls"
   | "redis_plain"
   | "redis_unified"
@@ -226,6 +227,7 @@ class DockerComposeHelper {
 
       case "mysql_plain":
       case "mysql_native_password":
+      case "mysql_caching_sha2":
       case "mysql_tls":
         info.ports[3306] = await this.port(service, 3306);
 
@@ -300,6 +302,7 @@ class DockerComposeHelper {
 
       case "mysql_plain":
       case "mysql_native_password":
+      case "mysql_caching_sha2":
       case "mysql_tls":
         env.MYSQL_HOST = info.host;
         env.MYSQL_PORT = info.ports[3306].toString();

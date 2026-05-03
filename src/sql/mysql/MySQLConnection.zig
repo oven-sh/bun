@@ -413,10 +413,12 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
 
     this.#auth_data.clearAndFree();
 
-    // Store auth data
-    try this.#auth_data.ensureTotalCapacity(handshake.auth_plugin_data_part_1.len + handshake.auth_plugin_data_part_2.len);
+    // Store auth data — strip trailing null from part_2 (not part of the nonce, see #26195)
+    const part2 = handshake.auth_plugin_data_part_2;
+    const part2_len = if (part2.len > 0 and part2[part2.len - 1] == 0) part2.len - 1 else part2.len;
+    try this.#auth_data.ensureTotalCapacity(handshake.auth_plugin_data_part_1.len + part2_len);
     try this.#auth_data.appendSlice(handshake.auth_plugin_data_part_1[0..]);
-    try this.#auth_data.appendSlice(handshake.auth_plugin_data_part_2[0..]);
+    try this.#auth_data.appendSlice(part2[0..part2_len]);
 
     // Get auth plugin
     if (handshake.auth_plugin_name.slice().len > 0) {

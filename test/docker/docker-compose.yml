@@ -120,6 +120,25 @@ services:
       start_period: 60s
       start_interval: 1s
 
+  mysql_caching_sha2:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: bun
+      MYSQL_DATABASE: bun_sql_test
+      MYSQL_ROOT_HOST: "%"
+    ports:
+      - target: 3306
+        published: 0
+        protocol: tcp
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pbun"]
+      interval: 1h # Effectively disable after startup
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
   mysql_tls:
     build:
       context: ../js/sql/mysql-tls

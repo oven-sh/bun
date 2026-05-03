@@ -357,22 +357,20 @@ describe("Bun.build", () => {
   //   throw new Error("test was not fully written");
   // });
 
-  test.concurrent(
-    "loader map with an empty-string key is ignored without leaving uninitialized slots",
-    async () => {
-      // `JSPropertyIterator` skips empty-name properties, but `loader_names` was being
-      // indexed by the property position instead of a dense counter, leaving garbage in
-      // the skipped slot that was later read/freed. Run in a subprocess so a crash in the
-      // bundler thread surfaces as a test failure instead of taking down the test runner.
-      const dir = tempDirWithFiles("bun-build-loader-empty-key", {
-        "entry.ts": `export const x: number = 42;\n`,
-      });
+  test.concurrent("loader map with an empty-string key is ignored without leaving uninitialized slots", async () => {
+    // `JSPropertyIterator` skips empty-name properties, but `loader_names` was being
+    // indexed by the property position instead of a dense counter, leaving garbage in
+    // the skipped slot that was later read/freed. Run in a subprocess so a crash in the
+    // bundler thread surfaces as a test failure instead of taking down the test runner.
+    const dir = tempDirWithFiles("bun-build-loader-empty-key", {
+      "entry.ts": `export const x: number = 42;\n`,
+    });
 
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
           const result = await Bun.build({
             entrypoints: [${JSON.stringify(join(dir, "entry.ts"))}],
             loader: { "": "js", ".ts": "ts", ".js": "js" },
@@ -380,19 +378,17 @@ describe("Bun.build", () => {
           if (!result.success) throw new AggregateError(result.logs, "build failed");
           console.log(JSON.stringify({ success: result.success, outputs: result.outputs.length }));
         `,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout.trim())).toEqual({ success: true, outputs: 1 });
-      expect(exitCode).toBe(0);
-    },
-    30_000,
-  );
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ success: true, outputs: 1 });
+    expect(exitCode).toBe(0);
+  });
 
   test.concurrent("rebuilding busts the directory entries cache", async () => {
     Bun.gc(true);

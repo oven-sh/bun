@@ -76,6 +76,13 @@ pub const Config = struct {
 
                 var values = map_entries[define_iter.len..];
 
+                // `define_iter.i` is the property position, not a dense index of yielded
+                // entries. With `skip_empty_name = true` (or a skipped property getter),
+                // writing at `define_iter.i` would leave earlier slots uninitialized.
+                // Track a dense counter instead. `allocator` is an arena, so slicing to
+                // `[0..written]` is sufficient here (no realloc needed).
+                var written: usize = 0;
+
                 while (try define_iter.next()) |prop| {
                     const property_value = define_iter.value;
                     const value_type = property_value.jsType();
@@ -84,18 +91,19 @@ pub const Config = struct {
                         return globalThis.throwInvalidArguments("define \"{f}\" must be a JSON string", .{prop});
                     }
 
-                    names[define_iter.i] = prop.toOwnedSlice(allocator) catch unreachable;
+                    names[written] = prop.toOwnedSlice(allocator) catch unreachable;
                     var val = jsc.ZigString.init("");
                     try property_value.toZigString(&val, globalThis);
                     if (val.len == 0) {
                         val = jsc.ZigString.init("\"\"");
                     }
-                    values[define_iter.i] = std.fmt.allocPrint(allocator, "{f}", .{val}) catch unreachable;
+                    values[written] = std.fmt.allocPrint(allocator, "{f}", .{val}) catch unreachable;
+                    written += 1;
                 }
 
                 this.transform.define = api.StringMap{
-                    .keys = names,
-                    .values = values,
+                    .keys = names[0..written],
+                    .values = values[0..written],
                 };
             }
         }

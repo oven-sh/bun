@@ -971,9 +971,16 @@ pub const JSBundler = struct {
                     written += 1;
                 }
 
+                // Shrink to the dense length so `Config.deinit` frees exactly what was
+                // allocated. Slicing alone would leak both backing arrays when
+                // `written == 0` (Zig's `Allocator.free` early-returns on zero-length
+                // slices) and otherwise passes a mismatched length to the allocator.
+                loader_names = try allocator.realloc(loader_names, written);
+                loader_values = try allocator.realloc(loader_values, written);
+
                 this.loaders = api.LoaderMap{
-                    .extensions = loader_names[0..written],
-                    .loaders = loader_values[0..written],
+                    .extensions = loader_names,
+                    .loaders = loader_values,
                 };
             }
 

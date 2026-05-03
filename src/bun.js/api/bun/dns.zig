@@ -1320,6 +1320,14 @@ pub const internal = struct {
             while (i < len) {
                 var entry = this.cache[i];
                 if (entry.key.hash == key.hash and entry.valid) {
+                    // refcount == 0 with result unset can only happen if the
+                    // caller side over-released (see freeaddrinfo below).
+                    // Skip so a new Request is created rather than adopting
+                    // the orphaned work-pool ref and underflowing later.
+                    if (entry.refcount == 0 and entry.result == null) {
+                        i += 1;
+                        continue;
+                    }
                     if (entry.isExpired(timestamp_to_store)) {
                         log("get: expired entry", .{});
                         if (entry.refcount == 0) {
@@ -1380,7 +1388,12 @@ pub const internal = struct {
             if (this.len >= this.cache.len) {
                 // check if there is an element to evict
                 for (this.cache[0..this.len]) |*e| {
-                    if (e.*.refcount == 0) {
+                    // result == null means workPoolCallback has not run yet (the
+                    // work-pool ref is encoded in the initial refcount and only
+                    // released by afterResult, which also sets result under this
+                    // lock). Even if refcount has been over-decremented to 0 by a
+                    // caller bug we must not free memory the worker will touch.
+                    if (e.*.refcount == 0 and e.*.result != null) {
                         e.*.deinit();
                         e.* = entry;
                         return true;
@@ -1563,7 +1576,15 @@ pub const internal = struct {
         var notify = req.notify;
         defer notify.deinit(bun.default_allocator);
         req.notify = .{};
-        req.refcount -= 1;
+        // Saturating: if the caller side over-released and refcount already
+        // reached 0 while result was unset (the scenario freeaddrinfo guards
+        // against below), a plain subtraction here would panic in safe builds
+        // and wrap to UINT32_MAX in ReleaseFast, leaving an unevictable zombie.
+        // Saturating leaves it at 0 so the now-completed entry becomes
+        // evictable by tryPush/freeaddrinfo. debugAssert (not assert) so this
+        // is a pure debug canary and never fires in canary/release builds.
+        bun.debugAssert(req.refcount > 0);
+        req.refcount -|= 1;
 
         // is this correct, or should it go after the loop?
         global_cache.lock.unlock();
@@ -1902,7 +1923,13 @@ pub const internal = struct {
 
         bun.assert(req.refcount > 0);
         req.refcount -= 1;
-        if (req.refcount == 0 and (global_cache.isNearlyFull() or !req.valid)) {
+        // result == null means workPoolCallback is still queued on the thread
+        // pool. afterResult sets result (and releases the work-pool ref) under
+        // this same lock, so result != null is the authoritative signal that
+        // the worker has finished dereferencing req. Reaching refcount == 0
+        // with result unset would require an over-decrement on the caller
+        // side; guard against it so we never hand the worker freed memory.
+        if (req.refcount == 0 and req.result != null and (global_cache.isNearlyFull() or !req.valid)) {
             log("cache --", .{});
             global_cache.remove(req);
             req.deinit();

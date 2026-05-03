@@ -614,8 +614,8 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const jsc = bun.jsc;
 const js_printer = bun.js_printer;
+const jsc = bun.jsc;
 const logger = bun.logger;
 const strings = bun.strings;
 

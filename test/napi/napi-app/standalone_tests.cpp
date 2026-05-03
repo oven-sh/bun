@@ -2166,6 +2166,73 @@ static napi_value test_issue_22259(const Napi::CallbackInfo &info) {
     return nullptr;
   }
 
+  // Verify the VM exception is pending (CodeRabbit review comment)
+  bool is_pending = false;
+  status = napi_is_exception_pending(env, &is_pending);
+  if (status != napi_ok || !is_pending) {
+    printf("napi_is_exception_pending: expected true, got false (status %d)\n", status);
+    return nullptr;
+  }
+  puts("Verified: VM exception is pending");
+
+  // Now with a VM-level exception pending, napi_create_error must still succeed.
+  // Before the fix, RETURN_IF_EXCEPTION would return napi_pending_exception here.
+  napi_value error_val;
+  status = napi_create_error(env, error_code, error_msg, &error_val);
+  if (status != napi_ok) {
+    printf("napi_create_error failed with VM-level exception pending: %d\n", status);
+    return nullptr;
+  }
+
+  napi_value type_error_val;
+  status = napi_create_type_error(env, error_code, error_msg, &type_error_val);
+  if (status != napi_ok) {
+    printf("napi_create_type_error failed with VM-level exception pending: %d\n", status);
+    return nullptr;
+  }
+
+  napi_value range_error_val;
+  status = napi_create_range_error(env, error_code, error_msg, &range_error_val);
+  if (status != napi_ok) {
+    printf("napi_create_range_error failed with VM-level exception pending: %d\n", status);
+    return nullptr;
+  }
+
+  napi_value syntax_error_val;
+  status = node_api_create_syntax_error(env, error_code, error_msg, &syntax_error_val);
+  if (status != napi_ok) {
+    printf("node_api_create_syntax_error failed with VM-level exception pending: %d\n", status);
+    return nullptr;
+  }
+
+  puts("napi_create_error functions succeeded with VM-level exception pending");
+  return ok(env);
+}
+
+  napi_value error_code;
+  status = napi_create_string_utf8(env, "ERR_TEST", NAPI_AUTO_LENGTH, &error_code);
+  if (status != napi_ok) {
+    printf("napi_create_string_utf8 (error_code) failed: %d\n", status);
+    return nullptr;
+  }
+
+  // Create a VM-level exception by running a script that throws.
+  // This sets vm.m_exception, which RETURN_IF_EXCEPTION checks.
+  napi_value throw_script;
+  status = napi_create_string_utf8(env, "throw new Error('vm-level')", NAPI_AUTO_LENGTH, &throw_script);
+  if (status != napi_ok) {
+    printf("napi_create_string_utf8 (throw_script) failed: %d\n", status);
+    return nullptr;
+  }
+
+  napi_value throw_result;
+  status = napi_run_script(env, throw_script, &throw_result);
+  // napi_run_script should return napi_pending_exception since the script threw
+  if (status != napi_pending_exception) {
+    printf("napi_run_script unexpected status: %d (expected %d)\n", status, napi_pending_exception);
+    return nullptr;
+  }
+
   // Verify the VM exception is pending and is the "vm-level" error.
   // After running throw_script and BEFORE clearing the exception, explicitly verify:
   // 1) napi_is_exception_pending returns true

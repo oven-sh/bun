@@ -294,6 +294,21 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                         extract_destination.deleteFileZ(".bun-tag") catch {};
                     };
                 }
+
+                // If a subdirectory path is specified, promote it to the root
+                const gh_subdir_path = this.resolution.value.github.path.slice(this.package_manager.lockfile.buffers.string_bytes.items);
+                if (gh_subdir_path.len > 0) {
+                    promoteSubdirectory(extract_destination, gh_subdir_path) catch |err| {
+                        log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            bun.default_allocator,
+                            "path '{s}' not found in repository '{s}'",
+                            .{ gh_subdir_path, name },
+                        ) catch unreachable;
+                        return err;
+                    };
+                }
             },
             else => switch (PackageManager.verbose_install) {
                 inline else => |verbose_log| _ = try Archiver.extractToDir(
@@ -337,7 +352,7 @@ pub fn moveToCacheDirectory(
     const tmpdir = this.temp_dir;
     const folder_name = switch (this.resolution.tag) {
         .npm => this.package_manager.cachedNPMPackageFolderNamePrint(&folder_name_buf, name, this.resolution.value.npm.version, null),
-        .github => PackageManager.cachedGitHubFolderNamePrint(&folder_name_buf, resolved, null),
+        .github => PackageManager.cachedGitHubFolderNamePrint(&folder_name_buf, resolved, null, this.resolution.value.github.path.slice(this.package_manager.lockfile.buffers.string_bytes.items)),
         .local_tarball, .remote_tarball => PackageManager.cachedTarballFolderNamePrint(&folder_name_buf, this.url.slice(), null),
         else => unreachable,
     };
@@ -586,6 +601,57 @@ pub fn moveToCacheDirectory(
             .buf = json_buf,
         },
     };
+}
+
+/// After extraction, move the contents of a subdirectory to the root of the extract dir.
+/// This ensures only the sub-package contents end up in the cache/node_modules.
+fn promoteSubdirectory(extract_dir: std.fs.Dir, subdir_path: string) !void {
+    // Null-terminate the subdir path
+    var subdir_z_buf: bun.PathBuffer = undefined;
+    const subdir_z = bun.path.joinZBuf(&subdir_z_buf, &[_]string{subdir_path}, .auto);
+
+    // Verify subdirectory exists
+    var sub_dir = bun.openDir(extract_dir, subdir_z) catch {
+        return error.InstallFailed;
+    };
+    sub_dir.close();
+
+    // Create a temp name for swapping
+    var tmp_name_buf: bun.PathBuffer = undefined;
+    const tmp_name = try FileSystem.tmpname("__subdir__", std.mem.asBytes(&tmp_name_buf), bun.fastRandom());
+
+    // Rename subdir to temp location within the same parent
+    const extract_dir_fd = bun.FD.fromStdDir(extract_dir);
+    if (bun.sys.renameat(extract_dir_fd, subdir_z, extract_dir_fd, tmp_name).asErr()) |_| {
+        return error.InstallFailed;
+    }
+
+    // Delete everything else in extract_dir (except the temp dir)
+    var iter = extract_dir.iterate();
+    while (iter.next() catch null) |entry| {
+        if (std.mem.eql(u8, entry.name, bun.span(tmp_name))) continue;
+        if (entry.kind == .directory) {
+            extract_dir.deleteTree(entry.name) catch {};
+        } else {
+            extract_dir.deleteFile(entry.name) catch {};
+        }
+    }
+
+    // Move temp contents back into extract_dir root
+    var tmp_dir = bun.openDir(extract_dir, tmp_name) catch {
+        return error.InstallFailed;
+    };
+    defer tmp_dir.close();
+
+    var tmp_iter = tmp_dir.iterate();
+    while (tmp_iter.next() catch null) |entry| {
+        var entry_name_buf: bun.PathBuffer = undefined;
+        const entry_name_z = std.fmt.bufPrintZ(&entry_name_buf, "{s}", .{entry.name}) catch continue;
+        _ = bun.sys.renameat(bun.FD.fromStdDir(tmp_dir), entry_name_z, extract_dir_fd, entry_name_z);
+    }
+
+    // Clean up the now-empty temp dir
+    extract_dir.deleteTree(bun.span(tmp_name)) catch {};
 }
 
 const string = []const u8;

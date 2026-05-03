@@ -112,6 +112,7 @@ pub fn detectAndLoadOtherLockfile(
                 error.PnpmLockfileInvalidPatchedDependency,
                 error.PnpmLockfileMissingCatalogEntry,
                 error.PnpmLockfileUnresolvableDependency,
+                error.InvalidPath,
                 => {
                     // These errors are continuable - log the error but don't exit
                     // The install will continue with a fresh install instead of migration

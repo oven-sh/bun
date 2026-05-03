@@ -179,12 +179,17 @@ pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader, options: ?*const Options) Ca
     return CacheDir{ .is_node_modules = true, .path = Fs.FileSystem.instance.abs(&fallback_parts) };
 }
 
-pub fn cachedGitFolderNamePrint(buf: []u8, resolved: string, patch_hash: ?u64) stringZ {
-    return std.fmt.bufPrintZ(buf, "@G@{s}{f}", .{ resolved, PatchHashFmt{ .hash = patch_hash } }) catch unreachable;
+pub fn cachedGitFolderNamePrint(buf: []u8, resolved: string, patch_hash: ?u64, subdir_path: string) stringZ {
+    return std.fmt.bufPrintZ(buf, "@G@{s}{f}{f}", .{
+        resolved,
+        PatchHashFmt{ .hash = patch_hash },
+        SubdirHashFmt{ .path = if (subdir_path.len > 0) subdir_path else null },
+    }) catch unreachable;
 }
 
 pub fn cachedGitFolderName(this: *const PackageManager, repository: *const Repository, patch_hash: ?u64) stringZ {
-    return cachedGitFolderNamePrint(&PackageManager.cached_package_folder_name_buf, this.lockfile.str(&repository.resolved), patch_hash);
+    const string_buf = this.lockfile.buffers.string_bytes.items;
+    return cachedGitFolderNamePrint(&PackageManager.cached_package_folder_name_buf, this.lockfile.str(&repository.resolved), patch_hash, repository.path.slice(string_buf));
 }
 
 pub fn cachedGitFolderNamePrintAuto(this: *const PackageManager, repository: *const Repository, patch_hash: ?u64) stringZ {
@@ -194,13 +199,15 @@ pub fn cachedGitFolderNamePrintAuto(this: *const PackageManager, repository: *co
 
     if (!repository.repo.isEmpty() and !repository.committish.isEmpty()) {
         const string_buf = this.lockfile.buffers.string_bytes.items;
+        const subdir_path = repository.path.slice(string_buf);
         return std.fmt.bufPrintZ(
             &PackageManager.cached_package_folder_name_buf,
-            "@G@{f}{f}{f}",
+            "@G@{f}{f}{f}{f}",
             .{
                 repository.committish.fmt(string_buf),
                 CacheVersion.Formatter{ .version_number = CacheVersion.current },
                 PatchHashFmt{ .hash = patch_hash },
+                SubdirHashFmt{ .path = if (subdir_path.len > 0) subdir_path else null },
             },
         ) catch unreachable;
     }
@@ -208,16 +215,18 @@ pub fn cachedGitFolderNamePrintAuto(this: *const PackageManager, repository: *co
     return "";
 }
 
-pub fn cachedGitHubFolderNamePrint(buf: []u8, resolved: string, patch_hash: ?u64) stringZ {
-    return std.fmt.bufPrintZ(buf, "@GH@{s}{f}{f}", .{
+pub fn cachedGitHubFolderNamePrint(buf: []u8, resolved: string, patch_hash: ?u64, subdir_path: string) stringZ {
+    return std.fmt.bufPrintZ(buf, "@GH@{s}{f}{f}{f}", .{
         resolved,
         CacheVersion.Formatter{ .version_number = CacheVersion.current },
         PatchHashFmt{ .hash = patch_hash },
+        SubdirHashFmt{ .path = if (subdir_path.len > 0) subdir_path else null },
     }) catch unreachable;
 }
 
 pub fn cachedGitHubFolderName(this: *const PackageManager, repository: *const Repository, patch_hash: ?u64) stringZ {
-    return cachedGitHubFolderNamePrint(&PackageManager.cached_package_folder_name_buf, this.lockfile.str(&repository.resolved), patch_hash);
+    const string_buf = this.lockfile.buffers.string_bytes.items;
+    return cachedGitHubFolderNamePrint(&PackageManager.cached_package_folder_name_buf, this.lockfile.str(&repository.resolved), patch_hash, repository.path.slice(string_buf));
 }
 
 pub fn cachedGitHubFolderNamePrintAuto(this: *const PackageManager, repository: *const Repository, patch_hash: ?u64) stringZ {
@@ -231,6 +240,16 @@ pub fn cachedGitHubFolderNamePrintAuto(this: *const PackageManager, repository: 
 
     return "";
 }
+
+const SubdirHashFmt = struct {
+    path: ?string = null,
+
+    pub fn format(this: *const SubdirHashFmt, writer: *std.Io.Writer) !void {
+        if (this.path) |p| {
+            try writer.print("+p{f}", .{bun.fmt.hexIntLower(String.Builder.stringHash(p))});
+        }
+    }
+};
 
 // TODO: normalize to alphanumeric
 pub fn cachedNPMPackageFolderNamePrint(this: *const PackageManager, buf: []u8, name: string, version: Semver.Version, patch_hash: ?u64) stringZ {
@@ -269,15 +288,17 @@ pub fn cachedNPMPackageFolderNamePrint(this: *const PackageManager, buf: []u8, n
 }
 
 fn cachedGitHubFolderNamePrintGuess(buf: []u8, string_buf: []const u8, repository: *const Repository, patch_hash: ?u64) stringZ {
+    const subdir_path = repository.path.slice(string_buf);
     return std.fmt.bufPrintZ(
         buf,
-        "@GH@{f}-{f}-{f}{f}{f}",
+        "@GH@{f}-{f}-{f}{f}{f}{f}",
         .{
             repository.owner.fmt(string_buf),
             repository.repo.fmt(string_buf),
             repository.committish.fmt(string_buf),
             CacheVersion.Formatter{ .version_number = CacheVersion.current },
             PatchHashFmt{ .hash = patch_hash },
+            SubdirHashFmt{ .path = if (subdir_path.len > 0) subdir_path else null },
         },
     ) catch unreachable;
 }

@@ -920,7 +920,8 @@ pub fn runTasks(
                         task.id,
                     );
 
-                    const checkout_id = Task.Id.forGitCheckout(repo, resolved);
+                    const path = git.path.slice(manager.lockfile.buffers.string_bytes.items);
+                    const checkout_id = Task.Id.forGitCheckout(repo, resolved, path);
 
                     if (manager.hasCreatedNetworkTask(checkout_id, dep.behavior.isRequired())) continue;
 

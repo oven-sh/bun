@@ -1033,6 +1033,7 @@ const ParseError = OOM || error{
     InvalidDependencyVersion,
     InvalidPackageResolution,
     UnexpectedResolution,
+    InvalidPath,
 };
 
 const PkgPathSet = PkgMap(void);
@@ -1709,6 +1710,10 @@ pub fn parseIntoBinaryLockfile(
                 },
                 error.InvalidSemver => {
                     try log.addErrorFmt(source, res_info.loc, allocator, "Invalid package version: {s}", .{res_str});
+                    return err;
+                },
+                error.InvalidPath => {
+                    try log.addErrorFmt(source, res_info.loc, allocator, "Invalid git subdirectory path: {s}", .{res_str});
                     return err;
                 },
             };

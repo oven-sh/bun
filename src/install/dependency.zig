@@ -1027,13 +1027,38 @@ pub fn parseWithTag(
             }
             const hash_index = strings.lastIndexOfChar(input, '#');
 
+            if (hash_index) |index| {
+                const fragment = input[index + 1 ..];
+                const path_split = Repository.splitPathFromFragment(fragment) catch return null;
+                const committish = sliced.sub(path_split.committish).value();
+                const path_value = if (path_split.path) |p| blk: {
+                    const p_idx = strings.indexOf(dependency, p);
+                    break :blk if (p_idx) |idx|
+                        sliced.sub(dependency[idx .. idx + p.len]).value()
+                    else
+                        String.from("");
+                } else String.from("");
+
+                return .{
+                    .literal = sliced.value(),
+                    .value = .{
+                        .git = .{
+                            .owner = String.from(""),
+                            .repo = sliced.sub(input[0..index]).value(),
+                            .committish = committish,
+                            .path = path_value,
+                        },
+                    },
+                    .tag = .git,
+                };
+            }
+
             return .{
                 .literal = sliced.value(),
                 .value = .{
                     .git = .{
                         .owner = String.from(""),
-                        .repo = sliced.sub(if (hash_index) |index| input[0..index] else input).value(),
-                        .committish = if (hash_index) |index| sliced.sub(input[index + 1 ..]).value() else String.from(""),
+                        .repo = sliced.sub(input).value(),
                     },
                 },
                 .tag = .git,
@@ -1053,7 +1078,11 @@ pub fn parseWithTag(
             // to create String objects that point to the original buffer
             const owner_str = info.user orelse "";
             const repo_str = info.project;
-            const committish_str = info.committish orelse "";
+            const raw_committish_str = info.committish orelse "";
+
+            // Split &path: from committish if present
+            const path_split = Repository.splitPathFromFragment(raw_committish_str) catch return null;
+            const committish_str = path_split.committish;
 
             // Find owner in dependency string
             const owner_idx = strings.indexOf(dependency, owner_str);
@@ -1069,11 +1098,20 @@ pub fn parseWithTag(
             else
                 String.from("");
 
-            // Find committish in dependency string
+            // Find committish in dependency string (without &path: suffix)
             const committish = if (committish_str.len > 0) blk: {
                 const committish_idx = strings.indexOf(dependency, committish_str);
                 break :blk if (committish_idx) |idx|
                     sliced.sub(dependency[idx .. idx + committish_str.len]).value()
+                else
+                    String.from("");
+            } else String.from("");
+
+            // Extract path from &path: suffix
+            const path_value = if (path_split.path) |p| blk: {
+                const path_idx = strings.indexOf(dependency, p);
+                break :blk if (path_idx) |idx|
+                    sliced.sub(dependency[idx .. idx + p.len]).value()
                 else
                     String.from("");
             } else String.from("");
@@ -1085,6 +1123,7 @@ pub fn parseWithTag(
                         .owner = owner,
                         .repo = repo,
                         .committish = committish,
+                        .path = path_value,
                     },
                 },
                 .tag = .github,

@@ -59,11 +59,13 @@ pub const Id = enum(u64) {
         return @enumFromInt(@as(u64, 4 << 61) | @as(u64, @as(u61, @truncate(hasher.final()))));
     }
 
-    pub fn forGitCheckout(url: string, resolved: string) Id {
+    pub fn forGitCheckout(url: string, resolved: string, path: string) Id {
         var hasher = bun.Wyhash11.init(0);
         hasher.update(url);
         hasher.update("@");
         hasher.update(resolved);
+        hasher.update(":");
+        hasher.update(path);
         return @enumFromInt(@as(u64, 5 << 61) | @as(u64, @as(u61, @truncate(hasher.final()))));
     }
 };
@@ -236,6 +238,7 @@ pub fn callback(task: *ThreadPool.Task) void {
                 git_checkout.name.slice(),
                 git_checkout.url.slice(),
                 git_checkout.resolved.slice(),
+                git_checkout.path.slice(),
             ) catch |err| {
                 this.err = err;
                 this.status = Status.fail;
@@ -340,6 +343,7 @@ pub const Request = union {
         name: strings.StringOrTinyString,
         url: strings.StringOrTinyString,
         resolved: strings.StringOrTinyString,
+        path: strings.StringOrTinyString = .{},
         resolution: Resolution,
         env: DotEnv.Map,
     },

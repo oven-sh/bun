@@ -171,7 +171,7 @@ public:
                 writeMark();
 
                 /* WebSocket upgrades does not allow content-length */
-                if (allowContentLength) {
+                if (allowContentLength && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
                     /* Even zero is a valid content-length */
                     Super::write("Content-Length: ", 16);
                     writeUnsigned64(totalSize);

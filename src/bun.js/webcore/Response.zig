@@ -17,10 +17,17 @@ pub const fromJSDirect = js.fromJSDirect;
 /// We increment this count in fetch so if JS Response is discarted we can resolve the Body
 /// In the server we use a flag response_protected to protect/unprotect the response
 ref_count: u32 = 1,
+/// Bun.serve's RequestContext holds a weak reference so `onAbort` /
+/// `handleResolveStream` / `handleRejectStream` can safely observe that the
+/// Response was GC'd (null) instead of dereferencing a freed pointer when
+/// backpressure lets GC run between `render()` and the async callback.
+weak_ptr_data: WeakRef.Data = .empty,
 #js_ref: jsc.JSRef = .empty(),
 
 // We must report a consistent value for this
 #reported_estimated_size: usize = 0,
+
+pub const WeakRef = bun.ptr.WeakPtr(Response, "weak_ptr_data");
 
 pub const getText = ResponseMixin.getText;
 pub const getBody = ResponseMixin.getBody;
@@ -452,7 +459,12 @@ fn destroy(this: *Response) void {
     this.#url.deref();
     this.#js_ref.deinit();
 
-    bun.destroy(this);
+    // Contents are gone; the allocation itself stays until any outstanding
+    // WeakRef derefs (RequestContext.response_weakref). WeakRef.get() returns
+    // null from here on.
+    if (this.weak_ptr_data.onFinalize()) {
+        bun.destroy(this);
+    }
 }
 
 pub fn ref(this: *Response) *Response {

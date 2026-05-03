@@ -1,12 +1,24 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isMacOS, isWindows, tempDir } from "harness";
 import path from "node:path";
 
-// TinyCC / bun:ffi are not available on Windows ARM64, and there is no
-// system `cc` on Windows x64 in CI. The bug being covered — heap-allocating
-// a JSBigInt off the JS thread without the JS lock — is platform-independent,
-// so exercising it on POSIX is sufficient.
+// TinyCC (and all of bun:ffi) is disabled on Windows ARM64.
+const isFFIUnavailable = isWindows && isArm64;
+
+// There is no system `cc` on Windows x64 in CI. The bug being covered —
+// heap-allocating a JSBigInt off the JS thread without the JS lock — is
+// platform-independent, so exercising it on POSIX is sufficient.
 const canRun = !isWindows;
+
+// The guard for this combination used to read the wrong variable and never
+// fired, so the threadsafe codegen path (which cannot return a value from a
+// posted task) was reachable.
+test.skipIf(isFFIUnavailable)("threadsafe JSCallback with a non-void return type is rejected", () => {
+  const { JSCallback } = require("bun:ffi");
+  expect(() => new JSCallback(() => 42, { returns: "int32_t", threadsafe: true })).toThrow(
+    "Threadsafe functions must return void",
+  );
+});
 
 // A threadsafe JSCallback with int64_t / uint64_t arguments used to convert
 // those arguments to JSBigInt inside the TCC-generated trampoline, *before*

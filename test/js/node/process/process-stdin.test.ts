@@ -162,6 +162,129 @@ test("stdin should not allow process to exit when not paused", async () => {
 // stayed inside a microtask chain and never yielded to the event loop.
 // `Bun__onPosixSignal` kept enqueuing into the signal ring, but
 // `tickConcurrentWithCount` never ran to drain it.
+//
+// Parameterized across SIGTERM/SIGINT/SIGUSR1/SIGUSR2 — a break that only
+// affected one signal type would sneak through single-signal coverage.
+describe.skipIf(!isPosix)("signals with flowing stdin on /dev/zero", () => {
+  describe.each([
+    { signal: "SIGTERM", exit: 42 },
+    { signal: "SIGINT", exit: 43 },
+    { signal: "SIGUSR1", exit: 44 },
+    { signal: "SIGUSR2", exit: 45 },
+  ] as const)("$signal", ({ signal, exit }) => {
+    // Timeout is deliberately tight: on regression the child's event loop
+    // is wedged in the synchronous read loop and neither waitpid nor the
+    // signal handler resolves, so we want each case to fail fast instead
+    // of eating 5s and truncating the rest of the suite's output.
+    test(
+      "handler fires",
+      async () => {
+        // await using: on regression the child is a CPU-bound infinite
+        // /dev/zero reader. An early expect() throw has to still terminate
+        // the subprocess or we leak a busy-looping process into the rest
+        // of the run.
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            // Order matters: without the fix, `process.stdin.on("data")`
+            // synchronously enters the blocking read loop, so any writes
+            // that come AFTER it never flush. Emit READY and install the
+            // signal handler FIRST, then attach the listener that arms
+            // the bug. The readiness ping proves the child got far enough
+            // to have the handler registered before we send the signal.
+            `
+            const fs = require("fs");
+            process.on(${JSON.stringify(signal)}, () => {
+              fs.writeSync(2, ${JSON.stringify(signal)} + "\\n");
+              process.exit(${exit});
+            });
+            fs.writeSync(1, "READY\\n");
+            process.stdin.on("data", () => {});
+            `,
+          ],
+          stdin: Bun.file("/dev/zero"),
+          stdout: "pipe",
+          stderr: "pipe",
+          env: bunEnv,
+        });
+
+        // Wait for READY so the child has definitely installed the signal
+        // handler before we kill it. READY precedes the data listener that
+        // arms the regression — on regression the child still prints
+        // READY, proc.kill delivers via the default disposition, and the
+        // tail assertions surface that the JS handler never ran.
+        await waitForLine(proc, "READY");
+
+        proc.kill(signal);
+
+        // stderr first: on regression the child is killed by the default
+        // disposition, exitCode is null and stderr is empty — asserting
+        // stderr first surfaces `expected "" to contain "SIGTERM"`, which
+        // points at the real cause (handler never fired).
+        expect(await proc.stderr.text()).toContain(signal);
+        expect(await proc.exited).toBe(exit);
+      },
+      // 5s timeout: debug-build subprocess startup is ~1s on its own, and
+      // READY takes another ~0.5-1s. Tight timeouts made the suite flaky.
+      5000,
+    );
+  });
+
+  // Timer callbacks share the same starvation path — setInterval stalled
+  // whenever tick() never returned.
+  test(
+    "setInterval fires",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          // Same ordering as above: handler + timer first, then READY,
+          // then the data listener that arms the bug. The SIGTERM handler
+          // writes the accumulated tick count on exit; a non-zero count
+          // proves the timer fired while stdin was flowing.
+          `
+          const fs = require("fs");
+          let ticks = 0;
+          process.on("SIGTERM", () => {
+            fs.writeSync(1, "ticks=" + ticks + "\\n");
+            process.exit(46);
+          });
+          setInterval(() => { ticks++; }, 10);
+          fs.writeSync(1, "READY\\n");
+          process.stdin.on("data", () => {});
+          `,
+        ],
+        stdin: Bun.file("/dev/zero"),
+        stdout: "pipe",
+        stderr: "pipe",
+        env: bunEnv,
+      });
+
+      await waitForLine(proc, "READY");
+      // Give the timer room to tick several times under a flowing stdin.
+      // 1s is plenty even on debug builds where the yield-and-read cycle
+      // is slower than release.
+      await Bun.sleep(1000);
+      proc.kill("SIGTERM");
+
+      const stdout = await proc.stdout.text();
+      const match = stdout.match(/ticks=(\d+)/);
+      // Handler must have fired (regression: exit is null/signal-killed,
+      // stdout only contains READY, match is null).
+      expect(match).not.toBeNull();
+      // Timer must have ticked at least once while stdin was flowing
+      // (regression: event loop is wedged, ticks stays 0).
+      expect(Number(match![1])).toBeGreaterThan(0);
+      expect(await proc.exited).toBe(46);
+    },
+    5000,
+  );
+});
+
+// waitForLine reads from proc.stdout until `needle` appears. Releases the
+// lock in a finally so `await using` disposal can still drain the stream.
 async function waitForLine(proc: Bun.Subprocess, needle: string): Promise<string> {
   const reader = proc.stdout.getReader();
   let seen = "";
@@ -176,94 +299,3 @@ async function waitForLine(proc: Bun.Subprocess, needle: string): Promise<string
   }
   return seen;
 }
-
-// Parameterized across SIGTERM/SIGINT/SIGUSR1/SIGUSR2 — a break that only
-// affected one signal type would sneak through single-signal coverage.
-describe.skipIf(!isPosix)("signals with flowing stdin on /dev/zero", () => {
-  describe.each([
-    { signal: "SIGTERM", exit: 42 },
-    { signal: "SIGINT", exit: 43 },
-    { signal: "SIGUSR1", exit: 44 },
-    { signal: "SIGUSR2", exit: 45 },
-  ] as const)("$signal", ({ signal, exit }) => {
-    test("handler fires", async () => {
-      // await using: the child reads /dev/zero in a tight loop with no
-      // natural exit, so if an assertion throws before we reach proc.kill
-      // (or the regression returns and kill never lands) we need the
-      // subprocess disposer to terminate it instead of leaking a CPU-bound
-      // process into the rest of the suite.
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
-          const fs = require("fs");
-          process.on(${JSON.stringify(signal)}, () => {
-            fs.writeSync(2, ${JSON.stringify(signal)} + "\\n");
-            process.exit(${exit});
-          });
-          process.stdin.on("data", () => {});
-          fs.writeSync(1, "READY\\n");
-          `,
-        ],
-        stdin: Bun.file("/dev/zero"),
-        stdout: "pipe",
-        stderr: "pipe",
-        env: bunEnv,
-      });
-
-      // Wait for the child to finish registering the signal handler + data
-      // listener. Sending the signal before the handler is installed would
-      // hit the default disposition (terminate) and the handler would
-      // never run.
-      expect(await waitForLine(proc, "READY")).toContain("READY");
-
-      proc.kill(signal);
-      const exitCode = await proc.exited;
-      // stderr first: on regression the child is killed by the default
-      // disposition, exitCode is null and stderr is empty — asserting
-      // stderr first surfaces "" not containing SIGTERM, which points at
-      // the real cause (handler never fired) rather than a bare null/exit
-      // mismatch.
-      expect(await proc.stderr.text()).toContain(signal);
-      expect(exitCode).toBe(exit);
-    });
-  });
-
-  // Timer callbacks share the same starvation path — setInterval stalled
-  // whenever tick() never returned.
-  test("setInterval fires", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        const fs = require("fs");
-        let ticks = 0;
-        process.on("SIGTERM", () => {
-          fs.writeSync(1, "ticks=" + ticks + "\\n");
-          process.exit(46);
-        });
-        setInterval(() => {
-          ticks++;
-          if (ticks === 3) fs.writeSync(1, "TICKED\\n");
-        }, 10);
-        process.stdin.on("data", () => {});
-        fs.writeSync(1, "READY\\n");
-        `,
-      ],
-      stdin: Bun.file("/dev/zero"),
-      stdout: "pipe",
-      stderr: "pipe",
-      env: bunEnv,
-    });
-
-    // Wait for the timer to tick at least 3 times — proves setInterval is
-    // firing despite the flowing stdin read loop.
-    expect(await waitForLine(proc, "TICKED")).toContain("TICKED");
-
-    proc.kill("SIGTERM");
-    const exitCode = await proc.exited;
-    expect(exitCode).toBe(46);
-  });
-});

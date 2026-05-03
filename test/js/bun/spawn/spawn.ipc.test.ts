@@ -91,3 +91,34 @@ describe("ipc mode advanced", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// getIPCInstance error path: on Windows, windowsConfigureClient can open the
+// pipe, set socket=.open, then fail readStart — at which point closeSocket
+// queued an _onAfterIPCClosed task holding *SendQueue, and instance.deinit()
+// (previously TrivialDeinit) freed it without cancelling. IPCInstance.deinit
+// now runs SendQueue.deinit() so the tracked after_close_task is cancelled on
+// both platforms before the allocation is released.
+it("child with unusable NODE_CHANNEL_FD tears down IPC without crashing", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        process.on('error', e => console.log('err', e.code));
+        process.send('x');
+        setImmediate(() => setImmediate(() => console.log('ok')));
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      NODE_CHANNEL_FD: "921",
+      NODE_CHANNEL_SERIALIZATION_MODE: "json",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("Unable to start IPC");
+  expect(stdout).toBe("err ERR_IPC_CHANNEL_CLOSED\nok\n");
+  expect(exitCode).toBe(0);
+});

@@ -3882,7 +3882,6 @@ pub const IPCInstanceUnion = union(enum) {
 
 pub const IPCInstance = struct {
     pub const new = bun.TrivialNew(@This());
-    pub const deinit = bun.TrivialDeinit(@This());
 
     globalThis: *JSGlobalObject,
     /// Embedded per-VM group on `RareData.spawn_ipc_group`; this is just a
@@ -3896,6 +3895,18 @@ pub const IPCInstance = struct {
     pub fn ipc(this: *IPCInstance) ?*IPC.SendQueue {
         return &this.data;
     }
+
+    /// Only reached from the `getIPCInstance` error path. On Windows,
+    /// `windowsConfigureClient` sets `data.socket = .open` before calling
+    /// `uv_read_start`; if that fails it calls `closeSocket()` which queues
+    /// the tracked `_onAfterIPCClosed` task holding `*SendQueue` — so
+    /// `SendQueue.deinit()` must run here to cancel it before this
+    /// allocation (and the embedded `SendQueue`) is freed.
+    pub fn deinit(this: *IPCInstance) void {
+        this.data.deinit();
+        bun.destroy(this);
+    }
+
     pub fn getGlobalThis(this: *IPCInstance) ?*JSGlobalObject {
         return this.globalThis;
     }

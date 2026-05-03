@@ -232,9 +232,7 @@ describe.skipIf(!isPosix)("signals with flowing stdin on /dev/zero", () => {
       // subprocess.
       expect(await proc.stderr.text()).toContain(signal);
       expect(await proc.exited).toBe(exit);
-      // 5s timeout: debug-build subprocess startup alone is ~1s and
-      // READY adds another ~0.5-1s. Tight timeouts made the suite flaky.
-    }, 5000);
+    });
   });
 
   // Timer callbacks share the same starvation path — setInterval stalled
@@ -284,7 +282,7 @@ describe.skipIf(!isPosix)("signals with flowing stdin on /dev/zero", () => {
     const stdout = await proc.stdout.text();
     expect(stdout).toContain("SAW_SIGTERM");
     expect(await proc.exited).toBe(46);
-  }, 5000);
+  });
 });
 
 // waitForLine reads from proc.stdout until `needle` appears. Throws on EOF

@@ -576,6 +576,15 @@ extern "C" void WebWorker__fireEarlyMessages(Worker* worker, Zig::GlobalObject* 
     worker->fireEarlyMessages(globalObject);
 }
 
+// Returns true if a 'message' event listener has been registered on the
+// worker's global event scope. Used by the Zig startup sequence to decide
+// whether the module body has progressed past its listener-registration
+// point before firing buffered messages.
+extern "C" bool WebWorker__hasMessageListener(Zig::GlobalObject* globalObject)
+{
+    return globalObject->globalEventScope->hasActiveEventListeners(eventNames().messageEvent);
+}
+
 extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString message, JSC::EncodedJSValue errorValue)
 {
     JSValue error = JSC::JSValue::decode(errorValue);

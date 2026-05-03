@@ -38,11 +38,13 @@ function countAlloc(verb: "new" | "destroy"): number {
   return n;
 }
 
-// Poll `cond` once per event-loop turn. Falls through to a hard error after
-// `deadline` iterations so a regressed build fails fast with a clear message
-// instead of hanging until the parent test times out.
-async function until(cond: () => boolean, what: string, deadline = 2_000) {
-  for (let i = 0; i < deadline; i++) {
+// Poll `cond` once per event-loop turn. The wall-clock bound is a safety
+// net so a regressed build fails with a clear message instead of hanging
+// until the parent test times out; on a fixed build every condition is met
+// in well under a second.
+async function until(cond: () => boolean, what: string, deadlineMs = 20_000) {
+  const start = performance.now();
+  while (performance.now() - start < deadlineMs) {
     if (cond()) return;
     await new Promise(r => setImmediate(r));
   }

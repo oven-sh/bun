@@ -585,6 +585,13 @@ pub const JSValue = enum(i64) {
     pub fn createBuffer(globalObject: *JSGlobalObject, slice: []u8) JSValue {
         jsc.markBinding(@src());
         @setRuntimeSafety(false);
+        if (slice.len == 0) {
+            // A zero-length slice's ptr field is not guaranteed to be a valid
+            // mimalloc allocation (it may be the 0xAA... sentinel from an empty
+            // slice literal). Callers that over-allocated and decoded zero bytes
+            // must free their allocation before calling this.
+            return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, 0, null, null);
+        }
         return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, null, jsc.array_buffer.MarkedArrayBuffer_deallocator);
     }
 

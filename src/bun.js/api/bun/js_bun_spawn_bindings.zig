@@ -305,7 +305,9 @@ pub fn spawnMaybeSync(
                         i += 1;
 
                         while (try stdio_iter.next()) |value| : (i += 1) {
-                            var new_item: Stdio = undefined;
+                            // extract() leaves `out_stdio` untouched when `value` is undefined, so this
+                            // must be initialized to a sane default instead of `undefined`.
+                            var new_item: Stdio = .{ .ignore = {} };
                             try new_item.extract(globalThis, i, value, is_sync);
 
                             const opt = switch (new_item.asSpawnOption(i)) {

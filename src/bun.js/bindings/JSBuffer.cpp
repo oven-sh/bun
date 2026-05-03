@@ -364,6 +364,13 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
 
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), 0, length);
     } else {
+        // Ownership of ptr was transferred to us. Even though the resulting Buffer is empty,
+        // the caller may have handed over a live allocation (e.g. FFI toBuffer with a
+        // finalizer, or sqlite3_serialize returning a non-null pointer with length 0), so
+        // honor the deallocator instead of silently leaking it.
+        if (bytesDeallocator) {
+            bytesDeallocator(ptr, ctx);
+        }
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, 0);
     }
 
@@ -990,9 +997,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_copyBytesFromBody(JSC::JS
         RELEASE_AND_RETURN(throwScope, JSValue::encode(createBuffer(lexicalGlobalObject, span.data(), span.size())));
     }
 
-    auto boffset = view->byteOffset();
-    auto blength = view->byteLength();
-    auto span = view->span().subspan(boffset, blength - boffset);
+    auto span = view->span();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(createBuffer(lexicalGlobalObject, span.data(), span.size())));
 }
 

@@ -121,80 +121,50 @@ const FLOAT4_ARRAY = 1021;
 const INT4 = 23;
 const FLOAT4 = 700;
 
-test("binary int4[] with len exceeding column bytes is rejected", async () => {
-  // 20-byte header claims 65536 elements but provides none.
-  const col = binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: 65536, lbound: 1 });
-  expect(col.length).toBe(20);
-  let err: any;
-  try {
-    await runMockQuery(col, INT4_ARRAY);
-  } catch (e) {
-    err = e;
-  }
-  expect(err).toBeDefined();
-  expect(err?.code ?? err?.message).toMatch(/ERR_POSTGRES_INVALID_BINARY_DATA|InvalidBinaryData/);
-});
+const malformed: { name: string; oid: number; col: Buffer }[] = [
+  {
+    // 20-byte header claims 65536 elements but provides none.
+    name: "int4[] with len exceeding column bytes",
+    oid: INT4_ARRAY,
+    col: binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: 65536, lbound: 1 }),
+  },
+  {
+    // Header claims 65536 elements but only 1 element worth of bytes follows.
+    name: "int4[] with len exceeding column bytes (partial data)",
+    oid: INT4_ARRAY,
+    col: Buffer.concat([
+      binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: 65536, lbound: 1 }),
+      int32(4),
+      int32(42),
+    ]),
+  },
+  {
+    name: "int4[] with negative len",
+    oid: INT4_ARRAY,
+    col: binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: -1, lbound: 1 }),
+  },
+  {
+    // Only 16 bytes: ndim, flags, elemtype, len — missing lbound.
+    name: "int4[] with ndim=1 but truncated header",
+    oid: INT4_ARRAY,
+    col: Buffer.concat([int32(1), int32(0), int32(INT4), int32(1)]),
+  },
+  {
+    name: "int4[] with len = INT32_MAX",
+    oid: INT4_ARRAY,
+    col: binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: 0x7fffffff, lbound: 1 }),
+  },
+  {
+    name: "float4[] with len exceeding column bytes",
+    oid: FLOAT4_ARRAY,
+    col: binaryArrayHeader({ ndim: 1, flags: 0, elemtype: FLOAT4, len: 1 << 20, lbound: 1 }),
+  },
+];
 
-test("binary int4[] with len exceeding column bytes (with partial data) is rejected", async () => {
-  // Header claims 65536 elements but only 1 element worth of bytes follows.
-  const col = Buffer.concat([
-    binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: 65536, lbound: 1 }),
-    int32(4), // element length prefix
-    int32(42), // element value
-  ]);
+test.each(malformed)("binary $name is rejected", async ({ oid, col }) => {
   let err: any;
   try {
-    await runMockQuery(col, INT4_ARRAY);
-  } catch (e) {
-    err = e;
-  }
-  expect(err).toBeDefined();
-  expect(err?.code ?? err?.message).toMatch(/ERR_POSTGRES_INVALID_BINARY_DATA|InvalidBinaryData/);
-});
-
-test("binary int4[] with negative len is rejected", async () => {
-  const col = binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: -1, lbound: 1 });
-  let err: any;
-  try {
-    await runMockQuery(col, INT4_ARRAY);
-  } catch (e) {
-    err = e;
-  }
-  expect(err).toBeDefined();
-  expect(err?.code ?? err?.message).toMatch(/ERR_POSTGRES_INVALID_BINARY_DATA|InvalidBinaryData/);
-});
-
-test("binary int4[] with ndim=1 but truncated header is rejected", async () => {
-  // Only 16 bytes: ndim, flags, elemtype, len — missing lbound.
-  const col = Buffer.concat([int32(1), int32(0), int32(INT4), int32(1)]);
-  expect(col.length).toBe(16);
-  let err: any;
-  try {
-    await runMockQuery(col, INT4_ARRAY);
-  } catch (e) {
-    err = e;
-  }
-  expect(err).toBeDefined();
-  expect(err?.code ?? err?.message).toMatch(/ERR_POSTGRES_INVALID_BINARY_DATA|InvalidBinaryData/);
-});
-
-test("binary float4[] with len exceeding column bytes is rejected", async () => {
-  const col = binaryArrayHeader({ ndim: 1, flags: 0, elemtype: FLOAT4, len: 1 << 20, lbound: 1 });
-  let err: any;
-  try {
-    await runMockQuery(col, FLOAT4_ARRAY);
-  } catch (e) {
-    err = e;
-  }
-  expect(err).toBeDefined();
-  expect(err?.code ?? err?.message).toMatch(/ERR_POSTGRES_INVALID_BINARY_DATA|InvalidBinaryData/);
-});
-
-test("binary int4[] with len = INT32_MAX is rejected", async () => {
-  const col = binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: 0x7fffffff, lbound: 1 });
-  let err: any;
-  try {
-    await runMockQuery(col, INT4_ARRAY);
+    await runMockQuery(col, oid);
   } catch (e) {
     err = e;
   }

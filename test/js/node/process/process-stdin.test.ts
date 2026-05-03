@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix } from "harness";
+import { bunEnv, bunExe, isMacOS, isPosix } from "harness";
 
 test("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -165,13 +165,26 @@ test("stdin should not allow process to exit when not paused", async () => {
 //
 // Parameterized across SIGTERM/SIGINT/SIGUSR1/SIGUSR2 — a break that only
 // affected one signal type would sneak through single-signal coverage.
+//
+// SIGUSR1/SIGUSR2 are skipped on macOS: JSC reserves SIGUSR2 for its own
+// signal machinery (see WTF/wtf/threads/Signals.cpp `Signal::Usr` →
+// `SIGUSR2`), and delivering SIGUSR1 to a Bun process on Darwin currently
+// crashes the runtime with `Bus error at address 0x0` — a pre-existing Bun
+// issue unrelated to this PR's event-loop yield fix. The Linux matrix still
+// exercises all four signals.
 describe.skipIf(!isPosix)("signals with flowing stdin on /dev/zero", () => {
-  describe.each([
+  const cases = [
     { signal: "SIGTERM", exit: 42 },
     { signal: "SIGINT", exit: 43 },
-    { signal: "SIGUSR1", exit: 44 },
-    { signal: "SIGUSR2", exit: 45 },
-  ] as const)("$signal", ({ signal, exit }) => {
+    ...(isMacOS
+      ? []
+      : ([
+          { signal: "SIGUSR1", exit: 44 },
+          { signal: "SIGUSR2", exit: 45 },
+        ] as const)),
+  ] as const;
+
+  describe.each(cases)("$signal", ({ signal, exit }) => {
     // Timeout is deliberately tight: on regression the child's event loop
     // is wedged in the synchronous read loop and neither waitpid nor the
     // signal handler resolves, so we want each case to fail fast instead

@@ -1142,6 +1142,7 @@ pub const Transpiler = struct {
                 opts.features.minify_syntax = transpiler.options.minify_syntax;
                 opts.features.minify_identifiers = transpiler.options.minify_identifiers;
                 opts.features.dead_code_elimination = transpiler.options.dead_code_elimination;
+                opts.features.react_fast_refresh = transpiler.options.react_fast_refresh;
                 opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;
                 opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
                 opts.features.repl_mode = transpiler.options.repl_mode;

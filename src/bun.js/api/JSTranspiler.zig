@@ -230,6 +230,10 @@ pub const Config = struct {
             this.runtime.auto_import_jsx = flag;
         }
 
+        if (try object.getBooleanLoose(globalThis, "reactFastRefresh")) |flag| {
+            this.runtime.react_fast_refresh = flag;
+        }
+
         if (try object.getBooleanLoose(globalThis, "allowBunRuntime")) |flag| {
             this.runtime.allow_runtime = flag;
         }
@@ -729,7 +733,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     transpiler.options.auto_import_jsx = config.runtime.auto_import_jsx;
     transpiler.options.inlining = config.runtime.inlining;
     transpiler.options.hot_module_reloading = config.runtime.hot_module_reloading;
-    transpiler.options.react_fast_refresh = false;
+    transpiler.options.react_fast_refresh = config.runtime.react_fast_refresh;
     transpiler.options.repl_mode = config.repl_mode;
 
     return this;

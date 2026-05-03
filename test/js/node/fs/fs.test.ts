@@ -1178,6 +1178,58 @@ it("readdirSync throws when given a file path with trailing slash", () => {
   }
 });
 
+// The error cleanup path previously called MarkedArrayBuffer.destroy() on
+// structs stored by-value inside the entries ArrayList, which passed interior
+// ArrayList pointers to the allocator (freeing entries.items.ptr for index 0 and
+// then freeing it again in entries.deinit()). A self-referential symlink makes
+// the recursive walk fail with ELOOP after entries have been collected, exercising
+// that cleanup path.
+it.skipIf(isWindows)(
+  "readdirSync({encoding: 'buffer', recursive: true}) frees entries safely when a subdir fails to open",
+  async () => {
+    using dir = tempDir("readdir-buffer-error", {
+      "a.txt": "a",
+      "b.txt": "b",
+      "c.txt": "c",
+    });
+    fs.symlinkSync("loop", join(String(dir), "loop"));
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          let code;
+          for (let i = 0; i < 2; i++) {
+            try {
+              fs.readdirSync(${JSON.stringify(String(dir))}, { encoding: "buffer", recursive: true });
+              throw new Error("expected readdirSync to throw");
+            } catch (e) {
+              code = e.code;
+            }
+          }
+          console.log(code);
+        `,
+      ],
+      // Disable symbolization so an ASAN abort exits promptly instead of spending
+      // seconds in llvm-symbolizer against the large debug binary.
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allow_user_segv_handler=1", "symbolize=0", "abort_on_error=1"]
+          .filter(Boolean)
+          .join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ELOOP", exitCode: 0 });
+  },
+);
+
 describe("readSync", () => {
   const firstFourBytes = new Uint32Array(new TextEncoder().encode("File").buffer)[0];
 

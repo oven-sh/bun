@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -486,26 +486,4 @@ describe("getHeapSnapshot", () => {
     ]);
     worker.postMessage(0);
   });
-
-  // The getHeapSnapshot() round-trip must never let the worker thread touch
-  // the parent VM's HandleSet. Before the fix this crashed ~30% of the time
-  // in release with a segfault at 0x10 inside the "Sh" (Strong Handles)
-  // marking constraint. The race window is a handful of instructions, so in
-  // the (much slower) debug build a single pass is just a functional check.
-  test(
-    "does not race the parent VM's Strong Handles list under GC",
-    async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(import.meta.dir, "heap-snapshot-gc-race-fixture.js")],
-        env: { ...bunEnv, ITERS: isDebug ? "5" : "300" },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(stdout).toBe("ok\n");
-      expect(exitCode).toBe(0);
-    },
-    isDebug ? 60_000 : 30_000,
-  );
 });

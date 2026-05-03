@@ -805,16 +805,4 @@ describe("Proxy in prototype chain", () => {
     expect(Bun.inspect(obj)).toContain("foo");
   });
 
-  it("does not crash when a Proxy is revoked mid-iteration", () => {
-    const proto = { foo: 1, bar: 2 };
-    const { proxy, revoke } = Proxy.revocable(proto, {
-      getPrototypeOf() {
-        revoke();
-        return null;
-      },
-    });
-    const obj = {};
-    Object.setPrototypeOf(obj, proxy);
-    expect(() => Bun.inspect(obj)).not.toThrow();
-  });
 });

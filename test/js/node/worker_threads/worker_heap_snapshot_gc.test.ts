@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { join } from "node:path";
 
 // The getHeapSnapshot() round-trip must never let the worker thread touch
@@ -11,13 +11,16 @@ import { join } from "node:path";
 //
 // The race window is a handful of instructions after each snapshot
 // completes, so no single run is guaranteed to hit it; we run the fixture
-// repeatedly in release and fail if any attempt crashes. In the (much
-// slower) debug build a single short pass is just a functional check.
+// repeatedly in release and fail if any attempt crashes. Debug and ASAN
+// builds are several times slower per heap snapshot, so they get a reduced
+// workload as a functional check — plain release CI is where this guards
+// against regressions.
 test(
   "worker.getHeapSnapshot() does not race the parent VM's Strong Handles list under GC",
   async () => {
-    const attempts = isDebug ? 1 : 15;
-    const iters = isDebug ? "5" : "300";
+    const slow = isDebug || isASAN;
+    const attempts = slow ? 1 : 15;
+    const iters = isDebug ? "5" : slow ? "100" : "300";
     const fixture = join(import.meta.dir, "heap-snapshot-gc-race-fixture.js");
 
     for (let i = 0; i < attempts; i++) {
@@ -38,5 +41,5 @@ test(
       });
     }
   },
-  isDebug ? 60_000 : 120_000,
+  isDebug || isASAN ? 60_000 : 120_000,
 );

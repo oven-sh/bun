@@ -647,19 +647,21 @@ CRYPTO_rdrand_multiple8_buf  [RDRAND]
 
 # ----------------------------------------------------------------------------
 # zstd Huffman/FSE BMI2. Gate: ZSTD_cpuid().
+# BMI1 is in the ceiling because every BMI2 CPU has BMI1 (both Haswell+);
+# ThinLTO codegen lowers ~a&b to ANDN in some of these where Full LTO didn't.
 # (19 symbols)
 # ----------------------------------------------------------------------------
 FSE_decompress_wksp_body_bmi2                         [BMI2, LZCNT]
 FSE_readNCount_body_bmi2                              [BMI2, LZCNT]
 HUF_compress1X_usingCTable_internal_bmi2              [BMI2]
-HUF_decompress1X1_usingDTable_internal_bmi2           [BMI2, LZCNT]
-HUF_decompress1X2_usingDTable_internal_bmi2           [BMI2, LZCNT]
+HUF_decompress1X1_usingDTable_internal_bmi2           [BMI1, BMI2, LZCNT]
+HUF_decompress1X2_usingDTable_internal_bmi2           [BMI1, BMI2, LZCNT]
 HUF_decompress4X1_usingDTable_internal_bmi2           [BMI2, LZCNT]
-HUF_decompress4X1_usingDTable_internal_fast           [BMI2]
+HUF_decompress4X1_usingDTable_internal_fast           [BMI1, BMI2]
 HUF_decompress4X1_usingDTable_internal_fast_asm_loop  [BMI2]
 HUF_decompress4X1_usingDTable_internal_fast_c_loop    [BMI2]
 HUF_decompress4X2_usingDTable_internal_bmi2           [BMI2, LZCNT]
-HUF_decompress4X2_usingDTable_internal_fast           [BMI2]
+HUF_decompress4X2_usingDTable_internal_fast           [BMI1, BMI2]
 HUF_decompress4X2_usingDTable_internal_fast_asm_loop  [BMI2]
 HUF_decompress4X2_usingDTable_internal_fast_c_loop    [BMI2]
 HUF_readStats_body_bmi2                               [BMI2, LZCNT]

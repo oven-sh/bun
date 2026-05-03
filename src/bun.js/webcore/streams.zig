@@ -165,12 +165,14 @@ pub const Start = union(Tag) {
                     }
                 }
 
-                return .{
-                    .FileSink = .{
-                        .input_path = .{ .fd = bun.invalid_fd },
-                        .chunk_size = chunk_size,
-                    },
-                };
+                // No `path` and no `fd` — caller passed only `{highWaterMark}`
+                // (readStreamIntoSink / readDirectStream do this on every
+                // assignToStream). Returning `.FileSink{.fd = invalid_fd}` here
+                // would tell `FileSink.setup()` to open invalid_fd: on POSIX
+                // that's a silently-swallowed EBADF, on Windows it reaches
+                // `WindowsPipeWriter.start()`'s `assert(source == null)` and
+                // crashes if the sink was already started natively.
+                return .{ .chunk_size = chunk_size };
             },
             .NetworkSink, .HTTPSResponseSink, .HTTPResponseSink, .H3ResponseSink => {
                 var empty = true;

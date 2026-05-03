@@ -544,7 +544,10 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
             bun.assert(!this.is_done);
 
             if (this.shouldBuffer(0)) {
-                onWrite(this.parent, buf_len, .drained);
+                // Data is only buffered here, not written; report 0 so the
+                // parent's onWrite (e.g. FileSink.written) doesn't count it
+                // twice when the buffer later drains.
+                onWrite(this.parent, 0, .drained);
                 registerPoll(this);
 
                 return .{ .wrote = buf_len };
@@ -601,7 +604,7 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
 
                 // noop, but need this to have a chance
                 // to register deferred tasks (onAutoFlush)
-                onWrite(this.parent, buf.len, .drained);
+                onWrite(this.parent, 0, .drained);
                 registerPoll(this);
 
                 // it's buffered, but should be reported as written to

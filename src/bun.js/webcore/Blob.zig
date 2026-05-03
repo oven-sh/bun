@@ -1216,7 +1216,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
             source_blob,
             @truncate(s3.options.partSize),
         ), ctx)) |stream| {
-            return destination_blob.pipeReadableStreamToBlob(ctx, stream, options.extra_options);
+            return destination_blob.pipeReadableStreamToBlob(ctx, stream, options.extra_options, options.mkdirp_if_not_exists orelse true);
         } else {
             return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ctx.createErrorInstance("Failed to stream bytes from s3 bucket", .{}));
         }
@@ -1553,6 +1553,20 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                         destination_blob.detach();
                         return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
                     }
+
+                    // If the body already has a ReadableStream (e.g. `res.body` was
+                    // accessed before calling Bun.write), data will flow to the
+                    // ByteStream instead of ever transitioning to .InternalBlob, so
+                    // `onReceiveValue` would never fire and the WriteFileWait task
+                    // would wait forever. Pump the stream directly.
+                    if (response.getBodyReadableStream(globalThis) orelse bodyValue.Locked.readable.get(globalThis)) |readable| {
+                        defer destination_blob.detach();
+                        if (readable.isDisturbed(globalThis)) {
+                            return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
+                        }
+                        return destination_blob.pipeReadableStreamToBlob(globalThis, readable, options.extra_options, options.mkdirp_if_not_exists orelse true);
+                    }
+
                     var task = bun.new(WriteFileWaitFromLockedValueTask, .{
                         .globalThis = globalThis,
                         .file_blob = destination_blob,
@@ -1616,6 +1630,17 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                         destination_blob.detach();
                         return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
                     }
+
+                    // See matching comment in the Response branch above —
+                    // onReceiveValue never fires once a ReadableStream exists.
+                    if (request.getBodyReadableStream(globalThis) orelse bodyValue.Locked.readable.get(globalThis)) |readable| {
+                        defer destination_blob.detach();
+                        if (readable.isDisturbed(globalThis)) {
+                            return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
+                        }
+                        return destination_blob.pipeReadableStreamToBlob(globalThis, readable, options.extra_options, options.mkdirp_if_not_exists orelse true);
+                    }
+
                     var task = bun.new(WriteFileWaitFromLockedValueTask, .{
                         .globalThis = globalThis,
                         .file_blob = destination_blob,
@@ -2526,6 +2551,7 @@ pub const FileStreamWrapper = struct {
 pub fn onFileStreamResolveRequestStream(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var args = callframe.arguments_old(2);
     var this = args.ptr[args.len - 1].asPromisePtr(FileStreamWrapper);
+    const written = this.sink.written;
     defer this.deinit();
     var strong = this.readable_stream_ref;
     defer strong.deinit();
@@ -2533,14 +2559,14 @@ pub fn onFileStreamResolveRequestStream(globalThis: *jsc.JSGlobalObject, callfra
     if (strong.get(globalThis)) |stream| {
         stream.done(globalThis);
     }
-    try this.promise.resolve(globalThis, jsc.JSValue.jsNumber(0));
+    try this.promise.resolve(globalThis, jsc.JSValue.jsNumber(written));
     return .js_undefined;
 }
 
 pub fn onFileStreamRejectRequestStream(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const args = callframe.arguments_old(2);
     var this = args.ptr[args.len - 1].asPromisePtr(FileStreamWrapper);
-    defer this.sink.deref();
+    defer this.deinit();
     const err = args.ptr[0];
 
     var strong = this.readable_stream_ref;
@@ -2561,7 +2587,7 @@ comptime {
     @export(&jsonRejectRequestStream, .{ .name = "Bun__FileStreamWrapper__onRejectRequestStream" });
 }
 
-pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, readable_stream: jsc.WebCore.ReadableStream, extra_options: ?JSValue) bun.JSError!jsc.JSValue {
+pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, readable_stream: jsc.WebCore.ReadableStream, extra_options: ?JSValue, mkdirp_if_not_exists: bool) bun.JSError!jsc.JSValue {
     var store = this.store orelse {
         return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, globalThis.createErrorInstance("Blob is detached", .{}));
     };
@@ -2605,19 +2631,28 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
             const fd: bun.FD = if (pathlike == .fd) pathlike.fd else brk: {
                 var file_path: bun.PathBuffer = undefined;
                 const path = pathlike.path.sliceZ(&file_path);
-                switch (bun.sys.open(
-                    path,
-                    bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK,
-                    write_permissions,
-                )) {
-                    .result => |result| {
-                        break :brk result;
-                    },
+                const open_flags = bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK | bun.O.TRUNC;
+                switch (bun.sys.open(path, open_flags, write_permissions)) {
+                    .result => |result| break :brk result,
                     .err => |err| {
+                        if (mkdirp_if_not_exists and err.getErrno() == .NOENT) {
+                            if (std.fs.path.dirname(path)) |dirname| {
+                                var node_fs: jsc.Node.fs.NodeFS = .{};
+                                if (node_fs.mkdirRecursive(.{
+                                    .path = .{ .string = bun.PathString.init(dirname) },
+                                    .recursive = true,
+                                    .always_return_none = true,
+                                }) == .result) {
+                                    switch (bun.sys.open(path, open_flags, write_permissions)) {
+                                        .result => |result| break :brk result,
+                                        .err => {},
+                                    }
+                                }
+                            }
+                        }
                         return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, try err.withPath(path).toJS(globalThis));
                     },
                 }
-                unreachable;
             };
 
             const is_stdout_or_stderr = brk: {
@@ -2683,11 +2718,27 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
         const stream_start: jsc.WebCore.streams.Start = .{
             .FileSink = .{
                 .input_path = input_path,
+                .truncate = true,
             },
         };
 
         switch (sink.start(stream_start)) {
-            .err => |err| {
+            .err => |err| retry: {
+                if (mkdirp_if_not_exists and err.getErrno() == .NOENT and input_path == .path) {
+                    if (std.fs.path.dirname(input_path.path.slice())) |dirname| {
+                        var node_fs: jsc.Node.fs.NodeFS = .{};
+                        if (node_fs.mkdirRecursive(.{
+                            .path = .{ .string = bun.PathString.init(dirname) },
+                            .recursive = true,
+                            .always_return_none = true,
+                        }) == .result) {
+                            switch (sink.start(stream_start)) {
+                                .err => {},
+                                else => break :retry,
+                            }
+                        }
+                    }
+                }
                 sink.deref();
                 return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, try err.toJS(globalThis));
             },
@@ -2745,9 +2796,10 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                     return promise_value;
                 },
                 .fulfilled => {
+                    const written = file_sink.written;
                     file_sink.deref();
                     readable_stream.done(globalThis);
-                    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumber(0));
+                    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumber(written));
                 },
                 .rejected => {
                     file_sink.deref();
@@ -2765,9 +2817,10 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
             return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, assignment_result);
         }
     }
+    const written = file_sink.written;
     file_sink.deref();
 
-    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumber(0));
+    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumber(written));
 }
 
 pub fn getWriter(
@@ -2950,8 +3003,23 @@ pub fn getWriter(
     };
 
     if (arguments.len > 0 and arguments.ptr[0].isObject()) {
-        stream_start = try jsc.WebCore.streams.Start.fromJSWithTag(globalThis, arguments[0], .FileSink);
-        stream_start.FileSink.input_path = input_path;
+        // input_path always comes from the Blob's store (the file this is a
+        // writer for); JS options can only contribute highWaterMark. The
+        // old code assigned to `stream_start.FileSink.input_path` after
+        // `fromJSWithTag`, which assumed the `.FileSink` variant even when
+        // `.err` or `.chunk_size` was returned.
+        switch (try jsc.WebCore.streams.Start.fromJSWithTag(globalThis, arguments[0], .FileSink)) {
+            .FileSink => |fs| {
+                defer fs.input_path.deinit();
+                stream_start.FileSink.chunk_size = fs.chunk_size;
+            },
+            .chunk_size => |cs| stream_start.FileSink.chunk_size = cs,
+            .err => |err| {
+                sink.deref();
+                return globalThis.throwValue(try err.toJS(globalThis));
+            },
+            else => {},
+        }
     }
 
     switch (sink.start(stream_start)) {

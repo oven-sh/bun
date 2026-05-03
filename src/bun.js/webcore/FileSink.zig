@@ -61,14 +61,14 @@ pub const Poll = IOWriter;
 pub const Options = struct {
     chunk_size: Blob.SizeType = 1024,
     input_path: webcore.PathOrFileDescriptor,
-    truncate: bool = true,
+    truncate: bool = false,
     close: bool = false,
     mode: bun.Mode = 0o664,
 
     pub fn flags(this: *const Options) i32 {
-        _ = this;
-
-        return bun.O.NONBLOCK | bun.O.CLOEXEC | bun.O.CREAT | bun.O.WRONLY;
+        var f: i32 = bun.O.NONBLOCK | bun.O.CLOEXEC | bun.O.CREAT | bun.O.WRONLY;
+        if (this.truncate) f |= bun.O.TRUNC;
+        return f;
     }
 };
 

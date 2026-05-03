@@ -106,7 +106,8 @@ pub fn statatWindows(fd: bun.FD, path: [:0]const u8) Maybe(bun.Stat) {
         dir[0..dir.len],
         path,
     };
-    const statpath = ResolvePath.joinZBuf(&buf, parts, .auto);
+    const statpath = ResolvePath.joinZBuf(&buf, parts, .auto) catch
+        return .{ .err = Syscall.Error.fromCode(.NAMETOOLONG, .stat).withPath(path) };
     return Syscall.stat(statpath);
 }
 
@@ -1553,10 +1554,17 @@ pub fn GlobWalker_(
                 return try stdJoin(this.arena.allocator(), subdir_parts);
             }
 
-            const out = try this.arena.allocator().dupe(u8, bunJoin(subdir_parts, .auto));
-            if (comptime sentinel) return out[0 .. out.len - 1 :0];
+            if (comptime !sentinel) {
+                return try this.arena.allocator().dupe(u8, bunJoin(subdir_parts, .auto));
+            }
 
-            return out;
+            // Allocate a buffer large enough that joinZBuf can't return
+            // error.NameTooLong; the result is already arena-owned.
+            var upper: usize = 2;
+            for (subdir_parts) |part| upper += part.len + 1;
+            const out = try this.arena.allocator().alloc(u8, upper);
+            const joined = ResolvePath.joinZBuf(out, subdir_parts, .auto) catch unreachable;
+            return joined;
         }
 
         inline fn startsWithDot(filepath: []const u8) bool {

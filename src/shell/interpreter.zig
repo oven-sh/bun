@@ -637,7 +637,8 @@ pub const Interpreter = struct {
                 const cwd_str = ResolvePath.joinZ(&[_][]const u8{
                     existing_cwd,
                     new_cwd_,
-                }, .auto);
+                }, .auto) catch
+                    return .{ .err = .fromCode(.NAMETOOLONG, .chdir) };
 
                 // remove trailing separator
                 if (bun.Environment.isWindows) {
@@ -1854,7 +1855,8 @@ pub const ShellSyscall = struct {
             dirpath[0..dirpath.len],
             to[0..to.len],
         };
-        const joined = ResolvePath.joinZBuf(buf, parts, .auto);
+        const joined = ResolvePath.joinZBuf(buf, parts, .auto) catch
+            return .{ .err = Syscall.Error.fromCode(.NAMETOOLONG, .open).withPath(to) };
         return .{ .result = joined };
     }
 

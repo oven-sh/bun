@@ -112,7 +112,7 @@ pub const PackageInstall = struct {
         const patch_tag_path = bun.path.joinZ(&[_][]const u8{
             this.destination_dir_subpath,
             bunhashtag,
-        }, .posix);
+        }, .posix) catch return false;
 
         var destination_dir = this.node_modules.openDir(root_node_modules_dir) catch return false;
         defer {

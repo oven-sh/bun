@@ -503,9 +503,19 @@ pub fn moveToCacheDirectory(
         else => this.package_manager.lockfile.trusted_dependencies != null and
             this.package_manager.lockfile.trusted_dependencies.?.contains(@truncate(Semver.String.Builder.stringHash(name))),
     }) {
+        const package_json_rel_path = bun.path.joinZBuf(&json_path_buf, &[_]string{ folder_name, "package.json" }, .auto) catch |err| {
+            log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                bun.default_allocator,
+                "\"package.json\" path for \"{s}\" is too long: {s}",
+                .{ name, @errorName(err) },
+            ) catch unreachable;
+            return error.InstallFailed;
+        };
         const json_file, json_buf = bun.sys.File.readFileFrom(
             bun.FD.fromStdDir(cache_dir),
-            bun.path.joinZBuf(&json_path_buf, &[_]string{ folder_name, "package.json" }, .auto),
+            package_json_rel_path,
             bun.default_allocator,
         ).unwrap() catch |err| {
             if (this.resolution.tag == .github and err == error.ENOENT) {

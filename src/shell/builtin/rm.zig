@@ -807,10 +807,12 @@ pub const ShellRmTask = struct {
         }
     }
 
-    pub fn bufJoin(this: *ShellRmTask, buf: *bun.PathBuffer, parts: []const []const u8, _: Syscall.Tag) Maybe([:0]const u8) {
-        if (this.join_style == .posix) {
-            return .{ .result = ResolvePath.joinZBuf(buf, parts, .posix) };
-        } else return .{ .result = ResolvePath.joinZBuf(buf, parts, .windows) };
+    pub fn bufJoin(this: *ShellRmTask, buf: *bun.PathBuffer, parts: []const []const u8, syscall: Syscall.Tag) Maybe([:0]const u8) {
+        const joined = if (this.join_style == .posix)
+            ResolvePath.joinZBuf(buf, parts, .posix)
+        else
+            ResolvePath.joinZBuf(buf, parts, .windows);
+        return .{ .result = joined catch return .{ .err = .fromCode(.NAMETOOLONG, syscall) } };
     }
 
     pub fn removeEntry(this: *ShellRmTask, dir_task: *DirTask, is_absolute: bool) Maybe(void) {

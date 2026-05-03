@@ -239,7 +239,14 @@ pub const PatchTask = struct {
         const absolute_patchfile_path = bun.path.joinZBuf(&absolute_patchfile_path_buf, &[_][]const u8{
             dir,
             patchfile_path,
-        }, .auto);
+        }, .auto) catch {
+            return try log.addErrorFmtOpts(
+                this.manager.allocator,
+                "patch file path is too long: {s}/{s}",
+                .{ dir, patchfile_path },
+                .{},
+            );
+        };
         // TODO: can the patch file be anything other than utf-8?
 
         const patchfile_txt = switch (bun.sys.File.readFrom(
@@ -382,7 +389,14 @@ pub const PatchTask = struct {
                 // tempdir_name,
             },
             .auto,
-        );
+        ) catch {
+            return try log.addErrorFmtOpts(
+                this.manager.allocator,
+                "temporary directory path is too long: {s}",
+                .{tempdir_name},
+                .{},
+            );
+        };
 
         if (bun.sys.renameatConcurrently(
             .fromStdDir(system_tmpdir),
@@ -414,7 +428,16 @@ pub const PatchTask = struct {
                 patchfile_path,
             },
             .auto,
-        );
+        ) catch {
+            log.addErrorFmt(
+                null,
+                Loc.Empty,
+                this.manager.allocator,
+                "patch file path is too long: {s}/{s}",
+                .{ dir, patchfile_path },
+            ) catch unreachable;
+            return null;
+        };
 
         const stat: bun.Stat = switch (bun.sys.stat(absolute_patchfile_path)) {
             .err => |e| {

@@ -889,6 +889,32 @@ booga"
     });
   });
 
+  describe.each(["touch", "mkdir"])("%s", builtin => {
+    test("very long relative path errors with ENAMETOOLONG instead of overflowing path buffer", async () => {
+      // joinZ uses a 4096-byte threadlocal buffer; this is large enough to
+      // overflow it (and the surrounding stack) without the bounds check.
+      // Spawn a subprocess so a crash on regression shows up as a failed
+      // assertion rather than killing the test runner.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const longPath = Buffer.alloc(100000, "a").toString();
+           const { exitCode, stderr } = await Bun.$\`${builtin} \${longPath}\`.quiet().nothrow();
+           console.log(JSON.stringify({ exitCode, stderr: stderr.toString().slice(0, 30) }));`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe(
+        JSON.stringify({ exitCode: 1, stderr: `${builtin}: File name too long: aaa`.slice(0, 30) }),
+      );
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test("which", async () => {
     const bogus = "akdfjlsdjflks";
     const { stdout } = await $`which ${BUN} ${bogus}`;

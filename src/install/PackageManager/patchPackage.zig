@@ -87,7 +87,10 @@ pub fn doPatchCommit(
     const _cache_dir: std.fs.Dir, const _cache_dir_subpath: stringZ, const _changes_dir: []const u8, const _pkg: Package = switch (arg_kind) {
         .path => result: {
             const package_json_source: *const logger.Source = &brk: {
-                const package_json_path = bun.path.joinZ(&[_][]const u8{ argument, "package.json" }, .auto);
+                const package_json_path = bun.path.joinZ(&[_][]const u8{ argument, "package.json" }, .auto) catch {
+                    Output.errGeneric("path to package.json under {f} is too long", .{bun.fmt.quote(argument)});
+                    Global.crash();
+                };
 
                 switch (bun.sys.File.toSource(package_json_path, manager.allocator, .{})) {
                     .result => |s| break :brk s,
@@ -165,7 +168,10 @@ pub fn doPatchCommit(
             const changes_dir = bun.path.joinZBuf(pathbuf[0..], &[_][]const u8{
                 node_modules.relative_path,
                 name,
-            }, .auto);
+            }, .auto) catch {
+                Output.errGeneric("path to package \"{s}\" is too long", .{name});
+                Global.crash();
+            };
             const pkg = lockfile.packages.get(pkg_id);
 
             const cache_result = manager.computeCacheDirAndSubpath(
@@ -429,7 +435,10 @@ pub fn doPatchCommit(
             patch_filename,
         },
         .posix,
-    );
+    ) catch {
+        Output.errGeneric("patch file path is too long: {s}/{s}", .{ manager.options.patch_features.commit.patches_dir, patch_filename });
+        Global.crash();
+    };
 
     var nodefs = bun.jsc.Node.fs.NodeFS{};
     const args = bun.jsc.Node.fs.Arguments.Mkdir{
@@ -454,7 +463,9 @@ pub fn doPatchCommit(
 
     const patch_key = bun.handleOom(std.fmt.allocPrint(manager.allocator, "{s}", .{resolution_label}));
     const patchfile_path = bun.handleOom(manager.allocator.dupe(u8, path_in_patches_dir));
-    _ = bun.sys.unlink(bun.path.joinZ(&[_][]const u8{ changes_dir, ".bun-patch-tag" }, .auto));
+    if (bun.path.joinZ(&[_][]const u8{ changes_dir, ".bun-patch-tag" }, .auto)) |patch_tag| {
+        _ = bun.sys.unlink(patch_tag);
+    } else |_| {}
 
     return .{
         .patch_key = patch_key,
@@ -572,7 +583,10 @@ pub fn preparePatch(manager: *PackageManager) !void {
             var lockfile = manager.lockfile;
 
             const package_json_source: *const logger.Source = &src: {
-                const package_json_path = bun.path.joinZ(&[_][]const u8{ argument, "package.json" }, .auto);
+                const package_json_path = bun.path.joinZ(&[_][]const u8{ argument, "package.json" }, .auto) catch {
+                    Output.errGeneric("path to package.json under {f} is too long", .{bun.fmt.quote(argument)});
+                    Global.crash();
+                };
 
                 switch (bun.sys.File.toSource(package_json_path, manager.allocator, .{})) {
                     .result => |s| break :src s,

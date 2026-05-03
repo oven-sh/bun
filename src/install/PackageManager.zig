@@ -95,6 +95,16 @@ global_link_dir: ?std.fs.Dir = null,
 global_dir: ?std.fs.Dir = null,
 global_link_dir_path: string = "",
 
+/// Names of packages registered via `bun link`, read from
+/// `<globalLinkDir>/` once per install. Populated on the main thread
+/// before any install worker starts; after that it's read-only and can
+/// be accessed lock-free from worker threads. Lookups return early
+/// when the set is empty (no active links) — the common case on dev
+/// machines without `bun link` configured, and unconditional on CI.
+/// See `populateLinkedNamesCache` / `linkedPackagePath`.
+linked_names: bun.StringHashMapUnmanaged(void) = .{},
+linked_names_populated: bool = false,
+
 onWake: WakeHandler = .{},
 ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
 
@@ -1176,6 +1186,8 @@ pub const getTemporaryDirectory = directories.getTemporaryDirectory;
 pub const globalLinkDir = directories.globalLinkDir;
 pub const globalLinkDirAndPath = directories.globalLinkDirAndPath;
 pub const globalLinkDirPath = directories.globalLinkDirPath;
+pub const linkedPackagePath = directories.linkedPackagePath;
+pub const populateLinkedNamesCache = directories.populateLinkedNamesCache;
 pub const isFolderInCache = directories.isFolderInCache;
 pub const pathForCachedNPMPath = directories.pathForCachedNPMPath;
 pub const pathForResolution = directories.pathForResolution;

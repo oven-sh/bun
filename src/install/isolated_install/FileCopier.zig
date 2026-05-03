@@ -7,6 +7,7 @@ pub const FileCopier = struct {
         src_dir: FD,
         src_path: bun.AbsPath(.{ .sep = .auto, .unit = .os }),
         dest_subpath: bun.Path(.{ .sep = .auto, .unit = .os }),
+        skip_filenames: []const bun.OSPathSlice,
         skip_dirnames: []const bun.OSPathSlice,
     ) OOM!FileCopier {
         return .{
@@ -16,7 +17,7 @@ pub const FileCopier = struct {
                 var w = try Walker.walk(
                     src_dir,
                     bun.default_allocator,
-                    &.{},
+                    skip_filenames,
                     skip_dirnames,
                 );
                 w.resolve_unknown_entry_types = true;

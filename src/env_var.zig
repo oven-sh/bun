@@ -26,6 +26,8 @@
 //!                      everything. This means that we potentially scan through envp a lot of
 //!                      times, even though we could only do it once.
 
+pub const ACTIONS_ID_TOKEN_REQUEST_TOKEN = New(kind.string, "ACTIONS_ID_TOKEN_REQUEST_TOKEN", .{});
+pub const ACTIONS_ID_TOKEN_REQUEST_URL = New(kind.string, "ACTIONS_ID_TOKEN_REQUEST_URL", .{});
 pub const AGENT = New(kind.string, "AGENT", .{});
 pub const BUN_AGENT_RULE_DISABLED = New(kind.boolean, "BUN_AGENT_RULE_DISABLED", .{ .default = false });
 pub const BUN_COMPILE_TARGET_TARBALL_URL = New(kind.string, "BUN_COMPILE_TARGET_TARBALL_URL", .{});
@@ -124,6 +126,7 @@ pub const NODE_CHANNEL_FD = New(kind.string, "NODE_CHANNEL_FD", .{});
 pub const BUN_INTERNAL_WEBVIEW_HOST = New(kind.string, "BUN_INTERNAL_WEBVIEW_HOST", .{});
 pub const NODE_PRESERVE_SYMLINKS_MAIN = New(kind.boolean, "NODE_PRESERVE_SYMLINKS_MAIN", .{ .default = false });
 pub const NODE_USE_SYSTEM_CA = New(kind.boolean, "NODE_USE_SYSTEM_CA", .{ .default = false });
+pub const NPM_ID_TOKEN = New(kind.string, "NPM_ID_TOKEN", .{});
 pub const npm_lifecycle_event = New(kind.string, "npm_lifecycle_event", .{});
 pub const PATH = New(kind.string, "PATH", .{});
 pub const REPL_ID = New(kind.boolean, "REPL_ID", .{ .default = false });

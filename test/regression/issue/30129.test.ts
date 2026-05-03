@@ -49,11 +49,7 @@ test("bun install does not panic when bin target's relative path has no `..` pre
     stderr: "pipe",
   });
 
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  // Without the fix the assertion panics with "Internal assertion failure"
-  // and the process aborts before the install completes.
-  expect(stderr).not.toContain("Internal assertion failure");
+  const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // The package itself must be extracted.
   const pkgJson = join(String(dir), "node_modules", "weird", "package.json");

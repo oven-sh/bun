@@ -734,30 +734,62 @@ pub const Bin = extern struct {
             };
             defer bunx_file.close();
 
-            // At runtime the shim walks back from its own image path
-            // `<bin_dir>\<name>.bunx` to the *parent* of `<bin_dir>` — that's
-            // where we must anchor the stored `bin_path`. See the walk-back
-            // loop in `src/install/windows-shim/bun_shim_impl.zig`.
+            // At runtime `bun_shim_impl.exe` walks back from its own image
+            // path `<bin_dir>\<name>.bunx` past *two* `\` separators before
+            // appending the stored `bin_path`. That lands the anchor at the
+            // parent of `<bin_dir>`. See the walk-back loop in
+            // `src/install/windows-shim/bun_shim_impl.zig`.
             //
-            // Computing the target relative to that anchor handles two
-            // shapes the launcher supports naturally:
-            //   - common case: target lives under `<bin_dir>`'s parent, so
-            //     the relative path is `some-pkg\\dist\\cli.js` (no `..`).
-            //   - zero-`..` case: target lives *inside* the bin dir itself
-            //     (a package whose `bin` resolves to `../.bin/foo.js`), so
-            //     the relative path is `.bin\\foo.js`.
+            // We compute `rel_target` relative to `<bin_dir>` (one dirname,
+            // always produces an absolute string) and then shape it into
+            // something that composes correctly when appended at the
+            // parent-of-`<bin_dir>` anchor. Three possible shapes:
             //
-            // For truly cross-volume setups the relative path can't be
-            // expressed with `..` walks between drives (e.g. `BUN_INSTALL_BIN`
-            // on `E:` + the default global store under `%USERPROFILE%` on
-            // `C:`), and `path.relative` falls through to returning the
-            // absolute target path. In that case we flip to absolute-target
-            // mode and set `is_absolute_target` so the launcher skips the
-            // walk-back reconstruction and uses the stored path verbatim.
-            const abs_dest_parent = path.dirname(path.dirname(abs_dest, .auto), .auto);
-            const rel_target = path.relativeBufZ(this.rel_buf, abs_dest_parent, abs_target);
-            const is_absolute_target = std.fs.path.isAbsoluteWindows(rel_target);
-            const bin_path_w = strings.toWPathNormalized(&target_buf, rel_target);
+            //   - Starts with `..\\` — common case, target lives somewhere
+            //     under `<bin_dir>`'s parent (e.g. `..\\some-pkg\\cli.js`).
+            //     Strip the single `..\\`: the launcher's walk-back already
+            //     took that step.
+            //   - Absolute — cross-volume (e.g. `BUN_INSTALL_BIN` on `E:` +
+            //     global store on `C:`). There's no `..`-relative form
+            //     between volumes, so we flip to absolute-target mode and
+            //     set `is_absolute_target`. The launcher skips the walk-back
+            //     reconstruction and uses the stored path verbatim.
+            //   - Anything else — `.bin`-local shape (e.g. a package whose
+            //     `bin` field resolves to `../.bin/foo.js`). Prepend the
+            //     basename of `<bin_dir>` so the composed runtime path
+            //     reaches the target inside the bin directory.
+            //
+            // We deliberately do *not* anchor via `dirname(dirname(abs_dest))`:
+            // for a one-level `BUN_INSTALL_BIN` like `E:\bin`, the outer
+            // `dirname` returns `"E:"` without the trailing `\`, which
+            // `path.relative` mishandles as a drive-relative anchor and
+            // silently resolves against the current working directory.
+            const abs_dest_dir = path.dirname(abs_dest, .auto);
+            const rel_target_from_bin = path.relativeBufZ(this.rel_buf, abs_dest_dir, abs_target);
+
+            var bin_path_utf8_buf: bun.PathBuffer = undefined;
+            const bin_path_utf8: []const u8, const is_absolute_target: bool = b: {
+                if (strings.hasPrefixComptime(rel_target_from_bin, "..\\")) {
+                    break :b .{ rel_target_from_bin["..\\".len..], false };
+                }
+                if (std.fs.path.isAbsoluteWindows(rel_target_from_bin)) {
+                    break :b .{ rel_target_from_bin, true };
+                }
+                // Zero-`..` shape: target lives inside `abs_dest_dir`. Build
+                // `<basename>\\<rel>` so the launcher's post-walk-back
+                // concatenation lands back inside the bin directory.
+                const bin_dir_name = path.basename(abs_dest_dir);
+                const composed_len = bin_dir_name.len + 1 + rel_target_from_bin.len;
+                if (composed_len >= bin_path_utf8_buf.len) {
+                    this.err = error.InvalidBinContent;
+                    return;
+                }
+                @memcpy(bin_path_utf8_buf[0..bin_dir_name.len], bin_dir_name);
+                bin_path_utf8_buf[bin_dir_name.len] = '\\';
+                @memcpy(bin_path_utf8_buf[bin_dir_name.len + 1 ..][0..rel_target_from_bin.len], rel_target_from_bin);
+                break :b .{ bin_path_utf8_buf[0..composed_len], false };
+            };
+            const bin_path_w = strings.toWPathNormalized(&target_buf, bin_path_utf8);
 
             const shebang = shebang: {
                 const first_content_chunk = contents: {
@@ -825,11 +857,13 @@ pub const Bin = extern struct {
             const abs_dest_dir = path.dirname(abs_dest, .auto);
             const rel_target = path.relativeBufZ(this.rel_buf, abs_dest_dir, abs_target);
 
-            // `rel_target` is almost always `..\\..\\package\\bin.js`-shaped,
-            // but it can also be a bare filename when the target lives inside
-            // `abs_dest_dir` itself (e.g. a package whose `bin` resolves to
-            // `../.bin/foo.js`). `symlink(2)` accepts any relative string, so
-            // don't assert the leading `..`.
+            // `rel_target` is almost always `../package/bin.js`-shaped on
+            // POSIX (this function is POSIX-only — the Windows path goes
+            // through `createWindowsShim`). It can also be a bare filename
+            // when the target lives inside `abs_dest_dir` itself, e.g. a
+            // package whose `bin` field resolves to `../.bin/foo.js`.
+            // `symlink(2)` accepts any relative string, so don't assert the
+            // leading `..`.
 
             switch (bun.sys.symlinkRunningExecutable(rel_target, abs_dest)) {
                 .err => |err| {

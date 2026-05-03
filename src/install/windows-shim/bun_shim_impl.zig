@@ -597,10 +597,14 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
         const current_offset = @intFromPtr(metadata_start_ptr) - @intFromPtr(buf1_u8);
         assert(current_offset >= new_offset);
 
-        // Destination must fit inside the `buf1_u8[0..buf1.len]` logical
-        // range. Metadata files are small in practice, but defensively fail
-        // the shim rather than corrupt adjacent memory.
-        if (read_len > buf1.len - new_offset) {
+        // Destination must fit inside the valid byte range reachable from
+        // `buf1_u8[0]`. The `[*]u8` is anchored at the physical midpoint of
+        // `buf1`, so the forward-reachable byte length equals `buf1.len`
+        // (each `u16` slot in the back half of `buf1` is exactly one byte
+        // of the front of `buf1_u8`). Metadata files are small in practice,
+        // but defensively fail the shim rather than corrupt adjacent memory.
+        const buf1_u8_len: usize = buf1.len; // bytes, see buf1_u8 definition
+        if (read_len > buf1_u8_len - new_offset) {
             return mode.fail(.InvalidShimDataSize);
         }
 

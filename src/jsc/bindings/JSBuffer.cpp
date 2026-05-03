@@ -401,11 +401,13 @@ static JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlobalObjec
     // byteLength 0 → offset >= 0 → return 0 without touching the null
     // vector(). Callers are still responsible for throwing the
     // Node-compatible ERR_BUFFER_OUT_OF_BOUNDS; this is the safety floor.
-    uint32_t byteLength = castedThis->byteLength();
+    // byteLength() returns size_t; MAX_LENGTH is 2^32 which would truncate
+    // to 0 in uint32_t. offset/length widen for the comparisons.
+    size_t byteLength = castedThis->byteLength();
     if (offset >= byteLength) [[unlikely]]
         return JSC::JSValue::encode(JSC::jsNumber(0));
     if (length > byteLength - offset) [[unlikely]]
-        length = byteLength - offset;
+        length = static_cast<uint32_t>(byteLength - offset);
 
     size_t written = 0;
 
@@ -2434,7 +2436,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
     // per-encoding write functions (utf8Write et al in internal/buffer.js)
     // re-validate against the current byteLength after encoding
     // normalization, so do the same here.
-    uint32_t byteLength = castedThis->byteLength();
+    size_t byteLength = castedThis->byteLength();
     if (offset > byteLength) [[unlikely]]
         return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
     if (length > byteLength - offset) [[unlikely]]

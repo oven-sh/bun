@@ -170,6 +170,45 @@ pub fn setOnClose(_: *PostgresSQLConnection, thisValue: jsc.JSValue, globalObjec
     js.oncloseSetCached(thisValue, globalObject, value);
 }
 
+pub fn getOnNotification(_: *PostgresSQLConnection, thisValue: jsc.JSValue, _: *jsc.JSGlobalObject) jsc.JSValue {
+    if (js.onnotificationGetCached(thisValue)) |value| {
+        return value;
+    }
+    return .js_undefined;
+}
+
+pub fn setOnNotification(_: *PostgresSQLConnection, thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) void {
+    js.onnotificationSetCached(thisValue, globalObject, value);
+}
+
+/// Backend process ID delivered via BackendKeyData ('K') message during connection setup.
+/// Returns 0 before the message has been received. Useful for `pg_terminate_backend(pid)`
+/// and matches the `state.pid` field exposed by postgres.js.
+pub fn getProcessId(this: *PostgresSQLConnection, _: *jsc.JSGlobalObject) jsc.JSValue {
+    return jsc.JSValue.jsNumber(this.backend_key_data.process_id);
+}
+
+/// Backend secret key delivered via BackendKeyData ('K'). Required to issue a
+/// CancelRequest on a separate connection. Matches `state.secret` in postgres.js.
+pub fn getSecretKey(this: *PostgresSQLConnection, _: *jsc.JSGlobalObject) jsc.JSValue {
+    return jsc.JSValue.jsNumber(this.backend_key_data.secret_key);
+}
+
+pub fn dispatchNotification(this: *PostgresSQLConnection, channel: []const u8, payload: []const u8) void {
+    if (this.js_value == .zero) return;
+    if (this.vm.isShuttingDown()) return;
+    debug("dispatchNotification: channel={s} payload.len={d}", .{ channel, payload.len });
+    this.js_value.ensureStillAlive();
+    const callback = js.onnotificationGetCached(this.js_value) orelse return;
+    if (!callback.isCallable()) return;
+    callback.ensureStillAlive();
+    // cloneUTF8 copies into a ref-counted WTFStringImpl so the JSValue is safe
+    // to use after the NotificationResponse ByteLists are freed.
+    const channel_js = bun.String.cloneUTF8(channel).toJS(this.globalObject) catch return;
+    const payload_js = bun.String.cloneUTF8(payload).toJS(this.globalObject) catch return;
+    this.globalObject.queueMicrotask(callback, &[_]JSValue{ channel_js, payload_js });
+}
+
 pub fn setupTLS(this: *PostgresSQLConnection) void {
     debug("setupTLS", .{});
     const tls_group = this.vm.rareData().postgresGroup(this.vm, true);
@@ -1879,6 +1918,12 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             var request = this.current() orelse return error.ExpectedRequest;
             defer this.updateRef();
             request.onResult("CLOSECOMPLETE", this.globalObject, this.js_value, false);
+        },
+        .NotificationResponse => {
+            var notification: protocol.NotificationResponse = undefined;
+            try notification.decodeInternal(Context, reader);
+            defer notification.deinit();
+            this.dispatchNotification(notification.channel.slice(), notification.payload.slice());
         },
         .CopyInResponse => {
             debug("TODO CopyInResponse", .{});

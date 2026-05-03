@@ -43,6 +43,7 @@ const sqliteResults = await sqlite`
 - Binary protocol support makes it faster
 - TLS support (and auth mode)
 - Automatic configuration with environment variable
+- PostgreSQL `LISTEN` / `NOTIFY` for pub/sub between clients
 
 ---
 
@@ -1290,11 +1291,80 @@ We haven't implemented `LOAD DATA INFILE` support yet
 
 ### PostgreSQL-Specific Features
 
+#### `LISTEN` / `NOTIFY`
+
+PostgreSQL's `LISTEN`/`NOTIFY` provides lightweight pub/sub between database clients. Bun exposes three methods on a Postgres SQL instance:
+
+- `sql.listen(channel, onnotify, onlisten?)` subscribes to a channel.
+- `sql.unlisten(channel, onnotify?)` unsubscribes.
+- `sql.notify(channel, payload)` publishes a payload to a channel.
+
+```ts
+import { SQL } from "bun";
+
+const sql = new SQL("postgres://user:pass@localhost/mydb");
+
+// Subscribe — onnotify fires for every NOTIFY on this channel.
+const sub = await sql.listen("user_events", payload => {
+  const event = JSON.parse(payload);
+  console.log("got", event);
+});
+console.log("listening on backend pid", sub.state.pid);
+
+// Publish from anywhere with a Postgres connection (the same `sql` instance,
+// a different one, or even psql). Payload must be a string; use JSON.stringify
+// for structured data.
+await sql.notify("user_events", JSON.stringify({ type: "signup", id: 42 }));
+
+// Stop receiving — only this listener is removed.
+await sub.unlisten();
+```
+
+##### Connection lifecycle
+
+Each `Bun.SQL` instance opens at most one **dedicated** PostgreSQL connection for `LISTEN`. All channels share that single connection, separate from the regular query pool. The connection is created lazily on the first `sql.listen()` call and closed on `sql.close()`.
+
+If the dedicated connection drops (network blip, server restart, `pg_terminate_backend`), Bun automatically reconnects with exponential backoff (250 ms → 32 s, with ±25% jitter) and re-issues `LISTEN` for every tracked channel. The `onlisten` callback fires again on every successful `LISTEN`, so you can use it to detect (re)connection.
+
+```ts
+let connectCount = 0;
+await sql.listen(
+  "heartbeat",
+  () => {},
+  () => console.log("(re)connected, attempt", ++connectCount),
+);
+```
+
+##### `state` object
+
+The object returned from `listen()` contains a shared `state` reference and a per-listener `unlisten()` function:
+
+```ts
+const { state, unlisten } = await sql.listen("ch", () => {});
+state.pid; // PostgreSQL backend process ID — useful with pg_terminate_backend()
+state.secret; // Cancellation secret from BackendKeyData
+```
+
+The same `state` object is handed back from every `listen()` call on this SQL instance. When the listen connection reconnects, `state.pid` and `state.secret` are mutated in place, so any reference you've kept always reflects the current backend.
+
+##### `notify()` semantics
+
+`sql.notify(channel, payload)` runs `SELECT pg_notify($1, $2)` through the regular query pool — it does not require an active subscription. It returns a Promise that resolves once the server has accepted the NOTIFY (committed at the next transaction boundary, which for autocommit queries is immediate).
+
+Channel names are quoted as PostgreSQL identifiers; null bytes are rejected. PostgreSQL's default `NOTIFY` payload limit is 8000 bytes — payloads above that produce a server-side error.
+
+##### Error handling
+
+- A `LISTEN` that fails on a live connection (e.g., a transient permission error) is logged via `console.warn` and retried on the next reconnect tick. After 10 consecutive failures the channel is dropped to avoid an infinite retry loop.
+- Errors thrown synchronously from your `onnotify` handler are caught and ignored — wrap your handler in a `try`/`catch` if you need custom error reporting.
+- Calling `unlisten()` (either form) is idempotent.
+
+#### Other PostgreSQL features
+
 We haven't implemented these yet:
 
 - `COPY` support
-- `LISTEN` support
-- `NOTIFY` support
+- Logical replication (`sql.subscribe()`)
 
 We also haven't implemented some of the more uncommon features like:
 

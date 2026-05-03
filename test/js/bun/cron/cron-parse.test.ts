@@ -50,6 +50,32 @@ describe("Bun.cron.parse — UTC", () => {
   });
 });
 
+describe("Bun.cron.parse — invalid `from` argument", () => {
+  // Values outside the ECMAScript Date range (±8.64e15 ms) used to reach
+  // WTF's int64 cast and panic with "integer does not fit in destination type".
+  test.each([1e20, -1e20, 8.64e15 + 1, -8.64e15 - 1, Number.MAX_VALUE, Infinity, -Infinity, NaN])(
+    "throws for out-of-range/non-finite ms: %p",
+    from => {
+      expect(() => Bun.cron.parse("@hourly", from)).toThrow("Invalid date value");
+    },
+  );
+
+  test("accepts the Date range boundary", () => {
+    // from = +8.64e15 is +275760-09-13T00:00:00Z; the next @hourly occurrence
+    // falls past the representable range → null, not an Invalid Date.
+    expect(Bun.cron.parse("@hourly", 8.64e15)).toBeNull();
+    // from = -8.64e15 is -271821-04-20T00:00:00Z; the next @hourly is 01:00,
+    // comfortably in range.
+    expect(Bun.cron.parse("@hourly", -8.64e15)?.toISOString()).toBe("-271821-04-20T01:00:00.000Z");
+    // Just inside the upper boundary: next @hourly lands exactly on 8.64e15.
+    expect(Bun.cron.parse("@hourly", 8.64e15 - 60_000)?.getTime()).toBe(8.64e15);
+  });
+
+  test("rejects an Invalid Date (consistent with numeric NaN)", () => {
+    expect(() => Bun.cron.parse("@hourly", new Date(1e20))).toThrow("Invalid date value");
+  });
+});
+
 describe("Bun.cron.parse — weekday 7 = Sunday in ranges", () => {
   // 2026-01-01 is a Thursday. next() is strictly-after, so the first match for
   // an every-day schedule is 2026-01-02.

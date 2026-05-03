@@ -49,7 +49,11 @@ test("bun install does not panic when bin target's relative path has no `..` pre
     stderr: "pipe",
   });
 
-  const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Bun prints "error:" for any user-facing install failure. The fix must
+  // let the install complete cleanly — no error markers in stderr.
+  expect(stderr).not.toContain("error:");
 
   // The package itself must be extracted.
   const pkgJson = join(String(dir), "node_modules", "weird", "package.json");

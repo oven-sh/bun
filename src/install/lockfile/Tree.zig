@@ -732,9 +732,16 @@ fn hoistDependency(
         }
 
         if (dependency.behavior.isPeer()) {
-            // Root dependencies are manually chosen by the user. Allow them
-            // to hoist other peers even if they don't satisfy the version
-            if (builder.lockfile.isWorkspaceRootDependency(dep_id)) {
+            // A peer that reaches a same-name ancestor whose version does not
+            // satisfy still collapses into it (yarn v1 / pnpm semantics) — the
+            // peer sees what the tree provides, with a warning. Only collapse
+            // when both sides resolved from the same source (npm/git/github);
+            // mixing e.g. a workspace and a registry version is a real
+            // mismatch we should leave nested.
+            const pkg_resolutions = builder.lockfile.packages.items(.resolution);
+            const existing_tag = pkg_resolutions[res_id].tag;
+            const target_tag = pkg_resolutions[package_id].tag;
+            if (existing_tag == target_tag and (existing_tag == .npm or existing_tag == .git or existing_tag == .github)) {
                 if (comptime method == .resolvable) {
                     builder.log.addWarningFmt(
                         null,
@@ -747,6 +754,12 @@ fn hoistDependency(
                         },
                     ) catch {};
                 }
+                return .hoisted; // 1
+            }
+
+            // Root dependencies are manually chosen by the user. Allow them
+            // to hoist other peers even if they don't satisfy the version
+            if (builder.lockfile.isWorkspaceRootDependency(dep_id)) {
                 return .hoisted; // 1
             }
         }

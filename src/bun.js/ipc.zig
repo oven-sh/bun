@@ -110,12 +110,17 @@ const advanced = struct {
                 };
             },
             .SerializedMessage, .SerializedInternalMessage => |tag| {
-                if (data.len < (header_length + message_len)) {
+                // `header_length + message_len` would be evaluated as u32; a peer-controlled
+                // `message_len >= 0xFFFFFFFB` wraps the sum to a small value and defeats the
+                // bounds check. Compare against the remaining bytes instead — `data.len >=
+                // header_length` is already established above, so the subtraction cannot
+                // underflow.
+                if (data.len - header_length < message_len) {
                     log("Not enough bytes to decode IPC message body of len {d}, have {d} bytes", .{ message_len, data.len });
                     return IPCDecodeError.NotEnoughBytes;
                 }
 
-                const message = data[header_length .. header_length + message_len];
+                const message = data[header_length..][0..message_len];
                 const deserialized = try JSValue.deserialize(message, global);
 
                 return .{

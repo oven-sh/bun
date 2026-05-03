@@ -114,10 +114,12 @@ describe("dns", () => {
   });
 
   // Hostnames longer than the fixed stack buffer used by the libc/system
-  // backends (bun.PathBuffer) previously overflowed when writing the NUL
-  // terminator. They must reject cleanly on every backend.
+  // backends (bun.PathBuffer, which is MAX_PATH_BYTES: 1024 on macOS, 4096 on
+  // Linux, ~98302 on Windows) previously overflowed when writing the NUL
+  // terminator. They must reject cleanly on every backend. 100 000 bytes
+  // exceeds the buffer on every platform so the doLookup guard is what fires.
   test.each(backends)("lookup() with oversized hostname rejects [backend: %s]", async backend => {
-    const long = Buffer.alloc(5000, "a").toString();
+    const long = Buffer.alloc(100_000, "a").toString();
     // @ts-expect-error
     await expect(dns.lookup(long, { backend })).rejects.toMatchObject({
       name: "DNSException",
@@ -137,7 +139,7 @@ describe("dns", () => {
         bunExe(),
         "-e",
         `
-          const long = Buffer.alloc(5000, "a").toString() + ".local";
+          const long = Buffer.alloc(100_000, "a").toString() + ".local";
           const settled = await Promise.allSettled([
             Bun.dns.lookup(long, { backend: "system" }),
             Bun.dns.lookup(long, { backend: "libc" }),

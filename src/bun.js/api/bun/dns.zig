@@ -239,15 +239,30 @@ const LibUVBackend = struct {
 
         request.backend.libc.uv.data = request;
         const promise = request.head.promise.value();
-        if (libuv.uv_getaddrinfo(
+        const rc = libuv.uv_getaddrinfo(
             this.vm.uvLoop(),
             &request.backend.libc.uv,
             &onRawLibUVComplete,
             host.ptr,
             portZ.ptr,
             if (hints) |*hint| hint else null,
-        ).errEnum()) |_| {
-            @panic("TODO: handle error");
+        );
+        if (rc.int() < 0) {
+            // uv_getaddrinfo can fail synchronously before it queues any work
+            // (e.g. UV_EINVAL from the 256-byte IDNA buffer for long hostnames,
+            // or UV_ENOMEM). Route the error through the same path the async
+            // completion would have taken so the pending-cache slot is released
+            // and the promise is rejected with a DNSException.
+            if (request.resolver_for_caching) |resolver| {
+                if (request.cache.pending_cache) {
+                    resolver.drainPendingHostNative(request.cache.pos_in_pending, request.head.globalThis, rc.int(), .{ .addrinfo = null });
+                    return promise;
+                }
+            }
+            var head = request.head;
+            head.processGetAddrInfoNative(rc.int(), null);
+            head.globalThis.allocator().destroy(request);
+            return promise;
         }
         return promise;
     }

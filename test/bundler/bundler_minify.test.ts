@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { normalizeBunSnapshot } from "harness";
 import { itBundled } from "./expectBundled";
 
@@ -1196,64 +1196,95 @@ describe("bundler", () => {
   // Minified output must be byte-identical regardless of comment placement
   // and length — comments are subtracted from the rename-frequency histogram
   // so they should not influence which single-letter names get assigned.
-  describe("minify/HistogramStableUnderComments", () => {
-    const body =
-      "var aa = 1, bb = 2, cc = 3, dd = 4, ee = 5, ff = 6;\n" +
-      "export function go() { return aa + bb + cc + dd + ee + ff; }\n";
+  // Each test bundles two entry points (one with the comment, one without)
+  // and asserts the rendered files match (modulo the entry-point filename
+  // appearing in the export-as marker).
+  const histogramBody =
+    "var aa = 1, bb = 2, cc = 3, dd = 4, ee = 5, ff = 6;\n" +
+    "export function go() { return aa + bb + cc + dd + ee + ff; }\n";
 
-    async function build(source: string): Promise<string> {
-      const result = await Bun.build({
-        entrypoints: ["/entry.js"],
-        minify: { identifiers: true, syntax: false, whitespace: false },
-        target: "browser",
-        plugins: [
-          {
-            name: "in-memory",
-            setup(build) {
-              build.onResolve({ filter: /^\/entry\.js$/ }, args => ({
-                path: args.path,
-                namespace: "in-memory",
-              }));
-              build.onLoad({ filter: /.*/, namespace: "in-memory" }, () => ({
-                contents: source,
-                loader: "js",
-              }));
-            },
-          },
-        ],
-      });
-      expect(result.success).toBe(true);
-      return await result.outputs[0].text();
-    }
+  itBundled("minify/HistogramStableUnderLeadingShortComment", {
+    files: {
+      "/with.js": "// short header\n" + histogramBody,
+      "/baseline.js": histogramBody,
+    },
+    entryPoints: ["/with.js", "/baseline.js"],
+    outdir: "/out",
+    minifyIdentifiers: true,
+    target: "browser",
+    onAfterBundle(api) {
+      // Bundler emits per-module `// with.js` / `// baseline.js` markers, so
+      // normalize the entry-name before comparing the rest of the output.
+      const withOut = api.readFile("/out/with.js").replace(/with\.js/g, "baseline.js");
+      expect(withOut).toBe(api.readFile("/out/baseline.js"));
+    },
+  });
 
-    test("leading short comment doesn't shift name assignment", async () => {
-      const baseline = await build(body);
-      const withLeading = await build("// short header\n" + body);
-      expect(withLeading).toBe(baseline);
-    });
+  itBundled("minify/HistogramStableUnderLeadingLongComment", {
+    files: {
+      "/with.js": "// " + Buffer.alloc(80, "x").toString() + "\n" + histogramBody,
+      "/baseline.js": histogramBody,
+    },
+    entryPoints: ["/with.js", "/baseline.js"],
+    outdir: "/out",
+    minifyIdentifiers: true,
+    target: "browser",
+    onAfterBundle(api) {
+      // Bundler emits per-module `// with.js` / `// baseline.js` markers, so
+      // normalize the entry-name before comparing the rest of the output.
+      const withOut = api.readFile("/out/with.js").replace(/with\.js/g, "baseline.js");
+      expect(withOut).toBe(api.readFile("/out/baseline.js"));
+    },
+  });
 
-    test("leading long comment doesn't shift name assignment", async () => {
-      const baseline = await build(body);
-      const withLeading = await build("// " + "x".repeat(80) + "\n" + body);
-      expect(withLeading).toBe(baseline);
-    });
+  itBundled("minify/HistogramStableUnderLeadingJSDoc", {
+    files: {
+      "/with.js": "/**\n * @license MIT\n * @copyright 2026 contributors\n */\n" + histogramBody,
+      "/baseline.js": histogramBody,
+    },
+    entryPoints: ["/with.js", "/baseline.js"],
+    outdir: "/out",
+    minifyIdentifiers: true,
+    target: "browser",
+    onAfterBundle(api) {
+      // Bundler emits per-module `// with.js` / `// baseline.js` markers, so
+      // normalize the entry-name before comparing the rest of the output.
+      const withOut = api.readFile("/out/with.js").replace(/with\.js/g, "baseline.js");
+      expect(withOut).toBe(api.readFile("/out/baseline.js"));
+    },
+  });
 
-    test("leading JSDoc block doesn't shift name assignment", async () => {
-      const baseline = await build(body);
-      const withLeading = await build("/**\n * @license MIT\n * @copyright 2026 contributors\n */\n" + body);
-      expect(withLeading).toBe(baseline);
-    });
+  itBundled("minify/HistogramStableUnderMidFileLineComment", {
+    files: {
+      "/with.js": "var aa = 1;\n// " + Buffer.alloc(40, "x").toString() + "\n" + histogramBody,
+      "/baseline.js": "var aa = 1;\n" + histogramBody,
+    },
+    entryPoints: ["/with.js", "/baseline.js"],
+    outdir: "/out",
+    minifyIdentifiers: true,
+    target: "browser",
+    onAfterBundle(api) {
+      // Bundler emits per-module `// with.js` / `// baseline.js` markers, so
+      // normalize the entry-name before comparing the rest of the output.
+      const withOut = api.readFile("/out/with.js").replace(/with\.js/g, "baseline.js");
+      expect(withOut).toBe(api.readFile("/out/baseline.js"));
+    },
+  });
 
-    test("mid-file long line comment doesn't shift name assignment", async () => {
-      const baseline = await build("var aa = 1;\n" + body);
-      const withMidLong = await build("var aa = 1;\n// " + "x".repeat(40) + "\n" + body);
-      expect(withMidLong).toBe(baseline);
-    });
-
-    test("mid-file long block comment doesn't shift name assignment", async () => {
-      const baseline = await build("var aa = 1;\n" + body);
-      const withMidBlock = await build("var aa = 1;\n/* " + "y".repeat(40) + " */\n" + body);
-      expect(withMidBlock).toBe(baseline);
-    });
+  itBundled("minify/HistogramStableUnderMidFileBlockComment", {
+    files: {
+      "/with.js": "var aa = 1;\n/* " + Buffer.alloc(40, "y").toString() + " */\n" + histogramBody,
+      "/baseline.js": "var aa = 1;\n" + histogramBody,
+    },
+    entryPoints: ["/with.js", "/baseline.js"],
+    outdir: "/out",
+    minifyIdentifiers: true,
+    target: "browser",
+    onAfterBundle(api) {
+      // Bundler emits per-module `// with.js` / `// baseline.js` markers, so
+      // normalize the entry-name before comparing the rest of the output.
+      const withOut = api.readFile("/out/with.js").replace(/with\.js/g, "baseline.js");
+      expect(withOut).toBe(api.readFile("/out/baseline.js"));
+    },
   });
 });

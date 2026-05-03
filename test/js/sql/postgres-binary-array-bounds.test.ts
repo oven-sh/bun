@@ -52,8 +52,20 @@ function dataRowRaw(cols: Buffer[]): Buffer {
 }
 
 // Binary int4[] header: ndim, flags, elemtype, [len, lbound] per dim, then elements.
-function binaryArrayHeader(opts: { ndim: number; flags: number; elemtype: number; len: number; lbound: number }): Buffer {
-  return Buffer.concat([int32(opts.ndim), int32(opts.flags), int32(opts.elemtype), int32(opts.len), int32(opts.lbound)]);
+function binaryArrayHeader(opts: {
+  ndim: number;
+  flags: number;
+  elemtype: number;
+  len: number;
+  lbound: number;
+}): Buffer {
+  return Buffer.concat([
+    int32(opts.ndim),
+    int32(opts.flags),
+    int32(opts.elemtype),
+    int32(opts.len),
+    int32(opts.lbound),
+  ]);
 }
 
 const authenticationOk = pkt("R", int32(0));

@@ -703,7 +703,9 @@ pub const AsyncModule = struct {
         }
 
         if (jsc_vm.isWatcherEnabled()) {
-            var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, bun.String.init(specifier), path.text, null, false);
+            // specifier and path.text borrow this.string_buf; clone so the
+            // SourceProvider owns them after deinit() frees string_buf.
+            var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, bun.String.cloneUTF8(specifier), path.text, null, false);
 
             if (parse_result.input_fd) |fd_| {
                 if (std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
@@ -724,11 +726,16 @@ pub const AsyncModule = struct {
             return resolved_source;
         }
 
+        // specifier and path.text are slices into this.string_buf which is
+        // freed in deinit() right after Bun__onFulfillAsyncModule returns.
+        // Zig::SourceProvider::create wraps source_url with
+        // StringImpl::createWithoutCopying when given a ZigString, so the
+        // SourceProvider must own these strings (clone into WTFStringImpl).
         return ResolvedSource{
             .allocator = null,
             .source_code = bun.String.cloneLatin1(printer.ctx.getWritten()),
-            .specifier = String.init(specifier),
-            .source_url = String.init(path.text),
+            .specifier = bun.String.cloneUTF8(specifier),
+            .source_url = bun.String.cloneUTF8(path.text),
             .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
         };
     }

@@ -181,12 +181,29 @@ const History = struct {
         }
     }
 
-    pub fn load(self: *History) !void {
-        const home_path = bun.env_var.HOME.get() orelse return;
-        if (home_path.len == 0) return;
+    /// Resolves the history file path using the same priority as the old TS REPL:
+    ///   1. $XDG_DATA_HOME/bun/.bun_repl_history
+    ///   2. $BUN_INSTALL/.bun_repl_history
+    ///   3. $HOME/.bun_repl_history
+    fn resolveHistoryPath(buf: *bun.PathBuffer) ?[]const u8 {
+        if (bun.env_var.XDG_DATA_HOME.get()) |xdg| {
+            if (xdg.len > 0)
+                return bun.path.joinZBuf(buf, &[_][]const u8{ xdg, "bun", HISTORY_FILENAME }, .auto);
+        }
+        if (bun.env_var.BUN_INSTALL.get()) |install| {
+            if (install.len > 0)
+                return bun.path.joinZBuf(buf, &[_][]const u8{ install, HISTORY_FILENAME }, .auto);
+        }
+        if (bun.env_var.HOME.get()) |home| {
+            if (home.len > 0)
+                return bun.path.joinZBuf(buf, &[_][]const u8{ home, HISTORY_FILENAME }, .auto);
+        }
+        return null;
+    }
 
+    pub fn load(self: *History) !void {
         var path_buf: bun.PathBuffer = undefined;
-        const path = bun.path.joinZBuf(&path_buf, &[_][]const u8{ home_path, HISTORY_FILENAME }, .auto);
+        const path = resolveHistoryPath(&path_buf) orelse return;
         self.file_path = try self.allocator.dupe(u8, path);
 
         const content = switch (bun.sys.File.readFrom(bun.FD.cwd(), path, self.allocator)) {
@@ -229,7 +246,13 @@ const History = struct {
             content.append('\n') catch return;
         }
 
-        const file = switch (bun.sys.openA(path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {
+        // Ensure parent directory exists (e.g. $XDG_DATA_HOME/bun/).
+        const parent = bun.path.dirname(path, .auto);
+        if (parent.len > 0) {
+            bun.FD.cwd().makePath(u8, parent) catch {};
+        }
+
+        const file = switch (bun.sys.openA(path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o600)) {
             .result => |fd| bun.sys.File{ .handle = fd },
             .err => return,
         };
@@ -615,7 +638,7 @@ fn cmdSave(repl: *Repl, args: []const u8) ReplResult {
         content.append('\n') catch return .skip_eval;
     }
 
-    const file = switch (bun.sys.openA(filename, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {
+    const file = switch (bun.sys.openA(filename, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o600)) {
         .result => |fd| bun.sys.File{ .handle = fd },
         .err => |err| {
             repl.printError("{f}\n", .{err});

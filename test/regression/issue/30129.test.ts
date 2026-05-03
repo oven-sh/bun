@@ -16,9 +16,9 @@
 // fix, `bun install` panics during bin linking and exits non-zero before any
 // node_modules artefacts land on disk.
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, readlinkSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 test("bun install does not panic when bin target's relative path has no `..` prefix", { timeout: 60_000 }, async () => {
   using dir = tempDir("issue-30129", {

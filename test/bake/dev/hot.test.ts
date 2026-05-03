@@ -1,5 +1,6 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
+import { renameSync, writeFileSync } from "node:fs";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
@@ -468,5 +469,50 @@ devTest("import.meta.hot on/off events", {
       `,
     );
     await c.expectMessage("Third update");
+  },
+});
+devTest("hmr detects atomic-rename saves alongside other file activity", {
+  // Windows can't rename over a file the dev server has open (EPERM); the
+  // merged-names code path under test is `Environment.isLinux`-gated anyway.
+  skip: ["win32"],
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      console.log("initial");
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("initial");
+
+    // Editors that save atomically (vim, emacs, IntelliJ) write to a temp file
+    // in the same directory and rename over the target. inotify reports CREATE
+    // tmp + MODIFY tmp + MOVED_FROM tmp + MOVED_TO target on the directory
+    // watch, all in one coalesced batch. INotifyWatcher merges same-index
+    // events into one WatchEvent with name_len = N; the dev server must
+    // forward every name to appendDir, not just the first, or the rename
+    // target is dropped and the file is never re-watched.
+    //
+    // Loop a few times so the unstable sort in processINotifyEventBatch
+    // doesn't accidentally place the target name first every time.
+    for (let i = 1; i <= 5; i++) {
+      const target = dev.join("index.ts");
+      const tmp = `${target}.${i}.swp`;
+      {
+        await using _wait = await dev.batchChanges();
+        writeFileSync(
+          tmp,
+          `
+            console.log("atomic ${i}");
+            import.meta.hot.accept();
+          `,
+        );
+        renameSync(tmp, target);
+      }
+      await c.expectMessage(`atomic ${i}`);
+    }
   },
 });

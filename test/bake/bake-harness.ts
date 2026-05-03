@@ -461,7 +461,11 @@ export class Dev extends EventEmitter {
         const socketEventHandler = () => {
           verboseSynchronization("Client received event");
           clientWaits++;
-          if (seenMainEvent && clientWaits === dev.connectedClients.size) {
+          // `>=` (not `===`): if a caller did unsynchronized writes before this
+          // batch, straggler received-hmr-event IPCs from those bundles can
+          // arrive after this listener is registered and push clientWaits past
+          // connectedClients.size. Strict equality would then never match.
+          if (seenMainEvent && clientWaits >= dev.connectedClients.size) {
             client.off("received-hmr-event", socketEventHandler);
             cleanupAndResolve();
           }
@@ -479,7 +483,7 @@ export class Dev extends EventEmitter {
         } else if (kind === WatchSynchronization.AnyBuildFinishedWaitForWebSockets) {
           verboseSynchronization("Need to wait for (" + clientWaits + "/" + dev.connectedClients.size + ") clients");
           seenMainEvent = true;
-          if (clientWaits === dev.connectedClients.size) {
+          if (clientWaits >= dev.connectedClients.size) {
             cleanupAndResolve();
           }
         } else if (kind === WatchSynchronization.ResultDidNotBundle) {

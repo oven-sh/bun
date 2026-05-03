@@ -260,8 +260,17 @@ FFI_Callback_threadsafe_call(FFICallbackFunctionWrapper& wrapper, size_t argCoun
         auto protectedWrapper = adoptRef(*wrapper);
         auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(ctx.jsGlobalObject());
         JSC::MarkedArgumentBuffer arguments;
-        for (size_t i = 0; i < argsVec.size(); ++i)
-            arguments.appendWithCrashOnOverflow(decodeThreadsafeCallbackArgument(globalObject, argsVec[i], argTypesVec[i]));
+        {
+            auto& vm = JSC::getVM(globalObject);
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            for (size_t i = 0; i < argsVec.size(); ++i) {
+                // JSBigInt::createFrom can throw (e.g. OOM). Leave the exception
+                // pending on the VM, matching invokeFFICallback.
+                JSC::JSValue arg = decodeThreadsafeCallbackArgument(globalObject, argsVec[i], argTypesVec[i]);
+                RETURN_IF_EXCEPTION(scope, void());
+                arguments.appendWithCrashOnOverflow(arg);
+            }
+        }
         invokeFFICallback(globalObject, protectedWrapper->m_function.get(), arguments);
     });
 }

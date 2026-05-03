@@ -312,6 +312,10 @@ JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObj
 }
 
 extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*);
+extern "C" bool Bun__tryLoadNapiLinkSlot(const char* path, size_t len, void** out_handle, bool* out_is_ns_module);
+#if OS(DARWIN)
+extern "C" void* Bun__darwinLookupSymbolInModule(void* module, const char* name);
+#endif
 #if OS(WINDOWS)
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
 #endif
@@ -458,11 +462,29 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #define StandaloneModuleGraph__base_path "/$bunfs/"_s
 #endif
     bool deleteAfter = false;
+    // NAPI link-slot addons are loaded from memory rather than via a
+    // filesystem path. On macOS the handle is an `NSModule` (from
+    // `NSLinkModule`), which needs `NSLookupSymbolInModule` in place of
+    // `dlsym`; on Linux it's an ordinary `dlopen()` handle sourced from a
+    // memfd. `slotHandle` short-circuits the path-based `dlopen()` below.
+    void* slotHandle = nullptr;
+    bool slotIsNSModule = false;
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
-        BunString bunStr = Bun::toString(filename);
-        if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
-            filename = bunStr.transferToWTFString();
-            deleteAfter = !filename.startsWith("/proc/"_s);
+        auto pathUtf8 = filename.utf8();
+        if (!Bun__tryLoadNapiLinkSlot(pathUtf8.data(), pathUtf8.length(), &slotHandle, &slotIsNSModule)) {
+            // Not a link slot — fall through to the module-graph tmpfile
+            // extractor for bundler-embedded addons.
+            BunString bunStr = Bun::toString(filename);
+            if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
+                filename = bunStr.transferToWTFString();
+                deleteAfter = !filename.startsWith("/proc/"_s);
+            }
+        } else if (!slotHandle) {
+            // Path matched a slot but the in-memory load failed (e.g. the
+            // embedded image isn't a valid Mach-O bundle). Surface that as a
+            // dlopen error rather than trying to find it on disk.
+            return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
+                makeString("failed to load linked native addon '"_s, filename, "' from embedded image"_s));
         }
     }
 
@@ -526,16 +548,26 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     Bun__process_dlopen_count++;
 
 #if OS(WINDOWS)
-    BunString filename_str = Bun::toString(filename);
-    HMODULE handle = Bun__LoadLibraryBunString(&filename_str);
+    HMODULE handle;
+    if (slotHandle) {
+        handle = reinterpret_cast<HMODULE>(slotHandle);
+    } else {
+        BunString filename_str = Bun::toString(filename);
+        handle = Bun__LoadLibraryBunString(&filename_str);
+    }
 
 // On Windows, we use GetLastError() for error messages, so we can only delete after checking for errors
 #else
-    CrashHandler__setDlOpenAction(utf8.data());
-    void* handle = dlopen(utf8.data(), RTLD_LAZY);
-    CrashHandler__setDlOpenAction(nullptr);
+    void* handle;
+    if (slotHandle) {
+        handle = slotHandle;
+    } else {
+        CrashHandler__setDlOpenAction(utf8.data());
+        handle = dlopen(utf8.data(), RTLD_LAZY);
+        CrashHandler__setDlOpenAction(nullptr);
 
-    tryToDeleteIfNecessary();
+        tryToDeleteIfNecessary();
+    }
 #endif
 
     globalObject->m_pendingNapiModuleDlopenHandle = handle;
@@ -694,26 +726,39 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
         return JSValue::encode(jsUndefined());
     }
 
-#if OS(WINDOWS)
-#define dlsym GetProcAddress
+    // Symbol lookup that routes NSModule handles (from in-memory NAPI link
+    // slots on macOS) through `NSLookupSymbolInModule` instead of `dlsym`.
+    // Every other handle — including Linux memfd-backed link slots — is a
+    // plain dlopen/LoadLibrary handle.
+    const auto lookupSymbol = [&](const char* name) -> void* {
+#if OS(DARWIN)
+        if (slotIsNSModule) return Bun__darwinLookupSymbolInModule(handle, name);
 #endif
+        (void)slotIsNSModule;
+#if OS(WINDOWS)
+        return reinterpret_cast<void*>(GetProcAddress(handle, name));
+#else
+        return dlsym(handle, name);
+#endif
+    };
 
     // TODO(@190n) look for node_register_module_vXYZ according to BuildOptions.reported_nodejs_version
     // (bun/src/env.zig:36) and the table at https://github.com/nodejs/node/blob/main/doc/abi_version_registry.json
-    auto napi_register_module_v1 = reinterpret_cast<napi_value (*)(napi_env, napi_value)>(dlsym(handle, "napi_register_module_v1"));
+    auto napi_register_module_v1 = reinterpret_cast<napi_value (*)(napi_env, napi_value)>(lookupSymbol("napi_register_module_v1"));
 
-    auto node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(dlsym(handle, "node_api_module_get_api_version_v1"));
-
-#if OS(WINDOWS)
-#undef dlsym
-#endif
+    auto node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(lookupSymbol("node_api_module_get_api_version_v1"));
 
     if (!napi_register_module_v1) {
+        // Link-slot handles are memoised per process and native addons
+        // can't be unloaded, so leave those in place; closing them would
+        // also strand the cached entry in loaded_handles[].
+        if (!slotHandle) {
 #if OS(WINDOWS)
-        FreeLibrary(handle);
+            FreeLibrary(handle);
 #else
-        dlclose(handle);
+            dlclose(handle);
 #endif
+        }
 
         if (!scope.exception()) [[likely]] {
             JSC::throwTypeError(globalObject, scope, "symbol 'napi_register_module_v1' not found in native module. Is this a Node API (napi) module?"_s);
@@ -756,13 +801,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     JSC::JSValue resultValue = encoded == 0 ? exports : JSValue::decode(encoded);
 
     if (auto resultObject = resultValue.getObject()) {
-#if OS(DARWIN) || OS(LINUX) || OS(FREEBSD)
         // If this is a native bundler plugin we want to store the handle from dlopen
         // as we are going to call `dlsym()` on it later to get the plugin implementation.
-        const char** pointer_to_plugin_name = (const char**)dlsym(handle, "BUN_PLUGIN_NAME");
-#elif OS(WINDOWS)
-        const char** pointer_to_plugin_name = (const char**)GetProcAddress(handle, "BUN_PLUGIN_NAME");
-#endif
+        const char** pointer_to_plugin_name = reinterpret_cast<const char**>(lookupSymbol("BUN_PLUGIN_NAME"));
         if (pointer_to_plugin_name) {
             // TODO: think about the finalizer here
             // currently we do not dealloc napi modules so we don't have to worry about it right now

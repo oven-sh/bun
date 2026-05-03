@@ -968,6 +968,64 @@ extern "C" void Bun__signpost_emit(os_log_t log, os_signpost_type_t type, os_sig
 
 #endif // OS(DARWIN) signpost code
 
+// -----------------------------------------------------------------------------
+// NAPI link slots: a fixed table of stub native-addon loaders that can be
+// filled in *after* `bun build --compile` without rebundling. Each slot points
+// at a `.node` image appended into the __BUN,__bun / .bun section (after the
+// standalone module graph payload). At runtime `process.dlopen` on a
+// `/$bunfs/...` path checks this table first; on Linux the slice is handed to
+// dlopen() via memfd (/proc/self/fd), and on other platforms it's written once
+// to a content-hashed cache path so repeated launches don't re-extract.
+//
+// The table lives in its own section so an external linker tool can locate it
+// by name (or by scanning for the per-slot magic) and stamp offset/length/
+// hash/path in place — no need to understand the module-graph serialization.
+// 256 bytes per slot keeps the math trivial for such tools.
+#define BUN_NAPI_LINK_SLOT_COUNT 8
+#define BUN_NAPI_LINK_SLOT_MAGIC 0x006B6E696C6E7562ULL // "bunlink\0" LE
+
+extern "C" {
+struct BunNapiLinkSlot {
+    uint64_t magic; // BUN_NAPI_LINK_SLOT_MAGIC | slot_index — sanity check + locatable signature
+    uint64_t offset; // byte offset from the start of the .bun section (i.e. from the u64 size header) to the embedded .node image; 0 = unused
+    uint64_t length; // byte length of the embedded .node image
+    uint64_t hash; // content hash of the image (for cache keying on platforms without memfd)
+    char path[224]; // NUL-terminated virtual path ("/$bunfs/..." or "B:/~BUN/...") this slot answers to
+};
+static_assert(sizeof(BunNapiLinkSlot) == 256, "BunNapiLinkSlot must be 256 bytes so external patchers can index the table");
+}
+
+#define BUN_NAPI_LINK_SLOT_INIT(i) { BUN_NAPI_LINK_SLOT_MAGIC | ((uint64_t)(i) << 56), 0, 0, 0, { 0 } }
+#define BUN_NAPI_LINK_SLOTS_INIT                                                                                      \
+    { BUN_NAPI_LINK_SLOT_INIT(0), BUN_NAPI_LINK_SLOT_INIT(1), BUN_NAPI_LINK_SLOT_INIT(2), BUN_NAPI_LINK_SLOT_INIT(3), \
+        BUN_NAPI_LINK_SLOT_INIT(4), BUN_NAPI_LINK_SLOT_INIT(5), BUN_NAPI_LINK_SLOT_INIT(6), BUN_NAPI_LINK_SLOT_INIT(7) }
+
+#if OS(DARWIN)
+extern "C" __attribute__((section("__DATA,__bun_napi_lnk"), used, aligned(16))) BunNapiLinkSlot BUN_NAPI_LINK_SLOTS[BUN_NAPI_LINK_SLOT_COUNT] = BUN_NAPI_LINK_SLOTS_INIT;
+#elif defined(_WIN32)
+#pragma section(".bnapi", read, write)
+extern "C" __declspec(allocate(".bnapi")) BunNapiLinkSlot BUN_NAPI_LINK_SLOTS[BUN_NAPI_LINK_SLOT_COUNT] = BUN_NAPI_LINK_SLOTS_INIT;
+#else
+extern "C" __attribute__((section(".bun_napi_link"), used, aligned(16))) BunNapiLinkSlot BUN_NAPI_LINK_SLOTS[BUN_NAPI_LINK_SLOT_COUNT] = BUN_NAPI_LINK_SLOTS_INIT;
+#endif
+
+extern "C" BunNapiLinkSlot* Bun__getNapiLinkSlots()
+{
+    return &BUN_NAPI_LINK_SLOTS[0];
+}
+
+extern "C" uint32_t Bun__getNapiLinkSlotCount()
+{
+    return BUN_NAPI_LINK_SLOT_COUNT;
+}
+
+// Base pointer that slot offsets are measured from. On Mach-O and ELF this is
+// the address of the BUN_COMPILED symbol (start of the __BUN,__bun / .bun
+// section, where the u64 size header lives). On Windows it is the start of the
+// .bun PE section, looked up at runtime. Declared per-platform below.
+extern "C" const uint8_t* Bun__getNapiLinkSectionBase();
+// -----------------------------------------------------------------------------
+
 #if OS(DARWIN) || defined(__linux__) || defined(__FreeBSD__)
 
 #define BLOB_HEADER_ALIGNMENT 16 * 1024
@@ -988,6 +1046,75 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength()
     return &BUN_COMPILED.size;
 }
 
+extern "C" const uint8_t* Bun__getNapiLinkSectionBase()
+{
+    return reinterpret_cast<const uint8_t*>(&BUN_COMPILED);
+}
+
+// In-memory Mach-O bundle loader for NAPI link slots. `dyld` has no API to
+// `dlopen()` a dylib from an offset inside another file, so we hand it the
+// embedded bytes via the (deprecated-but-still-exported) NSObjectFileImage
+// path. On modern dyld this routes through dyld's own private temp-file
+// shim so code-signing still works on arm64, but from bun's side it's a
+// pure pointer+length call — we never create a `.node` on disk ourselves.
+//
+// The returned `NSModule` is used as the "handle" in place of a `dlopen()`
+// result; `Process_functionDlopen` switches symbol lookup to
+// `NSLookupSymbolInModule` when the handle came from here.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#include <mach-o/dyld.h>
+#include <mach-o/loader.h>
+
+extern "C" void* Bun__darwinLoadMachOFromMemory(const uint8_t* bytes, size_t len, const char* name)
+{
+    if (len < sizeof(mach_header_64)) return nullptr;
+
+    // dyld may patch the image (e.g. slide fixups) and takes ownership of the
+    // buffer on success, so give it a private writable copy.
+    void* copy = ::malloc(len);
+    if (!copy) return nullptr;
+    ::memcpy(copy, bytes, len);
+
+    // `NSCreateObjectFileImageFromMemory` only accepts `MH_BUNDLE`. node-gyp
+    // builds `.node` addons as bundles already, but if someone hands us an
+    // `MH_DYLIB` the load-command layout is identical, so flip the filetype.
+    auto* mh = reinterpret_cast<mach_header_64*>(copy);
+    if (mh->magic == MH_MAGIC_64 && mh->filetype == MH_DYLIB) {
+        mh->filetype = MH_BUNDLE;
+    }
+
+    NSObjectFileImage image = nullptr;
+    if (NSCreateObjectFileImageFromMemory(copy, len, &image) != NSObjectFileImageSuccess) {
+        ::free(copy);
+        return nullptr;
+    }
+    // `NSLINKMODULE_OPTION_PRIVATE` keeps the addon's symbols out of the
+    // global namespace (mirrors `RTLD_LOCAL`, which is what `process.dlopen`
+    // gets from `RTLD_LAZY` by default). `RETURN_ON_ERROR` stops dyld from
+    // aborting the process on an unresolved import.
+    NSModule module = NSLinkModule(image, name,
+        NSLINKMODULE_OPTION_PRIVATE | NSLINKMODULE_OPTION_RETURN_ON_ERROR | NSLINKMODULE_OPTION_BINDNOW);
+    NSDestroyObjectFileImage(image);
+    // On success dyld has either taken ownership of `copy` or duplicated it;
+    // on failure the `NSDestroyObjectFileImage` above released it. Either way
+    // we must not free it here.
+    return reinterpret_cast<void*>(module);
+}
+
+extern "C" void* Bun__darwinLookupSymbolInModule(void* module, const char* name)
+{
+    if (!module) return nullptr;
+    // Mach-O exports carry a leading underscore that `dlsym` strips for you;
+    // `NSLookupSymbolInModule` does not.
+    char prefixed[256];
+    int n = ::snprintf(prefixed, sizeof(prefixed), "_%s", name);
+    if (n <= 0 || static_cast<size_t>(n) >= sizeof(prefixed)) return nullptr;
+    NSSymbol sym = NSLookupSymbolInModule(reinterpret_cast<NSModule>(module), prefixed);
+    return sym ? NSAddressOfSymbol(sym) : nullptr;
+}
+#pragma clang diagnostic pop
+
 #else // __linux__ / __FreeBSD__ — both ELF, same .bun section approach
 
 extern "C" BlobHeader __attribute__((section(".bun"), aligned(BLOB_HEADER_ALIGNMENT), used)) BUN_COMPILED = { 0 };
@@ -995,6 +1122,16 @@ extern "C" BlobHeader __attribute__((section(".bun"), aligned(BLOB_HEADER_ALIGNM
 extern "C" uint64_t* Bun__getStandaloneModuleGraphELFVaddr()
 {
     return &BUN_COMPILED.size;
+}
+
+extern "C" const uint8_t* Bun__getNapiLinkSectionBase()
+{
+    // On ELF BUN_COMPILED.size holds the vaddr of the appended payload, not
+    // the payload itself, so slot offsets are measured from that vaddr (which
+    // is where the u64 length + module-graph data live).
+    uint64_t vaddr = BUN_COMPILED.size;
+    if (vaddr == 0) return nullptr;
+    return reinterpret_cast<const uint8_t*>(static_cast<uintptr_t>(vaddr));
 }
 
 #endif // OS(DARWIN) / __linux__
@@ -1048,6 +1185,14 @@ extern "C" uint8_t* Bun__getStandaloneModuleGraphPEData()
 {
     if (!initializePESection()) return nullptr;
     return pe_section_data;
+}
+
+extern "C" const uint8_t* Bun__getNapiLinkSectionBase()
+{
+    if (!initializePESection()) return nullptr;
+    // Slot offsets are measured from the start of the section (the u64 size
+    // header), matching Mach-O.
+    return reinterpret_cast<const uint8_t*>(pe_section_size);
 }
 
 #endif

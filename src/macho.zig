@@ -39,7 +39,49 @@ pub const MachoFile = struct {
         self.allocator.destroy(self);
     }
 
+    pub const SectionLocation = struct {
+        file_offset: u64,
+        size: u64,
+    };
+
+    /// Locate a `(segname, sectname)` pair and return its file offset and
+    /// on-disk size. Unlike `writeSection`, this does not assume the
+    /// `__BUN,__bun` layout and does not mutate anything — it's the hook for
+    /// external patchers (e.g. the NAPI link slot table lives in
+    /// `__DATA,__bun_napi_lnk` and is overwritten in place).
+    pub fn findSection(self: *const MachoFile, segname: []const u8, sectname: []const u8) ?SectionLocation {
+        var iter = self.iterator();
+        while (iter.next()) |entry| {
+            if (entry.hdr.cmd != .SEGMENT_64) continue;
+            const command = entry.cast(macho.segment_command_64).?;
+            if (!strings.eqlLong(command.segName(), segname, true)) continue;
+            if (command.nsects == 0) continue;
+            const section_offset = @intFromPtr(entry.data.ptr) - @intFromPtr(self.data.items.ptr);
+            const sections_base = section_offset + @sizeOf(macho.segment_command_64);
+            var i: usize = 0;
+            while (i < command.nsects) : (i += 1) {
+                const sect_bytes = self.data.items[sections_base + i * @sizeOf(macho.section_64) ..][0..@sizeOf(macho.section_64)];
+                var sect: macho.section_64 = undefined;
+                @memcpy(std.mem.asBytes(&sect), sect_bytes);
+                if (strings.eqlLong(sect.sectName(), sectname, true)) {
+                    return .{ .file_offset = sect.offset, .size = sect.size };
+                }
+            }
+        }
+        return null;
+    }
+
     pub fn writeSection(self: *MachoFile, data: []const u8) !void {
+        return self.writeSectionWithHeader(data, @intCast(data.len));
+    }
+
+    /// Same as `writeSection` but the `u64` size header written at the
+    /// section's first 8 bytes is `header_value` instead of `data.len`. The
+    /// NAPI link-slot appender uses this to keep the header pointing at the
+    /// module-graph payload length (so `StandaloneModuleGraph.fromExecutable`
+    /// still finds its trailer) while tucking addon images past it in the
+    /// same section.
+    pub fn writeSectionWithHeader(self: *MachoFile, data: []const u8, header_value: u64) !void {
         const blob_alignment = 16 * 1024;
         const PAGE_SIZE: u64 = 1 << 12;
         const HASH_SIZE: usize = 32; // SHA256 = 32 bytes
@@ -160,7 +202,7 @@ pub const MachoFile = struct {
         bun.memmove(after_bun_slice, prev_after_bun_slice);
 
         // Now we copy the u64 size header (8 bytes for alignment)
-        std.mem.writeInt(u64, self.data.items[original_fileoff..][0..8], @intCast(data.len), .little);
+        std.mem.writeInt(u64, self.data.items[original_fileoff..][0..8], header_value, .little);
 
         // Now we copy the data itself
         @memcpy(self.data.items[original_fileoff + 8 ..][0..data.len], data);

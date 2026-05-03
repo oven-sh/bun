@@ -158,7 +158,14 @@ pub const StringOrBuffer = union(enum) {
             .threadsafe_string => {},
             .encoded_slice => {},
             .buffer => {
-                this.buffer.buffer.value.protect();
+                // `protect()`ing the JS value keeps the wrapper alive for GC
+                // but does not pin the ArrayBuffer backing store – user code
+                // can detach it (e.g. `buffer.transfer()`), freeing the bytes
+                // while the threadpool is still reading them. Copy the bytes
+                // into Bun-owned memory instead so the off-thread reader has
+                // a stable view.
+                const owned = bun.handleOom(bun.default_allocator.dupe(u8, this.buffer.slice()));
+                this.* = .{ .encoded_slice = jsc.ZigString.Slice.init(bun.default_allocator, owned) };
             },
         }
     }
@@ -277,7 +284,16 @@ pub const StringOrBuffer = union(enum) {
                 const buffer = Buffer.fromArrayBuffer(global, value);
 
                 if (is_async) {
-                    buffer.buffer.value.protect();
+                    // Copy the bytes into Bun-owned memory. Holding a raw
+                    // pointer into the ArrayBuffer and merely `protect()`ing
+                    // the JS value is not enough: user code can detach the
+                    // buffer (e.g. `buffer.transfer()`), which frees the
+                    // backing store while the threadpool still holds the
+                    // pointer.
+                    const bytes = buffer.slice();
+                    const owned = bun.handleOom(allocator.dupe(u8, bytes));
+                    defer global.vm().reportExtraMemory(owned.len);
+                    return .{ .encoded_slice = jsc.ZigString.Slice.init(allocator, owned) };
                 }
 
                 return .{ .buffer = buffer };
@@ -298,7 +314,13 @@ pub const StringOrBuffer = union(enum) {
         if (value.isCell() and value.jsType().isArrayBufferLike()) {
             const buffer = Buffer.fromArrayBuffer(global, value);
             if (is_async) {
-                buffer.buffer.value.protect();
+                // See fromJSMaybeAsync: copy so a concurrent detach/transfer
+                // of the ArrayBuffer can't free the bytes out from under the
+                // threadpool reader.
+                const bytes = buffer.slice();
+                const owned = bun.handleOom(allocator.dupe(u8, bytes));
+                defer global.vm().reportExtraMemory(owned.len);
+                return .{ .encoded_slice = jsc.ZigString.Slice.init(allocator, owned) };
             }
             return .{ .buffer = buffer };
         }

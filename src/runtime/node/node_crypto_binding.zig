@@ -189,9 +189,15 @@ fn CryptoJob(comptime Ctx: type) type {
 const random = struct {
     const JobCtx = struct {
         value: JSValue,
-        bytes: [*]u8,
+        /// Bun-owned scratch buffer filled on the threadpool. We do *not* hold
+        /// a raw pointer into the JS ArrayBuffer backing store here because
+        /// user code can synchronously detach it (e.g. `buf.buffer.transfer()`)
+        /// while the task is queued/running, which would free that storage and
+        /// turn the threadpool write into a use-after-free. Instead we fill
+        /// this buffer off-thread and copy it into the JS view back on the
+        /// main thread in `runFromJS`.
+        bytes: []u8,
         offset: u32,
-        length: usize,
 
         result: void = {},
 
@@ -200,15 +206,25 @@ const random = struct {
         }
 
         fn runTask(this: *JobCtx, _: void) void {
-            bun.csprng(this.bytes[this.offset..][0..this.length]);
+            bun.csprng(this.bytes);
         }
 
         fn runFromJS(this: *JobCtx, global: *JSGlobalObject, callback: JSValue) void {
+            if (this.value.asArrayBuffer(global)) |buf| {
+                const dest = buf.slice();
+                // If the buffer was detached or shrunk while the task ran,
+                // `dest` will no longer cover the requested range; in that
+                // case there is nothing to copy into.
+                if (this.bytes.len + @as(usize, this.offset) <= dest.len) {
+                    @memcpy(dest[this.offset..][0..this.bytes.len], this.bytes);
+                }
+            }
             const vm = global.bunVM();
             vm.eventLoop().runCallback(callback, global, .js_undefined, &.{ .null, this.value });
         }
 
         fn deinit(this: *JobCtx) void {
+            bun.default_allocator.free(this.bytes);
             this.value.unprotect();
         }
     };
@@ -339,9 +355,8 @@ const random = struct {
 
         const ctx: JobCtx = .{
             .value = result,
-            .bytes = bytes.ptr,
+            .bytes = bun.handleOom(bun.default_allocator.alloc(u8, size)),
             .offset = 0,
-            .length = size,
         };
         try Job.initAndSchedule(global, callback, &ctx);
 
@@ -417,9 +432,8 @@ const random = struct {
 
         const ctx: JobCtx = .{
             .value = buf_value,
-            .bytes = buf.slice().ptr,
+            .bytes = bun.handleOom(bun.default_allocator.alloc(u8, size)),
             .offset = offset,
-            .length = size,
         };
         try Job.initAndSchedule(global, callback, &ctx);
 

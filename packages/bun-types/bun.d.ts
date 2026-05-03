@@ -8262,6 +8262,10 @@ declare module "bun" {
    * of execution is fixed regardless of call order:
    * `autoOrient → rotate → flip/flop → resize → modulate`.
    *
+   * The source ICC colour profile (Display P3, Adobe RGB, Jpegli XYB, etc.)
+   * is preserved through re-encode to JPEG and PNG so non-sRGB images don't
+   * shift colour. WebP output drops the profile; `png()` / `jpeg()` keep it.
+   *
    * @example
    * ```ts
    * const thumb = await new Bun.Image("photo.jpg")

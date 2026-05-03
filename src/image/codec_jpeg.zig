@@ -15,6 +15,15 @@ extern fn tj3SetCroppingRegion(h: tjhandle, r: CropRegion) c_int;
 extern fn tj3GetScalingFactors(n: *c_int) ?[*]const ScalingFactor;
 pub extern fn tj3Free(ptr: ?*anyopaque) void;
 extern fn tj3GetErrorStr(h: tjhandle) [*:0]const u8;
+// ICC profile transport: the APP2 ICC_PROFILE marker carries the source's
+// colour space (sRGB implicit when absent; Display-P3 / Adobe RGB / Jpegli
+// XYB / … explicit when present). tj3GetICCProfile reads the decoded
+// marker after TJPARAM_SAVEMARKERS is set to 2 or 4 — it allocates via
+// libjpeg-turbo's allocator and returns it in *iccBuf for the caller to
+// tj3Free. tj3SetICCProfile copies the bytes into the encoder's state so
+// the input buffer can be freed immediately after.
+extern fn tj3GetICCProfile(h: tjhandle, icc_buf: *?[*]u8, icc_size: *usize) c_int;
+extern fn tj3SetICCProfile(h: tjhandle, icc_buf: ?[*]const u8, icc_size: usize) c_int;
 
 const ScalingFactor = extern struct { num: c_int, denom: c_int };
 const CropRegion = extern struct { x: c_int, y: c_int, w: c_int, h: c_int };
@@ -30,12 +39,20 @@ pub const TJPARAM_JPEGWIDTH = 5;
 pub const TJPARAM_JPEGHEIGHT = 6;
 const TJPARAM_PROGRESSIVE = 12;
 const TJPARAM_MAXPIXELS = 24;
+/// `2` = save only APP2/ICC_PROFILE markers (enough for colour management,
+/// skips the rest). Must be set BEFORE `tj3DecompressHeader` so the marker
+/// parser keeps the profile around for `tj3GetICCProfile`.
+const TJPARAM_SAVEMARKERS = 25;
 const TJPF_RGBA = 7;
 const TJSAMP_420 = 2;
 
 pub fn decode(bytes: []const u8, max_pixels: u64, hint: codecs.DecodeHint) codecs.Error!codecs.Decoded {
     const h = tj3Init(1) orelse return error.OutOfMemory;
     defer tj3Destroy(h);
+    // Ask libjpeg-turbo to keep the APP2/ICC_PROFILE markers so we can pull
+    // the profile out after header parse. Must be set PRE-header — the
+    // marker buffer is discarded if we set this after.
+    _ = tj3Set(h, TJPARAM_SAVEMARKERS, 2);
     if (tj3DecompressHeader(h, bytes.ptr, bytes.len) != 0) return error.DecodeFailed;
     const rw = tj3Get(h, TJPARAM_JPEGWIDTH);
     const rh = tj3Get(h, TJPARAM_JPEGHEIGHT);
@@ -102,10 +119,26 @@ pub fn decode(bytes: []const u8, max_pixels: u64, hint: codecs.DecodeHint) codec
         return error.DecodeFailed;
     if (tj3Get(h, TJPARAM_JPEGWIDTH) != rw or tj3Get(h, TJPARAM_JPEGHEIGHT) != rh)
         return error.DecodeFailed;
-    return .{ .rgba = out, .width = w, .height = ht };
+
+    // Extract the APP2 ICC profile (if the source carried one). The marker
+    // parser ran during tj3DecompressHeader, so this is a copy-out of
+    // already-parsed state. `tj3GetICCProfile` allocates via libjpeg-turbo's
+    // allocator; re-home into `bun.default_allocator` so the rest of the
+    // pipeline can free it uniformly. A decode that simply has no profile
+    // returns non-zero with iccSize==0 — treat that as "no profile", not an
+    // error.
+    var icc_ptr: ?[*]u8 = null;
+    var icc_size: usize = 0;
+    const icc: ?[]u8 = blk: {
+        if (tj3GetICCProfile(h, &icc_ptr, &icc_size) != 0 or icc_size == 0) break :blk null;
+        defer if (icc_ptr) |p| tj3Free(p);
+        const p = icc_ptr orelse break :blk null;
+        break :blk bun.default_allocator.dupe(u8, p[0..icc_size]) catch null;
+    };
+    return .{ .rgba = out, .width = w, .height = ht, .icc_profile = icc };
 }
 
-pub fn encode(rgba: []const u8, w: u32, ht: u32, quality: u8, progressive: bool) codecs.Error!codecs.Encoded {
+pub fn encode(rgba: []const u8, w: u32, ht: u32, quality: u8, progressive: bool, icc_profile: ?[]const u8) codecs.Error!codecs.Encoded {
     const h = tj3Init(0) orelse return error.OutOfMemory;
     defer tj3Destroy(h);
     _ = tj3Set(h, TJPARAM_QUALITY, @intCast(@min(@max(quality, 1), 100)));
@@ -114,6 +147,14 @@ pub fn encode(rgba: []const u8, w: u32, ht: u32, quality: u8, progressive: bool)
     // coarse-to-fine. Off by default (slower to encode, some old decoders
     // mishandle it).
     if (progressive) _ = tj3Set(h, TJPARAM_PROGRESSIVE, 1);
+    // Embed the source colour profile as an APP2/ICC_PROFILE marker. The
+    // library copies the bytes, so the caller can free `icc_profile` right
+    // after this call returns. A non-zero return here means the profile
+    // was malformed — drop it rather than fail the encode; a JPEG without a
+    // profile is still a valid JPEG (implicitly sRGB). See #30197.
+    if (icc_profile) |p| {
+        if (p.len > 0) _ = tj3SetICCProfile(h, p.ptr, p.len);
+    }
     var out_ptr: ?[*]u8 = null;
     var out_len: usize = 0;
     if (tj3Compress8(h, rgba.ptr, @intCast(w), 0, @intCast(ht), TJPF_RGBA, &out_ptr, &out_len) != 0) {

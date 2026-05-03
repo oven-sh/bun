@@ -416,6 +416,148 @@ describe("Bun.Image", () => {
     });
   });
 
+  // ICC colour profile preservation — #30197. The RGBA pixel buffer the
+  // pipeline works on carries no colour-space tag, so dropping the source's
+  // ICC profile reinterprets non-sRGB inputs (Display P3, Adobe RGB, Jpegli
+  // XYB) as sRGB and visibly shifts the colours. Bun's contract here is:
+  // source-format re-encode preserves the profile; format conversion
+  // preserves it when the target container supports ICC (JPEG APP2, PNG
+  // iCCP). WebP drops it — libwebpmux isn't in the build.
+  describe("ICC profile", () => {
+    // CRC32 and chunk helpers — same logic as makePng above, but we need
+    // to splice an iCCP chunk between IHDR and IDAT so keep them local.
+    function crc32(buf: Uint8Array): number {
+      let c = ~0 >>> 0;
+      for (let i = 0; i < buf.length; i++) {
+        c ^= buf[i];
+        for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+      }
+      return ~c >>> 0;
+    }
+    function chunk(type: string, data: Uint8Array): Uint8Array {
+      const out = new Uint8Array(12 + data.length);
+      const dv = new DataView(out.buffer);
+      dv.setUint32(0, data.length);
+      out.set(Buffer.from(type, "ascii"), 4);
+      out.set(data, 8);
+      dv.setUint32(8 + data.length, crc32(out.subarray(4, 8 + data.length)));
+      return out;
+    }
+
+    // Splice an iCCP chunk carrying `profile` into a valid PNG. The PNG spec
+    // requires iCCP before the first IDAT; put it right after IHDR. Chunk
+    // body: keyword + 0x00 separator + compression_method=0 + deflate(profile).
+    function pngWithIccp(basePng: Uint8Array, profile: Uint8Array, name = "ICC Profile"): Uint8Array {
+      const compressed = zlib.deflateSync(profile);
+      const body = Buffer.concat([Buffer.from(name, "latin1"), Buffer.from([0, 0]), compressed]);
+      const iccp = chunk("iCCP", body);
+      // 8-byte signature + IHDR (13-byte data + 12-byte framing = 25).
+      const ihdrEnd = 8 + 25;
+      return Buffer.concat([basePng.subarray(0, ihdrEnd), iccp, basePng.subarray(ihdrEnd)]);
+    }
+
+    // Pull the iCCP profile bytes back out of a PNG to verify it round-tripped.
+    function extractPngIccp(png: Uint8Array): Uint8Array | null {
+      const dv = new DataView(png.buffer, png.byteOffset, png.byteLength);
+      let off = 8;
+      while (off + 8 <= png.length) {
+        const len = dv.getUint32(off);
+        const type = String.fromCharCode(png[off + 4], png[off + 5], png[off + 6], png[off + 7]);
+        if (type === "iCCP") {
+          const body = png.subarray(off + 8, off + 8 + len);
+          // keyword\0 compression_method deflate-stream
+          let nameEnd = 0;
+          while (nameEnd < body.length && body[nameEnd] !== 0) nameEnd++;
+          return zlib.inflateSync(body.subarray(nameEnd + 2));
+        }
+        off += 12 + len;
+      }
+      return null;
+    }
+
+    // Hand-crafted "not an ICC profile" — we just need distinctive bytes that
+    // round-trip through libspng's deflate/inflate and libjpeg-turbo's APP2
+    // chunking without modification. Neither library validates ICC internals.
+    // 384 bytes > 256 so it forces multi-APP2-segment emission paths if libjpeg
+    // splits. Wide byte range exercises binary-safe transport (not text).
+    const fakeProfile = new Uint8Array(384);
+    for (let i = 0; i < fakeProfile.length; i++) fakeProfile[i] = (i * 37 + 11) & 0xff;
+
+    test("PNG iCCP survives PNG re-encode byte-for-byte", async () => {
+      const src = pngWithIccp(cornersPng, fakeProfile);
+      const out = await new Bun.Image(src).png().bytes();
+      const got = extractPngIccp(out);
+      expect(got).not.toBeNull();
+      expect(Array.from(got!)).toEqual(Array.from(fakeProfile));
+    });
+
+    test("PNG iCCP survives resize + re-encode — geometry doesn't drop profile", async () => {
+      const src = pngWithIccp(cornersPng, fakeProfile);
+      const out = await new Bun.Image(src).resize(8, 6).png().bytes();
+      const got = extractPngIccp(out);
+      expect(got).not.toBeNull();
+      expect(Array.from(got!)).toEqual(Array.from(fakeProfile));
+    });
+
+    test("PNG iCCP survives rotate — applyPipeline preserves profile across Decoded swap", async () => {
+      const src = pngWithIccp(cornersPng, fakeProfile);
+      const out = await new Bun.Image(src).rotate(90).png().bytes();
+      const got = extractPngIccp(out);
+      expect(got).not.toBeNull();
+      expect(Array.from(got!)).toEqual(Array.from(fakeProfile));
+    });
+
+    test("PNG iCCP transfers to JPEG encode — cross-format preserves profile", async () => {
+      const src = pngWithIccp(cornersPng, fakeProfile);
+      const jpg = await new Bun.Image(src).jpeg({ quality: 90 }).bytes();
+      // APP2 ICC_PROFILE marker: FF E2 + u16be seglen + "ICC_PROFILE\0" + seq + count + payload.
+      // There may be multiple APP2 segments for large profiles; concatenate payloads.
+      const marker = Buffer.from("ICC_PROFILE\0", "latin1");
+      const pieces: Buffer[] = [];
+      let i = 0;
+      while (i < jpg.length - 1) {
+        if (jpg[i] === 0xff && jpg[i + 1] === 0xe2) {
+          const seglen = (jpg[i + 2] << 8) | jpg[i + 3];
+          const segBody = jpg.subarray(i + 4, i + 2 + seglen);
+          if (segBody.length >= marker.length && Buffer.from(segBody.subarray(0, marker.length)).equals(marker)) {
+            // Skip marker (12 bytes) + seq (1) + total (1) = 14-byte header inside segment body.
+            pieces.push(Buffer.from(segBody.subarray(marker.length + 2)));
+          }
+          i += 2 + seglen;
+          continue;
+        }
+        i++;
+      }
+      expect(pieces.length).toBeGreaterThan(0);
+      const reassembled = Buffer.concat(pieces);
+      expect(Array.from(reassembled)).toEqual(Array.from(fakeProfile));
+    });
+
+    test("PNG without iCCP encodes to PNG without iCCP — no synthetic profile", async () => {
+      const out = await new Bun.Image(cornersPng).png().bytes();
+      expect(extractPngIccp(out)).toBeNull();
+    });
+
+    test("JPEG without ICC_PROFILE encodes to JPEG without ICC_PROFILE", async () => {
+      // round-trip a tiny PNG through JPEG without touching ICC — no profile
+      // should appear in the JPEG output.
+      const jpg = await new Bun.Image(cornersPng).jpeg({ quality: 80 }).bytes();
+      const hay = Buffer.from(jpg);
+      expect(hay.indexOf(Buffer.from("ICC_PROFILE\0", "latin1"))).toBe(-1);
+    });
+
+    test("JPEG → JPEG re-encode preserves ICC_PROFILE APP2 marker", async () => {
+      // Build a JPEG with ICC by going PNG(with iCCP) → Bun.Image → JPEG,
+      // then re-encode that JPEG through Bun.Image and confirm the profile
+      // survives the round-trip.
+      const srcPng = pngWithIccp(cornersPng, fakeProfile);
+      const jpg = await new Bun.Image(srcPng).jpeg({ quality: 90 }).bytes();
+      const reJpg = await new Bun.Image(jpg).jpeg({ quality: 90 }).bytes();
+      const marker = Buffer.from("ICC_PROFILE\0", "latin1");
+      expect(Buffer.from(reJpg).indexOf(marker)).toBeGreaterThan(-1);
+    });
+  });
+
   // EXIF: build a minimal JPEG via Bun.Image, then splice in an APP1 segment
   // carrying Orientation=6 (90° CW). A 4×2 source should report 2×4 after
   // auto-orient.

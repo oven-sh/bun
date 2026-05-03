@@ -14,6 +14,27 @@ extern fn spng_set_trns(ctx: *spng_ctx, trns: *const Trns) c_int;
 extern fn spng_encode_image(ctx: *spng_ctx, img: [*]const u8, len: usize, fmt: c_int, flags: c_int) c_int;
 extern fn spng_get_png_buffer(ctx: *spng_ctx, len: *usize, err: *c_int) ?[*]u8;
 extern fn spng_set_option(ctx: *spng_ctx, opt: c_int, value: c_int) c_int;
+/// iCCP chunk read/write — PNG carries an optional ICC profile alongside
+/// the pixels. `spng_get_iccp` returns `SPNG_ECHUNKAVAIL` (and leaves the
+/// struct untouched) when the source has none, which is the common case
+/// and not an error. The `profile` pointer it hands back is owned by the
+/// context and freed with `spng_ctx_free`; dupe out before then.
+extern fn spng_get_iccp(ctx: *spng_ctx, iccp: *Iccp) c_int;
+extern fn spng_set_iccp(ctx: *spng_ctx, iccp: *const Iccp) c_int;
+
+/// `SPNG_ECHUNKAVAIL = 56` — "chunk not available". Separate from the
+/// malformed-iCCP errors (`SPNG_EICCP_NAME` / `SPNG_EICCP_COMPRESSION_METHOD`)
+/// which indicate a broken iCCP chunk we should NOT treat as "absent".
+const SPNG_ECHUNKAVAIL: c_int = 56;
+
+const Iccp = extern struct {
+    /// `profile_name` is PNG's Latin-1 keyword (1-79 chars + NUL). libspng
+    /// requires the name to be non-empty on encode — we re-use whatever the
+    /// source had and fall back to a stable default.
+    profile_name: [80]u8,
+    profile_len: usize,
+    profile: ?[*]u8,
+};
 
 const Ihdr = extern struct {
     width: u32,
@@ -62,10 +83,22 @@ pub fn decode(bytes: []const u8, max_pixels: u64) codecs.Error!codecs.Decoded {
     errdefer bun.default_allocator.free(out);
     if (spng_decode_image(ctx, out.ptr, out.len, SPNG_FMT_RGBA8, SPNG_DECODE_TRNS) != 0)
         return error.DecodeFailed;
-    return .{ .rgba = out, .width = ihdr.width, .height = ihdr.height };
+
+    // iCCP after decode so the chunk has definitely been parsed. A chunk
+    // that isn't present returns SPNG_ECHUNKAVAIL — that's the no-profile
+    // case, not an error. Malformed iCCP (name/compression errors) also
+    // shouldn't fail the decode; we just drop the profile and the pixels
+    // are still valid RGBA. `profile` is context-owned memory, so copy it
+    // out before `spng_ctx_free` runs at function exit.
+    var iccp: Iccp = std.mem.zeroes(Iccp);
+    const icc: ?[]u8 = if (spng_get_iccp(ctx, &iccp) == 0 and iccp.profile_len > 0 and iccp.profile != null)
+        bun.default_allocator.dupe(u8, iccp.profile.?[0..iccp.profile_len]) catch null
+    else
+        null;
+    return .{ .rgba = out, .width = ihdr.width, .height = ihdr.height, .icc_profile = icc };
 }
 
-pub fn encode(rgba: []const u8, w: u32, h: u32, level: i8) codecs.Error!codecs.Encoded {
+pub fn encode(rgba: []const u8, w: u32, h: u32, level: i8, icc_profile: ?[]const u8) codecs.Error!codecs.Encoded {
     const ctx = spng_ctx_new(SPNG_CTX_ENCODER) orelse return error.OutOfMemory;
     defer spng_ctx_free(ctx);
     _ = spng_set_option(ctx, SPNG_ENCODE_TO_BUFFER, 1);
@@ -77,6 +110,25 @@ pub fn encode(rgba: []const u8, w: u32, h: u32, level: i8) codecs.Error!codecs.E
         .color_type = SPNG_COLOR_TYPE_TRUECOLOR_ALPHA,
     };
     if (spng_set_ihdr(ctx, &ihdr) != 0) return error.EncodeFailed;
+
+    // Embed the source colour profile as an iCCP chunk. libspng requires
+    // the profile_name to be set (1-79 bytes of Latin-1); PNGs decoded from
+    // other formats won't come with one, so fall back to a fixed tag. The
+    // profile bytes themselves are what's load-bearing for colour
+    // correctness — the name is purely informational per the PNG spec.
+    // Malformed profiles returning non-zero here are dropped, not fatal —
+    // a PNG without an iCCP is still valid (implicitly sRGB).
+    if (icc_profile) |p| if (p.len > 0) {
+        var iccp: Iccp = .{
+            .profile_name = @splat(0),
+            .profile_len = p.len,
+            .profile = @constCast(p.ptr),
+        };
+        const name = "ICC Profile";
+        @memcpy(iccp.profile_name[0..name.len], name);
+        _ = spng_set_iccp(ctx, &iccp);
+    };
+
     if (spng_encode_image(ctx, rgba.ptr, rgba.len, SPNG_FMT_PNG, SPNG_ENCODE_FINALIZE) != 0)
         return error.EncodeFailed;
     var len: usize = 0;

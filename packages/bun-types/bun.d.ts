@@ -8165,9 +8165,33 @@ declare module "bun" {
 
   namespace Image {
     /**
+     * Stable `error.code` values set on rejections from `Bun.Image` terminals.
+     * Branch on these instead of parsing the message.
+     *
+     * - `ERR_IMAGE_FORMAT_UNSUPPORTED` — the requested format isn't available
+     *   on this *machine* (HEIC/AVIF without the OS codec, TIFF on Linux).
+     *   Catch this to fall back to a portable format.
+     * - `ERR_IMAGE_TOO_MANY_PIXELS` — header dimensions or resize output
+     *   exceed `maxPixels`, or a path-backed input is over the 256 MiB cap.
+     * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
+     * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
+     * - `ERR_IMAGE_BUFFER_DETACHED` — the input ArrayBuffer was transferred
+     *   between construction and the terminal call.
+     * - File-backed inputs surface the underlying syscall code (`ENOENT`,
+     *   `EACCES`, …) directly.
+     */
+    type ErrorCode =
+      | "ERR_IMAGE_FORMAT_UNSUPPORTED"
+      | "ERR_IMAGE_TOO_MANY_PIXELS"
+      | "ERR_IMAGE_DECODE_FAILED"
+      | "ERR_IMAGE_ENCODE_FAILED"
+      | "ERR_IMAGE_UNKNOWN_FORMAT"
+      | "ERR_IMAGE_BUFFER_DETACHED";
+
+    /**
      * `bmp`/`tiff`/`gif` are decode-only — `metadata().format` may report them
      * but there are no `.bmp()`/`.tiff()`/`.gif()` encoder methods. `tiff`
-     * decode throws `UnsupportedOnPlatform` on Linux; `gif` decodes the first
+     * decode rejects with `error.code === "ERR_IMAGE_FORMAT_UNSUPPORTED"` on Linux; `gif` decodes the first
      * frame everywhere.
      */
     type Format = "jpeg" | "png" | "webp" | "heic" | "avif" | "bmp" | "tiff" | "gif";
@@ -8254,7 +8278,7 @@ declare module "bun" {
      *   JPEG/PNG/WebP (same bytes as Linux), Accelerate/vImage for `lanczos3`
      *   resize · rotate · flip on macOS, and ImageIO/WIC for HEIC/AVIF.
      * - `"bun"` — static codecs + Highway geometry only. Byte-identical to a
-     *   Linux build; HEIC/AVIF throw `UnsupportedOnPlatform`.
+     *   Linux build; HEIC/AVIF reject with `ERR_IMAGE_FORMAT_UNSUPPORTED`.
      *
      * Set before awaiting a pipeline; in-flight tasks read the value as of
      * when they were scheduled.
@@ -8317,13 +8341,15 @@ declare module "bun" {
     /** Set output format to WebP. */
     webp(options?: { quality?: number; lossless?: boolean }): this;
     /**
-     * Set output format to HEIC. macOS/Windows only — throws
-     * `UnsupportedOnPlatform` elsewhere.
+     * Set output format to HEIC. macOS / Windows-with-HEIF-Extension only —
+     * the terminal rejects with `error.code === "ERR_IMAGE_FORMAT_UNSUPPORTED"`
+     * elsewhere.
      */
     heic(options?: { quality?: number }): this;
     /**
-     * Set output format to AVIF. macOS/Windows only — throws
-     * `UnsupportedOnPlatform` elsewhere.
+     * Set output format to AVIF. Requires an OS AV1 encoder (macOS on Apple
+     * Silicon M3+, or Windows with the AV1 Video Extension) — the terminal
+     * rejects with `error.code === "ERR_IMAGE_FORMAT_UNSUPPORTED"` elsewhere.
      */
     avif(options?: { quality?: number }): this;
 

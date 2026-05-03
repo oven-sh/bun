@@ -186,10 +186,20 @@ For a passive "image in clipboard, press ⌘V" hint, poll `clipboardChangeCount(
 | BMP / GIF (decode)     | built-in                          | ImageIO           | WIC          |
 | TIFF (decode)          | ❌                                | ImageIO           | WIC          |
 | Resize / rotate / flip | Highway SIMD                      | Accelerate vImage | Highway SIMD |
-| HEIC / AVIF            | ❌ throws `UnsupportedOnPlatform` | ImageIO           | WIC ¹        |
+| HEIC / AVIF            | ❌ `ERR_IMAGE_FORMAT_UNSUPPORTED` | ImageIO ²         | WIC ¹        |
 | Clipboard              | ❌ returns `null`                 | NSPasteboard      | Win32        |
 
 ¹ Windows requires the **HEIF Image Extensions** / **AV1 Video Extension** from the Microsoft Store.
+² AVIF *encode* needs an OS AV1 encoder — Apple Silicon M3+ only. Intel Mac and M1/M2 reject with `ERR_IMAGE_FORMAT_UNSUPPORTED`; AVIF *decode* works everywhere ImageIO does (macOS 13+).
+
+When a system-backend format isn't available on the current machine, the terminal rejects with `error.code === "ERR_IMAGE_FORMAT_UNSUPPORTED"` — branch on that to fall back to a portable format:
+
+```ts
+const out = await img.avif({ quality: 50 }).bytes().catch(e => {
+  if (e.code === "ERR_IMAGE_FORMAT_UNSUPPORTED") return img.webp({ quality: 80 }).bytes();
+  throw e;
+});
+```
 
 Formats handled by the system backend (TIFF, HEIC, AVIF, clipboard) inherit the **OS's** patch level — keep macOS / Windows updated. JPEG, PNG, and WebP go through the same statically-linked codecs on every platform, so encoded output is byte-identical across Linux, macOS, and Windows. To force the portable Highway path for geometry too — e.g. for golden-image tests — set the process-global backend:
 

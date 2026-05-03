@@ -367,15 +367,40 @@ pub fn doFormatAvif(this: *Image, g: *jsc.JSGlobalObject, cf: *jsc.CallFrame) bu
     return this.setFormat(g, cf, .avif);
 }
 
+/// Stable `.code` so callers can branch without parsing the message — and so
+/// tests can skip when a system-backend format is unavailable on *this
+/// machine* (e.g. AVIF encode on M1/M2, or Windows without the HEIF store
+/// extension) without hard-coding which configurations have what.
+fn errorCode(e: codecs.Error) [:0]const u8 {
+    return switch (e) {
+        error.UnknownFormat => "ERR_IMAGE_UNKNOWN_FORMAT",
+        error.DecodeFailed => "ERR_IMAGE_DECODE_FAILED",
+        error.EncodeFailed => "ERR_IMAGE_ENCODE_FAILED",
+        error.TooManyPixels => "ERR_IMAGE_TOO_MANY_PIXELS",
+        error.UnsupportedOnPlatform => "ERR_IMAGE_FORMAT_UNSUPPORTED",
+        error.OutOfMemory => "ERR_OUT_OF_MEMORY",
+    };
+}
+
 fn errorMessage(e: codecs.Error) [:0]const u8 {
     return switch (e) {
         error.UnknownFormat => "Image: unrecognised format (expected JPEG, PNG, WebP, GIF, BMP, TIFF, HEIC or AVIF)",
         error.DecodeFailed => "Image: decode failed",
         error.EncodeFailed => "Image: encode failed",
         error.TooManyPixels => "Image: input exceeds maxPixels limit",
-        error.UnsupportedOnPlatform => "Image: format not supported on this platform (HEIC/AVIF/TIFF require macOS or Windows)",
+        error.UnsupportedOnPlatform => "Image: format not supported on this machine (HEIC/AVIF/TIFF require the OS codec; AVIF encode needs an AV1 encoder)",
         error.OutOfMemory => "Image: out of memory",
     };
+}
+
+fn rejectError(global: *jsc.JSGlobalObject, e: codecs.Error) jsc.JSValue {
+    return errorWithCode(global, errorCode(e), errorMessage(e));
+}
+
+fn errorWithCode(global: *jsc.JSGlobalObject, code: [:0]const u8, msg: [:0]const u8) jsc.JSValue {
+    const err = global.createErrorInstance("{s}", .{msg});
+    err.put(global, jsc.ZigString.static("code"), jsc.ZigString.init(code).toJS(global));
+    return err;
 }
 
 /// Fresh slice into the input bytes for use ON THE JS THREAD ONLY (re-reads
@@ -524,10 +549,7 @@ pub fn doMetadata(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.Cal
         } else |e| switch (e) {
             // HEIC/AVIF need the system backend → fall through to async.
             error.UnsupportedOnPlatform => {},
-            else => return jsc.JSPromise.rejectedPromise(
-                global,
-                global.createErrorInstance("{s}", .{errorMessage(e)}),
-            ).asValue(global),
+            else => return jsc.JSPromise.rejectedPromise(global, rejectError(global, e)).asValue(global),
         }
     }
     return this.schedule(global, callframe.this(), .metadata, .uint8array);
@@ -615,7 +637,7 @@ fn schedule(this: *Image, global: *jsc.JSGlobalObject, this_value: jsc.JSValue, 
         if (e == error.OutOfMemory) bun.outOfMemory();
         return jsc.JSPromise.rejectedPromise(
             global,
-            global.createErrorInstance("Image: source ArrayBuffer was detached", .{}),
+            errorWithCode(global, "ERR_IMAGE_BUFFER_DETACHED", "Image: source ArrayBuffer was detached"),
         ).asValue(global);
     };
     const job = PipelineTask.new(.{
@@ -1138,7 +1160,7 @@ pub const PipelineTask = struct {
                 obj.put(global, jsc.ZigString.static("format"), jsc.ZigString.init(@tagName(m.format)).toJS(global));
                 try promise.resolve(global, obj);
             },
-            .err => |e| try promise.reject(global, global.createErrorInstance("{s}", .{errorMessage(e)})),
+            .err => |e| try promise.reject(global, rejectError(global, e)),
             .io_err => |e| try promise.reject(global, e.toJS(global)),
         }
     }

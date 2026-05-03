@@ -275,13 +275,20 @@ export function getStdinStream(
         // while flowing; the immediate is just a tick-yield mechanism and
         // must not keep the process alive on its own.
         //
-        // The guard re-checks ownership: `pause`/`close` schedule disown()
-        // via process.nextTick, which drains before the immediate, so the
-        // reader may already be released by the time this fires.
+        // The guard re-checks ownership on the immediate tick: a `pause`/
+        // `close` that lands between triggerRead() and the immediate will
+        // run its nextTick→disown() first — since no `reader.read()` is
+        // pending in that window, releaseLock() succeeds and clears
+        // `reader`. Calling internalRead() anyway would hit
+        // `$assert(reader)` / TypeError and destroy stdin. If we drop the
+        // read, mark `needsInternalReadRefresh` so a later own() restarts.
         const self = this;
         setImmediate(() => {
-          if (!reader || shouldDisown || stream_destroyed) return;
-          internalRead(self);
+          if (reader && !shouldDisown && !stream_destroyed) {
+            internalRead(self);
+          } else {
+            needsInternalReadRefresh = true;
+          }
         }).unref();
       } else {
         internalRead(this);

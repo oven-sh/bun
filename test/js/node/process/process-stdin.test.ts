@@ -180,49 +180,60 @@ async function waitForLine(proc: Bun.Subprocess, needle: string): Promise<string
 // Parameterized across SIGTERM/SIGINT/SIGUSR1/SIGUSR2 — a break that only
 // affected one signal type would sneak through single-signal coverage.
 describe.skipIf(!isPosix)("signals with flowing stdin on /dev/zero", () => {
-  const cases = [
+  describe.each([
     { signal: "SIGTERM", exit: 42 },
     { signal: "SIGINT", exit: 43 },
     { signal: "SIGUSR1", exit: 44 },
     { signal: "SIGUSR2", exit: 45 },
-  ] as const;
+  ] as const)("$signal", ({ signal, exit }) => {
+    test("handler fires", async () => {
+      // await using: the child reads /dev/zero in a tight loop with no
+      // natural exit, so if an assertion throws before we reach proc.kill
+      // (or the regression returns and kill never lands) we need the
+      // subprocess disposer to terminate it instead of leaking a CPU-bound
+      // process into the rest of the suite.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const fs = require("fs");
+          process.on(${JSON.stringify(signal)}, () => {
+            fs.writeSync(2, ${JSON.stringify(signal)} + "\\n");
+            process.exit(${exit});
+          });
+          process.stdin.on("data", () => {});
+          fs.writeSync(1, "READY\\n");
+          `,
+        ],
+        stdin: Bun.file("/dev/zero"),
+        stdout: "pipe",
+        stderr: "pipe",
+        env: bunEnv,
+      });
 
-  test.each(cases)("$signal handler fires", async ({ signal, exit }) => {
-    const proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        const fs = require("fs");
-        process.on(${JSON.stringify(signal)}, () => {
-          fs.writeSync(2, ${JSON.stringify(signal)} + "\\n");
-          process.exit(${exit});
-        });
-        process.stdin.on("data", () => {});
-        fs.writeSync(1, "READY\\n");
-        `,
-      ],
-      stdin: Bun.file("/dev/zero"),
-      stdout: "pipe",
-      stderr: "pipe",
-      env: bunEnv,
+      // Wait for the child to finish registering the signal handler + data
+      // listener. Sending the signal before the handler is installed would
+      // hit the default disposition (terminate) and the handler would
+      // never run.
+      expect(await waitForLine(proc, "READY")).toContain("READY");
+
+      proc.kill(signal);
+      const exitCode = await proc.exited;
+      // stderr first: on regression the child is killed by the default
+      // disposition, exitCode is null and stderr is empty — asserting
+      // stderr first surfaces "" not containing SIGTERM, which points at
+      // the real cause (handler never fired) rather than a bare null/exit
+      // mismatch.
+      expect(await proc.stderr.text()).toContain(signal);
+      expect(exitCode).toBe(exit);
     });
-
-    // Wait for the child to finish registering the signal handler + data
-    // listener. Sending the signal before the handler is installed would hit
-    // the default disposition (terminate) and the handler would never run.
-    expect(await waitForLine(proc, "READY")).toContain("READY");
-
-    proc.kill(signal);
-    const exitCode = await proc.exited;
-    expect(exitCode).toBe(exit);
-    expect(await proc.stderr.text()).toContain(signal);
   });
 
   // Timer callbacks share the same starvation path — setInterval stalled
   // whenever tick() never returned.
   test("setInterval fires", async () => {
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",

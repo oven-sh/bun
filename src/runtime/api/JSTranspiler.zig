@@ -500,9 +500,16 @@ pub const TransformTask = struct {
         var ast_scope = ast_memory_allocator.enter(allocator);
         defer ast_scope.exit();
 
+        // Log message text/locations are allocated from the arena during
+        // parsing/printing, which is freed when this function returns.
+        // Use a temporary log and deep-copy into `this.log` so `then()` can
+        // safely read the messages on the JS thread.
+        var log = logger.Log.init(allocator);
+        log.level = this.log.level;
+        defer bun.handleOom(log.cloneToWithRecycled(&this.log, true));
+
         this.transpiler.setAllocator(allocator);
-        this.transpiler.setLog(&this.log);
-        this.log.msgs.allocator = bun.default_allocator;
+        this.transpiler.setLog(&log);
 
         const jsx = if (this.tsconfig != null)
             this.tsconfig.?.mergeJSX(this.transpiler.options.jsx)

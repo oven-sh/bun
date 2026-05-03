@@ -192,11 +192,37 @@ public:
     // if Chrome spawn failed.
     // wsUrl: connect to an existing Chrome's WebSocket debugger endpoint
     // instead of spawning. Empty → spawn with --remote-debugging-pipe.
+    //
+    // ChromeCreateFailure distinguishes the nullptr reasons so the
+    // constructor can throw an accurate error. Default (SpawnFailed)
+    // is the old pre-Windows-fix behavior: "failed to spawn Chrome".
+    //
+    // ConnectFailed: sync failure constructing a WebSocket for a user-
+    // supplied `backend.url`. The URL was structurally bad enough for
+    // WebCore::WebSocket::create to throw (malformed scheme, etc.).
+    // Async handshake failures (stale port, Chrome down) flow through
+    // wsOnClose and surface as later promise rejections, not here.
+    //
+    // AutoDetectConnectFailed: same sync failure but for the URL we
+    // read from DevToolsActivePort ourselves — the user never set
+    // backend.url, so the error message must not hint at setting it.
+    // Only fires if the file contains a syntactically malformed URL
+    // (readDevToolsActivePort validates port/path but not the full
+    // ws:// form); normal stale-file cases flow through wsOnClose.
+    //
+    // NotImplementedOnWindows: the call would have needed the POSIX-only
+    // spawn path; `Bun__Chrome__ensure` has no Windows port.
+    enum class ChromeCreateFailure : uint8_t {
+        SpawnFailed = 0,
+        ConnectFailed,
+        AutoDetectConnectFailed,
+        NotImplementedOnWindows,
+    };
     static JSWebView* createChrome(JSC::JSGlobalObject*, JSC::Structure*,
         uint32_t width, uint32_t height, const WTF::String& userDataDir,
         const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
         bool stdoutInherit, bool stderrInherit, const WTF::String& wsUrl = {},
-        bool skipAutoDetect = false);
+        bool skipAutoDetect = false, ChromeCreateFailure* outFailure = nullptr);
 
     void finishCreation(JSC::VM&);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);

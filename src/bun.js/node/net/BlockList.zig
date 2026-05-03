@@ -25,7 +25,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) b
 
 /// May be called from any thread.
 pub fn estimatedSize(this: *@This()) usize {
-    return (@sizeOf(@This()) + this.estimated_size.load(.seq_cst)) / this.ref_count.get();
+    return (@sizeOf(@This()) + this.estimated_size.load(.seq_cst)) / @max(this.ref_count.get(), 1);
 }
 
 pub fn finalize(this: *@This()) void {
@@ -219,6 +219,13 @@ pub fn onStructuredCloneDeserialize(globalThis: *jsc.JSGlobalObject, ptr: *[*]u8
     ptr.* = ptr.* + buffer_stream.pos;
 
     const this: *@This() = @ptrFromInt(int);
+    // A single SerializedScriptValue can be deserialized multiple times
+    // (e.g. BroadcastChannel fan-out), so each wrapper must own its own ref
+    // instead of adopting the one taken in serialize. The serialize ref is
+    // what keeps the backing alive while the pointer sits in the byte buffer;
+    // SerializedScriptValue has no destroy hook for Bun-native tags, so that
+    // ref is retained until a buffer-level deref exists (preferable to UAF).
+    this.ref();
     return this.toJS(globalThis);
 }
 

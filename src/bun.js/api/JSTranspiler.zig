@@ -70,18 +70,15 @@ pub const Config = struct {
                 }).init(globalThis, define_obj);
                 defer define_iter.deinit();
 
-                // cannot be a temporary because it may be loaded on different threads.
-                var map_entries = allocator.alloc([]u8, define_iter.len * 2) catch unreachable;
-                var names = map_entries[0..define_iter.len];
-
-                var values = map_entries[define_iter.len..];
-
                 // `define_iter.i` is the property position, not a dense index of yielded
                 // entries. With `skip_empty_name = true` (or a skipped property getter),
                 // writing at `define_iter.i` would leave earlier slots uninitialized.
-                // Track a dense counter instead. `allocator` is an arena, so slicing to
-                // `[0..written]` is sufficient here (no realloc needed).
-                var written: usize = 0;
+                // Use ArrayLists so the stored slice is always exactly what was appended.
+                // `allocator` is an arena, so ownership transfers via `.items`.
+                var names: std.ArrayListUnmanaged([]const u8) = .{};
+                var values: std.ArrayListUnmanaged([]const u8) = .{};
+                names.ensureTotalCapacityPrecise(allocator, define_iter.len) catch unreachable;
+                values.ensureTotalCapacityPrecise(allocator, define_iter.len) catch unreachable;
 
                 while (try define_iter.next()) |prop| {
                     const property_value = define_iter.value;
@@ -91,19 +88,18 @@ pub const Config = struct {
                         return globalThis.throwInvalidArguments("define \"{f}\" must be a JSON string", .{prop});
                     }
 
-                    names[written] = prop.toOwnedSlice(allocator) catch unreachable;
+                    names.appendAssumeCapacity(prop.toOwnedSlice(allocator) catch unreachable);
                     var val = jsc.ZigString.init("");
                     try property_value.toZigString(&val, globalThis);
                     if (val.len == 0) {
                         val = jsc.ZigString.init("\"\"");
                     }
-                    values[written] = std.fmt.allocPrint(allocator, "{f}", .{val}) catch unreachable;
-                    written += 1;
+                    values.appendAssumeCapacity(std.fmt.allocPrint(allocator, "{f}", .{val}) catch unreachable);
                 }
 
                 this.transform.define = api.StringMap{
-                    .keys = names[0..written],
-                    .values = values[0..written],
+                    .keys = names.items,
+                    .values = values.items,
                 };
             }
         }

@@ -944,43 +944,39 @@ pub const JSBundler = struct {
                 }).init(globalThis, loaders);
                 defer loader_iter.deinit();
 
-                var loader_names = try allocator.alloc(string, loader_iter.len);
-                errdefer allocator.free(loader_names);
-                var loader_values = try allocator.alloc(api.Loader, loader_iter.len);
-                errdefer allocator.free(loader_values);
-
                 // `loader_iter.i` is the property position, not a dense index of yielded
                 // entries. With `skip_empty_name = true` (or a skipped property getter),
                 // writing at `loader_iter.i` would leave earlier slots uninitialized and
-                // later freed as garbage. Track a dense counter instead.
-                var written: usize = 0;
-                errdefer for (loader_names[0..written]) |name| bun.default_allocator.free(name);
+                // later freed as garbage. Use ArrayLists so the stored slice is always
+                // exactly what was appended.
+                var loader_names: std.ArrayListUnmanaged(string) = .{};
+                errdefer {
+                    for (loader_names.items) |name| bun.default_allocator.free(name);
+                    loader_names.deinit(allocator);
+                }
+                var loader_values: std.ArrayListUnmanaged(api.Loader) = .{};
+                errdefer loader_values.deinit(allocator);
+
+                try loader_names.ensureTotalCapacityPrecise(allocator, loader_iter.len);
+                try loader_values.ensureTotalCapacityPrecise(allocator, loader_iter.len);
 
                 while (try loader_iter.next()) |prop| {
                     if (!prop.hasPrefixComptime(".") or prop.length() < 2) {
                         return globalThis.throwInvalidArguments("loader property names must be file extensions, such as '.txt'", .{});
                     }
 
-                    loader_values[written] = try loader_iter.value.toEnumFromMap(
+                    loader_values.appendAssumeCapacity(try loader_iter.value.toEnumFromMap(
                         globalThis,
                         "loader",
                         api.Loader,
                         options.Loader.api_names,
-                    );
-                    loader_names[written] = try prop.toOwnedSlice(bun.default_allocator);
-                    written += 1;
+                    ));
+                    loader_names.appendAssumeCapacity(try prop.toOwnedSlice(bun.default_allocator));
                 }
 
-                // Shrink to the dense length so `Config.deinit` frees exactly what was
-                // allocated. Slicing alone would leak both backing arrays when
-                // `written == 0` (Zig's `Allocator.free` early-returns on zero-length
-                // slices) and otherwise passes a mismatched length to the allocator.
-                loader_names = try allocator.realloc(loader_names, written);
-                loader_values = try allocator.realloc(loader_values, written);
-
                 this.loaders = api.LoaderMap{
-                    .extensions = loader_names,
-                    .loaders = loader_values,
+                    .extensions = loader_names.items,
+                    .loaders = loader_values.items,
                 };
             }
 

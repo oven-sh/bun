@@ -218,6 +218,47 @@ for (const [name, copy] of impls) {
       expect(fs.readdirSync(basename + "/result/dir_symlink")).toEqual(["c.txt"]);
     });
 
+    test("symlinks - copied link target is the original target, not the source link path", async () => {
+      // Previously the ELOOP fallback on Linux/FreeBSD called symlink(src, dest),
+      // so the copied link's target string was the path of the *source* symlink
+      // and every copied link pointed back into the source tree.
+      const basename = tempDirWithFiles("cp", {
+        "target.txt": "hello",
+        "from/keep": "",
+      });
+
+      const origTarget = join(basename, "target.txt");
+
+      // Absolute target — exercises the isAbsolute fast path.
+      const srcAbs = join(basename, "from", "abs_link");
+      fs.symlinkSync(origTarget, srcAbs);
+
+      // Relative target — exercises the dirname(src) resolve path.
+      const srcRel = join(basename, "from", "rel_link");
+      fs.symlinkSync(join("..", "target.txt"), srcRel);
+
+      await copy(basename + "/from", basename + "/to", { recursive: true });
+
+      for (const [which, srcLink] of [
+        ["abs_link", srcAbs],
+        ["rel_link", srcRel],
+      ] as const) {
+        const copiedLink = join(basename, "to", which);
+        expect(fs.lstatSync(copiedLink).isSymbolicLink()).toBe(true);
+
+        // The copied link's target string must not be the path of the source
+        // symlink. With the bug, readlink(copiedLink) returned srcLink.
+        expect(fs.readlinkSync(copiedLink)).not.toBe(srcLink);
+        expect(fs.realpathSync(copiedLink)).toBe(fs.realpathSync(origTarget));
+      }
+
+      // Deleting the source tree must not break the absolute link, since its
+      // target lives outside the source tree. With the bug, the copied link
+      // pointed at from/abs_link and would dangle once from/ was removed.
+      fs.rmSync(join(basename, "from"), { recursive: true, force: true });
+      expect(fs.readFileSync(join(basename, "to", "abs_link"), "utf8")).toBe("hello");
+    });
+
     test("filter - works", async () => {
       const basename = tempDirWithFiles("cp", {
         "from/a.txt": "a",

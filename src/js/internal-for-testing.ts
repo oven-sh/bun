@@ -64,6 +64,13 @@ export const shellInternals = {
   builtinDisabled: $newZigFunction("shell.zig", "TestingAPIs.disabledOnThisPlatform", 1),
 };
 
+export const subprocessInternals = {
+  injectStdioReadError: $newZigFunction("subprocess.zig", "TestingAPIs.injectStdioReadError", 2) as (
+    subprocess: import("bun").Subprocess,
+    kind: "stdout" | "stderr",
+  ) => boolean,
+};
+
 export const iniInternals = {
   parse: $newZigFunction("ini.zig", "IniTestingAPIs.parse", 1),
   // loadNpmrc: (
@@ -285,4 +292,8 @@ export const fetchH3Internals = {
     sessions: number;
     streams: number;
   },
+};
+
+export const fileSinkInternals = {
+  liveCount: $newZigFunction("bun.js/webcore/FileSink.zig", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
 };

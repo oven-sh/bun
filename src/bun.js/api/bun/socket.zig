@@ -884,8 +884,8 @@ pub fn NewSocket(comptime ssl: bool) type {
             var buf: [64]u8 = [_]u8{0} ** 64;
             const address_bytes: []const u8 = this.socket.localAddress(&buf) orelse return .js_undefined;
             return switch (address_bytes.len) {
-                4 => try bun.String.static("IPv4").toJS(globalThis),
-                16 => try bun.String.static("IPv6").toJS(globalThis),
+                4 => globalThis.commonStrings().IPv4(),
+                16 => globalThis.commonStrings().IPv6(),
                 else => return .js_undefined,
             };
         }
@@ -925,8 +925,8 @@ pub fn NewSocket(comptime ssl: bool) type {
             var buf: [64]u8 = [_]u8{0} ** 64;
             const address_bytes: []const u8 = this.socket.remoteAddress(&buf) orelse return .js_undefined;
             return switch (address_bytes.len) {
-                4 => try bun.String.static("IPv4").toJS(globalThis),
-                16 => try bun.String.static("IPv6").toJS(globalThis),
+                4 => globalThis.commonStrings().IPv4(),
+                16 => globalThis.commonStrings().IPv6(),
                 else => return .js_undefined,
             };
         }
@@ -1314,6 +1314,15 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn flush(this: *This, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
             jsc.markBinding(@src());
+            // `end()` → `internalFlush` → `markInactive` → `closeAndDetach(.normal)`
+            // detaches `this.socket` and, for TLS, defers the raw close until the
+            // peer's close_notify arrives — leaving `is_active` set so the eventual
+            // `onClose` can run `handlers.markInactive()`. Without this guard a
+            // follow-up `flush()` re-enters `markInactive`, sees the detached
+            // socket as closed, and frees `*Handlers` early; the deferred `onClose`
+            // then derefs freed memory. Every other `internalFlush` caller already
+            // has this check.
+            if (this.socket.isDetached()) return .js_undefined;
             this.internalFlush();
             return .js_undefined;
         }

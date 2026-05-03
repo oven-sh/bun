@@ -777,6 +777,73 @@ JSC_DEFINE_HOST_FUNCTION(functionBunNanoseconds, (JSGlobalObject * globalObject,
     return JSValue::encode(jsNumber(time));
 }
 
+// Check whether a POSIX absolute path contains any . or .. segments that
+// need resolution.  Only '/' is treated as a separator.
+static bool posixPathHasDotSegments(const WTF::String& path)
+{
+    unsigned len = path.length();
+    unsigned start = 1;
+
+    for (unsigned i = 1; i <= len; i++) {
+        if (i == len || path[i] == '/') {
+            unsigned segLen = i - start;
+            if (segLen == 1 && path[start] == '.')
+                return true;
+            if (segLen == 2 && path[start] == '.' && path[start + 1] == '.')
+                return true;
+            start = i + 1;
+        }
+    }
+    return false;
+}
+
+// Resolve . and .. segments in a POSIX absolute path, treating only '/' as
+// a separator.  Backslashes are preserved as literal filename characters so
+// that fileURLWithFileSystemPath can later percent-encode them as %5C.
+//
+// Only called when posixPathHasDotSegments() returns true, so paths without
+// dot segments (including those with consecutive slashes) pass through
+// untouched via the caller.
+static WTF::String resolvePosixDotSegments(const WTF::String& path)
+{
+    ASSERT(path.length() > 0 && path[0] == '/');
+
+    Vector<StringView> segments;
+    unsigned start = 1;
+    unsigned len = path.length();
+    bool trailingSlash = len > 1 && path[len - 1] == '/';
+
+    for (unsigned i = 1; i <= len; i++) {
+        if (i == len || path[i] == '/') {
+            unsigned segLen = i - start;
+            StringView seg = StringView(path).substring(start, segLen);
+            if (segLen == 2 && path[start] == '.' && path[start + 1] == '.') {
+                if (!segments.isEmpty())
+                    segments.removeLast();
+            } else if (segLen == 1 && path[start] == '.') {
+                // skip single-dot segment
+            } else if (segLen > 0) {
+                segments.append(seg);
+            }
+            start = i + 1;
+        }
+    }
+
+    if (segments.isEmpty())
+        return "/"_s;
+
+    StringBuilder builder;
+    for (auto& seg : segments) {
+        builder.append('/');
+        builder.append(seg);
+    }
+
+    if (trailingSlash)
+        builder.append('/');
+
+    return builder.toString();
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto& globalObject = *defaultGlobalObject(lexicalGlobalObject);
@@ -789,7 +856,29 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
     {
         WTF::String pathString = pathValue.toWTFString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
+
+#if OS(WINDOWS)
         pathString = pathResolveWTFString(lexicalGlobalObject, pathString);
+#else
+        // On POSIX, backslash is a valid filename character, not a path separator.
+        // pathResolveWTFString normalizes backslashes to forward slashes via
+        // joinAbsStringBuf, so we resolve relative paths by prepending the cwd
+        // directly, preserving backslashes for percent-encoding by the URL parser.
+        if (!pathString.startsWith('/')) {
+            auto cwdValue = JSC::JSValue::decode(Bun__Process__getCwd(lexicalGlobalObject));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            WTF::String cwd = cwdValue.toWTFString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (pathString.isEmpty())
+                pathString = cwd;
+            else if (cwd.endsWith('/'))
+                pathString = makeString(cwd, pathString);
+            else
+                pathString = makeString(cwd, '/', pathString);
+        }
+        if (posixPathHasDotSegments(pathString))
+            pathString = resolvePosixDotSegments(pathString);
+#endif
 
         auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString);
         auto object = WebCore::DOMURL::create(fileURL.string(), String());

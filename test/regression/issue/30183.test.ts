@@ -40,10 +40,16 @@ test("v-mode: inverted property on LHS of intersection still works", () => {
 
 test("v-mode: intersection of non-inverted property classes still works", () => {
   const re = /[\p{Number}&&\p{Alphabetic}]/v;
-  // No character is both a Number and Alphabetic in Unicode.
+  // gc=Lu, not in Number.
   expect(re.test("A")).toBe(false);
+  // gc=Nd, not in Alphabetic (Nd is excluded from the Alphabetic derivation).
   expect(re.test("1")).toBe(false);
+  // gc=Zs, in neither.
   expect(re.test(" ")).toBe(false);
+  // U+2164 ROMAN NUMERAL FIVE is gc=Nl (Letter_Number) — Nl is in both
+  // `\p{Number}` (N = Nd|Nl|No) and `\p{Alphabetic}` (UAX #44 includes Nl),
+  // so the intersection is non-empty.
+  expect(re.test("Ⅴ")).toBe(true);
 });
 
 test.skipIf(!yarrSetOpInvertFixed)("v-mode: three-way intersection with all-inverted operands", () => {

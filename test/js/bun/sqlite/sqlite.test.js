@@ -1561,7 +1561,8 @@ it("databases opened concurrently from Workers do not race", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
+  const stderrLines = stderr.split("\n").filter(l => l && !l.startsWith("WARNING: ASAN interferes"));
+  expect(stderrLines).toEqual([]);
   expect(stdout).toBe("ok\n");
   expect(exitCode).toBe(0);
 }, 60_000);

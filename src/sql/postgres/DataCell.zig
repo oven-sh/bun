@@ -496,6 +496,26 @@ pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, 
                     };
                 }
 
+                // dimensions == 1 here. The 1-D binary array header is 20 bytes:
+                // ndim(4) + flags(4) + elemtype(4) + len(4) + lbound(4), followed by
+                // `len` elements each prefixed by a 4-byte length. `len` is
+                // server-controlled, so validate it against bytes.len before
+                // slice() iterates to avoid reading/writing past the buffer.
+                if (bytes.len < 20) {
+                    return error.InvalidBinaryData;
+                }
+                const array_len: i32 = @byteSwap(@as(i32, @bitCast(bytes[12..16].*)));
+                if (array_len < 0) {
+                    return error.InvalidBinaryData;
+                }
+                // slice() consumes 2 * @sizeOf(element) bytes per element (the
+                // 4-byte length prefix + the 4-byte value for int4/float4).
+                const element_stride: usize = @sizeOf(try tag.byteArrayType()) * 2;
+                const max_elements = (bytes.len - 20) / element_stride;
+                if (@as(usize, @intCast(array_len)) > max_elements) {
+                    return error.InvalidBinaryData;
+                }
+
                 const elements = (try tag.pgArrayType()).init(bytes).slice();
 
                 return SQLDataCell{

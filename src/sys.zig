@@ -2328,8 +2328,20 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe([:0]u8) {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
-        buf[@intCast(rc)] = 0;
-        return .{ .result = buf[0..@intCast(rc) :0] };
+        const len: usize = @intCast(rc);
+        // POSIX readlink does not NUL-terminate and may truncate to buf.len.
+        // If the result filled the buffer, there is no room for the sentinel
+        // and the target may have been truncated. Treat this as ENAMETOOLONG
+        // instead of writing past the end of buf.
+        if (len >= buf.len) {
+            return .{ .err = .{
+                .errno = @intFromEnum(E.NAMETOOLONG),
+                .syscall = .readlink,
+                .path = in,
+            } };
+        }
+        buf[len] = 0;
+        return .{ .result = buf[0..len :0] };
     }
 }
 
@@ -2341,8 +2353,18 @@ pub fn readlinkat(fd: bun.FD, in: [:0]const u8, buf: []u8) Maybe([:0]u8) {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
-        buf[@intCast(rc)] = 0;
-        return Maybe([:0]u8){ .result = buf[0..@intCast(rc) :0] };
+        const len: usize = @intCast(rc);
+        // See comment in readlink() above.
+        if (len >= buf.len) {
+            return .{ .err = .{
+                .errno = @intFromEnum(E.NAMETOOLONG),
+                .syscall = .readlink,
+                .fd = fd,
+                .path = in,
+            } };
+        }
+        buf[len] = 0;
+        return Maybe([:0]u8){ .result = buf[0..len :0] };
     }
 }
 

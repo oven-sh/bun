@@ -75,4 +75,4 @@ test("scrypt async does not leak callback/buffers when output allocation fails",
   });
 
   expect(exitCode).toBe(0);
-}, 30_000);
+});

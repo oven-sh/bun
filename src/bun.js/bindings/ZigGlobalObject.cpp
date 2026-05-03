@@ -1936,6 +1936,12 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::JSGlobalObject* globalObject = init.owner;
 
             JSValue result = JSValue::decode(Bun__Jest__createTestModuleObject(globalObject));
+            if (result.isEmpty()) [[unlikely]] {
+                auto scope = DECLARE_TOP_EXCEPTION_SCOPE(init.vm);
+                scope.clearException();
+                init.set(JSC::constructEmptyObject(globalObject));
+                return;
+            }
             init.set(result.toObject(globalObject));
         });
 

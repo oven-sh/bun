@@ -1776,6 +1776,15 @@ pub const ValueBufferer = struct {
             // so handle the terminal states here instead of recursing.
             switch (value.*) {
                 .Locked => {
+                    // `toReadableStream` also leaves the value `.Locked` *without*
+                    // populating `locked.readable` when a body-mixin consumer
+                    // (`.text()`/`.json()`/...) already set `promise`/`action` — it
+                    // just hands back a `ReadableStream.used()` sentinel. Recursing
+                    // in that state makes no progress and loops until the stack or
+                    // the allocator gives out, so surface the real error instead.
+                    if (value.Locked.readable.get(sink.global) == null) {
+                        return error.StreamAlreadyUsed;
+                    }
                     readable.protect();
                     return try sink.bufferLockedBodyValue(value, null);
                 },

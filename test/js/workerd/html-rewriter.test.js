@@ -189,6 +189,40 @@ describe("HTMLRewriter", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("transform(response) throws StreamAlreadyUsed when a body-mixin consumer is pending", async () => {
+    // When .text()/.json()/etc. has already been called on a pending fetch body,
+    // toReadableStream returns a "used" sentinel without populating locked.readable
+    // or changing the tag. bufferLockedBodyValue must detect this and surface
+    // StreamAlreadyUsed rather than recursing (which previously spun ~1000+ times
+    // allocating throwaway streams before giving up with a misleading error).
+    const { promise: headersSent, resolve: resolveHeadersSent } = Promise.withResolvers();
+    await using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      async fetch() {
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write("<");
+              await controller.flush();
+              resolveHeadersSent();
+              await new Promise(() => {});
+            },
+          }),
+          { headers: { "content-type": "text/html" } },
+        );
+      },
+    });
+    const response = await fetch(`http://localhost:${server.port}/`);
+    await headersSent;
+    response.text().catch(() => {});
+    expect(() => new HTMLRewriter().transform(response)).toThrow(
+      expect.objectContaining({ code: "ERR_STREAM_ALREADY_FINISHED" }),
+    );
+    await server.stop(true);
+  });
+
   for (let input of [new Response("<div>hello</div>"), "<div>hello</div>"]) {
     it("supports element handlers with input " + input.constructor.name, async () => {
       var rewriter = new HTMLRewriter();

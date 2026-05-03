@@ -260,9 +260,10 @@ pub fn compressOutputFilesInParallel(
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const options = bun.options;
-const jsc = bun.jsc;
 const Logger = bun.logger;
+const jsc = bun.jsc;
+const options = bun.options;
 const LinkerContext = bun.bundle_v2.LinkerContext;
 const Algorithm = options.CompressionOptions.Algorithm;

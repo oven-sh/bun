@@ -1519,13 +1519,13 @@ for (const output of build.outputs) {
 
 Each artifact also contains the following properties:
 
-| Property    | Description                                                                                                                                                  |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Property    | Description                                                                                                                                                                                                             |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `kind`      | What kind of build output this file is. A build generates bundled entrypoints, code-split "chunks", sourcemaps, bytecode, copied assets (like images), and `compressed` copies when [`compress`](#compress) is enabled. |
-| `path`      | Absolute path to the file on disk                                                                                                                            |
-| `loader`    | The loader was used to interpret the file. See [Bundler > Loaders](/bundler/loaders) to see how Bun maps file extensions to the appropriate built-in loader. |
-| `hash`      | The hash of the file contents. Always defined for assets.                                                                                                    |
-| `sourcemap` | The sourcemap file corresponding to this file, if generated. Only defined for entrypoints and chunks.                                                        |
+| `path`      | Absolute path to the file on disk                                                                                                                                                                                       |
+| `loader`    | The loader was used to interpret the file. See [Bundler > Loaders](/bundler/loaders) to see how Bun maps file extensions to the appropriate built-in loader.                                                            |
+| `hash`      | The hash of the file contents. Always defined for assets.                                                                                                                                                               |
+| `sourcemap` | The sourcemap file corresponding to this file, if generated. Only defined for entrypoints and chunks.                                                                                                                   |
 
 Similar to `BunFile`, `BuildArtifact` objects can be passed directly into `new Response()`.
 

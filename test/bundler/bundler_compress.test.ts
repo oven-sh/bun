@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { gunzipSync, brotliDecompressSync, zstdDecompressSync } from "node:zlib";
-import { tmpdirSync, bunExe, bunEnv } from "harness";
-import { join } from "node:path";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { brotliDecompressSync, gunzipSync, zstdDecompressSync } from "node:zlib";
 
 describe("Bun.build compress", () => {
   function fixture(dir: string) {

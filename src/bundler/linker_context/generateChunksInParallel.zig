@@ -792,6 +792,7 @@ pub const ThreadPool = bun.bundle_v2.ThreadPool;
 const debugPartRanges = Output.scoped(.PartRanges, .hidden);
 
 const analyze_transpiled_module = @import("../../analyze_transpiled_module.zig");
+const compress_outputs = @import("../compress_outputs.zig");
 const std = @import("std");
 
 const bun = @import("bun");
@@ -827,4 +828,3 @@ const Loc = Logger.Loc;
 
 const options = bun.options;
 const OutputFile = bun.options.OutputFile;
-const compress_outputs = @import("../compress_outputs.zig");

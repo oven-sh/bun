@@ -2657,6 +2657,10 @@ pub const Resolver = struct {
         }
 
         if (reuse) |prev| {
+            // Each value is a []string slice separately heap-allocated in
+            // TSConfigJSON.parse(); free them before the map backing itself
+            // (matches the extends-merge cleanup in dirInfoUncached).
+            for (prev.paths.values()) |v| bun.default_allocator.free(v);
             prev.paths.deinit();
             prev.* = result.*;
             bun.destroy(result);
@@ -4372,7 +4376,24 @@ pub const Resolver = struct {
                         // without this, every intermediate config in an extends chain leaks on
                         // each dirInfoUncached() call, which is especially bad under HMR where
                         // bustDirCache triggers a re-parse of the whole chain on every reload.
-                        bun.destroy(parent_config);
+                        //
+                        // Exception: the reused allocation must survive because child
+                        // DirInfos that weren't busted still alias it via
+                        // enclosing_tsconfig_json. It's handled below instead.
+                        if (parent_config != reuse_tsconfig_json) {
+                            bun.destroy(parent_config);
+                        }
+                    }
+                    // Preserve the reused allocation's address: if the merged
+                    // result landed in a fresh base-config allocation, move it
+                    // into the reused struct so child enclosing_tsconfig_json
+                    // pointers stay valid.
+                    if (reuse_tsconfig_json) |prev| {
+                        if (merged_config != prev) {
+                            prev.* = merged_config.*;
+                            bun.destroy(merged_config);
+                            merged_config = prev;
+                        }
                     }
                     info.tsconfig_json = merged_config;
                 }

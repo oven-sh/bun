@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { copyFileSync, mkdirSync } from "fs";
+import { copyFileSync, mkdirSync, rmSync } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rm, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
@@ -40,6 +40,30 @@ var packageDir: string;
 var packageJson: string;
 
 let users: Record<string, string> = {};
+
+function stderrWithoutASANWarning(stderr: string): string {
+  return stderr
+    .split(/\r?\n/)
+    .filter(line => !line.startsWith("WARNING: ASAN interferes"))
+    .join("\n")
+    .trim();
+}
+
+function findWritableSecondDrive(currentDrive: string): string | null {
+  for (const letter of "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+    const drive = `${letter}:`;
+    if (drive === currentDrive) continue;
+
+    const candidate = join(`${drive}\\`, `bun-cross-drive-bin-probe-${process.pid}-${Date.now()}`);
+    try {
+      mkdirSync(candidate, { recursive: true });
+      rmSync(candidate, { recursive: true, force: true });
+      return drive;
+    } catch {}
+  }
+
+  return null;
+}
 
 setDefaultTimeout(1000 * 60 * 5);
 registry = new VerdaccioRegistry();
@@ -2657,74 +2681,70 @@ describe("binaries", () => {
     }
   });
 
-  test.skipIf(!isWindows)("can globally link bins when BUN_INSTALL_BIN is on another drive", async () => {
-    const currentDrive = resolve(packageDir).slice(0, 2).toUpperCase();
-    let globalBinDir: string | null = null;
+  const tempDrive = resolve(process.env.TEMP ?? process.env.TMP ?? process.cwd()).slice(0, 2).toUpperCase();
+  const secondDrive = isWindows ? findWritableSecondDrive(tempDrive) : null;
+  test.skipIf(!isWindows || secondDrive === null)(
+    "can globally link bins when BUN_INSTALL_BIN is on another drive",
+    async () => {
+      const currentDrive = resolve(packageDir).slice(0, 2).toUpperCase();
+      let globalBinDir = "";
 
-    // subst-backed drives are canonicalized before shim encoding, so this
-    // regression needs a real second volume to exercise absolute targets.
-    for (const letter of "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
-      const drive = `${letter}:`;
-      if (drive === currentDrive) continue;
+      // subst-backed drives are canonicalized before shim encoding, so this
+      // regression needs a real second volume to exercise absolute targets.
+      const drive = secondDrive !== currentDrive ? secondDrive : findWritableSecondDrive(currentDrive);
+      if (drive === null) {
+        throw new Error("cross-drive Windows bin-linking regression requires a writable second drive");
+      }
 
-      const candidate = join(`${drive}\\`, `bun-cross-drive-bin-${process.pid}-${Date.now()}`);
+      globalBinDir = join(`${drive}\\`, `bun-cross-drive-bin-${process.pid}-${Date.now()}`);
+      await mkdir(globalBinDir, { recursive: true });
+
+      const globalInstallDir = join(packageDir, "global-install-dir");
+
       try {
-        await mkdir(candidate, { recursive: true });
-        globalBinDir = candidate;
-        break;
-      } catch {}
-    }
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "i", "--linker=hoisted", "-g", "what-bin"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env: {
+            ...env,
+            BUN_INSTALL_BIN: globalBinDir,
+            BUN_INSTALL_GLOBAL_DIR: globalInstallDir,
+          },
+        });
 
-    if (globalBinDir === null) {
-      console.warn("skipping cross-drive Windows bin-linking regression: no writable second drive was available");
-      return;
-    }
+        await stderr.text();
+        const out = await stdout.text();
+        expect(out).toContain("what-bin@1.5.0");
+        expect(await exited).toBe(0);
 
-    const globalInstallDir = join(packageDir, "global-install-dir");
+        expect(await exists(join(globalBinDir, "what-bin.exe"))).toBeTrue();
+        expect(await exists(join(globalBinDir, "what-bin.bunx"))).toBeTrue();
+        expect(await exists(join(globalInstallDir, "node_modules", "what-bin"))).toBeTrue();
 
-    try {
-      const { stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "i", "--linker=hoisted", "-g", "what-bin"],
-        cwd: packageDir,
-        stdout: "pipe",
-        stderr: "pipe",
-        env: {
-          ...env,
-          BUN_INSTALL_BIN: globalBinDir,
-          BUN_INSTALL_GLOBAL_DIR: globalInstallDir,
-        },
-      });
+        const bunxBytes = new Uint16Array(await file(join(globalBinDir, "what-bin.bunx")).arrayBuffer());
+        const bunxPayload = new TextDecoder("utf-16le").decode(bunxBytes);
+        const expectedTarget = join(globalInstallDir, "node_modules", "what-bin", "what-bin.js");
+        expect(bunxBytes[0]).toBe(0x1f);
+        expect(bunxPayload).toContain(expectedTarget);
 
-      await stderr.text();
-      const out = await stdout.text();
-      expect(out).toContain("what-bin@1.5.0");
-      expect(await exited).toBe(0);
-
-      expect(await exists(join(globalBinDir, "what-bin.exe"))).toBeTrue();
-      expect(await exists(join(globalBinDir, "what-bin.bunx"))).toBeTrue();
-      expect(await exists(join(globalInstallDir, "node_modules", "what-bin"))).toBeTrue();
-
-      const bunxBytes = new Uint16Array(await file(join(globalBinDir, "what-bin.bunx")).arrayBuffer());
-      const bunxPayload = new TextDecoder("utf-16le").decode(bunxBytes);
-      const expectedTarget = join(globalInstallDir, "node_modules", "what-bin", "what-bin.js");
-      expect(bunxBytes[0]).toBe(0x1f);
-      expect(bunxPayload).toContain(expectedTarget);
-
-      const run = spawn({
-        cmd: [join(globalBinDir, "what-bin.exe")],
-        cwd: packageDir,
-        stdout: "pipe",
-        stderr: "pipe",
-        env,
-      });
-      expect(await run.stdout.text()).toBeEmpty();
-      expect(await run.stderr.text()).toBeEmpty();
-      expect(await run.exited).toBe(0);
-      expect(await file(join(packageDir, "what-bin.txt")).text()).toBe("what-bin@1.5.0");
-    } finally {
-      await rm(globalBinDir, { recursive: true, force: true });
-    }
-  });
+        const run = spawn({
+          cmd: [join(globalBinDir, "what-bin.exe")],
+          cwd: packageDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        expect(await run.stdout.text()).toBeEmpty();
+        expect(stderrWithoutASANWarning(await run.stderr.text())).toBeEmpty();
+        expect(await run.exited).toBe(0);
+        expect(await file(join(packageDir, "what-bin.txt")).text()).toBe("what-bin@1.5.0");
+      } finally {
+        await rm(globalBinDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   test.skipIf(!isWindows)("can encode absolute Windows bins without a second drive", async () => {
     const globalInstallDir = join(packageDir, "global-install-dir");
@@ -2765,7 +2785,7 @@ describe("binaries", () => {
       env,
     });
     expect(await run.stdout.text()).toBeEmpty();
-    expect(await run.stderr.text()).toBeEmpty();
+    expect(stderrWithoutASANWarning(await run.stderr.text())).toBeEmpty();
     expect(await run.exited).toBe(0);
     expect(await file(join(packageDir, "what-bin.txt")).text()).toBe("what-bin@1.5.0");
   });

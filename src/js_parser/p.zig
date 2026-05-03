@@ -272,6 +272,15 @@ pub fn NewParser_(
         /// we always fold constant expressions.
         should_fold_typescript_constant_expressions: bool = false,
 
+        /// When set, numeric binary arithmetic folds unconditionally even if
+        /// the folded literal would print larger than the source expression.
+        /// Used inside TypeScript enum bodies so the emitted enum table has
+        /// fully computed numeric values (matching `tsc`), and so subsequent
+        /// enum members that reference prior members can resolve to a number.
+        /// Outside this flag, arithmetic folding under `minify_syntax` only
+        /// happens when the folded literal is no longer than the source.
+        fold_numeric_constants_unconditionally: bool = false,
+
         emitted_namespace_vars: RefMap = RefMap{},
         is_exported_inside_namespace: RefRefMap = .{},
         local_type_names: StringBoolMap = StringBoolMap{},

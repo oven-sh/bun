@@ -643,6 +643,25 @@ pub const Parser = struct {
 
         visit_tracer.end();
 
+        // If no `await` survived DCE at module scope, drop the pre-DCE range
+        // so downstream passes don't think this file is an ESM module just
+        // because of a dead top-level await.
+        if (!p.has_live_top_level_await) {
+            p.top_level_await_keyword = logger.Range.None;
+        } else if (!p.options.features.top_level_await) {
+            // A live top-level await survived DCE, but the configured output
+            // format does not support top-level await. Emit a targeted error
+            // pointing at the surviving `await` (visitExpr.e_await rewrites
+            // `top_level_await_keyword` to a live range before we get here).
+            try p.log.addRangeErrorFmt(
+                p.source,
+                p.top_level_await_keyword,
+                p.allocator,
+                "Top-level await is currently not supported with the \"{s}\" output format",
+                .{@tagName(p.options.output_format)},
+            );
+        }
+
         // If there were errors while visiting, also halt here
         if (self.log.errors > orig_error_count) {
             return error.SyntaxError;

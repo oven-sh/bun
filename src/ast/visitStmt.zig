@@ -926,7 +926,13 @@ pub fn VisitStmt(
                     const where = where: {
                         if (p.esm_export_keyword.len > 0) {
                             break :where p.esm_export_keyword;
-                        } else if (p.top_level_await_keyword.len > 0) {
+                        } else if (p.top_level_await_keyword.len > 0 and p.options.features.top_level_await) {
+                            // `top_level_await_keyword` may be populated from a
+                            // dead-branch parse-time discovery in CJS targets
+                            // where TLA isn't supported. Only treat it as an
+                            // ESM signal when the feature is actually on —
+                            // otherwise a dead `if (false) { await ... }` plus
+                            // a top-level `return` would wrongly be rejected.
                             break :where p.top_level_await_keyword;
                         } else {
                             break :where logger.Range.None;
@@ -1193,6 +1199,26 @@ pub fn VisitStmt(
                 try stmts.append(stmt.*);
             }
             pub fn s_for_of(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.ForOf) !void {
+                // A `for await (… of …)` loop counts as a top-level `await`
+                // for the purposes of CJS-TLA error reporting. Mark it as
+                // live when we reach it in reachable control flow at module
+                // scope so we don't silently drop the diagnostic for loops
+                // whose body happens not to contain any `await` expressions.
+                // Overwrite `top_level_await_keyword` with the range parse
+                // captured for this loop so that the post-visit diagnostic
+                // points at the live `for await` keyword, not at some
+                // later-parsed dead `await` that the parse pass last wrote.
+                if (data.is_await and
+                    !p.is_control_flow_dead and
+                    p.fn_or_arrow_data_visit.is_outside_fn_or_arrow and
+                    !p.has_live_top_level_await)
+                {
+                    if (data.await_range.len > 0) {
+                        p.top_level_await_keyword = data.await_range;
+                    }
+                    p.has_live_top_level_await = true;
+                }
+
                 p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
                 defer p.popScope();
                 _ = p.visitForLoopInit(data.init, true);

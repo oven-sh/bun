@@ -156,6 +156,11 @@ pub fn NewParser_(
         has_import_meta: bool = false,
         has_es_module_syntax: bool = false,
         top_level_await_keyword: logger.Range = logger.Range.None,
+        /// Set during the visit pass when an `await` is actually reached in
+        /// live module-scope control flow. This is distinct from
+        /// `top_level_await_keyword`, which is populated during parsing and
+        /// therefore includes awaits inside branches that DCE will eliminate.
+        has_live_top_level_await: bool = false,
         fn_or_arrow_data_parse: FnOrArrowDataParse = FnOrArrowDataParse{},
         fn_or_arrow_data_visit: FnOrArrowDataVisit = FnOrArrowDataVisit{},
         fn_only_data_visit: FnOnlyDataVisit = FnOnlyDataVisit{},
@@ -2096,14 +2101,22 @@ pub fn NewParser_(
                 p.scope_order_to_visit.len = i;
             }
 
+            // `top_level_await_keyword` may be populated from a parse-time
+            // discovery that lives inside a branch DCE will drop. Only let it
+            // imply ESM when the output format actually allows top-level
+            // await; otherwise we'd mis-classify the file until `visit_tracer`
+            // finishes and we can clear the keyword.
+            const tla_implies_esm =
+                !p.top_level_await_keyword.isEmpty() and p.options.features.top_level_await;
+
             p.is_file_considered_to_have_esm_exports =
-                !p.top_level_await_keyword.isEmpty() or !p.esm_export_keyword.isEmpty() or
+                tla_implies_esm or !p.esm_export_keyword.isEmpty() or
                 p.options.module_type == .esm;
 
             try p.pushScopeForVisitPass(js_ast.Scope.Kind.entry, locModuleScope);
             p.fn_or_arrow_data_visit.is_outside_fn_or_arrow = true;
             p.module_scope = p.current_scope;
-            p.has_es_module_syntax = p.has_es_module_syntax or p.esm_import_keyword.len > 0 or p.esm_export_keyword.len > 0 or p.top_level_await_keyword.len > 0;
+            p.has_es_module_syntax = p.has_es_module_syntax or p.esm_import_keyword.len > 0 or p.esm_export_keyword.len > 0 or tla_implies_esm;
 
             if (p.lexer.jsx_pragma.jsx()) |factory| {
                 p.options.jsx.factory = options.JSX.Pragma.memberListToComponentsIfDifferent(p.allocator, p.options.jsx.factory, factory.text) catch unreachable;
@@ -2133,11 +2146,15 @@ pub fn NewParser_(
 
             // ECMAScript modules are always interpreted as strict mode. This has to be
             // done before "hoistSymbols" because strict mode can alter hoisting (!).
+            // Only opt into strict mode from top-level `await` when the target
+            // output actually supports top-level await. Otherwise we could
+            // mark a module strict on the basis of an `await` that DCE will
+            // end up eliminating.
             if (p.esm_import_keyword.len > 0) {
                 p.module_scope.recursiveSetStrictMode(js_ast.StrictModeKind.implicit_strict_mode_import);
             } else if (p.esm_export_keyword.len > 0) {
                 p.module_scope.recursiveSetStrictMode(js_ast.StrictModeKind.implicit_strict_mode_export);
-            } else if (p.top_level_await_keyword.len > 0) {
+            } else if (p.top_level_await_keyword.len > 0 and p.options.features.top_level_await) {
                 p.module_scope.recursiveSetStrictMode(js_ast.StrictModeKind.implicit_strict_mode_top_level_await);
             }
 

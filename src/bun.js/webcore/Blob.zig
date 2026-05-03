@@ -526,9 +526,13 @@ fn _onStructuredCloneDeserialize(
 
     const content_type_len = try reader.readInt(u32, .little);
 
-    const content_type = try readSlice(reader, content_type_len, allocator);
-    // Ownership transfers to `blob.content_type` only on the success path
-    // below; any error before then must release it.
+    var content_type: []u8 = try readSlice(reader, content_type_len, allocator);
+    // Ownership transfers to `blob.content_type` at the end of the success
+    // path below; until then this errdefer is responsible for it. Once the
+    // blob takes ownership we null the slice out so an error between that
+    // point and the final return (there is none today — `toJS` is
+    // infallible — but this keeps it structurally safe) cannot double-free
+    // via both this errdefer and `blob.deinit()`.
     errdefer allocator.free(content_type);
 
     const content_type_was_set: bool = try reader.readInt(u8, .little) != 0;
@@ -656,6 +660,8 @@ fn _onStructuredCloneDeserialize(
         blob.content_type_allocated = true;
         blob.content_type_was_set = content_type_was_set;
     }
+    // Ownership handed to `blob` (or it was empty); disarm the errdefer.
+    content_type = &.{};
 
     return blob.toJS(globalThis);
 }

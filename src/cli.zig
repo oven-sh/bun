@@ -91,6 +91,7 @@ pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
 pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 pub const WhyCommand = @import("./cli/why_command.zig").WhyCommand;
+pub const PruneCommand = @import("./cli/prune_command.zig").PruneCommand;
 pub const FuzzilliCommand = @import("./cli/fuzzilli_command.zig").FuzzilliCommand;
 pub const ReplCommand = @import("./cli/repl_command.zig").ReplCommand;
 
@@ -671,7 +672,7 @@ pub const Command = struct {
             RootCommandMatcher.case("login") => .ReservedCommand,
             RootCommandMatcher.case("logout") => .ReservedCommand,
             RootCommandMatcher.case("whoami") => .PackageManagerCommand,
-            RootCommandMatcher.case("prune") => .ReservedCommand,
+            RootCommandMatcher.case("prune") => .PruneCommand,
             RootCommandMatcher.case("list") => .PackageManagerCommand,
             RootCommandMatcher.case("why") => .WhyCommand,
             RootCommandMatcher.case("fuzzilli") => if (bun.Environment.enable_fuzzilli)
@@ -916,6 +917,12 @@ pub const Command = struct {
                 try PackageManagerCommand.exec(ctx);
                 return;
             },
+            .PruneCommand => {
+                const ctx = try Command.init(allocator, log, .PruneCommand);
+
+                try PruneCommand.exec(ctx);
+                return;
+            },
             .TestCommand => {
                 const ctx = try Command.init(allocator, log, .TestCommand);
 
@@ -1073,6 +1080,7 @@ pub const Command = struct {
         PublishCommand,
         AuditCommand,
         WhyCommand,
+        PruneCommand,
         FuzzilliCommand,
 
         /// Used by crash reports.
@@ -1111,6 +1119,7 @@ pub const Command = struct {
                 .PublishCommand => 'k',
                 .AuditCommand => 'A',
                 .WhyCommand => 'W',
+                .PruneCommand => 'Q',
                 .FuzzilliCommand => 'F',
             };
         }
@@ -1367,6 +1376,9 @@ pub const Command = struct {
                         \\
                     , .{});
                     Output.flush();
+                },
+                .PruneCommand => {
+                    Install.PackageManager.CommandLineArguments.printHelp(.prune);
                 },
                 .OutdatedCommand, .UpdateInteractiveCommand, .PublishCommand, .AuditCommand => {
                     Install.PackageManager.CommandLineArguments.printHelp(switch (cmd) {

@@ -152,6 +152,7 @@ pub const Subcommand = enum {
     audit,
     info,
     why,
+    prune,
     scan,
 
     // bin,

@@ -1456,21 +1456,27 @@ pub const ESModule = struct {
             if (strings.startsWith(package.name, ".") or strings.indexAnyComptime(package.name, "\\%") != null)
                 return null;
 
+            // A version delimiter `@` is only valid within the package-name portion of
+            // the specifier. Searching the entire specifier misparses wildcard subpaths
+            // whose matched substring contains `@` (e.g. `test-pkg/@scope/sub/index.js`
+            // or `ember-source/@ember/renderer/...`) as if the package had a version.
             const offset: usize = if (package.name.len == 0 or package.name[0] != '@') 0 else 1;
-            if (strings.indexOfChar(specifier[offset..], '@')) |at| {
-                package.version = parseVersion(specifier[offset..][at..]) orelse "";
-                if (package.version.len == 0) {
-                    package.version = specifier[offset..][at..];
-                    if (package.version.len > 0 and package.version[0] == '@') {
-                        package.version = package.version[1..];
+            if (offset < package.name.len) {
+                if (strings.indexOfChar(specifier[offset..package.name.len], '@')) |at| {
+                    package.version = parseVersion(specifier[offset..][at..]) orelse "";
+                    if (package.version.len == 0) {
+                        package.version = specifier[offset..][at..];
+                        if (package.version.len > 0 and package.version[0] == '@') {
+                            package.version = package.version[1..];
+                        }
                     }
-                }
-                package.name = specifier[0 .. at + offset];
+                    package.name = specifier[0 .. at + offset];
 
-                parseSubpath(&package.subpath, specifier[@min(package.name.len + package.version.len + 1, specifier.len)..], subpath_buf);
-            } else {
-                parseSubpath(&package.subpath, specifier[package.name.len..], subpath_buf);
+                    parseSubpath(&package.subpath, specifier[@min(package.name.len + package.version.len + 1, specifier.len)..], subpath_buf);
+                    return package;
+                }
             }
+            parseSubpath(&package.subpath, specifier[package.name.len..], subpath_buf);
 
             return package;
         }

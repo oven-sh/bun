@@ -485,6 +485,89 @@ it.skipIf(isWindows)("browser map resolution handles relative paths longer than 
   expect(exitCode).toBe(0);
 });
 
+// ESModule.Package.parse scanned the entire specifier for an `@` to split off a
+// version. For wildcard `exports` maps the matched substring can contain `@`
+// (e.g. `ember-source/@ember/renderer/...`, `pkg/@scope/sub`) — those `@`s
+// aren't version delimiters, they're subpath content. The version split must
+// be bounded to the package-name portion of the specifier.
+// https://github.com/oven-sh/bun/issues/30187
+describe("wildcard exports with @ in matched subpath", () => {
+  it.concurrent("resolves a subpath whose wildcard match starts with @", () => {
+    using dir = tempDir("resolver-wildcard-at-scoped", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/test-pkg/package.json": JSON.stringify({
+        name: "test-pkg",
+        version: "1.0.0",
+        exports: { "./*": "./dist/packages/*" },
+      }),
+      "node_modules/test-pkg/dist/packages/plain/index.js": "export default 'plain';",
+      "node_modules/test-pkg/dist/packages/@scope/sub/index.js": "export default 'scoped';",
+    });
+    const root = String(dir);
+
+    expect(Bun.resolveSync("test-pkg/plain/index.js", root)).toBe(
+      join(root, "node_modules/test-pkg/dist/packages/plain/index.js"),
+    );
+    expect(Bun.resolveSync("test-pkg/@scope/sub/index.js", root)).toBe(
+      join(root, "node_modules/test-pkg/dist/packages/@scope/sub/index.js"),
+    );
+  });
+
+  it.concurrent("resolves a subpath that contains `@` mid-segment", () => {
+    using dir = tempDir("resolver-wildcard-at-mid", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/test-pkg/package.json": JSON.stringify({
+        name: "test-pkg",
+        version: "1.0.0",
+        exports: { "./*": "./dist/packages/*" },
+      }),
+      "node_modules/test-pkg/dist/packages/with@sign/sub/index.js": "export default 'sign';",
+    });
+    const root = String(dir);
+
+    expect(Bun.resolveSync("test-pkg/with@sign/sub/index.js", root)).toBe(
+      join(root, "node_modules/test-pkg/dist/packages/with@sign/sub/index.js"),
+    );
+  });
+
+  it.concurrent("resolves an @-prefixed subpath under a scoped package", () => {
+    using dir = tempDir("resolver-wildcard-at-scoped-pkg", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/@my/pkg/package.json": JSON.stringify({
+        name: "@my/pkg",
+        version: "1.0.0",
+        exports: { "./*": "./dist/*" },
+      }),
+      "node_modules/@my/pkg/dist/@inner/bar/index.js": "export default 'inner';",
+    });
+    const root = String(dir);
+
+    expect(Bun.resolveSync("@my/pkg/@inner/bar/index.js", root)).toBe(
+      join(root, "node_modules/@my/pkg/dist/@inner/bar/index.js"),
+    );
+  });
+
+  // Regression guard: `@version` specifiers immediately following the package
+  // name must still be stripped. We don't install alternative versions; we just
+  // verify `pkg@1.0.0/subpath` still resolves to the same file as `pkg/subpath`.
+  it.concurrent("still strips a trailing @version after the package name", () => {
+    using dir = tempDir("resolver-wildcard-versioned", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/test-pkg/package.json": JSON.stringify({
+        name: "test-pkg",
+        version: "1.0.0",
+        exports: { "./*": "./dist/packages/*" },
+      }),
+      "node_modules/test-pkg/dist/packages/plain/index.js": "export default 'plain';",
+    });
+    const root = String(dir);
+
+    expect(Bun.resolveSync("test-pkg@1.0.0/plain/index.js", root)).toBe(
+      join(root, "node_modules/test-pkg/dist/packages/plain/index.js"),
+    );
+  });
+});
+
 // dirInfoCachedMaybeLog reads the rfs.entries cache without checking the union
 // tag. If readDirectory() previously failed with a non-ENOENT error (e.g.
 // EACCES), a `.err` variant is stored there; re-resolving the directory after

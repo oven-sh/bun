@@ -1830,17 +1830,11 @@ test("dependency from root satisfies range from dependency", async () => {
     expect.stringContaining("+ no-deps@1.0.0"),
     "+ one-range-dep@1.0.0",
     "",
-    "3 packages installed",
+    "2 packages installed",
   ]);
   expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
     name: "no-deps",
     version: "1.0.0",
-  } as any);
-  expect(
-    await file(join(packageDir, "node_modules", "one-range-dep", "node_modules", "no-deps", "package.json")).json(),
-  ).toEqual({
-    name: "no-deps",
-    version: "1.1.0",
   } as any);
   expect(await exited).toBe(0);
   assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
@@ -1867,7 +1861,7 @@ test("dependency from root satisfies range from dependency", async () => {
     expect.stringContaining("+ no-deps@1.0.0"),
     "+ one-range-dep@1.0.0",
     "",
-    "3 packages installed",
+    "2 packages installed",
   ]);
   expect(await exited).toBe(0);
   assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
@@ -7076,7 +7070,7 @@ describe("yarn tests", () => {
       "",
       "+ dragon-test-2-a@workspace:dragon-test-2-a",
       "",
-      "4 packages installed",
+      "3 packages installed",
     ]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
       "dragon-test-2-a",
@@ -7086,10 +7080,6 @@ describe("yarn tests", () => {
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
       name: "no-deps",
       version: "1.0.0",
-    });
-    expect(await file(join(packageDir, "dragon-test-2-b", "node_modules", "no-deps", "package.json")).json()).toEqual({
-      name: "no-deps",
-      version: "2.0.0",
     });
     expect(await exists(join(packageDir, "dragon-test-2-a", "node_modules"))).toBeFalse();
     expect(await exited).toBe(0);

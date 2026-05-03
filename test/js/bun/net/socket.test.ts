@@ -3,7 +3,7 @@ import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 import { createSocketPair } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
 import { closeSync } from "fs";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, getMaxFD, isWindows, tls } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, getMaxFD, isWindows, tempDir, tls } from "harness";
 describe.concurrent("socket", () => {
   it("should throw when a socket from a file descriptor has a bad file descriptor", async () => {
     const open = jest.fn();
@@ -871,3 +871,67 @@ it("getServername on a closed TLS socket should not crash", async () => {
   expect(await promise).toBeUndefined();
   expect(client.getServername()).toBeUndefined();
 });
+it("TLS client: flush() after end() does not double-teardown before deferred onClose", async () => {
+  // `end()` on a TLS client sends close_notify and defers the raw close until the
+  // peer replies, leaving `is_active` set so the eventual onClose can release the
+  // Handlers. A `flush()` in that window must not re-enter markInactive and free
+  // the Handlers early — when the peer's close_notify then arrives, onClose would
+  // deref freed memory (ASAN heap-use-after-free). Run in a subprocess so an ASAN
+  // abort surfaces as a clean test failure rather than taking down the runner.
+  using dir = tempDir("tls-flush-after-end", {
+    "run.ts": `
+      const tls = JSON.parse(process.env.TLS_JSON!);
+
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls,
+        socket: {
+          open() {},
+          data() {},
+          // reply to the client's close_notify so its deferred onClose fires
+          end(s) { s.end(); },
+          close() {},
+          error() {},
+        },
+      });
+
+      const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+      const { promise: handshook, resolve: onHandshook } = Promise.withResolvers<void>();
+
+      const client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls,
+        socket: {
+          handshake() { onHandshook(); },
+          data() {},
+          close() { onClosed(); },
+          error() { onClosed(); },
+        },
+      });
+
+      await handshook;
+      client.end("x");
+      // Previously this re-entered markInactive while the TLS raw close was
+      // still deferred, freeing *Handlers before onClose ran.
+      client.flush();
+      client.flush();
+      await closed;
+      console.log("OK");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.ts"],
+    env: { ...bunEnv, TLS_JSON: JSON.stringify(tls) },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+}, 30_000); // debug subprocess startup + ASAN symbolication on failure is slow

@@ -57,28 +57,37 @@ describe("ipc mode advanced", () => {
     // checked `data.len < header_length + message_len`, which is u32 arithmetic: a child
     // sending length 0xFFFFFFFB makes the sum wrap to 0, the guard passes, and the receiver
     // slices `data[5..0]` (length ~SIZE_MAX) straight into the deserializer.
-    let receivedMessage: unknown;
-    await using child = spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        // type = SerializedMessage (0x02), length = 0xFFFFFFFB (little-endian).
-        // header_length (5) + 0xFFFFFFFB wraps to 0 in u32.
-        `require("fs").writeSync(3, Buffer.from([0x02, 0xfb, 0xff, 0xff, 0xff]))`,
-      ],
+    //
+    // Run the receiver in its own subprocess so a crash is observed as a failing
+    // assertion here rather than taking out the test runner.
+    // prettier-ignore
+    const parent = `
+      const child = Bun.spawn({
+        cmd: [
+          process.execPath, "-e",
+          // type = SerializedMessage (0x02), length = 0xFFFFFFFB (little-endian).
+          // header_length (5) + 0xFFFFFFFB wraps to 0 in u32.
+          'require("fs").writeSync(3, Buffer.from([0x02, 0xfb, 0xff, 0xff, 0xff]))',
+        ],
+        stdio: ["ignore", "inherit", "inherit"],
+        serialization: "advanced",
+        ipc(msg) { console.error("UNEXPECTED_IPC_MESSAGE", msg); },
+      });
+      await child.exited;
+      console.log("PARENT_OK");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", parent],
       env: bunEnv,
-      stdio: ["ignore", "pipe", "pipe"],
-      serialization: "advanced",
-      ipc(msg) {
-        receivedMessage = msg;
-      },
+      stdout: "pipe",
+      stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
-    expect(stdout).toBe("");
-    expect(receivedMessage).toBeUndefined();
+    expect(stdout.trim()).toBe("PARENT_OK");
+    expect(stderr).not.toContain("UNEXPECTED_IPC_MESSAGE");
     expect(exitCode).toBe(0);
   });
 });

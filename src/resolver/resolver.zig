@@ -2728,9 +2728,14 @@ pub const Resolver = struct {
             switch (prev.side_effects) {
                 .unspecified, .false => {},
                 .map => |*m| m.deinit(alloc),
-                .glob => |*g| g.deinit(alloc),
+                .glob => |*g| {
+                    // Each pattern is separately duped by normalizePathForGlob.
+                    for (g.items) |s| alloc.free(s);
+                    g.deinit(alloc);
+                },
                 .mixed => |*m| {
                     m.exact.deinit(alloc);
+                    for (m.globs.items) |s| alloc.free(s);
                     m.globs.deinit(alloc);
                 },
             }

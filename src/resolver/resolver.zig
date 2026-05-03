@@ -2662,6 +2662,15 @@ pub const Resolver = struct {
             // (matches the extends-merge cleanup in dirInfoUncached).
             for (prev.paths.values()) |v| bun.default_allocator.free(v);
             prev.paths.deinit();
+            // jsx.factory/.fragment are heap []string from
+            // parseMemberExpressionForJSX when set in JSON; the defaults are
+            // static slices, so only free when jsx_flags records they were
+            // parsed. Remaining per-field allocations (jsx.import_source,
+            // the tsconfig file-text buffer) need a TSConfigJSON contents
+            // handle / centralized deinitOwnedFields() to close fully and
+            // are tracked as follow-ups alongside the ExportsMap gap.
+            if (prev.jsx_flags.contains(.factory)) bun.default_allocator.free(prev.jsx.factory);
+            if (prev.jsx_flags.contains(.fragment)) bun.default_allocator.free(prev.jsx.fragment);
             prev.* = result.*;
             bun.destroy(result);
             return prev;

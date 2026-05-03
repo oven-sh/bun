@@ -153,9 +153,11 @@ pub fn readlink(file_path: [:0]const u8, buf: []u8) Maybe([:0]u8) {
         bun.assert(rc.int() == 0);
         const result_ptr: ?[*:0]u8 = req.ptrAs(?[*:0]u8);
         const slice = bun.span(result_ptr orelse return .{ .err = .{ .errno = @intFromEnum(bun.sys.E.NOENT), .syscall = .readlink, .path = file_path } });
-        if (slice.len > buf.len) {
+        // Reserve one byte for the NUL sentinel below. When slice.len == buf.len
+        // there is no room for it and buf[slice.len] = 0 would be out of bounds.
+        if (slice.len >= buf.len) {
             log("uv readlink({s}) = {d}, {s} TRUNCATED", .{ file_path, rc.int(), slice });
-            return .{ .err = .{ .errno = @intFromEnum(bun.sys.E.NOMEM), .syscall = .readlink, .path = file_path } };
+            return .{ .err = .{ .errno = @intFromEnum(bun.sys.E.NAMETOOLONG), .syscall = .readlink, .path = file_path } };
         }
         log("uv readlink({s}) = {d}, {s}", .{ file_path, rc.int(), slice });
         @memcpy(buf[0..slice.len], slice);

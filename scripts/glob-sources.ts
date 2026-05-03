@@ -42,7 +42,7 @@ const patterns = {
   },
   /** `*.classes.ts` — input to generate-classes codegen */
   zigGeneratedClasses: {
-    paths: ["src/bun.js/*.classes.ts", "src/bun.js/{api,node,test,webcore}/*.classes.ts"],
+    paths: ["src/bun.js/*.classes.ts", "src/bun.js/{api,node,test,webcore}/*.classes.ts", "src/image/*.classes.ts"],
   },
   /** built-in modules bundled at build time */
   js: {

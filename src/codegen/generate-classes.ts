@@ -1414,7 +1414,10 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
           bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor&, ASCIILiteral* reason) final
           {
               auto* controller = uncheckedDowncast<${name}>(handle.slot()->asCell());
-              if (${name}::hasPendingActivity(controller->wrapped())) {
+              // m_ctx is null between wrapper creation and constructor return
+              // when constructNeedsThis is set; GC during that window must not
+              // call into the Zig hasPendingActivity with nullptr.
+              if (controller->wrapped() && ${name}::hasPendingActivity(controller->wrapped())) {
                   if (reason) [[unlikely]] {
                     *reason = "has pending activity"_s;
                   }
@@ -3019,6 +3022,12 @@ fn log_zig_class_method(typename: []const u8, method_name: []const u8, callframe
 fn log_zig_class_getter(typename: []const u8, property_name: []const u8) callconv(bun.callconv_inline) void {
   if (comptime Environment.enable_logs) {
     zig("<r><d>static<r> <blue>get<r> {s}<d>.<r>{s}", .{typename, property_name});
+  }
+}
+
+fn log_zig_class_setter(typename: []const u8, property_name: []const u8, value: jsc.JSValue) callconv(bun.callconv_inline) void {
+  if (comptime Environment.enable_logs) {
+    zig("<r><d>static<r> <blue>set<r> {s}<d>.<r>{s} = {?s}", .{typename, property_name, bun.tagName(jsc.JSValue, value)});
   }
 }
 

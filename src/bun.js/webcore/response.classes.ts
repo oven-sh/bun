@@ -161,6 +161,11 @@ export default [
       // Non-standard, but consistent!
       bytes: { fn: "getBytes", async: true },
 
+      // `new Bun.Image(this, opts)` — synchronous (the read happens lazily
+      // when an Image terminal is awaited), so this is just a constructor
+      // call with the receiver as input. Covers BunFile/S3File.
+      image: { fn: "doImage", length: 0 },
+
       type: {
         getter: "getType",
       },

@@ -11,6 +11,12 @@ pub const mysql_native_password = struct {
         if (password.len == 0) {
             return result;
         }
+        // A malicious or broken server can send an AuthSwitchRequest with a
+        // short plugin_data; without this check the slicing below reads past
+        // the end of the buffer.
+        if (nonce.len < 20) {
+            return error.MissingAuthData;
+        }
 
         // Stage 1: SHA1(password)
         bun.sha.SHA1.hash(password, &stage1, jsc.VirtualMachine.get().rareData().boringEngine());
@@ -102,6 +108,17 @@ pub const caching_sha2_password = struct {
         // RSA encrypted value of XOR(password, seed) using server public key (RSA_PKCS1_OAEP_PADDING).
 
         pub fn writeInternal(this: *const EncryptedPassword, comptime Context: type, writer: NewWriter(Context)) !void {
+            // The XOR below does `nonce[i % nonce.len]`; an empty nonce from a
+            // malicious server's AuthSwitchRequest would be a divide-by-zero.
+            if (this.nonce.len == 0) {
+                return error.MissingAuthData;
+            }
+            // `&this.public_key[0]` below would index past a zero-length
+            // slice if the server answered the public-key request with an
+            // empty payload.
+            if (this.public_key.len == 0) {
+                return error.InvalidPublicKey;
+            }
             // 1024 is overkill but lets cover all cases
             var password_buf: [1024]u8 = undefined;
             var needs_to_free_password = false;

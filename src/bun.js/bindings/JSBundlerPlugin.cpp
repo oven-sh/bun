@@ -540,11 +540,12 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const
         auto exception = scope.exception();
         (void)scope.tryClearException();
         if (!plugin->plugin.tombstoned) {
+            // which = 1 (Load). Zig's JSBundlerPlugin__addError casts ctx based on this value.
             plugin->plugin.addError(
                 context,
-                plugin->plugin.config,
+                plugin,
                 JSC::JSValue::encode(exception),
-                JSValue::encode(jsNumber(0)));
+                JSValue::encode(jsNumber(1)));
         }
     }
 }
@@ -583,11 +584,12 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, co
         auto exception = JSValue(scope.exception());
         (void)scope.tryClearException();
         if (!plugin->plugin.tombstoned) {
-            JSBundlerPlugin__addError(
+            // which = 0 (Resolve). Zig's JSBundlerPlugin__addError casts ctx based on this value.
+            plugin->plugin.addError(
                 context,
                 plugin,
                 JSC::JSValue::encode(exception),
-                JSValue::encode(jsNumber(1)));
+                JSValue::encode(jsNumber(0)));
         }
         return;
     }

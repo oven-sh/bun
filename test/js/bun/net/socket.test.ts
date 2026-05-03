@@ -821,6 +821,59 @@ it("should throw on empty unix path from truthy non-string value", () => {
   expect(() => Bun.connect({ unix: [] as any, socket })).toThrow("SocketOptions.unix must be a string");
 });
 
+it("reading .listener on a closed client socket does not use-after-free handlers", async () => {
+  // Client-mode Handlers is heap-allocated per-connect and freed in
+  // markInactive once the socket closes. `socket.listener` read
+  // `handlers.mode` through the dangling pointer before the isDetached()
+  // check. Run in a subprocess so the ASAN abort is observable as a
+  // non-zero exit instead of killing the test runner.
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { promise: closed, resolve: onClosed } = Promise.withResolvers();
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open(s) { s.end(); },
+            data() {},
+          },
+        });
+        const client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: {
+            data() {},
+            close() { onClosed(); },
+          },
+        });
+        await closed;
+        server.stop(true);
+        // The close callback resolves while native onClose is still on the
+        // stack; markInactive (which frees the client Handlers) runs in the
+        // deferred unwind after scope.exit() drains this microtask. Hop one
+        // event-loop turn so the free has actually happened.
+        await new Promise(r => setImmediate(r));
+        console.log("listener:" + client.listener);
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      // llvm-symbolizer on the debug binary takes several seconds; the raw
+      // ASAN report line + exit code are enough to flag the regression.
+      ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:symbolize=0",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("listener:undefined\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 it("reading fd of a TLS listener should not crash", () => {
   using listener = Bun.listen({
     hostname: "localhost",

@@ -646,11 +646,11 @@ fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSVal
         }
 
         // family <string> Either IPv4 or IPv6
-        interface.put(globalThis, jsc.ZigString.static("family"), (switch (addr.any.family) {
-            std.posix.AF.INET => jsc.ZigString.static("IPv4"),
-            std.posix.AF.INET6 => jsc.ZigString.static("IPv6"),
-            else => jsc.ZigString.static("unknown"),
-        }).toJS(globalThis));
+        interface.put(globalThis, jsc.ZigString.static("family"), switch (addr.any.family) {
+            std.posix.AF.INET => globalThis.commonStrings().IPv4(),
+            std.posix.AF.INET6 => globalThis.commonStrings().IPv6(),
+            else => jsc.ZigString.static("unknown").toJS(globalThis),
+        });
 
         // mac <string> The MAC address of the network interface
         {
@@ -788,11 +788,11 @@ fn networkInterfacesWindows(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSV
             interface.put(globalThis, jsc.ZigString.static("netmask"), jsc.ZigString.init(str).withEncoding().toJS(globalThis));
         }
         // family
-        interface.put(globalThis, jsc.ZigString.static("family"), (switch (iface.address.address4.family) {
-            std.posix.AF.INET => jsc.ZigString.static("IPv4"),
-            std.posix.AF.INET6 => jsc.ZigString.static("IPv6"),
-            else => jsc.ZigString.static("unknown"),
-        }).toJS(globalThis));
+        interface.put(globalThis, jsc.ZigString.static("family"), switch (iface.address.address4.family) {
+            std.posix.AF.INET => globalThis.commonStrings().IPv4(),
+            std.posix.AF.INET6 => globalThis.commonStrings().IPv6(),
+            else => jsc.ZigString.static("unknown").toJS(globalThis),
+        });
 
         // mac
         {

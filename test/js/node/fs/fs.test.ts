@@ -1178,6 +1178,58 @@ it("readdirSync throws when given a file path with trailing slash", () => {
   }
 });
 
+// The error cleanup path previously called MarkedArrayBuffer.destroy() on
+// structs stored by-value inside the entries ArrayList, which passed interior
+// ArrayList pointers to the allocator (freeing entries.items.ptr for index 0 and
+// then freeing it again in entries.deinit()). A self-referential symlink makes
+// the recursive walk fail with ELOOP after entries have been collected, exercising
+// that cleanup path.
+it.skipIf(isWindows)(
+  "readdirSync({encoding: 'buffer', recursive: true}) frees entries safely when a subdir fails to open",
+  async () => {
+    using dir = tempDir("readdir-buffer-error", {
+      "a.txt": "a",
+      "b.txt": "b",
+      "c.txt": "c",
+    });
+    fs.symlinkSync("loop", join(String(dir), "loop"));
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          let code;
+          for (let i = 0; i < 2; i++) {
+            try {
+              fs.readdirSync(${JSON.stringify(String(dir))}, { encoding: "buffer", recursive: true });
+              throw new Error("expected readdirSync to throw");
+            } catch (e) {
+              code = e.code;
+            }
+          }
+          console.log(code);
+        `,
+      ],
+      // Disable symbolization so an ASAN abort exits promptly instead of spending
+      // seconds in llvm-symbolizer against the large debug binary.
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allow_user_segv_handler=1", "symbolize=0", "abort_on_error=1"]
+          .filter(Boolean)
+          .join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ELOOP", exitCode: 0 });
+  },
+);
+
 describe("readSync", () => {
   const firstFourBytes = new Uint32Array(new TextEncoder().encode("File").buffer)[0];
 
@@ -1607,6 +1659,38 @@ it("readlink", () => {
   symlinkSync(import.meta.path, actual);
 
   expect(readlinkSync(actual)).toBe(realpathSync(import.meta.path));
+});
+
+// On FUSE / some network filesystems a symlink target can exceed PATH_MAX,
+// and POSIX readlink() may return exactly buf.len (truncated). Bun used to
+// write the NUL terminator at buf[rc] which would be one past the end of the
+// stack PathBuffer in that case. We can't create a >= PATH_MAX target on a
+// normal filesystem, but we can exercise the longest-possible target to make
+// sure the bounds check in sys.readlink doesn't fire early.
+it.skipIf(isWindows)("readlink with PATH_MAX-1 target", () => {
+  const dir = tmpdirSync();
+  // Find the longest target the local filesystem will accept for symlink(2).
+  // On Linux this is 4095, on macOS 1023. Bun's own path validation silently
+  // replaces the target with "" when it is exactly MAX_PATH_BYTES long (and
+  // Darwin accepts symlink("", link)), so start just below that boundary on
+  // each platform rather than probing through it.
+  let len = process.platform === "darwin" ? 1023 : 4095;
+  let link: string;
+  let target: string;
+  while (true) {
+    link = join(dir, "l" + len);
+    target = Buffer.alloc(len, "x").toString();
+    try {
+      symlinkSync(target, link);
+      break;
+    } catch {
+      if (len <= 1) throw new Error("could not create any symlink");
+      len--;
+    }
+  }
+  // readlinkSync must return the exact target, not error and not truncate.
+  expect(readlinkSync(link).length).toBe(len);
+  expect(readlinkSync(link)).toBe(target);
 });
 
 it.if(isWindows)("symlink on windows with forward slashes", async () => {

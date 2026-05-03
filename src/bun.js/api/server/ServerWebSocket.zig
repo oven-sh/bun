@@ -1117,9 +1117,9 @@ pub fn getBinaryType(
     log("getBinaryType()", .{});
 
     return switch (this.#flags.binary_type) {
-        .Uint8Array => bun.String.static("uint8array").toJS(globalThis),
-        .Buffer => bun.String.static("nodebuffer").toJS(globalThis),
-        .ArrayBuffer => bun.String.static("arraybuffer").toJS(globalThis),
+        .Uint8Array => globalThis.commonStrings().uint8array(),
+        .Buffer => globalThis.commonStrings().nodebuffer(),
+        .ArrayBuffer => globalThis.commonStrings().arraybuffer(),
         else => @panic("Invalid binary type"),
     };
 }

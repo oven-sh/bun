@@ -24,6 +24,12 @@ pending_body: []const u8 = "",
 request_body_done: bool = false,
 is_streaming_body: bool = false,
 headers_delivered: bool = false,
+/// Wire bytes delivered to JS via `deliver()` that haven't been reported
+/// drained via `scheduleResponseBodyConsumed`. Once over
+/// `receive_body_high_water` we stop `lsquic_stream_wantread` so lsquic
+/// withholds `MAX_STREAM_DATA` and the server backpressures.
+outstanding_body_bytes: usize = 0,
+read_paused: bool = false,
 
 pub fn deinit(this: *Stream) void {
     this.decoded_headers.deinit(bun.default_allocator);

@@ -301,6 +301,41 @@ pub fn retryAfterH2Coalesce(this: *HTTPClient) void {
     this.start_(true);
 }
 
+/// Response-body receive backpressure for streaming consumers
+/// (`signals.body_consumption_tracked` set). Once the body bytes handed
+/// to JS but not yet reported drained via `scheduleResponseBodyConsumed`
+/// exceed `receive_body_high_water`, the transport applies backpressure:
+/// HTTP/1.1 pauses the socket read (`us_socket_pause` → TCP rwnd closes),
+/// HTTP/3 stops `lsquic_stream_read` (`wantRead(false)` → lsquic withholds
+/// `MAX_STREAM_DATA`). HTTP/2 uses a different mechanism (per-stream
+/// WINDOW_UPDATE gated on the same consumption reports — see
+/// `h2_client/ClientSession.replenishWindow`) so its limit is governed by
+/// `H2.local_initial_window_size` instead. Resumed once consumption
+/// reports bring the outstanding count below `receive_body_low_water`.
+pub const receive_body_high_water: usize = 4 << 20; // 4 MiB
+pub const receive_body_low_water: usize = 1 << 20; // 1 MiB
+
+/// Process-wide counters for the HTTP/1.1 `receive_paused` flag
+/// transitions: incremented at every `false→true` / `true→false` edge,
+/// regardless of which path clears it (`consumeResponseBody`,
+/// `maybePauseReceive`'s done/redirect branch, the pre-pool-release
+/// defensive resume). Exposed through
+/// `fetchInternals.h1BackpressureCounts()` so the backpressure test can
+/// observe pause/resume from the client subprocess directly instead of
+/// inferring it from a server-side `drain` timeout whose latency depends
+/// on the kernel's loopback sndbuf/rcvbuf autotuning.
+pub var h1_socket_pauses = std.atomic.Value(u32).init(0);
+pub var h1_socket_resumes = std.atomic.Value(u32).init(0);
+
+pub const TestingAPIs = struct {
+    pub fn h1BackpressureCounts(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const obj = jsc.JSValue.createEmptyObject(globalThis, 2);
+        obj.put(globalThis, jsc.ZigString.static("pauses"), .jsNumber(h1_socket_pauses.load(.monotonic)));
+        obj.put(globalThis, jsc.ZigString.static("resumes"), .jsNumber(h1_socket_resumes.load(.monotonic)));
+        return obj;
+    }
+};
+
 /// REFUSED_STREAM or graceful GOAWAY past our id: the server promises it
 /// did not process the request, so re-dispatch from the top. Only reached
 /// for `.bytes` bodies (replayable).
@@ -2029,12 +2064,41 @@ pub fn onData(
             this.handleOnDataHeaders(is_ssl, incoming_data, ctx, socket);
         },
         .body => {
-            this.setTimeout(socket, 5);
+            // Don't re-arm the idle timer while the reader has
+            // intentionally stalled: maybePauseReceive cleared it on
+            // the false→true transition, but uSockets' repeat-recv
+            // fast path can land more on_data calls in the same
+            // epoll tick after pauseStream(), and re-arming here
+            // would time out a reader that stalls >5 minutes.
+            if (!this.state.flags.receive_paused) this.setTimeout(socket, 5);
 
+            const out = this.state.body_out_str.?;
+            const before = out.list.items.len;
             const report_progress = this.handleResponseBody(incoming_data, false) catch |err| {
                 this.closeAndFail(err, is_ssl, socket);
                 return;
             };
+
+            // Must run before progressUpdate: a final chunk makes
+            // onAsyncHTTPCallback destroy the ThreadlocalAsyncHTTP that
+            // owns *this* HTTPClient inline on this thread, so `this`
+            // is poisoned by the time progressUpdate returns.
+            //
+            // Count the `body_out_str` delta — i.e. exactly what
+            // progressUpdate hands to FetchTasklet and onward to
+            // `ByteStream.onData` → `didDrain`. `incoming_data.len`
+            // would include Transfer-Encoding: chunked framing;
+            // `total_body_received` is pre-decompression wire bytes.
+            // Either mismatch accumulates as a permanent floor under
+            // `outstanding_body_bytes` (framing for uncompressed
+            // chunked SSE; stored-block overhead for gzip on
+            // incompressible content) and eventually deadlocks a
+            // long-lived stream on the first pause past the low-water
+            // mark. For `body_consumption_tracked` consumers
+            // `report_progress` is true for every non-empty chunk and
+            // the callback resets `body_out_str`, so `before` is 0
+            // and the delta is this chunk's post-decompress length.
+            this.maybePauseReceive(is_ssl, socket, out.list.items.len -| before);
 
             if (report_progress) {
                 this.progressUpdate(is_ssl, ctx, socket);
@@ -2043,12 +2107,16 @@ pub fn onData(
         },
 
         .body_chunk => {
-            this.setTimeout(socket, 5);
+            if (!this.state.flags.receive_paused) this.setTimeout(socket, 5);
 
+            const out = this.state.body_out_str.?;
+            const before = out.list.items.len;
             const report_progress = this.handleResponseBodyChunkedEncoding(incoming_data) catch |err| {
                 this.closeAndFail(err, is_ssl, socket);
                 return;
             };
+
+            this.maybePauseReceive(is_ssl, socket, out.list.items.len -| before);
 
             if (report_progress) {
                 this.progressUpdate(is_ssl, ctx, socket);
@@ -2204,6 +2272,82 @@ pub fn setTimeout(this: *HTTPClient, socket: anytype, minutes: c_uint) void {
     socket.setTimeoutMinutes(minutes);
 }
 
+/// Called from `onData` after body bytes have been decoded and (if
+/// streaming) queued for JS. Counts `n` post-dechunk/post-decompress
+/// body bytes towards `outstanding_body_bytes` — the same currency
+/// `didDrain` credits — and, if the JS reader is reporting consumption
+/// and the outstanding total has crossed the high-water mark, pauses
+/// the socket read so TCP rwnd backpressures the server. The
+/// proxy-tunnel path is excluded: its inner TLS session needs the
+/// socket readable to complete handshake/close_notify regardless of the
+/// application body, and pausing the carrier socket would wedge that.
+fn maybePauseReceive(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, n: usize) void {
+    if (!this.signals.get(.body_consumption_tracked)) return;
+    if (this.state.stage == .done or this.state.stage == .fail) return;
+    this.state.outstanding_body_bytes +|= n;
+    // handleResponseBody just ran: if the body is complete (or a redirect
+    // is pending) the socket is about to be released to the keep-alive
+    // pool — or closed — inside progressUpdate. Leaving it paused would
+    // hand the next pooled request a socket with LIBUS_SOCKET_READABLE
+    // cleared and no consumeResponseBody to re-enable it.
+    //
+    // We can reach here with `receive_paused` already true because
+    // uSockets' repeat-recv fast path (loop.c) keeps calling recv() in
+    // the same epoll tick while the buffer comes back full, without
+    // re-consulting poll flags; a us_socket_pause() issued from a
+    // previous on_data in that loop doesn't stop the next recv(). The
+    // final chunk can therefore arrive while receive_paused is set.
+    if (this.state.isDone() or this.state.flags.is_redirect_pending) {
+        if (this.state.flags.receive_paused) {
+            this.state.flags.receive_paused = false;
+            _ = h1_socket_resumes.fetchAdd(1, .monotonic);
+            if (!socket.isClosedOrHasError()) _ = socket.resumeStream();
+        }
+        return;
+    }
+    if (this.state.flags.receive_paused) return;
+    if (this.state.outstanding_body_bytes < receive_body_high_water) return;
+    if (this.proxy_tunnel != null) return;
+    if (socket.isClosedOrHasError()) return;
+    this.state.flags.receive_paused = true;
+    // While paused, the idle timer would otherwise fire with no socket
+    // activity to re-arm it. The response isn't "stalled" — the reader
+    // chose not to pull — so drop the timeout until we resume.
+    socket.setTimeoutMinutes(0);
+    socket.timeout(0);
+    _ = socket.pauseStream();
+    _ = h1_socket_pauses.fetchAdd(1, .monotonic);
+    log("maybePauseReceive: paused at {d} bytes outstanding", .{this.state.outstanding_body_bytes});
+}
+
+/// HTTP-thread wake-up from `scheduleResponseBodyConsumed`: the JS reader
+/// drained `bytes` from the ByteStream. For HTTP/1.1 this may resume a
+/// socket read that `maybePauseReceive` paused. HTTP/2 and HTTP/3 have
+/// dedicated handlers that reach here via their session dispatch.
+pub fn consumeResponseBody(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, bytes: u32) void {
+    // Both sides count the `body_out_str` delta so increment and
+    // decrement are the same currency; the saturating subtract is
+    // still needed for the `maxInt(u32)` sentinel from
+    // `ignoreRemainingResponseBody` and for `ByteStream.drain()`
+    // reporting bytes that arrived before `body_consumption_tracked`
+    // was armed (those were never counted here because the first
+    // line of maybePauseReceive early-returns on the unset signal).
+    this.state.outstanding_body_bytes -|= @min(@as(usize, bytes), this.state.outstanding_body_bytes);
+    if (!this.state.flags.receive_paused) return;
+    // Disarming `body_consumption_tracked` (e.g. reader.cancel()) posts a
+    // saturating sentinel; treat that as "resume now" regardless of the
+    // low-water mark so the abandoned body can drain for keep-alive reuse.
+    const should_resume = this.state.outstanding_body_bytes <= receive_body_low_water or
+        !this.signals.get(.body_consumption_tracked);
+    if (!should_resume) return;
+    this.state.flags.receive_paused = false;
+    _ = h1_socket_resumes.fetchAdd(1, .monotonic);
+    if (socket.isClosedOrHasError()) return;
+    _ = socket.resumeStream();
+    this.setTimeout(socket, 5);
+    log("consumeResponseBody: resumed, {d} bytes outstanding", .{this.state.outstanding_body_bytes});
+}
+
 pub fn drainResponseBody(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
 
     // Find out if we should not send any update.
@@ -2264,6 +2408,23 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
                 if (t.wrapper) |*w| !w.isShutdown() else false
         else
             true;
+
+        // Defensive: maybePauseReceive's isDone() branch resumes for
+        // the normal .body/.body_chunk onData path, but a
+        // close-delimited body or an early server reply can reach
+        // here without another onData. The uSockets `is_paused` flag
+        // survives state.reset(), so a paused socket released to the
+        // pool would hang the next request that adopts it. Lives
+        // above the keepalive check so `h1_socket_resumes` tracks
+        // `h1_socket_pauses` on the close branch too (where
+        // state.reset() would otherwise clear `receive_paused`
+        // without a counter bump); resumeStream on a closed socket
+        // is a no-op in uSockets.
+        if (this.state.flags.receive_paused) {
+            this.state.flags.receive_paused = false;
+            _ = h1_socket_resumes.fetchAdd(1, .monotonic);
+            if (!socket.isClosedOrHasError()) _ = socket.resumeStream();
+        }
 
         if (this.isKeepAlivePossible() and !socket.isClosedOrHasError() and tunnel_poolable) {
             log("release socket", .{});

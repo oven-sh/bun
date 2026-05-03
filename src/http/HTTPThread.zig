@@ -34,10 +34,12 @@ has_pending_queued_abort: bool = false,
 queued_shutdowns: std.ArrayListUnmanaged(ShutdownMessage) = std.ArrayListUnmanaged(ShutdownMessage){},
 queued_writes: std.ArrayListUnmanaged(WriteMessage) = std.ArrayListUnmanaged(WriteMessage){},
 queued_response_body_drains: std.ArrayListUnmanaged(DrainMessage) = std.ArrayListUnmanaged(DrainMessage){},
+queued_response_body_consumed: std.ArrayListUnmanaged(ConsumeMessage) = std.ArrayListUnmanaged(ConsumeMessage){},
 
 queued_shutdowns_lock: bun.Mutex = .{},
 queued_writes_lock: bun.Mutex = .{},
 queued_response_body_drains_lock: bun.Mutex = .{},
+queued_response_body_consumed_lock: bun.Mutex = .{},
 
 queued_threadlocal_proxy_derefs: std.ArrayListUnmanaged(*ProxyTunnel) = std.ArrayListUnmanaged(*ProxyTunnel){},
 
@@ -116,6 +118,10 @@ const WriteMessage = struct {
 };
 const DrainMessage = struct {
     async_http_id: u32,
+};
+const ConsumeMessage = struct {
+    async_http_id: u32,
+    bytes: u32,
 };
 const ShutdownMessage = struct {
     async_http_id: u32,
@@ -507,9 +513,52 @@ fn drainQueuedHTTPResponseBodyDrains(this: *@This()) void {
     }
 }
 
+fn drainQueuedHTTPResponseBodyConsumed(this: *@This()) void {
+    while (true) {
+        var queued = brk: {
+            this.queued_response_body_consumed_lock.lock();
+            defer this.queued_response_body_consumed_lock.unlock();
+            const q = this.queued_response_body_consumed;
+            this.queued_response_body_consumed = .{};
+            break :brk q;
+        };
+        defer queued.deinit(bun.default_allocator);
+
+        for (queued.items) |msg| {
+            if (bun.http.socket_async_http_abort_tracker.get(msg.async_http_id)) |socket_ptr| {
+                switch (socket_ptr) {
+                    inline .SocketTLS, .SocketTCP => |socket, tag| {
+                        const is_tls = tag == .SocketTLS;
+                        const HTTPContext = HTTPThread.NewHTTPContext(comptime is_tls);
+                        const tagged = HTTPContext.getTaggedFromSocket(socket);
+                        if (tagged.get(HTTPClient)) |client| {
+                            // HTTP/1.1: may resume a paused socket read.
+                            client.consumeResponseBody(comptime is_tls, socket, msg.bytes);
+                        }
+                        if (tagged.get(bun.http.H2.ClientSession)) |session| {
+                            // HTTP/2: releases per-stream WINDOW_UPDATE.
+                            session.consumeResponseBodyByHttpId(msg.async_http_id, msg.bytes);
+                        }
+                    },
+                }
+            } else {
+                // HTTP/3: QUIC streams aren't in the TCP-socket tracker;
+                // dispatch via the session registry. May resume a
+                // lsquic `wantRead(0)` pause.
+                bun.http.H3.ClientContext.consumeResponseBodyByHttpId(msg.async_http_id, msg.bytes);
+            }
+        }
+        if (queued.items.len == 0) {
+            break;
+        }
+        threadlog("drained {d} queued consumes", .{queued.items.len});
+    }
+}
+
 fn drainEvents(this: *@This()) void {
     // Process any pending writes **before** aborting.
     this.drainQueuedHTTPResponseBodyDrains();
+    this.drainQueuedHTTPResponseBodyConsumed();
     this.drainQueuedWrites();
     this.drainQueuedShutdowns();
     bun.http.H3.PendingConnect.drainResolved();
@@ -658,6 +707,36 @@ pub fn scheduleResponseBodyDrain(this: *@This(), async_http_id: u32) void {
         }) catch |err| bun.handleOom(err);
     }
     if (this.has_awoken.load(.monotonic))
+        this.loop.loop.wakeup();
+}
+
+/// JS-thread → HTTP-thread notice that the `ReadableStream` reader for
+/// `async_http_id` has drained `bytes` from its buffer. Consecutive messages
+/// for the same id are coalesced under the lock so a tight `read()` loop
+/// posts one entry per wake instead of one per pull.
+pub fn scheduleResponseBodyConsumed(this: *@This(), async_http_id: u32, bytes: usize) void {
+    const n: u32 = @truncate(@min(bytes, @as(usize, std.math.maxInt(u32))));
+    if (n == 0) return;
+    const appended = brk: {
+        this.queued_response_body_consumed_lock.lock();
+        defer this.queued_response_body_consumed_lock.unlock();
+        const items = this.queued_response_body_consumed.items;
+        if (items.len > 0 and items[items.len - 1].async_http_id == async_http_id) {
+            items[items.len - 1].bytes +|= n;
+            break :brk false;
+        }
+        this.queued_response_body_consumed.append(bun.default_allocator, .{
+            .async_http_id = async_http_id,
+            .bytes = n,
+        }) catch |err| bun.handleOom(err);
+        break :brk true;
+    };
+    // Only wake on the append path: if we coalesced into an existing
+    // entry, the HTTP thread was already woken for that entry's
+    // original append and will see the updated `bytes` when it swaps
+    // the queue under the same lock. A tight `read()` loop over a
+    // multi-GiB body otherwise issues one eventfd write per pull.
+    if (appended and this.has_awoken.load(.monotonic))
         this.loop.loop.wakeup();
 }
 

@@ -291,6 +291,18 @@ export const fetchH3Internals = {
   liveCounts: $newZigFunction("http/H3Client.zig", "TestingAPIs.quicLiveCounts", 0) as () => {
     sessions: number;
     streams: number;
+    bodyBytesReceived: number;
+  },
+};
+
+export const fetchInternals = {
+  /** Process-wide HTTP/1.1 `maybePauseReceive` / `consumeResponseBody`
+   *  transition counters — lets the backpressure tests observe pause/resume
+   *  from inside the fetching subprocess instead of inferring it from a
+   *  server-side `drain` timeout that varies with kernel loopback tuning. */
+  h1BackpressureCounts: $newZigFunction("http.zig", "TestingAPIs.h1BackpressureCounts", 0) as () => {
+    pauses: number;
+    resumes: number;
   },
 };
 

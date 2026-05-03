@@ -76,6 +76,7 @@ pub const PendingValue = struct {
     onStartStreaming: ?*const fn (ctx: *anyopaque) jsc.WebCore.DrainResult = null,
     onReadableStreamAvailable: ?*const fn (ctx: *anyopaque, globalThis: *jsc.JSGlobalObject, readable: jsc.WebCore.ReadableStream) void = null,
     onStreamCancelled: ?*const fn (ctx: ?*anyopaque) void = null,
+    onStreamConsumed: ?*const fn (ctx: ?*anyopaque, bytes: usize) void = null,
     size_hint: Blob.SizeType = 0,
 
     deinit: bool = false,
@@ -517,6 +518,12 @@ pub const Value = union(Tag) {
                     if (locked.task) |task| {
                         reader.cancel_handler = onCancelled;
                         reader.cancel_ctx = task;
+                    }
+                }
+                if (locked.onStreamConsumed) |onConsumed| {
+                    if (locked.task) |task| {
+                        reader.drain_handler = onConsumed;
+                        reader.drain_ctx = task;
                     }
                 }
 
@@ -1049,6 +1056,19 @@ pub const Value = union(Tag) {
             .context = undefined,
             .globalThis = globalThis,
         });
+
+        if (locked.onStreamCancelled) |onCancelled| {
+            if (locked.task) |task| {
+                reader.cancel_handler = onCancelled;
+                reader.cancel_ctx = task;
+            }
+        }
+        if (locked.onStreamConsumed) |onConsumed| {
+            if (locked.task) |task| {
+                reader.drain_handler = onConsumed;
+                reader.drain_ctx = task;
+            }
+        }
 
         reader.context.setup();
 

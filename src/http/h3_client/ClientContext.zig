@@ -101,6 +101,13 @@ pub fn streamBodyByHttpId(async_http_id: u32, ended: bool) void {
     for (this.sessions.items) |s| s.streamBodyByHttpId(async_http_id, ended);
 }
 
+pub fn consumeResponseBodyByHttpId(async_http_id: u32, bytes: u32) void {
+    const this = instance orelse return;
+    for (this.sessions.items) |s| {
+        if (s.consumeResponseBodyByHttpId(async_http_id, bytes)) return;
+    }
+}
+
 const log = bun.Output.scoped(.h3_client, .hidden);
 
 const ClientSession = @import("./ClientSession.zig");

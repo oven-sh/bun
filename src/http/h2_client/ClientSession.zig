@@ -348,6 +348,26 @@ pub fn drainResponseBodyByHttpId(this: *ClientSession, async_http_id: u32) void 
     }
 }
 
+/// HTTP-thread wake-up from `scheduleResponseBodyConsumed`: the JS reader
+/// drained `bytes` from the ByteStream. Bump the stream's consumption
+/// counter and release any per-stream window credit that has become
+/// available.
+pub fn consumeResponseBodyByHttpId(this: *ClientSession, async_http_id: u32, bytes: u32) void {
+    this.ref();
+    defer this.deref();
+    for (this.streams.values()) |stream| {
+        const client = stream.client orelse continue;
+        if (client.async_http_id != async_http_id) continue;
+        // `bytes` is decompressed; clamp the running total to wire bytes
+        // still outstanding so a compression surplus isn't banked to
+        // credit later DATA the reader hasn't touched.
+        stream.consumed_bytes = @min(stream.consumed_bytes +| bytes, stream.unacked_bytes);
+        this.replenishWindow();
+        if (this.write_buffer.isNotEmpty()) _ = this.flush() catch |err| this.failAll(err);
+        return;
+    }
+}
+
 /// HTTP-thread wake-up from `scheduleRequestWrite`: new body bytes (or
 /// end-of-body) are available in the ThreadSafeStreamBuffer.
 pub fn streamBodyByHttpId(this: *ClientSession, async_http_id: u32, ended: bool) void {
@@ -372,6 +392,8 @@ pub fn writeWindowUpdate(this: *ClientSession, stream_id: u32, increment: u31) v
 
 fn replenishWindow(this: *ClientSession) void {
     const threshold = local_initial_window_size / 2;
+    // Connection-level credit stays receipt-based so one stream whose JS
+    // reader is stalled doesn't starve siblings of the shared window.
     if (this.conn_unacked_bytes >= threshold) {
         this.writeWindowUpdate(0, @intCast(this.conn_unacked_bytes));
         this.conn_unacked_bytes = 0;
@@ -379,9 +401,22 @@ fn replenishWindow(this: *ClientSession) void {
     var it = this.streams.iterator();
     while (it.next()) |e| {
         const s = e.value_ptr.*;
-        if (s.unacked_bytes >= threshold and !s.remoteClosed()) {
-            this.writeWindowUpdate(s.id, @intCast(s.unacked_bytes));
-            s.unacked_bytes = 0;
+        if (s.remoteClosed()) continue;
+        // `body_consumption_tracked` is set only while a JS consumer is
+        // reporting drained bytes via `scheduleResponseBodyConsumed`
+        // (fetch `res.body` with a `drain_handler` wired). It is *not*
+        // set for buffering consumers (`await res.text()`), S3 streaming
+        // downloads, or once the body is abandoned via
+        // `ignoreRemainingResponseBody` — those stay receipt-based so
+        // the transfer completes. When tracked, credit only what JS has
+        // actually drained, clamped to wire bytes received so a
+        // decompressed body can't inflate the window past what was sent.
+        const tracked = if (s.client) |c| c.signals.get(.body_consumption_tracked) else false;
+        const avail: u32 = if (tracked) @min(s.consumed_bytes, s.unacked_bytes) else s.unacked_bytes;
+        if (avail >= threshold) {
+            this.writeWindowUpdate(s.id, @intCast(avail));
+            s.unacked_bytes -= avail;
+            s.consumed_bytes -|= avail;
         }
     }
 }

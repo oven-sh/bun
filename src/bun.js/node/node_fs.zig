@@ -464,6 +464,8 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
         /// On each creation of a `AsyncCpSingleFileTask`, this is incremented.
         /// When each task is finished, decrement.
         /// The maintask thread starts this at 1 and decrements it at the end, to avoid the promise being resolved while new tasks may be added.
+        /// The task is only dispatched to the JS thread (and subsequently
+        /// destroyed) once this reaches zero — see `onSubtaskDone`.
         subtask_count: std.atomic.Value(usize),
 
         shelltask: ShellTaskT,
@@ -509,27 +511,18 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                     this.cp_task.args,
                 );
 
-                brk: {
-                    switch (result) {
-                        .err => |err| {
-                            if (err.errno == @intFromEnum(E.EXIST) and !args.flags.errorOnExist) {
-                                break :brk;
-                            }
-                            this.cp_task.finishConcurrently(result);
-                            this.deinit();
-                            return;
-                        },
-                        .result => {
-                            this.cp_task.onCopy(this.src, this.dest);
-                        },
-                    }
+                switch (result) {
+                    .err => |err| {
+                        if (!(err.errno == @intFromEnum(E.EXIST) and !args.flags.errorOnExist)) {
+                            this.cp_task.storeResult(result);
+                        }
+                    },
+                    .result => {
+                        this.cp_task.onCopy(this.src, this.dest);
+                    },
                 }
 
-                const old_count = this.cp_task.subtask_count.fetchSub(1, .monotonic);
-                if (old_count == 1) {
-                    this.cp_task.finishConcurrently(.success);
-                }
-
+                this.cp_task.onSubtaskDone();
                 this.deinit();
             }
 
@@ -631,8 +624,12 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             ThisAsyncCpTask.cpAsync(&node_fs, this);
         }
 
-        /// May be called from any thread (the subtasks)
-        fn finishConcurrently(this: *ThisAsyncCpTask, result: Maybe(Return.Cp)) void {
+        /// Atomically record the result of the operation. The first caller wins;
+        /// subsequent calls are no-ops. This does NOT schedule completion — the
+        /// task is only dispatched to the JS thread (and subsequently destroyed)
+        /// once every outstanding reference in `subtask_count` has been released
+        /// via `onSubtaskDone`.
+        fn storeResult(this: *ThisAsyncCpTask, result: Maybe(Return.Cp)) void {
             if (this.has_result.cmpxchgStrong(false, true, .monotonic, .monotonic)) |_| {
                 return;
             }
@@ -642,12 +639,35 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             if (this.result == .err) {
                 this.result.err = this.result.err.clone(bun.default_allocator);
             }
+        }
+
+        /// Release one reference held in `subtask_count`. When the count reaches
+        /// zero, completion is scheduled on the owning event loop, which will
+        /// ultimately `deinit()` this task. This is the ONLY place completion is
+        /// scheduled, guaranteeing that `this` outlives every concurrent access.
+        /// The caller must not touch `this` after calling this function.
+        fn onSubtaskDone(this: *ThisAsyncCpTask) void {
+            if (this.subtask_count.fetchSub(1, .acq_rel) != 1) {
+                return;
+            }
+
+            // We were the last reference. If no error was recorded, the copy
+            // succeeded.
+            this.storeResult(.success);
 
             if (this.evtloop == .js) {
                 this.evtloop.enqueueTaskConcurrent(.{ .js = jsc.ConcurrentTask.fromCallback(this, runFromJSThread) });
             } else {
                 this.evtloop.enqueueTaskConcurrent(.{ .mini = jsc.AnyTaskWithExtraContext.fromCallbackAutoDeinit(this, "runFromJSThreadMini") });
             }
+        }
+
+        /// Store `result` and release the caller's reference. May be called from
+        /// any thread. Convenience wrapper for paths that own exactly one
+        /// `subtask_count` reference and are done with it.
+        fn finishConcurrently(this: *ThisAsyncCpTask, result: Maybe(Return.Cp)) void {
+            this.storeResult(result);
+            this.onSubtaskDone();
         }
 
         pub fn runFromJSThreadMini(this: *ThisAsyncCpTask, _: *anyopaque) void {
@@ -781,11 +801,12 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                 return;
             }
 
-            const success = ThisAsyncCpTask._cpAsyncDirectory(nodefs, args.flags, this, &src_buf, @intCast(src.len), &dest_buf, @intCast(dest.len));
-            const old_count = this.subtask_count.fetchSub(1, .monotonic);
-            if (success and old_count == 1) {
-                this.finishConcurrently(.success);
-            }
+            // `_cpAsyncDirectory` may spawn SingleTasks that run concurrently
+            // and may record an error via `storeResult`, but none of them can
+            // bring `subtask_count` to zero while we still hold our reference,
+            // so `this` is guaranteed to remain alive until the call below.
+            _ = ThisAsyncCpTask._cpAsyncDirectory(nodefs, args.flags, this, &src_buf, @intCast(src.len), &dest_buf, @intCast(dest.len));
+            this.onSubtaskDone();
         }
 
         // returns boolean `should_continue`
@@ -811,7 +832,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                         .INVAL,
                         => {
                             @memcpy(nodefs.sync_error_buf[0..src.len], src);
-                            this.finishConcurrently(.{ .err = err.err.withPath(nodefs.sync_error_buf[0..src.len]) });
+                            this.storeResult(.{ .err = err.err.withPath(nodefs.sync_error_buf[0..src.len]) });
                             return false;
                         },
                         // Other errors may be due to clonefile() not being supported
@@ -826,7 +847,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             const open_flags = bun.O.DIRECTORY | bun.O.RDONLY;
             const fd = switch (Syscall.openatOSPath(bun.FD.cwd(), src, open_flags, 0)) {
                 .err => |err| {
-                    this.finishConcurrently(.{ .err = err.withPath(nodefs.osPathIntoSyncErrorBuf(src)) });
+                    this.storeResult(.{ .err = err.withPath(nodefs.osPathIntoSyncErrorBuf(src)) });
                     return false;
                 },
                 .result => |fd_| fd_,
@@ -838,7 +859,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             const normdest: bun.OSPathSliceZ = if (Environment.isWindows)
                 switch (bun.sys.normalizePathWindows(u16, bun.invalid_fd, dest, &buf, .{ .add_nt_prefix = false })) {
                     .err => |err| {
-                        this.finishConcurrently(.{ .err = err });
+                        this.storeResult(.{ .err = err });
                         return false;
                     },
                     .result => |normdest| normdest,
@@ -849,7 +870,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             const mkdir_ = nodefs.mkdirRecursiveOSPath(normdest, Arguments.Mkdir.DefaultMode, false);
             switch (mkdir_) {
                 .err => |err| {
-                    this.finishConcurrently(.{ .err = err });
+                    this.storeResult(.{ .err = err });
                     return false;
                 },
                 .result => {
@@ -862,7 +883,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             while (switch (entry) {
                 .err => |err| {
                     // @memcpy(this.sync_error_buf[0..src.len], src);
-                    this.finishConcurrently(.{ .err = err.withPath(nodefs.osPathIntoSyncErrorBuf(src)) });
+                    this.storeResult(.{ .err = err.withPath(nodefs.osPathIntoSyncErrorBuf(src)) });
                     return false;
                 },
                 .result => |ent| ent,
@@ -875,7 +896,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                 if (src_dir_len + 1 + cname.len >= src_buf.len or
                     dest_dir_len + 1 + cname.len >= dest_buf.len)
                 {
-                    this.finishConcurrently(.{ .err = .{
+                    this.storeResult(.{ .err = .{
                         .errno = @intFromEnum(E.NAMETOOLONG),
                         .syscall = .copyfile,
                         .path = nodefs.osPathIntoSyncErrorBuf(src_buf[0..src_dir_len]),

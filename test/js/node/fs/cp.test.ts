@@ -438,3 +438,59 @@ describe.skipIf(isWindows).each(["cp", "cpSync"] as const)(
     });
   },
 );
+
+// Regression: when fs.promises.cp spawns per-file copy subtasks and one of them
+// fails, the error path used to enqueue JS-thread completion (which destroys the
+// AsyncCpTask) while the directory-scan thread and other subtasks still held
+// references and touched `subtask_count` afterwards — a use-after-free of the
+// task struct. This stress test races many failing subtasks against the scan
+// thread; under the ASAN debug build it reliably trips heap-use-after-free
+// without the fix, and passes once completion is deferred until the refcount
+// hits zero.
+test("fs.promises.cp recursive: subtask errors do not free the task while other refs are live", async () => {
+  const FILES = 24;
+  const ITERS = 20;
+
+  const layout: Record<string, string> = {};
+  for (let i = 0; i < FILES; i++) {
+    layout[`from/f${i}.txt`] = "x";
+    layout[`to/f${i}.txt`] = "y";
+  }
+  const basename = tempDirWithFiles("cp-uaf", layout);
+
+  // Run the stress loop in a subprocess so an ASAN abort surfaces as a clean
+  // assertion failure here rather than tearing down the test runner.
+  const script = `
+    const fs = require("fs");
+    const path = require("path");
+    const base = ${JSON.stringify(basename)};
+    const from = path.join(base, "from");
+    const to = path.join(base, "to");
+    (async () => {
+      let rejected = 0;
+      for (let i = 0; i < ${ITERS}; i++) {
+        try {
+          await fs.promises.cp(from, to, { recursive: true, errorOnExist: true, force: false });
+          console.error("iteration " + i + " unexpectedly resolved");
+          process.exit(1);
+        } catch (e) {
+          if (e && e.code === "EEXIST") rejected++;
+          else {
+            console.error("iteration " + i + " rejected with " + (e && e.code));
+            process.exit(1);
+          }
+        }
+      }
+      console.log("REJECTED:" + rejected);
+    })();
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: `REJECTED:${ITERS}`, stderr: "" });
+  expect(exitCode).toBe(0);
+}, 30_000);

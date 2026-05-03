@@ -1009,19 +1009,18 @@ pub const H2FrameParser = struct {
                     .streamIdentifier = @intCast(this.id),
                     .length = @intCast(payload_size),
                 };
-                // Copy into the shared buffer BEFORE any write() that can
-                // re-enter JS; after re-entry frame.buffer may have been freed
-                // by cleanQueue if we hadn't taken ownership, and even with
-                // ownership we prefer not to interleave reads across the
-                // callback boundary.
-                const out_bytes: []const u8 = if (padding != 0) blk: {
+                // May re-enter JS. `able_to_send` points into frame.buffer
+                // which is stack-owned here, so it stays valid across the
+                // callback. `shared_request_buffer` is threadlocal and can be
+                // clobbered by a re-entrant padded request()/sendData(), so
+                // fill it AFTER the header write, immediately before use.
+                _ = dataHeader.write(@TypeOf(writer), writer);
+                const no_backpressure = if (padding != 0) blk: {
                     var buffer = shared_request_buffer[0..];
                     bun.memmove(buffer[1..][0..able_to_send.len], able_to_send);
                     buffer[0] = padding;
-                    break :blk buffer[0..payload_size];
-                } else able_to_send;
-                _ = dataHeader.write(@TypeOf(writer), writer);
-                const no_backpressure = (writer.write(out_bytes) catch 0) != 0;
+                    break :blk (writer.write(buffer[0..payload_size]) catch 0) != 0;
+                } else (writer.write(able_to_send) catch 0) != 0;
 
                 // Record how much of this frame has been sent and decide what
                 // to do with the remainder AFTER all re-entrant JS has run.
@@ -1059,14 +1058,18 @@ pub const H2FrameParser = struct {
                 .streamIdentifier = @intCast(this.id),
                 .length = @intCast(payload_size),
             };
-            const out_bytes: []const u8 = if (padding != 0) blk: {
+            // May re-enter JS. `frame_slice` points into frame.buffer which is
+            // stack-owned here, so it stays valid across the callback.
+            // `shared_request_buffer` is threadlocal and can be clobbered by a
+            // re-entrant padded request()/sendData(), so fill it AFTER the
+            // header write, immediately before use.
+            _ = dataHeader.write(@TypeOf(writer), writer);
+            const no_backpressure = if (padding != 0) blk: {
                 var buffer = shared_request_buffer[0..];
                 bun.memmove(buffer[1..][0..frame_slice.len], frame_slice);
                 buffer[0] = padding;
-                break :blk buffer[0..payload_size];
-            } else frame_slice;
-            _ = dataHeader.write(@TypeOf(writer), writer);
-            const no_backpressure = (writer.write(out_bytes) catch 0) != 0;
+                break :blk (writer.write(buffer[0..payload_size]) catch 0) != 0;
+            } else (writer.write(frame_slice) catch 0) != 0;
             this.finishFlushedFrame(client, &frame);
             return if (no_backpressure) .flushed else .backpressure;
         }

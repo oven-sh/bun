@@ -2061,7 +2061,19 @@ fn NewLexer_(
         }
 
         pub fn init(log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator) !LexerType {
+            return initWithOptions(log, source, allocator, .{});
+        }
+
+        pub const InitOptions = struct {
+            /// Must be set here (before the priming `next()` below) — setting
+            /// it on the lexer afterwards is too late, since `next()` will
+            /// have already consumed any leading comments with tracking off.
+            track_comments: bool = false,
+        };
+
+        pub fn initWithOptions(log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator, opts: InitOptions) !LexerType {
             var lex = initWithoutReading(log, source, allocator);
+            lex.track_comments = opts.track_comments;
             lex.step();
             try lex.next();
 

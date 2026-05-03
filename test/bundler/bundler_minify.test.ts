@@ -1192,4 +1192,99 @@ describe("bundler", () => {
       stdout: "object\nobject\nobject",
     },
   });
+
+  // Minified output must be byte-identical regardless of comment placement
+  // and length — comments are subtracted from the rename-frequency histogram
+  // so they should not influence which single-letter names get assigned.
+  // Each test bundles two entry points (one with the comment, one without)
+  // and asserts the rendered files match (modulo the entry-point filename
+  // appearing in the export-as marker).
+  const histogramBody =
+    "var aa = 1, bb = 2, cc = 3, dd = 4, ee = 5, ff = 6;\n" +
+    "export function go() { return aa + bb + cc + dd + ee + ff; }\n";
+
+  itBundled("minify/HistogramStableUnderLeadingShortComment", {
+    files: {
+      "/with.js": "// short header\n" + histogramBody,
+      "/baseline.js": histogramBody,
+    },
+    entryPoints: ["/with.js", "/baseline.js"],
+    outdir: "/out",
+    minifyIdentifiers: true,
+    target: "browser",
+    onAfterBundle(api) {
+      // Bundler emits per-module `// with.js` / `// baseline.js` markers, so
+      // normalize the entry-name before comparing the rest of the output.
+      const withOut = api.readFile("/out/with.js").replace(/with\.js/g, "baseline.js");
+      expect(withOut).toBe(api.readFile("/out/baseline.js"));
+    },
+  });
+
+  itBundled("minify/HistogramStableUnderLeadingLongComment", {
+    files: {
+      "/with.js": "// " + Buffer.alloc(80, "x").toString() + "\n" + histogramBody,
+      "/baseline.js": histogramBody,
+    },
+    entryPoints: ["/with.js", "/baseline.js"],
+    outdir: "/out",
+    minifyIdentifiers: true,
+    target: "browser",
+    onAfterBundle(api) {
+      // Bundler emits per-module `// with.js` / `// baseline.js` markers, so
+      // normalize the entry-name before comparing the rest of the output.
+      const withOut = api.readFile("/out/with.js").replace(/with\.js/g, "baseline.js");
+      expect(withOut).toBe(api.readFile("/out/baseline.js"));
+    },
+  });
+
+  itBundled("minify/HistogramStableUnderLeadingJSDoc", {
+    files: {
+      "/with.js": "/**\n * @license MIT\n * @copyright 2026 contributors\n */\n" + histogramBody,
+      "/baseline.js": histogramBody,
+    },
+    entryPoints: ["/with.js", "/baseline.js"],
+    outdir: "/out",
+    minifyIdentifiers: true,
+    target: "browser",
+    onAfterBundle(api) {
+      // Bundler emits per-module `// with.js` / `// baseline.js` markers, so
+      // normalize the entry-name before comparing the rest of the output.
+      const withOut = api.readFile("/out/with.js").replace(/with\.js/g, "baseline.js");
+      expect(withOut).toBe(api.readFile("/out/baseline.js"));
+    },
+  });
+
+  itBundled("minify/HistogramStableUnderMidFileLineComment", {
+    files: {
+      "/with.js": "var aa = 1;\n// " + Buffer.alloc(40, "x").toString() + "\n" + histogramBody,
+      "/baseline.js": "var aa = 1;\n" + histogramBody,
+    },
+    entryPoints: ["/with.js", "/baseline.js"],
+    outdir: "/out",
+    minifyIdentifiers: true,
+    target: "browser",
+    onAfterBundle(api) {
+      // Bundler emits per-module `// with.js` / `// baseline.js` markers, so
+      // normalize the entry-name before comparing the rest of the output.
+      const withOut = api.readFile("/out/with.js").replace(/with\.js/g, "baseline.js");
+      expect(withOut).toBe(api.readFile("/out/baseline.js"));
+    },
+  });
+
+  itBundled("minify/HistogramStableUnderMidFileBlockComment", {
+    files: {
+      "/with.js": "var aa = 1;\n/* " + Buffer.alloc(40, "y").toString() + " */\n" + histogramBody,
+      "/baseline.js": "var aa = 1;\n" + histogramBody,
+    },
+    entryPoints: ["/with.js", "/baseline.js"],
+    outdir: "/out",
+    minifyIdentifiers: true,
+    target: "browser",
+    onAfterBundle(api) {
+      // Bundler emits per-module `// with.js` / `// baseline.js` markers, so
+      // normalize the entry-name before comparing the rest of the output.
+      const withOut = api.readFile("/out/with.js").replace(/with\.js/g, "baseline.js");
+      expect(withOut).toBe(api.readFile("/out/baseline.js"));
+    },
+  });
 });

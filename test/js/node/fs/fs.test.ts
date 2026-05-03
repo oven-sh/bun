@@ -1618,8 +1618,11 @@ it("readlink", () => {
 it.skipIf(isWindows)("readlink with PATH_MAX-1 target", () => {
   const dir = tmpdirSync();
   // Find the longest target the local filesystem will accept for symlink(2).
-  // On Linux this is 4095, on macOS 1023.
-  let len = 4095;
+  // On Linux this is 4095, on macOS 1023. Bun's own path validation silently
+  // replaces the target with "" when it is exactly MAX_PATH_BYTES long (and
+  // Darwin accepts symlink("", link)), so start just below that boundary on
+  // each platform rather than probing through it.
+  let len = process.platform === "darwin" ? 1023 : 4095;
   let link: string;
   let target: string;
   while (true) {

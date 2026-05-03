@@ -737,7 +737,14 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                     }
                     prev.handlers = handlers_ptr;
                     bun.assert(prev.socket.socket == .detached);
-                    bun.assert(prev.connection == null);
+                    // Adopt `connection` (heap-owned for .unix) so the socket's
+                    // deinit frees it; matches the TLS arm above and the
+                    // non-pipe arm below. Previously `.connection = null`
+                    // dropped the duped pipe-path bytes on the floor.
+                    if (prev.connection) |old_connection| {
+                        old_connection.deinit();
+                    }
+                    prev.connection = connection;
                     bun.assert(prev.protos == null);
                     bun.assert(prev.server_name == null);
                     break :blk prev;
@@ -745,7 +752,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                     .ref_count = .init(),
                     .handlers = handlers_ptr,
                     .socket = TCPSocket.Socket.detached,
-                    .connection = null,
+                    .connection = connection,
                     .protos = null,
                     .server_name = null,
                 });

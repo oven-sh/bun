@@ -158,6 +158,21 @@ pub fn decodeUTF16(
 pub fn decode(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(2).slice();
 
+    // Evaluate options.stream before reading the input bytes. Reading `stream`
+    // can invoke a user-defined getter that detaches/transfers the input's
+    // ArrayBuffer; capturing the byte pointer before that getter runs leaves
+    // `decodeSlice` reading through a stale pointer into memory that may have
+    // been freed or reused. Node.js reads options first as well.
+    const stream = stream: {
+        if (arguments.len > 1 and arguments[1].isObject()) {
+            if (try arguments[1].fastGet(globalThis, .stream)) |stream_value| {
+                break :stream stream_value.toBoolean();
+            }
+        }
+
+        break :stream false;
+    };
+
     const input_slice = input_slice: {
         if (arguments.len == 0 or arguments[0].isUndefined()) {
             break :input_slice "";
@@ -168,16 +183,6 @@ pub fn decode(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, callframe: *j
         }
 
         return globalThis.throwInvalidArguments("TextDecoder.decode expects an ArrayBuffer or TypedArray", .{});
-    };
-
-    const stream = stream: {
-        if (arguments.len > 1 and arguments[1].isObject()) {
-            if (try arguments[1].fastGet(globalThis, .stream)) |stream_value| {
-                break :stream stream_value.toBoolean();
-            }
-        }
-
-        break :stream false;
     };
 
     return switch (!stream) {

@@ -228,14 +228,31 @@ pub fn fire(this: *TimerObjectInternals, _: *const timespec, vm: *jsc.VirtualMac
                 if (kind == .setTimeout and !repeat.isNull()) {
                     if (idle_timeout.getNumber()) |num| {
                         if (num != -1) {
+                            // reschedule() inside convertToInterval will see state == .FIRED
+                            // and add a ref; fall through to the switch below so the .ACTIVE
+                            // arm can balance it.
                             this.convertToInterval(globalThis, this_object, repeat);
-                            break :is_timer_done false;
                         }
                     }
                 }
 
-                if (this.eventLoopTimer().state == .FIRED) {
-                    break :is_timer_done true;
+                switch (this.eventLoopTimer().state) {
+                    .FIRED => {
+                        break :is_timer_done true;
+                    },
+                    .ACTIVE => {
+                        // The developer called timer.refresh() synchronously in the callback,
+                        // or the timer was converted to an interval via t._repeat. Balance out
+                        // the ref count: the transition from "FIRED" -> "ACTIVE" via
+                        // reschedule() caused it to increment.
+                        this.deref();
+                    },
+                    else => {
+                        // The developer called clearTimeout() synchronously in the callback.
+                        // cancel() saw state == .FIRED and skipped its deref, so release the
+                        // heap ref here.
+                        break :is_timer_done true;
+                    },
                 }
             }
 
@@ -331,7 +348,11 @@ pub fn doRef(this: *TimerObjectInternals, _: *jsc.JSGlobalObject, this_value: JS
     // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L256
     // and
     // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L685-L687
-    if (!did_have_js_ref and !this.flags.has_cleared_timer) {
+    // Node only re-enables the keep-alive ref when `!this._destroyed`. Checking
+    // `has_cleared_timer` alone is not sufficient: a one-shot timer that has already fired
+    // has `has_cleared_timer == false` but is still destroyed. Calling `.unref(); .ref()`
+    // on such a timer would otherwise leak an event-loop ref and hang the process.
+    if (!did_have_js_ref and !this.getDestroyed()) {
         this.setEnableKeepingEventLoopAlive(jsc.VirtualMachine.get(), true);
     }
 

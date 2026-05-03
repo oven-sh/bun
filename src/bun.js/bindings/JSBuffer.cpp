@@ -81,6 +81,7 @@
 #include <JavaScriptCore/JSArrayBufferViewInlines.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
+#include <JavaScriptCore/JSObjectInlines.h>
 
 extern "C" bool Bun__Node__ZeroFillBuffers;
 
@@ -363,6 +364,13 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
 
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), 0, length);
     } else {
+        // Ownership of ptr was transferred to us. Even though the resulting Buffer is empty,
+        // the caller may have handed over a live allocation (e.g. FFI toBuffer with a
+        // finalizer, or sqlite3_serialize returning a non-null pointer with length 0), so
+        // honor the deallocator instead of silently leaking it.
+        if (bytesDeallocator) {
+            bytesDeallocator(ptr, ctx);
+        }
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, 0);
     }
 
@@ -839,62 +847,61 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalO
     Bun::V::validateArray(throwScope, lexicalGlobalObject, listValue, "list"_s, jsUndefined());
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    // Note: `validateArray` uses `JSC::isArray()` which returns true for Proxy->Array.
-    // `dynamicDowncast<JSArray>` returns nullptr for Proxy, so we must fall back to
-    // the generic get() path to match Node.js behavior.
-    auto* array = dynamicDowncast<JSC::JSArray>(listValue);
-    uint64_t arrayLength64;
-    if (array) [[likely]] {
-        arrayLength64 = array->length();
-    } else {
-        JSValue lengthValue = listValue.get(lexicalGlobalObject, vm.propertyNames->length);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        arrayLength64 = lengthValue.toLength(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (arrayLength64 < 1) {
-        RELEASE_AND_RETURN(throwScope, constructBufferEmpty(lexicalGlobalObject));
-    }
-    if (arrayLength64 > std::numeric_limits<unsigned>::max()) [[unlikely]] {
-        throwOutOfMemoryError(lexicalGlobalObject, throwScope);
-        return {};
-    }
-    unsigned arrayLength = static_cast<unsigned>(arrayLength64);
-
     JSValue totalLengthValue = callFrame->argument(1);
 
-    size_t byteLength = 0;
-
-    // Use an argument buffer to avoid calling `getIndex` more than once per element.
-    // This is a small optimization
+    // Resolve every element of `list` into a MarkedArgumentBuffer first so
+    // that all user-observable side effects (index getters, proxy traps)
+    // run to completion before we read any byte lengths or allocate the
+    // output buffer. This avoids a TOCTOU where a getter at index N detaches
+    // or resizes the buffer backing index M < N after M's length was
+    // measured, which previously left uninitialized bytes in the output.
+    //
+    // Note: `validateArray` uses `JSC::isArray()` which returns true for
+    // Proxy->Array. `forEachInArrayLike` reads `.length` and each index via
+    // `JSObject::getIndex`, which fast-paths dense JSArrays and falls back
+    // to [[Get]] for proxies and sparse arrays.
     MarkedArgumentBuffer args;
-    args.ensureCapacity(arrayLength);
+    if (auto* array = dynamicDowncast<JSC::JSArray>(listValue)) [[likely]] {
+        args.ensureCapacity(array->length());
+        if (args.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(lexicalGlobalObject, throwScope);
+            return {};
+        }
+    }
+
+    JSC::forEachInArrayLike(lexicalGlobalObject, asObject(listValue), [&](JSValue element) -> bool {
+        args.append(element);
+        return true;
+    });
+    RETURN_IF_EXCEPTION(throwScope, {});
     if (args.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(lexicalGlobalObject, throwScope);
         return {};
     }
+    // Node.js: `if (list.length === 0) return new FastBuffer();`
+    // — an empty list returns an empty buffer regardless of totalLength.
+    if (args.isEmpty()) {
+        RELEASE_AND_RETURN(throwScope, constructBufferEmpty(lexicalGlobalObject));
+    }
 
-    for (unsigned i = 0; i < arrayLength; i++) {
-        JSValue element = array ? array->getIndex(lexicalGlobalObject, i) : listValue.get(lexicalGlobalObject, i);
-        RETURN_IF_EXCEPTION(throwScope, {});
-
+    // All user code is done running. Validate each element and sum their
+    // byte lengths. Nothing between here and the final memcpy loop can call
+    // back into JavaScript, so the lengths we measure now are the lengths we
+    // copy below.
+    size_t availableLength = 0;
+    for (unsigned i = 0; i < args.size(); i++) {
+        JSValue element = args.at(i);
         auto* typedArray = dynamicDowncast<JSC::JSUint8Array>(element);
-        if (!typedArray) {
+        if (!typedArray) [[unlikely]] {
             return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, makeString("list["_s, i, "]"_s), "Buffer or Uint8Array"_s, element);
         }
         if (typedArray->isDetached()) [[unlikely]] {
             return throwVMTypeError(lexicalGlobalObject, throwScope, "ArrayBufferView is detached"_s);
         }
-
-        auto length = typedArray->byteLength();
-
-        if (length > 0)
-            args.append(element);
-
-        byteLength += length;
+        availableLength += typedArray->byteLength();
     }
 
-    size_t availableLength = byteLength;
+    size_t byteLength = availableLength;
     if (!totalLengthValue.isUndefined()) {
         if (!totalLengthValue.isNumber()) [[unlikely]] {
             throwTypeError(lexicalGlobalObject, throwScope, "totalLength must be a valid number"_s);
@@ -924,17 +931,17 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalO
     RETURN_IF_EXCEPTION(throwScope, {});
 
     auto output = outBuffer->typedSpan();
-    const size_t arrayLengthI = args.size();
-    for (size_t i = 0; i < arrayLengthI && output.size() > 0; i++) {
-        auto* bufferView = uncheckedDowncast<JSC::JSArrayBufferView>(args.at(i));
+    for (size_t i = 0; i < args.size() && output.size() > 0; i++) {
+        auto* bufferView = uncheckedDowncast<JSC::JSUint8Array>(args.at(i));
         auto source = bufferView->span();
+        if (source.empty())
+            continue;
         size_t length = std::min(output.size(), source.size());
-
-        ASSERT_WITH_MESSAGE(length > 0, "length should be greater than 0. This should be checked before appending to the MarkedArgumentBuffer.");
-
         WTF::memcpySpan(output.first(length), source.first(length));
         output = output.subspan(length);
     }
+
+    ASSERT(byteLength > availableLength || output.empty());
 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(outBuffer));
 }
@@ -990,9 +997,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_copyBytesFromBody(JSC::JS
         RELEASE_AND_RETURN(throwScope, JSValue::encode(createBuffer(lexicalGlobalObject, span.data(), span.size())));
     }
 
-    auto boffset = view->byteOffset();
-    auto blength = view->byteLength();
-    auto span = view->span().subspan(boffset, blength - boffset);
+    auto span = view->span();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(createBuffer(lexicalGlobalObject, span.data(), span.size())));
 }
 

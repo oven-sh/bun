@@ -380,32 +380,32 @@ pub const Parser = struct {
 };
 
 pub fn calculateExpandedAmount(tokens: []const Token) u32 {
-    var nested_brace_stack = bun.SmallList(u8, MAX_NESTED_BRACES){};
+    const StackEntry = struct {
+        segment_product: u32 = 1,
+        accumulator: u32 = 0,
+    };
+    var nested_brace_stack = bun.SmallList(StackEntry, MAX_NESTED_BRACES){};
     defer nested_brace_stack.deinit(bun.default_allocator);
     var variant_count: u32 = 0;
-    var prev_comma: bool = false;
 
     for (tokens) |tok| {
-        prev_comma = false;
         switch (tok) {
-            .open => nested_brace_stack.append(bun.default_allocator, 0),
+            .open => nested_brace_stack.append(bun.default_allocator, .{}),
             .comma => {
-                const val = nested_brace_stack.lastMut().?;
-                val.* += 1;
-                prev_comma = true;
+                const top = nested_brace_stack.lastMut().?;
+                top.accumulator +|= top.segment_product;
+                top.segment_product = 1;
             },
             .close => {
-                var variants = nested_brace_stack.pop().?;
-                if (!prev_comma) {
-                    variants += 1;
-                }
+                const entry = nested_brace_stack.pop().?;
+                const total = entry.accumulator +| entry.segment_product;
                 if (nested_brace_stack.len() > 0) {
-                    const top = nested_brace_stack.lastMut().?;
-                    top.* += variants - 1;
+                    const parent = nested_brace_stack.lastMut().?;
+                    parent.segment_product *|= total;
                 } else if (variant_count == 0) {
-                    variant_count = variants;
+                    variant_count = total;
                 } else {
-                    variant_count *= variants;
+                    variant_count *|= total;
                 }
             },
             else => {},

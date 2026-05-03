@@ -55,10 +55,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         // Track compression state of the entire message (across fragments)
         message_is_compressed: bool = false,
 
-        // Custom SSL context for per-connection TLS options (e.g., custom CA)
-        // This is set when the WebSocket is adopted from a connection that used a custom SSL context.
-        // Must be cleaned up when the WebSocket closes.
-        custom_ssl_ctx: ?*uws.SocketContext = null,
+        /// `us_ssl_ctx_t` inherited from the upgrade client when it was built
+        /// with a custom CA. The socket's `SSL*` references the `SSL_CTX`
+        /// inside, so this must outlive the connection. Null when the upgrade
+        /// used the shared default context.
+        secure: ?*uws.SslCtx = null,
 
         // Proxy tunnel for wss:// through HTTP proxy.
         // When set, all I/O goes through the tunnel (TLS encryption/decryption).
@@ -86,34 +87,16 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             return true;
         }
 
-        pub fn register(global: *jsc.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.c) void {
-            const vm = global.bunVM();
-            const loop = @as(*uws.Loop, @ptrCast(@alignCast(loop_)));
-
-            const ctx: *uws.SocketContext = @as(*uws.SocketContext, @ptrCast(ctx_));
-
-            if (comptime Environment.isPosix) {
-                if (vm.event_loop_handle) |other| {
-                    bun.assert(other == loop);
-                }
-            }
-
-            Socket.configure(
-                ctx,
-                true,
-                *WebSocket,
-                struct {
-                    pub const onClose = handleClose;
-                    pub const onData = handleData;
-                    pub const onWritable = handleWritable;
-                    pub const onTimeout = handleTimeout;
-                    pub const onLongTimeout = handleTimeout;
-                    pub const onConnectError = handleConnectError;
-                    pub const onEnd = handleEnd;
-                    pub const onHandshake = handleHandshake;
-                },
-            );
-        }
+        /// Handler set referenced by `dispatch.zig` (kind = `.ws_client[_tls]`).
+        /// Replaces the C++→`register()`→`us_socket_context_on_*` round-trip.
+        pub const onClose = handleClose;
+        pub const onData = handleData;
+        pub const onWritable = handleWritable;
+        pub const onTimeout = handleTimeout;
+        pub const onLongTimeout = handleTimeout;
+        pub const onConnectError = handleConnectError;
+        pub const onEnd = handleEnd;
+        pub const onHandshake = handleHandshake;
 
         pub fn clearData(this: *WebSocket) void {
             log("clearData", .{});
@@ -129,10 +112,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.message_is_compressed = false;
             if (this.deflate) |d| d.deinit();
             this.deflate = null;
-            // Clean up custom SSL context if we own one
-            if (this.custom_ssl_ctx) |ctx| {
-                ctx.deinit(ssl);
-                this.custom_ssl_ctx = null;
+            if (this.secure) |s| {
+                bun.BoringSSL.c.SSL_CTX_free(s);
+                this.secure = null;
             }
             // Clean up proxy tunnel if we own one
             // Set to null FIRST to prevent re-entrancy (shutdown can trigger callbacks)
@@ -144,11 +126,25 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 tunnel.clearConnectedWebSocket();
                 tunnel.shutdown();
                 tunnel.deref();
+                // Release the I/O-layer ref taken in initWithTunnel() — the
+                // tunnel was this struct's socket-equivalent owner. In the
+                // non-tunnel path this same ref is released by handleClose()
+                // when the adopted uSockets socket fires its close event, but
+                // tunnel mode never adopts a socket so that callback never runs.
+                // Callers that touch `this` after clearData() must hold a local
+                // ref guard (see cancel/finalize).
+                this.deref();
             }
         }
 
         pub fn cancel(this: *WebSocket) callconv(.c) void {
             log("cancel", .{});
+            // clearData() may drop the tunnel's I/O-layer ref; keep `this`
+            // alive until we've finished closing the socket below.
+            this.ref();
+            defer this.deref();
+
+            const had_tunnel = this.proxy_tunnel != null;
             this.clearData();
 
             if (comptime ssl) {
@@ -156,6 +152,17 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 this.tcp.close(.normal);
             } else {
                 this.tcp.close(.failure);
+            }
+
+            // In tunnel mode tcp is .detached so close() above is a no-op and
+            // handleClose() never fires. Mirror what handleClose() does for
+            // the non-tunnel path: drop the C++ ref (if still held) via
+            // dispatchAbruptClose so e.g. ws.terminate() — which calls
+            // cancel() then sets m_connectedWebSocketKind = None, bypassing
+            // the destructor's finalize() — does not leak. When reached via
+            // fail(), outgoing_websocket is already null and this is a no-op.
+            if (had_tunnel) {
+                this.dispatchAbruptClose(ErrorCode.ended);
             }
         }
 
@@ -1049,6 +1056,12 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             len: usize,
             op: u8,
         ) callconv(.c) void {
+            // In tunnel mode, SSLWrapper.writeData() can synchronously fire
+            // onClose → ws.fail() → cancel() → clearData() and free `this`
+            // before the catch block in enqueueEncodedBytes/sendBuffer runs.
+            this.ref();
+            defer this.deref();
+
             if (!this.hasTCP() or op > 0xF) {
                 this.dispatchAbruptClose(ErrorCode.ended);
                 return;
@@ -1079,6 +1092,10 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             blob_value: jsc.JSValue,
             op: u8,
         ) callconv(.c) void {
+            // See writeBinaryData() — tunnel.write() can re-enter fail().
+            this.ref();
+            defer this.deref();
+
             if (!this.hasTCP() or op > 0xF) {
                 this.dispatchAbruptClose(ErrorCode.ended);
                 return;
@@ -1121,6 +1138,10 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             str_: *const jsc.ZigString,
             op: u8,
         ) callconv(.c) void {
+            // See writeBinaryData() — tunnel.write() can re-enter fail().
+            this.ref();
+            defer this.deref();
+
             const str = str_.*;
             if (!this.hasTCP()) {
                 this.dispatchAbruptClose(ErrorCode.ended);
@@ -1185,6 +1206,13 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn close(this: *WebSocket, code: u16, reason: ?*const jsc.ZigString) callconv(.c) void {
+            // In tunnel mode, SSLWrapper.writeData() (via sendCloseWithBody →
+            // enqueueEncodedBytes → tunnel.write) can synchronously fire
+            // onClose → ws.fail() → cancel() → clearData() and free `this`
+            // before sendCloseWithBody's own clearData/dispatchClose run.
+            this.ref();
+            defer this.deref();
+
             if (!this.hasTCP())
                 return;
             const tcp = this.tcp;
@@ -1239,15 +1267,14 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         pub fn init(
             outgoing: *CppWebSocket,
             input_socket: *anyopaque,
-            socket_ctx: *anyopaque,
             globalThis: *jsc.JSGlobalObject,
             buffered_data: [*]u8,
             buffered_data_len: usize,
             deflate_params: ?*const WebSocketDeflate.Params,
-            custom_ssl_ctx_ptr: ?*anyopaque,
+            secure_ptr: ?*anyopaque,
         ) callconv(.c) ?*anyopaque {
             const tcp = @as(*uws.us_socket_t, @ptrCast(input_socket));
-            const ctx = @as(*uws.SocketContext, @ptrCast(socket_ctx));
+            const vm = globalThis.bunVM();
             var ws = bun.new(WebSocket, .{
                 .ref_count = .init(),
                 .tcp = .{ .socket = .{ .detached = {} } },
@@ -1255,23 +1282,22 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 .globalThis = globalThis,
                 .send_buffer = bun.LinearFifo(u8, .Dynamic).init(bun.default_allocator),
                 .receive_buffer = bun.LinearFifo(u8, .Dynamic).init(bun.default_allocator),
-                .event_loop = globalThis.bunVM().eventLoop(),
-                // Take ownership of custom SSL context if provided
-                .custom_ssl_ctx = if (custom_ssl_ctx_ptr) |ptr| @ptrCast(ptr) else null,
+                .event_loop = vm.eventLoop(),
+                .secure = if (secure_ptr) |ptr| @ptrCast(@alignCast(ptr)) else null,
             });
 
             if (deflate_params) |params| {
-                if (WebSocketDeflate.init(bun.default_allocator, params.*, globalThis.bunVM().rareData())) |deflate| {
+                if (WebSocketDeflate.init(bun.default_allocator, params.*, vm.rareData())) |deflate| {
                     ws.deflate = deflate;
                 } else |_| {
-                    // failed to init, silently disable compression
                     ws.deflate = null;
                 }
             }
 
-            if (!Socket.adoptPtr(
+            if (!Socket.adoptGroup(
                 tcp,
-                ctx,
+                vm.rareData().wsClientGroup(vm, ssl),
+                if (ssl) .ws_client_tls else .ws_client,
                 WebSocket,
                 "tcp",
                 ws,
@@ -1322,6 +1348,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         ) callconv(.c) ?*anyopaque {
             const tunnel: *WebSocketProxyTunnel = @ptrCast(@alignCast(tunnel_ptr));
 
+            // ref_count starts at 1: this is the I/O-layer ref, owned by the
+            // tunnel connection (analogous to the adopted-socket ref in init()
+            // that handleClose() releases). It is released in clearData() when
+            // proxy_tunnel is detached. The ws.ref() below adds the C++ ref
+            // paired with m_connectedWebSocket.
             var ws = bun.new(WebSocket, .{
                 .ref_count = .init(),
                 .tcp = .{ .socket = .{ .detached = {} } }, // No direct socket - using tunnel
@@ -1376,6 +1407,12 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         /// Flushes any buffered plaintext data through the tunnel.
         pub fn handleTunnelWritable(this: *WebSocket) void {
             if (this.close_received) return;
+            // sendBuffer → tunnel.write() can re-enter fail() synchronously
+            // (see writeBinaryData). The tunnel ref-guards itself in
+            // onWritable() but not this struct.
+            this.ref();
+            defer this.deref();
+
             const send_buf = this.send_buffer.readableSlice(0);
             if (send_buf.len == 0) return;
             _ = this.sendBuffer(send_buf);
@@ -1383,6 +1420,12 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         pub fn finalize(this: *WebSocket) callconv(.c) void {
             log("finalize", .{});
+            // clearData() may drop the tunnel's I/O-layer ref and the block
+            // below drops the C++ ref; keep `this` alive until we've finished
+            // the tcp close check.
+            this.ref();
+            defer this.deref();
+
             this.clearData();
 
             // This is only called by outgoing_websocket.
@@ -1424,7 +1467,6 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 @export(&init, .{ .name = "Bun__" ++ name ++ "__init" });
                 @export(&initWithTunnel, .{ .name = "Bun__" ++ name ++ "__initWithTunnel" });
                 @export(&memoryCost, .{ .name = "Bun__" ++ name ++ "__memoryCost" });
-                @export(&register, .{ .name = "Bun__" ++ name ++ "__register" });
                 @export(&writeBinaryData, .{ .name = "Bun__" ++ name ++ "__writeBinaryData" });
                 @export(&writeBlob, .{ .name = "Bun__" ++ name ++ "__writeBlob" });
                 @export(&writeString, .{ .name = "Bun__" ++ name ++ "__writeString" });

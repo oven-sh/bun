@@ -23,16 +23,25 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// BroadcastChannel is a thin EventTarget over the process-global
+// BunBroadcastChannelRegistry.
+//
+// The registry is directly thread-safe; posting never bounces through the
+// main thread. Each (message, subscriber) pair becomes one task on the
+// subscriber's context — the HTML spec requires that same-event-loop
+// subscribers observe messages in (message-major, creation-minor) order,
+// which per-channel inbox batching would break. If cross-thread bursts ever
+// need coalescing, the place to add it is a per-(context, name) inbox in the
+// registry, not per-channel.
+
 #pragma once
 
-#include "ActiveDOMObject.h"
 #include "ContextDestructionObserver.h"
-#include "BroadcastChannelIdentifier.h"
-// #include "ClientOrigin.h"
 #include "EventTarget.h"
 #include "ExceptionOr.h"
+#include "ScriptExecutionContext.h"
 #include <wtf/Forward.h>
-#include <wtf/RefCounted.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 
 namespace JSC {
 class JSGlobalObject;
@@ -43,31 +52,27 @@ namespace WebCore {
 
 class SerializedScriptValue;
 
-class BroadcastChannel : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<BroadcastChannel>, public EventTarget /*, public ActiveDOMObject*/, public ContextDestructionObserver {
+class BroadcastChannel final : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<BroadcastChannel>, public EventTarget, public ContextDestructionObserver {
     WTF_MAKE_TZONE_ALLOCATED(BroadcastChannel);
 
 public:
     static Ref<BroadcastChannel> create(ScriptExecutionContext& context, const String& name)
     {
-        auto channel = adoptRef(*new BroadcastChannel(context, name));
-        // channel->suspendIfNeeded();
-        return channel;
+        return adoptRef(*new BroadcastChannel(context, name));
     }
     ~BroadcastChannel();
 
     using ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<BroadcastChannel>::ref;
     using ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<BroadcastChannel>::deref;
 
-    BroadcastChannelIdentifier identifier() const;
-    String name() const;
+    String name() const { return m_name; }
 
     ExceptionOr<void> postMessage(JSC::JSGlobalObject&, JSC::JSValue message);
     void close();
-    bool isClosed() const { return m_isClosed; }
+    bool isClosed() const { return m_state.load(std::memory_order_acquire) & Closed; }
 
-    WEBCORE_EXPORT static void dispatchMessageTo(BroadcastChannelIdentifier, Ref<SerializedScriptValue>&&);
-
-    static ScriptExecutionContextIdentifier contextIdForBroadcastChannelId(BroadcastChannelIdentifier);
+    // Called on this channel's context thread with one message.
+    void dispatchMessage(Ref<SerializedScriptValue>&&);
 
     bool hasPendingActivity() const;
 
@@ -75,30 +80,31 @@ public:
     void jsUnref(JSGlobalObject*);
 
 private:
+    friend class BunBroadcastChannelRegistry;
+
     BroadcastChannel(ScriptExecutionContext&, const String& name);
-
-    void dispatchMessage(Ref<SerializedScriptValue>&&);
-
-    bool isEligibleForMessaging() const;
 
     // EventTarget
     EventTargetInterface eventTargetInterface() const final { return BroadcastChannelEventTargetInterfaceType; }
-    ScriptExecutionContext* scriptExecutionContext() const;
-    void refEventTarget() final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::ref(); }
-    void derefEventTarget() final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::deref(); }
+    ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
+    void refEventTarget() final { ref(); }
+    void derefEventTarget() final { deref(); }
     void eventListenersDidChange() final;
+    void contextDestroyed() final;
 
-    // ActiveDOMObject
-    // const char* activeDOMObjectName() const final;
-    // bool virtualHasPendingActivity() const final;
-    // void stop() final { close(); }
+    // State is a single atomic so the GC-thread hasPendingActivity() check
+    // never takes a lock.
+    enum State : uint64_t {
+        Closed = 1ull << 0,
+        HasMessageListener = 1ull << 1,
+    };
 
-    class MainThreadBridge;
-    Ref<MainThreadBridge> m_mainThreadBridge;
-    bool m_isClosed { false };
-    bool m_hasRelevantEventListener { false };
+    const String m_name;
+    const ScriptExecutionContextIdentifier m_contextId;
+
+    std::atomic<uint64_t> m_state { 0 };
+
     bool m_hasRef { false };
-    ScriptExecutionContextIdentifier m_contextId;
 };
 
 } // namespace WebCore

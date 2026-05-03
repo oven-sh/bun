@@ -116,9 +116,7 @@ console.log(
 
 // The test must actually exercise the backpressure → pending_flush path.
 if (flushPending < ITERATIONS / 2) {
-  console.error(
-    `insufficient backpressure: only ${flushPending}/${ITERATIONS} end() calls returned a pending promise`,
-  );
+  console.error(`insufficient backpressure: only ${flushPending}/${ITERATIONS} end() calls returned a pending promise`);
   process.exit(2);
 }
 // Before the fix: delta ≈ ITERATIONS (every pending_flush stays protected).

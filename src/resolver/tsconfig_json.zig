@@ -348,10 +348,22 @@ pub const TSConfigJSON = struct {
                                             }
                                         }
                                         if (count > 0) {
+                                            // Invalid patterns are filtered out above, so count <= array.len.
+                                            // Shrink the allocation so the slice stored in the map is exactly
+                                            // what was allocated — callers that later free these values (the
+                                            // extends-merge in resolver.zig) pass the stored slice to
+                                            // Allocator.free, which requires the original length.
+                                            if (count < values.len) {
+                                                values = allocator.realloc(values, count) catch values;
+                                            }
                                             result.paths.put(
                                                 key,
                                                 values[0..count],
                                             ) catch unreachable;
+                                        } else {
+                                            // Every entry was invalid; nothing to store. Free the buffer
+                                            // instead of leaking it.
+                                            allocator.free(values);
                                         }
                                     }
                                 },

@@ -1,7 +1,7 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it } from "bun:test";
-import { mkdirSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isWindows, joinP, tempDirWithFiles } from "harness";
+import { chmodSync, chownSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, bunRun, isLinux, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -444,3 +444,138 @@ describe("When CJS and ESM are mixed", () => {
     expect(stderr).toBeEmpty();
   });
 });
+
+// The "browser" map resolver copied the normalized input path into a 512-byte
+// threadlocal buffer without a bounds check. Paths inside deep directory trees
+// can easily exceed 512 bytes while still being well under MAX_PATH_BYTES.
+it.skipIf(isWindows)("browser map resolution handles relative paths longer than 512 bytes", async () => {
+  // Build a nested relative path longer than 512 bytes. Each component stays
+  // well under NAME_MAX and the absolute path stays well under MAX_PATH_BYTES.
+  const segments: string[] = [];
+  let len = 0;
+  while (len <= 520) {
+    const seg = "nested-directory-" + segments.length;
+    segments.push(seg);
+    len += seg.length + 1;
+  }
+  const deep = segments.join("/");
+  expect(deep.length).toBeGreaterThan(512);
+
+  using dir = tempDir("resolver-browser-long-path", {
+    "package.json": JSON.stringify({
+      name: "pkg",
+      browser: { "./unused.js": "./unused.js" },
+    }),
+    "entry.js": `import {x} from "./${deep}/target.js"; console.log(x);`,
+    [`${deep}/target.js`]: `export const x = 42;`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--target=browser", "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toContain("42");
+  expect(exitCode).toBe(0);
+});
+
+// dirInfoCachedMaybeLog reads the rfs.entries cache without checking the union
+// tag. If readDirectory() previously failed with a non-ENOENT error (e.g.
+// EACCES), a `.err` variant is stored there; re-resolving the directory after
+// the error condition clears would then reinterpret the two `anyerror` values
+// as a *DirEntry pointer and dereference it.
+{
+  // Root bypasses DAC, so chmod 0 won't yield EACCES. When running as root on
+  // Linux we drop to `nobody` via runuser (and chown the temp dir so the
+  // fixture can chmod it back). Otherwise we run the fixture directly.
+  const isRoot = !isWindows && process.getuid?.() === 0;
+  const nobody = (() => {
+    try {
+      // /etc/passwd format: name:x:uid:gid:gecos:home:shell
+      const line = readFileSync("/etc/passwd", "utf8")
+        .split("\n")
+        .find(l => l.startsWith("nobody:"));
+      if (!line) return null;
+      const [, , uid, gid] = line.split(":");
+      if (!Number.isInteger(+uid) || !Number.isInteger(+gid)) return null;
+      return { uid: +uid, gid: +gid };
+    } catch {
+      return null;
+    }
+  })();
+  const canUseRunuser = isLinux && isRoot && !!Bun.which("runuser") && nobody !== null;
+  const canTriggerEACCES = !isWindows && (!isRoot || canUseRunuser);
+
+  it.skipIf(!canTriggerEACCES)("resolving a directory whose entries cache holds .err does not crash", async () => {
+    const fixture = `
+      const { chmodSync } = require("fs");
+      const { join } = require("path");
+      const root = process.argv[2];
+      const bad = join(root, "bad");
+
+      // 1) Make "bad" unreadable. loadAsFile -> readDirectory(bad) fails with
+      //    EACCES, which stores EntriesOption{ .err = ... } in rfs.entries.
+      chmodSync(bad, 0o000);
+      let threw = false;
+      try { Bun.resolveSync("./bad/index.js", root); } catch { threw = true; }
+
+      // 2) Restore permissions so the dir is openable again.
+      chmodSync(bad, 0o755);
+
+      // 3) Resolve "bad" as a directory. dirInfoCachedMaybeLog now opens it
+      //    successfully, finds the cached .err, and must not read
+      //    cached_entry.entries.generation on the inactive union field.
+      const resolved = Bun.resolveSync("./bad", root);
+
+      if (!threw) throw new Error("expected EACCES resolving ./bad/index.js");
+      if (!resolved.endsWith(join("bad", "index.js")))
+        throw new Error("expected ./bad to resolve to bad/index.js, got: " + resolved);
+      console.log("OK");
+    `;
+
+    using dir = tempDir("resolver-cached-err", {
+      "fixture.js": fixture,
+      "bad/index.js": "module.exports = 1;\n",
+    });
+    const root = String(dir);
+
+    let cmd: string[];
+    if (canUseRunuser) {
+      // Give `nobody` ownership so the fixture's chmodSync calls succeed, and
+      // open up perms so `nobody` can traverse/read everything it needs.
+      for (const p of [root, join(root, "fixture.js"), join(root, "bad"), join(root, "bad", "index.js")]) {
+        chmodSync(p, 0o777);
+        chownSync(p, nobody!.uid, nobody!.gid);
+      }
+      cmd = ["runuser", "-u", "nobody", "--", bunExe(), join(root, "fixture.js"), root];
+    } else {
+      cmd = [bunExe(), join(root, "fixture.js"), root];
+    }
+
+    try {
+      await using proc = Bun.spawn({
+        cmd,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout).toBe("OK\n");
+      expect(exitCode).toBe(0);
+    } finally {
+      // Ensure tempDir cleanup can remove the directory even if the fixture
+      // crashed between the two chmod calls.
+      try {
+        chmodSync(join(root, "bad"), 0o755);
+      } catch {}
+    }
+  });
+}

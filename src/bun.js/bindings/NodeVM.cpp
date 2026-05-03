@@ -344,7 +344,7 @@ static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* modu
     promise->fulfill(vm, globalObject, result);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    JSObject* thenResult = promise->then(globalObject, transformer, globalObject->promiseEmptyOnRejectedFunction());
+    JSObject* thenResult = promise->then(globalObject, transformer, jsUndefined());
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // JSPromise::then() may return a non-JSPromise when Promise[Symbol.species]

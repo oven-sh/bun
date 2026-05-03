@@ -133,6 +133,7 @@ pub const runtime_params_ = [_]ParamType{
 pub const auto_or_run_params = [_]ParamType{
     clap.parseParam("-F, --filter <STR>...             Run a script in all workspace packages matching the pattern") catch unreachable,
     clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
+    clap.parseParam("--no-orphans                      Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only.") catch unreachable,
     clap.parseParam("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'") catch unreachable,
     clap.parseParam("--workspaces                      Run a script in all workspace packages (from the \"workspaces\" field in package.json)") catch unreachable,
     clap.parseParam("--parallel                        Run multiple scripts concurrently with Foreman-style output") catch unreachable,
@@ -223,6 +224,7 @@ pub const build_params = build_only_params ++ transpiler_params_ ++ base_params_
 
 // TODO: update test completions
 pub const test_only_params = [_]ParamType{
+    clap.parseParam("--no-orphans                     Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only.") catch unreachable,
     clap.parseParam("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
     clap.parseParam("-u, --update-snapshots           Update snapshot files") catch unreachable,
     clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
@@ -465,6 +467,13 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         };
     } else {
         cwd = try bun.getcwdAlloc(allocator);
+    }
+
+    // Not gated on .BunxCommand: bunx skips Arguments.parse entirely
+    // (uses_global_options=false). bunx picks up no-orphans via the
+    // BUN_FEATURE_FLAG_NO_ORPHANS env var in main()→install() instead.
+    if (cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand) {
+        if (args.flag("--no-orphans")) bun.ParentDeathWatchdog.enable();
     }
 
     if (cmd == .RunCommand or cmd == .AutoCommand) {

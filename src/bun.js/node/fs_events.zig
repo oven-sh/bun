@@ -425,6 +425,7 @@ pub const FSEventsLoop = struct {
         // clean old paths
         if (this.paths) |p| {
             this.paths = null;
+            for (p) |s| if (s) |str| CF.Release(str);
             bun.default_allocator.free(p);
         }
         if (this.cf_paths) |cf| {
@@ -473,10 +474,19 @@ pub const FSEventsLoop = struct {
         // changes to files from the past.
         //
         const ref = CS.FSEventStreamCreate(null, _events_cb, &ctx, cf_paths, CS.kFSEventStreamEventIdSinceNow, latency, flags);
+        if (ref == null) {
+            // FSEventStreamCreate can fail under rapid stream churn (resource
+            // exhaustion); passing NULL into ScheduleWithRunLoop crashes the CF thread.
+            for (paths[0..count]) |s| if (s) |str| CF.Release(str);
+            bun.default_allocator.free(paths);
+            CF.Release(cf_paths);
+            return;
+        }
 
         CS.FSEventStreamScheduleWithRunLoop(ref, this.loop, CF.RunLoopDefaultMode.*);
         if (CS.FSEventStreamStart(ref) == 0) {
             //clean in case of failure
+            for (paths[0..count]) |s| if (s) |str| CF.Release(str);
             bun.default_allocator.free(paths);
             CF.Release(cf_paths);
             CS.FSEventStreamInvalidate(ref);
@@ -576,7 +586,7 @@ pub const FSEventsWatcher = struct {
     recursive: bool,
     ctx: ?*anyopaque,
 
-    pub const Callback = PathWatcher.Callback;
+    pub const Callback = *const fn (ctx: ?*anyopaque, event: Event, is_file: bool) void;
     pub const UpdateEndCallback = *const fn (ctx: ?*anyopaque) void;
 
     pub fn init(loop: *FSEventsLoop, path: string, recursive: bool, callback: Callback, updateEnd: UpdateEndCallback, ctx: ?*anyopaque) *FSEventsWatcher {
@@ -640,10 +650,8 @@ pub fn closeAndWait() void {
 const string = []const u8;
 
 const std = @import("std");
+const EventType = @import("./path_watcher.zig").PathWatcher.EventType;
 const Semaphore = std.Thread.Semaphore;
-
-const PathWatcher = @import("./path_watcher.zig").PathWatcher;
-const EventType = PathWatcher.EventType;
 
 const bun = @import("bun");
 const Mutex = bun.Mutex;

@@ -305,7 +305,9 @@ pub fn spawnMaybeSync(
                         i += 1;
 
                         while (try stdio_iter.next()) |value| : (i += 1) {
-                            var new_item: Stdio = undefined;
+                            // extract() leaves `out_stdio` untouched when `value` is undefined, so this
+                            // must be initialized to a sane default instead of `undefined`.
+                            var new_item: Stdio = .{ .ignore = {} };
                             try new_item.extract(globalThis, i, value, is_sync);
 
                             const opt = switch (new_item.asSpawnOption(i)) {
@@ -815,11 +817,12 @@ pub fn spawnMaybeSync(
     var posix_ipc_info: if (Environment.isPosix) IPC.Socket else void = undefined;
     if (Environment.isPosix and !is_sync) {
         if (maybe_ipc_mode) |mode| {
-            if (uws.us_socket_t.fromFd(
-                jsc_vm.rareData().spawnIPCContext(jsc_vm),
+            if (jsc_vm.rareData().spawnIPCGroup(jsc_vm).fromFd(
+                .spawn_ipc,
+                null,
                 @sizeOf(*IPC.SendQueue),
                 posix_ipc_fd.cast(),
-                1,
+                true,
             )) |socket| {
                 subprocess.ipc_data = .init(mode, .{ .subprocess = subprocess }, .uninitialized);
                 posix_ipc_info = IPC.Socket.from(socket);

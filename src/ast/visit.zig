@@ -740,6 +740,83 @@ pub fn Visit(
                                 }
                             }
 
+                            // To match TypeScript behavior, move non-static instance field
+                            // initializers into the constructor body after the parameter
+                            // property assignments. Per the JS spec, class field initializers
+                            // execute before the constructor body, so fields that reference
+                            // parameter properties (e.g. `baz = this.bar.foo`) would see
+                            // undefined values if left as class fields.
+                            var fields_to_move: usize = 0;
+                            for (class_body.items[j..]) |prop| {
+                                if (prop.initializer != null and
+                                    !prop.flags.contains(.is_static) and
+                                    !prop.flags.contains(.is_method) and
+                                    prop.kind != .class_static_block and
+                                    prop.ts_decorators.len == 0)
+                                {
+                                    fields_to_move += 1;
+                                }
+                            }
+
+                            if (fields_to_move > 0) {
+                                stmts.ensureUnusedCapacity(fields_to_move) catch unreachable;
+
+                                // The insert_base is after all parameter property assignments
+                                // (and after super() if present).
+                                const insert_base = if (super_index) |k| j + k + 1 else j;
+
+                                var field_offset: usize = 0;
+                                var write_idx: usize = j;
+                                for (class_body.items[j..]) |*prop| {
+                                    if (prop.initializer != null and
+                                        !prop.flags.contains(.is_static) and
+                                        !prop.flags.contains(.is_method) and
+                                        prop.kind != .class_static_block and
+                                        prop.ts_decorators.len == 0)
+                                    {
+                                        if (prop.key) |key| {
+                                            const initializer = prop.initializer.?;
+                                            const target = p.newExpr(E.This{}, key.loc);
+
+                                            const lhs = if (prop.flags.contains(.is_computed))
+                                                p.newExpr(E.Index{
+                                                    .target = target,
+                                                    .index = key,
+                                                }, key.loc)
+                                            else if (key.data == .e_string)
+                                                p.newExpr(E.Dot{
+                                                    .target = target,
+                                                    .name = key.data.e_string.string(p.allocator) catch unreachable,
+                                                    .name_loc = key.loc,
+                                                }, key.loc)
+                                            else
+                                                // For identifier keys (including private), use a dot access
+                                                p.newExpr(E.Dot{
+                                                    .target = target,
+                                                    .name = if (key.data == .e_identifier)
+                                                        p.symbols.items[key.data.e_identifier.ref.innerIndex()].original_name
+                                                    else if (key.data == .e_private_identifier)
+                                                        p.symbols.items[key.data.e_private_identifier.ref.innerIndex()].original_name
+                                                    else
+                                                        unreachable,
+                                                    .name_loc = key.loc,
+                                                }, key.loc);
+
+                                            stmts.insert(
+                                                insert_base + field_offset,
+                                                Stmt.assign(lhs, initializer),
+                                            ) catch unreachable;
+                                            field_offset += 1;
+                                        }
+                                        // Remove this property from the class body by not copying it
+                                    } else {
+                                        class_body.items[write_idx] = prop.*;
+                                        write_idx += 1;
+                                    }
+                                }
+                                class_body.items.len = write_idx;
+                            }
+
                             class.properties = class_body.items;
                             constructor.func.body.stmts = stmts.items;
                         }

@@ -431,7 +431,7 @@ const RouteLoader = struct {
                                 continue :outer;
                             }
                         }
-                        subdirs.append(this.allocator, entry) catch bun.outOfMemory();
+                        bun.handleOom(subdirs.append(this.allocator, entry));
                     },
 
                     .file => {

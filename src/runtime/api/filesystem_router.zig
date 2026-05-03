@@ -218,7 +218,7 @@ pub const FileSystemRouter = struct {
                                 continue :outer;
                             }
                         }
-                        subdirs.append(bun.default_allocator, entry) catch bun.outOfMemory();
+                        bun.handleOom(subdirs.append(bun.default_allocator, entry));
                     }
                 }
             }

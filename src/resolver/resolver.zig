@@ -2970,11 +2970,13 @@ pub const Resolver = struct {
             var in_place: ?*Fs.FileSystem.DirEntry = null;
 
             if (rfs.entries.atIndex(cached_dir_entry_result.index)) |cached_entry| {
-                if (cached_entry.entries.generation >= r.generation) {
-                    dir_entries_option = cached_entry;
-                    needs_iter = false;
-                } else {
-                    in_place = cached_entry.entries;
+                if (cached_entry.* == .entries) {
+                    if (cached_entry.entries.generation >= r.generation) {
+                        dir_entries_option = cached_entry;
+                        needs_iter = false;
+                    } else {
+                        in_place = cached_entry.entries;
+                    }
                 }
             }
 

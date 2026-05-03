@@ -150,7 +150,14 @@ pub fn hasExited(this: *const Subprocess) bool {
 }
 
 pub fn computeHasPendingActivity(this: *const Subprocess) bool {
-    if (this.ipc_data != null) {
+    // `ipc_data` is never set back to `null` after init, so checking only
+    // for `!= null` would keep the JSSubprocess strongly referenced for the
+    // lifetime of the VM. The IPC side contributes pending activity until
+    // `_onAfterIPCClosed` has actually run: gating on `close_event_sent`
+    // (rather than `socket != .closed`) keeps the wrapper Strong across the
+    // window where the socket is already `.closed` but the task holding a
+    // raw `*SendQueue` into `ipc_data` is still queued.
+    if (this.ipc_data != null and !this.ipc_data.?.close_event_sent) {
         return true;
     }
 
@@ -815,8 +822,15 @@ pub fn finalize(this: *Subprocess) callconv(.c) void {
     MaxBuf.removeFromSubprocess(&this.stdout_maxbuf);
     MaxBuf.removeFromSubprocess(&this.stderr_maxbuf);
 
-    if (this.ipc_data != null) {
-        this.disconnectIPC(false);
+    if (this.ipc_data) |*ipc_data| {
+        // In normal operation the socket is already `.closed` by the time we
+        // get here (that is what allowed `computeHasPendingActivity` to drop
+        // to false and let GC collect us). `disconnectIPC` would be a no-op
+        // in that state and would leak the SendQueue's buffers; deinit it
+        // instead. `SendQueue.deinit` handles the VM-shutdown case where the
+        // socket is still open.
+        ipc_data.deinit();
+        this.ipc_data = null;
     }
 
     this.flags.finalized = true;

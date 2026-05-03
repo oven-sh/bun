@@ -10,29 +10,34 @@ import { join } from "path";
 // fixtures are produced by round-tripping that PNG through Bun.Image itself —
 // which doubles as a smoke-test for the encoders.
 
+// PNG chunk primitives — shared between makePng below and the iCCP splice
+// helper in the "ICC profile" describe block. Table-less CRC-32 + length-
+// prefixed chunk; small enough that hoisting to a separate module isn't
+// worth the import overhead.
+function pngCrc32(buf: Uint8Array): number {
+  let c = ~0 >>> 0;
+  for (let i = 0; i < buf.length; i++) {
+    c ^= buf[i];
+    for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+  }
+  return ~c >>> 0;
+}
+function pngChunk(type: string, data: Uint8Array): Uint8Array {
+  const out = new Uint8Array(12 + data.length);
+  const dv = new DataView(out.buffer);
+  dv.setUint32(0, data.length);
+  out.set(Buffer.from(type, "ascii"), 4);
+  out.set(data, 8);
+  dv.setUint32(8 + data.length, pngCrc32(out.subarray(4, 8 + data.length)));
+  return out;
+}
+
 // Hand-roll a tiny RGBA8 PNG. width×height pixels, each pixel = pixelOf(x, y).
 function makePng(
   width: number,
   height: number,
   pixelOf: (x: number, y: number) => [number, number, number, number],
 ): Uint8Array {
-  function crc32(buf: Uint8Array): number {
-    let c = ~0 >>> 0;
-    for (let i = 0; i < buf.length; i++) {
-      c ^= buf[i];
-      for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
-    }
-    return ~c >>> 0;
-  }
-  function chunk(type: string, data: Uint8Array): Uint8Array {
-    const out = new Uint8Array(12 + data.length);
-    const dv = new DataView(out.buffer);
-    dv.setUint32(0, data.length);
-    out.set(Buffer.from(type, "ascii"), 4);
-    out.set(data, 8);
-    dv.setUint32(8 + data.length, crc32(out.subarray(4, 8 + data.length)));
-    return out;
-  }
   const ihdr = new Uint8Array(13);
   const iv = new DataView(ihdr.buffer);
   iv.setUint32(0, width);
@@ -56,9 +61,9 @@ function makePng(
   const idat = zlib.deflateSync(raw);
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk("IHDR", ihdr),
-    chunk("IDAT", idat),
-    chunk("IEND", new Uint8Array(0)),
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", idat),
+    pngChunk("IEND", new Uint8Array(0)),
   ]);
 }
 
@@ -424,33 +429,14 @@ describe("Bun.Image", () => {
   // preserves it when the target container supports ICC (JPEG APP2, PNG
   // iCCP). WebP drops it — libwebpmux isn't in the build.
   describe("ICC profile", () => {
-    // CRC32 and chunk helpers — same logic as makePng above, but we need
-    // to splice an iCCP chunk between IHDR and IDAT so keep them local.
-    function crc32(buf: Uint8Array): number {
-      let c = ~0 >>> 0;
-      for (let i = 0; i < buf.length; i++) {
-        c ^= buf[i];
-        for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
-      }
-      return ~c >>> 0;
-    }
-    function chunk(type: string, data: Uint8Array): Uint8Array {
-      const out = new Uint8Array(12 + data.length);
-      const dv = new DataView(out.buffer);
-      dv.setUint32(0, data.length);
-      out.set(Buffer.from(type, "ascii"), 4);
-      out.set(data, 8);
-      dv.setUint32(8 + data.length, crc32(out.subarray(4, 8 + data.length)));
-      return out;
-    }
-
     // Splice an iCCP chunk carrying `profile` into a valid PNG. The PNG spec
     // requires iCCP before the first IDAT; put it right after IHDR. Chunk
     // body: keyword + 0x00 separator + compression_method=0 + deflate(profile).
+    // Reuses the file-scope pngChunk helper that backs makePng.
     function pngWithIccp(basePng: Uint8Array, profile: Uint8Array, name = "ICC Profile"): Uint8Array {
       const compressed = zlib.deflateSync(profile);
       const body = Buffer.concat([Buffer.from(name, "latin1"), Buffer.from([0, 0]), compressed]);
-      const iccp = chunk("iCCP", body);
+      const iccp = pngChunk("iCCP", body);
       // 8-byte signature + IHDR (13-byte data + 12-byte framing = 25).
       const ihdrEnd = 8 + 25;
       return Buffer.concat([basePng.subarray(0, ihdrEnd), iccp, basePng.subarray(ihdrEnd)]);

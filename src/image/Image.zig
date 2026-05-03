@@ -996,7 +996,7 @@ pub const PipelineTask = struct {
             this.result = .{ .err = e };
             return;
         };
-        defer bun.default_allocator.free(decoded.rgba);
+        defer decoded.deinit();
 
         const src_format = codecs.Format.sniff(input) orelse .png;
 
@@ -1031,12 +1031,20 @@ pub const PipelineTask = struct {
         // "HEIC/AVIF require macOS or Windows" message, which is wrong twice
         // over. Emit PNG instead — it's the lossless, everywhere-supported
         // default Sharp uses for the same case.
-        const enc: codecs.EncodeOptions = this.kind.encode orelse .{
+        var enc: codecs.EncodeOptions = this.kind.encode orelse .{
             .format = switch (src_format) {
                 .bmp, .tiff, .gif => .png,
                 else => src_format,
             },
         };
+        // Carry the source ICC profile through to the encoder unless the
+        // caller already set one (reserved for a future `.withIccProfile()`
+        // method). The pipeline doesn't colour-convert the RGBA, so dropping
+        // the profile reinterprets a non-sRGB source (Display-P3, Adobe RGB,
+        // Jpegli XYB) as sRGB and visibly shifts the colours — see #30197.
+        // Encoders that don't support ICC (WebP, at time of writing) ignore
+        // this field.
+        if (enc.icc_profile == null) enc.icc_profile = decoded.icc_profile;
         const out = codecs.encode(decoded.rgba, decoded.width, decoded.height, enc) catch |e| {
             this.result = .{ .err = e };
             return;
@@ -1074,7 +1082,9 @@ pub const PipelineTask = struct {
         const hash = thumbhash.encode(&buf, w, h, pixels);
         const rendered = try thumbhash.decode(hash);
         defer bun.default_allocator.free(rendered.rgba);
-        const png_out = try codecs.png.encode(rendered.rgba, rendered.w, rendered.h, -1);
+        // Placeholder is a synthetic ThumbHash render, not the source image —
+        // no ICC profile attaches to it.
+        const png_out = try codecs.png.encode(rendered.rgba, rendered.w, rendered.h, -1, null);
         return .{ .encoded = .{ .out = png_out, .format = .png, .w = rendered.w, .h = rendered.h } };
     }
 
@@ -1167,13 +1177,19 @@ pub const PipelineTask = struct {
 
     /// Fixed Sharp order: rotate → flip/flop → resize. Each stage replaces
     /// `d` in place; the old buffer is freed before assigning the new one so
-    /// peak memory is at most 2× one frame.
+    /// peak memory is at most 2× one frame. Every stage hand-swaps only the
+    /// pixel slots — rotate/resize return a fresh `Decoded` with
+    /// `icc_profile == null`, so overwriting `d.*` wholesale would drop the
+    /// source's colour profile. Geometry doesn't change colour meaning, so
+    /// the profile survives unchanged.
     fn applyPipeline(this: *PipelineTask, d: *codecs.Decoded) codecs.Error!void {
         const p = this.pipeline;
         if (p.rotate != 0) {
             const next = try codecs.rotate(d.rgba, d.width, d.height, p.rotate);
             bun.default_allocator.free(d.rgba);
-            d.* = next;
+            d.rgba = next.rgba;
+            d.width = next.width;
+            d.height = next.height;
         }
         if (p.flip) {
             const next = try codecs.flip(d.rgba, d.width, d.height, false);
@@ -1199,7 +1215,9 @@ pub const PipelineTask = struct {
             if (t.w != d.width or t.h != d.height) {
                 const next = try codecs.resize(d.rgba, d.width, d.height, t.w, t.h, r.filter);
                 bun.default_allocator.free(d.rgba);
-                d.* = .{ .rgba = next, .width = t.w, .height = t.h };
+                d.rgba = next;
+                d.width = t.w;
+                d.height = t.h;
             }
         }
         if (p.modulate) |m| codecs.modulate(d.rgba, m.brightness, m.saturation);
@@ -1240,9 +1258,13 @@ pub const PipelineTask = struct {
             d.rgba = next;
         }
         if (t.rotate != 0) {
+            // Swap pixel slots only — `next` carries no ICC profile, and the
+            // one on `d` (set by decode) must survive EXIF auto-orient.
             const next = try codecs.rotate(d.rgba, d.width, d.height, t.rotate);
             bun.default_allocator.free(d.rgba);
-            d.* = next;
+            d.rgba = next.rgba;
+            d.width = next.width;
+            d.height = next.height;
         }
     }
 

@@ -144,6 +144,23 @@ pub const Decoded = struct {
     rgba: []u8, // bun.default_allocator
     width: u32,
     height: u32,
+    /// ICC color profile bytes pulled from the source container (JPEG APP2,
+    /// PNG iCCP), `bun.default_allocator`-owned. `null` when the source
+    /// didn't carry one or the decode path doesn't extract it — WebP
+    /// (libwebpmux/libwebpdemux not linked), BMP/GIF (no ICC chunk), and
+    /// system backends (which already colour-manage into sRGB during
+    /// decode, so the profile is no longer needed). The image pipeline
+    /// hands this straight to the matching encoder — the RGBA buffer is
+    /// NOT converted to sRGB, so the bytes only have their intended colour
+    /// meaning when the profile travels with them. Dropping it on a
+    /// Display-P3 / Adobe RGB / XYB source would reinterpret the values
+    /// as sRGB and visibly shift the colours. See issue #30197.
+    icc_profile: ?[]u8 = null,
+
+    pub fn deinit(self: *Decoded) void {
+        bun.default_allocator.free(self.rgba);
+        if (self.icc_profile) |p| bun.default_allocator.free(p);
+    }
 };
 
 pub const Error = error{
@@ -296,6 +313,12 @@ pub const EncodeOptions = struct {
     dither: bool = false,
     /// JPEG only: emit a progressive scan script (coarse-to-fine render).
     progressive: bool = false,
+    /// ICC profile to embed in the output container (JPEG APP2, PNG iCCP).
+    /// `null` ⇒ no profile chunk/marker is written. The pipeline forwards
+    /// this from the decode step so a non-sRGB source (P3, Adobe RGB,
+    /// XYB/Jpegli) preserves its colour meaning through re-encode. Borrowed;
+    /// the caller retains ownership.
+    icc_profile: ?[]const u8 = null,
 };
 
 /// Encoded output paired with the free function for its allocator. The C
@@ -331,11 +354,15 @@ pub const Encoded = struct {
 
 pub fn encode(rgba: []const u8, width: u32, height: u32, opts: EncodeOptions) Error!Encoded {
     return switch (opts.format) {
-        .jpeg => jpeg.encode(rgba, width, height, opts.quality, opts.progressive),
+        .jpeg => jpeg.encode(rgba, width, height, opts.quality, opts.progressive, opts.icc_profile),
+        // PNG carries iCCP on both truecolour and indexed images — quantise
+        // operates on raw RGB numbers without converting colour spaces, so
+        // the palette entries are still in the source space and need the
+        // profile to be interpreted correctly (see PNG spec §11.3.3.3).
         .png => if (opts.palette)
-            png.encodeIndexed(rgba, width, height, opts.compression_level, opts.colors, opts.dither)
+            png.encodeIndexed(rgba, width, height, opts.compression_level, opts.colors, opts.dither, opts.icc_profile)
         else
-            png.encode(rgba, width, height, opts.compression_level),
+            png.encode(rgba, width, height, opts.compression_level, opts.icc_profile),
         .webp => webp.encode(rgba, width, height, opts.quality, opts.lossless),
         // Same routing rationale as decode(): the OS encoder is a capability
         // fallback, not a fast path — ImageIO's quality scale doesn't match

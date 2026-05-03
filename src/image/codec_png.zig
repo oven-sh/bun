@@ -14,6 +14,26 @@ extern fn spng_set_trns(ctx: *spng_ctx, trns: *const Trns) c_int;
 extern fn spng_encode_image(ctx: *spng_ctx, img: [*]const u8, len: usize, fmt: c_int, flags: c_int) c_int;
 extern fn spng_get_png_buffer(ctx: *spng_ctx, len: *usize, err: *c_int) ?[*]u8;
 extern fn spng_set_option(ctx: *spng_ctx, opt: c_int, value: c_int) c_int;
+/// iCCP chunk read/write — PNG carries an optional ICC profile alongside
+/// the pixels for every colour type (including indexed). `spng_get_iccp`
+/// returns non-zero when the source has no iCCP (or the chunk was
+/// malformed); we treat all non-zero returns the same way — drop the
+/// profile — because the pixels are still valid and a PNG without iCCP
+/// is still a valid PNG. The `profile` pointer it hands back is owned by
+/// the context and freed with `spng_ctx_free`; dupe out before then.
+extern fn spng_get_iccp(ctx: *spng_ctx, iccp: *Iccp) c_int;
+extern fn spng_set_iccp(ctx: *spng_ctx, iccp: *const Iccp) c_int;
+
+const Iccp = extern struct {
+    /// PNG's Latin-1 iCCP keyword (1-79 chars + NUL). libspng requires it
+    /// non-empty on encode; the PNG spec marks it purely informational
+    /// (the profile bytes are what describe the colour space), so on
+    /// encode we always write the literal `"ICC Profile"`. The source
+    /// keyword is not threaded through `Decoded`.
+    profile_name: [80]u8,
+    profile_len: usize,
+    profile: ?[*]u8,
+};
 
 const Ihdr = extern struct {
     width: u32,
@@ -62,10 +82,51 @@ pub fn decode(bytes: []const u8, max_pixels: u64) codecs.Error!codecs.Decoded {
     errdefer bun.default_allocator.free(out);
     if (spng_decode_image(ctx, out.ptr, out.len, SPNG_FMT_RGBA8, SPNG_DECODE_TRNS) != 0)
         return error.DecodeFailed;
-    return .{ .rgba = out, .width = ihdr.width, .height = ihdr.height };
+
+    // iCCP after decode so the chunk has definitely been parsed. A non-zero
+    // return here means "no iCCP" or "iCCP was malformed" — treat both as
+    // the no-profile case; the pixels are still valid RGBA. `profile` is
+    // context-owned memory, so copy it out before `spng_ctx_free` runs at
+    // function exit. Propagate OutOfMemory on allocator failure rather
+    // than silently degrading colour fidelity — the pixels may be Display
+    // P3 / Adobe RGB / XYB, and a "no profile" result there is a visible
+    // colour shift, which is the exact bug #30197 is about.
+    var iccp: Iccp = std.mem.zeroes(Iccp);
+    const icc: ?[]u8 = if (spng_get_iccp(ctx, &iccp) == 0 and iccp.profile_len > 0 and iccp.profile != null)
+        try bun.default_allocator.dupe(u8, iccp.profile.?[0..iccp.profile_len])
+    else
+        null;
+    return .{ .rgba = out, .width = ihdr.width, .height = ihdr.height, .icc_profile = icc };
 }
 
-pub fn encode(rgba: []const u8, w: u32, h: u32, level: i8) codecs.Error!codecs.Encoded {
+/// Attach `icc_profile` to the encoder as an iCCP chunk. libspng requires
+/// `profile_name` non-empty (1-79 Latin-1 chars + NUL) and will deflate the
+/// profile payload into the chunk itself. The PNG spec marks the keyword as
+/// purely informational, so we write the literal `"ICC Profile"` always —
+/// the colour-meaning payload is `p`. A malformed-profile return from
+/// libspng drops the profile rather than failing the encode; a PNG without
+/// an iCCP is still valid (implicitly sRGB). Called from both truecolour
+/// `encode()` and indexed `encodeIndexed()` — the PNG spec applies iCCP to
+/// every colour type (indexed-colour palettes live in the source space
+/// too, so dropping the profile there would silently reinterpret them as
+/// sRGB, same bug #30197 was filed for).
+fn embedIccp(ctx: *spng_ctx, icc_profile: ?[]const u8) void {
+    const p = icc_profile orelse return;
+    if (p.len == 0) return;
+    var iccp: Iccp = .{
+        .profile_name = @splat(0),
+        .profile_len = p.len,
+        // `profile` is `char*` in libspng; the library reads-only during
+        // encode when `user.iccp = 1` (set by spng_set_iccp). Const-cast
+        // to fit the extern-struct field type without duping.
+        .profile = @constCast(p.ptr),
+    };
+    const name = "ICC Profile";
+    @memcpy(iccp.profile_name[0..name.len], name);
+    _ = spng_set_iccp(ctx, &iccp);
+}
+
+pub fn encode(rgba: []const u8, w: u32, h: u32, level: i8, icc_profile: ?[]const u8) codecs.Error!codecs.Encoded {
     const ctx = spng_ctx_new(SPNG_CTX_ENCODER) orelse return error.OutOfMemory;
     defer spng_ctx_free(ctx);
     _ = spng_set_option(ctx, SPNG_ENCODE_TO_BUFFER, 1);
@@ -77,6 +138,7 @@ pub fn encode(rgba: []const u8, w: u32, h: u32, level: i8) codecs.Error!codecs.E
         .color_type = SPNG_COLOR_TYPE_TRUECOLOR_ALPHA,
     };
     if (spng_set_ihdr(ctx, &ihdr) != 0) return error.EncodeFailed;
+    embedIccp(ctx, icc_profile);
     if (spng_encode_image(ctx, rgba.ptr, rgba.len, SPNG_FMT_PNG, SPNG_ENCODE_FINALIZE) != 0)
         return error.EncodeFailed;
     var len: usize = 0;
@@ -89,8 +151,11 @@ pub fn encode(rgba: []const u8, w: u32, h: u32, level: i8) codecs.Error!codecs.E
 
 /// Quantize RGBA to ≤ `colors` and emit an indexed (colour-type 3) PNG
 /// with PLTE + tRNS. The quantizer is a small median-cut — see
-/// quantize.zig.
-pub fn encodeIndexed(rgba: []const u8, w: u32, h: u32, level: i8, colors: u16, dither: bool) codecs.Error!codecs.Encoded {
+/// quantize.zig. `icc_profile` carries the source colour space; median
+/// cut operates on the raw RGB numbers without converting colour spaces,
+/// so the palette entries are still in that space and need the profile
+/// to be interpreted correctly — same contract as truecolour encode.
+pub fn encodeIndexed(rgba: []const u8, w: u32, h: u32, level: i8, colors: u16, dither: bool, icc_profile: ?[]const u8) codecs.Error!codecs.Encoded {
     var q = try quantize.quantize(rgba, w, h, .{ .max_colors = colors, .dither = dither });
     defer q.deinit();
 
@@ -106,6 +171,7 @@ pub fn encodeIndexed(rgba: []const u8, w: u32, h: u32, level: i8, colors: u16, d
         .color_type = SPNG_COLOR_TYPE_INDEXED,
     };
     if (spng_set_ihdr(ctx, &ihdr) != 0) return error.EncodeFailed;
+    embedIccp(ctx, icc_profile);
 
     var plte: Plte = .{ .n_entries = q.colors, .entries = undefined };
     var trns: Trns = .{ .n_type3_entries = q.colors, .type3_alpha = undefined };

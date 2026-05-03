@@ -1189,6 +1189,7 @@ pub const Command = struct {
                         \\Flags:
                         \\  <cyan>--bun<r>                  Force the command to run with Bun instead of Node.js
                         \\  <cyan>-p, --package <blue>\<package\><r>    Specify package to install when binary name differs from package name
+                        \\  <cyan>--cwd <blue>\<path\><r>             Set the working directory for package resolution and execution
                         \\  <cyan>--no-install<r>           Skip installation if package is not already installed
                         \\  <cyan>--verbose<r>              Enable verbose output during installation
                         \\  <cyan>--silent<r>               Suppress output during installation

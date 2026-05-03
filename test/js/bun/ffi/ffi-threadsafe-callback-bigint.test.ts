@@ -1,3 +1,4 @@
+import { JSCallback } from "bun:ffi";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isMacOS, isWindows, tempDir } from "harness";
 import path from "node:path";
@@ -14,7 +15,6 @@ const canRun = !isWindows;
 // fired, so the threadsafe codegen path (which cannot return a value from a
 // posted task) was reachable.
 test.skipIf(isFFIUnavailable)("threadsafe JSCallback with a non-void return type is rejected", () => {
-  const { JSCallback } = require("bun:ffi");
   expect(() => new JSCallback(() => 42, { returns: "int32_t", threadsafe: true })).toThrow(
     "Threadsafe functions must return void",
   );

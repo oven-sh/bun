@@ -638,17 +638,26 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             self.mutex.lock();
             defer self.mutex.unlock();
 
+            // Consume any parked slot for this key up front. If the caller's
+            // result came from getOrPut() it already carries the reclaimed
+            // index, but getOrPut() early-returns on NotFound without
+            // consulting reclaimable — so a put() after markNotFound() would
+            // otherwise burn a fresh slot while the parked one is discarded.
+            const reclaimed = self.reclaimable.fetchRemove(result.hash);
+
             if (result.index.index == NotFound.index or result.index.index == Unassigned.index) {
-                result.index.is_overflow = instance.backing_buf_used > max_index;
-                if (result.index.is_overflow) {
-                    result.index.index = self.overflow_list.len();
+                if (reclaimed) |kv| {
+                    result.index = kv.value;
                 } else {
-                    result.index.index = instance.backing_buf_used;
-                    instance.backing_buf_used += 1;
+                    result.index.is_overflow = instance.backing_buf_used > max_index;
+                    if (result.index.is_overflow) {
+                        result.index.index = self.overflow_list.len();
+                    } else {
+                        result.index.index = instance.backing_buf_used;
+                        instance.backing_buf_used += 1;
+                    }
                 }
             }
-
-            _ = self.reclaimable.remove(result.hash);
 
             try self.index.put(self.allocator, result.hash, result.index);
 

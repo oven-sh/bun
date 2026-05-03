@@ -243,8 +243,10 @@ pub const Error = @import("ErrorCode").Error;
 pub const init_timestamp = std.math.maxInt(JSTimeType);
 pub const JSTimeType = u52;
 pub fn toJSTime(sec: isize, nsec: isize) JSTimeType {
-    const millisec = @as(u64, @intCast(@divTrunc(nsec, std.time.ns_per_ms)));
-    return @as(JSTimeType, @truncate(@as(u64, @intCast(sec * std.time.ms_per_s)) + millisec));
+    const total_ms: i128 = @as(i128, sec) * std.time.ms_per_s + @divTrunc(@as(i128, nsec), std.time.ns_per_ms);
+    // `init_timestamp` (maxInt(JSTimeType)) is used as a sentinel meaning
+    // "last_modified not yet resolved", so never return it from here.
+    return @intCast(std.math.clamp(total_ms, 0, std.math.maxInt(JSTimeType) - 1));
 }
 
 pub const MAX_SAFE_INTEGER = 9007199254740991;

@@ -530,6 +530,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     Global.exit(1);
                 }
             }
+            ctx.test_options.coverage_reporter_from_cli = true;
         }
 
         if (args.option("--reporter-outfile")) |reporter_outfile| {
@@ -563,6 +564,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
         if (args.option("--coverage-dir")) |dir| {
             ctx.test_options.coverage.reports_directory = dir;
+            ctx.test_options.coverage_dir_from_cli = true;
         }
 
         if (args.options("--path-ignore-patterns").len > 0) {

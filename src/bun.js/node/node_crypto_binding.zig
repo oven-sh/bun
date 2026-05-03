@@ -135,7 +135,10 @@ fn CryptoJob(comptime Ctx: type) type {
                 .ctx = ctx.*,
                 .callback = .create(callback.withAsyncContextIfNeeded(global), global),
             });
-            errdefer bun.destroy(job);
+            // If `ctx.init` throws, we must release the callback `Strong` and any resources the
+            // ctx already owns (e.g. `Scrypt` has already protected its password/salt buffers in
+            // `fromJS`). `deinit` handles all of that; `poll.unref` is a no-op while inactive.
+            errdefer job.deinit();
             try job.ctx.init(global);
             job.any_task = jsc.AnyTask.New(@This(), &runFromJS).init(job);
             return job;
@@ -671,6 +674,9 @@ const Scrypt = struct {
     }
 
     fn init(this: *Scrypt, global: *JSGlobalObject) JSError!void {
+        if (this.keylen > jsc.VirtualMachine.synthetic_allocation_limit) {
+            return global.throwOutOfMemory();
+        }
         const buf, const bytes = try jsc.ArrayBuffer.alloc(global, .ArrayBuffer, this.keylen);
 
         // to be filled in later

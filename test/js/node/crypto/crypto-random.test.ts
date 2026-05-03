@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { randomBytes, randomFill, randomFillSync, randomInt } from "crypto";
+import { bunEnv, bunExe } from "harness";
 
 describe("randomInt args validation", () => {
   it("default min is 0 so max should be greater than 0", () => {
@@ -63,13 +64,33 @@ describe("randomFill bounds checking", () => {
   // bounds check in assertSize cast the u32 offset to f32 before adding, so an offset
   // of 16777217 rounded down to 16777216 and `size + offset > length` passed when the
   // true sum exceeded the buffer length, leading to a heap write past the end.
-  it("randomFillSync rejects size + offset > length when offset exceeds 2**24", () => {
-    const length = 2 ** 24 + 2; // 16777218
-    const offset = 2 ** 24 + 1; // 16777217 -> rounds to 16777216 as f32
-    const size = 2; // offset + size = 16777219 > 16777218
-    expect(() => randomFillSync(new ArrayBuffer(length), offset, size)).toThrow(
-      expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
-    );
+  //
+  // Without the fix this path writes out of bounds: debug panics on the slice bounds
+  // check and release writes past the allocation. Run in a subprocess so the test
+  // runner survives and records a clean failure either way.
+  it("randomFillSync rejects size + offset > length when offset exceeds 2**24", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { randomFillSync } = require("crypto");
+         const length = 2 ** 24 + 2; // 16777218
+         const offset = 2 ** 24 + 1; // 16777217 -> rounds to 16777216 as f32
+         const size = 2;             // offset + size = 16777219 > 16777218
+         try {
+           randomFillSync(new ArrayBuffer(length), offset, size);
+           console.log("NO_THROW");
+         } catch (e) {
+           console.log(e.code);
+         }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("ERR_OUT_OF_RANGE");
+    expect(exitCode).toBe(0);
   });
 
   it("randomFillSync still accepts size + offset == length at the f32 precision boundary", () => {
@@ -80,14 +101,28 @@ describe("randomFill bounds checking", () => {
     expect(() => randomFillSync(buf, offset, size)).not.toThrow();
   });
 
-  it("randomFill (async) rejects size + offset > length when offset exceeds 2**24", () => {
-    const length = 2 ** 24 + 2;
-    const offset = 2 ** 24 + 1;
-    const size = 2;
-    // Validation errors are thrown synchronously even for the async API.
-    expect(() => randomFill(new ArrayBuffer(length), offset, size, () => {})).toThrow(
-      expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
-    );
+  it("randomFill (async) rejects size + offset > length when offset exceeds 2**24", async () => {
+    // Validation errors are thrown synchronously even for the async API. Without the
+    // fix the check passes and the threadpool writes past the end of the buffer, so
+    // run in a subprocess.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { randomFill } = require("crypto");
+         try {
+           randomFill(new ArrayBuffer(2 ** 24 + 2), 2 ** 24 + 1, 2, () => {});
+           console.log("NO_THROW");
+         } catch (e) {
+           console.log(e.code);
+         }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("ERR_OUT_OF_RANGE");
   });
 
   it("randomFill (async) still accepts size + offset == length at the f32 precision boundary", async () => {
@@ -107,13 +142,26 @@ describe("randomFill default size with multi-byte typed arrays", () => {
   // already been scaled to a byte offset by assertOffset. For element_size > 1 this
   // either underflowed (panic in debug) or under-filled the buffer.
   it("randomFill(Float64Array, offset, cb) does not underflow when byte offset > element count", async () => {
-    const buf = new Float64Array(10); // 80 bytes, 10 elements
-    const { promise, resolve } = Promise.withResolvers<Error | null>();
-    // offset 2 elements = 16 bytes; previously computed size as 10 - 16 -> underflow
-    randomFill(buf, 2, err => resolve(err));
-    expect(await promise).toBeNull();
-    expect(buf[0]).toBe(0);
-    expect(buf[1]).toBe(0);
+    // Without the fix this underflows usize and panics in debug, so run in a subprocess.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { randomFill } = require("crypto");
+         // 80 bytes, 10 elements; offset 2 elements = 16 bytes.
+         // Previously computed default size as 10 - 16 -> usize underflow.
+         randomFill(new Float64Array(10), 2, (err, buf) => {
+           if (err) return console.log("ERR:" + err.code);
+           console.log("OK", buf[0], buf[1]);
+         });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("OK 0 0");
+    expect(exitCode).toBe(0);
   });
 
   it("randomFill passes the buffer (not 0) to the callback when size is 0", async () => {

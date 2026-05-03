@@ -584,7 +584,12 @@ pub const PathLike = union(enum) {
                 this.* = .{ .threadsafe_string = slice_with_underlying_string };
             },
             .buffer => {
-                this.buffer.buffer.value.protect();
+                // See StringOrBuffer.toThreadSafe: `protect()` doesn't stop
+                // user code from detaching the ArrayBuffer and freeing the
+                // backing store while the threadpool still holds a pointer
+                // into it. Copy into Bun-owned memory instead.
+                const owned = bun.handleOom(bun.default_allocator.dupe(u8, this.buffer.slice()));
+                this.* = .{ .encoded_slice = jsc.ZigString.Slice.init(bun.default_allocator, owned) };
             },
             else => {},
         }

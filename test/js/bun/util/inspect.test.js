@@ -804,5 +804,4 @@ describe("Proxy in prototype chain", () => {
     );
     expect(Bun.inspect(obj)).toContain("foo");
   });
-
 });

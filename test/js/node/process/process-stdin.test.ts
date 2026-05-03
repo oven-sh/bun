@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isPosix } from "harness";
 
 test("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -152,4 +152,136 @@ test("stdin should not allow process to exit when not paused", async () => {
   await proc.exited;
   expect(await proc.stdout.text()).toMatchInlineSnapshot(`""`);
   expect(await proc.stderr.text()).toMatchInlineSnapshot(`""`);
+});
+
+// https://github.com/oven-sh/bun/issues/30189
+// Signal handlers must fire even when process.stdin has a flowing 'data'
+// listener on a non-pollable character device (/dev/zero, /dev/urandom, ...).
+// Previously, onPull drove `reader.read()` synchronously for non-pollable
+// fds, so the `onPull -> resolve -> await -> push -> _read -> onPull` loop
+// stayed inside a microtask chain and never yielded to the event loop.
+// `Bun__onPosixSignal` kept enqueuing into the signal ring, but
+// `tickConcurrentWithCount` never ran to drain it.
+test.skipIf(!isPosix)("SIGTERM is delivered with flowing stdin on /dev/zero", async () => {
+  const proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const fs = require("fs");
+      process.on("SIGTERM", () => {
+        fs.writeSync(2, "SIGTERM\\n");
+        process.exit(42);
+      });
+      process.stdin.on("data", () => {});
+      fs.writeSync(1, "READY\\n");
+      `,
+    ],
+    stdin: Bun.file("/dev/zero"),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  // Wait for the child to finish registering the signal handler + data
+  // listener. Sending SIGTERM before the handler is installed hits the
+  // default disposition (terminate) and the handler never runs.
+  const readyPromise = (async () => {
+    const reader = proc.stdout.getReader();
+    let seen = "";
+    while (!seen.includes("READY")) {
+      const { value, done } = await reader.read();
+      if (done) return false;
+      seen += new TextDecoder().decode(value);
+    }
+    reader.releaseLock();
+    return true;
+  })();
+  expect(await readyPromise).toBe(true);
+
+  proc.kill("SIGTERM");
+  const exitCode = await proc.exited;
+  expect(exitCode).toBe(42);
+  expect(await proc.stderr.text()).toContain("SIGTERM");
+});
+
+test.skipIf(!isPosix)("SIGINT is delivered with flowing stdin on /dev/zero", async () => {
+  const proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const fs = require("fs");
+      process.on("SIGINT", () => {
+        fs.writeSync(2, "SIGINT\\n");
+        process.exit(43);
+      });
+      process.stdin.on("data", () => {});
+      fs.writeSync(1, "READY\\n");
+      `,
+    ],
+    stdin: Bun.file("/dev/zero"),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  const reader = proc.stdout.getReader();
+  let seen = "";
+  while (!seen.includes("READY")) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    seen += new TextDecoder().decode(value);
+  }
+  reader.releaseLock();
+  expect(seen).toContain("READY");
+
+  proc.kill("SIGINT");
+  const exitCode = await proc.exited;
+  expect(exitCode).toBe(43);
+  expect(await proc.stderr.text()).toContain("SIGINT");
+});
+
+// Timer callbacks must fire too: the same read-loop stall froze setInterval.
+test.skipIf(!isPosix)("setInterval fires with flowing stdin on /dev/zero", async () => {
+  const proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const fs = require("fs");
+      let ticks = 0;
+      process.on("SIGTERM", () => {
+        fs.writeSync(1, "ticks=" + ticks + "\\n");
+        process.exit(44);
+      });
+      setInterval(() => {
+        ticks++;
+        if (ticks === 3) fs.writeSync(1, "TICKED\\n");
+      }, 10);
+      process.stdin.on("data", () => {});
+      fs.writeSync(1, "READY\\n");
+      `,
+    ],
+    stdin: Bun.file("/dev/zero"),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  // Wait for the timer to tick at least 3 times — proves setInterval is
+  // firing despite the flowing stdin read loop.
+  const reader = proc.stdout.getReader();
+  let seen = "";
+  while (!seen.includes("TICKED")) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    seen += new TextDecoder().decode(value);
+  }
+  reader.releaseLock();
+  expect(seen).toContain("TICKED");
+
+  proc.kill("SIGTERM");
+  const exitCode = await proc.exited;
+  expect(exitCode).toBe(44);
 });

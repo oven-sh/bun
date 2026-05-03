@@ -248,11 +248,36 @@ export function getStdinStream(
     }
   }
 
+  // For non-pollable fds (regular files, character devices like /dev/zero),
+  // the native ReadableStream's onPull runs a synchronous blocking read. If
+  // _read invoked internalRead() inline, the resulting
+  // `await reader.read() -> resolve -> await -> push -> _read` chain would
+  // stay entirely inside microtasks, never yielding to the event loop. That
+  // in turn means `tickConcurrentWithCount` never runs, so queued
+  // SIGTERM/SIGINT/SIGUSR* signals (see PosixSignalHandle) aren't delivered
+  // to JS and setInterval/setTimeout callbacks don't fire. See
+  // https://github.com/oven-sh/bun/issues/30189.
+  //
+  // For pipe/socket fdTypes the reader is pollable and the FilePoll
+  // callback provides that yield naturally, so only defer here for `file`.
+  const needsEventLoopYield = fdType === BunProcessStdinFdType.file && !isTTY;
+
   function triggerRead(_size) {
     $debug("_read();", reader);
 
     if (reader && !shouldDisown) {
-      internalRead(this);
+      if (needsEventLoopYield) {
+        // setImmediate schedules an ImmediateObject task, which is drained in
+        // autoTick() (after timers and I/O). Using it here forces tick() to
+        // return before the next read begins.
+        //
+        // unref()d because the underlying `source` already holds a ref
+        // while flowing; the immediate is just a tick-yield mechanism and
+        // must not keep the process alive on its own.
+        setImmediate(internalRead, this).unref();
+      } else {
+        internalRead(this);
+      }
     } else {
       // The stream has not been ref()ed yet. If it is ever ref()ed,
       // run internalRead()

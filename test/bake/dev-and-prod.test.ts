@@ -265,24 +265,37 @@ devTest("hmr handles rapid consecutive edits", {
     // Barrier: one more write, then wait for it to appear at the client.
     // Hot-updates are delivered over a single ordered WebSocket and applied
     // FIFO, so once the sentinel's console.log arrives every prior update
-    // has already been applied — no stragglers can later leak into the
-    // unread-messages disposal check. Don't use dev.batchChanges() here:
-    // if a bundle from the rapid burst is still in flight when the batch
-    // 'H' arrives, the harness's seenFiles promise can hang.
+    // already in the pipe has been applied. Don't use dev.batchChanges()
+    // here: if a bundle from the rapid burst is still in flight when the
+    // batch 'H' arrives, the harness's seenFiles promise can hang.
     writeFileSync(target, hmrSelfAcceptingModule("render sentinel"));
     await waitForMessage("render sentinel");
 
-    // Drain. Watcher coalescing / double-firing makes the exact count
+    // Watcher coalescing / double-firing makes the exact count
     // non-deterministic, but every message must be one of the two values
     // we wrote. If #19736 regresses, "Unknown HMR script: ..." is thrown
     // inside the bun:hmr callback, which propagates as an unhandled
     // rejection in client-fixture.mjs and exits the subprocess non-zero —
     // failing this test at disposal without an explicit assertion here.
+    const expected = new Set(["render rapid", "render sentinel"]);
     for (const msg of client.messages) {
-      if (msg !== "render rapid" && msg !== "render sentinel") {
+      if (!expected.has(msg)) {
         throw new Error(`Unexpected HMR message: ${JSON.stringify(msg)}`);
       }
     }
     client.messages.length = 0;
+
+    // The barrier guarantees ordering of in-flight updates but does not
+    // bound how many bundles the server may still start (e.g. a queued
+    // next_bundle.reload_event, or the sentinel write's IN_MODIFY and
+    // IN_CLOSE_WRITE landing in separate inotify reads). Keep a listener
+    // active through `await using` disposal that swallows expected values
+    // so only genuinely unexpected output trips the unread-messages check.
+    client.on("message", (m: unknown) => {
+      if (expected.has(m as string)) {
+        const i = client.messages.indexOf(m);
+        if (i !== -1) client.messages.splice(i, 1);
+      }
+    });
   },
 });

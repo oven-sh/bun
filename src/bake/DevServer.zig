@@ -734,7 +734,7 @@ pub fn deinit(dev: *DevServer) void {
         .testing_batch_events = switch (dev.testing_batch_events) {
             .disabled => {},
             .enabled => |*batch| {
-                batch.deinit(alloc);
+                batch.entry_points.deinit(alloc);
             },
             .enable_after_bundle => {},
         },
@@ -4470,34 +4470,23 @@ pub fn readString32(reader: anytype, alloc: Allocator) ![]const u8 {
 }
 
 const TestingBatch = struct {
-    /// Keys are owned by this struct. They must be duped on insert because
-    /// the incoming keys are borrowed slices into `HotReloadEvent.extra_files`
-    /// (via `processFileList`), which is cleared and may be reallocated before
-    /// the batch is consumed by `startAsyncBundle`.
+    /// Keys are borrowed. `IncrementalGraph.invalidate` populates the local
+    /// `entry_points` with graph-owned `bundled_files.keys()[index]` (and the
+    /// tailwind hack uses DevServer-owned map keys), both of which outlive
+    /// the batch. Borrowing — rather than duping and freeing after
+    /// `startAsyncBundle` returns — keeps the keys valid through the async
+    /// onResolve-plugin path, which stores `abs_path` as
+    /// `Resolve.import_record.specifier` without copying and reads it on a
+    /// later event-loop tick.
     entry_points: EntryPointList,
 
     pub const empty: @This() = .{ .entry_points = .empty };
 
     pub fn append(self: *@This(), dev: *DevServer, entry_points: EntryPointList) !void {
         assert(entry_points.set.count() > 0);
-        const alloc = dev.allocator();
         for (entry_points.set.keys(), entry_points.set.values()) |k, v| {
-            const gop = try self.entry_points.set.getOrPut(alloc, k);
-            if (gop.found_existing) {
-                const T = @typeInfo(EntryPointList.Flags).@"struct".backing_integer.?;
-                gop.value_ptr.* = @bitCast(@as(T, @bitCast(gop.value_ptr.*)) | @as(T, @bitCast(v)));
-            } else {
-                gop.key_ptr.* = try alloc.dupe(u8, k);
-                gop.value_ptr.* = v;
-            }
+            try self.entry_points.append(dev.allocator(), k, v);
         }
-    }
-
-    pub fn deinit(self: *@This(), alloc: Allocator) void {
-        for (self.entry_points.set.keys()) |k| {
-            alloc.free(k);
-        }
-        self.entry_points.deinit(alloc);
     }
 };
 

@@ -145,14 +145,16 @@ pub const Decoded = struct {
     width: u32,
     height: u32,
     /// ICC color profile bytes pulled from the source container (JPEG APP2,
-    /// PNG iCCP, WebP ICCP), `bun.default_allocator`-owned. `null` when the
-    /// source didn't carry one or the decode path doesn't extract it (system
-    /// backends, which already color-manage during decode). The image
-    /// pipeline hands this straight to the matching encoder — the RGBA
-    /// buffer is NOT converted to sRGB, so the bytes only have their
-    /// intended colour meaning when the profile travels with them. Dropping
-    /// it on a Display-P3 / Adobe RGB / XYB source would reinterpret the
-    /// values as sRGB and visibly shift the colours. See issue #30197.
+    /// PNG iCCP), `bun.default_allocator`-owned. `null` when the source
+    /// didn't carry one or the decode path doesn't extract it — WebP
+    /// (libwebpmux/libwebpdemux not linked), BMP/GIF (no ICC chunk), and
+    /// system backends (which already colour-manage into sRGB during
+    /// decode, so the profile is no longer needed). The image pipeline
+    /// hands this straight to the matching encoder — the RGBA buffer is
+    /// NOT converted to sRGB, so the bytes only have their intended colour
+    /// meaning when the profile travels with them. Dropping it on a
+    /// Display-P3 / Adobe RGB / XYB source would reinterpret the values
+    /// as sRGB and visibly shift the colours. See issue #30197.
     icc_profile: ?[]u8 = null,
 
     pub fn deinit(self: *Decoded) void {
@@ -353,13 +355,12 @@ pub const Encoded = struct {
 pub fn encode(rgba: []const u8, width: u32, height: u32, opts: EncodeOptions) Error!Encoded {
     return switch (opts.format) {
         .jpeg => jpeg.encode(rgba, width, height, opts.quality, opts.progressive, opts.icc_profile),
+        // PNG carries iCCP on both truecolour and indexed images — quantise
+        // operates on raw RGB numbers without converting colour spaces, so
+        // the palette entries are still in the source space and need the
+        // profile to be interpreted correctly (see PNG spec §11.3.3.3).
         .png => if (opts.palette)
-            // Indexed PNG quantises to ≤256 colours and an ICC profile
-            // describes the colour space of the original continuous values;
-            // after quantisation the palette entries are already specific
-            // colours and the ICC relationship is moot. Drop it here rather
-            // than embed a profile that no longer applies.
-            png.encodeIndexed(rgba, width, height, opts.compression_level, opts.colors, opts.dither)
+            png.encodeIndexed(rgba, width, height, opts.compression_level, opts.colors, opts.dither, opts.icc_profile)
         else
             png.encode(rgba, width, height, opts.compression_level, opts.icc_profile),
         .webp => webp.encode(rgba, width, height, opts.quality, opts.lossless),

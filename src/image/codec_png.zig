@@ -15,22 +15,21 @@ extern fn spng_encode_image(ctx: *spng_ctx, img: [*]const u8, len: usize, fmt: c
 extern fn spng_get_png_buffer(ctx: *spng_ctx, len: *usize, err: *c_int) ?[*]u8;
 extern fn spng_set_option(ctx: *spng_ctx, opt: c_int, value: c_int) c_int;
 /// iCCP chunk read/write — PNG carries an optional ICC profile alongside
-/// the pixels. `spng_get_iccp` returns `SPNG_ECHUNKAVAIL` (and leaves the
-/// struct untouched) when the source has none, which is the common case
-/// and not an error. The `profile` pointer it hands back is owned by the
-/// context and freed with `spng_ctx_free`; dupe out before then.
+/// the pixels for every colour type (including indexed). `spng_get_iccp`
+/// returns non-zero when the source has no iCCP (or the chunk was
+/// malformed); we treat all non-zero returns the same way — drop the
+/// profile — because the pixels are still valid and a PNG without iCCP
+/// is still a valid PNG. The `profile` pointer it hands back is owned by
+/// the context and freed with `spng_ctx_free`; dupe out before then.
 extern fn spng_get_iccp(ctx: *spng_ctx, iccp: *Iccp) c_int;
 extern fn spng_set_iccp(ctx: *spng_ctx, iccp: *const Iccp) c_int;
 
-/// `SPNG_ECHUNKAVAIL = 56` — "chunk not available". Separate from the
-/// malformed-iCCP errors (`SPNG_EICCP_NAME` / `SPNG_EICCP_COMPRESSION_METHOD`)
-/// which indicate a broken iCCP chunk we should NOT treat as "absent".
-const SPNG_ECHUNKAVAIL: c_int = 56;
-
 const Iccp = extern struct {
-    /// `profile_name` is PNG's Latin-1 keyword (1-79 chars + NUL). libspng
-    /// requires the name to be non-empty on encode — we re-use whatever the
-    /// source had and fall back to a stable default.
+    /// PNG's Latin-1 iCCP keyword (1-79 chars + NUL). libspng requires it
+    /// non-empty on encode; the PNG spec marks it purely informational
+    /// (the profile bytes are what describe the colour space), so on
+    /// encode we always write the literal `"ICC Profile"`. The source
+    /// keyword is not threaded through `Decoded`.
     profile_name: [80]u8,
     profile_len: usize,
     profile: ?[*]u8,
@@ -98,6 +97,33 @@ pub fn decode(bytes: []const u8, max_pixels: u64) codecs.Error!codecs.Decoded {
     return .{ .rgba = out, .width = ihdr.width, .height = ihdr.height, .icc_profile = icc };
 }
 
+/// Attach `icc_profile` to the encoder as an iCCP chunk. libspng requires
+/// `profile_name` non-empty (1-79 Latin-1 chars + NUL) and will deflate the
+/// profile payload into the chunk itself. The PNG spec marks the keyword as
+/// purely informational, so we write the literal `"ICC Profile"` always —
+/// the colour-meaning payload is `p`. A malformed-profile return from
+/// libspng drops the profile rather than failing the encode; a PNG without
+/// an iCCP is still valid (implicitly sRGB). Called from both truecolour
+/// `encode()` and indexed `encodeIndexed()` — the PNG spec applies iCCP to
+/// every colour type (indexed-colour palettes live in the source space
+/// too, so dropping the profile there would silently reinterpret them as
+/// sRGB, same bug #30197 was filed for).
+fn embedIccp(ctx: *spng_ctx, icc_profile: ?[]const u8) void {
+    const p = icc_profile orelse return;
+    if (p.len == 0) return;
+    var iccp: Iccp = .{
+        .profile_name = @splat(0),
+        .profile_len = p.len,
+        // `profile` is `char*` in libspng; the library reads-only during
+        // encode when `user.iccp = 1` (set by spng_set_iccp). Const-cast
+        // to fit the extern-struct field type without duping.
+        .profile = @constCast(p.ptr),
+    };
+    const name = "ICC Profile";
+    @memcpy(iccp.profile_name[0..name.len], name);
+    _ = spng_set_iccp(ctx, &iccp);
+}
+
 pub fn encode(rgba: []const u8, w: u32, h: u32, level: i8, icc_profile: ?[]const u8) codecs.Error!codecs.Encoded {
     const ctx = spng_ctx_new(SPNG_CTX_ENCODER) orelse return error.OutOfMemory;
     defer spng_ctx_free(ctx);
@@ -110,25 +136,7 @@ pub fn encode(rgba: []const u8, w: u32, h: u32, level: i8, icc_profile: ?[]const
         .color_type = SPNG_COLOR_TYPE_TRUECOLOR_ALPHA,
     };
     if (spng_set_ihdr(ctx, &ihdr) != 0) return error.EncodeFailed;
-
-    // Embed the source colour profile as an iCCP chunk. libspng requires
-    // the profile_name to be set (1-79 bytes of Latin-1); PNGs decoded from
-    // other formats won't come with one, so fall back to a fixed tag. The
-    // profile bytes themselves are what's load-bearing for colour
-    // correctness — the name is purely informational per the PNG spec.
-    // Malformed profiles returning non-zero here are dropped, not fatal —
-    // a PNG without an iCCP is still valid (implicitly sRGB).
-    if (icc_profile) |p| if (p.len > 0) {
-        var iccp: Iccp = .{
-            .profile_name = @splat(0),
-            .profile_len = p.len,
-            .profile = @constCast(p.ptr),
-        };
-        const name = "ICC Profile";
-        @memcpy(iccp.profile_name[0..name.len], name);
-        _ = spng_set_iccp(ctx, &iccp);
-    };
-
+    embedIccp(ctx, icc_profile);
     if (spng_encode_image(ctx, rgba.ptr, rgba.len, SPNG_FMT_PNG, SPNG_ENCODE_FINALIZE) != 0)
         return error.EncodeFailed;
     var len: usize = 0;
@@ -141,8 +149,11 @@ pub fn encode(rgba: []const u8, w: u32, h: u32, level: i8, icc_profile: ?[]const
 
 /// Quantize RGBA to ≤ `colors` and emit an indexed (colour-type 3) PNG
 /// with PLTE + tRNS. The quantizer is a small median-cut — see
-/// quantize.zig.
-pub fn encodeIndexed(rgba: []const u8, w: u32, h: u32, level: i8, colors: u16, dither: bool) codecs.Error!codecs.Encoded {
+/// quantize.zig. `icc_profile` carries the source colour space; median
+/// cut operates on the raw RGB numbers without converting colour spaces,
+/// so the palette entries are still in that space and need the profile
+/// to be interpreted correctly — same contract as truecolour encode.
+pub fn encodeIndexed(rgba: []const u8, w: u32, h: u32, level: i8, colors: u16, dither: bool, icc_profile: ?[]const u8) codecs.Error!codecs.Encoded {
     var q = try quantize.quantize(rgba, w, h, .{ .max_colors = colors, .dither = dither });
     defer q.deinit();
 
@@ -158,6 +169,7 @@ pub fn encodeIndexed(rgba: []const u8, w: u32, h: u32, level: i8, colors: u16, d
         .color_type = SPNG_COLOR_TYPE_INDEXED,
     };
     if (spng_set_ihdr(ctx, &ihdr) != 0) return error.EncodeFailed;
+    embedIccp(ctx, icc_profile);
 
     var plte: Plte = .{ .n_entries = q.colors, .entries = undefined };
     var trns: Trns = .{ .n_type3_entries = q.colors, .type3_alpha = undefined };

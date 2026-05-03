@@ -185,10 +185,6 @@ describe.skipIf(!isPosix)("signals with flowing stdin on /dev/zero", () => {
   ] as const;
 
   describe.each(cases)("$signal", ({ signal, exit }) => {
-    // Timeout is deliberately tight: on regression the child's event loop
-    // is wedged in the synchronous read loop and neither waitpid nor the
-    // signal handler resolves, so we want each case to fail fast instead
-    // of eating 5s and truncating the rest of the suite's output.
     test("handler fires", async () => {
       // await using: on regression the child is a CPU-bound infinite
       // /dev/zero reader. An early expect() throw has to still terminate
@@ -221,21 +217,24 @@ describe.skipIf(!isPosix)("signals with flowing stdin on /dev/zero", () => {
       });
 
       // Wait for READY so the child has definitely installed the signal
-      // handler before we kill it. READY precedes the data listener that
-      // arms the regression — on regression the child still prints
-      // READY, proc.kill delivers via the default disposition, and the
-      // tail assertions surface that the JS handler never ran.
+      // handler (and entered the wedge) before we kill it.
       await waitForLine(proc, "READY");
 
       proc.kill(signal);
 
-      // stderr first: on regression the child is killed by the default
-      // disposition, exitCode is null and stderr is empty — asserting
-      // stderr first surfaces `expected "" to contain "SIGTERM"`, which
-      // points at the real cause (handler never fired).
+      // Both assertions are satisfied by the same event: the JS signal
+      // handler actually running (writes the signal name to stderr and
+      // exits with the matching code). On regression Bun's sigaction
+      // catches the signal and queues it in the ring buffer, but
+      // `tickConcurrentWithCount` never runs to drain it, so the child
+      // hangs — `proc.stderr.text()` never resolves and the test falls
+      // through to its 5s timeout. `await using` then SIGKILLs the
+      // subprocess.
       expect(await proc.stderr.text()).toContain(signal);
       expect(await proc.exited).toBe(exit);
-    }, 5000); // READY takes another ~0.5-1s. Tight timeouts made the suite flaky. // 5s timeout: debug-build subprocess startup is ~1s on its own, and
+      // 5s timeout: debug-build subprocess startup alone is ~1s and
+      // READY adds another ~0.5-1s. Tight timeouts made the suite flaky.
+    }, 5000);
   });
 
   // Timer callbacks share the same starvation path — setInterval stalled

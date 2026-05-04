@@ -16,6 +16,7 @@
     macro(markdown) \
     macro(MD5) \
     macro(S3Client) \
+    macro(SMTPClient) \
     macro(SHA1) \
     macro(SHA224) \
     macro(SHA256) \
@@ -51,6 +52,7 @@
     macro(createParsedShellScript) \
     macro(createShellInterpreter) \
     macro(deflateSync) \
+    macro(email) \
     macro(file) \
     macro(fs) \
     macro(gc) \

@@ -2057,6 +2057,20 @@ describe("global virtual store", () => {
       "implicit-index/index.js": "module.exports = {};\n",
       "implicit-index/index.d.ts": "export {};\n",
 
+      // node10 main-sibling: classic `tsc --declaration --outDir lib`
+      // shape. No `exports`/`types`/`typings`/`typesVersions`, no root
+      // `index.d.ts`, but `"main"` points at `./lib/index.js` and
+      // `lib/index.d.ts` sits next to it. TypeScript'"'"'s legacy `node`
+      // resolution strips the `.js` extension from `main` and probes
+      // `<stem>.d.ts` → finds the declaration.
+      "main-sibling/package.json": JSON.stringify({
+        name: "main-sibling",
+        version: "1.0.0",
+        main: "./lib/index.js",
+      }),
+      "main-sibling/lib/index.js": "module.exports = {};\n",
+      "main-sibling/lib/index.d.ts": "export {};\n",
+
       // `"exports"` set without a `types` condition, but the resolved
       // JS target has a sibling `.d.ts` — TS picks that up via the
       // JS-to-declaration pairing. Common for packages that haven't
@@ -2215,6 +2229,7 @@ describe("global virtual store", () => {
       "exports-types-array",
       "types-versions",
       "implicit-index",
+      "main-sibling",
       "sibling-dts",
       "subpath-only",
       "exports-no-types-top-types",
@@ -2281,6 +2296,7 @@ describe("global virtual store", () => {
           "exports-types-array": "1.0.0",
           "types-versions": "1.0.0",
           "implicit-index": "1.0.0",
+          "main-sibling": "1.0.0",
           "sibling-dts": "1.0.0",
           "subpath-only": "1.0.0",
           "exports-no-types-top-types": "1.0.0",
@@ -2350,6 +2366,10 @@ describe("global virtual store", () => {
       "exports-types-array",
       "types-versions",
       "implicit-index",
+      // node10 `main`-sibling: no explicit `types` field, but
+      // `main: "./lib/index.js"` has `lib/index.d.ts` next to it. The
+      // classic `tsc --declaration --outDir lib` output shape.
+      "main-sibling",
       "sibling-dts",
       // Every subpath carries a `types` condition → at least one entry
       // point exposes declarations → package ships types.

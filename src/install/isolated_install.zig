@@ -1974,10 +1974,15 @@ pub fn installIsolatedPackages(
 ///      separate "node10" column. A package shaped `{ exports: { ".":
 ///      "./dist/index.js" }, types: "./types/index.d.ts" }` ships types
 ///      to node10 consumers even if the exports walk says no.
-///   3. If `"typesVersions"` is present and non-empty, TS treats the
+///   3. node10 `"main"`-sibling — when neither `"types"` nor `"typings"`
+///      is set, TS strips the extension from `"main"` and probes
+///      `<stem>.d.ts`. A package shaped `{ "main": "./lib/index.js" }`
+///      with `lib/index.d.ts` present ships types this way even when
+///      the package root has no `index.d.ts`.
+///   4. If `"typesVersions"` is present and non-empty, TS treats the
 ///      package as type-shipping regardless of subpath content (it'll
 ///      pick the matching range and look up subpaths there).
-///   4. Last resort — implicit `index.d.ts` in the package root, the
+///   5. Last resort — implicit `index.d.ts` in the package root, the
 ///      conventional no-`exports` / no-`types` fallback.
 ///
 /// Any positive hit means the package's declaration file(s) are what a
@@ -2098,7 +2103,7 @@ fn resolvePackageExposesTypes(source_bytes: []const u8, cache_dir: FD, folder: [
     //    conditions. Covers `moduleResolution: node16 / nodenext /
     //    bundler` consumers.
     if (json.asProperty("exports")) |prop| {
-        if (exportsExposesTypes(prop.expr, cache_dir, folder, arena_allocator)) return true;
+        if (exportsExposesTypes(prop.expr, cache_dir, folder)) return true;
         // When `exports` doesn't resolve to a declaration, fall through
         // to the top-level signals: `moduleResolution: node10` (still
         // the default under `module: "commonjs"`, and what ATW's
@@ -2121,7 +2126,22 @@ fn resolvePackageExposesTypes(source_bytes: []const u8, cache_dir: FD, folder: [
         }
     }
 
-    // 3. `"typesVersions"` — presence-only. TS resolves subpaths through
+    // 3. node10 `"main"`-sibling — when no `types`/`typings` field is
+    //    set, TypeScript's legacy `node` module resolution (still the
+    //    default under `module: "commonjs"`, and ATW's "node10" column)
+    //    strips the extension from `"main"` and probes
+    //    `<main-stem>.d.ts` before falling back to `./index.d.ts`.
+    //    Catches the classic `tsc --declaration --outDir lib` shape
+    //    (`{ "main": "./lib/index.js" }` with `lib/index.d.ts` on disk
+    //    and no explicit `"types"` field). `pathExposesTypes` handles
+    //    the `.js`→sibling-`.d.ts` pairing via `js_to_dts_pairs`.
+    if (json.asProperty("main")) |prop| {
+        if (prop.expr.asString(arena_allocator)) |s| {
+            if (pathExposesTypes(s, cache_dir, folder)) return true;
+        }
+    }
+
+    // 4. `"typesVersions"` — presence-only. TS resolves subpaths through
     //    whichever version range matches the consumer's TS version; we
     //    have no TS version to match here, so treat any non-empty map as
     //    a type-shipping signal.
@@ -2129,7 +2149,7 @@ fn resolvePackageExposesTypes(source_bytes: []const u8, cache_dir: FD, folder: [
         if (prop.expr.data == .e_object and prop.expr.data.e_object.properties.len > 0) return true;
     }
 
-    // 4. Implicit `index.d.ts` — the no-`exports`/no-`types` fallback.
+    // 5. Implicit `index.d.ts` — the no-`exports`/no-`types` fallback.
     if (cacheFileExists(cache_dir, folder, "index.d.ts")) return true;
 
     return false;
@@ -2142,14 +2162,14 @@ fn resolvePackageExposesTypes(source_bytes: []const u8, cache_dir: FD, folder: [
 /// a package whose only declared subpaths are `"./Button"` and
 /// `"./Card"` still ships types to any consumer doing
 /// `import … from "pkg/Button"`.
-fn exportsExposesTypes(expr: bun.js_parser.Expr, cache_dir: FD, folder: []const u8, allocator: std.mem.Allocator) bool {
+fn exportsExposesTypes(expr: bun.js_parser.Expr, cache_dir: FD, folder: []const u8) bool {
     // `exports` can be:
     //   "exports": "./index.js"                       → string (shorthand for `.`)
     //   "exports": [ ... ]                            → array of fallbacks (shorthand for `.`)
     //   "exports": { ".": ..., "./sub": ... }         → subpath map
     //   "exports": { "import": ..., "require": ... }  → condition map (shorthand for `.`)
     switch (expr.data) {
-        .e_string, .e_array => return resolveTargetExposesTypes(expr, cache_dir, folder, allocator, 0),
+        .e_string, .e_array => return resolveTargetExposesTypes(expr, cache_dir, folder, 0),
         .e_object => |obj| {
             var has_dot_keys = false;
             for (obj.properties.slice()) |prop| {
@@ -2175,13 +2195,13 @@ fn exportsExposesTypes(expr: bun.js_parser.Expr, cache_dir: FD, folder: []const 
                 // / `.tsx` / `.mts` / `.cts` counts as type-shipping.
                 for (obj.properties.slice()) |prop| {
                     const value = prop.value orelse continue;
-                    if (resolveTargetExposesTypes(value, cache_dir, folder, allocator, 0)) return true;
+                    if (resolveTargetExposesTypes(value, cache_dir, folder, 0)) return true;
                 }
                 return false;
             }
             // No subpath keys: the whole object is the condition tree
             // for `.` (shorthand).
-            return resolveTargetExposesTypes(expr, cache_dir, folder, allocator, 0);
+            return resolveTargetExposesTypes(expr, cache_dir, folder, 0);
         },
         else => return false,
     }
@@ -2196,7 +2216,6 @@ fn resolveTargetExposesTypes(
     target: bun.js_parser.Expr,
     cache_dir: FD,
     folder: []const u8,
-    allocator: std.mem.Allocator,
     depth: u8,
 ) bool {
     if (depth > 16) return false;
@@ -2210,7 +2229,7 @@ fn resolveTargetExposesTypes(
             // resolvable target wins. For our yes/no question the order
             // doesn't matter — any alternative exposing types is enough.
             for (array.items.slice()) |item| {
-                if (resolveTargetExposesTypes(item, cache_dir, folder, allocator, depth + 1)) return true;
+                if (resolveTargetExposesTypes(item, cache_dir, folder, depth + 1)) return true;
             }
             return false;
         },
@@ -2230,7 +2249,7 @@ fn resolveTargetExposesTypes(
                 const value = prop.value orelse continue;
                 if (key.data != .e_string) continue;
                 if (key.data.e_string.eqlComptime("types")) {
-                    if (resolveTargetExposesTypes(value, cache_dir, folder, allocator, depth + 1)) return true;
+                    if (resolveTargetExposesTypes(value, cache_dir, folder, depth + 1)) return true;
                 }
             }
             for (obj.properties.slice()) |prop| {
@@ -2238,7 +2257,7 @@ fn resolveTargetExposesTypes(
                 const value = prop.value orelse continue;
                 if (key.data != .e_string) continue;
                 if (key.data.e_string.eqlComptime("types")) continue;
-                if (resolveTargetExposesTypes(value, cache_dir, folder, allocator, depth + 1)) return true;
+                if (resolveTargetExposesTypes(value, cache_dir, folder, depth + 1)) return true;
             }
             return false;
         },

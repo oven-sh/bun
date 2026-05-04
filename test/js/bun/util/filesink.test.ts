@@ -219,6 +219,13 @@ if (isWindows) {
   });
 }
 
+it.skipIf(isWindows)("writer() with invalid path/fd options throws instead of crashing", () => {
+  const file = path.join(tmpdirSync(), "test.txt");
+  expect(() => Bun.file(file).writer({ path: 123 })).toThrow(expect.objectContaining({ code: "EINVAL" }));
+  expect(() => Bun.file(file).writer({ fd: "hello" })).toThrow(expect.objectContaining({ code: "EBADF" }));
+  expect(() => Bun.file(file).writer({ fd: 2 ** 53 })).toThrow(expect.objectContaining({ code: "EBADF" }));
+});
+
 // When a write to a pollable fd returns `.pending`, FileSink takes a
 // `must_be_kept_alive_until_eof` ref on itself so it survives until the
 // buffered data is drained. If the write later fails (e.g. EPIPE because the

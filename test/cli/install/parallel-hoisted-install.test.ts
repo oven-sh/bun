@@ -1,7 +1,7 @@
 import { $, Glob, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { lstat, mkdir, readlink, rm } from "fs/promises";
-import { bunEnv, bunExe, isASAN, isDebug, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMusl, isPosix, tempDir } from "harness";
 import { join } from "path";
 
 // Parallel hoisted install is POSIX-only (Windows already fans out
@@ -225,11 +225,19 @@ describe.skipIf(!isPosix)("parallel hoisted install", () => {
   // (background network/extract threads add a little, but with a
   // warm cache and frozen lockfile there is essentially none).
   //
-  // Skip on single-core machines where no fan-out is possible, and
-  // on debug/ASAN builds where sanitizer + process-startup overhead
+  // Skip on single-core machines where no fan-out is possible, on
+  // debug/ASAN builds where sanitizer + process-startup overhead
   // swamps the linking work and compresses the ratio toward 1.0
-  // (observed 1.12 on CI's ASAN runner).
-  test.skipIf((navigator.hardwareConcurrency ?? 1) < 2 || isDebug || isASAN)(
+  // (observed 1.12 on CI's ASAN runner), and on musl — the Alpine
+  // CI runners are CPU-quota-constrained containers where
+  // `navigator.hardwareConcurrency` reports the host's core count
+  // but the cgroup scheduler hands out slices serially, so the
+  // observed ratio collapses even though tasks ARE fanned out to
+  // the thread pool. The deterministic "[ParallelHoistedInstall] N
+  // tasks" marker in the first test already proves the parallel
+  // code path is taken; this test is a performance canary for
+  // unconstrained hosts only.
+  test.skipIf((navigator.hardwareConcurrency ?? 1) < 2 || isDebug || isASAN || isMusl)(
     "links packages in parallel on the thread pool",
     async () => {
       await rm(join(fixture.dir, "node_modules"), { recursive: true, force: true });

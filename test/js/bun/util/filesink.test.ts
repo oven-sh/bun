@@ -223,7 +223,10 @@ it("ignores non-string path and invalid fd in options", async () => {
   }
 });
 
-it("does not leak native FileSink when options getter throws", async () => {
+// On Windows, Blob.writer() ignores the options object entirely (it opens the
+// fd directly without calling fromJSWithTag), so the throwing getter is never
+// invoked and there is nothing to leak.
+it.skipIf(isWindows)("does not leak native FileSink when options getter throws", async () => {
   const x = tmpdirSync();
   const file = Bun.file(path.join(x, "test.txt"));
   const options = {

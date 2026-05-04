@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -345,12 +345,12 @@ it("jsx with circular references does not crash", () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(exitCode).toBe(0);
   const out = stdout.toString();
   expect(out).toContain("[Circular]");
   expect(out).toContain("<div>\n  [Circular]\n</div>");
   expect(out).toContain("<span>\n  [Circular]\n  [Circular]\n</span>");
   expect(out).toContain("<div key=[Circular] />");
+  expect(exitCode).toBe(0);
 });
 
 it("jsx with non-object props does not crash", () => {
@@ -367,15 +367,13 @@ it("jsx with non-object props does not crash", () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(exitCode).toBe(0);
   expect(stdout.toString().trim()).toBe("<div />");
+  expect(exitCode).toBe(0);
 });
 
-it("jsx with circular props in test diff formatter", async () => {
-  const dir = tmpdirSync();
-  await Bun.write(
-    join(dir, "diff.test.js"),
-    `
+it("jsx with circular props in test diff formatter", () => {
+  using dir = tempDir("jsx-circular-diff", {
+    "diff.test.js": `
       import { test, expect } from "bun:test";
       test("circular", () => {
         const el = { $$typeof: Symbol.for("react.element"), type: "div", props: null, key: null };
@@ -387,17 +385,15 @@ it("jsx with circular props in test diff formatter", async () => {
         expect(() => expect(el).toEqual({})).toThrow();
       });
     `,
-  );
+  });
   const { exitCode, stderr } = Bun.spawnSync({
     cmd: [bunExe(), "test", "diff.test.js"],
-    cwd: dir,
+    cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
-  const err = stderr.toString();
-  expect(err).not.toContain("panic");
-  expect(err).toContain("2 pass");
+  expect(stderr.toString()).toContain("2 pass");
   expect(exitCode).toBe(0);
 });
 

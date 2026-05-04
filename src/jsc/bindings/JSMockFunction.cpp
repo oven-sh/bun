@@ -843,8 +843,7 @@ static EncodedJSValue jsMockFunctionCallOrConstruct(JSGlobalObject* lexicalGloba
 
     if (isConstructCall) {
         JSValue newTarget = callframe->newTarget();
-        JSObject* newTargetObject = newTarget.getObject();
-        if (newTargetObject && newTargetObject != fn) {
+        if (JSObject* newTargetObject = newTarget.getObject()) {
             JSGlobalObject* functionGlobalObject = getFunctionRealm(globalObject, newTargetObject);
             RETURN_IF_EXCEPTION(scope, {});
             Structure* structure = InternalFunction::createSubclassStructure(globalObject, newTargetObject, functionGlobalObject->objectStructureForObjectConstructor());

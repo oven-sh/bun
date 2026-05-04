@@ -1,6 +1,6 @@
 import { SQL } from "bun";
-import { once } from "events";
 import { afterAll, describe, expect, test } from "bun:test";
+import { once } from "events";
 import net, { type AddressInfo } from "node:net";
 import * as dockerCompose from "../../docker/index.ts";
 

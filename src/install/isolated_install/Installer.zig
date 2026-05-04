@@ -318,10 +318,23 @@ pub const Installer = struct {
 
         const deps = entry_deps[entry_id.get()];
         for (deps.slice()) |dep| {
-            if (entry_steps[dep.entry_id.get()].load(.acquire) != .done) {
+            const dep_step = entry_steps[dep.entry_id.get()].load(.acquire);
+            if (dep_step != .done) {
                 parent_dedupe.clearRetainingCapacity();
                 if (this.store.isCycle(entry_id, dep.entry_id, parent_dedupe)) {
-                    continue;
+                    // Waiting for a cyclic dep to reach `.done` would deadlock,
+                    // but we still need its package files on disk before we
+                    // link bins — `Bin.Linker.link` silently skips targets
+                    // that don't exist yet, producing an intermittently
+                    // missing `.bin/<peer>` symlink (issue #30209).
+                    // `link_package` writes the files and then advances the
+                    // step via a release store, so any step past
+                    // `.link_package` (acquired here) means the files are
+                    // visible. Only block while the cyclic dep is still in
+                    // `link_package`; the wait is bounded by that one step.
+                    if (dep_step != .link_package) {
+                        continue;
+                    }
                 }
                 return true;
             }
@@ -1587,6 +1600,21 @@ pub const Installer = struct {
 
         this.appendRealStoreNodeModulesPath(&node_modules_path, parent_entry_id, .staging);
 
+        // Reused for each `isCycle` call below.
+        var cycle_dedupe: std.AutoArrayHashMap(Store.Entry.Id, void) = .init(bun.default_allocator);
+        defer cycle_dedupe.deinit();
+
+        // Both this entry and the dep live in the global store, so the dep
+        // target path traverses a `<parent>/node_modules/<dep>` symlink into
+        // a sibling store entry that's still in its staging directory — the
+        // staging→final rename happens in that dep's `binaries` step, not
+        // until after its own bin linking is done. For a cyclic peer that
+        // would deadlock (we need their rename, they need ours), so the
+        // bin linker must be allowed to create the symlink against a
+        // target that won't resolve until everyone commits. See the
+        // `allow_dangling_target` field on `Bin.Linker` and issue #30209.
+        const parent_uses_global_store = this.entryUsesGlobalStore(parent_entry_id);
+
         for (entry_deps[parent_entry_id.get()].slice()) |dep| {
             const node_id = entry_node_ids[dep.entry_id.get()];
             const dep_id = node_dep_ids[node_id.get()];
@@ -1621,6 +1649,13 @@ pub const Installer = struct {
                 target_package_name = strings.StringOrTinyString.init(this.lockfile.str(&pkg_names[replacement_pkg_id]));
             }
 
+            const dep_is_cyclic_global = parent_uses_global_store and
+                this.entryUsesGlobalStore(dep.entry_id) and
+                blk: {
+                    cycle_dedupe.clearRetainingCapacity();
+                    break :blk store.isCycle(parent_entry_id, dep.entry_id, &cycle_dedupe);
+                };
+
             var bin_linker: Bin.Linker = .{
                 .bin = bin,
                 .global_bin_path = this.manager.options.bin_path,
@@ -1634,6 +1669,7 @@ pub const Installer = struct {
                 .abs_target_buf = link_target_buf,
                 .abs_dest_buf = link_dest_buf,
                 .rel_buf = link_rel_buf,
+                .allow_dangling_target = dep_is_cyclic_global,
             };
 
             bin_linker.link(false);

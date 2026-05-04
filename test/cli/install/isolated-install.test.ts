@@ -249,6 +249,62 @@ test("handles cyclic dependencies", async () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/30209 — the isolated linker raced
+// `symlink_dependency_binaries` against the peer's `link_package` when the two
+// packages form a cycle through a peer edge. `Bin.Linker.link` silently skips
+// a target that doesn't yet exist on disk, so the `.bin` symlink for the peer
+// would intermittently go missing. Install the same graph repeatedly and
+// assert the symlink is always present, on both store layouts (project-local
+// and the default global virtual store).
+describe("cyclic peer dependency always links peer bin symlink", () => {
+  for (const globalStore of [false, true]) {
+    test(`globalStore=${globalStore}`, async () => {
+      const { packageJson, packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated", globalStore },
+      });
+
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: `test-pkg-bin-cycle-${globalStore ? "global" : "local"}`,
+          dependencies: {
+            "bin-cycle-a": "1.0.0",
+          },
+        }),
+      );
+
+      // The race is timing-sensitive. Loop enough times to hit it reliably on a
+      // debug build; on a release build the same loop is cheap.
+      const iterations = 8;
+      for (let i = 0; i < iterations; i++) {
+        await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+        await rm(join(packageDir, "bun.lock"), { force: true });
+        // Global-store warm-hits short-circuit the installer and hide the
+        // race. Nuke the project-scoped cache to force a cold install every
+        // iteration.
+        await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+        await runBunInstall(bunEnv, packageDir);
+
+        // The store entry directory for `bin-cycle-b` carries a peer-hash suffix
+        // because it has an unresolved peer. Locate it dynamically rather than
+        // hard-coding the hash.
+        const bunStore = join(packageDir, "node_modules", ".bun");
+        const bunStoreEntries = await readdirSorted(bunStore);
+        const bCycleStore = bunStoreEntries.find(e => e.startsWith("bin-cycle-b@1.0.0"));
+        expect(bCycleStore, "bin-cycle-b store entry").toBeDefined();
+
+        // `bin-cycle-b` peer-depends on `bin-cycle-a` and has a bin of its own;
+        // `bin-cycle-a` has a bin too. The store entry for `bin-cycle-b` must
+        // carry `.bin` symlinks for *both* — its own bin plus the cyclic peer's.
+        const binDir = join(bunStore, bCycleStore!, "node_modules", ".bin");
+        expect(await readdirSorted(binDir)).toEqual(["bin-cycle-a-cli", "bin-cycle-b"]);
+        expect(readlinkSync(join(binDir, "bin-cycle-a-cli"))).toBe(join("..", "bin-cycle-a", "cli.js"));
+        expect(readlinkSync(join(binDir, "bin-cycle-b"))).toBe(join("..", "bin-cycle-b", "cli.js"));
+      }
+    });
+  }
+});
+
 test("package with dependency on previous self works", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 

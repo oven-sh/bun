@@ -1,0 +1,44 @@
+{
+	"name": "bin-cycle-a",
+	"versions": {
+		"1.0.0": {
+			"name": "bin-cycle-a",
+			"version": "1.0.0",
+			"dependencies": {
+				"bin-cycle-b": "^1.0.0"
+			},
+			"bin": {
+				"bin-cycle-a-cli": "cli.js"
+			},
+			"_id": "bin-cycle-a@1.0.0",
+			"_nodeVersion": "22.6.0",
+			"_npmVersion": "10.8.3",
+			"dist": {
+				"integrity": "sha512-XQmsONgSXoiRKwB+K91QktHzX+P2Ax4jZLoYDQRXkxp+FUgVQYleItSSTvJ2CHc0jyP4Pymmlz7XbjqmCp9dGw==",
+				"shasum": "2548350c87e01f77a35a65efb81c84d828962210",
+				"tarball": "http://localhost:4873/bin-cycle-a/-/bin-cycle-a-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2025-06-08T19:49:59.426Z",
+		"created": "2025-06-08T19:49:59.426Z",
+		"1.0.0": "2025-06-08T19:49:59.426Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"bin-cycle-a-1.0.0.tgz": {
+			"shasum": "2548350c87e01f77a35a65efb81c84d828962210",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "bin-cycle-a",
+	"readme": "ERROR: No README data found!"
+}

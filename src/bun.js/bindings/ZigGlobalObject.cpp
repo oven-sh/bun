@@ -3584,7 +3584,28 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     RETURN_IF_EXCEPTION(scope, result);
 
     if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(key))) {
-        Bun__VM__setEntryPointEvalResultESM(globalObject->bunVM(), JSValue::encode(result));
+        // For a module with top-level `await`, JSC compiles the body as a
+        // generator and the first call into evaluate() yields the awaited
+        // value — NOT the module's final completion value. If we captured
+        // that yielded value here, `bun -p '(await 1) + 1'` would print `1`
+        // instead of `2`. The resume path (asyncModuleExecutionResume in
+        // WebKit) calls module->evaluate() directly and bypasses this hook,
+        // so we can't rely on a later call to overwrite the captured value.
+        //
+        // Instead, when the module yielded, capture the async capability's
+        // promise. Its resolution value is the module's final completion
+        // value; the --print loop in bun.js.zig already unwraps promises
+        // via asAnyPromise + Bun__onResolveEntryPointResult.
+        JSC::JSValue valueToStore = result;
+        if (auto* moduleRecord = dynamicDowncast<JSC::AbstractModuleRecord>(moduleRecordValue)) {
+            JSC::JSValue state = moduleRecord->internalField(JSC::AbstractModuleRecord::Field::State).get();
+            bool moduleYielded = state.isNumber() && state.asNumber() != static_cast<int32_t>(JSC::JSGenerator::State::Executing);
+            if (moduleYielded) {
+                if (auto* capability = moduleRecord->asyncCapability())
+                    valueToStore = capability;
+            }
+        }
+        Bun__VM__setEntryPointEvalResultESM(globalObject->bunVM(), JSValue::encode(valueToStore));
     }
 
     return result;

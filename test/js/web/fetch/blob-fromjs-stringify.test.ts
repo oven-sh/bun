@@ -1,7 +1,7 @@
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { tmpdirSync } from "harness";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdirSync } from "harness";
 
 // Bun.write with a non-BlobPart value falls through Blob.fromJSWithoutDeferGC's
 // default branch to JSValue.toSlice -> String.fromJS -> BunString__fromJS ->

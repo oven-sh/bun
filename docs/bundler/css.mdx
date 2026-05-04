@@ -893,6 +893,18 @@ A CSS module is a CSS file (with the `.module.css` extension) where are all clas
 
 Under the hood, Bun's bundler transforms locally scoped class names into unique identifiers.
 
+<Warning>
+  **Known Issue with HMR:**  
+  When Hot Module Reloading (HMR) is enabled, CSS Modules may fail to work correctly due to a current bug in Bun (see issue
+  <a href="https://github.com/oven-sh/bun/issues/18258">#18258</a>). The JSON object generated for CSS modules is not emitted during HMR, which results in a `ReferenceError` when
+  importing classes.
+
+  This issue **only affects development mode with HMR enabled**.  
+  In production builds — or development runs with HMR disabled — CSS Modules work as expected.
+
+  Until this is resolved, CSS Modules are **not fully compatible with HMR**.
+</Warning>
+
 ### Getting started
 
 Create a CSS file with the `.module.css` extension:

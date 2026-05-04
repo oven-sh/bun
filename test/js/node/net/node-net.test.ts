@@ -786,3 +786,75 @@ it.if(isWindows)(
   },
   20_000,
 );
+
+// On Windows, unix paths route through the named-pipe codepath which reports
+// failure asynchronously; this test targets the synchronous-failure branch in
+// Listener.connectInner.
+it.skipIf(isWindows)(
+  "should not leak when connect({path}) fails synchronously on a reused handle",
+  async () => {
+    // node:net creates a detached native socket (`_handle`) and passes it as
+    // `prev` to connectInner. connectInner unconditionally `socket.ref()`s
+    // before `doConnect`. A nonexistent unix path makes `doConnect` throw
+    // synchronously while the socket is still `.detached`, so
+    // `handleConnectError`'s own deref (gated on `!isDetached()`) does not
+    // fire — the ref taken here must be released by the caller for reused
+    // sockets too, not only freshly-allocated ones. Without that, every
+    // failed reconnect leaks one native TCPSocket struct + its connection
+    // string.
+    const script = `
+      const net = require("node:net");
+      const { heapStats } = require("bun:jsc");
+      const path = "/tmp/bun-test-nonexistent-" + process.pid + ".sock";
+
+      function once() {
+        return new Promise(resolve => {
+          const s = new net.Socket();
+          s.on("error", () => {});
+          s.on("close", resolve);
+          s.connect({ path });
+        });
+      }
+      async function run(n) {
+        for (let i = 0; i < n; i += 100) {
+          const batch = [];
+          for (let j = 0; j < 100; j++) batch.push(once());
+          await Promise.all(batch);
+        }
+        Bun.gc(true);
+        await Bun.sleep(20);
+        Bun.gc(true);
+      }
+
+      // Count live mimalloc pages across all size bins. Each leaked
+      // TCPSocket struct is ~300-400 bytes; 8k of them fill ~25 pages
+      // (release) / ~160 pages (debug+ASAN). Unlike RSS this is the
+      // allocator's own bookkeeping, so it's independent of OS page
+      // reclamation and JSC heap oscillation — same result on every
+      // platform, every run.
+      function pageCount() {
+        return heapStats().mimalloc.page_bins.reduce((a, b) => a + b.current, 0);
+      }
+
+      await run(2000);
+      const before = pageCount();
+      await run(8000);
+      const after = pageCount();
+      console.log(JSON.stringify({ before, after, delta: after - before }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { before, after, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
+    // Without the balancing deref: +25 pages (release) / +163 pages
+    // (debug+ASAN). With it: 0 ± 2. The threshold sits well clear of both.
+    expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(10);
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);

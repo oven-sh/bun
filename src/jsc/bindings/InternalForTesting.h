@@ -10,5 +10,6 @@ JSC_DECLARE_HOST_FUNCTION(jsFunction_hasReifiedStatic);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_lsanDoLeakCheck);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_BunString_toThreadSafeRefCountDelta);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_lowercaseHeaderNameSIMD);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_BunString_fromJSNullNoException);
 
 }

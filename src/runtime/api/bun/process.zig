@@ -551,10 +551,12 @@ pub const Process = struct {
     ///
     /// Returns:
     /// - `.result = true` if the signal was delivered.
-    /// - `.result = false` if the OS reported `ESRCH` (the process is already
-    ///   gone). Callers that just want best-effort termination can ignore this,
-    ///   but anything JS-visible (e.g. `subprocess.kill()`) needs to propagate
-    ///   it so Node's `ChildProcess.kill()` can return `false`.
+    /// - `.result = false` if the child could not be reached — either the
+    ///   poller is already `.detached` (we observed the exit on our side)
+    ///   or the OS reported `ESRCH`. Callers that just want best-effort
+    ///   termination can ignore this, but anything JS-visible (e.g.
+    ///   `subprocess.kill()`) needs to propagate it so Node's
+    ///   `ChildProcess.kill()` can return `false`.
     /// - `.err` for any other error.
     pub fn kill(this: *Process, signal: u8) Maybe(bool) {
         if (comptime Environment.isPosix) {

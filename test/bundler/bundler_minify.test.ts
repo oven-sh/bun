@@ -655,6 +655,30 @@ describe("bundler", () => {
     capture: [`"big"`],
   });
   // https://github.com/oven-sh/bun/issues/30203
+  // The const-decl force-fold flag must not leak through the function or
+  // arrow body. A nested \`() => 1/3\` runs at call time, not when the
+  // surrounding \`const\` is visited, so its arithmetic should obey the
+  // ordinary size-aware gate and stay unfolded.
+  itBundled("minify/ConstantFoldingConstArrowBodyDoesNotForceFold", {
+    files: {
+      "/entry.ts": `
+        const arrowRatio = () => 1 / 3;
+        const funcRatio = function () { return 1 / 3; };
+        export { arrowRatio, funcRatio };
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Arrow/function bodies are visited with
+      // fold_numeric_constants_unconditionally reset to false, so 1/3 stays
+      // as a binary expression (18-byte fold > 3-byte source).
+      expect(code).toContain("1 / 3");
+      expect(code).not.toContain("0.3333333333333333");
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/30203
   // Enum bodies must still fully fold so the emitted table has numeric
   // values, and so later members can reference earlier numeric members.
   itBundled("minify/ConstantFoldingEnumBodyAlwaysFolds", {

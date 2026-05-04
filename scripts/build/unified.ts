@@ -136,6 +136,10 @@ const noUnify: readonly string[] = [
   // keeping it out of unified bundles avoids the macro pollution (`min`/`max`
   // /`ERROR`/etc.) leaking into siblings.
   "src/jsc/bindings/image_wic_shim.cpp",
+  // dlopen'd libavif loader + decode/encode wrapper. Linux-only; stubbed
+  // elsewhere. Keeping it standalone avoids the pinned avif struct layouts
+  // leaking into siblings' symbol namespaces.
+  "src/jsc/bindings/image_avif_shim.cpp",
 ];
 
 /**

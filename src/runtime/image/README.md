@@ -5,24 +5,35 @@ off the JS thread.
 
 ## Layout
 
-| file                                  | owns                                                                                                            | touch when                               |
-| ------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `Image.classes.ts`                    | JS surface (codegen input)                                                                                      | adding/renaming a JS method              |
-| `Image.zig`                           | JS↔Zig glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery                     | new options, new chainable, new terminal |
-| `codecs.zig`                          | thin `extern fn` wrappers over libjpeg-turbo / libspng / libwebp + the `Format` sniffer + the pixel-limit guard | bumping a codec, adding a format         |
-| `exif.zig`                            | JPEG APP1/TIFF Orientation reader (tag 0x0112 only)                                                             | extending EXIF coverage                  |
-| `quantize.zig`                        | median-cut RGBA → palette for `png({palette})`                                                                  | dithering, perceptual weighting          |
-| `backend_coregraphics.zig`            | macOS ImageIO/CoreGraphics, lazy `dlopen`                                                                       | macOS-specific behaviour                 |
-| `backend_wic.zig`                     | Windows WIC, COM                                                                                                | Windows-specific behaviour               |
-| `../bun.js/bindings/image_resize.cpp` | highway resize/rotate/flip/modulate kernels (`bun_image_*` C ABI)                                               | new filter, perf work                    |
+| file                                     | owns                                                                                                            | touch when                               |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `Image.classes.ts`                       | JS surface (codegen input)                                                                                      | adding/renaming a JS method              |
+| `Image.zig`                              | JS↔Zig glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery                     | new options, new chainable, new terminal |
+| `codecs.zig`                             | thin `extern fn` wrappers over libjpeg-turbo / libspng / libwebp + the `Format` sniffer + the pixel-limit guard | bumping a codec, adding a format         |
+| `codec_avif.zig`                         | Zig wrapper over `bun_avif_*` in `image_avif_shim.cpp`. Linux only.                                             | bumping pinned libavif ABI               |
+| `exif.zig`                               | JPEG APP1/TIFF Orientation reader (tag 0x0112 only)                                                             | extending EXIF coverage                  |
+| `quantize.zig`                           | median-cut RGBA → palette for `png({palette})`                                                                  | dithering, perceptual weighting          |
+| `backend_coregraphics.zig`               | macOS ImageIO/CoreGraphics, lazy `dlopen`                                                                       | macOS-specific behaviour                 |
+| `backend_wic.zig`                        | Windows WIC, COM                                                                                                | Windows-specific behaviour               |
+| `../../jsc/bindings/image_resize.cpp`    | highway resize/rotate/flip/modulate kernels (`bun_image_*` C ABI)                                               | new filter, perf work                    |
+| `../../jsc/bindings/image_avif_shim.cpp` | dlopen'd libavif.so.16 loader + decode/encode wrapper; pinned v1.0.0 struct layout                              | libavif ABI bumps                        |
 
 `system_backend` in `codecs.zig` is `?type` — `null` on Linux so the dispatch
 compiles away. On macOS/Windows the backend is tried first; it returns
 `error.BackendUnavailable` for anything it can't do (palette PNG, lossless
 WebP, dlopen miss) and the static path takes over.
 
-The codecs themselves are vendored via `scripts/build/deps/{libjpeg-turbo,libspng,libwebp}.ts`.
-`patches/libjpeg-turbo/` carries the 8-bit-only patch + the j12/j16 stub overlay.
+The JPEG/PNG/WebP codecs are vendored and statically linked via
+`scripts/build/deps/{libjpeg-turbo,libspng,libwebp}.ts`; `patches/libjpeg-turbo/`
+carries the 8-bit-only patch + the j12/j16 stub overlay. AVIF is different:
+`image_avif_shim.cpp` dlopens `libavif.so.16` at first use and dlsyms the
+decoder + encoder entry points, so bun has no link-time dependency on
+libavif/dav1d — the feature works only where the distro ships those packages
+(Debian trixie+, Ubuntu 24.04+, Fedora 39+, Alpine 3.20+) and falls back to
+`ERR_IMAGE_FORMAT_UNSUPPORTED` everywhere else. Encode uses whichever AV1
+encoder libavif was linked against (aom / rav1e / SvtAv1Enc); a decode-only
+libavif build surfaces `ERR_IMAGE_ENCODE_FAILED`. macOS/Windows decode and
+encode AVIF via their respective system backends.
 
 ## Adding a chainable op
 

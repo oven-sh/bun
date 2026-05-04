@@ -56,6 +56,10 @@ export const allDeps: readonly Dependency[] = [
   libjpegTurbo,
   libspng,
   libwebp,
+  // AVIF on Linux is dlopen'd at first use (libavif.so.16 / libdav1d.so.7
+  // from the distro's packages — `apt install libavif16`), so there's no
+  // vendored build here. See src/runtime/image/codec_avif.zig and
+  // src/jsc/bindings/image_avif_shim.cpp.
   cares,
   hdrhistogram,
   highway,

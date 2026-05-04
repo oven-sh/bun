@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import zlib from "node:zlib";
 import { join } from "path";
 
@@ -792,18 +792,191 @@ describe("Bun.Image", () => {
 
     test("sniffer recognises ftyp brands", async () => {
       // metadata() will fail (not a real image) but the FORMAT in the error
-      // path proves the sniffer routed correctly. On Linux it's
-      // UnsupportedOnPlatform; on macOS/Windows the system codec rejects.
+      // path proves the sniffer routed correctly. On Linux HEIC is
+      // UnsupportedOnPlatform; AVIF now has a runtime-loaded decoder
+      // (dlopen'd libavif+dav1d) and the malformed header fails libavif's
+      // parse as DecodeFailed — unless libavif isn't installed, in which
+      // case it rejects as UnsupportedOnPlatform. Either way, metadata()
+      // rejects; we don't pin the code because both are valid.
       await expect(new Bun.Image(heicHdr).metadata()).rejects.toThrow();
       await expect(new Bun.Image(avifHdr).metadata()).rejects.toThrow();
     });
 
-    if (!isMacOS && !isWindows) {
-      test("encode .heic()/.avif() rejects ERR_IMAGE_FORMAT_UNSUPPORTED on Linux", async () => {
-        for (const fmt of ["heic", "avif"] as const)
-          await expect(new Bun.Image(cornersPng)[fmt]().bytes()).rejects.toMatchObject({
-            code: "ERR_IMAGE_FORMAT_UNSUPPORTED",
+    // Linux gained AVIF decode + encode via dlopen'd libavif in #30199.
+    // Decode pulls in dav1d (transitively from libavif's NEEDED entry);
+    // encode uses whichever AV1 encoder the distro bundled with libavif —
+    // typically aom, rav1e, and/or SVT-AV1. These fixtures are from
+    // libavif's own test suite (see tests/data/). Pin the branch to
+    // `isLinux` rather than `!isMacOS && !isWindows` so a future non-desktop
+    // target (freebsd/android/...) that also lacks AVIF doesn't start
+    // falsely claiming to have it.
+    //
+    // Dlopen means "works if libavif.so.16 is on the host", not "works on
+    // every Linux shard". Probe by running a tiny decode in a subprocess
+    // (sync, cheap — the fixture is 305 bytes and libavif parses it in
+    // sub-ms) and skip the decode-requires-libavif tests cleanly on
+    // shards (minimal Docker, musl without `libavif` apk, pre-trixie
+    // Debian) that lack the package. Using a subprocess rather than
+    // `ldconfig -p` matches exactly what the shim's
+    // `dlopen("libavif.so.16")` does — works on glibc and musl alike,
+    // whereas `ldconfig -p` is a no-op stub on Alpine/musl.
+    const hasAvifRuntime = (() => {
+      if (!isLinux) return false;
+      // Fixture is duplicated below (white1x1Avif) — kept inline here
+      // because the describe-body callback is sync, so we can't await a
+      // real Bun.Image call. The subprocess handles the dlopen.
+      const fixture =
+        "AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUEAAADybWV0YQAAAAAAAAAoaGRsc" +
+        "gAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAGxpYmF2aWYAAAAADnBpdG0AAAAAAAEAAAAe" +
+        "aWxvYwAAAABEAAABAAEAAAABAAABGgAAABcAAAAoaWluZgAAAAAAAQAAABppbmZlAgA" +
+        "AAAABAABhdjAxQ29sb3IAAAAAamlwcnAAAABLaXBjbwAAABRpc3BlAAAAAAAAAAEAAA" +
+        "ABAAAAEHBpeGkAAAAAAwgICAAAAAxhdjFDgSAAAAAAABNjb2xybmNseAABAA0ABoAAA" +
+        "AAXaXBtYQAAAAAAAAABAAEEAQKDBAAAAB9tZGF0EgAKBzgABhAQ0GkyCh/wP///xAAA" +
+        "r3A=";
+      const script =
+        `const b = Buffer.from(${JSON.stringify(fixture)}, "base64");` +
+        `new Bun.Image(b).metadata().then(() => process.exit(0), e => process.exit(e?.code === "ERR_IMAGE_FORMAT_UNSUPPORTED" ? 2 : 1));`;
+      try {
+        const proc = Bun.spawnSync({
+          cmd: [bunExe(), "-e", script],
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        // Only exit 2 ("library unavailable") counts as skip. Anything else
+        // — success, crash, unexpected error — should let the real test run
+        // so failures surface instead of being silently hidden. A probe
+        // that crashes under ASAN would otherwise downgrade a real
+        // regression into a green skip.
+        return proc.exitCode !== 2;
+      } catch {
+        return false;
+      }
+    })();
+    if (isLinux) {
+      // 1×1 white pixel AVIF, 305 bytes (libavif tests/data/white_1x1.avif).
+      const white1x1Avif = Buffer.from(
+        "AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUEAAADybWV0YQAAAAAAAAAoaGRsc" +
+          "gAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAGxpYmF2aWYAAAAADnBpdG0AAAAAAAEAAAAe" +
+          "aWxvYwAAAABEAAABAAEAAAABAAABGgAAABcAAAAoaWluZgAAAAAAAQAAABppbmZlAgA" +
+          "AAAABAABhdjAxQ29sb3IAAAAAamlwcnAAAABLaXBjbwAAABRpc3BlAAAAAAAAAAEAAA" +
+          "ABAAAAEHBpeGkAAAAAAwgICAAAAAxhdjFDgSAAAAAAABNjb2xybmNseAABAA0ABoAAA" +
+          "AAXaXBtYQAAAAAAAAABAAEEAQKDBAAAAB9tZGF0EgAKBzgABhAQ0GkyCh/wP///xAAA" +
+          "r3A=",
+        "base64",
+      );
+      // 4×4 AVIF, 330 bytes (libavif tests/data/extended_pixi.avif). Used
+      // for the maxPixels guard test — 16 pixels is comfortably over a
+      // small limit without inflating the fixture size.
+      const pixi4x4Avif = Buffer.from(
+        "AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUIAAADxbWV0YQAAAAAAAAAhaGRs" +
+          "cgAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAAAAAAAOcGl0bQAAAAAAAQAAAB5pbG9jAA" +
+          "AAAEQAAAEAAQAAAAEAAAEZAAAAMQAAAChpaW5mAAAAAAABAAAAGmluZmUCAAAAAAEA" +
+          "AGF2MDFDb2xvcgAAAABwaXBycAAAAFFpcGNvAAAAFGlzcGUAAAAAAAAABAAAAAQAAA" +
+          "AWcGl4aQAAAAEDCAgIAgACIAIgAAAADGF2MUOBAA0AAAAAE2NvbHJuY2x4AAIAAgAC" +
+          "gAAAABdpcG1hAAAAAAAAAAEAAQQBAoMEAAAAOW1kYXQSAAoFGAR9gUgyJhfACSSSRA" +
+          "BOQpsmXwal4c1e451a75FxWtQXOrIX0TGFWyby7pvW",
+        "base64",
+      );
+
+      test.skipIf(!hasAvifRuntime)("decode AVIF: metadata() returns dimensions", async () => {
+        expect(await new Bun.Image(white1x1Avif).metadata()).toEqual({
+          width: 1,
+          height: 1,
+          format: "avif",
+        });
+      });
+
+      test.skipIf(!hasAvifRuntime)("decode AVIF: round-trip through PNG", async () => {
+        const png = await new Bun.Image(white1x1Avif).png().bytes();
+        expect(png[0]).toBe(0x89);
+        expect(String.fromCharCode(png[1], png[2], png[3])).toBe("PNG");
+        const { w, h, data } = decodePngRaw(png);
+        expect(w).toBe(1);
+        expect(h).toBe(1);
+        // AV1 quantizes pure white; accept anything ≥240 on each channel
+        // and a fully-opaque alpha. The point of the assertion is "a white
+        // pixel stays roughly white", not byte-exactness through a lossy
+        // codec — Y'CbCr → RGB → Y'CbCr has rounding at each step.
+        const [r, g, b, a] = rgbaAt(data, 1, 0, 0);
+        expect(r).toBeGreaterThanOrEqual(240);
+        expect(g).toBeGreaterThanOrEqual(240);
+        expect(b).toBeGreaterThanOrEqual(240);
+        expect(a).toBe(255);
+      });
+
+      test.skipIf(!hasAvifRuntime)("decode AVIF honours maxPixels", async () => {
+        // The ERR code is the contract — callers (Sharp migrants) branch on
+        // it to distinguish "too big" from "corrupt". Exercise an AVIF that
+        // actually exceeds maxPixels so the post-parse guard has to fire;
+        // an earlier pass pushed maxPixels into libavif's own imageSizeLimit
+        // and the parse failed first, turning this into ERR_IMAGE_DECODE_FAILED.
+        await expect(new Bun.Image(pixi4x4Avif, { maxPixels: 5 }).metadata()).rejects.toMatchObject({
+          code: "ERR_IMAGE_TOO_MANY_PIXELS",
+        });
+        // Edge case: maxPixels: 0 → reject everything, including 1×1.
+        await expect(new Bun.Image(white1x1Avif, { maxPixels: 0 }).metadata()).rejects.toMatchObject({
+          code: "ERR_IMAGE_TOO_MANY_PIXELS",
+        });
+        // Same contract on the full decode path, not just metadata().
+        await expect(new Bun.Image(pixi4x4Avif, { maxPixels: 15 }).png().bytes()).rejects.toMatchObject({
+          code: "ERR_IMAGE_TOO_MANY_PIXELS",
+        });
+      });
+
+      test("encode .heic() rejects ERR_IMAGE_FORMAT_UNSUPPORTED on Linux", async () => {
+        // No vendored HEVC encoder and Linux has no OS codec.
+        await expect(new Bun.Image(cornersPng).heic().bytes()).rejects.toMatchObject({
+          code: "ERR_IMAGE_FORMAT_UNSUPPORTED",
+        });
+      });
+
+      // Positive AVIF encode test, gated on the Linux distro shipping a
+      // libavif that has an AV1 encoder linked in. Probe the way we'd
+      // measure the feature in production: try an actual encode of our
+      // cornersPng in a subprocess and inspect the exit code. Same
+      // libc-agnostic strategy as `hasAvifRuntime` above. Without this
+      // gate the test would silently tolerate the regression; with it,
+      // on dev containers / CI images that ship libavif16 with
+      // aom/rav1e/SvtAv1Enc linked we always take the strict branch,
+      // and a broken encode dispatch makes `.avif()` throw loudly.
+      // Decode-only libavif builds (rare — Alpine minimal) skip cleanly.
+      const hasAvifEncoderLibrary = (() => {
+        if (!hasAvifRuntime) return false;
+        // Feed the probe subprocess the same cornersPng (base64'd) the
+        // test uses. Inline the bytes — the describe-body callback is
+        // sync so we can't await.
+        const pngB64 = Buffer.from(cornersPng).toString("base64");
+        const script =
+          `const png = Buffer.from(${JSON.stringify(pngB64)}, "base64");` +
+          `new Bun.Image(png).avif({ quality: 50 }).bytes()` +
+          `.then(() => process.exit(0), e => process.exit((e?.code === "ERR_IMAGE_FORMAT_UNSUPPORTED" || e?.code === "ERR_IMAGE_ENCODE_FAILED") ? 2 : 1));`;
+        try {
+          const proc = Bun.spawnSync({
+            cmd: [bunExe(), "-e", script],
+            env: bunEnv,
+            stdout: "ignore",
+            stderr: "ignore",
           });
+          // Same "only exit 2 skips" rule as hasAvifRuntime: a crashing
+          // probe must not mask a real encode regression as a skip.
+          return proc.exitCode !== 2;
+        } catch {
+          return false;
+        }
+      })();
+
+      test.skipIf(!hasAvifEncoderLibrary)("encode .avif() round-trips on Linux", async () => {
+        // The machine has an AV1 encoder plugin in libavif's NEEDED — the
+        // dispatch MUST produce bytes. Strict assertion, no tolerance arm:
+        // stashing the encode wiring makes .avif() throw
+        // UnsupportedOnPlatform and this test fails.
+        const out = await new Bun.Image(cornersPng).avif({ quality: 50 }).bytes();
+        // ISOBMFF `ftyp` box signature at offset 4-8.
+        expect(String.fromCharCode(...out.subarray(4, 8))).toBe("ftyp");
+        // Decode back through the dlopen'd decoder and pin dimensions.
+        const meta = await new Bun.Image(out).metadata();
+        expect(meta).toEqual({ width: 4, height: 3, format: "avif" });
       });
     } else {
       // HEIC/AVIF encode availability is *machine*-specific, not platform:

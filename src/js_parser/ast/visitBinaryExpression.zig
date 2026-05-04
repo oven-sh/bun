@@ -59,14 +59,18 @@ pub fn CreateBinaryExpressionVisitor(
         /// `0.3333333333333333` would inflate the output.
         ///
         /// `op_len` is the byte length of the operator as printed (1 for `+`,
-        /// `-`, `*`, `/`, `%`; 2 for `**`). Unary `-` on a negative operand
-        /// is already folded into its `lenOfNumber`.
+        /// `-`, `*`, `/`, `%`; 2 for `**`). When `minify_whitespace` is off
+        /// the printer emits a space on either side of a binary operator, so
+        /// we add 2 to the source-length model to match the actual output.
+        /// Unary `-` on a negative operand is already folded into its
+        /// `lenOfNumber`.
         fn shouldFoldArithmetic(p: *P, folded_value: f64, left: f64, right: f64, op_len: u32) bool {
             if (p.fold_numeric_constants_unconditionally) return true;
             if (!p.options.features.minify_syntax) return true;
 
+            const space_len: u32 = if (p.options.features.minify_whitespace) 0 else 2;
             const folded_len = js_printer.lenOfNumber(folded_value);
-            const source_len = js_printer.lenOfNumber(left) + op_len + js_printer.lenOfNumber(right);
+            const source_len = js_printer.lenOfNumber(left) + op_len + space_len + js_printer.lenOfNumber(right);
             return folded_len <= source_len;
         }
 

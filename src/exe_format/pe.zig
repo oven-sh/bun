@@ -1273,6 +1273,27 @@ pub const PEFile = struct {
                     if (thunk >> 31 != 0) return true;
                     const hint_rva: u32 = @intCast(thunk);
                     const name = addon.cstrAtRva(hint_rva +| 2) catch return true;
+                    // MSVC C++ `throw` calls vcruntime's
+                    // `_CxxThrowException`, which does
+                    // `RtlPcToFileHeader(pThrowInfo, &ThrowImageBase)`
+                    // to learn the image base the 32-bit
+                    // `_ThrowInfo` / `_CatchableTypeArray` RVAs are
+                    // relative to. `RtlPcToFileHeader` only walks
+                    // `PEB->Ldr` — not `RtlAddFunctionTable`
+                    // registrations — and the addon's `.rdata` sits
+                    // inside bun.exe's grown `SizeOfImage`, so it
+                    // returns `exe_base` instead of
+                    // `exe_base + rva_base`. `__CxxFrameHandler3/4`
+                    // then resolves the throw-side catchable-type
+                    // list against the wrong base and walks garbage
+                    // → AV or `std::terminate()`. Stack unwinding
+                    // and SEH `__try`/`__except` are fine (they use
+                    // `DispatcherContext->ImageBase`, which
+                    // `RtlAddFunctionTable` sets); only C++
+                    // `throw`/`catch` type matching breaks. Fall
+                    // back so node-addon-api `NAPI_CPP_EXCEPTIONS`
+                    // addons keep working.
+                    if (std.mem.eql(u8, name, "_CxxThrowException")) return true;
                     try entries.append(.{
                         .iat_rva = rva_base + slot_rva,
                         .ordinal = 0,

@@ -343,6 +343,27 @@ describe("pe.addLinkedAddon adversarial input", () => {
     expect(r.skipped).toBe(true);
   });
 
+  test("addon importing _CxxThrowException is skipped (C++ EH type matching breaks)", () => {
+    // _CxxThrowException calls RtlPcToFileHeader(pThrowInfo, ...) to
+    // resolve the 32-bit _ThrowInfo/_CatchableType RVAs, and
+    // RtlPcToFileHeader only walks PEB->Ldr — it returns bun.exe's
+    // base for anything in the merged section, so the catch-side
+    // type match walks garbage and terminates. SEH and unwinding
+    // are fine; only C++ throw/catch breaks, so gate on the throw
+    // symbol. Fallback gives the addon its own LDR entry.
+    const r = peLinkAddon(
+      makeHost(),
+      makeAddon(b => {
+        // Overwrite the fixture's import-by-name string at the
+        // IMAGE_IMPORT_BY_NAME hint offset (section body 0x040+2).
+        b.fill(0, FILE_ALIGN + 0x042, FILE_ALIGN + 0x060);
+        b.write("_CxxThrowException\0", FILE_ALIGN + 0x042, "latin1");
+      }),
+      "x",
+    );
+    expect(r.skipped).toBe(true);
+  });
+
   test("addon with SizeOfImage = 0 is skipped", () => {
     const r = peLinkAddon(
       makeHost(),

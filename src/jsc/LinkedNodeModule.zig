@@ -16,7 +16,8 @@
 //!      export table, everything else via `LoadLibraryA`+`GetProcAddress`
 //!   3. `VirtualProtect` each original-section range to the protection the
 //!      addon shipped with, then `FlushInstructionCache`
-//!   4. `RtlAddFunctionTable` so SEH / C++ exceptions inside the addon work
+//!   4. `RtlAddFunctionTable` so SEH and stack unwinding through the addon
+//!      work
 //!   5. call the addon's `DllMain(DLL_PROCESS_ATTACH)` so its CRT and static
 //!      constructors run — exactly what `LoadLibrary` would have triggered
 //!
@@ -28,11 +29,26 @@
 //! are never merged: reserving a slot in the loader's private
 //! `LdrpTlsBitmap` and growing every existing thread's
 //! `ThreadLocalStoragePointer` array has no userspace API, and faking it
-//! risks index collisions with later `LoadLibrary` calls. Those addons go
-//! through the tempfile fallback where the real loader handles it. The
-//! MSVC CRT's callback-only TLS directory (empty template — present in
-//! essentially every node-gyp addon via `tlssup.obj`) needs no index and
-//! is merged with the directory ignored.
+//! risks index collisions with later `LoadLibrary` calls. The MSVC CRT's
+//! callback-only TLS directory (empty template — present in essentially
+//! every node-gyp addon via `tlssup.obj`) needs no index and is merged
+//! with the directory ignored.
+//!
+//! Addons that import `_CxxThrowException` (i.e. contain a C++ `throw`,
+//! notably node-addon-api with `NAPI_CPP_EXCEPTIONS`) are likewise never
+//! merged: `_CxxThrowException` calls `RtlPcToFileHeader(pThrowInfo, …)`
+//! to find the image base that the 32-bit `_ThrowInfo`/`_CatchableType`
+//! RVAs are relative to, and `RtlPcToFileHeader` only walks `PEB->Ldr`
+//! (not `RtlAddFunctionTable` registrations), so it returns bun.exe's
+//! base instead of the addon's — the catch-side type match then walks
+//! garbage and terminates. SEH `__try`/`__except` and plain unwinding
+//! through addon frames are unaffected; only C++ `throw`/`catch` type
+//! matching breaks, so the gate is on the throw symbol, not the frame
+//! handler.
+//!
+//! Both classes of addon go through the tempfile fallback where the real
+//! loader handles TLS and gives `RtlPcToFileHeader` a proper
+//! `LDR_DATA_TABLE_ENTRY`.
 //!
 //! Any failure (bad blob, missing import, `DllMain` returning FALSE)
 //! returns false and the caller falls back to writing a temp file and

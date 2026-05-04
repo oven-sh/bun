@@ -22,8 +22,6 @@ import { bunEnv, bunExe, isASAN, isCI, isDebug, isWindows, mergeWindowEnvs, temp
 import { dedent } from "../bundler/expectBundled.ts";
 import { exitCodeMapStrings } from "./exit-code-map.mjs";
 
-const isDebugBuild = Bun.version.includes("debug");
-
 /**
  * Multiplier for internal wait timeouts (waitForLine, expectMessage, etc.)
  * to account for slow CI machines, ASAN overhead, and debug builds. On a
@@ -31,7 +29,7 @@ const isDebugBuild = Bun.version.includes("debug");
  * happy-dom, fetch the page, parse HTML, run the bundle, and connect a
  * WebSocket — 1 second is not enough headroom.
  */
-export const WAIT_MULTIPLIER = (isDebugBuild ? 3 : 1) * (isASAN ? 3 : 1) * (isCI ? 2 : 1);
+export const WAIT_MULTIPLIER = (isDebug ? 3 : 1) * (isASAN ? 3 : 1) * (isCI ? 2 : 1);
 
 const verboseSynchronization = process.env.BUN_DEV_SERVER_VERBOSE_SYNC
   ? (arg: string) => {
@@ -1960,9 +1958,9 @@ function testImpl<T extends DevServerTest>(
           BUN_DUMP_STATE_ON_CRASH: "1",
           NODE_ENV,
           // BUN_DEBUG_QUIET_LOGS: "0",
-          // BUN_DEBUG_DEVSERVER: isDebugBuild && interactive ? "1" : undefined,
-          // BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild && interactive ? "1" : undefined,
-          // BUN_DEBUG_WATCHER: isDebugBuild && interactive ? "1" : undefined,
+          // BUN_DEBUG_DEVSERVER: isDebug && interactive ? "1" : undefined,
+          // BUN_DEBUG_INCREMENTALGRAPH: isDebug && interactive ? "1" : undefined,
+          // BUN_DEBUG_WATCHER: isDebug && interactive ? "1" : undefined,
           BUN_ASSUME_PERFECT_INCREMENTAL: "0",
         },
       ]),

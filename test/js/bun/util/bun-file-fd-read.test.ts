@@ -111,7 +111,9 @@ await Bun.sleep(100);
 // SO_LINGER with l_linger=0 makes the close() send RST instead of FIN. The
 // client's epoll entry then reports EPOLLERR with a pending ECONNRESET.
 const linger = new Int32Array([1, 0]);
-libc.symbols.setsockopt(serverSocket._handle.fd, SOL_SOCKET, SO_LINGER, ptr(linger), 8);
+if (libc.symbols.setsockopt(serverSocket._handle.fd, SOL_SOCKET, SO_LINGER, ptr(linger), 8) !== 0) {
+  throw new Error("setsockopt(SO_LINGER) failed");
+}
 serverSocket.destroy();
 
 const result = await read;

@@ -5126,6 +5126,11 @@ pub fn NewParser_(
                 }, prop_loc);
                 var method_flags = prop.flags;
                 method_flags.insert(.is_method);
+                // Tag so the decorator-metadata emitter knows this came from
+                // an `accessor` field and should emit only `design:type`
+                // (matching tsc's PropertyDeclaration behavior), not the
+                // `design:paramtypes = []` it would emit for a real getter.
+                method_flags.insert(.is_auto_accessor_rewrite);
                 bun.handleOom(rewritten.append(.{
                     .kind = .get,
                     .flags = method_flags,
@@ -5321,6 +5326,9 @@ pub fn NewParser_(
                                     },
                                     .get => if (prop.flags.contains(.is_method)) {
                                         // typescript sets design:type to the return value & design:paramtypes to [].
+                                        // For `accessor` fields rewritten into a getter+setter pair, tsc treats
+                                        // the original as a PropertyDeclaration and emits only `design:type`, so
+                                        // skip the `design:paramtypes = []` emission in that case.
                                         if (prop.value) |prop_value| {
                                             {
                                                 var args = p.allocator.alloc(Expr, 2) catch unreachable;
@@ -5328,7 +5336,7 @@ pub fn NewParser_(
                                                 args[1] = p.serializeMetadata(prop_value.data.e_function.func.return_ts_metadata) catch unreachable;
                                                 array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
                                             }
-                                            {
+                                            if (!prop.flags.contains(.is_auto_accessor_rewrite)) {
                                                 var args = p.allocator.alloc(Expr, 2) catch unreachable;
                                                 args[0] = p.newExpr(E.String{ .data = "design:paramtypes" }, logger.Loc.Empty);
                                                 args[1] = p.newExpr(E.Array{ .items = ExprNodeList.empty }, logger.Loc.Empty);

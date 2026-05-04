@@ -687,7 +687,8 @@ describe("bundler", () => {
   itBundled("minify/ConstantFoldingConstClassBodyDoesNotForceFold", {
     files: {
       "/entry.ts": `
-        const C = class {
+        function mixin(x: number) { return class { rate = x; }; }
+        const C = class extends mixin(1 / 3) {
           ratio = 1 / 3;
           static { globalThis.staticRatio = 1 / 3; }
         };

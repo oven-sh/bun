@@ -4,6 +4,9 @@
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSArrayBufferView.h"
+#include "JavaScriptCore/CallData.h"
+#include "JavaScriptCore/JSFunction.h"
+#include "WebCoreJSBuiltins.h"
 #include "headers-handwritten.h"
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/WTFString.h>
@@ -45,6 +48,37 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_lsanDoLeakCheck, (JSC::JSGlobalObject * glob
     return JSValue::encode(jsNumber(__lsan_do_recoverable_leak_check()));
 #endif
     return encodedJSUndefined();
+}
+
+// Drives the `windowsEnv` JS builtin (see `ProcessObjectInternals.ts`) with
+// caller-supplied args, returning the resulting Proxy. On Windows this
+// wrapper is what `process.env` actually is; exposing it here lets tests
+// exercise the Proxy's trap semantics on every platform rather than only
+// when the Windows `createEnvironmentVariablesMap` branch runs.
+//
+// Expected args: (internalEnv: object, envMapList: string[], editCb: (k, v) => void)
+JSC_DEFINE_HOST_FUNCTION(jsFunction_createWindowsEnvProxyForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSFunction* windowsEnv = JSC::JSFunction::create(vm, globalObject, WebCore::processObjectInternalsWindowsEnvCodeGenerator(vm), globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSC::MarkedArgumentBuffer args;
+    args.append(callFrame->argument(0));
+    args.append(callFrame->argument(1));
+    args.append(callFrame->argument(2));
+
+    JSC::CallData callData = JSC::getCallData(windowsEnv);
+    NakedPtr<JSC::Exception> returnedException = nullptr;
+    auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, windowsEnv, callData, globalObject->globalThis(), args, returnedException);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (returnedException) {
+        throwException(globalObject, scope, returnedException.get());
+        return {};
+    }
+    return JSValue::encode(result);
 }
 
 // Returns the net refcount change on the *original* StringImpl after a

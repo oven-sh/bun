@@ -887,25 +887,23 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
         }
 
         // Extract keepalive option (spec: `init["keepalive"] !== undefined`
-        // then request.keepalive = Boolean(init.keepalive))
+        // then request.keepalive = Boolean(init.keepalive)). `value.get` already
+        // collapses `undefined` into `null`, so the optional unwrap IS the
+        // `!== undefined` check.
         if (!fields.contains(.keepalive)) {
             if (try value.get(globalThis, "keepalive")) |keepalive_value| {
-                if (!keepalive_value.isUndefined()) {
-                    req.flags.keepalive = keepalive_value.toBoolean();
-                    fields.insert(.keepalive);
-                }
+                req.flags.keepalive = keepalive_value.toBoolean();
+                fields.insert(.keepalive);
             }
         }
 
         // Extract integrity option (spec: `init["integrity"] !== undefined`
-        // then request.integrity = String(init.integrity))
+        // then request.integrity = String(init.integrity)).
         if (!fields.contains(.integrity)) {
             if (try value.get(globalThis, "integrity")) |integrity_value| {
-                if (!integrity_value.isUndefined()) {
-                    req.integrity.deref();
-                    req.integrity = try bun.String.fromJS(integrity_value, globalThis);
-                    fields.insert(.integrity);
-                }
+                req.integrity.deref();
+                req.integrity = try bun.String.fromJS(integrity_value, globalThis);
+                fields.insert(.integrity);
             }
         }
 
@@ -913,26 +911,24 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
         // then: "" → "no-referrer"; else parse as URL, failure throws TypeError)
         if (!fields.contains(.referrer)) {
             if (try value.get(globalThis, "referrer")) |referrer_value| {
-                if (!referrer_value.isUndefined()) {
-                    var referrer_str = try bun.String.fromJS(referrer_value, globalThis);
-                    if (referrer_str.isEmpty()) {
+                var referrer_str = try bun.String.fromJS(referrer_value, globalThis);
+                if (referrer_str.isEmpty()) {
+                    referrer_str.deref();
+                    req.referrer.deref();
+                    // Static: no allocation. Getter maps this sentinel to "".
+                    req.referrer = bun.String.static(no_referrer_sentinel);
+                } else {
+                    const parsed = bun.jsc.URL.hrefFromString(referrer_str);
+                    if (parsed.isEmpty()) {
                         referrer_str.deref();
-                        req.referrer.deref();
-                        // Static: no allocation. Getter maps this sentinel to "".
-                        req.referrer = bun.String.static(no_referrer_sentinel);
-                    } else {
-                        const parsed = bun.jsc.URL.hrefFromString(referrer_str);
-                        if (parsed.isEmpty()) {
-                            referrer_str.deref();
-                            parsed.deref();
-                            return globalThis.throwTypeError("Referrer is not a valid URL.", .{});
-                        }
-                        referrer_str.deref();
-                        req.referrer.deref();
-                        req.referrer = parsed;
+                        parsed.deref();
+                        return globalThis.throwTypeError("Referrer is not a valid URL.", .{});
                     }
-                    fields.insert(.referrer);
+                    referrer_str.deref();
+                    req.referrer.deref();
+                    req.referrer = parsed;
                 }
+                fields.insert(.referrer);
             }
         }
     }

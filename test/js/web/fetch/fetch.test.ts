@@ -2462,3 +2462,51 @@ it("should allow to follow redirect if connection is closed, abort should work e
     }
   }
 });
+
+// https://github.com/oven-sh/bun/issues/29195 — init is a Web IDL dictionary
+describe("init argument validation (#29195)", () => {
+  // data: URL keeps good_init cases hermetic — no network I/O.
+  const url = "data:text/plain,ok";
+  const bad_init: [string, unknown][] = [
+    ["number 0", 0],
+    ["non-zero number", 42],
+    ["bigint", 0n],
+    ["empty string", ""],
+    ["non-empty string", "hello"],
+    ["boolean false", false],
+    ["boolean true", true],
+    ["symbol", Symbol("test")],
+  ];
+  const good_init: [string, unknown][] = [
+    ["undefined", undefined],
+    ["null", null],
+    ["a plain object", { method: "GET" }],
+  ];
+
+  it.each(bad_init)("fetch() rejects TypeError when init is %s", async (_l, value) => {
+    await expect(fetch(url, value as any)).rejects.toBeInstanceOf(TypeError);
+  });
+  it.each(good_init)("fetch() resolves when init is %s", async (_l, value) => {
+    const res = await fetch(url, value as any);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("ok");
+  });
+  it.each(bad_init)("new Request() throws TypeError when init is %s", (_l, value) => {
+    expect(() => new Request(url, value as any)).toThrow(TypeError);
+  });
+  it.each(good_init)("new Request() does not throw when init is %s", (_l, value) => {
+    expect(() => new Request(url, value as any)).not.toThrow();
+  });
+
+  // WebIDL converts arguments left-to-right: a throwing toString on input
+  // surfaces before the init TypeError. toString runs synchronously in URL
+  // conversion, so fetch() throws rather than rejecting.
+  it("surfaces first-argument conversion errors before the init TypeError", () => {
+    const first_arg = {
+      toString() {
+        throw new Error("boom from toString");
+      },
+    };
+    expect(() => fetch(first_arg as any, 0 as any)).toThrow("boom from toString");
+  });
+});

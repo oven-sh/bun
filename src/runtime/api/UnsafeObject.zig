@@ -37,10 +37,10 @@ fn createMimallocProf(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
 /// Bun.unsafe.mimallocProf.start(sampleRateBytes = 512 * 1024)
 /// Begins sampling native (mimalloc) allocations. Resets any prior samples.
 fn mimallocProfStart(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const args = callframe.arguments_old(1);
+    const rate_arg = callframe.argumentsAsArray(1)[0];
     var rate: usize = 512 * 1024;
-    if (args.len >= 1 and !args.ptr[0].isEmptyOrUndefinedOrNull()) {
-        const v = try args.ptr[0].coerce(i64, globalThis);
+    if (!rate_arg.isEmptyOrUndefinedOrNull()) {
+        const v = try rate_arg.coerce(i64, globalThis);
         if (v <= 0) return globalThis.throwInvalidArguments("sampleRateBytes must be > 0", .{});
         rate = @intCast(v);
     }
@@ -71,9 +71,9 @@ fn mimallocProfReset(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.
 /// Bun.unsafe.mimallocProf.snapshot(path) -> boolean
 /// Writes a structural heap snapshot (arenas/pages/blocks) for `mi-heapview`.
 fn mimallocSnapshot(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const args = callframe.arguments_old(1);
-    if (args.len < 1) return globalThis.throwInvalidArguments("snapshot(path) requires a path", .{});
-    const str = try args.ptr[0].toBunString(globalThis);
+    const path_arg = callframe.argumentsAsArray(1)[0];
+    if (path_arg.isEmptyOrUndefinedOrNull()) return globalThis.throwInvalidArguments("snapshot(path) requires a path", .{});
+    const str = try path_arg.toBunString(globalThis);
     defer str.deref();
     var sfb = std.heap.stackFallback(1024, bun.default_allocator);
     const alloc = sfb.get();

@@ -2060,7 +2060,7 @@ describe("global virtual store", () => {
       // node10 main-sibling: classic `tsc --declaration --outDir lib`
       // shape. No `exports`/`types`/`typings`/`typesVersions`, no root
       // `index.d.ts`, but `"main"` points at `./lib/index.js` and
-      // `lib/index.d.ts` sits next to it. TypeScript'"'"'s legacy `node`
+      // `lib/index.d.ts` sits next to it. TypeScript's legacy `node`
       // resolution strips the `.js` extension from `main` and probes
       // `<stem>.d.ts` → finds the declaration.
       "main-sibling/package.json": JSON.stringify({

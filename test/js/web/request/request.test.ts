@@ -172,6 +172,16 @@ test("new Request(other, init) with explicit referrer uses init.referrer", () =>
   expect(over.referrer).toBe("https://other.example/");
 });
 
+test("new Request(base, otherRequest) reads otherRequest.referrer as init.referrer", () => {
+  // When init is itself a Request, WebIDL converts it to a RequestInit
+  // dictionary by [[Get]]ting each member. So otherRequest.referrer is
+  // read via its getter and becomes the effective init.referrer, which
+  // takes precedence over the base's referrer. Matches Node/spec.
+  const base = new Request("https://a.example/", { referrer: "https://foo.example/" });
+  const otherReq = new Request("https://b.example/", { referrer: "https://bar.example/" });
+  expect(new Request(base, otherReq).referrer).toBe("https://bar.example/");
+});
+
 // Spec step 12 keys on presence of any WebIDL-recognized RequestInit member,
 // not on whether Bun actually parses it. Members like `signal: null`,
 // `credentials`, `referrerPolicy`, `duplex`, `window` also trigger the

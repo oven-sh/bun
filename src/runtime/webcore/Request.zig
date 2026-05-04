@@ -765,12 +765,22 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
 
                 // Spec step 12: if init is not empty, referrer was already
                 // reset to "client" — do NOT inherit from the base Request.
-                // We still insert `.referrer` into fields so the later
-                // init-parsing pass skips this iteration's Request getter
-                // (a Request has a `referrer` getter that returns its own
-                // URL, which would otherwise leak back in).
+                // The gate only applies to the *base* iteration: when
+                // `init` is itself a Request (`new Request(base, other)`)
+                // this branch fires first with `request == other`, and
+                // there we DO want `other.referrer` (it is the init
+                // dictionary's `referrer` member per WebIDL). `base` is
+                // always the last entry in values_to_try (len==2 case).
+                //
+                // We still insert `.referrer` into fields unconditionally
+                // so the later init-parsing pass skips this iteration's
+                // Request getter (which would return the wrapped
+                // Request's own URL).
                 if (!fields.contains(.referrer)) {
-                    if (!init_has_key and !request.referrer.isEmpty()) {
+                    const is_base_iter = values_to_try.len == 2 and
+                        @intFromEnum(value) == @intFromEnum(values_to_try[values_to_try.len - 1]);
+                    const skip_copy = is_base_iter and init_has_key;
+                    if (!skip_copy and !request.referrer.isEmpty()) {
                         req.referrer = request.referrer.dupeRef();
                     }
                     fields.insert(.referrer);

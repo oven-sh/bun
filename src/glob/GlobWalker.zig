@@ -501,7 +501,7 @@ pub fn GlobWalker_(
                                     // Symlink cycle — Node's `fs.glob` returns
                                     // `[]` for absolute-literal patterns that
                                     // traverse a self-referential symlink. The
-                                    // non-fast-path cwd-open at line ~532 is
+                                    // main cwd-open below (for `root_path`) is
                                     // already covered by `swallow_missing_cwd`;
                                     // mirror that here so both codepaths agree.
                                     if (this.walker.swallow_missing_cwd and e.getErrno() == bun.sys.E.LOOP) {

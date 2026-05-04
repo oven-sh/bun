@@ -353,17 +353,30 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
     expect(fs.globSync("target.txt/*.js", { cwd: root })).toStrictEqual([]);
   });
 
-  it("self-referential symlink in the literal prefix returns [] (not ELOOP)", () => {
-    // Opening `loop/` as a directory throws ELOOP for a self-referential
-    // symlink `loop -> loop`. Node swallows this and returns `[]`; so do we.
-    // Covers three shapes of cwd open that may hit ELOOP:
-    //   * relative with wildcard tail  — `loop/*.txt`  (main cwd open)
-    //   * relative all-literal         — `loop/inside.txt` (main cwd open)
-    //   * absolute all-literal         — `/abs/loop/inside.txt` (fast path)
+  it("self-referential symlink reached from readdir returns [] (not ELOOP)", () => {
+    // `loop -> loop` in a directory we readdir: the walker encounters `loop`
+    // as a `.sym_link` entry, then `openat(cwd_fd, 'loop')` fails with ELOOP
+    // in the `.symlink` work-item handler. `error_on_broken_symlinks=false`
+    // treats it as a broken symlink and skips — Node returns `[]`, so do we.
     using dir = tempDir("glob-loop", {});
     fs.symlinkSync("loop", path.join(String(dir), "loop"), "dir");
     expect(fs.globSync("loop/*.txt", { cwd: String(dir) })).toStrictEqual([]);
     expect(fs.globSync("loop/inside.txt", { cwd: String(dir) })).toStrictEqual([]);
+  });
+
+  it("self-referential symlink as cwd / absolute literal target returns [] (not ELOOP)", () => {
+    // These two shapes hit ELOOP at the *walker's own* cwd open — not via
+    // readdir — so they exercise the `swallow_missing_cwd` branches that
+    // this PR added to `Iterator.init()`. Without those branches, the
+    // error would surface as a thrown ELOOP in both shapes.
+    //   * cwd IS the loop       — `fs.globSync('*.txt', {cwd: '/abs/loop'})`
+    //     (main cwd-open branch in `Iterator.init`)
+    //   * absolute all-literal  — `fs.globSync('/abs/loop/inside.txt')`
+    //     (absolute-literal fast-path branch in `Iterator.init`)
+    using dir = tempDir("glob-loop-cwd", {});
+    fs.symlinkSync("loop", path.join(String(dir), "loop"), "dir");
+    const loopPath = path.join(String(dir), "loop");
+    expect(fs.globSync("*.txt", { cwd: loopPath })).toStrictEqual([]);
     expect(fs.globSync(path.join(String(dir), "loop/inside.txt"))).toStrictEqual([]);
   });
 

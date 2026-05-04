@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isArm64, isWindows } from "harness";
+
+// TinyCC (and therefore JSCallback/linkSymbols) is unavailable on Windows aarch64.
+const isFFIUnavailable = isWindows && isArm64;
 
 // Each linkSymbols() call allocates a native FFI struct plus per-symbol
 // TinyCC compiler state. Before the fix, FFI.finalize() was empty, so none
@@ -8,7 +11,7 @@ import { bunEnv, bunExe } from "harness";
 // We GC periodically so that, when finalize() does its job, the freed
 // native memory is reused by the next batch and RSS stays flat. When
 // finalize() is a no-op the TCC state simply piles up and RSS climbs.
-test("linkSymbols() does not leak FFI struct and TCC state on GC", async () => {
+test.skipIf(isFFIUnavailable)("linkSymbols() does not leak FFI struct and TCC state on GC", async () => {
   const code = /* js */ `
     const { linkSymbols, JSCallback } = require("bun:ffi");
 
@@ -58,7 +61,7 @@ test("linkSymbols() does not leak FFI struct and TCC state on GC", async () => {
 // trampoline while the symbol is still callable. The JSFFIFunction keeps a
 // strong reference to the wrapper so it survives GC until every symbol is
 // unreachable.
-test("extracted symbol keeps FFI wrapper alive across GC", async () => {
+test.skipIf(isFFIUnavailable)("extracted symbol keeps FFI wrapper alive across GC", async () => {
   const code = /* js */ `
     const { linkSymbols, JSCallback } = require("bun:ffi");
     const cb = new JSCallback(() => 42, { returns: "int32_t", args: [] });

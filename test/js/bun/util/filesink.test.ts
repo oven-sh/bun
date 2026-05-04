@@ -207,6 +207,24 @@ it("write result is not cumulative", async () => {
   await util.promisify(fs.close)(fd);
 });
 
+it("writer() does not crash when options contain a non-string path", async () => {
+  const dir = tmpdirSync();
+  const file = Bun.file(join(dir, "writer-bad-path.txt"));
+  const writer = file.writer({ path: {} } as any);
+  await writer.write("hello");
+  await writer.end();
+  expect(await file.text()).toBe("hello");
+});
+
+it("writer() does not crash when options contain a non-integer fd", async () => {
+  const dir = tmpdirSync();
+  const file = Bun.file(join(dir, "writer-bad-fd.txt"));
+  const writer = file.writer({ fd: "not a number" } as any);
+  await writer.write("hello");
+  await writer.end();
+  expect(await file.text()).toBe("hello");
+});
+
 if (isWindows) {
   it("ENOENT, Windows", () => {
     expect(() => Bun.file("A:\\this-does-not-exist.txt").writer()).toThrow(

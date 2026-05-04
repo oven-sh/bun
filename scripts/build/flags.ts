@@ -758,7 +758,20 @@ export const linkerFlags: Flag[] = [
     flag: [
       "/LTCG",
       "/OPT:REF",
-      "/OPT:NOICF",
+      // SAFEICF (lld-specific) only folds functions whose address is never
+      // taken, so JSC ClassInfo native constructors — stored as pointers and
+      // compared for identity — stay distinct. /OPT:ICF (aggressive) folded
+      // callBigIntConstructor with constructBigInt → "not a constructor",
+      // and broke expect.any(Constructor); see commit 218430c731. Mirrors
+      // Linux `-Wl,-icf=safe`.
+      "/OPT:SAFEICF",
+      // String-literal tail merging (lld-specific; MSVC link.exe has no
+      // equivalent). Helps .rdata the same way --icf handles .rodata.cst on ELF.
+      "/OPT:lldtailmerge",
+      // 512-byte section file alignment (default is 4 KB). Was present in
+      // the pre-ninja CMake config; harmless to page-in cost since sections
+      // are few and large.
+      "/FILEALIGN:0x200",
       "/DEBUG:FULL",
       "/delayload:ole32.dll",
       "/delayload:WINMM.dll",

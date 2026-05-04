@@ -181,12 +181,14 @@ pub const FileSystemRouter = struct {
         return fs_router;
     }
 
-    threadlocal var win32_normalized_dir_info_cache_buf: if (Environment.isWindows) [bun.MAX_PATH_BYTES * 2]u8 else void = undefined;
+    const win32_normalize_bufs = bun.ThreadlocalBuffers(struct {
+        buf: if (Environment.isWindows) [bun.MAX_PATH_BYTES * 2]u8 else void = undefined,
+    });
     pub fn bustDirCacheRecursive(this: *FileSystemRouter, globalThis: *jsc.JSGlobalObject, inputPath: []const u8) void {
         var vm = globalThis.bunVM();
         var path = inputPath;
         if (comptime Environment.isWindows) {
-            path = vm.transpiler.resolver.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, path);
+            path = vm.transpiler.resolver.fs.normalizeBuf(&win32_normalize_bufs.get().buf, path);
         }
 
         const root_dir_info = vm.transpiler.resolver.readDirInfo(path) catch {

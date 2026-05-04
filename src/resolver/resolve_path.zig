@@ -307,7 +307,15 @@ pub fn longestCommonPathPosix(input: []const []const u8) []const u8 {
     return longestCommonPathGeneric(input, .posix);
 }
 
-pub threadlocal var relative_to_common_path_buf: bun.PathBuffer = undefined;
+const relative_bufs = bun.ThreadlocalBuffers(struct {
+    relative_to_common_path_buf: bun.PathBuffer = undefined,
+    relative_from_buf: bun.PathBuffer = undefined,
+    relative_to_buf: bun.PathBuffer = undefined,
+});
+
+pub inline fn relative_to_common_path_buf() *bun.PathBuffer {
+    return &relative_bufs.get().relative_to_common_path_buf;
+}
 
 /// Find a relative path from a common path
 // Loosely based on Node.js' implementation of path.relative
@@ -478,7 +486,7 @@ pub fn relativeNormalizedBuf(buf: []u8, from: []const u8, to: []const u8, compti
 }
 
 pub fn relativeNormalized(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
-    return relativeNormalizedBuf(&relative_to_common_path_buf, from, to, platform, always_copy);
+    return relativeNormalizedBuf(relative_to_common_path_buf(), from, to, platform, always_copy);
 }
 
 pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
@@ -512,15 +520,12 @@ pub fn dirnameW(str: []const u16) []const u16 {
     return str[0..separator];
 }
 
-threadlocal var relative_from_buf: bun.PathBuffer = undefined;
-threadlocal var relative_to_buf: bun.PathBuffer = undefined;
-
 pub fn relative(from: []const u8, to: []const u8) []const u8 {
     return relativePlatform(from, to, .auto, false);
 }
 
 pub fn relativeZ(from: []const u8, to: []const u8) [:0]const u8 {
-    return relativeBufZ(&relative_to_common_path_buf, from, to, .auto, true);
+    return relativeBufZ(relative_to_common_path_buf(), from, to);
 }
 
 pub fn relativeBufZ(buf: []u8, from: []const u8, to: []const u8) [:0]const u8 {
@@ -530,6 +535,8 @@ pub fn relativeBufZ(buf: []u8, from: []const u8, to: []const u8) [:0]const u8 {
 }
 
 pub fn relativePlatformBuf(buf: []u8, from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
+    const relative_from_buf = &relative_bufs.get().relative_from_buf;
+    const relative_to_buf = &relative_bufs.get().relative_to_buf;
     const normalized_from = if (platform.isAbsolute(from)) brk: {
         if (platform == .loose and bun.Environment.isWindows) {
             // we want to invoke the windows resolution behavior but end up with a
@@ -544,7 +551,7 @@ pub fn relativePlatformBuf(buf: []u8, from: []const u8, to: []const u8, comptime
         break :brk relative_from_buf[0 .. path.len + 1];
     } else joinAbsStringBuf(
         Fs.FileSystem.instance.top_level_dir,
-        &relative_from_buf,
+        relative_from_buf,
         &[_][]const u8{
             normalizeStringBuf(from, relative_from_buf[1..], true, platform, true),
         },
@@ -563,7 +570,7 @@ pub fn relativePlatformBuf(buf: []u8, from: []const u8, to: []const u8, comptime
         break :brk relative_to_buf[0 .. path.len + 1];
     } else joinAbsStringBuf(
         Fs.FileSystem.instance.top_level_dir,
-        &relative_to_buf,
+        relative_to_buf,
         &[_][]const u8{
             normalizeStringBuf(to, relative_to_buf[1..], true, platform, true),
         },
@@ -574,7 +581,7 @@ pub fn relativePlatformBuf(buf: []u8, from: []const u8, to: []const u8, comptime
 }
 
 pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
-    return relativePlatformBuf(&relative_to_common_path_buf, from, to, platform, always_copy);
+    return relativePlatformBuf(relative_to_common_path_buf(), from, to, platform, always_copy);
 }
 
 pub fn relativeAlloc(allocator: std.mem.Allocator, from: []const u8, to: []const u8) ![]const u8 {

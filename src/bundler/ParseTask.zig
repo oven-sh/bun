@@ -284,8 +284,6 @@ pub fn getRuntimeSource(target: options.Target) RuntimeSource {
     };
 }
 
-threadlocal var override_file_path_buf: bun.PathBuffer = undefined;
-
 fn getEmptyCSSAST(
     log: *Logger.Log,
     transpiler: *Transpiler,

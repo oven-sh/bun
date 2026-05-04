@@ -1720,7 +1720,7 @@ fn normalizeSpecifierForResolution(specifier_: []const u8, query_string: *[]cons
     return specifier;
 }
 
-threadlocal var specifier_cache_resolver_buf: bun.PathBuffer = undefined;
+const specifier_cache_resolver_bufs = bun.ThreadlocalBuffers(struct { buf: bun.PathBuffer = undefined });
 fn _resolve(
     jsc_vm: *VirtualMachine,
     ret: *ResolveFunctionResult,
@@ -1797,6 +1797,7 @@ fn _resolve(
                 else {
                     retry_on_not_found = false;
 
+                    const specifier_cache_resolver_buf = &specifier_cache_resolver_bufs.get().buf;
                     const buster_name = name: {
                         if (std.fs.path.isAbsolute(normalized_specifier)) {
                             if (std.fs.path.dirname(normalized_specifier)) |dir| {
@@ -1804,7 +1805,7 @@ fn _resolve(
                                     return error.ModuleNotFound;
                                 }
                                 // Normalized without trailing slash
-                                break :name bun.strings.normalizeSlashesOnly(&specifier_cache_resolver_buf, dir, std.fs.path.sep);
+                                break :name bun.strings.normalizeSlashesOnly(specifier_cache_resolver_buf, dir, std.fs.path.sep);
                             }
                         }
 
@@ -1822,7 +1823,7 @@ fn _resolve(
 
                         break :name bun.path.joinAbsStringBufZ(
                             jsc_vm.transpiler.fs.top_level_dir,
-                            &specifier_cache_resolver_buf,
+                            specifier_cache_resolver_buf,
                             &parts,
                             .auto,
                         );

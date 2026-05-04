@@ -61,6 +61,13 @@ mime_types: ?bun.http.MimeType.Map = null,
 
 node_fs_stat_watcher_scheduler: ?bun.ptr.RefPtr(StatWatcherScheduler) = null,
 
+/// Windows `fs.watch()` dedup map. Per-VM (not process-global) because each
+/// `uv_fs_event_t` is bound to a specific `uv_loop_t` and libuv handles aren't
+/// thread-safe — a Worker's watcher must live on the Worker's own loop. See
+/// `win_watcher.zig` PathWatcherManager doc comment.
+windows_path_watcher_manager: if (bun.Environment.isWindows) ?*WinWatcher.PathWatcherManager else void =
+    if (bun.Environment.isWindows) null else {},
+
 listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FD) = .{},
 listening_sockets_for_watch_mode_lock: bun.Mutex = .{},
 
@@ -773,6 +780,15 @@ pub fn nodeFSStatWatcherScheduler(rare: *RareData, vm: *jsc.VirtualMachine) bun.
     }).dupeRef();
 }
 
+pub fn windowsPathWatcherManager(rare: *RareData, vm: *jsc.VirtualMachine) *WinWatcher.PathWatcherManager {
+    if (comptime !bun.Environment.isWindows)
+        @compileError("windowsPathWatcherManager is Windows-only");
+    return rare.windows_path_watcher_manager orelse {
+        rare.windows_path_watcher_manager = WinWatcher.PathWatcherManager.init(vm);
+        return rare.windows_path_watcher_manager.?;
+    };
+}
+
 pub fn s3DefaultClient(rare: *RareData, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     return rare.s3_default_client.get() orelse {
         const vm = globalThis.bunVM();
@@ -863,6 +879,13 @@ pub fn deinit(this: *RareData) void {
 
     this.valkey_context.deinit();
 
+    if (comptime bun.Environment.isWindows) {
+        if (this.windows_path_watcher_manager) |m| {
+            this.windows_path_watcher_manager = null;
+            m.deinit();
+        }
+    }
+
     if (this.default_client_ssl_ctx) |s| bun.BoringSSL.c.SSL_CTX_free(s);
     // After the default-ctx free so the tombstone callback still finds a live
     // map; deinit then clears every remaining entry's ex_data so any later
@@ -932,6 +955,10 @@ pub fn spawnSyncEventLoop(this: *RareData, vm: *jsc.VirtualMachine) *SpawnSyncEv
         break :brk ptr;
     };
 }
+
+const WinWatcher = if (bun.Environment.isWindows) @import("../runtime/node/win_watcher.zig") else struct {
+    pub const PathWatcherManager = opaque {};
+};
 
 const UUID = @import("./uuid.zig");
 const WebSocketDeflate = @import("../http_jsc/websocket_client/WebSocketDeflate.zig");

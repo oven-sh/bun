@@ -142,77 +142,81 @@ test("unhandled rejection mid-TLA does not abandon an in-flight wait", async () 
   expect(exitCode).toBe(1);
 });
 
-test("--hot reload proceeds after a hanging top-level await", async () => {
-  // With the TLA exit-on-no-work fix, `loadEntryPoint` returns with the
-  // internal promise still in `.pending` when a TLA never settles (e.g.
-  // `await new Promise(() => {})`). `reload()` used to see that pending
-  // status and permanently defer via `hot_reload_deferred = true`, but
-  // `reportExceptionInHotReloadedModuleIfNeeded` early-returns on
-  // `.pending` before consuming the flag — so every subsequent file save
-  // was silently dropped. `reload()` now distinguishes "loader chain /
-  // ref'd await still in flight" from "abandoned TLA" by consulting
-  // `hasAnyHandleWorkIgnoringForeverTimer()` — the `forever_timer` carve-
-  // out matters because the --hot main loop holds a ref'd uv timer on
-  // Windows which would otherwise keep the liveness check permanently
-  // true. Test asserts the behavior, not the mechanism: three back-to-
-  // back reloads must each actually run.
-  using dir = tempDir("hot-tla", {
-    "entry.ts": `
+test(
+  "--hot reload proceeds after a hanging top-level await",
+  async () => {
+    // With the TLA exit-on-no-work fix, `loadEntryPoint` returns with the
+    // internal promise still in `.pending` when a TLA never settles (e.g.
+    // `await new Promise(() => {})`). `reload()` used to see that pending
+    // status and permanently defer via `hot_reload_deferred = true`, but
+    // `reportExceptionInHotReloadedModuleIfNeeded` early-returns on
+    // `.pending` before consuming the flag — so every subsequent file save
+    // was silently dropped. `reload()` now distinguishes "loader chain /
+    // ref'd await still in flight" from "abandoned TLA" by consulting
+    // `hasAnyHandleWorkIgnoringForeverTimer()` — the `forever_timer` carve-
+    // out matters because the --hot main loop holds a ref'd uv timer on
+    // Windows which would otherwise keep the liveness check permanently
+    // true. Test asserts the behavior, not the mechanism: three back-to-
+    // back reloads must each actually run.
+    using dir = tempDir("hot-tla", {
+      "entry.ts": `
       console.log("v=" + (globalThis.__tag || 1));
       await new Promise(() => {});
     `,
-  });
-  const entry = join(String(dir), "entry.ts");
+    });
+    const entry = join(String(dir), "entry.ts");
 
-  await using runner = Bun.spawn({
-    cmd: [bunExe(), "--hot", "run", entry],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "ignore",
-    stdin: "ignore",
-  });
+    await using runner = Bun.spawn({
+      cmd: [bunExe(), "--hot", "run", entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "ignore",
+      stdin: "ignore",
+    });
 
-  const decoder = new TextDecoder();
-  const seen: string[] = [];
-  let round = 0;
-  // Buffer across chunk boundaries — matches the pattern in
-  // test/cli/hot/hot.test.ts. A 4-byte "v=N\n" write is realistically
-  // never torn on either platform here, but making the reader robust
-  // costs nothing and keeps it consistent with the other --hot readers.
-  let buf = "";
+    const decoder = new TextDecoder();
+    const seen: string[] = [];
+    let round = 0;
+    // Buffer across chunk boundaries — matches the pattern in
+    // test/cli/hot/hot.test.ts. A 4-byte "v=N\n" write is realistically
+    // never torn on either platform here, but making the reader robust
+    // costs nothing and keeps it consistent with the other --hot readers.
+    let buf = "";
 
-  for await (const chunk of runner.stdout) {
-    buf += decoder.decode(chunk, { stream: true });
-    const lines = buf.split("\n");
-    buf = lines.pop() ?? "";
-    for (const line of lines) {
-      if (!line.startsWith("v=")) continue;
-      seen.push(line);
-      round++;
-      if (round === 3) {
-        runner.kill();
-        break;
-      }
-      await Bun.write(
-        entry,
-        `
+    for await (const chunk of runner.stdout) {
+      buf += decoder.decode(chunk, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.startsWith("v=")) continue;
+        seen.push(line);
+        round++;
+        if (round === 3) {
+          runner.kill();
+          break;
+        }
+        await Bun.write(
+          entry,
+          `
           globalThis.__tag = ${round + 1};
           console.log("v=" + globalThis.__tag);
           await new Promise(() => {});
         `,
-      );
+        );
+      }
+      if (round === 3) break;
     }
-    if (round === 3) break;
-  }
 
-  expect(seen).toEqual(["v=1", "v=2", "v=3"]);
-  // Subprocess spawn + two full file-watcher round-trips can exceed the
-  // 5s default on debug/ASAN builds and the Windows `ReadDirectoryChanges`
-  // watcher. Match the `test/cli/hot/hot.test.ts` convention so a slow
-  // lane doesn't produce the same timeout signature as the regression
-  // this test guards against.
-}, isDebug ? Infinity : 30_000);
+    expect(seen).toEqual(["v=1", "v=2", "v=3"]);
+    // Subprocess spawn + two full file-watcher round-trips can exceed the
+    // 5s default on debug/ASAN builds and the Windows `ReadDirectoryChanges`
+    // watcher. Match the `test/cli/hot/hot.test.ts` convention so a slow
+    // lane doesn't produce the same timeout signature as the regression
+    // this test guards against.
+  },
+  isDebug ? Infinity : 30_000,
+);
 
 test("unhandledRejection handler that resolves the TLA runs to completion", async () => {
   // The default `.bun` unhandled-rejection path calls

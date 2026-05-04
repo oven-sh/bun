@@ -242,6 +242,11 @@ pub fn onStart(this: *FileReader) streams.Start {
             this.waiting_for_onReaderDone = true;
             _ = this.parent().incrementCount();
         }
+    } else if (comptime Environment.isWindows) {
+        if (this.reader.source != null and !this.reader.isDone()) {
+            this.waiting_for_onReaderDone = true;
+            _ = this.parent().incrementCount();
+        }
     }
 
     if (comptime Environment.isPosix) {
@@ -622,6 +627,11 @@ pub fn onReaderError(this: *FileReader, err: bun.sys.Error) void {
 
     this.pending.result = .{ .err = .{ .Error = err } };
     this.pending.run();
+
+    if (this.waiting_for_onReaderDone) {
+        this.waiting_for_onReaderDone = false;
+        _ = this.parent().decrementCount();
+    }
 }
 
 pub fn setRawMode(this: *FileReader, flag: bool) bun.sys.Maybe(void) {

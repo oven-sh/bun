@@ -980,11 +980,11 @@ pub const WindowsBufferedReader = struct {
         MaxBuf.removeFromPipereader(&this.maxbuf);
         this.buffer().deinit();
         const source = this.source orelse return;
-        this.source = null;
         if (!source.isClosed()) {
             // closeImpl will take care of freeing the source
             this.closeImpl(false);
         }
+        this.source = null;
     }
 
     pub fn setRawMode(this: *WindowsBufferedReader, value: bool) bun.sys.Maybe(void) {
@@ -1053,12 +1053,13 @@ pub const WindowsBufferedReader = struct {
         // Get parent before completing (fs.data may be null if detached)
         const parent_ptr = fs.data;
 
-        // ALWAYS complete the read first (cleans up fs_t, updates state)
+        // ALWAYS complete the read first (cleans up fs_t, updates state).
+        // NOTE: when detached (parent_ptr == null), complete() finalizes `file`
+        // (async close or immediate destroy) — must not be dereferenced past
+        // this point on the detached branch.
         file.complete(was_canceled);
 
-        // If detached, file should be closing itself now
         if (parent_ptr == null) {
-            bun.assert(file.state == .closing); // complete should have started close
             return;
         }
 
@@ -1197,6 +1198,8 @@ pub const WindowsBufferedReader = struct {
             switch (source) {
                 .sync_file, .file => |file| {
                     // Detach - file will close itself after operation completes
+                    // (or just free the struct if the caller owns the fd).
+                    file.close_fd = this.flags.close_handle;
                     file.detach();
                 },
                 .pipe => |pipe| {

@@ -53,6 +53,10 @@ pub const Source = union(enum) {
         /// When true, file will close itself when the current operation completes.
         close_after_operation: bool = false,
 
+        /// When false, finalize() frees this struct without calling uv_fs_close
+        /// — the caller owns the fd. Mirrors BufferedReader.flags.close_handle.
+        close_fd: bool = true,
+
         /// Get the File struct from an fs_t pointer using field offset.
         pub fn fromFS(fs: *uv.fs_t) *File {
             return @fieldParentPtr("fs", fs);
@@ -84,9 +88,9 @@ pub const Source = union(enum) {
             }
         }
 
-        /// Detach from parent and schedule automatic cleanup.
-        /// If an operation is in progress, it will complete and then close the file.
-        /// If idle, closes the file immediately.
+        /// Detach from parent and schedule automatic cleanup. After this call,
+        /// `this` may be freed (immediately when idle and `close_fd == false`,
+        /// or via `onCloseComplete` once the async close finishes).
         pub fn detach(this: *File) void {
             this.fs.data = null;
             this.close_after_operation = true;
@@ -94,12 +98,15 @@ pub const Source = union(enum) {
 
             if (this.state == .deinitialized) {
                 this.close_after_operation = false;
-                this.startClose();
+                this.finalize();
             }
         }
 
-        /// Mark the operation as complete and clean up.
-        /// Must be called first in the callback before processing data.
+        /// Mark the operation as complete and clean up. Called first in the
+        /// callback. When detached with an op in flight (`close_after_operation`),
+        /// this frees `this` (immediately when `close_fd == false`, or via the
+        /// async close callback) — callers must not dereference `this` afterward
+        /// on that branch.
         pub fn complete(this: *File, was_canceled: bool) void {
             bun.assert(this.state == .operating or this.state == .canceling);
             if (was_canceled) {
@@ -111,14 +118,21 @@ pub const Source = union(enum) {
 
             if (this.close_after_operation) {
                 this.close_after_operation = false;
-                this.startClose();
+                this.finalize();
             }
         }
 
-        fn startClose(this: *File) void {
+        /// Either start an async close (when `close_fd`) or destroy immediately.
+        /// `this` must not be dereferenced after this returns.
+        fn finalize(this: *File) void {
             bun.assert(this.state == .deinitialized);
-            this.state = .closing;
-            _ = uv.uv_fs_close(uv.Loop.get(), &this.fs, this.file, onCloseComplete);
+            if (this.close_fd) {
+                this.state = .closing;
+                _ = uv.uv_fs_close(uv.Loop.get(), &this.fs, this.file, onCloseComplete);
+            } else {
+                // Caller owns the fd — free this struct without closing.
+                bun.default_allocator.destroy(this);
+            }
         }
 
         fn onCloseComplete(fs: *uv.fs_t) callconv(.c) void {
@@ -285,8 +299,12 @@ pub const Source = union(enum) {
         log("openFile (fd = {f})", .{fd});
         const file = bun.handleOom(bun.default_allocator.create(Source.File));
 
-        file.* = std.mem.zeroes(Source.File);
-        file.file = fd.uv();
+        file.* = .{
+            .fs = std.mem.zeroes(uv.fs_t),
+            .iov = std.mem.zeroes(uv.uv_buf_t),
+            .file = fd.uv(),
+            // state/close_after_operation/close_fd take their declared defaults
+        };
         return file;
     }
 

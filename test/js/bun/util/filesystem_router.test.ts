@@ -557,9 +557,6 @@ it("MatchedRoute.filePath survives router.reload() (no use-after-free)", async (
     });
     const index = router.match("/");
     const post = router.match("/posts/hello");
-    // Capture the expected value before the old arena is discarded.
-    const expectedIndex = index.filePath;
-    const expectedPost = post.filePath;
 
     // reload() drops the previous arena. The existing MatchedRoute objects must
     // continue to read back the same path, not freed memory.
@@ -567,12 +564,15 @@ it("MatchedRoute.filePath survives router.reload() (no use-after-free)", async (
     router.reload();
     Bun.gc(true);
 
-    for (const [m, expected] of [[index, expectedIndex], [post, expectedPost]]) {
-      if (m.filePath !== expected) throw new Error("filePath changed: " + m.filePath + " vs " + expected);
-      // src also reads file_path internally.
-      if (typeof m.src !== "string" || m.src.length === 0) throw new Error("bad src: " + m.src);
-    }
-    console.log("ok:" + index.filePath + "|" + post.filePath);
+    // MatchedRoute.filePath / .src have cache:true in the generated bindings, so the
+    // first access is what invokes the native getter and reads route.file_path. Do not
+    // touch them before reload() or the cached JSString would mask the freed read.
+    console.log(JSON.stringify({
+      indexFilePath: index.filePath,
+      postFilePath: post.filePath,
+      indexSrc: index.src,
+      postSrc: post.src,
+    }));
   `;
 
   await using proc = Bun.spawn({
@@ -583,7 +583,12 @@ it("MatchedRoute.filePath survives router.reload() (no use-after-free)", async (
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout.trim()).toBe(`ok:${pagesDir}/index.tsx|${pagesDir}/posts/[id].tsx`);
+  expect(JSON.parse(stdout)).toEqual({
+    indexFilePath: `${pagesDir}/index.tsx`,
+    postFilePath: `${pagesDir}/posts/[id].tsx`,
+    indexSrc: `https://example.com/_next/static/index.tsx`,
+    postSrc: `https://example.com/_next/static/posts/[id].tsx`,
+  });
   expect(exitCode).toBe(0);
 });
 

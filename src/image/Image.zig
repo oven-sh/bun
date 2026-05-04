@@ -1042,8 +1042,7 @@ pub const PipelineTask = struct {
         // method). The pipeline doesn't colour-convert the RGBA, so dropping
         // the profile reinterprets a non-sRGB source (Display-P3, Adobe RGB,
         // Jpegli XYB) as sRGB and visibly shifts the colours — see #30197.
-        // Encoders that don't support ICC (WebP, at time of writing) ignore
-        // this field.
+        // JPEG/PNG/WebP embed it; HEIC/AVIF via the system backend do not.
         if (enc.icc_profile == null) enc.icc_profile = decoded.icc_profile;
         const out = codecs.encode(decoded.rgba, decoded.width, decoded.height, enc) catch |e| {
             this.result = .{ .err = e };

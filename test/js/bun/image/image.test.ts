@@ -427,7 +427,7 @@ describe("Bun.Image", () => {
   // XYB) as sRGB and visibly shifts the colours. Bun's contract here is:
   // source-format re-encode preserves the profile; format conversion
   // preserves it when the target container supports ICC (JPEG APP2, PNG
-  // iCCP). WebP drops it — libwebpmux isn't in the build.
+  // iCCP, WebP ICCP).
   describe("ICC profile", () => {
     // Splice an iCCP chunk carrying `profile` into a valid PNG. The PNG spec
     // requires iCCP before the first IDAT; put it right after IHDR. Chunk
@@ -484,6 +484,25 @@ describe("Bun.Image", () => {
         i++;
       }
       return pieces.length === 0 ? null : Buffer.concat(pieces);
+    }
+
+    // Walk a WebP RIFF container and return the ICCP chunk payload.
+    // Layout: "RIFF" · u32le(riff_size) · "WEBP" · { fourcc(4) ·
+    // u32le(chunk_size) · payload · pad-to-even }…  A non-VP8X WebP
+    // (plain `WebPEncodeRGBA` output) only has a single VP8/VP8L chunk
+    // and returns null here. libwebpmux wraps the bitstream in VP8X +
+    // ICCP when a profile is attached.
+    function extractWebpIccp(webp: Uint8Array): Uint8Array | null {
+      if (webp.length < 12) return null;
+      const dv = new DataView(webp.buffer, webp.byteOffset, webp.byteLength);
+      let off = 12; // past RIFF····WEBP
+      while (off + 8 <= webp.length) {
+        const fourcc = String.fromCharCode(webp[off], webp[off + 1], webp[off + 2], webp[off + 3]);
+        const size = dv.getUint32(off + 4, /* littleEndian */ true);
+        if (fourcc === "ICCP") return webp.slice(off + 8, off + 8 + size);
+        off += 8 + size + (size & 1); // RIFF pads odd-length chunks to even
+      }
+      return null;
     }
 
     // Distinctive binary payload that round-trips through libspng's
@@ -625,6 +644,82 @@ describe("Bun.Image", () => {
       const got = extractJpegIcc(out);
       expect(got).not.toBeNull();
       expect(Array.from(got!)).toEqual(Array.from(fakeProfile));
+    });
+
+    // ── WebP ICCP carry-through — libwebpmux/libwebpdemux wrap the raw
+    // VP8/VP8L bitstream in a VP8X container so the ICCP chunk can travel
+    // alongside. Covers decode-side (WebP→PNG), encode-side (PNG→WebP,
+    // both lossy and lossless), WebP→WebP round-trip, geometry ops
+    // preserving the profile through a WebP encode, and the no-profile
+    // fast path staying a bare VP8/VP8L RIFF.
+
+    test("PNG iCCP transfers to WebP encode — ICCP chunk in output", async () => {
+      const src = pngWithIccp(cornersPng, fakeProfile);
+      const webp = await new Bun.Image(src).webp({ quality: 90 }).bytes();
+      // libwebpmux wraps the bitstream in VP8X when any extended chunk is
+      // attached. First chunk after the RIFF header must be VP8X with the
+      // ICCP flag (bit 5 of byte 0 of the VP8X body) set.
+      expect(String.fromCharCode(...webp.subarray(12, 16))).toBe("VP8X");
+      expect(webp[20] & 0x20).toBe(0x20);
+      const got = extractWebpIccp(webp);
+      expect(got).not.toBeNull();
+      expect(Array.from(got!)).toEqual(Array.from(fakeProfile));
+    });
+
+    test("PNG iCCP transfers to lossless WebP encode", async () => {
+      // VP8L has a different bitstream chunk from VP8; the VP8X + ICCP
+      // wrapping must still work. Lossless path is separate from lossy
+      // (`WebPEncodeLosslessRGBA` vs `WebPEncodeRGBA`), so both need
+      // coverage.
+      const src = pngWithIccp(cornersPng, fakeProfile);
+      const webp = await new Bun.Image(src).webp({ lossless: true }).bytes();
+      const got = extractWebpIccp(webp);
+      expect(got).not.toBeNull();
+      expect(Array.from(got!)).toEqual(Array.from(fakeProfile));
+    });
+
+    test("WebP ICCP transfers to PNG encode — demux extracts the profile", async () => {
+      // Build the WebP via Bun.Image (PNG-with-iCCP → WebP) so the test
+      // doesn't hand-assemble a VP8X container, then decode THAT WebP
+      // and re-encode to PNG. This exercises `WebPDemuxGetChunk` on the
+      // decode side.
+      const srcPng = pngWithIccp(cornersPng, fakeProfile);
+      const webp = await new Bun.Image(srcPng).webp({ lossless: true }).bytes();
+      const outPng = await new Bun.Image(webp).png().bytes();
+      const got = extractPngIccp(outPng);
+      expect(got).not.toBeNull();
+      expect(Array.from(got!)).toEqual(Array.from(fakeProfile));
+    });
+
+    test("WebP → WebP re-encode preserves the ICC profile byte-for-byte", async () => {
+      const srcPng = pngWithIccp(cornersPng, fakeProfile);
+      const webp = await new Bun.Image(srcPng).webp({ quality: 90 }).bytes();
+      const reWebp = await new Bun.Image(webp).webp({ quality: 90 }).bytes();
+      const got = extractWebpIccp(reWebp);
+      expect(got).not.toBeNull();
+      expect(Array.from(got!)).toEqual(Array.from(fakeProfile));
+    });
+
+    test("WebP ICCP survives resize — geometry doesn't drop profile", async () => {
+      const src = pngWithIccp(cornersPng, fakeProfile);
+      const webp = await new Bun.Image(src).resize(8, 6).webp({ quality: 90 }).bytes();
+      const got = extractWebpIccp(webp);
+      expect(got).not.toBeNull();
+      expect(Array.from(got!)).toEqual(Array.from(fakeProfile));
+    });
+
+    test("WebP without ICCP stays a bare VP8/VP8L — no VP8X wrapper added", async () => {
+      // The no-profile fast path skips the mux round-trip entirely. A
+      // bare lossy WebP is RIFF····WEBP·VP8 ···; a lossless one is
+      // ···VP8L···. Neither should gain a VP8X chunk or an ICCP chunk
+      // when the source carried no profile.
+      const lossy = await new Bun.Image(cornersPng).webp({ quality: 90 }).bytes();
+      expect(String.fromCharCode(...lossy.subarray(12, 16))).toBe("VP8 ");
+      expect(extractWebpIccp(lossy)).toBeNull();
+
+      const lossless = await new Bun.Image(cornersPng).webp({ lossless: true }).bytes();
+      expect(String.fromCharCode(...lossless.subarray(12, 16))).toBe("VP8L");
+      expect(extractWebpIccp(lossless)).toBeNull();
     });
   });
 

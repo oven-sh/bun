@@ -8263,8 +8263,8 @@ declare module "bun" {
    * `autoOrient → rotate → flip/flop → resize → modulate`.
    *
    * The source ICC colour profile (Display P3, Adobe RGB, Jpegli XYB, etc.)
-   * is preserved through re-encode to JPEG and PNG so non-sRGB images don't
-   * shift colour. WebP output drops the profile; `png()` / `jpeg()` keep it.
+   * is preserved through re-encode to JPEG, PNG, and WebP so non-sRGB
+   * images don't shift colour.
    *
    * @example
    * ```ts

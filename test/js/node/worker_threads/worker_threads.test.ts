@@ -668,6 +668,41 @@ test("transferring a ref'd MessagePort releases its event-loop ref on the source
   expect(exitCode).toBe(0);
 });
 
+test("on() after unref() on a transferred port re-refs (Node's newListener hook)", async () => {
+  // Node's setupPortReferencing installs a 'newListener' hook that calls
+  // this.ref() on the first 'message' listener, so port.unref(); port.on('message', fn)
+  // re-refs and the worker stays alive. The reverse order (on; unref) stays unref'd.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+        const { Worker, workerData } = require("node:worker_threads");
+        const { once } = require("node:events");
+        const { port1, port2 } = new MessageChannel();
+        const w = new Worker(
+          "const p = require('node:worker_threads').workerData.port;" +
+          "p.unref(); p.on('message', m => { console.log('got:' + m); p.close(); });" +
+          "require('node:worker_threads').parentPort.postMessage(p.hasRef());",
+          { ev${/* bundler hates eval */ ""}al: true, workerData: { port: port2 }, transferList: [port2] },
+        );
+        once(w, "message").then(([hasRef]) => {
+          console.log("hasRef:" + hasRef);
+          setTimeout(() => port1.postMessage("hi"), 50);
+        });
+        w.on("exit", c => { console.log("exit:" + c); port1.close(); });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n").sort()).toEqual(["exit:0", "got:hi", "hasRef:true"]);
+  expect(exitCode).toBe(0);
+});
+
 test("worker does not stay alive after unref() on a transferred port with a listener", async () => {
   // A transferred MessagePort with a 'message' listener used to hold a separate
   // event loop ref that .unref() could not release, keeping the worker alive forever.

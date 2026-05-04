@@ -311,15 +311,24 @@ pub const os_path_buffer_pool = paths.os_path_buffer_pool;
 /// instantiation a distinct `threadlocal var ptr` even if the field layout
 /// happens to match another call site.
 ///
-/// The allocation is never explicitly freed. mimalloc associates it with
-/// the allocating thread's heap, which is abandoned on thread exit and
-/// later reclaimed by other threads, so it is not a hard leak; and since
-/// the previous static-TLS arrangement charged every thread the full cost
-/// up front regardless of use, the net high-water mark is lower even for
-/// short-lived Workers.
+/// Allocations are threaded onto a per-thread intrusive list so
+/// `deleteAllPoolsForThreadExit()` (called from `WebWorker.shutdown()`)
+/// can free them when a Worker thread exits. Without that, a short-lived
+/// Worker that loaded its entry module through the resolver would orphan
+/// the whole `Bufs` struct (~150 KB POSIX / ~3 MB Windows) until process
+/// exit — mimalloc's abandoned-heap reclaim only recycles *freed* blocks.
+/// Long-lived threads (main, pooled bundler/install workers) simply hold
+/// the allocation for their lifetime.
 pub fn ThreadlocalBuffers(comptime T: type) type {
     return struct {
         threadlocal var instance: ?*T = null;
+
+        // Header + payload allocated together so the type-erased free
+        // function can recover the full allocation from the node pointer.
+        const Storage = struct {
+            node: ThreadlocalBuffersNode,
+            data: T,
+        };
 
         pub inline fn get() *T {
             return instance orelse alloc();
@@ -327,16 +336,50 @@ pub fn ThreadlocalBuffers(comptime T: type) type {
 
         noinline fn alloc() *T {
             @branchHint(.cold);
-            const p = default_allocator.create(T) catch outOfMemory();
+            const s = default_allocator.create(Storage) catch outOfMemory();
             // Apply field default values. For the common case of
             // `field: PathBuffer = undefined` this is a no-op in release
             // builds; for wrappers around structs with real defaults (e.g.
             // `NodeFS{ .vm = null }`) it's required for correctness.
-            p.* = .{};
-            instance = p;
-            return p;
+            s.* = .{
+                .node = .{ .next = threadlocal_buffers_head, .free = free },
+                .data = .{},
+            };
+            threadlocal_buffers_head = &s.node;
+            instance = &s.data;
+            return &s.data;
+        }
+
+        fn free(node: *ThreadlocalBuffersNode) void {
+            instance = null;
+            const s: *Storage = @alignCast(@fieldParentPtr("node", node));
+            default_allocator.destroy(s);
         }
     };
+}
+
+/// Intrusive list node prepended to every `ThreadlocalBuffers` allocation
+/// so `freeAllThreadlocalBuffers()` can walk them without knowing each
+/// instantiation's `T`.
+const ThreadlocalBuffersNode = struct {
+    next: ?*ThreadlocalBuffersNode,
+    free: *const fn (*ThreadlocalBuffersNode) void,
+};
+threadlocal var threadlocal_buffers_head: ?*ThreadlocalBuffersNode = null;
+
+/// Free every `ThreadlocalBuffers` allocation made on the current thread.
+/// Called from `deleteAllPoolsForThreadExit()` just before a Worker thread
+/// exits. After this returns, a subsequent `get()` on the same thread
+/// re-allocates (so ordering relative to other shutdown code is not
+/// load-bearing).
+pub fn freeAllThreadlocalBuffers() void {
+    var node = threadlocal_buffers_head;
+    threadlocal_buffers_head = null;
+    while (node) |n| {
+        const next = n.next;
+        n.free(n);
+        node = next;
+    }
 }
 
 pub inline fn cast(comptime To: type, value: anytype) To {
@@ -2786,6 +2829,7 @@ pub fn deleteAllPoolsForThreadExit() void {
     inline for (pools_to_delete) |pool| {
         pool.deleteAll();
     }
+    freeAllThreadlocalBuffers();
 }
 
 pub const Tmpfile = @import("./tmp.zig").Tmpfile;

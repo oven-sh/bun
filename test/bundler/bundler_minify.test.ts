@@ -602,6 +602,24 @@ describe("bundler", () => {
     capture: ["1 / 3", "2 / 3", "1 / 7", "10 / 3", "3", "100", "50", "81", "1.3", "10 ** 20", "2 ** 32"],
   });
   // https://github.com/oven-sh/bun/issues/30203
+  // With `minify_syntax` on but `minify_whitespace` off, the printer emits
+  // a space on either side of a binary operator (`5 / 4`, not `5/4`), so
+  // the source-length model must account for those two extra bytes — or
+  // folds that would shrink output (here `5 / 4` → `1.25`, saving a byte)
+  // get wrongly rejected.
+  itBundled("minify/ConstantFoldingNumericBinaryWithoutMinifyWhitespace", {
+    files: {
+      "/entry.js": `
+        // Shrinking fold: source is 5 chars with spaces, folded is 4.
+        capture(5 / 4);
+        // Inflating fold stays as-is.
+        capture(1 / 3);
+      `,
+    },
+    minifySyntax: true,
+    capture: ["1.25", "1 / 3"],
+  });
+  // https://github.com/oven-sh/bun/issues/30203
   // Enum bodies must still fully fold so the emitted table has numeric
   // values, and so later members can reference earlier numeric members.
   itBundled("minify/ConstantFoldingEnumBodyAlwaysFolds", {

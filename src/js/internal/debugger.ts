@@ -339,7 +339,14 @@ class Debugger {
         return Response.json(versionInfo());
       case "/json":
       case "/json/list":
-      // TODO?
+        // Unix socket inspectors don't have a host:port to advertise to HTTP
+        // discovery clients (VS Code, chrome://inspect). Skip discovery for
+        // them so we don't hand out garbage URLs; the client would just fall
+        // through to the WebSocket upgrade path anyway.
+        if (this.#url!.protocol.includes("unix")) {
+          return new Response(null, { status: 404 });
+        }
+        return Response.json(listInfo(request, this.#url!));
     }
 
     if (!this.#url!.protocol.includes("unix") && this.#url!.pathname !== pathname) {
@@ -516,6 +523,35 @@ function versionInfo(): unknown {
     "Bun-Version": Bun.version,
     "Bun-Revision": Bun.revision,
   };
+}
+
+function listInfo(request: Request, listenUrl: URL): unknown {
+  // Echo back the Host the client used so e.g. 127.0.0.1 queries get a
+  // 127.0.0.1 WebSocket URL even when bun bound to 0.0.0.0. Fall back to the
+  // configured listen URL if the Host header is missing.
+  // listenUrl.host already omits the protocol-default port (80 for ws:, 443
+  // for wss:), unlike `hostname:port` which would leave a trailing colon.
+  const host = request.headers.get("Host") || listenUrl.host;
+  const id = listenUrl.pathname.startsWith("/") ? listenUrl.pathname.slice(1) : listenUrl.pathname;
+  const wsUrl = `${host}/${id}`;
+  const scriptPath = process.argv[1] || "";
+  const title = scriptPath ? `bun[${process.pid}] ${scriptPath}` : `bun[${process.pid}]`;
+  // pathToFileURL handles percent-encoding (spaces, #, ?) and UNC paths, which
+  // manual `file://` + replace can't.
+  const fileUrl = scriptPath ? require("node:url").pathToFileURL(scriptPath).href : "";
+  return [
+    {
+      "description": "bun instance",
+      "devtoolsFrontendUrl": `devtools://devtools/bundled/js_app.html?experiments=true&v8only=true&ws=${wsUrl}`,
+      "devtoolsFrontendUrlCompat": `devtools://devtools/bundled/inspector.html?experiments=true&v8only=true&ws=${wsUrl}`,
+      "faviconUrl": "https://bun.com/favicon.ico",
+      "id": id,
+      "title": title,
+      "type": "node",
+      "url": fileUrl,
+      "webSocketDebuggerUrl": `ws://${wsUrl}`,
+    },
+  ];
 }
 
 function webSocketWriter(ws: ServerWebSocket<unknown>): Writer {

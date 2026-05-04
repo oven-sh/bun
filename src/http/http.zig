@@ -382,7 +382,9 @@ pub fn onClose(
         }
     }
 
-    if (client.allow_retry) {
+    if (client.allow_retry and client.method.isIdempotent() and
+        client.state.response_stage != .body and client.state.response_stage != .body_chunk)
+    {
         client.allow_retry = false;
         // we need to retry the request, clean up the response message buffer and start again
         client.state.response_message_buffer.deinit();

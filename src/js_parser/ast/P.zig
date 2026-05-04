@@ -4939,6 +4939,236 @@ pub fn NewParser_(
             stmts.append(closure) catch unreachable;
         }
 
+        /// Rewrite each `accessor x = ...` property into a `#_accessor_storage_N`
+        /// private field plus a `get x()` / `set x(v)` pair. JSC does not parse
+        /// the `accessor` keyword, so this runs regardless of decorator mode.
+        /// `ts_decorators` carry over to the synthesized getter.
+        ///
+        /// Runs POST-visit, so the synthesized `G.Fn`s skip scope setup and go
+        /// straight to the printer.
+        ///
+        /// For computed keys, the getter/setter's `PropertyName` would each
+        /// evaluate `expr` independently. To preserve single-evaluation, we
+        /// hoist `var _tmp;` into `prefix_stmts` and rewrite the pair as
+        /// `get [(_tmp = expr())]()` / `set [_tmp](v)`. If `prefix_stmts` is
+        /// null (class expression, no statement sink) we fall back to reusing
+        /// `prop.key` on both members — a double-eval edge case.
+        pub fn rewriteAutoAccessorProperties(
+            p: *P,
+            class: *G.Class,
+            prefix_stmts: ?*ListManaged(Stmt),
+        ) void {
+            // One pass: count auto_accessors + bump `storage_counter` past any
+            // user-declared `#_accessor_storage_N` to avoid collisions.
+            const storage_prefix = "#_accessor_storage_";
+            var auto_accessor_count: usize = 0;
+            var storage_counter: u64 = 0;
+            var key_counter: u64 = 0;
+            for (class.properties) |existing| {
+                if (existing.kind == .auto_accessor) auto_accessor_count += 1;
+                if (existing.key) |k| if (k.data == .e_private_identifier) {
+                    const name = p.symbols.items[k.data.e_private_identifier.ref.innerIndex()].original_name;
+                    if (bun.strings.hasPrefixComptime(name, storage_prefix)) {
+                        if (std.fmt.parseInt(u64, name[storage_prefix.len..], 10)) |n| {
+                            if (n < std.math.maxInt(u64) and n + 1 > storage_counter) storage_counter = n + 1;
+                        } else |_| {}
+                    }
+                };
+            }
+            if (auto_accessor_count == 0) return;
+
+            // Each auto_accessor expands into 3 members (storage + getter + setter),
+            // so the rewritten list needs `len + 2 * auto_accessor_count` slots.
+            var rewritten = bun.handleOom(ListManaged(Property).initCapacity(
+                p.allocator,
+                class.properties.len + 2 * auto_accessor_count,
+            ));
+
+            for (class.properties) |prop| {
+                if (prop.kind != .auto_accessor) {
+                    bun.handleOom(rewritten.append(prop));
+                    continue;
+                }
+
+                const prop_loc = if (prop.key) |k| k.loc else logger.Loc.Empty;
+
+                const storage_n = storage_counter;
+                storage_counter += 1;
+                const storage_name = bun.handleOom(std.fmt.allocPrint(
+                    p.allocator,
+                    "#_accessor_storage_{d}",
+                    .{storage_n},
+                ));
+
+                const storage_kind: Symbol.Kind = if (prop.flags.contains(.is_static))
+                    .private_static_field
+                else
+                    .private_field;
+                const storage_ref = bun.handleOom(p.newSymbol(storage_kind, storage_name));
+                bun.handleOom(p.current_scope.generated.append(p.allocator, storage_ref));
+
+                // For computed keys, emit an assignment-as-key so the user
+                // expression runs exactly once, inside the class body in
+                // class-element order (see doc comment above).
+                var getter_key = prop.key;
+                var setter_key = prop.key;
+                if (prop.flags.contains(.is_computed)) {
+                    if (prefix_stmts) |ps| {
+                        if (prop.key) |k| {
+                            // Walk up to the nearest hoisting scope — the
+                            // `var` declaration lives there.
+                            var hoist_scope = p.current_scope;
+                            while (!hoist_scope.kindStopsHoisting()) {
+                                hoist_scope = hoist_scope.parent.?;
+                            }
+
+                            // Bump key_counter past any existing
+                            // `__bun_accessor_key_N$` in the hoisting scope
+                            // (sibling classes, re-entry) so the counter
+                            // doesn't reset to 0 and duplicate their temp.
+                            const tmp_prefix = "__bun_accessor_key_";
+                            for (hoist_scope.generated.slice()) |existing_ref| {
+                                const existing_name = p.symbols.items[existing_ref.innerIndex()].original_name;
+                                if (bun.strings.hasPrefixComptime(existing_name, tmp_prefix) and
+                                    bun.strings.hasSuffixComptime(existing_name, "$"))
+                                {
+                                    const rest = existing_name[tmp_prefix.len .. existing_name.len - 1];
+                                    if (std.fmt.parseInt(u64, rest, 10)) |n| {
+                                        if (n < std.math.maxInt(u64) and n + 1 > key_counter) key_counter = n + 1;
+                                    } else |_| {}
+                                }
+                            }
+                            const tmp_name = brk: {
+                                var n: u64 = key_counter;
+                                while (true) : (n += 1) {
+                                    const candidate = bun.handleOom(std.fmt.allocPrint(
+                                        p.allocator,
+                                        "__bun_accessor_key_{d}$",
+                                        .{n},
+                                    ));
+                                    if (!hoist_scope.members.contains(candidate)) {
+                                        key_counter = n + 1;
+                                        break :brk candidate;
+                                    }
+                                }
+                            };
+                            const tmp_ref = bun.handleOom(p.newSymbol(.other, tmp_name));
+                            bun.handleOom(hoist_scope.generated.append(p.allocator, tmp_ref));
+                            bun.handleOom(p.declared_symbols.append(p.allocator, .{
+                                .ref = tmp_ref,
+                                .is_top_level = hoist_scope == p.module_scope,
+                            }));
+
+                            // Hoist `var __bun_accessor_key_N$;` (no init);
+                            // the assignment fires inside the getter key below.
+                            const decls = bun.handleOom(p.allocator.alloc(G.Decl, 1));
+                            decls[0] = .{
+                                .binding = p.b(B.Identifier{ .ref = tmp_ref }, k.loc),
+                            };
+                            bun.handleOom(ps.append(p.s(
+                                S.Local{ .kind = .k_var, .decls = G.Decl.List.fromOwnedSlice(decls) },
+                                k.loc,
+                            )));
+
+                            // Getter key `(_tmp = expr())`; setter key `_tmp`.
+                            p.recordUsage(tmp_ref);
+                            getter_key = Expr.assign(
+                                p.newExpr(E.Identifier{ .ref = tmp_ref }, k.loc),
+                                k,
+                            );
+                            p.recordUsage(tmp_ref);
+                            setter_key = p.newExpr(E.Identifier{ .ref = tmp_ref }, k.loc);
+                        }
+                    }
+                }
+
+                // `#storage` private field with the original initializer.
+                var storage_flags = prop.flags;
+                storage_flags.remove(.is_computed);
+                bun.handleOom(rewritten.append(.{
+                    .kind = .normal,
+                    .flags = storage_flags,
+                    .key = p.newExpr(E.PrivateIdentifier{ .ref = storage_ref }, prop_loc),
+                    .initializer = prop.initializer,
+                }));
+
+                // Static accessors dereference through the class binding
+                // (`Counter.#storage`) — `this.#storage` would trip the brand
+                // check when a subclass accesses the field. Anonymous class
+                // expressions have no name binding, so fall back to `this`.
+                const static_class_ref: ?Ref = if (prop.flags.contains(.is_static)) brk: {
+                    if (class.class_name) |cn| if (cn.ref) |r| break :brk r;
+                    break :brk null;
+                } else null;
+                const fieldTarget = struct {
+                    fn make(pp: *P, static_ref: ?Ref, loc: logger.Loc) Expr {
+                        if (static_ref) |r| {
+                            pp.recordUsage(r);
+                            return pp.newExpr(E.Identifier{ .ref = r }, loc);
+                        }
+                        return pp.newExpr(E.This{}, loc);
+                    }
+                }.make;
+
+                // Getter: `get <key>() { return <target>.#storage; }`
+                const get_body_stmts = bun.handleOom(p.allocator.alloc(Stmt, 1));
+                get_body_stmts[0] = p.s(S.Return{ .value = p.newExpr(E.Index{
+                    .target = fieldTarget(p, static_class_ref, prop_loc),
+                    .index = p.newExpr(E.PrivateIdentifier{ .ref = storage_ref }, prop_loc),
+                }, prop_loc) }, prop_loc);
+                const get_fn_expr = p.newExpr(E.Function{
+                    .func = G.Fn{
+                        .body = .{ .loc = prop_loc, .stmts = get_body_stmts },
+                        // Copied so `design:type` metadata sees the original
+                        // `accessor x: T` annotation.
+                        .return_ts_metadata = prop.ts_metadata,
+                    },
+                }, prop_loc);
+                var method_flags = prop.flags;
+                method_flags.insert(.is_method);
+                // Tag so the decorator-metadata emitter knows this came from
+                // an `accessor` field and should emit only `design:type`
+                // (matching tsc's PropertyDeclaration behavior), not the
+                // `design:paramtypes = []` it would emit for a real getter.
+                method_flags.insert(.is_auto_accessor_rewrite);
+                bun.handleOom(rewritten.append(.{
+                    .kind = .get,
+                    .flags = method_flags,
+                    .key = getter_key,
+                    .value = get_fn_expr,
+                    .ts_decorators = prop.ts_decorators,
+                    .ts_metadata = prop.ts_metadata,
+                }));
+
+                // Setter: `set <key>(v) { <target>.#storage = v; }`
+                const setter_param_ref = bun.handleOom(p.newSymbol(.other, "v"));
+                bun.handleOom(p.current_scope.generated.append(p.allocator, setter_param_ref));
+                const setter_args = bun.handleOom(p.allocator.alloc(G.Arg, 1));
+                setter_args[0] = .{ .binding = p.b(B.Identifier{ .ref = setter_param_ref }, prop_loc) };
+                const set_body_stmts = bun.handleOom(p.allocator.alloc(Stmt, 1));
+                p.recordUsage(setter_param_ref);
+                set_body_stmts[0] = Stmt.assign(
+                    p.newExpr(E.Index{
+                        .target = fieldTarget(p, static_class_ref, prop_loc),
+                        .index = p.newExpr(E.PrivateIdentifier{ .ref = storage_ref }, prop_loc),
+                    }, prop_loc),
+                    p.newExpr(E.Identifier{ .ref = setter_param_ref }, prop_loc),
+                );
+                const set_fn_expr = p.newExpr(E.Function{ .func = G.Fn{
+                    .args = setter_args,
+                    .body = .{ .loc = prop_loc, .stmts = set_body_stmts },
+                } }, prop_loc);
+                bun.handleOom(rewritten.append(.{
+                    .kind = .set,
+                    .flags = method_flags,
+                    .key = setter_key,
+                    .value = set_fn_expr,
+                }));
+            }
+
+            class.properties = rewritten.items;
+        }
+
         pub fn lowerClass(
             noalias p: *P,
             stmtorexpr: js_ast.StmtOrExpr,
@@ -4950,11 +5180,22 @@ pub fn NewParser_(
                         return p.lowerStandardDecoratorsStmt(stmt);
                     }
 
+                    // Lower `accessor` fields (JSC doesn't parse the keyword).
+                    // `accessor_prefix_stmts` collects hoisted `var`s for
+                    // computed keys; emitted before the class below.
+                    var accessor_prefix_stmts = ListManaged(Stmt).init(p.allocator);
+                    p.rewriteAutoAccessorProperties(&stmt.data.s_class.class, &accessor_prefix_stmts);
+
                     if (comptime !is_typescript_enabled) {
                         if (!stmt.data.s_class.class.has_decorators) {
-                            var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
-                            stmts[0] = stmt;
-                            return stmts;
+                            if (accessor_prefix_stmts.items.len == 0) {
+                                var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                                stmts[0] = stmt;
+                                return stmts;
+                            }
+                            // Emit hoisted computed-key var decls before the class.
+                            bun.handleOom(accessor_prefix_stmts.append(stmt));
+                            return accessor_prefix_stmts.items;
                         }
                     }
                     var class = &stmt.data.s_class.class;
@@ -5000,11 +5241,38 @@ pub fn NewParser_(
                         // TODO: prop.kind == .declare and prop.value == null
 
                         if (prop.ts_decorators.len > 0) {
-                            const descriptor_key = prop.key.?;
+                            // `rewriteAutoAccessorProperties` synthesizes getter
+                            // keys as `(__bun_accessor_key_N$ = expr)` so the
+                            // user expression runs exactly once. The decorator
+                            // descriptor must reference just the temp, not the
+                            // whole assignment, or `__legacyDecorateClassTS`
+                            // would re-run `expr()` at runtime. Private
+                            // identifiers are also unprintable as expressions,
+                            // so they're passed as a string matching TS output.
+                            const descriptor_key = brk: {
+                                const k = prop.key.?;
+                                if (k.data == .e_private_identifier) {
+                                    const name = p.symbols.items[k.data.e_private_identifier.ref.innerIndex()].original_name;
+                                    break :brk p.newExpr(E.String{ .data = name }, k.loc);
+                                }
+                                if (k.data == .e_binary and k.data.e_binary.op == .bin_assign and
+                                    k.data.e_binary.left.data == .e_identifier)
+                                {
+                                    const lhs_ref = k.data.e_binary.left.data.e_identifier.ref;
+                                    const lhs_name = p.symbols.items[lhs_ref.innerIndex()].original_name;
+                                    if (bun.strings.hasPrefixComptime(lhs_name, "__bun_accessor_key_") and
+                                        bun.strings.hasSuffixComptime(lhs_name, "$"))
+                                    {
+                                        p.recordUsage(lhs_ref);
+                                        break :brk k.data.e_binary.left;
+                                    }
+                                }
+                                break :brk k;
+                            };
                             const loc = descriptor_key.loc;
 
-                            // TODO: when we have the `accessor` modifier, add `and !prop.flags.contains(.has_accessor_modifier)` to
-                            // the if statement.
+                            // Auto-accessors are rewritten into get/set pairs
+                            // before this loop, so `is_method` covers them.
                             const descriptor_kind: Expr = if (!prop.flags.contains(.is_method))
                                 p.newExpr(E.Undefined{}, loc)
                             else
@@ -5058,6 +5326,9 @@ pub fn NewParser_(
                                     },
                                     .get => if (prop.flags.contains(.is_method)) {
                                         // typescript sets design:type to the return value & design:paramtypes to [].
+                                        // For `accessor` fields rewritten into a getter+setter pair, tsc treats
+                                        // the original as a PropertyDeclaration and emits only `design:type`, so
+                                        // skip the `design:paramtypes = []` emission in that case.
                                         if (prop.value) |prop_value| {
                                             {
                                                 var args = p.allocator.alloc(Expr, 2) catch unreachable;
@@ -5065,7 +5336,7 @@ pub fn NewParser_(
                                                 args[1] = p.serializeMetadata(prop_value.data.e_function.func.return_ts_metadata) catch unreachable;
                                                 array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
                                             }
-                                            {
+                                            if (!prop.flags.contains(.is_auto_accessor_rewrite)) {
                                                 var args = p.allocator.alloc(Expr, 2) catch unreachable;
                                                 args[0] = p.newExpr(E.String{ .data = "design:paramtypes" }, logger.Loc.Empty);
                                                 args[1] = p.newExpr(E.Array{ .items = ExprNodeList.empty }, logger.Loc.Empty);
@@ -5100,7 +5371,8 @@ pub fn NewParser_(
                                             }
                                         }
                                     },
-                                    .spread, .declare, .auto_accessor => {}, // not allowed in a class (auto_accessor is standard decorators only)
+                                    // auto_accessor is rewritten to .get/.set before this loop.
+                                    .spread, .declare, .auto_accessor => {},
                                     .class_static_block => {}, // not allowed to decorate this
                                 }
                             }
@@ -5212,9 +5484,11 @@ pub fn NewParser_(
                         // https://github.com/evanw/esbuild/blob/e9413cc4f7ab87263ea244a999c6fa1f1e34dc65/internal/js_parser/js_parser_lower.go#L2742
                     }
 
-                    var stmts_count: usize = 1 + static_members.items.len + instance_decorators.items.len + static_decorators.items.len;
+                    var stmts_count: usize = 1 + accessor_prefix_stmts.items.len + static_members.items.len + instance_decorators.items.len + static_decorators.items.len;
                     if (class.ts_decorators.len > 0) stmts_count += 1;
                     var stmts = ListManaged(Stmt).initCapacity(p.allocator, stmts_count) catch unreachable;
+                    // Hoisted computed-key `var`s come before the class.
+                    stmts.appendSliceAssumeCapacity(accessor_prefix_stmts.items);
                     stmts.appendAssumeCapacity(stmt);
                     stmts.appendSliceAssumeCapacity(static_members.items);
                     stmts.appendSliceAssumeCapacity(instance_decorators.items);

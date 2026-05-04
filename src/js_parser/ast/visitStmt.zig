@@ -452,8 +452,30 @@ pub fn VisitStmt(
                                 data.default_name = createDefaultName(p, stmt.loc) catch unreachable;
                             }
 
-                            // We only inject a name into classes when there is a decorator
-                            if (class.class.has_decorators) {
+                            // Inject the default name into the class when a downstream
+                            // lowering will actually dereference `class.class_name`:
+                            //   - when it has decorators (existing behavior), or
+                            //   - when standard-decorator lowering will run and deref the
+                            //     name unconditionally (`lowerStandardDecoratorsStmt`), or
+                            //   - when it has a *static* `accessor` field, whose synthesized
+                            //     getter/setter dereferences through the class binding to
+                            //     avoid subclass brand-check failures.
+                            // Instance-only legacy `accessor` fields use `E.This{}` and
+                            // never read `class.class_name`, so leaving the class anonymous
+                            // preserves `.name === "default"` to match tsc.
+                            var needs_default_name = class.class.has_decorators;
+                            if (!needs_default_name) {
+                                for (class.class.properties) |prop| {
+                                    if (prop.kind == .auto_accessor and
+                                        (p.options.features.standard_decorators or
+                                            prop.flags.contains(.is_static)))
+                                    {
+                                        needs_default_name = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (needs_default_name) {
                                 if (class.class.class_name == null or
                                     class.class.class_name.?.ref == null)
                                 {

@@ -602,7 +602,11 @@ describe("resolving external URL specifiers with non-ASCII characters", () => {
 
   it("require with non-ASCII http specifier does not crash", async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `try { require("http://localhost/path?query=´5&foo=bar"); } catch (e) { console.log("caught", e.constructor.name); }`],
+      cmd: [
+        bunExe(),
+        "-e",
+        `try { require("http://localhost/path?query=´5&foo=bar"); } catch (e) { console.log("caught", e.constructor.name); }`,
+      ],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

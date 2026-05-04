@@ -12,6 +12,23 @@ const PNG_8x8 = Buffer.from(
   "base64",
 );
 
+// Fabricated PNG header for a nominally 2000×100 image. The renderer
+// only peeks the first 24 bytes (signature + IHDR length + "IHDR" +
+// width + height) to pick a scaling decision, so the rest of the file
+// doesn't need to be a valid PNG for these assertions.
+const PNG_WIDE_HEADER = Buffer.from([
+  // 8-byte PNG signature
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+  // 4-byte IHDR length (0x0000000D = 13)
+  0x00, 0x00, 0x00, 0x0d,
+  // 4-byte chunk type "IHDR"
+  0x49, 0x48, 0x44, 0x52,
+  // 4-byte width (0x000007D0 = 2000, big-endian)
+  0x00, 0x00, 0x07, 0xd0,
+  // 4-byte height (0x00000064 = 100, big-endian)
+  0x00, 0x00, 0x00, 0x64,
+]);
+
 // JFIF (JPEG) header — a 2-byte SOI + APP0 segment is all this test needs.
 // The bytes aren't a playable JPEG; the renderer only peeks the first 8.
 const JPEG_HEADER = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00]);
@@ -104,33 +121,53 @@ test("colors:false shows URL in plain parens after [img] marker", () => {
   expect(out).not.toContain("\x1b[");
 });
 
-test("Kitty APC includes c=<cols> to cap image width at the column budget", async () => {
-  // Render a local PNG with kittyGraphics:true + an explicit columns
-  // budget — the APC payload must advertise the column cap so big
-  // images get scaled down to fit the terminal.
-  using dir = tempDir("md-kitty-cols-", {});
-  const pngPath = join(String(dir), "pic.png");
+test("Kitty APC for a small PNG omits c= so Kitty renders at native size", async () => {
+  // Per the Kitty Graphics Protocol spec `c=<cols>` is the EXACT number
+  // of cells to display over, so emitting it for a small icon would
+  // upscale it to fill the column budget. Only emit `c=` when the
+  // image is guaranteed too wide for native rendering.
+  using dir = tempDir("md-kitty-small-", {});
+  const pngPath = join(String(dir), "icon.png");
   writeFileSync(pngPath, PNG_8x8);
 
-  const out = Bun.markdown.ansi(`![](./pic.png)\n`, {
+  const out = Bun.markdown.ansi(`![](./icon.png)\n`, {
     colors: true,
     kittyGraphics: true,
     columns: 40,
-    // Pre-existing file-lookup arg: tell the renderer where to resolve
-    // relative paths. Without this, ./pic.png resolves against the cwd
-    // and the file isn't found.
     cwd: String(dir),
   });
-  // APC opener must include the column cap.
+  // APC opener present, but no `c=` field — the 8px-wide PNG fits
+  // comfortably at native size in a 40-column terminal.
+  expect(out).toContain("\x1b_Ga=T,t=f,f=100,q=2;");
+  expect(out).not.toMatch(/\x1b_Ga=T,t=f,f=100,q=2,c=/);
+});
+
+test("Kitty APC for a wide PNG emits c=<cols> to cap the display width", async () => {
+  // A nominally 2000px-wide PNG — at ASSUMED_CELL_PX=16, the widest
+  // reasonable cell, this is 2000 > 40*16=640, so it would overflow
+  // at native size and Kitty needs a scaling hint.
+  using dir = tempDir("md-kitty-wide-", {});
+  const pngPath = join(String(dir), "wide.png");
+  writeFileSync(pngPath, PNG_WIDE_HEADER);
+
+  const out = Bun.markdown.ansi(`![](./wide.png)\n`, {
+    colors: true,
+    kittyGraphics: true,
+    columns: 40,
+    cwd: String(dir),
+  });
   expect(out).toContain("\x1b_Ga=T,t=f,f=100,q=2,c=40;");
 });
 
 test("Kitty APC omits c= when columns is 0 (wrapping disabled)", async () => {
+  // With wrapping disabled the renderer hands Kitty the image at
+  // native size regardless of pixel width — the user explicitly opted
+  // out of width management.
   using dir = tempDir("md-kitty-nocols-", {});
-  const pngPath = join(String(dir), "pic.png");
-  writeFileSync(pngPath, PNG_8x8);
+  const pngPath = join(String(dir), "wide.png");
+  writeFileSync(pngPath, PNG_WIDE_HEADER);
 
-  const out = Bun.markdown.ansi(`![](./pic.png)\n`, {
+  const out = Bun.markdown.ansi(`![](./wide.png)\n`, {
     colors: true,
     kittyGraphics: true,
     columns: 0,
@@ -141,15 +178,16 @@ test("Kitty APC omits c= when columns is 0 (wrapping disabled)", async () => {
   expect(out).not.toMatch(/\x1b_Ga=T,t=f,f=100,q=2,c=/);
 });
 
-test("Kitty APC for data:image/png payload also carries c=<cols>", () => {
+test("Kitty APC for a small data:image/png payload also skips c=", () => {
+  // Same scaling rule applies to the `t=d` direct-transmit path.
   const dataUrl = "data:image/png;base64," + PNG_8x8.toString("base64");
   const out = Bun.markdown.ansi(`![](${dataUrl})\n`, {
     colors: true,
     kittyGraphics: true,
     columns: 50,
   });
-  // t=d direct-transmit path also includes the column cap.
-  expect(out).toContain("\x1b_Ga=T,t=d,f=100,q=2,c=50;");
+  expect(out).toContain("\x1b_Ga=T,t=d,f=100,q=2;");
+  expect(out).not.toMatch(/\x1b_Ga=T,t=d,f=100,q=2,c=/);
 });
 
 test("Kitty APC path is taken for DATA:image/PNG;BASE64 (case-insensitive MIME)", () => {
@@ -163,7 +201,8 @@ test("Kitty APC path is taken for DATA:image/PNG;BASE64 (case-insensitive MIME)"
     kittyGraphics: true,
     columns: 50,
   });
-  expect(out).toContain("\x1b_Ga=T,t=d,f=100,q=2,c=50;");
+  // APC was taken (would otherwise be absent from alt-text fallback).
+  expect(out).toContain("\x1b_Ga=T,t=d,f=100,q=2;");
 });
 
 test("non-PNG file does NOT get sent to Kitty — falls through to URL label", async () => {
@@ -233,14 +272,15 @@ test("data:image/png;base64, with empty payload falls back instead of malformed 
   expect(out).toContain("oops");
 });
 
-test("inline image after text caps Kitty c= to the remaining line width", async () => {
+test("inline wide image after text caps Kitty c= to the remaining line width", async () => {
   // Paragraph like `prefix ![](./img.png)` puts the image mid-line, so the
   // Kitty cap must be (columns - visible prefix width), not (columns -
   // block indent) or the image overflows to the right of the terminal.
+  // Wide fabricated PNG so the cap actually fires.
   using dir = tempDir("md-kitty-inline-", {});
-  writeFileSync(join(String(dir), "pic.png"), PNG_8x8);
+  writeFileSync(join(String(dir), "wide.png"), PNG_WIDE_HEADER);
 
-  const out = Bun.markdown.ansi("Check out ![](./pic.png) here.\n", {
+  const out = Bun.markdown.ansi("Check out ![](./wide.png) here.\n", {
     colors: true,
     kittyGraphics: true,
     columns: 40,
@@ -248,7 +288,7 @@ test("inline image after text caps Kitty c= to the remaining line width", async 
   });
   // "Check out " is 10 visible columns, so the remaining budget is 30.
   expect(out).toContain("\x1b_Ga=T,t=f,f=100,q=2,c=30;");
-  // And the original full-width cap MUST NOT appear — it'd overflow.
+  // And the full-width cap MUST NOT appear — it'd overflow.
   expect(out).not.toContain("\x1b_Ga=T,t=f,f=100,q=2,c=40;");
 });
 

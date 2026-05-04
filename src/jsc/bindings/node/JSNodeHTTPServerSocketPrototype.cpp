@@ -10,11 +10,8 @@
 extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
-#if OS(WINDOWS)
-extern "C" uintptr_t us_socket_get_fd(void* socket);
-#else
-extern "C" int us_socket_get_fd(void* socket);
-#endif
+// us_socket_get_fd is declared in <libusockets.h>, transitively included via
+// JSNodeHTTPServerSocket.h / the uSockets headers.
 
 namespace Bun {
 
@@ -336,7 +333,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse, (JSC::JSGlobalObj
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterFd, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))
 {
-    auto* thisObject = jsCast<JSNodeHTTPServerSocket*>(JSC::JSValue::decode(thisValue));
+    auto* thisObject = uncheckedDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
     us_socket_t* socket = thisObject->socket;
     if (!socket || thisObject->isClosed()) {
         return JSValue::encode(JSC::jsNumber(-1));

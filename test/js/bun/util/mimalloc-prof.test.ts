@@ -36,20 +36,26 @@ describe("Bun.unsafe.mimallocProf", () => {
   });
 
   test("reset clears samples", () => {
+    // Baseline: profile with samples
     prof.start(1024);
     for (let i = 0; i < 1000; i++) Bun.inspect({ i, s: longB });
     const pb0 = prof.stop();
+    // Same workload, but reset() *after* allocating and *before* stop():
+    // start() resets internally, so to isolate reset() we must give it
+    // something to clear that start() didn't already clear.
     prof.start(1024);
+    for (let i = 0; i < 1000; i++) Bun.inspect({ i, s: longB });
     prof.reset();
     const pb1 = prof.stop();
-    // pb1 has no samples (only headers/mappings/strings), pb0 has ~hundreds
+    // pb1 has only headers/mappings/strings; pb0 has ~hundreds of samples
     expect(pb1.length).toBeGreaterThan(0);
     expect(pb1.length).toBeLessThan(pb0.length / 2);
   });
 
   test("start with default rate", () => {
     prof.start(); // default 512 KiB
-    Buffer.alloc(1024 * 1024);
+    // mimalloc-backed allocations (Buffer.alloc would go to JSC's Gigacage and not be sampled)
+    for (let i = 0; i < 200; i++) Bun.inspect({ i, s: longB });
     const pb = prof.stop();
     expect(pb.length).toBeGreaterThan(0);
   });

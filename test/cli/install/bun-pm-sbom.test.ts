@@ -28,7 +28,12 @@ async function sbom(cwd: string, args: string[] = []) {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds emit `Output.debugWarn` noise (e.g. "WorkspaceMap.insert:
+  // key ... does not exist" when PackageManager.init() re-scans workspaces
+  // from a subdirectory). It's not gated on BUN_DEBUG_QUIET_LOGS, so strip
+  // it here the same way `stderrForInstall` strips slow-filesystem warnings.
+  const stderr = rawStderr.replace(/^debug warn:.*\n?/gm, "");
   return { stdout, stderr, exitCode };
 }
 

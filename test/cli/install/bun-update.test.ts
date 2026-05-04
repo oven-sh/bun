@@ -1,5 +1,5 @@
 import { file, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
 import { access, exists, mkdir, readFile, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, toBeValidBin, toHaveBins } from "harness";
 import { join } from "path";
@@ -15,7 +15,12 @@ import {
   setHandler,
 } from "./dummy.registry.js";
 
-beforeAll(dummyBeforeAll);
+beforeAll(() => {
+  // ASAN + slow CI filesystems can push individual install spawns past the
+  // default 5s timeout. Match the convention other install test files use.
+  setDefaultTimeout(1000 * 60 * 5);
+  return dummyBeforeAll();
+});
 afterAll(dummyAfterAll);
 beforeEach(async () => {
   await dummyBeforeEach();

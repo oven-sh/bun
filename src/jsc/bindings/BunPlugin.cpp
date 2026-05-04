@@ -698,16 +698,20 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         }
     }
 
-    // If the module was already required (CJS) but not yet imported (ESM),
-    // snapshot the CJS exports object so the factory still sees the real
-    // implementation as its first argument.
+    // If the module was required (CJS), prefer the CJS exports as the
+    // factory's `original` argument — even when an ESM namespace also exists.
+    // For a callable CJS export (`module.exports = function(){}`) the ESM
+    // namespace is a wrapper object (`{ default: fn, length, name, prototype }`),
+    // which is not what `original()` / `new original()` should be operating
+    // against. `require()` returns the bare function, and so must the snapshot
+    // passed to the factory.
     JSValue entryValue = globalObject->requireMap()->get(globalObject, specifierString);
     RETURN_IF_EXCEPTION(scope, {});
     Bun::JSCommonJSModule* cjsModuleObject = nullptr;
     if (entryValue) {
         removeFromCJS = true;
         cjsModuleObject = dynamicDowncast<Bun::JSCommonJSModule>(entryValue);
-        if (cjsModuleObject && !originalSnapshot) {
+        if (cjsModuleObject) {
             // exportsObject() is a potentially-throwing JSObject::get — check
             // before declaring a nested ThrowScope inside buildOriginalSnapshot.
             JSValue cjsExports = cjsModuleObject->exportsObject();

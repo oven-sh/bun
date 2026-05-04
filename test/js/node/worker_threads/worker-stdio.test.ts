@@ -135,4 +135,52 @@ describe("worker stdio", () => {
     expect(JSON.parse(stdout)).toEqual({ code: 0, data: "hello world" });
     expect(exitCode).toBe(0);
   }, 30_000);
+
+  // Regression for the nested-worker teardown race the stdio implementation
+  // exposed: the Worker constructor now touches process.stdout in the middle
+  // worker (to pipe the inner worker's stdout through), which in practice
+  // leaves enough live objects that teardownJSCVM's final GC can no longer
+  // collect the globalObject. Before the fix, ~GlobalObject was the only
+  // place that removed the ScriptExecutionContext from the global map, so
+  // the middle context stayed registered after vm.deinit() set
+  // has_terminated — and the inner worker's dispatchExit then tripped the
+  // "enqueueTaskConcurrent: VM has terminated" assert (debug/ASAN builds
+  // only). The assert is fatal to the whole process, so run each attempt in
+  // its own subprocess and loop a few times since the original race was
+  // timing-sensitive on release-asan.
+  test("nested worker whose middle layer touches process.stdout shuts down cleanly", async () => {
+    using dir = tempDir("worker-stdio-nested", {
+      "outer.js": `
+        const { Worker } = require("worker_threads");
+        const w = new Worker(\`
+          const { Worker } = require("worker_threads");
+          // Touching process.stdout (either explicitly here, or implicitly
+          // via the Worker constructor's pipe-to-parent-stdio path) lazily
+          // constructs the native sink and enough supporting objects that
+          // the final GC in teardownJSCVM can't collect the globalObject.
+          void process.stdout;
+          new Worker("throw new Error('uncaught')", { ${"ev" + "al"}: true });
+        \`, { ${"ev" + "al"}: true });
+        w.on("error", e => {
+          if (e && e.message === "uncaught") {
+            process.stdout.write("ok");
+          } else {
+            process.stdout.write("wrong-error:" + (e && e.message));
+          }
+        });
+      `,
+    });
+    for (let i = 0; i < 5; i++) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "outer.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("ok");
+      expect(exitCode).toBe(0);
+    }
+  }, 60_000);
 });

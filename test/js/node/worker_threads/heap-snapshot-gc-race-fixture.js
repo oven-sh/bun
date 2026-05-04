@@ -16,7 +16,13 @@
 
 import { Worker } from "node:worker_threads";
 
-const src = `import { parentPort } from "node:worker_threads"; parentPort.on("message", () => {});`;
+// The worker only needs to stay alive so the parent can snapshot it
+// repeatedly. Use the global event target rather than importing
+// node:worker_threads — loading that module inside the worker now sets up
+// port-backed stdio streams (and pulls in the node:stream module tree),
+// which inflates the worker's heap and makes each snapshot several times
+// slower without exercising anything relevant to the HandleSet race.
+const src = `self.addEventListener("message", () => {});`;
 
 async function makeWorker() {
   const w = new Worker(src, { eval: true });

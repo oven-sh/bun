@@ -1381,6 +1381,139 @@ const WriteFileOptions = struct {
     mode: ?bun.Mode = null,
 };
 
+/// Compresses an `Archive`'s store on the thread pool, then resumes the
+/// `Bun.write(dest, archive)` pipeline by handing a byte-backed source Blob
+/// to `writeFileWithSourceDestination`.
+///
+/// libdeflate gzip of a multi-megabyte tarball can cost dozens of
+/// milliseconds. Running it synchronously on the JS thread from
+/// `writeFileInternal` would stall the event loop before the async write
+/// even started, so we route the CPU work through `WorkPool` the same way
+/// `Archive.write` / `archive.bytes()` already do, then splice the
+/// destination's write promise onto the promise we returned to JS.
+const ArchiveCompressAndWriteTask = struct {
+    store: *Store,
+    level: u8,
+    destination_blob: Blob,
+    mkdirp_if_not_exists: ?bool,
+    mode: ?bun.Mode,
+    /// Strong ref to `options.extra_options` — kept alive across the async
+    /// boundary so the resumed `writeFileWithSourceDestination` call can
+    /// still reach it (S3 credentials).
+    extra_options: jsc.Strong.Optional,
+    promise: jsc.JSPromise.Strong,
+    vm: *jsc.VirtualMachine,
+    globalThis: *jsc.JSGlobalObject,
+    work_task: jsc.WorkPoolTask = .{ .callback = &runFromThreadPool },
+    ref: bun.Async.KeepAlive = .{},
+    result: Result = .pending,
+
+    const Result = union(enum) {
+        pending,
+        ok: []u8,
+        err: anyerror,
+    };
+
+    fn create(
+        globalThis: *jsc.JSGlobalObject,
+        store: *Store,
+        level: u8,
+        destination_blob: Blob,
+        options: WriteFileOptions,
+    ) error{OutOfMemory}!*ArchiveCompressAndWriteTask {
+        const vm = globalThis.bunVM();
+        const self = bun.new(ArchiveCompressAndWriteTask, .{
+            .store = store,
+            .level = level,
+            .destination_blob = destination_blob,
+            .mkdirp_if_not_exists = options.mkdirp_if_not_exists,
+            .mode = options.mode,
+            .extra_options = if (options.extra_options) |v| .create(v, globalThis) else .empty,
+            .promise = jsc.JSPromise.Strong.init(globalThis),
+            .vm = vm,
+            .globalThis = globalThis,
+        });
+        self.ref.ref(vm);
+        return self;
+    }
+
+    fn schedule(this: *ArchiveCompressAndWriteTask) void {
+        jsc.WorkPool.schedule(&this.work_task);
+    }
+
+    fn runFromThreadPool(task: *jsc.WorkPoolTask) void {
+        const this: *ArchiveCompressAndWriteTask = @fieldParentPtr("work_task", task);
+        if (Archive.compressGzip(this.store.sharedView(), this.level)) |bytes| {
+            this.result = .{ .ok = bytes };
+        } else |err| {
+            this.result = .{ .err = err };
+        }
+        this.vm.eventLoop().enqueueTaskConcurrent(
+            jsc.ConcurrentTask.create(jsc.ManagedTask.New(ArchiveCompressAndWriteTask, runFromJS).init(this)),
+        );
+    }
+
+    fn runFromJS(this: *ArchiveCompressAndWriteTask) bun.JSError!void {
+        this.ref.unref(this.vm);
+        const globalThis = this.globalThis;
+        const outer = this.promise.swap();
+
+        defer {
+            // `writeFileWithSourceDestination` takes a struct-copy of
+            // `destination_blob` (not ownership), so we detach here
+            // regardless of which branch ran.
+            this.destination_blob.detach();
+            this.extra_options.deinit();
+            this.promise.deinit();
+            this.store.deref();
+            bun.destroy(this);
+        }
+
+        if (this.vm.isShuttingDown()) return;
+
+        switch (this.result) {
+            .pending => unreachable,
+            .err => |err| {
+                try outer.rejectWithAsyncStack(
+                    globalThis,
+                    globalThis.createErrorInstance("Failed to gzip archive: {s}", .{@errorName(err)}),
+                );
+            },
+            .ok => |compressed| {
+                // Hand the compressed bytes over as a byte-backed source Blob.
+                var source_blob = Blob.createWithBytesAndAllocator(compressed, bun.default_allocator, globalThis, false);
+                defer source_blob.detach();
+
+                const inner = writeFileWithSourceDestination(
+                    globalThis,
+                    &source_blob,
+                    &this.destination_blob,
+                    .{
+                        .mkdirp_if_not_exists = this.mkdirp_if_not_exists,
+                        .extra_options = this.extra_options.get(),
+                        .mode = this.mode,
+                    },
+                ) catch |e| {
+                    try outer.reject(globalThis, globalThis.takeException(e));
+                    return;
+                };
+
+                // Forward the inner write promise's eventual state to the
+                // outer promise we handed back to the caller.
+                if (inner.asAnyPromise()) |inner_promise| {
+                    switch (inner_promise.unwrap(globalThis.vm(), .mark_handled)) {
+                        .pending => try outer.resolve(globalThis, inner),
+                        .fulfilled => |v| try outer.resolve(globalThis, v),
+                        .rejected => |v| try outer.reject(globalThis, v),
+                    }
+                } else {
+                    try outer.resolve(globalThis, inner);
+                }
+            },
+        }
+    }
+};
+
 /// ## Errors
 /// - If `path_or_blob` is a detached blob
 /// ## Panics
@@ -1663,13 +1796,23 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                     break :brk Blob.initWithStore(archive.store, globalThis);
                 },
                 .gzip => |opts| {
-                    // Compress the tarball bytes so the destination (local file,
-                    // Bun.file, or S3) receives the gzipped form that
-                    // `archive.bytes()` / `Bun.Archive.write` would produce.
-                    const compressed = Archive.compressGzip(archive.store.sharedView(), opts.level) catch |err| {
-                        return globalThis.throwError(err, "Failed to gzip archive");
-                    };
-                    break :brk Blob.createWithBytesAndAllocator(compressed, bun.default_allocator, globalThis, false);
+                    // Compress on the thread pool, then resume with a
+                    // byte-backed source Blob. Mirrors the path that
+                    // `archive.bytes()` / `Bun.Archive.write` already take,
+                    // so large archives don't stall the JS thread.
+                    archive.store.ref();
+                    errdefer archive.store.deref();
+                    const task = try ArchiveCompressAndWriteTask.create(
+                        globalThis,
+                        archive.store,
+                        opts.level,
+                        destination_blob,
+                        options,
+                    );
+                    // Task now owns destination_blob and the ref on archive.store.
+                    const promise_value = task.promise.value();
+                    task.schedule();
+                    return promise_value;
                 },
             }
         }

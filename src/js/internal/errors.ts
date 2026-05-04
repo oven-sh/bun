@@ -596,8 +596,10 @@ function formatList(array, type = "and") {
 const classRegExp = /^([A-Z][a-z0-9]*)+$/;
 const kTypes = ["string", "function", "number", "object", "Function", "Object", "boolean", "bigint", "symbol"];
 
-// Register the error codes tests rely on. More can be added as needed; this is
-// only reached under --expose-internals so it's not on any hot path.
+// Register the error codes --expose-internals tests rely on. Keep this list
+// minimal: this module is required by internal/streams/{destroy,pipeline,readable}
+// and so evaluates on first node:stream load in every process, not only under
+// the testing flag.
 E(
   "ERR_ACCESS_DENIED",
   function (msg, permission = "", resource = "") {

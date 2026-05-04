@@ -292,6 +292,41 @@ test("mock.module", async () => {
 });
 ```
 
+### Partial Stubs — Delegating to the Original Module
+
+To replace only some of a module's exports and forward the rest (or wrap the real implementation), accept the first argument to the factory. It's a detached shallow snapshot of the module's exports at the time `mock.module()` is called.
+
+```ts title="partial.test.ts" icon="/icons/typescript.svg"
+import { test, expect, mock } from "bun:test";
+import * as api from "./api";
+
+test("partial stub", async () => {
+  mock.module("./api", original => ({
+    ...original,
+    // Wrap the real `fetch` but leave everything else untouched.
+    fetch: (url: string) => `wrapped: ${original.fetch(url)}`,
+  }));
+
+  const stubbed = await import("./api");
+  expect(stubbed.fetch("/users")).toBe("wrapped: /users");
+});
+```
+
+Don't close over the module's live namespace inside the returned functions:
+
+```ts
+// ❌ Infinite recursion. `api.fetch` has been replaced by this arrow by the
+// time it runs, so it calls itself.
+mock.module("./api", () => ({
+  fetch: (url: string) => `wrapped: ${api.fetch(url)}`,
+}));
+
+// ✅ The factory argument is a snapshot, detached from the live namespace.
+mock.module("./api", original => ({
+  fetch: (url: string) => `wrapped: ${original.fetch(url)}`,
+}));
+```
+
 ### Hoisting & Preloading
 
 If you need to ensure a module is mocked before it's imported, you should use `--preload` to load your mocks before your tests run.

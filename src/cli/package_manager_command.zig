@@ -443,7 +443,7 @@ pub const PackageManagerCommand = struct {
             try PmWhyCommand.exec(ctx, pm, pm.options.positionals);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "sbom")) {
-            try PmSbomCommand.exec(ctx, pm);
+            try PmSbomCommand.exec(ctx, pm, cwd);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "pkg")) {
             try PmPkgCommand.exec(ctx, pm, pm.options.positionals, cwd);

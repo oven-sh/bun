@@ -16,7 +16,7 @@ pub const PmSbomCommand = struct {
         }
     };
 
-    pub fn exec(ctx: Command.Context, pm: *PackageManager) !void {
+    pub fn exec(ctx: Command.Context, pm: *PackageManager, original_cwd: []const u8) !void {
         const format: Format = if (pm.options.sbom_format) |f|
             Format.fromString(f) orelse {
                 Output.errGeneric("invalid --format value: '{s}'", .{f});
@@ -60,8 +60,13 @@ pub const PmSbomCommand = struct {
         const output = writer_allocating.written();
 
         if (outfile) |path| {
+            // `PackageManager.init()` chdirs to the workspace root when
+            // invoked from inside a workspace member, so resolve relative
+            // paths against the user's original invocation directory.
+            var abs_buf: bun.PathBuffer = undefined;
+            const abs_path = bun.path.joinAbsStringBuf(original_cwd, &abs_buf, &.{path}, .auto);
             var buf_z: bun.PathBuffer = undefined;
-            const path_z = bun.path.z(path, &buf_z);
+            const path_z = bun.path.z(abs_path, &buf_z);
             var os_buf: bun.OSPathBuffer = undefined;
             const os_path: bun.OSPathSliceZ = if (comptime bun.Environment.isWindows)
                 bun.strings.convertUTF8toUTF16InBufferZ(&os_buf, path_z)

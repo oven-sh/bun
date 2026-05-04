@@ -343,6 +343,14 @@ describe("bun pm sbom", () => {
     expect(bomA.components.map((c: any) => c["bom-ref"]).sort()).toEqual(
       bomRoot.components.map((c: any) => c["bom-ref"]).sort(),
     );
+
+    // A relative `-o` path should resolve against the invocation
+    // directory, not the monorepo root that PackageManager.init() chdirs to.
+    const relOut = await sbom(join(packageDir, "packages", "pkg-a"), ["-o", "out.cdx.json"]);
+    expect(relOut.stderr).toContain("Saved");
+    expect(relOut.exitCode).toBe(0);
+    expect(existsSync(join(packageDir, "packages", "pkg-a", "out.cdx.json"))).toBe(true);
+    expect(existsSync(join(packageDir, "out.cdx.json"))).toBe(false);
   });
 
   test("rejects unknown --format", async () => {

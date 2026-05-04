@@ -37,7 +37,6 @@ test.concurrent("BroadcastChannel custom inspect does not crash when node:util c
     try { fn.call(bc, 2, {}); } catch {}
     try { fn.call(bc, 2, {}); } catch {}
     process.stdout.write("done");
-    process.exit(0);
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", src],

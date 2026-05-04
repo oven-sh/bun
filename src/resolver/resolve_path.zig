@@ -525,7 +525,7 @@ pub fn relative(from: []const u8, to: []const u8) []const u8 {
 }
 
 pub fn relativeZ(from: []const u8, to: []const u8) [:0]const u8 {
-    return relativeBufZ(relative_to_common_path_buf(), from, to, .auto, true);
+    return relativeBufZ(relative_to_common_path_buf(), from, to);
 }
 
 pub fn relativeBufZ(buf: []u8, from: []const u8, to: []const u8) [:0]const u8 {

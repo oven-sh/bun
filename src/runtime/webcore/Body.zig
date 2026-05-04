@@ -764,7 +764,7 @@ pub const Value = union(Tag) {
                                 blob.content_type = mimeType.value;
                                 blob.content_type_allocated = allocated;
                                 blob.content_type_was_set = true;
-                                if (blob.store != null) {
+                                if (blob.store != null and !allocated) {
                                     blob.store.?.mime_type = mimeType;
                                 }
                             }
@@ -1440,7 +1440,7 @@ pub fn Mixin(comptime Type: type) type {
                         blob.content_type = mimeType.value;
                         blob.content_type_allocated = allocated;
                         blob.content_type_was_set = true;
-                        if (blob.store != null) {
+                        if (blob.store != null and !allocated) {
                             blob.store.?.mime_type = mimeType;
                         }
                     }

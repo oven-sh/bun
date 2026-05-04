@@ -308,6 +308,37 @@ test("dupeWithContentType does not alias the source's allocated content_type", a
   expect(exitCode).toBe(0);
 });
 
+test("Response#blob() slice().type doesn't read freed store.mime_type after GC", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      let slice;
+      async function makeSlice() {
+        const response = new Response("hi", { headers: { "content-type": "application/javascript" } });
+        const blob = await response.blob();
+        slice = blob.slice();
+      }
+      await makeSlice();
+      Bun.gc(true);
+      await Bun.sleep(1);
+      Bun.gc(true);
+      process.stdout.write(JSON.stringify(slice.type));
+    `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(["\"\"", "\"application/javascript\""]).toContain(stdout);
+  expect(exitCode).toBe(0);
+});
+
 test("dupe() preserves allocated content_type for Body clone", () => {
   // Body.Value.clone() goes through Blob.dupe() -> dupeWithContentType(false).
   // That path must deep-copy a heap-allocated content_type rather than drop

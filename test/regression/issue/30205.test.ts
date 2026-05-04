@@ -19,9 +19,9 @@
 
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 const napiAppDir = join(import.meta.dir, "..", "..", "napi", "napi-app");
 const addon = join(napiAppDir, "build", "Debug", "isolate_finalizer_addon.node");
@@ -68,40 +68,48 @@ describe("#30205", () => {
     return files;
   }
 
-  test.concurrent("--isolate: deferred napi finalizers from the previous global don't write to its dead cell", async () => {
-    using dir = tempDir("isolate-napi-uaf", makeFixtures(8));
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--isolate", "."],
-      env: { ...bunEnv, BUN_JSC_collectContinuously: "1" },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // On crash the summary line is never reached; assert on it (and the pass
-    // count) first so the diff is the actual crash output, not just "expected
-    // 0, got 134".
-    expect(stderr).toContain("8 pass");
-    expect(stderr).toContain("0 fail");
-    expect(stderr).toContain("Ran 8 tests across 8 files.");
-    expect(exitCode).toBe(0);
-  }, 120_000);
+  test.concurrent(
+    "--isolate: deferred napi finalizers from the previous global don't write to its dead cell",
+    async () => {
+      using dir = tempDir("isolate-napi-uaf", makeFixtures(8));
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--isolate", "."],
+        env: { ...bunEnv, BUN_JSC_collectContinuously: "1" },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // On crash the summary line is never reached; assert on it (and the pass
+      // count) first so the diff is the actual crash output, not just "expected
+      // 0, got 134".
+      expect(stderr).toContain("8 pass");
+      expect(stderr).toContain("0 fail");
+      expect(stderr).toContain("Ran 8 tests across 8 files.");
+      expect(exitCode).toBe(0);
+    },
+    120_000,
+  );
 
-  test.concurrent("--parallel: same scenario via the worker path", async () => {
-    using dir = tempDir("parallel-napi-uaf", makeFixtures(8));
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--parallel=2", "."],
-      env: { ...bunEnv, BUN_JSC_collectContinuously: "1", BUN_TEST_PARALLEL_SCALE_MS: "0" },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("8 pass");
-    expect(stderr).toContain("0 fail");
-    expect(stderr).toContain("Ran 8 tests across 8 files.");
-    expect(exitCode).toBe(0);
-  }, 120_000);
+  test.concurrent(
+    "--parallel: same scenario via the worker path",
+    async () => {
+      using dir = tempDir("parallel-napi-uaf", makeFixtures(8));
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--parallel=2", "."],
+        env: { ...bunEnv, BUN_JSC_collectContinuously: "1", BUN_TEST_PARALLEL_SCALE_MS: "0" },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("8 pass");
+      expect(stderr).toContain("0 fail");
+      expect(stderr).toContain("Ran 8 tests across 8 files.");
+      expect(exitCode).toBe(0);
+    },
+    120_000,
+  );
 
   // Bun's panic handler ends in @trap(), so a real worker panic surfaces
   // as a fatal signal (SIGILL/SIGTRAP). Previously the coordinator printed
@@ -114,27 +122,31 @@ describe("#30205", () => {
   // no process.kill() signals, and the panic-signal classification is
   // POSIX-specific anyway (Windows abort() surfaces as exit code 3 and
   // falls into the non-panic branch below).
-  test.skipIf(isWindows)("--parallel: worker killed by a fatal signal aborts the run instead of retrying", async () => {
-    using dir = tempDir("parallel-panic-no-retry", {
-      "ok.test.js": `import {test,expect} from "bun:test"; test("ok",()=>expect(1).toBe(1));`,
-      "boom.test.js": `import {test} from "bun:test"; test("boom",()=>process.kill(process.pid, "SIGABRT"));`,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--parallel=2", "."],
-      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // No "⟳ … retrying" line; instead the coordinator reports the crash,
-    // names the signal, and aborts remaining work.
-    expect(stderr).not.toContain("retrying");
-    expect(stderr).toContain("worker crashed: SIGABRT");
-    expect(stderr).toMatch(/a test worker process crashed with SIGABRT while running .*boom\.test\.js/);
-    expect(stderr).toContain("Aborting");
-    expect(exitCode).not.toBe(0);
-  }, 60_000);
+  test.skipIf(isWindows)(
+    "--parallel: worker killed by a fatal signal aborts the run instead of retrying",
+    async () => {
+      using dir = tempDir("parallel-panic-no-retry", {
+        "ok.test.js": `import {test,expect} from "bun:test"; test("ok",()=>expect(1).toBe(1));`,
+        "boom.test.js": `import {test} from "bun:test"; test("boom",()=>process.kill(process.pid, "SIGABRT"));`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--parallel=2", "."],
+        env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // No "⟳ … retrying" line; instead the coordinator reports the crash,
+      // names the signal, and aborts remaining work.
+      expect(stderr).not.toContain("retrying");
+      expect(stderr).toContain("worker crashed: SIGABRT");
+      expect(stderr).toMatch(/a test worker process crashed with SIGABRT while running .*boom\.test\.js/);
+      expect(stderr).toContain("Aborting");
+      expect(exitCode).not.toBe(0);
+    },
+    60_000,
+  );
 
   // process.exit() is a deliberate user action, not a Bun bug. The file is
   // marked failed (not retried) and the run continues so the other files'

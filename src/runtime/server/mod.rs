@@ -331,7 +331,7 @@ impl AnyRoute {
                 } else {
                     FrameworkRouter::Style::NextjsPages
                 };
-                let style_guard = scopeguard::guard(style, |mut s| s.deinit());
+                // errdefer style.deinit() — Style impls Drop; `?` drops it on the error path
 
                 if !strings::ends_with(path, b"/*") {
                     return global.throw_invalid_arguments(
@@ -341,7 +341,7 @@ impl AnyRoute {
 
                 init_ctx.framework_router_list.push(bake::Framework::FileSystemRouterType {
                     root: relative_root,
-                    style: scopeguard::ScopeGuard::into_inner(style_guard),
+                    style,
                     // trim the /*
                     prefix: if path.len() == 2 { b"/" } else { &path[0..path.len() - 2] },
                     // TODO: customizable framework option.
@@ -402,7 +402,8 @@ pub enum ServePluginsState {
         plugin: Box<JSBundler::Plugin>,
         promise: jsc::JSPromise::Strong,
         html_bundle_routes: Vec<*mut html_bundle::Route>,
-        // TODO(port): lifetime — borrowed from callback param, no cleanup
+        // TODO(port): LIFETIMES.tsv classifies this BORROW_PARAM → Option<&'a DevServer>;
+        // threading <'a> through ServePluginsState/ServePlugins deferred to Phase B.
         dev_server: Option<NonNull<DevServer>>,
     },
     Loaded(Box<JSBundler::Plugin>),
@@ -634,6 +635,7 @@ pub fn on_resolve_impl(_global: &JSGlobalObject, callframe: &CallFrame) -> JsRes
 
     let [plugins_result, plugins_js] = callframe.arguments_as_array::<2>();
     let plugins = plugins_js.as_promise_ptr::<ServePlugins>();
+    // SAFETY: `plugins` was Box::into_raw'd and ref()'d before .then(); deref pairs with that ref
     let _guard = scopeguard::guard((), |_| unsafe { (*plugins).deref_() });
     plugins_result.ensure_still_alive();
 
@@ -649,6 +651,7 @@ pub fn on_reject_impl(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
 
     let [error_js, plugin_js] = callframe.arguments_as_array::<2>();
     let plugins = plugin_js.as_promise_ptr::<ServePlugins>();
+    // SAFETY: `plugins` was Box::into_raw'd and ref()'d before .then(); deref pairs with that ref
     let _guard = scopeguard::guard((), |_| unsafe { (*plugins).deref_() });
     // SAFETY: pointer was passed via .then() above
     unsafe { &mut *plugins }.handle_on_reject(global, error_js);
@@ -752,11 +755,8 @@ pub struct UserRoute<const SSL: bool, const DEBUG: bool> {
     pub route: server_config::RouteDeclaration,
 }
 
-impl<const SSL: bool, const DEBUG: bool> Drop for UserRoute<SSL, DEBUG> {
-    fn drop(&mut self) {
-        self.route.deinit();
-    }
-}
+// PORT NOTE: Zig UserRoute.deinit() only freed `self.route`; RouteDeclaration impls Drop,
+// so an explicit `impl Drop for UserRoute` would double-free. Field drops automatically.
 
 pub enum CreateJsRequest { Yes, No, Bake }
 
@@ -850,7 +850,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return Ok(JSValue::js_number(0));
         }
 
-        // SAFETY: app is set when subscriberCount can be called
+        // SAFETY: self.app is Some and points to a live uws App for the lifetime of any JS-reachable Server
         Ok(JSValue::js_number(unsafe { &*self.app.unwrap() }.num_subscribers(topic.slice())))
     }
 
@@ -872,6 +872,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return Ok(JSValue::NULL);
         };
         SocketAddress::create_dto(
+            // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW per LIFETIMES.tsv)
             unsafe { &*self.global_this },
             info.ip,
             i32::try_from(info.port).unwrap(),
@@ -900,6 +901,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         if !seconds.is_number() {
+            // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
             return unsafe { &*self.global_this }.throw(format_args!("timeout() requires a number"));
         }
         let value = seconds.to::<c_uint>();
@@ -909,6 +911,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         } else if let Some(response) = arguments[0].as_::<NodeHTTPResponse>() {
             response.set_timeout((value % 255) as u8);
         } else {
+            // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
             return unsafe { &*self.global_this }
                 .throw_invalid_arguments(format_args!("timeout() requires a Request object"));
         }
@@ -976,8 +979,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // if 0, return 0
                 // else return number of bytes sent
                 (AnyWebSocket::publish_with_options(SSL, app, topic_slice.slice(), buffer.slice(), Opcode::Binary, compress) as i32)
-                    * (buffer.len() as u32 as u16 as u32 as i32), // @truncate(u31) then widen
-                // TODO(port): the Zig is `@intCast(@as(u31, @truncate(buffer.len)))` — use (buffer.len() as u32 & 0x7FFF_FFFF) as i32
+                    * ((buffer.len() as u32 & 0x7FFF_FFFF) as i32), // @intCast(@as(u31, @truncate(buffer.len)))
             ));
         }
 
@@ -1585,6 +1587,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let request = Request::new_(existing_request);
 
         debug_assert!(!self.config.on_request.is_empty()); // confirmed above
+        // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
         let global_this = unsafe { &*self.global_this };
         let response_value = match self.config.on_request.call(
             global_this,
@@ -1621,11 +1624,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if self.app.is_none() {
             return Ok(JSValue::UNDEFINED);
         }
+        // SAFETY: self.app checked Some above; FFI handle alive until App::destroy in deinit()
         unsafe { &*self.app.unwrap() }.close_idle_connections();
         Ok(JSValue::UNDEFINED)
     }
 
     pub fn stop_from_js(&mut self, abruptly: Option<JSValue>) -> JSValue {
+        // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
         let rc = self.get_all_closed_promise(unsafe { &*self.global_this });
 
         if self.has_listener() {
@@ -1657,10 +1662,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         if let Some(listener) = self.listener {
+            // SAFETY: listener is a live uws ListenSocket FFI handle until stop_listening() nulls it
             return JSValue::js_number(unsafe { &*listener }.get_local_port());
         }
         if Self::HAS_H3 {
             if let Some(h3l) = self.h3_listener {
+                // SAFETY: h3_listener is a live H3 ListenSocket FFI handle until stop_listening() nulls it
                 return JSValue::js_number(unsafe { &*h3l }.get_local_port());
             }
         }
@@ -1695,6 +1702,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let mut port: u16 = tcp.port;
 
                 if let Some(listener) = self.listener {
+                    // SAFETY: listener is a live uws ListenSocket FFI handle until stop_listening() nulls it
                     let listener = unsafe { &*listener };
                     port = u16::try_from(listener.get_local_port()).unwrap();
 
@@ -1710,10 +1718,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             return Ok(JSValue::NULL);
                         }
                     };
+                    // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
                     return Ok(addr.into_dto(unsafe { &*self.global_this }));
                 }
                 if Self::HAS_H3 {
                     if let Some(h3l) = self.h3_listener {
+                        // SAFETY: h3_listener is a live H3 ListenSocket FFI handle until stop_listening() nulls it
                         let h3l = unsafe { &*h3l };
                         port = u16::try_from(h3l.get_local_port()).unwrap();
                         let mut buf = [0u8; 64];
@@ -1728,6 +1738,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 return Ok(JSValue::NULL);
                             }
                         };
+                        // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
                         return Ok(addr.into_dto(unsafe { &*self.global_this }));
                     }
                 }
@@ -1756,9 +1767,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             server_config::Address::Tcp(tcp) => 'blk: {
                 let mut port: u16 = tcp.port;
                 if let Some(listener) = self.listener {
+                    // SAFETY: listener is a live uws ListenSocket FFI handle until stop_listening() nulls it
                     port = u16::try_from(unsafe { &*listener }.get_local_port()).unwrap();
                 } else if Self::HAS_H3 {
                     if let Some(h3l) = self.h3_listener {
+                        // SAFETY: h3_listener is a live H3 ListenSocket FFI handle until stop_listening() nulls it
                         port = u16::try_from(unsafe { &*h3l }.get_local_port()).unwrap();
                     }
                 }
@@ -1793,6 +1806,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         {
             if let Some(listener) = self.listener {
                 let mut buf = [0u8; 1024];
+                // SAFETY: listener is a live uws ListenSocket FFI handle until stop_listening() nulls it
                 if let Some(addr) = unsafe { &*listener }.socket().remote_address(&mut buf[..1024]) {
                     if !addr.is_empty() {
                         return BunString::create_utf8_for_js(global, addr);
@@ -2047,31 +2061,18 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // However, when the JS VM terminates, it hypothetically might not call stopListening
         this.notify_inspector_server_stopped();
 
-        this.all_closed_promise.deinit();
-        // user_routes Drop handles route.deinit()
-        this.user_routes.clear();
-
-        this.config.deinit();
-
-        this.on_clienterror.deinit();
+        // PORT NOTE: owned-field cleanup (all_closed_promise / user_routes / config /
+        // on_clienterror / h3_alt_svc / dev_server / plugins) is handled by the
+        // Box::from_raw drop below. Only FFI-destroy side effects remain explicit.
         if Self::HAS_H3 {
             if let Some(h3a) = this.h3_app.take() {
+                // SAFETY: FFI destroy; h3a is a live H3::App handle owned by this server
                 unsafe { uws::H3::App::destroy(h3a) };
             }
         }
-        if Self::HAS_H3 && !this.h3_alt_svc.as_bytes().is_empty() {
-            // Box<ZStr> drops
-        }
         if let Some(app) = this.app.take() {
+            // SAFETY: FFI destroy; app is a live uws App handle owned by this server
             unsafe { Self::App::destroy(app) };
-        }
-
-        if let Some(dev_server) = this.dev_server.take() {
-            drop(dev_server);
-        }
-
-        if let Some(plugins) = this.plugins.take() {
-            drop(plugins); // Rc deref
         }
 
         // SAFETY: this was Box::into_raw'd in init()
@@ -2144,6 +2145,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     fn on_listen_failed(&mut self) {
         httplog!("onListenFailed");
 
+        // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
         let global = unsafe { &*self.global_this };
 
         let mut error_instance = JSValue::ZERO;
@@ -2152,6 +2154,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if SSL {
             output_buf[0] = 0;
             let mut written: usize = 0;
+            // SAFETY: FFI call into BoringSSL; no preconditions
             let mut ssl_error = unsafe { boringssl::ERR_get_error() };
             while ssl_error != 0 && written < output_buf.len() {
                 if written > 0 {
@@ -2159,6 +2162,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     written += 1;
                 }
 
+                // SAFETY: FFI call into BoringSSL; ssl_error is a valid packed error code
                 if let Some(reason_ptr) = unsafe { boringssl::ERR_reason_error_string(ssl_error) } {
                     // SAFETY: BoringSSL returns a NUL-terminated static string
                     let reason = unsafe { core::ffi::CStr::from_ptr(reason_ptr) }.to_bytes();
@@ -2169,7 +2173,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     written += reason.len();
                 }
 
+                // SAFETY: FFI call into BoringSSL; ssl_error is a valid packed error code
                 if let Some(reason_ptr) = unsafe { boringssl::ERR_func_error_string(ssl_error) } {
+                    // SAFETY: BoringSSL returns a NUL-terminated static string
                     let reason = unsafe { core::ffi::CStr::from_ptr(reason_ptr) }.to_bytes();
                     if !reason.is_empty() {
                         output_buf[written..written + 5].copy_from_slice(b" via ");
@@ -2179,7 +2185,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
                 }
 
+                // SAFETY: FFI call into BoringSSL; ssl_error is a valid packed error code
                 if let Some(reason_ptr) = unsafe { boringssl::ERR_lib_error_string(ssl_error) } {
+                    // SAFETY: BoringSSL returns a NUL-terminated static string
                     let reason = unsafe { core::ffi::CStr::from_ptr(reason_ptr) }.to_bytes();
                     if !reason.is_empty() {
                         output_buf[written] = b' ';
@@ -2189,12 +2197,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
                 }
 
+                // SAFETY: FFI call into BoringSSL; no preconditions
                 ssl_error = unsafe { boringssl::ERR_get_error() };
             }
 
             if written > 0 {
                 let message = &output_buf[0..written];
                 error_instance = global.create_error_instance(format_args!("OpenSSL {}", BStr::new(message)));
+                // SAFETY: FFI call into BoringSSL; no preconditions
                 unsafe { boringssl::ERR_clear_error() };
             }
         }
@@ -2413,6 +2423,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         req.set_yield(false);
         resp.timeout(self.config.idle_timeout);
 
+        // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
         let global = unsafe { &*self.global_this };
         let this_object: JSValue = self.js_value.try_get().unwrap_or(JSValue::UNDEFINED);
         let vm = self.vm;
@@ -2422,6 +2433,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let _nhr_guard = scopeguard::guard((), |_| {
             if !is_async {
                 if let Some(node_response) = node_http_response {
+                    // SAFETY: node_response was returned by NodeHTTPServer__onRequest_* with a ref;
+                    // synchronous path drops that ref here (intrusive refcount)
                     unsafe { &*node_response }.deref_();
                 }
             }
@@ -2552,6 +2565,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         if let Some(node_response) = node_http_response {
+            // SAFETY: node_response is a live NodeHTTPResponse held by the ref taken above
             let node_response = unsafe { &mut *node_response };
             if !node_response.flags.upgraded && node_response.raw_response.is_some() {
                 let raw_response = node_response.raw_response.unwrap();
@@ -2572,6 +2586,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub fn set_using_custom_expect_handler(&mut self, value: bool) {
+        // SAFETY: FFI call; self.app is Some and points to a live uws App while server is reachable
         unsafe { NodeHTTP_setUsingCustomExpectHandler(SSL, self.app.unwrap() as *mut c_void, value) };
     }
 
@@ -2637,6 +2652,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         let server_request_list = Self::js_route_list_get_cached(server.js_value_assert_alive()).unwrap();
         let call_route = if Ctx::IS_H3 { Bun__ServerRouteList__callRouteH3 } else { Bun__ServerRouteList__callRoute };
+        // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
         let global = unsafe { &*server.global_this };
         let response_value = match jsc::from_js_host_call(global, || unsafe {
             call_route(
@@ -2721,6 +2737,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         debug_assert!(!self.config.on_request.is_empty());
 
+        // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
         let global = unsafe { &*self.global_this };
         let js_value = self.js_value_assert_alive();
         let response_value = match self.config.on_request.call(
@@ -2848,10 +2865,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             if http::Method::which(req.method()).unwrap_or(http::Method::OPTIONS).has_request_body() {
                 let len: usize = 'brk: {
                     if let Some(content_length) = req.header(b"content-length") {
-                        break 'brk core::str::from_utf8(content_length)
-                            .ok()
-                            .and_then(|s| s.parse::<usize>().ok())
-                            .unwrap_or(0);
+                        // Parse ASCII decimal directly off the byte slice — header bytes are not
+                        // guaranteed UTF-8, and PORTING.md forbids from_utf8 on network bytes.
+                        break 'brk bun_str::strings::parse_int::<usize>(content_length).unwrap_or(0);
                     }
                     0
                 };
@@ -3188,6 +3204,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     fn set_routes(&mut self) -> JSValue {
         let mut route_list_value = JSValue::ZERO;
+        // SAFETY: self.app is Some and points to a live uws App; set_routes is only called after init()
         let app = unsafe { &*self.app.unwrap() };
         let any_server = AnyServer::from(self);
         let dev_server = self.dev_server.as_deref_mut();
@@ -3209,14 +3226,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 &mut self.user_routes,
                 Vec::with_capacity(user_routes_to_build_list.len()),
             );
-            // old_user_routes drops at scope end (UserRoute Drop calls route.deinit())
+            // old_user_routes drops at scope end (RouteDeclaration impls Drop)
             let _ = old_user_routes;
             let mut paths_zig: Vec<ZigString> = Vec::with_capacity(user_routes_to_build_list.len());
-            let mut callbacks_js: Vec<JSValue> = Vec::with_capacity(user_routes_to_build_list.len());
+            // GC-safe: Vec<JSValue> backing storage is on the Rust heap (not stack-scanned).
+            // Use MarkedArgumentBuffer so earlier elements stay rooted while later ones are read.
+            let mut callbacks_js = bun_jsc::MarkedArgumentBuffer::with_capacity(user_routes_to_build_list.len());
 
             for (i, builder) in user_routes_to_build_list.iter_mut().enumerate() {
                 paths_zig.push(ZigString::init(&builder.route.path));
-                callbacks_js.push(builder.callback.get().unwrap());
+                callbacks_js.append(builder.callback.get().unwrap());
                 // PERF(port): was assume_capacity
                 self.user_routes.push(UserRoute {
                     id: i as u32,
@@ -3224,6 +3243,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     route: mem::take(&mut builder.route), // Mark as moved
                 });
             }
+            // SAFETY: FFI into JSC; global_this is JSC_BORROW; callbacks_js/paths_zig point to
+            // len-contiguous buffers valid for the duration of the call.
             route_list_value = unsafe {
                 Bun__ServerRouteList__create(
                     &*self.global_this,
@@ -3669,6 +3690,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
 
                 if self.config.h1 {
+                    // SAFETY: app is a live uws App FFI handle owned by this server
                     unsafe { &*app }.listen_with_config(self, Self::on_listen, uws::ListenConfig {
                         port: tcp.port,
                         host,
@@ -3680,10 +3702,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     if let Some(h3_app) = self.h3_app {
                         // Same UDP port as the TCP listener so Alt-Svc works.
                         let h3_port: u16 = if let Some(ls) = self.listener {
+                            // SAFETY: listener is a live uws ListenSocket FFI handle (just set by on_listen)
                             u16::try_from(unsafe { &*ls }.get_local_port()).unwrap()
                         } else {
                             tcp.port
                         };
+                        // SAFETY: h3_app is a live H3::App FFI handle owned by this server
                         unsafe { &*h3_app }.listen_with_config(self, Self::on_h3_listen, uws::ListenConfig {
                             port: h3_port,
                             host,
@@ -3709,9 +3733,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         // advertise it. Drop the H3 listener rather than wire
                         // an exotic transport nobody can reach.
                         Output::warn(format_args!("h3: true with a unix socket — HTTP/3 listener skipped"));
+                        // SAFETY: FFI destroy; h3a is a live H3::App handle just taken from this.h3_app
                         unsafe { uws::H3::App::destroy(h3a) };
                     }
                 }
+                // SAFETY: app is a live uws App FFI handle owned by this server
                 unsafe { &*app }.listen_on_unix_socket(
                     self,
                     Self::on_listen,
@@ -3792,7 +3818,8 @@ pub struct SavedRequest<'a> {
 
 impl Drop for SavedRequest<'_> {
     fn drop(&mut self) {
-        self.js_request.deinit();
+        // js_request: Strong impls Drop (deallocates HandleSlot); do not double-free here.
+        // Only the intrusive-refcount deref on ctx is a non-field-ownership side effect.
         self.ctx.deref_();
     }
 }
@@ -4257,8 +4284,10 @@ unsafe extern "C" {
 }
 
 fn throw_ssl_error_if_necessary(global: &JSGlobalObject) -> bool {
+    // SAFETY: FFI call into BoringSSL; no preconditions
     let err_code = unsafe { boringssl::ERR_get_error() };
     if err_code != 0 {
+        // SAFETY: FFI call into BoringSSL; no preconditions
         let _guard = scopeguard::guard((), |_| unsafe { boringssl::ERR_clear_error() });
         let _ = global.throw_value(jsc::API::Crypto::create_crypto_error(global, err_code));
         return true;
@@ -4269,7 +4298,7 @@ fn throw_ssl_error_if_necessary(global: &JSGlobalObject) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/server/server.zig (3855 lines)
-//   confidence: low
-//   todos:      41
-//   notes:      NewServer comptime type-generator → const-generic struct<SSL,DEBUG>; conditional H3 fields kept as Option (loses void elision); ServePlugins/AnyServer use intrusive refcount + tagged-ptr (Rc placeholder is wrong — Phase B: IntrusiveRc); .classes.ts codegen (js.gc.routeList) stubbed; many uws callback registrations need fn-pointer adapters
+//   confidence: medium
+//   todos:      40
+//   notes:      NewServer comptime type-generator → const-generic struct<SSL,DEBUG>; conditional H3 fields kept as Option (loses void elision); ServePlugins/AnyServer use intrusive refcount + tagged-ptr (Rc placeholder is wrong — Phase B: IntrusiveRc); .classes.ts codegen (js.gc.routeList) stubbed; many uws callback registrations need fn-pointer adapters; deinit() relies on Box::from_raw to drop owned fields (do NOT re-add per-field .deinit())
 // ──────────────────────────────────────────────────────────────────────────

@@ -2970,8 +2970,8 @@ impl Win32Error {
     /// A reserved policy element was found in the QoS provider-specific buffer.
     pub const WSA_QOS_RESERVED_PETYPE: Win32Error = Win32Error(11031);
     pub fn get() -> Win32Error {
-        // SAFETY: GetLastError returns a DWORD; truncate to u16 to match Zig enum(u16)
-        Win32Error(unsafe { kernel32::GetLastError() } as u16)
+        // SAFETY: GetLastError has no preconditions
+        Win32Error(u16::try_from(unsafe { kernel32::GetLastError() }).unwrap())
     }
 
     pub fn int(self) -> u16 {
@@ -3036,10 +3036,14 @@ pub fn CreateHardLinkW(
     };
     #[cfg(debug_assertions)]
     {
+        // SAFETY: caller guarantees both LPCWSTR args are NUL-terminated wide strings
+        let new_w = unsafe { bun_str::WStr::from_ptr_nul(new_file_name) };
+        // SAFETY: caller guarantees both LPCWSTR args are NUL-terminated wide strings
+        let existing_w = unsafe { bun_str::WStr::from_ptr_nul(existing_file_name) };
         bun_sys::syslog!(
             "CreateHardLinkW({}, {}) = {}",
-            bun_core::fmt::fmt_os_path(unsafe { bun_str::WStr::from_ptr_nul(new_file_name) }, Default::default()),
-            bun_core::fmt::fmt_os_path(unsafe { bun_str::WStr::from_ptr_nul(existing_file_name) }, Default::default()),
+            bun_core::fmt::fmt_os_path(new_w, Default::default()),
+            bun_core::fmt::fmt_os_path(existing_w, Default::default()),
             if rc == 0 { Win32Error::get().0 } else { 0 },
         );
     }
@@ -3051,6 +3055,7 @@ pub use bun_windows_sys::externs::CopyFileW;
 pub use bun_windows_sys::externs::SetFileInformationByHandle;
 
 pub fn get_last_errno() -> E {
+    // SAFETY: GetLastError has no preconditions
     SystemErrno::init(unsafe { kernel32::GetLastError() })
         .unwrap_or(SystemErrno::EUNKNOWN)
         .to_e()
@@ -3254,7 +3259,11 @@ pub fn user_unique_id() -> u32 {
     // SAFETY: buf and size are valid
     if unsafe { externs::GetUserNameW(buf.as_mut_ptr(), &mut size) } == 0 {
         #[cfg(debug_assertions)]
-        panic!("GetUserNameW failed: {:?}", unsafe { GetLastError() });
+        {
+            // SAFETY: GetLastError has no preconditions
+            let err = unsafe { GetLastError() };
+            panic!("GetUserNameW failed: {:?}", err);
+        }
         #[cfg(not(debug_assertions))]
         return 0;
     }
@@ -3377,7 +3386,7 @@ pub fn win_sock_error_to_zig_error(err: win32::ws2_32::WinsockError) -> Result<(
 
 pub fn WSAGetLastError() -> Option<SystemErrno> {
     // SAFETY: ws2_32 is loaded
-    SystemErrno::init(unsafe { win32::ws2_32::WSAGetLastError() } as u32)
+    SystemErrno::init(u32::try_from(unsafe { win32::ws2_32::WSAGetLastError() }).unwrap())
 }
 
 // BOOL CreateDirectoryExW(
@@ -3410,7 +3419,9 @@ pub fn GetFinalPathNameByHandle(
     };
 
     if return_length == 0 {
-        bun_sys::syslog!("GetFinalPathNameByHandleW({:p}) = {:?}", hFile, unsafe { GetLastError() });
+        // SAFETY: GetLastError has no preconditions
+        let err = unsafe { GetLastError() };
+        bun_sys::syslog!("GetFinalPathNameByHandleW({:p}) = {:?}", hFile, err);
         return Err(GetFinalPathNameByHandleError::FileNotFound);
     }
 
@@ -3457,7 +3468,7 @@ pub fn get_module_handle_from_address(addr: usize) -> Option<HMODULE> {
 
 pub fn get_module_name_w(module: HMODULE, buf: &mut [u16]) -> Option<&[u16]> {
     // SAFETY: buf valid for buf.len()
-    let rc = unsafe { externs::GetModuleFileNameW(module, buf.as_mut_ptr(), buf.len() as u32) };
+    let rc = unsafe { externs::GetModuleFileNameW(module, buf.as_mut_ptr(), u32::try_from(buf.len()).unwrap()) };
     if rc == 0 {
         return None;
     }
@@ -3524,6 +3535,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         SecurityDescriptor: ptr::null_mut(),
         SecurityQualityOfService: ptr::null_mut(),
     };
+    // SAFETY: all-zero is a valid IO_STATUS_BLOCK
     let mut io: IO_STATUS_BLOCK = unsafe { core::mem::zeroed() };
     let mut tmp_handle: HANDLE = ptr::null_mut();
     // SAFETY: all out-params are valid
@@ -3653,6 +3665,7 @@ pub fn edit_win32_binary_subsystem(fd: bun_sys::File, subsystem: Subsystem) -> R
     }
     // TODO(port): fd.reader().readInt(u32, .little)
     let offset: u32 = fd.reader().read_int_le::<u32>()?;
+    // SAFETY: fd.handle is a valid Windows HANDLE
     if unsafe { externs::SetFilePointerEx(fd.handle.cast(), offset as i64 + SUBSYSTEM_OFFSET, ptr::null_mut(), win32::FILE_BEGIN) } == 0 {
         return Err(bun_core::err!("Win32Error"));
     }
@@ -3749,9 +3762,9 @@ pub mod rescle {
             let path_w = bun_str::strings::to_w_path_normalized(&mut icon_buf, i);
             // toWPathNormalized returns a slice into icon_buf, need to null-terminate it
             let len = path_w.len();
-            // SAFETY: icon_buf has space for the NUL
             let buf_u16 = icon_buf.as_mut_slice();
             buf_u16[len] = 0;
+            // SAFETY: buf_u16[len] == 0 written above; pointer + len form a valid NUL-terminated wide slice
             Some(unsafe { bun_str::WStr::from_raw(buf_u16.as_ptr(), len) })
         } else {
             None
@@ -3842,14 +3855,18 @@ pub fn is_watcher_child() -> bool {
 
 pub fn become_watcher_manager() -> ! {
     // this process will be the parent of the child process that actually runs the script
+    // SAFETY: all-zero is a valid PROCESS_INFORMATION
     let mut procinfo: win32::PROCESS_INFORMATION = unsafe { core::mem::zeroed() };
+    // SAFETY: FFI call has no input invariants; mutates process-global stdio inheritance flags
     unsafe { externs::windows_enable_stdio_inheritance() };
     // SAFETY: null args allowed
     let job = unsafe { externs::CreateJobObjectA(ptr::null_mut(), ptr::null()) };
     if job.is_null() {
+        // SAFETY: GetLastError has no preconditions
+        let err = unsafe { kernel32::GetLastError() };
         bun_core::Output::panic!(
             "Could not create watcher Job Object: {}",
-            <&'static str>::from(unsafe { kernel32::GetLastError() })
+            <&'static str>::from(err)
         );
     }
     // SAFETY: all-zero is valid for this C struct
@@ -3869,9 +3886,11 @@ pub fn become_watcher_manager() -> ! {
         )
     } == 0
     {
+        // SAFETY: GetLastError has no preconditions
+        let err = unsafe { kernel32::GetLastError() };
         bun_core::Output::panic!(
             "Could not configure watcher Job Object: {}",
-            <&'static str>::from(unsafe { kernel32::GetLastError() })
+            <&'static str>::from(err)
         );
     }
 
@@ -3879,7 +3898,9 @@ pub fn become_watcher_manager() -> ! {
         if let Err(err) = spawn_watcher_child(&mut procinfo, job) {
             bun_core::handle_error_return_trace(err);
             if err == bun_core::err!("Win32Error") {
-                bun_core::Output::panic!("Failed to spawn process: {}\n", <&'static str>::from(unsafe { GetLastError() }));
+                // SAFETY: GetLastError has no preconditions
+                let last = unsafe { GetLastError() };
+                bun_core::Output::panic!("Failed to spawn process: {}\n", <&'static str>::from(last));
             }
             bun_core::Output::panic!("Failed to spawn process: {}\n", err.name());
         }
@@ -3890,10 +3911,13 @@ pub fn become_watcher_manager() -> ! {
         let mut exit_code: DWORD = 0;
         // SAFETY: hProcess valid, exit_code is out-param
         if unsafe { externs::GetExitCodeProcess(procinfo.hProcess, &mut exit_code) } == 0 {
+            // SAFETY: GetLastError has no preconditions
             let err = unsafe { GetLastError() };
+            // SAFETY: hProcess owned by this fn; closing on error path
             unsafe { let _ = externs::NtClose(procinfo.hProcess); }
             bun_core::Output::panic!("Failed to get exit code of child process: {}\n", <&'static str>::from(err));
         }
+        // SAFETY: hProcess owned by this fn
         unsafe { let _ = externs::NtClose(procinfo.hProcess); }
 
         // magic exit code to indicate that the child process should be re-spawned
@@ -3949,6 +3973,7 @@ pub fn spawn_watcher_child(
     let kernelenv = unsafe { kernel32_2::GetEnvironmentStringsW() };
     let _free_env = scopeguard::guard(kernelenv, |envptr| {
         if !envptr.is_null() {
+            // SAFETY: envptr was returned from GetEnvironmentStringsW and is non-null
             unsafe { let _ = kernel32_2::FreeEnvironmentStringsW(envptr); }
         }
     });
@@ -4027,8 +4052,10 @@ pub fn spawn_watcher_child(
         return Err(bun_core::err!("Win32Error"));
     }
     let mut is_in_job: BOOL = 0;
+    // SAFETY: procinfo.hProcess and job are valid handles; is_in_job is a valid out-param
     unsafe { let _ = externs::IsProcessInJob(procinfo.hProcess, job, &mut is_in_job); }
     debug_assert!(is_in_job != 0);
+    // SAFETY: procinfo.hThread owned by this fn
     unsafe { let _ = externs::NtClose(procinfo.hThread); }
     Ok(())
 }
@@ -4076,6 +4103,7 @@ pub fn delete_opened_file(fd: Fd) -> bun_sys::Result<()> {
             | FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE,
     };
 
+    // SAFETY: all-zero is a valid IO_STATUS_BLOCK
     let mut io: win32::IO_STATUS_BLOCK = unsafe { core::mem::zeroed() };
     // SAFETY: fd valid; info/io valid
     let rc = unsafe {
@@ -4124,6 +4152,7 @@ pub fn move_opened_file_at(
     const STRUCT_BUF_LEN: usize = size_of::<win32::FILE_RENAME_INFORMATION_EX>() + (bun_paths::MAX_PATH_BYTES - 1);
     #[repr(align(8))] // align_of FILE_RENAME_INFORMATION_EX
     struct AlignedBuf([u8; STRUCT_BUF_LEN]);
+    // SAFETY: AlignedBuf is plain [u8; N] used as raw byte storage; fully written via *rename_info = ... and copy_nonoverlapping before any read
     let mut rename_info_buf: AlignedBuf = unsafe { MaybeUninit::uninit().assume_init() };
 
     let struct_len = size_of::<win32::FILE_RENAME_INFORMATION_EX>() - 1 + new_file_name.len() * 2;
@@ -4133,6 +4162,7 @@ pub fn move_opened_file_at(
 
     // SAFETY: buffer aligned for FILE_RENAME_INFORMATION_EX
     let rename_info = unsafe { &mut *(rename_info_buf.0.as_mut_ptr() as *mut win32::FILE_RENAME_INFORMATION_EX) };
+    // SAFETY: all-zero is a valid IO_STATUS_BLOCK
     let mut io_status_block: win32::IO_STATUS_BLOCK = unsafe { core::mem::zeroed() };
 
     let mut flags: ULONG = win32::FILE_RENAME_POSIX_SEMANTICS | win32::FILE_RENAME_IGNORE_READONLY_ATTRIBUTE;

@@ -292,7 +292,9 @@ impl<'ast> Expr<'ast> {
     /// - `foo[123].bar[456].baz.qux` // etc.
     ///
     /// This is not intended for use by the transpiler, instead by pretty printing JSON.
-    pub fn get_path_may_be_index(expr: &Expr<'ast>, name: &[u8]) -> Option<Expr<'ast>> {
+    // PORT NOTE: Zig passed `bun.default_allocator` to getByIndex; Rust threads the arena
+    // explicitly because get_by_index allocates an E.String slice into &'ast Bump.
+    pub fn get_path_may_be_index(expr: &Expr<'ast>, bump: &'ast Bump, name: &[u8]) -> Option<Expr<'ast>> {
         if name.is_empty() {
             return None;
         }
@@ -308,24 +310,29 @@ impl<'ast> Expr<'ast> {
                     }
 
                     let index_str = &name[idx + 1..end_idx];
-                    // TODO(port): std.fmt.parseInt → bun_str::parse_int or core::str::parse
-                    let index = match core::str::from_utf8(index_str)
-                        .ok()
-                        .and_then(|s| s.parse::<u32>().ok())
-                    {
-                        Some(i) => i,
-                        None => return None,
+                    // std.fmt.parseInt(u32, index_str, 10) — parse ASCII digits directly from &[u8];
+                    // do NOT route through core::str::from_utf8 (path segments are bytes, not UTF-8).
+                    let index: u32 = 'parse: {
+                        if index_str.is_empty() {
+                            return None;
+                        }
+                        let mut acc: u32 = 0;
+                        for &b in index_str {
+                            let d = b.wrapping_sub(b'0');
+                            if d > 9 {
+                                return None;
+                            }
+                            acc = match acc.checked_mul(10).and_then(|a| a.checked_add(d as u32)) {
+                                Some(v) => v,
+                                None => return None,
+                            };
+                        }
+                        break 'parse acc;
                     };
                     let rest: &[u8] = if name.len() > end_idx { &name[end_idx + 1..] } else { b"" };
-                    // TODO(port): bun.default_allocator dropped; using thread-local Store/global mimalloc
-                    let result = base_expr.get_by_index(index, index_str, /* bump */ unsafe {
-                        // SAFETY: get_by_index only allocates for E.String slicing which uses bump;
-                        // Phase B should plumb a real arena here.
-                        core::mem::transmute::<&Bump, &'ast Bump>(&*core::ptr::null::<Bump>())
-                    })?;
-                    // TODO(port): the above null-bump hack is wrong — Phase B must pass a real allocator
+                    let result = base_expr.get_by_index(index, index_str, bump)?;
                     if !rest.is_empty() {
-                        return result.get_path_may_be_index(rest);
+                        return result.get_path_may_be_index(bump, rest);
                     }
                     return Some(result);
                 }
@@ -334,7 +341,7 @@ impl<'ast> Expr<'ast> {
                     let sub_expr = expr.get(key)?;
                     let subpath: &[u8] = if name.len() > idx { &name[idx + 1..] } else { b"" };
                     if !subpath.is_empty() {
-                        return sub_expr.get_path_may_be_index(subpath);
+                        return sub_expr.get_path_may_be_index(bump, subpath);
                     }
                     return Some(sub_expr);
                 }
@@ -1920,6 +1927,9 @@ impl<'ast> Data<'ast> {
                 e.value.data.write_to_hasher(hasher, symbol_table);
             }
             Data::EYield(e) => {
+                // TODO(port): Zig hashed the raw bytes of `.{ e.is_star, e.value }` (the full
+                // `?Expr` optional, including loc/data pointer). Rust `Option<Expr>` layout is
+                // not byte-compatible, so we hash the discriminant here and recurse below.
                 bun_core::write_any_to_hasher(hasher, &(e.is_star, e.value.is_some()));
                 if let Some(value) = &e.value {
                     value.data.write_to_hasher(hasher, symbol_table);
@@ -2611,6 +2621,6 @@ fn string_to_equivalent_number_value(str: &[u8]) -> f64 {
 // PORT STATUS
 //   source:     src/js_parser/ast/Expr.zig (3247 lines)
 //   confidence: medium
-//   todos:      20
-//   notes:      `&'ast mut` payloads break `Copy` on Data/Expr — Phase B likely needs raw arena ptrs; comptime-type init/allocate collapsed to IntoExprData trait; toJS aliases deleted per *_jsc rule; get_path_may_be_index has a placeholder bump that must be plumbed.
+//   todos:      18
+//   notes:      `&'ast mut` payloads break `Copy` on Data/Expr — Phase B likely needs raw arena ptrs; comptime-type init/allocate collapsed to IntoExprData trait; toJS aliases deleted per *_jsc rule; get_path_may_be_index now takes &'ast Bump (Zig used default_allocator).
 // ──────────────────────────────────────────────────────────────────────────

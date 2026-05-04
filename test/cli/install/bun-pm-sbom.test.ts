@@ -301,6 +301,50 @@ describe("bun pm sbom", () => {
     expect(depsByRef[pkgA["bom-ref"]]).toEqual(["no-deps@1.0.0"]);
   });
 
+  test("produces the same SBOM when run from inside a workspace subdirectory", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    await write(
+      packageJson,
+      JSON.stringify({ name: "sbom-ws-sub", version: "1.0.0", workspaces: ["packages/*"] }),
+    );
+    await write(
+      join(packageDir, "packages", "pkg-a", "package.json"),
+      JSON.stringify({ name: "pkg-a", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
+    );
+    await write(
+      join(packageDir, "packages", "pkg-b", "package.json"),
+      JSON.stringify({ name: "pkg-b", version: "1.0.0", dependencies: { "a-dep": "1.0.1" } }),
+    );
+    await runBunInstall(bunEnv, packageDir);
+
+    const fromRoot = await sbom(packageDir);
+    const fromPkgA = await sbom(join(packageDir, "packages", "pkg-a"));
+    expect(fromRoot.stderr).toBe("");
+    expect(fromPkgA.stderr).toBe("");
+    expect(fromRoot.exitCode).toBe(0);
+    expect(fromPkgA.exitCode).toBe(0);
+
+    const bomRoot = JSON.parse(fromRoot.stdout);
+    const bomA = JSON.parse(fromPkgA.stdout);
+
+    // The SBOM describes the whole lockfile regardless of cwd; the root
+    // component is the monorepo root in both cases.
+    expect(bomA.metadata.component.name).toBe("sbom-ws-sub");
+    expect(bomA.metadata.component["bom-ref"]).toBe(bomRoot.metadata.component["bom-ref"]);
+
+    // Sibling workspace and its dep must be `required`, not `excluded`.
+    const byRef = Object.fromEntries(bomA.components.map((c: any) => [c.name, c]));
+    expect(byRef["pkg-a"].scope).toBe("required");
+    expect(byRef["pkg-b"].scope).toBe("required");
+    expect(byRef["no-deps"].scope).toBe("required");
+    expect(byRef["a-dep"].scope).toBe("required");
+
+    // Same component set from either cwd.
+    expect(bomA.components.map((c: any) => c["bom-ref"]).sort()).toEqual(
+      bomRoot.components.map((c: any) => c["bom-ref"]).sort(),
+    );
+  });
+
   test("rejects unknown --format", async () => {
     const dir = await setup("sbom-badfmt", { dependencies: { "no-deps": "1.0.0" } });
 

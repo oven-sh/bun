@@ -221,7 +221,14 @@ const Generator = struct {
         // install: transitive dependencies of a root devDependency are only
         // reachable via a dev edge, so they're all `.excluded` unless some
         // other prod path also reaches them.
-        const root_id = pm.root_package_id.get(lockfile, pm.workspace_name_hash);
+        //
+        // The SBOM always describes the whole lockfile, so the BFS seeds
+        // from the lockfile root (PackageID 0) even when `bun pm sbom` is
+        // invoked from inside a workspace member's directory. Using the
+        // workspace-aware `pm.root_package_id` here would leave sibling
+        // workspaces and their deps at `.excluded` despite emitting them
+        // as components.
+        const root_id: PackageID = 0;
         const pkg_scope = try allocator.alloc(Scope, lockfile.packages.len);
         @memset(pkg_scope, .excluded);
         if (root_id < pkg_scope.len) pkg_scope[root_id] = .required;

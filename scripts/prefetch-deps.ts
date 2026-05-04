@@ -18,8 +18,9 @@
  *   bun scripts/prefetch-deps.ts <prefetchDir>
  *
  * Enumerates variants on the dimensions that affect download URLs (asan, lto,
- * baseline, musl) for the current host os/arch. Variants without a published
- * artifact are skipped — better to over-enumerate and 404 than to miss one.
+ * baseline, musl, pr) for the current host os/arch. Variants without a
+ * published artifact are skipped — better to over-enumerate and 404 than to
+ * miss one.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -29,7 +30,7 @@ import { resolveConfig, type Config, type PartialConfig } from "./build/config.t
 import { resolveToolchain } from "./build/configure.ts";
 import { allDeps } from "./build/deps/index.ts";
 import { downloadWithRetry, extractTarGz, extractZip, prefetchPathForUrl } from "./build/download.ts";
-import { zigCompilerSafe, zigDownloadUrl } from "./build/zig.ts";
+import { zigCompilerSafe, zigDownloadUrl, zigVendorBasename } from "./build/zig.ts";
 
 const dest = process.argv[2];
 if (dest === undefined) {
@@ -44,7 +45,8 @@ const extractedDir = resolve(dest, "extracted");
 //
 // github-archive sources are config-independent, so one base config covers
 // them. WebKit prebuilt URL varies by (musl, baseline, debug|lto, asan); zig
-// by host + safe. Iterate the cross-product, dedupe URLs.
+// by host + safe + pr (pr picks STABLE vs FAST commit). Iterate the
+// cross-product, dedupe URLs.
 // ───────────────────────────────────────────────────────────────────────────
 
 const toolchain = resolveToolchain();
@@ -56,7 +58,9 @@ for (const asan of [false, true]) {
   for (const lto of [false, true]) {
     for (const baseline of baseCfg.x64 ? [false, true] : [false]) {
       for (const abi of baseCfg.linux ? (["gnu", "musl"] as const) : [undefined]) {
-        variants.push({ ...base, asan, lto, baseline, ...(abi !== undefined && { abi }) });
+        for (const pr of [false, true]) {
+          variants.push({ ...base, asan, lto, baseline, pr, ...(abi !== undefined && { abi }) });
+        }
       }
     }
   }
@@ -113,23 +117,28 @@ for (const partial of variants) {
           stamp: ".identity",
           value: src.identity,
           kind: "tar.gz",
-          rm: src.rmAfterExtract,
+          ...(src.rmAfterExtract !== undefined && { rm: src.rmAfterExtract }),
         },
       });
     }
   }
 
-  // Zig — host-only download. Only the variant CI actually uses on this host
-  // gets pre-EXTRACTED to extracted/zig/ (the build's dest is always
-  // vendor/zig regardless of safe, so only one extracted tree can match);
-  // both URLs go into by-url/ so a safe-flag flip still avoids the network.
+  // Zig — host-only download. Pre-extract only the safe-variant CI actually
+  // uses on this host (the build's dest is per-{stable,fast} but not per-safe,
+  // so only one safe-variant can match an extracted tree); both safe URLs go
+  // into by-url/ so a safe-flag flip still avoids the network. The extract
+  // name follows zigVendorBasename so extracted/zig/ and extracted/zig-stable/
+  // both populate (pr loop covers both commits).
   const ciSafe = zigCompilerSafe(cfg);
+  const zigName = zigVendorBasename(cfg);
   for (const safe of [false, true]) {
     const url = zigDownloadUrl(cfg, safe);
     const stampValue = `${cfg.zigCommit}${safe ? "-safe" : ""}`;
     add({
       url,
-      extract: safe === ciSafe ? { name: "zig", stamp: ".zig-commit", value: stampValue, kind: "zip" } : undefined,
+      ...(safe === ciSafe && {
+        extract: { name: zigName, stamp: ".zig-commit", value: stampValue, kind: "zip" as const },
+      }),
     });
   }
 }

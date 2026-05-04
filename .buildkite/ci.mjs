@@ -403,7 +403,7 @@ function getZigAgent(platform, options) {
 
   // Everything else cross-compiles from Linux aarch64. ASAN gets a wider
   // box: it builds with cg=CI_ASAN_CODEGEN_THREADS (8) so it can use the
-  // parallel backend; release stays at cg=1 (full IPO) so 2 vCPU suffice.
+  // parallel backend; non-ASAN stays at cg=1 so 2 vCPU suffice.
   return getEc2Agent(getZigPlatform(), options, {
     instanceType: platform.profile === "asan" ? "r8g.2xlarge" : "r8g.large",
   });
@@ -514,6 +514,9 @@ function getBuildArgs(target, options, mode) {
   }
   if (baseline) args.push("--baseline=on");
   if (profile === "asan") args.push("--asan=on");
+  // PR builds use the FAST zig compiler; main-branch builds (canary +
+  // production) use STABLE. See zigFastCompiler() in scripts/build/zig.ts.
+  if (!isMainBranch()) args.push("--pr=on");
 
   // canary: options.canary can be number (revision count) or undefined
   // (default on). Old system used CANARY_REVISION as a counter; build.ts

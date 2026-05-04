@@ -663,15 +663,17 @@ describe("bun", () => {
       "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
       // `0.7` would otherwise silently `@intFromFloat` to `0`, which
       // disables elision entirely — the opposite of what the error
-      // message suggests. `-c ./bunfig.toml` is passed so `bun run`
-      // actually loads the bunfig (the auto-load path skips it for
-      // `run`).
+      // message suggests. `--config=./bunfig.toml` uses the `=` form
+      // because `-c` / `--config` is declared as `.one_optional` in
+      // clap and does not consume a following argv element; the split
+      // `-c ./bunfig.toml` form would leave the path as a positional
+      // and dispatch as `AutoCommand`.
       "bunfig.toml": `[run]\nelide-lines = 0.7\n`,
     });
 
     const { exitCode, stderr } = spawnSync({
       cwd: dir,
-      cmd: [bunExe(), "-c", "./bunfig.toml", "run", "--filter", "./packages/dep0", "script"],
+      cmd: [bunExe(), "--config=./bunfig.toml", "run", "--filter", "./packages/dep0", "script"],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

@@ -11,6 +11,7 @@
 
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
@@ -34,6 +35,9 @@ describe.skipIf(isWindows)("bun test --isolate with NAPI finalizers pending acro
     });
     if (!install.success) {
       throw new Error("napi-app build failed:\n" + install.stderr.toString());
+    }
+    if (!existsSync(addonPath)) {
+      throw new Error(`napi-app build succeeded but ${addonPath} is missing:\n${install.stderr.toString()}`);
     }
   }, 120_000);
 
@@ -73,20 +77,27 @@ describe.skipIf(isWindows)("bun test --isolate with NAPI finalizers pending acro
         BUN_JSC_collectContinuously: "1",
       },
       cwd: String(dir),
-      stdout: "pipe",
+      // The addon printf()s "finalizer\n" per wrapped object — up to 20k lines
+      // of fully-buffered libc stdio we don't need and which may or may not be
+      // flushed depending on the build's exit path.
+      stdout: "ignore",
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-    // The addon's finalizer prints "finalizer" to stdout for every wrapped
-    // object. Seeing them proves deferred finalizers actually ran (against a
-    // live global) rather than being silently dropped.
-    expect(stdout).toContain("finalizer");
-    // On crash the runner aborts mid-run and never prints the pass/fail
-    // summary; assert the summary before the exit code for a readable diff.
-    expect(stderr).toContain("20 pass");
-    expect(stderr).toContain("0 fail");
-    expect(exitCode).toBe(0);
+    // On crash the runner aborts mid-run and never reaches the pass/fail
+    // summary. No --retry is set, so a single panic is terminal. Asserting
+    // the full summary + signal together keeps the diff actionable when it
+    // regresses.
+    expect({
+      summary: stderr.split("\n").filter(l => / pass| fail|^Ran /.test(l)),
+      exitCode,
+      signalCode: proc.signalCode,
+    }).toEqual({
+      summary: [" 20 pass", " 0 fail", expect.stringMatching(/^Ran 20 tests across 20 files\./)],
+      exitCode: 0,
+      signalCode: null,
+    });
   }, 120_000);
 });

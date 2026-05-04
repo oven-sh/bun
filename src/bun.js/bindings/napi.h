@@ -380,12 +380,18 @@ public:
     }
 
     inline Zig::GlobalObject* globalObject() const { return m_globalObject; }
-    // Test isolation (`bun test --isolate`) swaps the Zig::GlobalObject while the
-    // JSC::VM stays alive. NapiEnvs outlive their original global — they're held
-    // by queued NapiFinalizerTasks and by weak-handle callbacks that fire after
-    // the old global is swept — so this raw pointer must be repointed at the
-    // replacement global during the swap.
-    inline void setGlobalObject(Zig::GlobalObject* globalObject) { m_globalObject = globalObject; }
+    // Only for GlobalObject::adoptNapiEnvsForTestIsolation(): `bun test
+    // --isolate` swaps the Zig::GlobalObject while the JSC::VM stays alive.
+    // NapiEnvs outlive their original global — they're held by queued
+    // NapiFinalizerTasks and by weak-handle callbacks that fire after the old
+    // global is swept — so this raw pointer must be repointed at the
+    // replacement global during the swap. m_vm is fixed at construction; the
+    // replacement must live in the same VM.
+    inline void setGlobalObject(Zig::GlobalObject* globalObject)
+    {
+        ASSERT(&JSC::getVM(globalObject) == &m_vm);
+        m_globalObject = globalObject;
+    }
     inline const napi_module& napiModule() const { return m_napiModule; }
     inline JSC::VM& vm() const { return m_vm; }
     inline std::optional<JSC::JSValue> pendingException() const

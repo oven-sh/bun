@@ -721,7 +721,12 @@ pub const retry = bun.sys.E.AGAIN;
 pub const ReadState = @import("./pipes.zig").ReadState;
 pub const PipeReader = @import("./PipeReader.zig").PipeReader;
 pub const BufferedReader = @import("./PipeReader.zig").BufferedReader;
-pub const ReaderThreadPoolReadTask = if (bun.Environment.isPosix) @import("./PipeReader.zig").PosixThreadPoolReadTask else void;
+pub const ReaderThreadPoolReadTask = if (bun.Environment.isPosix) @import("./PipeReader.zig").PosixThreadPoolReadTask else ReaderThreadPoolReadTaskStub;
+/// Placeholder on platforms where the threadpool read path is not used
+/// (currently Windows). Exists so the `Task` TaggedPointerUnion has a
+/// concrete type to name; the enum tag is unreachable at runtime because
+/// nothing ever constructs an instance.
+pub const ReaderThreadPoolReadTaskStub = opaque {};
 pub const BufferedWriter = @import("./PipeWriter.zig").BufferedWriter;
 pub const WriteResult = @import("./PipeWriter.zig").WriteResult;
 pub const WriteStatus = @import("./PipeWriter.zig").WriteStatus;

@@ -263,6 +263,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, co
                 try transform_task.runFromJS();
             },
             @field(Task.Tag, @typeName(ReaderThreadPoolReadTask)) => {
+                bun.markPosixOnly();
                 var pool_task: *ReaderThreadPoolReadTask = task.get(ReaderThreadPoolReadTask).?;
                 pool_task.runFromJSThread();
             },

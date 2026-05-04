@@ -222,7 +222,11 @@ pub fn onStart(this: *FileReader) streams.Start {
                         file_type = opened.file_type;
                         this.reader.flags.nonblocking = opened.nonblocking;
                         this.reader.flags.pollable = pollable;
-                        this.reader.flags.threadpool = opened.use_threadpool;
+                        // The threadpool path only exists on POSIX — Windows
+                        // ReadFile is already async on the libuv worker pool.
+                        if (comptime bun.Environment.isPosix) {
+                            this.reader.flags.threadpool = opened.use_threadpool;
+                        }
                     },
                 }
             },

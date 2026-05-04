@@ -138,7 +138,7 @@ unsafe extern "C" {
     fn os_log_create(subsystem: *const c_char, category: *const c_char) -> *mut OSLog;
 
     #[link_name = "Bun__signpost_emit"]
-    pub fn bun_signpost_emit(
+    fn bun_signpost_emit(
         log: *const OSLog,
         id: u64,
         signpost_type: SignpostType,

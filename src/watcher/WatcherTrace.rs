@@ -73,7 +73,7 @@ pub fn write_events(
     // I/O set; revisit if a `bun_core::time` helper exists.
     let timestamp: i64 = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
+        .map(|d| i64::try_from(d.as_millis()).unwrap())
         .unwrap_or(0);
 
     // Write: { "timestamp": number, "files": { ... } }

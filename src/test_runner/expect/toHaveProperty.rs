@@ -9,13 +9,13 @@ use super::Expect;
 pub fn to_have_property(
     this: &mut Expect,
     global: &JSGlobalObject,
-    call_frame: &CallFrame,
+    frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // PORT NOTE: `defer this.postMatch(globalThis)` — guard owns `this` and calls post_match on drop.
     let mut this = scopeguard::guard(this, |this| this.post_match(global));
 
-    let this_value = call_frame.this();
-    let _arguments = call_frame.arguments_old(2);
+    let this_value = frame.this();
+    let _arguments = frame.arguments_old(2);
     let arguments: &[JSValue] = _arguments.as_slice();
 
     if arguments.len() < 1 {

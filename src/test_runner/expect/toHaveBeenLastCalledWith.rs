@@ -16,13 +16,10 @@ pub fn to_have_been_last_called_with(
     let arguments = frame.arguments();
 
     // Zig: `defer this.postMatch(globalThis);`
-    // PORT NOTE: scopeguard over a raw pointer to avoid an exclusive borrow of `this`
-    // for the whole fn body. SAFETY: `this` is valid for the entire function; the guard
-    // runs at scope exit before `this`'s borrow ends.
-    let this_ptr: *mut Expect = this;
-    let _post_match = scopeguard::guard((), |_| unsafe {
-        (*this_ptr).post_match(global);
-    });
+    // PORT NOTE: reshaped for borrowck — wrap `this` in a scopeguard and re-borrow through
+    // the guard's DerefMut so post_match runs at every exit without a raw-pointer alias.
+    let mut this = scopeguard::guard(this, |t| t.post_match(global));
+    let this: &mut Expect = &mut *this;
 
     let value: JSValue =
         this.get_value(global, this_value, "toHaveBeenLastCalledWith", "<green>...expected<r>")?;
@@ -134,5 +131,5 @@ pub fn to_have_been_last_called_with(
 //   source:     src/test_runner/expect/toHaveBeenLastCalledWith.zig (91 lines)
 //   confidence: medium
 //   todos:      0
-//   notes:      `defer this.postMatch` mapped to scopeguard over raw *mut Expect to avoid borrowck conflict; `bun.cpp.JSMockFunction__getCalls` → bun_jsc::cpp::js_mock_function_get_calls; get_signature assumed const fn.
+//   notes:      `defer this.postMatch` reshaped via scopeguard::guard(this, ..) + DerefMut re-borrow (no raw ptr); `bun.cpp.JSMockFunction__getCalls` → bun_jsc::cpp::js_mock_function_get_calls; get_signature assumed const fn.
 // ──────────────────────────────────────────────────────────────────────────

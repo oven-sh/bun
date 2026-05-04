@@ -17,7 +17,7 @@ pub fn post_process_css_chunk(
     // TODO(port): narrow error set
     let c = ctx.c;
     let mut j = StringJoiner {
-        // PORT NOTE: dropped `.allocator = worker.allocator` — global mimalloc
+        // TODO(port): worker.allocator is a per-worker arena — thread `&'bump Bump` in Phase B
         watcher: bun_core::string_joiner::Watcher {
             input: chunk.unique_key,
         },
@@ -119,7 +119,7 @@ pub fn post_process_css_chunk(
     //     j.AddString("\n")
     // }
 
-    // PORT NOTE: dropped `worker.allocator` arg; `catch |err| bun.handleOom(err)` → Rust aborts on OOM
+    // TODO(port): worker.allocator is a per-worker arena — thread `&'bump Bump` to break_output_into_pieces in Phase B; `catch |err| bun.handleOom(err)` → Rust aborts on OOM
     chunk.intermediate_output = c.break_output_into_pieces(&mut j, ctx.chunks.len() as u32);
     // TODO: meta contents
 
@@ -144,6 +144,6 @@ pub fn post_process_css_chunk(
 // PORT STATUS
 //   source:     src/bundler/linker_context/postProcessCSSChunk.zig (127 lines)
 //   confidence: medium
-//   todos:      5
-//   notes:      Dropped allocator args (worker.allocator/default_allocator); enum variant paths for options.{source_maps,mode} and MultiArrayList field-slice accessor are guessed — verify in Phase B.
+//   todos:      7
+//   notes:      worker.allocator is a per-worker arena (not global mimalloc) — thread `&'bump Bump` to StringJoiner/break_output_into_pieces in Phase B; default_allocator arg to j.push dropped; enum variant paths for options.{source_maps,mode} and MultiArrayList field-slice accessor are guessed — verify in Phase B.
 // ──────────────────────────────────────────────────────────────────────────

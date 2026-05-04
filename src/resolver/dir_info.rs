@@ -39,10 +39,10 @@ pub struct DirInfo {
     pub abs_path: &'static [u8],
     pub entries: Index,
     /// Is there a "package.json" file?
-    // TODO(port): lifetime — deinit() calls .deinit() on this in-place; storage owned by resolver cache
+    // TODO(port): lifetime — reset() drops the pointee in-place; storage owned by resolver cache
     pub package_json: Option<NonNull<PackageJSON>>,
     /// Is there a "tsconfig.json" file in this directory or a parent directory?
-    // TODO(port): lifetime — deinit() calls .deinit() on this in-place; storage owned by resolver cache
+    // TODO(port): lifetime — reset() drops the pointee in-place; storage owned by resolver cache
     pub tsconfig_json: Option<NonNull<TSConfigJSON>>,
     /// If non-empty, this is the real absolute path resolving any symlinks
     // TODO(port): lifetime — slice into BSS-backed path storage; never individually freed
@@ -145,19 +145,22 @@ pub enum Flags {
     InsideNodeModules,
 }
 
-impl Drop for DirInfo {
-    fn drop(&mut self) {
+impl DirInfo {
+    // TODO(port): in-place cache invalidation, not Drop — DirInfo lives in BSS-backed
+    // allocators::BSSMap storage so Drop never fires naturally; callers invoke this
+    // explicitly when invalidating the cache slot. Zig name was `deinit`.
+    pub fn reset(&mut self) {
         if let Some(p) = self.package_json.take() {
             // SAFETY: package_json points to a live PackageJSON in the resolver cache;
-            // deinit() releases its owned resources in-place (storage itself is BSS/cache-owned).
-            // TODO(port): revisit ownership — Zig calls p.deinit() without freeing the allocation.
-            unsafe { p.as_ptr().as_mut().unwrap().deinit() };
+            // drop_in_place releases its owned resources in-place (storage itself is
+            // BSS/cache-owned and not freed here, matching Zig `p.deinit()`).
+            unsafe { core::ptr::drop_in_place(p.as_ptr()) };
         }
         if let Some(t) = self.tsconfig_json.take() {
             // SAFETY: tsconfig_json points to a live TSConfigJSON in the resolver cache;
-            // deinit() releases its owned resources in-place.
-            // TODO(port): revisit ownership — Zig calls t.deinit() without freeing the allocation.
-            unsafe { t.as_ptr().as_mut().unwrap().deinit() };
+            // drop_in_place releases its owned resources in-place (storage itself is
+            // BSS/cache-owned and not freed here, matching Zig `t.deinit()`).
+            unsafe { core::ptr::drop_in_place(t.as_ptr()) };
         }
     }
 }

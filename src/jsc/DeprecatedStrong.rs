@@ -1,3 +1,4 @@
+use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
 use crate::JSValue;
@@ -6,13 +7,14 @@ use crate::JSValue;
 // `jsc.Strong.Deprecated` (see bottom-of-file alias `const Strong = jsc.Strong.Deprecated`).
 // Ported here as `DeprecatedStrong`.
 //
-// PORT NOTE: `pub fn deinit` is intentionally KEPT as an inherent method instead of
-// `impl Drop`. This type exposes manual `ref()`/`unref()` (JSValueProtect-based
-// refcounting) whose teardown path overlaps `deinit`; an automatic `Drop` would
-// double-`unprotect` after a final `unref`. The Zig is explicitly manual and
-// deprecated — preserve that contract. Phase B may revisit once all callers are
-// audited.
-// TODO(port): revisit Drop vs explicit deinit once call sites are ported.
+// PORT NOTE: Zig `deinit` → `impl Drop`. The manual `ref()`/`unref()` path
+// overlaps teardown; to avoid Drop double-`unprotect`ing after a final `unref`,
+// `unref()` zeroes `raw` and clears `safety` when it frees (debug builds), so
+// Drop becomes a no-op (`unprotect` on ZERO is a no-op; `safety == None` skips
+// the canary free).
+// TODO(port): release builds have no ref_count, so a caller that does the final
+// `unref()` and then lets Drop fire would double-unprotect — audit call sites
+// in Phase B (Zig contract: ref/unref pairs are balanced, deinit is the release).
 
 // `enable_safety = bun.Environment.ci_assert`
 // TODO(port): map `Environment.ci_assert` to the correct cfg; using debug_assertions as proxy.
@@ -30,6 +32,9 @@ type Safety = ();
 struct SafetyData {
     // PORT NOTE: raw pointer (not Box) — this is a heap canary for UAF detection;
     // owning it via Box would change the semantics (Drop would recurse / hide UAF).
+    // Backing allocation is `Box<ManuallyDrop<DeprecatedStrong>>` (repr(transparent))
+    // so freeing does NOT run DeprecatedStrong::drop on the sentinel value; the
+    // pointer is stored cast to the inner type for ergonomic field access.
     ptr: NonNull<DeprecatedStrong>,
     // PORT NOTE: `gpa: std.mem.Allocator` dropped — global mimalloc.
     ref_count: u32,
@@ -58,12 +63,16 @@ impl DeprecatedStrong {
         value.protect();
         #[cfg(debug_assertions)]
         let safety: Safety = Some(SafetyData {
-            // SAFETY: Box::into_raw never returns null.
+            // SAFETY: Box::into_raw never returns null. ManuallyDrop<T> is
+            // #[repr(transparent)], so the cast to *mut DeprecatedStrong is sound.
             ptr: unsafe {
-                NonNull::new_unchecked(Box::into_raw(Box::new(DeprecatedStrong {
-                    raw: JSValue::from_encoded(0xAEBCFA),
-                    safety: None,
-                })))
+                NonNull::new_unchecked(
+                    Box::into_raw(Box::new(ManuallyDrop::new(DeprecatedStrong {
+                        raw: JSValue::from_encoded(0xAEBCFA),
+                        safety: None,
+                    })))
+                    .cast::<DeprecatedStrong>(),
+                )
             },
             ref_count: 1,
         });
@@ -72,28 +81,14 @@ impl DeprecatedStrong {
         DeprecatedStrong { raw: value, safety }
     }
 
-    pub fn deinit(&mut self) {
-        self.raw.unprotect();
-        #[cfg(debug_assertions)]
-        if let Some(safety) = &mut self.safety {
-            // SAFETY: ptr was produced by Box::into_raw in `init` and has not been freed
-            // (ref_count == 1 asserted below).
-            unsafe {
-                debug_assert!((*safety.ptr.as_ptr()).raw.encoded() == 0xAEBCFA);
-                (*safety.ptr.as_ptr()).raw = JSValue::from_encoded(0xFFFFFF);
-                debug_assert!(safety.ref_count == 1);
-                drop(Box::from_raw(safety.ptr.as_ptr()));
-            }
-        }
-    }
-
     pub fn get(&self) -> JSValue {
         self.raw
     }
 
     pub fn swap(&mut self, next: JSValue) -> JSValue {
         let prev = self.raw;
-        self.deinit();
+        // PORT NOTE: `*self = ...` drops the old value in place (runs Drop),
+        // matching Zig's explicit `this.deinit(); this.* = .init(next);`.
         *self = Self::init(next);
         prev
     }
@@ -119,11 +114,37 @@ impl DeprecatedStrong {
                 unsafe {
                     debug_assert!((*safety.ptr.as_ptr()).raw.encoded() == 0xAEBCFA);
                     (*safety.ptr.as_ptr()).raw = JSValue::from_encoded(0xFFFFFF);
-                    drop(Box::from_raw(safety.ptr.as_ptr()));
+                    // Free without running Drop on the sentinel (ManuallyDrop is repr(transparent)).
+                    drop(Box::from_raw(
+                        safety.ptr.as_ptr().cast::<ManuallyDrop<DeprecatedStrong>>(),
+                    ));
                 }
+                // Neutralize so Drop is a no-op (see top-of-file PORT NOTE).
+                self.safety = None;
+                self.raw = JSValue::ZERO;
                 return;
             }
             safety.ref_count -= 1;
+        }
+    }
+}
+
+impl Drop for DeprecatedStrong {
+    fn drop(&mut self) {
+        self.raw.unprotect();
+        #[cfg(debug_assertions)]
+        if let Some(safety) = &mut self.safety {
+            // SAFETY: ptr was produced by Box::into_raw in `init` and has not been freed
+            // (ref_count == 1 asserted below).
+            unsafe {
+                debug_assert!((*safety.ptr.as_ptr()).raw.encoded() == 0xAEBCFA);
+                (*safety.ptr.as_ptr()).raw = JSValue::from_encoded(0xFFFFFF);
+                debug_assert!(safety.ref_count == 1);
+                // Free without running Drop on the sentinel (ManuallyDrop is repr(transparent)).
+                drop(Box::from_raw(
+                    safety.ptr.as_ptr().cast::<ManuallyDrop<DeprecatedStrong>>(),
+                ));
+            }
         }
     }
 }
@@ -133,26 +154,21 @@ pub struct Optional {
 }
 
 impl Optional {
-    pub const EMPTY: Optional = Optional::init_non_cell(None);
+    // PORT NOTE: Zig `pub const empty = .initNonCell(null)` — inlined as a struct
+    // literal so it can be `const` (init_non_cell debug_asserts, which is non-const).
+    pub const EMPTY: Optional =
+        Optional { backing: DeprecatedStrong { raw: JSValue::ZERO, safety: SAFETY_NONE } };
 
-    pub const fn init_non_cell(non_cell: Option<JSValue>) -> Optional {
-        // PORT NOTE: reshaped — Zig calls Strong.initNonCell(non_cell orelse .zero);
-        // that fn debug_asserts !is_cell() which is non-const, so inline the field
-        // init here to keep `EMPTY` a const.
-        let v = match non_cell {
-            Some(v) => v,
-            None => JSValue::ZERO,
-        };
-        Optional { backing: DeprecatedStrong { raw: v, safety: SAFETY_NONE } }
+    pub fn init_non_cell(non_cell: Option<JSValue>) -> Optional {
+        Optional { backing: DeprecatedStrong::init_non_cell(non_cell.unwrap_or(JSValue::ZERO)) }
     }
 
     pub fn init(value: Option<JSValue>) -> Optional {
         Optional { backing: DeprecatedStrong::init(value.unwrap_or(JSValue::ZERO)) }
     }
 
-    pub fn deinit(&mut self) {
-        self.backing.deinit();
-    }
+    // PORT NOTE: Zig `deinit` dropped — `backing: DeprecatedStrong` is dropped
+    // automatically (its Drop impl runs `unprotect` + canary free).
 
     pub fn get(&self) -> Option<JSValue> {
         let result = self.backing.get();
@@ -196,5 +212,5 @@ use enable_safety as _;
 //   source:     src/jsc/DeprecatedStrong.zig (95 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      deinit kept explicit (not Drop) due to ref/unref overlap; ci_assert→debug_assertions proxy; assumes JSValue::{from_encoded,encoded,protect,unprotect,is_cell,is_empty,ZERO}
+//   notes:      deinit→Drop (unref zeroes self in debug to neutralize Drop; release-mode ref/unref+Drop overlap needs Phase-B audit); ci_assert→debug_assertions proxy; assumes JSValue::{from_encoded,encoded,protect,unprotect,is_cell,is_empty,ZERO}
 // ──────────────────────────────────────────────────────────────────────────

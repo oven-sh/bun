@@ -62,16 +62,10 @@ pub fn to_be_empty(
                         "Expected value to be a string, object, or iterable"
                     ));
                 };
-                // TODO(port): JSPropertyIterator was comptime-parameterized in Zig; pass options at runtime for now.
-                let props_iter = bun_jsc::JSPropertyIterator::init(
+                // const params: <SKIP_EMPTY_NAME, OWN_PROPERTIES_ONLY, INCLUDE_VALUE>
+                let props_iter = bun_jsc::JSPropertyIterator::<false, false, true>::init(
                     global,
                     cell.to_object(global),
-                    bun_jsc::JSPropertyIteratorOptions {
-                        skip_empty_name: false,
-                        own_properties_only: false,
-                        include_value: true,
-                        // FIXME: can we do this?
-                    },
                 )?;
                 // `defer props_iter.deinit()` — handled by Drop.
                 pass = props_iter.len == 0;
@@ -131,6 +125,6 @@ pub fn to_be_empty(
 // PORT STATUS
 //   source:     src/test_runner/expect/toBeEmpty.zig (88 lines)
 //   confidence: medium
-//   todos:      3
-//   notes:      defer postMatch reshaped via scopeguard+raw ptr; throw_pretty/get_signature signatures guessed; JSPropertyIterator comptime opts passed at runtime
+//   todos:      2
+//   notes:      defer postMatch reshaped via scopeguard+raw ptr; throw_pretty/get_signature signatures guessed
 // ──────────────────────────────────────────────────────────────────────────

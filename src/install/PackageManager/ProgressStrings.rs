@@ -7,38 +7,40 @@ use super::PackageManager;
 pub struct ProgressStrings;
 
 impl ProgressStrings {
+    // PORT NOTE: base *_NO_EMOJI_ / *_EMOJI consts stay &str because concatcp! requires str
+    // inputs; derived consts and fn returns are &[u8] per type-map ([]const u8 → &[u8]).
     pub const DOWNLOAD_NO_EMOJI_: &'static str = "Resolving";
-    const DOWNLOAD_NO_EMOJI: &'static str = concatcp!(ProgressStrings::DOWNLOAD_NO_EMOJI_, "\n");
-    const DOWNLOAD_WITH_EMOJI: &'static str =
-        concatcp!(ProgressStrings::DOWNLOAD_EMOJI, ProgressStrings::DOWNLOAD_NO_EMOJI_);
+    const DOWNLOAD_NO_EMOJI: &'static [u8] = concatcp!(ProgressStrings::DOWNLOAD_NO_EMOJI_, "\n").as_bytes();
+    const DOWNLOAD_WITH_EMOJI: &'static [u8] =
+        concatcp!(ProgressStrings::DOWNLOAD_EMOJI, ProgressStrings::DOWNLOAD_NO_EMOJI_).as_bytes();
     pub const DOWNLOAD_EMOJI: &'static str = "  🔍 ";
 
     pub const EXTRACT_NO_EMOJI_: &'static str = "Resolving & extracting";
-    const EXTRACT_NO_EMOJI: &'static str = concatcp!(ProgressStrings::EXTRACT_NO_EMOJI_, "\n");
-    const EXTRACT_WITH_EMOJI: &'static str =
-        concatcp!(ProgressStrings::EXTRACT_EMOJI, ProgressStrings::EXTRACT_NO_EMOJI_);
+    const EXTRACT_NO_EMOJI: &'static [u8] = concatcp!(ProgressStrings::EXTRACT_NO_EMOJI_, "\n").as_bytes();
+    const EXTRACT_WITH_EMOJI: &'static [u8] =
+        concatcp!(ProgressStrings::EXTRACT_EMOJI, ProgressStrings::EXTRACT_NO_EMOJI_).as_bytes();
     pub const EXTRACT_EMOJI: &'static str = "  🚚 ";
 
     pub const INSTALL_NO_EMOJI_: &'static str = "Installing";
-    const INSTALL_NO_EMOJI: &'static str = concatcp!(ProgressStrings::INSTALL_NO_EMOJI_, "\n");
-    const INSTALL_WITH_EMOJI: &'static str =
-        concatcp!(ProgressStrings::INSTALL_EMOJI, ProgressStrings::INSTALL_NO_EMOJI_);
+    const INSTALL_NO_EMOJI: &'static [u8] = concatcp!(ProgressStrings::INSTALL_NO_EMOJI_, "\n").as_bytes();
+    const INSTALL_WITH_EMOJI: &'static [u8] =
+        concatcp!(ProgressStrings::INSTALL_EMOJI, ProgressStrings::INSTALL_NO_EMOJI_).as_bytes();
     pub const INSTALL_EMOJI: &'static str = "  📦 ";
 
     pub const SAVE_NO_EMOJI_: &'static str = "Saving lockfile";
-    const SAVE_NO_EMOJI: &'static str = ProgressStrings::SAVE_NO_EMOJI_;
-    const SAVE_WITH_EMOJI: &'static str =
-        concatcp!(ProgressStrings::SAVE_EMOJI, ProgressStrings::SAVE_NO_EMOJI_);
+    const SAVE_NO_EMOJI: &'static [u8] = ProgressStrings::SAVE_NO_EMOJI_.as_bytes();
+    const SAVE_WITH_EMOJI: &'static [u8] =
+        concatcp!(ProgressStrings::SAVE_EMOJI, ProgressStrings::SAVE_NO_EMOJI_).as_bytes();
     pub const SAVE_EMOJI: &'static str = "  🔒 ";
 
     pub const SCRIPT_NO_EMOJI_: &'static str = "Running script";
-    const SCRIPT_NO_EMOJI: &'static str = concatcp!(ProgressStrings::SCRIPT_NO_EMOJI_, "\n");
-    const SCRIPT_WITH_EMOJI: &'static str =
-        concatcp!(ProgressStrings::SCRIPT_EMOJI, ProgressStrings::SCRIPT_NO_EMOJI_);
+    const SCRIPT_NO_EMOJI: &'static [u8] = concatcp!(ProgressStrings::SCRIPT_NO_EMOJI_, "\n").as_bytes();
+    const SCRIPT_WITH_EMOJI: &'static [u8] =
+        concatcp!(ProgressStrings::SCRIPT_EMOJI, ProgressStrings::SCRIPT_NO_EMOJI_).as_bytes();
     pub const SCRIPT_EMOJI: &'static str = "  ⚙️  ";
 
     #[inline]
-    pub fn download() -> &'static str {
+    pub fn download() -> &'static [u8] {
         if Output::enable_ansi_colors_stderr() {
             Self::DOWNLOAD_WITH_EMOJI
         } else {
@@ -47,7 +49,7 @@ impl ProgressStrings {
     }
 
     #[inline]
-    pub fn save() -> &'static str {
+    pub fn save() -> &'static [u8] {
         if Output::enable_ansi_colors_stderr() {
             Self::SAVE_WITH_EMOJI
         } else {
@@ -56,7 +58,7 @@ impl ProgressStrings {
     }
 
     #[inline]
-    pub fn extract() -> &'static str {
+    pub fn extract() -> &'static [u8] {
         if Output::enable_ansi_colors_stderr() {
             Self::EXTRACT_WITH_EMOJI
         } else {
@@ -65,7 +67,7 @@ impl ProgressStrings {
     }
 
     #[inline]
-    pub fn install() -> &'static str {
+    pub fn install() -> &'static [u8] {
         if Output::enable_ansi_colors_stderr() {
             Self::INSTALL_WITH_EMOJI
         } else {
@@ -74,7 +76,7 @@ impl ProgressStrings {
     }
 
     #[inline]
-    pub fn script() -> &'static str {
+    pub fn script() -> &'static [u8] {
         if Output::enable_ansi_colors_stderr() {
             Self::SCRIPT_WITH_EMOJI
         } else {
@@ -87,11 +89,9 @@ impl PackageManager {
     pub fn set_node_name<const IS_FIRST: bool>(
         &mut self,
         node: &mut Progress::Node,
-        name: &str,
-        emoji: &str,
+        name: &[u8],
+        emoji: &[u8],
     ) {
-        let name = name.as_bytes();
-        let emoji = emoji.as_bytes();
         if Output::enable_ansi_colors_stderr() {
             if IS_FIRST {
                 self.progress_name_buf[..emoji.len()].copy_from_slice(emoji);
@@ -124,8 +124,8 @@ impl PackageManager {
         // TODO(port): resolve overlapping borrow of self.downloads_node vs &mut self
         self.set_node_name::<true>(
             self.downloads_node.as_mut().unwrap(),
-            ProgressStrings::DOWNLOAD_NO_EMOJI_,
-            ProgressStrings::DOWNLOAD_EMOJI,
+            ProgressStrings::DOWNLOAD_NO_EMOJI_.as_bytes(),
+            ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
         );
         let total_tasks = self.total_tasks;
         let extracted_count = self.extracted_count;
@@ -155,5 +155,5 @@ impl PackageManager {
 //   source:     src/install/PackageManager/ProgressStrings.zig (100 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      node.name = &self.progress_name_buf[..] is self-referential; set_node_name call in start_progress_bar has overlapping &mut self — Phase B may need raw ptr or restructure Progress::Node ownership
+//   notes:      node.name = &self.progress_name_buf[..] is self-referential; set_node_name call in start_progress_bar has overlapping &mut self — Phase B may need raw ptr or restructure Progress::Node ownership. Base *_NO_EMOJI_/*_EMOJI consts kept as &str (concatcp! input requirement); fn returns/params are &[u8].
 // ──────────────────────────────────────────────────────────────────────────

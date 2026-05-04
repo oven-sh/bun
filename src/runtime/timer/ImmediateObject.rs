@@ -1,4 +1,5 @@
 use core::cell::Cell;
+use core::mem::MaybeUninit;
 
 use bun_jsc::{CallFrame, Debugger, EnsureStillAlive, JSGlobalObject, JSValue, JsResult, VirtualMachine};
 
@@ -18,10 +19,24 @@ pub type ImmediateObjectRc = bun_ptr::IntrusiveRc<ImmediateObject>;
 pub struct ImmediateObject {
     ref_count: Cell<u32>,
     pub event_loop_timer: EventLoopTimer,
-    pub internals: TimerObjectInternals,
+    // Zig declared `internals: TimerObjectInternals = undefined` and filled it via an
+    // out-param `init()` after `toJS`. `MaybeUninit` is the only sound placeholder here —
+    // `zeroed()` is UB for a type with enum/Strong fields.
+    pub internals: MaybeUninit<TimerObjectInternals>,
 }
 
 impl ImmediateObject {
+    // SAFETY (both accessors): `internals` is fully written inside `Self::init()` before the
+    // JS wrapper (the only path to every other method/getter on this type) is returned.
+    #[inline]
+    fn internals(&self) -> &TimerObjectInternals {
+        unsafe { self.internals.assume_init_ref() }
+    }
+    #[inline]
+    fn internals_mut(&mut self) -> &mut TimerObjectInternals {
+        unsafe { self.internals.assume_init_mut() }
+    }
+
     pub fn init(
         global_this: &JSGlobalObject,
         id: i32,
@@ -36,18 +51,20 @@ impl ImmediateObject {
                 tag: super::event_loop_timer::Tag::ImmediateObject,
                 ..Default::default()
             },
-            // SAFETY: Zig wrote `internals = undefined`; every field is overwritten by
+            // Zig wrote `internals = undefined`; every field is overwritten by
             // `internals.init()` below before any read.
-            // TODO(port): TimerObjectInternals::init is an out-param constructor — once
-            // ported to `fn init(...) -> Self`, replace zeroed()+in-place with a direct value.
-            internals: unsafe { core::mem::zeroed() },
+            internals: MaybeUninit::uninit(),
         }));
         // SAFETY: just allocated above; sole owner until toJS hands it to the JS wrapper.
         let immediate_ref = unsafe { &mut *immediate };
 
         let js_value = immediate_ref.to_js(global_this);
         let _keep = EnsureStillAlive(js_value);
-        immediate_ref.internals.init(
+        // TODO(port): in-place init — TimerObjectInternals::init is an out-param constructor;
+        // once it is reshaped to `fn init(...) -> Self`, replace with
+        // `immediate_ref.internals.write(TimerObjectInternals::init(...))`.
+        // SAFETY: `as_mut_ptr` yields the uninit slot; `init` writes every field before return.
+        unsafe { &mut *immediate_ref.internals.as_mut_ptr() }.init(
             js_value,
             global_this,
             id,
@@ -74,7 +91,7 @@ impl ImmediateObject {
     fn deinit(this: *mut Self) {
         // SAFETY: caller (IntrusiveRc::deref) guarantees `this` is the last live reference.
         unsafe {
-            (*this).internals.deinit();
+            (*this).internals.assume_init_mut().deinit();
             drop(Box::from_raw(this));
         }
     }
@@ -86,42 +103,42 @@ impl ImmediateObject {
 
     /// returns true if an exception was thrown
     pub fn run_immediate_task(&mut self, vm: &mut VirtualMachine) -> bool {
-        self.internals.run_immediate_task(vm)
+        self.internals_mut().run_immediate_task(vm)
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn to_primitive(this: &mut Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        this.internals.to_primitive()
+        this.internals_mut().to_primitive()
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn do_ref(this: &mut Self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        this.internals.do_ref(global_this, call_frame.this())
+        this.internals_mut().do_ref(global_this, call_frame.this())
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn do_unref(this: &mut Self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        this.internals.do_unref(global_this, call_frame.this())
+        this.internals_mut().do_unref(global_this, call_frame.this())
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn has_ref(this: &mut Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        this.internals.has_ref()
+        this.internals_mut().has_ref()
     }
 
     pub fn finalize(this: *mut Self) {
         // SAFETY: called on the mutator thread during lazy sweep; `this` is the m_ctx payload.
-        unsafe { (*this).internals.finalize() }
+        unsafe { (*this).internals.assume_init_mut().finalize() }
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_destroyed(this: &Self, _global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::from(this.internals.get_destroyed()))
+        Ok(JSValue::from(this.internals().get_destroyed()))
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn dispose(this: &mut Self, global_this: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        this.internals.cancel(global_this.bun_vm());
+        this.internals_mut().cancel(global_this.bun_vm());
         Ok(JSValue::UNDEFINED)
     }
 }
@@ -131,5 +148,5 @@ impl ImmediateObject {
 //   source:     src/runtime/timer/ImmediateObject.zig (106 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      .classes.ts payload + intrusive RC; internals uses out-param init (zeroed placeholder); sibling-module paths (EventLoopTimer/ID/Kind) need Phase-B fixup
+//   notes:      .classes.ts payload + intrusive RC; internals is MaybeUninit + out-param init (reshape to `-> Self` in Phase B); sibling-module paths (EventLoopTimer/ID/Kind) need Phase-B fixup
 // ──────────────────────────────────────────────────────────────────────────

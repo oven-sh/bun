@@ -3,7 +3,7 @@
 //! If an API can be implemented on multiple platforms,
 //! it does not belong in this namespace.
 
-use core::ffi::c_long;
+use core::ffi::{c_int, c_long};
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use bun_sys::Fd;
@@ -16,9 +16,9 @@ pub use bun_alloc::LinuxMemFdAllocator as MemFdAllocator;
 /// to the file descriptor fd_out, where one of the file descriptors
 /// must refer to a pipe.
 pub fn splice(
-    fd_in: libc::c_int,
+    fd_in: c_int,
     off_in: Option<&mut i64>,
-    fd_out: libc::c_int,
+    fd_out: c_int,
     off_out: Option<&mut i64>,
     len: usize,
     flags: u32,
@@ -112,9 +112,9 @@ pub extern "C" fn sys_epoll_pwait2(
     unsafe {
         libc::syscall(
             libc::SYS_epoll_pwait2,
-            epfd as isize as usize,
+            isize::from(epfd) as usize,
             events as usize,
-            maxevents as isize as usize,
+            isize::from(maxevents) as usize,
             timeout as usize,
             sigmask as usize,
             // This is the correct value. glibc claims to pass `sizeof sigset_t` for this argument,

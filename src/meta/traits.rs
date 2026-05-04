@@ -127,18 +127,21 @@ pub const fn is_container<T: IsContainer>() -> bool {
 // PORT NOTE: the Zig source has a typo (`.pointer.size` instead of `info.pointer.size`)
 // which would not compile; preserving the intended semantics here.
 pub trait IsSingleItemPtr {
-    type Pointee: ?Sized;
+    type Pointee;
 }
-impl<T: ?Sized> IsSingleItemPtr for &T {
+// NB: `T` is deliberately `Sized` here — Zig's `.pointer.size == .One` is mutually
+// exclusive with `.slice`, so `&[u8]` (a Zig slice) must NOT satisfy this trait.
+// `&[u8; N]` still matches because `[u8; N]: Sized`.
+impl<T> IsSingleItemPtr for &T {
     type Pointee = T;
 }
-impl<T: ?Sized> IsSingleItemPtr for &mut T {
+impl<T> IsSingleItemPtr for &mut T {
     type Pointee = T;
 }
-impl<T: ?Sized> IsSingleItemPtr for *const T {
+impl<T> IsSingleItemPtr for *const T {
     type Pointee = T;
 }
-impl<T: ?Sized> IsSingleItemPtr for *mut T {
+impl<T> IsSingleItemPtr for *mut T {
     type Pointee = T;
 }
 

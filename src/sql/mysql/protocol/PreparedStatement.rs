@@ -3,7 +3,7 @@ use super::command_type::CommandType;
 use super::new_reader::{decoder_wrap, NewReader};
 use super::new_writer::{write_wrap, NewWriter};
 use super::super::mysql_param::Param;
-use super::super::mysql_types::Value;
+use super::super::mysql_types::{FieldType, Value};
 
 bun_output::declare_scope!(PreparedStatement, hidden);
 
@@ -130,9 +130,7 @@ impl Execute {
             // Write parameter values
             debug_assert_eq!(self.params.len(), self.param_types.len());
             for (param, param_type) in self.params.iter().zip(self.param_types.iter()) {
-                if matches!(param, Value::Null) || param_type.r#type.is_null() {
-                    // TODO(port): Zig checks `param_type.type == .MYSQL_TYPE_NULL`; assuming an
-                    // `is_null()` helper or `== FieldType::MYSQL_TYPE_NULL` — adjust in Phase B.
+                if matches!(param, Value::Null) || param_type.r#type == FieldType::MYSQL_TYPE_NULL {
                     continue;
                 }
 
@@ -159,6 +157,6 @@ impl Execute {
 // PORT STATUS
 //   source:     src/sql/mysql/protocol/PreparedStatement.zig (118 lines)
 //   confidence: medium
-//   todos:      4
+//   todos:      3
 //   notes:      decoder_wrap/write_wrap comptime type-generators stubbed; param_types lifetime needs Phase B; NewReader/NewWriter passed by value (may need &mut)
 // ──────────────────────────────────────────────────────────────────────────

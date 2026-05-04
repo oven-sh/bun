@@ -167,10 +167,10 @@ pub extern "C" fn us_socket_buffered_js_write(
         if stream_buffer.is_not_empty() {
             let to_flush = stream_buffer.slice();
             let to_flush_len = to_flush.len();
-            let written: u32 = socket.write(to_flush).max(0) as u32;
+            let written: u32 = u32::try_from(socket.write(to_flush).max(0)).unwrap();
             stream_buffer.wrote(written);
             total_written = total_written.saturating_add(usize::from(written));
-            if (written as usize) < to_flush_len {
+            if usize::from(written) < to_flush_len {
                 if !data_slice.is_empty() {
                     stream_buffer.write(data_slice);
                 }
@@ -179,10 +179,10 @@ pub extern "C" fn us_socket_buffered_js_write(
         }
 
         if !data_slice.is_empty() {
-            let written: u32 = socket.write(data_slice).max(0) as u32;
+            let written: u32 = u32::try_from(socket.write(data_slice).max(0)).unwrap();
             total_written = total_written.saturating_add(usize::from(written));
-            if (written as usize) < data_slice.len() {
-                stream_buffer.write(&data_slice[written as usize..]);
+            if usize::from(written) < data_slice.len() {
+                stream_buffer.write(&data_slice[usize::from(written)..]);
                 break 'body JSValue::FALSE;
             }
         }
@@ -202,5 +202,5 @@ pub extern "C" fn us_socket_buffered_js_write(
 //   source:     src/runtime/socket/uws_jsc.zig (116 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      defer reshaped to labeled block; ERR()/BlobOrStringOrBuffer API shapes guessed
+//   notes:      defer reshaped to labeled block; ERR()/BlobOrStringOrBuffer API shapes guessed; int casts now checked per PORTING.md
 // ──────────────────────────────────────────────────────────────────────────

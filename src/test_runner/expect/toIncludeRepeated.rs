@@ -99,11 +99,11 @@ impl Expect {
         let substring_fmt = substring.to_fmt(&formatter);
         let times_fmt = count.to_fmt(&formatter);
 
-        const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";
-
+        // PORT NOTE: Zig builds `"\n\n" ++ expected_line ++ received_line` at comptime via named
+        // consts; Rust `concat!` only accepts literal tokens (not `const` items), so the pieces are
+        // inlined directly below instead of bound to RECEIVED_LINE/EXPECTED_LINE locals.
         if not {
             if count_as_num == 0 {
-                const EXPECTED_LINE: &str = "Expected to include: <green>{}<r> \n";
                 const SIGNATURE: &str = get_signature("toIncludeRepeated", "<green>expected<r>", true);
                 return this.throw(
                     global,
@@ -115,7 +115,6 @@ impl Expect {
                     ),
                 );
             } else if count_as_num == 1 {
-                const EXPECTED_LINE: &str = "Expected not to include: <green>{}<r> \n";
                 const SIGNATURE: &str = get_signature("toIncludeRepeated", "<green>expected<r>", true);
                 return this.throw(
                     global,
@@ -127,7 +126,6 @@ impl Expect {
                     ),
                 );
             } else {
-                const EXPECTED_LINE: &str = "Expected not to include: <green>{}<r> <green>{}<r> times \n";
                 const SIGNATURE: &str = get_signature("toIncludeRepeated", "<green>expected<r>", true);
                 return this.throw(
                     global,
@@ -143,7 +141,6 @@ impl Expect {
         }
 
         if count_as_num == 0 {
-            const EXPECTED_LINE: &str = "Expected to not include: <green>{}<r>\n";
             const SIGNATURE: &str = get_signature("toIncludeRepeated", "<green>expected<r>", false);
             this.throw(
                 global,
@@ -155,7 +152,6 @@ impl Expect {
                 ),
             )
         } else if count_as_num == 1 {
-            const EXPECTED_LINE: &str = "Expected to include: <green>{}<r>\n";
             const SIGNATURE: &str = get_signature("toIncludeRepeated", "<green>expected<r>", false);
             this.throw(
                 global,
@@ -167,7 +163,6 @@ impl Expect {
                 ),
             )
         } else {
-            const EXPECTED_LINE: &str = "Expected to include: <green>{}<r> <green>{}<r> times \n";
             const SIGNATURE: &str = get_signature("toIncludeRepeated", "<green>expected<r>", false);
             this.throw(
                 global,

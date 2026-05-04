@@ -138,7 +138,7 @@ impl ConcurrentTask {
     /// # Safety
     /// `this` must have been produced by `ConcurrentTask::new` and not yet freed.
     #[inline]
-    pub unsafe fn deinit(this: *mut ConcurrentTask) {
+    pub unsafe fn destroy(this: *mut ConcurrentTask) {
         // SAFETY: caller contract above.
         drop(unsafe { Box::from_raw(this) });
     }

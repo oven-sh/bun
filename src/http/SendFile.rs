@@ -13,17 +13,6 @@ pub struct SendFile {
     pub content_size: usize,
 }
 
-impl Default for SendFile {
-    fn default() -> Self {
-        Self {
-            fd: Fd::invalid(),
-            remain: 0,
-            offset: 0,
-            content_size: 0,
-        }
-    }
-}
-
 impl SendFile {
     pub fn is_eligible(url: &URL) -> bool {
         // `if cfg!()` is fine here: both branches type-check (no platform-only items referenced).
@@ -110,7 +99,7 @@ impl SendFile {
 
         #[cfg(all(unix, not(target_os = "linux"), not(target_os = "freebsd")))]
         {
-            let mut sbytes: i64 = adjusted_count as i64; // std.posix.off_t
+            let mut sbytes: i64 = i64::try_from(adjusted_count).unwrap(); // std.posix.off_t
             // SAFETY: same-size POD bitcast u64 -> i64 (Zig used @bitCast).
             let signed_offset: i64 = unsafe { core::mem::transmute::<u64, i64>(self.offset as u64) };
             // TODO(port): map `std.c.sendfile` (Darwin signature) — using bun_sys::c.

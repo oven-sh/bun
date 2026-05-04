@@ -1,4 +1,3 @@
-use bun_core::Output;
 use bun_jsc::{CallFrame, ConsoleObject, JSGlobalObject, JSValue, JsResult};
 
 use crate::diff_format::DiffFormatter;
@@ -15,14 +14,9 @@ pub fn to_have_been_called_with(
 
     let this_value = frame.this();
     let arguments = frame.arguments();
-    // PORT NOTE: reshaped for borrowck — `defer this.post_match(global)` captured via raw ptr so
-    // `this` remains usable below. Guard runs on every return path.
-    let this_ptr: *mut Expect = this;
-    let global_ptr: *const JSGlobalObject = global;
-    let _post_match = scopeguard::guard((), move |_| {
-        // SAFETY: `this` and `global` outlive this function scope; guard drops before return.
-        unsafe { (*this_ptr).post_match(&*global_ptr) };
-    });
+    // PORT NOTE: reshaped for borrowck — `defer this.post_match(global)` becomes an IIFE so the
+    // body's `&mut *this` borrow ends before `post_match` runs on every return path (no raw ptrs).
+    let result = (|| -> JsResult<JSValue> {
     let value: JSValue = this.get_value(global, this_value, "toHaveBeenCalledWith", "<green>...expected<r>")?;
 
     this.increment_expect_call_counter();
@@ -130,52 +124,29 @@ pub fn to_have_been_called_with(
         formatter: &mut formatter,
     };
 
-    // TODO(port): Output::pretty_fmt is a comptime string transform (color tag → ANSI / strip).
-    // Rust format_args! requires a literal first arg, so the const-generic dispatch below passes
-    // the concatenated literal directly. Phase B: replace with `bun_core::pretty_fmt!` macro.
-    const FMT: &str = concat!(
-        "\n\n",
-        "    <green>Expected<r>: {}\n",
-        "    <red>Received<r>:\n",
-        "{}\n",
-        "\n",
-        "    Number of calls: {}",
-        "\n",
-    );
+    // TODO(port): Output.prettyFmt comptime color dispatch — Zig branches on
+    // `Output.enable_ansi_colors_stderr` to substitute/strip `<green>`/`<red>` tags at comptime.
+    // Re-expand to `if b { throw::<true>() } else { throw::<false>() }` once `bun_core::pretty_fmt!` exists.
     // PERF(port): was comptime bool dispatch (`switch inline else`) — profile in Phase B
-    if Output::enable_ansi_colors_stderr() {
-        this.throw(
-            global,
-            signature,
-            // TODO(port): Output::pretty_fmt::<true>(FMT) — comptime color substitution
-            format_args!(
-                "\n\n    <green>Expected<r>: {}\n    <red>Received<r>:\n{}\n\n    Number of calls: {}\n",
-                expected_args_js_array.to_fmt(&mut formatter),
-                list_formatter,
-                calls_count,
-            ),
-        )
-    } else {
-        this.throw(
-            global,
-            signature,
-            // TODO(port): Output::pretty_fmt::<false>(FMT) — comptime color stripping
-            format_args!(
-                "\n\n    <green>Expected<r>: {}\n    <red>Received<r>:\n{}\n\n    Number of calls: {}\n",
-                expected_args_js_array.to_fmt(&mut formatter),
-                list_formatter,
-                calls_count,
-            ),
-        )
-    }
-    #[allow(unused)]
-    let _ = FMT;
+    return this.throw(
+        global,
+        signature,
+        format_args!(
+            "\n\n    <green>Expected<r>: {}\n    <red>Received<r>:\n{}\n\n    Number of calls: {}\n",
+            expected_args_js_array.to_fmt(&mut formatter),
+            list_formatter,
+            calls_count,
+        ),
+    );
+    })();
+    this.post_match(global);
+    result
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/test_runner/expect/toHaveBeenCalledWith.zig (127 lines)
 //   confidence: medium
-//   todos:      4
-//   notes:      Output.prettyFmt comptime color transform needs a macro; defer post_match uses raw-ptr scopeguard for borrowck; this.throw signature assumed to take fmt::Arguments
+//   todos:      2
+//   notes:      Output.prettyFmt comptime color dispatch collapsed to single call pending pretty_fmt! macro; defer post_match reshaped as IIFE; this.throw assumed to take fmt::Arguments
 // ──────────────────────────────────────────────────────────────────────────

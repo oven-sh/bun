@@ -57,6 +57,7 @@ impl PendingConnect {
     /// SAFETY: `this` must be the pointer produced by `Box::into_raw` in `register`
     /// and must not be used after this call (it is freed here).
     pub unsafe fn on_dns_resolved(this: *mut PendingConnect) {
+        // SAFETY: `this` is the Box::into_raw'd ptr from register; live until dropped at end of fn.
         let session = unsafe { (*this).session };
         // Zig: defer { session.deref(); bun.destroy(this); }
         let _guard = scopeguard::guard((), move |_| {

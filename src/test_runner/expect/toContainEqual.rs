@@ -35,8 +35,10 @@ pub fn to_contain_equal(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // TODO(port): `defer this.postMatch(global)` — scopeguard would hold `&mut *this` for the
-    // whole body and conflict with uses below; reshape in Phase B (e.g. RAII guard on Expect).
+    // defer this.postMatch(globalThis);
+    // PORT NOTE: wrap `this` in a scopeguard so post_match runs on every exit path; `this`
+    // remains usable below via DerefMut on the guard (matches toBeWithin/toBeNumber pattern).
+    let mut this = scopeguard::guard(this, |t| t.post_match(global));
     let this_value = frame.this();
     let arguments_ = frame.arguments_old(1);
     let arguments = arguments_.slice();
@@ -144,6 +146,6 @@ pub fn to_contain_equal(
 // PORT STATUS
 //   source:     src/test_runner/expect/toContainEqual.zig (113 lines)
 //   confidence: medium
-//   todos:      1
-//   notes:      defer postMatch needs borrowck reshape; Expect.throw fmt-args shape may need adjusting
+//   todos:      0
+//   notes:      `this` wrapped in scopeguard for post_match defer; Expect.throw fmt-args shape may need adjusting
 // ──────────────────────────────────────────────────────────────────────────

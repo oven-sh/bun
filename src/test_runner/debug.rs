@@ -1,5 +1,6 @@
-use core::fmt::{self, Write as _};
+use core::fmt;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::io::Write as _;
 
 use bun_jsc::JsResult;
 
@@ -106,7 +107,7 @@ pub fn dump_order(this: &Execution) -> JsResult<()> {
 pub mod group {
     use super::*;
 
-    fn print_indent(writer: &mut impl fmt::Write) {
+    fn print_indent(writer: &mut impl std::io::Write) {
         let _ = write!(writer, "\x1b[90m");
         for _ in 0..INDENT.load(Ordering::Relaxed) {
             let _ = write!(writer, "│ ");
@@ -155,11 +156,11 @@ pub mod group {
 
         // TODO(port): Zig used std.fs.File.stdout().writerStreaming with a 64-byte buffer;
         // route through bun_core::Output stdout writer in Phase B.
-        let mut buf = String::new();
+        let mut buf: Vec<u8> = Vec::new();
         print_indent(&mut buf);
-        let _ = write!(buf, "\x1b[32m++ \x1b[0m");
-        let _ = write!(buf, "{}\n", args);
-        bun_core::Output::write_stdout(buf.as_bytes());
+        let _ = write!(&mut buf, "\x1b[32m++ \x1b[0m");
+        let _ = write!(&mut buf, "{}\n", args);
+        bun_core::Output::write_stdout(buf.as_slice());
 
         INDENT.fetch_add(1, Ordering::Relaxed);
         LAST_WAS_START.store(true, Ordering::Relaxed);
@@ -177,24 +178,24 @@ pub mod group {
             return; // std.fs.File.stdout().writer().print("\x1b[A", .{}) catch {};
         }
 
-        let mut buf = String::new();
+        let mut buf: Vec<u8> = Vec::new();
         print_indent(&mut buf);
         let _ = write!(
-            buf,
+            &mut buf,
             "\x1b[32m{}\x1b[m\n",
             if last_was_start { "+-" } else { "--" },
         );
-        bun_core::Output::write_stdout(buf.as_bytes());
+        bun_core::Output::write_stdout(buf.as_slice());
     }
 
     pub fn log(args: fmt::Arguments<'_>) {
         if !get_log_enabled() {
             return;
         }
-        let mut buf = String::new();
+        let mut buf: Vec<u8> = Vec::new();
         print_indent(&mut buf);
-        let _ = write!(buf, "{}\n", args);
-        bun_core::Output::write_stdout(buf.as_bytes());
+        let _ = write!(&mut buf, "{}\n", args);
+        bun_core::Output::write_stdout(buf.as_slice());
         LAST_WAS_START.store(false, Ordering::Relaxed);
     }
 }
@@ -204,5 +205,5 @@ pub mod group {
 //   source:     src/test_runner/debug.zig (108 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      stdout writer API + std.zig.fmtString escaping + SourceLocation need Phase B wiring; mutable globals → atomics
+//   notes:      stdout writer API + std.zig.fmtString escaping + SourceLocation need Phase B wiring; mutable globals → atomics; byte buffers via Vec<u8> + std::io::Write
 // ──────────────────────────────────────────────────────────────────────────

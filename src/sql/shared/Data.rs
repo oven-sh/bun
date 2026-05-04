@@ -64,6 +64,9 @@ impl Data {
             Data::Empty => {}
             Data::InlineStorage(_) => {}
         }
+        // Reset to Empty without running Drop on the (already freed) old value,
+        // so the caller's later Drop is a no-op instead of a double-free.
+        std::mem::forget(std::mem::replace(self, Data::Empty));
     }
 
     pub fn slice(&self) -> &[u8] {

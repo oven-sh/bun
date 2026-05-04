@@ -40,17 +40,7 @@ pub struct Property {
     pub value: Binding,
     pub default_value: Option<Expr>,
 }
-
-impl Default for Property {
-    fn default() -> Self {
-        Self {
-            flags: Flags::Property::NONE,
-            key: ExprNodeIndex::default(),
-            value: Binding::default(),
-            default_value: None,
-        }
-    }
-}
+// TODO(port): partial defaults — Zig only defaults `flags`/`default_value`; `key`/`value` have none, so no `impl Default`.
 
 pub struct Object<'a> {
     pub properties: &'a mut [Property],
@@ -58,12 +48,7 @@ pub struct Object<'a> {
 }
 // Zig: `pub const Property = B.Property;` — inherent associated type alias.
 // TODO(port): inherent associated types are unstable; callers use `B::Property` directly.
-
-impl<'a> Default for Object<'a> {
-    fn default() -> Self {
-        Self { properties: &mut [], is_single_line: false }
-    }
-}
+// TODO(port): partial defaults — Zig only defaults `is_single_line`; `properties` has none, so no `impl Default`.
 
 pub struct Array<'a> {
     pub items: &'a mut [ArrayBinding],
@@ -72,12 +57,7 @@ pub struct Array<'a> {
 }
 // Zig: `pub const Item = ArrayBinding;` — inherent associated type alias.
 // TODO(port): inherent associated types are unstable; callers use `ArrayBinding` directly.
-
-impl<'a> Default for Array<'a> {
-    fn default() -> Self {
-        Self { items: &mut [], has_spread: false, is_single_line: false }
-    }
-}
+// TODO(port): partial defaults — Zig only defaults `has_spread`/`is_single_line`; `items` has none, so no `impl Default`.
 
 #[derive(Default)]
 pub struct Missing {}
@@ -142,6 +122,6 @@ pub use crate::ast::G::Class;
 // PORT STATUS
 //   source:     src/js_parser/ast/B.zig (104 lines)
 //   confidence: medium
-//   todos:      4
-//   notes:      arena lifetimes <'a> per LIFETIMES.tsv; nested type aliases (Object::Property, Array::Item) dropped pending inherent-assoc-types; symbol_table anytype left as unbounded generic
+//   todos:      7
+//   notes:      arena lifetimes <'a> per LIFETIMES.tsv; nested type aliases (Object::Property, Array::Item) dropped pending inherent-assoc-types; symbol_table anytype left as unbounded generic; Default impls dropped (Zig structs not `.{}`-constructible)
 // ──────────────────────────────────────────────────────────────────────────

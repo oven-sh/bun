@@ -47,7 +47,7 @@ impl WeakImpl {
         unsafe { Bun__WeakRef__clear(this.as_ptr()) }
     }
 
-    pub unsafe fn deinit(this: NonNull<WeakImpl>) {
+    pub unsafe fn destroy(this: NonNull<WeakImpl>) {
         // SAFETY: `this` is a live WeakImpl handle; consumed here.
         unsafe { Bun__WeakRef__delete(this.as_ptr()) }
     }
@@ -179,7 +179,7 @@ impl<'a, T> Drop for Weak<'a, T> {
         };
         self.r#ref = None;
         // SAFETY: `r#ref` was live; we just took ownership and are deleting it.
-        unsafe { WeakImpl::deinit(r#ref) };
+        unsafe { WeakImpl::destroy(r#ref) };
     }
 }
 

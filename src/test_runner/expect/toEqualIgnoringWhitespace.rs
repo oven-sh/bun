@@ -2,6 +2,13 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter;
 use bun_test_runner::expect::Expect;
 
+// PORT NOTE: std.ascii.isWhitespace includes VT (0x0B); Rust's u8::is_ascii_whitespace does not.
+// Zig matches ' ' and '\t'..'\r' (0x09–0x0D).
+#[inline]
+fn is_zig_whitespace(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'\n' | 0x0B | 0x0C | b'\r')
+}
+
 #[bun_jsc::host_fn(method)]
 pub fn to_equal_ignoring_whitespace(
     this: &mut Expect,
@@ -51,10 +58,10 @@ pub fn to_equal_ignoring_whitespace(
         let mut right: usize = 0;
 
         // Skip leading whitespaces
-        while left < value_utf8.len() && value_utf8[left].is_ascii_whitespace() {
+        while left < value_utf8.len() && is_zig_whitespace(value_utf8[left]) {
             left += 1;
         }
-        while right < expected_utf8.len() && expected_utf8[right].is_ascii_whitespace() {
+        while right < expected_utf8.len() && is_zig_whitespace(expected_utf8[right]) {
             right += 1;
         }
 
@@ -71,10 +78,10 @@ pub fn to_equal_ignoring_whitespace(
             right += 1;
 
             // Skip trailing whitespaces
-            while left < value_utf8.len() && value_utf8[left].is_ascii_whitespace() {
+            while left < value_utf8.len() && is_zig_whitespace(value_utf8[left]) {
                 left += 1;
             }
-            while right < expected_utf8.len() && expected_utf8[right].is_ascii_whitespace() {
+            while right < expected_utf8.len() && is_zig_whitespace(expected_utf8[right]) {
                 right += 1;
             }
         }
@@ -128,7 +135,7 @@ pub fn to_equal_ignoring_whitespace(
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/test_runner/expect/toEqualIgnoringWhitespace.zig (91 lines)
-//   confidence: medium
+//   confidence: medium-high
 //   todos:      2
-//   notes:      scopeguard reshape for postMatch defer; Formatter/to_fmt and Expect::throw signatures assumed
+//   notes:      scopeguard reshape for postMatch defer; Formatter/to_fmt and Expect::throw signatures assumed; whitespace check matches Zig std.ascii.isWhitespace (includes VT)
 // ──────────────────────────────────────────────────────────────────────────

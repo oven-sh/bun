@@ -139,21 +139,13 @@ impl SASL {
     }
 }
 
-impl Drop for SASL {
-    fn drop(&mut self) {
-        // TODO(port): Zig `deinit` only resets state (no owned resources) — likely a reset()
-        // for reuse rather than a destructor. Phase B: confirm callers and rename to reset().
-        self.nonce_len = 0;
-        self.salted_password_created = false;
-        self.server_signature_len = 0;
-        self.status = SASLStatus::Init;
-    }
-}
+// TODO(port): Zig `deinit` is reset-for-reuse (zeroes scalar state, no owned resources);
+// add `pub fn reset(&mut self)` if callers need it. Not mapped to Drop — no side effects.
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/sql_jsc/postgres/SASL.zig (94 lines)
 //   confidence: medium
-//   todos:      4
-//   notes:      crate paths for bun_base64/bun_hmac/bun_sha/csprng/EVP::pbkdf2 are guesses; deinit→Drop is suspect (looks like reset)
+//   todos:      5
+//   notes:      crate paths for bun_base64/bun_hmac/bun_sha/csprng/EVP::pbkdf2 are guesses; Zig deinit is reset-for-reuse (Drop omitted)
 // ──────────────────────────────────────────────────────────────────────────

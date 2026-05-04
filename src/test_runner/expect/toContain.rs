@@ -36,10 +36,12 @@ impl Expect {
         let not = this.flags.not;
         let mut pass = false;
 
-        struct ExpectedEntry<'a> {
-            global: &'a JSGlobalObject,
+        // FFI/BACKREF: erased to *mut c_void for for_each userdata; raw ptrs match the Zig
+        // `*JSGlobalObject` / `*bool` fields and avoid a Phase-A struct lifetime param.
+        struct ExpectedEntry {
+            global: *const JSGlobalObject,
             expected: JSValue,
-            pass: &'a mut bool,
+            pass: *mut bool,
         }
 
         if value.js_type_loose().is_array_like() {
@@ -65,9 +67,9 @@ impl Expect {
             }
         } else if value.is_iterable(global)? {
             let mut expected_entry = ExpectedEntry {
-                global,
+                global: global as *const _,
                 expected,
-                pass: &mut pass,
+                pass: &mut pass as *mut bool,
             };
 
             extern "C" fn same_value_iterator(
@@ -77,14 +79,15 @@ impl Expect {
                 item: JSValue,
             ) {
                 // SAFETY: entry_ is &mut ExpectedEntry on the caller's stack, threaded through
-                // for_each as opaque userdata; non-null asserted by Zig `entry_.?`.
+                // for_each as opaque userdata; non-null asserted by Zig `entry_.?`. global/pass
+                // point at live stack locals for the duration of the for_each call.
                 debug_assert!(!entry_.is_null());
-                let entry = unsafe { &mut *(entry_ as *mut ExpectedEntry<'_>) };
-                let Ok(same) = item.is_same_value(entry.expected, entry.global) else {
+                let entry = unsafe { &mut *(entry_ as *mut ExpectedEntry) };
+                let Ok(same) = item.is_same_value(entry.expected, unsafe { &*entry.global }) else {
                     return;
                 };
                 if same {
-                    *entry.pass = true;
+                    unsafe { *entry.pass = true };
                     // TODO(perf): break out of the `forEach` when a match is found
                 }
             }
@@ -117,6 +120,7 @@ impl Expect {
         let expected_fmt = expected.to_fmt(&mut formatter);
         if not {
             let received_fmt = value.to_fmt(&mut formatter);
+            // PERF(port): was comptime getSignature — profile in Phase B (make get_signature const fn / const_format)
             let signature = get_signature("toContain", "<green>expected<r>", true);
             return this.throw(
                 global,
@@ -131,6 +135,7 @@ impl Expect {
             );
         }
 
+        // PERF(port): was comptime getSignature — profile in Phase B (make get_signature const fn / const_format)
         let signature = get_signature("toContain", "<green>expected<r>", false);
         this.throw(
             global,

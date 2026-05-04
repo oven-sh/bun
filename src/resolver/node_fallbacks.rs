@@ -88,7 +88,9 @@ impl FallbackModule {
 
 // TODO(port): `phf_map!` values must be const-evaluable; this depends on every constructor
 // reached by `__fallback_module_init!` being `const fn`. Revisit in Phase B — if that proves
-// intractable, fall back to a `once_cell::Lazy<HashMap<..>>` and leave a PERF(port) marker.
+// intractable, fall back to a `once_cell::Lazy<bun_collections::StringHashMap<FallbackModule>>`
+// (or a plain `match` on `&[u8]`) and leave a PERF(port) marker. Do NOT use
+// `std::collections::HashMap` (SipHash + nondeterministic iteration).
 pub static MAP: phf::Map<&'static [u8], FallbackModule> = phf::phf_map! {
     b"assert"         => __fallback_module_init!("assert"),
     b"buffer"         => __fallback_module_init!("buffer"),
@@ -115,7 +117,7 @@ pub static MAP: phf::Map<&'static [u8], FallbackModule> = phf::phf_map! {
     b"zlib"           => __fallback_module_init!("zlib"),
 };
 
-pub fn contents_from_path(path: &[u8]) -> Option<&'static str> {
+pub fn contents_from_path(path: &[u8]) -> Option<&'static [u8]> {
     if cfg!(debug_assertions) {
         debug_assert!(path.starts_with(IMPORT_PATH));
     }
@@ -127,7 +129,7 @@ pub fn contents_from_path(path: &[u8]) -> Option<&'static str> {
         .unwrap_or(module_name.len())];
 
     if let Some(module) = MAP.get(module_name) {
-        return Some((module.code)());
+        return Some((module.code)().as_bytes());
     }
 
     None
@@ -138,5 +140,5 @@ pub fn contents_from_path(path: &[u8]) -> Option<&'static str> {
 //   source:     src/resolver/node_fallbacks.zig (99 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      Heavy comptime init → macros + phf; needs const-fn ctors on Path/Source/PackageJSON in Phase B. LIFETIMES.tsv said code returns &'static str (vs &[u8]) — kept verbatim.
+//   notes:      Heavy comptime init → macros + phf; needs const-fn ctors on Path/Source/PackageJSON in Phase B. LIFETIMES.tsv pins struct field `code` to &'static str; free fn `contents_from_path` returns &'static [u8] per type-map rule.
 // ──────────────────────────────────────────────────────────────────────────

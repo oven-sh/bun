@@ -29,6 +29,18 @@ pub struct OptionDefinition {
     pub default_value: Option<JSValue>,
 }
 
+impl Default for OptionDefinition {
+    fn default() -> Self {
+        Self {
+            long_name: String::empty(),
+            short_name: String::empty(),
+            r#type: OptionValueType::Boolean,
+            multiple: false,
+            default_value: None,
+        }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum TokenSubtype {
     /// '--'

@@ -32,7 +32,7 @@ pub fn to_be_type_of(
         return global.throw_invalid_arguments(format_args!("toBeTypeOf() requires 1 argument"));
     }
 
-    let value: JSValue = this.get_value(global, this_value, "toBeTypeOf", "")?;
+    let value: JSValue = this.get_value(global, this_value, b"toBeTypeOf", b"")?;
 
     let expected = arguments[0];
     expected.ensure_still_alive();
@@ -96,7 +96,7 @@ pub fn to_be_type_of(
     let expected_str = expected.to_fmt(&mut formatter);
 
     if not {
-        let signature = get_signature("toBeTypeOf", "", true);
+        let signature = get_signature(b"toBeTypeOf", b"", true);
         return this.throw(
             global,
             signature,
@@ -113,7 +113,7 @@ pub fn to_be_type_of(
         );
     }
 
-    let signature = get_signature("toBeTypeOf", "", false);
+    let signature = get_signature(b"toBeTypeOf", b"", false);
     this.throw(
         global,
         signature,

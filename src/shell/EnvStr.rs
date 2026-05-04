@@ -94,10 +94,10 @@ impl EnvStr {
         )
     }
 
-    pub fn init_ref_counted(str: Box<[u8]>) -> EnvStr {
-        // TODO(port): Zig took `[]const u8` here and RefCountedStr assumed ownership of the
-        // backing allocation. In Rust the caller must hand over a Box<[u8]> (or this should
-        // borrow + dupe — revisit RefCountedStr ownership contract in Phase B).
+    pub fn init_ref_counted(str: &[u8]) -> EnvStr {
+        // TODO(port): Zig `initRefCounted([]const u8)` hands the slice to RefCountedStr which
+        // assumes ownership of the backing allocation. Revisit RefCountedStr::init ownership
+        // contract in Phase B (caller-allocated vs. dupe-on-init).
         if str.is_empty() {
             return Self::pack(0, Tag::Empty, 0);
         }
@@ -118,7 +118,11 @@ impl EnvStr {
         match self.tag() {
             Tag::Empty => b"",
             Tag::Slice => self.cast_slice(),
-            Tag::Refcounted => unsafe { (*self.cast_ref_counted()).byte_slice() },
+            Tag::Refcounted => {
+                // SAFETY: tag == Refcounted guarantees ptr is a live *mut RefCountedStr
+                // (set by init_ref_counted/dupe_ref_counted).
+                unsafe { (*self.cast_ref_counted()).byte_slice() }
+            }
         }
     }
 
@@ -195,5 +199,5 @@ fn to_ptr(ptr_val: *const c_void) -> u64 {
 //   source:     src/shell/EnvStr.zig (119 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      packed u128 modeled as #[repr(transparent)] with shift accessors; slice() lifetime + RefCountedStr::init ownership need Phase-B review
+//   notes:      packed u128 modeled as #[repr(transparent)] with shift accessors; slice() lifetime + RefCountedStr::init ownership contract need Phase-B review
 // ──────────────────────────────────────────────────────────────────────────

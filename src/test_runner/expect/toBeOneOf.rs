@@ -101,41 +101,37 @@ pub fn to_be_one_of(
     let expected_fmt = expected.to_fmt(&mut formatter);
     if not {
         let received_fmt = list_value.to_fmt(&mut formatter);
-        const EXPECTED_LINE: &str =
-            "Expected to not be one of: <green>{}<r>\nReceived: <red>{}<r>\n";
         // TODO(port): get_signature was `comptime` in Zig — ensure it is `const fn` so this stays compile-time.
         let signature = get_signature("toBeOneOf", "<green>expected<r>", true);
+        // PORT NOTE: Zig `{f}` fmt specifier mapped to Rust `{}` (Display); `++` mapped to concat!.
         return this.throw(
             global_this,
             signature,
-            concat!(
-                "\n\n",
-                "Expected to not be one of: <green>{}<r>\nReceived: <red>{}<r>\n"
+            format_args!(
+                concat!(
+                    "\n\n",
+                    "Expected to not be one of: <green>{}<r>\nReceived: <red>{}<r>\n",
+                ),
+                received_fmt,
+                expected_fmt,
             ),
-            format_args!("{}{}", received_fmt, expected_fmt),
         );
-        // PORT NOTE: Zig `{f}` fmt specifier mapped to Rust `{}` (Display); `++` mapped to concat!.
-        let _ = EXPECTED_LINE;
     }
 
-    const EXPECTED_LINE: &str = "Expected to be one of: <green>{}<r>\n";
-    const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";
     let signature = get_signature("toBeOneOf", "<green>expected<r>", false);
-    this.throw(
+    return this.throw(
         global_this,
         signature,
-        concat!(
-            "\n\n",
-            "Expected to be one of: <green>{}<r>\n",
-            "Received: <red>{}<r>\n"
+        format_args!(
+            concat!(
+                "\n\n",
+                "Expected to be one of: <green>{}<r>\n",
+                "Received: <red>{}<r>\n",
+            ),
+            value_fmt,
+            expected_fmt,
         ),
-        format_args!("{}{}", value_fmt, expected_fmt),
-    )
-    // PORT NOTE: Zig passed a tuple `.{ value_fmt, expected_fmt }` matched against two `{f}` holes;
-    // Rust side of `Expect::throw` likely takes `core::fmt::Arguments` — Phase B to confirm signature.
-    ;
-    let _ = (EXPECTED_LINE, RECEIVED_LINE);
-    unreachable!()
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -143,5 +139,5 @@ pub fn to_be_one_of(
 //   source:     src/test_runner/expect/toBeOneOf.zig (92 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      defer post_match via scopeguard borrows &mut this across body; Expect::throw fmt-args shape and const get_signature need Phase B verification
+//   notes:      defer post_match via scopeguard borrows &mut this across body; const get_signature needs Phase B verification
 // ──────────────────────────────────────────────────────────────────────────

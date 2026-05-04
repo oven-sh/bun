@@ -28,19 +28,20 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
             .sub(offset_of!(BundleV2, linker))
             .cast::<BundleV2>()
     };
-    let worker = ThreadPool::Worker::get(bv2);
-    let worker = scopeguard::guard(worker, |w| w.unget());
+    // `defer worker.unget()` → RAII: Worker::get returns a guard that Derefs to &mut Worker
+    // and calls unget() on Drop (per PORTING.md pool-get pattern).
+    let mut worker = ThreadPool::Worker::get(bv2);
 
-    // TODO(port): Environment.show_crash_trace — assuming a const bool on bun_core::Environment
-    let _crash_guard = if Environment::SHOW_CRASH_TRACE {
+    // TODO(port): Environment.show_crash_trace — exact cfg key TBD; using feature = "show_crash_trace"
+    #[cfg(feature = "show_crash_trace")]
+    let _crash_guard = {
         let prev_action = bun_crash_handler::current_action();
-        Some(scopeguard::guard(prev_action, |prev| {
+        scopeguard::guard(prev_action, |prev| {
             bun_crash_handler::set_current_action(prev);
-        }))
-    } else {
-        None
+        })
     };
-    if Environment::SHOW_CRASH_TRACE {
+    #[cfg(feature = "show_crash_trace")]
+    {
         bun_crash_handler::set_current_action(bun_crash_handler::Action::BundleGenerateChunk {
             chunk: ctx.chunk,
             context: ctx.c,
@@ -48,7 +49,8 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
         });
     }
 
-    if Environment::SHOW_CRASH_TRACE {
+    #[cfg(feature = "show_crash_trace")]
+    {
         let path = &ctx
             .c
             .parse_graph
@@ -63,15 +65,11 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
 
     ctx.chunk.compile_results_for_chunk[part_range.i] =
         generate_compile_result_for_js_chunk_impl(
-            *scopeguard::ScopeGuard::into_inner(worker),
+            &mut *worker,
             ctx.c,
             ctx.chunk,
             part_range.part_range,
         );
-    // PORT NOTE: reshaped for borrowck — worker.unget() must run after the impl call;
-    // the original Zig used `defer worker.unget()`. Disarming the guard above and
-    // calling unget() manually below to keep ordering identical.
-    // TODO(port): verify Worker::get returns a value that needs explicit unget vs RAII guard
 }
 
 fn generate_compile_result_for_js_chunk_impl(
@@ -113,7 +111,7 @@ fn generate_compile_result_for_js_chunk_impl(
     let collect_decls = c.options.generate_bytecode_cache
         && c.options.output_format == OutputFormat::Esm
         && c.options.compile;
-    let mut dc = DeclCollector { allocator };
+    let mut dc = DeclCollector { allocator, ..Default::default() };
 
     let result = c.generate_code_for_file_in_chunk_js(
         &mut buffer_writer,
@@ -169,6 +167,6 @@ use bun_js_parser::js_printer::PrintResult;
 // PORT STATUS
 //   source:     src/bundler/linker_context/generateCompileResultForJSChunk.zig (110 lines)
 //   confidence: medium
-//   todos:      6
-//   notes:      @fieldParentPtr parent type for Worker::get assumed BundleV2; runtime allocator selection kept as &dyn; arena/worker defer ordering reshaped with scopeguard
+//   todos:      5
+//   notes:      @fieldParentPtr parent type for Worker::get assumed BundleV2; Worker::get modeled as RAII guard (unget on Drop); show_crash_trace gated by #[cfg(feature)]; runtime allocator selection kept as &dyn
 // ──────────────────────────────────────────────────────────────────────────

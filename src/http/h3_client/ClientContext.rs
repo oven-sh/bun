@@ -21,7 +21,7 @@ bun_output::declare_scope!(h3_client, hidden);
 
 pub struct ClientContext {
     // TODO(port): lifetime — FFI handle owned for process lifetime (never freed).
-    qctx: *mut quic::Context,
+    qctx: NonNull<quic::Context>,
     sessions: Vec<*mut ClientSession>,
 }
 
@@ -68,9 +68,8 @@ impl ClientContext {
     }
 
     /// Find or open a connection to `hostname:port` and queue `client` on it.
-    pub fn connect(&mut self, client: *mut HttpClient, hostname: &[u8], port: u16) -> bool {
-        // SAFETY: caller passes a live HTTPClient; only reading a flag.
-        let reject = unsafe { (*client).flags.reject_unauthorized };
+    pub fn connect(&mut self, client: &mut HttpClient, hostname: &[u8], port: u16) -> bool {
+        let reject = client.flags.reject_unauthorized;
         for &s in self.sessions.iter() {
             // SAFETY: sessions vec holds live ClientSession pointers; removed via unregister() before destroy.
             let s = unsafe { &mut *s };
@@ -107,7 +106,7 @@ impl ClientContext {
 
         // SAFETY: qctx is the process-lifetime lsquic client engine.
         match unsafe {
-            (*self.qctx).connect(host_z.as_ptr(), port, host_z.as_ptr(), reject, session)
+            (*self.qctx.as_ptr()).connect(host_z.as_ptr(), port, host_z.as_ptr(), reject, session)
         } {
             quic::ConnectResult::Socket(qs) => {
                 // SAFETY: session is live; qs is a fresh quic socket whose ext slot
@@ -131,7 +130,7 @@ impl ClientContext {
                     port
                 );
                 // SAFETY: qctx is live for the process.
-                PendingConnect::register(session, pending, unsafe { (*self.qctx).loop_() });
+                PendingConnect::register(session, pending, unsafe { (*self.qctx.as_ptr()).loop_() });
             }
             quic::ConnectResult::Err => {
                 bun_output::scoped_log!(
@@ -140,7 +139,8 @@ impl ClientContext {
                     bstr::BStr::new(hostname),
                     port
                 );
-                self.unregister(session);
+                // SAFETY: session was just allocated above and is live.
+                self.unregister(unsafe { &mut *session });
                 PendingConnect::fail_session(session, bun_core::err!("ConnectionRefused"));
                 return false;
             }
@@ -148,19 +148,17 @@ impl ClientContext {
         true
     }
 
-    pub fn unregister(&mut self, session: *mut ClientSession) {
-        // SAFETY: caller guarantees session is live (it is being torn down).
-        let i = unsafe { (*session).registry_index } as usize;
-        if i >= self.sessions.len() || self.sessions[i] != session {
+    pub fn unregister(&mut self, session: &mut ClientSession) {
+        let i = session.registry_index as usize;
+        if i >= self.sessions.len() || !core::ptr::eq(self.sessions[i], session) {
             return;
         }
         let _ = self.sessions.swap_remove(i);
         if i < self.sessions.len() {
             // SAFETY: the swapped-in element is a live registered session.
-            unsafe { (*self.sessions[i]).registry_index = i as u32 };
+            unsafe { (*self.sessions[i]).registry_index = u32::try_from(i).unwrap() };
         }
-        // SAFETY: session is still live; we are detaching it from the registry.
-        unsafe { (*session).registry_index = u32::MAX };
+        session.registry_index = u32::MAX;
     }
 
     pub fn abort_by_http_id(async_http_id: u32) -> bool {
@@ -192,5 +190,5 @@ impl ClientContext {
 //   source:     src/http/h3_client/ClientContext.zig (117 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      mutable global INSTANCE uses static mut (HTTP-thread-only); quic::ConnectResult enum & ZStr owned-dupeZ shape assumed; ClientSession/HttpClient kept as raw *mut (FFI ext-slot back-refs)
+//   notes:      mutable global INSTANCE uses static mut (HTTP-thread-only); quic::ConnectResult enum & ZStr owned-dupeZ shape assumed; ClientSession registry storage stays raw *mut (FFI ext-slot back-ref), fn params take &mut
 // ──────────────────────────────────────────────────────────────────────────

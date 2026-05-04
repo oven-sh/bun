@@ -4,7 +4,7 @@
 
 use bun_js_parser::{E, G, Expr, ExprData, ToJSError};
 use bun_jsc::{JSGlobalObject, JSValue};
-use bun_str::{self as bstr, StringJsc as _};
+use bun_str::{String as BunString, strings, StringJsc as _};
 
 pub fn expr_to_js(this: &Expr, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
     data_to_js(&this.data, global)
@@ -88,22 +88,22 @@ pub fn string_to_js(s: &mut E::String, global: &JSGlobalObject) -> Result<JSValu
     // TODO(port): narrow error set
     s.resolve_rope_if_needed();
     if !s.is_present() {
-        let mut emp = bstr::String::empty();
+        let mut emp = BunString::empty();
         return Ok(emp.to_js(global));
     }
 
     if s.is_utf8() {
-        if let Some(utf16) = bstr::strings::to_utf16_alloc(s.slice8(), false, false)? {
-            let (mut out, chars) = bstr::String::create_uninitialized_utf16(utf16.len());
+        if let Some(utf16) = strings::to_utf16_alloc(s.slice8(), false, false)? {
+            let (mut out, chars) = BunString::create_uninitialized_utf16(utf16.len());
             chars.copy_from_slice(&utf16);
             Ok(out.transfer_to_js(global))
         } else {
-            let (mut out, chars) = bstr::String::create_uninitialized_latin1(s.slice8().len());
+            let (mut out, chars) = BunString::create_uninitialized_latin1(s.slice8().len());
             chars.copy_from_slice(s.slice8());
             Ok(out.transfer_to_js(global))
         }
     } else {
-        let (mut out, chars) = bstr::String::create_uninitialized_utf16(s.slice16().len());
+        let (mut out, chars) = BunString::create_uninitialized_utf16(s.slice16().len());
         chars.copy_from_slice(s.slice16());
         Ok(out.transfer_to_js(global))
     }

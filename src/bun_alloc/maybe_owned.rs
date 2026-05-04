@@ -106,17 +106,10 @@ impl<A> MaybeOwned<A> {
     }
 }
 
-impl<A> Drop for MaybeOwned<A> {
-    fn drop(&mut self) {
-        // Zig `deinit`: take the parent (if owned) and deinit it.
-        // In Rust, dropping `self._parent: Nullable<A>` already drops the inner `A` when
-        // present, so this is largely a no-op beyond field drop glue.
-        // Kept explicit to mirror `bun.memory.deinit(parent_alloc)` for side-effecting allocators.
-        if let Some(parent_alloc) = crate::take_nullable::<A>(&mut self._parent) {
-            bun_memory::deinit(parent_alloc);
-        }
-    }
-}
+// Zig `deinit` only forwarded to `bun.memory.deinit(parent_alloc)` on the owned field.
+// Per PORTING.md (Idiom map: `pub fn deinit`), that is exactly field drop glue on
+// `_parent: Nullable<A>`, so no explicit `Drop` impl — keeping one would also forbid
+// moving `self._parent` out in `into_parent(self)`.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Null allocator vtable (used when `MaybeOwned` is borrowed)
@@ -146,5 +139,5 @@ impl Allocator for NullAllocator {
 //   source:     src/bun_alloc/maybe_owned.zig (112 lines)
 //   confidence: medium
 //   todos:      5
-//   notes:      Generic allocator wrapper; depends on unsettled crate::{Nullable, Borrowed, init_nullable, unpack_nullable, as_std, Allocator trait} and bun_memory::{init_default, deinit}. Associated `Borrowed` type alias hoisted to free `MaybeOwnedBorrowed<A>` (no stable inherent assoc types).
+//   notes:      Generic allocator wrapper; depends on unsettled crate::{Nullable, Borrowed, init_nullable, unpack_nullable, as_std, Allocator trait} and bun_memory::init_default. Associated `Borrowed` type alias hoisted to free `MaybeOwnedBorrowed<A>` (no stable inherent assoc types). Zig `deinit` dropped — pure field drop glue.
 // ──────────────────────────────────────────────────────────────────────────

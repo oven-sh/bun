@@ -47,7 +47,7 @@ pub fn level_from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<O
     }
 
     if !value.is_string() {
-        return Err(global_this.throw_invalid_arguments("Expected logLevel to be a string", format_args!("")));
+        return Err(global_this.throw_invalid_arguments(format_args!("Expected logLevel to be a string")));
     }
 
     // TODO(port): `Log.Level.Map` is a ComptimeStringMap in Zig → `phf::Map` in bun_logger;

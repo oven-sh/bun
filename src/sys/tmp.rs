@@ -7,31 +7,32 @@ const ALLOW_TMPFILE: bool = false;
 
 // To be used with files
 // not folders!
-pub struct Tmpfile<'a> {
+pub struct Tmpfile {
     pub destination_dir: Fd,
-    // TODO(port): lifetime — borrowed from caller for the lifetime of the Tmpfile
-    pub tmpfilename: &'a ZStr,
+    // TODO(port): lifetime — borrowed from caller for the lifetime of the Tmpfile;
+    // no LIFETIMES.tsv entry, so stored raw per Phase-A rules (no <'a> on struct).
+    pub tmpfilename: *const ZStr,
     pub fd: Fd,
     pub using_tmpfile: bool,
 }
 
-impl<'a> Default for Tmpfile<'a> {
+impl Default for Tmpfile {
     fn default() -> Self {
         Self {
             destination_dir: Fd::invalid(),
-            tmpfilename: ZStr::EMPTY,
+            tmpfilename: core::ptr::null(),
             fd: Fd::invalid(),
             using_tmpfile: ALLOW_TMPFILE,
         }
     }
 }
 
-impl<'a> Tmpfile<'a> {
-    pub fn create(destination_dir: Fd, tmpfilename: &'a ZStr) -> crate::Result<Tmpfile<'a>> {
+impl Tmpfile {
+    pub fn create(destination_dir: Fd, tmpfilename: &ZStr) -> crate::Result<Tmpfile> {
         let perm = 0o644;
         let mut tmpfile = Tmpfile {
             destination_dir,
-            tmpfilename,
+            tmpfilename: tmpfilename as *const ZStr,
             ..Default::default()
         };
 
@@ -106,8 +107,7 @@ impl<'a> Tmpfile<'a> {
                                 retry = false;
                                 continue;
                             } else {
-                                ret.unwrap()?;
-                                return Ok(());
+                                return Err(err.into());
                             }
                         }
                     }
@@ -118,7 +118,8 @@ impl<'a> Tmpfile<'a> {
         crate::move_file_z_with_handle(
             self.fd,
             self.destination_dir,
-            self.tmpfilename,
+            // SAFETY: set in `create` from a caller-borrowed &ZStr that must outlive this Tmpfile.
+            unsafe { &*self.tmpfilename },
             self.destination_dir,
             destname,
         )?;
@@ -131,5 +132,5 @@ impl<'a> Tmpfile<'a> {
 //   source:     src/sys/tmp.zig (89 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      ALLOW_TMPFILE=false dead branches still type-check in Rust; may need #[cfg] gating if O::TMPFILE/linkat_tmpfile absent. Tmpfile borrows tmpfilename via <'a>.
+//   notes:      ALLOW_TMPFILE=false dead branches still type-check in Rust; may need #[cfg] gating if O::TMPFILE/linkat_tmpfile absent. tmpfilename stored as raw *const ZStr pending lifetime decision.
 // ──────────────────────────────────────────────────────────────────────────

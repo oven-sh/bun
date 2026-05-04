@@ -16,8 +16,9 @@ use super::ClientSession;
 // TODO(port): `bun.http` is the crate-root struct in Zig; confirm Rust path.
 use crate::HTTPClient;
 
-// `pub const new = bun.TrivialNew(@This());` — in Rust callers use `Box::new(Stream { .. })`.
-// The Box is owned by `ClientSession.streams`; Drop runs when removed from the map.
+// `pub const new = bun.TrivialNew(@This());` — see `Stream::new` below, which fills the
+// Zig field defaults and returns a Box. The Box is owned by `ClientSession.streams`;
+// Drop runs when removed from the map.
 
 pub struct Stream {
     // TODO(port): was u31 (HTTP/2 stream IDs are 31-bit); top bit must stay clear.
@@ -92,6 +93,37 @@ impl Drop for Stream {
 }
 
 impl Stream {
+    /// Mirrors `bun.TrivialNew(@This())` + Zig struct field defaults: callers in Zig
+    /// write `Stream.new(.{ .id, .session, .client, .send_window })` and the rest
+    /// default to `.{}` / `0` / `false` / `""`.
+    pub fn new(
+        id: u32,
+        session: *mut ClientSession,
+        client: Option<NonNull<HTTPClient>>,
+        send_window: i32,
+    ) -> Box<Self> {
+        Box::new(Self {
+            id,
+            session,
+            client,
+            header_block: Vec::new(),
+            body_buffer: Vec::new(),
+            decoded_bytes: Vec::new(),
+            decoded_headers: Vec::new(),
+            status_code: 0,
+            state: State::Open,
+            rst_done: false,
+            headers_ready: false,
+            headers_end_stream: false,
+            awaiting_continue: false,
+            fatal_error: None,
+            unacked_bytes: 0,
+            data_bytes_received: 0,
+            send_window,
+            pending_body: b"",
+        })
+    }
+
     pub fn rst(&mut self, code: wire::ErrorCode) {
         if self.rst_done || self.state == State::Closed {
             return;

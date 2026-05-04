@@ -10,9 +10,9 @@ impl Expect {
         global: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        // TODO(port): `defer this.postMatch(globalThis)` — scopeguard captures &mut self and
-        // conflicts with later borrows; Phase B reshape (inner fn or explicit calls on each return).
-        let _post = scopeguard::guard((), |_| this.post_match(global));
+        // TODO(port): `defer this.postMatch(globalThis)` — Phase B reshape (inner fn or explicit
+        // post_match before each return). scopeguard would capture &mut self and conflict with
+        // later borrows, and per PORTING.md scopeguard maps `errdefer {side-effects}`, not `defer`.
 
         let this_value = call_frame.this();
         let this_arguments = call_frame.arguments_old(2);

@@ -38,11 +38,11 @@ impl AnyRequest {
             Self::H3(r) => unsafe { (**r).url() },
         }
     }
-    pub fn set_yield(&self, y: bool) {
-        // SAFETY: see header()
+    pub fn set_yield(&mut self, y: bool) {
+        // SAFETY: see header(); set_yield mutates the underlying uWS/lsquic request state
         match self {
-            Self::H1(r) => unsafe { (**r).set_yield(y) },
-            Self::H3(r) => unsafe { (**r).set_yield(y) },
+            Self::H1(r) => unsafe { (&mut **r).set_yield(y) },
+            Self::H3(r) => unsafe { (&mut **r).set_yield(y) },
         }
     }
     pub fn date_for_header(&self, name: &[u8]) -> JsResult<Option<u64>> {
@@ -70,9 +70,9 @@ impl Request {
         // SAFETY: &self is a valid uWS::Request handle
         unsafe { c::uws_req_get_yield(self) }
     }
-    pub fn set_yield(&self, yield_: bool) {
-        // SAFETY: &self is a valid uWS::Request handle
-        unsafe { c::uws_req_set_yield(self as *const _ as *mut _, yield_) }
+    pub fn set_yield(&mut self, yield_: bool) {
+        // SAFETY: &mut self is a valid uWS::Request handle
+        unsafe { c::uws_req_set_yield(self, yield_) }
     }
     pub fn url(&self) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();

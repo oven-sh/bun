@@ -97,9 +97,8 @@ impl BufferVectorized {
                 }
             }
         };
+        // Zig writeU8/writeU16 return `!usize`; Rust port returns `Result<usize, _>` so `written` is already usize.
         let Ok(written) = result else { return false; };
-        // TODO(port): verify write_u16/write_u8 return type; Zig uses it as unsigned slice index.
-        let written = written as usize;
 
         if written == 0 && str.length() > 0 {
             return false;
@@ -155,26 +154,21 @@ impl BufferVectorized {
         }
 
         // PORT NOTE: reshaped for borrowck — Zig grew two slices (`contents`, `buf`) into the
-        // same underlying buffer and mutated `contents.len` in place. Here we track offsets.
+        // same underlying buffer and mutated `contents.len` in place. Here we track offsets
+        // and use copy_within (src/dst share `buf`).
+        // PERF(port): was memcpy (non-overlapping) — profile in Phase B if memmove-vs-memcpy matters.
         let mut contents_len = written;
         let mut buf_offset = written;
 
         while fill_length - buf_offset >= contents_len {
-            // SAFETY: src = [0, contents_len) and dst = [buf_offset, buf_offset + contents_len)
-            // are non-overlapping (invariant: buf_offset == contents_len at loop head).
-            unsafe {
-                core::ptr::copy_nonoverlapping(buf_ptr, buf_ptr.add(buf_offset), contents_len);
-            }
+            buf.copy_within(0..contents_len, buf_offset);
             buf_offset += contents_len;
             contents_len *= 2;
         }
 
         let remaining = fill_length - buf_offset;
         if remaining > 0 {
-            // SAFETY: remaining < contents_len <= buf_offset, so regions do not overlap.
-            unsafe {
-                core::ptr::copy_nonoverlapping(buf_ptr, buf_ptr.add(buf_offset), remaining);
-            }
+            buf.copy_within(0..remaining, buf_offset);
         }
 
         true
@@ -185,6 +179,6 @@ impl BufferVectorized {
 // PORT STATUS
 //   source:     src/runtime/node/buffer.zig (90 lines)
 //   confidence: medium
-//   todos:      1
-//   notes:      doubling-fill loop reshaped to raw-ptr offsets for borrowck; encoder fn signatures/paths need Phase B verification
+//   todos:      0
+//   notes:      doubling-fill loop reshaped to offset-tracked copy_within for borrowck; encoder fn paths need Phase B verification
 // ──────────────────────────────────────────────────────────────────────────

@@ -56,14 +56,13 @@ type Map = ArrayHashMap<(), ()>;
 
 impl List {
     /// Can only be called on the bundler thread.
-    // TODO(port): narrow error set
     pub fn put(
         &mut self,
         source_index: IndexInt,
         use_directive: UseDirective,
         reference_source_index: IndexInt,
         ssr_source_index: IndexInt,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), bun_alloc::AllocError> {
         self.list.append(ServerComponentBoundary {
             source_index,
             use_directive,
@@ -120,8 +119,7 @@ impl<'a> Slice<'a> {
         Some(self.list.items().reference_source_index[i])
     }
 
-    pub fn bit_set(&self, input_file_count: usize) -> Result<DynamicBitSet, bun_core::Error> {
-        // TODO(port): narrow error set
+    pub fn bit_set(&self, input_file_count: usize) -> Result<DynamicBitSet, bun_alloc::AllocError> {
         let mut scb_bitset = DynamicBitSet::init_empty(input_file_count)?;
         for &source_index in self.list.items().source_index {
             scb_bitset.set(source_index as usize);
@@ -151,6 +149,6 @@ impl<'a> Adapter<'a> {
 // PORT STATUS
 //   source:     src/js_parser/ast/ServerComponentBoundary.zig (121 lines)
 //   confidence: medium
-//   todos:      4
+//   todos:      3
 //   notes:      ArrayHashMap<(),()> + Adapter pattern needs adapted-lookup API in bun_collections; MultiArrayList Slice/items() shape assumed
 // ──────────────────────────────────────────────────────────────────────────

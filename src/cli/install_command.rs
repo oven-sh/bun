@@ -72,6 +72,9 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
             // TODO(port): @ptrCast of method fn pointer — DependenciesScanner.onFetch likely expects
             // `unsafe extern "C" fn(*mut c_void, *mut DependenciesScannerResult) -> Result<(), Error>`;
             // wire a trampoline in Phase B.
+            // SAFETY: @ptrCast — Analyzer::on_analyze has layout-compatible signature with
+            // DependenciesScanner.on_fetch; ctx is &mut Analyzer passed as *mut c_void above.
+            // TODO(port): replace with explicit C-ABI trampoline in Phase B.
             on_fetch: unsafe {
                 core::mem::transmute::<
                     fn(&mut Analyzer<'_>, &mut DependenciesScannerResult) -> Result<(), Error>,

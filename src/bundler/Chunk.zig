@@ -818,10 +818,10 @@ pub const ParseTask = bun.bundle_v2.ParseTask;
 const string = []const u8;
 
 const HTMLImportManifest = @import("./HTMLImportManifest.zig");
-const analyze_transpiled_module = @import("../analyze_transpiled_module.zig");
+const analyze_transpiled_module = @import("./analyze_transpiled_module.zig");
 const std = @import("std");
 
-const options = @import("../options.zig");
+const options = @import("./options.zig");
 const Loader = options.Loader;
 
 const bun = @import("bun");

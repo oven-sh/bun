@@ -426,7 +426,10 @@ pub fn sleepUntil(this: *PackageManager, closure: anytype, comptime isDoneFn: an
     this.event_loop.tick(closure, isDoneFn);
 }
 
-pub threadlocal var cached_package_folder_name_buf: bun.PathBuffer = undefined;
+const cached_package_folder_name_bufs = bun.ThreadlocalBuffers(struct { buf: bun.PathBuffer = undefined });
+pub inline fn cached_package_folder_name_buf() *bun.PathBuffer {
+    return &cached_package_folder_name_bufs.get().buf;
+}
 
 const Holder = struct {
     pub var ptr: *PackageManager = undefined;

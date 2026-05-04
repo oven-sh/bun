@@ -27,19 +27,7 @@ pub const AltSvc = @import("./h3_client/AltSvc.zig");
 pub var live_sessions = std.atomic.Value(u32).init(0);
 pub var live_streams = std.atomic.Value(u32).init(0);
 
-pub const TestingAPIs = struct {
-    /// Named distinctly from H2's `liveCounts` because generate-js2native.ts
-    /// mangles `[^A-Za-z]` to `_`, so `H2Client.zig` and `H3Client.zig` produce
-    /// the same path prefix and the function name has to differ.
-    pub fn quicLiveCounts(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const obj = jsc.JSValue.createEmptyObject(globalThis, 2);
-        obj.put(globalThis, jsc.ZigString.static("sessions"), .jsNumber(live_sessions.load(.monotonic)));
-        obj.put(globalThis, jsc.ZigString.static("streams"), .jsNumber(live_streams.load(.monotonic)));
-        return obj;
-    }
-};
-
-const std = @import("std");
+pub const TestingAPIs = @import("../http_jsc/headers_jsc.zig").H3TestingAPIs;
 
 const bun = @import("bun");
-const jsc = bun.jsc;
+const std = @import("std");

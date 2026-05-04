@@ -29,26 +29,9 @@ pub const CommandTag = union(enum) {
 
     other: []const u8,
 
-    pub fn toJSTag(this: CommandTag, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
-        return switch (this) {
-            .INSERT => JSValue.jsNumber(1),
-            .DELETE => JSValue.jsNumber(2),
-            .UPDATE => JSValue.jsNumber(3),
-            .MERGE => JSValue.jsNumber(4),
-            .SELECT => JSValue.jsNumber(5),
-            .MOVE => JSValue.jsNumber(6),
-            .FETCH => JSValue.jsNumber(7),
-            .COPY => JSValue.jsNumber(8),
-            .other => |tag| bun.String.createUTF8ForJS(globalObject, tag),
-        };
-    }
+    pub const toJSTag = @import("../../sql_jsc/postgres/command_tag_jsc.zig").toJSTag;
 
-    pub fn toJSNumber(this: CommandTag) JSValue {
-        return switch (this) {
-            .other => JSValue.jsNumber(0),
-            inline else => |val| JSValue.jsNumber(val),
-        };
-    }
+    pub const toJSNumber = @import("../../sql_jsc/postgres/command_tag_jsc.zig").toJSNumber;
 
     const KnownCommand = enum {
         INSERT,
@@ -100,6 +83,3 @@ const debug = bun.Output.scoped(.Postgres, .visible);
 
 const bun = @import("bun");
 const std = @import("std");
-
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;

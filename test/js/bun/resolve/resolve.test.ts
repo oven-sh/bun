@@ -1,7 +1,7 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it } from "bun:test";
-import { mkdirSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import { chmodSync, chownSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, bunRun, isLinux, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -483,4 +483,241 @@ it.skipIf(isWindows)("browser map resolution handles relative paths longer than 
   expect(stderr).toBe("");
   expect(stdout).toContain("42");
   expect(exitCode).toBe(0);
+});
+
+// ESModule.Package.parse scanned the entire specifier for an `@` to split off a
+// version. For wildcard `exports` maps the matched substring can contain `@`
+// (e.g. `ember-source/@ember/renderer/...`, `pkg/@scope/sub`) — those `@`s
+// aren't version delimiters, they're subpath content. The version split must
+// be bounded to the package-name portion of the specifier.
+// https://github.com/oven-sh/bun/issues/30187
+describe("wildcard exports with @ in matched subpath", () => {
+  it.concurrent("resolves a subpath whose wildcard match starts with @", () => {
+    using dir = tempDir("resolver-wildcard-at-scoped", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/test-pkg/package.json": JSON.stringify({
+        name: "test-pkg",
+        version: "1.0.0",
+        exports: { "./*": "./dist/packages/*" },
+      }),
+      "node_modules/test-pkg/dist/packages/plain/index.js": "export default 'plain';",
+      "node_modules/test-pkg/dist/packages/@scope/sub/index.js": "export default 'scoped';",
+    });
+    const root = String(dir);
+
+    expect(Bun.resolveSync("test-pkg/plain/index.js", root)).toBe(
+      join(root, "node_modules/test-pkg/dist/packages/plain/index.js"),
+    );
+    expect(Bun.resolveSync("test-pkg/@scope/sub/index.js", root)).toBe(
+      join(root, "node_modules/test-pkg/dist/packages/@scope/sub/index.js"),
+    );
+  });
+
+  it.concurrent("resolves a subpath that contains `@` mid-segment", () => {
+    using dir = tempDir("resolver-wildcard-at-mid", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/test-pkg/package.json": JSON.stringify({
+        name: "test-pkg",
+        version: "1.0.0",
+        exports: { "./*": "./dist/packages/*" },
+      }),
+      "node_modules/test-pkg/dist/packages/with@sign/sub/index.js": "export default 'sign';",
+    });
+    const root = String(dir);
+
+    expect(Bun.resolveSync("test-pkg/with@sign/sub/index.js", root)).toBe(
+      join(root, "node_modules/test-pkg/dist/packages/with@sign/sub/index.js"),
+    );
+  });
+
+  it.concurrent("resolves an @-prefixed subpath under a scoped package", () => {
+    using dir = tempDir("resolver-wildcard-at-scoped-pkg", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/@my/pkg/package.json": JSON.stringify({
+        name: "@my/pkg",
+        version: "1.0.0",
+        exports: { "./*": "./dist/*" },
+      }),
+      "node_modules/@my/pkg/dist/@inner/bar/index.js": "export default 'inner';",
+    });
+    const root = String(dir);
+
+    expect(Bun.resolveSync("@my/pkg/@inner/bar/index.js", root)).toBe(
+      join(root, "node_modules/@my/pkg/dist/@inner/bar/index.js"),
+    );
+  });
+
+  // Regression guard: `@version` specifiers immediately following the package
+  // name must still be stripped. We don't install alternative versions; we just
+  // verify `pkg@1.0.0/subpath` still resolves to the same file as `pkg/subpath`.
+  it.concurrent("still strips a trailing @version after the package name", () => {
+    using dir = tempDir("resolver-wildcard-versioned", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/test-pkg/package.json": JSON.stringify({
+        name: "test-pkg",
+        version: "1.0.0",
+        exports: { "./*": "./dist/packages/*" },
+      }),
+      "node_modules/test-pkg/dist/packages/plain/index.js": "export default 'plain';",
+    });
+    const root = String(dir);
+
+    expect(Bun.resolveSync("test-pkg@1.0.0/plain/index.js", root)).toBe(
+      join(root, "node_modules/test-pkg/dist/packages/plain/index.js"),
+    );
+  });
+
+  // Regression guard for the scoped-package version split: the `@version`
+  // delimiter still falls inside the name span `parseName` returns (between
+  // the leading `@` and the second `/`), so the version branch must still
+  // fire for `@scope/pkg@ver/sub`.
+  it.concurrent("still strips @version after a scoped package name", () => {
+    using dir = tempDir("resolver-wildcard-scoped-versioned", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/@my/pkg/package.json": JSON.stringify({
+        name: "@my/pkg",
+        version: "1.0.0",
+        exports: { "./*": "./dist/*" },
+      }),
+      "node_modules/@my/pkg/dist/sub/index.js": "export default 'sub';",
+    });
+    const root = String(dir);
+
+    expect(Bun.resolveSync("@my/pkg@1.0.0/sub/index.js", root)).toBe(
+      join(root, "node_modules/@my/pkg/dist/sub/index.js"),
+    );
+  });
+});
+
+// dirInfoCachedMaybeLog reads the rfs.entries cache without checking the union
+// tag. If readDirectory() previously failed with a non-ENOENT error (e.g.
+// EACCES), a `.err` variant is stored there; re-resolving the directory after
+// the error condition clears would then reinterpret the two `anyerror` values
+// as a *DirEntry pointer and dereference it.
+{
+  // Root bypasses DAC, so chmod 0 won't yield EACCES. When running as root on
+  // Linux we drop to `nobody` via runuser (and chown the temp dir so the
+  // fixture can chmod it back). Otherwise we run the fixture directly.
+  const isRoot = !isWindows && process.getuid?.() === 0;
+  const nobody = (() => {
+    try {
+      // /etc/passwd format: name:x:uid:gid:gecos:home:shell
+      const line = readFileSync("/etc/passwd", "utf8")
+        .split("\n")
+        .find(l => l.startsWith("nobody:"));
+      if (!line) return null;
+      const [, , uid, gid] = line.split(":");
+      if (!Number.isInteger(+uid) || !Number.isInteger(+gid)) return null;
+      return { uid: +uid, gid: +gid };
+    } catch {
+      return null;
+    }
+  })();
+  const canUseRunuser = isLinux && isRoot && !!Bun.which("runuser") && nobody !== null;
+  const canTriggerEACCES = !isWindows && (!isRoot || canUseRunuser);
+
+  it.skipIf(!canTriggerEACCES)("resolving a directory whose entries cache holds .err does not crash", async () => {
+    const fixture = `
+      const { chmodSync } = require("fs");
+      const { join } = require("path");
+      const root = process.argv[2];
+      const bad = join(root, "bad");
+
+      // 1) Make "bad" unreadable. loadAsFile -> readDirectory(bad) fails with
+      //    EACCES, which stores EntriesOption{ .err = ... } in rfs.entries.
+      chmodSync(bad, 0o000);
+      let threw = false;
+      try { Bun.resolveSync("./bad/index.js", root); } catch { threw = true; }
+
+      // 2) Restore permissions so the dir is openable again.
+      chmodSync(bad, 0o755);
+
+      // 3) Resolve "bad" as a directory. dirInfoCachedMaybeLog now opens it
+      //    successfully, finds the cached .err, and must not read
+      //    cached_entry.entries.generation on the inactive union field.
+      const resolved = Bun.resolveSync("./bad", root);
+
+      if (!threw) throw new Error("expected EACCES resolving ./bad/index.js");
+      if (!resolved.endsWith(join("bad", "index.js")))
+        throw new Error("expected ./bad to resolve to bad/index.js, got: " + resolved);
+      console.log("OK");
+    `;
+
+    using dir = tempDir("resolver-cached-err", {
+      "fixture.js": fixture,
+      "bad/index.js": "module.exports = 1;\n",
+    });
+    const root = String(dir);
+
+    let cmd: string[];
+    if (canUseRunuser) {
+      // Give `nobody` ownership so the fixture's chmodSync calls succeed, and
+      // open up perms so `nobody` can traverse/read everything it needs.
+      for (const p of [root, join(root, "fixture.js"), join(root, "bad"), join(root, "bad", "index.js")]) {
+        chmodSync(p, 0o777);
+        chownSync(p, nobody!.uid, nobody!.gid);
+      }
+      cmd = ["runuser", "-u", "nobody", "--", bunExe(), join(root, "fixture.js"), root];
+    } else {
+      cmd = [bunExe(), join(root, "fixture.js"), root];
+    }
+
+    try {
+      await using proc = Bun.spawn({
+        cmd,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout).toBe("OK\n");
+      expect(exitCode).toBe(0);
+    } finally {
+      // Ensure tempDir cleanup can remove the directory even if the fixture
+      // crashed between the two chmod calls.
+      try {
+        chmodSync(join(root, "bad"), 0o755);
+      } catch {}
+    }
+  });
+}
+
+describe("resolving external URL specifiers with non-ASCII characters", () => {
+  // The resolver returns http://, https://, and // specifiers as-is (marked external).
+  // When the specifier contains non-ASCII characters, the intermediate UTF-8 buffer
+  // is heap-allocated and freed before the caller reads the result, so the resolved
+  // path must be cloned rather than borrowed.
+  it.each([
+    ["http://localhost/path?query=´5&foo=bar"],
+    ["http://localhost/´path?query=a"],
+    ["http://localhost/´path"],
+    ["https://example/´"],
+    ["//example/´?q"],
+  ])("Bun.resolveSync(%j)", specifier => {
+    expect(Bun.resolveSync(specifier, import.meta.dir)).toBe(specifier);
+  });
+
+  it("import.meta.resolveSync", () => {
+    const specifier = "http://localhost/path?query=´5&foo=bar";
+    expect(import.meta.resolveSync(specifier)).toBe(specifier);
+  });
+
+  it("require with non-ASCII http specifier does not crash", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try { require("http://localhost/path?query=´5&foo=bar"); } catch (e) { console.log("caught", e.constructor.name); }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("caught");
+    expect(exitCode).toBe(0);
+  });
 });

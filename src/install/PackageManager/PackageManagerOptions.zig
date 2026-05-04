@@ -146,25 +146,7 @@ pub const LogLevel = enum {
     }
 };
 
-pub const NodeLinker = enum(u8) {
-    // If workspaces are used: isolated
-    // If not: hoisted
-    // Used when nodeLinker is absent from package.json/bun.lock/bun.lockb
-    auto,
-
-    hoisted,
-    isolated,
-
-    pub fn fromStr(input: string) ?NodeLinker {
-        if (strings.eqlComptime(input, "hoisted")) {
-            return .hoisted;
-        }
-        if (strings.eqlComptime(input, "isolated")) {
-            return .isolated;
-        }
-        return null;
-    }
-};
+pub const NodeLinker = @import("../../install_types/NodeLinker.zig").NodeLinker;
 
 pub const Update = struct {
     development: bool = false,

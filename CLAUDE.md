@@ -134,7 +134,7 @@ test("(multi-file test) my feature", async () => {
 ### Language Structure
 
 - **Zig code** (`src/*.zig`): Core runtime, JavaScript bindings, package manager
-- **C++ code** (`src/bun.js/bindings/*.cpp`): JavaScriptCore bindings, Web APIs
+- **C++ code** (`src/jsc/bindings/*.cpp`): JavaScriptCore bindings, Web APIs
 - **TypeScript** (`src/js/`): Built-in JavaScript modules with special syntax (see JavaScript Modules section)
 - **Generated code**: Many files are auto-generated from `.classes.ts` and other sources. Bun will automatically rebuild these files when you make changes to them.
 
@@ -149,24 +149,24 @@ test("(multi-file test) my feature", async () => {
 - `resolver/` - Module resolution system
 - `allocators/` - Custom memory allocators for performance
 
-#### JavaScript Runtime (`src/bun.js/`)
+#### JavaScript Runtime (`src/jsc/` + `src/runtime/`)
 
-- `bindings/` - C++ JavaScriptCore bindings
+- `src/jsc/bindings/` - C++ JavaScriptCore bindings
   - Generated classes from `.classes.ts` files
   - Manual bindings for complex APIs
-- `api/` - Bun-specific APIs
+- `src/runtime/api/` - Bun-specific APIs
   - `server.zig` - HTTP server implementation
   - `FFI.zig` - Foreign Function Interface
   - `crypto.zig` - Cryptographic operations
   - `glob.zig` - File pattern matching
-- `node/` - Node.js compatibility layer
+- `src/runtime/node/` - Node.js compatibility layer
   - Module implementations (fs, path, crypto, etc.)
   - Process and Buffer APIs
-- `webcore/` - Web API implementations
+- `src/runtime/webcore/` - Web API implementations
   - `fetch.zig` - Fetch API
   - `streams.zig` - Web Streams
   - `Blob.zig`, `Response.zig`, `Request.zig`
-- `event_loop/` - Event loop and task management
+- `src/event_loop/` + `src/jsc/event_loop.zig` - Event loop and task management
 
 #### Build Tools & Package Manager
 

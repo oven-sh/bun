@@ -1173,7 +1173,7 @@ pub fn Package(comptime SemverIntType: type) type {
                                 false,
                             );
                             if (comptime Environment.isWindows) {
-                                bun.path.dangerouslyConvertPathToPosixInPlace(u8, Path.relative_to_common_path_buf[0..rel.len]);
+                                bun.path.dangerouslyConvertPathToPosixInPlace(u8, Path.relative_to_common_path_buf()[0..rel.len]);
                             }
                             break :brk rel;
                         });

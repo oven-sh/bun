@@ -1124,8 +1124,14 @@ pub const RunCommand = struct {
                             }
                         }
 
-                        if (strings.startsWith(key, "post") or strings.startsWith(key, "pre")) {
-                            continue :loop;
+                        // npm-style lifecycle hooks: a script named `pre<X>` or `post<X>` runs
+                        // automatically around `<X>`, so there's no reason to list it as a
+                        // completion target. But `prettier`, `prebuild`-with-no-`build`,
+                        // `postgres`, etc. are standalone scripts — keep them.
+                        if (strings.hasPrefixComptime(key, "pre")) {
+                            if (scripts.contains(key["pre".len..])) continue :loop;
+                        } else if (strings.hasPrefixComptime(key, "post")) {
+                            if (scripts.contains(key["post".len..])) continue :loop;
                         }
 
                         const entry_item = results.getOrPutAssumeCapacity(key);
@@ -2170,13 +2176,13 @@ pub const BunXFastPath = struct {
 const string = []const u8;
 const stringZ = [:0]const u8;
 
-const DotEnv = @import("../env_loader.zig");
+const DotEnv = @import("../dotenv/env_loader.zig");
 const ShellCompletions = @import("./shell_completions.zig");
-const options = @import("../options.zig");
-const resolve_path = @import("../resolver/resolve_path.zig");
+const options = @import("../bundler/options.zig");
+const resolve_path = @import("../paths/resolve_path.zig");
 const std = @import("std");
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
-const which = @import("../which.zig").which;
+const which = @import("../which/which.zig").which;
 const yarn_commands = @import("./list-of-yarn-commands.zig").all_yarn_commands;
 const windows = std.os.windows;
 

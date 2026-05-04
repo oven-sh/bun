@@ -900,7 +900,7 @@ pub const JSON5Parser = struct {
     }
 };
 
-const identifier = @import("../js_lexer/identifier.zig");
+const identifier = @import("../js_parser/lexer/identifier.zig");
 const std = @import("std");
 
 const bun = @import("bun");

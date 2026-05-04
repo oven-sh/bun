@@ -31,12 +31,12 @@ declare -a FILES_TO_FORMAT
 echo "Finding header files..."
 while IFS= read -r -d '' file; do
     # Additional filtering for specific files and patterns
-    if [[ "$file" =~ src/bun\.js/api/ffi- ]] || \
+    if [[ "$file" =~ src/runtime/ffi/ffi- ]] || \
        [[ "$file" =~ src/napi/ ]] || \
-       [[ "$file" =~ src/bun\.js/bindings/libuv/ ]] || \
-       [[ "$file" =~ src/bun\.js/bindings/sqlite/ ]] || \
+       [[ "$file" =~ src/jsc/bindings/libuv/ ]] || \
+       [[ "$file" =~ src/jsc/bindings/sqlite/ ]] || \
        [[ "$file" =~ packages/bun-usockets/.*libuv ]] || \
-       [[ "$file" =~ src/deps/ ]]; then
+       [[ "$file" =~ vendor/ ]]; then
         continue
     fi
     FILES_TO_FORMAT+=("$file")

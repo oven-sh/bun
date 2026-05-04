@@ -36,47 +36,56 @@ pub const SideEffectsData = struct {
 
 /// A temporary threadlocal buffer with a lifetime more than the current
 /// function call.
-const bufs = struct {
-    // Experimenting with making this one struct instead of a bunch of different
-    // threadlocal vars yielded no performance improvement on macOS when
-    // bundling 10 copies of Three.js. It may be worthwhile for more complicated
-    // packages but we lack a decent module resolution benchmark right now.
-    // Potentially revisit after https://github.com/oven-sh/bun/issues/2716
-    pub threadlocal var extension_path: bun.PathBuffer = undefined;
-    pub threadlocal var tsconfig_match_full_buf: bun.PathBuffer = undefined;
-    pub threadlocal var tsconfig_match_full_buf2: bun.PathBuffer = undefined;
-    pub threadlocal var tsconfig_match_full_buf3: bun.PathBuffer = undefined;
+///
+/// These used to be individual `threadlocal var x: bun.PathBuffer = undefined`
+/// declarations. On Windows each `PathBuffer` is 96 KB (vs 4 KB on POSIX) and
+/// PE/COFF has no TLS-BSS, so 25 of them here cost ~2.5 MB of raw zeros in
+/// bun.exe and in every thread's TLS block. Grouping them behind a lazily
+/// allocated pointer brings that down to 8 bytes. See `bun.ThreadlocalBuffers`.
+///
+/// Experimenting with making this one struct instead of a bunch of different
+/// threadlocal vars yielded no performance improvement on macOS when bundling
+/// 10 copies of Three.js. Potentially revisit after https://github.com/oven-sh/bun/issues/2716
+const Bufs = struct {
+    extension_path: bun.PathBuffer = undefined,
+    tsconfig_match_full_buf: bun.PathBuffer = undefined,
+    tsconfig_match_full_buf2: bun.PathBuffer = undefined,
+    tsconfig_match_full_buf3: bun.PathBuffer = undefined,
 
-    pub threadlocal var esm_subpath: [512]u8 = undefined;
-    pub threadlocal var esm_absolute_package_path: bun.PathBuffer = undefined;
-    pub threadlocal var esm_absolute_package_path_joined: bun.PathBuffer = undefined;
+    esm_subpath: [512]u8 = undefined,
+    esm_absolute_package_path: bun.PathBuffer = undefined,
+    esm_absolute_package_path_joined: bun.PathBuffer = undefined,
 
-    pub threadlocal var dir_entry_paths_to_resolve: [256]DirEntryResolveQueueItem = undefined;
-    pub threadlocal var open_dirs: [256]FD = undefined;
-    pub threadlocal var resolve_without_remapping: bun.PathBuffer = undefined;
-    pub threadlocal var index: bun.PathBuffer = undefined;
-    pub threadlocal var dir_info_uncached_filename: bun.PathBuffer = undefined;
-    pub threadlocal var node_bin_path: bun.PathBuffer = undefined;
-    pub threadlocal var dir_info_uncached_path: bun.PathBuffer = undefined;
-    pub threadlocal var tsconfig_base_url: bun.PathBuffer = undefined;
-    pub threadlocal var relative_abs_path: bun.PathBuffer = undefined;
-    pub threadlocal var load_as_file_or_directory_via_tsconfig_base_path: bun.PathBuffer = undefined;
-    pub threadlocal var node_modules_check: bun.PathBuffer = undefined;
-    pub threadlocal var field_abs_path: bun.PathBuffer = undefined;
-    pub threadlocal var tsconfig_path_abs: bun.PathBuffer = undefined;
-    pub threadlocal var check_browser_map: bun.PathBuffer = undefined;
-    pub threadlocal var remap_path: bun.PathBuffer = undefined;
-    pub threadlocal var load_as_file: bun.PathBuffer = undefined;
-    pub threadlocal var remap_path_trailing_slash: bun.PathBuffer = undefined;
-    pub threadlocal var path_in_global_disk_cache: bun.PathBuffer = undefined;
-    pub threadlocal var abs_to_rel: bun.PathBuffer = undefined;
-    pub threadlocal var node_modules_paths_buf: bun.PathBuffer = undefined;
-    pub threadlocal var import_path_for_standalone_module_graph: bun.PathBuffer = undefined;
+    dir_entry_paths_to_resolve: [256]DirEntryResolveQueueItem = undefined,
+    open_dirs: [256]FD = undefined,
+    resolve_without_remapping: bun.PathBuffer = undefined,
+    index: bun.PathBuffer = undefined,
+    dir_info_uncached_filename: bun.PathBuffer = undefined,
+    node_bin_path: bun.PathBuffer = undefined,
+    dir_info_uncached_path: bun.PathBuffer = undefined,
+    tsconfig_base_url: bun.PathBuffer = undefined,
+    relative_abs_path: bun.PathBuffer = undefined,
+    load_as_file_or_directory_via_tsconfig_base_path: bun.PathBuffer = undefined,
+    node_modules_check: bun.PathBuffer = undefined,
+    field_abs_path: bun.PathBuffer = undefined,
+    tsconfig_path_abs: bun.PathBuffer = undefined,
+    check_browser_map: bun.PathBuffer = undefined,
+    remap_path: bun.PathBuffer = undefined,
+    load_as_file: bun.PathBuffer = undefined,
+    remap_path_trailing_slash: bun.PathBuffer = undefined,
+    path_in_global_disk_cache: bun.PathBuffer = undefined,
+    abs_to_rel: bun.PathBuffer = undefined,
+    node_modules_paths_buf: bun.PathBuffer = undefined,
+    import_path_for_standalone_module_graph: bun.PathBuffer = undefined,
 
-    pub inline fn bufs(comptime field: std.meta.DeclEnum(@This())) *@TypeOf(@field(@This(), @tagName(field))) {
-        return &@field(@This(), @tagName(field));
-    }
-}.bufs;
+    win32_normalized_dir_info_cache: if (Environment.isWindows) [bun.MAX_PATH_BYTES * 2]u8 else void = undefined,
+};
+
+const bufs_storage = bun.ThreadlocalBuffers(Bufs);
+
+inline fn bufs(comptime field: std.meta.FieldEnum(Bufs)) *@FieldType(Bufs, @tagName(field)) {
+    return &@field(bufs_storage.get(), @tagName(field));
+}
 
 pub const PathPair = struct {
     primary: Path,
@@ -2311,9 +2320,13 @@ pub const Resolver = struct {
         // This is important so that browser_scope has a valid index.
         const dir_info_ptr = r.dir_cache.put(&dir_cache_info_result, .{}) catch unreachable;
 
+        // `dir_path` is a slice into the threadlocal `bufs(.path_in_global_disk_cache)` buffer,
+        // which gets overwritten on the next auto-install resolution. `dirInfoUncached` stores
+        // its `path` argument directly as `DirInfo.abs_path` in the permanent `dir_cache`, so
+        // pass the interned copy from `DirEntry.dir` (always backed by `DirnameStore`) instead.
         try r.dirInfoUncached(
             dir_info_ptr,
-            dir_path,
+            dir_entries_option.entries.dir,
             dir_entries_option,
             dir_cache_info_result,
             cached_dir_entry_result.index,
@@ -2685,7 +2698,6 @@ pub const Resolver = struct {
         };
     }
 
-    threadlocal var win32_normalized_dir_info_cache_buf: if (Environment.isWindows) [bun.MAX_PATH_BYTES * 2]u8 else void = undefined;
     fn dirInfoCachedMaybeLog(r: *ThisResolver, raw_input_path: string, comptime enable_logging: bool, comptime follow_symlinks: bool) !?*DirInfo {
         r.mutex.lock();
         defer r.mutex.unlock();
@@ -2701,12 +2713,13 @@ pub const Resolver = struct {
         if (input_path.len > bun.MAX_PATH_BYTES) return null;
 
         if (comptime Environment.isWindows) {
-            input_path = r.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, input_path);
+            const win32_normalized_dir_info_cache_buf = bufs(.win32_normalized_dir_info_cache);
+            input_path = r.fs.normalizeBuf(win32_normalized_dir_info_cache_buf, input_path);
             // kind of a patch on the fact normalizeBuf isn't 100% perfect what we want
             if ((input_path.len == 2 and input_path[1] == ':') or
                 (input_path.len == 3 and input_path[1] == ':' and input_path[2] == '.'))
             {
-                bun.unsafeAssert(input_path.ptr == &win32_normalized_dir_info_cache_buf);
+                bun.unsafeAssert(input_path.ptr == win32_normalized_dir_info_cache_buf);
                 win32_normalized_dir_info_cache_buf[2] = '\\';
                 input_path.len = 3;
             }
@@ -2966,11 +2979,13 @@ pub const Resolver = struct {
             var in_place: ?*Fs.FileSystem.DirEntry = null;
 
             if (rfs.entries.atIndex(cached_dir_entry_result.index)) |cached_entry| {
-                if (cached_entry.entries.generation >= r.generation) {
-                    dir_entries_option = cached_entry;
-                    needs_iter = false;
-                } else {
-                    in_place = cached_entry.entries;
+                if (cached_entry.* == .entries) {
+                    if (cached_entry.entries.generation >= r.generation) {
+                        dir_entries_option = cached_entry;
+                        needs_iter = false;
+                    } else {
+                        in_place = cached_entry.entries;
+                    }
                 }
             }
 
@@ -3477,78 +3492,8 @@ pub const Resolver = struct {
         };
     }
 
-    pub fn nodeModulePathsForJS(globalThis: *bun.jsc.JSGlobalObject, callframe: *bun.jsc.CallFrame) bun.JSError!jsc.JSValue {
-        bun.jsc.markBinding(@src());
-        const argument: bun.jsc.JSValue = callframe.argument(0);
-
-        if (argument == .zero or !argument.isString()) {
-            return globalThis.throwInvalidArgumentType("nodeModulePaths", "path", "string");
-        }
-
-        const in_str = try argument.toBunString(globalThis);
-        defer in_str.deref();
-        return nodeModulePathsJSValue(in_str, globalThis, false);
-    }
-
-    pub export fn Resolver__propForRequireMainPaths(globalThis: *bun.jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
-        bun.jsc.markBinding(@src());
-
-        const in_str = bun.String.init(".");
-        return nodeModulePathsJSValue(in_str, globalThis, false);
-    }
-
-    pub fn nodeModulePathsJSValue(in_str: bun.String, globalObject: *bun.jsc.JSGlobalObject, use_dirname: bool) callconv(.c) bun.jsc.JSValue {
-        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
-        defer arena.deinit();
-        var stack_fallback_allocator = std.heap.stackFallback(1024, arena.allocator());
-        const alloc = stack_fallback_allocator.get();
-
-        var list = std.array_list.Managed(bun.String).init(alloc);
-        defer list.deinit();
-
-        const sliced = in_str.toUTF8(bun.default_allocator);
-        defer sliced.deinit();
-        const base_path = if (use_dirname) std.fs.path.dirname(sliced.slice()) orelse sliced.slice() else sliced.slice();
-        const buf = bufs(.node_modules_paths_buf);
-
-        const full_path = bun.path.joinAbsStringBuf(
-            bun.fs.FileSystem.instance.top_level_dir,
-            buf,
-            &.{base_path},
-            .auto,
-        );
-        const root_index = switch (bun.Environment.os) {
-            .windows => bun.path.windowsFilesystemRoot(full_path).len,
-            else => 1,
-        };
-        var root_path: []const u8 = full_path[0..root_index];
-        if (full_path.len > root_path.len) {
-            var it = std.mem.splitBackwardsScalar(u8, full_path[root_index..], std.fs.path.sep);
-            while (it.next()) |part| {
-                if (strings.eqlComptime(part, "node_modules"))
-                    continue;
-
-                list.append(bun.String.createFormat(
-                    "{s}{s}" ++ std.fs.path.sep_str ++ "node_modules",
-                    .{
-                        root_path,
-                        it.buffer[0 .. (if (it.index) |i| i + 1 else 0) + part.len],
-                    },
-                ) catch |err| bun.handleOom(err)) catch |err| bun.handleOom(err);
-            }
-        }
-
-        while (root_path.len > 0 and bun.path.Platform.auto.isSeparator(root_path[root_path.len - 1])) {
-            root_path.len -= 1;
-        }
-
-        list.append(bun.String.createFormat(
-            "{s}" ++ std.fs.path.sep_str ++ "node_modules",
-            .{root_path},
-        ) catch |err| bun.handleOom(err)) catch |err| bun.handleOom(err);
-
-        return bun.String.toJSArray(globalObject, list.items) catch .zero;
-    }
+    // nodeModulePathsForJS / Resolver__propForRequireMainPaths: see src/jsc/resolver_jsc.zig
+    // (no Zig callers; exported to C++ only)
 
     pub fn loadAsIndex(r: *ThisResolver, dir_info: *DirInfo, extension_order: []const string) ?MatchResult {
         // Try the "index" file with extensions
@@ -4059,6 +4004,17 @@ pub const Resolver = struct {
         const rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
         var entries = _entries.entries;
 
+        if (comptime Environment.allow_assert) {
+            // `path` is stored in the permanent `dir_cache` as `DirInfo.abs_path`. It must not
+            // point into a reused threadlocal scratch buffer, or a later resolution will
+            // corrupt cached entries. Callers must intern it (e.g. via `DirnameStore`) first.
+            bun.assertf(
+                !allocators.isSliceInBuffer(path, bufs(.path_in_global_disk_cache)),
+                "DirInfo.abs_path must not point into the threadlocal path_in_global_disk_cache buffer (got \"{s}\")",
+                .{path},
+            );
+        }
+
         info.* = DirInfo{
             .abs_path = path,
             // .abs_real_path = path,
@@ -4383,82 +4339,30 @@ pub const RootPathPair = struct {
     package_json: *const PackageJSON,
 };
 
-pub const GlobalCache = enum {
-    allow_install,
-    read_only,
-    auto,
-    force,
-    fallback,
-    disable,
-
-    pub const Map = bun.ComptimeStringMap(GlobalCache, .{
-        .{ "auto", GlobalCache.auto },
-        .{ "force", GlobalCache.force },
-        .{ "disable", GlobalCache.disable },
-        .{ "fallback", GlobalCache.fallback },
-    });
-
-    pub fn allowVersionSpecifier(this: GlobalCache) bool {
-        return this == .force;
-    }
-
-    pub fn canUse(this: GlobalCache, has_a_node_modules_folder: bool) bool {
-        // When there is a node_modules folder, we default to false
-        // When there is NOT a node_modules folder, we default to true
-        // That is the difference between these two branches.
-        if (has_a_node_modules_folder) {
-            return switch (this) {
-                .fallback, .allow_install, .force => true,
-                .read_only, .disable, .auto => false,
-            };
-        } else {
-            return switch (this) {
-                .read_only, .fallback, .allow_install, .auto, .force => true,
-                .disable => false,
-            };
-        }
-    }
-
-    pub fn isEnabled(this: GlobalCache) bool {
-        return this != .disable;
-    }
-
-    pub fn canInstall(this: GlobalCache) bool {
-        return switch (this) {
-            .auto, .allow_install, .force, .fallback => true,
-            else => false,
-        };
-    }
-};
-
-comptime {
-    _ = Resolver.Resolver__propForRequireMainPaths;
-    @export(&jsc.toJSHostFn(Resolver.nodeModulePathsForJS), .{ .name = "Resolver__nodeModulePathsForJS" });
-    @export(&Resolver.nodeModulePathsJSValue, .{ .name = "Resolver__nodeModulePathsJSValue" });
-}
+pub const GlobalCache = @import("../options_types/GlobalCache.zig").GlobalCache;
 
 const string = []const u8;
 
 const Dependency = @import("../install/dependency.zig");
-const DotEnv = @import("../env_loader.zig");
-const NodeFallbackModules = @import("../node_fallbacks.zig");
-const ResolvePath = @import("./resolve_path.zig");
-const ast = @import("../import_record.zig");
-const options = @import("../options.zig");
+const DotEnv = @import("../dotenv/env_loader.zig");
+const NodeFallbackModules = @import("./node_fallbacks.zig");
+const ResolvePath = @import("../paths/resolve_path.zig");
+const ast = @import("../options_types/import_record.zig");
+const options = @import("../bundler/options.zig");
 const std = @import("std");
 const Package = @import("../install/lockfile.zig").Package;
 const Resolution = @import("../install/resolution.zig").Resolution;
 const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
-const Timer = @import("../system_timer.zig").Timer;
+const Timer = @import("../perf/system_timer.zig").Timer;
 
-const cache = @import("../cache.zig");
+const cache = @import("../bundler/cache.zig");
 const CacheSet = cache.Set;
-
-const Fs = @import("../fs.zig");
-const Path = Fs.Path;
 
 const Install = @import("../install/install.zig");
 const PackageManager = @import("../install/install.zig").PackageManager;
+
+const Fs = @import("./fs.zig");
+const Path = Fs.Path;
 
 const BrowserMap = @import("./package_json.zig").BrowserMap;
 const ESModule = @import("./package_json.zig").ESModule;

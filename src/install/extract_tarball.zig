@@ -122,9 +122,11 @@ pub fn buildURLWithPrinter(
     }
 }
 
-threadlocal var final_path_buf: bun.PathBuffer = undefined;
-threadlocal var folder_name_buf: bun.PathBuffer = undefined;
-threadlocal var json_path_buf: bun.PathBuffer = undefined;
+const tl_bufs = bun.ThreadlocalBuffers(struct {
+    final_path_buf: bun.PathBuffer = undefined,
+    folder_name_buf: bun.PathBuffer = undefined,
+    json_path_buf: bun.PathBuffer = undefined,
+});
 
 pub fn usesStreamingExtraction() bool {
     return !bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL.get();
@@ -193,7 +195,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         defer extract_destination.close();
 
         const Archiver = bun.libarchive.Archiver;
-        const Zlib = @import("../zlib.zig");
+        const Zlib = @import("../zlib/zlib.zig");
         var zlib_pool = Npm.Registry.BodyPool.get(default_allocator);
         zlib_pool.data.reset();
         defer Npm.Registry.BodyPool.release(zlib_pool);
@@ -335,10 +337,11 @@ pub fn moveToCacheDirectory(
     resolved: []const u8,
 ) !Install.ExtractData {
     const tmpdir = this.temp_dir;
+    const bufs = tl_bufs.get();
     const folder_name = switch (this.resolution.tag) {
-        .npm => this.package_manager.cachedNPMPackageFolderNamePrint(&folder_name_buf, name, this.resolution.value.npm.version, null),
-        .github => PackageManager.cachedGitHubFolderNamePrint(&folder_name_buf, resolved, null),
-        .local_tarball, .remote_tarball => PackageManager.cachedTarballFolderNamePrint(&folder_name_buf, this.url.slice(), null),
+        .npm => this.package_manager.cachedNPMPackageFolderNamePrint(&bufs.folder_name_buf, name, this.resolution.value.npm.version, null),
+        .github => PackageManager.cachedGitHubFolderNamePrint(&bufs.folder_name_buf, resolved, null),
+        .local_tarball, .remote_tarball => PackageManager.cachedTarballFolderNamePrint(&bufs.folder_name_buf, this.url.slice(), null),
         else => unreachable,
     };
     if (folder_name.len == 0 or (folder_name.len == 1 and folder_name[0] == '/')) @panic("Tried to delete root and stopped it");
@@ -481,7 +484,7 @@ pub fn moveToCacheDirectory(
     // and get the fd path
     const final_path = bun.getFdPathZ(
         .fromStdDir(final_dir),
-        &final_path_buf,
+        &bufs.final_path_buf,
     ) catch |err| {
         log.addErrorFmt(
             null,
@@ -505,7 +508,7 @@ pub fn moveToCacheDirectory(
     }) {
         const json_file, json_buf = bun.sys.File.readFileFrom(
             bun.FD.fromStdDir(cache_dir),
-            bun.path.joinZBuf(&json_path_buf, &[_]string{ folder_name, "package.json" }, .auto),
+            bun.path.joinZBuf(&bufs.json_path_buf, &[_]string{ folder_name, "package.json" }, .auto),
             bun.default_allocator,
         ).unwrap() catch |err| {
             if (this.resolution.tag == .github and err == error.ENOENT) {
@@ -527,7 +530,7 @@ pub fn moveToCacheDirectory(
         };
         defer json_file.close();
         json_path = json_file.getPath(
-            &json_path_buf,
+            &bufs.json_path_buf,
         ).unwrap() catch |err| {
             log.addErrorFmt(
                 null,
@@ -592,7 +595,7 @@ const string = []const u8;
 
 const Npm = @import("./npm.zig");
 const std = @import("std");
-const FileSystem = @import("../fs.zig").FileSystem;
+const FileSystem = @import("../resolver/fs.zig").FileSystem;
 const Integrity = @import("./integrity.zig").Integrity;
 const Resolution = @import("./resolution.zig").Resolution;
 

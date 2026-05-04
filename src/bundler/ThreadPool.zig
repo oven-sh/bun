@@ -310,7 +310,7 @@ pub const ThreadPool = struct {
             transpiler.setAllocator(allocator);
             transpiler.linker.resolver = &transpiler.resolver;
             transpiler.macro_context = js_ast.Macro.MacroContext.init(transpiler);
-            const CacheSet = @import("../cache.zig");
+            const CacheSet = @import("./cache.zig");
             transpiler.resolver.caches = CacheSet.Set.init(allocator);
         }
 
@@ -343,8 +343,8 @@ pub const Ref = bun.ast.Ref;
 
 pub const Index = bun.ast.Index;
 
-const Logger = @import("../logger.zig");
-const linker = @import("../linker.zig");
+const Logger = @import("../logger/logger.zig");
+const linker = @import("./linker.zig");
 const std = @import("std");
 
 const bun = @import("bun");

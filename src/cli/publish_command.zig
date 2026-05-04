@@ -1228,7 +1228,12 @@ pub const PublishCommand = struct {
         }
 
         while (iter.next().unwrap() catch null) |entry| {
-            if (entry.kind != .file) continue;
+            // Only directories are unconditionally rejected — accept regular
+            // files, symlinks (so a workspace README symlinked into a package
+            // is followed by the later File.readFrom), and `.unknown` entries
+            // which some filesystems report for regular files. npm follows
+            // symlinks here via fs.readFile.
+            if (entry.kind == .directory) continue;
             const name = entry.name.slice();
             switch (classifyReadmeFilename(name)) {
                 .no_match => {},

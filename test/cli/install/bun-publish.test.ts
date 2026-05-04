@@ -5,6 +5,7 @@ import {
   VerdaccioRegistry,
   bunExe,
   bunEnv as env,
+  isLinux,
   isWindows,
   pack,
   runBunInstall,
@@ -1061,10 +1062,12 @@ describe("readme", async () => {
     });
   });
 
-  test("multiple extensionless READMEs pick lexicographically-smallest", async () => {
+  test.skipIf(!isLinux)("multiple extensionless READMEs pick lexicographically-smallest", async () => {
     // Case-sensitive filesystems (Linux) can have `README` and `readme` as
     // separate files. Picking by sort order keeps the selection deterministic
-    // regardless of readdir order.
+    // regardless of readdir order. macOS APFS and Windows NTFS are
+    // case-insensitive by default, so `README` and `readme` collapse to the
+    // same directory entry there.
     const packageDir = tmpdirSync();
     const { server, lastBody } = startMockRegistry();
     using mock = server;
@@ -1088,6 +1091,39 @@ describe("readme", async () => {
       readme: upperContents,
       readmeFilename: "README",
     });
+  });
+
+  test.skipIf(isWindows)("symlinked README is followed", async () => {
+    // npm's readme search uses fs.readFile which follows symlinks; a
+    // monorepo pattern is to symlink the root README into each workspace
+    // package. readdir reports these as `.sym_link` not `.file`, so
+    // `findWorkspaceReadme` must not reject that entry kind.
+    // Windows symlinks require elevation; skip there rather than add
+    // conditional perms logic to a test.
+    const packageDir = tmpdirSync();
+    const { server, lastBody } = startMockRegistry();
+    using mock = server;
+
+    const readmeContents = "symlinked readme contents";
+    const rootReadme = join(packageDir, "..", `root-readme-${Date.now()}.md`);
+    await write(rootReadme, readmeContents);
+    await write(join(packageDir, "package.json"), JSON.stringify({ name: "readme-pkg-8", version: "8.0.0" }));
+    await writeBunfig(packageDir, mock.port);
+    await (await import("node:fs/promises")).symlink(rootReadme, join(packageDir, "README.md"));
+
+    try {
+      const { err, exitCode } = await publish(env, packageDir);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      const body = lastBody();
+      expect(body.versions["8.0.0"]).toMatchObject({
+        readme: readmeContents,
+        readmeFilename: "README.md",
+      });
+    } finally {
+      await rm(rootReadme, { force: true });
+    }
   });
 });
 

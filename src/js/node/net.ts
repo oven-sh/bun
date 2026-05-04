@@ -116,14 +116,20 @@ function pushDataToSocket(self, buffer) {
     return true;
   }
 }
-// Like `self.emit(event, ...args)`, but routes a listener throw to
-// `uncaughtException` via `reportError` instead of letting it unwind back
-// through the Zig socket callback — which catches it and funnels it into
-// `Handlers.callErrorHandler`, the socket's 'error' event, or (for `onOpen`)
-// tears down the connection. Same rationale as `pushDataToSocket`.
-function emitToSocket(self, event, ...args) {
+// Runs `fn` and routes any synchronous throw to `uncaughtException` via
+// `reportError`, instead of letting it unwind back through the Zig socket
+// callback — which would catch it and funnel it into
+// `Handlers.callErrorHandler` (socket's 'error' event) or, on the `onOpen`
+// path, tear the connection down. Same rationale as `pushDataToSocket`.
+//
+// Use this around a *group* of consecutive `self.emit(...)` calls rather
+// than one-per-emit: Node's synchronous `emit('a'); emit('b')` short-circuits
+// — a throw from the 'a' listener prevents 'b' from firing at all. Wrapping
+// each emit individually would reorder that into "'a' threw, reported, 'b'
+// still fires", which is not what Node does.
+function safelyInvokeListeners(fn) {
   try {
-    self.emit(event, ...args);
+    fn();
   } catch (e) {
     reportError(e);
   }
@@ -260,8 +266,10 @@ const SocketHandlers: SocketHandler = {
       self[kBytesWritten] = socket.bytesWritten;
       // this is not actually emitted on nodejs when socket used on the connection
       // this is already emmited on non-TLS socket and on TLS socket is emmited secureConnect after handshake
-      emitToSocket(self, "connect", self);
-      emitToSocket(self, "ready");
+      safelyInvokeListeners(() => {
+        self.emit("connect", self);
+        self.emit("ready");
+      });
     }
 
     SocketHandlers.drain(socket);
@@ -278,38 +286,42 @@ const SocketHandlers: SocketHandler = {
     self.secureConnecting = false;
     self._secureEstablished = !!success;
 
-    emitToSocket(self, "secure", self);
-    self.alpnProtocol = socket.alpnProtocol;
-    const { checkServerIdentity } = self[bunTLSConnectOptions];
-    if (!verifyError && typeof checkServerIdentity === "function") {
-      const hostname = self.servername || self._host || "localhost";
-      const cert = self.getPeerCertificate(true);
-      if (cert) {
-        verifyError = checkServerIdentity(hostname, cert);
+    safelyInvokeListeners(() => {
+      self.emit("secure", self);
+      self.alpnProtocol = socket.alpnProtocol;
+      const { checkServerIdentity } = self[bunTLSConnectOptions];
+      if (!verifyError && typeof checkServerIdentity === "function") {
+        const hostname = self.servername || self._host || "localhost";
+        const cert = self.getPeerCertificate(true);
+        if (cert) {
+          verifyError = checkServerIdentity(hostname, cert);
+        }
       }
-    }
-    if (self._requestCert || self._rejectUnauthorized) {
-      if (verifyError) {
-        self.authorized = false;
-        self.authorizationError = verifyError.code || verifyError.message;
-        if (self._rejectUnauthorized) {
-          self.destroy(verifyError);
-          return;
+      if (self._requestCert || self._rejectUnauthorized) {
+        if (verifyError) {
+          self.authorized = false;
+          self.authorizationError = verifyError.code || verifyError.message;
+          if (self._rejectUnauthorized) {
+            self.destroy(verifyError);
+            return;
+          }
+        } else {
+          self.authorized = true;
         }
       } else {
         self.authorized = true;
       }
-    } else {
-      self.authorized = true;
-    }
-    emitToSocket(self, "secureConnect", verifyError);
-    self.removeListener("end", onConnectEnd);
+      self.emit("secureConnect", verifyError);
+      self.removeListener("end", onConnectEnd);
+    });
   },
   timeout(socket) {
     const self = socket.data;
     if (!self) return;
 
-    emitToSocket(self, "timeout", self);
+    safelyInvokeListeners(() => {
+      self.emit("timeout", self);
+    });
   },
   binaryType: "buffer",
 } as const;
@@ -418,11 +430,13 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         self.prependOnceListener("connection", connectionListener);
       }
     }
-    emitToSocket(self, "connection", _socket);
-    // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
-    if (!pauseOnConnect && !isTLS) {
-      _socket.resume();
-    }
+    safelyInvokeListeners(() => {
+      self.emit("connection", _socket);
+      // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
+      if (!pauseOnConnect && !isTLS) {
+        _socket.resume();
+      }
+    });
   },
   handshake(socket, success, verifyError) {
     const self = socket.data;
@@ -441,36 +455,38 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     self.servername = socket.getServername();
     const server = self.server!;
     self.alpnProtocol = socket.alpnProtocol;
-    if (self._requestCert || self._rejectUnauthorized) {
-      if (verifyError) {
-        self.authorized = false;
-        self.authorizationError = verifyError.code || verifyError.message;
-        server.emit("tlsClientError", verifyError, self);
-        if (self._rejectUnauthorized) {
-          // if we reject we still need to emit secure
-          emitToSocket(self, "secure", self);
-          self.destroy(verifyError);
-          return;
+    safelyInvokeListeners(() => {
+      if (self._requestCert || self._rejectUnauthorized) {
+        if (verifyError) {
+          self.authorized = false;
+          self.authorizationError = verifyError.code || verifyError.message;
+          server.emit("tlsClientError", verifyError, self);
+          if (self._rejectUnauthorized) {
+            // if we reject we still need to emit secure
+            self.emit("secure", self);
+            self.destroy(verifyError);
+            return;
+          }
+        } else {
+          self.authorized = true;
         }
       } else {
         self.authorized = true;
       }
-    } else {
-      self.authorized = true;
-    }
-    const connectionListener = server[bunSocketServerOptions]?.connectionListener;
-    if (typeof connectionListener === "function") {
-      server.prependOnceListener("secureConnection", connectionListener);
-    }
-    emitToSocket(server, "secureConnection", self);
-    // after secureConnection event we emmit secure and secureConnect
-    emitToSocket(self, "secure", self);
-    emitToSocket(self, "secureConnect", verifyError);
-    if (server.pauseOnConnect) {
-      self.pause();
-    } else {
-      self.resume();
-    }
+      const connectionListener = server[bunSocketServerOptions]?.connectionListener;
+      if (typeof connectionListener === "function") {
+        server.prependOnceListener("secureConnection", connectionListener);
+      }
+      server.emit("secureConnection", self);
+      // after secureConnection event we emmit secure and secureConnect
+      self.emit("secure", self);
+      self.emit("secureConnect", verifyError);
+      if (server.pauseOnConnect) {
+        self.pause();
+      } else {
+        self.resume();
+      }
+    });
   },
   error(socket, error) {
     const data = this.data;
@@ -593,32 +609,34 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     self.secureConnecting = false;
     self._secureEstablished = !!success;
 
-    emitToSocket(self, "secure", self);
-    self.alpnProtocol = socket.alpnProtocol;
-    const { checkServerIdentity } = self[bunTLSConnectOptions];
-    if (!verifyError && typeof checkServerIdentity === "function") {
-      const hostname = self.servername || self._host || "localhost";
-      const cert = self.getPeerCertificate(true);
-      if (cert) {
-        verifyError = checkServerIdentity(hostname, cert);
+    safelyInvokeListeners(() => {
+      self.emit("secure", self);
+      self.alpnProtocol = socket.alpnProtocol;
+      const { checkServerIdentity } = self[bunTLSConnectOptions];
+      if (!verifyError && typeof checkServerIdentity === "function") {
+        const hostname = self.servername || self._host || "localhost";
+        const cert = self.getPeerCertificate(true);
+        if (cert) {
+          verifyError = checkServerIdentity(hostname, cert);
+        }
       }
-    }
-    if (self._requestCert || self._rejectUnauthorized) {
-      if (verifyError) {
-        self.authorized = false;
-        self.authorizationError = verifyError.code || verifyError.message;
-        if (self._rejectUnauthorized) {
-          self.destroy(verifyError);
-          return;
+      if (self._requestCert || self._rejectUnauthorized) {
+        if (verifyError) {
+          self.authorized = false;
+          self.authorizationError = verifyError.code || verifyError.message;
+          if (self._rejectUnauthorized) {
+            self.destroy(verifyError);
+            return;
+          }
+        } else {
+          self.authorized = true;
         }
       } else {
         self.authorized = true;
       }
-    } else {
-      self.authorized = true;
-    }
-    emitToSocket(self, "secureConnect", verifyError);
-    self.removeListener("end", onConnectEnd);
+      self.emit("secureConnect", verifyError);
+      self.removeListener("end", onConnectEnd);
+    });
   },
   error(socket, error) {
     $debug("Bun.Socket error");
@@ -638,7 +656,9 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
   timeout(socket) {
     $debug("Bun.Socket timeout");
     const { self } = socket.data;
-    emitToSocket(self, "timeout", self);
+    safelyInvokeListeners(() => {
+      self.emit("timeout", self);
+    });
   },
   connectError(socket, error) {
     $debug("Bun.Socket connectError");
@@ -2007,8 +2027,10 @@ function afterConnect(status, handle, req, readable, writable) {
       self._handle.setKeepAlive(true, self[kSetKeepAliveInitialDelay]);
     }
 
-    emitToSocket(self, "connect");
-    emitToSocket(self, "ready");
+    safelyInvokeListeners(() => {
+      self.emit("connect");
+      self.emit("ready");
+    });
 
     // Start the first read, or get an immediate EOF.
     // this doesn't actually consume any bytes, because len=0.

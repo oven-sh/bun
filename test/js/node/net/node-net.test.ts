@@ -1009,27 +1009,30 @@ describe.concurrent("uncaughtException in socket listener", () => {
         "-e",
         `
           const net = require("net");
+          let client;
           const server = net.createServer((socket) => {
-            socket.on("data", (d) => console.log("SERVER_RECV:" + d));
+            socket.on("data", (d) => {
+              console.log("SERVER_RECV:" + d);
+              socket.end();
+            });
+            socket.on("end", () => server.close(() => process.exit(0)));
           });
           server.listen(0, () => {
             const port = server.address().port;
-            const client = net.createConnection({ port });
+            client = net.createConnection({ port });
             client.on("error", (err) => console.log("SOCKET_ERROR:" + err.message));
             client.on("connect", () => {
               console.log("CONNECT-FIRED");
               throw new Error("CONNECT-BOOM");
             });
-            // After uncaughtException handles the throw, the socket must still be writable
-            // — Node leaves it alone; Bun used to tear it down via onOpen's error-routing.
-            setTimeout(() => {
-              console.log("WRITABLE:" + client.writable);
-              client.write("hi-after-throw");
-              client.end();
-              server.close(() => process.exit(0));
-            }, 50);
           });
-          process.on("uncaughtException", (err) => console.log("UNCAUGHT:" + err.message));
+          // Drive the post-throw write from the uncaughtException handler
+          // so the assertion is event-driven, not time-based.
+          process.on("uncaughtException", (err) => {
+            console.log("UNCAUGHT:" + err.message);
+            console.log("WRITABLE:" + client.writable);
+            client.write("hi-after-throw");
+          });
         `,
       ],
       env: bunEnv,
@@ -1110,6 +1113,64 @@ describe.concurrent("uncaughtException in socket listener", () => {
     expect(stdout).toContain("CONNECTION-FIRED");
     expect(stdout).toContain("UNCAUGHT:CONNECTION-BOOM");
     expect(stdout).not.toContain("SERVER_ERROR:");
+    expect(exitCode).toBe(0);
+  });
+
+  // Node's `self.emit('connect'); self.emit('ready')` runs synchronously:
+  // if the 'connect' listener throws, execution unwinds and 'ready' never
+  // fires. Matching those short-circuit semantics means wrapping consecutive
+  // emit groups in a single try/catch rather than catching each emit
+  // individually.
+  it("short-circuits subsequent emits when a listener throws", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          let client;
+          const server = net.createServer((socket) => {
+            socket.on("data", (d) => {
+              console.log("DATA:" + d);
+              socket.end();
+            });
+            socket.on("end", () => server.close(() => process.exit(0)));
+          });
+          server.listen(0, () => {
+            const port = server.address().port;
+            client = net.createConnection({ port });
+            client.on("error", () => {});
+            client.on("connect", () => {
+              console.log("CONNECT");
+              throw new Error("CONNECT-BOOM");
+            });
+            // 'ready' fires synchronously right after 'connect' in the same
+            // emit frame. If the fix wraps each emit individually, READY
+            // prints before UNCAUGHT; with a single try/catch around the pair
+            // the throw short-circuits and READY never fires.
+            client.on("ready", () => console.log("READY"));
+          });
+          // Drive the post-throw write from uncaughtException so the server
+          // round-trip forces us to wait past the emit sequence before the
+          // test can exit — gives 'ready' a full tick to fire if the fix is
+          // wrong.
+          process.on("uncaughtException", (err) => {
+            console.log("UNCAUGHT:" + err.message);
+            client.write("done");
+          });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("CONNECT");
+    expect(stdout).toContain("UNCAUGHT:CONNECT-BOOM");
+    expect(stdout).toContain("DATA:done");
+    // 'ready' must NOT fire — a throw from the preceding 'connect' listener
+    // aborts the synchronous emit sequence (Node semantics).
+    expect(stdout).not.toContain("READY");
     expect(exitCode).toBe(0);
   });
 });

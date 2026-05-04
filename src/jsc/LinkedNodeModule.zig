@@ -34,8 +34,9 @@
 //! every node-gyp addon via `tlssup.obj`) needs no index and is merged
 //! with the directory ignored.
 //!
-//! Addons that import `_CxxThrowException` (i.e. contain a C++ `throw`,
-//! notably node-addon-api with `NAPI_CPP_EXCEPTIONS`) are likewise never
+//! Addons that import `_CxxThrowException` from `VCRUNTIME140.dll`
+//! (i.e. `/MD`-linked addons containing a C++ `throw`, notably
+//! node-addon-api with `NAPI_CPP_EXCEPTIONS`) are likewise never
 //! merged: `_CxxThrowException` calls `RtlPcToFileHeader(pThrowInfo, …)`
 //! to find the image base that the 32-bit `_ThrowInfo`/`_CatchableType`
 //! RVAs are relative to, and `RtlPcToFileHeader` only walks `PEB->Ldr`
@@ -44,7 +45,10 @@
 //! garbage and terminates. SEH `__try`/`__except` and plain unwinding
 //! through addon frames are unaffected; only C++ `throw`/`catch` type
 //! matching breaks, so the gate is on the throw symbol, not the frame
-//! handler.
+//! handler. A `/MT`-linked addon has `_CxxThrowException` statically
+//! linked into its own `.text` and is not caught by this import-table
+//! gate; such addons should set `BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK=1`
+//! if they throw (node-gyp defaults to `/MD`, so this is rare).
 //!
 //! Both classes of addon go through the tempfile fallback where the real
 //! loader handles TLS and gives `RtlPcToFileHeader` a proper
@@ -72,6 +76,16 @@ pub const Resolved = extern struct {
     /// the process, and a valid in-image pointer. Never passed to a
     /// Win32 API that expects an actual module handle.
     handle_token: ?*anyopaque = null,
+    /// True when this call to `init()` is the one that ran `bind()`
+    /// (and therefore `DllMain`), in which case `init()` returns with
+    /// `lock` *still held* so the C++ caller can publish to
+    /// `DLHandleMap` before a concurrent Worker on the cached-hit
+    /// path reaches `DLHandleMap.get()`. The C++ side MUST call
+    /// `Bun__linkedNodeModuleUnlock()` exactly once before any
+    /// re-entrant user code (`executePendingNapiModule`,
+    /// `napi_register_module_v1`). False on the cached-hit / failure
+    /// paths, where `init()` already released the lock.
+    did_bind: bool = false,
 };
 
 const Reader = struct {
@@ -225,12 +239,24 @@ fn parseBlob(blob: []const u8) !void {
 /// then skips `LoadLibraryExW` entirely. On false the caller falls through
 /// to the extract-to-tempfile path, so this never surfaces as a user-
 /// visible error.
+///
+/// When this call is the one that ran `bind()` (`out.did_bind == true`),
+/// `lock` is intentionally left held across the return: the C++ caller
+/// first publishes the addon's self-registration to the process-global
+/// `DLHandleMap`, then calls `Bun__linkedNodeModuleUnlock()`. A concurrent
+/// Worker blocked here on the cached-hit path therefore cannot reach
+/// `DLHandleMap.get()` until that publish has happened. Without this
+/// hand-off the loser could observe an empty map (self-registration's
+/// `napi_module_register` bumped only the *binder's* threadlocal
+/// `napiModuleRegisterCallCount`) and spuriously throw
+/// "napi_register_module_v1 not found".
 pub fn init(path: []const u8, out: *Resolved) bool {
     if (!enabled) return false;
     if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK.get()) return false;
 
     lock.lock();
-    defer lock.unlock();
+    var keep_lock = false;
+    defer if (!keep_lock) lock.unlock();
 
     ensureLoaded();
 
@@ -238,6 +264,7 @@ pub fn init(path: []const u8, out: *Resolved) bool {
     switch (entry.state) {
         .bound => |r| {
             out.* = r;
+            // did_bind stays false — lock releases on return.
             return true;
         },
         // A previous attempt already mutated the section; do not touch
@@ -254,7 +281,21 @@ pub fn init(path: []const u8, out: *Resolved) bool {
     };
     entry.state = .{ .bound = resolved };
     out.* = resolved;
+    out.did_bind = true;
+    // Leave the lock held; the C++ caller releases it via
+    // Bun__linkedNodeModuleUnlock() once DLHandleMap is populated and
+    // before any re-entrant user code runs.
+    keep_lock = true;
     return true;
+}
+
+/// Release the lock that `init()` left held on the `did_bind == true`
+/// path. Called from `Process_functionDlopen` after `DLHandleMap.add()`
+/// and before `executePendingNapiModule` / `napi_register_module_v1`
+/// (which are re-entrant into `init()`).
+pub fn Bun__linkedNodeModuleUnlock() callconv(.c) void {
+    if (!enabled) return;
+    lock.unlock();
 }
 
 fn lookup(path: []const u8) ?*Entry {
@@ -471,6 +512,7 @@ pub fn Bun__initLinkedNodeModule(
 comptime {
     if (enabled) {
         @export(&Bun__initLinkedNodeModule, .{ .name = "Bun__initLinkedNodeModule" });
+        @export(&Bun__linkedNodeModuleUnlock, .{ .name = "Bun__linkedNodeModuleUnlock" });
     }
 }
 

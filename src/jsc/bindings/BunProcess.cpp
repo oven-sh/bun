@@ -3,6 +3,7 @@
 
 #include "BunProcess.h"
 #include "DLHandleMap.h"
+#include <wtf/Scope.h>
 #include "WebCoreJSBuiltins.h"
 #include "v8/node.h"
 
@@ -326,12 +327,21 @@ struct Bun__LinkedNodeModuleResolved {
     // DLHandleMap / napiDlopenHandle key so two merged addons do not
     // collide. Not a real HMODULE — never pass it to Win32.
     void* handle_token;
+    // True when this call ran bind() (and therefore DllMain), in
+    // which case the Zig-side lock is *still held* across the return
+    // so a concurrent Worker on the cached-hit path cannot reach
+    // DLHandleMap.get() before we .add(). Caller MUST call
+    // Bun__linkedNodeModuleUnlock() exactly once before any
+    // re-entrant user code runs (executePendingNapiModule /
+    // napi_register_module_v1). False on cached-hit / failure paths.
+    bool did_bind;
 };
 // Finish linking a statically-merged addon (relocs, IAT, VirtualProtect,
 // RtlAddFunctionTable, DllMain) and hand back its export pointers. Returns
 // false if the path was not merged or the bind failed; caller then falls
 // through to the extract-to-tempfile + LoadLibraryExW path.
 extern "C" bool Bun__initLinkedNodeModule(const char* path, size_t path_len, Bun__LinkedNodeModuleResolved* out);
+extern "C" void Bun__linkedNodeModuleUnlock();
 #endif
 
 /// Returns a pointer that needs to be freed with `delete[]`.
@@ -610,6 +620,25 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     // path instead.
     void* dlopenHandleForMeta = usedLinkedAddon ? nullptr : handle;
 
+    // When this thread is the one that ran bind() (did_bind),
+    // LinkedNodeModule.lock is still held so a concurrent Worker on
+    // the cached-hit path is blocked inside init() and cannot reach
+    // DLHandleMap.get() until we have .add()ed. Release exactly
+    // once, after publishing to DLHandleMap and before any
+    // re-entrant user code (executePendingNapiModule /
+    // napi_register_module_v1, which can dlopen another addon and
+    // would deadlock on the non-recursive lock). The scope-exit
+    // below catches early-return / exception-throw paths that never
+    // reach the explicit release.
+    bool binderLockHeld = usedLinkedAddon && linkedResolved.did_bind;
+    const auto releaseBinderLock = [&] {
+        if (binderLockHeld) {
+            binderLockHeld = false;
+            Bun__linkedNodeModuleUnlock();
+        }
+    };
+    auto binderLockGuard = WTF::makeScopeExit([&] { releaseBinderLock(); });
+
 // On Windows, we use GetLastError() for error messages, so we can only delete after checking for errors
 #else
     CrashHandler__setDlOpenAction(utf8.data());
@@ -688,6 +717,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
             }
         }
 
+#if OS(WINDOWS)
+        // DLHandleMap is now populated for this handle; a Worker on
+        // the cached-hit path can proceed to .get(). Release before
+        // nm_register_func runs — it is user code and may dlopen
+        // another merged addon, which would deadlock on the
+        // non-recursive lock.
+        releaseBinderLock();
+#endif
+
         // Execute all NAPI modules. If an nm_register_func registers more
         // modules re-entrantly, they accumulate back in m_pendingNapiModules;
         // drain those too once the current batch is done.
@@ -724,6 +762,16 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
         return JSValue::encode(jsUndefined());
     }
+
+#if OS(WINDOWS)
+    // If the binder reached here, the addon did not self-register
+    // (no NAPI_MODULE-macro static ctor), so there is nothing to
+    // publish to DLHandleMap and no loser-thread .get() to order
+    // against. Release before any re-entrant user code below
+    // (napi_register_module_v1, or a cached replay's
+    // nm_register_func on the loser path).
+    releaseBinderLock();
+#endif
 
     // Module didn't self-register on this load. Check if we have cached registrations.
     if (auto cachedModules = Bun::DLHandleMap::singleton().get(handle)) {

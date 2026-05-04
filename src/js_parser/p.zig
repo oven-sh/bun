@@ -4272,6 +4272,21 @@ pub fn NewParser_(
                                 else => {},
                             }
                         },
+
+                        // Arithmetic between two statically-known numbers has
+                        // no `valueOf`/`toString` side effects and cannot
+                        // throw — treat as removable when both sides are.
+                        // Pre-PR this never fired because every such node was
+                        // folded to `.e_number` before reaching here; with
+                        // size-aware folding the `.e_binary` survives (e.g.
+                        // `export class C { ratio = 1/3 }`) and without this
+                        // arm the unused export no longer tree-shakes.
+                        .bin_add, .bin_sub, .bin_mul, .bin_div, .bin_rem, .bin_pow => {
+                            if (ex.left.knownPrimitive() == .number and ex.right.knownPrimitive() == .number) {
+                                return p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.left) and
+                                    p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.right);
+                            }
+                        },
                         else => {},
                     }
                 },

@@ -638,7 +638,10 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
     }
 
     // https://fetch.spec.whatwg.org/#dom-request — init is a Web IDL dictionary.
-    // Checked after the url-string branch so an invalid-URL error surfaces first.
+    // Checked after the first-argument `bun.String.fromJS` call above so that a
+    // throwing `toString` on that argument surfaces first, matching WebIDL
+    // left-to-right argument conversion. (URL validity is checked much later,
+    // after `init` has been consumed.)
     if (arguments.len > 1 and !arguments[1].isUndefinedOrNull() and !arguments[1].isObject()) {
         return globalThis.ERR(.INVALID_ARG_TYPE, "Failed to construct 'Request': The \"init\" argument must be of type object, undefined, or null.", .{}).throw();
     }

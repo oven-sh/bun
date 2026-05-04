@@ -252,6 +252,29 @@ pub const SideEffects = enum(u1) {
                             return simplifyUnusedExpr(p, bin.left);
                     },
 
+                    // Arithmetic between two known-number operands has no
+                    // `valueOf`/`toString` side effects and cannot throw, so
+                    // it's safe to drop when unused — mirrors the
+                    // `.bin_lt/gt/le/ge` handling just above. Pre-size-aware
+                    // folding this was never reached because these nodes
+                    // always collapsed to `.e_number` first; now rejected
+                    // folds survive as `.e_binary` and without this arm an
+                    // unused expression-statement like `1/3;` would be kept.
+                    .bin_add, .bin_sub, .bin_mul, .bin_div, .bin_rem, .bin_pow => {
+                        if (bin.left.knownPrimitive() == .number and bin.right.knownPrimitive() == .number) {
+                            const left_simplified = simplifyUnusedExpr(p, bin.left);
+                            const right_simplified = simplifyUnusedExpr(p, bin.right);
+                            if (left_simplified == null and right_simplified == null) {
+                                return null;
+                            }
+                            return Expr.joinWithComma(
+                                left_simplified orelse bin.left.toEmpty(),
+                                right_simplified orelse bin.right.toEmpty(),
+                                p.allocator,
+                            );
+                        }
+                    },
+
                     else => {},
                 }
             },

@@ -323,7 +323,8 @@ static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject)
     }
 #endif
     RETURN_IF_EXCEPTION(scope, jsUndefined());
-    if (!sqlValue || !sqlValue.isObject()) [[unlikely]] return jsUndefined();
+    if (!sqlValue || !sqlValue.isObject()) [[unlikely]]
+        return jsUndefined();
     JSValue result = sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword);
     RETURN_IF_EXCEPTION(scope, jsUndefined());
     return result ? result : jsUndefined();
@@ -341,7 +342,8 @@ static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
     }
 #endif
     RETURN_IF_EXCEPTION(scope, jsUndefined());
-    if (!sqlValue || !sqlValue.isObject()) [[unlikely]] return jsUndefined();
+    if (!sqlValue || !sqlValue.isObject()) [[unlikely]]
+        return jsUndefined();
     auto clientData = WebCore::clientData(vm);
     JSValue result = sqlValue.getObject()->get(globalObject, clientData->builtinNames().SQLPublicName());
     RETURN_IF_EXCEPTION(scope, jsUndefined());

@@ -879,8 +879,30 @@ describe("Bun.Image", () => {
       // 4×2 RGB pixels — distinctive so a misread shows up as a crash or
       // wrong-colour PNG, not a silently equal output.
       const pixels = [
-        255, 0, 0, 0, 255, 0, 0, 0, 255, 128, 128, 128, //
-        64, 64, 64, 200, 200, 200, 32, 64, 96, 100, 150, 200,
+        255,
+        0,
+        0,
+        0,
+        255,
+        0,
+        0,
+        0,
+        255,
+        128,
+        128,
+        128, //
+        64,
+        64,
+        64,
+        200,
+        200,
+        200,
+        32,
+        64,
+        96,
+        100,
+        150,
+        200,
       ];
       for (let i = 0; i < pixels.length; i++) tiff[140 + i] = pixels[i];
 

@@ -302,7 +302,12 @@ pub fn ParseProperty(
                                         .p_accessor => {
                                             // `accessor` is a standalone proposal, not gated on the
                                             // decorators mode (either legacy or standard is fine).
-                                            if (opts.is_class and
+                                            //
+                                            // TC39 grammar is `accessor [no LineTerminator here]
+                                            // ClassElementName`, matching `.p_async` above: a newline
+                                            // before the next token means `accessor` is an ordinary
+                                            // field name terminated by ASI, not the modifier keyword.
+                                            if (opts.is_class and !p.lexer.has_newline_before and
                                                 (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == .p_accessor)
                                             {
                                                 kind = .auto_accessor;

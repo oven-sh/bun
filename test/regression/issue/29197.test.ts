@@ -461,3 +461,66 @@ test.concurrent(
     expect(exitCode).toBe(0);
   },
 );
+
+test.concurrent(
+  "newline between `accessor` and the name triggers ASI (two fields, not one auto-accessor)",
+  async () => {
+    // TC39 grammar: `accessor [no LineTerminator here] ClassElementName`.
+    // With a newline, `accessor` must be parsed as a plain field name
+    // terminated by ASI, and the following `y = 1` becomes a second
+    // data field — NOT a single auto-accessor `y`. Matches tsc/esbuild.
+    const { stdout, stderr, exitCode } = await runTS(`
+      class C {
+        accessor
+        y = 1
+      }
+      const c = new C() as any;
+      // Both should be own data properties; neither should become an auto-accessor.
+      console.log("keys:", Object.getOwnPropertyNames(c).sort().join(","));
+      console.log("accessor:", c.accessor);
+      console.log("y:", c.y);
+    `);
+
+    expect(stderr).toBe("");
+    // Both fields should be own data props on the instance.
+    expect(stdout).toBe("keys: accessor,y\naccessor: undefined\ny: 1\n");
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent(
+  "`static accessor` with a side-effecting initializer is not hoisted past preceding statements",
+  async () => {
+    // Non-bundle tree-shaking calls `G.Class.canBeMoved()` on the pre-visit
+    // AST, before `rewriteAutoAccessorProperties` converts the auto-accessor
+    // into a `.normal` private field. `canBeMoved` used to only inspect
+    // `.normal` static initializers, so a class with `static accessor x =
+    // sideEffect()` was (incorrectly) treated as movable and hoisted ahead
+    // of the preceding `console.log("first")`, inverting evaluation order.
+    using dir = tempDir("bun-issue-29197-hoist", {
+      "main.ts":
+        'console.log("first");\n' +
+        "export class Foo {\n" +
+        '  static accessor x = (console.log("second"), 42);\n' +
+        "}\n" +
+        'console.log("third");\n',
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("first\nsecond\nthird\n");
+    expect(exitCode).toBe(0);
+  },
+);

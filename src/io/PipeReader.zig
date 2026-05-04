@@ -82,6 +82,13 @@ const PosixBufferedReader = struct {
     flags: Flags = .{},
     count: usize = 0,
     maxbuf: ?*MaxBuf = null,
+    /// When `flags.threadpool` is set, each read() allocates a task and
+    /// submits it to `jsc.WorkPool` instead of calling read(2) inline.
+    /// The task is heap-allocated rather than embedded so it can outlive
+    /// the reader — if the reader is closed mid-read, the pool thread
+    /// finishes its syscall and the completion task drops its write back
+    /// to the reader on noticing the detached state.
+    threadpool_task: ?*ThreadPoolReadTask = null,
 
     const Flags = packed struct(u16) {
         is_done: bool = false,
@@ -94,7 +101,188 @@ const PosixBufferedReader = struct {
         memfd: bool = false,
         use_pread: bool = false,
         is_paused: bool = false,
-        _: u6 = 0,
+        /// Route read() through `jsc.WorkPool` rather than calling read(2)
+        /// inline on the caller's (JS) thread. Set by `FileReader.onStart`
+        /// when the fd is a blocking non-regular, non-TTY file descriptor
+        /// (typically a character device such as /dev/zero). Prevents the
+        /// synchronous read loop from starving the event loop — signals,
+        /// timers, and I/O callbacks all get CPU between reads. See #30189.
+        threadpool: bool = false,
+        /// A worker-pool read is currently in flight — the pool thread
+        /// owns `threadpool_task.buf`, and the main thread must not
+        /// schedule another read until the completion task has run.
+        threadpool_in_flight: bool = false,
+        _: u4 = 0,
+    };
+
+    /// One-shot worker-pool read. Heap-allocated so it can outlive its
+    /// owning `PosixBufferedReader`: if the reader closes while a read
+    /// is in flight on a pool thread, the pool thread still gets to
+    /// finish its syscall and schedule the completion task, and the
+    /// completion task sees `reader == null` (set by `detachAndClose`)
+    /// and destroys itself without touching the freed reader.
+    const ThreadPoolReadTask = struct {
+        task: bun.ThreadPool.Task = .{ .callback = &runOnPoolThread },
+        concurrent: jsc.ConcurrentTask = .{},
+        /// Pool-thread read target. Owned by this task.
+        buf: []u8 = &.{},
+        /// Result of `bun.sys.read`, written on the pool thread.
+        result: bun.sys.Maybe(usize) = .{ .result = 0 },
+        /// The owning reader. Cleared (under `lock`) by
+        /// `detachAndClose` when the reader tears down before this
+        /// task's completion runs on the JS thread. The pool thread
+        /// also reads this under `lock` so it can close the fd itself
+        /// if the reader has already been freed.
+        reader: ?*PosixBufferedReader,
+        /// The fd to read from, cached at schedule time so the pool
+        /// thread doesn't have to reach back through `reader`. Kept
+        /// valid by the detach handshake: the reader either holds the
+        /// fd open until completion, or takes ownership back and
+        /// closes it itself after `detachAndClose` returns.
+        fd: bun.FD,
+        /// The event loop to wake when the read completes. Cached
+        /// alongside `fd` so the pool thread never dereferences
+        /// `reader` to find it.
+        event_loop: jsc.EventLoopHandle,
+        /// Refs the event loop while a pool read is in flight so the
+        /// process doesn't exit before the completion task runs. The
+        /// inline path relies on the FilePoll's refcount for this, but
+        /// the threadpool path has no poll handle (fds used here are
+        /// non-pollable character devices), so we track it explicitly.
+        /// Ref'd in `schedule`, unref'd in `runFromJSThread` or
+        /// `detachAndClose` — i.e. exactly once per task lifetime.
+        keep_alive: Async.KeepAlive = .{},
+        lock: bun.Mutex = .{},
+
+        /// Size of each pool-thread read. Smaller than the inline
+        /// streaming path's 256 KB: each chunk round-trips through
+        /// `onReadChunk` → JS → `_read` → another pool read, and 64 KB
+        /// keeps the per-chunk latency low on slow devices while still
+        /// coalescing syscalls on fast ones like /dev/zero.
+        const buf_size: usize = 64 * 1024;
+
+        pub const new = bun.TrivialNew(@This());
+
+        fn schedule(reader: *PosixBufferedReader) void {
+            if (reader.flags.threadpool_in_flight) return;
+            reader.flags.threadpool_in_flight = true;
+
+            const event_loop = reader.eventLoop();
+            const self = ThreadPoolReadTask.new(.{
+                .buf = bun.handleOom(bun.default_allocator.alloc(u8, buf_size)),
+                .reader = reader,
+                .fd = reader.getFd(),
+                .event_loop = event_loop,
+            });
+            // Ref the loop before the task hits the pool — the reader
+            // has no poll handle to do this for it.
+            self.keep_alive.ref(event_loop);
+            reader.threadpool_task = self;
+            jsc.WorkPool.schedule(&self.task);
+        }
+
+        /// Called on the JS thread when the reader is being torn down
+        /// while `flags.threadpool_in_flight` is set. Hands ownership
+        /// of the fd to the task so the pool thread can close it
+        /// after its read completes — the task must free both the fd
+        /// and itself from `runFromJSThread`.
+        fn detachAndClose(reader: *PosixBufferedReader) void {
+            const self = reader.threadpool_task orelse return;
+            reader.threadpool_task = null;
+            self.lock.lock();
+            defer self.lock.unlock();
+            self.reader = null;
+            // The reader no longer owns the fd — ownership has moved
+            // to the task, which will close it in `runFromJSThread`.
+            // Drop the keep-alive now that teardown has started so the
+            // completion task doesn't keep a closing process alive.
+            self.keep_alive.unref(self.event_loop);
+        }
+
+        fn runOnPoolThread(task: *bun.ThreadPool.Task) void {
+            const self: *ThreadPoolReadTask = @fieldParentPtr("task", task);
+            // Read the fd (blocking on the pool thread). Never touch
+            // JS-visible state here.
+            self.result = bun.sys.read(self.fd, self.buf);
+            self.event_loop.enqueueTaskConcurrent(.{ .js = self.concurrent.from(self, .manual_deinit) });
+        }
+
+        pub fn runFromJSThread(self: *ThreadPoolReadTask) void {
+            defer {
+                // Release the loop-keep-alive we took in `schedule`.
+                // Safe even if `detachAndClose` already unref'd because
+                // `KeepAlive.unref` is a no-op when not active.
+                self.keep_alive.unref(self.event_loop);
+                bun.default_allocator.free(self.buf);
+                bun.destroy(self);
+            }
+
+            // Acquire the detach lock and capture the reader pointer
+            // atomically with `flags.threadpool_in_flight` so we can't
+            // race with `detachAndClose`.
+            self.lock.lock();
+            const reader = self.reader;
+            self.lock.unlock();
+
+            if (reader == null) {
+                // Reader was torn down while we were reading. Close
+                // the fd we inherited and exit.
+                self.fd.close();
+                return;
+            }
+
+            const r = reader.?;
+            r.threadpool_task = null;
+            r.flags.threadpool_in_flight = false;
+
+            if (r.flags.is_done or r.flags.closed_without_reporting or r.flags.is_paused) {
+                return;
+            }
+
+            const buf = self.buf;
+            switch (self.result) {
+                .result => |bytes_read| {
+                    if (r.maxbuf) |l| l.onReadBytes(bytes_read);
+
+                    if (bytes_read == 0) {
+                        // EOF
+                        r.closeWithoutReporting();
+                        if (!r.flags.is_done) r.done();
+                        return;
+                    }
+
+                    r._offset += bytes_read;
+                    const streaming = r.vtable.isStreamingEnabled();
+                    if (streaming) {
+                        const wants_more = r.vtable.onReadChunk(buf[0..bytes_read], .progress);
+                        if (wants_more and !r.flags.is_paused and !r.isDone()) {
+                            // Schedule the next pool read. The JS-thread
+                            // round trip in between is the yield that
+                            // lets signals/timers/I/O drain.
+                            schedule(r);
+                        }
+                    } else {
+                        // Non-streaming: append to resizable buffer and
+                        // keep reading until EOF/error.
+                        bun.handleOom(r._buffer.appendSlice(buf[0..bytes_read]));
+                        if (!r.flags.is_paused and !r.isDone()) {
+                            schedule(r);
+                        }
+                    }
+                },
+                .err => |err| {
+                    if (err.isRetry()) {
+                        // Character devices shouldn't return EAGAIN on
+                        // blocking read, but be defensive: just reschedule.
+                        if (!r.flags.is_paused and !r.isDone()) {
+                            schedule(r);
+                        }
+                        return;
+                    }
+                    r.onError(err);
+                },
+            }
+        }
     };
 
     pub fn init(comptime Type: type) PosixBufferedReader {
@@ -104,8 +292,15 @@ const PosixBufferedReader = struct {
     }
 
     pub fn updateRef(this: *const PosixBufferedReader, value: bool) void {
-        const poll = this.handle.getPoll() orelse return;
-        poll.setKeepingProcessAlive(this.vtable.eventLoop(), value);
+        if (this.handle.getPoll()) |poll| {
+            poll.setKeepingProcessAlive(this.vtable.eventLoop(), value);
+            return;
+        }
+        // No poll handle — the only keep-alive this reader has is the
+        // ref held by an in-flight threadpool read, if any.
+        if (this.threadpool_task) |task| {
+            if (value) task.keep_alive.ref(task.event_loop) else task.keep_alive.unref(task.event_loop);
+        }
     }
 
     pub inline fn isDone(this: *const PosixBufferedReader) bool {
@@ -166,6 +361,17 @@ const PosixBufferedReader = struct {
     }
 
     pub fn close(this: *PosixBufferedReader) void {
+        // If a pool-thread read is in flight the completion task could
+        // otherwise dereference a freed reader. Detach: the task takes
+        // ownership of the fd and closes it when its read returns.
+        // We still fire the normal `done` → `onReaderDone` path here so
+        // the parent stream sees the close synchronously.
+        if (this.flags.threadpool_in_flight) {
+            ThreadPoolReadTask.detachAndClose(this);
+            this.handle = .{ .closed = {} };
+            if (!this.flags.is_done) this.done();
+            return;
+        }
         this.closeHandle();
     }
 
@@ -173,6 +379,11 @@ const PosixBufferedReader = struct {
         if (this.getFd() != bun.invalid_fd) {
             bun.assert(!this.flags.closed_without_reporting);
             this.flags.closed_without_reporting = true;
+            if (this.flags.threadpool_in_flight) {
+                ThreadPoolReadTask.detachAndClose(this);
+                this.handle = .{ .closed = {} };
+                return;
+            }
             if (this.flags.close_handle) this.handle.close(this, {});
         }
     }
@@ -323,6 +534,7 @@ const PosixBufferedReader = struct {
 
     // Exists for consistently with Windows.
     pub fn hasPendingRead(this: *const PosixBufferedReader) bool {
+        if (this.flags.threadpool_in_flight) return true;
         return this.handle == .poll and this.handle.poll.isRegistered();
     }
 
@@ -363,6 +575,17 @@ const PosixBufferedReader = struct {
                 return;
             },
             .file => {
+                // For blocking non-regular fds (character devices like
+                // /dev/zero) dispatch each read to the worker pool so the
+                // JS thread doesn't sit in a read(2) loop that never
+                // yields — signals and timers stay serviced. Regular
+                // files keep the inline path because they hit EOF
+                // quickly and the thread-hop per chunk isn't worth the
+                // overhead.
+                if (this.flags.threadpool) {
+                    ThreadPoolReadTask.schedule(this);
+                    return;
+                }
                 readFile(this, buf, fd, 0, false);
                 return;
             },
@@ -1298,6 +1521,8 @@ else if (bun.Environment.isWindows)
     WindowsBufferedReader
 else
     @compileError("Unsupported platform");
+
+pub const PosixThreadPoolReadTask = if (bun.Environment.isPosix) PosixBufferedReader.ThreadPoolReadTask else @compileError("POSIX only");
 
 const MaxBuf = @import("./MaxBuf.zig");
 const std = @import("std");

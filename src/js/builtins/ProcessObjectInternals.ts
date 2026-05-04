@@ -248,59 +248,11 @@ export function getStdinStream(
     }
   }
 
-  // For non-pollable fds (regular files, character devices like /dev/zero),
-  // the native ReadableStream's onPull runs a synchronous blocking read. If
-  // _read invoked internalRead() inline, the resulting
-  // `await reader.read() -> resolve -> await -> push -> _read` chain would
-  // stay entirely inside microtasks, never yielding to the event loop. That
-  // in turn means `tickConcurrentWithCount` never runs, so queued
-  // SIGTERM/SIGINT/SIGUSR* signals (see PosixSignalHandle) aren't delivered
-  // to JS and setInterval/setTimeout callbacks don't fire. See
-  // https://github.com/oven-sh/bun/issues/30189.
-  //
-  // For pipe/socket fdTypes the reader is pollable and the FilePoll
-  // callback provides that yield naturally, so only defer here for `file`.
-  const needsEventLoopYield = fdType === BunProcessStdinFdType.file && !isTTY;
-
   function triggerRead(_size) {
     $debug("_read();", reader);
 
     if (reader && !shouldDisown) {
-      if (needsEventLoopYield) {
-        // setImmediate schedules an ImmediateObject task, which is drained in
-        // autoTick() (after timers and I/O). Using it here forces tick() to
-        // return before the next read begins.
-        //
-        // NOT unref()d: for non-pollable fds, `source.updateRef(true)` in
-        // `own()` is a no-op (PosixBufferedReader.updateRef early-returns
-        // when there's no poll handle — see src/io/PipeReader.zig), so the
-        // native source contributes zero to event-loop liveness. If this
-        // immediate were unref'd, a plain `bun script.js < file` with only
-        // a `'data'` listener would exit before the first read completes
-        // because `runImmediateTask` skips unref'd immediates when the
-        // event loop is otherwise idle. The immediate is one-shot per
-        // `_read` call and the chain stops naturally at EOF (Readable
-        // won't call `_read` again after `push(null)`), so keeping it
-        // ref'd does not leak the process beyond stdin close.
-        //
-        // The guard re-checks ownership on the immediate tick: a `pause`/
-        // `close` that lands between triggerRead() and the immediate will
-        // run its nextTick→disown() first — since no `reader.read()` is
-        // pending in that window, releaseLock() succeeds and clears
-        // `reader`. Calling internalRead() anyway would hit
-        // `$assert(reader)` / TypeError and destroy stdin. If we drop the
-        // read, mark `needsInternalReadRefresh` so a later own() restarts.
-        const self = this;
-        setImmediate(() => {
-          if (reader && !shouldDisown && !stream_destroyed) {
-            internalRead(self);
-          } else {
-            needsInternalReadRefresh = true;
-          }
-        });
-      } else {
-        internalRead(this);
-      }
+      internalRead(this);
     } else {
       // The stream has not been ref()ed yet. If it is ever ref()ed,
       // run internalRead()

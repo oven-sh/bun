@@ -41,6 +41,11 @@ pub const Lazy = union(enum) {
         pollable: bool = false,
         nonblocking: bool = true,
         file_type: bun.io.FileType = .file,
+        /// Read via the worker pool instead of inline on the JS thread.
+        /// Set for blocking non-regular, non-TTY fds (e.g. /dev/zero,
+        /// /dev/urandom) so the synchronous read(2) loop doesn't starve
+        /// the event loop. See #30189.
+        use_threadpool: bool = false,
     };
 
     pub extern "c" fn open_as_nonblocking_tty(i32, i32) i32;
@@ -146,6 +151,19 @@ pub const Lazy = union(enum) {
             if (this.nonblocking and this.file_type == .pipe) {
                 this.file_type = .nonblocking_pipe;
             }
+
+            // Character devices (and any other non-regular, non-pollable,
+            // non-TTY fd we classified as `.file`) would otherwise drive
+            // `read(2)` in a tight loop on the JS thread — /dev/zero and
+            // /dev/urandom both return data immediately forever, so the
+            // event loop never drains signals/timers/I/O. Mark them for
+            // the worker pool path; regular files keep the inline loop
+            // because they hit EOF quickly.
+            if (this.file_type == .file and !this.pollable and
+                !bun.isRegularFile(stat.mode) and !(file.is_atty orelse false))
+            {
+                this.use_threadpool = true;
+            }
         }
 
         this.fd = fd;
@@ -204,6 +222,7 @@ pub fn onStart(this: *FileReader) streams.Start {
                         file_type = opened.file_type;
                         this.reader.flags.nonblocking = opened.nonblocking;
                         this.reader.flags.pollable = pollable;
+                        this.reader.flags.threadpool = opened.use_threadpool;
                     },
                 }
             },

@@ -224,6 +224,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         // Headers8Bit::init only returns AllocError; handle OOM as a crash per
         // the OOM contract instead of masking it as a connection failure.
+        // SAFETY: header_names/header_values point to header_count live BunStrings per extern-C contract.
         let extra_headers =
             unsafe { Headers8Bit::init(header_names, header_values, header_count) };
 
@@ -263,9 +264,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // Build proxy state if using proxy.
         // The CONNECT request is built using local variables for proxy_authorization and proxy_headers
         // which are freed immediately after building the request (not stored on the client).
-        let mut proxy_state: Option<WebSocketProxy> = None;
-        let mut connect_request: Vec<u8> = Vec::new();
-        if using_proxy {
+        // Ownership of `body` moves into the proxy (matching Zig); the CONNECT
+        // request becomes the initial input_body_buf instead.
+        let (proxy_state, input_body_buf): (Option<WebSocketProxy>, Vec<u8>) = if using_proxy {
             // Parse proxy authorization (temporary, freed after building CONNECT request)
             let proxy_auth_decoded: Option<Utf8Slice<'_>> =
                 proxy_authorization.map(|auth| auth.to_utf8());
@@ -274,6 +275,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // Parse proxy headers (temporary, freed after building CONNECT request)
             // Headers8Bit::init / to_headers only return AllocError; OOM should
             // crash, not silently become a connection failure.
+            // SAFETY: proxy_header_names/values point to proxy_header_count live BunStrings per extern-C contract.
             let proxy_extra_headers = unsafe {
                 Headers8Bit::init(proxy_header_names, proxy_header_values, proxy_header_count)
             };
@@ -286,23 +288,23 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
             // Build CONNECT request (proxy_auth and proxy_hdrs are dropped after this).
             // build_connect_request only returns AllocError; crash on OOM.
-            connect_request =
+            let connect_request =
                 build_connect_request(host_slice.slice(), port, proxy_auth_slice, proxy_hdrs.as_ref());
 
             // Duplicate target_host (needed for SNI during TLS handshake).
             let target_host_dup: Box<[u8]> = Box::from(host_slice.slice());
 
-            proxy_state = Some(WebSocketProxy::init(
+            let proxy = WebSocketProxy::init(
                 target_host_dup,
                 // Use target_is_secure from C++, not ssl template parameter
                 // (ssl may be true for HTTPS proxy even with ws:// target)
                 target_is_secure,
-                body.clone(),
-                // TODO(port): Zig passes `body` here and `connect_request` to
-                // input_body_buf below; ownership of `body` transfers into the
-                // proxy. Using `body.clone()` for now; Phase B should move it.
-            ));
-        }
+                body,
+            );
+            (Some(proxy), connect_request)
+        } else {
+            (None, body)
+        };
 
         let subprotocols = {
             let mut subprotocols = StringSet::new();
@@ -317,7 +319,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             ref_count: Cell::new(1),
             tcp: Socket::<SSL>::detached(),
             outgoing_websocket: Some(websocket),
-            input_body_buf: if using_proxy { connect_request } else { body },
+            input_body_buf,
             to_send_len: 0,
             read_length: 0,
             headers_buf: [picohttp::Header::default(); 128],
@@ -609,6 +611,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 }
                 // SAFETY: native handle on a TLS socket is `*SSL`.
                 let ssl_ptr = unsafe { socket.get_native_handle().cast::<boringssl::c::SSL>() };
+                // SAFETY: ssl_ptr is a live *SSL from the open socket; SSL_get_servername
+                // returns a nullable borrowed C string valid for the SSL's lifetime.
                 if let Some(servername) =
                     unsafe { boringssl::c::SSL_get_servername(ssl_ptr, 0).as_ref() }
                 {
@@ -639,6 +643,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 if let Some(handle) = socket.get_native_handle_ref() {
                     // TODO(port): ZStr — hostname includes trailing NUL.
                     let len = self.hostname.len() - 1;
+                    // SAFETY: hostname[len] == 0 (written by dupe_z); the buffer
+                    // outlives this borrow.
                     let zstr = unsafe {
                         bun_str::ZStr::from_raw(self.hostname.as_ptr(), len)
                     };
@@ -1407,6 +1413,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
 /// `bun.default_allocator.dupeZ(u8, s) catch ""` — returns owned bytes with a
 /// trailing NUL, or empty on (impossible-in-Rust) alloc failure.
+// TODO(port): owned ZStr type — replace this helper and the `hostname` field
+// with `bun_str::ZStr::from_bytes(s)` once the owned-ZStr shape is settled.
 fn dupe_z(s: &[u8]) -> Box<[u8]> {
     let mut v = Vec::with_capacity(s.len() + 1);
     v.extend_from_slice(s);

@@ -269,8 +269,9 @@ impl SubscriptionCtx {
         Ok(self.parent().client.flags.finalized || !self.has_subscriptions(global_object)?)
     }
 
-    // TODO(port): cannot be Drop — takes global_object param. Kept as explicit method.
-    pub fn deinit(&mut self, global_object: &JSGlobalObject) {
+    // TODO(port): cannot be Drop — takes global_object param. Exposed as explicit
+    // `close` per PORTING.md (never expose `pub fn deinit`).
+    pub fn close(&mut self, global_object: &JSGlobalObject) {
         if cfg!(debug_assertions) {
             let go = self.parent().global_object;
             debug_assert!(self.is_deletable(go).expect("unreachable"));
@@ -768,10 +769,12 @@ impl JSValkeyClient {
 
     pub fn get_or_create_subscription_ctx(&mut self) -> JsResult<&mut SubscriptionCtx> {
         // TODO(port): Zig treats _subscription_ctx as Optional here but the field is not
-        // optional in the struct definition above. Preserving the apparent intent: if already
-        // initialized (is_subscriber path), return it; else (re)init.
-        // Original: `if (this._subscription_ctx) |*ctx| { return ctx; }`
-        // We can't pattern-match a non-Option in Rust; mirror the connected-state side effects.
+        // optional in the struct definition above. Original:
+        //   `if (this._subscription_ctx) |*ctx| { return ctx; }`
+        // Preserve the return-existing intent so we don't unconditionally reinit.
+        if self._subscription_ctx.is_subscriber {
+            return Ok(&mut self._subscription_ctx);
+        }
 
         // Save the original flag values and create a new subscription context
         // (Zig passed extra args to SubscriptionCtx.init that don't exist on the fn — preserved
@@ -1329,22 +1332,19 @@ impl JSValkeyClient {
         self.ref_();
         // socket close can potentially call JS so we need to enqueue the deinit
         struct Holder {
-            // LIFETIMES.tsv: SHARED → Arc<JSValkeyClient>
-            // TODO(port): JSValkeyClient uses an *intrusive* RefCount; the Zig code does
-            // `this.ref()` before storing the raw `*JSValkeyClient` and `self.ctx.deref()` in
-            // run(). Arc<> here would double the refcounting scheme. Phase B should likely use
-            // `*mut JSValkeyClient` (BACKREF) and keep the explicit ref/deref pair.
-            ctx: Arc<JSValkeyClient>,
+            // BACKREF — JSValkeyClient is intrusively ref-counted (RefCount + @fieldParentPtr
+            // recovery in SubscriptionCtx::parent). The `self.ref_()` above / `(*ctx).deref()`
+            // in run() keep it alive across the task hop, exactly as the Zig does.
+            // TODO(port): LIFETIMES.tsv lists this as SHARED; update to BACKREF.
+            ctx: *mut JSValkeyClient,
             task: jsc::AnyTask,
         }
         impl Holder {
             fn run(self_: *mut Holder) {
                 // SAFETY: allocated via Box::into_raw below; reclaimed here.
                 let self_ = unsafe { Box::from_raw(self_) };
-                // TODO(port): with Arc, mutable access requires interior mutability.
-                // Preserving original semantics: close client then deref.
-                // SAFETY: single-threaded; intrusive ref guarantees liveness.
-                let ctx = Arc::as_ptr(&self_.ctx) as *mut JSValkeyClient;
+                let ctx = self_.ctx;
+                // SAFETY: single-threaded; intrusive ref taken before enqueue guarantees liveness.
                 unsafe {
                     (*ctx).client.close();
                     (*ctx).deref();
@@ -1352,9 +1352,8 @@ impl JSValkeyClient {
                 // self_ dropped here (Box freed).
             }
         }
-        // TODO(port): `Arc::from_raw(self)` is wrong for an intrusive-rc payload; placeholder.
         let holder = Box::into_raw(Box::new(Holder {
-            ctx: unsafe { Arc::from_raw(self as *const JSValkeyClient) },
+            ctx: self as *mut JSValkeyClient,
             task: jsc::AnyTask::default(), // overwritten below
         }));
         // SAFETY: holder just allocated
@@ -1651,9 +1650,9 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.client.on_open(Self::_socket(socket))
     }
 
-    fn on_handshake_(
+    fn on_handshake_<S>(
         this: &mut JSValkeyClient,
-        _socket: impl core::any::Any, // anytype
+        _socket: S, // anytype — opaque, body never calls a method on it
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
     ) -> jsc::JsTerminatedResult<()> {
@@ -1959,6 +1958,6 @@ impl Options {
 // PORT STATUS
 //   source:     src/runtime/valkey_jsc/js_valkey.zig (1674 lines)
 //   confidence: medium
-//   todos:      17
-//   notes:      Holder.ctx Arc<> from LIFETIMES.tsv conflicts with intrusive RefCount; scopeguard closures capture &mut self (borrowck reshaping needed in Phase B); ValkeyClient/Address/Flags struct shapes assumed; ON_HANDSHAKE const-fn-ptr needs specialization.
+//   todos:      15
+//   notes:      Holder.ctx is BACKREF (raw *mut + intrusive ref/deref) — LIFETIMES.tsv needs SHARED→BACKREF update; scopeguard closures capture &mut self (borrowck reshaping needed in Phase B); ValkeyClient/Address/Flags struct shapes assumed; ON_HANDSHAKE const-fn-ptr needs specialization.
 // ──────────────────────────────────────────────────────────────────────────

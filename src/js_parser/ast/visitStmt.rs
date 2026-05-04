@@ -10,10 +10,12 @@ use bun_js_parser::ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
 use bun_js_parser::ast::G::Decl;
 use bun_js_parser::lexer as js_lexer;
 use bun_str::strings;
+use bumpalo::Bump;
+use bumpalo::collections::Vec as BumpVec;
 
-// TODO(port): `ListManaged(Stmt)` in the parser is arena-backed (`p.allocator`).
-// Phase B should thread `'bump` and switch to `bumpalo::collections::Vec<'bump, Stmt>`.
-type StmtList = Vec<Stmt>;
+// `ListManaged(Stmt)` in the parser is arena-backed (`p.allocator`).
+// TODO(port): thread `'bump` through fn signatures (`stmts: &mut StmtList<'bump>`) in Phase B.
+type StmtList<'bump> = BumpVec<'bump, Stmt>;
 
 /// Zig: `pub fn VisitStmt(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
 pub struct VisitStmt<
@@ -174,6 +176,7 @@ impl<
                         p.log.add_range_error_fmt(
                             p.source,
                             r,
+                            p.allocator,
                             format_args!("\"{}\" is not declared in this file", bstr::BStr::new(name)),
                         )?;
                     }
@@ -200,6 +203,7 @@ impl<
                         p.log.add_range_error_fmt(
                             p.source,
                             r,
+                            p.allocator,
                             format_args!("\"{}\" is not declared in this file", bstr::BStr::new(name)),
                         )?;
                         continue;
@@ -262,16 +266,13 @@ impl<
                 j += 1;
             }
 
-            let had_items = !data.items.is_empty();
             data.items.truncate(j);
 
-            if j == 0 && had_items {
-                // Zig checks `data.items.len > 0` *after* the truncate which is always
-                // false; preserved bug-for-bug here would mean this branch is dead.
-                // TODO(port): confirm intended semantics — Zig original is `if (j == 0 and data.items.len > 0)`
-                // after `data.items.len = j;` so it never fires. Mirroring literally:
+            // TODO(port): dead branch in Zig — `data.items.len = j;` runs first, so
+            // `j == 0 and data.items.len > 0` is always false. Mirrored bug-for-bug.
+            #[allow(unreachable_code)]
+            if j == 0 && !data.items.is_empty() {
                 return Ok(());
-                // (left as TODO; Phase B should verify against esbuild behavior)
             }
         } else {
             // This is a re-export and the symbols created here are used to reference
@@ -443,8 +444,7 @@ impl<
                 if p.current_scope.parent.is_none() && p.will_wrap_module_in_try_catch_for_using {
                     stmts.reserve(2);
 
-                    // PERF(port): was arena alloc — using Vec for now
-                    let mut decls = Vec::with_capacity(1);
+                    let mut decls = BumpVec::with_capacity_in(1, p.allocator);
                     decls.push(G::Decl {
                         binding: p.b(
                             B::Identifier { ref_: data.default_name.ref_.unwrap() },
@@ -460,7 +460,7 @@ impl<
                         },
                         stmt.loc,
                     ));
-                    let mut items = Vec::with_capacity(1);
+                    let mut items = BumpVec::with_capacity_in(1, p.allocator);
                     items.push(js_ast::ClauseItem {
                         alias: b"default",
                         alias_loc: data.default_name.loc,
@@ -970,6 +970,7 @@ impl<
                     .add_range_error_fmt(
                         p.source,
                         r,
+                        p.allocator,
                         format_args!("Cannot \"continue\" to label {}", bstr::BStr::new(name)),
                     )
                     .expect("unreachable");
@@ -1194,8 +1195,7 @@ impl<
                                 }
                                 last.needs_decl = false;
 
-                                // PERF(port): was arena alloc
-                                let mut decls = Vec::with_capacity(1);
+                                let mut decls = BumpVec::with_capacity_in(1, p.allocator);
                                 let ref_ = bin.left.data.e_commonjs_export_identifier().ref_;
                                 decls.push(Decl {
                                     binding: p.b(B::Identifier { ref_ }, bin.left.loc),
@@ -1209,7 +1209,7 @@ impl<
                                 p.esm_export_keyword.loc = stmt.loc;
                                 p.esm_export_keyword.len = 5;
                                 p.had_commonjs_named_exports_this_visit = true;
-                                let mut clause_items = Vec::with_capacity(1);
+                                let mut clause_items = BumpVec::with_capacity_in(1, p.allocator);
                                 clause_items.push(js_ast::ClauseItem {
                                     // We want the generated name to not conflict
                                     alias: p.commonjs_named_exports.keys()[to_convert as usize],
@@ -1467,7 +1467,7 @@ impl<
             if effects.ok {
                 if effects.value {
                     if data.no.is_none()
-                        || !SideEffects::should_keep_stmt_in_dead_control_flow(data.no.unwrap())
+                        || !SideEffects::should_keep_stmt_in_dead_control_flow(data.no.unwrap(), p.allocator)
                     {
                         if effects.side_effects == SideEffects::CouldHaveSideEffects {
                             // Keep the condition if it could have side effects (but is still known to be truthy)
@@ -1482,7 +1482,7 @@ impl<
                     }
                 } else {
                     // The test is falsy
-                    if !SideEffects::should_keep_stmt_in_dead_control_flow(data.yes) {
+                    if !SideEffects::should_keep_stmt_in_dead_control_flow(data.yes, p.allocator) {
                         if effects.side_effects == SideEffects::CouldHaveSideEffects {
                             // Keep the condition if it could have side effects (but is still known to be truthy)
                             if let Some(test_) = SideEffects::simplify_unused_expr(p, data.test_) {
@@ -1663,8 +1663,7 @@ impl<
                         S::Local {
                             kind: init2.kind,
                             decls: {
-                                // PERF(port): was arena alloc
-                                let mut decls = Vec::with_capacity(1);
+                                let mut decls = BumpVec::with_capacity_in(1, p.allocator);
                                 decls.push(G::Decl {
                                     binding: p.b(B::Identifier { ref_: id.ref_ }, loc),
                                     value: Some(p.new_expr(E::Identifier { ref_: temp_ref }, loc)),
@@ -1681,8 +1680,7 @@ impl<
                     } else {
                         1
                     };
-                    // PERF(port): was arena alloc
-                    let mut statements: Vec<Stmt> = Vec::with_capacity(1 + length);
+                    let mut statements: BumpVec<'_, Stmt> = BumpVec::with_capacity_in(1 + length, p.allocator);
                     statements.push(first);
                     if let Stmt::Data::SBlock(b) = &data.body.data {
                         statements.extend_from_slice(&b.stmts);
@@ -1818,7 +1816,9 @@ impl<
         p.record_declared_symbol(data.name.ref_.unwrap())?;
         p.push_scope_for_visit_pass(js_ast::Scope::Kind::Entry, stmt.loc)?;
         // Zig: defer p.popScope();
-        // TODO(port): defer side-effect — explicit pop at end
+        // TODO(port): defer side-effect — scopeguard borrows `p` exclusively; Phase B
+        // must reshape (e.g. guard a `*mut P` or split borrow) so the body can use `p`.
+        let _pop_scope = scopeguard::guard((), |_| p.pop_scope());
         p.record_declared_symbol(data.arg)?;
 
         // Scan ahead for any variables inside this namespace. This must be done
@@ -1836,7 +1836,7 @@ impl<
         // without initializers are initialized to undefined.
         let mut next_numeric_value: Option<f64> = Some(0.0);
 
-        let mut value_exprs: Vec<Expr> = Vec::with_capacity(data.values.len());
+        let mut value_exprs: BumpVec<'_, Expr> = BumpVec::with_capacity_in(data.values.len(), p.allocator);
 
         let mut all_values_are_pure = true;
 
@@ -1914,7 +1914,7 @@ impl<
                 p.options.features.minify_syntax && js_lexer::is_identifier(value.name);
 
             let name_as_e_string = if !is_assign_target || !has_string_value {
-                Some(p.new_expr(value.name_as_e_string(), value.loc))
+                Some(p.new_expr(value.name_as_e_string(p.allocator), value.loc))
             } else {
                 None
             };
@@ -1971,7 +1971,7 @@ impl<
 
         p.should_fold_typescript_constant_expressions = old_should_fold_typescript_constant_expressions;
 
-        let mut value_stmts: StmtList = Vec::with_capacity(value_exprs.len());
+        let mut value_stmts: StmtList = BumpVec::with_capacity_in(value_exprs.len(), p.allocator);
         // Generate statements from expressions
         for expr in value_exprs.iter() {
             // PERF(port): was assume_capacity
@@ -1988,7 +1988,6 @@ impl<
             value_stmts.into(),
             all_values_are_pure,
         )?;
-        p.pop_scope();
         Ok(())
     }
 
@@ -2043,5 +2042,5 @@ impl<
 //   source:     src/js_parser/ast/visitStmt.zig (1590 lines)
 //   confidence: medium
 //   todos:      19
-//   notes:      `defer` state-restore via scopeguard will need borrowck reshaping; `inline else` dispatch expanded by hand; arena Vec<'bump, Stmt> deferred to Phase B; `s_export_from` preserves a likely-dead-branch bug from Zig
+//   notes:      `defer`/scopeguard sites need borrowck reshaping; `inline else` dispatch expanded by hand; StmtList<'bump> = bumpalo Vec — thread `'bump` through signatures in Phase B; `s_export_from` mirrors Zig's dead `j == 0 && items.len > 0` branch bug-for-bug
 // ──────────────────────────────────────────────────────────────────────────

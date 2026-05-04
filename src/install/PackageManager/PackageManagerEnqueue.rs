@@ -1841,7 +1841,7 @@ fn get_or_put_resolved_package_with_find_result(
         success_fn(this, dependency_id, pkg_id);
     });
     let this: &mut PackageManager = &mut *guard.0;
-    // TODO(port): errdefer — verify scopeguard captures &mut PackageManager correctly
+    // PORT NOTE: Zig `defer` (not errdefer) — scopeguard runs on ALL exits, never disarmed.
 
     // non-null if the package is in "patchedDependencies"
     let mut name_and_version_hash: Option<u64> = None;
@@ -1921,10 +1921,8 @@ fn get_or_put_resolved_package_with_find_result(
         _ => unreachable!(),
     };
 
-    // Disarm guard and run success_fn (matches Zig defer semantics: runs on success path too)
-    let (this, pkg_id) = scopeguard::ScopeGuard::into_inner(guard);
-    success_fn(this, dependency_id, pkg_id);
     Ok(result)
+    // `guard` drops here → success_fn(this, dependency_id, package.meta.id)
 }
 
 fn get_or_put_resolved_package(
@@ -2455,6 +2453,6 @@ fn resolution_satisfies_dependency(
 // PORT STATUS
 //   source:     src/install/PackageManager/PackageManagerEnqueue.zig (2026 lines)
 //   confidence: medium
-//   todos:      13
-//   notes:      comptime SuccessFn/FailFn demoted to runtime fn ptrs (identity-compared); Task pool slots kept as raw *mut with in-place init; defer successFn → scopeguard; Closure<'a> per LIFETIMES.tsv; heavy borrowck reshaping expected in Phase B
+//   todos:      15
+//   notes:      comptime SuccessFn/FailFn demoted to runtime fn ptrs (identity-compared); Task pool slots kept as raw *mut with in-place init; defer successFn → scopeguard (never disarmed); Closure<'a> per LIFETIMES.tsv; heavy borrowck reshaping expected in Phase B
 // ──────────────────────────────────────────────────────────────────────────

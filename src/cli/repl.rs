@@ -1090,11 +1090,7 @@ impl<'a> Repl<'a> {
             // Temporarily re-enable signal delivery so Ctrl+C can interrupt
             // the blocking waitForPromise call
             self.enable_signals_during_wait();
-            let _restore = scopeguard::guard((), |_| {
-                // TODO(port): scopeguard cannot borrow &mut self here; Phase B may inline
-            });
-            // PORT NOTE: reshaped for borrowck — call disable explicitly on each return path below
-            // TODO(port): errdefer-style restore captures &mut self; verify all paths covered
+            // PORT NOTE: reshaped for borrowck — call disable_signals_during_wait() explicitly on each return path below
 
             // Wait for the promise to settle
             vm.wait_for_promise(jsc::AnyPromise::Normal(promise));
@@ -2248,6 +2244,6 @@ const VERSION: &str = Environment::VERSION_STRING;
 // PORT STATUS
 //   source:     src/cli/repl.zig (2058 lines)
 //   confidence: medium
-//   todos:      10
+//   todos:      11
 //   notes:      defer self.disableSignalsDuringWait() reshaped to explicit calls (borrowck); transform_for_repl mutates vm.transpiler through & borrow; sigaction/tty wrappers assumed in bun_sys
 // ──────────────────────────────────────────────────────────────────────────

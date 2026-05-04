@@ -228,11 +228,9 @@ fn downlevel_dir<'bump>(bump: &'bump Bump, dir: parser::Direction, targets: Targ
             },
         });
         if dir == parser::Direction::Ltr {
-            return Component::Negation({
-                let list = bump.alloc_slice_fill_with(1, |_| Selector::from_component(bump, c));
-                // TODO(port): Zig `allocator.alloc(Selector, 1)` then `list[0] = ...`.
-                list
-            });
+            return Component::Negation(
+                bumpalo::vec![in bump; Selector::from_component(bump, c)].into_bump_slice_mut(),
+            );
         }
         return c;
     } else {
@@ -1808,6 +1806,6 @@ impl<'a> CompoundSelectorIter<'a> {
 // PORT STATUS
 //   source:     src/css/selectors/selector.zig (1613 lines)
 //   confidence: medium
-//   todos:      11
+//   todos:      10
 //   notes:      Arena-backed (bumpalo) slice ownership for Component::Is/Negation payloads needs Phase B reconciliation; `r#impl` module name; Component/PseudoClass variant shapes guessed from Zig union arms.
 // ──────────────────────────────────────────────────────────────────────────

@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use bun_bundler::options::Loader;
 use bun_collections::StringHashMap;
 use bun_str::strings;
@@ -14,12 +16,11 @@ macro_rules! t {
     };
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct MimeType {
-    // TODO(port): `value` ownership is mixed in Zig (static literal | borrowed input | heap-duped
-    // via `init()` allocator). Phase B: change to `Cow<'static, [u8]>` or split owned/borrowed
-    // variants. Using `&'static [u8]` for now so the `pub const` items below are expressible.
-    pub value: &'static [u8],
+    // Zig `deinit` frees `value` via allocator → owning type per §Type-map.
+    // `Cow` so the `pub const` items below stay `Borrowed` and const-constructible.
+    pub value: Cow<'static, [u8]>,
     pub category: Category,
 }
 
@@ -83,7 +84,7 @@ impl Compact {
 
         let slice = self.value.slice();
         MimeType {
-            value: slice,
+            value: Cow::Borrowed(slice),
             category: Category::from_table(self.value),
         }
     }
@@ -112,13 +113,13 @@ pub fn create_hash_table() -> Result<Map, bun_alloc::AllocError> {
 }
 
 impl MimeType {
-    pub fn can_open_in_editor(self) -> bool {
+    pub fn can_open_in_editor(&self) -> bool {
         if self.category == Category::Text || self.category.is_code() {
             return true;
         }
 
         if self.category == Category::Image {
-            return self.value == b"image/svg+xml";
+            return self.value.as_ref() == b"image/svg+xml";
         }
 
         false
@@ -330,7 +331,7 @@ pub const WASM: MimeType = MimeType::init_comptime(b"application/wasm", Category
 impl MimeType {
     const fn init_comptime(str: &'static [u8], t: Category) -> MimeType {
         MimeType {
-            value: str,
+            value: Cow::Borrowed(str),
             category: t,
         }
     }
@@ -354,7 +355,7 @@ impl MimeType {
 
             match category_.len() {
                 len if len == b"application".len() => {
-                    if strings::eql_comptime_ignore_len(category_, b"application") {
+                    if strings::eql_ignore_len(category_, b"application") {
                         if str == b"json" || str == b"geo+json" {
                             return JSON;
                         }
@@ -379,7 +380,7 @@ impl MimeType {
                     };
                 }
                 len if len == b"font".len() => {
-                    if strings::eql_comptime_ignore_len(category_, b"font") {
+                    if strings::eql_ignore_len(category_, b"font") {
                         if let Some(a) = allocated {
                             if dupe {
                                 *a = true;
@@ -391,7 +392,7 @@ impl MimeType {
                         };
                     }
 
-                    if strings::eql_comptime_ignore_len(category_, b"text") {
+                    if strings::eql_ignore_len(category_, b"text") {
                         if str == b"css" {
                             return CSS;
                         }
@@ -420,7 +421,7 @@ impl MimeType {
                     }
                 }
                 len if len == b"image".len() => {
-                    if strings::eql_comptime_ignore_len(category_, b"image") {
+                    if strings::eql_ignore_len(category_, b"image") {
                         if let Some(a) = allocated {
                             if dupe {
                                 *a = true;
@@ -432,7 +433,7 @@ impl MimeType {
                         };
                     }
 
-                    if strings::eql_comptime_ignore_len(category_, b"audio") {
+                    if strings::eql_ignore_len(category_, b"audio") {
                         if let Some(a) = allocated {
                             if dupe {
                                 *a = true;
@@ -444,7 +445,7 @@ impl MimeType {
                         };
                     }
 
-                    if strings::eql_comptime_ignore_len(category_, b"video") {
+                    if strings::eql_ignore_len(category_, b"video") {
                         if let Some(a) = allocated {
                             if dupe {
                                 *a = true;
@@ -472,16 +473,14 @@ impl MimeType {
     }
 
     #[inline]
-    fn maybe_dupe(s: &[u8], dupe: bool) -> &'static [u8] {
-        // TODO(port): see TODO on `value` field. When `dupe` is true, Zig heap-dupes via
-        // `allocator.dupe(u8, str_)` and the caller later frees via `deinit()`. When false,
-        // the input slice is borrowed. Neither maps to `&'static [u8]`; Phase B must pick
-        // `Cow<'static, [u8]>` or a lifetime param. Stub via leak/transmute for now.
+    fn maybe_dupe(s: &[u8], dupe: bool) -> Cow<'static, [u8]> {
         if dupe {
-            Box::leak(Box::<[u8]>::from(s))
+            Cow::Owned(s.to_vec())
         } else {
-            // SAFETY: NOT actually safe — placeholder. See TODO above.
-            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(s) }
+            // TODO(port): Zig borrows the input slice here (zero-copy). A non-'static
+            // borrow needs a struct lifetime param, forbidden in Phase A — copying for now.
+            // PERF(port): was zero-copy borrow — profile in Phase B
+            Cow::Owned(s.to_vec())
         }
     }
 }
@@ -514,12 +513,6 @@ pub use super::mime_type_list_enum::MimeTypeList::ALL as ALL;
 // its too many branches to use ComptimeStringMap
 pub fn by_name(name: &[u8]) -> MimeType {
     MimeType::init(name, false, None)
-}
-
-// TODO(port): `deinit` in Zig frees `value` via the passed allocator. Tied to the
-// `value` ownership decision above; once `value` becomes `Cow`/owned, this becomes `Drop`.
-pub fn deinit(_mime_type: MimeType) {
-    // no-op placeholder
 }
 
 // TODO(port): phf_map! rejects duplicate keys at compile time. The Zig source contains
@@ -1745,6 +1738,6 @@ pub fn sniff(bytes: &[u8]) -> Option<MimeType> {
 // PORT STATUS
 //   source:     src/http_types/MimeType.zig (1635 lines)
 //   confidence: medium
-//   todos:      7
-//   notes:      Table variant idents need codegen scheme (`t!` placeholder); `value` field ownership is mixed static/borrowed/owned — Phase B should switch to Cow<'static,[u8]>; phf_map has 3 dup keys (tsx/yaml/yml) to dedupe.
+//   todos:      5
+//   notes:      Table variant idents need codegen scheme (`t!` placeholder); `value` is Cow<'static,[u8]> — non-'static borrow path in init() copies (see maybe_dupe TODO); phf_map has 3 dup keys (tsx/yaml/yml) to dedupe.
 // ──────────────────────────────────────────────────────────────────────────

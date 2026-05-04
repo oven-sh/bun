@@ -159,14 +159,15 @@ impl<const SIZE: u16> IntegerBitSet<SIZE> {
             return;
         }
 
-        let start_bit = range.start as u32;
+        let start_bit = u32::try_from(range.start).unwrap();
 
         let mut mask = bool_mask_usize(true) << start_bit;
         if range.end != Self::BIT_LENGTH {
-            let end_bit = range.end as u32;
-            // TODO(port): Zig used `@bitSizeOf(MaskInt)` (== SIZE). With usize
-            // backing we use SIZE explicitly to keep semantics.
-            mask &= bool_mask_usize(true) >> ((SIZE as u32) - end_bit);
+            let end_bit = u32::try_from(range.end).unwrap();
+            // Zig shifts a SIZE-bit MaskInt so `~0 >> (SIZE - end_bit)` yields the
+            // low `end_bit` bits. With a usize backing the shift must be relative
+            // to usize::BITS to get the same low-`end_bit`-bits mask.
+            mask &= bool_mask_usize(true) >> (usize::BITS - end_bit);
         }
         // also clear bits above SIZE since our backing int is wider than Zig's
         mask &= Self::FULL_MASK;
@@ -174,8 +175,8 @@ impl<const SIZE: u16> IntegerBitSet<SIZE> {
 
         let mut mask = bool_mask_usize(value) << start_bit;
         if range.end != Self::BIT_LENGTH {
-            let end_bit = range.end as u32;
-            mask &= bool_mask_usize(value) >> ((SIZE as u32) - end_bit);
+            let end_bit = u32::try_from(range.end).unwrap();
+            mask &= bool_mask_usize(value) >> (usize::BITS - end_bit);
         }
         mask &= Self::FULL_MASK;
         self.mask |= mask;
@@ -336,7 +337,7 @@ impl<const SIZE: u16> IntegerBitSet<SIZE> {
         if SIZE == 0 {
             return 0;
         }
-        1usize << (index as u32)
+        1usize << index
     }
 
     #[inline(always)]
@@ -345,7 +346,7 @@ impl<const SIZE: u16> IntegerBitSet<SIZE> {
         if SIZE == 0 {
             return 0;
         }
-        (value as usize) << (index as u32)
+        (value as usize) << index
     }
 }
 
@@ -752,7 +753,7 @@ where
     #[inline(always)]
     #[allow(dead_code)]
     fn bool_mask_bit(index: usize, value: bool) -> usize {
-        (value as usize) << (index as u32)
+        (value as usize) << index
     }
 }
 
@@ -891,6 +892,7 @@ impl DynamicBitSetUnmanaged {
 
             // SAFETY: new_alloc points to at least new_masks+1 usize words.
             unsafe { *new_alloc = new_masks + 1 };
+            // SAFETY: new_alloc points to at least new_masks+1 words; +1 is in-bounds.
             self.masks = unsafe { new_alloc.add(1) };
         }
 
@@ -899,7 +901,8 @@ impl DynamicBitSetUnmanaged {
         if new_len > old_len {
             // set the padding bits in the old last item to 1
             if fill && old_masks > 0 {
-                let old_padding_bits = (old_masks * DYN_MASK_BITS as usize - old_len) as u32;
+                let old_padding_bits =
+                    u32::try_from(old_masks * DYN_MASK_BITS as usize - old_len).unwrap();
                 let old_mask = usize::MAX >> old_padding_bits;
                 // SAFETY: index in [0, new_masks).
                 unsafe { *self.masks.add(old_masks - 1) |= !old_mask };
@@ -918,7 +921,8 @@ impl DynamicBitSetUnmanaged {
 
         // Zero out the padding bits
         if new_len > 0 {
-            let padding_bits = (new_masks * DYN_MASK_BITS as usize - new_len) as u32;
+            let padding_bits =
+                u32::try_from(new_masks * DYN_MASK_BITS as usize - new_len).unwrap();
             let last_item_mask = usize::MAX >> padding_bits;
             // SAFETY: new_masks > 0 here.
             unsafe { *self.masks.add(new_masks - 1) &= last_item_mask };
@@ -1099,7 +1103,8 @@ impl DynamicBitSetUnmanaged {
             unsafe { *self.masks.add(i) ^= *toggles.masks.add(i) };
         }
 
-        let padding_bits = (num_masks * DYN_MASK_BITS as usize - bit_length) as u32;
+        let padding_bits =
+            u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).unwrap();
         let last_item_mask = usize::MAX >> padding_bits;
         // SAFETY: num_masks > 0.
         unsafe { *self.masks.add(num_masks - 1) &= last_item_mask };
@@ -1115,7 +1120,8 @@ impl DynamicBitSetUnmanaged {
             *mask = bool_mask_usize(value);
         }
 
-        let padding_bits = (num_masks * DYN_MASK_BITS as usize - bit_length) as u32;
+        let padding_bits =
+            u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).unwrap();
         let last_item_mask = usize::MAX >> padding_bits;
         // SAFETY: num_masks > 0.
         unsafe { *self.masks.add(num_masks - 1) &= last_item_mask };
@@ -1134,7 +1140,8 @@ impl DynamicBitSetUnmanaged {
             *mask = !*mask;
         }
 
-        let padding_bits = (num_masks * DYN_MASK_BITS as usize - bit_length) as u32;
+        let padding_bits =
+            u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).unwrap();
         let last_item_mask = usize::MAX >> padding_bits;
         // SAFETY: num_masks > 0.
         unsafe { *self.masks.add(num_masks - 1) &= last_item_mask };
@@ -1153,7 +1160,8 @@ impl DynamicBitSetUnmanaged {
             unsafe { *self.masks.add(i) = *other.masks.add(i) };
         }
 
-        let padding_bits = (num_masks * DYN_MASK_BITS as usize - bit_length) as u32;
+        let padding_bits =
+            u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).unwrap();
         let last_item_mask = usize::MAX >> padding_bits;
         // SAFETY: num_masks > 0.
         unsafe { *self.masks.add(num_masks - 1) &= last_item_mask };
@@ -1317,7 +1325,8 @@ impl DynamicBitSetUnmanaged {
         &self,
     ) -> BitSetIterator<'_, KIND, DIRECTION> {
         let num_masks = Self::num_masks(self.bit_length);
-        let padding_bits = (num_masks * DYN_MASK_BITS as usize - self.bit_length) as u32;
+        let padding_bits =
+            u32::try_from(num_masks * DYN_MASK_BITS as usize - self.bit_length).unwrap();
         let last_item_mask = usize::MAX >> padding_bits;
         BitSetIterator::init(self.masks_slice(), last_item_mask)
     }
@@ -1333,7 +1342,7 @@ impl DynamicBitSetUnmanaged {
     #[inline(always)]
     #[allow(dead_code)]
     fn bool_mask_bit(index: usize, value: bool) -> usize {
-        (value as usize) << (index as u32)
+        (value as usize) << index
     }
     #[inline(always)]
     pub const fn num_masks(bit_length: usize) -> usize {
@@ -1957,6 +1966,6 @@ mod tests {
 // PORT STATUS
 //   source:     src/collections/bit_set.zig (1968 lines)
 //   confidence: medium
-//   todos:      19
-//   notes:      ArrayBitSet needs generic_const_exprs (or 2nd const param); IntegerBitSet backed by usize not exact-width uN; DynamicBitSetUnmanaged kept raw-ptr+header layout for List views (no Drop); IteratorOptions split into KIND/DIRECTION const generics; test helpers stubbed (no test blocks in Zig source).
+//   todos:      18
+//   notes:      ArrayBitSet needs generic_const_exprs (or 2nd const param); IntegerBitSet backed by usize not exact-width uN; DynamicBitSetUnmanaged kept raw-ptr+header layout for List views (no Drop — Phase B should split borrowed-view type from owning type); IteratorOptions split into KIND/DIRECTION const generics; test helpers stubbed (no test blocks in Zig source).
 // ──────────────────────────────────────────────────────────────────────────

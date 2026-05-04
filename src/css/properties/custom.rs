@@ -184,17 +184,17 @@ impl TokenList {
         // If there is only one token, we must preserve it. e.g. `--foo: ;` is valid.
         // PERF(alloc): this feels like a common codepath, idk how I feel about reallocating a new array just to slice off whitespace.
         if tokens.len() >= 2 {
-            let mut slice = &tokens[..];
-            if !tokens.is_empty() && tokens[0].is_whitespace() {
-                slice = &slice[1..];
+            let mut start = 0;
+            let mut end = tokens.len();
+            if tokens[0].is_whitespace() {
+                start = 1;
             }
-            if !tokens.is_empty() && tokens[tokens.len() - 1].is_whitespace() {
-                slice = &slice[..slice.len() - 1];
+            if tokens[tokens.len() - 1].is_whitespace() {
+                end -= 1;
             }
-            // TODO(port): Zig `insertSlice(0, slice)` then deinit old; here we deep-clone the
-            // borrowed range. Phase B could `drain` in place to avoid the clone.
-            let newlist: Vec<TokenOrValue> = slice.iter().map(|t| t.deep_clone()).collect();
-            drop(tokens);
+            // PORT NOTE: Zig does `insertSlice(0, slice)` (shallow memcpy) then `tokens.deinit()`
+            // (frees only the backing array). `drain` moves the elements out without deep-cloning.
+            let newlist: Vec<TokenOrValue> = tokens.drain(start..end).collect();
             return Ok(TokenList { v: newlist });
         }
 
@@ -435,14 +435,14 @@ impl TokenList {
         tokens
     }
 
-    pub fn get_fallbacks(&mut self, targets: css::targets::Targets) -> css::SmallList<(SupportsCondition, TokenList), 2> {
+    pub fn get_fallbacks(&mut self, targets: css::targets::Targets) -> css::SmallList<Fallbacks, 2> {
         // Get the full list of possible fallbacks, and remove the lowest one, which will replace
         // the original declaration. The remaining fallbacks need to be added as @supports rules.
         let mut fallbacks = self.get_necessary_fallbacks(targets);
         let lowest_fallback = fallbacks.lowest();
         fallbacks.remove(lowest_fallback);
 
-        let mut res = css::SmallList::<(SupportsCondition, TokenList), 2>::new();
+        let mut res = css::SmallList::<Fallbacks, 2>::new();
         if fallbacks.contains(ColorFallbackKind::P3) {
             // PERF(port): was assume_capacity
             res.push((
@@ -529,6 +529,8 @@ impl TokenList {
 }
 
 pub type TokenListFns = TokenList;
+
+pub type Fallbacks = (SupportsCondition, TokenList);
 
 /// A color value with an unresolved alpha value (e.g. a variable).
 /// These can be converted from the modern slash syntax to older comma syntax.
@@ -1223,6 +1225,6 @@ pub fn try_parse_color_token(f: &[u8], state: &css::ParserState, input: &mut css
 // PORT STATUS
 //   source:     src/css/properties/custom.zig (1554 lines)
 //   confidence: medium
-//   todos:      4
-//   notes:      Allocator params dropped (Vec/global mimalloc per LIFETIMES.tsv); Zig closure structs collapsed to Rust closures; css::Token variant shapes, ParserOptions::default arity, define_enum_property! macro, and implement_eql/hash/deep_clone helpers need Phase B wiring.
+//   todos:      3
+//   notes:      Allocator params dropped (Vec/global mimalloc per LIFETIMES.tsv — Phase B revisit for arena); Zig closure structs collapsed to Rust closures; css::Token variant shapes, ParserOptions::default arity, define_enum_property! macro, and implement_eql/hash/deep_clone helpers need Phase B wiring.
 // ──────────────────────────────────────────────────────────────────────────

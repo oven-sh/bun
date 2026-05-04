@@ -88,10 +88,9 @@ impl Start {
 
         if let Some(chunk_size) = value.get(global_this, "chunkSize") {
             if chunk_size.is_number() {
-                return Ok(Start::ChunkSize(
-                    (chunk_size.to_int64() as i64 as i64 & ((1i64 << 52) - 1)) as BlobSizeType,
-                ));
                 // TODO(port): @truncate(i52) semantics — using mask; revisit exact bit-width
+                let truncated = chunk_size.to_int64() & ((1i64 << 52) - 1);
+                return Ok(Start::ChunkSize(BlobSizeType::try_from(truncated).unwrap()));
             }
         }
 
@@ -132,10 +131,9 @@ impl Start {
                 {
                     if chunk_size_val.is_number() {
                         empty = false;
-                        chunk_size = 0i64
-                            .max((chunk_size_val.to_int64() as i64) & ((1i64 << 51) - 1))
-                            as BlobSizeType;
-                        // TODO(port): @truncate(i51) semantics
+                        // TODO(port): @truncate(i51) semantics — using mask
+                        let truncated = chunk_size_val.to_int64() & ((1i64 << 51) - 1);
+                        chunk_size = BlobSizeType::try_from(0i64.max(truncated)).unwrap();
                     }
                 }
 
@@ -154,10 +152,9 @@ impl Start {
                     value.fast_get(global_this, bun_jsc::BuiltinName::HighWaterMark)?
                 {
                     if chunk_size_val.is_number() {
-                        chunk_size = 0i64
-                            .max((chunk_size_val.to_int64() as i64) & ((1i64 << 51) - 1))
-                            as BlobSizeType;
-                        // TODO(port): @truncate(i51) semantics
+                        // TODO(port): @truncate(i51) semantics — using mask
+                        let truncated = chunk_size_val.to_int64() & ((1i64 << 51) - 1);
+                        chunk_size = BlobSizeType::try_from(0i64.max(truncated)).unwrap();
                     }
                 }
 
@@ -217,10 +214,9 @@ impl Start {
                 {
                     if chunk_size_val.is_number() {
                         empty = false;
-                        chunk_size = 256i64
-                            .max((chunk_size_val.to_int64() as i64) & ((1i64 << 51) - 1))
-                            as BlobSizeType;
-                        // TODO(port): @truncate(i51) semantics
+                        // TODO(port): @truncate(i51) semantics — using mask
+                        let truncated = chunk_size_val.to_int64() & ((1i64 << 51) - 1);
+                        chunk_size = BlobSizeType::try_from(256i64.max(truncated)).unwrap();
                     }
                 }
 
@@ -257,8 +253,9 @@ pub enum StreamResult {
 }
 
 impl StreamResult {
-    // TODO(port): not Drop — Result is bitwise-copied in to_js() shutdown path; ownership is contextual
-    pub fn deinit(&mut self) {
+    // TODO(port): not Drop — Result is bitwise-copied in to_js() shutdown path; ownership is contextual.
+    // Named `release` (not `deinit`) per PORTING.md — `pub fn deinit` is forbidden as a public API.
+    pub fn release(&mut self) {
         match self {
             StreamResult::Owned(owned) => owned.clear_and_free(),
             StreamResult::OwnedAndDone(owned_and_done) => owned_and_done.clear_and_free(),
@@ -370,12 +367,8 @@ impl Default for WritablePending {
     }
 }
 
-impl WritablePending {
-    // TODO(port): deinit kept as inherent method; Future contains JSPromiseStrong with side-effect deinit
-    pub fn deinit(&mut self) {
-        self.future.deinit();
-    }
-}
+// PORT NOTE: Zig `WritablePending.deinit` / `WritableFuture.deinit` only deinit the owned
+// JSPromiseStrong field — JSPromiseStrong implements Drop, so no explicit Drop impl is needed here.
 
 pub enum WritableFuture {
     None,
@@ -385,15 +378,6 @@ pub enum WritableFuture {
         global: *const JSGlobalObject,
     },
     Handler(WritableHandler),
-}
-
-impl WritableFuture {
-    pub fn deinit(&mut self) {
-        if let WritableFuture::Promise { strong, .. } = self {
-            strong.deinit();
-            *self = WritableFuture::None;
-        }
-    }
 }
 
 impl WritablePending {
@@ -466,8 +450,9 @@ impl WritablePending {
                     ctx: h.ctx,
                     handler: h.handler,
                 });
+                // PORT NOTE: Zig left self.result intact (bitwise copy); reset to Done here —
+                // verify no caller reads it after run().
                 (h.handler)(h.ctx, core::mem::replace(&mut self.result, Writable::Done));
-                // TODO(port): Zig passed self.result by value without consuming; using mem::replace
             }
             WritableFuture::None => {}
         }
@@ -604,7 +589,8 @@ impl Pending {
         }
 
         let clone = Box::new(core::mem::take(self));
-        // PORT NOTE: reshaped — Zig copied *self then reset fields; mem::take + Default does both
+        // PORT NOTE: Zig copied *self then reset only state+result; mem::take also resets
+        // self.future to Default (Zig left it untouched — no reader observes it after this).
         self.state = PendingState::None;
         self.result = StreamResult::Done;
         vm.event_loop().enqueue_task(Task::init(Box::into_raw(clone)));
@@ -681,8 +667,9 @@ impl Pending {
                 StreamResult::fulfill_promise(&mut self.result, *promise, global);
             }
             PendingFuture::Handler(h) => {
+                // PORT NOTE: Zig left self.result intact (bitwise copy); reset to Done here —
+                // verify no caller reads it after run().
                 (h.handler)(h.ctx, core::mem::replace(&mut self.result, StreamResult::Done));
-                // TODO(port): Zig passed self.result by value (bitwise copy); using mem::replace
             }
         }
     }
@@ -946,7 +933,7 @@ pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub end_len: usize,
     pub aborted: bool,
 
-    pub on_first_write: Option<fn(*mut c_void)>,
+    pub on_first_write: Option<fn(Option<*mut c_void>)>,
     pub ctx: Option<*mut c_void>,
 
     pub auto_flusher: AutoFlusher,
@@ -984,9 +971,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     fn handle_first_write_if_necessary(&mut self) {
-        if let Some(on_first_write) = self.on_first_write {
-            let ctx = self.ctx.take().unwrap_or(core::ptr::null_mut());
-            self.on_first_write = None;
+        if let Some(on_first_write) = self.on_first_write.take() {
+            let ctx = self.ctx.take();
             on_first_write(ctx);
         }
     }
@@ -1685,13 +1671,14 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             let global_this = unsafe { &*self.global_this };
             // SAFETY: prom is GC-rooted
             unsafe { &*prom }.to_js().unprotect();
-            let wrote_now = self.wrote;
             let result = unsafe { &mut *prom }.resolve(
                 global_this,
                 JSValue::js_number(self.wrote.saturating_sub(self.wrote_at_start_of_flush) as f64),
             );
-            self.wrote_at_start_of_flush = wrote_now;
-            // PORT NOTE: Zig `defer this.wrote_at_start_of_flush = this.wrote` runs after try; reordered
+            // PORT NOTE: Zig `defer this.wrote_at_start_of_flush = this.wrote` reads `this.wrote`
+            // at scope exit (AFTER resolve, which may reenter JS and mutate `wrote`). Read it here,
+            // not before the call.
+            self.wrote_at_start_of_flush = self.wrote;
             return result;
         }
         Ok(())
@@ -2099,17 +2086,9 @@ impl BufferAction {
     }
 }
 
-impl Drop for BufferAction {
-    fn drop(&mut self) {
-        match self {
-            BufferAction::Text(p)
-            | BufferAction::ArrayBuffer(p)
-            | BufferAction::Blob(p)
-            | BufferAction::Bytes(p)
-            | BufferAction::Json(p) => p.deinit(),
-        }
-    }
-}
+// PORT NOTE: Zig `BufferAction.deinit` only deinits the JSPromiseStrong payload of each
+// variant. JSPromiseStrong implements Drop, so the enum drops it automatically — no explicit
+// `impl Drop for BufferAction` needed.
 
 // ──────────────────────────────────────────────────────────────────────────
 // ReadResult
@@ -2176,6 +2155,6 @@ impl ReadResult {
 // PORT STATUS
 //   source:     src/runtime/webcore/streams.zig (1661 lines)
 //   confidence: medium
-//   todos:      44
-//   notes:      Result/Writable pending fields use raw ptrs (self-referential lifetimes); HTTPServerWritable UwsResponse type-dispatch on const generics needs trait; JSSink type-generator needs codegen; many borrowck reshapes around readable_slice()+send().
+//   todos:      41
+//   notes:      Result/Writable pending fields use raw ptrs (self-referential lifetimes); HTTPServerWritable UwsResponse type-dispatch on const generics needs trait; JSSink type-generator needs codegen; many borrowck reshapes around readable_slice()+send(). NetworkSink.task: LIFETIMES.tsv says SHARED→Arc but Zig calls mutable methods through intrusive refcount — Phase B must pick Arc<+interior-mut> vs IntrusiveArc.
 // ──────────────────────────────────────────────────────────────────────────

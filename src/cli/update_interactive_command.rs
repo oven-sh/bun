@@ -1130,6 +1130,7 @@ impl UpdateInteractiveCommand {
         #[cfg(unix)]
         {
             // TODO(port): replace std.posix.system.ioctl with bun_sys
+            // SAFETY: all-zero is a valid Winsize (#[repr(C)] POD, no NonNull/NonZero fields).
             let mut size: bun_sys::posix::Winsize = unsafe { core::mem::zeroed() };
             // SAFETY: ioctl with TIOCGWINSZ on stdout fd; size is a valid out-ptr.
             if unsafe {
@@ -1156,6 +1157,7 @@ impl UpdateInteractiveCommand {
                 Err(_) => return TerminalSize { height: 20, width: 80 },
             };
 
+            // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
             let mut csbi: windows::CONSOLE_SCREEN_BUFFER_INFO = unsafe { core::mem::zeroed() };
             // SAFETY: handle is valid; csbi is a valid out-ptr.
             if unsafe { windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi) }
@@ -2137,10 +2139,17 @@ impl UpdateInteractiveCommand {
                                             .split(|b| *b == b';')
                                             .filter(|s| !s.is_empty());
                                         if let Some(button_str) = parts.next() {
-                                            // TODO(port): std.fmt.parseInt(u32, _, 10)
-                                            let button: u32 = core::str::from_utf8(button_str)
-                                                .ok()
-                                                .and_then(|s| s.parse().ok())
+                                            // TODO(port): replace inline fold with shared bun_str parse_int helper
+                                            // std.fmt.parseInt(u32, _, 10) on raw bytes — terminal
+                                            // input is bytes, do not round-trip through from_utf8.
+                                            let button: u32 = button_str
+                                                .iter()
+                                                .try_fold(0u32, |acc, &b| match b {
+                                                    b'0'..=b'9' => acc
+                                                        .checked_mul(10)
+                                                        .and_then(|a| a.checked_add((b - b'0') as u32)),
+                                                    _ => None,
+                                                })
                                                 .unwrap_or(0);
                                             // Mouse wheel events
                                             if button == 64 {

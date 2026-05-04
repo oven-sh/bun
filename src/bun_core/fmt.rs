@@ -389,6 +389,8 @@ fn get_shared_buffer() -> &'static mut SharedTempBuffer {
 
 pub fn format_utf16_type(slice_: &[u16], writer: &mut impl fmt::Write) -> fmt::Result {
     let chunk_ptr = get_shared_buffer().as_mut_ptr();
+    // SAFETY: chunk_ptr was just obtained from get_shared_buffer() (Box-allocated, thread-local);
+    // we are the unique borrower for this scope and the cell is nulled below to guard recursion.
     let chunk: &mut SharedTempBuffer = unsafe { &mut *(chunk_ptr as *mut SharedTempBuffer) };
 
     // Defensively ensure recursion doesn't cause the buffer to be overwritten in-place
@@ -426,6 +428,8 @@ pub fn format_utf16_type_with_path_options(
     opts: PathFormatOptions,
 ) -> fmt::Result {
     let chunk_ptr = get_shared_buffer().as_mut_ptr();
+    // SAFETY: chunk_ptr was just obtained from get_shared_buffer() (Box-allocated, thread-local);
+    // we are the unique borrower for this scope and the cell is nulled below to guard recursion.
     let chunk: &mut SharedTempBuffer = unsafe { &mut *(chunk_ptr as *mut SharedTempBuffer) };
 
     // Defensively ensure recursion doesn't cause the buffer to be overwritten in-place
@@ -609,6 +613,8 @@ pub fn fmt_path_u16(path: &[u16], options: PathFormatOptions) -> FormatUTF16<'_>
 
 pub fn format_latin1(slice_: &[u8], writer: &mut impl fmt::Write) -> fmt::Result {
     let chunk_ptr = get_shared_buffer().as_mut_ptr();
+    // SAFETY: chunk_ptr was just obtained from get_shared_buffer() (Box-allocated, thread-local);
+    // we are the unique borrower for this scope and the cell is nulled below to guard recursion.
     let chunk: &mut SharedTempBuffer = unsafe { &mut *(chunk_ptr as *mut SharedTempBuffer) };
     let mut slice = slice_;
 
@@ -966,10 +972,10 @@ impl ColorCode {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, IntoStaticStr, strum::EnumString)]
+#[derive(Clone, Copy, PartialEq, Eq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
-// TODO(port): bun.ComptimeEnumMap(Keyword) — Zig builds a comptime perfect-hash map
-// keyed by @tagName. Phase B should replace `Keywords::get` with a `phf::Map<&'static [u8], Keyword>`.
+// bun.ComptimeEnumMap(Keyword) — Zig builds a comptime perfect-hash map keyed by @tagName.
+// Mapped to `phf::Map<&'static [u8], Keyword>` in `Keywords::get` below.
 pub enum Keyword {
     Abstract,
     As,
@@ -1108,9 +1114,72 @@ impl Keyword {
 
 pub struct Keywords;
 impl Keywords {
-    // TODO(port): replace with phf::Map for O(1) lookup matching ComptimeEnumMap perf.
     pub fn get(s: &[u8]) -> Option<Keyword> {
-        core::str::from_utf8(s).ok().and_then(|s| s.parse().ok())
+        static KEYWORDS: phf::Map<&'static [u8], Keyword> = phf::phf_map! {
+            b"abstract" => Keyword::Abstract,
+            b"as" => Keyword::As,
+            b"async" => Keyword::Async,
+            b"await" => Keyword::Await,
+            b"case" => Keyword::Case,
+            b"catch" => Keyword::Catch,
+            b"class" => Keyword::Class,
+            b"const" => Keyword::Const,
+            b"continue" => Keyword::Continue,
+            b"debugger" => Keyword::Debugger,
+            b"default" => Keyword::Default,
+            b"delete" => Keyword::Delete,
+            b"do" => Keyword::Do,
+            b"else" => Keyword::Else,
+            b"enum" => Keyword::Enum,
+            b"export" => Keyword::Export,
+            b"extends" => Keyword::Extends,
+            b"false" => Keyword::False,
+            b"finally" => Keyword::Finally,
+            b"for" => Keyword::For,
+            b"function" => Keyword::Function,
+            b"if" => Keyword::If,
+            b"implements" => Keyword::Implements,
+            b"import" => Keyword::Import,
+            b"in" => Keyword::In,
+            b"instanceof" => Keyword::Instanceof,
+            b"interface" => Keyword::Interface,
+            b"let" => Keyword::Let,
+            b"new" => Keyword::New,
+            b"null" => Keyword::Null,
+            b"package" => Keyword::Package,
+            b"private" => Keyword::Private,
+            b"protected" => Keyword::Protected,
+            b"public" => Keyword::Public,
+            b"return" => Keyword::Return,
+            b"static" => Keyword::Static,
+            b"super" => Keyword::Super,
+            b"switch" => Keyword::Switch,
+            b"this" => Keyword::This,
+            b"throw" => Keyword::Throw,
+            b"break" => Keyword::Break,
+            b"true" => Keyword::True,
+            b"try" => Keyword::Try,
+            b"type" => Keyword::Type,
+            b"typeof" => Keyword::Typeof,
+            b"var" => Keyword::Var,
+            b"void" => Keyword::Void,
+            b"while" => Keyword::While,
+            b"with" => Keyword::With,
+            b"yield" => Keyword::Yield,
+            b"string" => Keyword::String,
+            b"number" => Keyword::Number,
+            b"boolean" => Keyword::Boolean,
+            b"symbol" => Keyword::Symbol,
+            b"any" => Keyword::Any,
+            b"object" => Keyword::Object,
+            b"unknown" => Keyword::Unknown,
+            b"never" => Keyword::Never,
+            b"namespace" => Keyword::Namespace,
+            b"declare" => Keyword::Declare,
+            b"readonly" => Keyword::Readonly,
+            b"undefined" => Keyword::Undefined,
+        };
+        KEYWORDS.get(s).copied()
     }
 }
 
@@ -1654,18 +1723,18 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                             }
                             prev_keyword = None;
 
-                            // Zig `while {} else {}` — runs body while cond, then else when cond
-                            // first becomes false (only if no `break`). Here the else runs only if
-                            // the loop body never executed.
-                            // PORT NOTE: reshaped for borrowck/semantics.
-                            if !(i < text.len() && js_lexer::is_identifier_continue(text[i] as i32)) {
-                                i = 1;
-                                break 'jsx;
-                            }
+                            // Zig `while (cond) { i += 1 } else { i = 1; break :jsx; }` — Zig's
+                            // while-else runs the else branch whenever the condition becomes false
+                            // (i.e. on normal loop exit, since the body has no `break`). So the
+                            // else ALWAYS fires here and the code below is dead in Zig too.
+                            // TODO(port): Zig while-else always fires here — likely upstream bug, verify in Phase B.
                             while i < text.len() && js_lexer::is_identifier_continue(text[i] as i32) {
                                 i += 1;
                             }
+                            i = 1;
+                            break 'jsx;
 
+                            #[allow(unreachable_code)]
                             while i < text.len() && text[i] != b'>' {
                                 i += 1;
 
@@ -1727,7 +1796,7 @@ pub fn quote(self_: &[u8]) -> QuotedFormatter<'_> {
 // EnumTagListFormatter
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(core::marker::ConstParamTy, Clone, Copy, PartialEq, Eq)]
 pub enum EnumTagListSeparator {
     List,
     Dash,
@@ -2102,7 +2171,7 @@ fn format_duration_one_decimal(data: FormatDurationData, writer: &mut impl fmt::
             push_fmt!("{}", kunits / 1000);
             let frac = (kunits % 1000) / 100;
             if frac > 0 {
-                let decimal_buf = [b'.', b'0' + frac as u8];
+                let decimal_buf = [b'.', b'0' + u8::try_from(frac).unwrap()];
                 push_str!(&decimal_buf);
             }
             push_str!(sep);
@@ -2433,6 +2502,6 @@ fn splat_byte_all(w: &mut impl fmt::Write, byte: u8, count: usize) -> fmt::Resul
 // PORT STATUS
 //   source:     src/bun_core/fmt.zig (1851 lines)
 //   confidence: medium
-//   todos:      18
-//   notes:      Output.prettyFmt comptime-format-string expansion stubbed with raw ANSI; format_ip needs Address type + reborrow plumbing; ComptimeEnumMap → phf in Phase B.
+//   todos:      27
+//   notes:      Output.prettyFmt comptime-format-string expansion stubbed with raw ANSI; format_ip needs Address type + reborrow plumbing; JSX while-else in highlighter matches Zig's (likely buggy) always-break behavior.
 // ──────────────────────────────────────────────────────────────────────────

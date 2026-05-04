@@ -143,6 +143,8 @@ mod advanced {
     use super::*;
 
     pub const HEADER_LENGTH: usize = size_of::<IPCMessageType>() + size_of::<u32>();
+    // HEADER_LENGTH is a 5-byte compile-time constant; narrowing to u32 is provably safe.
+    pub const HEADER_LENGTH_U32: u32 = HEADER_LENGTH as u32;
     pub const VERSION: u32 = 1;
 
     #[repr(u8)]
@@ -201,7 +203,7 @@ mod advanced {
 
         match message_type_raw {
             x if x == IPCMessageType::Version as u8 => Ok(DecodeIPCMessageResult {
-                bytes_consumed: HEADER_LENGTH as u32,
+                bytes_consumed: HEADER_LENGTH_U32,
                 message: DecodedIPCMessage::Version(message_len),
             }),
             x if x == IPCMessageType::SerializedMessage as u8
@@ -225,7 +227,7 @@ mod advanced {
                 let deserialized = JSValue::deserialize(message, global)?;
 
                 Ok(DecodeIPCMessageResult {
-                    bytes_consumed: HEADER_LENGTH as u32 + message_len,
+                    bytes_consumed: HEADER_LENGTH_U32 + message_len,
                     message: if x == IPCMessageType::SerializedInternalMessage as u8 {
                         DecodedIPCMessage::Internal(deserialized)
                     } else {
@@ -839,6 +841,7 @@ impl SendQueue {
     #[cfg(not(windows))]
     fn _windows_close(&mut self) {}
 
+    #[cfg(windows)]
     extern "C" fn _windows_on_closed(windows: *mut uv::Pipe) {
         log!("SendQueue#_windowsOnClosed");
         // SAFETY: pipe was Box::into_raw'd in windowsConfigureClient / created by caller.
@@ -1316,12 +1319,14 @@ impl SendQueue {
         }
     }
 
+    #[cfg(windows)]
     extern "C" fn on_server_pipe_close(this: *mut uv::Pipe) {
         // safely free the pipes
         // SAFETY: pipe was Box::into_raw'd by the caller that configured it.
         let _ = unsafe { Box::from_raw(this) };
     }
 
+    #[cfg(windows)]
     pub fn windows_configure_server(
         &mut self,
         ipc_pipe: *mut uv::Pipe,
@@ -1333,18 +1338,18 @@ impl SendQueue {
             (*ipc_pipe).unref();
         }
         self.socket = SocketUnion::Open(ipc_pipe);
-        #[cfg(windows)]
-        {
-            self.windows.is_server = true;
-        }
+        self.windows.is_server = true;
         let pipe: *mut uv::Pipe = match self.socket {
             SocketUnion::Open(p) => p,
             _ => unreachable!(),
         };
+        // SAFETY: pipe is the live uv handle just stored in self.socket.
         unsafe { (*pipe).data = (self as *mut SendQueue).cast() };
 
+        // SAFETY: pipe is the live uv handle just stored in self.socket.
         let stream: *mut uv::uv_stream_t = unsafe { (*pipe).as_stream() };
 
+        // SAFETY: stream points to the live uv handle just stored in self.socket.
         let read_start_result = unsafe {
             (*stream).read_start(
                 self,
@@ -1360,6 +1365,7 @@ impl SendQueue {
         bun_sys::Result::Ok(())
     }
 
+    #[cfg(windows)]
     pub fn windows_configure_client(&mut self, pipe_fd: Fd) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         log!("configureClient");
@@ -1368,22 +1374,25 @@ impl SendQueue {
             Box::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }));
         // SAFETY: ipc_pipe just allocated above.
         if let Err(err) = unsafe { (*ipc_pipe).init(uv::Loop::get(), true) }.unwrap_() {
+            // SAFETY: ipc_pipe was Box::into_raw'd above and init failed before libuv took ownership.
             let _ = unsafe { Box::from_raw(ipc_pipe) };
             return Err(err.into());
         }
+        // SAFETY: ipc_pipe is a live initialized uv_pipe_t.
         if let Err(err) = unsafe { (*ipc_pipe).open(pipe_fd) }.unwrap_() {
+            // SAFETY: ipc_pipe is a live initialized uv_pipe_t; close_and_destroy frees the Box.
             unsafe { (*ipc_pipe).close_and_destroy() };
             return Err(err.into());
         }
+        // SAFETY: ipc_pipe is a live initialized uv_pipe_t.
         unsafe { (*ipc_pipe).unref() };
         self.socket = SocketUnion::Open(ipc_pipe);
-        #[cfg(windows)]
-        {
-            self.windows.is_server = false;
-        }
+        self.windows.is_server = false;
 
+        // SAFETY: ipc_pipe is the live uv handle just stored in self.socket.
         let stream = unsafe { (*ipc_pipe).as_stream() };
 
+        // SAFETY: stream points to the live uv handle just stored in self.socket.
         if let Err(err) = unsafe {
             (*stream).read_start(
                 self,
@@ -2231,6 +2240,8 @@ pub fn ipc_serialize(
         ) -> JSValue;
     }
     // TODO(port): bun.cpp.IPCSerialize — verify exception-aware wrapper shape
+    // SAFETY: FFI call into C++ binding; global_object is a valid &JSGlobalObject borrowed for
+    // the call duration, and JSValue args are Copy stack values kept alive by conservative scan.
     let r = unsafe { IPCSerialize(global_object, message, handle) };
     if r.is_empty() {
         return Err(JsError::Thrown);
@@ -2254,6 +2265,8 @@ pub fn ipc_parse(
         ) -> JSValue;
     }
     // TODO(port): bun.cpp.IPCParse — verify exception-aware wrapper shape
+    // SAFETY: FFI call into C++ binding; global_object is a valid &JSGlobalObject borrowed for
+    // the call duration, and JSValue args are Copy stack values kept alive by conservative scan.
     let r = unsafe { IPCParse(global_object, target, serialized, fd) };
     if r.is_empty() {
         return Err(JsError::Thrown);
@@ -2265,6 +2278,6 @@ pub fn ipc_parse(
 // PORT STATUS
 //   source:     src/jsc/ipc.zig (1545 lines)
 //   confidence: medium
-//   todos:      19
-//   notes:      WindowsWrite Box vs raw-ptr ownership conflicts with libuv callback reclaim; on_data2/on_read reshaped heavily for borrowck (re-match on send_queue.incoming each iteration); defer update_ref/loop.exit inlined at returns pending scopeguard
+//   todos:      23
+//   notes:      WindowsWrite Box vs raw-ptr ownership conflicts with libuv callback reclaim; on_data2/on_read reshaped heavily for borrowck (re-match on send_queue.incoming each iteration); defer update_ref/loop.exit inlined at returns pending scopeguard; windows_configure_* / on_server_pipe_close cfg(windows)-gated (SocketType differs by platform)
 // ──────────────────────────────────────────────────────────────────────────

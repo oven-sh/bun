@@ -108,11 +108,12 @@ impl<'a> Body<'a> {
     }
 }
 
-// TODO(port): not a clean Drop — Value::deinit mutates self to Null/Used and is called explicitly
-// at specific points (e.g. resolve()). Keeping explicit deinit().
+// TODO(port): not a clean Drop — Value::reset mutates self to Null/Used and is called explicitly
+// at specific protocol points (e.g. resolve()). PORTING.md forbids `pub fn deinit(&mut self)`;
+// renamed to `reset()` since it cannot take `self` by value (in-place state transition).
 impl<'a> Body<'a> {
-    pub fn deinit(&mut self) {
-        self.value.deinit();
+    pub fn reset(&mut self) {
+        self.value.reset();
     }
 }
 
@@ -478,7 +479,9 @@ impl ValueError {
         }
     }
 
-    pub fn deinit(&mut self) {
+    // TODO(port): not a clean Drop — resets self to safe-empty in place. Renamed from `deinit`
+    // per PORTING.md (never expose `pub fn deinit(&mut self)`).
+    pub fn reset(&mut self) {
         match self {
             ValueError::SystemError(system_error) => system_error.deref(),
             ValueError::Message(message) => message.deref(),
@@ -892,12 +895,14 @@ impl<'a> Value<'a> {
                     Action::GetFormData(form_data_slot) => 'inner: {
                         let mut blob = new.use_as_any_blob();
                         let Some(async_form_data) = form_data_slot.take() else {
-                            promise.reject(
+                            // Zig: `defer blob.detach()` covers the `try promise.reject(...)` error path.
+                            let r = promise.reject(
                                 global,
                                 ZigString::init(b"Internal error: task for FormData must not be null")
                                     .to_error_instance(global),
-                            )?;
+                            );
                             blob.detach();
+                            r?;
                             break 'inner;
                         };
                         let result = async_form_data.to_js(global, blob.slice(), &promise);
@@ -1012,9 +1017,9 @@ impl<'a> Value<'a> {
                     return None;
                 }
             }
-            Value::Locked(l) => return l.to_any_blob_allow_promise(),
-            // PORT NOTE: Zig fell through to set *self = Used after Locked too, but only if
-            // toAnyBlobAllowPromise returned non-null. The early-return above matches Zig (`orelse return null`).
+            // Zig: `.Locked => this.Locked.toAnyBlobAllowPromise() orelse return null` — on Some
+            // it falls through to `this.* = .{ .Used = {} }` below. `?` on Option early-returns None.
+            Value::Locked(l) => l.to_any_blob_allow_promise()?,
             _ => return None,
         };
 
@@ -1082,17 +1087,25 @@ impl<'a> Value<'a> {
             let Value::Locked(mut locked) = old else { unreachable!() };
             let Value::Error(err_ref) = self else { unreachable!() };
 
-            let mut strong_readable = core::mem::take(&mut locked.readable);
-            // defer strong_readable.deinit() — handled below
+            // Zig: `defer strong_readable.deinit()` — must run on every exit incl. `?` paths.
+            let strong_readable = scopeguard::guard(
+                core::mem::take(&mut locked.readable),
+                |mut r| r.deinit(),
+            );
 
             if let Some(promise_value) = locked.promise.take() {
+                // Zig: `defer promise_value.ensureStillAlive(); defer promise_value.unprotect();`
+                // — non-Drop side effect (GC root decrement) that must run even if
+                // reject_with_async_stack errors.
+                let promise_value = scopeguard::guard(promise_value, |p| {
+                    p.unprotect();
+                    p.ensure_still_alive();
+                });
                 if let Some(promise) = promise_value.as_any_promise() {
                     if promise.status() == jsc::PromiseStatus::Pending {
                         promise.reject_with_async_stack(global, err_ref.to_js(global))?;
                     }
                 }
-                promise_value.ensure_still_alive();
-                promise_value.unprotect();
             }
 
             // The Promise version goes before the ReadableStream version incase the Promise version is used too.
@@ -1109,7 +1122,6 @@ impl<'a> Value<'a> {
                 on_receive_value(locked.task.unwrap(), self);
             }
 
-            strong_readable.deinit();
             return Ok(());
         }
         *self = Value::Error(err);
@@ -1127,8 +1139,8 @@ impl<'a> Value<'a> {
     }
 
     // TODO(port): not a clean Drop — mutates self to Null and is called explicitly at specific
-    // protocol points. Keeping as inherent method.
-    pub fn deinit(&mut self) {
+    // protocol points. Renamed from `deinit` per PORTING.md (never expose `pub fn deinit(&mut self)`).
+    pub fn reset(&mut self) {
         let tag = self.tag();
         if tag == Tag::Locked {
             let Value::Locked(locked) = self else { unreachable!() };
@@ -1161,7 +1173,7 @@ impl<'a> Value<'a> {
 
         if tag == Tag::Error {
             if let Value::Error(e) = self {
-                e.deinit();
+                e.reset();
             }
         }
     }
@@ -1808,8 +1820,12 @@ impl<'a> ValueBufferer<'a> {
             }
             Value::Error(err) => {
                 bun_output::scoped_log!(BodyValueBufferer, "Error");
-                // TODO(port): Zig passed `err` by value (copy). ValueError contains Strong; verify clone semantics.
-                (self.on_finished_buffering)(self.ctx, b"", Some(err.dupe(self.global)), false);
+                // Zig passes `err` by bitwise value copy with no ref bump; mirror exactly.
+                // SAFETY: ValueError is plain data in Zig (no Drop on the copy); callback owns
+                // neither original nor copy refcount-wise — matches Zig 1:1.
+                // TODO(port): callback ownership — verify no double-free once ValueError gains Drop.
+                let err_copy = unsafe { core::ptr::read(err) };
+                (self.on_finished_buffering)(self.ctx, b"", Some(err_copy), false);
                 return Ok(());
             }
             // Value::InlineBlob(_) |
@@ -1914,11 +1930,18 @@ impl<'a> ValueBufferer<'a> {
             wrapper.detach(self.global);
             wrapper.sink.destroy();
         }
-        let mut ref_ = jsc::strong::Optional::create(err, self.global);
-        (self.on_finished_buffering)(self.ctx, b"", Some(ValueError::JSValue(ref_)), is_async);
-        // TODO(port): Zig had `defer ref.deinit()` AFTER passing it by value into the callback.
-        // The callback receives a moved ValueError here; if the callback doesn't take ownership,
-        // ref_.deinit() must run here. Verify ownership in Phase B.
+        // Zig: `var ref = ...; defer ref.deinit(); sink.onFinishedBuffering(..., .{ .JSValue = ref }, ...);`
+        // — passes a bitwise copy into the callback and *always* deinits the local afterward.
+        let ref_ = scopeguard::guard(
+            jsc::strong::Optional::create(err, self.global),
+            |mut r| r.deinit(),
+        );
+        // SAFETY: bitwise copy of Strong.Optional matches Zig's by-value struct pass; the
+        // scopeguard above deinits the original exactly as Zig's `defer ref.deinit()` does.
+        // TODO(port): callback ownership — Zig's pattern relies on callback not retaining the
+        // Strong past this call; verify in Phase B.
+        let ref_copy = unsafe { core::ptr::read(&*ref_) };
+        (self.on_finished_buffering)(self.ctx, b"", Some(ValueError::JSValue(ref_copy)), is_async);
     }
 
     fn handle_resolve_stream(&mut self, is_async: bool) {
@@ -2105,7 +2128,11 @@ impl<'a> ValueBufferer<'a> {
         match value {
             Value::Error(err) => {
                 bun_output::scoped_log!(BodyValueBufferer, "onReceiveValue Error");
-                (sink.on_finished_buffering)(sink.ctx, b"", Some(err.dupe(sink.global)), true);
+                // Zig passes `err` by bitwise value copy with no ref bump; mirror exactly.
+                // SAFETY: matches Zig's struct-by-value pass; see run() above.
+                // TODO(port): callback ownership — verify no double-free once ValueError gains Drop.
+                let err_copy = unsafe { core::ptr::read(err) };
+                (sink.on_finished_buffering)(sink.ctx, b"", Some(err_copy), true);
             }
             _ => {
                 value.to_blob_if_possible();
@@ -2149,6 +2176,6 @@ mod blob {
 // PORT STATUS
 //   source:     src/runtime/webcore/Body.zig (1833 lines)
 //   confidence: medium
-//   todos:      21
-//   notes:      Value/PendingValue carry <'a> from JSC_BORROW global per LIFETIMES.tsv — cascades widely; Mixin reshaped to trait (BodyMixin + BodyOwnerJs); WTFStringImpl mapped to Arc<> per TSV but is intrusively refcounted (verify); several borrowck reshapes around &mut self in match arms.
+//   todos:      26
+//   notes:      Value/PendingValue carry <'a> from JSC_BORROW global per LIFETIMES.tsv — cascades widely; Mixin reshaped to trait (BodyMixin + BodyOwnerJs); WTFStringImpl mapped to Arc<> per TSV but is intrusively refcounted (verify); several borrowck reshapes around &mut self in match arms; deinit() renamed reset() (in-place state transition, not Drop); ValueBufferer callback receives bitwise ValueError copies to match Zig — ownership needs Phase B audit.
 // ──────────────────────────────────────────────────────────────────────────

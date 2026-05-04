@@ -441,14 +441,14 @@ impl<'a> YarnLock<'a> {
                             );
                         } else if Entry::is_git_dependency(value) {
                             let git_info = Entry::parse_git_url(self, value)?;
-                            // TODO(port): when git_info.owned_url is Some, `resolved` must
-                            // borrow the owned buffer. We store owned_url on entry via
-                            // git_repo_name's allocator pattern; Phase B should rework
-                            // ParsedGitUrl ownership.
-                            entry.resolved = Some(match &git_info.owned_url {
-                                Some(_) => git_info.url, // TODO(port): owned_url lifetime
-                                None => git_info.url,
-                            });
+                            // TODO(port): dropped logic — Zig reassigns `url` to the
+                            // allocPrint'd `https://github.com/{path}` buffer for the
+                            // `github:` branch and stores that as `resolved`. Here
+                            // `git_info.url` still borrows the stripped input slice and
+                            // `owned_url` is discarded, so github: URLs resolve INCORRECTLY.
+                            // Phase B must change Entry.resolved to Cow<'a, [u8]> (or store
+                            // the owned buffer on Entry) so `owned_url` can be assigned here.
+                            entry.resolved = Some(git_info.url);
                             entry.commit = git_info.commit;
                             if let Some(repo_name) = git_info.repo {
                                 entry.git_repo_name = Some(Box::<[u8]>::from(repo_name));
@@ -463,10 +463,10 @@ impl<'a> YarnLock<'a> {
                         entry.resolved = Some(value);
                         if Entry::is_git_dependency(value) {
                             let git_info = Entry::parse_git_url(self, value)?;
-                            entry.resolved = Some(match &git_info.owned_url {
-                                Some(_) => git_info.url, // TODO(port): owned_url lifetime
-                                None => git_info.url,
-                            });
+                            // TODO(port): same github: owned_url issue as the `version` branch
+                            // above — Entry.resolved needs Cow<'a, [u8]> to hold the rewritten
+                            // `https://github.com/...` buffer.
+                            entry.resolved = Some(git_info.url);
                             entry.commit = git_info.commit;
                             if let Some(repo_name) = git_info.repo {
                                 entry.git_repo_name = Some(Box::<[u8]>::from(repo_name));
@@ -545,12 +545,6 @@ impl<'a> YarnLock<'a> {
 
         self.entries.push(new_entry);
         Ok(())
-    }
-}
-
-impl<'a> Drop for YarnLock<'a> {
-    fn drop(&mut self) {
-        // Vec<Entry> drops automatically; Entry's owned fields (Vec/Box/HashMap) drop too.
     }
 }
 

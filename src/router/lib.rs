@@ -166,15 +166,6 @@ impl<'a> Router<'a> {
     }
 }
 
-#[cfg(windows)]
-impl Drop for Router<'_> {
-    fn drop(&mut self) {
-        // On Windows, abs_path was allocator.dupe'd in Route::parse — Box<[u8]> drops automatically
-        // when the MultiArrayList drops the Box<Route>; nothing to do here.
-        // (Zig manually freed routes.list.items(.filepath) here; Rust ownership handles it.)
-    }
-}
-
 pub const BANNED_DIRS: [&[u8]; 1] = [b"node_modules"];
 
 struct RouteIndex {
@@ -524,7 +515,7 @@ impl<'a> RouteLoader<'a> {
         }
 
         this.all_routes
-            .sort_by(|a, b| Route::Sorter::sort_by_name_cmp(a, b));
+            .sort_unstable_by(|a, b| Route::Sorter::sort_by_name_cmp(a, b));
 
         let mut route_list = RouteIndex::List::default();
         route_list
@@ -674,18 +665,37 @@ impl<'a> RouteLoader<'a> {
     }
 }
 
-#[repr(C)]
+// Zig: `packed struct(u32) { offset: u16, len: u16 }` — bitcast-compatible u32.
+#[repr(transparent)]
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
-pub struct TinyPtr {
-    pub offset: u16,
-    pub len: u16,
-}
+pub struct TinyPtr(u32);
 
 impl TinyPtr {
     #[inline]
+    pub const fn new(offset: u16, len: u16) -> Self {
+        Self((offset as u32) | ((len as u32) << 16))
+    }
+    #[inline]
+    pub const fn offset(self) -> u16 {
+        self.0 as u16
+    }
+    #[inline]
+    pub const fn len(self) -> u16 {
+        (self.0 >> 16) as u16
+    }
+    #[inline]
+    pub fn set_offset(&mut self, offset: u16) {
+        self.0 = (self.0 & 0xFFFF_0000) | (offset as u32);
+    }
+    #[inline]
+    pub fn set_len(&mut self, len: u16) {
+        self.0 = (self.0 & 0x0000_FFFF) | ((len as u32) << 16);
+    }
+
+    #[inline]
     pub fn str<'s>(self, slice: &'s [u8]) -> &'s [u8] {
-        if self.len > 0 {
-            &slice[self.offset as usize..(self.offset as usize + self.len as usize)]
+        if self.len() > 0 {
+            &slice[self.offset() as usize..(self.offset() as usize + self.len() as usize)]
         } else {
             b""
         }
@@ -694,8 +704,8 @@ impl TinyPtr {
     #[inline]
     pub fn to_string_pointer(self) -> api::StringPointer {
         api::StringPointer {
-            offset: self.offset as u32,
-            length: self.len as u32,
+            offset: self.offset() as u32,
+            length: self.len() as u32,
         }
     }
 
@@ -718,10 +728,7 @@ impl TinyPtr {
         let length = end.max(right) - right;
         let offset = (in_.as_ptr() as usize).max(parent.as_ptr() as usize)
             - parent.as_ptr() as usize;
-        TinyPtr {
-            offset: offset as u16,
-            len: length as u16,
-        }
+        TinyPtr::new(offset as u16, length as u16)
     }
 }
 
@@ -1249,10 +1256,15 @@ pub mod pattern {
                     }
                     Value::Dynamic(dynamic) => {
                         if let Some(i) = path_.iter().position(|&b| b == b'/') {
-                            params.push(Param {
-                                // TODO(port): lifetime — borrows from `name` and `path_`
-                                name: unsafe { core::mem::transmute(dynamic.str(name)) },
-                                value: unsafe { core::mem::transmute(&path_[0..i]) },
+                            // TODO(port): lifetime — borrows from `name` and `path_`
+                            // SAFETY: name borrows route name (DirnameStore-backed), value borrows
+                            // request path; both outlive the Param::List owner. Phase B must thread
+                            // the actual lifetime through Param instead of transmuting to 'static.
+                            params.push(unsafe {
+                                Param {
+                                    name: core::mem::transmute(dynamic.str(name)),
+                                    value: core::mem::transmute(&path_[0..i]),
+                                }
                             });
                             path_ = &path_[i + 1..];
 
@@ -1263,9 +1275,13 @@ pub mod pattern {
 
                             continue;
                         } else if pattern.is_end(name) {
-                            params.push(Param {
-                                name: unsafe { core::mem::transmute(dynamic.str(name)) },
-                                value: unsafe { core::mem::transmute(path_) },
+                            // SAFETY: borrows route name / request path; outlive Param::List owner
+                            // (see lifetime TODO above).
+                            params.push(unsafe {
+                                Param {
+                                    name: core::mem::transmute(dynamic.str(name)),
+                                    value: core::mem::transmute(path_),
+                                }
                             });
                             return true;
                         } else if ALLOW_OPTIONAL_CATCH_ALL {
@@ -1273,11 +1289,13 @@ pub mod pattern {
                                 Pattern::init(match_name, offset).expect("unreachable");
 
                             if matches!(pattern.value, Value::OptionalCatchAll(_)) {
-                                params.push(Param {
-                                    name: unsafe {
-                                        core::mem::transmute(dynamic.str(name))
-                                    },
-                                    value: unsafe { core::mem::transmute(path_) },
+                                // SAFETY: borrows route name / request path; outlive Param::List owner
+                                // (see lifetime TODO above).
+                                params.push(unsafe {
+                                    Param {
+                                        name: core::mem::transmute(dynamic.str(name)),
+                                        value: core::mem::transmute(path_),
+                                    }
                                 });
                                 path_ = b"";
                                 let _ = path_;
@@ -1292,9 +1310,13 @@ pub mod pattern {
                     }
                     Value::CatchAll(dynamic) => {
                         if !path_.is_empty() {
-                            params.push(Param {
-                                name: unsafe { core::mem::transmute(dynamic.str(name)) },
-                                value: unsafe { core::mem::transmute(path_) },
+                            // SAFETY: borrows route name / request path; outlive Param::List owner
+                            // (see lifetime TODO above).
+                            params.push(unsafe {
+                                Param {
+                                    name: core::mem::transmute(dynamic.str(name)),
+                                    value: core::mem::transmute(path_),
+                                }
                             });
                             return true;
                         }
@@ -1304,11 +1326,13 @@ pub mod pattern {
                     Value::OptionalCatchAll(dynamic) => {
                         if ALLOW_OPTIONAL_CATCH_ALL {
                             if !path_.is_empty() {
-                                params.push(Param {
-                                    name: unsafe {
-                                        core::mem::transmute(dynamic.str(name))
-                                    },
-                                    value: unsafe { core::mem::transmute(path_) },
+                                // SAFETY: borrows route name / request path; outlive Param::List owner
+                                // (see lifetime TODO above).
+                                params.push(unsafe {
+                                    Param {
+                                        name: core::mem::transmute(dynamic.str(name)),
+                                        value: core::mem::transmute(path_),
+                                    }
                                 });
                             }
 
@@ -1503,7 +1527,7 @@ pub mod pattern {
 
                         i += 1;
 
-                        param.offset = i;
+                        param.set_offset(i);
 
                         if i >= end {
                             return Err(PatternParseError::InvalidRoutePattern);
@@ -1530,7 +1554,7 @@ pub mod pattern {
                                     );
                                 }
                                 i += 3;
-                                param.offset = i;
+                                param.set_offset(i);
                             }
                             b'.' => {
                                 tag = Tag::CatchAll;
@@ -1545,7 +1569,7 @@ pub mod pattern {
                                 }
                                 i += 2;
 
-                                param.offset = i;
+                                param.set_offset(i);
                             }
                             _ => {}
                         }
@@ -1562,7 +1586,7 @@ pub mod pattern {
                             return Err(PatternParseError::PatternMissingClosingBracket);
                         }
 
-                        param.len = i - param.offset;
+                        param.set_len(i - param.offset());
 
                         i += 1;
 
@@ -2010,5 +2034,5 @@ mod tests {
 //   source:     src/router/router.zig (1918 lines)
 //   confidence: medium
 //   todos:      24
-//   notes:      Routes/RouteLoader self-reference Box<Route> in MultiArrayList (raw ptrs/'static transmute placeholder); Param/Route string fields treated as &'static (DirnameStore-backed); test harness (make_test/Test::make + 4 fixture-driven tests) stubbed pending bun_sys/bun_resolver; Route::Sorter nested-module shim is invalid Rust syntax — Phase B must hoist callers
+//   notes:      Routes/RouteLoader self-reference Box<Route> in MultiArrayList (raw ptrs/'static transmute placeholder); Param/Route string fields treated as &'static (DirnameStore-backed) — Pattern::match_ transmutes name/path borrows into Param, Phase B must thread real lifetime; test harness (make_test/Test::make + 4 fixture-driven tests) stubbed pending bun_sys/bun_resolver; Route::Sorter nested-module shim is invalid Rust syntax — Phase B must hoist callers; TinyPtr is repr(transparent) u32 with shift accessors (Zig packed struct(u32))
 // ──────────────────────────────────────────────────────────────────────────

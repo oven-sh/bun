@@ -17,6 +17,7 @@ bun_output::declare_scope!(PipeWriter, hidden);
 // WriteResult / WriteStatus
 // ──────────────────────────────────────────────────────────────────────────
 
+#[derive(Copy, Clone)]
 pub enum WriteResult {
     Done(usize),
     Wrote(usize),
@@ -485,6 +486,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         };
         let loop_ = self.parent().event_loop().loop_();
 
+        // SAFETY: poll is a *mut FilePoll just stored in self.handle (PollOrFd::Poll); valid until handle is closed.
         match unsafe { (*poll).register_with_fd(loop_, bun_aio::Pollable::Writable, bun_aio::PollMode::Dispatch, fd) } {
             sys::Result::Err(err) => {
                 return sys::Result::Err(err);
@@ -719,6 +721,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         }
 
         // PORT NOTE: reshaped for borrowck — pass slice via raw to avoid &self/&mut self overlap.
+        // TODO(port): raw-ptr borrowck escape — restructure in Phase B.
         let slice_ptr = self.outgoing.slice().as_ptr();
         let slice_len = self.outgoing.slice().len();
         // SAFETY: outgoing storage not reallocated during try_write_newly_buffered_data
@@ -790,8 +793,11 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             }
 
             // PORT NOTE: reshaped for borrowck
+            // TODO(port): raw-ptr borrowck escape — restructure in Phase B.
             let slice_ptr = self.outgoing.slice().as_ptr();
             let slice_len = self.outgoing.slice().len();
+            // SAFETY: outgoing storage is not reallocated inside try_write_newly_buffered_data
+            // until after the syscall reads from this slice (only reset/wrote cursor mutation).
             let s = unsafe { core::slice::from_raw_parts(slice_ptr, slice_len) };
             return self.try_write_newly_buffered_data(s);
         }
@@ -935,6 +941,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             }
         };
 
+        // SAFETY: poll is a *mut FilePoll just stored in self.handle (PollOrFd::Poll); valid until handle is closed.
         match unsafe { (*poll).register_with_fd(loop_.loop_(), bun_aio::Pollable::Writable, bun_aio::PollMode::Dispatch, fd) } {
             sys::Result::Err(err) => {
                 return sys::Result::Err(err);
@@ -1033,11 +1040,15 @@ pub trait BaseWindowsPipeWriter {
                 }
             }
             Source::Pipe(pipe) => {
+                // SAFETY: pipe is heap-allocated by Source::open; freed in on_pipe_close.
                 unsafe { (*pipe).data = pipe as *mut c_void };
+                // SAFETY: pipe is a live uv handle; libuv calls on_pipe_close after close completes.
                 unsafe { (*pipe).close(on_pipe_close) };
             }
             Source::Tty(tty) => {
+                // SAFETY: tty is heap-allocated by Source::open; freed in on_tty_close.
                 unsafe { (*tty).data = tty as *mut c_void };
+                // SAFETY: tty is a live uv handle; libuv calls on_tty_close after close completes.
                 unsafe { (*tty).close(on_tty_close) };
             }
         }
@@ -1108,6 +1119,7 @@ pub trait BaseWindowsPipeWriter {
         debug_assert!(self.source().is_none());
         // Use the event loop from the parent, not the global one
         // This is critical for spawnSync to use its isolated loop
+        // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
         let loop_ = unsafe { (*self.parent_ptr()).loop_() };
         let source = match Source::open(loop_, fd) {
             sys::Result::Ok(source) => source,
@@ -1215,6 +1227,7 @@ impl<Parent: WindowsBufferedWriterParent> BaseWindowsPipeWriter for WindowsBuffe
 
     fn on_close_source(&mut self) {
         if Parent::HAS_ON_CLOSE {
+            // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
             unsafe { (*self.parent).on_close() };
         }
     }
@@ -1266,8 +1279,10 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
 
     extern "C" fn on_fs_write_complete(fs: *mut uv::fs_t) {
         let file = crate::source::File::from_fs(fs);
+        // SAFETY: fs is a live uv_fs_t passed by libuv to this callback.
         let result = unsafe { (*fs).result };
         let was_canceled = result.int() == uv::UV_ECANCELED;
+        // SAFETY: fs is a live uv_fs_t passed by libuv to this callback.
         let parent_ptr = unsafe { (*fs).data };
 
         // ALWAYS complete first
@@ -1304,8 +1319,11 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         }
 
         // PORT NOTE: reshaped for borrowck — capture ptr/len before mutating self.
+        // TODO(port): raw-ptr borrowck escape — restructure in Phase B.
         let buffer_ptr = buffer.as_ptr();
         let buffer_len = buffer.len();
+        // SAFETY: buffer points into get_buffer_internal()'s storage which is not
+        // reallocated below (only handed to libuv via uv_buf_t / write_req).
         let buffer = unsafe { core::slice::from_raw_parts(buffer_ptr, buffer_len) };
 
         let Some(pipe) = &self.source else { return };
@@ -1513,13 +1531,6 @@ impl StreamBuffer {
     }
 }
 
-impl Drop for StreamBuffer {
-    fn drop(&mut self) {
-        self.cursor = 0;
-        // list freed automatically
-    }
-}
-
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum WriteKind {
     Bytes,
@@ -1599,6 +1610,7 @@ impl<Parent: WindowsStreamingWriterParent> BaseWindowsPipeWriter for WindowsStre
             self.closed_without_reporting = false;
             return;
         }
+        // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
         unsafe { (*self.parent).on_close() };
     }
 
@@ -1632,6 +1644,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     fn on_write_complete(&mut self, status: uv::ReturnCode) {
         // Deref the parent at the end to balance the ref taken in
         // process_send before submitting the async write request.
+        // SAFETY: p is the BACKREF parent ptr; ref taken in process_send keeps it alive until this deref.
         let _g = scopeguard::guard(self.parent, |p| unsafe { (*p).deref() });
 
         if let Some(err) = status.to_error(uv::SyscallTag::Write) {
@@ -1677,8 +1690,10 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 
     extern "C" fn on_fs_write_complete(fs: *mut uv::fs_t) {
         let file = crate::source::File::from_fs(fs);
+        // SAFETY: fs is a live uv_fs_t passed by libuv to this callback.
         let result = unsafe { (*fs).result };
         let was_canceled = result.int() == uv::UV_ECANCELED;
+        // SAFETY: fs is a live uv_fs_t passed by libuv to this callback.
         let parent_ptr = unsafe { (*fs).data };
 
         // ALWAYS complete first
@@ -1696,12 +1711,14 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         if was_canceled {
             // Canceled write - reset buffers and deref to balance process_send ref
             this.current_payload.reset();
+            // SAFETY: parent is BACKREF; ref taken in process_send keeps it alive until this deref.
             unsafe { (*this.parent).deref() };
             return;
         }
 
         if let Some(err) = result.to_error(uv::SyscallTag::Write) {
             // deref to balance process_send ref
+            // SAFETY: p is the BACKREF parent ptr; ref taken in process_send keeps it alive until this deref.
             let _g = scopeguard::guard(this.parent, |p| unsafe { (*p).deref() });
             this.close();
             this.parent().on_error(err);
@@ -1739,7 +1756,10 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // current payload is empty we can just swap with outgoing
         mem::swap(&mut self.current_payload, &mut self.outgoing);
         // PORT NOTE: reshaped for borrowck — re-read bytes from current_payload (post-swap).
+        // TODO(port): raw-ptr borrowck escape — restructure in Phase B.
         let bytes_ptr = self.current_payload.slice().as_ptr();
+        // SAFETY: current_payload storage is not reallocated until on_write_complete resets it;
+        // libuv reads via uv_buf_t which holds this same ptr/len.
         let bytes = unsafe { core::slice::from_raw_parts(bytes_ptr, bytes_len) };
 
         match pipe {
@@ -1790,6 +1810,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // Ref the parent to prevent it from being freed while the async
         // write is in flight. The matching deref is in on_write_complete
         // or on_fs_write_complete.
+        // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
         unsafe { (*self.parent).ref_() };
         self.last_write_result = WriteResult::Pending(0);
     }
@@ -1857,8 +1878,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             return WriteResult::Pending(0);
         }
         self.process_send();
-        // TODO(port): WriteResult not Copy — Phase B: derive Clone/Copy on WriteResult if sys::Error is Copy.
-        mem::replace(&mut self.last_write_result, WriteResult::Wrote(0))
+        self.last_write_result
     }
 
     fn write_internal_u16(&mut self, buffer: &[u16]) -> WriteResult {
@@ -1909,7 +1929,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             return WriteResult::Pending(0);
         }
         self.process_send();
-        mem::replace(&mut self.last_write_result, WriteResult::Wrote(0))
+        self.last_write_result
     }
 
     pub fn write_utf16(&mut self, buf: &[u16]) -> WriteResult {
@@ -1933,7 +1953,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         }
 
         self.process_send();
-        mem::replace(&mut self.last_write_result, WriteResult::Wrote(0))
+        self.last_write_result
     }
 
     pub fn end(&mut self) {
@@ -1980,6 +2000,6 @@ pub type StreamingWriter<P> = WindowsStreamingWriter<P>;
 // PORT STATUS
 //   source:     src/io/PipeWriter.zig (1576 lines)
 //   confidence: medium
-//   todos:      14
-//   notes:      comptime vtable+mixin pattern → traits; heavy borrowck reshaping around self-referential buffers; writeInternal/writeOrFallback fn-ptr-identity dispatch reworked to WriteKind enum; MovableIfWindowsFd overloads stubbed
+//   todos:      17
+//   notes:      comptime vtable+mixin pattern → traits; heavy borrowck reshaping around self-referential buffers (raw-ptr escapes flagged for Phase B restructure); writeInternal/writeOrFallback fn-ptr-identity dispatch reworked to WriteKind enum; MovableIfWindowsFd overloads stubbed
 // ──────────────────────────────────────────────────────────────────────────

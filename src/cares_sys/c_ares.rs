@@ -283,6 +283,7 @@ impl struct_hostent {
         buffer: *mut u8,
         buffer_length: c_int,
     ) {
+        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
         let this = unsafe { &mut *(ctx as *mut T) };
         if status != ARES_SUCCESS {
             this.on_hostent(Error::get(status), timeouts, ptr::null_mut());
@@ -293,6 +294,7 @@ impl struct_hostent {
             // SAFETY: POD scratch buffer for ares_parse_a_reply.
             unsafe { core::mem::zeroed() };
         let mut naddrttls: i32 = 256;
+        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         let result = unsafe {
             ares_parse_a_reply(buffer, buffer_length, &mut start, addrttls.as_mut_ptr(), &mut naddrttls)
         };
@@ -310,12 +312,14 @@ impl struct_hostent {
         buffer: *mut u8,
         buffer_length: c_int,
     ) {
+        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
         let this = unsafe { &mut *(ctx as *mut T) };
         if status != ARES_SUCCESS {
             this.on_hostent(Error::get(status), timeouts, ptr::null_mut());
             return;
         }
         let mut start: *mut struct_hostent = ptr::null_mut();
+        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         let result = unsafe { ares_parse_ns_reply(buffer, buffer_length, &mut start) };
         if result != ARES_SUCCESS {
             this.on_hostent(Error::get(result), timeouts, ptr::null_mut());
@@ -331,12 +335,14 @@ impl struct_hostent {
         buffer: *mut u8,
         buffer_length: c_int,
     ) {
+        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
         let this = unsafe { &mut *(ctx as *mut T) };
         if status != ARES_SUCCESS {
             this.on_hostent(Error::get(status), timeouts, ptr::null_mut());
             return;
         }
         let mut start: *mut struct_hostent = ptr::null_mut();
+        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         let result = unsafe {
             ares_parse_ptr_reply(buffer, buffer_length, ptr::null(), 0, AF::INET, &mut start)
         };
@@ -385,6 +391,7 @@ impl hostent_with_ttls {
         // TODO(port): Zig declared this as `ares_host_callback` (4th arg
         // `?*hostent_with_ttls`) but that signature mismatches the C
         // `ares_host_callback` (`?*struct_hostent`). Appears unused; verify.
+        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
         let this = unsafe { &mut *(ctx as *mut T) };
         if status != ARES_SUCCESS {
             this.on_hostent_with_ttls(Error::get(status), timeouts, None);
@@ -400,6 +407,7 @@ impl hostent_with_ttls {
         buffer: *mut u8,
         buffer_length: c_int,
     ) {
+        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
         let this = unsafe { &mut *(ctx as *mut T) };
         if status != ARES_SUCCESS {
             this.on_hostent_with_ttls(Error::get(status), timeouts, None);
@@ -418,6 +426,7 @@ impl hostent_with_ttls {
         buffer: *mut u8,
         buffer_length: c_int,
     ) {
+        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
         let this = unsafe { &mut *(ctx as *mut T) };
         if status != ARES_SUCCESS {
             this.on_hostent_with_ttls(Error::get(status), timeouts, None);
@@ -434,6 +443,7 @@ impl hostent_with_ttls {
         // SAFETY: POD scratch buffer.
         let mut addrttls: [struct_ares_addrttl; 256] = unsafe { core::mem::zeroed() };
         let mut naddrttls: c_int = 256;
+        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         let result = unsafe {
             ares_parse_a_reply(buffer, buffer_length, &mut start, addrttls.as_mut_ptr(), &mut naddrttls)
         };
@@ -453,6 +463,7 @@ impl hostent_with_ttls {
         // SAFETY: POD scratch buffer.
         let mut addr6ttls: [struct_ares_addr6ttl; 256] = unsafe { core::mem::zeroed() };
         let mut naddr6ttls: c_int = 256;
+        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         let result = unsafe {
             ares_parse_aaaa_reply(buffer, buffer_length, &mut start, addr6ttls.as_mut_ptr(), &mut naddr6ttls)
         };
@@ -495,6 +506,7 @@ impl struct_nameinfo {
         node: *mut u8,
         service: *mut u8,
     ) {
+        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
         let this = unsafe { &mut *(ctx as *mut T) };
         if status != ARES_SUCCESS {
             this.on_nameinfo(Error::get(status), timeouts, None);
@@ -586,6 +598,7 @@ impl AddrInfo {
         timeouts: c_int,
         addr_info: *mut AddrInfo,
     ) {
+        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
         let this = unsafe { &mut *(ctx as *mut T) };
         this.on_addr_info(Error::get(status), timeouts, addr_info);
     }
@@ -685,7 +698,9 @@ impl Channel {
         let optmask: c_int =
             ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS | ARES_OPT_SOCK_STATE_CB | ARES_OPT_TRIES;
 
+        // SAFETY: c-ares FFI; opts/channel are valid stack pointers.
         if let Some(err) = Error::get(unsafe { ares_init_options(&mut channel, &mut opts, optmask) }) {
+            // SAFETY: c-ares FFI; library was initialized above.
             unsafe { ares_library_cleanup() };
             return Some(err);
         }
@@ -734,6 +749,7 @@ impl Channel {
         }
         let hints_: *const AddrInfo_hints =
             if !hints.is_empty() { hints_buf.as_ptr() } else { ptr::null() };
+        // SAFETY: c-ares FFI; host/port/hints are NUL-terminated stack buffers or null; ctx outlives the channel.
         unsafe {
             ares_getaddrinfo(
                 self,
@@ -764,6 +780,7 @@ impl Channel {
             name_buf.as_ptr() as *const c_char
         };
 
+        // SAFETY: c-ares FFI; name_ptr is a NUL-terminated stack buffer; ctx outlives the channel.
         unsafe {
             ares_query(
                 self,
@@ -796,7 +813,9 @@ impl Channel {
         // which can avoid the use of `struct_in_addr` to reduce extra bytes.
         let mut addr = [0u8; 16];
         if !addr_ptr.is_null() {
+            // SAFETY: c-ares FFI; addr_ptr is a NUL-terminated stack buffer, addr is 16-byte stack scratch.
             if unsafe { ares_inet_pton(AF::INET, addr_ptr, addr.as_mut_ptr() as *mut c_void) } > 0 {
+                // SAFETY: c-ares FFI; addr holds a 4-byte in_addr written by ares_inet_pton; ctx outlives the channel.
                 unsafe {
                     ares_gethostbyaddr(
                         self,
@@ -808,7 +827,9 @@ impl Channel {
                     );
                 }
                 return;
+            // SAFETY: c-ares FFI; addr_ptr is a NUL-terminated stack buffer, addr is 16-byte stack scratch.
             } else if unsafe { ares_inet_pton(AF::INET6, addr_ptr, addr.as_mut_ptr() as *mut c_void) } > 0 {
+                // SAFETY: c-ares FFI; addr holds a 16-byte in6_addr written by ares_inet_pton; ctx outlives the channel.
                 unsafe {
                     ares_gethostbyaddr(
                         self,
@@ -840,6 +861,7 @@ impl Channel {
         } else {
             core::mem::size_of::<sockaddr_in6>() as ares_socklen_t
         };
+        // SAFETY: c-ares FFI; sa is a valid sockaddr of size `salen`; ctx outlives the channel.
         unsafe {
             ares_getnameinfo(
                 self,
@@ -856,6 +878,7 @@ impl Channel {
 
     #[inline]
     pub fn process(&mut self, fd: ares_socket_t, readable: bool, writable: bool) {
+        // SAFETY: c-ares FFI; self is a live channel handle.
         unsafe {
             ares_process_fd(
                 self,
@@ -873,6 +896,7 @@ fn library_init() {
         return;
     }
 
+    // SAFETY: c-ares FFI; mimalloc fn pointers have C ABI matching ares_library_init_mem's contract.
     let rc = unsafe {
         ares_library_init_mem(
             ARES_LIB_INIT_ALL,
@@ -1014,12 +1038,14 @@ impl struct_ares_caa_reply {
         buffer: *mut u8,
         buffer_length: c_int,
     ) {
+        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
         let this = unsafe { &mut *(ctx as *mut T) };
         if status != ARES_SUCCESS {
             this.on_caa(Error::get(status), timeouts, ptr::null_mut());
             return;
         }
         let mut start: *mut struct_ares_caa_reply = ptr::null_mut();
+        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         let result = unsafe { ares_parse_caa_reply(buffer, buffer_length, &mut start) };
         if result != ARES_SUCCESS {
             this.on_caa(Error::get(result), timeouts, ptr::null_mut());
@@ -1056,12 +1082,14 @@ impl struct_ares_srv_reply {
         buffer: *mut u8,
         buffer_length: c_int,
     ) {
+        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
         let this = unsafe { &mut *(ctx as *mut T) };
         if status != ARES_SUCCESS {
             this.on_srv(Error::get(status), timeouts, ptr::null_mut());
             return;
         }
         let mut srv_start: *mut struct_ares_srv_reply = ptr::null_mut();
+        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         let result = unsafe { ares_parse_srv_reply(buffer, buffer_length, &mut srv_start) };
         if result != ARES_SUCCESS {
             this.on_srv(Error::get(result), timeouts, ptr::null_mut());
@@ -1096,12 +1124,14 @@ impl struct_ares_mx_reply {
         buffer: *mut u8,
         buffer_length: c_int,
     ) {
+        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
         let this = unsafe { &mut *(ctx as *mut T) };
         if status != ARES_SUCCESS {
             this.on_mx(Error::get(status), timeouts, ptr::null_mut());
             return;
         }
         let mut start: *mut struct_ares_mx_reply = ptr::null_mut();
+        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         let result = unsafe { ares_parse_mx_reply(buffer, buffer_length, &mut start) };
         if result != ARES_SUCCESS {
             this.on_mx(Error::get(result), timeouts, ptr::null_mut());
@@ -1136,12 +1166,14 @@ impl struct_ares_txt_reply {
         buffer: *mut u8,
         buffer_length: c_int,
     ) {
+        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
         let this = unsafe { &mut *(ctx as *mut T) };
         if status != ARES_SUCCESS {
             this.on_txt(Error::get(status), timeouts, ptr::null_mut());
             return;
         }
         let mut srv_start: *mut struct_ares_txt_reply = ptr::null_mut();
+        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         let result = unsafe { ares_parse_txt_reply(buffer, buffer_length, &mut srv_start) };
         if result != ARES_SUCCESS {
             this.on_txt(Error::get(result), timeouts, ptr::null_mut());
@@ -1188,12 +1220,14 @@ impl struct_ares_naptr_reply {
         buffer: *mut u8,
         buffer_length: c_int,
     ) {
+        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
         let this = unsafe { &mut *(ctx as *mut T) };
         if status != ARES_SUCCESS {
             this.on_naptr(Error::get(status), timeouts, ptr::null_mut());
             return;
         }
         let mut naptr_start: *mut struct_ares_naptr_reply = ptr::null_mut();
+        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         let result = unsafe { ares_parse_naptr_reply(buffer, buffer_length, &mut naptr_start) };
         if result != ARES_SUCCESS {
             this.on_naptr(Error::get(result), timeouts, ptr::null_mut());
@@ -1232,12 +1266,14 @@ impl struct_ares_soa_reply {
         buffer: *mut u8,
         buffer_length: c_int,
     ) {
+        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
         let this = unsafe { &mut *(ctx as *mut T) };
         if status != ARES_SUCCESS {
             this.on_soa(Error::get(status), timeouts, ptr::null_mut());
             return;
         }
         let mut soa_start: *mut struct_ares_soa_reply = ptr::null_mut();
+        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         let result = unsafe { ares_parse_soa_reply(buffer, buffer_length, &mut soa_start) };
         if result != ARES_SUCCESS {
             this.on_soa(Error::get(result), timeouts, ptr::null_mut());
@@ -1260,7 +1296,6 @@ pub struct struct_ares_uri_reply {
     pub ttl: c_int,
 }
 
-#[derive(Default)]
 pub struct struct_any_reply {
     pub a_reply: Option<Box<hostent_with_ttls>>,
     pub aaaa_reply: Option<Box<hostent_with_ttls>>,
@@ -1274,8 +1309,22 @@ pub struct struct_any_reply {
     pub caa_reply: *mut struct_ares_caa_reply,
 }
 
-// TODO(port): `Default` derive on raw pointers requires they be `null`; if the
-// derive doesn't apply, write `impl Default` by hand zeroing each FFI field.
+impl Default for struct_any_reply {
+    fn default() -> Self {
+        Self {
+            a_reply: None,
+            aaaa_reply: None,
+            mx_reply: ptr::null_mut(),
+            ns_reply: ptr::null_mut(),
+            txt_reply: ptr::null_mut(),
+            srv_reply: ptr::null_mut(),
+            ptr_reply: ptr::null_mut(),
+            naptr_reply: ptr::null_mut(),
+            soa_reply: ptr::null_mut(),
+            caa_reply: ptr::null_mut(),
+        }
+    }
+}
 
 pub trait AnyHandler: Sized {
     fn on_any(&mut self, status: Option<Error>, timeouts: i32, results: Option<Box<struct_any_reply>>);
@@ -1291,6 +1340,7 @@ impl struct_any_reply {
         buffer: *mut u8,
         buffer_length: c_int,
     ) {
+        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
         let this = unsafe { &mut *(ctx as *mut T) };
         if status != ARES_SUCCESS {
             this.on_any(Error::get(status), timeouts, None);
@@ -1317,6 +1367,7 @@ impl struct_any_reply {
             Err(err) => last_error = Some(err as c_int),
         }
 
+        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         let mut result = unsafe { ares_parse_mx_reply(buffer, buffer_length, &mut reply.mx_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
@@ -1324,6 +1375,7 @@ impl struct_any_reply {
             last_error = Some(result);
         }
 
+        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         result = unsafe { ares_parse_ns_reply(buffer, buffer_length, &mut reply.ns_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
@@ -1331,6 +1383,7 @@ impl struct_any_reply {
             last_error = Some(result);
         }
 
+        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         result = unsafe { ares_parse_txt_reply(buffer, buffer_length, &mut reply.txt_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
@@ -1338,6 +1391,7 @@ impl struct_any_reply {
             last_error = Some(result);
         }
 
+        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         result = unsafe { ares_parse_srv_reply(buffer, buffer_length, &mut reply.srv_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
@@ -1345,6 +1399,7 @@ impl struct_any_reply {
             last_error = Some(result);
         }
 
+        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         result = unsafe {
             ares_parse_ptr_reply(buffer, buffer_length, ptr::null(), 0, AF::INET, &mut reply.ptr_reply)
         };
@@ -1354,6 +1409,7 @@ impl struct_any_reply {
             last_error = Some(result);
         }
 
+        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         result = unsafe { ares_parse_naptr_reply(buffer, buffer_length, &mut reply.naptr_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
@@ -1361,6 +1417,7 @@ impl struct_any_reply {
             last_error = Some(result);
         }
 
+        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         result = unsafe { ares_parse_soa_reply(buffer, buffer_length, &mut reply.soa_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
@@ -1368,6 +1425,7 @@ impl struct_any_reply {
             last_error = Some(result);
         }
 
+        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         result = unsafe { ares_parse_caa_reply(buffer, buffer_length, &mut reply.caa_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
@@ -1390,6 +1448,7 @@ impl Drop for struct_any_reply {
         // Zig: `inline for (@typeInfo(..).fields)` — written out by hand.
         // a_reply / aaaa_reply are Box<hostent_with_ttls>; their Drop frees the
         // inner hostent via ares_free_hostent.
+        // SAFETY: each field is either null or a c-ares allocation matching its free fn.
         unsafe {
             if !self.mx_reply.is_null() { ares_free_data(self.mx_reply as *mut c_void); }
             if !self.ns_reply.is_null() { ares_free_hostent(self.ns_reply); }
@@ -1855,6 +1914,6 @@ type struct_sockaddr = sockaddr;
 // PORT STATUS
 //   source:     src/cares_sys/c_ares.zig (1553 lines)
 //   confidence: medium
-//   todos:      10
+//   todos:      9
 //   notes:      comptime callback-wrapper pattern reshaped to per-reply traits; Channel::resolve uses ResolveHandler trait in place of @field/comptime-string dispatch; bun_sys sockaddr/EAI/AF paths need confirmation
 // ──────────────────────────────────────────────────────────────────────────

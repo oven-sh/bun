@@ -87,13 +87,6 @@ pub struct NodeModulesFolder {
 }
 
 impl NodeModulesFolder {
-    pub fn deinit(&mut self) {
-        // PORT NOTE: zig clearAndFree — Vec<u8>::drop handles this; kept for explicit
-        // early-release call sites in install loops below.
-        self.path.clear();
-        self.path.shrink_to_fit();
-    }
-
     /// Since the stack size of these functions are rather large, let's not let them be inlined.
     #[inline(never)]
     fn directory_exists_at_without_opening_directories(
@@ -684,7 +677,6 @@ impl<'a> PackageInstaller<'a> {
                         name,
                         unsafe { &*resolution },
                     );
-                    self.node_modules.deinit();
                 }
                 self.trees[i].pending_installs.clear();
             }
@@ -890,7 +882,6 @@ impl<'a> PackageInstaller<'a> {
                     name,
                     unsafe { &*callback_resolution },
                 );
-                self.node_modules.deinit();
             }
             self.node_modules = prev_node_modules;
             self.current_tree_id = prev_tree_id;
@@ -1233,27 +1224,20 @@ impl<'a> PackageInstaller<'a> {
                     installer.cache_dir = bun_sys::cwd();
                 } else {
                     let global_link_dir = self.manager.global_link_dir_path();
-                    let ptr = self.folder_path_buf.as_mut_ptr();
-                    let mut remain: &mut [u8] = self.folder_path_buf.as_mut_slice();
-                    // SAFETY: ptr aliases remain; we only use ptr for the final length calc.
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(
-                            global_link_dir.as_ptr(),
-                            ptr,
-                            global_link_dir.len(),
-                        );
-                    }
-                    remain = &mut remain[global_link_dir.len()..];
+                    let buf = self.folder_path_buf.as_mut_slice();
+                    let mut len = 0usize;
+                    buf[len..len + global_link_dir.len()].copy_from_slice(global_link_dir);
+                    len += global_link_dir.len();
                     if global_link_dir[global_link_dir.len() - 1] != SEP {
-                        remain[0] = SEP;
-                        remain = &mut remain[1..];
+                        buf[len] = SEP;
+                        len += 1;
                     }
-                    remain[..folder.len()].copy_from_slice(folder);
-                    remain = &mut remain[folder.len()..];
-                    remain[0] = 0;
-                    let len = (remain.as_ptr() as usize) - (ptr as usize);
+                    buf[len..len + folder.len()].copy_from_slice(folder);
+                    len += folder.len();
+                    buf[len] = 0;
                     // SAFETY: buf[len] == 0 written above
-                    installer.cache_dir_subpath = unsafe { ZStr::from_raw(ptr, len) };
+                    installer.cache_dir_subpath =
+                        unsafe { ZStr::from_raw(self.folder_path_buf.as_ptr(), len) };
                     installer.cache_dir = directory;
                 }
             }

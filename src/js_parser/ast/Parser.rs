@@ -685,6 +685,7 @@ impl<'a> Parser<'a> {
                             }
                         } else {
                             let mut sliced = BumpVec::<Stmt>::with_capacity_in(1, p.bump);
+                            // SAFETY: capacity for 1 reserved by with_capacity_in above; element written immediately below before any read.
                             unsafe { sliced.set_len(1) };
                             sliced[0] = *stmt;
                             p.append_part(&mut parts, sliced.as_mut_slice())?;
@@ -711,6 +712,7 @@ impl<'a> Parser<'a> {
                         };
 
                         let mut sliced = BumpVec::<Stmt>::with_capacity_in(1, p.bump);
+                        // SAFETY: capacity for 1 reserved by with_capacity_in above; element written immediately below before any read.
                         unsafe { sliced.set_len(1) };
                         sliced[0] = *stmt;
                         p.append_part(parts_list, sliced.as_mut_slice())?;
@@ -723,6 +725,7 @@ impl<'a> Parser<'a> {
                         let should_move = !p.options.bundle && class.class.can_be_moved();
 
                         let mut sliced = BumpVec::<Stmt>::with_capacity_in(1, p.bump);
+                        // SAFETY: capacity for 1 reserved by with_capacity_in above; element written immediately below before any read.
                         unsafe { sliced.set_len(1) };
                         sliced[0] = *stmt;
                         p.append_part(&mut parts, sliced.as_mut_slice())?;
@@ -740,6 +743,7 @@ impl<'a> Parser<'a> {
                         // https://github.com/oven-sh/bun/issues/1961
                         let should_move = !p.options.bundle && value.can_be_moved();
                         let mut sliced = BumpVec::<Stmt>::with_capacity_in(1, p.bump);
+                        // SAFETY: capacity for 1 reserved by with_capacity_in above; element written immediately below before any read.
                         unsafe { sliced.set_len(1) };
                         sliced[0] = *stmt;
                         p.append_part(&mut parts, sliced.as_mut_slice())?;

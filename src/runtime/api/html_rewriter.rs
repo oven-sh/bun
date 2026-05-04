@@ -110,11 +110,13 @@ impl HTMLRewriter {
         }
 
         let selector = scopeguard::ScopeGuard::into_inner(selector_guard);
-        // TODO(port): Rc<LOLHTMLContext> needs interior mutability to push here;
-        // Zig mutates through *LOLHTMLContext directly. Phase B: RefCell or
-        // restructure to IntrusiveRc with &mut access.
+        // TODO(port): KNOWN-WRONG — Rc::get_mut returns None (→ panic) once
+        // begin_transform() has cloned the Rc, but the Zig mutates through
+        // *LOLHTMLContext unconditionally and HTMLRewriter is reusable after
+        // transform(). Phase B: switch context to bun_ptr::IntrusiveRc<LOLHTMLContext>
+        // (or Rc<RefCell<_>>) so push() works through a shared handle.
         let ctx = Rc::get_mut(&mut self.context)
-            .expect("HTMLRewriter.context uniquely owned during builder phase");
+            .expect("TODO(port): context shared after transform(); see note above");
         ctx.selectors.push(selector);
         ctx.element_handlers.push(handler);
         Ok(call_frame.this())
@@ -146,8 +148,10 @@ impl HTMLRewriter {
             );
         }
 
+        // TODO(port): KNOWN-WRONG — see on_() above; Rc::get_mut panics once
+        // begin_transform() has cloned the Rc. Phase B: IntrusiveRc / RefCell.
         let ctx = Rc::get_mut(&mut self.context)
-            .expect("HTMLRewriter.context uniquely owned during builder phase");
+            .expect("TODO(port): context shared after transform(); see note above");
         ctx.document_handlers.push(handler);
         Ok(call_frame.this())
     }
@@ -178,6 +182,8 @@ impl HTMLRewriter {
 
     pub fn transform_(&mut self, global: &JSGlobalObject, response_value: JSValue) -> JsResult<JSValue> {
         if let Some(response) = response_value.as_::<Response>() {
+            // SAFETY: response is the m_ctx of a live JS Response (response_value
+            // is on the stack, conservatively scanned).
             let body_value = unsafe { (*response).get_body_value() };
             if matches!(*body_value, Body::Value::Used) {
                 return global.throw_invalid_arguments("Response body already used");
@@ -215,7 +221,11 @@ impl HTMLRewriter {
                 false,
             )));
             // defer resp.finalize();
-            let _resp_guard = scopeguard::guard(resp, |r| unsafe { Response::finalize(r) });
+            let _resp_guard = scopeguard::guard(resp, |r| {
+                // SAFETY: r is the Box::into_raw allocation from above; finalize
+                // takes ownership and frees it exactly once.
+                unsafe { Response::finalize(r) }
+            });
 
             let out_response_value = self.begin_transform(global, resp)?;
             // Check if the returned value is an error and throw it properly
@@ -226,12 +236,18 @@ impl HTMLRewriter {
             let Some(out_response) = out_response_value.as_::<Response>() else {
                 return Ok(out_response_value);
             };
+            // SAFETY: out_response is the m_ctx of out_response_value (kept alive
+            // on the stack via ensure_still_alive above).
             let mut blob = unsafe { (*out_response).get_body_value().use_as_any_blob_allow_non_utf8_string() };
 
-            let _out_guard = scopeguard::guard((out_response_value, out_response), |(v, r)| unsafe {
-                let _ = Response::js::dangerously_set_ptr(v, core::ptr::null_mut());
-                // Manually invoke the finalizer to ensure it does what we want
-                Response::finalize(r);
+            let _out_guard = scopeguard::guard((out_response_value, out_response), |(v, r)| {
+                // SAFETY: r is the m_ctx pointer detached from v here, then
+                // finalized exactly once (Zig: dangerouslySetPtr + finalize).
+                unsafe {
+                    let _ = Response::js::dangerously_set_ptr(v, core::ptr::null_mut());
+                    // Manually invoke the finalizer to ensure it does what we want
+                    Response::finalize(r);
+                }
             });
 
             return match kind {
@@ -366,6 +382,8 @@ impl HTMLRewriterLoader {
         // semantics this would be a clone; here LOLHTMLContext is owned by
         // value. Phase B: confirm whether HTMLRewriterLoader is dead code (it
         // is not referenced by HTMLRewriter.transform).
+        // SAFETY: context points at a fully-initialized LOLHTMLContext owned by
+        // the caller; Zig does a struct copy (`self.context = context.*`).
         self.context = unsafe { core::ptr::read(context) };
         self.output = output;
 
@@ -439,6 +457,8 @@ impl HTMLRewriterLoader {
 // ───────────────────────── BufferOutputSink ──────────────────────────────
 
 pub struct BufferOutputSink {
+    // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
+    // per PORTING.md (intrusive RefCount; *Self crosses FFI as lol-html userdata).
     ref_count: Cell<u32>,
     pub global: &'static JSGlobalObject, // JSC_BORROW
     pub bytes: MutableString,
@@ -474,6 +494,8 @@ impl BufferOutputSink {
     ) -> JsResult<JSValue> {
         // TODO(port): JSC_BORROW lifetime — Zig stores *JSGlobalObject by raw
         // pointer; storing &'static here is a Phase-A approximation.
+        // SAFETY: JSGlobalObject outlives the sink (VM-lifetime; sink is freed
+        // before VM teardown).
         let global_static: &'static JSGlobalObject = unsafe { &*(global as *const _) };
 
         let sink = Box::into_raw(Box::new(BufferOutputSink {
@@ -489,6 +511,8 @@ impl BufferOutputSink {
         }));
         // defer sink.deref();
         let _sink_guard = scopeguard::guard(sink, |s| BufferOutputSink::deref(s));
+        // SAFETY: sink was just allocated via Box::into_raw above; refcount==1
+        // and no other alias exists yet.
         let sink_ref = unsafe { &mut *sink };
 
         let result = Box::into_raw(Box::new(Response::init(
@@ -507,6 +531,8 @@ impl BufferOutputSink {
 
         sink_ref.response = result;
         let mut sink_error: JSValue = JSValue::ZERO;
+        // SAFETY: original is a live *Response passed from begin_transform; its
+        // JS wrapper is on the caller's stack.
         let input_size = unsafe { (*original).get_body_len() };
         let vm = global.bun_vm();
 
@@ -546,11 +572,15 @@ impl BufferOutputSink {
         sink_ref.rewriter = match built {
             Ok(r) => r,
             Err(_) => {
+                // SAFETY: result was Box::into_raw'd above and never handed to
+                // JS; finalize takes ownership and frees it once.
                 unsafe { Response::finalize(result) };
                 return Ok(create_lolhtml_error(global));
             }
         };
 
+        // SAFETY: result and original are both live *Response (result allocated
+        // above, original kept alive by caller); no aliasing &mut exists.
         unsafe {
             (*result).set_init(
                 (*original).get_method(),
@@ -565,12 +595,16 @@ impl BufferOutputSink {
         }
 
         // Hold off on cloning until we're actually done.
+        // SAFETY: sink_ref.response == result (set above), live heap allocation.
         let response_js_value = unsafe { (*sink_ref.response).to_js(sink_ref.global) };
         sink_ref.response_value.set(global, response_js_value);
 
+        // SAFETY: result/original are live *Response (see SAFETY note above).
         unsafe { (*result).set_url((*original).get_url().clone()) };
 
+        // SAFETY: original is a live *Response kept alive by caller.
         let value = unsafe { (*original).get_body_value() };
+        // SAFETY: original is a live *Response kept alive by caller.
         let owned_readable_stream = unsafe { (*original).get_body_readable_stream(sink_ref.global) };
         sink_ref.ref_();
         sink_ref.body_value_bufferer = Some(webcore::Body::ValueBufferer::init(
@@ -625,9 +659,13 @@ impl BufferOutputSink {
         is_async: bool,
     ) {
         let _g = scopeguard::guard(sink, |s| BufferOutputSink::deref(s));
+        // SAFETY: sink was ref'd in init() before scheduling this callback;
+        // refcount > 0 so the allocation is live.
         let sink = unsafe { &mut *sink };
 
         if let Some(err) = js_err {
+            // SAFETY: sink.response is the heap Response allocated in init() and
+            // kept alive by sink.response_value (Strong root).
             let sink_body_value = unsafe { (*sink.response).get_body_value() };
             if matches!(sink_body_value, Body::Value::Locked(l)
                 if l.task as usize == sink as *mut _ as usize && l.promise.is_none())
@@ -678,6 +716,7 @@ impl BufferOutputSink {
         // SAFETY: rewriter set by init().
         if unsafe { lolhtml::HTMLRewriter::write(self.rewriter, bytes) }.is_err() {
             if is_async {
+                // SAFETY: response == self.response, kept alive by response_value Strong.
                 let _ = unsafe { (*response).get_body_value() }
                     .to_error_instance(Body::Value::ValueError::Message(create_lolhtml_string_error()), global);
                 // TODO: properly propagate exception upwards
@@ -687,8 +726,10 @@ impl BufferOutputSink {
             }
         }
 
+        // SAFETY: rewriter set by init() and not yet freed.
         if unsafe { lolhtml::HTMLRewriter::end(self.rewriter) }.is_err() {
             if is_async {
+                // SAFETY: response == self.response, kept alive by response_value Strong.
                 let _ = unsafe { (*response).get_body_value() }
                     .to_error_instance(Body::Value::ValueError::Message(create_lolhtml_string_error()), global);
                 // TODO: properly propagate exception upwards
@@ -702,6 +743,8 @@ impl BufferOutputSink {
     }
 
     pub fn done(&mut self) {
+        // SAFETY: self.response is kept alive by self.response_value (Strong
+        // root) for the lifetime of this sink.
         let body_value = unsafe { (*self.response).get_body_value() };
         let mut prev_value = core::mem::replace(
             body_value,
@@ -739,6 +782,10 @@ impl Drop for BufferOutputSink {
 // ──────────────────────── DocumentHandler ────────────────────────────────
 
 pub struct DocumentHandler {
+    // TODO(port): bare JSValue heap fields kept alive via JSC gcProtect — the
+    // Zig calls .protect()/.unprotect() so this is sound in practice, but
+    // PORTING.md flags bare JSValue on heap structs. Evaluate bun_jsc::Strong
+    // in Phase B (would let us drop the manual protect/unprotect calls).
     pub on_doc_type_callback: Option<JSValue>,
     pub on_comment_callback: Option<JSValue>,
     pub on_text_callback: Option<JSValue>,
@@ -782,8 +829,9 @@ impl DocumentHandler {
     }
 
     pub fn init(global: &JSGlobalObject, this_object: JSValue) -> JsResult<DocumentHandler> {
+        // SAFETY: JSC_BORROW — JSGlobalObject outlives every handler (VM-lifetime).
         let global_static: &'static JSGlobalObject = unsafe { &*(global as *const _) };
-        let mut handler = DocumentHandler {
+        let handler = DocumentHandler {
             on_doc_type_callback: None,
             on_comment_callback: None,
             on_text_callback: None,
@@ -797,11 +845,16 @@ impl DocumentHandler {
         }
 
         // errdefer: unprotect any callbacks we've protected so far on failure.
-        let guard = scopeguard::guard(&mut handler, |h| {
-            if let Some(cb) = h.on_doc_type_callback { cb.unprotect(); }
-            if let Some(cb) = h.on_comment_callback { cb.unprotect(); }
-            if let Some(cb) = h.on_text_callback { cb.unprotect(); }
-            if let Some(cb) = h.on_end_callback { cb.unprotect(); }
+        // Guard the OWNED value (not &mut) so the success path returns it by
+        // value via ScopeGuard::into_inner — no zeroed placeholder needed.
+        let mut guard = scopeguard::guard(handler, |mut h| {
+            if let Some(cb) = h.on_doc_type_callback.take() { cb.unprotect(); }
+            if let Some(cb) = h.on_comment_callback.take() { cb.unprotect(); }
+            if let Some(cb) = h.on_text_callback.take() { cb.unprotect(); }
+            if let Some(cb) = h.on_end_callback.take() { cb.unprotect(); }
+            // this_object was never protected on the error path; neutralize so
+            // Drop's unprotect() is a no-op.
+            h.this_object = JSValue::ZERO;
         });
 
         if let Some(val) = this_object.get(global, "doctype")? {
@@ -838,12 +891,7 @@ impl DocumentHandler {
 
         let handler = scopeguard::ScopeGuard::into_inner(guard);
         this_object.protect();
-        Ok(core::mem::replace(
-            handler,
-            // PORT NOTE: reshaped for borrowck — guard borrows &mut handler.
-            // TODO(port): tidy by guarding an owned value instead of &mut.
-            unsafe { core::mem::zeroed() },
-        ))
+        Ok(handler)
     }
 }
 
@@ -913,6 +961,8 @@ where
     // When using RefCount, we don't check the count value directly as it's an
     // opaque type now. The init values are handled by Box::new with Cell::new(1).
 
+    // SAFETY: wrapper is a live heap allocation (ref'd above) for the entire
+    // scope of this guard; deref runs at most once on this path.
     let _guard = scopeguard::guard(wrapper, |w| unsafe {
         if Z::HAS_INVALIDATE {
             // Some wrapper types (Element) hand out sub-objects that borrow
@@ -925,6 +975,9 @@ where
         Z::deref(w);
     });
 
+    // SAFETY: `this` is the Box<ElementHandler>/Box<DocumentHandler> userdata
+    // pointer we registered with lol-html; it lives in LOLHTMLContext for the
+    // duration of the rewriter.
     let this = unsafe { &mut *this };
     let global = this.global();
 
@@ -936,6 +989,8 @@ where
     let result = match cb.call(
         global,
         this.this_object(),
+        // SAFETY: wrapper is a live heap allocation (ref'd above; guard deref
+        // runs after this call).
         &[unsafe { (*wrapper).to_js(global) }],
     ) {
         Ok(v) => v,
@@ -996,6 +1051,8 @@ where
 // ───────────────────────── ElementHandler ────────────────────────────────
 
 pub struct ElementHandler {
+    // TODO(port): bare JSValue heap fields kept alive via JSC gcProtect —
+    // evaluate bun_jsc::Strong in Phase B (see DocumentHandler note).
     pub on_element_callback: Option<JSValue>,
     pub on_comment_callback: Option<JSValue>,
     pub on_text_callback: Option<JSValue>,
@@ -1005,8 +1062,9 @@ pub struct ElementHandler {
 
 impl ElementHandler {
     pub fn init(global: &JSGlobalObject, this_object: JSValue) -> JsResult<ElementHandler> {
+        // SAFETY: JSC_BORROW — JSGlobalObject outlives every handler (VM-lifetime).
         let global_static: &'static JSGlobalObject = unsafe { &*(global as *const _) };
-        let mut handler = ElementHandler {
+        let handler = ElementHandler {
             on_element_callback: None,
             on_comment_callback: None,
             on_text_callback: None,
@@ -1014,10 +1072,14 @@ impl ElementHandler {
             global: global_static,
         };
 
-        let guard = scopeguard::guard(&mut handler, |h| {
-            if let Some(cb) = h.on_comment_callback { cb.unprotect(); }
-            if let Some(cb) = h.on_element_callback { cb.unprotect(); }
-            if let Some(cb) = h.on_text_callback { cb.unprotect(); }
+        // errdefer: guard the OWNED value so success returns it via into_inner.
+        let mut guard = scopeguard::guard(handler, |mut h| {
+            if let Some(cb) = h.on_comment_callback.take() { cb.unprotect(); }
+            if let Some(cb) = h.on_element_callback.take() { cb.unprotect(); }
+            if let Some(cb) = h.on_text_callback.take() { cb.unprotect(); }
+            // this_object was never protected on the error path; neutralize so
+            // Drop's unprotect() is a no-op.
+            h.this_object = JSValue::ZERO;
         });
 
         if !this_object.is_object() {
@@ -1050,11 +1112,7 @@ impl ElementHandler {
 
         let handler = scopeguard::ScopeGuard::into_inner(guard);
         this_object.protect();
-        Ok(core::mem::replace(
-            handler,
-            // PORT NOTE: reshaped for borrowck — see DocumentHandler::init.
-            unsafe { core::mem::zeroed() },
-        ))
+        Ok(handler)
     }
 
     pub fn on_element(this: *mut Self, value: *mut lolhtml::Element) -> bool {
@@ -1141,6 +1199,8 @@ fn html_string_value(input: lolhtml::HTMLString, global_object: &JSGlobalObject)
 
 #[bun_jsc::JsClass]
 pub struct TextChunk {
+    // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
+    // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
     ref_count: Cell<u32>,
     pub text_chunk: *mut lolhtml_sys::TextChunk,
 }
@@ -1148,6 +1208,8 @@ pub struct TextChunk {
 impl TextChunk {
     pub fn ref_(&self) { self.ref_count.set(self.ref_count.get() + 1); }
     pub fn deref(this: *mut Self) {
+        // SAFETY: intrusive refcount — `this` is a live Box::into_raw allocation
+        // with ref_count >= 1; freed exactly once when it reaches 0.
         unsafe {
             let rc = (*this).ref_count.get() - 1;
             (*this).ref_count.set(rc);
@@ -1226,6 +1288,8 @@ impl TextChunk {
         if self.text_chunk.is_null() {
             return Ok(JSValue::UNDEFINED);
         }
+        // SAFETY: self.text_chunk is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         unsafe { lolhtml::TextChunk::remove(self.text_chunk) };
         Ok(call_frame.this())
     }
@@ -1235,6 +1299,8 @@ impl TextChunk {
         if self.text_chunk.is_null() {
             return Ok(JSValue::UNDEFINED);
         }
+        // SAFETY: self.text_chunk is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         BunString::create_utf8_for_js(global, unsafe { lolhtml::TextChunk::get_content(self.text_chunk) }.slice())
     }
 
@@ -1243,6 +1309,8 @@ impl TextChunk {
         if self.text_chunk.is_null() {
             return JSValue::UNDEFINED;
         }
+        // SAFETY: self.text_chunk is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         JSValue::from(unsafe { lolhtml::TextChunk::is_removed(self.text_chunk) })
     }
 
@@ -1251,6 +1319,8 @@ impl TextChunk {
         if self.text_chunk.is_null() {
             return JSValue::UNDEFINED;
         }
+        // SAFETY: self.text_chunk is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         JSValue::from(unsafe { lolhtml::TextChunk::is_last_in_text_node(self.text_chunk) })
     }
 
@@ -1271,6 +1341,8 @@ impl WrapperLike for TextChunk {
 
 #[bun_jsc::JsClass]
 pub struct DocType {
+    // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
+    // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
     ref_count: Cell<u32>,
     pub doctype: *mut lolhtml_sys::DocType,
 }
@@ -1278,6 +1350,8 @@ pub struct DocType {
 impl DocType {
     pub fn ref_(&self) { self.ref_count.set(self.ref_count.get() + 1); }
     pub fn deref(this: *mut Self) {
+        // SAFETY: intrusive refcount — `this` is a live Box::into_raw allocation
+        // with ref_count >= 1; freed exactly once when it reaches 0.
         unsafe {
             let rc = (*this).ref_count.get() - 1;
             (*this).ref_count.set(rc);
@@ -1302,6 +1376,8 @@ impl DocType {
         if self.doctype.is_null() {
             return JSValue::UNDEFINED;
         }
+        // SAFETY: self.doctype is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         let str = unsafe { lolhtml::DocType::get_name(self.doctype) }.slice();
         if str.is_empty() {
             return JSValue::NULL;
@@ -1314,6 +1390,8 @@ impl DocType {
         if self.doctype.is_null() {
             return JSValue::UNDEFINED;
         }
+        // SAFETY: self.doctype is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         let str = unsafe { lolhtml::DocType::get_system_id(self.doctype) }.slice();
         if str.is_empty() {
             return JSValue::NULL;
@@ -1326,6 +1404,8 @@ impl DocType {
         if self.doctype.is_null() {
             return JSValue::UNDEFINED;
         }
+        // SAFETY: self.doctype is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         let str = unsafe { lolhtml::DocType::get_public_id(self.doctype) }.slice();
         if str.is_empty() {
             return JSValue::NULL;
@@ -1338,6 +1418,8 @@ impl DocType {
         if self.doctype.is_null() {
             return Ok(JSValue::UNDEFINED);
         }
+        // SAFETY: self.doctype is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         unsafe { lolhtml::DocType::remove(self.doctype) };
         Ok(call_frame.this())
     }
@@ -1347,6 +1429,8 @@ impl DocType {
         if self.doctype.is_null() {
             return JSValue::UNDEFINED;
         }
+        // SAFETY: self.doctype is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         JSValue::from(unsafe { lolhtml::DocType::is_removed(self.doctype) })
     }
 }
@@ -1363,6 +1447,8 @@ impl WrapperLike for DocType {
 
 #[bun_jsc::JsClass]
 pub struct DocEnd {
+    // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
+    // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
     ref_count: Cell<u32>,
     pub doc_end: *mut lolhtml_sys::DocEnd,
 }
@@ -1370,6 +1456,8 @@ pub struct DocEnd {
 impl DocEnd {
     pub fn ref_(&self) { self.ref_count.set(self.ref_count.get() + 1); }
     pub fn deref(this: *mut Self) {
+        // SAFETY: intrusive refcount — `this` is a live Box::into_raw allocation
+        // with ref_count >= 1; freed exactly once when it reaches 0.
         unsafe {
             let rc = (*this).ref_count.get() - 1;
             (*this).ref_count.set(rc);
@@ -1439,6 +1527,8 @@ impl WrapperLike for DocEnd {
 
 #[bun_jsc::JsClass]
 pub struct Comment {
+    // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
+    // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
     ref_count: Cell<u32>,
     pub comment: *mut lolhtml_sys::Comment,
 }
@@ -1446,6 +1536,8 @@ pub struct Comment {
 impl Comment {
     pub fn ref_(&self) { self.ref_count.set(self.ref_count.get() + 1); }
     pub fn deref(this: *mut Self) {
+        // SAFETY: intrusive refcount — `this` is a live Box::into_raw allocation
+        // with ref_count >= 1; freed exactly once when it reaches 0.
         unsafe {
             let rc = (*this).ref_count.get() - 1;
             (*this).ref_count.set(rc);
@@ -1523,6 +1615,8 @@ impl Comment {
         if self.comment.is_null() {
             return Ok(JSValue::NULL);
         }
+        // SAFETY: self.comment is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         unsafe { lolhtml::Comment::remove(self.comment) };
         Ok(call_frame.this())
     }
@@ -1532,19 +1626,23 @@ impl Comment {
         if self.comment.is_null() {
             return Ok(JSValue::NULL);
         }
+        // SAFETY: self.comment is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         unsafe { lolhtml::Comment::get_text(self.comment) }.to_js(global_object)
     }
 
     #[bun_jsc::host_fn(setter)]
-    pub fn set_text(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+    pub fn set_text(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
         if self.comment.is_null() {
-            return Ok(());
+            return Ok(true);
         }
         let text = value.to_slice(global)?;
+        // SAFETY: self.comment is non-null (checked above) and valid for the
+        // duration of the lol-html callback that owns it.
         if unsafe { lolhtml::Comment::set_text(self.comment, text.slice()) }.is_err() {
             return global.throw_value(create_lolhtml_error(global));
         }
-        Ok(())
+        Ok(true)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1552,6 +1650,8 @@ impl Comment {
         if self.comment.is_null() {
             return JSValue::UNDEFINED;
         }
+        // SAFETY: self.comment is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         JSValue::from(unsafe { lolhtml::Comment::is_removed(self.comment) })
     }
 
@@ -1572,11 +1672,15 @@ impl WrapperLike for Comment {
 
 #[bun_jsc::JsClass]
 pub struct EndTag {
+    // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
+    // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
     ref_count: Cell<u32>,
     pub end_tag: *mut lolhtml_sys::EndTag,
 }
 
 pub struct EndTagHandler {
+    // TODO(port): bare JSValue heap field kept alive via JSC gcProtect —
+    // evaluate bun_jsc::Strong in Phase B (see DocumentHandler note).
     pub callback: Option<JSValue>,
     pub global: &'static JSGlobalObject, // JSC_BORROW
 }
@@ -1600,6 +1704,8 @@ impl EndTagHandler {
 impl EndTag {
     pub fn ref_(&self) { self.ref_count.set(self.ref_count.get() + 1); }
     pub fn deref(this: *mut Self) {
+        // SAFETY: intrusive refcount — `this` is a live Box::into_raw allocation
+        // with ref_count >= 1; freed exactly once when it reaches 0.
         unsafe {
             let rc = (*this).ref_count.get() - 1;
             (*this).ref_count.set(rc);
@@ -1681,6 +1787,8 @@ impl EndTag {
         if self.end_tag.is_null() {
             return Ok(JSValue::UNDEFINED);
         }
+        // SAFETY: self.end_tag is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         unsafe { lolhtml::EndTag::remove(self.end_tag) };
         Ok(call_frame.this())
     }
@@ -1690,19 +1798,23 @@ impl EndTag {
         if self.end_tag.is_null() {
             return Ok(JSValue::UNDEFINED);
         }
+        // SAFETY: self.end_tag is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         unsafe { lolhtml::EndTag::get_name(self.end_tag) }.to_js(global_object)
     }
 
     #[bun_jsc::host_fn(setter)]
-    pub fn set_name(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+    pub fn set_name(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
         if self.end_tag.is_null() {
-            return Ok(());
+            return Ok(true);
         }
         let text = value.to_slice(global)?;
+        // SAFETY: self.end_tag is non-null (checked above) and valid for the
+        // duration of the lol-html callback that owns it.
         if unsafe { lolhtml::EndTag::set_name(self.end_tag, text.slice()) }.is_err() {
             return global.throw_value(create_lolhtml_error(global));
         }
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -1718,6 +1830,8 @@ impl WrapperLike for EndTag {
 
 #[bun_jsc::JsClass]
 pub struct AttributeIterator {
+    // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
+    // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
     ref_count: Cell<u32>,
     pub iterator: *mut lolhtml_sys::AttributeIterator,
 }
@@ -1725,6 +1839,8 @@ pub struct AttributeIterator {
 impl AttributeIterator {
     pub fn ref_(&self) { self.ref_count.set(self.ref_count.get() + 1); }
     pub fn deref(this: *mut Self) {
+        // SAFETY: intrusive refcount — `this` is a live Box::into_raw allocation
+        // with ref_count >= 1; freed exactly once when it reaches 0.
         unsafe {
             let rc = (*this).ref_count.get() - 1;
             (*this).ref_count.set(rc);
@@ -1751,6 +1867,8 @@ impl AttributeIterator {
     }
 
     pub fn finalize(this: *mut AttributeIterator) {
+        // SAFETY: called by JSC codegen finalize on the mutator thread; `this`
+        // is the live m_ctx payload.
         unsafe { (*this).detach() };
         Self::deref(this);
     }
@@ -1770,6 +1888,8 @@ impl AttributeIterator {
             ));
         }
 
+        // SAFETY: self.iterator is non-null (checked above) and valid until
+        // detached by Element::invalidate or exhausted below.
         let Some(attribute) = (unsafe { lolhtml::AttributeIterator::next(self.iterator) }) else {
             // SAFETY: iterator non-null (checked above); freed once here.
             unsafe { lolhtml::AttributeIterator::deinit(self.iterator) };
@@ -1805,6 +1925,8 @@ impl AttributeIterator {
 
 #[bun_jsc::JsClass]
 pub struct Element {
+    // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
+    // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
     ref_count: Cell<u32>,
     pub element: *mut lolhtml_sys::Element,
     /// AttributeIterator instances created by `getAttributes()` that borrow
@@ -1817,6 +1939,8 @@ pub struct Element {
 impl Element {
     pub fn ref_(&self) { self.ref_count.set(self.ref_count.get() + 1); }
     pub fn deref(this: *mut Self) {
+        // SAFETY: intrusive refcount — `this` is a live Box::into_raw allocation
+        // with ref_count >= 1; freed exactly once when it reaches 0.
         unsafe {
             let rc = (*this).ref_count.get() - 1;
             (*this).ref_count.set(rc);
@@ -1845,7 +1969,8 @@ impl Element {
     /// is about to mutate the `Vec<Attribute>` the iterators borrow from.
     fn detach_attribute_iterators(&mut self) {
         for iter in self.attribute_iterators.drain(..) {
-            // SAFETY: iter is a live AttributeIterator we ref'd in get_attributes().
+            // SAFETY: iter is a live AttributeIterator we ref'd in get_attributes();
+            // ref_count >= 1 so the allocation is valid here.
             unsafe { (*iter).detach() };
             AttributeIterator::deref(iter);
         }
@@ -1874,12 +1999,17 @@ impl Element {
             return Ok(ZigString::init(b"Expected a function").with_encoding().to_js(global_object));
         }
 
+        // SAFETY: JSC_BORROW — JSGlobalObject outlives the EndTagHandler
+        // (VM-lifetime; handler freed before VM teardown).
         let global_static: &'static JSGlobalObject = unsafe { &*(global_object as *const _) };
         let end_tag_handler = Box::into_raw(Box::new(EndTagHandler {
             global: global_static,
             callback: Some(function),
         }));
 
+        // SAFETY: self.element is non-null (checked above) and valid for the
+        // duration of the lol-html callback; end_tag_handler is a fresh Box
+        // whose ownership transfers to lol-html on success.
         if unsafe {
             lolhtml::Element::on_end_tag(
                 self.element,
@@ -1905,6 +2035,8 @@ impl Element {
             return Ok(JSValue::NULL);
         }
         let slice = name.to_slice();
+        // SAFETY: self.element is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         let attr = unsafe { lolhtml::Element::get_attribute(self.element, slice.slice()) };
 
         if attr.len == 0 {
@@ -1920,6 +2052,8 @@ impl Element {
             return JSValue::FALSE;
         }
         let slice = name.to_slice();
+        // SAFETY: self.element is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         match unsafe { lolhtml::Element::has_attribute(self.element, slice.slice()) } {
             Ok(b) => JSValue::from(b),
             Err(_) => create_lolhtml_error(global),
@@ -1944,6 +2078,8 @@ impl Element {
 
         let name_slice = name_.to_slice();
         let value_slice = value_.to_slice();
+        // SAFETY: self.element is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         if unsafe { lolhtml::Element::set_attribute(self.element, name_slice.slice(), value_slice.slice()) }.is_err() {
             return create_lolhtml_error(global_object);
         }
@@ -1966,6 +2102,8 @@ impl Element {
         self.detach_attribute_iterators();
 
         let name_slice = name.to_slice();
+        // SAFETY: self.element is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         if unsafe { lolhtml::Element::remove_attribute(self.element, name_slice.slice()) }.is_err() {
             return create_lolhtml_error(global_object);
         }
@@ -2040,6 +2178,8 @@ impl Element {
         if self.element.is_null() {
             return Ok(JSValue::UNDEFINED);
         }
+        // SAFETY: self.element is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         unsafe { lolhtml::Element::remove(self.element) };
         Ok(call_frame.this())
     }
@@ -2050,6 +2190,8 @@ impl Element {
         if self.element.is_null() {
             return Ok(JSValue::UNDEFINED);
         }
+        // SAFETY: self.element is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         unsafe { lolhtml::Element::remove_and_keep_content(self.element) };
         Ok(call_frame.this())
     }
@@ -2059,19 +2201,23 @@ impl Element {
         if self.element.is_null() {
             return Ok(JSValue::UNDEFINED);
         }
+        // SAFETY: self.element is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         html_string_value(unsafe { lolhtml::Element::tag_name(self.element) }, global_object)
     }
 
     #[bun_jsc::host_fn(setter)]
-    pub fn set_tag_name(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+    pub fn set_tag_name(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
         if self.element.is_null() {
-            return Ok(());
+            return Ok(true);
         }
         let text = value.to_slice(global)?;
+        // SAFETY: self.element is non-null (checked above) and valid for the
+        // duration of the lol-html callback that owns it.
         if unsafe { lolhtml::Element::set_tag_name(self.element, text.slice()) }.is_err() {
             return global.throw_value(create_lolhtml_error(global));
         }
-        Ok(())
+        Ok(true)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2079,6 +2225,8 @@ impl Element {
         if self.element.is_null() {
             return JSValue::UNDEFINED;
         }
+        // SAFETY: self.element is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         JSValue::from(unsafe { lolhtml::Element::is_removed(self.element) })
     }
 
@@ -2087,6 +2235,8 @@ impl Element {
         if self.element.is_null() {
             return JSValue::UNDEFINED;
         }
+        // SAFETY: self.element is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         JSValue::from(unsafe { lolhtml::Element::is_self_closing(self.element) })
     }
 
@@ -2095,6 +2245,8 @@ impl Element {
         if self.element.is_null() {
             return JSValue::UNDEFINED;
         }
+        // SAFETY: self.element is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         JSValue::from(unsafe { lolhtml::Element::can_have_content(self.element) })
     }
 
@@ -2114,6 +2266,8 @@ impl Element {
             return JSValue::UNDEFINED;
         }
 
+        // SAFETY: self.element is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
         let Some(iter) = (unsafe { lolhtml::Element::attributes(self.element) }) else {
             return create_lolhtml_error(global_object);
         };
@@ -2125,8 +2279,11 @@ impl Element {
         // lol-html's attribute iterator borrows from the element's attribute
         // buffer which is freed after the callback; leaking the iterator to JS
         // without detaching it would be a use-after-free.
+        // SAFETY: attr_iter is a fresh Box::into_raw allocation (refcount==1).
         unsafe { (*attr_iter).ref_() };
         self.attribute_iterators.push(attr_iter);
+        // SAFETY: attr_iter is live (refcount==2 now); to_js wraps it as the JS
+        // wrapper's m_ctx.
         unsafe { (*attr_iter).to_js(global_object) }
     }
 }
@@ -2145,6 +2302,6 @@ impl WrapperLike for Element {
 // PORT STATUS
 //   source:     src/runtime/api/html_rewriter.zig (2031 lines)
 //   confidence: medium
-//   todos:      15
-//   notes:      HandlerCallback comptime-reflection replaced with HandlerLike/WrapperLike traits + closures; Rc<LOLHTMLContext> needs interior mutability (Phase B); host_fn.wrapInstanceMethod shims left to #[bun_jsc::host_fn(method)] codegen; tmp_sync_error stack-ptr pattern preserved with NonNull but fragile.
+//   todos:      28
+//   notes:      HandlerCallback comptime-reflection replaced with HandlerLike/WrapperLike traits + closures; Rc<LOLHTMLContext> get_mut() is KNOWN-WRONG after transform() — Phase B must switch to IntrusiveRc/RefCell; intrusive RefCount left as hand-rolled Cell<u32> + ref_/deref (Phase B: bun_ptr::IntrusiveRc); bare-JSValue heap fields kept alive via gcProtect (Phase B: evaluate Strong); host_fn.wrapInstanceMethod shims left to #[bun_jsc::host_fn(method)] codegen; tmp_sync_error stack-ptr pattern preserved with NonNull but fragile.
 // ──────────────────────────────────────────────────────────────────────────

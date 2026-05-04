@@ -188,10 +188,10 @@ impl MediaQuery {
         let condition = if explicit_media_type.is_none() {
             Some(MediaCondition::parse_with_flags(
                 input,
-                QueryConditionFlags { allow_or: true, ..Default::default() },
+                QueryConditionFlags::ALLOW_OR,
             )?)
         } else if input.try_parse(|i| i.expect_ident_matching("and")).is_ok() {
-            Some(MediaCondition::parse_with_flags(input, QueryConditionFlags::default())?)
+            Some(MediaCondition::parse_with_flags(input, QueryConditionFlags::empty())?)
         } else {
             None
         };
@@ -229,7 +229,9 @@ impl MediaQuery {
                 dest.write_str("screen")?;
             }
             MediaType::Custom(desc) => {
-                dest.write_str(desc)?;
+                // SAFETY: arena-owned slice borrowed from parser input; input outlives MediaType.
+                // TODO(port): thread `'i` lifetime in Phase B and drop the raw pointer.
+                dest.write_str(unsafe { &**desc })?;
             }
         }
 
@@ -255,7 +257,7 @@ impl MediaQuery {
 /// Flags for `parse_query_condition`.
 // PORT NOTE: Zig `packed struct(u8)` with two bool fields → bitflags!
 bitflags::bitflags! {
-    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct QueryConditionFlags: u8 {
         /// Whether to allow top-level "or" boolean logic.
         const ALLOW_OR = 1 << 0;
@@ -275,9 +277,8 @@ impl QueryConditionFlags {
     }
 }
 
-// PORT NOTE: Zig packed-struct field-init `.{ .allow_or = true }` callsites are
-// kept readable via this builder; Phase B may collapse to `QueryConditionFlags::ALLOW_OR`.
-// TODO(port): unify callsites on bitflags constants directly.
+// PORT NOTE: Zig packed-struct field-init `.{ .allow_or = true }` callsites map
+// directly to bitflags constants (`QueryConditionFlags::ALLOW_OR`, `::empty()`).
 
 pub fn to_css_with_parens_if_needed<V: ToCss + ?Sized>(
     v: &V,
@@ -1516,6 +1517,6 @@ fn write_min_max<FeatureId: FeatureIdTrait>(
 // PORT STATUS
 //   source:     src/css/media_query.zig (1568 lines)
 //   confidence: medium
-//   todos:      5
-//   notes:      css crate needs unified `'i` input lifetime; QueryConditionFlags uses bitflags; Result<T> mapped to Ok/Err; arena→Vec/Box per LIFETIMES.tsv
+//   todos:      6
+//   notes:      css crate needs unified `'i` input lifetime; QueryConditionFlags uses bitflags constants; Result<T> mapped to Ok/Err; arena→Vec/Box per LIFETIMES.tsv
 // ──────────────────────────────────────────────────────────────────────────

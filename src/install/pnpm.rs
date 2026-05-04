@@ -1,8 +1,13 @@
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
-use bun_collections::StringArrayHashMap;
+use bun_collections::ArrayHashMap;
 use bun_js_parser::{self as js_ast, Expr, E};
+
+// Zig `bun.StringArrayHashMap(V)` → `bun_collections::ArrayHashMap<K,V>` per PORTING.md.
+// TODO(port): confirm key type — Zig stores borrowed `[]const u8` keys; using owned Box<[u8]>
+// here since allocator params were dropped and lifetimes are not threaded in Phase A.
+type StringArrayHashMap<V> = ArrayHashMap<Box<[u8]>, V>;
 use bun_logger as logger;
 use bun_semver::{self as semver, ExternalString, String};
 use bun_str::strings;
@@ -1089,6 +1094,12 @@ impl From<AllocError> for ParseAppendDependenciesError {
     }
 }
 
+impl From<ParseAppendDependenciesError> for bun_core::Error {
+    fn from(e: ParseAppendDependenciesError) -> Self {
+        bun_core::Error::from_name(<&'static str>::from(&e))
+    }
+}
+
 impl From<ParseAppendDependenciesError> for MigratePnpmLockfileError {
     fn from(e: ParseAppendDependenciesError) -> Self {
         match e {
@@ -2007,6 +2018,6 @@ fn update_package_json_after_migration(
 // PORT STATUS
 //   source:     src/install/pnpm.zig (1585 lines)
 //   confidence: medium
-//   todos:      12
-//   notes:      Heavy borrowck reshaping needed around Expr/E.Object mut borrows; Dependency.Behavior assumed bitflags consts; AutoAbsPath/Resolution constructors guessed; allocator params dropped per non-AST rules.
+//   todos:      14
+//   notes:      Heavy borrowck reshaping needed around Expr/E.Object mut borrows; Dependency.Behavior assumed bitflags consts; AutoAbsPath/Resolution constructors guessed; allocator params dropped per non-AST rules. StringArrayHashMap aliased to ArrayHashMap<Box<[u8]>,V>.
 // ──────────────────────────────────────────────────────────────────────────

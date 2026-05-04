@@ -66,12 +66,40 @@ impl CalcUnit {
     /// Zig: `bun.ComptimeEnumMap(CalcUnit).getAnyCase(f)`
     // TODO(port): phf custom hasher — case-insensitive lookup over &[u8].
     pub fn get_any_case(f: &[u8]) -> Option<Self> {
-        // PERF(port): Zig used a comptime perfect hash; this allocates nothing but
-        // does a linear strum match after lowercasing. Phase B: phf_map! over &[u8].
-        let s = core::str::from_utf8(f).ok()?;
-        s.parse::<CalcUnit>()
-            .ok()
-            .or_else(|| s.to_ascii_lowercase().parse().ok())
+        // PERF(port): Zig used a comptime perfect hash; this is a linear match on a
+        // stack-lowercased byte slice. Phase B: phf_map! over &[u8].
+        // §Strings: source bytes are &[u8], never &str/String — no from_utf8/to_ascii_lowercase().
+        if f.len() > 5 {
+            return None;
+        }
+        let mut buf = [0u8; 5];
+        for (i, b) in f.iter().enumerate() {
+            buf[i] = b.to_ascii_lowercase();
+        }
+        match &buf[..f.len()] {
+            b"abs" => Some(Self::Abs),
+            b"acos" => Some(Self::Acos),
+            b"asin" => Some(Self::Asin),
+            b"atan" => Some(Self::Atan),
+            b"atan2" => Some(Self::Atan2),
+            b"calc" => Some(Self::Calc),
+            b"clamp" => Some(Self::Clamp),
+            b"cos" => Some(Self::Cos),
+            b"exp" => Some(Self::Exp),
+            b"hypot" => Some(Self::Hypot),
+            b"log" => Some(Self::Log),
+            b"max" => Some(Self::Max),
+            b"min" => Some(Self::Min),
+            b"mod" => Some(Self::Mod),
+            b"pow" => Some(Self::Pow),
+            b"rem" => Some(Self::Rem),
+            b"round" => Some(Self::Round),
+            b"sign" => Some(Self::Sign),
+            b"sin" => Some(Self::Sin),
+            b"sqrt" => Some(Self::Sqrt),
+            b"tan" => Some(Self::Tan),
+            _ => None,
+        }
     }
 }
 
@@ -913,6 +941,7 @@ impl<V> Calc<V> {
         CssResult::Ok(val)
     }
 
+    // PERF(port): `args` was arena bulk-free (ArrayList fed input.allocator()) — profile in Phase B
     pub fn parse_hypot(args: &mut Vec<Self>) -> CssResult<Option<Self>> {
         if args.len() == 1 {
             let v = core::mem::replace(&mut args[0], Calc::Number(0.0));
@@ -1087,6 +1116,7 @@ impl<V> Calc<V> {
     /// I don't like how this function requires allocating a second ArrayList
     /// I am pretty sure we could do this reduction in place, or do it as the
     /// arguments are being parsed.
+    // PERF(port): `args`/`reduced` were arena bulk-free (ArrayList fed input.allocator()) — profile in Phase B
     fn reduce_args(args: &mut Vec<Self>, order: Ordering)
     where
         V: PartialOrd,
@@ -1179,8 +1209,10 @@ pub enum MathFunction<V> {
     /// The `calc()` function.
     Calc(Calc<V>),
     /// The `min()` function.
+    // PERF(port): was arena bulk-free (ArrayList fed input.allocator()) — profile in Phase B
     Min(Vec<Calc<V>>),
     /// The `max()` function.
+    // PERF(port): was arena bulk-free (ArrayList fed input.allocator()) — profile in Phase B
     Max(Vec<Calc<V>>),
     /// The `clamp()` function.
     Clamp {
@@ -1209,6 +1241,7 @@ pub enum MathFunction<V> {
     /// The `sign()` function.
     Sign(Calc<V>),
     /// The `hypot()` function.
+    // PERF(port): was arena bulk-free (ArrayList fed input.allocator()) — profile in Phase B
     Hypot(Vec<Calc<V>>),
 }
 
@@ -1459,7 +1492,7 @@ impl Default for RoundingStrategy {
 }
 
 fn arr2<T>(a: T, b: T) -> Vec<T> {
-    // PERF(port): was arena-backed ArrayList
+    // PERF(port): was arena bulk-free (ArrayList fed input.allocator()) — profile in Phase B
     vec![a, b]
 }
 
@@ -1549,6 +1582,6 @@ fn absf(a: f32) -> f32 {
 // PORT STATUS
 //   source:     src/css/values/calc.zig (1892 lines)
 //   confidence: medium
-//   todos:      15
-//   notes:      comptime `switch (V)` dispatch (intoValue/addValue/mulValueF32/intoCalc/trySign) needs a `CalcValue` trait in Phase B; closure-struct → Rust-closure reshape changes parse_ident plumbing (fn-pointer vs captured-ctx) and won't typecheck as-is; LIFETIMES.tsv chose Box over arena so allocator params dropped — verify CSS arena interaction; preserved likely Zig bug at clamp switch_val packing.
+//   todos:      17
+//   notes:      comptime `switch (V)` dispatch (intoValue/addValue/mulValueF32/intoCalc/trySign) needs a `CalcValue` trait in Phase B; closure-struct → Rust-closure reshape changes parse_ident plumbing (fn-pointer vs captured-ctx) and won't typecheck as-is; LIFETIMES.tsv chose Box over arena so allocator params dropped — Vec sites that were arena-fed now carry PERF(port) markers for Phase B benchmarking; preserved likely Zig bug at clamp switch_val packing.
 // ──────────────────────────────────────────────────────────────────────────

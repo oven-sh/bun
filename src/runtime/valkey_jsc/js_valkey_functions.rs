@@ -71,7 +71,7 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
 pub(crate) mod compile {
     use super::*;
 
-    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
     pub enum ClientStateRequirement {
         /// The client must be a subscriber (in subscription mode).
         Subscriber,
@@ -81,12 +81,11 @@ pub(crate) mod compile {
         DontCare,
     }
 
-    pub(crate) fn test_correct_state(
+    pub(crate) fn test_correct_state<const REQ: ClientStateRequirement>(
         this: &JSValkeyClient,
         js_client_prototype_function_name: &[u8],
-        client_state_requirement: ClientStateRequirement,
     ) -> JsResult<()> {
-        match client_state_requirement {
+        match REQ {
             ClientStateRequirement::Subscriber => {
                 require_subscriber(this, js_client_prototype_function_name)
             }
@@ -117,7 +116,7 @@ macro_rules! cmd_noargs {
             global: &JSGlobalObject,
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
-            compile::test_correct_state(this, $name, compile::ClientStateRequirement::$state)?;
+            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(this, $name)?;
 
             let promise = match this.send(
                 global,
@@ -150,7 +149,7 @@ macro_rules! cmd_key {
             global: &JSGlobalObject,
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
-            compile::test_correct_state(this, $name, compile::ClientStateRequirement::$state)?;
+            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(this, $name)?;
 
             let Some(key) = from_js(global, frame.argument(0))? else {
                 return global.throw_invalid_argument_type($name, $arg0_name, "string or buffer");
@@ -187,7 +186,7 @@ macro_rules! cmd_key_varargs {
             global: &JSGlobalObject,
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
-            compile::test_correct_state(this, $name, compile::ClientStateRequirement::$state)?;
+            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(this, $name)?;
 
             if frame.argument(0).is_undefined_or_null() {
                 return global.throw_missing_arguments_value(&[$arg0_name]);
@@ -242,7 +241,7 @@ macro_rules! cmd_key_value {
             global: &JSGlobalObject,
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
-            compile::test_correct_state(this, $name, compile::ClientStateRequirement::$state)?;
+            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(this, $name)?;
 
             let Some(key) = from_js(global, frame.argument(0))? else {
                 return global.throw_invalid_argument_type($name, $arg0_name, "string or buffer");
@@ -282,7 +281,7 @@ macro_rules! cmd_key_value_value2 {
             global: &JSGlobalObject,
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
-            compile::test_correct_state(this, $name, compile::ClientStateRequirement::$state)?;
+            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(this, $name)?;
 
             let Some(key) = from_js(global, frame.argument(0))? else {
                 return global.throw_invalid_argument_type($name, $arg0_name, "string or buffer");
@@ -325,7 +324,7 @@ macro_rules! cmd_strings_varargs {
             global: &JSGlobalObject,
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
-            compile::test_correct_state(this, $name, compile::ClientStateRequirement::$state)?;
+            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(this, $name)?;
 
             let mut args: Vec<JSArgument> = Vec::with_capacity(frame.arguments().len());
 
@@ -371,7 +370,7 @@ macro_rules! cmd_key_value_varargs {
             global: &JSGlobalObject,
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
-            compile::test_correct_state(this, $name, compile::ClientStateRequirement::$state)?;
+            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(this, $name)?;
 
             let mut args: Vec<JSArgument> = Vec::with_capacity(frame.arguments().len());
 

@@ -78,6 +78,12 @@ impl From<AllocError> for HostedGitInfoError {
     }
 }
 
+impl From<HostedGitInfoError> for bun_core::Error {
+    fn from(e: HostedGitInfoError) -> Self {
+        bun_core::Error::from_name(<&'static str>::from(e))
+    }
+}
+
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ParseUrlError {
     #[error("InvalidGitUrl")]
@@ -89,6 +95,12 @@ pub enum ParseUrlError {
 impl From<AllocError> for ParseUrlError {
     fn from(_: AllocError) -> Self {
         ParseUrlError::OutOfMemory
+    }
+}
+
+impl From<ParseUrlError> for bun_core::Error {
+    fn from(e: ParseUrlError) -> Self {
+        bun_core::Error::from_name(<&'static str>::from(e))
     }
 }
 
@@ -597,7 +609,9 @@ pub fn is_github_shorthand(npa_str: &[u8]) -> bool {
             }
             _ => {
                 // Implement spaceOnlyAfterHash
-                if c.is_ascii_whitespace() && pound_idx.is_none() {
+                // PORT NOTE: match Zig std.ascii.isWhitespace exactly (includes VT 0x0B and FF 0x0C;
+                // Rust u8::is_ascii_whitespace excludes VT).
+                if matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C) && pound_idx.is_none() {
                     return false;
                 }
             }
@@ -747,7 +761,7 @@ fn normalize_protocol(npa_str: &[u8]) -> UrlProtocolPair<'_> {
         // We have an @ in the string
         if first_colon_idx != -1 {
             // We have a : in the string.
-            if (at_idx as i32) > first_colon_idx {
+            if i32::try_from(at_idx).unwrap() > first_colon_idx {
                 // The @ is after the :, so we have something like user:pass@host which is a valid
                 // URL. and should be promoted to git_plus_ssh. It's guaranteed that the issue is
                 // not that we have proto://user@host:path because we would've caught that above.
@@ -800,7 +814,7 @@ fn normalize_protocol(npa_str: &[u8]) -> UrlProtocolPair<'_> {
     // it.
     let maybe_dup_slash_idx = strings::index_of(npa_str, b"//");
     if let Some(dup_slash_idx) = maybe_dup_slash_idx {
-        if (dup_slash_idx as i32) == first_colon_idx + 1 {
+        if i32::try_from(dup_slash_idx).unwrap() == first_colon_idx + 1 {
             return UrlProtocolPair {
                 url: UrlProtocolPairUrl::Unmanaged(strings::substring(
                     npa_str,

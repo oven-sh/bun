@@ -37,6 +37,15 @@ alive: bool = false,
 /// Set when the process-exit notification arrives. Reaping waits for both
 /// this and `ipc.done` so trailing IPC frames are decoded first.
 exit_status: ?bun.spawn.Status = null,
+/// Set when this process sends `.ready`; reset before each (re)spawn. A reap
+/// with `inflight == null` and `!reached_ready` is a startup failure (init
+/// crash before the IPC handshake) as opposed to a clean post-shutdown exit.
+reached_ready: bool = false,
+/// Consecutive (re)spawns of this slot that exited before `.ready`. Reset on
+/// `.ready`. `reapWorker`'s mid-file handling is keyed on `inflight`, so
+/// pre-ready crashes bypass it; this per-slot counter bounds the respawn
+/// loop so a worker that can never finish init doesn't spin.
+startup_failures: u8 = 0,
 extra_fd_stdio: [1]bun.spawn.SpawnOptions.Stdio = .{.ignore},
 
 pub fn start(this: *Worker) !void {

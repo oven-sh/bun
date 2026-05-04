@@ -2574,3 +2574,1702 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub fn set_using_custom_expect_handler(&mut self, value: bool) {
         unsafe { NodeHTTP_setUsingCustomExpectHandler(SSL, self.app.unwrap() as *mut c_void, value) };
     }
+
+    // TODO(port): `var did_send_idletimeout_warning_once = false;` is a per-monomorphization static.
+    // Use AtomicBool in a generic-associated static via OnceLock or a plain static keyed on (SSL,DEBUG).
+    fn did_send_idletimeout_warning_once() -> &'static core::sync::atomic::AtomicBool {
+        // TODO(port): per-generic static
+        static FLAG: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+        &FLAG
+    }
+
+    fn on_timeout_for_idle_warn(_: *mut c_void, _: Option<*mut c_void>) {
+        if DEBUG && !Self::did_send_idletimeout_warning_once().load(core::sync::atomic::Ordering::Relaxed) {
+            if !bun_cli::Command::get().debug.silent {
+                Self::did_send_idletimeout_warning_once().store(true, core::sync::atomic::Ordering::Relaxed);
+                Output::pretty_errorln(
+                    "<r><yellow>[Bun.serve]<r><d>:<r> request timed out after 10 seconds. Pass <d><cyan>`idleTimeout`<r> to configure.",
+                );
+                Output::flush();
+            }
+        }
+    }
+
+    fn should_add_timeout_handler_for_warning(&self) -> bool {
+        if DEBUG {
+            if !Self::did_send_idletimeout_warning_once().load(core::sync::atomic::Ordering::Relaxed)
+                && !bun_cli::Command::get().debug.silent
+            {
+                return !self.config.has_idle_timeout;
+            }
+        }
+        false
+    }
+
+    pub fn on_user_route_request(
+        user_route: &mut UserRoute<SSL, DEBUG>,
+        req: &mut uws::Request,
+        resp: &mut <Self::App as uws::AppTrait>::Response,
+    ) {
+        Self::on_user_route_request_for::<Self::RequestContext>(user_route, req, resp);
+    }
+
+    fn on_user_route_request_for<Ctx: super::request_context::RequestCtx>(
+        user_route: &mut UserRoute<SSL, DEBUG>,
+        req: &mut Ctx::Req,
+        resp: &mut Ctx::Resp,
+    ) {
+        // SAFETY: server backref outlives user_route
+        let server = unsafe { &mut *(user_route.server as *mut Self) };
+        let index = user_route.id;
+
+        let mut should_deinit_context = false;
+        let Some(mut prepared) = server.prepare_js_request_context_for::<Ctx>(
+            req,
+            resp,
+            Some(&mut should_deinit_context),
+            CreateJsRequest::No,
+            match user_route.route.method {
+                server_config::RouteMethod::Any => None,
+                server_config::RouteMethod::Specific(m) => Some(m),
+            },
+        ) else { return };
+
+        let server_request_list = Self::js_route_list_get_cached(server.js_value_assert_alive()).unwrap();
+        let call_route = if Ctx::IS_H3 { Bun__ServerRouteList__callRouteH3 } else { Bun__ServerRouteList__callRoute };
+        let global = unsafe { &*server.global_this };
+        let response_value = match jsc::from_js_host_call(global, || unsafe {
+            call_route(
+                global,
+                index,
+                prepared.request_object,
+                server.js_value_assert_alive(),
+                server_request_list,
+                &mut prepared.js_request,
+                req as *mut _ as *mut c_void,
+            )
+        }) {
+            Ok(v) => v,
+            Err(err) => global.take_exception(err),
+        };
+
+        server.handle_request_for::<Ctx>(&mut should_deinit_context, prepared, req, response_value);
+    }
+
+    fn handle_request(
+        &mut self,
+        should_deinit_context: &mut bool,
+        prepared: Self::PreparedRequest<'_>,
+        req: &mut uws::Request,
+        response_value: JSValue,
+    ) {
+        self.handle_request_for::<Self::RequestContext>(should_deinit_context, prepared, req, response_value);
+    }
+
+    fn handle_request_for<Ctx: super::request_context::RequestCtx>(
+        &mut self,
+        should_deinit_context: &mut bool,
+        prepared: PreparedRequestFor<'_, Ctx>,
+        req: &mut Ctx::Req,
+        response_value: JSValue,
+    ) {
+        let ctx = prepared.ctx;
+
+        let _detach_guard = scopeguard::guard((), |_| {
+            // uWS request will not live longer than this function
+            prepared.request_object.request_context.detach_request();
+        });
+
+        ctx.on_response(self, prepared.js_request, response_value);
+        // Reference in the stack here in case it is not for whatever reason
+        prepared.js_request.ensure_still_alive();
+
+        ctx.defer_deinit_until_callback_completes = None;
+
+        if *should_deinit_context {
+            ctx.deinit();
+            return;
+        }
+
+        if ctx.should_render_missing() {
+            ctx.render_missing();
+            return;
+        }
+
+        // The request is asynchronous, and all information from `req` must be copied
+        // since the provided uws.Request will be re-used for future requests (stack allocated).
+        ctx.to_async(req, prepared.request_object);
+    }
+
+    pub fn on_request(&mut self, req: &mut uws::Request, resp: &mut <Self::App as uws::AppTrait>::Response) {
+        self.on_request_for::<Self::RequestContext>(req, resp);
+    }
+
+    fn on_request_for<Ctx: super::request_context::RequestCtx>(
+        &mut self,
+        req: &mut Ctx::Req,
+        resp: &mut Ctx::Resp,
+    ) {
+        let mut should_deinit_context = false;
+        let Some(prepared) = self.prepare_js_request_context_for::<Ctx>(
+            req,
+            resp,
+            Some(&mut should_deinit_context),
+            CreateJsRequest::Yes,
+            None,
+        ) else { return };
+
+        debug_assert!(!self.config.on_request.is_empty());
+
+        let global = unsafe { &*self.global_this };
+        let js_value = self.js_value_assert_alive();
+        let response_value = match self.config.on_request.call(
+            global,
+            js_value,
+            &[prepared.js_request, js_value],
+        ) {
+            Ok(v) => v,
+            Err(err) => global.take_exception(err),
+        };
+
+        self.handle_request_for::<Ctx>(&mut should_deinit_context, prepared, req, response_value);
+    }
+
+    pub fn on_saved_request<const ARG_COUNT: usize>(
+        &mut self,
+        req: SavedRequestUnion,
+        resp: &mut <Self::App as uws::AppTrait>::Response,
+        callback: JSValue,
+        extra_args: [JSValue; ARG_COUNT],
+    ) {
+        let prepared: Self::PreparedRequest<'_> = match &req {
+            SavedRequestUnion::Stack(r) => {
+                match self.prepare_js_request_context(
+                    // SAFETY: stack uws::Request still alive
+                    unsafe { &mut **r },
+                    resp,
+                    None,
+                    CreateJsRequest::Bake,
+                    None,
+                ) {
+                    Some(p) => p,
+                    None => return,
+                }
+            }
+            SavedRequestUnion::Saved(data) => PreparedRequestFor {
+                js_request: data.js_request.get().expect("Request was unexpectedly freed"),
+                request_object: data.request,
+                ctx: data.ctx.tagged_pointer.as_::<Self::RequestContext>(),
+            },
+        };
+        let ctx = prepared.ctx;
+
+        debug_assert!(!callback.is_empty());
+        // on-stack [JSValue; N+1] is fine — conservative scan covers it
+        let mut args = [JSValue::ZERO; ARG_COUNT + 1];
+        args[0] = prepared.js_request;
+        args[1..].copy_from_slice(&extra_args);
+        let global = unsafe { &*self.global_this };
+        let response_value = match callback.call(global, self.js_value_assert_alive(), &args) {
+            Ok(v) => v,
+            Err(err) => global.take_exception(err),
+        };
+
+        let is_stack = matches!(req, SavedRequestUnion::Stack(_));
+        let _detach_guard = scopeguard::guard((), |_| {
+            if is_stack {
+                // uWS request will not live longer than this function
+                prepared.request_object.request_context.detach_request();
+            }
+        });
+        let original_state = ctx.defer_deinit_until_callback_completes;
+        let mut should_deinit_context = false;
+        ctx.defer_deinit_until_callback_completes = Some(&mut should_deinit_context);
+        ctx.on_response(self, prepared.js_request, response_value);
+        ctx.defer_deinit_until_callback_completes = original_state;
+
+        // Reference in the stack here in case it is not for whatever reason
+        prepared.js_request.ensure_still_alive();
+
+        if should_deinit_context {
+            ctx.deinit();
+            return;
+        }
+
+        if ctx.should_render_missing() {
+            ctx.render_missing();
+            return;
+        }
+
+        // The request is asynchronous, and all information from `req` must be copied
+        // since the provided uws.Request will be re-used for future requests (stack allocated).
+        match req {
+            SavedRequestUnion::Stack(r) => ctx.to_async(unsafe { &mut *r }, prepared.request_object),
+            SavedRequestUnion::Saved(_) => {} // info already copied
+        }
+    }
+
+    pub fn prepare_js_request_context(
+        &mut self,
+        req: &mut uws::Request,
+        resp: &mut <Self::App as uws::AppTrait>::Response,
+        should_deinit_context: Option<&mut bool>,
+        create_js_request: CreateJsRequest,
+        method: Option<http::Method>,
+    ) -> Option<Self::PreparedRequest<'_>> {
+        self.prepare_js_request_context_for::<Self::RequestContext>(req, resp, should_deinit_context, create_js_request, method)
+    }
+
+    fn prepare_js_request_context_for<Ctx: super::request_context::RequestCtx>(
+        &mut self,
+        req: &mut Ctx::Req,
+        resp: &mut Ctx::Resp,
+        should_deinit_context: Option<&mut bool>,
+        create_js_request: CreateJsRequest,
+        method: Option<http::Method>,
+    ) -> Option<PreparedRequestFor<'_, Ctx>> {
+        jsc::mark_binding!();
+
+        // We need to register the handler immediately since uSockets will not buffer.
+        //
+        // We first validate the self-reported request body length so that
+        // we avoid needing to worry as much about what memory to free.
+        // RFC 9114 §4.2: an HTTP/3 message containing a transfer-encoding
+        // header field is malformed.
+        if Ctx::IS_H3 {
+            if req.header(b"transfer-encoding").is_some() {
+                resp.write_status(b"400 Bad Request");
+                resp.end_without_body(false);
+                return None;
+            }
+        }
+
+        let request_body_length: Option<usize> = 'request_body_length: {
+            if http::Method::which(req.method()).unwrap_or(http::Method::OPTIONS).has_request_body() {
+                let len: usize = 'brk: {
+                    if let Some(content_length) = req.header(b"content-length") {
+                        break 'brk core::str::from_utf8(content_length)
+                            .ok()
+                            .and_then(|s| s.parse::<usize>().ok())
+                            .unwrap_or(0);
+                    }
+                    0
+                };
+
+                // Abort the request very early. For H3 a per-request error
+                // is a stream error (RFC 9114 §4.1.2); close_connection
+                // would CONNECTION_CLOSE every sibling stream on the conn.
+                if len > self.config.max_request_body_size {
+                    resp.write_status(b"413 Request Entity Too Large");
+                    resp.end_without_body(!Ctx::IS_H3);
+                    return None;
+                }
+
+                break 'request_body_length Some(len);
+            }
+            None
+        };
+
+        self.on_pending_request();
+
+        #[cfg(debug_assertions)]
+        self.vm.event_loop().debug.enter();
+        let _dbg_guard = scopeguard::guard((), |_| {
+            #[cfg(debug_assertions)]
+            self.vm.event_loop().debug.exit();
+        });
+        req.set_yield(false);
+        resp.timeout(self.config.idle_timeout);
+
+        // Since we do timeouts by default, we should tell the user when
+        // this happens - but limit it to only warn once.
+        if self.should_add_timeout_handler_for_warning() {
+            // We need to pass it a pointer, any pointer should do.
+            resp.on_timeout::<c_void>(
+                |p, _resp| Self::on_timeout_for_idle_warn(p, None),
+                Self::did_send_idletimeout_warning_once() as *const _ as *mut c_void,
+            );
+        }
+
+        // TODO(port): pool selection — Ctx::IS_H3 ? h3_request_pool_allocator : request_pool_allocator
+        let pool_allocator = if Ctx::IS_H3 {
+            // SAFETY: same struct layout for both pool kinds; Phase B refactor
+            unsafe { mem::transmute::<_, &dyn super::request_context::Pool<Ctx>>(self.h3_request_pool_allocator) }
+        } else {
+            unsafe { mem::transmute::<_, &dyn super::request_context::Pool<Ctx>>(self.request_pool_allocator) }
+        };
+        let ctx = pool_allocator.try_get(); // bun.handleOom — aborts on OOM
+        ctx.create(self, req, resp, should_deinit_context, method);
+        self.vm.jsc_vm.deprecated_report_extra_memory(mem::size_of::<Ctx>());
+        let body = self.vm.init_request_body_value(Body::Value::Null).expect("unreachable");
+
+        ctx.request_body = Some(body);
+        let signal = AbortSignal::new(unsafe { &*self.global_this });
+        ctx.signal = Some(signal);
+        signal.pending_activity_ref();
+
+        let request_object = Request::new_(Request::init(
+            ctx.method,
+            AnyRequestContext::init(ctx),
+            SSL,
+            signal.ref_(),
+            body.ref_(),
+        ));
+        ctx.request_weakref = super::request_context::WeakRef::init_ref(request_object);
+
+        // The lazy `getRequest()` path that backs Request.url / .headers
+        // is `*uws.Request`-typed; for HTTP/3 we populate both eagerly so
+        // the rest of the pipeline never needs to know which transport
+        // delivered the bytes.
+        if Ctx::IS_H3 {
+            request_object.set_fetch_headers(FetchHeaders::create_from_h3(req));
+            let path = req.url();
+            if !path.is_empty() && path[0] == b'/' {
+                if let Some(host) = req.header(b"host") {
+                    let fmt = bun_fmt::HostFormatter { is_https: true, host };
+                    let mut s = Vec::new();
+                    write!(&mut s, "https://{}{}", fmt, BStr::new(path)).ok();
+                    request_object.url = BunString::clone_utf8(&s);
+                } else {
+                    request_object.url = BunString::clone_utf8(path);
+                }
+            } else {
+                request_object.url = BunString::clone_utf8(path);
+            }
+            ctx.req = None;
+        }
+
+        if DEBUG {
+            ctx.flags.is_web_browser_navigation = 'brk: {
+                if let Some(fetch_dest) = req.header(b"sec-fetch-dest") {
+                    if fetch_dest == b"document" {
+                        break 'brk true;
+                    }
+                }
+                false
+            };
+        }
+
+        if let Some(req_len) = request_body_length {
+            ctx.request_body_content_len = req_len;
+            ctx.flags.is_transfer_encoding = req.header(b"transfer-encoding").is_some();
+            // HTTP/3 (RFC 9114 §4.2.2): Content-Length is optional and
+            // Transfer-Encoding is forbidden; the body is terminated by
+            // the QUIC stream FIN, so always arm onData for body methods.
+            if req_len > 0 || ctx.flags.is_transfer_encoding || Ctx::IS_H3 {
+                // we defer pre-allocating the body until we receive the first chunk
+                // that way if the client is lying about how big the body is or the client aborts
+                // we don't waste memory
+                ctx.request_body.as_mut().unwrap().value = Body::Value::Locked(Body::Locked {
+                    task: ctx as *mut _ as *mut c_void,
+                    global: unsafe { &*self.global_this },
+                    on_start_buffering: Ctx::on_start_buffering_callback,
+                    on_start_streaming: Ctx::on_start_streaming_request_body_callback,
+                    on_readable_stream_available: Ctx::on_request_body_readable_stream_available,
+                });
+                ctx.flags.is_waiting_for_request_body = true;
+
+                resp.on_data::<Ctx>(Ctx::on_buffered_body_chunk, ctx);
+            }
+        }
+
+        Some(PreparedRequestFor {
+            js_request: match create_js_request {
+                CreateJsRequest::Yes => request_object.to_js(unsafe { &*self.global_this }),
+                CreateJsRequest::Bake => match request_object.to_js_for_bake(unsafe { &*self.global_this }) {
+                    Ok(v) => v,
+                    Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
+                    Err(_) => return None,
+                },
+                CreateJsRequest::No => JSValue::ZERO,
+            },
+            request_object,
+            ctx,
+        })
+    }
+
+    fn upgrade_web_socket_user_route(
+        this: &mut UserRoute<SSL, DEBUG>,
+        resp: &mut <Self::App as uws::AppTrait>::Response,
+        req: &mut uws::Request,
+        upgrade_ctx: &mut WebSocketUpgradeContext,
+        method: Option<http::Method>,
+    ) {
+        // SAFETY: server backref outlives user_route
+        let server = unsafe { &mut *(this.server as *mut Self) };
+        let index = this.id;
+
+        let mut should_deinit_context = false;
+        let Some(mut prepared) = server.prepare_js_request_context(req, resp, Some(&mut should_deinit_context), CreateJsRequest::No, method) else { return };
+        prepared.ctx.upgrade_context = Some(upgrade_ctx); // set the upgrade context
+        let server_request_list = Self::js_route_list_get_cached(server.js_value_assert_alive()).unwrap();
+        let global = unsafe { &*server.global_this };
+        let response_value = match jsc::from_js_host_call(global, || unsafe {
+            Bun__ServerRouteList__callRoute(
+                global,
+                index,
+                prepared.request_object,
+                server.js_value_assert_alive(),
+                server_request_list,
+                &mut prepared.js_request,
+                req as *mut _ as *mut c_void,
+            )
+        }) {
+            Ok(v) => v,
+            Err(err) => global.take_exception(err),
+        };
+
+        server.handle_request(&mut should_deinit_context, prepared, req, response_value);
+    }
+
+    pub fn on_web_socket_upgrade(
+        &mut self,
+        resp: &mut <Self::App as uws::AppTrait>::Response,
+        req: &mut uws::Request,
+        upgrade_ctx: &mut WebSocketUpgradeContext,
+        id: usize,
+    ) {
+        jsc::mark_binding!();
+        if id == 1 {
+            // This is actually a UserRoute if id is 1 so it's safe to cast
+            // SAFETY: uws passes the UserRoute* as the context when id == 1
+            let user_route = unsafe { &mut *(self as *mut Self as *mut UserRoute<SSL, DEBUG>) };
+            Self::upgrade_web_socket_user_route(user_route, resp, req, upgrade_ctx, None);
+            return;
+        }
+        // Access `this` as *ThisServer only if id is 0
+        debug_assert!(id == 0);
+        if !self.config.on_node_http_request.is_empty() {
+            self.on_node_http_request_with_upgrade_ctx(req, resp, Some(upgrade_ctx));
+            return;
+        }
+        if self.config.on_request.is_empty() {
+            // require fetch method to be set otherwise we dont know what route to call
+            // this should be the fallback in case no route is provided to upgrade
+            resp.write_status(b"403 Forbidden");
+            resp.end_without_body(true);
+            return;
+        }
+        self.pending_requests += 1;
+        req.set_yield(false);
+        let ctx = self.request_pool_allocator.try_get();
+        let mut should_deinit_context = false;
+        ctx.create(self, req, resp, Some(&mut should_deinit_context), None);
+        let body = self.vm.init_request_body_value(Body::Value::Null).expect("unreachable");
+
+        ctx.request_body = Some(body);
+        let signal = AbortSignal::new(unsafe { &*self.global_this });
+        ctx.signal = Some(signal);
+        signal.pending_activity_ref();
+
+        let request_object = Request::new_(Request::init(
+            ctx.method,
+            AnyRequestContext::init(ctx),
+            SSL,
+            signal.ref_(),
+            body.ref_(),
+        ));
+        ctx.upgrade_context = Some(upgrade_ctx);
+        ctx.request_weakref = super::request_context::WeakRef::init_ref(request_object);
+        // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
+        let global = unsafe { &*self.global_this };
+        let args = [
+            request_object.to_js(global),
+            self.js_value_assert_alive(),
+        ];
+        let request_value = args[0];
+        request_value.ensure_still_alive();
+
+        let response_value = match self.config.on_request.call(global, self.js_value_assert_alive(), &args) {
+            Ok(v) => v,
+            Err(err) => global.take_exception(err),
+        };
+        let _detach_guard = scopeguard::guard((), |_| {
+            // uWS request will not live longer than this function
+            request_object.request_context.detach_request();
+        });
+        ctx.on_response(self, request_value, response_value);
+
+        ctx.defer_deinit_until_callback_completes = None;
+
+        if should_deinit_context {
+            ctx.deinit();
+            return;
+        }
+
+        if ctx.should_render_missing() {
+            ctx.render_missing();
+            return;
+        }
+
+        ctx.to_async(req, request_object);
+    }
+
+    // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
+    fn on_chrome_dev_tools_json_request(
+        &mut self,
+        req: &mut uws::Request,
+        resp: &mut <Self::App as uws::AppTrait>::Response,
+    ) {
+        if cfg!(feature = "debug_logs") {
+            httplog!("{} - {}", BStr::new(req.method()), BStr::new(req.url()));
+        }
+
+        let authorized = 'brk: {
+            if self.dev_server.is_none() {
+                break 'brk false;
+            }
+
+            if let Some(address) = resp.get_remote_socket_info() {
+                // IPv4 loopback addresses
+                if address.ip.starts_with(b"127.") {
+                    break 'brk true;
+                }
+                // IPv6 loopback addresses
+                if address.ip.starts_with(b"::ffff:127.")
+                    || address.ip.starts_with(b"::1")
+                    || address.ip == b"0:0:0:0:0:0:0:1"
+                {
+                    break 'brk true;
+                }
+            }
+
+            false
+        };
+
+        if !authorized {
+            req.set_yield(true);
+            return;
+        }
+
+        // They need a 16 byte uuid. It needs to be somewhat consistent. We don't want to store this field anywhere.
+
+        // So we first use a hash of the main field:
+        let first_hash_segment: [u8; 8] = 'brk: {
+            let buffer = paths::path_buffer_pool().get();
+            let main = VirtualMachine::get().main;
+            let len = main.len().min(buffer.len());
+            break 'brk hash(strings::copy_lowercase(&main[..len], &mut buffer[..len])).to_ne_bytes();
+        };
+
+        // And then we use a hash of their project root directory:
+        let second_hash_segment: [u8; 8] = 'brk: {
+            let buffer = paths::path_buffer_pool().get();
+            let root = &self.dev_server.as_ref().unwrap().root;
+            let len = root.len().min(buffer.len());
+            break 'brk hash(strings::copy_lowercase(&root[..len], &mut buffer[..len])).to_ne_bytes();
+        };
+
+        // We combine it together to get a 16 byte uuid.
+        let mut hash_bytes = [0u8; 16];
+        hash_bytes[..8].copy_from_slice(&first_hash_segment);
+        hash_bytes[8..].copy_from_slice(&second_hash_segment);
+        let uuid = UUID::init_with(&hash_bytes);
+
+        // interface DevToolsJSON {
+        //   workspace?: {
+        //     root: string,
+        //     uuid: string,
+        //   }
+        // }
+        let mut json_string = Vec::new();
+        write!(
+            &mut json_string,
+            "{{ \"workspace\": {{ \"root\": {}, \"uuid\": \"{}\" }} }}",
+            bun_fmt::format_json_string_utf8(&self.dev_server.as_ref().unwrap().root, Default::default()),
+            uuid,
+        )
+        .ok();
+
+        resp.write_status(b"200 OK");
+        resp.write_header(b"Content-Type", b"application/json");
+        resp.end(&json_string, resp.should_close_connection());
+    }
+
+    fn set_routes(&mut self) -> JSValue {
+        let mut route_list_value = JSValue::ZERO;
+        let app = unsafe { &*self.app.unwrap() };
+        let any_server = AnyServer::from(self);
+        let dev_server = self.dev_server.as_deref_mut();
+
+        // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
+        // Only enable this when we're using the dev server.
+        let mut should_add_chrome_devtools_json_route = DEBUG
+            && self.config.allow_hot
+            && dev_server.is_some()
+            && self.config.enable_chrome_devtools_automatic_workspace_folders;
+        const CHROME_DEVTOOLS_ROUTE: &[u8] = b"/.well-known/appspecific/com.chrome.devtools.json";
+
+        // --- 1. Handle user_routes_to_build (dynamic JS routes) ---
+        // (This part remains conceptually the same: populate this.user_routes and route_list_value
+        //  Crucially, ServerConfig.fromJS must ensure `route.method` is correctly .specific or .any)
+        if !self.config.user_routes_to_build.is_empty() {
+            let mut user_routes_to_build_list = mem::take(&mut self.config.user_routes_to_build);
+            let old_user_routes = mem::replace(
+                &mut self.user_routes,
+                Vec::with_capacity(user_routes_to_build_list.len()),
+            );
+            // old_user_routes drops at scope end (UserRoute Drop calls route.deinit())
+            let _ = old_user_routes;
+            let mut paths_zig: Vec<ZigString> = Vec::with_capacity(user_routes_to_build_list.len());
+            let mut callbacks_js: Vec<JSValue> = Vec::with_capacity(user_routes_to_build_list.len());
+
+            for (i, builder) in user_routes_to_build_list.iter_mut().enumerate() {
+                paths_zig.push(ZigString::init(&builder.route.path));
+                callbacks_js.push(builder.callback.get().unwrap());
+                // PERF(port): was assume_capacity
+                self.user_routes.push(UserRoute {
+                    id: i as u32,
+                    server: self,
+                    route: mem::take(&mut builder.route), // Mark as moved
+                });
+            }
+            route_list_value = unsafe {
+                Bun__ServerRouteList__create(
+                    &*self.global_this,
+                    callbacks_js.as_mut_ptr(),
+                    paths_zig.as_mut_ptr(),
+                    user_routes_to_build_list.len(),
+                )
+            };
+            for builder in &mut user_routes_to_build_list {
+                builder.deinit();
+            }
+        }
+
+        // --- 2. Setup WebSocket handler's app reference ---
+        if let Some(websocket) = &mut self.config.websocket {
+            websocket.global_object = self.global_this;
+            websocket.handler.app = Some(app as *const _ as *mut c_void);
+            websocket.handler.flags.ssl = SSL;
+        }
+
+        // --- 3. Register compiled user routes (this.user_routes) & Track "/*" Coverage ---
+        let mut star_methods_covered_by_user = http::Method::Set::init_empty();
+        let mut has_any_user_route_for_star_path = false; // True if "/*" path appears in user_routes at all
+        let mut has_any_ws_route_for_star_path = false;
+
+        for user_route in &mut self.user_routes {
+            let is_star_path = user_route.route.path.as_ref() == b"/*";
+            if is_star_path {
+                has_any_user_route_for_star_path = true;
+            }
+
+            if should_add_chrome_devtools_json_route {
+                if user_route.route.path.as_ref() == CHROME_DEVTOOLS_ROUTE
+                    || user_route.route.path.starts_with(b"/.well-known/")
+                {
+                    should_add_chrome_devtools_json_route = false;
+                }
+            }
+
+            // Register HTTP routes
+            match user_route.route.method {
+                server_config::RouteMethod::Any => {
+                    app.any(&user_route.route.path, user_route, Self::on_user_route_request);
+                    if Self::HAS_H3 {
+                        if let Some(h3_app) = self.h3_app {
+                            unsafe { &*h3_app }.any(&user_route.route.path, user_route, Self::on_h3_user_route_request);
+                        }
+                    }
+                    if is_star_path {
+                        star_methods_covered_by_user = http::Method::Set::init_full();
+                    }
+
+                    if let Some(websocket) = &self.config.websocket {
+                        if is_star_path {
+                            has_any_ws_route_for_star_path = true;
+                        }
+                        app.ws(
+                            &user_route.route.path,
+                            user_route,
+                            1, // id 1 means is a user route
+                            ServerWebSocket::behavior::<Self, SSL>(websocket.to_behavior()),
+                        );
+                    }
+                }
+                server_config::RouteMethod::Specific(method_val) => {
+                    // method_val is HTTP.Method here
+                    app.method(method_val, &user_route.route.path, user_route, Self::on_user_route_request);
+                    if Self::HAS_H3 {
+                        if let Some(h3_app) = self.h3_app {
+                            unsafe { &*h3_app }.method(method_val, &user_route.route.path, user_route, Self::on_h3_user_route_request);
+                        }
+                    }
+                    if is_star_path {
+                        star_methods_covered_by_user.insert(method_val);
+                    }
+
+                    // Setup user websocket in the route if needed.
+                    if let Some(websocket) = &self.config.websocket {
+                        // Websocket upgrade is a GET request
+                        if method_val == Method::GET {
+                            app.ws(
+                                &user_route.route.path,
+                                user_route,
+                                1, // id 1 means is a user route
+                                ServerWebSocket::behavior::<Self, SSL>(websocket.to_behavior()),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- 4. Register negative routes ---
+        for route_path in &self.config.negative_routes {
+            app.head(route_path, self, Self::on_request);
+            app.any(route_path, self, Self::on_request);
+            if Self::HAS_H3 {
+                if let Some(h3_app) = self.h3_app {
+                    let h3_app = unsafe { &*h3_app };
+                    h3_app.head(route_path, self, Self::on_h3_request);
+                    h3_app.any(route_path, self, Self::on_h3_request);
+                }
+            }
+        }
+
+        // --- 5. Register static routes & Track "/*" Coverage ---
+        let mut needs_plugins = dev_server.is_some();
+        let mut has_static_route_for_star_path = false;
+
+        if !self.config.static_routes.is_empty() {
+            for entry in &mut self.config.static_routes {
+                if entry.path.as_ref() == b"/*" {
+                    has_static_route_for_star_path = true;
+                    match &entry.method {
+                        http::Method::Optional::Any => {
+                            star_methods_covered_by_user = http::Method::Set::init_full();
+                        }
+                        http::Method::Optional::Method(method) => {
+                            star_methods_covered_by_user.set_union(*method);
+                        }
+                    }
+                }
+
+                if should_add_chrome_devtools_json_route {
+                    if entry.path.as_ref() == CHROME_DEVTOOLS_ROUTE || entry.path.starts_with(b"/.well-known/") {
+                        should_add_chrome_devtools_json_route = false;
+                    }
+                }
+
+                match &entry.route {
+                    AnyRoute::Static(static_route) => {
+                        ServerConfig::apply_static_route(any_server, SSL, app, &**static_route, &entry.path, entry.method);
+                        if Self::HAS_H3 {
+                            if let Some(h3_app) = self.h3_app {
+                                ServerConfig::apply_static_route_h3(any_server, unsafe { &*h3_app }, &**static_route, &entry.path, entry.method);
+                            }
+                        }
+                    }
+                    AnyRoute::File(file_route) => {
+                        ServerConfig::apply_static_route(any_server, SSL, app, &**file_route, &entry.path, entry.method);
+                        if Self::HAS_H3 {
+                            if let Some(h3_app) = self.h3_app {
+                                ServerConfig::apply_static_route_h3(any_server, unsafe { &*h3_app }, &**file_route, &entry.path, entry.method);
+                            }
+                        }
+                    }
+                    AnyRoute::Html(html_bundle_route) => {
+                        ServerConfig::apply_static_route(any_server, SSL, app, &*html_bundle_route.data, &entry.path, entry.method);
+                        if Self::HAS_H3 {
+                            if let Some(h3_app) = self.h3_app {
+                                ServerConfig::apply_static_route_h3(any_server, unsafe { &*h3_app }, &*html_bundle_route.data, &entry.path, entry.method);
+                            }
+                        }
+                        if let Some(dev) = &mut self.dev_server {
+                            dev.html_router.put(&entry.path, html_bundle_route.data.clone());
+                        }
+                        needs_plugins = true;
+                    }
+                    AnyRoute::FrameworkRouter(_) => {}
+                }
+            }
+        }
+
+        // --- 6. Initialize plugins if needed ---
+        if needs_plugins && self.plugins.is_none() {
+            if let Some(serve_plugins_config) = &self.vm.transpiler.options.serve_plugins {
+                if !serve_plugins_config.is_empty() {
+                    // TODO(port): ServePlugins.init returns *mut; wrap as IntrusiveRc
+                    self.plugins = Some(unsafe {
+                        Rc::from_raw(ServePlugins::init(serve_plugins_config.clone()))
+                    });
+                }
+            }
+        }
+
+        // --- 7. Debug mode specific routes ---
+        if DEBUG {
+            app.get(b"/bun:info", self, Self::on_bun_info_request);
+        }
+
+        // Snapshot "/*" coverage from user/static routes before DevServer
+        // (which is H1-only and not mirrored to the H3 router) marks it
+        // as full.
+        let h3_star_covered = star_methods_covered_by_user;
+
+        // --- 8. Handle DevServer routes & Track "/*" Coverage ---
+        let mut has_dev_server_for_star_path = false;
+        if let Some(dev) = &mut self.dev_server {
+            // dev.setRoutes might register its own "/*" HTTP handler
+            has_dev_server_for_star_path = dev.set_routes(self);
+            if has_dev_server_for_star_path {
+                // Assume dev server "/*" covers all methods if it exists
+                star_methods_covered_by_user = http::Method::Set::init_full();
+            }
+        }
+
+        // Setup user websocket fallback route aka fetch function if fetch is not provided will respond with 403.
+        if !has_any_ws_route_for_star_path {
+            if let Some(websocket) = &self.config.websocket {
+                app.ws(
+                    b"/*",
+                    self,
+                    0, // id 0 means is a fallback route and ctx is the server
+                    ServerWebSocket::behavior::<Self, SSL>(websocket.to_behavior()),
+                );
+            }
+        }
+
+        // --- 9. Consolidated "/*" HTTP Fallback Registration ---
+        if star_methods_covered_by_user == http::Method::Set::init_full() {
+            // User/Static/Dev has already provided a "/*" handler for ALL methods.
+            // No further global "/*" HTTP fallback needed.
+        } else if has_any_user_route_for_star_path || has_static_route_for_star_path || has_dev_server_for_star_path {
+            // A "/*" route exists, but doesn't cover all methods.
+            // Apply the global handler to the *remaining* methods for "/*".
+            // So we flip the bits for the methods that are not covered by the user/static/dev routes
+            star_methods_covered_by_user.toggle_all();
+            for method_to_cover in star_methods_covered_by_user.iter() {
+                if self.config.on_node_http_request.is_empty() {
+                    if self.config.on_request.is_empty() {
+                        app.method(method_to_cover, b"/*", self, Self::on404);
+                    } else {
+                        app.method(method_to_cover, b"/*", self, Self::on_request);
+                    }
+                } else {
+                    app.method(method_to_cover, b"/*", self, Self::on_node_http_request);
+                }
+            }
+        } else {
+            if self.config.on_node_http_request.is_empty() {
+                if self.config.on_request.is_empty() {
+                    app.any(b"/*", self, Self::on404);
+                } else {
+                    app.any(b"/*", self, Self::on_request);
+                }
+            } else {
+                app.any(b"/*", self, Self::on_node_http_request);
+            }
+        }
+
+        // H3 fallback — same three-way as H1 above, but driven by
+        // user/static "/*" coverage only (DevServer routes are not mirrored
+        // to H3). h3_app.any("/*") would overwrite a user .any "/*"
+        // mirrored above, so skip when coverage is already full;
+        // for method-specific "/*" routes fill the complement per method.
+        if Self::HAS_H3 {
+            if let Some(h3_app) = self.h3_app {
+                let h3_app = unsafe { &*h3_app };
+                if h3_star_covered == http::Method::Set::init_full() {
+                    // user/static "/*" already covers every method
+                } else if has_any_user_route_for_star_path || has_static_route_for_star_path {
+                    let mut uncovered = h3_star_covered;
+                    uncovered.toggle_all();
+                    for m in uncovered.iter() {
+                        if !self.config.on_request.is_empty() {
+                            h3_app.method(m, b"/*", self, Self::on_h3_request);
+                        } else {
+                            h3_app.method(m, b"/*", self, Self::on_h3_404);
+                        }
+                    }
+                } else if !self.config.on_request.is_empty() {
+                    h3_app.any(b"/*", self, Self::on_h3_request);
+                } else {
+                    h3_app.any(b"/*", self, Self::on_h3_404);
+                }
+            }
+        }
+
+        if should_add_chrome_devtools_json_route {
+            app.get(CHROME_DEVTOOLS_ROUTE, self, Self::on_chrome_dev_tools_json_request);
+        }
+
+        // If onNodeHTTPRequest is configured, it might be needed for Node.js compatibility layer
+        // for specific Node API routes, even if it's not the main "/*" handler.
+        if !self.config.on_node_http_request.is_empty() {
+            unsafe { NodeHTTP_assignOnNodeJSCompat(SSL, app as *const _ as *mut c_void) };
+        }
+
+        route_list_value
+    }
+
+    pub fn on404(_this: &mut Self, req: &mut uws::Request, resp: &mut <Self::App as uws::AppTrait>::Response) {
+        if cfg!(feature = "debug_logs") {
+            httplog!("{} - {} 404", BStr::new(req.method()), BStr::new(req.url()));
+        }
+
+        resp.write_status(b"404 Not Found");
+
+        // Rely on browser default page for now.
+        resp.end(b"", false);
+    }
+
+    // TODO: make this return JSError!void, and do not deinitialize on synchronous failure, to allow errdefer in caller scope
+    pub fn listen(&mut self) -> JSValue {
+        httplog!("listen");
+        let app: *mut Self::App;
+        let global = unsafe { &*self.global_this };
+        let mut route_list_value = JSValue::ZERO;
+        if SSL {
+            boringssl::load();
+            let ssl_config = self.config.ssl_config.as_ref().expect("Assertion failure: ssl_config");
+            let ssl_options = ssl_config.as_usockets();
+
+            app = match Self::App::create(ssl_options) {
+                Some(a) => a,
+                None => {
+                    if !global.has_exception() {
+                        if !throw_ssl_error_if_necessary(global) {
+                            let _ = global.throw(format_args!("Failed to create HTTP server"));
+                        }
+                    }
+                    self.app = None;
+                    Self::deinit(self);
+                    return JSValue::ZERO;
+                }
+            };
+
+            self.app = Some(app);
+
+            if Self::HAS_H3 {
+                if self.config.h3 {
+                    self.h3_app = match uws::H3::App::create(ssl_options, self.config.idle_timeout) {
+                        Some(a) => Some(a),
+                        None => {
+                            if !global.has_exception() {
+                                let _ = global.throw(format_args!("Failed to create HTTP/3 server"));
+                            }
+                            Self::deinit(self);
+                            return JSValue::ZERO;
+                        }
+                    };
+                }
+            }
+
+            route_list_value = self.set_routes();
+
+            // add serverName to the SSL context using default ssl options
+            if let Some(server_name_ptr) = ssl_config.server_name {
+                // SAFETY: server_name is NUL-terminated C string
+                let server_name = unsafe { core::ffi::CStr::from_ptr(server_name_ptr) }.to_bytes();
+                if !server_name.is_empty() {
+                    if unsafe { &*app }.add_server_name_with_options(server_name, ssl_options).is_err() {
+                        if !global.has_exception() {
+                            if !throw_ssl_error_if_necessary(global) {
+                                let _ = global.throw(format_args!("Failed to add serverName: {}", BStr::new(server_name)));
+                            }
+                        }
+                        Self::deinit(self);
+                        return JSValue::ZERO;
+                    }
+                    if throw_ssl_error_if_necessary(global) {
+                        Self::deinit(self);
+                        return JSValue::ZERO;
+                    }
+
+                    unsafe { &*app }.domain(server_name);
+                    if throw_ssl_error_if_necessary(global) {
+                        Self::deinit(self);
+                        return JSValue::ZERO;
+                    }
+
+                    // Ensure the routes are set for that domain name.
+                    let _ = self.set_routes();
+                }
+            }
+
+            // apply SNI routes if any
+            if let Some(sni) = &self.config.sni {
+                for sni_ssl_config in sni.slice() {
+                    // SAFETY: server_name is NUL-terminated C string
+                    let sni_servername = unsafe { core::ffi::CStr::from_ptr(sni_ssl_config.server_name.unwrap()) }.to_bytes();
+                    if !sni_servername.is_empty() {
+                        if Self::HAS_H3 {
+                            if let Some(h3a) = self.h3_app {
+                                if unsafe { &*h3a }.add_server_name_with_options(sni_servername, sni_ssl_config.as_usockets()).is_err() {
+                                    if !global.has_exception() {
+                                        let _ = global.throw(format_args!("Failed to add serverName \"{}\" for HTTP/3", BStr::new(sni_servername)));
+                                    }
+                                    Self::deinit(self);
+                                    return JSValue::ZERO;
+                                }
+                            }
+                        }
+                        if unsafe { &*app }.add_server_name_with_options(sni_servername, sni_ssl_config.as_usockets()).is_err() {
+                            if !global.has_exception() {
+                                if !throw_ssl_error_if_necessary(global) {
+                                    let _ = global.throw(format_args!("Failed to add serverName: {}", BStr::new(sni_servername)));
+                                }
+                            }
+                            Self::deinit(self);
+                            return JSValue::ZERO;
+                        }
+
+                        unsafe { &*app }.domain(sni_servername);
+
+                        if throw_ssl_error_if_necessary(global) {
+                            Self::deinit(self);
+                            return JSValue::ZERO;
+                        }
+
+                        // Ensure the routes are set for that domain name.
+                        let _ = self.set_routes();
+                    }
+                }
+            }
+        } else {
+            app = match Self::App::create(Default::default()) {
+                Some(a) => a,
+                None => {
+                    if !global.has_exception() {
+                        let _ = global.throw(format_args!("Failed to create HTTP server"));
+                    }
+                    Self::deinit(self);
+                    return JSValue::ZERO;
+                }
+            };
+            self.app = Some(app);
+
+            route_list_value = self.set_routes();
+        }
+
+        if !self.config.on_node_http_request.is_empty() {
+            self.set_using_custom_expect_handler(true);
+        }
+
+        match &self.config.address {
+            server_config::Address::Tcp(tcp) => {
+                let mut host: Option<*const c_char> = None;
+                let mut host_buff = [0u8; 1025]; // [1024:0]u8
+
+                if let Some(existing) = tcp.hostname {
+                    let hostname = bstr::slice_to_nul(existing);
+
+                    if hostname.len() > 2 && hostname[0] == b'[' {
+                        // remove "[" and "]" from hostname
+                        let inner = &hostname[1..hostname.len() - 1];
+                        host_buff[..inner.len()].copy_from_slice(inner);
+                        host_buff[inner.len()] = 0;
+                        host = Some(host_buff.as_ptr() as *const c_char);
+                    } else {
+                        host = Some(existing as *const c_char);
+                    }
+                }
+
+                if self.config.h1 {
+                    unsafe { &*app }.listen_with_config(self, Self::on_listen, uws::ListenConfig {
+                        port: tcp.port,
+                        host,
+                        options: self.config.get_usockets_options(),
+                    });
+                }
+
+                if Self::HAS_H3 {
+                    if let Some(h3_app) = self.h3_app {
+                        // Same UDP port as the TCP listener so Alt-Svc works.
+                        let h3_port: u16 = if let Some(ls) = self.listener {
+                            u16::try_from(unsafe { &*ls }.get_local_port()).unwrap()
+                        } else {
+                            tcp.port
+                        };
+                        unsafe { &*h3_app }.listen_with_config(self, Self::on_h3_listen, uws::ListenConfig {
+                            port: h3_port,
+                            host,
+                            options: self.config.get_usockets_options(),
+                        });
+                        if self.h3_listener.is_none() {
+                            if !global.has_exception() {
+                                let _ = global.throw(format_args!("Failed to listen on UDP port {} for HTTP/3", h3_port));
+                            }
+                            Self::deinit(self);
+                            return JSValue::ZERO;
+                        }
+                        if !self.config.h1 {
+                            self.vm.event_loop_handle = AsyncLoop::get();
+                        }
+                    }
+                }
+            }
+            server_config::Address::Unix(unix) => {
+                if Self::HAS_H3 {
+                    if let Some(h3a) = self.h3_app.take() {
+                        // QUIC over AF_UNIX is non-standard and Alt-Svc can't
+                        // advertise it. Drop the H3 listener rather than wire
+                        // an exotic transport nobody can reach.
+                        Output::warn(format_args!("h3: true with a unix socket — HTTP/3 listener skipped"));
+                        unsafe { uws::H3::App::destroy(h3a) };
+                    }
+                }
+                unsafe { &*app }.listen_on_unix_socket(
+                    self,
+                    Self::on_listen,
+                    unix,
+                    self.config.get_usockets_options(),
+                );
+            }
+        }
+
+        if global.has_exception() {
+            Self::deinit(self);
+            return JSValue::ZERO;
+        }
+
+        self.ref_();
+
+        // Starting up an HTTP server is a good time to GC
+        if self.vm.aggressive_garbage_collection == jsc::AggressiveGC::Aggressive {
+            self.vm.auto_garbage_collect();
+        } else {
+            self.vm.event_loop().perform_gc();
+        }
+
+        route_list_value
+    }
+
+    pub fn on_client_error_callback(&mut self, socket: &mut uws::Socket, error_code: u8, raw_packet: &[u8]) {
+        if let Some(callback) = self.on_clienterror.get() {
+            let is_ssl = SSL;
+            let global = unsafe { &*self.global_this };
+            let node_socket = match jsc::from_js_host_call(global, || unsafe {
+                Bun__createNodeHTTPServerSocketForClientError(is_ssl, socket as *mut _ as *mut c_void, global)
+            }) {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            if node_socket.is_undefined_or_null() {
+                return;
+            }
+
+            let error_code_value = JSValue::js_number(error_code);
+            let raw_packet_value = match ArrayBuffer::create_buffer(global, raw_packet) {
+                Ok(v) => v,
+                Err(_) => return, // TODO: properly propagate exception upwards
+            };
+            let event_loop = global.bun_vm().event_loop();
+            event_loop.enter();
+            let _exit_guard = scopeguard::guard((), |_| event_loop.exit());
+            if let Err(err) = callback.call(
+                global,
+                JSValue::UNDEFINED,
+                &[JSValue::from(is_ssl), node_socket, error_code_value, raw_packet_value],
+            ) {
+                global.report_active_exception_as_unhandled(err);
+            }
+        }
+    }
+
+    // TODO(port): codegen helpers — these wrap js.gc.routeList.set and js.routeListGetCached
+    fn js_gc_route_list_set(server_js: JSValue, global: &JSGlobalObject, route_list: JSValue) {
+        // TODO(port): generated by .classes.ts codegen
+        let _ = (server_js, global, route_list);
+    }
+    fn js_route_list_get_cached(server_js: JSValue) -> Option<JSValue> {
+        // TODO(port): generated by .classes.ts codegen
+        let _ = server_js;
+        None
+    }
+}
+
+// ─── SavedRequest ────────────────────────────────────────────────────────────
+pub struct SavedRequest<'a> {
+    pub js_request: Strong,
+    pub request: &'a Request,
+    pub ctx: AnyRequestContext,
+    pub response: uws::AnyResponse,
+}
+
+impl Drop for SavedRequest<'_> {
+    fn drop(&mut self) {
+        self.js_request.deinit();
+        self.ctx.deref_();
+    }
+}
+
+pub enum SavedRequestUnion<'a> {
+    /// Direct pointer to a µWebSockets request that is still on the stack.
+    /// Used for synchronous request handling where the request can be processed
+    /// immediately within the current call frame. This avoids heap allocation
+    /// and is more efficient for simple, fast operations.
+    Stack(&'a mut uws::Request),
+
+    /// A heap-allocated copy of the request data that persists beyond the
+    /// initial request handler. Used when request processing needs to be
+    /// deferred (e.g., async operations, waiting for framework initialization).
+    /// Contains strong references to JavaScript objects and all context needed
+    /// to complete the request later.
+    Saved(SavedRequest<'a>),
+}
+
+// ─── ServerAllConnectionsClosedTask ──────────────────────────────────────────
+pub struct ServerAllConnectionsClosedTask {
+    pub global_object: &'static JSGlobalObject, // JSC_BORROW
+    pub promise: jsc::JSPromise::Strong,
+    pub tracker: AsyncTaskTracker,
+}
+
+impl ServerAllConnectionsClosedTask {
+    pub fn schedule(this: ServerAllConnectionsClosedTask, vm: &VirtualMachine) {
+        let ptr = Box::into_raw(Box::new(this));
+        vm.event_loop().enqueue_task(jsc::Task::init(ptr));
+    }
+
+    pub fn run_from_js_thread(this: *mut Self, vm: &VirtualMachine) -> Result<(), jsc::JsTerminated> {
+        httplog!("ServerAllConnectionsClosedTask runFromJSThread");
+
+        // SAFETY: ptr was Box::into_raw'd in schedule()
+        let this = unsafe { Box::from_raw(this) };
+        let global_object = this.global_object;
+        let tracker = this.tracker;
+        tracker.will_dispatch(global_object);
+        let _guard = scopeguard::guard((), |_| tracker.did_dispatch(global_object));
+
+        let mut promise = this.promise;
+        // promise drops at scope end
+
+        if !vm.is_shutting_down() {
+            promise.resolve(global_object, JSValue::UNDEFINED)?;
+        }
+        Ok(())
+    }
+}
+
+// ─── Type aliases ────────────────────────────────────────────────────────────
+pub type HTTPServer = NewServer<false, false>;
+pub type HTTPSServer = NewServer<true, false>;
+pub type DebugHTTPServer = NewServer<false, true>;
+pub type DebugHTTPSServer = NewServer<true, true>;
+
+// ─── AnyServer ───────────────────────────────────────────────────────────────
+#[derive(Clone, Copy)]
+pub struct AnyServer {
+    pub ptr: TaggedPtrUnion<(HTTPServer, HTTPSServer, DebugHTTPServer, DebugHTTPSServer)>,
+}
+
+pub enum AnyUserRouteList<'a> {
+    HTTPServer(&'a [UserRoute<false, false>]),
+    HTTPSServer(&'a [UserRoute<true, false>]),
+    DebugHTTPServer(&'a [UserRoute<false, true>]),
+    DebugHTTPSServer(&'a [UserRoute<true, true>]),
+}
+
+macro_rules! any_server_dispatch {
+    ($self:expr, |$s:ident| $body:expr) => {
+        match $self.ptr.tag() {
+            t if t == <TaggedPtrUnion<_>>::case::<HTTPServer>() => { let $s = $self.ptr.as_::<HTTPServer>(); $body }
+            t if t == <TaggedPtrUnion<_>>::case::<HTTPSServer>() => { let $s = $self.ptr.as_::<HTTPSServer>(); $body }
+            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPServer>() => { let $s = $self.ptr.as_::<DebugHTTPServer>(); $body }
+            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPSServer>() => { let $s = $self.ptr.as_::<DebugHTTPSServer>(); $body }
+            _ => unreachable!("Invalid pointer tag"),
+        }
+    };
+}
+
+impl AnyServer {
+    pub fn user_routes(&self) -> AnyUserRouteList<'_> {
+        match self.ptr.tag() {
+            t if t == <TaggedPtrUnion<_>>::case::<HTTPServer>() => AnyUserRouteList::HTTPServer(&self.ptr.as_::<HTTPServer>().user_routes),
+            t if t == <TaggedPtrUnion<_>>::case::<HTTPSServer>() => AnyUserRouteList::HTTPSServer(&self.ptr.as_::<HTTPSServer>().user_routes),
+            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPServer>() => AnyUserRouteList::DebugHTTPServer(&self.ptr.as_::<DebugHTTPServer>().user_routes),
+            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPSServer>() => AnyUserRouteList::DebugHTTPSServer(&self.ptr.as_::<DebugHTTPSServer>().user_routes),
+            _ => unreachable!("Invalid pointer tag"),
+        }
+    }
+
+    pub fn get_url_as_string(&self) -> Result<BunString, AllocError> {
+        any_server_dispatch!(self, |s| s.get_url_as_string())
+    }
+
+    pub fn vm(&self) -> &'static VirtualMachine {
+        any_server_dispatch!(self, |s| s.vm)
+    }
+
+    /// Cached `h3=":<port>"; ma=86400` for Alt-Svc on H1/H2 responses, or
+    /// None when the server has no H3 listener. Static/file/HTML routes
+    /// emit it via this so browsers discover the QUIC endpoint regardless
+    /// of which response path produced the body.
+    pub fn h3_alt_svc(&self) -> Option<&[u8]> {
+        match self.ptr.tag() {
+            t if t == <TaggedPtrUnion<_>>::case::<HTTPSServer>() => self.ptr.as_::<HTTPSServer>().h3_alt_svc(),
+            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPSServer>() => self.ptr.as_::<DebugHTTPSServer>().h3_alt_svc(),
+            _ => None,
+        }
+    }
+
+    pub fn set_inspector_server_id(&self, id: DebuggerId) {
+        any_server_dispatch!(self, |s| {
+            s.inspector_server_id = id;
+            if let Some(dev_server) = &mut s.dev_server {
+                dev_server.inspector_server_id = id;
+            }
+        })
+    }
+
+    pub fn inspector_server_id(&self) -> DebuggerId {
+        any_server_dispatch!(self, |s| s.inspector_server_id)
+    }
+
+    pub fn plugins(&self) -> Option<&ServePlugins> {
+        // TODO(port): returns Option<Rc<ServePlugins>> deref
+        any_server_dispatch!(self, |s| s.plugins.as_deref())
+    }
+
+    pub fn get_plugins(&self) -> PluginsResult<'_> {
+        // TODO(port): getPlugins method does not exist on NewServer in this file — defined elsewhere
+        any_server_dispatch!(self, |s| s.get_plugins())
+    }
+
+    pub fn load_and_resolve_plugins(
+        &self,
+        bundle: &mut html_bundle::HTMLBundleRoute,
+        raw_plugins: &[&[u8]],
+        bunfig_path: &[u8],
+    ) {
+        // TODO(port): getPluginsAsync method does not exist on NewServer in this file — defined elsewhere
+        any_server_dispatch!(self, |s| s.get_plugins_async(bundle, raw_plugins, bunfig_path))
+    }
+
+    /// Returns:
+    /// - .ready if no plugin has to be loaded
+    /// - .err if there is a cached failure. Currently, this requires restarting the entire server.
+    /// - .pending if `callback` was stored. It will call `onPluginsResolved` or `onPluginsRejected` later.
+    pub fn get_or_load_plugins(&self, callback: ServePluginsCallback<'_>) -> GetOrStartLoadResult<'_> {
+        any_server_dispatch!(self, |s| s.get_or_load_plugins(callback))
+    }
+
+    pub fn reload_static_routes(&self) -> Result<bool, bun_core::Error> {
+        // TODO(port): narrow error set
+        any_server_dispatch!(self, |s| s.reload_static_routes())
+    }
+
+    pub fn append_static_route(
+        &self,
+        path: &[u8],
+        route: AnyRoute,
+        method: http::Method::Optional,
+    ) -> Result<(), bun_core::Error> {
+        // TODO(port): narrow error set
+        any_server_dispatch!(self, |s| s.append_static_route(path, route, method))
+    }
+
+    pub fn global_this(&self) -> &JSGlobalObject {
+        any_server_dispatch!(self, |s| unsafe { &*s.global_this })
+    }
+
+    pub fn config(&self) -> &ServerConfig {
+        any_server_dispatch!(self, |s| &s.config)
+    }
+
+    pub fn web_socket_handler(&self) -> Option<&mut WebSocketServerContext::Handler> {
+        let server_config: &mut ServerConfig = any_server_dispatch!(self, |s| &mut s.config);
+        server_config.websocket.as_mut().map(|ws| &mut ws.handler)
+    }
+
+    pub fn on_request(&self, req: &mut uws::Request, resp: uws::AnyResponse) {
+        match self.ptr.tag() {
+            t if t == <TaggedPtrUnion<_>>::case::<HTTPServer>() => self.ptr.as_::<HTTPServer>().on_request(req, resp.assert_no_ssl()),
+            t if t == <TaggedPtrUnion<_>>::case::<HTTPSServer>() => self.ptr.as_::<HTTPSServer>().on_request(req, resp.assert_ssl()),
+            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPServer>() => self.ptr.as_::<DebugHTTPServer>().on_request(req, resp.assert_no_ssl()),
+            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPSServer>() => self.ptr.as_::<DebugHTTPSServer>().on_request(req, resp.assert_ssl()),
+            _ => unreachable!("Invalid pointer tag"),
+        }
+    }
+
+    pub fn from<T>(server: &T) -> AnyServer
+    where
+        TaggedPtrUnion<(HTTPServer, HTTPSServer, DebugHTTPServer, DebugHTTPSServer)>: From<*const T>,
+    {
+        AnyServer { ptr: TaggedPtrUnion::init(server) }
+    }
+
+    pub fn on_pending_request(&self) {
+        any_server_dispatch!(self, |s| s.on_pending_request())
+    }
+
+    pub fn on_request_complete(&self) {
+        any_server_dispatch!(self, |s| s.on_request_complete())
+    }
+
+    pub fn on_static_request_complete(&self) {
+        any_server_dispatch!(self, |s| s.on_static_request_complete())
+    }
+
+    pub fn publish(&self, topic: &[u8], message: &[u8], opcode: Opcode, compress: bool) -> bool {
+        any_server_dispatch!(self, |s| unsafe { &*s.app.unwrap() }.publish(topic, message, opcode, compress))
+    }
+
+    pub fn on_saved_request<const EXTRA_ARG_COUNT: usize>(
+        &self,
+        req: SavedRequestUnion,
+        resp: uws::AnyResponse,
+        callback: JSValue,
+        extra_args: [JSValue; EXTRA_ARG_COUNT],
+    ) {
+        match self.ptr.tag() {
+            t if t == <TaggedPtrUnion<_>>::case::<HTTPServer>() => self.ptr.as_::<HTTPServer>().on_saved_request(req, resp.tcp(), callback, extra_args),
+            t if t == <TaggedPtrUnion<_>>::case::<HTTPSServer>() => self.ptr.as_::<HTTPSServer>().on_saved_request(req, resp.ssl(), callback, extra_args),
+            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPServer>() => self.ptr.as_::<DebugHTTPServer>().on_saved_request(req, resp.tcp(), callback, extra_args),
+            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPSServer>() => self.ptr.as_::<DebugHTTPSServer>().on_saved_request(req, resp.ssl(), callback, extra_args),
+            _ => unreachable!("Invalid pointer tag"),
+        }
+    }
+
+    pub fn prepare_and_save_js_request_context(
+        &self,
+        req: &mut uws::Request,
+        resp: uws::AnyResponse,
+        global: &JSGlobalObject,
+        method: Option<http::Method>,
+    ) -> JsResult<Option<SavedRequest<'_>>> {
+        Ok(match self.ptr.tag() {
+            t if t == <TaggedPtrUnion<_>>::case::<HTTPServer>() => {
+                let s = self.ptr.as_::<HTTPServer>();
+                let Some(p) = s.prepare_js_request_context(req, resp.tcp(), None, CreateJsRequest::Bake, method) else { return Ok(None); };
+                Some(p.save(global, req, resp.tcp()))
+            }
+            t if t == <TaggedPtrUnion<_>>::case::<HTTPSServer>() => {
+                let s = self.ptr.as_::<HTTPSServer>();
+                let Some(p) = s.prepare_js_request_context(req, resp.ssl(), None, CreateJsRequest::Bake, method) else { return Ok(None); };
+                Some(p.save(global, req, resp.ssl()))
+            }
+            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPServer>() => {
+                let s = self.ptr.as_::<DebugHTTPServer>();
+                let Some(p) = s.prepare_js_request_context(req, resp.tcp(), None, CreateJsRequest::Bake, method) else { return Ok(None); };
+                Some(p.save(global, req, resp.tcp()))
+            }
+            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPSServer>() => {
+                let s = self.ptr.as_::<DebugHTTPSServer>();
+                let Some(p) = s.prepare_js_request_context(req, resp.ssl(), None, CreateJsRequest::Bake, method) else { return Ok(None); };
+                Some(p.save(global, req, resp.ssl()))
+            }
+            _ => unreachable!("Invalid pointer tag"),
+        })
+    }
+
+    pub fn num_subscribers(&self, topic: &[u8]) -> u32 {
+        any_server_dispatch!(self, |s| unsafe { &*s.app.unwrap() }.num_subscribers(topic))
+    }
+
+    pub fn dev_server(&self) -> Option<&DevServer> {
+        any_server_dispatch!(self, |s| s.dev_server.as_deref())
+    }
+}
+
+// ─── Exported fns ────────────────────────────────────────────────────────────
+#[unsafe(no_mangle)]
+pub extern "C" fn Server__setIdleTimeout(server: JSValue, seconds: JSValue, global: &JSGlobalObject) {
+    match server_set_idle_timeout_(server, seconds, global) {
+        Ok(()) => {}
+        Err(JsError::Thrown) => {}
+        Err(JsError::OutOfMemory) => {
+            let _ = global.throw_out_of_memory_value();
+        }
+        Err(JsError::Terminated) => {}
+    }
+}
+
+pub fn server_set_idle_timeout_(server: JSValue, seconds: JSValue, global: &JSGlobalObject) -> JsResult<()> {
+    if !server.is_object() {
+        return global.throw(format_args!("Failed to set timeout: The 'this' value is not a Server."));
+    }
+
+    if !seconds.is_number() {
+        return global.throw(format_args!("Failed to set timeout: The provided value is not of type 'number'."));
+    }
+    let value = seconds.to::<c_uint>();
+    if let Some(this) = server.as_::<HTTPServer>() {
+        this.set_idle_timeout(value);
+    } else if let Some(this) = server.as_::<HTTPSServer>() {
+        this.set_idle_timeout(value);
+    } else if let Some(this) = server.as_::<DebugHTTPServer>() {
+        this.set_idle_timeout(value);
+    } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
+        this.set_idle_timeout(value);
+    } else {
+        return global.throw(format_args!("Failed to set timeout: The 'this' value is not a Server."));
+    }
+    Ok(())
+}
+
+pub fn server_set_on_client_error_(global: &JSGlobalObject, server: JSValue, callback: JSValue) -> JsResult<JSValue> {
+    if !server.is_object() {
+        return global.throw(format_args!("Failed to set clientError: The 'this' value is not a Server."));
+    }
+
+    if !callback.is_function() {
+        return global.throw(format_args!("Failed to set clientError: The provided value is not a function."));
+    }
+
+    macro_rules! handle {
+        ($T:ty) => {
+            if let Some(this) = server.as_::<$T>() {
+                if let Some(app) = this.app {
+                    this.on_clienterror.deinit();
+                    this.on_clienterror = Strong::create(callback, global);
+                    unsafe { &*app }.on_client_error(this, <$T>::on_client_error_callback);
+                }
+                return Ok(JSValue::UNDEFINED);
+            }
+        };
+    }
+    handle!(HTTPServer);
+    handle!(HTTPSServer);
+    handle!(DebugHTTPServer);
+    handle!(DebugHTTPSServer);
+    debug_assert!(false);
+    Ok(JSValue::UNDEFINED)
+}
+
+pub fn server_set_app_flags_(
+    global: &JSGlobalObject,
+    server: JSValue,
+    require_host_header: bool,
+    use_strict_method_validation: bool,
+) -> JsResult<JSValue> {
+    if !server.is_object() {
+        return global.throw(format_args!("Failed to set requireHostHeader: The 'this' value is not a Server."));
+    }
+
+    if let Some(this) = server.as_::<HTTPServer>() {
+        this.set_flags(require_host_header, use_strict_method_validation);
+    } else if let Some(this) = server.as_::<HTTPSServer>() {
+        this.set_flags(require_host_header, use_strict_method_validation);
+    } else if let Some(this) = server.as_::<DebugHTTPServer>() {
+        this.set_flags(require_host_header, use_strict_method_validation);
+    } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
+        this.set_flags(require_host_header, use_strict_method_validation);
+    } else {
+        return global.throw(format_args!("Failed to set timeout: The 'this' value is not a Server."));
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
+pub fn server_set_max_http_header_size_(
+    global: &JSGlobalObject,
+    server: JSValue,
+    max_header_size: u64,
+) -> JsResult<JSValue> {
+    if !server.is_object() {
+        return global.throw(format_args!("Failed to set maxHeaderSize: The 'this' value is not a Server."));
+    }
+
+    if let Some(this) = server.as_::<HTTPServer>() {
+        this.set_max_http_header_size(max_header_size);
+    } else if let Some(this) = server.as_::<HTTPSServer>() {
+        this.set_max_http_header_size(max_header_size);
+    } else if let Some(this) = server.as_::<DebugHTTPServer>() {
+        this.set_max_http_header_size(max_header_size);
+    } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
+        this.set_max_http_header_size(max_header_size);
+    } else {
+        return global.throw(format_args!("Failed to set maxHeaderSize: The 'this' value is not a Server."));
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
+// TODO(port): @export — host_fn.wrap{3,4} generates the C-ABI shim. Phase B: emit via proc-macro.
+#[unsafe(no_mangle)]
+pub extern "C" fn Server__setAppFlags() {
+    // TODO(port): proc-macro — wrap4(server_set_app_flags_)
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn Server__setOnClientError() {
+    // TODO(port): proc-macro — wrap3(server_set_on_client_error_)
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn Server__setMaxHTTPHeaderSize() {
+    // TODO(port): proc-macro — wrap3(server_set_max_http_header_size_)
+}
+
+// ─── Externs ─────────────────────────────────────────────────────────────────
+// TODO(port): move to <area>_sys
+unsafe extern "C" {
+    fn NodeHTTPServer__onRequest_http(
+        any_server: usize,
+        global: *const JSGlobalObject,
+        this: JSValue,
+        callback: JSValue,
+        method_string: JSValue,
+        request: *mut uws::Request,
+        response: *mut c_void, // *uws.NewApp(false).Response
+        upgrade_ctx: *mut WebSocketUpgradeContext,
+        node_response_ptr: *mut Option<*mut NodeHTTPResponse>,
+    ) -> JSValue;
+
+    fn NodeHTTPServer__onRequest_https(
+        any_server: usize,
+        global: *const JSGlobalObject,
+        this: JSValue,
+        callback: JSValue,
+        method_string: JSValue,
+        request: *mut uws::Request,
+        response: *mut c_void, // *uws.NewApp(true).Response
+        upgrade_ctx: *mut WebSocketUpgradeContext,
+        node_response_ptr: *mut Option<*mut NodeHTTPResponse>,
+    ) -> JSValue;
+
+    fn Bun__createNodeHTTPServerSocketForClientError(
+        is_ssl: bool,
+        socket: *mut c_void,
+        global: *const JSGlobalObject,
+    ) -> JSValue;
+
+    fn Bun__ServerRouteList__callRoute(
+        global: *const JSGlobalObject,
+        index: u32,
+        request_ptr: *mut Request,
+        server_object: JSValue,
+        route_list_object: JSValue,
+        request_object: *mut JSValue,
+        req: *mut c_void, // *uws.Request
+    ) -> JSValue;
+
+    fn Bun__ServerRouteList__callRouteH3(
+        global: *const JSGlobalObject,
+        index: u32,
+        request_ptr: *mut Request,
+        server_object: JSValue,
+        route_list_object: JSValue,
+        request_object: *mut JSValue,
+        req: *mut c_void,
+    ) -> JSValue;
+
+    fn Bun__ServerRouteList__create(
+        global: *const JSGlobalObject,
+        callbacks: *mut JSValue,
+        paths: *mut ZigString,
+        paths_length: usize,
+    ) -> JSValue;
+
+    fn NodeHTTP_assignOnNodeJSCompat(ssl: bool, app: *mut c_void);
+    fn NodeHTTP_setUsingCustomExpectHandler(ssl: bool, app: *mut c_void, value: bool);
+}
+
+fn throw_ssl_error_if_necessary(global: &JSGlobalObject) -> bool {
+    let err_code = unsafe { boringssl::ERR_get_error() };
+    if err_code != 0 {
+        let _guard = scopeguard::guard((), |_| unsafe { boringssl::ERR_clear_error() });
+        let _ = global.throw_value(jsc::API::Crypto::create_crypto_error(global, err_code));
+        return true;
+    }
+    false
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// PORT STATUS
+//   source:     src/runtime/server/server.zig (3855 lines)
+//   confidence: low
+//   todos:      41
+//   notes:      NewServer comptime type-generator → const-generic struct<SSL,DEBUG>; conditional H3 fields kept as Option (loses void elision); ServePlugins/AnyServer use intrusive refcount + tagged-ptr (Rc placeholder is wrong — Phase B: IntrusiveRc); .classes.ts codegen (js.gc.routeList) stubbed; many uws callback registrations need fn-pointer adapters
+// ──────────────────────────────────────────────────────────────────────────

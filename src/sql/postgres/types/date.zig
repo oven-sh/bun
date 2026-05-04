@@ -11,7 +11,7 @@ pub fn fromBinary(bytes: []const u8) f64 {
     return (double_microseconds / std.time.us_per_ms) + POSTGRES_EPOCH_DATE;
 }
 
-pub fn fromJS(globalObject: *jsc.JSGlobalObject, value: JSValue) bun.JSError!i64 {
+pub fn fromJS(globalObject: *jsc.JSGlobalObject, value: JSValue) AnyPostgresError!i64 {
     const double_value = if (value.isDate())
         value.getUnixTimestamp()
     else if (value.isNumber())
@@ -21,6 +21,14 @@ pub fn fromJS(globalObject: *jsc.JSGlobalObject, value: JSValue) bun.JSError!i64
         defer str.deref();
         break :brk try str.parseDate(globalObject);
     } else return 0;
+
+    // `@intFromFloat` on a non-finite value is Illegal Behavior. Invalid
+    // `Date` objects (e.g. `new Date("bad")` / `new Date(NaN)`) are real
+    // `DateInstance`s whose internal value is NaN, so `getUnixTimestamp()`
+    // — and likewise `parseDate` on a bad string or `asNumber` on `NaN` —
+    // can return NaN / ±Infinity here. The text path (`toISOString`) already
+    // rejects these via `std::isfinite`; mirror that for the binary path.
+    if (!std.math.isFinite(double_value)) return error.InvalidQueryBinding;
 
     const unix_timestamp: i64 = @intFromFloat(double_value);
     return (unix_timestamp - POSTGRES_EPOCH_DATE) * std.time.us_per_ms;
@@ -46,6 +54,7 @@ pub fn toJS(
 
 const bun = @import("bun");
 const std = @import("std");
+const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
 const Data = @import("../../shared/Data.zig").Data;
 
 const int_types = @import("./int_types.zig");

@@ -151,14 +151,34 @@ pub fn writeBind(
             },
 
             else => {
-                const str = try String.fromJS(value, globalObject);
-                if (str.tag == .Dead) return error.OutOfMemory;
-                defer str.deref();
-                const slice = str.toUTF8WithoutRef(bun.default_allocator);
-                defer slice.deinit();
-                const l = try writer.length();
-                try writer.write(slice.slice());
-                try l.writeExcludingSelf();
+                // JS `Date` objects reach this branch whenever the server
+                // hasn't told us the parameter type is `.timestamp` /
+                // `.timestamptz` — e.g. under `prepare: false`, or on the
+                // first execution of a fresh prepared statement before
+                // Describe returns. `bun.String.fromJS(date)` would emit
+                // `Date.prototype.toString()` output (a locale-dependent
+                // string like "Mon Jan 15 2024 12:30:45 GMT+0000 ..."),
+                // which PostgreSQL rejects. Serialize as ISO 8601 instead.
+                // On failure propagate a bind error rather than falling
+                // back to the legacy text path — the fallback would just
+                // re-emit the same broken locale string.
+                if (value.isDate()) {
+                    var iso_buf: JSValue.ISOStringBuffer = undefined;
+                    const iso = value.toISOString(globalObject, &iso_buf);
+                    if (iso.len == 0) return error.InvalidQueryBinding;
+                    const l = try writer.length();
+                    try writer.write(iso);
+                    try l.writeExcludingSelf();
+                } else {
+                    const str = try String.fromJS(value, globalObject);
+                    if (str.tag == .Dead) return error.OutOfMemory;
+                    defer str.deref();
+                    const slice = str.toUTF8WithoutRef(bun.default_allocator);
+                    defer slice.deinit();
+                    const l = try writer.length();
+                    try writer.write(slice.slice());
+                    try l.writeExcludingSelf();
+                }
             },
         }
     }

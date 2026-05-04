@@ -296,7 +296,9 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
 
         const can_execute = !connection.hasQueryRunning();
         if (can_execute) {
+            const write_start = PostgresSQLConnection.WriteBufferSnapshot.take(connection);
             PostgresRequest.executeQuery(query_str.slice(), PostgresSQLConnection.Writer, writer) catch |err| {
+                write_start.restore(connection);
                 // fail to run do cleanup
                 this.statement = null;
                 bun.default_allocator.destroy(stmt);
@@ -371,7 +373,9 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
                             debug("bindAndExecute", .{});
 
                             // bindAndExecute will bind + execute, it will change to running after binding is complete
+                            const write_start = PostgresSQLConnection.WriteBufferSnapshot.take(connection);
                             PostgresRequest.bindAndExecute(globalObject, this.statement.?, binding_value, columns_value, PostgresSQLConnection.Writer, writer) catch |err| {
+                                write_start.restore(connection);
                                 // fail to run do cleanup
                                 this.statement = null;
                                 stmt.deref();
@@ -402,7 +406,9 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
             if (!has_params) {
                 debug("prepareAndQueryWithSignature", .{});
                 // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
+                const write_start = PostgresSQLConnection.WriteBufferSnapshot.take(connection);
                 PostgresRequest.prepareAndQueryWithSignature(globalObject, query_str.slice(), binding_value, PostgresSQLConnection.Writer, writer, &signature) catch |err| {
+                    write_start.restore(connection);
                     if (connection_entry_value != null) {
                         _ = connection.statements.remove(signature_hash);
                     }
@@ -425,7 +431,9 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
                 // for ParameterDescription before sending Bind+Execute in advance().
                 debug("writeQuery", .{});
 
+                const write_start = PostgresSQLConnection.WriteBufferSnapshot.take(connection);
                 PostgresRequest.writeQuery(query_str.slice(), signature.prepared_statement_name, signature.fields, PostgresSQLConnection.Writer, writer) catch |err| {
+                    write_start.restore(connection);
                     if (connection_entry_value != null) {
                         _ = connection.statements.remove(signature_hash);
                     }
@@ -440,6 +448,7 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
                     return error.JSError;
                 };
                 writer.write(&protocol.Sync) catch |err| {
+                    write_start.restore(connection);
                     if (connection_entry_value != null) {
                         _ = connection.statements.remove(signature_hash);
                     }

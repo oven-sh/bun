@@ -405,8 +405,15 @@ pub const JSValue = enum(i64) {
         return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), JSC__JSValue__push, .{ value, globalObject, out });
     }
 
-    extern fn JSC__JSValue__toISOString(*jsc.JSGlobalObject, jsc.JSValue, *[28]u8) c_int;
-    pub fn toISOString(this: JSValue, globalObject: *jsc.JSGlobalObject, buf: *[28]u8) []const u8 {
+    /// Buffer type for `toISOString` / `getDateNowISOString`. Must match the
+    /// `char in[64]` parameter of `Bun::toISOString` in `wtf-bindings.cpp`.
+    pub const ISOStringBuffer = [64]u8;
+
+    extern fn JSC__JSValue__toISOString(*jsc.JSGlobalObject, jsc.JSValue, *ISOStringBuffer) c_int;
+    /// Serializes a JavaScript `Date` value as an ISO 8601 / RFC 3339 string
+    /// (the same format as `Date.prototype.toISOString`). Returns an empty
+    /// slice on failure (e.g. the value is not a finite `Date`).
+    pub fn toISOString(this: JSValue, globalObject: *jsc.JSGlobalObject, buf: *ISOStringBuffer) []const u8 {
         const count = JSC__JSValue__toISOString(globalObject, this, buf);
         if (count < 0) {
             return "";
@@ -414,8 +421,10 @@ pub const JSValue = enum(i64) {
 
         return buf[0..@as(usize, @intCast(count))];
     }
-    extern fn JSC__JSValue__DateNowISOString(*JSGlobalObject, f64) JSValue;
-    pub fn getDateNowISOString(globalObject: *jsc.JSGlobalObject, buf: *[28]u8) []const u8 {
+    extern fn JSC__JSValue__DateNowISOString(*jsc.JSGlobalObject, *ISOStringBuffer) c_int;
+    /// Writes `new Date(Date.now()).toISOString()` into `buf` and returns
+    /// the written slice. Empty slice on failure.
+    pub fn getDateNowISOString(globalObject: *jsc.JSGlobalObject, buf: *ISOStringBuffer) []const u8 {
         const count = JSC__JSValue__DateNowISOString(globalObject, buf);
         if (count < 0) {
             return "";

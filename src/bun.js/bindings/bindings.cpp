@@ -5885,7 +5885,6 @@ extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNullTerminatedString(JSC
 // this is largely copied from dateProtoFuncToISOString
 extern "C" int JSC__JSValue__toISOString(JSC::JSGlobalObject* globalObject, EncodedJSValue dateValue, char* buf)
 {
-    char buffer[64];
     JSC::DateInstance* thisDateObj = dynamicDowncast<JSC::DateInstance>(JSC::JSValue::decode(dateValue));
     if (!thisDateObj)
         return -1;
@@ -5895,41 +5894,18 @@ extern "C" int JSC__JSValue__toISOString(JSC::JSGlobalObject* globalObject, Enco
 
     auto& vm = JSC::getVM(globalObject);
 
-    return static_cast<int>(Bun::toISOString(vm, thisDateObj->internalNumber(), buffer));
+    return static_cast<int>(Bun::toISOString(vm, thisDateObj->internalNumber(), buf));
 }
 
 extern "C" int JSC__JSValue__DateNowISOString(JSC::JSGlobalObject* globalObject, char* buf)
 {
-    char buffer[29];
-    JSC::DateInstance* thisDateObj = JSC::DateInstance::create(globalObject->vm(), globalObject->dateStructure(), globalObject->jsDateNow());
-
-    if (!std::isfinite(thisDateObj->internalNumber()))
-        return -1;
-
     auto& vm = JSC::getVM(globalObject);
+    double now = globalObject->jsDateNow();
 
-    const GregorianDateTime* gregorianDateTime = thisDateObj->gregorianDateTimeUTC(vm.dateCache);
-    if (!gregorianDateTime)
+    if (!std::isfinite(now))
         return -1;
 
-    // If the year is outside the bounds of 0 and 9999 inclusive we want to use the extended year format (ES 15.9.1.15.1).
-    int ms = static_cast<int>(fmod(thisDateObj->internalNumber(), msPerSecond));
-    if (ms < 0)
-        ms += msPerSecond;
-
-    int charactersWritten;
-    if (gregorianDateTime->year() > 9999 || gregorianDateTime->year() < 0)
-        charactersWritten = snprintf(buffer, sizeof(buffer), "%+07d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime->year(), gregorianDateTime->month() + 1, gregorianDateTime->monthDay(), gregorianDateTime->hour(), gregorianDateTime->minute(), gregorianDateTime->second(), ms);
-    else
-        charactersWritten = snprintf(buffer, sizeof(buffer), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime->year(), gregorianDateTime->month() + 1, gregorianDateTime->monthDay(), gregorianDateTime->hour(), gregorianDateTime->minute(), gregorianDateTime->second(), ms);
-
-    memcpy(buf, buffer, charactersWritten);
-
-    ASSERT(charactersWritten > 0 && static_cast<unsigned>(charactersWritten) < sizeof(buffer));
-    if (static_cast<unsigned>(charactersWritten) >= sizeof(buffer))
-        return -1;
-
-    return charactersWritten;
+    return static_cast<int>(Bun::toISOString(vm, now, buf));
 }
 
 #pragma mark - WebCore::DOMFormData

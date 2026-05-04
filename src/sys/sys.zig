@@ -3241,8 +3241,11 @@ pub const MemfdFlags = enum(u32) {
     cross_process = MFD_NOEXEC_SEAL,
 
     pub fn olderKernelFlag(this: MemfdFlags) u32 {
+        // MFD_EXEC / MFD_NOEXEC_SEAL require Linux 6.3; MFD_ALLOW_SEALING has
+        // existed since memfd_create itself (3.17) and is still wanted so
+        // callers can F_ADD_SEALS after populating the file.
         return switch (this) {
-            .non_executable, .executable => MFD_CLOEXEC,
+            .non_executable, .executable => MFD_CLOEXEC | MFD_ALLOW_SEALING,
             .cross_process => 0,
         };
     }

@@ -204,7 +204,7 @@ FFI_Callback_call(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::Enc
     return JSC::JSValue::encode(result);
 }
 
-// Must match FFI.ABIType in src/bun.js/api/ffi.zig.
+// Must match FFI.ABIType in src/runtime/ffi/ffi.zig.
 enum class FFIABIType : uint8_t {
     int64_t_ = 7,
     uint64_t_ = 8,

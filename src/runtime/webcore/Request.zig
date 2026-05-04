@@ -970,7 +970,17 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
         // Extract referrer option (spec: `init["referrer"] !== undefined`
         // then: "" → "no-referrer"; else parse as URL, failure throws TypeError).
         // Matches the integrity pattern: compute first, then swap.
-        if (!fields.contains(.referrer)) {
+        //
+        // Spec step 12: if init is non-empty, the base Request's referrer
+        // must be reset to "client" — not leaked via its `referrer`
+        // getter. The DOMWrapper branch above handles this for direct
+        // Requests, but falls through to this generic block when the base
+        // is a Request subclass (or has a mutated structure), since
+        // `asDirect(Request)` returns null for those. Re-apply the gate
+        // here so `value.get("referrer")` doesn't invoke the inherited
+        // accessor and leak the base's URL back in.
+        const is_base_iter_for_referrer = values_to_try.len == 2 and iter_idx == values_to_try.len - 1;
+        if (!fields.contains(.referrer) and !(is_base_iter_for_referrer and init_has_key)) {
             if (try value.get(globalThis, "referrer")) |referrer_value| {
                 var referrer_str = try bun.String.fromJS(referrer_value, globalThis);
                 const new_referrer: bun.String = if (referrer_str.isEmpty()) blk: {

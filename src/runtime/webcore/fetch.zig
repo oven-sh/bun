@@ -626,7 +626,9 @@ fn fetchImpl(
         };
 
         inline for (0..2) |i| {
-            if (objects_to_try[i] != .zero and objects_to_try[i].asDirect(Request) == null) {
+            // `.as()` (not `.asDirect()`) so Request subclasses and
+            // structure-mutated instances are also recognized and skipped.
+            if (objects_to_try[i] != .zero and objects_to_try[i].as(Request) == null) {
                 if (try objects_to_try[i].get(globalThis, "keepalive")) |keepalive_value| {
                     if (keepalive_value.isBoolean()) {
                         break :extract_disable_keepalive !keepalive_value.asBoolean();

@@ -191,6 +191,24 @@ test("new Request(req, req) — aliased args keep referrer", () => {
   expect(new Request(r, r).referrer).toBe("https://foo.example/");
 });
 
+test("new Request(subclassBase, init) resets referrer per step 12", () => {
+  // Regression: the DOMWrapper-Request branch gates on `asDirect(Request)`
+  // which returns null for subclass instances and structure-mutated
+  // Requests, letting the generic `value.get("referrer")` fallthrough
+  // invoke the inherited Request.prototype.referrer accessor and leak
+  // the base's URL back in. The generic block must apply the same
+  // step-12 reset gate as the DOMWrapper branch.
+  class MySubRequest extends Request {}
+  const subBase = new MySubRequest("https://a.example/", { referrer: "https://foo.example/" });
+  expect(new Request(subBase, { method: "POST" }).referrer).toBe("about:client");
+
+  // Structure-mutated direct Request exhibits the same asDirect-returns-null
+  // fallthrough.
+  const mutated = new Request("https://a.example/", { referrer: "https://foo.example/" });
+  (mutated as any).extra = 1;
+  expect(new Request(mutated, { method: "POST" }).referrer).toBe("about:client");
+});
+
 // Spec step 12 keys on presence of any WebIDL-recognized RequestInit member,
 // not on whether Bun actually parses it. Members like `signal: null`,
 // `credentials`, `referrerPolicy`, `duplex`, `window` also trigger the

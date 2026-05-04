@@ -370,4 +370,61 @@ describe("node:http Agent socket accounting", () => {
       server.close();
     }
   });
+
+  test("requests that omit port are tracked under the defaulted port key", () => {
+    const agent = new http.Agent();
+    try {
+      // Don't need a real server — addRequest populates agent.sockets
+      // synchronously. Just check the key format.
+      http.get({ host: "127.0.0.1", agent }, () => {}).on("error", () => {});
+      const keys = Object.keys(agent.sockets);
+      // Node.js writes the defaulted port back onto options, so the key is
+      // '127.0.0.1:80:' — not '127.0.0.1::'. If the port weren't written
+      // back, requests with and without an explicit port: 80 would land in
+      // separate maxSockets pools for the same origin.
+      expect(keys).toEqual(["127.0.0.1:80:"]);
+      expect(agent.sockets["127.0.0.1::"]).toBeUndefined();
+    } finally {
+      agent.destroy();
+    }
+  });
+
+  test("flushHeaders() on a bodiless GET that gets a response before end() releases the slot", async () => {
+    const agent = new http.Agent({ maxSockets: 1 });
+    const server = http.createServer((req, res) => res.end("ok"));
+    server.listen(0);
+    try {
+      await once(server, "listening");
+      const port = (server.address() as AddressInfo).port;
+      const name = agent.getName({ port });
+
+      let gotResponse = false;
+      const req = http.request({ port, agent }, res => {
+        gotResponse = true;
+        res.resume();
+      });
+      req.on("error", () => {});
+      // flushHeaders() starts a duplex fetch with no body generator for a
+      // GET with no write()s. If the server responds before end(), the
+      // .then handler runs while onEnd is still the initial no-op, so
+      // handleResponse() (which installs the res 'end'/'close' release
+      // hooks) would never be called.
+      req.flushHeaders();
+      // Wait for the response to arrive.
+      for (let i = 0; i < 50 && !gotResponse; i++) {
+        await new Promise<void>(r => setImmediate(r));
+      }
+      req.end();
+
+      for (let i = 0; i < 50 && agent.totalSocketCount > 0; i++) {
+        await new Promise<void>(r => setImmediate(r));
+      }
+      expect(gotResponse).toBe(true);
+      expect(agent.totalSocketCount).toBe(0);
+      expect(name in agent.sockets).toBe(false);
+    } finally {
+      agent.destroy();
+      server.close();
+    }
+  });
 });

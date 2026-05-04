@@ -655,6 +655,12 @@ function ClientRequest(input, options, cb) {
       onEnd = () => {
         handleResponse?.();
       };
+      // If flushHeaders() already started a duplex fetch and the response
+      // arrived before end() was called, the .then handler ran while onEnd
+      // was still the initial no-op. Invoke it now; harmless otherwise
+      // (handleResponse is still a no-op until .then assigns it, and it
+      // clears itself after running once).
+      onEnd();
     } catch (err) {
       if (!!$debug) globalReportError(err);
       this.emit("error", err);
@@ -765,7 +771,11 @@ function ClientRequest(input, options, cb) {
   }
 
   const defaultPort = options.defaultPort || this[kAgent].defaultPort;
-  const port = (this[kPort] = options.port || defaultPort || 80);
+  // Write the resolved port back onto options so agent.addRequest() →
+  // getName(options) keys on 'host:80:' (matching Node.js) rather than
+  // 'host::', which would split maxSockets pooling between requests that
+  // pass port: 80 explicitly and those that omit it.
+  const port = (this[kPort] = options.port = options.port || defaultPort || 80);
   this[kUseDefaultPort] = this[kPort] === defaultPort;
   const host =
     (this[kHost] =

@@ -401,11 +401,11 @@ const Options = @import("./options.zig");
 const std = @import("std");
 const URL = @import("../url/url.zig").URL;
 
-const Resolver = @import("../resolver/resolver.zig");
-const ResolverType = Resolver.Resolver;
-
 const _import_record = @import("../options_types/import_record.zig");
 const ImportRecord = _import_record.ImportRecord;
+
+const Resolver = @import("../resolver/resolver.zig");
+const ResolverType = Resolver.Resolver;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

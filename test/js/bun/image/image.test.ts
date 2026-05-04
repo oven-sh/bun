@@ -918,12 +918,12 @@ describe("Bun.Image", () => {
 
       // End-to-end: the reported fix workflow — resize → webp encode — must
       // produce a WebP with the swapped aspect ratio, not the stored one.
-      // Source is 2:4 upright; fit:"inside" into 100×100 gives 50×100 (height
-      // hits the cap first), so a passing build has height > width — whereas
-      // the un-fixed stored-orientation path would hand back 100×50.
+      // Source is 2:4 upright; fit:"inside" into a 100×100 box scales to
+      // 50×100 (height hits the cap first) — pin the exact dims so anything
+      // but the post-orient scaling regresses loudly, not just "not square".
+      // The un-fixed stored-orientation path would have landed at 100×50.
       const webp = await new Bun.Image(tiff).resize(100, 100, { fit: "inside" }).webp({ quality: 80 }).bytes();
-      const reMeta = await new Bun.Image(webp).metadata();
-      expect(reMeta.height).toBeGreaterThan(reMeta.width);
+      expect(await new Bun.Image(webp).metadata()).toEqual({ width: 50, height: 100, format: "webp" });
     });
   });
 

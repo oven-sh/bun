@@ -54,6 +54,14 @@ pub fn Visit(
             var func = _func;
             const old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
             const old_fn_only_data = p.fn_only_data_visit;
+            // Reset `fold_numeric_constants_unconditionally` across function
+            // boundaries: the callers that force-fold (enum body, macro/require
+            // args, const initializer for inlining) want the override only for
+            // the immediate initializer expression, not for any nested function
+            // body's arithmetic — which goes with the function when it's
+            // called and must obey the usual size-aware gate.
+            const old_fold_numeric_constants_unconditionally = p.fold_numeric_constants_unconditionally;
+            p.fold_numeric_constants_unconditionally = false;
             p.fn_or_arrow_data_visit = FnOrArrowDataVisit{ .is_async = func.flags.contains(.is_async) };
             p.fn_only_data_visit = FnOnlyDataVisit{ .is_this_nested = true, .arguments_ref = func.arguments_ref };
 
@@ -100,6 +108,7 @@ pub fn Visit(
 
             p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
             p.fn_only_data_visit = old_fn_only_data;
+            p.fold_numeric_constants_unconditionally = old_fold_numeric_constants_unconditionally;
 
             return func;
         }

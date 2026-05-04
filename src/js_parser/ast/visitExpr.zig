@@ -1600,6 +1600,15 @@ pub fn VisitExpr(
                 const old_inside_async_arrow_fn = p.fn_only_data_visit.is_inside_async_arrow_fn;
                 p.fn_only_data_visit.is_inside_async_arrow_fn = e_.is_async or p.fn_only_data_visit.is_inside_async_arrow_fn;
 
+                // Same reasoning as `visitFunc`: callers that force-fold
+                // (enum body, macro/require args, const initializer for
+                // inlining) want that override for the immediate initializer
+                // only, not for arithmetic inside a nested arrow body that
+                // runs at call time under normal size-aware rules.
+                const old_fold_numeric_constants_unconditionally = p.fold_numeric_constants_unconditionally;
+                p.fold_numeric_constants_unconditionally = false;
+                defer p.fold_numeric_constants_unconditionally = old_fold_numeric_constants_unconditionally;
+
                 p.pushScopeForVisitPass(.function_args, expr.loc) catch unreachable;
                 const dupe = p.allocator.dupe(Stmt, e_.body.stmts) catch unreachable;
 

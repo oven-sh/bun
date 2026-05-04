@@ -536,6 +536,62 @@ it("MatchedRoute.params does not leak", async () => {
   expect(exitCode).toBe(0);
 }, 60_000);
 
+it("MatchedRoute.filePath survives router.reload() (no use-after-free)", async () => {
+  // On Windows, Route.abs_path used to be allocated in the FileSystemRouter's arena.
+  // MatchedRoute borrows file_path without owning it, so reload() (which replaces the
+  // arena) left the live MatchedRoute pointing at freed memory. POSIX was unaffected
+  // because abs_path lives in the global DirnameStore; Windows now does the same.
+  // Run in a subprocess so an ASAN crash doesn't take down the test runner.
+  using dir = tempDir("fsr-match-reload", {
+    "pages/index.tsx": "export default 1;",
+    "pages/posts/[id].tsx": "export default 1;",
+  });
+  const pagesDir = path.join(String(dir), "pages").replaceAll("\\", "/");
+
+  const code = /* ts */ `
+    const router = new Bun.FileSystemRouter({
+      dir: ${JSON.stringify(pagesDir)},
+      style: "nextjs",
+      assetPrefix: "/_next/static/",
+      origin: "https://example.com",
+    });
+    const index = router.match("/");
+    const post = router.match("/posts/hello");
+
+    // reload() drops the previous arena. The existing MatchedRoute objects must
+    // continue to read back the same path, not freed memory.
+    router.reload();
+    router.reload();
+    Bun.gc(true);
+
+    // MatchedRoute.filePath / .src have cache:true in the generated bindings, so the
+    // first access is what invokes the native getter and reads route.file_path. Do not
+    // touch them before reload() or the cached JSString would mask the freed read.
+    console.log(JSON.stringify({
+      indexFilePath: index.filePath,
+      postFilePath: post.filePath,
+      indexSrc: index.src,
+      postSrc: post.src,
+    }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    indexFilePath: `${pagesDir}/index.tsx`,
+    postFilePath: `${pagesDir}/posts/[id].tsx`,
+    indexSrc: `https://example.com/_next/static/index.tsx`,
+    postSrc: `https://example.com/_next/static/posts/[id].tsx`,
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("throws a clean error for invalid route filenames (no use-after-free)", async () => {
   // The constructor's log is backed by an arena allocator. When route loading
   // produces errors (e.g. a filename like `[foo.tsx` missing its closing bracket),

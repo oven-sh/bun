@@ -40,11 +40,11 @@ pub fn init(
 }
 
 pub fn deinit(this: *Router) void {
-    if (comptime Environment.isWindows) {
-        for (this.routes.list.items(.filepath)) |abs_path| {
-            this.allocator.free(abs_path);
-        }
-    }
+    // Route strings (name, public_path, match_name, abs_path) live in the global
+    // DirnameStore on all platforms, so nothing to free here. Previously the Windows
+    // abs_path was arena-owned and freed here, but that allowed a live JS MatchedRoute
+    // to read freed memory after reload()/GC.
+    _ = this;
 }
 
 pub fn getEntryPoints(this: *const Router) []const string {
@@ -532,8 +532,8 @@ pub const Route = struct {
     full_hash: u32,
     param_count: u16,
 
-    // On windows we need to normalize this path to have forward slashes.
-    // To avoid modifying memory we do not own, allocate another buffer
+    // On windows we need to normalize this path to have forward slashes, so we
+    // store a separate DirnameStore-interned copy rather than reusing entry.abs_path.
     abs_path: if (Environment.isWindows) struct {
         path: string,
 
@@ -760,8 +760,11 @@ pub const Route = struct {
             entry.abs_path = PathString.init(abs_path_str);
         }
 
+        // Store the Windows-normalized path in DirnameStore (same as POSIX and the other
+        // route strings above). This must not be arena-backed: a JS `MatchedRoute` borrows
+        // `file_path` and can outlive the router's arena across `reload()` / GC finalize.
         const abs_path = if (comptime Environment.isWindows)
-            bun.handleOom(allocator.dupe(u8, bun.path.platformToPosixBuf(u8, abs_path_str, &route_bufs.get().normalized_abs_path_buf)))
+            FileSystem.DirnameStore.instance.append([]const u8, bun.path.platformToPosixBuf(u8, abs_path_str, &route_bufs.get().normalized_abs_path_buf)) catch unreachable
         else
             PathString.init(abs_path_str);
 

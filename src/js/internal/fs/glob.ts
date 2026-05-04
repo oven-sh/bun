@@ -74,7 +74,7 @@ function validatePattern(pattern: string | string[]): string[] {
 }
 
 // `descendLiteralSymlinks` / `swallowMissingCwd` are internal `Bun.Glob`
-// scan options (see `src/bun.js/api/glob.zig`) that the `node:fs.glob`
+// scan options (see `src/runtime/api/glob.zig`) that the `node:fs.glob`
 // layer uses to pick up Node-compatible semantics. They aren't part of
 // the public `GlobScanOptions` type; widen the return type locally so
 // the object literal below typechecks without exposing the knobs.

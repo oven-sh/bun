@@ -3331,11 +3331,14 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     if (res.success) {
         if (!queryString.isEmpty()) {
             auto result = JSC::Identifier::fromString(globalObject->vm(), makeString(res.result.value.toWTFString(BunString::ZeroCopy), queryString.toWTFString(BunString::ZeroCopy)));
+            res.result.value.deref();
             queryString.deref();
             return result;
         }
 
-        return Identifier::fromString(globalObject->vm(), res.result.value.toWTFString(BunString::ZeroCopy));
+        auto result = Identifier::fromString(globalObject->vm(), res.result.value.toWTFString(BunString::ZeroCopy));
+        res.result.value.deref();
+        return result;
     } else {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         throwException(scope, res.result.err, globalObject);
@@ -3435,6 +3438,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
             queryString.deref();
         }
 
+        resolved.result.value.deref();
         moduleNameZ.deref();
         sourceOriginZ.deref();
     }

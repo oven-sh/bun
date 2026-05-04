@@ -19,7 +19,7 @@ fn findPath(
     }
 
     // for each path
-    const found = if (paths_maybe) |paths| found: {
+    var found = if (paths_maybe) |paths| found: {
         var iter = try paths.iterator(global);
         while (try iter.next()) |path| {
             const cur_path = try bun.String.fromJS(path, global);
@@ -33,8 +33,8 @@ fn findPath(
         break :found null;
     } else findPathInner(request_bun_str, bun.String.static(""), global);
 
-    if (found) |str| {
-        return str.toJS(global);
+    if (found) |*str| {
+        return str.transferToJS(global);
     }
 
     return .false;

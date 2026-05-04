@@ -847,6 +847,7 @@ fn doResolveWithArgs(ctx: *jsc.JSGlobalObject, specifier: bun.String, from: bun.
     if (!errorable.success) {
         return ctx.throwValue(errorable.result.err.value);
     }
+    defer errorable.result.value.deref();
 
     if (!query_string.isEmpty()) {
         var stack = std.heap.stackFallback(1024, ctx.allocator());

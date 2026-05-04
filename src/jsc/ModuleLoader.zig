@@ -208,9 +208,9 @@ fn tryOpenExtractDir(abs_buf: *bun.PathBuffer, tmpdir_path: []const u8, subdir_n
         // Accept either strict (real POSIX FS, dir is 0o700 and ours) or
         // lax (lax-mode mount where fchmod didn't take): require the dir
         // is ours and the reported mode denies group/other write. This
-        // keeps cross-restart dedup working on CIFS/vfat/DrvFs (gap 1 in
-        // claude[bot] review #3181961762) without reopening CWE-377 on
-        // normal /tmp — an attacker-squatted dir fails `st.uid == uid`.
+        // keeps cross-restart dedup working on CIFS/vfat/DrvFs without
+        // reopening CWE-377 on normal /tmp — an attacker-squatted dir
+        // fails `st.uid == uid`.
         //
         // `just_created` implies the dir is ours even on uid-pinned
         // mounts (`uid=` mount-option) where st.uid is a fixed mount uid
@@ -221,8 +221,7 @@ fn tryOpenExtractDir(abs_buf: *bun.PathBuffer, tmpdir_path: []const u8, subdir_n
             fd.close();
             // Clean up a dir we just mkdir'd but can't use — otherwise
             // the 8-iteration random fallback leaks one empty dir per try
-            // on filesystems that report a group/other-writable mode
-            // (gap 2 in the same review).
+            // on filesystems that report a group/other-writable mode.
             if (just_created) _ = bun.sys.rmdir(abs_z);
             return null;
         }

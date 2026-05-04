@@ -2390,6 +2390,14 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_CHANNEL_CLOSED, "Channel closed."_s));
     case ErrorCode::ERR_SOCKET_BAD_TYPE:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_BAD_TYPE, "Bad socket type specified. Valid types are: udp4, udp6"_s));
+    case ErrorCode::ERR_WORKER_MESSAGING_ERRORED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_WORKER_MESSAGING_ERRORED, "The destination thread threw an error while processing the message"_s));
+    case ErrorCode::ERR_WORKER_MESSAGING_FAILED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_WORKER_MESSAGING_FAILED, "Cannot find the destination thread or listener"_s));
+    case ErrorCode::ERR_WORKER_MESSAGING_SAME_THREAD:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_WORKER_MESSAGING_SAME_THREAD, "Cannot sent a message to the same thread"_s));
+    case ErrorCode::ERR_WORKER_MESSAGING_TIMEOUT:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_WORKER_MESSAGING_TIMEOUT, "Sending a message to another thread timed out"_s));
     case ErrorCode::ERR_ZLIB_INITIALIZATION_FAILED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ZLIB_INITIALIZATION_FAILED, "Initialization failed"_s));
     case ErrorCode::ERR_IPC_ONE_PIPE:

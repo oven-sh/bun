@@ -100,12 +100,18 @@ describe("issue #30221: prepare:false JSON-stringifies object parameters", () =>
     let captured: ReturnType<typeof extractFirstParam> | null = null;
     const server = net.createServer(socket => {
       let gotStartup = false;
+      // TCP doesn't preserve message boundaries; accumulate partial frames.
+      let pending = Buffer.alloc(0);
       socket.on("data", chunk => {
+        pending = pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
         const out: Buffer[] = [];
         let o = 0;
-        while (o < chunk.length) {
+        while (o < pending.length) {
           if (!gotStartup) {
-            const len = chunk.readInt32BE(o);
+            // StartupMessage: i32 length, i32 protoVersion, (cstr key, cstr val)*, \0
+            if (pending.length - o < 4) break;
+            const len = pending.readInt32BE(o);
+            if (pending.length - o < len) break;
             o += len;
             gotStartup = true;
             out.push(
@@ -118,9 +124,12 @@ describe("issue #30221: prepare:false JSON-stringifies object parameters", () =>
             );
             continue;
           }
-          const code = chunk[o];
-          const len = chunk.readInt32BE(o + 1);
-          const body = chunk.subarray(o + 5, o + 1 + len);
+          // Regular frame: u8 code, i32 length (includes the length field).
+          if (pending.length - o < 5) break;
+          const code = pending[o];
+          const len = pending.readInt32BE(o + 1);
+          if (pending.length - o < 1 + len) break;
+          const body = pending.subarray(o + 5, o + 1 + len);
           o += 1 + len;
           switch (code) {
             case 0x50 /* P Parse    */:
@@ -147,6 +156,7 @@ describe("issue #30221: prepare:false JSON-stringifies object parameters", () =>
               return;
           }
         }
+        pending = o === pending.length ? Buffer.alloc(0) : pending.subarray(o);
         if (out.length) socket.write(Buffer.concat(out));
       });
     });
@@ -201,12 +211,15 @@ describe("issue #30221: prepare:false JSON-stringifies object parameters", () =>
     expect(param).toEqual({ format: 0, value: "hello" });
   });
 
-  test("integer parameter still emits text '42'", async () => {
+  test("integer parameter keeps the int4 binary-format path", async () => {
     const param = await captureBindParam(sql => sql`SELECT ${42}::int`);
-    // Integers are declared as int4 in the signature, which is binary-
-    // format capable — the server reports OID 0 here but the first-run
-    // path still uses signature types for encoding.
-    expect(param?.value).toBeDefined();
+    // Signature.generate writes OID 23 (int4) for JS numbers — not 0 — so
+    // the new parameter_field==0 branch does NOT fire, and writeBind takes
+    // the existing .int4 arm that emits 4 big-endian bytes in binary format.
+    // Asserting the exact bytes proves the JSON re-derivation didn't steal
+    // this path: under the pre-fix else branch these 4 bytes would instead
+    // have been the ASCII text "42" in format=0.
+    expect(param).toEqual({ format: 1, value: "\u0000\u0000\u0000\x2a" });
   });
 
   test("null parameter is signalled with length=-1", async () => {

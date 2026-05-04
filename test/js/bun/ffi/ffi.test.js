@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
-import { isGlibcVersionAtLeast } from "harness";
+import { isArm64, isGlibcVersionAtLeast, isWindows } from "harness";
 import { platform } from "os";
 
 import {
@@ -8,6 +8,7 @@ import {
   CFunction,
   CString,
   JSCallback,
+  linkSymbols,
   ptr,
   read,
   suffix,
@@ -969,4 +970,139 @@ describe.if(!!libPath)("can open more than 63 symbols via", () => {
       expect(lib.symbols.strlen(Buffer.from("bunbun\0", "ascii"))).toBe(6n);
     });
   }
+});
+
+// TinyCC (which compiles the FFI trampolines) is disabled on Windows ARM64.
+describe.skipIf(isWindows && isArm64)("calling an FFI symbol after close()", () => {
+  // Regression test: calling a captured FFI symbol after its library has been
+  // closed must throw instead of jumping into the freed TinyCC JIT pages.
+  it("linkSymbols: throws instead of calling freed code", () => {
+    const cb = new JSCallback(x => x + 1, { args: ["i32"], returns: "i32" });
+    try {
+      const lib = linkSymbols({
+        inc: { args: ["i32"], returns: "i32", ptr: cb.ptr },
+      });
+      const inc = lib.symbols.inc;
+      const native = inc.native;
+      expect(inc(41)).toBe(42);
+      expect(native(41)).toBe(42);
+
+      lib.close();
+
+      expect(() => inc(1)).toThrow(TypeError);
+      expect(() => inc(1)).toThrow("Cannot call an FFI function after the library has been closed");
+      expect(() => native(1)).toThrow(TypeError);
+
+      // close() is idempotent
+      lib.close();
+      expect(() => inc(1)).toThrow(TypeError);
+    } finally {
+      cb.close();
+    }
+  });
+
+  it("linkSymbols: zero-arg function throws instead of calling freed code", () => {
+    const cb = new JSCallback(() => 7, { returns: "i32" });
+    try {
+      const lib = linkSymbols({
+        seven: { returns: "i32", ptr: cb.ptr },
+      });
+      // zero-arg functions are not wrapped by FFIBuilder, so the symbol IS
+      // the native JSFFIFunction itself.
+      const seven = lib.symbols.seven;
+      expect(seven()).toBe(7);
+
+      lib.close();
+
+      expect(() => seven()).toThrow(TypeError);
+      expect(() => seven()).toThrow("Cannot call an FFI function after the library has been closed");
+    } finally {
+      cb.close();
+    }
+  });
+
+  it("close() after symbol was deleted from lib.symbols and GC'd does not read a freed cell", () => {
+    // compiled.js_function is stored in the Zig heap; it must be rooted so
+    // that close() can safely detach it even if the user removed it from
+    // the (mutable) symbols object and a GC ran in between.
+    const cb = new JSCallback(() => 7, { returns: "i32" });
+    try {
+      const lib = linkSymbols({ seven: { returns: "i32", ptr: cb.ptr } });
+      const seven = lib.symbols.seven;
+      expect(seven()).toBe(7);
+
+      delete lib.symbols.seven;
+      Bun.gc(true);
+
+      // Must not read a freed/reused GC cell.
+      lib.close();
+
+      // `seven` was kept alive by our local reference and must have been
+      // detached by close().
+      expect(() => seven()).toThrow(TypeError);
+    } finally {
+      cb.close();
+    }
+  });
+
+  it("mid-loop failure unroots and detaches already-compiled symbols", () => {
+    // If linkSymbols fails on symbol N after symbols 0..N-1 have been
+    // compiled + protected, the cleanup path must run Function.deinit on
+    // each earlier symbol (unprotect + setClosed) rather than only freeing
+    // base_name/arg_types. Otherwise each earlier JSFFIFunction becomes a
+    // permanent GC root and its TCC state leaks.
+    const cb = new JSCallback(() => 7, { returns: "i32" });
+    try {
+      let captured;
+      expect(() => {
+        captured = linkSymbols({
+          good: { returns: "i32", ptr: cb.ptr },
+          // missing `ptr` triggers the mid-loop error after `good` compiled
+          bad: { returns: "i32" },
+        });
+      }).toThrow(/"bad".*ptr/);
+      expect(captured).toBeUndefined();
+      // No observable side effects; primary regression signal is no ASAN
+      // leak report and (once the process exits) a balanced gcProtect table.
+    } finally {
+      cb.close();
+    }
+  });
+
+  it("JSCallback.close() does not detach an FFI symbol passed as the callback", () => {
+    // On the JSCallback path, Function.step.compiled.js_function holds the
+    // user's callback (which may itself be a JSFFIFunction from another
+    // still-open library). Closing the JSCallback must not null that
+    // symbol's trampoline.
+    const target = new JSCallback(() => 7, { returns: "i32" });
+    try {
+      const lib = linkSymbols({ seven: { returns: "i32", ptr: target.ptr } });
+      const seven = lib.symbols.seven; // raw JSFFIFunction
+      expect(seven()).toBe(7);
+
+      const wrapper = new JSCallback(seven, { returns: "i32" });
+      wrapper.close();
+
+      // lib is still open; seven must still work.
+      expect(seven()).toBe(7);
+
+      lib.close();
+      expect(() => seven()).toThrow(TypeError);
+    } finally {
+      target.close();
+    }
+  });
+
+  it.if(!!libPath)("dlopen: throws instead of calling freed code", () => {
+    const lib = _dlopen(libPath, { strlen: { args: ["ptr"], returns: "usize" } });
+    const strlen = lib.symbols.strlen;
+    const native = strlen.native;
+    expect(strlen(Buffer.from("bun\0"))).toBe(3n);
+
+    lib.close();
+
+    expect(() => strlen(Buffer.from("bun\0"))).toThrow(TypeError);
+    expect(() => strlen(Buffer.from("bun\0"))).toThrow("Cannot call an FFI function after the library has been closed");
+    expect(() => native(Buffer.from("bun\0"))).toThrow(TypeError);
+  });
 });

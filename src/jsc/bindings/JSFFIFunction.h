@@ -79,12 +79,13 @@ public:
     }
 
     const CFFIFunction function() const { return m_function; }
+    void setFunction(CFFIFunction function) { m_function = function; }
 
-#if OS(WINDOWS)
-
+    // All calls to FFI functions created via createForFFI() route through this
+    // trampoline, which dispatches to m_function. This indirection lets us
+    // null out m_function when the owning library is closed so that calling a
+    // symbol after close() throws instead of jumping into freed JIT memory.
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES trampoline(JSGlobalObject* globalObject, CallFrame* callFrame);
-
-#endif
 
     void* dataPtr;
     void* symbolFromDynamicLibrary { nullptr };

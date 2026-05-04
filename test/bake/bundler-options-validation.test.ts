@@ -1,15 +1,9 @@
 import { expect, test } from "bun:test";
 
 test("Bun.serve app.bundlerOptions throws on non-object values instead of crashing", () => {
-  expect(() => Bun.serve({ app: { bundlerOptions: 42 } } as any)).toThrow(
-    "'app.bundlerOptions' must be an object",
-  );
-  expect(() => Bun.serve({ app: { bundlerOptions: "foo" } } as any)).toThrow(
-    "'app.bundlerOptions' must be an object",
-  );
-  expect(() => Bun.serve({ app: { bundlerOptions: true } } as any)).toThrow(
-    "'app.bundlerOptions' must be an object",
-  );
+  expect(() => Bun.serve({ app: { bundlerOptions: 42 } } as any)).toThrow("'app.bundlerOptions' must be an object");
+  expect(() => Bun.serve({ app: { bundlerOptions: "foo" } } as any)).toThrow("'app.bundlerOptions' must be an object");
+  expect(() => Bun.serve({ app: { bundlerOptions: true } } as any)).toThrow("'app.bundlerOptions' must be an object");
 });
 
 test("Bun.serve app.bundlerOptions.{server,client,ssr} throws on non-object values instead of crashing", () => {

@@ -1,8 +1,14 @@
 import { spawn, write } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { VerdaccioRegistry, bunEnv, bunExe, runBunInstall } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+
+// Each test does a full `bun install` against a local verdaccio registry;
+// on a loaded host the default 5s timeout isn't enough, and a timed-out
+// test triggers dangling-process cleanup which kills verdaccio and
+// cascades failures into every subsequent test.
+setDefaultTimeout(1000 * 60 * 2);
 
 const registry = new VerdaccioRegistry();
 

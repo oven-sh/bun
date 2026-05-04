@@ -213,6 +213,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototype_inspectCustom, (JSC::JSGlob
 
     JSFunction* utilInspect = globalObject->utilInspectFunction();
     RETURN_IF_EXCEPTION(throwScope, {});
+    if (!utilInspect) [[unlikely]]
+        return JSValue::encode(jsNontrivialString(vm, "BroadcastChannel"_s));
     auto callData = JSC::getCallData(utilInspect);
     MarkedArgumentBuffer arguments;
     arguments.append(inputObj);

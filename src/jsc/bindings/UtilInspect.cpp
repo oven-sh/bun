@@ -28,9 +28,9 @@ Structure* createUtilInspectOptionsStructure(VM& vm, JSC::JSGlobalObject* global
 JSObject* createInspectOptionsObject(VM& vm, Zig::GlobalObject* globalObject, unsigned max_depth, bool colors)
 {
     JSFunction* stylizeFn = colors ? globalObject->utilInspectStylizeColorFunction() : globalObject->utilInspectStylizeNoColorFunction();
-    if (!stylizeFn) return nullptr;
+    if (vm.exceptionForInspection()) return nullptr;
     JSObject* options = JSC::constructEmptyObject(vm, globalObject->utilInspectOptionsStructure());
-    options->putDirectOffset(vm, 0, stylizeFn);
+    options->putDirectOffset(vm, 0, stylizeFn ? JSValue(stylizeFn) : jsUndefined());
     options->putDirectOffset(vm, 1, jsNumber(max_depth));
     options->putDirectOffset(vm, 2, jsBoolean(colors));
     return options;
@@ -57,8 +57,8 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     auto callData = JSC::getCallData(functionToCall);
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(depth));
-    arguments.append(options);
-    arguments.append(inspectFn);
+    arguments.append(options ? JSValue(options) : jsUndefined());
+    arguments.append(inspectFn ? JSValue(inspectFn) : jsUndefined());
 
     auto inspectRet = JSC::profiledCall(globalObject, ProfilingReason::API, functionToCall, callData, thisValue, arguments);
     RETURN_IF_EXCEPTION(scope, {});

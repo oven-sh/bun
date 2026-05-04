@@ -987,12 +987,36 @@ pub fn normalizePathWindows(
     if (comptime T != u8 and T != u16) {
         @compileError("normalizePathWindows only supports u8 and u16 character types");
     }
+
+    const name_too_long: Maybe([:0]const u16) = .{
+        .err = .{
+            .errno = @intFromEnum(E.NAMETOOLONG),
+            .syscall = .open,
+        },
+    };
+    // normalizeStringGenericTZ writes into `buf` with .add_nt_prefix = true and
+    // .zero_terminate = true but performs no bounds checking of its own. The NT
+    // prefix adds up to 6 u16 ("\\" -> "\??\UNC\") plus a NUL. Reserve enough
+    // headroom wherever we feed it a path that could approach `buf.len`.
+    const nt_prefix_headroom = 8;
+
     const wbuf = if (T != u16) bun.w_path_buffer_pool.get();
     defer if (T != u16) bun.w_path_buffer_pool.put(wbuf);
+    // convertUTF8toUTF16InBuffer forwards only `output.ptr` to simdutf, which
+    // performs no output bounds checking. UTF-16 output length is always <=
+    // UTF-8 input byte length, so `path_.len` is a cheap upper bound; when it
+    // exceeds `wbuf.len`, compute the exact post-conversion length to avoid
+    // over-rejecting multi-byte inputs whose UTF-16 representation fits.
+    if (T != u16 and path_.len > wbuf.len and bun.simdutf.length.utf16.from.utf8(path_) > wbuf.len) {
+        return name_too_long;
+    }
     var path = if (T == u16) path_ else bun.strings.convertUTF8toUTF16InBuffer(wbuf, path_);
 
     if (std.fs.path.isAbsoluteWindowsWTF16(path)) {
-        if (path_.len >= 4) {
+        // `path_.len` guards the `path_[path_.len - 4 ..]` slice below; `path.len`
+        // guards `path[1]`/`path[3]`. For T == u8 these can differ when the input
+        // contains multi-byte UTF-8 (e.g. "\\\\é" is 4 bytes but 3 u16).
+        if (path_.len >= 4 and path.len >= 4) {
             if ((bun.strings.eqlComptimeT(T, path_[path_.len - "\\nul".len ..], "\\nul") or
                 bun.strings.eqlComptimeT(T, path_[path_.len - "\\NUL".len ..], "\\NUL")))
             {
@@ -1006,6 +1030,9 @@ pub fn normalizePathWindows(
                 // Preserve the device path, instead of resolving '.' as a relative
                 // path. This prevents simplifying the path '\\.\pipe' into '\pipe'
                 if (path[2] == '.') {
+                    if (path.len >= buf.len) {
+                        return name_too_long;
+                    }
                     buf[0..4].* = .{ '\\', '\\', '.', '\\' };
                     const rest = path[4..];
                     @memcpy(buf[4..][0..rest.len], rest);
@@ -1020,18 +1047,19 @@ pub fn normalizePathWindows(
             }
         }
 
+        // With .add_nt_prefix = false, normalizeStringGenericTZ can still grow
+        // the input by one u16 (it appends a trailing '\' after a bare UNC
+        // volume name) plus the NUL terminator.
+        if (path.len > buf.len -| (if (opts.add_nt_prefix) nt_prefix_headroom else 2)) {
+            return name_too_long;
+        }
         const norm = bun.path.normalizeStringGenericTZ(u16, path, buf, .{ .add_nt_prefix = opts.add_nt_prefix, .zero_terminate = true });
         return .{ .result = norm };
     }
 
     if (bun.strings.indexOfAnyT(T, path_, &.{ '\\', '/', '.' }) == null) {
-        if (buf.len < path.len) {
-            return .{
-                .err = .{
-                    .errno = @intFromEnum(E.NOMEM),
-                    .syscall = .open,
-                },
-            };
+        if (path.len >= buf.len) {
+            return name_too_long;
         }
 
         // Skip the system call to get the final path name if it doesn't have any of the above characters.
@@ -1060,10 +1088,14 @@ pub fn normalizePathWindows(
 
     const buf1 = bun.w_path_buffer_pool.get();
     defer bun.w_path_buffer_pool.put(buf1);
+    const joined_len = base_path.len + 1 + path.len;
+    if (joined_len > buf1.len -| nt_prefix_headroom) {
+        return name_too_long;
+    }
     @memcpy(buf1[0..base_path.len], base_path);
     buf1[base_path.len] = '\\';
-    @memcpy(buf1[base_path.len + 1 .. base_path.len + 1 + path.len], path);
-    const norm = bun.path.normalizeStringGenericTZ(u16, buf1[0 .. base_path.len + 1 + path.len], buf, .{ .add_nt_prefix = true, .zero_terminate = true });
+    @memcpy(buf1[base_path.len + 1 .. joined_len], path);
+    const norm = bun.path.normalizeStringGenericTZ(u16, buf1[0..joined_len], buf, .{ .add_nt_prefix = true, .zero_terminate = true });
     return .{
         .result = norm,
     };

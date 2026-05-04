@@ -1946,7 +1946,9 @@ pub fn resolveMaybeNeedsTrailingSlash(
         jsc.ModuleLoader.ExposedInternals.map.has(specifier_utf8.slice()))
     {
         // Node.js `--expose-internals`: allow `require("internal/errors")` etc.
-        res.* = ErrorableString.ok(specifier);
+        // Callers deref `res.result.value` on success *in addition to* their own
+        // borrowed specifier, so echo it back with a +1 (see HardcodedModule above).
+        res.* = ErrorableString.ok(specifier.dupeRef());
         return;
     }
 

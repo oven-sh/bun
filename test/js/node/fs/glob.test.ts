@@ -425,8 +425,9 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
 
 // Cross-platform edge cases — no symlink fixtures, so these run on every
 // OS. Covers patterns the walker needs to handle: trailing slashes,
-// consecutive separators, ENOTDIR/ENOENT/ELOOP on the cwd, and
-// user-exclude error propagation.
+// consecutive separators, bare-root patterns, brace alternatives, and
+// user-exclude error propagation. (ENOTDIR/ENOENT/ELOOP-on-cwd tests
+// live in the symlink describe above since they need symlink fixtures.)
 describe("fs.glob edge cases", () => {
   function seg(...parts: string[]) {
     return parts.join(sep);

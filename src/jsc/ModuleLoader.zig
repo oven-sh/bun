@@ -202,7 +202,22 @@ fn tryOpenExtractDir(abs_buf: *bun.PathBuffer, tmpdir_path: []const u8, subdir_n
                 return null;
             },
         };
-        if (!bun.S.ISDIR(st.mode) or st.uid != uid or (st.mode & 0o777) != 0o700) {
+        // For EXIST (someone else made this dir) we require exact 0o700 +
+        // our-uid: anything looser could be an attacker pre-squatting the
+        // predictable name with a permissive mode. For just_created we made
+        // it a moment ago, fchmod'd it to 0o700 above, and the mount
+        // enforces its own global security boundary — so if the FS ignores
+        // mode bits (CIFS/SMB, vfat, WSL1 DrvFs, some Docker bind-mounts
+        // from Windows/macOS hosts) we accept whatever it reports as long
+        // as no group/other write is permitted, and skip the st.uid check
+        // (mounts that pin uid via `uid=` mount-option show a fixed owner
+        // that wouldn't match our euid).
+        const mode_ok = if (just_created)
+            (st.mode & 0o022) == 0
+        else
+            (st.mode & 0o777) == 0o700;
+        const uid_ok = just_created or st.uid == uid;
+        if (!bun.S.ISDIR(st.mode) or !uid_ok or !mode_ok) {
             fd.close();
             return null;
         }

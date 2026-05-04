@@ -621,7 +621,12 @@ pub const Flags = packed struct(u32) {
     /// Set after the first H3 retry so a stale-session/GOAWAY race retries
     /// once on a fresh connection but never loops.
     h3_retried: bool = false,
-    _: u13 = 0,
+    /// Set by `buildRequest()` if the request on the wire carries explicit
+    /// body framing (either `Transfer-Encoding: chunked` that survived header
+    /// truncation, or `Content-Length`). Used by `writeToStream()` to decide
+    /// whether to drain the streaming request body before the 101 response.
+    request_body_has_framing: bool = false,
+    _: u12 = 0,
 };
 
 // TODO: reduce the size of this struct
@@ -1058,6 +1063,40 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
             .value = content_length,
         };
         header_count += 1;
+    }
+
+    // Compute `request_body_has_framing` from the *finalized* header slice
+    // that will hit the wire — not from the raw user headers, which may
+    // include entries past `max_user_headers` that have been dropped, or a
+    // `Transfer-Encoding` value that is not `chunked`.
+    //
+    // Used by `writeToStream()` (below) to decide whether to drain a
+    // streaming request body buffer while the upgrade is pending.
+    // `FetchTasklet.skipChunkedFraming()` reads the user headers directly
+    // and does NOT consult this flag — the two code paths deliberately ask
+    // different questions (drain vs. chunk-wrap).
+    //
+    // Only upgrade requests read this flag (the consumer in
+    // `writeToStream()` short-circuits on `upgrade_state == .pending`),
+    // so skip the scan entirely for the >99% non-upgrade case.
+    // `upgrade_state` is set by the first header loop above, so it's
+    // authoritative by the time we get here.
+    if (this.flags.upgrade_state != .none) {
+        var has_framing = false;
+        for (request_headers_buf[0..header_count]) |h| {
+            const hash = hashHeaderName(h.name);
+            if (hash == hashHeaderConst(content_length_header_name)) {
+                has_framing = true;
+                break;
+            }
+            if (hash == hashHeaderConst(chunked_encoded_header.name) and
+                bun.strings.containsCaseInsensitiveASCII(h.value, "chunked"))
+            {
+                has_framing = true;
+                break;
+            }
+        }
+        this.flags.request_body_has_framing = has_framing;
     }
 
     return picohttp.Request{
@@ -1532,8 +1571,17 @@ pub fn writeToStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCo
     }
     var stream = &this.state.original_request_body.stream;
     const stream_buffer = stream.buffer orelse return;
-    if (this.flags.upgrade_state == .pending) {
-        // cannot drain yet, upgrade is waiting for upgrade
+    if (this.flags.upgrade_state == .pending and !this.flags.request_body_has_framing) {
+        // For upgrade requests with no explicit body framing (WebSocket-style),
+        // writes represent post-upgrade protocol data and must be held until
+        // the server responds 101. For requests that *do* have explicit framing
+        // (e.g. dockerode sends `Transfer-Encoding: chunked` with an `Upgrade:`
+        // header), the body is part of the HTTP request and must be drained so
+        // the server can parse it before deciding to switch protocols.
+        //
+        // `request_body_has_framing` is set by `buildRequest()` from the header
+        // set that actually makes it to the wire, so a late/dropped
+        // `Transfer-Encoding` user header will not falsely enable draining.
         return;
     }
     const buffer = stream_buffer.acquire();

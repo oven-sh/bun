@@ -1191,6 +1191,15 @@ pub const FetchTasklet = struct {
                 },
             };
         }
+
+        // Note: `HTTPClient.flags.request_body_has_framing` (read by
+        // `writeToStream()` in http.zig to decide whether to drain the
+        // streaming request body before the 101) is set from
+        // `buildRequest()`, which runs on the HTTP thread during the header
+        // send phase — strictly before the body phase that calls
+        // `writeToStream()`. `FetchTasklet.skipChunkedFraming()` reads the
+        // user headers directly, so it doesn't need the pre-computation here.
+
         // TODO is this necessary? the http client already sets the redirect type,
         // so manually setting it here seems redundant
         if (fetch_options.redirect_type != FetchRedirect.follow) {
@@ -1259,13 +1268,37 @@ pub const FetchTasklet = struct {
         }
     }
 
-    /// Whether the request body should skip chunked transfer encoding framing.
-    /// True for upgraded connections (e.g. WebSocket) or when the user explicitly
-    /// set Content-Length without setting Transfer-Encoding.
+    /// Whether the request body should skip chunked transfer encoding framing
+    /// (i.e. write bytes raw instead of wrapping them in `{hex}\r\n...\r\n`).
+    ///
+    /// Once the server has responded `101 Switching Protocols`, the connection
+    /// is in raw mode and all further writes must bypass chunked framing and
+    /// skip the terminating `0\r\n\r\n` — otherwise we'd inject chunk headers
+    /// into the hijacked protocol stream (e.g. corrupting dockerode stdin).
+    ///
+    /// Before the upgrade, the decision is made from the user's request
+    /// headers. Chunked framing is ONLY applied when the request body is
+    /// actually chunked-encoded on the wire:
+    ///   - user explicitly set `Transfer-Encoding: chunked`, OR
+    ///   - there is no explicit framing and `buildRequest()` will auto-add
+    ///     chunked (the default streaming path).
+    ///
+    /// `Content-Length`-delimited bodies are raw bytes too — the server reads
+    /// exactly N bytes, no chunk headers. That case lives in the
+    /// `(content-length != null and transfer-encoding == null)` branch below.
     fn skipChunkedFraming(this: *const FetchTasklet) bool {
+        // Post-upgrade: always raw bytes, no framing and no terminator.
+        if (this.signals.get(.upgraded)) return true;
+        const transfer_encoding = this.request_headers.get("transfer-encoding");
+        if (transfer_encoding) |value| {
+            // User explicitly requested chunked — keep the framing even for
+            // upgrade connections (dockerode's hijacked `docker exec` uses
+            // `Transfer-Encoding: chunked` with `Upgrade: tcp`).
+            if (bun.strings.containsCaseInsensitiveASCII(value, "chunked")) return false;
+        }
         return this.upgraded_connection or
             this.result.is_http2 or
-            (this.request_headers.get("content-length") != null and this.request_headers.get("transfer-encoding") == null);
+            (this.request_headers.get("content-length") != null and transfer_encoding == null);
     }
 
     pub fn writeRequestData(this: *FetchTasklet, data: []const u8) ResumableSinkBackpressure {

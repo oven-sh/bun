@@ -56,6 +56,28 @@ const {
 const { globalAgent } = require("node:_http_agent");
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
+const { Duplex } = require("node:stream");
+
+// Local hook set by `ClientRequest` on itself when it owns an upgrade-aware
+// body generator. `createUpgradeSocket._final()`/`_destroy()` call this to
+// terminate the upload half of a hijacked connection without tripping the
+// normal `req.end()` path (which for the WebSocket/CDP pattern already ran
+// synchronously before the 101 response arrived).
+const kEndUpgradeBody = Symbol("kEndUpgradeBody");
+
+// Matches a `Connection: Upgrade` + `Upgrade: <proto>` pair that turns the
+// request into an HTTP/1.1 upgrade handshake. `h2`/`h2c` are excluded to
+// match `Bun__fetch_` in fetch.zig, which also ignores h2/h2c upgrades.
+function hasUpgradeHeaders(req): boolean {
+  const upgrade = req.getHeader("upgrade");
+  if (!upgrade) return false;
+  const upgradeStr = String(upgrade).toLowerCase();
+  if (upgradeStr === "h2" || upgradeStr === "h2c") return false;
+  const connection = req.getHeader("connection");
+  if (!connection) return false;
+  const cs = Array.isArray(connection) ? connection.join(",") : String(connection);
+  return /(?:^|[\s,])upgrade(?:[\s,]|$)/i.test(cs);
+}
 
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
@@ -73,6 +95,204 @@ function emitErrorEventNT(self, err) {
   if (self.listenerCount("error") > 0) {
     self.emit("error", err);
   }
+}
+
+// Creates a Duplex stream that represents the hijacked socket for a
+// `Connection: Upgrade` response. The readable side is fed from the
+// IncomingMessage `res` (which owns the fetch response body reader); the
+// writable side routes back through `req.write()` so the upload half of
+// the HTTP/1.1 connection keeps flowing. After the server sends `101`,
+// FetchTasklet.skipChunkedFraming() flips on `signals.upgraded`, so any
+// post-upgrade writes bypass chunked framing and the terminating 0-chunk —
+// matching the raw-bytes semantics of a real hijacked TCP socket.
+//
+// Used for dockerode-style hijacked `docker exec` sessions and similar
+// `Upgrade: tcp` patterns.
+function createUpgradeSocket(req, res) {
+  let socketDestroyed = false;
+  let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+  let timeoutMs = 0;
+
+  const armTimeout = () => {
+    if (timeoutTimer !== undefined) {
+      clearTimeout(timeoutTimer);
+      timeoutTimer = undefined;
+    }
+    if (timeoutMs > 0 && !socketDestroyed) {
+      timeoutTimer = setTimeout(() => {
+        timeoutTimer = undefined;
+        if (!socketDestroyed) duplex.emit("timeout");
+      }, timeoutMs);
+      (timeoutTimer as any).unref?.();
+    }
+  };
+
+  let dataBridged = false;
+  const bridgeResData = () => {
+    if (dataBridged) return;
+    dataBridged = true;
+    // Bridge the IncomingMessage's decoded body into the Duplex. The
+    // IncomingMessage is the single consumer of the fetch response body
+    // reader — avoiding a second `getReader()` call that would otherwise
+    // throw "ReadableStream is already locked" on the next read.
+    res.on("data", (chunk: Buffer) => {
+      armTimeout();
+      if (!duplex.push(chunk)) res.pause();
+    });
+    res.once("end", () => {
+      duplex.push(null);
+    });
+  };
+
+  const duplex: any = new Duplex({
+    allowHalfOpen: true,
+    read() {
+      // If the underlying IncomingMessage was already destroyed (e.g. the
+      // request aborted before the user attached a 'data' listener), push
+      // EOF immediately so the readable side doesn't hang forever.
+      if (res.destroyed || res.readableEnded) {
+        duplex.push(null);
+        return;
+      }
+      bridgeResData();
+      res.resume();
+    },
+    write(chunk, encoding, callback) {
+      // Only gate on `req.destroyed`, NOT `req.finished` — for the
+      // WebSocket/CDP pattern the caller has already called `req.end()`
+      // before the 101, which sets `req.finished = true` synchronously.
+      // The upgrade-aware body generator stays alive past that point and
+      // still accepts writes until the hijacked socket tears down. Since
+      // the only way into this branch is destruction, use
+      // `ERR_STREAM_DESTROYED` (matches net.Socket/Writable semantics)
+      // rather than `ERR_STREAM_WRITE_AFTER_END` (reserved for writes
+      // after `.end()` on a stream that ended normally).
+      if (req.destroyed) {
+        callback($ERR_STREAM_DESTROYED("write"));
+        return;
+      }
+      armTimeout();
+      // Honor backpressure: only ack this write once `req` reports that it
+      // actually has room for more. `req.write()` returns false when its
+      // internal body queue has crossed the fake-backpressure threshold; the
+      // `'drain'` event fires when the queued chunks have been consumed by
+      // the underlying fetch body generator. Post-upgrade, FetchTasklet
+      // writes the raw bytes directly (no chunk framing).
+      const ok = req.write(chunk, encoding);
+      if (ok) {
+        callback();
+        return;
+      }
+      // Backpressure: wait for 'drain', but also tear down cleanly if `req`
+      // errors or closes before drain fires — otherwise the callback is
+      // orphaned and the writable side stays stuck in kWriting.
+      //
+      // A `'close'` before `'drain'` is a failure: the in-flight chunk is
+      // still buffered inside `req` and gets discarded when `req` tears
+      // down. We MUST surface this as an error so the Duplex consumer knows
+      // the write was lost (unlike `_final()` where a clean close after
+      // `req.end()` legitimately signals completion).
+      let settled = false;
+      const settle = (err?: Error) => {
+        if (settled) return;
+        settled = true;
+        req.removeListener("drain", onDrain);
+        req.removeListener("error", onError);
+        req.removeListener("close", onClose);
+        callback(err);
+      };
+      const onDrain = () => settle();
+      const onError = (err: Error) => settle(err);
+      const onClose = () => settle(new ConnResetException("socket hang up"));
+      req.once("drain", onDrain);
+      req.once("error", onError);
+      req.once("close", onClose);
+    },
+    final(callback) {
+      if (req.destroyed) {
+        callback();
+        return;
+      }
+      // The ClientRequest unconditionally installs the upgrade-aware body
+      // terminator, so `kEndUpgradeBody` is always present — close the
+      // upload half through it. This covers both the WebSocket/CDP pattern
+      // (req.end() before 101, req.finished already true) and the
+      // dockerode pattern (only req.write(), never req.end()).
+      req[kEndUpgradeBody]();
+      callback();
+    },
+    destroy(err, callback) {
+      socketDestroyed = true;
+      if (timeoutTimer !== undefined) {
+        clearTimeout(timeoutTimer);
+        timeoutTimer = undefined;
+      }
+      try {
+        res.destroy?.(err || undefined);
+      } catch (_err) {
+        void _err;
+      }
+      // Release the upgrade-aware body generator so `fetch` can finalize
+      // the request; otherwise the generator would hang forever waiting
+      // for more chunks (or the `finished` signal that never comes for
+      // the WebSocket pattern).
+      try {
+        req[kEndUpgradeBody]?.();
+      } catch (_err) {
+        void _err;
+      }
+      if (!req.destroyed) {
+        req.destroy(err || undefined);
+      }
+      callback(err);
+    },
+  });
+
+  // Surface common net.Socket fields so consumers that inspect the socket
+  // (e.g. dockerode-modem) see a sane shape.
+  duplex.setKeepAlive = () => duplex;
+  duplex.setNoDelay = () => duplex;
+  duplex.setTimeout = (msecs: number, callback?: () => void) => {
+    timeoutMs = msecs | 0;
+    if (callback) {
+      // Match `net.Socket.setTimeout(0, cb)` semantics: passing 0 with a
+      // callback de-registers that specific listener rather than adding
+      // another one. Mirrors `ClientRequestPrototype.setTimeout` below.
+      if (timeoutMs === 0) {
+        duplex.removeListener("timeout", callback);
+      } else {
+        duplex.once("timeout", callback);
+      }
+    }
+    armTimeout();
+    return duplex;
+  };
+  duplex.ref = () => duplex;
+  duplex.unref = () => duplex;
+
+  // Eagerly wire `res` error/close propagation — NOT inside the lazy
+  // `bridgeResData()` closure. Attaching these only on the first `_read()`
+  // leaves a race window between the `'upgrade'` event firing (scheduled on
+  // `process.nextTick`) and the user's handler subscribing to `'data'`: if
+  // the request aborts during that gap, `res` is destroyed with no listener
+  // and the duplex never learns about it. We also hook into req's error
+  // path for the same reason — network errors on the upload half should
+  // surface on the hijacked socket immediately.
+  res.once("error", (err: Error) => {
+    if (!duplex.destroyed) duplex.destroy(err);
+  });
+  res.once("close", () => {
+    if (!duplex.destroyed && !duplex.readableEnded) {
+      // Push EOF if nothing else has — ensures the readable side finishes
+      // even if no 'end' was emitted before the close (abort, reset, etc.).
+      duplex.push(null);
+    }
+  });
+  req.once("error", (err: Error) => {
+    if (!duplex.destroyed) duplex.destroy(err);
+  });
+
+  return duplex;
 }
 
 function ClientRequest(input, options, cb) {
@@ -98,6 +318,19 @@ function ClientRequest(input, options, cb) {
 
   let writeCount = 0;
   let resolveNextChunk: ((end: boolean) => void) | undefined = _end => {};
+  // Upgrade-aware body generator's exit flag. For upgrade requests the
+  // generator ignores `self.finished` (which gets set synchronously by
+  // `req.end()` in the WebSocket pattern) and instead waits until the
+  // hijacked duplex socket explicitly closes the upload half via
+  // `this[kEndUpgradeBody]`.
+  let upgradeBodyEnded = false;
+
+  // Exposed on `this` so `createUpgradeSocket`'s `_final`/`_destroy` can
+  // release the upload half. Safe to call multiple times.
+  this[kEndUpgradeBody] = () => {
+    upgradeBodyEnded = true;
+    resolveNextChunk?.(true);
+  };
 
   const pushChunk = chunk => {
     this[kBodyChunks].push(chunk);
@@ -184,7 +417,18 @@ function ClientRequest(input, options, cb) {
 
     if (!this.finished) {
       send();
-      resolveNextChunk?.(true);
+      // For upgrade requests the upload half must stay open for post-101
+      // writes. WebSocket/CDP clients call `req.end()` before the 101
+      // arrives (and reach this guard); dockerode's hijacked exec never
+      // calls `req.end()` at all (flushHeaders + write only). The
+      // generator keeps running until the hijacked socket's
+      // `_final`/`_destroy` signals via `kEndUpgradeBody`.
+      //
+      // Read the cached `isUpgrade` (populated by `send()` → `startFetch`
+      // a few lines above) instead of re-running `hasUpgradeHeaders()`.
+      if (!isUpgrade) {
+        resolveNextChunk?.(true);
+      }
     }
 
     return this;
@@ -265,6 +509,13 @@ function ClientRequest(input, options, cb) {
   };
 
   let fetching = false;
+  // Precomputed once by the first `startFetch()` call so `this.end`, `go()`,
+  // and the `.then` leak-fix guard all share the same answer to "did the
+  // request carry `Connection: Upgrade` + `Upgrade: <proto>`?" — instead of
+  // each re-running `hasUpgradeHeaders()` (two `getHeader()` calls + regex).
+  // `this.end` reads this after `send()` returns, by which point startFetch
+  // has run synchronously and the flag is populated.
+  let isUpgrade = false;
 
   const startFetch = (customBody?) => {
     if (fetching) {
@@ -272,6 +523,7 @@ function ClientRequest(input, options, cb) {
     }
 
     fetching = true;
+    isUpgrade = hasUpgradeHeaders(this);
 
     const method = this[kMethod];
 
@@ -322,8 +574,26 @@ function ClientRequest(input, options, cb) {
         keepalive,
       };
       let keepOpen = false;
-      // no body and not finished
-      const isDuplex = customBody === undefined && !this.finished;
+      // `isUpgrade` (closure var, set above in `startFetch`) tells us
+      // whether the request carried `Connection: Upgrade` + `Upgrade:
+      // <proto>`. Upgrade requests need a long-lived streaming body so
+      // the upload half of the hijacked connection stays open for
+      // post-101 writes — covers the dockerode pattern (POST +
+      // req.write()) and the WebSocket/CDP pattern (GET + req.end()
+      // before the 101).
+
+      // For upgrade requests always funnel the body through the generator
+      // so the write side stays live; any pre-assembled body is already in
+      // kBodyChunks (send() reads from there without clearing it). Clear
+      // it BEFORE computing isDuplex so `keepOpen` goes true — otherwise
+      // the `.finally()` below resets `fetching`, and the first
+      // post-upgrade `socket.write()` would fire a second nodeHttpClient
+      // request to the same URL.
+      if (isUpgrade && customBody !== undefined) {
+        customBody = undefined;
+      }
+
+      const isDuplex = customBody === undefined && (!this.finished || isUpgrade);
 
       if (isDuplex) {
         fetchOptions.duplex = "half";
@@ -335,9 +605,12 @@ function ClientRequest(input, options, cb) {
       if (customBody !== undefined) {
         fetchOptions.body = customBody;
       } else if (
-        isDuplex &&
-        // Normal case: non-GET/HEAD/OPTIONS can use streaming
-        ((method !== "GET" && method !== "HEAD" && method !== "OPTIONS") ||
+        (isDuplex || isUpgrade) &&
+        // Upgrade: always stream — even GET/HEAD/OPTIONS with no pre-body
+        // need a live body channel for post-upgrade socket.write().
+        (isUpgrade ||
+          // Normal case: non-GET/HEAD/OPTIONS can use streaming
+          (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") ||
           // Special case: GET/HEAD/OPTIONS with already-queued chunks should also stream
           this[kBodyChunks]?.length > 0)
       ) {
@@ -351,7 +624,10 @@ function ClientRequest(input, options, cb) {
             self.emit("drain");
           }
 
-          while (!self.finished) {
+          // Exit condition diverges: upgrade requests stay alive until the
+          // hijacked socket calls `req[kEndUpgradeBody]()`; non-upgrade
+          // requests end at `req.end()` as before.
+          while (isUpgrade ? !upgradeBodyEnded : !self.finished) {
             yield await new Promise(resolve => {
               resolveNextChunk = end => {
                 resolveNextChunk = undefined;
@@ -366,6 +642,19 @@ function ClientRequest(input, options, cb) {
             if (self[kBodyChunks]?.length === 0) {
               self.emit("drain");
             }
+          }
+
+          // Drain chunks queued while `resolveNextChunk` was momentarily
+          // `undefined`. The main loop delivers exactly one chunk per
+          // `resolveNextChunk` wake, so back-to-back synchronous writes
+          // — e.g. `socket.write(A); socket.write(B); socket.end()` on the
+          // hijacked Duplex — leave B in `kBodyChunks`; when `socket.end()`
+          // flushes synchronously, `_final()` → `kEndUpgradeBody()` sets
+          // `upgradeBodyEnded = true` before the generator can re-park,
+          // and the loop check above exits without yielding B. Same shape
+          // applies to `req.end()` on non-upgrade streaming requests.
+          while (self[kBodyChunks]?.length > 0) {
+            yield self[kBodyChunks].shift();
           }
 
           handleResponse?.();
@@ -397,6 +686,33 @@ function ClientRequest(input, options, cb) {
           return;
         }
 
+        // A `HTTP/1.1 101 Switching Protocols` response indicates the server
+        // has accepted an `Upgrade:` request (WebSocket, `docker exec` hijack,
+        // etc.). The ClientRequest must dispatch `'upgrade'` with the hijacked
+        // socket regardless of whether the caller ever calls `req.end()` — the
+        // upload half of the connection is deliberately left open for the
+        // hijacked protocol.
+        //
+        // Named `is101` rather than `isUpgrade` to avoid shadowing the
+        // outer closure `isUpgrade` (set by `startFetch` from the request
+        // headers — a different question; the two diverge when the
+        // server rejects).
+        const is101 = response.status === 101;
+
+        // Server rejected the upgrade (e.g. 400 Bad Request, 404, auth
+        // failure) — release the upgrade-aware body generator so the
+        // ResumableSink/FetchTasklet can finalize. Otherwise the generator
+        // parks at `yield await new Promise(...)` forever (upgradeBodyEnded
+        // is only set by the hijacked socket, which never gets constructed
+        // for a non-101 response).
+        //
+        // Use the captured outer `isUpgrade` (same source of truth the
+        // generator's loop condition closes over) so the guard can't
+        // diverge from the generator if the user mutates headers mid-flight.
+        if (!is101 && isUpgrade) {
+          this[kEndUpgradeBody]();
+        }
+
         handleResponse = () => {
           this[kFetchRequest] = null;
           this[kClearTimeout]();
@@ -411,6 +727,61 @@ function ClientRequest(input, options, cb) {
           setIsNextIncomingMessageHTTPS(prevIsHTTPS);
           res.req = this;
           res.setTimeout = clientResponseSetTimeout;
+
+          if (is101) {
+            this[kUpgradeOrConnect] = true;
+            // The hijacked socket reads via the IncomingMessage `res` (the
+            // single owner of the fetch response body reader); this avoids
+            // the "ReadableStream is already locked" TypeError that would
+            // otherwise occur when the user touches `res`.
+            const upgradeSocket = createUpgradeSocket(this, res);
+            process.nextTick(
+              (self, res, socket) => {
+                if (self.aborted || self.listenerCount("upgrade") === 0) {
+                  // No handler for 'upgrade' — drop the hijacked socket so
+                  // we don't leak the underlying TCP connection. The close
+                  // notification for `req` will follow from the socket
+                  // destruction path below.
+                  socket.destroy();
+                  res._dump?.();
+                  maybeEmitClose();
+                } else {
+                  // Do NOT call `maybeEmitClose()` here. The ClientRequest
+                  // lifecycle is now owned by the hijacked socket — firing
+                  // `req.emit('close')` on the very next tick would race
+                  // the Duplex `_write` backpressure path, which watches
+                  // `req.once('close', …)` to detect real TCP drops and
+                  // would treat a routine lifecycle close as a spurious
+                  // `ConnResetException('socket hang up')`. The hijacked
+                  // socket's `_destroy` path calls `req.destroy()` when
+                  // the user is done, which emits `'close'` on `req` at
+                  // the correct time.
+                  //
+                  // `head` is always `Buffer.alloc(0)` here, diverging from
+                  // Node.js which passes any bytes llhttp read past the 101
+                  // `\r\n\r\n` in the same TCP segment. Bun's fetch-routed
+                  // architecture enqueues those bytes into `response.body`
+                  // before `handleResponse()` runs, so they flow through
+                  // `res` (the `IncomingMessage`) → `createUpgradeSocket`'s
+                  // `res.on('data', …)` bridge and arrive as the first
+                  // `socket.on('data')` chunk instead. Standard upgrade
+                  // consumers (`ws`, dockerode-modem, the `websocket` npm
+                  // package) do `if (head.length) socket.unshift(head)` and
+                  // then read from the socket, so they're unaffected — the
+                  // only code that diverges is code that synchronously
+                  // inspects `head` for protocol bytes before subscribing
+                  // to `'data'`, which is already fragile under Node since
+                  // TCP packet boundaries are not guaranteed.
+                  self.emit("upgrade", res, socket, Buffer.alloc(0));
+                }
+              },
+              this,
+              res,
+              upgradeSocket,
+            );
+            return;
+          }
+
           process.nextTick(
             (self, res) => {
               // If the user did not listen for the 'response' event, then they
@@ -442,7 +813,7 @@ function ClientRequest(input, options, cb) {
           );
         };
 
-        if (!keepOpen) {
+        if (!keepOpen || is101) {
           handleResponse();
         }
 

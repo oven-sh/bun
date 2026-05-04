@@ -1469,7 +1469,13 @@ const ArchiveCompressAndWriteTask = struct {
             bun.destroy(this);
         }
 
-        if (this.vm.isShuttingDown()) return;
+        if (this.vm.isShuttingDown()) {
+            // Worker already produced compressed bytes but we're exiting
+            // without consuming them (no Blob will be created). Free now
+            // so the allocation doesn't leak until process tear-down.
+            if (this.result == .ok) bun.default_allocator.free(this.result.ok);
+            return;
+        }
 
         switch (this.result) {
             .pending => unreachable,

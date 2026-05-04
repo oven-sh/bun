@@ -28,10 +28,9 @@ var tmpdir = function () {
 // (Windows), matching Node. The env check must run on every call — Bun's
 // cached env-var accessors snapshot at first read, which is why the Zig
 // binding alone isn't enough. The binding is still used as the fallback
-// when the env var is empty or unset (passwd entry on POSIX,
-// GetUserProfileDirectoryW via libuv on Windows). os.userInfo().homedir
-// continues to call the binding directly, matching Node's behavior of
-// ignoring $HOME there.
+// when the env var is unset (passwd entry on POSIX, GetUserProfileDirectoryW
+// via libuv on Windows). os.userInfo().homedir continues to call the binding
+// directly, matching Node's behavior of ignoring $HOME there.
 function homedirFactory(bindingHomedir) {
   if (process.platform === "win32") {
     return function homedir() {

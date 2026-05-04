@@ -5,10 +5,11 @@
 // os.homedir() never saw subsequent changes — even mutations made before
 // require('node:os').
 //
-// Node's posix uv_os_homedir checks HOME live on every call, falling back
-// to the passwd entry only when HOME is empty/unset. os.userInfo().homedir
-// reads passwd directly and does NOT honor HOME in Node — that behavior
-// must be preserved.
+// Node's posix uv_os_homedir checks HOME live on every call. It returns
+// getenv("HOME") verbatim whenever it's non-NULL (so HOME="" → ""), and
+// only falls back to the passwd entry when HOME is unset. os.userInfo()
+// .homedir reads passwd directly and does NOT honor HOME in Node — that
+// behavior must be preserved.
 //
 // Each test spawns its own subprocess so mutating process.env.HOME can't
 // bleed into the test runner — and therefore can't bleed between tests,
@@ -85,17 +86,26 @@ test.concurrent.skipIf(isWindows)("os.homedir() returns '' when HOME is set to e
 test.concurrent.skipIf(isWindows)("os.homedir() falls back to passwd when HOME is deleted (#29244)", async () => {
   // Deleted HOME (getenv returns NULL) is the one case that should fall
   // through to the passwd entry, matching libuv's UV_ENOENT branch.
+  //
+  // Seed HOME with a sentinel value the passwd entry cannot possibly be,
+  // then delete it. If the delete were silently ignored (the regression
+  // class #29244 targets), homedir() would still return the sentinel. We
+  // also cross-check against os.userInfo().homedir — the passwd entry —
+  // to prove the passwd path was actually taken.
+  const sentinel = "/tmp/sentinel-deleted-29244";
   const { stdout, exitCode } = await runBun(
     `
         delete process.env.HOME;
-        const h = require('node:os').homedir();
-        console.log(JSON.stringify({ h, len: h.length, abs: h.startsWith('/') }));
+        const os = require('node:os');
+        console.log(JSON.stringify({ h: os.homedir(), passwd: os.userInfo().homedir }));
       `,
+    { HOME: sentinel },
   );
   const result = JSON.parse(stdout);
-  expect(result.len).toBeGreaterThan(0);
-  expect(result.abs).toBe(true);
-  expect(result.h).not.toBe("");
+  expect(result.h).not.toBe(sentinel); // delete was honored
+  expect(result.h).toBe(result.passwd); // same source as userInfo
+  expect(result.h.length).toBeGreaterThan(0);
+  expect(result.h.startsWith("/")).toBe(true);
   expect(exitCode).toBe(0);
 });
 

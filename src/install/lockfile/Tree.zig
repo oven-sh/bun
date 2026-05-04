@@ -734,27 +734,52 @@ fn hoistDependency(
         if (dependency.behavior.isPeer()) {
             // A peer that reaches a same-name ancestor whose version does not
             // satisfy still collapses into it (yarn v1 / pnpm semantics) — the
-            // peer sees what the tree provides, with a warning. Only collapse
-            // when both sides resolved from the same source (npm/git/github);
-            // mixing e.g. a workspace and a registry version is a real
-            // mismatch we should leave nested.
+            // peer sees what the tree provides, with a warning. But only when
+            // no satisfying version exists anywhere in the lockfile: if one
+            // does (e.g. `ajv@8` brought in by `schema-utils` while root has
+            // `ajv@6`), the peer already resolved to it and should nest with
+            // it rather than be forced onto the wrong major.
             const pkg_resolutions = builder.lockfile.packages.items(.resolution);
             const existing_tag = pkg_resolutions[res_id].tag;
             const target_tag = pkg_resolutions[package_id].tag;
             if (existing_tag == target_tag and (existing_tag == .npm or existing_tag == .git or existing_tag == .github)) {
-                if (comptime method == .resolvable) {
-                    builder.log.addWarningFmt(
-                        null,
-                        logger.Loc.Empty,
-                        builder.allocator,
-                        "incorrect peer dependency \"{f}@{f}\"",
-                        .{
-                            builder.packageName(res_id),
-                            builder.packageVersion(res_id),
-                        },
-                    ) catch {};
+                // Only force-collapse when no *non-peer* dependency anywhere
+                // resolved to a version satisfying this peer's range. If one
+                // did (e.g. `schema-utils` regular-deps on `ajv@^8` while
+                // root has `ajv@6`), the peer should nest with that version
+                // rather than be forced onto the wrong major. If none did
+                // (the peer's own auto-installed version is the only
+                // satisfying one), collapse + warn — yarn/pnpm semantics.
+                const has_satisfying_non_peer = has: {
+                    if (dependency.version.tag != .npm) break :has false;
+                    const range = dependency.version.value.npm.version;
+                    for (builder.dependencies, builder.resolutions) |other_dep, other_res_id| {
+                        if (other_dep.name_hash != dependency.name_hash) continue;
+                        if (other_dep.behavior.isPeer()) continue;
+                        if (other_res_id >= pkg_resolutions.len) continue;
+                        const other_res = pkg_resolutions[other_res_id];
+                        if (other_res.tag != .npm) continue;
+                        if (range.satisfies(other_res.value.npm.version, builder.buf(), builder.buf())) {
+                            break :has true;
+                        }
+                    }
+                    break :has false;
+                };
+                if (!has_satisfying_non_peer) {
+                    if (comptime method == .resolvable) {
+                        builder.log.addWarningFmt(
+                            null,
+                            logger.Loc.Empty,
+                            builder.allocator,
+                            "incorrect peer dependency \"{f}@{f}\"",
+                            .{
+                                builder.packageName(res_id),
+                                builder.packageVersion(res_id),
+                            },
+                        ) catch {};
+                    }
+                    return .hoisted; // 1
                 }
-                return .hoisted; // 1
             }
 
             // Root dependencies are manually chosen by the user. Allow them

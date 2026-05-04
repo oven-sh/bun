@@ -81,17 +81,20 @@ pub fn installHoistedPackages(
         skip_delete = false;
     }
 
-    // Remove stale packages from workspace `node_modules` directories.
-    // A previous install (especially a package-local one) may have placed packages
-    // inside `packages/<workspace>/node_modules` that the current hoisted layout
-    // no longer expects. Those directories would shadow hoisted copies during
-    // module resolution. The installer only visits trees that still have
-    // dependencies, so stale entries are otherwise never deleted.
+    // Remove stale packages from workspace `node_modules` directories
+    // before the install loop runs. A previous install (especially a
+    // package-local one) may have placed packages inside
+    // `packages/<workspace>/node_modules` that the current hoisted layout
+    // no longer expects — those directories would shadow the hoisted copies
+    // during module resolution. The installer only visits trees that still
+    // have dependencies, so without this sweep the stale entries are never
+    // seen, let alone removed.
     //
-    // We build the expected set from `original_trees` (pre-filter) on purpose:
-    // with `--filter`, the filtered tree omits excluded workspaces entirely,
-    // but their node_modules still belong to them and must not be touched
-    // based on what the _current_ install would re-create.
+    // We build the expected set from `original_trees` (pre-filter) on
+    // purpose: with `--filter` the filtered tree omits excluded workspaces
+    // entirely, but those workspaces' `node_modules` still belong to them
+    // and must not be wiped based on what the _current_ install would
+    // re-create.
     if (this.lockfile.workspace_paths.count() > 0) {
         pruneStaleWorkspaceNodeModules(this, original_trees.items, original_tree_dep_ids.items) catch {};
     }

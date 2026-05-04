@@ -188,61 +188,37 @@ fn CryptoJob(comptime Ctx: type) type {
 
 const random = struct {
     const JobCtx = struct {
-        /// The user-supplied destination (randomFill) or `.zero` when we
-        /// create the result ourselves (randomBytes).
         value: JSValue,
-        /// Bun-owned scratch buffer filled on the threadpool. We do *not* hold
-        /// a raw pointer into the JS ArrayBuffer backing store here because
-        /// user code can synchronously detach it (e.g. `buf.buffer.transfer()`)
-        /// while the task is queued/running, which would free that storage and
-        /// turn the threadpool write into a use-after-free. Instead we fill
-        /// this buffer off-thread and either (randomFill) copy it into the JS
-        /// view back on the main thread, or (randomBytes) hand it off to a
-        /// fresh JS Buffer via `createBuffer`, which takes ownership.
-        bytes: []u8,
+        /// Slice into `value`'s ArrayBuffer backing store. The backing store
+        /// is pinned by the caller (see `JSValue.pinArrayBuffer`), so user
+        /// code calling `buf.buffer.transfer()` while the task is queued or
+        /// running copies the contents out instead of freeing them — the
+        /// threadpool can safely write through this pointer. Captured
+        /// *after* pinning because the pin promotes a `FastTypedArray` to
+        /// stable heap storage, which repoints the view's vector.
+        bytes: [*]u8,
         offset: u32,
+        length: usize,
+        pinned: bool,
 
         result: void = {},
 
         fn init(this: *JobCtx, _: *JSGlobalObject) JSError!void {
-            if (this.value != .zero) {
-                this.value.protect();
-            }
+            this.value.protect();
         }
 
         fn runTask(this: *JobCtx, _: void) void {
-            bun.csprng(this.bytes);
+            bun.csprng(this.bytes[this.offset..][0..this.length]);
         }
 
         fn runFromJS(this: *JobCtx, global: *JSGlobalObject, callback: JSValue) void {
             const vm = global.bunVM();
-            if (this.value == .zero) {
-                // randomBytes: wrap the scratch buffer directly — no memcpy,
-                // no second allocation. `createBuffer` takes ownership via
-                // the mimalloc deallocator, so clear `bytes` before `deinit`
-                // runs to avoid a double-free.
-                const buf = JSValue.createBuffer(global, this.bytes);
-                this.bytes = &.{};
-                vm.eventLoop().runCallback(callback, global, .js_undefined, &.{ .null, buf });
-                return;
-            }
-            if (this.value.asArrayBuffer(global)) |buf| {
-                const dest = buf.slice();
-                // If the buffer was detached or shrunk while the task ran,
-                // `dest` will no longer cover the requested range; in that
-                // case there is nothing to copy into.
-                if (this.bytes.len + @as(usize, this.offset) <= dest.len) {
-                    @memcpy(dest[this.offset..][0..this.bytes.len], this.bytes);
-                }
-            }
             vm.eventLoop().runCallback(callback, global, .js_undefined, &.{ .null, this.value });
         }
 
         fn deinit(this: *JobCtx) void {
-            bun.default_allocator.free(this.bytes);
-            if (this.value != .zero) {
-                this.value.unprotect();
-            }
+            if (this.pinned) this.value.unpinArrayBuffer();
+            this.value.unprotect();
         }
     };
 
@@ -358,19 +334,28 @@ const random = struct {
 
         const size = try assertSize(global, size_value, 1, 0, max_possible_length + 1);
 
+        if (!callback.isUndefined()) {
+            _ = try validators.validateFunction(global, "callback", callback);
+        }
+
+        const result, const bytes = try jsc.ArrayBuffer.alloc(global, .ArrayBuffer, size);
+
         if (callback.isUndefined()) {
             // sync
-            const result, const bytes = try jsc.ArrayBuffer.alloc(global, .ArrayBuffer, size);
             bun.csprng(bytes);
             return result;
         }
 
-        _ = try validators.validateFunction(global, "callback", callback);
-
+        // `result` is freshly allocated and not yet exposed to user JS, so a
+        // detach can't race us here; pin anyway so `JobCtx` has uniform
+        // unpin-in-deinit semantics. `ArrayBuffer.alloc` produces a proper
+        // heap-backed buffer, so `bytes` is already the stable slice.
         const ctx: JobCtx = .{
-            .value = .zero,
-            .bytes = bun.handleOom(bun.default_allocator.alloc(u8, size)),
+            .value = result,
+            .bytes = bytes.ptr,
             .offset = 0,
+            .length = size,
+            .pinned = result.pinArrayBuffer(),
         };
         try Job.initAndSchedule(global, callback, &ctx);
 
@@ -444,10 +429,22 @@ const random = struct {
             return .js_undefined;
         }
 
+        // Pin the backing store so a concurrent `buf.buffer.transfer()` copies
+        // instead of freeing it while the threadpool is writing. Pinning may
+        // promote a FastTypedArray to stable heap storage, so re-read the
+        // slice afterwards. `JobCtx.deinit` unpins.
+        const pinned = buf_value.pinArrayBuffer();
+        const stable = buf_value.asArrayBuffer(global) orelse {
+            if (pinned) buf_value.unpinArrayBuffer();
+            return global.throwInvalidArgumentTypeValue("buf", "ArrayBuffer or ArrayBufferView", buf_value);
+        };
+
         const ctx: JobCtx = .{
             .value = buf_value,
-            .bytes = bun.handleOom(bun.default_allocator.alloc(u8, size)),
+            .bytes = stable.slice().ptr,
             .offset = offset,
+            .length = size,
+            .pinned = pinned,
         };
         try Job.initAndSchedule(global, callback, &ctx);
 

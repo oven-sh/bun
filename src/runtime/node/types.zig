@@ -158,14 +158,22 @@ pub const StringOrBuffer = union(enum) {
             .threadsafe_string => {},
             .encoded_slice => {},
             .buffer => {
-                // `protect()`ing the JS value keeps the wrapper alive for GC
-                // but does not pin the ArrayBuffer backing store – user code
-                // can detach it (e.g. `buffer.transfer()`), freeing the bytes
-                // while the threadpool is still reading them. Copy the bytes
-                // into Bun-owned memory instead so the off-thread reader has
-                // a stable view.
-                const owned = bun.handleOom(bun.default_allocator.dupe(u8, this.buffer.slice()));
-                this.* = .{ .encoded_slice = jsc.ZigString.Slice.init(bun.default_allocator, owned) };
+                // `protect()` alone keeps the JS wrapper alive for GC but does
+                // not stop user code from detaching the ArrayBuffer (e.g.
+                // `buffer.transfer()`), which would free the backing store
+                // while the threadpool still holds a pointer into it. Pin the
+                // backing store so a concurrent detach copies instead of
+                // frees. Pinning may promote a FastTypedArray to stable heap
+                // storage, so `pinAndRefresh` also re-reads `ptr`/`byte_len`.
+                // `deinitAndUnprotect` unpins.
+                if (!this.buffer.buffer.pinAndRefresh()) {
+                    // No backing ArrayBuffer (already detached) — nothing to
+                    // pin and the slice is empty. Drop to an owned empty
+                    // slice so `deinitAndUnprotect` doesn't try to unpin.
+                    this.* = .{ .encoded_slice = jsc.ZigString.Slice.empty };
+                    return;
+                }
+                this.buffer.buffer.value.protect();
             },
         }
     }
@@ -232,6 +240,7 @@ pub const StringOrBuffer = union(enum) {
                 str.deinit();
             },
             .buffer => |buffer| {
+                buffer.buffer.value.unpinArrayBuffer();
                 buffer.buffer.value.unprotect();
             },
             .encoded_slice => |*encoded| {
@@ -281,19 +290,22 @@ pub const StringOrBuffer = union(enum) {
             .BigUint64Array,
             .DataView,
             => {
-                const buffer = Buffer.fromArrayBuffer(global, value);
+                var buffer = Buffer.fromArrayBuffer(global, value);
 
                 if (is_async) {
-                    // Copy the bytes into Bun-owned memory. Holding a raw
-                    // pointer into the ArrayBuffer and merely `protect()`ing
-                    // the JS value is not enough: user code can detach the
-                    // buffer (e.g. `buffer.transfer()`), which frees the
-                    // backing store while the threadpool still holds the
-                    // pointer.
-                    const bytes = buffer.slice();
-                    const owned = bun.handleOom(allocator.dupe(u8, bytes));
-                    defer global.vm().reportExtraMemory(owned.len);
-                    return .{ .encoded_slice = jsc.ZigString.Slice.init(allocator, owned) };
+                    // `protect()` alone doesn't stop user code from
+                    // detaching the ArrayBuffer (e.g. `buffer.transfer()`),
+                    // which would free the backing store while the
+                    // threadpool still holds a pointer into it. Pin the
+                    // backing store so a concurrent detach copies instead of
+                    // frees. Pinning may promote a FastTypedArray to stable
+                    // heap storage, so `pinAndRefresh` also re-reads the
+                    // slice. `deinitAndUnprotect` unpins.
+                    if (!buffer.buffer.pinAndRefresh()) {
+                        // Already detached — nothing to pin or read.
+                        return .{ .encoded_slice = jsc.ZigString.Slice.empty };
+                    }
+                    buffer.buffer.value.protect();
                 }
 
                 return .{ .buffer = buffer };
@@ -312,15 +324,15 @@ pub const StringOrBuffer = union(enum) {
 
     pub fn fromJSWithEncodingMaybeAsync(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, encoding: Encoding, is_async: bool, allow_string_object: bool) bun.JSError!?StringOrBuffer {
         if (value.isCell() and value.jsType().isArrayBufferLike()) {
-            const buffer = Buffer.fromArrayBuffer(global, value);
+            var buffer = Buffer.fromArrayBuffer(global, value);
             if (is_async) {
-                // See fromJSMaybeAsync: copy so a concurrent detach/transfer
+                // See fromJSMaybeAsync: pin so a concurrent detach/transfer
                 // of the ArrayBuffer can't free the bytes out from under the
                 // threadpool reader.
-                const bytes = buffer.slice();
-                const owned = bun.handleOom(allocator.dupe(u8, bytes));
-                defer global.vm().reportExtraMemory(owned.len);
-                return .{ .encoded_slice = jsc.ZigString.Slice.init(allocator, owned) };
+                if (!buffer.buffer.pinAndRefresh()) {
+                    return .{ .encoded_slice = jsc.ZigString.Slice.empty };
+                }
+                buffer.buffer.value.protect();
             }
             return .{ .buffer = buffer };
         }
@@ -584,12 +596,14 @@ pub const PathLike = union(enum) {
                 this.* = .{ .threadsafe_string = slice_with_underlying_string };
             },
             .buffer => {
-                // See StringOrBuffer.toThreadSafe: `protect()` doesn't stop
-                // user code from detaching the ArrayBuffer and freeing the
-                // backing store while the threadpool still holds a pointer
-                // into it. Copy into Bun-owned memory instead.
-                const owned = bun.handleOom(bun.default_allocator.dupe(u8, this.buffer.slice()));
-                this.* = .{ .encoded_slice = jsc.ZigString.Slice.init(bun.default_allocator, owned) };
+                // See StringOrBuffer.toThreadSafe: pin the backing store so
+                // a concurrent detach/transfer copies instead of freeing it
+                // while the threadpool still holds a pointer into it.
+                if (!this.buffer.buffer.pinAndRefresh()) {
+                    this.* = .{ .encoded_slice = jsc.ZigString.Slice.empty };
+                    return;
+                }
+                this.buffer.buffer.value.protect();
             },
             else => {},
         }
@@ -601,6 +615,7 @@ pub const PathLike = union(enum) {
                 val.deinit();
             },
             .buffer => |val| {
+                val.buffer.value.unpinArrayBuffer();
                 val.buffer.value.unprotect();
             },
             else => {},

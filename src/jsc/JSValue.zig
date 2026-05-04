@@ -1212,6 +1212,29 @@ pub const JSValue = enum(i64) {
         }
         return null;
     }
+
+    extern fn JSC__JSValue__pinArrayBuffer(this: JSValue) bool;
+    extern fn JSC__JSValue__unpinArrayBuffer(this: JSValue) void;
+
+    /// Pin the backing `ArrayBuffer` of a `JSArrayBuffer` / `JSArrayBufferView`
+    /// so that `transfer()` / detach copies the contents instead of freeing
+    /// the backing store while a native caller holds a pointer into it.
+    ///
+    /// This calls `possiblySharedBuffer()` under the hood, which promotes a
+    /// `FastTypedArray` (small, GC-movable inline storage) to stable heap
+    /// storage — so any slice captured *before* pinning may be stale; re-read
+    /// via `asArrayBuffer` after pinning. No-op on `SharedArrayBuffer`.
+    ///
+    /// Returns `false` if `this` has no backing ArrayBuffer. Pair every `true`
+    /// return with exactly one `unpinArrayBuffer` call.
+    pub fn pinArrayBuffer(this: JSValue) bool {
+        return JSC__JSValue__pinArrayBuffer(this);
+    }
+
+    pub fn unpinArrayBuffer(this: JSValue) void {
+        JSC__JSValue__unpinArrayBuffer(this);
+    }
+
     extern fn JSC__JSValue__fromInt64NoTruncate(globalObject: *JSGlobalObject, i: i64) JSValue;
     /// This always returns a JS BigInt
     pub fn fromInt64NoTruncate(globalObject: *JSGlobalObject, i: i64) JSValue {

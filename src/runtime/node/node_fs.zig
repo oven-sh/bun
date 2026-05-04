@@ -2461,22 +2461,6 @@ pub const Arguments = struct {
         }
 
         pub fn toThreadSafe(self: *@This()) void {
-            if (self.buffer == .buffer) {
-                // `writeInner`/`pwriteInner` (and the libuv path) only ever
-                // consume `buffer.slice()[offset..][0..length]`, so dupe just
-                // that range rather than letting the generic
-                // `StringOrBuffer.toThreadSafe` copy the whole view. This
-                // keeps the detach-safety guarantee while avoiding an
-                // O(view.byteLength) copy per chunked write.
-                const full = self.buffer.buffer.slice();
-                const off: usize = @min(self.offset, full.len);
-                const len: usize = @min(self.length, full.len - off);
-                const owned = bun.handleOom(bun.default_allocator.dupe(u8, full[off..][0..len]));
-                self.buffer = .{ .encoded_slice = jsc.ZigString.Slice.init(bun.default_allocator, owned) };
-                self.offset = 0;
-                self.length = owned.len;
-                return;
-            }
             self.buffer.toThreadSafe();
         }
 

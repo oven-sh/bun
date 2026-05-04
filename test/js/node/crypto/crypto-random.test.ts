@@ -194,8 +194,10 @@ describe.concurrent("async crypto does not touch a detached ArrayBuffer backing 
   // ArrayBuffer backing store and only `protect()`ed the JS wrapper. Calling
   // `buffer.transfer()` with a different length frees that storage
   // synchronously, so the worker thread would read from / write to freed
-  // gigacage memory. These tests spawn a fresh process so that the observed
-  // heap reuse isn't perturbed by the test runner itself.
+  // gigacage memory. The fix pins the backing ArrayBuffer for the duration
+  // of the off-thread work so a concurrent transfer() copies the bytes out
+  // instead of detaching. These tests spawn a fresh process so that the
+  // observed heap reuse isn't perturbed by the test runner itself.
 
   it("randomFill does not write through a freed backing store", async () => {
     const src = `
@@ -236,7 +238,7 @@ describe.concurrent("async crypto does not touch a detached ArrayBuffer backing 
     expect(exitCode).toBe(0);
   });
 
-  it("scrypt copies ArrayBuffer inputs before going off-thread", async () => {
+  it("scrypt pins ArrayBuffer inputs while off-thread", async () => {
     const src = `
       const crypto = require("crypto");
       const size = 1 << 16;
@@ -264,7 +266,7 @@ describe.concurrent("async crypto does not touch a detached ArrayBuffer backing 
     expect(exitCode).toBe(0);
   });
 
-  it("pbkdf2 copies ArrayBuffer inputs before going off-thread", async () => {
+  it("pbkdf2 pins ArrayBuffer inputs while off-thread", async () => {
     const src = `
       const crypto = require("crypto");
       const size = 1 << 16;

@@ -94,10 +94,16 @@ describe.concurrent("napi", () => {
               stderr: "inherit",
             });
             expect(build.success).toBeTrue();
-            const tmpdir = tempDirWithFiles("should-be-empty-except", {});
+            // The old "extract-and-immediately-unlink" path (added for
+            // #19550) previously let this test assert the tmpdir was empty
+            // after exit. Since #29587 the extracted `.node` persists at a
+            // content-hashed path so subsequent loads share it — dedup is
+            // covered by test/regression/issue/29585.test.ts, so here we
+            // just assert the compiled binary successfully loaded its
+            // embedded addons.
             const result = spawnSync({
               cmd: [exe, "self"],
-              env: { ...bunEnv, BUN_TMPDIR: tmpdir },
+              env: bunEnv,
               stdin: "inherit",
               stderr: "inherit",
               stdout: "pipe",
@@ -105,14 +111,6 @@ describe.concurrent("napi", () => {
             const stdout = result.stdout.toString().trim();
             expect(stdout).toBe("hello world!");
             expect(result.success).toBeTrue();
-            // The old "extract-and-immediately-unlink" path (added for
-            // #19550) used to let this test assert `readdirSync(tmpdir)`
-            // was empty after exit. Since #29587 the extracted `.node`
-            // persists at a content-hashed path so subsequent loads share
-            // it — the dedup guarantee is covered by
-            // test/regression/issue/29585.test.ts. Here we just need to
-            // know the compiled binary successfully loaded its embedded
-            // addons; the stdout check above already did that.
           },
           10 * 1000,
         );

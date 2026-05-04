@@ -7,18 +7,27 @@ Packages on `npm` can define _lifecycle scripts_ in their `package.json`. These 
 
 ## Supported lifecycle scripts
 
-Bun invokes a fixed subset of the [npm lifecycle scripts](https://docs.npmjs.com/cli/v10/using-npm/scripts). Other scripts on that page (for example `dependencies`, `preuninstall`, `postuninstall`, `prerestart`, `prestop`) are **not** invoked by Bun.
+Bun invokes a fixed subset of the [npm lifecycle scripts](https://docs.npmjs.com/cli/v10/using-npm/scripts). Other package-manager hooks from that page (for example `dependencies`, `preuninstall`, `postuninstall`) are **not** invoked by Bun.
 
-During `bun install`, `bun add`, `bun remove`, and `bun update`, Bun runs these scripts in order:
+Note that this section is about _package-manager_ hooks. Generic `pre<name>` / `post<name>` wrappers still run around any matching `bun run <name>` — so for example `bun run build` will still invoke `prebuild` and `postbuild` if they exist.
 
-- `preinstall`: Before the package is installed
-- `install`: During installation
-- `postinstall`: After the package is installed
-- `preprepare`: Before `prepare` (root, `git:`, and `github:` packages only)
-- `prepare`: After `postinstall`, and before the package is packed or published (root, `git:`, `github:`, and workspace packages)
-- `postprepare`: After `prepare` (root, `git:`, and `github:` packages only)
+During `bun install`, `bun add`, `bun remove`, and `bun update`, Bun runs these scripts in this order:
+
+- `preinstall`
+- `install`
+- `postinstall`
+- `preprepare` (root, `git:`, and `github:` packages only)
+- `prepare` (root, `git:`, `github:`, and workspace packages)
+- `postprepare` (root, `git:`, and `github:` packages only)
 
 The prepare-family hooks (`preprepare`, `prepare`, `postprepare`) are not run for tarballs fetched from the npm registry — by convention those scripts are only meaningful for source checkouts.
+
+<Note>
+  Unlike npm, Bun runs the **root** project's install-time scripts as a single batch **after** `node_modules` is
+  populated, the lockfile is saved, and dependency scripts have finished. Root `preinstall` does **not** run before
+  dependencies are fetched. This means common npm patterns (e.g. writing `.npmrc` from a root `preinstall` so dependency
+  downloads pick it up) don't work under Bun — configure registry credentials before invoking `bun install` instead.
+</Note>
 
 During `bun publish` and `bun pm pack`, Bun runs:
 

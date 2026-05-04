@@ -15,8 +15,8 @@
 // every platform rather than only showing up as a Windows size bump.
 
 import { describe, expect, test } from "bun:test";
-import { openSync, readSync, closeSync } from "node:fs";
-import { isLinux, isWindows, isFreeBSD } from "harness";
+import { isFreeBSD, isLinux, isWindows } from "harness";
+import { closeSync, openSync, readSync } from "node:fs";
 
 /** Read `len` bytes from `fd` at absolute `offset`. */
 function preadExact(fd: number, offset: number, len: number): Buffer {

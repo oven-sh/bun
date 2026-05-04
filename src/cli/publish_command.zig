@@ -1212,13 +1212,13 @@ pub const PublishCommand = struct {
         allocator: std.mem.Allocator,
         abs_workspace_path: string,
     ) OOM!?ReadmeInfo {
-        var workspace_dir = std.fs.openDirAbsolute(abs_workspace_path, .{ .iterate = true }) catch |err| {
+        const workspace_fd = bun.sys.openA(abs_workspace_path, bun.O.DIRECTORY, 0).unwrap() catch |err| {
             Output.warn("failed to scan for README in {s}: {s}", .{ abs_workspace_path, @errorName(err) });
             return null;
         };
-        defer workspace_dir.close();
+        defer workspace_fd.close();
 
-        var iter = bun.DirIterator.iterate(.fromStdDir(workspace_dir), .u8);
+        var iter = bun.DirIterator.iterate(workspace_fd, .u8);
 
         var markdown_name: ?string = null;
         var fallback_name: ?string = null;
@@ -1269,7 +1269,7 @@ pub const PublishCommand = struct {
             if (f.ptr != chosen.ptr) allocator.free(f);
         }
 
-        const contents = switch (bun.sys.File.readFrom(bun.FD.fromStdDir(workspace_dir), chosen, allocator)) {
+        const contents = switch (bun.sys.File.readFrom(workspace_fd, chosen, allocator)) {
             .result => |bytes| bytes,
             .err => |err| {
                 Output.warn("failed to read {s}: {s}", .{ chosen, err.name() });

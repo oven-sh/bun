@@ -7,15 +7,15 @@ comptime {
     _ = &@import("./webcore/TextEncoder.zig");
 }
 
-pub const DOMExceptionCode = @import("./bindings/JSErrorCode.zig").DOMExceptionCode;
+pub const DOMExceptionCode = @import("../jsc/JSErrorCode.zig").DOMExceptionCode;
 
 // TODO: make this JSGlobalObject local for better security
 pub const ByteListPool = bun.ObjectPool(bun.ByteList, null, true, 8);
 
 pub const Crypto = @import("./webcore/Crypto.zig");
-pub const AbortSignal = @import("./bindings/AbortSignal.zig").AbortSignal;
-pub const WebWorker = @import("./web_worker.zig");
-pub const AutoFlusher = @import("./webcore/AutoFlusher.zig");
+pub const AbortSignal = @import("../jsc/AbortSignal.zig").AbortSignal;
+pub const WebWorker = @import("../jsc/web_worker.zig");
+pub const AutoFlusher = @import("../event_loop/AutoFlusher.zig");
 pub const EncodingLabel = @import("./webcore/EncodingLabel.zig").EncodingLabel;
 pub const Fetch = @import("./webcore/fetch.zig");
 pub const Response = @import("./webcore/Response.zig");
@@ -37,7 +37,7 @@ pub const CookieMap = @import("./webcore/CookieMap.zig").CookieMap;
 pub const ObjectURLRegistry = @import("./webcore/ObjectURLRegistry.zig");
 pub const Sink = @import("./webcore/Sink.zig");
 pub const FileSink = @import("./webcore/FileSink.zig");
-pub const FetchHeaders = @import("./bindings/FetchHeaders.zig").FetchHeaders;
+pub const FetchHeaders = @import("../jsc/FetchHeaders.zig").FetchHeaders;
 pub const ByteBlobLoader = @import("./webcore/ByteBlobLoader.zig");
 pub const ByteStream = @import("./webcore/ByteStream.zig");
 pub const FileReader = @import("./webcore/FileReader.zig");

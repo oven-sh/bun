@@ -373,7 +373,7 @@ pub const GenerateHeader = struct {
 };
 
 const std = @import("std");
-const analytics = @import("./analytics/schema.zig").analytics;
+const analytics = @import("./schema.zig").analytics;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

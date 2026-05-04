@@ -7305,7 +7305,7 @@ const NodeFSFunctionEnum = std.meta.DeclEnum(NodeFS);
 const string = []const u8;
 
 const DirIterator = @import("./dir_iterator.zig");
-const FileSystem = @import("../../fs.zig").FileSystem;
+const FileSystem = @import("../../resolver/fs.zig").FileSystem;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

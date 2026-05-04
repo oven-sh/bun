@@ -1,18 +1,18 @@
 pub const c_allocator = basic.c_allocator;
 pub const z_allocator = basic.z_allocator;
 pub const freeWithoutSize = basic.freeWithoutSize;
-pub const mimalloc = @import("./allocators/mimalloc.zig");
-pub const MimallocArena = @import("./allocators/MimallocArena.zig");
+pub const mimalloc = @import("../mimalloc_sys/mimalloc.zig");
+pub const MimallocArena = @import("./MimallocArena.zig");
 
-pub const allocation_scope = @import("./allocators/allocation_scope.zig");
+pub const allocation_scope = @import("./allocation_scope.zig");
 pub const AllocationScope = allocation_scope.AllocationScope;
 pub const AllocationScopeIn = allocation_scope.AllocationScopeIn;
 
-pub const NullableAllocator = @import("./allocators/NullableAllocator.zig");
-pub const MaxHeapAllocator = @import("./allocators/MaxHeapAllocator.zig");
-pub const LinuxMemFdAllocator = @import("./allocators/LinuxMemFdAllocator.zig");
-pub const BufferFallbackAllocator = @import("./allocators/BufferFallbackAllocator.zig");
-pub const MaybeOwned = @import("./allocators/maybe_owned.zig").MaybeOwned;
+pub const NullableAllocator = @import("./NullableAllocator.zig");
+pub const MaxHeapAllocator = @import("./MaxHeapAllocator.zig");
+pub const LinuxMemFdAllocator = @import("./LinuxMemFdAllocator.zig");
+pub const BufferFallbackAllocator = @import("./BufferFallbackAllocator.zig");
+pub const MaybeOwned = @import("./maybe_owned.zig").MaybeOwned;
 
 pub fn isSliceInBufferT(comptime T: type, slice: []const T, buffer: []const T) bool {
     return (@intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and
@@ -925,11 +925,11 @@ pub const Default = struct {
 };
 
 const basic = if (bun.use_mimalloc)
-    @import("./allocators/basic.zig")
+    @import("./basic.zig")
 else
-    @import("./allocators/fallback.zig");
+    @import("./fallback.zig");
 
-const Environment = @import("./env.zig");
+const Environment = @import("../bun_core/env.zig");
 const std = @import("std");
 
 const bun = @import("bun");

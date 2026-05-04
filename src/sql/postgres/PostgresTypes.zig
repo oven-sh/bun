@@ -1,9 +1,9 @@
-pub const @"bool" = @import("./types/bool.zig");
+pub const @"bool" = @import("../../sql_jsc/postgres/types/bool.zig");
 
-pub const bytea = @import("./types/bytea.zig");
-pub const date = @import("./types/date.zig");
-pub const json = @import("./types/json.zig");
-pub const string = @import("./types/PostgresString.zig");
+pub const bytea = @import("../../sql_jsc/postgres/types/bytea.zig");
+pub const date = @import("../../sql_jsc/postgres/types/date.zig");
+pub const json = @import("../../sql_jsc/postgres/types/json.zig");
+pub const string = @import("../../sql_jsc/postgres/types/PostgresString.zig");
 pub const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
 pub const Tag = @import("./types/Tag.zig").Tag;
 

@@ -3,6 +3,9 @@ comptime {
     _ = process.getTitle;
     _ = process.setTitle;
     _ = @import("./node/util/parse_args.zig");
+    if (Environment.isWindows) {
+        _ = @import("./node/uv_signal_handle_windows.zig");
+    }
 }
 
 /// node:fs

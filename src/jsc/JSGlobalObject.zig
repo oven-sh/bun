@@ -1054,7 +1054,7 @@ pub const JSGlobalObject = opaque {
 
 const string = []const u8;
 
-const napi = @import("../../napi/napi.zig");
+const napi = @import("../napi/napi.zig");
 const std = @import("std");
 
 const bun = @import("bun");

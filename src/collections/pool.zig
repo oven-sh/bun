@@ -154,7 +154,7 @@ pub fn ObjectPool(
         }
 
         pub fn push(allocator: std.mem.Allocator, pooled: Type) void {
-            if (comptime @import("./env.zig").allow_assert)
+            if (comptime @import("../bun_core/env.zig").allow_assert)
                 bun.assert(!full());
 
             const new_node = allocator.create(LinkedList.Node) catch unreachable;

@@ -1,7 +1,7 @@
-pub const args = @import("./clap/args.zig");
+pub const args = @import("./args.zig");
 
-pub const ComptimeClap = @import("./clap/comptime.zig").ComptimeClap;
-pub const StreamingClap = @import("./clap/streaming.zig").StreamingClap;
+pub const ComptimeClap = @import("./comptime.zig").ComptimeClap;
+pub const StreamingClap = @import("./streaming.zig").StreamingClap;
 
 /// The names a ::Param can have.
 pub const Names = struct {
@@ -724,7 +724,7 @@ fn testUsage(expected: []const u8, params: []const Param(Help)) !void {
     testing.expectEqualStrings(expected, fbs.getWritten());
 }
 
-const Output = @import("../../output.zig");
+const Output = @import("../bun_core/output.zig");
 const bun = @import("bun");
 
 const std = @import("std");

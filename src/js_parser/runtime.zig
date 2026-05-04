@@ -11,8 +11,8 @@ fn embedDebugFallback(comptime msg: []const u8, comptime code: []const u8) []con
 }
 
 pub const Fallback = struct {
-    pub const HTMLTemplate = @embedFile("./fallback.html");
-    pub const HTMLBackendTemplate = @embedFile("./fallback-backend.html");
+    pub const HTMLTemplate = @embedFile("../fallback.html");
+    pub const HTMLBackendTemplate = @embedFile("../fallback-backend.html");
 
     const Base64FallbackMessage = struct {
         msg: *const api.FallbackMessageContainer,

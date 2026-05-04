@@ -1218,7 +1218,7 @@ pub const ValkeyClient = struct {
 const debug = bun.Output.scoped(.Redis, .visible);
 
 const ValkeyCommand = @import("./ValkeyCommand.zig");
-const protocol = @import("./valkey_protocol.zig");
+const protocol = @import("../../valkey/valkey_protocol.zig");
 const std = @import("std");
 
 const bun = @import("bun");

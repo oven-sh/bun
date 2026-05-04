@@ -1,9 +1,9 @@
 const ModuleLoader = @This();
 
-pub const node_fallbacks = @import("../node_fallbacks.zig");
+pub const node_fallbacks = @import("../resolver/node_fallbacks.zig");
 pub const AsyncModule = @import("./AsyncModule.zig").AsyncModule;
 pub const RuntimeTranspilerStore = @import("./RuntimeTranspilerStore.zig").RuntimeTranspilerStore;
-pub const HardcodedModule = @import("./HardcodedModule.zig").HardcodedModule;
+pub const HardcodedModule = @import("../resolve_builtins/HardcodedModule.zig").HardcodedModule;
 
 transpile_source_code_arena: ?*bun.ArenaAllocator = null,
 eval_source: ?*logger.Source = null,
@@ -1350,15 +1350,15 @@ const debug = Output.scoped(.ModuleLoader, .hidden);
 
 const string = []const u8;
 
-const Fs = @import("../fs.zig");
-const Runtime = @import("../runtime.zig");
-const analyze_transpiled_module = @import("../analyze_transpiled_module.zig");
-const ast = @import("../import_record.zig");
-const node_module_module = @import("./bindings/NodeModuleModule.zig");
+const Fs = @import("../resolver/fs.zig");
+const Runtime = @import("../js_parser/runtime.zig");
+const analyze_transpiled_module = @import("../bundler/analyze_transpiled_module.zig");
+const ast = @import("../options_types/import_record.zig");
+const node_module_module = @import("./NodeModuleModule.zig");
 const std = @import("std");
 const panic = std.debug.panic;
 
-const options = @import("../options.zig");
+const options = @import("../bundler/options.zig");
 const ModuleType = options.ModuleType;
 
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;

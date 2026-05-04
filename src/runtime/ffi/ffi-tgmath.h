@@ -8,16 +8,16 @@
 #include <math.h>
 
 #ifndef __cplusplus
-#define __tgmath_real(x, F)                                                    \
-  _Generic((x), float: F##f, long double: F##l, default: F)(x)
-#define __tgmath_real_2_1(x, y, F)                                             \
-  _Generic((x), float: F##f, long double: F##l, default: F)(x, y)
-#define __tgmath_real_2(x, y, F)                                               \
-  _Generic((x) + (y), float: F##f, long double: F##l, default: F)(x, y)
-#define __tgmath_real_3_2(x, y, z, F)                                          \
-  _Generic((x) + (y), float: F##f, long double: F##l, default: F)(x, y, z)
-#define __tgmath_real_3(x, y, z, F)                                            \
-  _Generic((x) + (y) + (z), float: F##f, long double: F##l, default: F)(x, y, z)
+#define __tgmath_real(x, F) \
+    _Generic((x), float: F##f, long double: F##l, default: F)(x)
+#define __tgmath_real_2_1(x, y, F) \
+    _Generic((x), float: F##f, long double: F##l, default: F)(x, y)
+#define __tgmath_real_2(x, y, F) \
+    _Generic((x) + (y), float: F##f, long double: F##l, default: F)(x, y)
+#define __tgmath_real_3_2(x, y, z, F) \
+    _Generic((x) + (y), float: F##f, long double: F##l, default: F)(x, y, z)
+#define __tgmath_real_3(x, y, z, F) \
+    _Generic((x) + (y) + (z), float: F##f, long double: F##l, default: F)(x, y, z)
 
 /* Functions defined in both <math.h> and <complex.h> (7.22p4) */
 #define acos(z) __tgmath_real(z, acos)

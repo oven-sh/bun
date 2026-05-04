@@ -843,7 +843,7 @@ const HTTPCertError = @import("./HTTPCertError.zig");
 const HTTPThread = @import("./HTTPThread.zig");
 const ProxyTunnel = @import("./ProxyTunnel.zig");
 const std = @import("std");
-const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
+const TaggedPointerUnion = @import("../ptr/ptr.zig").TaggedPointerUnion;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

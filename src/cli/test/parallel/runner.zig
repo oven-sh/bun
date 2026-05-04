@@ -443,7 +443,7 @@ const Worker = @import("./Worker.zig");
 const aggregate = @import("./aggregate.zig");
 const std = @import("std");
 const Channel = @import("./Channel.zig").Channel;
-const Command = @import("../../../cli.zig").Command;
+const Command = @import("../../cli.zig").Command;
 const Coordinator = @import("./Coordinator.zig").Coordinator;
 
 const test_command = @import("../../test_command.zig");

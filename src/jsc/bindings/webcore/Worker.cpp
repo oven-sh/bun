@@ -52,7 +52,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(Worker);
 
 // ---- Zig FFI -----------------------------------------------------------------------------------
 // The Zig WebWorker struct is owned by this Worker (freed in ~Worker) and drives the worker
-// thread. See src/bun.js/web_worker.zig for the matching side of each entry point.
+// thread. See src/jsc/web_worker.zig for the matching side of each entry point.
 extern "C" {
 
 // Allocate the Zig WebWorker, take a keep-alive on the parent event loop, and spawn the worker

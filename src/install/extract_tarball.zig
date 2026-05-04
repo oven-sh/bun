@@ -195,7 +195,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         defer extract_destination.close();
 
         const Archiver = bun.libarchive.Archiver;
-        const Zlib = @import("../zlib.zig");
+        const Zlib = @import("../zlib/zlib.zig");
         var zlib_pool = Npm.Registry.BodyPool.get(default_allocator);
         zlib_pool.data.reset();
         defer Npm.Registry.BodyPool.release(zlib_pool);
@@ -595,7 +595,7 @@ const string = []const u8;
 
 const Npm = @import("./npm.zig");
 const std = @import("std");
-const FileSystem = @import("../fs.zig").FileSystem;
+const FileSystem = @import("../resolver/fs.zig").FileSystem;
 const Integrity = @import("./integrity.zig").Integrity;
 const Resolution = @import("./resolution.zig").Resolution;
 

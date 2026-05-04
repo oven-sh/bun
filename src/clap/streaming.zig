@@ -437,7 +437,7 @@ test "errors" {
     testErr(&params, &[_][]const u8{"--cc"}, "The argument '--cc' requires a value but none was supplied\n");
 }
 
-const clap = @import("../clap.zig");
+const clap = @import("./clap.zig");
 const args = clap.args;
 
 const bun = @import("bun");

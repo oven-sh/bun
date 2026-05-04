@@ -672,7 +672,7 @@ pub const E = @import("./ast/E.zig");
 pub const Expr = @import("./ast/Expr.zig");
 pub const ExprNodeIndex = Expr;
 pub const G = @import("./ast/G.zig");
-pub const Macro = @import("./ast/Macro.zig");
+pub const Macro = @import("../js_parser_jsc/Macro.zig");
 pub const Op = @import("./ast/Op.zig");
 pub const S = @import("./ast/S.zig");
 pub const Scope = @import("./ast/Scope.zig");
@@ -702,7 +702,7 @@ pub const BabyList = bun.BabyList;
 const string = []const u8;
 
 const std = @import("std");
-const TypeScript = @import("./js_parser.zig").TypeScript;
+const TypeScript = @import("./parser.zig").TypeScript;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

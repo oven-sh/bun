@@ -5,16 +5,8 @@ const LoaderMap = bun.StringArrayHashMapUnmanaged(options.Loader);
 
 // TODO: replace api.TransformOptions with Bunfig
 pub const Bunfig = struct {
-    pub const OfflineMode = enum {
-        online,
-        latest,
-        offline,
-    };
-    pub const Prefer = bun.ComptimeStringMap(OfflineMode, .{
-        &.{ "offline", OfflineMode.offline },
-        &.{ "latest", OfflineMode.latest },
-        &.{ "online", OfflineMode.online },
-    });
+    pub const OfflineMode = @import("../options_types/OfflineMode.zig").OfflineMode;
+    pub const Prefer = @import("../options_types/OfflineMode.zig").Prefer;
 
     pub const Parser = struct {
         json: js_ast.Expr,
@@ -1294,13 +1286,13 @@ pub const Bunfig = struct {
 
 const string = []const u8;
 
-const options = @import("./options.zig");
-const resolver = @import("./resolver/resolver.zig");
+const options = @import("../bundler/options.zig");
+const resolver = @import("../resolver/resolver.zig");
 const std = @import("std");
 const Command = @import("./cli.zig").Command;
-const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
-const TestCommand = @import("./cli/test_command.zig").TestCommand;
-const URL = @import("./url.zig").URL;
+const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
+const TestCommand = @import("./test_command.zig").TestCommand;
+const URL = @import("../url/url.zig").URL;
 
 const bun = @import("bun");
 const JSONParser = bun.json;

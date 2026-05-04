@@ -315,7 +315,7 @@ pub const Json = struct {
 
 const string = []const u8;
 
-const fs = @import("./fs.zig");
+const fs = @import("../resolver/fs.zig");
 const std = @import("std");
 const Define = @import("./defines.zig").Define;
 

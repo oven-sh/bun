@@ -695,7 +695,7 @@ pub const FSWatcher = struct {
 
 const string = []const u8;
 
-const Path = @import("../../resolver/resolve_path.zig");
+const Path = @import("../../paths/resolve_path.zig");
 const std = @import("std");
 
 const bun = @import("bun");

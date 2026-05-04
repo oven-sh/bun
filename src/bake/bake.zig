@@ -2,9 +2,9 @@
 //! combines `Bun.build` and `Bun.serve`, providing a hot-reloading development
 //! server, server components, and other integrations. Instead of taking the
 //! role as a framework, Bake is tool for frameworks to build on top of.
-pub const production = @import("./bake/production.zig");
-pub const DevServer = @import("./bake/DevServer.zig");
-pub const FrameworkRouter = @import("./bake/FrameworkRouter.zig");
+pub const production = @import("./production.zig");
+pub const DevServer = @import("./DevServer.zig");
+pub const FrameworkRouter = @import("./FrameworkRouter.zig");
 
 /// export default { app: ... };
 pub const api_name = "app";
@@ -282,9 +282,9 @@ pub const Framework = struct {
                 "bun-framework-react/server.tsx",
                 "bun-framework-react/ssr.tsx",
             }, if (Environment.codegen_embed) &.{
-                .{ .code = @embedFile("./bake/bun-framework-react/client.tsx") },
-                .{ .code = @embedFile("./bake/bun-framework-react/server.tsx") },
-                .{ .code = @embedFile("./bake/bun-framework-react/ssr.tsx") },
+                .{ .code = @embedFile("./bun-framework-react/client.tsx") },
+                .{ .code = @embedFile("./bun-framework-react/server.tsx") },
+                .{ .code = @embedFile("./bun-framework-react/ssr.tsx") },
             } else &.{
                 // Cannot use .import because resolution must happen from the user's POV
                 .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/client.tsx") },

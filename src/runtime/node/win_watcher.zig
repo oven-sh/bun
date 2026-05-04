@@ -3,7 +3,7 @@ var default_manager: ?*PathWatcherManager = null;
 // TODO: make this a generic so we can reuse code with path_watcher
 // TODO: we probably should use native instead of libuv abstraction here for better performance
 pub const PathWatcherManager = struct {
-    const options = @import("../../options.zig");
+    const options = @import("../../bundler/options.zig");
     const log = Output.scoped(.PathWatcherManager, .visible);
 
     watchers: bun.StringArrayHashMapUnmanaged(*PathWatcher) = .{},

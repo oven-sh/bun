@@ -313,7 +313,7 @@ pub const Integrity = extern struct {
 };
 
 const std = @import("std");
-const Crypto = @import("../sha.zig").Hashers;
+const Crypto = @import("../sha_hmac/sha.zig").Hashers;
 
 const bun = @import("bun");
 const strings = bun.strings;

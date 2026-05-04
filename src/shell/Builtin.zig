@@ -57,7 +57,7 @@ pub const Impl = union(Kind) {
     cp: Cp,
 };
 
-pub const Result = @import("../result.zig").Result;
+pub const Result = @import("../bun_core/result.zig").Result;
 
 // Note: this enum uses @tagName, choose wisely!
 pub const Kind = enum {
@@ -804,8 +804,8 @@ pub const Echo = @import("./builtin/echo.zig");
 pub const Which = @import("./builtin/which.zig");
 pub const Rm = @import("./builtin/rm.zig");
 pub const Exit = @import("./builtin/exit.zig");
-pub const True = @import("./builtin/true.zig");
-pub const False = @import("./builtin/false.zig");
+pub const True = @import("./builtin/true_.zig");
+pub const False = @import("./builtin/false_.zig");
 pub const Yes = @import("./builtin/yes.zig");
 pub const Seq = @import("./builtin/seq.zig");
 pub const Dirname = @import("./builtin/dirname.zig");

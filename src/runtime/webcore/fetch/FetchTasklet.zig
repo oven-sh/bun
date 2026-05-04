@@ -1481,8 +1481,8 @@ pub const FetchTasklet = struct {
 
 const X509 = @import("../../api/bun/x509.zig");
 const std = @import("std");
-const Method = @import("../../../http/Method.zig").Method;
-const ZigURL = @import("../../../url.zig").URL;
+const Method = @import("../../../http_types/Method.zig").Method;
+const ZigURL = @import("../../../url/url.zig").URL;
 
 const bun = @import("bun");
 const Async = bun.Async;

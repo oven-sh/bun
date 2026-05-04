@@ -412,7 +412,7 @@ pub const Define = struct {
 
 const string = []const u8;
 
-const fs = @import("./fs.zig");
+const fs = @import("../resolver/fs.zig");
 const std = @import("std");
 
 const table = @import("./defines-table.zig");

@@ -214,7 +214,7 @@
 #include "NodeFSStatBinding.h"
 #include "NodeFSStatFSBinding.h"
 #include "NodeDirent.h"
-#include "../webview/JSWebView.h"
+#include "../../runtime/webview/JSWebView.h"
 
 #if !OS(WINDOWS)
 #include <dlfcn.h>

@@ -380,7 +380,7 @@ fn validateRouteName(global: *jsc.JSGlobalObject, path: []const u8) !void {
     }
 }
 
-pub const SSLConfig = @import("./SSLConfig.zig");
+pub const SSLConfig = @import("../socket/SSLConfig.zig");
 
 fn getRoutesObject(global: *jsc.JSGlobalObject, arg: jsc.JSValue) bun.JSError!?jsc.JSValue {
     inline for (.{ "routes", "static" }) |key| {

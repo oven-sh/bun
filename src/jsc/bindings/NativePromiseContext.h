@@ -36,7 +36,7 @@ public:
     // CompactPointerTuple, so this cell adds only one pointer of storage
     // beyond the JSCell header.
     //
-    // Must stay in sync with Tag in src/bun.js/api/NativePromiseContext.zig.
+    // Must stay in sync with Tag in src/runtime/api/NativePromiseContext.zig.
     enum class Tag : uint8_t {
         HTTPServerRequestContext,
         HTTPSServerRequestContext,

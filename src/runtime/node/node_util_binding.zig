@@ -228,7 +228,7 @@ pub fn parseEnv(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
 const string = []const u8;
 
 const bun = @import("bun");
-const envloader = @import("../../env_loader.zig");
+const envloader = @import("../../dotenv/env_loader.zig");
 const std = @import("std");
 const validators = @import("./util/validators.zig");
 const Allocator = std.mem.Allocator;

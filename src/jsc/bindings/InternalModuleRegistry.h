@@ -16,7 +16,7 @@ using namespace JSC;
 //
 // Modules come from two sources:
 // - some are written in JS (src/js, there is a readme file that explain those files more.
-// - others are native code (src/bun.js/modules), see _NativeModule.h in there.
+// - others are native code (src/jsc/modules), see _NativeModule.h in there.
 class InternalModuleRegistry : public JSInternalFieldObjectImpl<BUN_INTERNAL_MODULE_COUNT> {
 public:
     using Base = JSInternalFieldObjectImpl<BUN_INTERNAL_MODULE_COUNT>;

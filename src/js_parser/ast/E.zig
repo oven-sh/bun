@@ -68,17 +68,7 @@ pub const Array = struct {
         return out;
     }
 
-    pub fn toJS(this: @This(), allocator: std.mem.Allocator, globalObject: *jsc.JSGlobalObject) ToJSError!jsc.JSValue {
-        const items = this.items.slice();
-        var array = try jsc.JSValue.createEmptyArray(globalObject, items.len);
-        array.protect();
-        defer array.unprotect();
-        for (items, 0..) |expr, j| {
-            try array.putIndex(globalObject, @as(u32, @truncate(j)), try expr.data.toJS(allocator, globalObject));
-        }
-
-        return array;
-    }
+    pub const toJS = @import("../../js_parser_jsc/expr_jsc.zig").arrayToJS;
 
     /// Assumes each item in the array is a string
     pub fn alphabetizeStrings(this: *Array) void {
@@ -147,9 +137,7 @@ pub const Binary = struct {
 
 pub const Boolean = struct {
     value: bool,
-    pub fn toJS(this: @This(), ctx: *jsc.JSGlobalObject) jsc.C.JSValueRef {
-        return jsc.C.JSValueMakeBoolean(ctx, this.value);
-    }
+    pub const toJS = @import("../../js_parser_jsc/expr_jsc.zig").boolToJS;
 };
 pub const Super = struct {};
 pub const Null = struct {};
@@ -505,9 +493,7 @@ pub const Number = struct {
         return try writer.write(self.value);
     }
 
-    pub fn toJS(this: @This()) jsc.JSValue {
-        return jsc.JSValue.jsNumber(this.value);
-    }
+    pub const toJS = @import("../../js_parser_jsc/expr_jsc.zig").numberToJS;
 };
 
 pub const BigInt = struct {
@@ -519,10 +505,7 @@ pub const BigInt = struct {
         return try writer.write(self.value);
     }
 
-    pub fn toJS(_: @This()) jsc.JSValue {
-        // TODO:
-        return jsc.JSValue.jsNumber(0);
-    }
+    pub const toJS = @import("../../js_parser_jsc/expr_jsc.zig").bigIntToJS;
 };
 
 pub const Object = struct {
@@ -554,22 +537,7 @@ pub const Object = struct {
         return if (asProperty(self, key)) |query| query.expr else @as(?Expr, null);
     }
 
-    pub fn toJS(this: *Object, allocator: std.mem.Allocator, globalObject: *jsc.JSGlobalObject) ToJSError!jsc.JSValue {
-        var obj = jsc.JSValue.createEmptyObject(globalObject, this.properties.len);
-        obj.protect();
-        defer obj.unprotect();
-        const props: []const G.Property = this.properties.slice();
-        for (props) |prop| {
-            if (prop.kind != .normal or prop.class_static_block != null or prop.key == null or prop.value == null) {
-                return error.@"Cannot convert argument type to JS";
-            }
-            const key = try prop.key.?.data.toJS(allocator, globalObject);
-            const value = try prop.value.?.toJS(allocator, globalObject);
-            try obj.putToPropertyKey(globalObject, key, value);
-        }
-
-        return obj;
-    }
+    pub const toJS = @import("../../js_parser_jsc/expr_jsc.zig").objectToJS;
 
     pub fn put(self: *Object, allocator: std.mem.Allocator, key: string, expr: Expr) !void {
         if (asProperty(self, key)) |query| {
@@ -1172,29 +1140,7 @@ pub const String = struct {
         }
     }
 
-    pub fn toJS(s: *String, allocator: std.mem.Allocator, globalObject: *jsc.JSGlobalObject) !jsc.JSValue {
-        s.resolveRopeIfNeeded(allocator);
-        if (!s.isPresent()) {
-            var emp = bun.String.empty;
-            return emp.toJS(globalObject);
-        }
-
-        if (s.isUTF8()) {
-            if (try strings.toUTF16Alloc(allocator, s.slice8(), false, false)) |utf16| {
-                var out, const chars = bun.String.createUninitialized(.utf16, utf16.len);
-                @memcpy(chars, utf16);
-                return out.transferToJS(globalObject);
-            } else {
-                var out, const chars = bun.String.createUninitialized(.latin1, s.slice8().len);
-                @memcpy(chars, s.slice8());
-                return out.transferToJS(globalObject);
-            }
-        } else {
-            var out, const chars = bun.String.createUninitialized(.utf16, s.slice16().len);
-            @memcpy(chars, s.slice16());
-            return out.transferToJS(globalObject);
-        }
-    }
+    pub const toJS = @import("../../js_parser_jsc/expr_jsc.zig").stringToJS;
 
     pub fn toZigString(s: *String, allocator: std.mem.Allocator) jsc.ZigString {
         if (s.isUTF8()) {
@@ -1522,4 +1468,3 @@ const G = js_ast.G;
 const Op = js_ast.Op;
 const OptionalChain = js_ast.OptionalChain;
 const Ref = js_ast.Ref;
-const ToJSError = js_ast.ToJSError;

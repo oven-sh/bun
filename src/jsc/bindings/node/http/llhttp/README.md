@@ -2,7 +2,7 @@ Sources are from [llhttp](https://github.com/nodejs/llhttp) 9.3.0 (36151b9a7d632
 
 Keep this in sync with:
 
-- `src/bun.js/bindings/ProcessBindingHTTPParser.cpp`
+- `src/jsc/bindings/ProcessBindingHTTPParser.cpp`
 - `packages/bun-types/overrides.d.ts`
 
 ```

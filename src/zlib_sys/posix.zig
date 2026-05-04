@@ -52,9 +52,9 @@ pub const zStream_struct = extern struct {
 pub const z_stream = zStream_struct;
 pub const z_streamp = *z_stream;
 
-pub const DataType = @import("./zlib.shared.zig").DataType;
-pub const FlushValue = @import("./zlib.shared.zig").FlushValue;
-pub const ReturnCode = @import("./zlib.shared.zig").ReturnCode;
+pub const DataType = @import("./shared.zig").DataType;
+pub const FlushValue = @import("./shared.zig").FlushValue;
+pub const ReturnCode = @import("./shared.zig").ReturnCode;
 pub extern fn zlibVersion() [*c]const u8;
 
 pub extern fn deflateInit_(strm: z_streamp, level: c_int, version: [*c]const u8, stream_size: c_int) ReturnCode;

@@ -1917,6 +1917,7 @@ pub const internal = struct {
 pub const InternalDNSRequest = internal.Request;
 
 comptime {
+    _ = @import("./cares_jsc.zig"); // Bun__canonicalizeIP @export
     @export(&internal.us_getaddrinfo_set, .{
         .name = "Bun__addrinfo_set",
     });

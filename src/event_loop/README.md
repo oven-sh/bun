@@ -8,7 +8,7 @@ Bun's event loop is built on top of **uSockets** (a cross-platform event loop ba
 
 ## Core Components
 
-### 1. Task Queue (`src/bun.js/event_loop/Task.zig`)
+### 1. Task Queue (`src/event_loop/Task.zig`)
 
 A tagged pointer union containing various async task types (file I/O, network requests, timers, etc.). Tasks are queued by various subsystems and drained by the main event loop.
 
@@ -25,11 +25,11 @@ This prevents infinite loops when `setImmediate` is called within a `setImmediat
 
 Thread-safe queue for tasks enqueued from worker threads or async operations. These are moved to the main task queue before processing.
 
-### 4. Deferred Task Queue (`src/bun.js/event_loop/DeferredTaskQueue.zig`)
+### 4. Deferred Task Queue (`src/event_loop/DeferredTaskQueue.zig`)
 
 For operations that should be batched and deferred until after microtasks drain (e.g., buffered HTTP response writes, file sink flushes). This avoids excessive system calls while maintaining responsiveness.
 
-### 5. Process.nextTick Queue (`src/bun.js/bindings/JSNextTickQueue.cpp`)
+### 5. Process.nextTick Queue (`src/jsc/bindings/JSNextTickQueue.cpp`)
 
 Node.js-compatible implementation of `process.nextTick()`, which runs before microtasks but after each task.
 

@@ -147,9 +147,7 @@ pub fn hasAnyPropertyNamed(expr: *const Expr, comptime names: []const string) bo
     return false;
 }
 
-pub fn toJS(this: Expr, allocator: std.mem.Allocator, globalObject: *jsc.JSGlobalObject) ToJSError!jsc.JSValue {
-    return this.data.toJS(allocator, globalObject);
-}
+pub const toJS = @import("../../js_parser_jsc/expr_jsc.zig").exprToJS;
 
 pub inline fn isArray(this: *const Expr) bool {
     return this.data == .e_array;
@@ -3114,39 +3112,7 @@ pub const Data = union(Tag) {
         return Equality.unknown;
     }
 
-    pub fn toJS(this: Data, allocator: std.mem.Allocator, globalObject: *jsc.JSGlobalObject) ToJSError!jsc.JSValue {
-        return switch (this) {
-            .e_array => |e| e.toJS(allocator, globalObject),
-            .e_object => |e| e.toJS(allocator, globalObject),
-            .e_string => |e| e.toJS(allocator, globalObject),
-            .e_null => jsc.JSValue.null,
-            .e_undefined => .js_undefined,
-            .e_boolean, .e_branch_boolean => |boolean| if (boolean.value)
-                .true
-            else
-                .false,
-            .e_number => |e| e.toJS(),
-            // .e_big_int => |e| e.toJS(ctx, exception),
-
-            .e_inlined_enum => |inlined| inlined.value.data.toJS(allocator, globalObject),
-
-            .e_identifier,
-            .e_import_identifier,
-            .e_private_identifier,
-            .e_commonjs_export_identifier,
-            => error.@"Cannot convert identifier to JS. Try a statically-known value",
-
-            // brk: {
-            //     // var node = try allocator.create(Macro.JSNode);
-            //     // node.* = Macro.JSNode.initExpr(Expr{ .data = this, .loc = logger.Loc.Empty });
-            //     // break :brk jsc.JSValue.c(Macro.JSNode.Class.make(globalObject, node));
-            // },
-
-            else => {
-                return error.@"Cannot convert argument type to JS";
-            },
-        };
-    }
+    pub const toJS = @import("../../js_parser_jsc/expr_jsc.zig").dataToJS;
 
     pub const Store = struct {
         const StoreType = NewStore(&.{
@@ -3254,7 +3220,7 @@ fn stringToEquivalentNumberValue(str: []const u8) f64 {
 const string = []const u8;
 const stringZ = [:0]const u8;
 
-const JSPrinter = @import("../js_printer.zig");
+const JSPrinter = @import("../../js_printer/js_printer.zig");
 const std = @import("std");
 
 const bun = @import("bun");
@@ -3279,4 +3245,3 @@ const Op = js_ast.Op;
 const Ref = js_ast.Ref;
 const S = js_ast.S;
 const Stmt = js_ast.Stmt;
-const ToJSError = js_ast.ToJSError;

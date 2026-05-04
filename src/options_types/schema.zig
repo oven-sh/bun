@@ -1977,26 +1977,7 @@ pub const api = struct {
 
         _,
 
-        pub fn fromJS(global: *bun.jsc.JSGlobalObject, value: bun.jsc.JSValue) bun.JSError!?SourceMapMode {
-            if (value.isString()) {
-                const str = try value.toSliceOrNull(global);
-                defer str.deinit();
-                const utf8 = str.slice();
-                if (bun.strings.eqlComptime(utf8, "none")) {
-                    return .none;
-                }
-                if (bun.strings.eqlComptime(utf8, "inline")) {
-                    return .@"inline";
-                }
-                if (bun.strings.eqlComptime(utf8, "external")) {
-                    return .external;
-                }
-                if (bun.strings.eqlComptime(utf8, "linked")) {
-                    return .linked;
-                }
-            }
-            return null;
-        }
+        pub const fromJS = @import("../bundler_jsc/source_map_mode_jsc.zig").sourceMapModeFromJS;
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {
             return try writer.write(@tagName(self));

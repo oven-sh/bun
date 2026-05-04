@@ -1076,7 +1076,7 @@ pub const UDPSocket = struct {
 };
 
 const std = @import("std");
-const uws = @import("../../../deps/uws.zig");
+const uws = @import("../../uws/uws.zig");
 
 const bun = @import("bun");
 const Async = bun.Async;

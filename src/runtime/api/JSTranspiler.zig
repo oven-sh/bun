@@ -788,7 +788,7 @@ fn isLikelyObjectLiteral(code: []const u8) bool {
     return true;
 }
 
-fn getParseResult(this: *JSTranspiler, allocator: std.mem.Allocator, code: []const u8, loader: ?Loader, macro_js_ctx: Transpiler.MacroJSValueType) ?Transpiler.ParseResult {
+fn getParseResult(this: *JSTranspiler, allocator: std.mem.Allocator, code: []const u8, loader: ?Loader, macro_js_ctx: Transpiler.MacroJSCtx) ?Transpiler.ParseResult {
     const name = this.config.default_loader.stdinName();
 
     // In REPL mode, wrap potential object literals in parentheses
@@ -869,7 +869,7 @@ pub fn scan(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callframe: *js
     var ast_scope = ast_memory_allocator.enter(allocator);
     defer ast_scope.exit();
 
-    var parse_result = getParseResult(this, allocator, code, loader, Transpiler.MacroJSValueType.zero) orelse {
+    var parse_result = getParseResult(this, allocator, code, loader, Transpiler.MacroJSCtx.zero) orelse {
         if ((this.transpiler.log.warnings + this.transpiler.log.errors) > 0) {
             return globalThis.throwValue(try this.transpiler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));
         }
@@ -1196,11 +1196,11 @@ pub fn scanImports(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callfra
 const string = []const u8;
 
 const std = @import("std");
-const ImportRecord = @import("../../import_record.zig").ImportRecord;
-const Runtime = @import("../../runtime.zig").Runtime;
+const ImportRecord = @import("../../options_types/import_record.zig").ImportRecord;
+const Runtime = @import("../../js_parser/runtime.zig").Runtime;
 const TSConfigJSON = @import("../../resolver/tsconfig_json.zig").TSConfigJSON;
 
-const options = @import("../../options.zig");
+const options = @import("../../bundler/options.zig");
 const Loader = options.Loader;
 const Target = options.Target;
 

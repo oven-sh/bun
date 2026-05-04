@@ -2043,7 +2043,7 @@ pub const StatHash = @import("./fs/stat_hash.zig");
 const string = []const u8;
 const stringZ = [:0]const u8;
 
-const path_handler = @import("./resolver/resolve_path.zig");
+const path_handler = @import("../paths/resolve_path.zig");
 const std = @import("std");
 
 const bun = @import("bun");

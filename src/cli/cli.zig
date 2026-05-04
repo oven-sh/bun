@@ -5,7 +5,7 @@ pub var start_time: i128 = undefined;
 pub var Bun__Node__ProcessTitle: ?string = null;
 
 pub const Cli = struct {
-    pub const CompileTarget = @import("./compile_target.zig");
+    pub const CompileTarget = @import("../options_types/CompileTarget.zig");
     pub var log_: logger.Log = undefined;
     pub fn startTransform(_: std.mem.Allocator, _: api.TransformOptions, _: *logger.Log) anyerror!void {}
     pub fn start(allocator: std.mem.Allocator) void {
@@ -64,37 +64,37 @@ pub fn invalidTarget(diag: *clap.Diagnostic, _target: []const u8) noreturn {
     std.process.exit(1);
 }
 
-pub const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
-pub const AddCommand = @import("./cli/add_command.zig").AddCommand;
-pub const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
-pub const CreateCommandExample = @import("./cli/create_command.zig").Example;
-pub const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
-pub const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
-pub const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
-pub const LinkCommand = @import("./cli/link_command.zig").LinkCommand;
-pub const UnlinkCommand = @import("./cli/unlink_command.zig").UnlinkCommand;
-pub const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
-pub const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
-pub const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
-pub const RunCommand = @import("./cli/run_command.zig").RunCommand;
-pub const ShellCompletions = @import("./cli/shell_completions.zig");
-pub const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
-pub const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
-pub const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
-pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
-pub const PatchCommand = @import("./cli/patch_command.zig").PatchCommand;
-pub const PatchCommitCommand = @import("./cli/patch_commit_command.zig").PatchCommitCommand;
-pub const OutdatedCommand = @import("./cli/outdated_command.zig").OutdatedCommand;
-pub const UpdateInteractiveCommand = @import("./cli/update_interactive_command.zig").UpdateInteractiveCommand;
-pub const PublishCommand = @import("./cli/publish_command.zig").PublishCommand;
-pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
-pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
-pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
-pub const WhyCommand = @import("./cli/why_command.zig").WhyCommand;
-pub const FuzzilliCommand = @import("./cli/fuzzilli_command.zig").FuzzilliCommand;
-pub const ReplCommand = @import("./cli/repl_command.zig").ReplCommand;
+pub const BuildCommand = @import("./build_command.zig").BuildCommand;
+pub const AddCommand = @import("./add_command.zig").AddCommand;
+pub const CreateCommand = @import("./create_command.zig").CreateCommand;
+pub const CreateCommandExample = @import("./create_command.zig").Example;
+pub const CreateListExamplesCommand = @import("./create_command.zig").CreateListExamplesCommand;
+pub const DiscordCommand = @import("./discord_command.zig").DiscordCommand;
+pub const InstallCommand = @import("./install_command.zig").InstallCommand;
+pub const LinkCommand = @import("./link_command.zig").LinkCommand;
+pub const UnlinkCommand = @import("./unlink_command.zig").UnlinkCommand;
+pub const InstallCompletionsCommand = @import("./install_completions_command.zig").InstallCompletionsCommand;
+pub const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
+pub const RemoveCommand = @import("./remove_command.zig").RemoveCommand;
+pub const RunCommand = @import("./run_command.zig").RunCommand;
+pub const ShellCompletions = @import("./shell_completions.zig");
+pub const UpdateCommand = @import("./update_command.zig").UpdateCommand;
+pub const UpgradeCommand = @import("./upgrade_command.zig").UpgradeCommand;
+pub const BunxCommand = @import("./bunx_command.zig").BunxCommand;
+pub const ExecCommand = @import("./exec_command.zig").ExecCommand;
+pub const PatchCommand = @import("./patch_command.zig").PatchCommand;
+pub const PatchCommitCommand = @import("./patch_commit_command.zig").PatchCommitCommand;
+pub const OutdatedCommand = @import("./outdated_command.zig").OutdatedCommand;
+pub const UpdateInteractiveCommand = @import("./update_interactive_command.zig").UpdateInteractiveCommand;
+pub const PublishCommand = @import("./publish_command.zig").PublishCommand;
+pub const PackCommand = @import("./pack_command.zig").PackCommand;
+pub const AuditCommand = @import("./audit_command.zig").AuditCommand;
+pub const InitCommand = @import("./init_command.zig").InitCommand;
+pub const WhyCommand = @import("./why_command.zig").WhyCommand;
+pub const FuzzilliCommand = @import("./fuzzilli_command.zig").FuzzilliCommand;
+pub const ReplCommand = @import("./repl_command.zig").ReplCommand;
 
-pub const Arguments = @import("./cli/Arguments.zig");
+pub const Arguments = @import("./Arguments.zig");
 
 const AutoCommand = struct {
     pub fn exec(allocator: std.mem.Allocator) !void {
@@ -308,238 +308,51 @@ pub const Command = struct {
         return global_cli_ctx;
     }
 
-    pub const DebugOptions = struct {
-        dump_environment_variables: bool = false,
-        dump_limits: bool = false,
-        fallback_only: bool = false,
-        silent: bool = false,
-        hot_reload: HotReload = HotReload.none,
-        global_cache: options.GlobalCache = .auto,
-        offline_mode_setting: ?Bunfig.OfflineMode = null,
-        run_in_bun: bool = false,
-        loaded_bunfig: bool = false,
-        /// Disables using bun.shell.Interpreter for `bun run`, instead spawning cmd.exe
-        use_system_shell: bool = !bun.Environment.isWindows,
-
-        // technical debt
-        macros: MacroOptions = MacroOptions.unspecified,
-        editor: string = "",
-        package_bundle_map: bun.StringArrayHashMapUnmanaged(options.BundlePackage) = bun.StringArrayHashMapUnmanaged(options.BundlePackage){},
-
-        test_directory: []const u8 = "",
-        output_file: []const u8 = "",
-    };
-
-    pub const MacroOptions = union(enum) { unspecified: void, disable: void, map: MacroMap };
-
-    pub const HotReload = enum {
-        none,
-        hot,
-        watch,
-    };
-
-    pub const TestOptions = struct {
-        default_timeout_ms: u32 = 5 * std.time.ms_per_s,
-        update_snapshots: bool = false,
-        repeat_count: u32 = 0,
-        retry: u32 = 0,
-        run_todo: bool = false,
-        only: bool = false,
-        pass_with_no_tests: bool = false,
-        concurrent: bool = false,
-        randomize: bool = false,
-        seed: ?u32 = null,
-        concurrent_test_glob: ?[]const []const u8 = null,
-        bail: u32 = 0,
-        coverage: TestCommand.CodeCoverageOptions = .{},
-        path_ignore_patterns: []const []const u8 = &.{},
-        path_ignore_patterns_from_cli: bool = false,
-        test_filter_pattern: ?[]const u8 = null,
-        test_filter_regex: ?*RegularExpression = null,
-        max_concurrency: u32 = 20,
-        /// `bun test --isolate`: run each test file in a fresh `JSGlobalObject`
-        /// on the same JSC::VM, force-closing leaked handles between files.
-        isolate: bool = false,
-        /// `bun test --parallel[=N]`: run test files across N worker
-        /// processes. 0 means not requested. Implies `isolate` in workers.
-        parallel: u32 = 0,
-        /// `bun test --parallel-delay=MS`: how long the first worker must be
-        /// busy before spawning the rest. null = use the built-in default.
-        parallel_delay_ms: ?u32 = null,
-        /// Internal: this process is a `--parallel` worker. Files arrive over
-        /// fd 3, results are written back over fd 3; no discovery, no header.
-        test_worker: bool = false,
-        /// `bun test --changed[=<since>]`. When set, only test files whose
-        /// module graph reaches a file changed according to git are run.
-        /// null = flag not passed. "" = compare against uncommitted changes.
-        /// Otherwise the value is a git ref (commit, branch, tag) to diff
-        /// against.
-        changed: ?[]const u8 = null,
-        /// `bun test --shard=M/N`. When set, test files are sorted by path
-        /// and only every Nth file (starting from M-1) is run. index is
-        /// 1-based; both are validated at parse time so `1 <= index <= count`.
-        shard: ?struct { index: u32, count: u32 } = null,
-
-        reporters: struct {
-            dots: bool = false,
-            only_failures: bool = false,
-            junit: bool = false,
-        } = .{},
-        reporter_outfile: ?[]const u8 = null,
-    };
-
-    pub const Debugger = union(enum) {
-        unspecified: void,
-        enable: struct {
-            path_or_port: []const u8 = "",
-            wait_for_connection: bool = false,
-            set_breakpoint_on_first_line: bool = false,
-        },
-    };
-
-    pub const RuntimeOptions = struct {
-        smol: bool = false,
-        debugger: Debugger = .{ .unspecified = {} },
-        if_present: bool = false,
-        redis_preconnect: bool = false,
-        sql_preconnect: bool = false,
-        eval: struct {
-            script: []const u8 = "",
-            eval_and_print: bool = false,
-        } = .{},
-        preconnect: []const []const u8 = &[_][]const u8{},
-        experimental_http2_fetch: bool = false,
-        experimental_http3_fetch: bool = false,
-        dns_result_order: []const u8 = "verbatim",
-        /// `--expose-gc` makes `globalThis.gc()` available. Added for Node
-        /// compatibility.
-        expose_gc: bool = false,
-        preserve_symlinks_main: bool = false,
-        console_depth: ?u16 = null,
-        cron_title: []const u8 = "",
-        cron_period: []const u8 = "",
-        cpu_prof: struct {
-            enabled: bool = false,
-            name: []const u8 = "",
-            dir: []const u8 = "",
-            interval: u32 = 1000,
-            md_format: bool = false,
-            json_format: bool = false,
-        } = .{},
-        heap_prof: struct {
-            enabled: bool = false,
-            text_format: bool = false,
-            name: []const u8 = "",
-            dir: []const u8 = "",
-        } = .{},
-    };
+    const ctx_types = @import("../options_types/Context.zig");
+    pub const ContextData = ctx_types.ContextData;
+    pub const Context = ctx_types.Context;
+    pub const DebugOptions = ctx_types.DebugOptions;
+    pub const TestOptions = ctx_types.TestOptions;
+    pub const RuntimeOptions = ctx_types.RuntimeOptions;
+    pub const MacroOptions = ctx_types.MacroOptions;
+    pub const HotReload = ctx_types.HotReload;
+    pub const Debugger = ctx_types.Debugger;
 
     var global_cli_ctx: Context = undefined;
     var context_data: ContextData = undefined;
 
-    pub const init = ContextData.create;
+    pub const init = createContextData;
 
-    pub const ContextData = struct {
-        start_time: i128,
-        args: api.TransformOptions,
-        log: *logger.Log,
-        allocator: std.mem.Allocator,
-        positionals: []const string = &.{},
-        passthrough: []const string = &.{},
-        install: ?*api.BunInstall = null,
-
-        debug: DebugOptions = .{},
-        test_options: TestOptions = .{},
-        bundler_options: BundlerOptions = .{},
-        runtime_options: RuntimeOptions = .{},
-
-        filters: []const []const u8 = &.{},
-        workspaces: bool = false,
-        if_present: bool = false,
-        parallel: bool = false,
-        sequential: bool = false,
-        no_exit_on_error: bool = false,
-
-        preloads: []const string = &.{},
-        has_loaded_global_config: bool = false,
-
-        pub const BundlerOptions = struct {
-            outdir: []const u8 = "",
-            outfile: []const u8 = "",
-            metafile: [:0]const u8 = "",
-            metafile_md: [:0]const u8 = "",
-            root_dir: []const u8 = "",
-            public_path: []const u8 = "",
-            entry_naming: []const u8 = "[dir]/[name].[ext]",
-            chunk_naming: []const u8 = "./[name]-[hash].[ext]",
-            asset_naming: []const u8 = "./[name]-[hash].[ext]",
-            server_components: bool = false,
-            react_fast_refresh: bool = false,
-            code_splitting: bool = false,
-            transform_only: bool = false,
-            inline_entrypoint_import_meta_main: bool = false,
-            minify_syntax: bool = false,
-            minify_whitespace: bool = false,
-            minify_identifiers: bool = false,
-            keep_names: bool = false,
-            ignore_dce_annotations: bool = false,
-            emit_dce_annotations: bool = true,
-            output_format: options.Format = .esm,
-            bytecode: bool = false,
-            banner: []const u8 = "",
-            footer: []const u8 = "",
-            css_chunking: bool = false,
-            bake: bool = false,
-            bake_debug_dump_server: bool = false,
-            bake_debug_disable_minify: bool = false,
-
-            production: bool = false,
-
-            env_behavior: api.DotEnvBehavior = .disable,
-            env_prefix: []const u8 = "",
-            elide_lines: ?usize = null,
-            // Compile options
-            compile: bool = false,
-            compile_target: Cli.CompileTarget = .{},
-            compile_exec_argv: ?[]const u8 = null,
-            compile_autoload_dotenv: bool = true,
-            compile_autoload_bunfig: bool = true,
-            compile_autoload_tsconfig: bool = false,
-            compile_autoload_package_json: bool = false,
-            compile_executable_path: ?[]const u8 = null,
-            windows: options.WindowsOptions = .{},
-            allow_unresolved: ?[]const []const u8 = null,
+    /// `ContextData.create` body — kept here because it calls `Arguments.parse`
+    /// and reaches into Windows watcher hooks. Aliased onto `ContextData` in
+    /// `options_types/Context.zig`.
+    pub fn createContextData(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
+        Cli.cmd = command;
+        context_data = .{
+            .args = std.mem.zeroes(api.TransformOptions),
+            .log = log,
+            .start_time = start_time,
+            .allocator = allocator,
         };
+        global_cli_ctx = &context_data;
 
-        pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
-            Cli.cmd = command;
-            context_data = .{
-                .args = std.mem.zeroes(api.TransformOptions),
-                .log = log,
-                .start_time = start_time,
-                .allocator = allocator,
-            };
-            global_cli_ctx = &context_data;
+        if (comptime Command.Tag.uses_global_options.get(command)) {
+            global_cli_ctx.args = try Arguments.parse(allocator, global_cli_ctx, command);
+        }
 
-            if (comptime Command.Tag.uses_global_options.get(command)) {
-                global_cli_ctx.args = try Arguments.parse(allocator, global_cli_ctx, command);
-            }
-
-            if (comptime Environment.isWindows) {
-                if (global_cli_ctx.debug.hot_reload == .watch) {
-                    if (!bun.windows.isWatcherChild()) {
-                        // this is noreturn
-                        bun.windows.becomeWatcherManager(allocator);
-                    } else {
-                        bun.auto_reload_on_crash = true;
-                    }
+        if (comptime Environment.isWindows) {
+            if (global_cli_ctx.debug.hot_reload == .watch) {
+                if (!bun.windows.isWatcherChild()) {
+                    // this is noreturn
+                    bun.windows.becomeWatcherManager(allocator);
+                } else {
+                    bun.auto_reload_on_crash = true;
                 }
             }
-
-            return global_cli_ctx;
         }
-    };
-    pub const Context = *ContextData;
+
+        return global_cli_ctx;
+    }
 
     // std.process.args allocates!
     const ArgsIterator = struct {
@@ -595,7 +408,7 @@ pub const Command = struct {
         }
 
         if (isNode(argv0)) {
-            @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
+            @import("../clap/streaming.zig").warn_on_unrecognized_flag = false;
             pretend_to_be_node = true;
             return .RunAsNodeCommand;
         }
@@ -1041,489 +854,322 @@ pub const Command = struct {
         }
     }
 
-    pub const Tag = enum {
-        AddCommand,
-        AutoCommand,
-        BuildCommand,
-        BunxCommand,
-        CreateCommand,
-        DiscordCommand,
-        GetCompletionsCommand,
-        HelpCommand,
-        InitCommand,
-        InfoCommand,
-        InstallCommand,
-        InstallCompletionsCommand,
-        LinkCommand,
-        PackageManagerCommand,
-        RemoveCommand,
-        RunCommand,
-        RunAsNodeCommand, // arg0 == 'node'
-        TestCommand,
-        UnlinkCommand,
-        UpdateCommand,
-        UpgradeCommand,
-        ReplCommand,
-        ReservedCommand,
-        ExecCommand,
-        PatchCommand,
-        PatchCommitCommand,
-        OutdatedCommand,
-        UpdateInteractiveCommand,
-        PublishCommand,
-        AuditCommand,
-        WhyCommand,
-        FuzzilliCommand,
+    pub const Tag = @import("../options_types/CommandTag.zig").Tag;
 
-        /// Used by crash reports.
-        ///
-        /// This must be kept in sync with https://github.com/oven-sh/bun.report/blob/62601d8aafb9c0d29554dfc3f8854044ec04d367/backend/remap.ts#L10
-        pub fn char(this: Tag) u8 {
-            return switch (this) {
-                .AddCommand => 'I',
-                .AutoCommand => 'a',
-                .BuildCommand => 'b',
-                .BunxCommand => 'B',
-                .CreateCommand => 'c',
-                .DiscordCommand => 'D',
-                .GetCompletionsCommand => 'g',
-                .HelpCommand => 'h',
-                .InitCommand => 'j',
-                .InfoCommand => 'v',
-                .InstallCommand => 'i',
-                .InstallCompletionsCommand => 'C',
-                .LinkCommand => 'l',
-                .PackageManagerCommand => 'P',
-                .RemoveCommand => 'R',
-                .RunCommand => 'r',
-                .RunAsNodeCommand => 'n',
-                .TestCommand => 't',
-                .UnlinkCommand => 'U',
-                .UpdateCommand => 'u',
-                .UpgradeCommand => 'p',
-                .ReplCommand => 'G',
-                .ReservedCommand => 'w',
-                .ExecCommand => 'e',
-                .PatchCommand => 'x',
-                .PatchCommitCommand => 'z',
-                .OutdatedCommand => 'o',
-                .UpdateInteractiveCommand => 'U',
-                .PublishCommand => 'k',
-                .AuditCommand => 'A',
-                .WhyCommand => 'W',
-                .FuzzilliCommand => 'F',
-            };
+    pub fn tagParams(comptime cmd: Tag) []const Arguments.ParamType {
+        return comptime &switch (cmd) {
+            .AutoCommand => Arguments.auto_params,
+            .RunCommand, .RunAsNodeCommand => Arguments.run_params,
+            .BuildCommand => Arguments.build_params,
+            .TestCommand => Arguments.test_params,
+            .BunxCommand => Arguments.run_params,
+            else => Arguments.base_params_ ++ Arguments.runtime_params_ ++ Arguments.transpiler_params_,
+        };
+    }
+
+    pub fn tagPrintHelp(comptime cmd: Tag, show_all_flags: bool) void {
+        switch (cmd) {
+
+            // the output of --help uses the following syntax highlighting
+            // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
+            // use [foo] for multiple arguments or flags for foo.
+            // use <bar> to emphasize 'bar'
+
+            // these commands do not use Context
+            // .DiscordCommand => return try DiscordCommand.exec(allocator),
+            // .HelpCommand => return try HelpCommand.exec(allocator),
+            // .ReservedCommand => return try ReservedCommand.exec(allocator),
+
+            // these commands are implemented in install.zig
+            // Command.Tag.InstallCommand => {},
+            // Command.Tag.AddCommand => {},
+            // Command.Tag.RemoveCommand => {},
+            // Command.Tag.UpdateCommand => {},
+            // Command.Tag.PackageManagerCommand => {},
+            // Command.Tag.LinkCommand => {},
+            // Command.Tag.UnlinkCommand => {},
+
+            // fall back to HelpCommand.printWithReason
+            Command.Tag.AutoCommand => {
+                HelpCommand.printWithReason(.explicit, show_all_flags);
+            },
+            .RunCommand, .RunAsNodeCommand => {
+                RunCommand_.printHelp(null);
+            },
+
+            .InitCommand => {
+                const intro_text =
+                    \\<b>Usage<r>: <b><green>bun init<r> <cyan>[flags]<r> <blue>[\<folder\>]<r>
+                    \\  Initialize a Bun project in the current directory.
+                    \\  Creates a package.json, tsconfig.json, and bunfig.toml if they don't exist.
+                    \\
+                    \\<b>Flags<r>:
+                    \\      <cyan>--help<r>             Print this menu
+                    \\  <cyan>-y, --yes<r>              Accept all default options
+                    \\  <cyan>-m, --minimal<r>          Only initialize type definitions
+                    \\  <cyan>-r, --react<r>            Initialize a React project
+                    \\      <cyan>--react=tailwind<r>   Initialize a React project with TailwindCSS
+                    \\      <cyan>--react=shadcn<r>     Initialize a React project with @shadcn/ui and TailwindCSS
+                    \\
+                    \\<b>Examples:<r>
+                    \\  <b><green>bun init<r>
+                    \\  <b><green>bun init<r> <cyan>--yes<r>
+                    \\  <b><green>bun init<r> <cyan>--react<r>
+                    \\  <b><green>bun init<r> <cyan>--react=tailwind<r> <blue>my-app<r>
+                ;
+
+                Output.pretty(intro_text ++ "\n", .{});
+                Output.flush();
+            },
+
+            Command.Tag.BunxCommand => {
+                Output.prettyErrorln(
+                    \\<b>Usage<r>: <b><green>bunx<r> <cyan>[flags]<r> <blue>\<package\><r><d>\<@version\><r> [flags and arguments for the package]<r>
+                    \\Execute an npm package executable (CLI), automatically installing into a global shared cache if not installed in node_modules.
+                    \\
+                    \\Flags:
+                    \\  <cyan>--bun<r>                  Force the command to run with Bun instead of Node.js
+                    \\  <cyan>-p, --package <blue>\<package\><r>    Specify package to install when binary name differs from package name
+                    \\  <cyan>--no-install<r>           Skip installation if package is not already installed
+                    \\  <cyan>--verbose<r>              Enable verbose output during installation
+                    \\  <cyan>--silent<r>               Suppress output during installation
+                    \\
+                    \\Examples<d>:<r>
+                    \\  <b><green>bunx<r> <blue>prisma<r> migrate<r>
+                    \\  <b><green>bunx<r> <blue>prettier<r> foo.js<r>
+                    \\  <b><green>bunx<r> <cyan>-p @angular/cli<r> <blue>ng<r> new my-app
+                    \\  <b><green>bunx<r> <cyan>--bun<r> <blue>vite<r> dev foo.js<r>
+                    \\
+                , .{});
+            },
+            Command.Tag.BuildCommand => {
+                const intro_text =
+                    \\<b>Usage<r>:
+                    \\  Transpile and bundle one or more files.
+                    \\  <b><green>bun build<r> <cyan>[flags]<r> <blue>\<entrypoint\><r>
+                ;
+
+                const outro_text =
+                    \\<b>Examples:<r>
+                    \\  <d>Frontend web apps:<r>
+                    \\  <b><green>bun build<r> <cyan>--outfile=bundle.js<r> <blue>./src/index.ts<r>
+                    \\  <b><green>bun build<r> <cyan>--minify --splitting --outdir=out<r> <blue>./index.jsx ./lib/worker.ts<r>
+                    \\
+                    \\  <d>Bundle code to be run in Bun (reduces server startup time)<r>
+                    \\  <b><green>bun build<r> <cyan>--target=bun --outfile=server.js<r> <blue>./server.ts<r>
+                    \\
+                    \\  <d>Creating a standalone executable (see https://bun.com/docs/bundler/executables)<r>
+                    \\  <b><green>bun build<r> <cyan>--compile --outfile=my-app<r> <blue>./cli.ts<r>
+                    \\
+                    \\A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
+                    \\
+                ;
+
+                Output.pretty(intro_text ++ "\n\n", .{});
+                Output.flush();
+                Output.pretty("<b>Flags:<r>", .{});
+                Output.flush();
+                clap.simpleHelp(&Arguments.build_only_params);
+                Output.pretty("\n\n" ++ outro_text, .{});
+                Output.flush();
+            },
+            Command.Tag.TestCommand => {
+                const intro_text =
+                    \\<b>Usage<r>: <b><green>bun test<r> <cyan>[flags]<r> <blue>[\<patterns\>]<r>
+                    \\  Run all matching test files and print the results to stdout
+                ;
+                const outro_text =
+                    \\<b>Examples:<r>
+                    \\  <d>Run all test files<r>
+                    \\  <b><green>bun test<r>
+                    \\
+                    \\  <d>Run all test files with "foo" or "bar" in the file name<r>
+                    \\  <b><green>bun test<r> <blue>foo bar<r>
+                    \\
+                    \\  <d>Run all test files, only including tests whose names includes "baz"<r>
+                    \\  <b><green>bun test<r> <cyan>--test-name-pattern<r> <blue>baz<r>
+                    \\
+                    \\Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
+                    \\
+                ;
+
+                Output.pretty(intro_text, .{});
+                Output.flush();
+                Output.pretty("\n\n<b>Flags:<r>", .{});
+                Output.flush();
+                clap.simpleHelp(&Arguments.test_only_params);
+                Output.pretty("\n\n", .{});
+                Output.pretty(outro_text, .{});
+                Output.flush();
+            },
+            Command.Tag.CreateCommand => {
+                const intro_text =
+                    \\<b>Usage<r><d>:<r>
+                    \\  <b><green>bun create<r> <magenta>\<MyReactComponent.(jsx|tsx)\><r>
+                    \\  <b><green>bun create<r> <magenta>\<template\><r> <cyan>[...flags]<r> <blue>dest<r>
+                    \\  <b><green>bun create<r> <magenta>\<github-org/repo\><r> <cyan>[...flags]<r> <blue>dest<r>
+                    \\
+                    \\<b>Environment variables<r><d>:<r>
+                    \\  <cyan>GITHUB_TOKEN<r>         <d>Supply a token to download code from GitHub with a higher rate limit<r>
+                    \\  <cyan>GITHUB_API_DOMAIN<r>    <d>Configure custom/enterprise GitHub domain. Default "api.github.com"<r>
+                    \\  <cyan>NPM_CLIENT<r>           <d>Absolute path to the npm client executable<r>
+                    \\  <cyan>BUN_CREATE_DIR<r>       <d>Custom path for global templates (default: $HOME/.bun-create)<r>
+                ;
+
+                const outro_text =
+                    \\<b>React Component Projects<r><d>:<r>
+                    \\  • Turn an existing React component into a complete frontend dev environment
+                    \\  • Automatically starts a hot-reloading dev server
+                    \\  • Auto-detects & configures TailwindCSS and shadcn/ui
+                    \\
+                    \\  <b><magenta>bun create \<MyReactComponent.(jsx|tsx)\><r>
+                    \\
+                    \\<b>Templates<r><d>:<r>
+                    \\  • NPM: Runs <b><magenta>bunx create-\<template\><r> with given arguments
+                    \\  • GitHub: Downloads repository contents as template
+                    \\  • Local: Uses templates from $HOME/.bun-create/\<name\> or ./.bun-create/\<name\>
+                    \\
+                    \\Learn more: <magenta>https://bun.com/docs/cli/bun-create<r>
+                    \\
+                ;
+
+                Output.pretty(intro_text, .{});
+                Output.pretty("\n\n", .{});
+                Output.pretty(outro_text, .{});
+                Output.flush();
+            },
+            Command.Tag.HelpCommand => {
+                HelpCommand.printWithReason(.explicit);
+            },
+            Command.Tag.UpgradeCommand => {
+                const intro_text =
+                    \\<b>Usage<r>: <b><green>bun upgrade<r> <cyan>[flags]<r>
+                    \\  Upgrade Bun
+                ;
+                const outro_text =
+                    \\<b>Examples:<r>
+                    \\  <d>Install the latest {s} version<r>
+                    \\  <b><green>bun upgrade<r>
+                    \\
+                    \\  <d>{s}<r>
+                    \\  <b><green>bun upgrade<r> <cyan>--{s}<r>
+                    \\
+                    \\Full documentation is available at <magenta>https://bun.com/docs/installation#upgrading<r>
+                    \\
+                ;
+
+                const args = comptime switch (Environment.is_canary) {
+                    true => .{ "canary", "Switch from the canary version back to the latest stable release", "stable" },
+                    false => .{ "stable", "Install the most recent canary version of Bun", "canary" },
+                };
+
+                Output.pretty(intro_text, .{});
+                Output.pretty("\n\n", .{});
+                Output.flush();
+                Output.pretty(outro_text, args);
+                Output.flush();
+            },
+            Command.Tag.ReplCommand => {
+                const intro_text =
+                    \\<b>Usage<r>: <b><green>bun repl<r> <cyan>[flags]<r>
+                    \\  Open a Bun REPL
+                    \\
+                ;
+
+                Output.pretty(intro_text, .{});
+                Output.flush();
+            },
+
+            Command.Tag.GetCompletionsCommand => {
+                Output.pretty("<b>Usage<r>: <b><green>bun getcompletes<r>", .{});
+                Output.flush();
+            },
+            Command.Tag.InstallCompletionsCommand => {
+                Output.pretty("<b>Usage<r>: <b><green>bun completions<r>", .{});
+                Output.flush();
+            },
+            Command.Tag.PatchCommand => {
+                Install.PackageManager.CommandLineArguments.printHelp(.patch);
+            },
+            Command.Tag.PatchCommitCommand => {
+                Install.PackageManager.CommandLineArguments.printHelp(.@"patch-commit");
+            },
+            Command.Tag.ExecCommand => {
+                Output.pretty(
+                    \\<b>Usage: bun exec <r><cyan>\<script\><r>
+                    \\
+                    \\Execute a shell script directly from Bun.
+                    \\
+                    \\<b><red>Note<r>: If executing this from a shell, make sure to escape the string!
+                    \\
+                    \\<b>Examples<d>:<r>
+                    \\  <b>bun exec "echo hi"<r>
+                    \\  <b>bun exec "echo \"hey friends\"!"<r>
+                    \\
+                , .{});
+                Output.flush();
+            },
+            .OutdatedCommand, .UpdateInteractiveCommand, .PublishCommand, .AuditCommand => {
+                Install.PackageManager.CommandLineArguments.printHelp(switch (cmd) {
+                    .OutdatedCommand => .outdated,
+                    .UpdateInteractiveCommand => .update,
+                    .PublishCommand => .publish,
+                    .AuditCommand => .audit,
+                });
+            },
+            .InfoCommand => {
+                const intro_text =
+                    \\<b>Usage<r>: <b><green>bun info<r> <cyan>[flags]<r> <blue>\<package\><r><d>\<@version\><r> <blue>[property path]<r>
+                    \\  Display package metadata from the registry.
+                    \\
+                    \\<b>Examples:<r>
+                    \\  <d>View basic information about a package<r>
+                    \\  <b><green>bun info<r> <blue>react<r>
+                    \\
+                    \\  <d>View specific version<r>
+                    \\  <b><green>bun info<r> <blue>react@18.0.0<r>
+                    \\
+                    \\  <d>View specific property<r>
+                    \\  <b><green>bun info<r> <blue>react<r> version
+                    \\  <b><green>bun info<r> <blue>react<r> dependencies
+                    \\  <b><green>bun info<r> <blue>react<r> versions
+                    \\
+                    \\Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>
+                    \\
+                ;
+
+                Output.pretty(intro_text, .{});
+                Output.flush();
+            },
+            .WhyCommand => {
+                const intro_text =
+                    \\<b>Usage<r>: <b><green>bun why<r> <cyan>[flags]<r> <blue>\<package\><r><d>\<@version\><r> <blue>[property path]<r>
+                    \\Explain why a package is installed
+                    \\
+                    \\<b>Arguments:<r>
+                    \\  <blue>\<package\><r>     <d>The package name to explain (supports glob patterns like '@org/*')<r>
+                    \\
+                    \\<b>Options:<r>
+                    \\  <cyan>--top<r>         <d>Show only the top dependency tree instead of nested ones<r>
+                    \\  <cyan>--depth<r> <blue>\<NUM\><r> <d>Maximum depth of the dependency tree to display<r>
+                    \\
+                    \\<b>Examples:<r>
+                    \\  <d>$<r> <b><green>bun why<r> <blue>react<r>
+                    \\  <d>$<r> <b><green>bun why<r> <blue>"@types/*"<r> <cyan>--depth<r> <blue>2<r>
+                    \\  <d>$<r> <b><green>bun why<r> <blue>"*-lodash"<r> <cyan>--top<r>
+                    \\
+                    \\Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
+                    \\
+                ;
+
+                Output.pretty(intro_text, .{});
+                Output.flush();
+            },
+            else => {
+                HelpCommand.printWithReason(.explicit, false);
+            },
         }
-
-        pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
-            return comptime &switch (cmd) {
-                .AutoCommand => Arguments.auto_params,
-                .RunCommand, .RunAsNodeCommand => Arguments.run_params,
-                .BuildCommand => Arguments.build_params,
-                .TestCommand => Arguments.test_params,
-                .BunxCommand => Arguments.run_params,
-                else => Arguments.base_params_ ++ Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-            };
-        }
-
-        pub fn printHelp(comptime cmd: Tag, show_all_flags: bool) void {
-            switch (cmd) {
-
-                // the output of --help uses the following syntax highlighting
-                // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
-                // use [foo] for multiple arguments or flags for foo.
-                // use <bar> to emphasize 'bar'
-
-                // these commands do not use Context
-                // .DiscordCommand => return try DiscordCommand.exec(allocator),
-                // .HelpCommand => return try HelpCommand.exec(allocator),
-                // .ReservedCommand => return try ReservedCommand.exec(allocator),
-
-                // these commands are implemented in install.zig
-                // Command.Tag.InstallCommand => {},
-                // Command.Tag.AddCommand => {},
-                // Command.Tag.RemoveCommand => {},
-                // Command.Tag.UpdateCommand => {},
-                // Command.Tag.PackageManagerCommand => {},
-                // Command.Tag.LinkCommand => {},
-                // Command.Tag.UnlinkCommand => {},
-
-                // fall back to HelpCommand.printWithReason
-                Command.Tag.AutoCommand => {
-                    HelpCommand.printWithReason(.explicit, show_all_flags);
-                },
-                .RunCommand, .RunAsNodeCommand => {
-                    RunCommand_.printHelp(null);
-                },
-
-                .InitCommand => {
-                    const intro_text =
-                        \\<b>Usage<r>: <b><green>bun init<r> <cyan>[flags]<r> <blue>[\<folder\>]<r>
-                        \\  Initialize a Bun project in the current directory.
-                        \\  Creates a package.json, tsconfig.json, and bunfig.toml if they don't exist.
-                        \\
-                        \\<b>Flags<r>:
-                        \\      <cyan>--help<r>             Print this menu
-                        \\  <cyan>-y, --yes<r>              Accept all default options
-                        \\  <cyan>-m, --minimal<r>          Only initialize type definitions
-                        \\  <cyan>-r, --react<r>            Initialize a React project
-                        \\      <cyan>--react=tailwind<r>   Initialize a React project with TailwindCSS
-                        \\      <cyan>--react=shadcn<r>     Initialize a React project with @shadcn/ui and TailwindCSS
-                        \\
-                        \\<b>Examples:<r>
-                        \\  <b><green>bun init<r>
-                        \\  <b><green>bun init<r> <cyan>--yes<r>
-                        \\  <b><green>bun init<r> <cyan>--react<r>
-                        \\  <b><green>bun init<r> <cyan>--react=tailwind<r> <blue>my-app<r>
-                    ;
-
-                    Output.pretty(intro_text ++ "\n", .{});
-                    Output.flush();
-                },
-
-                Command.Tag.BunxCommand => {
-                    Output.prettyErrorln(
-                        \\<b>Usage<r>: <b><green>bunx<r> <cyan>[flags]<r> <blue>\<package\><r><d>\<@version\><r> [flags and arguments for the package]<r>
-                        \\Execute an npm package executable (CLI), automatically installing into a global shared cache if not installed in node_modules.
-                        \\
-                        \\Flags:
-                        \\  <cyan>--bun<r>                  Force the command to run with Bun instead of Node.js
-                        \\  <cyan>-p, --package <blue>\<package\><r>    Specify package to install when binary name differs from package name
-                        \\  <cyan>--no-install<r>           Skip installation if package is not already installed
-                        \\  <cyan>--verbose<r>              Enable verbose output during installation
-                        \\  <cyan>--silent<r>               Suppress output during installation
-                        \\
-                        \\Examples<d>:<r>
-                        \\  <b><green>bunx<r> <blue>prisma<r> migrate<r>
-                        \\  <b><green>bunx<r> <blue>prettier<r> foo.js<r>
-                        \\  <b><green>bunx<r> <cyan>-p @angular/cli<r> <blue>ng<r> new my-app
-                        \\  <b><green>bunx<r> <cyan>--bun<r> <blue>vite<r> dev foo.js<r>
-                        \\
-                    , .{});
-                },
-                Command.Tag.BuildCommand => {
-                    const intro_text =
-                        \\<b>Usage<r>:
-                        \\  Transpile and bundle one or more files.
-                        \\  <b><green>bun build<r> <cyan>[flags]<r> <blue>\<entrypoint\><r>
-                    ;
-
-                    const outro_text =
-                        \\<b>Examples:<r>
-                        \\  <d>Frontend web apps:<r>
-                        \\  <b><green>bun build<r> <cyan>--outfile=bundle.js<r> <blue>./src/index.ts<r>
-                        \\  <b><green>bun build<r> <cyan>--minify --splitting --outdir=out<r> <blue>./index.jsx ./lib/worker.ts<r>
-                        \\
-                        \\  <d>Bundle code to be run in Bun (reduces server startup time)<r>
-                        \\  <b><green>bun build<r> <cyan>--target=bun --outfile=server.js<r> <blue>./server.ts<r>
-                        \\
-                        \\  <d>Creating a standalone executable (see https://bun.com/docs/bundler/executables)<r>
-                        \\  <b><green>bun build<r> <cyan>--compile --outfile=my-app<r> <blue>./cli.ts<r>
-                        \\
-                        \\A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
-                        \\
-                    ;
-
-                    Output.pretty(intro_text ++ "\n\n", .{});
-                    Output.flush();
-                    Output.pretty("<b>Flags:<r>", .{});
-                    Output.flush();
-                    clap.simpleHelp(&Arguments.build_only_params);
-                    Output.pretty("\n\n" ++ outro_text, .{});
-                    Output.flush();
-                },
-                Command.Tag.TestCommand => {
-                    const intro_text =
-                        \\<b>Usage<r>: <b><green>bun test<r> <cyan>[flags]<r> <blue>[\<patterns\>]<r>
-                        \\  Run all matching test files and print the results to stdout
-                    ;
-                    const outro_text =
-                        \\<b>Examples:<r>
-                        \\  <d>Run all test files<r>
-                        \\  <b><green>bun test<r>
-                        \\
-                        \\  <d>Run all test files with "foo" or "bar" in the file name<r>
-                        \\  <b><green>bun test<r> <blue>foo bar<r>
-                        \\
-                        \\  <d>Run all test files, only including tests whose names includes "baz"<r>
-                        \\  <b><green>bun test<r> <cyan>--test-name-pattern<r> <blue>baz<r>
-                        \\
-                        \\Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
-                        \\
-                    ;
-
-                    Output.pretty(intro_text, .{});
-                    Output.flush();
-                    Output.pretty("\n\n<b>Flags:<r>", .{});
-                    Output.flush();
-                    clap.simpleHelp(&Arguments.test_only_params);
-                    Output.pretty("\n\n", .{});
-                    Output.pretty(outro_text, .{});
-                    Output.flush();
-                },
-                Command.Tag.CreateCommand => {
-                    const intro_text =
-                        \\<b>Usage<r><d>:<r>
-                        \\  <b><green>bun create<r> <magenta>\<MyReactComponent.(jsx|tsx)\><r>
-                        \\  <b><green>bun create<r> <magenta>\<template\><r> <cyan>[...flags]<r> <blue>dest<r>
-                        \\  <b><green>bun create<r> <magenta>\<github-org/repo\><r> <cyan>[...flags]<r> <blue>dest<r>
-                        \\
-                        \\<b>Environment variables<r><d>:<r>
-                        \\  <cyan>GITHUB_TOKEN<r>         <d>Supply a token to download code from GitHub with a higher rate limit<r>
-                        \\  <cyan>GITHUB_API_DOMAIN<r>    <d>Configure custom/enterprise GitHub domain. Default "api.github.com"<r>
-                        \\  <cyan>NPM_CLIENT<r>           <d>Absolute path to the npm client executable<r>
-                        \\  <cyan>BUN_CREATE_DIR<r>       <d>Custom path for global templates (default: $HOME/.bun-create)<r>
-                    ;
-
-                    const outro_text =
-                        \\<b>React Component Projects<r><d>:<r>
-                        \\  • Turn an existing React component into a complete frontend dev environment
-                        \\  • Automatically starts a hot-reloading dev server
-                        \\  • Auto-detects & configures TailwindCSS and shadcn/ui
-                        \\
-                        \\  <b><magenta>bun create \<MyReactComponent.(jsx|tsx)\><r>
-                        \\
-                        \\<b>Templates<r><d>:<r>
-                        \\  • NPM: Runs <b><magenta>bunx create-\<template\><r> with given arguments
-                        \\  • GitHub: Downloads repository contents as template
-                        \\  • Local: Uses templates from $HOME/.bun-create/\<name\> or ./.bun-create/\<name\>
-                        \\
-                        \\Learn more: <magenta>https://bun.com/docs/cli/bun-create<r>
-                        \\
-                    ;
-
-                    Output.pretty(intro_text, .{});
-                    Output.pretty("\n\n", .{});
-                    Output.pretty(outro_text, .{});
-                    Output.flush();
-                },
-                Command.Tag.HelpCommand => {
-                    HelpCommand.printWithReason(.explicit);
-                },
-                Command.Tag.UpgradeCommand => {
-                    const intro_text =
-                        \\<b>Usage<r>: <b><green>bun upgrade<r> <cyan>[flags]<r>
-                        \\  Upgrade Bun
-                    ;
-                    const outro_text =
-                        \\<b>Examples:<r>
-                        \\  <d>Install the latest {s} version<r>
-                        \\  <b><green>bun upgrade<r>
-                        \\
-                        \\  <d>{s}<r>
-                        \\  <b><green>bun upgrade<r> <cyan>--{s}<r>
-                        \\
-                        \\Full documentation is available at <magenta>https://bun.com/docs/installation#upgrading<r>
-                        \\
-                    ;
-
-                    const args = comptime switch (Environment.is_canary) {
-                        true => .{ "canary", "Switch from the canary version back to the latest stable release", "stable" },
-                        false => .{ "stable", "Install the most recent canary version of Bun", "canary" },
-                    };
-
-                    Output.pretty(intro_text, .{});
-                    Output.pretty("\n\n", .{});
-                    Output.flush();
-                    Output.pretty(outro_text, args);
-                    Output.flush();
-                },
-                Command.Tag.ReplCommand => {
-                    const intro_text =
-                        \\<b>Usage<r>: <b><green>bun repl<r> <cyan>[flags]<r>
-                        \\  Open a Bun REPL
-                        \\
-                    ;
-
-                    Output.pretty(intro_text, .{});
-                    Output.flush();
-                },
-
-                Command.Tag.GetCompletionsCommand => {
-                    Output.pretty("<b>Usage<r>: <b><green>bun getcompletes<r>", .{});
-                    Output.flush();
-                },
-                Command.Tag.InstallCompletionsCommand => {
-                    Output.pretty("<b>Usage<r>: <b><green>bun completions<r>", .{});
-                    Output.flush();
-                },
-                Command.Tag.PatchCommand => {
-                    Install.PackageManager.CommandLineArguments.printHelp(.patch);
-                },
-                Command.Tag.PatchCommitCommand => {
-                    Install.PackageManager.CommandLineArguments.printHelp(.@"patch-commit");
-                },
-                Command.Tag.ExecCommand => {
-                    Output.pretty(
-                        \\<b>Usage: bun exec <r><cyan>\<script\><r>
-                        \\
-                        \\Execute a shell script directly from Bun.
-                        \\
-                        \\<b><red>Note<r>: If executing this from a shell, make sure to escape the string!
-                        \\
-                        \\<b>Examples<d>:<r>
-                        \\  <b>bun exec "echo hi"<r>
-                        \\  <b>bun exec "echo \"hey friends\"!"<r>
-                        \\
-                    , .{});
-                    Output.flush();
-                },
-                .OutdatedCommand, .UpdateInteractiveCommand, .PublishCommand, .AuditCommand => {
-                    Install.PackageManager.CommandLineArguments.printHelp(switch (cmd) {
-                        .OutdatedCommand => .outdated,
-                        .UpdateInteractiveCommand => .update,
-                        .PublishCommand => .publish,
-                        .AuditCommand => .audit,
-                    });
-                },
-                .InfoCommand => {
-                    const intro_text =
-                        \\<b>Usage<r>: <b><green>bun info<r> <cyan>[flags]<r> <blue>\<package\><r><d>\<@version\><r> <blue>[property path]<r>
-                        \\  Display package metadata from the registry.
-                        \\
-                        \\<b>Examples:<r>
-                        \\  <d>View basic information about a package<r>
-                        \\  <b><green>bun info<r> <blue>react<r>
-                        \\
-                        \\  <d>View specific version<r>
-                        \\  <b><green>bun info<r> <blue>react@18.0.0<r>
-                        \\
-                        \\  <d>View specific property<r>
-                        \\  <b><green>bun info<r> <blue>react<r> version
-                        \\  <b><green>bun info<r> <blue>react<r> dependencies
-                        \\  <b><green>bun info<r> <blue>react<r> versions
-                        \\
-                        \\Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>
-                        \\
-                    ;
-
-                    Output.pretty(intro_text, .{});
-                    Output.flush();
-                },
-                .WhyCommand => {
-                    const intro_text =
-                        \\<b>Usage<r>: <b><green>bun why<r> <cyan>[flags]<r> <blue>\<package\><r><d>\<@version\><r> <blue>[property path]<r>
-                        \\Explain why a package is installed
-                        \\
-                        \\<b>Arguments:<r>
-                        \\  <blue>\<package\><r>     <d>The package name to explain (supports glob patterns like '@org/*')<r>
-                        \\
-                        \\<b>Options:<r>
-                        \\  <cyan>--top<r>         <d>Show only the top dependency tree instead of nested ones<r>
-                        \\  <cyan>--depth<r> <blue>\<NUM\><r> <d>Maximum depth of the dependency tree to display<r>
-                        \\
-                        \\<b>Examples:<r>
-                        \\  <d>$<r> <b><green>bun why<r> <blue>react<r>
-                        \\  <d>$<r> <b><green>bun why<r> <blue>"@types/*"<r> <cyan>--depth<r> <blue>2<r>
-                        \\  <d>$<r> <b><green>bun why<r> <blue>"*-lodash"<r> <cyan>--top<r>
-                        \\
-                        \\Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
-                        \\
-                    ;
-
-                    Output.pretty(intro_text, .{});
-                    Output.flush();
-                },
-                else => {
-                    HelpCommand.printWithReason(.explicit, false);
-                },
-            }
-        }
-
-        pub fn readGlobalConfig(this: Tag) bool {
-            return switch (this) {
-                .BunxCommand,
-                .PackageManagerCommand,
-                .InstallCommand,
-                .AddCommand,
-                .RemoveCommand,
-                .UpdateCommand,
-                .PatchCommand,
-                .PatchCommitCommand,
-                .OutdatedCommand,
-                .PublishCommand,
-                .AuditCommand,
-                => true,
-                else => false,
-            };
-        }
-
-        pub fn isNPMRelated(this: Tag) bool {
-            return switch (this) {
-                .BunxCommand,
-                .LinkCommand,
-                .UnlinkCommand,
-                .PackageManagerCommand,
-                .InstallCommand,
-                .AddCommand,
-                .RemoveCommand,
-                .UpdateCommand,
-                .PatchCommand,
-                .PatchCommitCommand,
-                .OutdatedCommand,
-                .PublishCommand,
-                .AuditCommand,
-                => true,
-                else => false,
-            };
-        }
-
-        pub const loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
-            .BuildCommand = true,
-            .TestCommand = true,
-            .InstallCommand = true,
-            .AddCommand = true,
-            .RemoveCommand = true,
-            .UpdateCommand = true,
-            .PatchCommand = true,
-            .PatchCommitCommand = true,
-            .PackageManagerCommand = true,
-            .BunxCommand = true,
-            .AutoCommand = true,
-            .RunCommand = true,
-            .RunAsNodeCommand = true,
-            .OutdatedCommand = true,
-            .UpdateInteractiveCommand = true,
-            .PublishCommand = true,
-            .AuditCommand = true,
-        });
-
-        pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
-            .BuildCommand = true,
-            .TestCommand = true,
-            .InstallCommand = true,
-            .AddCommand = true,
-            .RemoveCommand = true,
-            .UpdateCommand = true,
-            .PatchCommand = true,
-            .PatchCommitCommand = true,
-            .PackageManagerCommand = true,
-            .BunxCommand = true,
-            .OutdatedCommand = true,
-            .UpdateInteractiveCommand = true,
-            .PublishCommand = true,
-            .AuditCommand = true,
-        });
-
-        pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{
-            .AddCommand = false,
-            .AuditCommand = false,
-            .BunxCommand = false,
-            .CreateCommand = false,
-            .InfoCommand = false,
-            .InstallCommand = false,
-            .LinkCommand = false,
-            .OutdatedCommand = false,
-            .UpdateInteractiveCommand = false,
-            .PackageManagerCommand = false,
-            .PatchCommand = false,
-            .PatchCommitCommand = false,
-            .PublishCommand = false,
-            .RemoveCommand = false,
-            .UnlinkCommand = false,
-            .UpdateCommand = false,
-        });
-    };
+    }
 
     fn @"bun --eval --print"(ctx: Context) !void {
         const trigger = bun.pathLiteral("/[eval]");
@@ -1820,20 +1466,18 @@ pub fn printRevisionAndExit() noreturn {
 
 const string = []const u8;
 
-const AddCompletions = @import("./cli/add_completions.zig");
-const FilterRun = @import("./cli/filter_run.zig");
-const MultiRun = @import("./cli/multi_run.zig");
-const PmViewCommand = @import("./cli/pm_view_command.zig");
-const fs = @import("./fs.zig");
-const options = @import("./options.zig");
+const AddCompletions = @import("./add_completions.zig");
+const FilterRun = @import("./filter_run.zig");
+const MultiRun = @import("./multi_run.zig");
+const PmViewCommand = @import("./pm_view_command.zig");
+const fs = @import("../resolver/fs.zig");
+const options = @import("../bundler/options.zig");
 const std = @import("std");
-const Bunfig = @import("./bunfig.zig").Bunfig;
-const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
-const MacroMap = @import("./resolver/package_json.zig").MacroMap;
-const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
-const TestCommand = @import("./cli/test_command.zig").TestCommand;
+const ColonListType = @import("./colon_list_type.zig").ColonListType;
+const RunCommand_ = @import("./run_command.zig").RunCommand;
+const TestCommand = @import("./test_command.zig").TestCommand;
 
-const Install = @import("./install/install.zig");
+const Install = @import("../install/install.zig");
 const PackageManager = Install.PackageManager;
 
 const bun = @import("bun");
@@ -1846,5 +1490,4 @@ const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const strings = bun.strings;
 const File = bun.sys.File;
-const RegularExpression = bun.jsc.RegularExpression;
 const api = bun.schema.api;

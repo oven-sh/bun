@@ -131,9 +131,9 @@ export fn us_dispatch_ssl_raw_tap(s: *us_socket_t, data: [*c]u8, len: c_int) ?*u
 }
 
 const bun = @import("bun");
-const handlers = @import("./handlers.zig");
+const handlers = @import("./uws_handlers.zig");
 const std = @import("std");
-const vtable = @import("./vtable.zig");
+const vtable = @import("../../uws_sys/vtable.zig");
 
 const uws = bun.uws;
 const ConnectingSocket = uws.ConnectingSocket;

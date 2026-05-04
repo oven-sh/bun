@@ -362,7 +362,7 @@ const log = bun.Output.scoped(.WebSocketProxyTunnel, .visible);
 
 const ErrorCode = @import("../websocket_client.zig").ErrorCode;
 const NewHTTPUpgradeClient = @import("./WebSocketUpgradeClient.zig").NewHTTPUpgradeClient;
-const SSLWrapper = @import("../../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
+const SSLWrapper = @import("../../runtime/socket/ssl_wrapper.zig").SSLWrapper;
 
 const bun = @import("bun");
 const BoringSSL = bun.BoringSSL;

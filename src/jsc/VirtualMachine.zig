@@ -3916,7 +3916,7 @@ pub const IPCInstance = struct {
     data: IPC.SendQueue,
     has_disconnect_called: bool = false,
 
-    const node_cluster_binding = @import("./node/node_cluster_binding.zig");
+    const node_cluster_binding = @import("../runtime/node/node_cluster_binding.zig");
 
     pub fn ipc(this: *IPCInstance) ?*IPC.SendQueue {
         return &this.data;
@@ -4099,20 +4099,20 @@ const string = []const u8;
 
 const Config = @import("./config.zig");
 const Counters = @import("./Counters.zig");
-const Fs = @import("../fs.zig");
+const Fs = @import("../resolver/fs.zig");
 const IPC = @import("./ipc.zig");
 const Resolver = @import("../resolver/resolver.zig");
-const Runtime = @import("../runtime.zig");
-const node_module_module = @import("./bindings/NodeModuleModule.zig");
+const Runtime = @import("../js_parser/runtime.zig");
+const node_module_module = @import("./NodeModuleModule.zig");
 const std = @import("std");
 const PackageManager = @import("../install/install.zig").PackageManager;
-const URL = @import("../url.zig").URL;
+const URL = @import("../url/url.zig").URL;
 const Allocator = std.mem.Allocator;
 
-const CPUProfiler = @import("./bindings/BunCPUProfiler.zig");
+const CPUProfiler = @import("./BunCPUProfiler.zig");
 const CPUProfilerConfig = CPUProfiler.CPUProfilerConfig;
 
-const HeapProfiler = @import("./bindings/BunHeapProfiler.zig");
+const HeapProfiler = @import("./BunHeapProfiler.zig");
 const HeapProfilerConfig = HeapProfiler.HeapProfilerConfig;
 
 const bun = @import("bun");

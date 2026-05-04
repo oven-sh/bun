@@ -117,11 +117,11 @@ pub const Index = bun.ast.Index;
 const string = []const u8;
 
 const IndexStringMap = @import("./IndexStringMap.zig");
-const Logger = @import("../logger.zig");
+const Logger = @import("../logger/logger.zig");
 const _resolver = @import("../resolver/resolver.zig");
 const std = @import("std");
 
-const options = @import("../options.zig");
+const options = @import("./options.zig");
 const Loader = options.Loader;
 
 const bun = @import("bun");

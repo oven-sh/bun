@@ -363,12 +363,7 @@ pub const ExternalModules = struct {
     });
 };
 
-pub const BundlePackage = enum {
-    always,
-    never,
-
-    pub const Map = bun.StringArrayHashMapUnmanaged(BundlePackage);
-};
+pub const BundlePackage = @import("../options_types/BundleEnums.zig").BundlePackage;
 
 pub const ModuleType = enum {
     unknown,
@@ -398,12 +393,7 @@ pub const Target = enum {
         .{ "node", .node },
     });
 
-    pub fn fromJS(global: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!?Target {
-        if (!value.isString()) {
-            return global.throwInvalidArguments("target must be a string", .{});
-        }
-        return Map.fromJS(global, value);
-    }
+    pub const fromJS = @import("../bundler_jsc/options_jsc.zig").targetFromJS;
 
     pub fn toAPI(this: Target) api.Target {
         return switch (this) {
@@ -567,83 +557,14 @@ pub const Target = enum {
     }
 };
 
-pub const Format = enum {
-    /// ES module format
-    /// This is the default format
-    esm,
+pub const Format = @import("../options_types/BundleEnums.zig").Format;
 
-    /// Immediately-invoked function expression
-    /// (function(){
-    ///     ...
-    /// })();
-    iife,
-
-    /// CommonJS
-    cjs,
-
-    /// Bake uses a special module format for Hot-module-reloading. It includes a
-    /// runtime payload, sourced from src/bake/hmr-runtime-{side}.ts.
-    ///
-    /// ((unloadedModuleRegistry, config) => {
-    ///   ... runtime code ...
-    /// })({
-    ///   "module1.ts": ...,
-    ///   "module2.ts": ...,
-    /// }, { ...metadata... });
-    internal_bake_dev,
-
-    pub fn keepES6ImportExportSyntax(this: Format) bool {
-        return this == .esm;
-    }
-
-    pub inline fn isESM(this: Format) bool {
-        return this == .esm;
-    }
-
-    pub inline fn isAlwaysStrictMode(this: Format) bool {
-        return this == .esm;
-    }
-
-    pub const Map = bun.ComptimeStringMap(Format, .{
-        .{ "esm", .esm },
-        .{ "cjs", .cjs },
-        .{ "iife", .iife },
-
-        // TODO: Disable this outside of debug builds
-        .{ "internal_bake_dev", .internal_bake_dev },
-    });
-
-    pub fn fromJS(global: *jsc.JSGlobalObject, format: jsc.JSValue) bun.JSError!?Format {
-        if (format.isUndefinedOrNull()) return null;
-
-        if (!format.isString()) {
-            return global.throwInvalidArguments("format must be a string", .{});
-        }
-
-        return try Map.fromJS(global, format) orelse {
-            return global.throwInvalidArguments("Invalid format - must be esm, cjs, or iife", .{});
-        };
-    }
-
-    pub fn fromString(slice: string) ?Format {
-        return Map.getWithEql(slice, strings.eqlComptime);
-    }
-};
-
-pub const WindowsOptions = struct {
-    hide_console: bool = false,
-    icon: ?[]const u8 = null,
-    title: ?[]const u8 = null,
-    publisher: ?[]const u8 = null,
-    version: ?[]const u8 = null,
-    description: ?[]const u8 = null,
-    copyright: ?[]const u8 = null,
-};
+pub const WindowsOptions = @import("../options_types/BundleEnums.zig").WindowsOptions;
 
 // The max integer value in this enum can only be appended to.
 // It has dependencies in several places:
 // - bun-native-bundler-plugin-api/bundler_plugin.h
-// - src/bun.js/bindings/headers-handwritten.h
+// - src/jsc/bindings/headers-handwritten.h
 pub const Loader = enum(u8) {
     jsx = 0,
     js = 1,
@@ -797,24 +718,7 @@ pub const Loader = enum(u8) {
         return stdin_name.get(this);
     }
 
-    pub fn fromJS(global: *jsc.JSGlobalObject, loader: jsc.JSValue) bun.JSError!?Loader {
-        if (loader.isUndefinedOrNull()) return null;
-
-        if (!loader.isString()) {
-            return global.throwInvalidArguments("loader must be a string", .{});
-        }
-
-        var zig_str = jsc.ZigString.init("");
-        try loader.toZigString(&zig_str, global);
-        if (zig_str.len == 0) return null;
-
-        const slice = zig_str.toSlice(bun.default_allocator);
-        defer slice.deinit();
-
-        return fromString(slice.slice()) orelse {
-            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, wasm, bunsh, json, or md", .{});
-        };
-    }
+    pub const fromJS = @import("../bundler_jsc/options_jsc.zig").loaderFromJS;
 
     pub const names = bun.ComptimeStringMap(Loader, .{
         .{ "js", .js },
@@ -2595,7 +2499,7 @@ pub const RouteConfig = struct {
     }
 };
 
-pub const GlobalCache = @import("./resolver/resolver.zig").GlobalCache;
+pub const GlobalCache = @import("../resolver/resolver.zig").GlobalCache;
 
 pub const PathTemplate = struct {
     data: string = "",
@@ -2728,15 +2632,15 @@ pub const PathTemplate = struct {
 
 const string = []const u8;
 
-const DotEnv = @import("./env_loader.zig");
-const Fs = @import("./fs.zig");
-const resolver = @import("./resolver/resolver.zig");
-const Runtime = @import("./runtime.zig").Runtime;
-const URL = @import("./url.zig").URL;
+const DotEnv = @import("../dotenv/env_loader.zig");
+const Fs = @import("../resolver/fs.zig");
+const resolver = @import("../resolver/resolver.zig");
+const Runtime = @import("../js_parser/runtime.zig").Runtime;
+const URL = @import("../url/url.zig").URL;
 
-const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
-const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
-const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
+const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
+const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
+const ConditionsMap = @import("../resolver/package_json.zig").ESModule.ConditionsMap;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

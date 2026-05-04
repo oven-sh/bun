@@ -346,7 +346,7 @@ pub const StringOrBuffer = union(enum) {
 
 /// https://github.com/nodejs/node/blob/master/lib/buffer.js#L587
 /// See `jsc.WebCore.encoding` for encoding and decoding functions.
-/// must match src/bun.js/bindings/BufferEncodingType.h
+/// must match src/jsc/bindings/BufferEncodingType.h
 pub const Encoding = enum(u8) {
     utf8,
     ucs2,
@@ -1235,7 +1235,7 @@ pub const PathOrBlob = union(enum) {
 const string = []const u8;
 
 const std = @import("std");
-const URL = @import("../../url.zig").URL;
+const URL = @import("../../url/url.zig").URL;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

@@ -1084,12 +1084,12 @@ pub fn setTimeout(
 
 const string = []const u8;
 
-const Environment = @import("../../env.zig");
+const Environment = @import("../../bun_core/env.zig");
 const std = @import("std");
-const FetchCacheMode = @import("../../http/FetchCacheMode.zig").FetchCacheMode;
-const FetchRedirect = @import("../../http/FetchRedirect.zig").FetchRedirect;
-const FetchRequestMode = @import("../../http/FetchRequestMode.zig").FetchRequestMode;
-const Method = @import("../../http/Method.zig").Method;
+const FetchCacheMode = @import("../../http_types/FetchCacheMode.zig").FetchCacheMode;
+const FetchRedirect = @import("../../http_types/FetchRedirect.zig").FetchRedirect;
+const FetchRequestMode = @import("../../http_types/FetchRequestMode.zig").FetchRequestMode;
+const Method = @import("../../http_types/Method.zig").Method;
 
 const bun = @import("bun");
 const Output = bun.Output;

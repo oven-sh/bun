@@ -1,9 +1,9 @@
 const httplog = Output.scoped(.Server, .visible);
 const ctxLog = Output.scoped(.RequestContext, .visible);
 
-pub const WebSocketServerContext = @import("./server/WebSocketServerContext.zig");
-pub const HTTPStatusText = @import("./server/HTTPStatusText.zig");
-pub const HTMLBundle = @import("./server/HTMLBundle.zig");
+pub const WebSocketServerContext = @import("./WebSocketServerContext.zig");
+pub const HTTPStatusText = @import("./HTTPStatusText.zig");
+pub const HTMLBundle = @import("./HTMLBundle.zig");
 
 pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, status: u16) void {
     if (resp_ptr) |resp| {
@@ -17,10 +17,10 @@ pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, sta
 }
 
 // TODO: rename to StaticBlobRoute? the html bundle is sometimes a static route
-pub const StaticRoute = @import("./server/StaticRoute.zig");
-pub const FileRoute = @import("./server/FileRoute.zig");
-pub const FileResponseStream = @import("./server/FileResponseStream.zig");
-pub const RangeRequest = @import("./server/RangeRequest.zig");
+pub const StaticRoute = @import("./StaticRoute.zig");
+pub const FileRoute = @import("./FileRoute.zig");
+pub const FileResponseStream = @import("./FileResponseStream.zig");
+pub const RangeRequest = @import("./RangeRequest.zig");
 
 pub const AnyRoute = union(enum) {
     /// Serve a static file
@@ -273,9 +273,9 @@ pub const AnyRoute = union(enum) {
     }
 };
 
-pub const ServerConfig = @import("./server/ServerConfig.zig");
-pub const ServerWebSocket = @import("./server/ServerWebSocket.zig");
-pub const NodeHTTPResponse = @import("./server/NodeHTTPResponse.zig");
+pub const ServerConfig = @import("./ServerConfig.zig");
+pub const ServerWebSocket = @import("./ServerWebSocket.zig");
+pub const NodeHTTPResponse = @import("./NodeHTTPResponse.zig");
 
 /// State machine to handle loading plugins asynchronously. This structure is not thread-safe.
 const ServePlugins = struct {
@@ -3257,8 +3257,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
     };
 }
 
-pub const AnyRequestContext = @import("./server/AnyRequestContext.zig");
-pub const NewRequestContext = @import("./server/RequestContext.zig").NewRequestContext;
+pub const AnyRequestContext = @import("./AnyRequestContext.zig");
+pub const NewRequestContext = @import("./RequestContext.zig").NewRequestContext;
 
 pub const SavedRequest = struct {
     js_request: jsc.Strong.Optional,
@@ -3809,13 +3809,13 @@ extern fn NodeHTTP_setUsingCustomExpectHandler(bool, *anyopaque, bool) void;
 
 const string = []const u8;
 
-const Sys = @import("../../sys.zig");
-const options = @import("../../options.zig");
+const Sys = @import("../../sys/sys.zig");
+const options = @import("../../bundler/options.zig");
 const std = @import("std");
-const URL = @import("../../url.zig").URL;
+const URL = @import("../../url/url.zig").URL;
 const Allocator = std.mem.Allocator;
 
-const Runtime = @import("../../runtime.zig");
+const Runtime = @import("../../js_parser/runtime.zig");
 const Fallback = Runtime.Fallback;
 
 const bun = @import("bun");

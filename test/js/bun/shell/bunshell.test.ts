@@ -1108,7 +1108,7 @@ describe("deno_task", () => {
 
     if (isPosix) {
       TestBuilder.command`ls . | echo hi`.exitCode(0).stdout("hi\n").runAsTest("broken pipe builtin");
-      TestBuilder.command`grep hi src/js_parser.zig | echo hi`
+      TestBuilder.command`grep hi src/js_parser/parser.zig | echo hi`
         .exitCode(0)
         .stdout("hi\n")
         .stderr("")

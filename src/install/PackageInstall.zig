@@ -1482,7 +1482,7 @@ pub const PackageInstall = struct {
 const string = []const u8;
 const stringZ = [:0]const u8;
 
-const Walker = @import("../walker_skippable.zig");
+const Walker = @import("../sys/walker_skippable.zig");
 const std = @import("std");
 
 const bun = @import("bun");

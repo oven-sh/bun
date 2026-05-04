@@ -683,15 +683,15 @@ pub const MatchedRoute = struct {
 
 const string = []const u8;
 
-const Fs = @import("../../fs.zig");
-const Router = @import("../../router.zig");
-const URLPath = @import("../../http/URLPath.zig");
+const Fs = @import("../../resolver/fs.zig");
+const Router = @import("../../router/router.zig");
+const URLPath = @import("../../http_types/URLPath.zig");
 const std = @import("std");
 const Resolver = @import("../../resolver/resolver.zig").Resolver;
 
-const CombinedScanner = @import("../../url.zig").CombinedScanner;
-const QueryStringMap = @import("../../url.zig").QueryStringMap;
-const URL = @import("../../url.zig").URL;
+const CombinedScanner = @import("../../url/url.zig").CombinedScanner;
+const QueryStringMap = @import("../../url/url.zig").QueryStringMap;
+const URL = @import("../../url/url.zig").URL;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

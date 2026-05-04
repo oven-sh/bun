@@ -960,7 +960,7 @@ pub const Test = struct {
             .extensions = &.{"js"},
         });
 
-        const Resolver = @import("./resolver/resolver.zig").Resolver;
+        const Resolver = @import("../resolver/resolver.zig").Resolver;
         var logger = Logger.Log.init(default_allocator);
         errdefer {
             logger.print(Output.errorWriter()) catch {};
@@ -1015,7 +1015,7 @@ pub const Test = struct {
             .extensions = &.{"js"},
         });
 
-        const Resolver = @import("./resolver/resolver.zig").Resolver;
+        const Resolver = @import("../resolver/resolver.zig").Resolver;
         var logger = Logger.Log.init(default_allocator);
         errdefer {
             logger.print(Output.errorWriter()) catch {};
@@ -1573,7 +1573,7 @@ test "Github API Route Loader" {
     var ctx = MockRequestContextType{
         .url = try URLPath.parse("/hi"),
     };
-    const fixtures = @import("./test/fixtures.zig");
+    const fixtures = @import("../test_runner/harness/fixtures.zig");
     var router = try Test.make("routes-github-api", fixtures.github_api_routes_list);
 
     {
@@ -1682,7 +1682,7 @@ test "Sample Route Loader" {
     var ctx = MockRequestContextType{
         .url = try URLPath.parse("/hi"),
     };
-    const fixtures = @import("./test/fixtures.zig");
+    const fixtures = @import("../test_runner/harness/fixtures.zig");
     var router = try Test.make("routes-sample", fixtures.sample_route_list);
 
     {
@@ -1890,13 +1890,13 @@ test "Pattern" {
 
 const string = []const u8;
 
-const DirInfo = @import("./resolver/dir_info.zig");
-const Options = @import("./options.zig");
-const URLPath = @import("./http/URLPath.zig");
+const DirInfo = @import("../resolver/dir_info.zig");
+const Options = @import("../bundler/options.zig");
+const URLPath = @import("../http_types/URLPath.zig");
 const std = @import("std");
-const PathnameScanner = @import("./url.zig").PathnameScanner;
+const PathnameScanner = @import("../url/url.zig").PathnameScanner;
 
-const Fs = @import("./fs.zig");
+const Fs = @import("../resolver/fs.zig");
 const FileSystem = Fs.FileSystem;
 
 const bun = @import("bun");

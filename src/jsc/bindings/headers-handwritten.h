@@ -47,7 +47,7 @@ enum class BunStringTag : uint8_t {
     Empty = 4,
 };
 
-/// Mirrors `bun.uws.ResponseKind` in src/deps/uws.zig.
+/// Mirrors `bun.uws.ResponseKind` in src/uws_sys/uws.zig.
 enum class UWSResponseKind : int32_t {
     TCP = 0,
     SSL = 1,

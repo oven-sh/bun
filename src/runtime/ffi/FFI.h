@@ -1,6 +1,6 @@
 // This file is part of Bun!
 // You can find the original source:
-// https://github.com/oven-sh/bun/blob/main/src/bun.js/api/FFI.h
+// https://github.com/oven-sh/bun/blob/main/src/runtime/api/FFI.h
 //
 // clang-format off
 // This file is only compatible with 64 bit CPUs

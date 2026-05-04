@@ -228,7 +228,7 @@ pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) void {
 const WTFTimer = bun.api.Timer.WTFTimer;
 
 const std = @import("std");
-const StatWatcherScheduler = @import("../../node/node_fs_stat_watcher.zig").StatWatcherScheduler;
+const StatWatcherScheduler = @import("../runtime/node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

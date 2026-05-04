@@ -6863,8 +6863,8 @@ const string = []const u8;
 
 const repl_transforms = @import("./repl_transforms.zig");
 
-const Define = @import("../defines.zig").Define;
-const DefineData = @import("../defines.zig").DefineData;
+const Define = @import("../../bundler/defines.zig").Define;
+const DefineData = @import("../../bundler/defines.zig").DefineData;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

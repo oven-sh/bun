@@ -658,7 +658,7 @@ noinline fn getSSLException(globalThis: *jsc.JSGlobalObject, defaultMessage: []c
 
 const string = []const u8;
 
-const X509 = @import("../x509.zig");
+const X509 = @import("../api/bun/x509.zig");
 const std = @import("std");
 
 const bun = @import("bun");

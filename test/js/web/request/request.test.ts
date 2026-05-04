@@ -172,6 +172,26 @@ test("new Request(other, init) with explicit referrer uses init.referrer", () =>
   expect(over.referrer).toBe("https://other.example/");
 });
 
+// Spec step 12 keys on presence of any WebIDL-recognized RequestInit member,
+// not on whether Bun actually parses it. Members like `signal: null`,
+// `credentials`, `referrerPolicy`, `duplex`, `window` also trigger the
+// "init is not empty" reset; unrecognized keys (`foo`) and `undefined`
+// members do not. Mirrors Node/undici.
+test("new Request(other, init) — referrer reset keys on WebIDL member presence", () => {
+  const base = new Request("https://example.org/", { referrer: "https://foo.example/" });
+
+  // Recognized members reset referrer to "client" (getter: "about:client").
+  expect(new Request(base, { signal: null }).referrer).toBe("about:client");
+  expect(new Request(base, { credentials: "omit" }).referrer).toBe("about:client");
+  expect(new Request(base, { referrerPolicy: "origin" }).referrer).toBe("about:client");
+  expect(new Request(base, { duplex: "half" } as any).referrer).toBe("about:client");
+  expect(new Request(base, { window: null }).referrer).toBe("about:client");
+
+  // Unrecognized keys and undefined members leave init "empty" → inherit.
+  expect(new Request(base, { foo: "bar" } as any).referrer).toBe("https://foo.example/");
+  expect(new Request(base, { method: undefined }).referrer).toBe("https://foo.example/");
+});
+
 test("clone() preserves referrer, integrity, keepalive", () => {
   const base = new Request("https://example.org/", {
     referrer: "https://foo.example/",

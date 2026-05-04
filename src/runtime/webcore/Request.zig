@@ -684,15 +684,43 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
     };
     const values_to_try = values_to_try_[0 .. @as(usize, @intFromBool(!is_first_argument_a_url)) +
         @as(usize, @intFromBool(arguments.len > 1 and arguments[1].isObject()))];
-    // Fetch spec step 12: if init is not empty (i.e. has any recognized,
-    // non-undefined member), request.referrer is reset to "client" before
-    // init.referrer is consulted. When values_to_try.len == 2 the first
-    // value is the init object and the second is the base Request; if the
-    // init iteration inserts any Fields flag, init was non-empty and the
-    // base Request's referrer must not be inherited.
-    var init_has_key = false;
+    // Fetch spec step 12: if init is not empty (i.e. the WebIDL dictionary
+    // conversion of init has any present member), request's referrer is
+    // reset to "client" before init.referrer is consulted. When
+    // values_to_try.len == 2 the first value is the init object and the
+    // second is the base Request; in that case we probe init for any
+    // recognized RequestInit key with a non-undefined value and, if so,
+    // skip inheriting referrer from the base.
+    //
+    // Probing is up-front rather than inferred from what the parsing loop
+    // stores, because the spec's "is not empty" test keys on member
+    // *presence* — including members we don't read (credentials,
+    // referrerPolicy, duplex, priority, window) and members filtered by
+    // our loop (signal: null is dropped by getTruthy, but it IS a present
+    // WebIDL member).
+    const init_has_key: bool = blk: {
+        if (values_to_try.len != 2) break :blk false;
+        const init_obj = values_to_try[0];
+        if (!init_obj.isObject()) break :blk false;
+        // Matches the members of WHATWG Fetch's RequestInit dictionary as
+        // recognized by Node/undici. Any member present here (including
+        // null — e.g. `signal: null` — which WebIDL treats as a present
+        // value) makes init non-empty.
+        const keys = [_][]const u8{
+            "method",         "headers",     "body",        "referrer",
+            "referrerPolicy", "mode",        "credentials", "cache",
+            "redirect",       "integrity",   "keepalive",   "signal",
+            "duplex",         "window",
+        };
+        inline for (keys) |key| {
+            // value.get returns Zig null for missing OR undefined; any
+            // non-null return means the member is present (including
+            // null, false, 0, "", etc.), which WebIDL treats as present.
+            if (try init_obj.get(globalThis, key)) |_| break :blk true;
+        }
+        break :blk false;
+    };
     for (values_to_try) |value| {
-        const fields_before = fields;
         const value_type = value.jsType();
         const explicit_check = values_to_try.len == 2 and value_type == .FinalObject and values_to_try[1].jsType() == .DOMWrapper;
         if (value_type == .DOMWrapper) {
@@ -951,14 +979,6 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
             }
         }
 
-        // If this iteration is the init object (non-DOMWrapper) in the
-        // 2-arg form and it contributed any recognized member, record that
-        // so the subsequent DOMWrapper iteration skips referrer inheritance.
-        if (values_to_try.len == 2 and value_type != .DOMWrapper and
-            !fields.eql(fields_before))
-        {
-            init_has_key = true;
-        }
     }
 
     if (globalThis.hasException()) {

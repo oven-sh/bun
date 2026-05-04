@@ -40,9 +40,11 @@ pub fn markActive(this: *Handlers) void {
 pub const Scope = struct {
     handlers: *Handlers,
 
-    pub fn exit(this: *Scope) void {
+    /// Returns true if `handlers` was destroyed (client mode, last ref).
+    /// Callers that also hold the pointer in a socket field must null it.
+    pub fn exit(this: *Scope) bool {
         this.handlers.vm.eventLoop().exit();
-        this.handlers.markInactive();
+        return this.handlers.markInactive();
     }
 };
 
@@ -77,7 +79,11 @@ pub fn rejectPromise(this: *Handlers, value: JSValue) bun.JSTerminated!bool {
     return true;
 }
 
-pub fn markInactive(this: *Handlers) void {
+/// Returns true when the client-mode allocation has been destroyed so the
+/// caller can null any `*Handlers` it still holds (the socket's `handlers`
+/// field). Without that, a subsequent `connectInner` reusing the same native
+/// socket as `prev` would `deinit`/`destroy` the freed pointer.
+pub fn markInactive(this: *Handlers) bool {
     Listener.log("markInactive", .{});
     this.active_connections -= 1;
     if (this.active_connections == 0) {
@@ -92,8 +98,10 @@ pub fn markInactive(this: *Handlers) void {
             const vm = this.vm;
             this.deinit();
             vm.allocator.destroy(this);
+            return true;
         }
     }
+    return false;
 }
 
 pub fn callErrorHandler(this: *Handlers, thisValue: JSValue, args: *const [2]JSValue) bool {

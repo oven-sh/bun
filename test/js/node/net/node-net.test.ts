@@ -1,7 +1,7 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
 import { randomUUID } from "node:crypto";
 import { connect, createConnection, createServer, isIP, isIPv4, isIPv6, Server, Socket, Stream } from "node:net";
 import { join } from "node:path";
@@ -418,6 +418,136 @@ describe("net.Socket write", () => {
     }
     server.close();
   });
+
+  // Client-mode `Handlers.markInactive()` frees the per-connection Handlers
+  // allocation when the last reference drops, but the native socket's
+  // `handlers` field was left pointing at the freed block. Reusing that
+  // native socket as `prev` in `connectInner` (the net.Socket reconnect
+  // path) then called `deinit()`/`destroy()` on freed memory, and
+  // `getListener` read `handlers.mode` through the same dangling pointer.
+  // These only fault under ASAN/debug-poison, so they are gated accordingly.
+  it.skipIf(!isDebug && !isASAN)(
+    "native handle does not retain a dangling handlers pointer after connectError (scope.exit path)",
+    async () => {
+      const fixture = `
+        const net = require("node:net");
+        const s = new net.Socket();
+        let handle;
+        s.on("error", () => {});
+        // Capture the native handle before _destroy nulls s._handle.
+        s.once("connectionAttemptFailed", () => { handle = s._handle; });
+        s.on("close", () => {
+          // handleConnectError never reached markActive (is_active == false),
+          // so the socket-level markInactive is a no-op. The Handlers were
+          // freed by scope.exit() — which must also null the socket's field.
+          for (let i = 0; i < 100; i++) {
+            if (handle.listener !== undefined) {
+              console.error("unexpected listener");
+              process.exit(1);
+            }
+          }
+          console.log("ok");
+        });
+        s.connect(1, "127.0.0.1");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("ok");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it.skipIf(!isDebug && !isASAN)(
+    "native handle does not retain a dangling handlers pointer after close (getListener)",
+    async () => {
+      const fixture = `
+        const net = require("node:net");
+        const server = net.createServer(c => c.end());
+        server.listen(0, "127.0.0.1", () => {
+          const port = server.address().port;
+          const s = new net.Socket();
+          let handle;
+          s.on("error", () => {});
+          s.on("connect", () => { handle = s._handle; });
+          s.on("close", () => {
+            // markInactive has freed the Handlers; without the fix the
+            // native socket's 'handlers' still points at it and
+            // '.listener' reads 'handlers.mode'.
+            for (let i = 0; i < 100; i++) {
+              if (handle.listener !== undefined) {
+                console.error("unexpected listener value");
+                process.exit(1);
+              }
+            }
+            server.close(() => console.log("ok"));
+          });
+          s.connect(port, "127.0.0.1");
+        });
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("ok");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it.skipIf(!isDebug && !isASAN)(
+    "reconnecting through a native handle whose handlers were freed does not double-free (connectInner)",
+    async () => {
+      const fixture = `
+        const net = require("node:net");
+        const server = net.createServer(c => c.end());
+        server.listen(0, "127.0.0.1", () => {
+          const port = server.address().port;
+          let iterations = 0;
+          function once(done) {
+            const s = new net.Socket();
+            let handle;
+            s.on("error", () => {});
+            s.on("connect", () => { handle = s._handle; });
+            s.on("close", () => {
+              // Route a second connect through the same native socket.
+              // connectInner sees prev.handlers (stale) and — without the
+              // fix — calls deinit()/destroy() on the freed allocation.
+              const s2 = new net.Socket();
+              s2._handle = handle;
+              s2.on("error", () => {});
+              s2.on("connect", () => s2.destroy());
+              s2.on("close", () => done());
+              s2.connect(port, "127.0.0.1");
+            });
+            s.connect(port, "127.0.0.1");
+          }
+          (function next() {
+            if (iterations++ < 5) once(next);
+            else server.close(() => console.log(JSON.stringify({ iterations })));
+          })();
+        });
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout.trim())).toEqual({ iterations: 6 });
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 it("should handle connection error", done => {

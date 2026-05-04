@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
 
 // Regression test for broken double-checked locking on `fsevents_default_loop`
-// in src/bun.js/node/fs_events.zig.
+// in src/runtime/node/fs_events.zig.
 //
 // `FSEvents.watch()` is called from `Darwin.addWatch` (path_watcher.zig)
 // WITHOUT holding `manager.mutex` (it's released first to keep lock order

@@ -886,6 +886,182 @@ it("$npm_lifecycle_event is accurate during publish", async () => {
   expect(exitCode).toBe(0);
 });
 
+describe("readme", async () => {
+  // Captures the PUT body sent to the mock registry so we can assert on
+  // the version-level `readme` / `readmeFilename` fields. Matches `npm
+  // publish` behaviour — see https://github.com/oven-sh/bun/issues/30255.
+  function startMockRegistry(): { server: ReturnType<typeof Bun.serve>; lastBody: () => any } {
+    let captured: any = null;
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (req.method === "PUT") {
+          captured = await req.json();
+          return new Response("OK", { status: 200 });
+        }
+        return new Response("Not Found", { status: 404 });
+      },
+    });
+    return { server, lastBody: () => captured };
+  }
+
+  // The mock registry doesn't validate the token; a stable placeholder avoids
+  // spinning up verdaccio just to generate one.
+  const mockToken = "mock-token-readme";
+
+  async function writeBunfig(dir: string, port: number) {
+    await write(
+      join(dir, "bunfig.toml"),
+      `
+      [install]
+      cache = false
+      registry = { url = "http://localhost:${port}", token = "${mockToken}" }`,
+    );
+  }
+
+  test("workspace publish populates readme and readmeFilename", async () => {
+    const packageDir = tmpdirSync();
+    const { server, lastBody } = startMockRegistry();
+    using mock = server;
+
+    const readmeContents = "# Hello World\n\nA readme for the test package.";
+    await Promise.all([
+      writeBunfig(packageDir, mock.port),
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "readme-pkg-1", version: "1.0.0" })),
+      write(join(packageDir, "README.md"), readmeContents),
+    ]);
+
+    const { out, err, exitCode } = await publish(env, packageDir);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const body = lastBody();
+    expect(body).not.toBeNull();
+    expect(body.versions["1.0.0"]).toMatchObject({
+      readme: readmeContents,
+      readmeFilename: "README.md",
+    });
+  });
+
+  test("tarball publish populates readme and readmeFilename", async () => {
+    const packageDir = tmpdirSync();
+    const { server, lastBody } = startMockRegistry();
+    using mock = server;
+
+    const readmeContents = "# Tarball Readme\n\nFrom inside the tarball.";
+    await Promise.all([
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "readme-pkg-2", version: "2.0.0" })),
+      write(join(packageDir, "README.md"), readmeContents),
+    ]);
+
+    await pack(packageDir, env);
+    await writeBunfig(packageDir, mock.port);
+
+    const { err, exitCode } = await publish(env, packageDir, "./readme-pkg-2-2.0.0.tgz");
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const body = lastBody();
+    expect(body).not.toBeNull();
+    expect(body.versions["2.0.0"]).toMatchObject({
+      readme: readmeContents,
+      readmeFilename: "README.md",
+    });
+  });
+
+  test("workspace publish without README sets ERROR sentinel", async () => {
+    // Matches npm's behaviour: when no README file exists, data.readme is set
+    // to "ERROR: No README data found!" so the registry never stores an empty
+    // string. See @npmcli/package-json normalize.js.
+    const packageDir = tmpdirSync();
+    const { server, lastBody } = startMockRegistry();
+    using mock = server;
+
+    await Promise.all([
+      writeBunfig(packageDir, mock.port),
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "readme-pkg-3", version: "3.0.0" })),
+    ]);
+
+    const { err, exitCode } = await publish(env, packageDir);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const body = lastBody();
+    expect(body.versions["3.0.0"].readme).toBe("ERROR: No README data found!");
+    expect(body.versions["3.0.0"].readmeFilename).toBeUndefined();
+  });
+
+  test("existing readme in package.json is preserved", async () => {
+    const packageDir = tmpdirSync();
+    const { server, lastBody } = startMockRegistry();
+    using mock = server;
+
+    const userProvidedReadme = "explicit readme from package.json";
+    await Promise.all([
+      writeBunfig(packageDir, mock.port),
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({ name: "readme-pkg-4", version: "4.0.0", readme: userProvidedReadme }),
+      ),
+      write(join(packageDir, "README.md"), "file-based contents, should be ignored"),
+    ]);
+
+    const { err, exitCode } = await publish(env, packageDir);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const body = lastBody();
+    expect(body.versions["4.0.0"].readme).toBe(userProvidedReadme);
+  });
+
+  test("markdown variant is preferred over extensionless README", async () => {
+    const packageDir = tmpdirSync();
+    const { server, lastBody } = startMockRegistry();
+    using mock = server;
+
+    const mdContents = "markdown variant";
+    await Promise.all([
+      writeBunfig(packageDir, mock.port),
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "readme-pkg-5", version: "5.0.0" })),
+      write(join(packageDir, "README"), "plain readme"),
+      write(join(packageDir, "README.md"), mdContents),
+    ]);
+
+    const { err, exitCode } = await publish(env, packageDir);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const body = lastBody();
+    expect(body.versions["5.0.0"]).toMatchObject({
+      readme: mdContents,
+      readmeFilename: "README.md",
+    });
+  });
+
+  test("extensionless README is used when no markdown variant exists", async () => {
+    const packageDir = tmpdirSync();
+    const { server, lastBody } = startMockRegistry();
+    using mock = server;
+
+    const plainContents = "extensionless readme";
+    await Promise.all([
+      writeBunfig(packageDir, mock.port),
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "readme-pkg-6", version: "6.0.0" })),
+      write(join(packageDir, "README"), plainContents),
+    ]);
+
+    const { err, exitCode } = await publish(env, packageDir);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const body = lastBody();
+    expect(body.versions["6.0.0"]).toMatchObject({
+      readme: plainContents,
+      readmeFilename: "README",
+    });
+  });
+});
+
 describe("--tolerate-republish", async () => {
   test("republishing normally fails", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();

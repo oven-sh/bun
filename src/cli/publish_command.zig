@@ -51,6 +51,13 @@ pub const PublishCommand = struct {
 
                 var maybe_package_json_contents: ?[]const u8 = null;
 
+                // README match tracking: mirrors `findWorkspaceReadme`, but
+                // operates streamingly over tar entries.
+                var readme_markdown_name: ?[]const u8 = null;
+                var readme_markdown_bytes: ?[]const u8 = null;
+                var readme_fallback_name: ?[]const u8 = null;
+                var readme_fallback_bytes: ?[]const u8 = null;
+
                 var iter = switch (Archive.Iterator.init(tarball_bytes)) {
                     .err => |err| {
                         Output.errGeneric("{s}: {s}", .{
@@ -110,6 +117,48 @@ pub const PublishCommand = struct {
                                     },
                                     .result => |bytes| bytes,
                                 };
+                            } else switch (classifyReadmeFilenameT(bun.OSPathChar, filename)) {
+                                .no_match => {},
+                                .markdown_extension => {
+                                    // Keep the lexicographically-smallest markdown
+                                    // variant, matching npm's "first markdown wins"
+                                    // behaviour over the sorted glob output.
+                                    // We must read the entry bytes here — libarchive
+                                    // iteration is one-shot and advances past unread
+                                    // entries.
+                                    const bytes = switch (try next.readEntryData(ctx.allocator, iter.archive)) {
+                                        .err => |err| {
+                                            Output.errGeneric("{s}: {s}", .{ err.message, err.archive.errorString() });
+                                            Global.crash();
+                                        },
+                                        .result => |bytes| bytes,
+                                    };
+                                    const take = readme_markdown_name == null or
+                                        cmpOsPathAsc(filename, readme_markdown_name.?);
+                                    if (take) {
+                                        if (readme_markdown_name) |old| ctx.allocator.free(old);
+                                        if (readme_markdown_bytes) |old| ctx.allocator.free(old);
+                                        readme_markdown_name = try ctx.allocator.dupe(bun.OSPathChar, filename);
+                                        readme_markdown_bytes = bytes;
+                                    } else {
+                                        ctx.allocator.free(bytes);
+                                    }
+                                },
+                                .no_extension => {
+                                    const bytes = switch (try next.readEntryData(ctx.allocator, iter.archive)) {
+                                        .err => |err| {
+                                            Output.errGeneric("{s}: {s}", .{ err.message, err.archive.errorString() });
+                                            Global.crash();
+                                        },
+                                        .result => |bytes| bytes,
+                                    };
+                                    if (readme_fallback_name == null) {
+                                        readme_fallback_name = try ctx.allocator.dupe(bun.OSPathChar, filename);
+                                        readme_fallback_bytes = bytes;
+                                    } else {
+                                        ctx.allocator.free(bytes);
+                                    }
+                                },
                             }
                         }
                     } else {
@@ -129,6 +178,33 @@ pub const PublishCommand = struct {
                 }
 
                 const package_json_contents = maybe_package_json_contents orelse return error.MissingPackageJSON;
+
+                // Pick between markdown-variant and extensionless README,
+                // matching npm's preference order.
+                const readme_info: ?ReadmeInfo = readme_info: {
+                    var chosen_name_os: []const bun.OSPathChar = undefined;
+                    var chosen_bytes: []const u8 = undefined;
+                    if (readme_markdown_name) |name| {
+                        chosen_name_os = name;
+                        chosen_bytes = readme_markdown_bytes.?;
+                        if (readme_fallback_name) |f| ctx.allocator.free(f);
+                        if (readme_fallback_bytes) |b| ctx.allocator.free(b);
+                    } else if (readme_fallback_name) |name| {
+                        chosen_name_os = name;
+                        chosen_bytes = readme_fallback_bytes.?;
+                    } else break :readme_info null;
+
+                    // Convert OS path (UTF-16 on Windows) to UTF-8 for JSON.
+                    const filename_utf8 = if (comptime bun.OSPathChar == u8)
+                        chosen_name_os
+                    else blk: {
+                        const utf8 = try strings.toUTF8Alloc(ctx.allocator, chosen_name_os);
+                        ctx.allocator.free(chosen_name_os);
+                        break :blk utf8;
+                    };
+
+                    break :readme_info .{ .filename = filename_utf8, .contents = chosen_bytes };
+                };
 
                 const package_name, const package_version, var json, const json_source = package_info: {
                     const source = &logger.Source.initPathString("package.json", package_json_contents);
@@ -204,6 +280,7 @@ pub const PublishCommand = struct {
                     json_source,
                     shasum,
                     integrity,
+                    readme_info,
                 );
 
                 Pack.Context.printSummary(
@@ -919,6 +996,11 @@ pub const PublishCommand = struct {
         };
     }
 
+    pub const ReadmeInfo = struct {
+        filename: string,
+        contents: string,
+    };
+
     pub fn normalizedPackage(
         allocator: std.mem.Allocator,
         manager: *PackageManager,
@@ -928,6 +1010,7 @@ pub const PublishCommand = struct {
         json_source: *const logger.Source,
         shasum: sha.SHA1.Digest,
         integrity: sha.SHA512.Digest,
+        readme: ?ReadmeInfo,
     ) OOM!string {
         bun.assertWithLocation(json.isObject(), @src());
 
@@ -944,6 +1027,19 @@ pub const PublishCommand = struct {
         try json.setString(allocator, "_npmVersion", "10.8.3");
         try json.setString(allocator, "integrity", integrity_fmt);
         try json.setString(allocator, "shasum", try std.fmt.allocPrint(allocator, "{s}", .{std.fmt.bytesToHex(shasum, .lower)}));
+
+        // Match npm: only set `readme` / `readmeFilename` if `readme` isn't already
+        // present in package.json, and fall back to `ERROR: No README data found!`
+        // when no README file exists. See
+        // https://github.com/npm/package-json/blob/2ac3b348aecc67ca73cdeba10428cdd455b9d2a8/lib/normalize.js#L430-L463
+        if (!hasNonEmptyStringProperty(json, "readme")) {
+            if (readme) |r| {
+                try json.setString(allocator, "readme", r.contents);
+                try json.setString(allocator, "readmeFilename", r.filename);
+            } else {
+                try json.setString(allocator, "readme", "ERROR: No README data found!");
+            }
+        }
 
         var dist_props = try allocator.alloc(G.Property, 3);
         dist_props[0] = .{
@@ -1040,6 +1136,133 @@ pub const PublishCommand = struct {
         _ = written;
 
         return writer.ctx.writtenWithoutTrailingZero();
+    }
+
+    fn hasNonEmptyStringProperty(json: *const Expr, name: string) bool {
+        if (json.asProperty(name)) |q| {
+            if (q.expr.data == .e_string) {
+                return q.expr.data.e_string.len() > 0;
+            }
+        }
+        return false;
+    }
+
+    fn cmpOsPathAsc(a: []const bun.OSPathChar, b: []const bun.OSPathChar) bool {
+        const len = @min(a.len, b.len);
+        for (a[0..len], b[0..len]) |ca, cb| {
+            if (ca < cb) return true;
+            if (ca > cb) return false;
+        }
+        return a.len < b.len;
+    }
+
+    pub const ReadmeFilenameKind = enum { no_match, no_extension, markdown_extension };
+
+    /// Classifies a filename the way npm's readme search does. Matches npm's
+    /// loop in `@npmcli/package-json`'s `normalize.js`: the file must either
+    /// equal `README` (no extension) or have an extension matching
+    /// `/\.m?a?r?k?d?o?w?n?$/i`. Other extensions like `.txt` are ignored
+    /// even though they match the `{README,README.*}` glob.
+    ///
+    /// Generic over character type so it can classify both UTF-8 filenames
+    /// from `readdir` and UTF-16 tar entry names on Windows.
+    pub fn classifyReadmeFilenameT(comptime T: type, filename: []const T) ReadmeFilenameKind {
+        const README = "README";
+        if (filename.len < README.len) return .no_match;
+        if (!strings.eqlCaseInsensitiveT(T, filename[0..README.len], README)) return .no_match;
+        if (filename.len == README.len) return .no_extension;
+        if (filename[README.len] != '.') return .no_match;
+
+        // Match /^\.m?a?r?k?d?o?w?n?$/i — each letter of "markdown" may appear
+        // at most once, in order, after the leading dot.
+        const target = "markdown";
+        var ti: usize = 0;
+        for (filename[README.len + 1 ..]) |c| {
+            const lc: u8 = if (c >= 'A' and c <= 'Z') @intCast(c + 32) else if (c < 128) @intCast(c) else return .no_match;
+            while (ti < target.len and target[ti] != lc) : (ti += 1) {}
+            if (ti == target.len) return .no_match;
+            ti += 1;
+        }
+        return .markdown_extension;
+    }
+
+    pub fn classifyReadmeFilename(filename: []const u8) ReadmeFilenameKind {
+        return classifyReadmeFilenameT(u8, filename);
+    }
+
+    /// Searches `abs_workspace_path` for a README file using the same rules as
+    /// `@npmcli/package-json`: a case-insensitive match of `{README,README.*}`,
+    /// preferring a markdown-like extension and falling back to extensionless
+    /// `README`. Non-markdown extensions other than no-extension are ignored.
+    /// Returns the chosen file's contents + filename, or null if none is found.
+    ///
+    /// Opens its own directory handle so the caller's FD state (readdir offset)
+    /// is untouched. The caller owns `filename` / `contents` in the result.
+    pub fn findWorkspaceReadme(
+        allocator: std.mem.Allocator,
+        abs_workspace_path: string,
+    ) OOM!?ReadmeInfo {
+        var workspace_dir = std.fs.openDirAbsolute(abs_workspace_path, .{ .iterate = true }) catch |err| {
+            Output.warn("failed to scan for README in {s}: {s}", .{ abs_workspace_path, @errorName(err) });
+            return null;
+        };
+        defer workspace_dir.close();
+
+        var iter = bun.DirIterator.iterate(.fromStdDir(workspace_dir), .u8);
+
+        var markdown_name: ?string = null;
+        var fallback_name: ?string = null;
+        errdefer {
+            if (markdown_name) |m| allocator.free(m);
+            if (fallback_name) |f| allocator.free(f);
+        }
+
+        while (iter.next().unwrap() catch null) |entry| {
+            if (entry.kind != .file) continue;
+            const name = entry.name.slice();
+            switch (classifyReadmeFilename(name)) {
+                .no_match => {},
+                .markdown_extension => {
+                    // npm iterates glob output (alphabetically sorted) and keeps
+                    // the first markdown match. Mirror that with the
+                    // lexicographically-smallest name for determinism regardless
+                    // of readdir order.
+                    if (markdown_name == null or strings.cmpStringsAsc({}, name, markdown_name.?)) {
+                        if (markdown_name) |old| allocator.free(old);
+                        markdown_name = try allocator.dupe(u8, name);
+                    }
+                },
+                .no_extension => {
+                    // Only one extensionless `README` variant can exist on a
+                    // case-sensitive filesystem, and a case-insensitive FS will
+                    // only report one readdir entry.
+                    if (fallback_name == null) {
+                        fallback_name = try allocator.dupe(u8, name);
+                    }
+                },
+            }
+        }
+
+        const chosen = markdown_name orelse fallback_name orelse return null;
+
+        // Free whichever wasn't chosen; keep `chosen` alive for the return value.
+        if (markdown_name) |m| {
+            if (m.ptr != chosen.ptr) allocator.free(m);
+        }
+        if (fallback_name) |f| {
+            if (f.ptr != chosen.ptr) allocator.free(f);
+        }
+
+        const contents = switch (bun.sys.File.readFrom(bun.FD.fromStdDir(workspace_dir), chosen, allocator)) {
+            .result => |bytes| bytes,
+            .err => |err| {
+                Output.warn("failed to read {s}: {s}", .{ chosen, err.name() });
+                allocator.free(chosen);
+                return null;
+            },
+        };
+
+        return .{ .filename = chosen, .contents = contents };
     }
 
     fn normalizeBin(

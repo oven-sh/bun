@@ -124,6 +124,11 @@ test("unhandled rejection mid-TLA does not abandon an in-flight wait", async () 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", source],
     env: bunEnv,
+    // The script deliberately leaves the rejection unhandled to trigger
+    // Bun's default `.bun`-mode stderr report; ignore it so the message
+    // doesn't leak into the test-runner output (Bun.spawn defaults stderr
+    // to 'inherit').
+    stderr: "ignore",
   });
 
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);

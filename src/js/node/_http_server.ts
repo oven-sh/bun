@@ -828,11 +828,13 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
 }
 
 const kBytesWritten = Symbol("kBytesWritten");
+const kBytesRead = Symbol("kBytesRead");
 const kEnableStreaming = Symbol("kEnableStreaming");
 const NodeHTTPServerSocket = class Socket extends Duplex {
   connecting = false;
   timeout = 0;
   [kBytesWritten] = 0;
+  [kBytesRead] = 0;
   [kHandle];
   server: Server;
   _httpMessage;
@@ -852,7 +854,9 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
 
   get bytesRead() {
     const handle = this[kHandle];
-    return handle ? (handle.response?.getBytesRead?.() ?? 0) : 0;
+    return handle
+      ? (handle.response?.getBytesRead?.() ?? this[kBytesRead] ?? 0)
+      : (this[kBytesRead] ?? 0);
   }
 
   get bytesWritten() {
@@ -901,6 +905,8 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     }
   }
   #closeHandle(handle, callback) {
+    // Snapshot bytesRead so it survives after the handle is cleared.
+    this[kBytesRead] = handle.response?.getBytesRead?.() ?? this[kBytesRead] ?? 0;
     this[kHandle] = undefined;
     handle.onclose = this.#onCloseForDestroy.bind(this, callback);
     handle.close();
@@ -913,6 +919,9 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     }
   }
   #onClose() {
+    const handle = this[kHandle];
+    // Snapshot bytesRead so it survives after the handle is cleared.
+    this[kBytesRead] = handle?.response?.getBytesRead?.() ?? this[kBytesRead] ?? 0;
     this[kHandle] = null;
 
     const message = this._httpMessage;

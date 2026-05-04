@@ -1595,6 +1595,13 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     }
   }
 
+  // Reconstructs the wire byte length of the HTTP request line + headers from
+  // parsed components. uWS does not expose the raw consumed offset from the
+  // parser, so this assumes canonical "Name: Value\r\n" framing. For canonical
+  // clients (curl, browsers, node:http) this matches the wire bytes; clients
+  // using RFC 7230 §3.2 OWS variations after the colon may differ by a few
+  // bytes. Used to seed socket.bytesRead with the header portion before body
+  // chunks are accumulated in onData.
   size_t uws_req_get_headers_byte_length(uws_req_t *res)
   {
     uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;

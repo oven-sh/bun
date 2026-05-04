@@ -579,3 +579,38 @@ it.skipIf(isWindows)("browser map resolution handles relative paths longer than 
     }
   });
 }
+
+describe("resolving external URL specifiers with non-ASCII characters", () => {
+  // The resolver returns http://, https://, and // specifiers as-is (marked external).
+  // When the specifier contains non-ASCII characters, the intermediate UTF-8 buffer
+  // is heap-allocated and freed before the caller reads the result, so the resolved
+  // path must be cloned rather than borrowed.
+  it.each([
+    ["http://localhost/path?query=´5&foo=bar"],
+    ["http://localhost/´path?query=a"],
+    ["http://localhost/´path"],
+    ["https://example/´"],
+    ["//example/´?q"],
+  ])("Bun.resolveSync(%j)", specifier => {
+    expect(Bun.resolveSync(specifier, import.meta.dir)).toBe(specifier);
+  });
+
+  it("import.meta.resolveSync", () => {
+    const specifier = "http://localhost/path?query=´5&foo=bar";
+    expect(import.meta.resolveSync(specifier)).toBe(specifier);
+  });
+
+  it("require with non-ASCII http specifier does not crash", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `try { require("http://localhost/path?query=´5&foo=bar"); } catch (e) { console.log("caught", e.constructor.name); }`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("AddressSanitizer");
+    expect(stderr).not.toContain("panic");
+    expect(stdout).toContain("caught");
+    expect(exitCode).toBe(0);
+  });
+});

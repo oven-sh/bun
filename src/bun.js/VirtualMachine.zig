@@ -1927,7 +1927,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
     if (jsc.ModuleLoader.HardcodedModule.Alias.get(specifier_utf8.slice(), .bun, .{})) |hardcoded| {
         res.* = ErrorableString.ok(
             if (is_user_require_resolve and hardcoded.node_builtin)
-                specifier
+                specifier.dupeRef()
             else
                 bun.String.init(hardcoded.path),
         );
@@ -2010,7 +2010,10 @@ pub fn resolveMaybeNeedsTrailingSlash(
             bun.String.empty;
     }
 
-    res.* = ErrorableString.ok(bun.String.init(result.path));
+    // `result.path` can be a slice into `specifier_utf8` (e.g. http:// specifiers that
+    // the resolver marks external without copying), so clone it for the same reason as
+    // `result.query_string` above. Callers must deref `res.result.value` on success.
+    res.* = ErrorableString.ok(bun.String.cloneUTF8(result.path));
 }
 
 pub const main_file_name: string = "bun:main";

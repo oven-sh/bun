@@ -34,6 +34,7 @@ fn findPath(
     } else findPathInner(request_bun_str, bun.String.static(""), global);
 
     if (found) |str| {
+        defer str.deref();
         return str.toJS(global);
     }
 

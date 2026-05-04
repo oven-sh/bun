@@ -592,10 +592,14 @@ describe("bundler", () => {
         capture(1.1 + 0.2);
         // Large powers that would inflate should be preserved
         capture(10 ** 20);
+        // \`2 ** 32\` produced a u64 value outside the lemire table range in
+        // \`fastDigitCount\` and panicked the ASAN build on everything that
+        // imported readable-stream. Guard it explicitly.
+        capture(2 ** 32);
       `,
     },
     minifySyntax: true,
-    capture: ["1 / 3", "2 / 3", "1 / 7", "10 / 3", "3", "100", "50", "81", "1.3", "10 ** 20"],
+    capture: ["1 / 3", "2 / 3", "1 / 7", "10 / 3", "3", "100", "50", "81", "1.3", "10 ** 20", "2 ** 32"],
   });
   // https://github.com/oven-sh/bun/issues/30203
   // Enum bodies must still fully fold so the emitted table has numeric

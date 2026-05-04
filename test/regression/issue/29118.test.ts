@@ -332,3 +332,29 @@ test("image inside a heading doesn't emit the URL-parens fallback", () => {
   const maxLineWidth = Math.max(0, ...out.split("\n").map(l => Bun.stringWidth(l)));
   expect(maxLineWidth).toBeLessThanOrEqual(40);
 });
+
+test("relative `cwd` is resolved against the process cwd, not `/`", async () => {
+  // `bun.path.joinAbsString` assumes its `cwd` argument is already
+  // absolute (it even asserts that on Windows), so a relative value
+  // passed to `theme.image_base_dir` used to produce `/<rel>/img.png`
+  // on POSIX and panic on Windows debug. The JS API now absolutizes
+  // against `process.cwd()` before handing it to the renderer.
+  using dir = tempDir("md-kitty-relcwd-", {});
+  writeFileSync(join(String(dir), "pic.png"), PNG_8x8);
+  const prev_cwd = process.cwd();
+  process.chdir(String(dir));
+  try {
+    // Relative cwd (".") — must resolve to the process cwd we just
+    // chdir'd into, not `/`, so `./pic.png` is found.
+    const out = Bun.markdown.ansi("![](./pic.png)\n", {
+      colors: true,
+      kittyGraphics: true,
+      columns: 80,
+      cwd: ".",
+    });
+    // Kitty APC emitted → the file was found at the relative cwd.
+    expect(out).toContain("\x1b_Ga=T,t=f,f=100,q=2");
+  } finally {
+    process.chdir(prev_cwd);
+  }
+});

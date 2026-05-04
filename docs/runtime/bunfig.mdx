@@ -747,13 +747,14 @@ For more details see [Minimum release age](/pm/cli/install#minimum-release-age) 
 
 ### `install.minimumReleaseAgeExcludes`
 
-An array of package names that are exempt from the `minimumReleaseAge` check. Default `[]`.
+An array of package entries that are exempt from the `minimumReleaseAge` check. Default `[]`.
+
+Entries are either a bare package name (whitelists every version) or a pinned `name@version` (whitelists exactly that one version). See [Minimum release age](/pm/cli/install#minimum-release-age) for the full rules.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
 minimumReleaseAge = 259200
-# These packages will bypass the 3-day minimum age requirement
-minimumReleaseAgeExcludes = ["@types/bun", "typescript"]
+minimumReleaseAgeExcludes = ["@types/bun", "typescript@5.4.5"]
 ```
 
 ## `bun run`

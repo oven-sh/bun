@@ -40,6 +40,7 @@
 #include "ScriptExecutionContext.h"
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include "MessageEvent.h"
 #include "BunWorkerGlobalScope.h"
 #include "CloseEvent.h"
@@ -592,6 +593,20 @@ extern "C" void WebWorker__fireEarlyMessages(Worker* worker, Zig::GlobalObject* 
 
 extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString message, JSC::EncodedJSValue errorValue)
 {
+    // Zig's onUnhandledRejection calls us and then proceeds straight to
+    // shutdown() → teardownJSCVM, whose DECLARE_THROW_SCOPE is the next
+    // scope declared on this thread. Both dispatchEvent (user onerror
+    // listeners) and SerializedScriptValue::create below declare throw
+    // scopes; without a scope here to observe them, the validator flags
+    // an unchecked exception when teardownJSCVM's scope is entered. This
+    // is a top-of-JS-stack boundary (we're called from Zig and return to
+    // Zig), so catch-and-clear — any listener exception during uncaught-
+    // error dispatch shouldn't block serializing the original error to
+    // the parent, and a termination exception (set by setRequestedTerminate
+    // right after we return) is expected and left alone.
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
     JSValue error = JSC::JSValue::decode(errorValue);
     ErrorEvent::Init init;
     init.message = message.toWTFString(BunString::ZeroCopy).isolatedCopy();
@@ -600,16 +615,19 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     init.bubbles = false;
 
     globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    scope.clearExceptionExceptTermination();
     switch (worker->options().kind) {
     case WorkerOptions::Kind::Web:
-        return worker->dispatchErrorWithMessage(message.toWTFString(BunString::ZeroCopy));
+        worker->dispatchErrorWithMessage(message.toWTFString(BunString::ZeroCopy));
+        break;
     case WorkerOptions::Kind::Node:
         if (!worker->dispatchErrorWithValue(globalObject, error)) {
             // If serialization threw an error, use the string instead
             worker->dispatchErrorWithMessage(message.toWTFString(BunString::ZeroCopy));
         }
-        return;
+        break;
     }
+    scope.clearExceptionExceptTermination();
 }
 
 extern "C" WebCore::Worker* WebWorker__getParentWorker(void* bunVM);

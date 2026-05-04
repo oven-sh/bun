@@ -2567,7 +2567,8 @@ pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
     this.main_resolved_path = bun.String.empty;
     this.unhandled_error_counter = 0;
 
-    const new_global = JSGlobalObject.createForTestIsolation(this.global, this.console);
+    const old_global = this.global;
+    const new_global = JSGlobalObject.createForTestIsolation(old_global, this.console);
     this.global = new_global;
     VMHolder.cached_global_object = new_global;
     this.regular_event_loop.global = new_global;
@@ -2575,6 +2576,17 @@ pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
     if (this.ipc) |ipc| if (ipc == .initialized) {
         ipc.initialized.globalThis = new_global;
     };
+    // NapiEnv cleanup hooks registered via napi_internal_register_cleanup_zig
+    // captured the old global in CleanupHook.globalThis; the C++ side has
+    // already retargeted env->m_globalObject to the new global, so only the
+    // Zig-side bookkeeping pointer is stale. It isn't dereferenced (execute
+    // only calls func(ctx)), but eql() compares on it — keep it accurate so
+    // a later remove_env_cleanup_hook from the same addon matches.
+    if (this.rare_data) |rare| {
+        for (rare.cleanup_hooks.items) |*hook| {
+            if (hook.globalThis == old_global) hook.globalThis = new_global;
+        }
+    }
 
     // TODO(isolate): drain HTTPThread's keepalive pool. It lives on a separate
     // thread with its own uws loop; pooled sockets are JS-invisible and bounded

@@ -1,4 +1,3 @@
-import { spawnSync } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 

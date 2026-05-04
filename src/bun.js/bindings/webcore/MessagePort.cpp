@@ -294,6 +294,12 @@ void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& e
     auto& port = static_cast<MessagePort&>(self);
     switch (kind) {
     case Add:
+        // Node's setupPortReferencing installs a 'newListener' hook that
+        // calls this.ref() on the first 'message' listener. Mirror that so
+        // port.unref(); port.on('message', fn) re-refs (matching Node), while
+        // port.on('message', fn); port.unref() stays unref'd.
+        if (port.m_messageEventCount == 0)
+            port.m_hasRef = true;
         port.m_messageEventCount++;
         break;
     case Remove:

@@ -311,8 +311,12 @@ pub const os_path_buffer_pool = paths.os_path_buffer_pool;
 /// instantiation a distinct `threadlocal var ptr` even if the field layout
 /// happens to match another call site.
 ///
-/// The allocation is intentionally never freed; it lives for the thread's
-/// lifetime like the static threadlocals it replaces.
+/// The allocation is never explicitly freed. mimalloc associates it with
+/// the allocating thread's heap, which is abandoned on thread exit and
+/// later reclaimed by other threads, so it is not a hard leak; and since
+/// the previous static-TLS arrangement charged every thread the full cost
+/// up front regardless of use, the net high-water mark is lower even for
+/// short-lived Workers.
 pub fn ThreadlocalBuffers(comptime T: type) type {
     return struct {
         threadlocal var instance: ?*T = null;

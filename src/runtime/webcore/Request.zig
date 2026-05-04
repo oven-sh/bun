@@ -206,7 +206,9 @@ pub fn getRemoteSocketInfo(this: *Request, globalObject: *jsc.JSGlobalObject) ?j
 }
 
 pub fn calculateEstimatedByteSize(this: *Request) void {
-    this.reported_estimated_size = this.#body.value.estimatedSize() + this.sizeOfURL() + @sizeOf(Request);
+    this.reported_estimated_size = this.#body.value.estimatedSize() + this.sizeOfURL() +
+        this.integrity.byteSlice().len + this.referrer.byteSlice().len +
+        @sizeOf(Request);
 }
 
 pub export fn Bun__JSRequest__calculateEstimatedByteSize(this: *Request) void {

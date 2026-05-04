@@ -1145,43 +1145,46 @@ pub const Resolver = struct {
 
         var import_path = input_import_path;
 
-        // Per the ESM spec, relative and absolute import specifiers are URL-like
-        // and percent-encoded characters should be decoded before filesystem lookup.
+        // Per the ESM spec, relative import specifiers are URL-like and
+        // percent-encoded characters should be decoded before filesystem lookup.
         // Only ESM import statements and dynamic import() are decoded — CJS
         // require(), CSS imports, and CLI entry points use literal paths.
         // Encoded path separators (%2f, %5c) are forbidden per spec.
+        //
+        // Absolute paths are NOT decoded here because `file://` URLs are already
+        // percent-decoded by the C++ layer (`WTF::URL::fileSystemPath()` in
+        // ZigGlobalObject.cpp) before reaching the resolver. Decoding again
+        // would break canonical `import(pathToFileURL(p).href)` for paths
+        // containing literal `%` or other characters that survive one decode.
         if ((kind == .stmt or kind == .dynamic) and
-            bun.strings.containsChar(import_path, '%'))
+            bun.strings.containsChar(import_path, '%') and
+            (bun.strings.hasPrefixComptime(import_path, "./") or
+                bun.strings.hasPrefixComptime(import_path, "../")))
         {
-            const is_relative_or_absolute = std.fs.path.isAbsolute(import_path) or
-                bun.strings.hasPrefixComptime(import_path, "./") or
-                bun.strings.hasPrefixComptime(import_path, "../");
-            if (is_relative_or_absolute) {
-                // Encoded "/" (%2f/%2F) and "\" (%5c/%5C) are invalid per ESM spec.
-                if (bun.strings.contains(import_path, "%2f") or
-                    bun.strings.contains(import_path, "%2F") or
-                    bun.strings.contains(import_path, "%5c") or
-                    bun.strings.contains(import_path, "%5C"))
-                {
-                    return .{ .not_found = {} };
-                }
-                const buf = bufs(.percent_decode_buf);
-                var fbs = std.io.fixedBufferStream(buf);
-                const decoded_len = PercentEncoding.decode(
-                    @TypeOf(fbs.writer()),
-                    fbs.writer(),
-                    import_path,
-                ) catch {
-                    return .{ .not_found = {} };
-                };
-                const decoded = buf[0..decoded_len];
-                // Reject encoded NUL bytes (%00) — a literal NUL check runs
-                // before this function, so decoded NULs must not bypass it.
-                if (bun.strings.containsChar(decoded, 0)) {
-                    return .{ .not_found = {} };
-                }
-                import_path = decoded;
+            // Encoded "/" (%2f/%2F) and "\" (%5c/%5C) are invalid per ESM spec.
+            if (bun.strings.contains(import_path, "%2f") or
+                bun.strings.contains(import_path, "%2F") or
+                bun.strings.contains(import_path, "%5c") or
+                bun.strings.contains(import_path, "%5C"))
+            {
+                return .{ .not_found = {} };
             }
+            const buf = bufs(.percent_decode_buf);
+            var fbs = std.io.fixedBufferStream(buf);
+            const decoded_len = PercentEncoding.decode(
+                @TypeOf(fbs.writer()),
+                fbs.writer(),
+                import_path,
+            ) catch {
+                return .{ .not_found = {} };
+            };
+            const decoded = buf[0..decoded_len];
+            // Reject encoded NUL bytes (%00) — a literal NUL check runs
+            // before this function, so decoded NULs must not bypass it.
+            if (bun.strings.containsChar(decoded, 0)) {
+                return .{ .not_found = {} };
+            }
+            import_path = decoded;
         }
 
         // This implements the module resolution algorithm from node.js, which is
@@ -1259,7 +1262,7 @@ pub const Resolver = struct {
 
                 return .{
                     .success = Result{
-                        .path_pair = .{ .primary = Path.init(bun.handleOom(r.fs.dirname_store.append(@TypeOf(import_path), import_path))) },
+                        .path_pair = .{ .primary = Path.init(import_path) },
                         .flags = .{ .is_external = true },
                     },
                 };

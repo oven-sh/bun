@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("ESM import with percent-encoded comma (%2c) resolves correctly", async () => {
@@ -122,19 +121,23 @@ test("ESM dynamic import() with percent-encoded characters resolves correctly", 
   expect(exitCode).toBe(0);
 });
 
-test("ESM import with absolute percent-encoded path resolves correctly", async () => {
+// Regression: `file://` URLs are already percent-decoded by the C++ layer
+// (WTF::URL::fileSystemPath()) before reaching the Zig resolver. Absolute
+// paths must NOT be decoded again, or canonical `pathToFileURL` imports break
+// for filenames containing literal `%` or already-encoded sequences.
+test("pathToFileURL import preserves literal % in filename", async () => {
   using dir = tempDir("issue-28745", {
-    "foo,bar.mjs": `console.log('absolute comma works');`,
+    "100%.mjs": `console.log('literal percent works');`,
+    "loader.mjs": `import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+const here = dirname(fileURLToPath(import.meta.url));
+const url = pathToFileURL(join(here, '100%.mjs')).href;
+await import(url);`,
   });
 
-  // Write test.mjs with an absolute path pointing into the temp dir.
-  // Normalize to forward slashes so backslashes on Windows don't become
-  // JS escape sequences inside the import string literal.
-  const absPath = `${String(dir)}/foo%2cbar.mjs`.replaceAll("\\", "/");
-  writeFileSync(`${String(dir)}/test.mjs`, `import ${JSON.stringify(absPath)};\n`);
-
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", "test.mjs"],
+    cmd: [bunExe(), "run", "loader.mjs"],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
@@ -143,6 +146,30 @@ test("ESM import with absolute percent-encoded path resolves correctly", async (
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout).toBe("absolute comma works\n");
+  expect(stdout).toBe("literal percent works\n");
+  expect(exitCode).toBe(0);
+});
+
+test("pathToFileURL import preserves filename with literal %2c", async () => {
+  using dir = tempDir("issue-28745", {
+    "foo%2cbar.mjs": `console.log('literal percent-2c works');`,
+    "loader.mjs": `import { pathToFileURL, fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+const here = dirname(fileURLToPath(import.meta.url));
+const url = pathToFileURL(join(here, 'foo%2cbar.mjs')).href;
+await import(url);`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "loader.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("literal percent-2c works\n");
   expect(exitCode).toBe(0);
 });

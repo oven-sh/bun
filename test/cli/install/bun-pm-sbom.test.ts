@@ -303,10 +303,7 @@ describe("bun pm sbom", () => {
 
   test("produces the same SBOM when run from inside a workspace subdirectory", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
-    await write(
-      packageJson,
-      JSON.stringify({ name: "sbom-ws-sub", version: "1.0.0", workspaces: ["packages/*"] }),
-    );
+    await write(packageJson, JSON.stringify({ name: "sbom-ws-sub", version: "1.0.0", workspaces: ["packages/*"] }));
     await write(
       join(packageDir, "packages", "pkg-a", "package.json"),
       JSON.stringify({ name: "pkg-a", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),

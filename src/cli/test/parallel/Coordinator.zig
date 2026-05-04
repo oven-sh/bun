@@ -376,13 +376,12 @@ pub const Coordinator = struct {
     }
 
     /// A worker was killed by a crash signal — treat this as a Bun bug, not
-    /// a test failure. Shut down every other worker and mark all remaining
+    /// a test failure. Print the panic banner (even if --bail already set
+    /// `bailed`), terminate every other worker, and mark all remaining
     /// files as aborted so the run ends immediately with a non-zero exit
     /// and the panic's stderr (already flushed via flushCaptured) is the
     /// last meaningful output, not buried under hundreds of later passes.
     fn abortOnWorkerPanic(this: *Coordinator, file_idx: u32, status: bun.spawn.Status) void {
-        if (this.bailed) return;
-        this.bailed = true;
         this.breakDots();
         Output.prettyError(
             "\n<red>error<r>: a test worker process crashed with <b>{s}<r> while running <b>{s}<r>.\n" ++
@@ -390,8 +389,22 @@ pub const Coordinator = struct {
             .{ describeStatus(status), this.relPath(file_idx) },
         );
         Output.flush();
+        if (this.bailed) return;
+        this.bailed = true;
+        // .shutdown() only takes effect between files, so a worker that's
+        // mid-file would keep producing output after the panic banner.
+        // Terminate the whole process group (same as the SIGINT path) so the
+        // run ends now; reapWorker() will account each inflight file as a
+        // crash when the exit arrives.
         for (this.workers[0..this.spawned_count]) |*other| {
-            if (other.alive and other.inflight == null) other.shutdown();
+            if (!other.alive) continue;
+            if (other.process) |p| {
+                if (Environment.isPosix) {
+                    _ = std.c.kill(-p.pid, std.posix.SIG.TERM);
+                } else {
+                    _ = p.kill(1);
+                }
+            }
         }
         this.abortQueuedFiles("aborted: worker panicked");
     }

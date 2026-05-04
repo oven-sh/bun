@@ -2572,6 +2572,9 @@ pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
     this.global = new_global;
     VMHolder.cached_global_object = new_global;
     this.regular_event_loop.global = new_global;
+    // macro_event_loop.global is assigned once from this.global at construction
+    // and would otherwise keep the first file's dead global across the whole run.
+    this.macro_event_loop.global = new_global;
     this.has_loaded_constructors = true;
     if (this.ipc) |ipc| if (ipc == .initialized) {
         ipc.initialized.globalThis = new_global;

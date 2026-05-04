@@ -4288,13 +4288,13 @@ pub fn NewParser_(
                         // `knownPrimitive`, whose recursion through
                         // `.bin_add` would stack-overflow on the
                         // million-deep `a+a+a+…` chain in
-                        // `transpiler-stack-overflow.test.ts` (where `a` is
-                        // an identifier and the outer shape is irrelevant
-                        // anyway).
+                        // `transpiler-stack-overflow.test.ts`. For those
+                        // tags `exprCanBeRemovedIfUnusedWithoutDCECheck` is
+                        // already known to return true (literal fast-path
+                        // above), so no recursion is needed.
                         .bin_add, .bin_sub, .bin_mul, .bin_div, .bin_rem, .bin_pow => {
                             if (ex.left.data.extractNumericValue() != null and ex.right.data.extractNumericValue() != null) {
-                                return p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.left) and
-                                    p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.right);
+                                return true;
                             }
                         },
                         else => {},

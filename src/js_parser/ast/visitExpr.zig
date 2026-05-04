@@ -1149,7 +1149,7 @@ pub fn VisitExpr(
                 //
                 // const binding = await import(`./${process.platform}-${process.arch}.node`);
                 //
-                const prev_should_fold_typescript_constant_expressions = true;
+                const prev_should_fold_typescript_constant_expressions = p.should_fold_typescript_constant_expressions;
                 const prev_fold_numeric_constants_unconditionally = p.fold_numeric_constants_unconditionally;
                 defer {
                     p.should_fold_typescript_constant_expressions = prev_should_fold_typescript_constant_expressions;

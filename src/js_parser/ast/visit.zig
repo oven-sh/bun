@@ -191,9 +191,25 @@ pub fn Visit(
                     if (was_anonymous_named_expr and val.data == .e_class and val.data.e_class.should_lower_standard_decorators and decl.binding.data == .b_identifier) {
                         p.decorator_class_name = p.loadNameFromRef(decl.binding.data.b_identifier.ref);
                     }
+                    // For a const decl that could become a const_values entry
+                    // (inlining on), force numeric arithmetic to fold in the
+                    // initializer. Otherwise `const RATIO = 16/9` stays as
+                    // `E.Binary`, `canBeConstValue` returns false, the ref is
+                    // never registered, and cross-statement inlining / DCE
+                    // that depended on it (e.g. `if (RATIO > 1) { keep } else
+                    // { dead }`) silently stops working.
+                    const want_unconditional_numeric_fold = was_const and
+                        !p.current_scope.is_after_const_local_prefix and
+                        p.options.features.inlining and
+                        decl.binding.data == .b_identifier;
+                    const prev_fold_numeric_constants_unconditionally = p.fold_numeric_constants_unconditionally;
+                    if (want_unconditional_numeric_fold) {
+                        p.fold_numeric_constants_unconditionally = true;
+                    }
                     decl.value = p.visitExprInOut(val, .{
                         .is_immediately_assigned_to_decl = true,
                     });
+                    p.fold_numeric_constants_unconditionally = prev_fold_numeric_constants_unconditionally;
                     p.decorator_class_name = prev_decorator_class_name;
 
                     if (p.options.features.react_fast_refresh) {

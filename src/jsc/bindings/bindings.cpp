@@ -5444,7 +5444,10 @@ restart:
                 break;
             if (iterating == globalObject)
                 break;
-            iterating = iterating->getPrototype(globalObject).getObject();
+            JSValue proto = iterating->getPrototype(globalObject);
+            // Ignore exceptions from Proxy "getPrototype" trap.
+            CLEAR_IF_EXCEPTION(scope);
+            iterating = proto ? proto.getObject() : nullptr;
         }
     }
 

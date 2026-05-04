@@ -707,9 +707,9 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
         // null — e.g. `signal: null` — which WebIDL treats as a present
         // value) makes init non-empty.
         const keys = [_][]const u8{
-            "method",         "headers",     "body",        "referrer",
-            "referrerPolicy", "mode",        "credentials", "cache",
-            "redirect",       "integrity",   "keepalive",   "signal",
+            "method",         "headers",   "body",        "referrer",
+            "referrerPolicy", "mode",      "credentials", "cache",
+            "redirect",       "integrity", "keepalive",   "signal",
             "duplex",         "window",
         };
         inline for (keys) |key| {
@@ -978,7 +978,6 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
                 fields.insert(.referrer);
             }
         }
-
     }
 
     if (globalThis.hasException()) {

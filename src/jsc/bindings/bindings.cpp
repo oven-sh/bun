@@ -3308,9 +3308,11 @@ bool JSC__JSValue__asArrayBuffer(
 }
 
 // Pin/unpin the backing ArrayBuffer of a JSArrayBuffer or JSArrayBufferView so
-// transfer()/detach() throw while a native borrower holds a slice into it.
-// `pin` is a no-op on SharedArrayBuffer (already non-detachable). Returns
-// false if `value` has no ArrayBuffer impl.
+// a concurrent transfer()/detach copies the contents out instead of freeing
+// the backing store while a native borrower holds a slice into it
+// (ArrayBuffer::transferTo → !isDetachable() → m_contents.copyTo — the source
+// stays attached). `pin` is a no-op on SharedArrayBuffer (already
+// non-detachable). Returns false if `value` has no ArrayBuffer impl.
 static JSC::ArrayBuffer* arrayBufferImpl(JSC::JSValue value)
 {
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))

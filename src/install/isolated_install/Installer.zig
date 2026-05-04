@@ -1708,21 +1708,62 @@ pub const Installer = struct {
         switch (sys.renameat(FD.cwd(), staging.sliceZ(), FD.cwd(), final.sliceZ())) {
             .result => return .success,
             .err => |err| {
-                const collided = switch (err.getErrno()) {
-                    .EXIST, .NOTEMPTY => true,
-                    // Windows maps a rename onto an in-use directory to
-                    // ERROR_ACCESS_DENIED; on POSIX PERM/ACCES are real
-                    // permission failures and must propagate.
-                    .PERM, .ACCES => Environment.isWindows,
-                    else => false,
-                };
+                if (!isRenameCollision(err)) {
+                    FD.cwd().deleteTree(staging.slice()) catch {};
+                    return .initErr(err);
+                }
+                // Under --force, the existing entry may be the corrupt one
+                // we were asked to replace. Swap it aside (atomic from a
+                // reader's POV: `final` is always either the old or the new
+                // tree, never missing), publish staging, then GC the old
+                // tree. Without --force, the existing entry came from a
+                // concurrent install and is content-identical — keep it and
+                // discard ours.
+                if (this.manager.options.enable.force_install) {
+                    var old: bun.AbsPath(.{ .sep = .auto }) = .init();
+                    defer old.deinit();
+                    old.append(this.global_store_path.?);
+                    old.appendFmt("{f}.old-{x}", .{
+                        Store.Entry.fmtGlobalStorePath(entry_id, this.store, this.lockfile),
+                        bun.fastRandom(),
+                    });
+                    if (sys.renameat(FD.cwd(), final.sliceZ(), FD.cwd(), old.sliceZ()).asErr()) |swap_err| {
+                        FD.cwd().deleteTree(staging.slice()) catch {};
+                        return .initErr(swap_err);
+                    }
+                    switch (sys.renameat(FD.cwd(), staging.sliceZ(), FD.cwd(), final.sliceZ())) {
+                        .result => {
+                            FD.cwd().deleteTree(old.slice()) catch {};
+                            return .success;
+                        },
+                        .err => |publish_err| {
+                            // Another --force install raced us in the window
+                            // between swap-out and publish. Theirs is fresh
+                            // too; clean up both temp trees.
+                            FD.cwd().deleteTree(staging.slice()) catch {};
+                            FD.cwd().deleteTree(old.slice()) catch {};
+                            return if (isRenameCollision(publish_err)) .success else .initErr(publish_err);
+                        },
+                    }
+                }
                 FD.cwd().deleteTree(staging.slice()) catch {};
                 // A concurrent install renamed first; both writers produced
                 // the same content-addressed bytes, so theirs is as good as
                 // ours.
-                return if (collided) .success else .initErr(err);
+                return .success;
             },
         }
+    }
+
+    fn isRenameCollision(err: sys.Error) bool {
+        return switch (err.getErrno()) {
+            .EXIST, .NOTEMPTY => true,
+            // Windows maps a rename onto an in-use directory to
+            // ERROR_ACCESS_DENIED; on POSIX PERM/ACCES are real
+            // permission failures and must propagate.
+            .PERM, .ACCES => Environment.isWindows,
+            else => false,
+        };
     }
 
     /// Project-local path `node_modules/.bun/<storepath>` (the symlink that

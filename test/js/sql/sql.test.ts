@@ -1917,6 +1917,19 @@ if (isDockerEnabled()) {
       expect(result[1][0].x).toEqual(2);
     });
 
+    test("simple query with multiple statements and different column names", async () => {
+      // Each result set has its own RowDescription; the statement's cached
+      // structure must be rebuilt for the second one instead of reusing the
+      // first (which would surface as {x: 2} below).
+      const result = await sql`select 1 as x;select 2 as y`.simple();
+      expect(result).toEqual([[{ x: 1 }], [{ y: 2 }]]);
+    });
+
+    test("simple query with multiple statements and different column counts", async () => {
+      const result = await sql.unsafe("select 1 as one; select 1 as a, 2 as b, 3 as c; select 'hi' as greeting");
+      expect(result).toEqual([[{ one: 1 }], [{ a: 1, b: 2, c: 3 }], [{ greeting: "hi" }]]);
+    });
+
     // t('listen and notify', async() => {
     //   const sql = postgres(options)
     //   const channel = 'hello'

@@ -124,6 +124,18 @@ pub fn unrefByIndex(assets: *Assets, index: EntryIndex, dec_count: u32) void {
         assets.files.values()[index.get()].deref();
         assets.files.swapRemoveAt(index.get());
         _ = assets.refs.swapRemove(index.get());
+        // `swapRemove` moved the entry that was at the old last index into
+        // `index`'s slot. Any `path_map` value that still points at the old
+        // last index (now equal to `files.count()`) must be patched to point
+        // at the new slot, otherwise the next lookup for that path would read
+        // past the end of `files`/`refs`, or alias an unrelated asset if a
+        // new entry is appended afterwards.
+        const moved_from: u30 = @intCast(assets.files.count());
+        if (moved_from != index.get()) {
+            for (assets.path_map.values()) |*entry_index| {
+                if (entry_index.get() == moved_from) entry_index.* = index;
+            }
+        }
     }
 }
 

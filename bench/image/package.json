@@ -1,0 +1,7 @@
+{
+  "name": "bench-image",
+  "private": true,
+  "dependencies": {
+    "sharp": "latest"
+  }
+}

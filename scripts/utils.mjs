@@ -2283,6 +2283,20 @@ export async function getBuildMetadata(name) {
 }
 
 /**
+ * @param {string} name
+ * @param {string} value
+ * @returns {Promise<void>}
+ */
+export async function setBuildMetadata(name, value) {
+  if (isBuildkite) {
+    const { error } = await spawn(["buildkite-agent", "meta-data", "set", name, value]);
+    if (error) {
+      console.error(`Failed to set build meta-data '${name}':`, error);
+    }
+  }
+}
+
+/**
  * @typedef ConnectOptions
  * @property {string} hostname
  * @property {number} port
@@ -3051,6 +3065,7 @@ const emojiMap = {
   rocket: ["🚀", "rocket"],
   openbsd: ["🐡", "openbsd"],
   netbsd: ["🚩", "netbsd"],
+  freebsd: ["😈", "freebsd"],
 };
 
 /**

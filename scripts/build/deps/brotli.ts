@@ -48,6 +48,7 @@ export const brotli: Dependency = {
         BROTLI_HAVE_LOG2: 1,
         ...(cfg.linux && { OS_LINUX: true }),
         ...(cfg.darwin && { OS_MACOSX: true }),
+        ...(cfg.freebsd && { OS_FREEBSD: true }),
       },
       pic: true,
     };

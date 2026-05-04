@@ -7,7 +7,7 @@
 // In a debug build, the import is always allowed.
 // It is disallowed in release builds unless run in Bun's CI.
 
-const fmtBinding = $bindgenFn("fmt.bind.ts", "fmtString");
+const fmtBinding = $bindgenFn("fmt_jsc.bind.ts", "fmtString");
 
 export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight-javascript");
 export const escapePowershell = (code: string) => fmtBinding(code, "escape-powershell");
@@ -41,6 +41,8 @@ export const internalSourceMap = {
 const shellLex = $newZigFunction("shell.zig", "TestingAPIs.shellLex", 2);
 const shellParse = $newZigFunction("shell.zig", "TestingAPIs.shellParse", 2);
 
+export const sslCtxLiveCount = $newZigFunction("SecureContext.zig", "jsLiveCount", 0);
+
 export const escapeRegExp = $newZigFunction("escapeRegExp.zig", "jsEscapeRegExp", 1);
 export const escapeRegExpForPackageNameMatching = $newZigFunction(
   "escapeRegExp.zig",
@@ -60,6 +62,13 @@ export const shellInternals = {
    * ```
    */
   builtinDisabled: $newZigFunction("shell.zig", "TestingAPIs.disabledOnThisPlatform", 1),
+};
+
+export const subprocessInternals = {
+  injectStdioReadError: $newZigFunction("subprocess.zig", "TestingAPIs.injectStdioReadError", 2) as (
+    subprocess: import("bun").Subprocess,
+    kind: "stdout" | "stderr",
+  ) => boolean,
 };
 
 export const iniInternals = {
@@ -165,7 +174,7 @@ export const isOperatingSystemMatch: (operatingSystem: string[]) => boolean = $n
   1,
 );
 
-export const createSocketPair: () => [number, number] = $newZigFunction("socket.zig", "jsCreateSocketPair", 0);
+export const createSocketPair: () => [number, number] = $newZigFunction("runtime/socket/socket.zig", "jsCreateSocketPair", 0);
 
 export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunction(
   "NodeModuleModule.cpp",
@@ -203,7 +212,7 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
 );
 
 export const timerInternals = {
-  timerClockMs: $newZigFunction("Timer.zig", "internal_bindings.timerClockMs", 0),
+  timerClockMs: $newZigFunction("runtime/timer/Timer.zig", "internal_bindings.timerClockMs", 0),
 };
 
 export const decodeURIComponentSIMD = $newCppFunction(
@@ -221,7 +230,7 @@ interface setSocketOptionsFn {
   (socket: Bun.Socket, recvBuffer: 2, size: number): void;
 }
 
-export const setSocketOptions: setSocketOptionsFn = $newZigFunction("socket.zig", "jsSetSocketOptions", 3);
+export const setSocketOptions: setSocketOptionsFn = $newZigFunction("runtime/socket/socket.zig", "jsSetSocketOptions", 3);
 type SerializationContext = "worker" | "window" | "postMessage" | "default";
 export const structuredCloneAdvanced: (
   value: any,
@@ -232,6 +241,12 @@ export const structuredCloneAdvanced: (
 ) => any = $newCppFunction("StructuredClone.cpp", "jsFunctionStructuredCloneAdvanced", 5);
 
 export const lsanDoLeakCheck = $newCppFunction("InternalForTesting.cpp", "jsFunction_lsanDoLeakCheck", 1);
+
+export const BunString_toThreadSafeRefCountDelta: () => number = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_BunString_toThreadSafeRefCountDelta",
+  0,
+);
 
 export const getEventLoopStats: () => { activeTasks: number; concurrentRef: number; numPolls: number } =
   $newZigFunction("event_loop.zig", "getActiveTasks", 0);
@@ -252,3 +267,33 @@ export const sysErrorNameFromLibuv: (errno: number) => string | undefined = $new
   "TestingAPIs.sysErrorNameFromLibuv",
   1,
 );
+
+export const stringsInternals = {
+  /**
+   * Calls `bun.strings.toUTF16AllocForReal(allocator, bytes, false, true)` and
+   * returns the resulting UTF-16 data as a JS string. The `sentinel = true`
+   * path is otherwise only reachable from Windows `bun build --compile`
+   * metadata, so this binding lets us exercise it on all platforms.
+   */
+  toUTF16AllocSentinel: $newZigFunction("string/immutable/unicode.zig", "TestingAPIs.toUTF16AllocSentinel", 1) as (
+    bytes: Uint8Array,
+  ) => string,
+};
+
+export const fetchH2Internals = {
+  liveCounts: $newZigFunction("http/H2Client.zig", "TestingAPIs.liveCounts", 0) as () => {
+    sessions: number;
+    streams: number;
+  },
+};
+
+export const fetchH3Internals = {
+  liveCounts: $newZigFunction("http/H3Client.zig", "TestingAPIs.quicLiveCounts", 0) as () => {
+    sessions: number;
+    streams: number;
+  },
+};
+
+export const fileSinkInternals = {
+  liveCount: $newZigFunction("runtime/webcore/FileSink.zig", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
+};

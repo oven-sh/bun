@@ -71,58 +71,11 @@ pub fn escapeRegExpForPackageNameMatching(input: []const u8, writer: *std.Io.Wri
     try writer.writeAll(remain);
 }
 
-pub fn jsEscapeRegExp(global: *JSGlobalObject, call_frame: *jsc.CallFrame) JSError!JSValue {
-    const input_value = call_frame.argument(0);
-
-    if (!input_value.isString()) {
-        return global.throw("expected string argument", .{});
-    }
-
-    var input = try input_value.toSlice(global, bun.default_allocator);
-    defer input.deinit();
-
-    var buf = std.Io.Writer.Allocating.init(bun.default_allocator);
-    defer buf.deinit();
-
-    escapeRegExp(input.slice(), &buf.writer) catch |e| switch (e) {
-        error.WriteFailed => return error.OutOfMemory, // Writer.Allocating can only fail with OutOfMemory
-    };
-
-    var output = String.cloneUTF8(buf.written());
-
-    return output.toJS(global);
-}
-
-pub fn jsEscapeRegExpForPackageNameMatching(global: *JSGlobalObject, call_frame: *jsc.CallFrame) JSError!JSValue {
-    const input_value = call_frame.argument(0);
-
-    if (!input_value.isString()) {
-        return global.throw("expected string argument", .{});
-    }
-
-    var input = try input_value.toSlice(global, bun.default_allocator);
-    defer input.deinit();
-
-    var buf = std.Io.Writer.Allocating.init(bun.default_allocator);
-    defer buf.deinit();
-
-    escapeRegExpForPackageNameMatching(input.slice(), &buf.writer) catch |e| switch (e) {
-        error.WriteFailed => return error.OutOfMemory, // Writer.Allocating can only fail with OutOfMemory
-    };
-
-    var output = String.cloneUTF8(buf.written());
-
-    return output.toJS(global);
-}
+pub const jsEscapeRegExp = @import("../jsc/bun_string_jsc.zig").jsEscapeRegExp;
+pub const jsEscapeRegExpForPackageNameMatching = @import("../jsc/bun_string_jsc.zig").jsEscapeRegExpForPackageNameMatching;
 
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const JSError = bun.JSError;
-const String = bun.String;
 const strings = bun.strings;
-
-const jsc = bun.jsc;
-const JSGlobalObject = jsc.JSGlobalObject;
-const JSValue = jsc.JSValue;

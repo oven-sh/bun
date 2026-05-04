@@ -2786,6 +2786,79 @@ describe("css tests", () => {
     `,
     );
 
+    // Multi-layer variants of the above: with >1 background layer the
+    // SmallList(BackgroundClip, 1) spills to the heap. The
+    // `-webkit-background-clip` that follows the shorthand has both a
+    // different vendor prefix and a different value, which forces a
+    // flush() while a pointer into the previous `clips` payload is still
+    // live. flush() takes ownership of that payload, so the caller must
+    // not touch it afterwards.
+    cssTest(
+      `
+      .foo {
+        background: none, green none;
+        -webkit-background-clip: text, text;
+      }
+    `,
+      indoc`
+      .foo {
+        background: none, green;
+        -webkit-background-clip: text, text;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        background: none, green none;
+        -webkit-background-clip: text, text;
+        background-clip: content-box, content-box;
+      }
+    `,
+      indoc`
+      .foo {
+        background: none, green;
+        -webkit-background-clip: text, text;
+        background-clip: content-box, content-box;
+      }
+    `,
+    );
+
+    // A prefixed background-clip followed by a background shorthand
+    // whose implied clip values differ must flush the prefixed clip
+    // first rather than merging its vendor prefix into the shorthand's
+    // (different) clip values.
+    cssTest(
+      `
+      .foo {
+        -webkit-background-clip: text;
+        background: green content-box;
+      }
+    `,
+      indoc`
+      .foo {
+        -webkit-background-clip: text;
+        background: green content-box content-box;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-background-clip: text, text;
+        background: none, green none;
+      }
+    `,
+      indoc`
+      .foo {
+        -webkit-background-clip: text, text;
+        background: none, green;
+      }
+    `,
+    );
+
     cssTest(
       `
       .foo {

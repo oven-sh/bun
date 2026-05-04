@@ -176,12 +176,11 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
         return error.JSError;
     };
 
-    config_promise.setHandled(vm.jsc_vm);
+    config_promise.setHandled();
     vm.waitForPromise(.{ .internal = config_promise });
     var options = switch (config_promise.unwrap(vm.jsc_vm, .mark_handled)) {
         .pending => unreachable,
-        .fulfilled => |resolved| config: {
-            bun.assert(resolved.isUndefined());
+        .fulfilled => config: {
             const default = BakeGetDefaultExportFromModule(vm.global, try config_entry_point_string.toJS(vm.global));
 
             if (!default.isObject()) {
@@ -718,7 +717,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
 /// quits the process on exception
 fn loadModule(vm: *VirtualMachine, global: *jsc.JSGlobalObject, key: JSValue) !JSValue {
     const promise = BakeLoadModuleByKey(global, key).asAnyPromise().?.internal;
-    promise.setHandled(vm.jsc_vm);
+    promise.setHandled();
     vm.waitForPromise(.{ .internal = promise });
     // TODO: Specially draining microtasks here because `waitForPromise` has a
     //       bug which forgets to do it, but I don't want to fix it right now as it
@@ -728,8 +727,7 @@ fn loadModule(vm: *VirtualMachine, global: *jsc.JSGlobalObject, key: JSValue) !J
     };
     switch (promise.unwrap(vm.jsc_vm, .mark_handled)) {
         .pending => unreachable,
-        .fulfilled => |val| {
-            bun.assert(val.isUndefined());
+        .fulfilled => {
             return BakeGetModuleNamespace(global, key);
         },
         .rejected => |err| {

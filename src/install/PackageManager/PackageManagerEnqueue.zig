@@ -1368,6 +1368,38 @@ fn enqueueLocalTarball(
     resolution: Resolution,
     integrity: Integrity,
 ) *ThreadPool.Task {
+    // Resolve the on-disk tarball path here on the main thread. The task
+    // callback runs on a ThreadPool worker and must not read
+    // `lockfile.packages` / `lockfile.buffers.string_bytes`: those buffers
+    // can be reallocated concurrently by the main thread while processing
+    // other dependencies (e.g. `appendPackage` / `StringBuilder.allocate`
+    // in `Package.fromNPM`).
+    var abs_buf: bun.PathBuffer = undefined;
+    const tarball_path, const normalize = tarball_path: {
+        const workspace_pkg_id = this.lockfile.getWorkspacePkgIfWorkspaceDep(dependency_id);
+        if (workspace_pkg_id == invalid_package_id) break :tarball_path .{ path, true };
+
+        const workspace_res = this.lockfile.packages.items(.resolution)[workspace_pkg_id];
+        if (workspace_res.tag != .workspace) break :tarball_path .{ path, true };
+
+        // Construct an absolute path to the tarball.
+        // Normally tarball paths are always relative to the root directory, but if a
+        // workspace depends on a tarball path, it should be relative to the workspace.
+        const workspace_path = workspace_res.value.workspace.slice(this.lockfile.buffers.string_bytes.items);
+        break :tarball_path .{
+            Path.joinAbsStringBuf(
+                FileSystem.instance.top_level_dir,
+                &abs_buf,
+                &[_][]const u8{
+                    workspace_path,
+                    path,
+                },
+                .auto,
+            ),
+            false,
+        };
+    };
+
     var task = this.preallocated_resolve_tasks.get();
     task.* = Task{
         .package_manager = this,
@@ -1393,6 +1425,12 @@ fn enqueueLocalTarball(
                         FileSystem.FilenameStore.instance,
                     ) catch unreachable,
                 },
+                .tarball_path = strings.StringOrTinyString.initAppendIfNeeded(
+                    tarball_path,
+                    *FileSystem.FilenameStore,
+                    FileSystem.FilenameStore.instance,
+                ) catch unreachable,
+                .normalize = normalize,
             },
         },
         .id = task_id,

@@ -277,17 +277,18 @@ function applyPatch(dest: string, patchPath: string, patchBody: string): void {
 
 // Only run if this file is the entry point (not imported as a module).
 // fetch-cli.ts is ALSO imported by source.ts/zig.ts to get fetchCliPath —
-// that import should NOT execute main().
+// that import should NOT execute main(). No top-level await: it would mark
+// this module HasTLA and force every importer (and the {config,webkit,flags,
+// source} cycle) onto the async-evaluation path for code that's dead on
+// import anyway.
 if (process.argv[1] === import.meta.filename) {
-  try {
-    await main();
-  } catch (err) {
-    // Format BuildError nicely; let anything else bubble to bun's default
+  main().catch(err => {
+    // Format BuildError nicely; rethrow anything else to bun's default
     // uncaught handler (gets a stack trace, which is what you want for bugs).
     if (err instanceof BuildError) {
       process.stderr.write(err.format());
       process.exit(1);
     }
     throw err;
-  }
+  });
 }

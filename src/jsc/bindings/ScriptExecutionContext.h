@@ -1,0 +1,152 @@
+#pragma once
+
+#include "root.h"
+#include "ActiveDOMObject.h"
+#include <wtf/CrossThreadTask.h>
+#include <wtf/Function.h>
+#include <wtf/HashSet.h>
+#include <wtf/ObjectIdentifier.h>
+#include <wtf/WeakPtr.h>
+#include <wtf/text/WTFString.h>
+#include <wtf/CompletionHandler.h>
+#include "CachedScript.h"
+#include "wtf/ThreadSafeWeakPtr.h"
+#include <wtf/URL.h>
+
+namespace uWS {
+template<bool isServer, bool isClient, typename UserData>
+struct WebSocketContext;
+}
+
+struct us_socket_t;
+struct us_socket_group_t;
+struct us_loop_t;
+
+namespace WebCore {
+
+class WebSocket;
+
+class ScriptExecutionContext;
+class EventLoopTask;
+
+class ContextDestructionObserver;
+
+using ScriptExecutionContextIdentifier = uint32_t;
+
+#if ENABLE(MALLOC_BREAKDOWN)
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
+#endif
+class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext>, public RefCounted<ScriptExecutionContext> {
+#if ENABLE(MALLOC_BREAKDOWN)
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(ScriptExecutionContext, ScriptExecutionContext);
+#else
+    WTF_MAKE_TZONE_ALLOCATED(ScriptExecutionContext);
+#endif
+
+public:
+    ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject);
+    ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject, ScriptExecutionContextIdentifier identifier);
+
+    ~ScriptExecutionContext();
+
+    static ScriptExecutionContextIdentifier generateIdentifier();
+
+    JSC::JSGlobalObject* jsGlobalObject()
+    {
+        return m_globalObject;
+    }
+
+    static ScriptExecutionContext* getScriptExecutionContext(ScriptExecutionContextIdentifier identifier);
+    void refEventLoop();
+    void unrefEventLoop();
+    using RefCounted::deref;
+    using RefCounted::ref;
+
+    const WTF::URL& url() const
+    {
+        return m_url;
+    }
+    bool isMainThread() const { return m_identifier == 1; }
+    bool activeDOMObjectsAreSuspended() { return false; }
+    bool activeDOMObjectsAreStopped() { return false; }
+    bool isContextThread();
+    bool isDocument() { return false; }
+    bool isWorkerGlobalScope() { return true; }
+    bool isJSExecutionForbidden();
+    void reportException(const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL, JSC::Exception* exception, RefPtr<void*>&&, CachedScript* = nullptr, bool = false)
+    {
+    }
+    // void reportUnhandledPromiseRejection(JSC::JSGlobalObject&, JSC::JSPromise&, RefPtr<Inspector::ScriptCallStack>&&)
+    // {
+    // }
+
+#if ENABLE(WEB_CRYPTO)
+    // These two methods are used when CryptoKeys are serialized into IndexedDB. As a side effect, it is also
+    // used for things that utilize the same structure clone algorithm, for example, message passing between
+    // worker and document.
+
+    // For now these will return false. In the future, we will want to implement these similar to how WorkerGlobalScope.cpp does.
+    // virtual bool wrapCryptoKey(const Vector<uint8_t>& key, Vector<uint8_t>& wrappedKey) = 0;
+    // virtual bool unwrapCryptoKey(const Vector<uint8_t>& wrappedKey, Vector<uint8_t>& key) = 0;
+    bool wrapCryptoKey(const Vector<uint8_t>& key, Vector<uint8_t>& wrappedKey) { return false; }
+    bool unwrapCryptoKey(const Vector<uint8_t>& wrappedKey, Vector<uint8_t>& key) { return false; }
+#endif
+
+    WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task);
+    WEBCORE_EXPORT static bool ensureOnContextThread(ScriptExecutionContextIdentifier, Function<void(ScriptExecutionContext&)>&& task);
+    WEBCORE_EXPORT static bool ensureOnMainThread(Function<void(ScriptExecutionContext&)>&& task);
+
+    WEBCORE_EXPORT JSC::JSGlobalObject* globalObject();
+
+    void didCreateDestructionObserver(ContextDestructionObserver&);
+    void willDestroyDestructionObserver(ContextDestructionObserver&);
+
+    void checkConsistency() const;
+
+    void regenerateIdentifier();
+    void addToContextsMap();
+    void removeFromContextsMap();
+
+    void postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda);
+    // Executes the task on context's thread asynchronously.
+    void postTask(Function<void(ScriptExecutionContext&)>&& lambda);
+    // Executes the task on context's thread asynchronously.
+    void postTask(EventLoopTask* task);
+
+    template<typename... Arguments>
+    void postCrossThreadTask(Arguments&&... arguments)
+    {
+        postTask([crossThreadTask = createCrossThreadTask(arguments...)](ScriptExecutionContext&) mutable {
+            crossThreadTask.performTask();
+        });
+    }
+
+    JSC::VM& vm() { return *m_vm; }
+    ScriptExecutionContextIdentifier identifier() const { return m_identifier; }
+
+    bool isWorker = false;
+    void setGlobalObject(JSC::JSGlobalObject* globalObject)
+    {
+        m_globalObject = globalObject;
+        m_vm = &globalObject->vm();
+    }
+
+    static ScriptExecutionContext* getMainThreadScriptExecutionContext();
+
+private:
+    JSC::VM* m_vm = nullptr;
+    JSC::JSGlobalObject* m_globalObject = nullptr;
+    WTF::URL m_url = WTF::URL();
+    ScriptExecutionContextIdentifier m_identifier;
+
+    UncheckedKeyHashSet<ContextDestructionObserver*> m_destructionObservers;
+
+public:
+#if ASSERT_ENABLED
+    bool m_inScriptExecutionContextDestructor = false;
+#endif
+};
+
+ScriptExecutionContext* executionContext(JSC::JSGlobalObject*);
+
+}

@@ -367,10 +367,10 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
         "cjs": [],
         "cwd": "<cwd>",
         "esm": [
-          "bun:main",
-          "<cwd>/server.ts",
           "<cwd>/index.html",
           "<cwd>/second.html",
+          "<cwd>/server.ts",
+          "bun:main",
         ],
         "main": "<cwd>/server.ts",
       }

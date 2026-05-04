@@ -843,7 +843,7 @@ pub const visible = struct {
                 else => unreachable,
             };
 
-            const cp = decodeWTF8RuneTMultibyte(&cp_bytes, skip, u32, unicode_replacement);
+            const cp = if (skip > 1) decodeWTF8RuneTMultibyte(&cp_bytes, skip, u32, unicode_replacement) else unicode_replacement;
             len += visibleCodepointWidth(cp, false);
 
             bytes = bytes[@min(i + skip, bytes.len)..];
@@ -1353,7 +1353,7 @@ pub const visible = struct {
                 },
                 else => unreachable,
             };
-            const cp = decodeWTF8RuneTMultibyte(&cp_bytes, skip, u32, unicode_replacement);
+            const cp = if (skip > 1) decodeWTF8RuneTMultibyte(&cp_bytes, skip, u32, unicode_replacement) else unicode_replacement;
             const cw = visibleCodepointWidth(cp, false);
             if (w.* + cw > max_width) {
                 return (@intFromPtr(bytes.ptr) - @intFromPtr(input.ptr)) + i;

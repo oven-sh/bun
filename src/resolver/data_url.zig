@@ -103,10 +103,14 @@ pub const DataURL = struct {
 
     /// Decodes the data from the data URL. Always returns an owned slice.
     pub fn decodeData(url: DataURL, allocator: Allocator) ![]u8 {
-        const percent_decoded = PercentEncoding.decodeUnstrict(allocator, url.data) catch url.data orelse url.data;
+        const percent_decoded_owned: ?[]u8 = try PercentEncoding.decodeUnstrict(allocator, url.data);
+        defer if (percent_decoded_owned) |owned| allocator.free(owned);
+        const percent_decoded: []const u8 = percent_decoded_owned orelse url.data;
+
         if (url.is_base64) {
             const len = bun.base64.decodeLen(percent_decoded);
             const buf = try allocator.alloc(u8, len);
+            errdefer allocator.free(buf);
             const result = bun.base64.decode(buf, percent_decoded);
             if (!result.isSuccessful() or result.count != len) {
                 return error.Base64DecodeError;

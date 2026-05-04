@@ -426,7 +426,10 @@ pub fn sleepUntil(this: *PackageManager, closure: anytype, comptime isDoneFn: an
     this.event_loop.tick(closure, isDoneFn);
 }
 
-pub threadlocal var cached_package_folder_name_buf: bun.PathBuffer = undefined;
+const cached_package_folder_name_bufs = bun.ThreadlocalBuffers(struct { buf: bun.PathBuffer = undefined });
+pub inline fn cached_package_folder_name_buf() *bun.PathBuffer {
+    return &cached_package_folder_name_bufs.get().buf;
+}
 
 const Holder = struct {
     pub var ptr: *PackageManager = undefined;
@@ -495,14 +498,13 @@ var ensureTempNodeGypScriptOnce = bun.once(struct {
             \\)
             \\
             ,
-            else =>
-            \\#!/bin/sh
-            \\if [ "x$npm_config_node_gyp" = "x" ]; then
-            \\  bun x --silent node-gyp $@
-            \\else
-            \\  "$npm_config_node_gyp" $@
-            \\fi
-            \\
+            else => (if (Environment.isAndroid) "#!/system/bin/sh\n" else "#!/bin/sh\n") ++
+                \\if [ "x$npm_config_node_gyp" = "x" ]; then
+                \\  bun x --silent node-gyp $@
+                \\else
+                \\  "$npm_config_node_gyp" $@
+                \\fi
+                \\
             ,
         };
 

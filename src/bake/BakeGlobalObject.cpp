@@ -2,7 +2,7 @@
 #include "BakeSourceProvider.h"
 #include "JSNextTickQueue.h"
 #include "JavaScriptCore/GlobalObjectMethodTable.h"
-#include "JavaScriptCore/JSInternalPromise.h"
+#include "JavaScriptCore/JSPromise.h"
 #include "headers-handwritten.h"
 #include "JavaScriptCore/JSModuleLoader.h"
 #include "JavaScriptCore/Completion.h"
@@ -14,17 +14,17 @@ extern "C" BunString BakeToWindowsPath(BunString a);
 namespace Bake {
 using namespace JSC;
 
-JSC::JSInternalPromise*
+JSC::JSPromise*
 bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
     JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleNameValue,
-    JSC::JSValue parameters,
+    RefPtr<JSC::ScriptFetchParameters> parameters,
     const JSC::SourceOrigin& sourceOrigin)
 {
     WTF::String keyString = moduleNameValue->getString(global);
     if (keyString.startsWith("bake:/"_s)) {
         auto& vm = JSC::getVM(global);
         return JSC::importModule(global, JSC::Identifier::fromString(vm, keyString),
-            JSC::jsUndefined(), parameters, JSC::jsUndefined());
+            JSC::Identifier(), WTF::move(parameters), nullptr);
     }
 
     if (!sourceOrigin.isNull() && sourceOrigin.string().startsWith("bake:/"_s)) {
@@ -35,7 +35,7 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
         WTF::String keyString = moduleNameValue->getString(global);
 
         if (!keyString) {
-            auto promise = JSC::JSInternalPromise::create(vm, global->internalPromiseStructure());
+            auto promise = JSC::JSPromise::create(vm, global->promiseStructure());
             promise->reject(vm, global, JSC::createError(global, "import() requires a string"_s));
             return promise;
         }
@@ -44,23 +44,23 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
         RETURN_IF_EXCEPTION(scope, nullptr);
 
         return JSC::importModule(global, JSC::Identifier::fromString(vm, result.toWTFString()),
-            JSC::jsUndefined(), parameters, JSC::jsUndefined());
+            JSC::Identifier(), WTF::move(parameters), nullptr);
     }
 
     // TODO: make static cast instead of jscast
     // Use Zig::GlobalObject's function
-    return jsCast<Zig::GlobalObject*>(global)->moduleLoaderImportModule(global, moduleLoader, moduleNameValue, parameters, sourceOrigin);
+    return uncheckedDowncast<Zig::GlobalObject>(global)->moduleLoaderImportModule(global, moduleLoader, moduleNameValue, WTF::move(parameters), sourceOrigin);
 }
 
 JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
     JSC::JSModuleLoader* loader, JSC::JSValue key,
-    JSC::JSValue referrer, JSC::JSValue origin)
+    JSC::JSValue referrer, RefPtr<JSC::ScriptFetcher> origin, bool useImportMap)
 {
-    Bake::GlobalObject* global = jsCast<Bake::GlobalObject*>(jsGlobal);
+    Bake::GlobalObject* global = uncheckedDowncast<Bake::GlobalObject>(jsGlobal);
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (auto string = jsDynamicCast<JSC::JSString*>(referrer)) {
+    if (auto string = dynamicDowncast<JSC::JSString>(referrer)) {
         WTF::String refererString = string->getString(global);
 
         WTF::String keyString = key.toWTFString(global);
@@ -74,7 +74,7 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
         }
     }
 
-    if (auto string = jsDynamicCast<JSC::JSString*>(key)) {
+    if (auto string = dynamicDowncast<JSC::JSString>(key)) {
         auto keyView = string->getString(global);
         RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
 
@@ -87,21 +87,21 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
     }
 
     // Use Zig::GlobalObject's function
-    return Zig::GlobalObject::moduleLoaderResolve(jsGlobal, loader, key, referrer, origin);
+    return Zig::GlobalObject::moduleLoaderResolve(jsGlobal, loader, key, referrer, WTF::move(origin), useImportMap);
 }
 
-static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
+static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
-    JSC::JSInternalPromise* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+    JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     promise->rejectAsHandled(vm, globalObject, value);
     return promise;
 }
 
-static JSC::JSInternalPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
+static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
-    JSC::JSInternalPromise* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+    JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     promise->fulfill(vm, globalObject, value);
     return promise;
 }
@@ -115,15 +115,15 @@ extern "C" bool BakeGlobalObject__isBakeGlobalObject(JSC::JSGlobalObject* global
 
 extern "C" void* BakeGlobalObject__getPerThreadData(JSC::JSGlobalObject* global)
 {
-    Bake::GlobalObject* bake = jsCast<Bake::GlobalObject*>(global);
+    Bake::GlobalObject* bake = uncheckedDowncast<Bake::GlobalObject>(global);
     return bake->m_perThreadData;
 }
 
-JSC::JSInternalPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
+JSC::JSPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
     JSC::JSModuleLoader* loader, JSC::JSValue key,
-    JSC::JSValue parameters, JSC::JSValue script)
+    RefPtr<JSC::ScriptFetchParameters> parameters, RefPtr<JSC::ScriptFetcher> script)
 {
-    Bake::GlobalObject* global = jsCast<Bake::GlobalObject*>(globalObject);
+    Bake::GlobalObject* global = uncheckedDowncast<Bake::GlobalObject>(globalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto moduleKey = key.toWTFString(globalObject);
@@ -163,12 +163,12 @@ JSC::JSInternalPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
 #endif
             JSString* bakePrefixRemovedString = jsNontrivialString(vm, bakePrefixRemoved);
             JSValue bakePrefixRemovedJsvalue = bakePrefixRemovedString;
-            return Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, bakePrefixRemovedJsvalue, parameters, script);
+            return Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, bakePrefixRemovedJsvalue, WTF::move(parameters), WTF::move(script));
         }
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "BakeGlobalObject does not have per-thread data configured"_s));
     }
 
-    auto result = Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, key, parameters, script);
+    auto result = Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, key, WTF::move(parameters), WTF::move(script));
     RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
     return result;
 }
@@ -275,7 +275,7 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
     //   if (auto nextTickQueue = global->m_nextTickQueue.get()) {
     //     global->resetOnEachMicrotaskTick();
     //     // Bun::JSNextTickQueue *queue =
-    //     //     jsCast<Bun::JSNextTickQueue *>(nextTickQueue);
+    //     //     uncheckedDowncast<Bun::JSNextTickQueue>(nextTickQueue);
     //     // queue->drain(vm, global);
     //     return;
     //   }

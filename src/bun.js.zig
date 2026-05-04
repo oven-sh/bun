@@ -1,7 +1,7 @@
-pub const jsc = @import("./bun.js/jsc.zig");
-pub const webcore = @import("./bun.js/webcore.zig");
-pub const api = @import("./bun.js/api.zig");
-pub const bindgen = @import("./bun.js/bindgen.zig");
+pub const jsc = @import("./jsc/jsc.zig");
+pub const webcore = @import("./runtime/webcore.zig");
+pub const api = @import("./runtime/api.zig");
+pub const bindgen = @import("./jsc/bindgen.zig");
 
 pub fn applyStandaloneRuntimeFlags(b: *bun.Transpiler, graph: *const bun.StandaloneModuleGraph) void {
     b.options.env.disable_default_env_files = graph.flags.disable_default_env_files;
@@ -105,6 +105,8 @@ pub const Run = struct {
         vm.is_main_thread = true;
         jsc.VirtualMachine.is_main_thread_vm = true;
 
+        bun.http.experimental_http2_client_from_cli = ctx.runtime_options.experimental_http2_fetch;
+        bun.http.experimental_http3_client_from_cli = ctx.runtime_options.experimental_http3_fetch;
         doPreconnect(ctx.runtime_options.preconnect);
 
         const callback = OpaqueWrap(Run, Run.start);
@@ -144,7 +146,7 @@ pub const Run = struct {
         var bundle = try bun.Transpiler.init(
             ctx.allocator,
             ctx.log,
-            try @import("./bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
+            try @import("./jsc/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
             null,
         );
         try bundle.runEnvLoader(bundle.options.env.disable_default_env_files);
@@ -290,6 +292,8 @@ pub const Run = struct {
 
         vm.transpiler.env.loadTracy();
 
+        bun.http.experimental_http2_client_from_cli = ctx.runtime_options.experimental_http2_fetch;
+        bun.http.experimental_http3_client_from_cli = ctx.runtime_options.experimental_http3_fetch;
         doPreconnect(ctx.runtime_options.preconnect);
 
         vm.main_is_html_entrypoint = (loader orelse vm.transpiler.options.loader(std.fs.path.extension(entry_path))) == .html;
@@ -396,8 +400,9 @@ pub const Run = struct {
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
             if (promise.status() == .rejected) {
-                const handled = vm.uncaughtException(vm.global, promise.result(), true);
-                promise.setHandled(vm.global.vm());
+                const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
+                promise.setHandled();
+                vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 
                 if (vm.hot_reload != .none or handled) {
                     vm.addMainToWatcherIfNeeded();
@@ -420,7 +425,7 @@ pub const Run = struct {
                 }
             }
 
-            _ = promise.result();
+            _ = promise.result(vm.global.vm());
 
             if (vm.log.msgs.items.len > 0) {
                 dumpBuildError(vm);
@@ -550,7 +555,7 @@ pub const Run = struct {
         bun.api.napi.fixDeadCodeElimination();
         bun.webcore.BakeResponse.fixDeadCodeElimination();
         bun.crash_handler.fixDeadCodeElimination();
-        @import("./bun.js/bindings/JSSecrets.zig").fixDeadCodeElimination();
+        @import("./jsc/JSSecrets.zig").fixDeadCodeElimination();
         vm.globalExit();
     }
 
@@ -631,12 +636,12 @@ fn escapeForJSString(allocator: std.mem.Allocator, input: []const u8) ![]const u
     return result.toOwnedSlice();
 }
 
-const CPUProfiler = @import("./bun.js/bindings/BunCPUProfiler.zig");
-const HeapProfiler = @import("./bun.js/bindings/BunHeapProfiler.zig");
-const options = @import("./options.zig");
+const CPUProfiler = @import("./jsc/BunCPUProfiler.zig");
+const HeapProfiler = @import("./jsc/BunHeapProfiler.zig");
+const options = @import("./bundler/options.zig");
 const std = @import("std");
-const Command = @import("./cli.zig").Command;
-const which = @import("./which.zig").which;
+const Command = @import("./cli/cli.zig").Command;
+const which = @import("./which/which.zig").which;
 
 const bun = @import("bun");
 const Global = bun.Global;

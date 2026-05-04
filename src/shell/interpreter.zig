@@ -59,7 +59,7 @@
 //! and let `EnvStr` handle it.
 const string = []const u8;
 pub const Arena = std.heap.ArenaAllocator;
-pub const Braces = @import("./braces.zig");
+pub const Braces = @import("../shell_parser/braces.zig");
 pub const Syscall = bun.sys;
 pub const WorkPoolTask = jsc.WorkPoolTask;
 pub const WorkPool = jsc.WorkPool;
@@ -606,9 +606,23 @@ pub const Interpreter = struct {
                 @compileError("Bad type for new_cwd " ++ @typeName(@TypeOf(new_cwd_)));
             }
             const is_sentinel = @TypeOf(new_cwd_) == [:0]const u8;
+            const is_abs = ResolvePath.Platform.auto.isAbsolute(new_cwd_);
+
+            // Both branches below write into the 4096-byte threadlocal
+            // `ResolvePath.join_buf` with no bounds check: the absolute branch
+            // `@memcpy`s `new_cwd_` directly, and the relative branch normalizes
+            // `cwd + "/" + new_cwd_` into it via `joinZ`. In ReleaseFast (where
+            // slice bounds are elided) an oversized input overflows adjacent TLS
+            // and segfaults. Normalization never grows the path, so bounding the
+            // un-normalized length is sufficient (and matches POSIX `chdir`, which
+            // returns ENAMETOOLONG on argument length, not canonicalized length).
+            const required_len = if (is_abs) new_cwd_.len else this.cwd().len + 1 + new_cwd_.len;
+            if (required_len >= ResolvePath.join_buf.len) {
+                return Maybe(void).initErr(Syscall.Error.fromCode(.NAMETOOLONG, .chdir));
+            }
 
             const new_cwd: [:0]const u8 = brk: {
-                if (ResolvePath.Platform.auto.isAbsolute(new_cwd_)) {
+                if (is_abs) {
                     if (is_sentinel) {
                         @memcpy(ResolvePath.join_buf[0..new_cwd_.len], new_cwd_[0..new_cwd_.len]);
                         ResolvePath.join_buf[new_cwd_.len] = 0;
@@ -680,7 +694,7 @@ pub const Interpreter = struct {
                 const static_str = if (comptime bun.Environment.isWindows) EnvStr.initSlice("USERPROFILE") else EnvStr.initSlice("HOME");
                 break :brk self.shell_env.get(static_str) orelse self.export_env.get(static_str);
             };
-            return env_var orelse EnvStr.initSlice("");
+            return env_var orelse EnvStr.initSlice(if (comptime bun.Environment.isAndroid) "/data/local/tmp" else "");
         }
 
         pub fn writeFailingErrorFmt(
@@ -2052,7 +2066,7 @@ pub fn unsupportedFlag(comptime name: []const u8) []const u8 {
 pub const ParseFlagResult = union(enum) { continue_parsing, done, illegal_option: []const u8, unsupported: []const u8, show_usage };
 pub fn FlagParser(comptime Opts: type) type {
     return struct {
-        pub const Result = @import("../result.zig").Result;
+        pub const Result = @import("../bun_core/result.zig").Result;
 
         pub fn parseFlags(opts: Opts, args: []const [*:0]const u8) Result(?[]const [*:0]const u8, ParseError) {
             var idx: usize = 0;
@@ -2102,7 +2116,7 @@ pub fn FlagParser(comptime Opts: type) type {
 pub fn isPollable(fd: bun.FD, mode: bun.Mode) bool {
     return switch (bun.Environment.os) {
         .windows, .wasm => false,
-        .linux => posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.native()),
+        .linux, .freebsd => posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.native()),
         // macos DOES allow regular files to be pollable, but we don't want that because
         // our IOWriter code has a separate and better codepath for writing to files.
         .mac => if (posix.S.ISREG(mode)) false else posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.native()),
@@ -2112,7 +2126,7 @@ pub fn isPollable(fd: bun.FD, mode: bun.Mode) bool {
 pub fn isPollableFromMode(mode: bun.Mode) bool {
     return switch (bun.Environment.os) {
         .windows, .wasm => false,
-        .linux => posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode),
+        .linux, .freebsd => posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode),
         // macos DOES allow regular files to be pollable, but we don't want that because
         // our IOWriter code has a separate and better codepath for writing to files.
         .mac => if (posix.S.ISREG(mode)) false else posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode),
@@ -2125,7 +2139,7 @@ pub fn unreachableState(context: []const u8, state: []const u8) noreturn {
 }
 
 const builtin = @import("builtin");
-const WTFStringImplStruct = @import("../string.zig").WTFStringImplStruct;
+const WTFStringImplStruct = @import("../string/string.zig").WTFStringImplStruct;
 
 const bun = @import("bun");
 const ResolvePath = bun.path;

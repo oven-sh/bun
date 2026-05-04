@@ -12,7 +12,7 @@
 
 # ----------------------------------------------------------------------------
 # simdutf AVX2 (Haswell). Gate: set_best() dispatcher — CPUID at first call, cached in atomic ptr.
-# (89 symbols)
+# (93 symbols)
 # ----------------------------------------------------------------------------
 _ZN7simdutf7haswell12_GLOBAL__N_128convert_masked_utf8_to_utf16ILNS_10endiannessE0EEEmPKcmRPDs                                                                   [AVX, AVX2]
 _ZN7simdutf7haswell12_GLOBAL__N_128convert_masked_utf8_to_utf16ILNS_10endiannessE1EEEmPKcmRPDs                                                                   [AVX, AVX2]
@@ -66,6 +66,10 @@ _ZNK7simdutf7haswell14implementation24convert_utf32_to_utf16beEPKDimPDs         
 _ZNK7simdutf7haswell14implementation24convert_utf32_to_utf16leEPKDimPDs                                                                                          [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation24utf8_length_from_utf16beEPKDsm                                                                                             [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation24utf8_length_from_utf16leEPKDsm                                                                                             [AVX, AVX2]
+_ZNK7simdutf7haswell14implementation41utf8_length_from_utf16be_with_replacementEPKDsm                                                                            [AVX, AVX2]
+_ZNK7simdutf7haswell14implementation41utf8_length_from_utf16le_with_replacementEPKDsm                                                                            [AVX, AVX2]
+_ZNK7simdutf7haswell14implementation25binary_length_from_base64EPKDsm                                                                                            [AVX, AVX2]
+_ZNK7simdutf7haswell14implementation25binary_length_from_base64EPKcm                                                                                             [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation25convert_latin1_to_utf16beEPKcmPDs                                                                                          [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation25convert_latin1_to_utf16leEPKcmPDs                                                                                          [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation25convert_utf16be_to_latin1EPKDsmPc                                                                                          [AVX, AVX2]
@@ -107,7 +111,7 @@ _ZNK7simdutf7haswell14implementation4findEPKcS3_c                               
 
 # ----------------------------------------------------------------------------
 # simdutf AVX-512 (Icelake). Same dispatcher.
-# (91 symbols)
+# (95 symbols)
 # ----------------------------------------------------------------------------
 _ZN7simdutf7icelake12_GLOBAL__N_121utf16_to_utf8_avx512iILNS_10endiannessE0EEEmPKDsmPhPm                                                                  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]
 _ZN7simdutf7icelake12_GLOBAL__N_121utf16_to_utf8_avx512iILNS_10endiannessE1EEEmPKDsmPhPm                                                                  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]
@@ -159,8 +163,12 @@ _ZNK7simdutf7icelake14implementation24convert_utf16be_to_utf32EPKDsmPDi         
 _ZNK7simdutf7icelake14implementation24convert_utf16le_to_utf32EPKDsmPDi                                                                                   [AVX, AVX512BW, AVX512F, BMI2]
 _ZNK7simdutf7icelake14implementation24convert_utf32_to_utf16beEPKDimPDs                                                                                   [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI2, BMI2]
 _ZNK7simdutf7icelake14implementation24convert_utf32_to_utf16leEPKDimPDs                                                                                   [AVX, AVX512BW, AVX512F, AVX512_VBMI2, BMI2]
-_ZNK7simdutf7icelake14implementation24utf8_length_from_utf16beEPKDsm                                                                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
-_ZNK7simdutf7icelake14implementation24utf8_length_from_utf16leEPKDsm                                                                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZNK7simdutf7icelake14implementation24utf8_length_from_utf16beEPKDsm                                                                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+_ZNK7simdutf7icelake14implementation24utf8_length_from_utf16leEPKDsm                                                                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+_ZNK7simdutf7icelake14implementation25binary_length_from_base64EPKDsm                                                                                     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZNK7simdutf7icelake14implementation25binary_length_from_base64EPKcm                                                                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZNK7simdutf7icelake14implementation41utf8_length_from_utf16be_with_replacementEPKDsm                                                                     [AVX, AVX512BW, AVX512F, BMI2]
+_ZNK7simdutf7icelake14implementation41utf8_length_from_utf16le_with_replacementEPKDsm                                                                     [AVX, AVX512BW, AVX512F, BMI2]
 _ZNK7simdutf7icelake14implementation25convert_latin1_to_utf16beEPKcmPDs                                                                                   [AVX, AVX512BW, AVX512F, AVX512VL, BMI2]
 _ZNK7simdutf7icelake14implementation25convert_latin1_to_utf16leEPKcmPDs                                                                                   [AVX, AVX512BW, AVX512F, AVX512VL, BMI2]
 _ZNK7simdutf7icelake14implementation25convert_utf16be_to_latin1EPKDsmPc                                                                                   [AVX, AVX512BW, AVX512F, AVX512_VBMI, BMI2]
@@ -403,6 +411,43 @@ ipint_simd_v128_load8_splat_mem           [AVX]
 ipint_simd_v128_not                       [AVX]
 ipint_simd_v128_or                        [AVX]
 ipint_simd_v128_xor                       [AVX]
+
+
+# ----------------------------------------------------------------------------
+# JSC IPInt relaxed Wasm SIMD. Upstream 85da494b1c29 implements the
+# relaxed-SIMD proposal in IPInt; gated behind Options::useWasmSIMD() &&
+# Options::useWasmRelaxedSIMD().
+# (20 symbols)
+# ----------------------------------------------------------------------------
+ipint_simd_f32x4_relaxed_madd                     [AVX]
+ipint_simd_f32x4_relaxed_max                      [AVX]
+ipint_simd_f32x4_relaxed_min                      [AVX]
+ipint_simd_f32x4_relaxed_nmadd                    [AVX]
+ipint_simd_f64x2_relaxed_madd                     [AVX]
+ipint_simd_f64x2_relaxed_max                      [AVX]
+ipint_simd_f64x2_relaxed_min                      [AVX]
+ipint_simd_f64x2_relaxed_nmadd                    [AVX]
+ipint_simd_i16x8_relaxed_dot_i8x16_i7x16_s        [AVX]
+ipint_simd_i16x8_relaxed_laneselect               [AVX]
+ipint_simd_i16x8_relaxed_q15mulr_s                [AVX]
+ipint_simd_i32x4_relaxed_dot_i8x16_i7x16_add_s    [AVX]
+ipint_simd_i32x4_relaxed_laneselect               [AVX]
+ipint_simd_i32x4_relaxed_trunc_f32x4_s            [AVX]
+ipint_simd_i32x4_relaxed_trunc_f32x4_u            [AVX]
+ipint_simd_i32x4_relaxed_trunc_f64x2_s_zero       [AVX]
+ipint_simd_i32x4_relaxed_trunc_f64x2_u_zero       [AVX]
+ipint_simd_i64x2_relaxed_laneselect               [AVX]
+ipint_simd_i8x16_relaxed_laneselect               [AVX]
+ipint_simd_i8x16_relaxed_swizzle                  [AVX]
+
+
+# ----------------------------------------------------------------------------
+# JSC IPInt atomics. cmpxchg loop reloads the SIMD accumulator with vmovdqu
+# after the IPInt metadata removal in upstream ef40cabc28d2; gated behind
+# Options::useWasmSIMD().
+# (1 symbols)
+# ----------------------------------------------------------------------------
+ipint_i64_atomic_rmw32_cmpxchg_u          [AVX]
 
 
 # ----------------------------------------------------------------------------
@@ -704,3 +749,50 @@ _RNvMs6_NtNtNtNt<rust-hash>6memchr4arch6x86_644avx26memchrNtB5_5Three13find_raw_
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr10memchr_raw9find_avx2               [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr2_raw9find_avx2              [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr3_raw9find_avx2              [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# Bun.Image highway kernels (image_resize.cpp). Gate: HWY_DYNAMIC_DISPATCH ->
+# hwy::SupportedTargets() via CPUID. Same gate as the highway_strings block.
+# (40 symbols; union of glibc + musl LTO outcomes)
+# ----------------------------------------------------------------------------
+_ZN9bun_image10N_AVX3_SPRL12ModulateImplEPhmff  [AVX, AVX512F]
+_ZN9bun_image10N_AVX3_SPRL12Rotate90ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN9bun_image10N_AVX3_SPRL13Rotate180ImplEPKhmmPh  [AVX, AVX2, AVX512F]
+_ZN9bun_image10N_AVX3_SPRL13Rotate270ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN9bun_image10N_AVX3_SPRL18NearestPaletteImplEPKhjiiii  [AVX]
+_ZN9bun_image10N_AVX3_SPRL8VertPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI1, FMA]
+_ZN9bun_image10N_AVX3_SPRL9FlipHImplEPKhmmPh  [AVX, AVX2, AVX512F]
+_ZN9bun_image10N_AVX3_SPRL9HorizPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI]
+_ZN9bun_image11N_AVX3_ZEN4L12ModulateImplEPhmff  [AVX, AVX512F]
+_ZN9bun_image11N_AVX3_ZEN4L12Rotate90ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN9bun_image11N_AVX3_ZEN4L13Rotate180ImplEPKhmmPh  [AVX, AVX2, AVX512F]
+_ZN9bun_image11N_AVX3_ZEN4L13Rotate270ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN9bun_image11N_AVX3_ZEN4L18NearestPaletteImplEPKhjiiii  [AVX]
+_ZN9bun_image11N_AVX3_ZEN4L8VertPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI1, FMA]
+_ZN9bun_image11N_AVX3_ZEN4L9FlipHImplEPKhmmPh  [AVX, AVX2, AVX512F]
+_ZN9bun_image11N_AVX3_ZEN4L9HorizPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI]
+_ZN9bun_image6N_AVX2L12ModulateImplEPhmff  [AVX, AVX2, FMA]
+_ZN9bun_image6N_AVX2L12Rotate90ImplEPKhmmPh  [AVX]
+_ZN9bun_image6N_AVX2L13Rotate180ImplEPKhmmPh  [AVX, AVX2]
+_ZN9bun_image6N_AVX2L13Rotate270ImplEPKhmmPh  [AVX]
+_ZN9bun_image6N_AVX2L18NearestPaletteImplEPKhjiiii  [AVX]
+_ZN9bun_image6N_AVX2L8VertPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX2, BMI1, FMA]
+_ZN9bun_image6N_AVX2L9FlipHImplEPKhmmPh  [AVX, AVX2]
+_ZN9bun_image6N_AVX2L9HorizPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX2, BMI1, FMA]
+_ZN9bun_image6N_AVX3L12ModulateImplEPhmff  [AVX, AVX512F]
+_ZN9bun_image6N_AVX3L12Rotate90ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN9bun_image6N_AVX3L13Rotate180ImplEPKhmmPh  [AVX, AVX2, AVX512F]
+_ZN9bun_image6N_AVX3L13Rotate270ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN9bun_image6N_AVX3L18NearestPaletteImplEPKhjiiii  [AVX]
+_ZN9bun_image6N_AVX3L8VertPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX512BW, AVX512F, AVX512VL, BMI1, FMA]
+_ZN9bun_image6N_AVX3L9FlipHImplEPKhmmPh  [AVX, AVX2, AVX512F]
+_ZN9bun_image6N_AVX3L9HorizPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN9bun_image9N_AVX3_DLL12ModulateImplEPhmff  [AVX, AVX512F]
+_ZN9bun_image9N_AVX3_DLL12Rotate90ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN9bun_image9N_AVX3_DLL13Rotate180ImplEPKhmmPh  [AVX, AVX2, AVX512F]
+_ZN9bun_image9N_AVX3_DLL13Rotate270ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN9bun_image9N_AVX3_DLL18NearestPaletteImplEPKhjiiii  [AVX]
+_ZN9bun_image9N_AVX3_DLL8VertPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI1, FMA]
+_ZN9bun_image9N_AVX3_DLL9FlipHImplEPKhmmPh  [AVX, AVX2, AVX512F]
+_ZN9bun_image9N_AVX3_DLL9HorizPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI]

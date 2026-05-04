@@ -589,12 +589,12 @@ fn printNodeModulesFolderStructure(
 const string = []const u8;
 
 const Dependency = @import("../install/dependency.zig");
-const Fs = @import("../fs.zig");
+const Fs = @import("../resolver/fs.zig");
 const Lockfile = @import("../install/lockfile.zig");
-const Path = @import("../resolver/resolve_path.zig");
+const Path = @import("../paths/resolve_path.zig");
 const PmViewCommand = @import("./pm_view_command.zig");
 const std = @import("std");
-const Command = @import("../cli.zig").Command;
+const Command = @import("./cli.zig").Command;
 const PmPkgCommand = @import("./pm_pkg_command.zig").PmPkgCommand;
 const PmVersionCommand = @import("./pm_version_command.zig").PmVersionCommand;
 const PmWhyCommand = @import("./pm_why_command.zig").PmWhyCommand;

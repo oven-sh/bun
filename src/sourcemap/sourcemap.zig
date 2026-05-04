@@ -401,19 +401,11 @@ pub fn getSourceMapImpl(
                 };
             }
 
-            if (comptime SourceProviderKind == BakeSourceProvider) fallback_to_normal: {
-                const global = bun.jsc.VirtualMachine.get().global;
-                // If we're using bake's production build the global object will
-                // be Bake::GlobalObject and we can fetch the sourcemap from it,
-                // if not fallback to the normal way
-                if (!BakeGlobalObject__isBakeGlobalObject(global)) {
+            if (comptime @hasDecl(SourceProviderKind, "getExternalData")) fallback_to_normal: {
+                // BakeSourceProvider: if we're under Bake's production build the
+                // global object is a Bake::GlobalObject and the sourcemap is on it.
+                const data = SourceProviderKind.getExternalData(provider, source_filename) orelse
                     break :fallback_to_normal;
-                }
-                const data = BakeSourceProvider.getExternal(
-                    provider,
-                    global,
-                    source_filename,
-                );
                 break :parsed .{
                     .is_external_map,
                     parseJSON(
@@ -517,42 +509,7 @@ pub const SourceProviderMap = opaque {
     }
 };
 
-extern "c" fn BakeGlobalObject__isBakeGlobalObject(global: *bun.jsc.JSGlobalObject) bool;
-
-extern "c" fn BakeGlobalObject__getPerThreadData(global: *bun.jsc.JSGlobalObject) *bun.bake.production.PerThread;
-
-pub const BakeSourceProvider = opaque {
-    extern fn BakeSourceProvider__getSourceSlice(*BakeSourceProvider) bun.String;
-    pub const getSourceSlice = BakeSourceProvider__getSourceSlice;
-    pub fn toSourceContentPtr(this: *BakeSourceProvider) ParsedSourceMap.SourceContentPtr {
-        return ParsedSourceMap.SourceContentPtr.fromBakeProvider(this);
-    }
-
-    pub fn getExternal(_: *BakeSourceProvider, global: *bun.jsc.JSGlobalObject, source_filename: []const u8) []const u8 {
-        bun.assert(BakeGlobalObject__isBakeGlobalObject(global));
-        const pt = BakeGlobalObject__getPerThreadData(global);
-        if (pt.source_maps.get(source_filename)) |value| {
-            return pt.bundled_outputs[value.get()].value.asSlice();
-        }
-        return "";
-    }
-
-    /// The last two arguments to this specify loading hints
-    pub fn getSourceMap(
-        provider: *BakeSourceProvider,
-        source_filename: []const u8,
-        load_hint: SourceMap.SourceMapLoadHint,
-        result: SourceMap.ParseUrlResultHint,
-    ) ?SourceMap.ParseUrl {
-        return getSourceMapImpl(
-            BakeSourceProvider,
-            provider,
-            source_filename,
-            load_hint,
-            result,
-        );
-    }
-};
+pub const BakeSourceProvider = @import("../sourcemap_jsc/source_provider.zig").BakeSourceProvider;
 
 pub const DevServerSourceProvider = opaque {
     pub const SourceMapData = extern struct {
@@ -952,10 +909,10 @@ pub const DebugIDFormatter = struct {
     }
 };
 
-pub const coverage = @import("./CodeCoverage.zig");
+pub const coverage = @import("../sourcemap_jsc/CodeCoverage.zig");
 pub const VLQ = @import("./VLQ.zig");
 pub const LineOffsetTable = @import("./LineOffsetTable.zig");
-pub const JSSourceMap = @import("./JSSourceMap.zig");
+pub const JSSourceMap = @import("../sourcemap_jsc/JSSourceMap.zig");
 pub const InternalSourceMap = @import("./InternalSourceMap.zig");
 
 const decodeVLQAssumeValid = VLQ.decodeAssumeValid;

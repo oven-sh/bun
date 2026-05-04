@@ -261,7 +261,7 @@ pub fn write(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, 
 
 const std = @import("std");
 
-const options = @import("../options.zig");
+const options = @import("./options.zig");
 const Loader = options.Loader;
 
 const bun = @import("bun");

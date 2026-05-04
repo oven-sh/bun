@@ -7,7 +7,7 @@ import util from "node:util";
 import { exitCodeMap } from "./exit-code-map.mjs";
 
 // Prevent silent crashes from unhandled promise rejections
-process.on("unhandledRejection", (reason) => {
+process.on("unhandledRejection", reason => {
   console.error("[E] Unhandled rejection:", reason);
   process.exit(exitCodeMap.reloadFailed);
 });
@@ -149,9 +149,15 @@ function createWindow(windowUrl) {
         assert(element.src.startsWith("blob:"));
         const blob = objectURLRegistry.get(element.src);
         assert(blob);
+        // Capture the window this script was appended to. Rapid HMR reloads
+        // can swap the module-level `window` before `arrayBuffer()` resolves,
+        // which would otherwise eval an HMR chunk against a freshly-created
+        // window whose runtime has not loaded yet.
+        const owningWindow = window;
         blob.arrayBuffer().then(buffer => {
+          if (window !== owningWindow) return;
           const code = new TextDecoder().decode(buffer);
-          (0, window.eval)(code);
+          (0, owningWindow.eval)(code);
         });
         return;
       }

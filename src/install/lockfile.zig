@@ -2162,23 +2162,23 @@ const string = []const u8;
 const stringZ = [:0]const u8;
 
 const Dependency = @import("./dependency.zig");
-const DotEnv = @import("../env_loader.zig");
+const DotEnv = @import("../dotenv/env_loader.zig");
 const Npm = @import("./npm.zig");
-const Path = @import("../resolver/resolve_path.zig");
+const Path = @import("../paths/resolve_path.zig");
 const TextLockfile = @import("./lockfile/bun.lock.zig");
 const migration = @import("./migration.zig");
 const std = @import("std");
-const Crypto = @import("../sha.zig").Hashers;
+const Crypto = @import("../sha_hmac/sha.zig").Hashers;
 const Resolution = @import("./resolution.zig").Resolution;
-const StaticHashMap = @import("../StaticHashMap.zig").StaticHashMap;
-const which = @import("../which.zig").which;
+const StaticHashMap = @import("../collections/StaticHashMap.zig").StaticHashMap;
+const which = @import("../which/which.zig").which;
 const Allocator = std.mem.Allocator;
 
-const Fs = @import("../fs.zig");
-const FileSystem = Fs.FileSystem;
+const ArrayIdentityContext = @import("../collections/identity_context.zig").ArrayIdentityContext;
+const IdentityContext = @import("../collections/identity_context.zig").IdentityContext;
 
-const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
+const Fs = @import("../resolver/fs.zig");
+const FileSystem = Fs.FileSystem;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

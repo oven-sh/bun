@@ -56,19 +56,26 @@ function systemLibs(cfg: Config): string[] {
   const libs: string[] = [];
 
   if (cfg.linux) {
-    libs.push("-lc", "-lpthread", "-ldl");
-    // libatomic: static by default (CI distros ship it), dynamic on Arch-like.
-    // The static path needs to be the actual file path for lld to find it;
-    // dynamic uses -l syntax. We emit what CMake does: bare libatomic.a gets
-    // found in lib search paths, -latomic.so doesn't exist so we use -latomic.
-    if (cfg.staticLibatomic) {
-      libs.push("-l:libatomic.a");
+    if (cfg.abi === "android") {
+      // bionic: pthread/dl/rt are folded into libc; no separate libatomic
+      // (compiler-rt builtins). -llog for __android_log_*.
+      libs.push("-lc", "-lm", "-llog");
     } else {
-      libs.push("-latomic");
+      libs.push("-lc", "-lpthread", "-ldl");
+      // libatomic: static by default (CI distros ship it), dynamic on Arch-like.
+      // The static path needs to be the actual file path for lld to find it;
+      // dynamic uses -l syntax. We emit what CMake does: bare libatomic.a gets
+      // found in lib search paths, -latomic.so doesn't exist so we use -latomic.
+      if (cfg.staticLibatomic) {
+        libs.push("-l:libatomic.a");
+      } else {
+        libs.push("-latomic");
+      }
     }
     // Linux local WebKit: link system ICU (prebuilt bundles its own).
     // Assumes system ICU is in default lib paths — true on most distros.
-    if (cfg.webkit === "local") {
+    // Android: no system ICU; the local WebKit build must bundle it.
+    if (cfg.webkit === "local" && cfg.abi !== "android") {
       libs.push("-licudata", "-licui18n", "-licuuc");
     }
   }
@@ -77,6 +84,13 @@ function systemLibs(cfg: Config): string[] {
     // icucore: system ICU framework.
     // resolv: DNS resolution (getaddrinfo et al).
     libs.push("-licucore", "-lresolv");
+  }
+
+  if (cfg.freebsd) {
+    // pthread/m: explicit on FreeBSD (not folded into libc).
+    // execinfo: backtrace() — separate library on FreeBSD.
+    // kvm/procstat/elf/util: process introspection for node:os and crash handler.
+    libs.push("-lc", "-lpthread", "-lm", "-lexecinfo", "-lkvm", "-lprocstat", "-lelf", "-lutil");
   }
 
   if (cfg.windows) {
@@ -263,7 +277,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // mode where it fails on the pinned bun version (see cppAll docstring).
     // Scripts that emit undeclared .h also emit a .cpp/.h in cppAll, so they
     // still run. cxx transitively waits: cxx → PCH → deps+cppAll.
-    pchOut = pch(n, cfg, "src/bun.js/bindings/root-pch.h", {
+    pchOut = pch(n, cfg, "src/jsc/bindings/root-pch.h", {
       flags: cxxFlagsFull,
       implicitInputs: depHeaderSignal,
       orderOnlyInputs: codegen.cppAll,
@@ -295,8 +309,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   if (cfg.windows) {
     // rescle.h does `#define UNICODE` before including ATL; with PCH the
     // headers are already past in MBCS mode and ATL's TCHAR mismatches.
-    const rescle = resolve(cfg.cwd, "src/bun.js/bindings/windows/rescle.cpp");
-    const rescleBinding = resolve(cfg.cwd, "src/bun.js/bindings/windows/rescle-binding.cpp");
+    const rescle = resolve(cfg.cwd, "src/jsc/bindings/windows/rescle.cpp");
+    const rescleBinding = resolve(cfg.cwd, "src/jsc/bindings/windows/rescle-binding.cpp");
     cxxSources.push(rescle, rescleBinding);
     noPchSources.add(rescle);
     noPchSources.add(rescleBinding);
@@ -316,7 +330,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // effect of the edge whose declared outputs are only lib*.a. Depfiles record
   // those headers, but ninja stats them BEFORE the sub-build runs — so with
   // order-only, any compile that #includes a dep header lags one build behind
-  // a dep rebuild (observed: asan-config.c / uv-posix-*.c → wtf/Compiler.h).
+  // a dep rebuild (observed: uv-posix-*.c → wtf/Compiler.h).
   // Implicit deps on the libs make "dep rebuilt" itself the invalidation
   // signal. Cost is negligible: if the libs changed you're relinking anyway.
   //
@@ -400,10 +414,41 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     n.blank();
     const archiveName = `${cfg.libPrefix}${exeName}${cfg.libSuffix}`;
     const archive = ar(n, cfg, archiveName, allObjects);
+
+    // Upload dep libs as soon as they're built — they're ready ~minutes
+    // before the archive (WebKit copies from prefetch in seconds; lolhtml
+    // builds in ~30s), so the upload overlaps the cxx compile instead of
+    // waiting for it. Own pool so it doesn't take a compile slot. ci.ts's
+    // uploadArtifacts() then only handles the archive.
+    let depUploadStamp: string | undefined;
+    if (cfg.buildkite && depLibs.length > 0) {
+      n.pool("bk_upload", 1);
+      n.rule("bk_upload", {
+        // Paths relative to buildDir (ninja's cwd) so artifact names match
+        // what link-only's downloadArtifacts() expects. ; is the agent's
+        // default delimiter — quoted so the host shell doesn't split it.
+        // Stamp written only after the agent exits 0 so a failed upload
+        // re-runs on the next ninja invocation.
+        command:
+          cfg.host.os === "windows"
+            ? `cmd /c buildkite-agent artifact upload "$paths" && type nul > $out`
+            : `buildkite-agent artifact upload '$paths' && touch $out`,
+        description: "buildkite upload dep libs",
+        pool: "bk_upload",
+      });
+      depUploadStamp = resolve(cfg.buildDir, ".dep-libs-uploaded");
+      n.build({
+        outputs: [depUploadStamp],
+        rule: "bk_upload",
+        inputs: depLibs,
+        vars: { paths: depLibs.map(p => relative(cfg.buildDir, p)).join(";") },
+      });
+    }
+
     // depLibs explicit in the phony: deps with no provided includes (tinycc,
     // lolhtml) aren't in depHeaderSignal, so the archive doesn't pull them
     // transitively — but link-only still needs them uploaded.
-    n.phony("bun", [archive, ...depLibs]);
+    n.phony("bun", [archive, ...depLibs, ...(depUploadStamp ? [depUploadStamp] : [])]);
     n.default(["bun"]);
     return { archive, deps, codegen, zigObjects, objects: allObjects };
   }
@@ -592,6 +637,12 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
  * mismatch, etc.).
  */
 function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string): void {
+  // Cross-compiled binaries can't run on the build host. Skip the smoke
+  // test entirely — `ninja check` becomes a no-op alias for the exe.
+  if (cfg.crossTarget !== undefined) {
+    n.phony("check", [exe]);
+    return;
+  }
   const stamp = resolve(cfg.buildDir, `${exeName}.smoke-test-passed`);
 
   // Linux+ASAN: wrap in `setarch <arch> -R` to disable ASLR. Fall back

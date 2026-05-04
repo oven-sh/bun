@@ -1145,7 +1145,7 @@ const string = []const u8;
 const stringZ = [:0]const u8;
 
 const Dependency = @import("./dependency.zig");
-const Environment = @import("../env.zig");
+const Environment = @import("../bun_core/env.zig");
 const std = @import("std");
 
 const Install = @import("./install.zig");

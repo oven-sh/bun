@@ -163,6 +163,7 @@
               "/runtime/json5",
               "/runtime/jsonl",
               "/runtime/html-rewriter",
+              "/runtime/image",
               "/runtime/hashing",
               "/runtime/glob",
               "/runtime/semver",

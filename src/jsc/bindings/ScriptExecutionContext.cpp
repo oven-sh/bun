@@ -1,0 +1,258 @@
+#include "root.h"
+#include "headers.h"
+#include "ScriptExecutionContext.h"
+#include "ContextDestructionObserver.h"
+
+#include "libusockets.h"
+#include "_libusockets.h"
+#include "BunClientData.h"
+#include "EventLoopTask.h"
+extern "C" void Bun__startLoop(us_loop_t* loop);
+
+namespace WebCore {
+static constexpr ScriptExecutionContextIdentifier INITIAL_IDENTIFIER_INTERNAL = 1;
+
+static std::atomic<unsigned> lastUniqueIdentifier = INITIAL_IDENTIFIER_INTERNAL;
+
+#if ASSERT_ENABLED
+static ScriptExecutionContextIdentifier initialIdentifier()
+{
+    static bool hasCalledInitialIdentifier = false;
+    ASSERT_WITH_MESSAGE(!hasCalledInitialIdentifier, "ScriptExecutionContext::initialIdentifier() cannot be called more than once. Use generateIdentifier() instead.");
+    hasCalledInitialIdentifier = true;
+    return INITIAL_IDENTIFIER_INTERNAL;
+}
+#else
+static ScriptExecutionContextIdentifier initialIdentifier()
+{
+    return INITIAL_IDENTIFIER_INTERNAL;
+}
+#endif
+
+#if ENABLE(MALLOC_BREAKDOWN)
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
+#endif
+
+ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject)
+    : m_vm(vm)
+    , m_globalObject(globalObject)
+    , m_identifier(initialIdentifier())
+{
+    relaxAdoptionRequirement();
+    addToContextsMap();
+}
+
+ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject, ScriptExecutionContextIdentifier identifier)
+    : m_vm(vm)
+    , m_globalObject(globalObject)
+    , m_identifier(identifier == std::numeric_limits<int32_t>::max() ? ++lastUniqueIdentifier : identifier)
+{
+    relaxAdoptionRequirement();
+    addToContextsMap();
+}
+
+static Lock allScriptExecutionContextsMapLock;
+static HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allScriptExecutionContextsMap() WTF_REQUIRES_LOCK(allScriptExecutionContextsMapLock)
+{
+    static NeverDestroyed<HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>> contexts;
+    ASSERT(allScriptExecutionContextsMapLock.isLocked());
+    return contexts;
+}
+
+ScriptExecutionContext* ScriptExecutionContext::getScriptExecutionContext(ScriptExecutionContextIdentifier identifier)
+{
+    if (identifier == 0) {
+        return nullptr;
+    }
+    Locker locker { allScriptExecutionContextsMapLock };
+    return allScriptExecutionContextsMap().getOptional(identifier).value_or(nullptr);
+}
+
+JSGlobalObject* ScriptExecutionContext::globalObject()
+{
+    return m_globalObject;
+}
+
+extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
+
+void ScriptExecutionContext::refEventLoop()
+{
+    Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(vm())->bunVM, 1);
+}
+void ScriptExecutionContext::unrefEventLoop()
+{
+    Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(vm())->bunVM, -1);
+}
+
+ScriptExecutionContext::~ScriptExecutionContext()
+{
+    checkConsistency();
+
+#if ASSERT_ENABLED
+    {
+        Locker locker { allScriptExecutionContextsMapLock };
+        ASSERT_WITH_MESSAGE(!allScriptExecutionContextsMap().contains(m_identifier), "A ScriptExecutionContext subclass instance implementing postTask should have already removed itself from the map");
+    }
+    m_inScriptExecutionContextDestructor = true;
+#endif // ASSERT_ENABLED
+
+    while (auto* destructionObserver = m_destructionObservers.takeAny())
+        destructionObserver->contextDestroyed();
+
+#if ASSERT_ENABLED
+    m_inScriptExecutionContextDestructor = false;
+#endif // ASSERT_ENABLED
+}
+
+bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task)
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    auto* context = allScriptExecutionContextsMap().get(identifier);
+
+    if (!context)
+        return false;
+
+    context->postTaskConcurrently(WTF::move(task));
+    return true;
+}
+
+void ScriptExecutionContext::didCreateDestructionObserver(ContextDestructionObserver& observer)
+{
+#if ASSERT_ENABLED
+    ASSERT(!m_inScriptExecutionContextDestructor);
+#endif // ASSERT_ENABLED
+    m_destructionObservers.add(&observer);
+}
+
+void ScriptExecutionContext::willDestroyDestructionObserver(ContextDestructionObserver& observer)
+{
+#if ASSERT_ENABLED
+    ASSERT(!m_inScriptExecutionContextDestructor);
+#endif // ASSERT_ENABLED
+    m_destructionObservers.remove(&observer);
+}
+
+bool ScriptExecutionContext::isJSExecutionForbidden()
+{
+    return !m_vm || m_vm->executionForbidden();
+}
+
+extern "C" void* Bun__getVM();
+
+bool ScriptExecutionContext::isContextThread()
+{
+    auto clientData = WebCore::clientData(vm());
+    return clientData && clientData->bunVM == Bun__getVM();
+}
+
+bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task)
+{
+    ScriptExecutionContext* context = nullptr;
+    {
+        Locker locker { allScriptExecutionContextsMapLock };
+        context = allScriptExecutionContextsMap().get(identifier);
+
+        if (!context)
+            return false;
+
+        if (!context->isContextThread()) {
+            context->postTaskConcurrently(WTF::move(task));
+            return true;
+        }
+    }
+
+    task(*context);
+    return true;
+}
+
+bool ScriptExecutionContext::ensureOnMainThread(Function<void(ScriptExecutionContext&)>&& task)
+{
+    auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
+
+    if (!context) {
+        return false;
+    }
+
+    context->postTaskConcurrently(WTF::move(task));
+    return true;
+}
+
+ScriptExecutionContext* ScriptExecutionContext::getMainThreadScriptExecutionContext()
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    return allScriptExecutionContextsMap().get(1);
+}
+
+void ScriptExecutionContext::checkConsistency() const
+{
+#if ASSERT_ENABLED
+    for (auto* destructionObserver : m_destructionObservers)
+        ASSERT(destructionObserver->scriptExecutionContext() == this);
+#endif // ASSERT_ENABLED
+}
+
+ScriptExecutionContextIdentifier ScriptExecutionContext::generateIdentifier()
+{
+    return ++lastUniqueIdentifier;
+}
+
+void ScriptExecutionContext::regenerateIdentifier()
+{
+
+    m_identifier = ++lastUniqueIdentifier;
+
+    addToContextsMap();
+}
+
+void ScriptExecutionContext::addToContextsMap()
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    ASSERT(!allScriptExecutionContextsMap().contains(m_identifier));
+    allScriptExecutionContextsMap().add(m_identifier, this);
+}
+
+void ScriptExecutionContext::removeFromContextsMap()
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    ASSERT(allScriptExecutionContextsMap().contains(m_identifier));
+    allScriptExecutionContextsMap().remove(m_identifier);
+}
+
+ScriptExecutionContext* executionContext(JSC::JSGlobalObject* globalObject)
+{
+    if (!globalObject || !globalObject->inherits<JSDOMGlobalObject>())
+        return nullptr;
+    return uncheckedDowncast<JSDOMGlobalObject>(globalObject)->scriptExecutionContext();
+}
+
+void ScriptExecutionContext::postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda)
+{
+    auto* task = new EventLoopTask(WTF::move(lambda));
+    static_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskConcurrently(task);
+}
+// Executes the task on context's thread asynchronously.
+void ScriptExecutionContext::postTask(Function<void(ScriptExecutionContext&)>&& lambda)
+{
+    auto* task = new EventLoopTask(WTF::move(lambda));
+    static_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
+}
+// Executes the task on context's thread asynchronously.
+void ScriptExecutionContext::postTask(EventLoopTask* task)
+{
+    static_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
+}
+
+// Zig bindings
+extern "C" ScriptExecutionContextIdentifier ScriptExecutionContextIdentifier__forGlobalObject(JSC::JSGlobalObject* globalObject)
+{
+    return defaultGlobalObject(globalObject)->scriptExecutionContext()->identifier();
+}
+
+extern "C" JSC::JSGlobalObject* ScriptExecutionContextIdentifier__getGlobalObject(ScriptExecutionContextIdentifier id)
+{
+    auto* context = ScriptExecutionContext::getScriptExecutionContext(id);
+    if (!context) return nullptr;
+    return context->globalObject();
+}
+
+} // namespace WebCore

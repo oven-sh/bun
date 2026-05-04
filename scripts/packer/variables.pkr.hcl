@@ -67,6 +67,12 @@ variable "agent_script" {
   description = "Path to bundled agent.mjs. If empty, agent install is skipped."
 }
 
+variable "repo_ref" {
+  type        = string
+  default     = "main"
+  description = "Branch/tag of oven-sh/bun for bootstrap's Prefetch-Build-Deps to shallow-clone (dep version pins live in scripts/build/deps/)."
+}
+
 variable "gallery_resource_group" {
   type    = string
   default = "BUN-CI"

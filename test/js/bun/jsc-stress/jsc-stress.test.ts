@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import path from "path";
 
 const fixturesDir = path.join(import.meta.dir, "fixtures");
@@ -138,65 +138,95 @@ const wasmFixtures = [
   "omg-tail-call-to-function-with-less-arguments.js",
   "omg-tail-call-clobber-scratch-register.js",
   "omg-osr-stack-check-2.js",
+  // JSPI
+  "jspi-basic.js",
+  "jspi-rejection.js",
+  "jspi-resuspension.js",
+  "jspi-exceptions-from-wasm.js",
+  "jspi-exceptions-from-js.js",
 ];
 
 const preloadPath = path.join(import.meta.dir, "preload.js");
 
+// Under ASAN, JSC disables the wasm fault signal handler (and therefore wasm
+// shared memory) unless ASAN is told to let the process handle SIGSEGV. CI's
+// release-ASAN binary is named `bun-asan` so `bunEnv` sets this automatically,
+// but the debug build (`bun bd` -> `bun-debug`) is also ASAN-instrumented and
+// needs it too. Harmless when ASAN isn't active.
+const fixtureEnv = {
+  ...bunEnv,
+  ASAN_OPTIONS: bunEnv.ASAN_OPTIONS ?? "allow_user_segv_handler=1:disable_coredump=0",
+};
+
+// These are JIT stress tests; under a debug build they are dramatically
+// slower and run concurrently, so give each fixture more headroom there.
+// For non-debug builds, leave the timeout undefined so the runner-supplied
+// `--timeout` (90s in CI, 5s locally) stays in effect.
+const fixtureTimeout = isDebug ? 180_000 : undefined;
+
 describe.concurrent("JSC JIT Stress Tests", () => {
   describe("JS (Baseline/DFG/FTL)", () => {
     for (const fixture of jsFixtures) {
-      test(fixture, async () => {
-        const fixturePath = path.join(fixturesDir, fixture);
-        const jscEnv = parseJSCFlags(fixturePath);
+      test(
+        fixture,
+        async () => {
+          const fixturePath = path.join(fixturesDir, fixture);
+          const jscEnv = parseJSCFlags(fixturePath);
 
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "--preload", preloadPath, fixturePath],
-          env: { ...bunEnv, ...jscEnv },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "--preload", preloadPath, fixturePath],
+            env: { ...fixtureEnv, ...jscEnv },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
 
-        const [stdout, stderr, exitCode] = await Promise.all([
-          new Response(proc.stdout).text(),
-          new Response(proc.stderr).text(),
-          proc.exited,
-        ]);
+          const [stdout, stderr, exitCode] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+          ]);
 
-        if (exitCode !== 0) {
-          console.log("stdout:", stdout);
-          console.log("stderr:", stderr);
-        }
-        expect(exitCode).toBe(0);
-      });
+          if (exitCode !== 0) {
+            console.log("stdout:", stdout);
+            console.log("stderr:", stderr);
+          }
+          expect(exitCode).toBe(0);
+        },
+        fixtureTimeout,
+      );
     }
   });
 
   describe("Wasm (BBQ/OMG)", () => {
     for (const fixture of wasmFixtures) {
-      test(fixture, async () => {
-        const fixturePath = path.join(wasmFixturesDir, fixture);
-        const jscEnv = parseJSCFlags(fixturePath);
+      test(
+        fixture,
+        async () => {
+          const fixturePath = path.join(wasmFixturesDir, fixture);
+          const jscEnv = parseJSCFlags(fixturePath);
 
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "--preload", preloadPath, fixturePath],
-          env: { ...bunEnv, ...jscEnv },
-          cwd: wasmFixturesDir,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "--preload", preloadPath, fixturePath],
+            env: { ...fixtureEnv, ...jscEnv },
+            cwd: wasmFixturesDir,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
 
-        const [stdout, stderr, exitCode] = await Promise.all([
-          new Response(proc.stdout).text(),
-          new Response(proc.stderr).text(),
-          proc.exited,
-        ]);
+          const [stdout, stderr, exitCode] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+          ]);
 
-        if (exitCode !== 0) {
-          console.log("stdout:", stdout);
-          console.log("stderr:", stderr);
-        }
-        expect(exitCode).toBe(0);
-      });
+          if (exitCode !== 0) {
+            console.log("stdout:", stdout);
+            console.log("stderr:", stderr);
+          }
+          expect(exitCode).toBe(0);
+        },
+        fixtureTimeout,
+      );
     }
   });
 });

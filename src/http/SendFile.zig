@@ -39,6 +39,28 @@ pub fn write(
 
             return .{ .err = bun.errnoToZigErr(errcode) };
         }
+    } else if (Environment.isFreeBSD) {
+        var sbytes: std.posix.off_t = 0;
+        const signed_offset = @as(i64, @bitCast(@as(u64, this.offset)));
+        // FreeBSD: sendfile(fd, s, offset, nbytes, hdtr, *sbytes, flags)
+        const errcode = bun.sys.getErrno(std.c.sendfile(
+            this.fd.cast(),
+            socket.fd().cast(),
+            signed_offset,
+            adjusted_count,
+            null,
+            &sbytes,
+            0,
+        ));
+        const wrote = @as(u64, @intCast(sbytes));
+        this.offset +|= wrote;
+        this.remain -|= wrote;
+        if (errcode != .AGAIN or this.remain == 0 or sbytes == 0) {
+            if (errcode == .SUCCESS) {
+                return .{ .done = {} };
+            }
+            return .{ .err = bun.errnoToZigErr(errcode) };
+        }
     } else if (Environment.isPosix) {
         var sbytes: std.posix.off_t = adjusted_count;
         const signed_offset = @as(i64, @bitCast(@as(u64, this.offset)));

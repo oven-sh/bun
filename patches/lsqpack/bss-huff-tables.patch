@@ -1,0 +1,49 @@
+--- a/lsqpack.c	2026-05-02 06:42:53.039458414 +0000
++++ b/lsqpack.c	2026-05-02 06:43:11.469277877 +0000
+@@ -69,6 +69,15 @@
+ #include <xxhash.h>
+ #endif
+ 
++#if LS_QPACK_USE_LARGE_TABLES && LS_HPACK_BSS_LARGE_TABLES
++/* Bun: share lshpack's .bss-backed hencs/hdecs (same RFC 7541 Huffman code)
++ * instead of carrying a second 768 KB copy in .rodata. */
++struct henc { unsigned lens; uint32_t code; };
++struct hdec { uint8_t lens; uint8_t out[3]; };
++extern struct henc hencs[65536];
++extern struct hdec hdecs[65536];
++extern void lshpack_huff_tables_init(void);
++#endif
+ #include "huff-tables.h"
+ 
+ #define MIN(a, b) ((a) < (b) ? (a) : (b))
+@@ -502,6 +511,9 @@
+                   unsigned max_risked_streams, enum lsqpack_enc_opts enc_opts,
+                   unsigned char *tsu_buf, size_t *tsu_buf_sz)
+ {
++#if LS_QPACK_USE_LARGE_TABLES && LS_HPACK_BSS_LARGE_TABLES
++    lshpack_huff_tables_init();
++#endif
+     struct lsqpack_double_enc_head *buckets;
+     unsigned char *p;
+     unsigned nbits = 2;
+@@ -2782,6 +2794,9 @@
+     unsigned dyn_table_size, unsigned max_risked_streams,
+     const struct lsqpack_dec_hset_if *dh_if, enum lsqpack_dec_opts opts)
+ {
++#if LS_QPACK_USE_LARGE_TABLES && LS_HPACK_BSS_LARGE_TABLES
++    lshpack_huff_tables_init();
++#endif
+     unsigned i;
+     memset(dec, 0, sizeof(*dec));
+     dec->qpd_opts = opts;
+--- a/huff-tables.h	2026-05-02 06:42:53.039458414 +0000
++++ b/huff-tables.h	2026-05-02 06:43:11.459277975 +0000
+@@ -5141,7 +5141,7 @@
+     },
+ };
+ 
+-#if LS_QPACK_USE_LARGE_TABLES
++#if LS_QPACK_USE_LARGE_TABLES && !LS_HPACK_BSS_LARGE_TABLES
+ #if __BYTE_ORDER == __LITTLE_ENDIAN
+ #define I(i,j) ((j<<8)|i)
+ #else

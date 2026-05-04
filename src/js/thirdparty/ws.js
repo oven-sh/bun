@@ -150,11 +150,18 @@ class BunWebSocket extends EventEmitter {
     let proxy;
     let tlsOptions;
     let agent;
+    // Mirrors ws's `const opts = { perMessageDeflate: true, ...options }` + truthy check:
+    // any `perMessageDeflate` that's present and falsy suppresses the extension
+    // offer; omitted or truthy keeps the default.
+    let disableDeflate = false;
     // https://github.com/websockets/ws/blob/0d1b5e6c4acad16a6b1a1904426eb266a5ba2f72/lib/websocket.js#L741-L747
     if ($isObject(options)) {
       headers = options?.headers;
       proxy = options?.proxy;
       tlsOptions = options?.tls;
+      if ("perMessageDeflate" in options && !options.perMessageDeflate) {
+        disableDeflate = true;
+      }
 
       // Extract from agent if provided (like HttpsProxyAgent)
       agent = options?.agent;
@@ -206,7 +213,7 @@ class BunWebSocket extends EventEmitter {
         end: () => {
           if (!didCallEnd) {
             didCallEnd = true;
-            this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions);
+            this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
           }
         },
         write() {},
@@ -235,22 +242,25 @@ class BunWebSocket extends EventEmitter {
       EventEmitter.$call(nodeHttpClientRequestSimulated);
       finishRequest(nodeHttpClientRequestSimulated);
       if (!didCallEnd) {
-        this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions);
+        this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
       }
       return;
     }
 
-    this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions);
+    this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
   }
 
-  #createWebSocket(url, protocols, headers, method, proxy, tls) {
+  #createWebSocket(url, protocols, headers, method, proxy, tls, disableDeflate) {
+    // The native WebSocket keeps permessage-deflate enabled by default;
+    // forward `perMessageDeflate: false` only when the caller asked to disable.
     let wsOptions;
-    if (headers || proxy || tls) {
+    if (headers || proxy || tls || disableDeflate) {
       wsOptions = { protocols };
       if (headers) wsOptions.headers = headers;
       if (method) wsOptions.method = method;
       if (proxy) wsOptions.proxy = proxy;
       if (tls) wsOptions.tls = tls;
+      if (disableDeflate) wsOptions.perMessageDeflate = false;
     } else {
       wsOptions = protocols;
     }

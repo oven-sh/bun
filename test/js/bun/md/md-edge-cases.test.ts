@@ -58,6 +58,18 @@ describe("fuzzer-like edge cases", () => {
     expect(typeof Markdown.html(buf)).toBe("string");
   });
 
+  test("ansi: invalid UTF-8 lead bytes do not crash", () => {
+    // Lone continuation bytes and bytes >= 0xF8 are non-ASCII but not valid
+    // multi-byte lead bytes; previously hit an assert in the width calculator.
+    for (const b of [0x80, 0xbf, 0xf8, 0xff]) {
+      expect(typeof Markdown.ansi(Buffer.from([b]))).toBe("string");
+    }
+    const buf = Buffer.alloc(256);
+    for (let i = 0; i < 256; i++) buf[i] = i;
+    expect(typeof Markdown.ansi(buf)).toBe("string");
+    expect(typeof Markdown.ansi(buf, { columns: 4 })).toBe("string");
+  });
+
   // ---- Deeply nested structures ----
 
   test("deeply nested blockquotes", () => {

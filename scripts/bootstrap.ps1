@@ -1,4 +1,4 @@
-# Version: 16
+# Version: 19
 # A script that installs the dependencies needed to build and test Bun on Windows.
 # Supports both x64 and ARM64 using Scoop for package management.
 # Used by Azure [build images] pipeline.
@@ -217,7 +217,32 @@ function Install-Git {
 function Install-NodeJs {
   # Pin to match the ABI version Bun expects (NODE_MODULE_VERSION 137).
   # Latest Node (25.x) uses ABI 141 which breaks node-gyp tests.
-  Install-Scoop-Package "nodejs@24.3.0" -Command node
+  $nodejsVersion = "24.3.0"
+  Install-Scoop-Package "nodejs@$nodejsVersion" -Command node
+
+  # Seed node-gyp's cache so napi tests don't re-download headers + node.lib
+  # on every run (mirrors bootstrap.sh:setup_node_gyp_cache). node-gyp on
+  # Windows looks under %LOCALAPPDATA%\node-gyp\Cache\<ver>\; we seed both
+  # SYSTEM's and the buildkite-agent service account's LocalAppData.
+  $arch = if ($script:IsARM64) { "arm64" } else { "x64" }
+  $headersUrl = "https://nodejs.org/dist/v$nodejsVersion/node-v$nodejsVersion-headers.tar.gz"
+  $libUrl = "https://nodejs.org/dist/v$nodejsVersion/win-$arch/node.lib"
+  $headersTar = Download-File $headersUrl -Name "node-headers.tar.gz"
+  $libFile = Download-File $libUrl -Name "node.lib"
+
+  $stage = Join-Path $env:TEMP "node-headers"
+  Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $stage
+  New-Item -ItemType Directory -Force $stage | Out-Null
+  & tar -xzf $headersTar -C $stage --strip-components=1
+
+  foreach ($base in @("$env:LOCALAPPDATA", "C:\buildkite-agent\AppData\Local")) {
+    $cache = Join-Path $base "node-gyp\Cache\$nodejsVersion"
+    New-Item -ItemType Directory -Force "$cache\$arch" | Out-Null
+    Copy-Item -Recurse -Force "$stage\include" $cache
+    Copy-Item -Force $libFile "$cache\$arch\node.lib"
+    Set-Content "$cache\installVersion" "11"
+  }
+  Remove-Item -Recurse -Force $stage
 }
 
 function Install-CMake {
@@ -459,6 +484,32 @@ function Install-Visual-Studio {
   }
 }
 
+function Install-CurlH3 {
+  # Installs a static curl built with nghttp3/ngtcp2 as `curl-h3.exe` so the
+  # HTTP/3 server tests (test/js/bun/http/serve-http3.test.ts, fetch-h3.ts)
+  # can run in CI. The bundled C:\Windows\System32\curl.exe has no HTTP/3.
+  # Tests discover this via $env:CURL_HTTP3, then `curl-h3` in PATH.
+  if (Which curl-h3) {
+    return
+  }
+  $version = "8.19.0" # https://github.com/stunnel/static-curl/releases
+  $archName = if ($script:IsARM64) { "aarch64" } else { "x86_64" }
+  Write-Output "Installing curl-h3 $version ($archName)..."
+  $tar = Download-File "https://github.com/stunnel/static-curl/releases/download/$version/curl-windows-$archName-$version.tar.xz" -Name "curl-h3.tar.xz"
+  $extractDir = "$env:TEMP\curl-h3-extract"
+  New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+  # Server 2019's bundled bsdtar (3.3.2) has no liblzma, so `tar -xf foo.tar.xz`
+  # can't decode it (Win11's 3.5+ can). 7z is already installed via scoop.
+  & 7z x $tar "-o$extractDir" -y | Out-Null
+  & 7z x "$extractDir\curl-h3.tar" "-o$extractDir" -y | Out-Null
+  Copy-Item "$extractDir\curl.exe" "C:\Windows\System32\curl-h3.exe" -Force
+  Copy-Item "$extractDir\curl-ca-bundle.crt" "C:\Windows\System32\curl-ca-bundle.crt" -Force
+  Remove-Item $tar -ErrorAction SilentlyContinue
+  Remove-Item $extractDir -Recurse -ErrorAction SilentlyContinue
+  Set-Env CURL_HTTP3 "C:\Windows\System32\curl-h3.exe"
+  & curl-h3 --version | Select-Object -First 1 | Write-Output
+}
+
 function Install-PdbAddr2line {
   cargo install --examples "pdb-addr2line@0.11.2"
   # Also copy to System32 so it's always on PATH (like bun.exe)
@@ -655,12 +706,63 @@ if (-not $script:IsARM64) {
 Install-Pwsh
 Install-OpenSSH
 Install-Bun
+Install-CurlH3
 Install-Ccache
 Install-Rust
 Install-Visual-Studio
 Install-PdbAddr2line
 
+function Prefetch-Build-Deps {
+  # Bake a read-only download cache for scripts/build/download.ts
+  # (BUN_BUILD_PREFETCH_DIR). Content-addressed by URL/identity, so a dep
+  # version bump in scripts/build/deps/ just misses the cache for that one
+  # dep — no image rebuild needed.
+  $prefetchDir = "C:\bun-prefetch"
+  New-Item -ItemType Directory -Force -Path $prefetchDir | Out-Null
+
+  # Only bootstrap.ps1 is uploaded to the bake VM, so the repo (and the
+  # prefetch script + scripts/build/deps/*.ts version pins) has to be cloned.
+  # BUN_BOOTSTRAP_REPO_REF lets the orchestrator pin to its triggering commit.
+  $repoRef = if ($env:BUN_BOOTSTRAP_REPO_REF) { $env:BUN_BOOTSTRAP_REPO_REF } else { "main" }
+  $cloneDir = Join-Path $env:TEMP "bun-prefetch-clone"
+  Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $cloneDir
+  # Best-effort: a fork-PR branch that doesn't exist on the upstream remote,
+  # a deleted branch, or a transient network blip shouldn't abort the whole
+  # image bake — the build just falls through to the network with no warm
+  # cache. Same for a ref that predates the prefetch script.
+  & git clone --depth=1 --branch $repoRef https://github.com/oven-sh/bun.git $cloneDir
+  if ($LASTEXITCODE -ne 0) {
+    Write-Output "warning: clone of $repoRef failed; skipping warm cache"
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $cloneDir
+    return
+  }
+  if (-not (Test-Path "$cloneDir\scripts\prefetch-deps.ts")) {
+    Write-Output "prefetch-deps.ts not present at $repoRef; skipping warm cache"
+    Remove-Item -Recurse -Force $cloneDir
+    return
+  }
+
+  # resolveConfig() walks up from cwd to find package.json — run from inside
+  # the clone.
+  Push-Location $cloneDir
+  try {
+    & bun scripts\prefetch-deps.ts $prefetchDir
+    if ($LASTEXITCODE -ne 0) { throw "prefetch-deps.ts failed" }
+  } finally {
+    Pop-Location
+  }
+  Remove-Item -Recurse -Force $cloneDir
+
+  # Read-only: download.ts only ever copies FROM here, and a writable baked
+  # input is something a misbehaving job could corrupt for later jobs on the
+  # same runner.
+  & attrib +R "$prefetchDir\*" /S /D
+
+  Set-Env "BUN_BUILD_PREFETCH_DIR" $prefetchDir
+}
+
 if ($CI) {
+  Prefetch-Build-Deps
   Install-Buildkite
 }
 

@@ -15,19 +15,7 @@ pub fn memoryCost(this: *const Headers) usize {
     return this.buf.items.len + this.entries.memoryCost();
 }
 
-pub fn toFetchHeaders(this: *Headers, global: *bun.jsc.JSGlobalObject) bun.JSError!*FetchHeaders {
-    if (this.entries.len == 0) {
-        return FetchHeaders.createEmpty();
-    }
-    const headers = FetchHeaders.create(
-        global,
-        this.entries.items(.name).ptr,
-        this.entries.items(.value).ptr,
-        &bun.ZigString.fromBytes(this.buf.items),
-        @truncate(this.entries.len),
-    ) orelse return error.JSError;
-    return headers;
-}
+pub const toFetchHeaders = @import("../http_jsc/headers_jsc.zig").toFetchHeaders;
 
 pub fn clone(this: *Headers) !Headers {
     return Headers{

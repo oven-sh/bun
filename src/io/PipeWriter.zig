@@ -110,15 +110,14 @@ pub fn PosixPipeWriter(
                     }
                 },
                 .wrote => |amt| {
+                    // `.drained`: the buffer was fully written before the
+                    // callback. If the callback buffers more data via
+                    // `write()`, that path already calls `registerPoll()`.
+                    // Don't touch `parent` after the callback returns — the
+                    // `.drained` callback is allowed to close/free the writer
+                    // (e.g. `FileSink.onWrite` → `writer.end()` → `onClose`
+                    // may drop the last ref).
                     onWrite(parent, amt, .drained);
-                    if (@hasDecl(This, "auto_poll")) {
-                        if (!This.auto_poll) return;
-                    }
-                    if (getBuffer(parent).len > 0) {
-                        if (comptime registerPoll) |register| {
-                            register(parent);
-                        }
-                    }
                 },
                 .err => |err| {
                     onError(parent, err);
@@ -192,8 +191,6 @@ pub fn PosixBufferedWriter(Parent: type, function_table: anytype) type {
         pub fn memoryCost(_: *const @This()) usize {
             return @sizeOf(@This());
         }
-
-        pub const auto_poll = if (@hasDecl(Parent, "auto_poll")) Parent.auto_poll else true;
 
         pub fn createPoll(this: *@This(), fd: bun.FD) *Async.FilePoll {
             return Async.FilePoll.init(@as(*Parent, @ptrCast(this.parent)).eventLoop(), fd, .{}, PosixWriter, this);

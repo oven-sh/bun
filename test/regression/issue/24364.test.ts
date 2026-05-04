@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 test("react-tailwind template passes tsc --noEmit", async () => {
   // Read template files from source
-  const templateDir = join(import.meta.dir, "../../../src/init/react-tailwind");
+  const templateDir = join(import.meta.dir, "../../../src/cli/init/react-tailwind");
   const buildTs = readFileSync(join(templateDir, "build.ts"), "utf8");
   const tsconfigJson = readFileSync(join(templateDir, "tsconfig.json"), "utf8");
 

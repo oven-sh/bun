@@ -67,7 +67,7 @@ let counts: Record<string, [number, string][]> = {};
 
 for (const abs of zigSources) {
   const source = path.relative(root, abs);
-  if (source.startsWith("src" + path.sep + "deps")) continue;
+  if (/^src[/\\][a-z_]+_sys[/\\]/.test(source)) continue;
   if (source.startsWith("src" + path.sep + "codegen")) continue;
   if (source.startsWith("src" + path.sep + "unicode" + path.sep + "uucode")) continue;
   const content = await file(abs).text();
@@ -137,7 +137,7 @@ describe("banned words", () => {
 });
 
 describe("required words", () => {
-  const expectDir = "src/bun.js/test/expect";
+  const expectDir = "src/test_runner/expect";
   const files = readdirSync(expectDir);
   for (const file of files) {
     if (!file.endsWith(".zig") || file.startsWith(".") || file === "toHaveReturnedTimes.zig") continue;

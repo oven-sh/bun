@@ -122,7 +122,6 @@ Quote"Backslash
 "Warning log
   warn: console.warn an error
       at <file>:NN:NN
-      at loadAndEvaluateModule (N:NN)
 
   52 | console.group("Different logs");
 53 | console.log("Regular log");
@@ -133,7 +132,6 @@ Quote"Backslash
                        ^
 error: console.error an error
       at <file>:NN:NN
-      at loadAndEvaluateModule (N:NN)
 
   53 | console.log("Regular log");
 54 | console.info("Info log");
@@ -144,11 +142,9 @@ error: console.error an error
                    ^
 NamedError: console.error a named error
       at <file>:NN:NN
-      at loadAndEvaluateModule (N:NN)
 
   NamedError: console.warn a named error
       at <file>:NN:NN
-      at loadAndEvaluateModule (N:NN)
 
   Error log"
 `);

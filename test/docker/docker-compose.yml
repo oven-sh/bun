@@ -18,7 +18,8 @@ services:
       interval: 1h # Effectively disable after startup
       timeout: 5s
       retries: 30
-      start_period: 5s
+      start_period: 60s
+      start_interval: 1s
 
   postgres_tls:
     build:
@@ -71,7 +72,8 @@ services:
       interval: 1h # Effectively disable after startup
       timeout: 5s
       retries: 30
-      start_period: 5s
+      start_period: 60s
+      start_interval: 1s
 
   # MySQL Services
   mysql_plain:
@@ -86,11 +88,16 @@ services:
     tmpfs:
       - /var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      # 127.0.0.1 (not localhost) forces TCP — `localhost` would use the unix
+      # socket, which is up during the entrypoint's temporary init server and
+      # passes the check before the real TCP listener exists. Auth + SELECT 1
+      # so we don't go healthy until the real server is accepting connections.
+      test: ["CMD", "mysql", "-h", "127.0.0.1", "-uroot", "-e", "SELECT 1"]
       interval: 1h # Effectively disable after startup
       timeout: 5s
       retries: 30
-      start_period: 10s
+      start_period: 60s
+      start_interval: 1s
 
   mysql_native_password:
     image: mysql:8.0
@@ -106,11 +113,12 @@ services:
     tmpfs:
       - /var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pbun"]
+      test: ["CMD", "mysql", "-h", "127.0.0.1", "-uroot", "-pbun", "-e", "SELECT 1"]
       interval: 1h # Effectively disable after startup
       timeout: 5s
       retries: 30
-      start_period: 10s
+      start_period: 60s
+      start_interval: 1s
 
   mysql_tls:
     build:
@@ -129,11 +137,12 @@ services:
     tmpfs:
       - /var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pbun"]
+      test: ["CMD", "mysql", "-h", "127.0.0.1", "-uroot", "-pbun", "-e", "SELECT 1"]
       interval: 1h # Effectively disable after startup
       timeout: 5s
       retries: 30
-      start_period: 10s
+      start_period: 60s
+      start_interval: 1s
 
   # Redis/Valkey Services
   redis_plain:
@@ -188,7 +197,8 @@ services:
       interval: 1h # Effectively disable after startup
       timeout: 5s
       retries: 30
-      start_period: 5s
+      start_period: 60s
+      start_interval: 1s
 
   # WebSocket Autobahn Test Suite
   # NOTE: Autobahn requires port 9002 to match both internal and external ports
@@ -203,6 +213,16 @@ services:
       - target: 9002
         published: 0 # Dynamic port
         protocol: tcp
+    healthcheck:
+      # wstest needs a moment to load its config and bind 9002; without a
+      # healthcheck `up --wait` returns at "running" and the test's
+      # /getCaseCount fetch can hit before the listener exists.
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 9002), 1).close()"]
+      interval: 1h
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+      start_interval: 1s
 
   # Squid proxy for WebSocket proxy testing
   squid:
@@ -221,7 +241,8 @@ services:
       interval: 1h
       timeout: 5s
       retries: 30
-      start_period: 10s
+      start_period: 60s
+      start_interval: 1s
 
 volumes:
   redis-unix:

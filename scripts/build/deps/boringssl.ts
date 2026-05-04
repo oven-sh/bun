@@ -65,7 +65,7 @@ export const boringssl: Dependency = {
             "-fno-common",
             "-fvisibility=hidden",
             // GNU_STACK note is ELF-only.
-            ...(cfg.linux ? ["-Wa,--noexecstack"] : []),
+            ...(cfg.linux || cfg.freebsd ? ["-Wa,--noexecstack"] : []),
           ],
       // nasm needs -I with a trailing slash and CodeView debug info to
       // match cmake's `-gcv8`. Absolute path quoted — a checkout root

@@ -557,6 +557,7 @@ pub fn generateChunksInParallel(
                 },
                 .@"inline" => {
                     const output_source_map = chunk.output_source_map.finalize(bun.default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
+                    defer bun.default_allocator.free(output_source_map);
                     const encode_len = base64.encodeLen(output_source_map);
 
                     const source_map_start = "//# sourceMappingURL=data:application/json;base64,";
@@ -781,7 +782,7 @@ pub const ThreadPool = bun.bundle_v2.ThreadPool;
 
 const debugPartRanges = Output.scoped(.PartRanges, .hidden);
 
-const analyze_transpiled_module = @import("../../analyze_transpiled_module.zig");
+const analyze_transpiled_module = @import("../analyze_transpiled_module.zig");
 const std = @import("std");
 
 const bun = @import("bun");

@@ -250,31 +250,13 @@ pub fn callback(task: *ThreadPool.Task) void {
             this.status = Status.success;
         },
         .local_tarball => {
-            const workspace_pkg_id = manager.lockfile.getWorkspacePkgIfWorkspaceDep(this.request.local_tarball.tarball.dependency_id);
-
-            var abs_buf: bun.PathBuffer = undefined;
-            const tarball_path, const normalize = if (workspace_pkg_id != invalid_package_id) tarball_path: {
-                const workspace_res = manager.lockfile.packages.items(.resolution)[workspace_pkg_id];
-
-                if (workspace_res.tag != .workspace) break :tarball_path .{ this.request.local_tarball.tarball.url.slice(), true };
-
-                // Construct an absolute path to the tarball.
-                // Normally tarball paths are always relative to the root directory, but if a
-                // workspace depends on a tarball path, it should be relative to the workspace.
-                const workspace_path = workspace_res.value.workspace.slice(manager.lockfile.buffers.string_bytes.items);
-                break :tarball_path .{
-                    Path.joinAbsStringBuf(
-                        FileSystem.instance.top_level_dir,
-                        &abs_buf,
-                        &[_][]const u8{
-                            workspace_path,
-                            this.request.local_tarball.tarball.url.slice(),
-                        },
-                        .auto,
-                    ),
-                    false,
-                };
-            } else .{ this.request.local_tarball.tarball.url.slice(), true };
+            // `tarball_path` and `normalize` are computed on the main thread when the
+            // task is enqueued. This callback runs on a ThreadPool worker and must not
+            // read `manager.lockfile.packages` / `manager.lockfile.buffers.string_bytes`:
+            // the main thread may reallocate those buffers concurrently while processing
+            // other dependencies.
+            const tarball_path = this.request.local_tarball.tarball_path.slice();
+            const normalize = this.request.local_tarball.normalize;
 
             const result = readAndExtract(
                 manager.allocator,
@@ -363,6 +345,16 @@ pub const Request = union {
     },
     local_tarball: struct {
         tarball: ExtractTarball,
+        /// Path to read the tarball from. May be the same as `tarball.url` (when
+        /// `normalize` is true) or an absolute path joined with a workspace
+        /// directory. Computed on the main thread in `enqueueLocalTarball` because
+        /// resolving it requires reading `lockfile.packages` / `string_bytes`,
+        /// which can be reallocated concurrently by the main thread while this
+        /// task runs on a ThreadPool worker.
+        tarball_path: strings.StringOrTinyString,
+        /// When true, `tarball_path` is a user-provided path resolved relative to
+        /// cwd. When false, it is already an absolute path.
+        normalize: bool,
     },
 };
 
@@ -382,17 +374,12 @@ const PatchTask = install.PatchTask;
 const Repository = install.Repository;
 const Resolution = install.Resolution;
 const Task = install.Task;
-const invalid_package_id = install.invalid_package_id;
 
 const bun = @import("bun");
 const DotEnv = bun.DotEnv;
 const Output = bun.Output;
-const Path = bun.path;
 const Semver = bun.Semver;
 const ThreadPool = bun.ThreadPool;
 const logger = bun.logger;
 const strings = bun.strings;
 const File = bun.sys.File;
-
-const Fs = bun.fs;
-const FileSystem = Fs.FileSystem;

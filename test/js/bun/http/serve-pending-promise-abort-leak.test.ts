@@ -76,6 +76,41 @@ test("resolve() inside abort handler is handled safely", async () => {
   expect(server.pendingRequests).toBe(0);
 });
 
+test("streaming 413 detaches the response so a late resolve/reject is a no-op", async () => {
+  // Run in a subprocess: without the fix this is a heap-use-after-free under
+  // ASAN (render() corks a uWS socket that was freed when the 413 closed the
+  // connection — markDone() cleared onAborted so no abort ever detached
+  // ctx.resp).
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "serve-413-streaming-late-resolve-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  const lines = stdout
+    .trim()
+    .split("\n")
+    .map(l => JSON.parse(l));
+  expect(lines).toEqual([
+    {
+      case: "resolve",
+      status: "HTTP/1.1 413 Payload Too Large",
+      bodyErr: "Request body exceeded maxRequestBodySize",
+      pendingAfterResolve: 0,
+      followUp: { status: 200, text: "follow-up" },
+    },
+    {
+      case: "reject",
+      status: "HTTP/1.1 413 Payload Too Large",
+      pendingAfterReject: 0,
+    },
+  ]);
+  expect(exitCode).toBe(0);
+}, 30_000);
+
 test("resolve() after abort does not crash and cleans up", async () => {
   // UAF safety: while the resolve function is reachable, the Promise stays
   // alive, the NativePromiseContext cell stays alive, and the RequestContext

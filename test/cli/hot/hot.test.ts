@@ -536,6 +536,53 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
 );
 
 it(
+  "should not remap against a stale sourcemap after a partial-file reload",
+  async () => {
+    // Regression: the watcher can deliver a second reload Task between the
+    // moment a module's eval rejects and the moment that rejection is
+    // printed. The second reload re-transpiles and overwrites
+    // source_mappings[path] in place, so the still-unreported error gets
+    // remapped against the wrong map and transpiled coordinates leak
+    // through — or, since the new pending promise replaces the old one,
+    // the error is dropped entirely.
+    //
+    // To make the window deterministic the hot file truncates itself to a
+    // comment-only stub immediately before throwing, guaranteeing a fresh
+    // watcher event lands between reject and report.
+    const writeFull = (counter: number) =>
+      writeFileSync(
+        hotRunnerRoot,
+        `// source content
+${comment_spam}require("fs").writeFileSync(__filename, "// stub ${counter}\\n");
+${Buffer.alloc(counter * 2, " ").toString()}throw new Error('${counter}');`,
+      );
+    writeFull(0);
+    await using runner = spawn({
+      cmd: [bunExe(), "--smol", "--hot", "run", hotRunnerRoot],
+      env: bunEnv,
+      cwd,
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const reloadCounter = await driveErrorReloadCycle(runner, {
+      targetCount: 20,
+      onReload: writeFull,
+      verifyLine: (errorLine, nextLine, counter) => {
+        if (!nextLine) throw new Error(errorLine);
+        const match = nextLine.match(/\s*at.*?:(\d+):(\d+)\)?$/);
+        if (!match) throw new Error("no :line:col in: " + JSON.stringify(nextLine));
+        if (match[1] !== "1003") throw new Error("expected :1003: but got: " + JSON.stringify(nextLine));
+        expect(Number(match[2])).toBe(1 + "throw new ".length + counter * 2);
+      },
+    });
+    await runner.exited;
+    expect(reloadCounter).toBe(20);
+  },
+  longTimeout,
+);
+
+it(
   "should work with sourcemap loading",
   async () => {
     let bundleIn = join(cwd, "bundle_in.ts");

@@ -168,44 +168,7 @@ pub const HostedGitInfo = struct {
     }
 
     /// Convert this HostedGitInfo to a JavaScript object
-    pub fn toJS(self: *const Self, go: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
-        const obj = jsc.JSValue.createEmptyObject(go, 6);
-        obj.put(
-            go,
-            jsc.ZigString.static("type"),
-            try bun.String.fromBytes(self.host_provider.typeStr()).toJS(go),
-        );
-        obj.put(
-            go,
-            jsc.ZigString.static("domain"),
-            try bun.String.fromBytes(self.host_provider.domain()).toJS(go),
-        );
-        obj.put(
-            go,
-            jsc.ZigString.static("project"),
-            try bun.String.fromBytes(self.project).toJS(go),
-        );
-        obj.put(
-            go,
-            jsc.ZigString.static("user"),
-            if (self.user) |user| try bun.String.fromBytes(user).toJS(go) else .null,
-        );
-        obj.put(
-            go,
-            jsc.ZigString.static("committish"),
-            if (self.committish) |committish|
-                try bun.String.fromBytes(committish).toJS(go)
-            else
-                .null,
-        );
-        obj.put(
-            go,
-            jsc.ZigString.static("default"),
-            try bun.String.fromBytes(@tagName(self.default_representation)).toJS(go),
-        );
-
-        return obj;
-    }
+    pub const toJS = @import("../install_jsc/hosted_git_info_jsc.zig").hostedGitInfoToJS;
 
     pub const StringPair = struct {
         save_spec: []const u8,
@@ -307,7 +270,7 @@ pub const HostedGitInfo = struct {
 /// May error with `error.InvalidGitUrl` if the URL is not valid.
 ///
 /// Note that this may or may not allocate but it manages its own memory.
-fn parseUrl(allocator: std.mem.Allocator, npa_str: []const u8) error{ InvalidGitUrl, OutOfMemory }!struct {
+pub fn parseUrl(allocator: std.mem.Allocator, npa_str: []const u8) error{ InvalidGitUrl, OutOfMemory }!struct {
     url: *jsc.URL,
     proto: UrlProtocol,
 } {
@@ -1573,7 +1536,7 @@ const HostProvider = enum {
     });
 
     /// Return the string representation of the provider.
-    fn typeStr(self: Self) []const u8 {
+    pub fn typeStr(self: Self) []const u8 {
         return @tagName(self);
     }
 
@@ -1581,7 +1544,7 @@ const HostProvider = enum {
         return configs.get(self).shortcut;
     }
 
-    fn domain(self: Self) []const u8 {
+    pub fn domain(self: Self) []const u8 {
         return configs.get(self).domain;
     }
 
@@ -1678,72 +1641,12 @@ const HostProvider = enum {
 };
 
 pub const TestingAPIs = struct {
-    pub fn jsParseUrl(go: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const allocator = bun.default_allocator;
-
-        if (callframe.argumentsCount() != 1) {
-            return go.throw("hostedGitInfo.prototype.parseUrl takes exactly 1 argument", .{});
-        }
-
-        const arg0 = callframe.argument(0);
-        if (!arg0.isString()) {
-            return go.throw(
-                "hostedGitInfo.prototype.parseUrl takes a string as its " ++
-                    "first argument",
-                .{},
-            );
-        }
-
-        // TODO(markovejnovic): This feels like there's too much going on all
-        // to give us a slice. Maybe there's a better way to code this up.
-        const npa_str = try arg0.toBunString(go);
-        defer npa_str.deref();
-        var as_utf8 = npa_str.toUTF8(allocator);
-        defer as_utf8.deinit();
-        const parsed = parseUrl(allocator, as_utf8.mut()) catch |err| {
-            return go.throw("Invalid Git URL: {}", .{err});
-        };
-        defer parsed.url.deinit();
-
-        return parsed.url.href().toJS(go);
-    }
-
-    pub fn jsFromUrl(go: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const allocator = bun.default_allocator;
-
-        // TODO(markovejnovic): The original hosted-git-info actually takes another argument that
-        //                      allows you to inject options. Seems untested so we didn't implement
-        //                      it.
-        if (callframe.argumentsCount() != 1) {
-            return go.throw("hostedGitInfo.prototype.fromUrl takes exactly 1 argument", .{});
-        }
-
-        const arg0 = callframe.argument(0);
-        if (!arg0.isString()) {
-            return go.throw(
-                "hostedGitInfo.prototype.fromUrl takes a string as its first argument",
-                .{},
-            );
-        }
-
-        // TODO(markovejnovic): This feels like there's too much going on all to give us a slice.
-        // Maybe there's a better way to code this up.
-        const npa_str = try arg0.toBunString(go);
-        defer npa_str.deref();
-        var as_utf8 = npa_str.toUTF8(allocator);
-        defer as_utf8.deinit();
-        const parsed = HostedGitInfo.fromUrl(allocator, as_utf8.mut()) catch |err| {
-            return go.throw("Invalid Git URL: {}", .{err});
-        } orelse {
-            return .null;
-        };
-
-        return parsed.toJS(go);
-    }
+    pub const jsParseUrl = @import("../install_jsc/hosted_git_info_jsc.zig").jsParseUrl;
+    pub const jsFromUrl = @import("../install_jsc/hosted_git_info_jsc.zig").jsFromUrl;
 };
 
 const std = @import("std");
-const PercentEncoding = @import("../url.zig").PercentEncoding;
+const PercentEncoding = @import("../url/url.zig").PercentEncoding;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

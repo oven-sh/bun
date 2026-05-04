@@ -1,0 +1,66 @@
+name: FreeBSD smoke test
+
+# Runs the cross-compiled FreeBSD binary inside a FreeBSD VM to verify it
+# actually starts and executes JavaScript. The build itself happens on
+# BuildKite (cross-compiled from Linux); this just validates the result.
+#
+# Triggered manually with a BuildKite artifact URL.
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_url:
+        description: 'URL to bun-freebsd-x64.zip (from BuildKite artifacts)'
+        required: true
+        type: string
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    name: FreeBSD ${{ matrix.version }} smoke
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['14.3']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            test/js/bun
+            test/harness.ts
+
+      - name: Download bun-freebsd-x64
+        if: inputs.artifact_url != ''
+        env:
+          ARTIFACT_URL: ${{ inputs.artifact_url }}
+        run: |
+          curl -fsSL "$ARTIFACT_URL" -o bun-freebsd.zip
+          mkdir -p ./bin
+          unzip -j bun-freebsd.zip -d ./bin
+          # Normalize whatever name was in the zip to ./bin/bun.
+          for f in ./bin/bun-freebsd-* ./bin/bun-profile; do
+            [ -f "$f" ] && mv "$f" ./bin/bun && break
+          done
+          chmod +x ./bin/bun
+          file ./bin/bun
+
+      - name: Run in FreeBSD VM
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: ${{ matrix.version }}
+          usesh: true
+          copyback: false
+          run: |
+            set -e
+            if [ -x ./bin/bun ]; then BUN=./bin/bun;
+            else echo "::error::no bun binary found; pass artifact_url"; exit 1; fi
+            echo "=== version ==="
+            $BUN --revision
+            echo "=== eval ==="
+            $BUN -e 'console.log("hello from", process.platform, process.arch)'
+            echo "=== os ==="
+            $BUN -e 'const os=require("os"); console.log(os.type(), os.release(), os.cpus().length, "cpus")'
+            echo "=== fs ==="
+            $BUN -e 'require("fs").writeFileSync("/tmp/x","ok"); console.log(require("fs").readFileSync("/tmp/x","utf8"))'
+            echo "=== http ==="
+            $BUN -e 'const s=Bun.serve({port:0,fetch:()=>new Response("ok")}); fetch("http://localhost:"+s.port).then(r=>r.text()).then(t=>{console.log("got:",t);s.stop();process.exit(t==="ok"?0:1)})'

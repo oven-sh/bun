@@ -7,7 +7,7 @@ Bun exposes its internal transpiler via the `Bun.Transpiler` class. To create an
 
 ```ts
 const transpiler = new Bun.Transpiler({
-  loader: "tsx", // "js | "jsx" | "ts" | "tsx"
+  loader: "tsx", // "js" | "jsx" | "ts" | "tsx"
 });
 ```
 

@@ -106,7 +106,7 @@ pub const Shared = union(enum) {
     /// Amortized memory cost across all references to the same `PackedMap`
     pub fn memoryCost(self: Shared) usize {
         return switch (self) {
-            .some => |ptr| ptr.get().memoryCost() / ptr.strongCount(),
+            .some => |ptr| ptr.get().memoryCost() / @max(ptr.strongCount(), 1),
             else => 0,
         };
     }

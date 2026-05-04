@@ -10,22 +10,22 @@ export TRACE_EVENTS=$(rg 'bun\.perf\.trace\("([^"]*)"\)' -t zig --json \
     | sort \
     | uniq)
 
-echo "// Generated with scripts/generate-perf-trace-events.sh" > src/bun.js/bindings/generated_perf_trace_events.h
-echo "// clang-format off" >> src/bun.js/bindings/generated_perf_trace_events.h
-echo "#define FOR_EACH_TRACE_EVENT(macro) \\" >> src/bun.js/bindings/generated_perf_trace_events.h
+echo "// Generated with scripts/generate-perf-trace-events.sh" > src/jsc/bindings/generated_perf_trace_events.h
+echo "// clang-format off" >> src/jsc/bindings/generated_perf_trace_events.h
+echo "#define FOR_EACH_TRACE_EVENT(macro) \\" >> src/jsc/bindings/generated_perf_trace_events.h
 i=0
 for event in $TRACE_EVENTS; do
-    echo "  macro($event, $((i++))) \\" >> src/bun.js/bindings/generated_perf_trace_events.h
+    echo "  macro($event, $((i++))) \\" >> src/jsc/bindings/generated_perf_trace_events.h
 done
-echo "  // end" >> src/bun.js/bindings/generated_perf_trace_events.h
+echo "  // end" >> src/jsc/bindings/generated_perf_trace_events.h
 
-echo "Generated src/bun.js/bindings/generated_perf_trace_events.h"
+echo "Generated src/jsc/bindings/generated_perf_trace_events.h"
 
-echo "// Generated with scripts/generate-perf-trace-events.sh" > src/generated_perf_trace_events.zig
-echo "pub const PerfEvent = enum(i32) {" >> src/generated_perf_trace_events.zig
+echo "// Generated with scripts/generate-perf-trace-events.sh" > src/perf/generated_perf_trace_events.zig
+echo "pub const PerfEvent = enum(i32) {" >> src/perf/generated_perf_trace_events.zig
 for event in $TRACE_EVENTS; do
-    echo "    @\"$event\"," >> src/generated_perf_trace_events.zig
+    echo "    @\"$event\"," >> src/perf/generated_perf_trace_events.zig
 done
-echo "};" >> src/generated_perf_trace_events.zig
+echo "};" >> src/perf/generated_perf_trace_events.zig
 
-echo "Generated src/generated_perf_trace_events.zig"
+echo "Generated src/perf/generated_perf_trace_events.zig"

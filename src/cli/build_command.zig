@@ -797,13 +797,13 @@ fn printSummary(bundled_end: i128, minify_duration: u64, minified: bool, input_c
 const string = []const u8;
 
 const MetafileBuilder = @import("../bundler/linker_context/MetafileBuilder.zig");
-const fs = @import("../fs.zig");
-const options = @import("../options.zig");
-const resolve_path = @import("../resolver/resolve_path.zig");
+const fs = @import("../resolver/fs.zig");
+const options = @import("../bundler/options.zig");
+const resolve_path = @import("../paths/resolve_path.zig");
 const std = @import("std");
 const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;
-const Command = @import("../cli.zig").Command;
-const Runtime = @import("../runtime.zig").Runtime;
+const Command = @import("./cli.zig").Command;
+const Runtime = @import("../js_parser/runtime.zig").Runtime;
 
 const bun = @import("bun");
 const Global = bun.Global;

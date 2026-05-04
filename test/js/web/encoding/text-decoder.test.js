@@ -206,7 +206,7 @@ describe("TextDecoder", () => {
           expect(decoded).toBe(text);
         }
       });
-    });
+    }, 30_000); // 100k iterations under ASAN instrumentation takes ~13s.
   });
 
   it("should decode unicode text with multiple consecutive emoji", () => {
@@ -578,4 +578,81 @@ it("should not crash with a getter that throws", () => {
       },
     }),
   ).toThrowErrorMatchingInlineSnapshot(`"stream get error"`);
+});
+
+it("reads the input after the options.stream getter runs", () => {
+  // The Encoding spec processes options before pushing a copy of the input to
+  // the I/O queue, and Node.js matches that: a `stream` getter that detaches
+  // the input buffer causes decode() to see an empty input. Previously Bun
+  // cached the byte pointer before evaluating the getter and then read through
+  // it afterwards — a stale pointer into memory that no longer belongs to the
+  // input buffer.
+  const buf = new Uint8Array(300);
+  for (let i = 0; i < buf.length; i += 3) {
+    buf[i] = 0xe2;
+    buf[i + 1] = 0x82;
+    buf[i + 2] = 0xac;
+  }
+  let ran = 0;
+  const result = new TextDecoder().decode(buf, {
+    get stream() {
+      ran++;
+      const transferred = buf.buffer.transfer();
+      // Overwrite the transferred backing store so that if decode() still
+      // reads through the old pointer it cannot coincidentally produce "".
+      new Uint8Array(transferred).fill(0x41);
+      return false;
+    },
+  });
+  expect(ran).toBe(1);
+  expect(buf.byteLength).toBe(0);
+  expect(result).toBe("");
+});
+
+it("sees writes made by the options.stream getter", () => {
+  // Conversely, mutations the getter makes to a still-attached buffer must be
+  // visible to the decoder — the bytes are read after the getter runs.
+  const buf = new Uint8Array(4).fill(0x41); // "AAAA"
+  const result = new TextDecoder().decode(buf, {
+    get stream() {
+      buf.set([0x42, 0x42, 0x42, 0x42]); // "BBBB"
+      return false;
+    },
+  });
+  expect(result).toBe("BBBB");
+});
+
+it.each(["utf-16le", "utf-16be"])("TextDecoder(%s).decode() should not leak the output buffer", encoding => {
+  const unit = encoding === "utf-16le" ? [0x61, 0x00] : [0x00, 0x61];
+  const CODE_UNITS = 16 * 1024;
+  const input = new Uint8Array(CODE_UNITS * 2);
+  for (let i = 0; i < CODE_UNITS; i++) {
+    input[i * 2] = unit[0];
+    input[i * 2 + 1] = unit[1];
+  }
+  const expected = Buffer.alloc(CODE_UNITS, "a").toString();
+  const decoder = new TextDecoder(encoding);
+
+  // Sanity check.
+  expect(decoder.decode(input)).toBe(expected);
+
+  const run = batches => {
+    for (let i = 0; i < batches; i++) {
+      for (let j = 0; j < 128; j++) decoder.decode(input);
+      Bun.gc();
+    }
+    Bun.gc(true);
+  };
+
+  // Warm up so allocator arenas / JIT reach steady state, then snapshot RSS.
+  run(2);
+  const before = process.memoryUsage.rss();
+
+  // Prior to the fix each call leaked ~CODE_UNITS * 2 bytes = 32 KiB, so 3072
+  // calls leaked ~96 MiB regardless of GC.
+  run(24);
+  const after = process.memoryUsage.rss();
+
+  const deltaMiB = (after - before) / 1024 / 1024;
+  expect(deltaMiB).toBeLessThan(48);
 });

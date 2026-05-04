@@ -42,7 +42,7 @@ Options:
   --watch              Poll and redraw --status every 10s until the build finishes
   --errors             Print rendered test-failure annotations for the build
   --logs               Save full logs for each failed job to ./tmp/ci-<build>/
-  --all                With --errors, include warning/flaky annotations too
+  --all                With --errors, include warning/info annotations too (flaky is always shown)
   --no-compare         With --errors, skip the "[pre-existing]" check against recently merged PRs
   --no-dedup           With --errors, print every platform's output in full
   -h, --help           Show this help
@@ -170,10 +170,8 @@ function renderTermHTML(html: string): string {
   );
 }
 
-function renderAnnotation(a: Annotation, preExisting: boolean | null) {
+function renderAnnotation(a: Annotation, tag: string) {
   const color = a.style === "error" ? c.red : c.yellow;
-  const tag =
-    preExisting == null ? "" : preExisting ? ` ${c.dim}[pre-existing]${c.reset}` : ` ${c.yellow}[new]${c.reset}`;
   console.log(`\n${color}${c.bold}== ${a.context} ==${c.reset}${tag}`);
   // body_html is a sequence of <details><summary>…</summary><pre>…</pre></details>, one per platform.
   const sections = [...a.body_html.matchAll(/<details><summary>(.*?)<\/summary>(.*?)<\/details>/gs)];
@@ -196,6 +194,18 @@ function renderAnnotation(a: Annotation, preExisting: boolean | null) {
   }
 }
 
+// The `context=flaky style=warning` annotation bundles every retried test into one block,
+// unlike error annotations which are one-per-test. Split it back out so each flaky test
+// renders the same way an error does (own `== path ==` heading, per-platform dedup).
+function splitFlaky(a: Annotation): Annotation[] {
+  const byTest = new Map<string, string>();
+  for (const [block, summary] of a.body_html.matchAll(/<details><summary>(.*?)<\/summary>.*?<\/details>/gs)) {
+    const test = summary.match(/<code>(.*?)<\/code>/)?.[1] ?? renderTermHTML(summary).split(" - ")[0].trim();
+    byTest.set(test, (byTest.get(test) ?? "") + block);
+  }
+  return [...byTest].map(([context, body_html]) => ({ context, style: "flaky", body_html }));
+}
+
 function normalizeForDedup(s: string): string {
   return Bun.stripANSI(s)
     .replace(/[\d.]+m?s\b/g, "<t>")
@@ -215,16 +225,29 @@ async function printErrors(
     compare ? mergedPRFailingContexts(excludeBranch) : Promise.resolve(null),
   ]);
 
-  const shown = anns.filter(a => all || a.style === "error");
-  if (shown.length === 0) {
-    const other = anns.length - shown.length;
-    console.log(`no error annotations${other ? ` (${other} warning/flaky; pass --all to show)` : ""}`);
+  const flaky = anns.filter(a => a.context === "flaky").flatMap(splitFlaky);
+  const rest = anns.filter(a => a.context !== "flaky");
+  const shown = rest.filter(a => all || a.style === "error");
+
+  if (shown.length === 0 && flaky.length === 0) {
+    const other = rest.length;
+    console.log(`no error annotations${other ? ` (${other} warning/info; pass --all to show)` : ""}`);
     return;
   }
 
+  const tag = (a: Annotation) =>
+    a.style !== "error"
+      ? ""
+      : baseline == null
+        ? ""
+        : baseline.has(a.context)
+          ? ` ${c.dim}[pre-existing]${c.reset}`
+          : ` ${c.yellow}[new]${c.reset}`;
+
   // New-on-this-branch first.
   shown.sort((a, b) => Number(baseline?.has(a.context) ?? 0) - Number(baseline?.has(b.context) ?? 0));
-  for (const a of shown) renderAnnotation(a, baseline == null ? null : baseline.has(a.context));
+  for (const a of shown) renderAnnotation(a, tag(a));
+  for (const a of flaky) renderAnnotation(a, ` ${c.yellow}[flaky]${c.reset}`);
 
   if (baseline == null && compare) {
     console.log(`\n${c.dim}(could not fetch recently merged PRs for comparison)${c.reset}`);

@@ -119,7 +119,14 @@ pub fn next(this: *CondExpr) Yield {
             .stat_complete => {
                 switch (this.node.op) {
                     .@"-f" => {
-                        return this.parent.childDone(this, if (this.state.stat_complete.stat == .result) 0 else 1);
+                        const st: bun.Stat = switch (this.state.stat_complete.stat) {
+                            .result => |st| st,
+                            .err => {
+                                // It seems that bash always gives exit code 1
+                                return this.parent.childDone(this, 1);
+                            },
+                        };
+                        return this.parent.childDone(this, if (bun.S.ISREG(@intCast(st.mode))) 0 else 1);
                     },
                     .@"-d" => {
                         const st: bun.Stat = switch (this.state.stat_complete.stat) {

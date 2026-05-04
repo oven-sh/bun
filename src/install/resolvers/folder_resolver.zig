@@ -334,8 +334,8 @@ const stringZ = [:0]const u8;
 const Dependency = @import("../dependency.zig");
 const Npm = @import("../npm.zig");
 const std = @import("std");
-const FileSystem = @import("../../fs.zig").FileSystem;
-const IdentityContext = @import("../../identity_context.zig").IdentityContext;
+const FileSystem = @import("../../resolver/fs.zig").FileSystem;
+const IdentityContext = @import("../../collections/identity_context.zig").IdentityContext;
 const Resolution = @import("../resolution.zig").Resolution;
 
 const Features = @import("../install.zig").Features;

@@ -379,7 +379,7 @@ const T = lexer.T;
 const string = []const u8;
 
 const std = @import("std");
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
+const IdentityContext = @import("../collections/identity_context.zig").IdentityContext;
 const expect = std.testing.expect;
 
 const bun = @import("bun");

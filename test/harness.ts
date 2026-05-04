@@ -19,7 +19,8 @@ export const BREAKING_CHANGES_BUN_1_2 = false;
 
 export const isMacOS = process.platform === "darwin";
 export const isLinux = process.platform === "linux";
-export const isPosix = isMacOS || isLinux;
+export const isFreeBSD = process.platform === "freebsd";
+export const isPosix = isMacOS || isLinux || isFreeBSD;
 export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isArm64 = process.arch === "arm64";
@@ -48,6 +49,9 @@ export const isASAN = basename(process.execPath).includes("bun-asan");
 
 export const bunEnv: NodeJS.Dict<string> = {
   ...process.env,
+  // Strip ad-hoc JSC debug options that may be set on CI agents — they leak
+  // a "WARNING: failed to parse" line to stderr that breaks snapshot tests.
+  JSC_useJIT: undefined,
   GITHUB_ACTIONS: "false",
   BUN_DEBUG_QUIET_LOGS: "1",
   NO_COLOR: "1",
@@ -138,14 +142,14 @@ export async function expectMaxObjectTypeCount(
   var { heapStats } = require("bun:jsc");
 
   gc();
-  if (heapStats().objectTypeCounts[type] <= count) return;
+  if ((heapStats().objectTypeCounts[type] ?? 0) <= count) return;
   gc(true);
   for (const wait = 20; maxWait > 0; maxWait -= wait) {
-    if (heapStats().objectTypeCounts[type] <= count) break;
+    if ((heapStats().objectTypeCounts[type] ?? 0) <= count) break;
     await Bun.sleep(wait);
     gc();
   }
-  expect(heapStats().objectTypeCounts[type] || 0).toBeLessThanOrEqual(count);
+  expect(heapStats().objectTypeCounts[type] ?? 0).toBeLessThanOrEqual(count);
 }
 
 // we must ensure that finalizers are run
@@ -1001,19 +1005,22 @@ export async function describeWithContainer(
         ready: readyPromise,
       };
 
-      // Start the service before any tests
+      // Kick off `ensure()` at describe-define time so a file with multiple
+      // describeWithContainer blocks starts all of its containers in parallel.
+      // up() de-duplicates in-flight calls per service, so two describes for
+      // the same service share one `compose up`. beforeAll just awaits the
+      // result so test failures still surface there.
+      const startPromise = import("./docker/index.ts").then(h => h.ensure(actualService as any));
+      // Surface any rejection through `ready`; without a handler the runner
+      // would see an unhandled rejection before beforeAll re-throws it.
+      startPromise.catch(readyRejecter!);
+
       beforeAll(async () => {
-        try {
-          const dockerHelper = await import("./docker/index.ts");
-          const info = await dockerHelper.ensure(actualService as any);
-          _host = info.host;
-          _port = info.ports[servicePort];
-          console.log(`Container ready via docker-compose: ${image} at ${_host}:${_port}`);
-          readyResolver!();
-        } catch (error) {
-          readyRejecter!(error);
-          throw error;
-        }
+        const info = await startPromise;
+        _host = info.host;
+        _port = info.ports[servicePort];
+        console.log(`Container ready via docker-compose: ${image} at ${_host}:${_port}`);
+        readyResolver!();
       });
 
       fn(containerDescriptor);

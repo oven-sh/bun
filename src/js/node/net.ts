@@ -51,9 +51,9 @@ const newDetachedSocket = $newZigFunction("node_net_binding.zig", "newDetachedSo
 const doConnect = $newZigFunction("node_net_binding.zig", "doConnect", 2);
 
 const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
-const upgradeDuplexToTLS = $newZigFunction("socket.zig", "jsUpgradeDuplexToTLS", 2);
-const isNamedPipeSocket = $newZigFunction("socket.zig", "jsIsNamedPipeSocket", 1);
-const getBufferedAmount = $newZigFunction("socket.zig", "jsGetBufferedAmount", 1);
+const upgradeDuplexToTLS = $newZigFunction("runtime/socket/socket.zig", "jsUpgradeDuplexToTLS", 2);
+const isNamedPipeSocket = $newZigFunction("runtime/socket/socket.zig", "jsIsNamedPipeSocket", 1);
+const getBufferedAmount = $newZigFunction("runtime/socket/socket.zig", "jsGetBufferedAmount", 1);
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -2250,7 +2250,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
         port = 0;
       }
 
-      const isLinux = process.platform === "linux";
+      const isLinux = process.platform === "linux" || process.platform === "android";
 
       if (!Number.isSafeInteger(port) || port < 0) {
         if (path) {
@@ -2409,7 +2409,9 @@ Server.prototype[kRealListen] = function (
 
   if (contexts) {
     for (const [name, context] of contexts) {
-      addServerName(this._handle, name, context);
+      // tls.ts stores the InternalSecureContext wrapper; the Zig side wants
+      // the native SSL_CTX wrapper at `.context`.
+      addServerName(this._handle, name, context.context ?? context);
     }
   }
 

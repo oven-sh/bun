@@ -114,9 +114,15 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // (e.g. after deleting pch/ and reconfiguring) → every consumer fails with
   // "mtime changed". ninja's depfile already tracks invalidation; clang's
   // redundant mtime check just fights ccache.
+  // Windows: -Xclang -include, NOT /FI. clang-cl's /FI auto-promotes to
+  // -include-pch when a .pch already exists at the /Fp path — even for the
+  // /Yc -emit-pch cc1 job — so a stale PCH (e.g. after a cxxflags change)
+  // gets validated instead of overwritten and the build fails with
+  // "<langopt> was enabled in precompiled file but is currently disabled".
+  // -Xclang goes straight to cc1, bypassing the driver's auto-detection.
   n.rule("pch", {
     command: cfg.windows
-      ? `${ccacheLauncher}${cxx} /nologo /showIncludes $cxxflags /clang:-fpch-instantiate-templates -Xclang -fno-pch-timestamp /Yc$pch_header /FI$pch_header /Fp$out /c $in /Fo$pch_stub_obj`
+      ? `${ccacheLauncher}${cxx} /nologo /showIncludes $cxxflags /clang:-fpch-instantiate-templates -Xclang -fno-pch-timestamp /Yc$pch_header -Xclang -include -Xclang $pch_header /Fp$out /c $in /Fo$pch_stub_obj`
       : `${ccacheLauncher}${cxx} $cxxflags -Winvalid-pch -fpch-instantiate-templates -Xclang -fno-pch-timestamp -Xclang -emit-pch -Xclang -include -Xclang $pch_header -x c++-header -MD -MT $out -MF $out.d -c $in -o $out`,
     description: "pch $out",
     ...depfileOpts,
@@ -192,7 +198,7 @@ export interface CompileOpts {
  * Compile a C++ source file. Returns absolute path to the .o output.
  *
  * Output path: {buildDir}/obj/{path-from-cwd-with-slashes-flattened}.o
- * E.g. src/bun.js/bindings/foo.cpp → obj/src_bun.js_bindings_foo.cpp.o
+ * E.g. src/jsc/bindings/foo.cpp → obj/src_jsc_bindings_foo.cpp.o
  */
 export function cxx(n: Ninja, cfg: Config, src: string, opts: CompileOpts): string {
   assert(
@@ -462,8 +468,8 @@ export function ar(n: Ninja, cfg: Config, out: string, objects: string[]): strin
 /**
  * Compute the .o output path for a source file.
  *
- * Mirrors the source tree under obj/, so `src/bun.js/bindings/foo.cpp` →
- * `obj/src/bun.js/bindings/foo.cpp.o`. Generated sources (codegen .cpp
+ * Mirrors the source tree under obj/, so `src/jsc/bindings/foo.cpp` →
+ * `obj/src/jsc/bindings/foo.cpp.o`. Generated sources (codegen .cpp
  * files under buildDir) go under `obj/codegen/` to keep a single tree.
  *
  * Ninja does NOT auto-create parent directories of outputs. Directories

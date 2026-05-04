@@ -75,6 +75,14 @@ describe.skipIf(isWindows)("bun test --isolate with NAPI finalizers pending acro
       env: {
         ...bunEnv,
         BUN_JSC_collectContinuously: "1",
+        // CI ASAN sets this on the outer test and bunEnv inherits
+        // process.env; NAPI module init (napi_create_function →
+        // napi_set_named_property) has a pre-existing unchecked-exception
+        // scope that is unrelated to the global-swap UAF under test, so
+        // keep the validator off in the child like the other NAPI tests in
+        // no-validate-exceptions.txt.
+        BUN_JSC_validateExceptionChecks: undefined,
+        BUN_JSC_dumpSimulatedThrows: undefined,
       },
       cwd: String(dir),
       // The addon printf()s "finalizer\n" per wrapped object — up to 20k lines

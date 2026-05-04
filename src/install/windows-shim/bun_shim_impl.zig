@@ -374,8 +374,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             .MaximumLength = path_len_bytes,
             .Buffer = buf1_u16,
         };
-        if (dbg) debug("NtCreateFile({s})", .{fmt16(unicodeStringToU16(nt_name))});
-        if (dbg) debug("NtCreateFile({f})", .{(unicodeStringToU16(nt_name))});
+        if (dbg) debug("NtCreateFile({f})", .{fmt16(unicodeStringToU16(nt_name))});
         var attr = w.OBJECT_ATTRIBUTES{
             .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
             .RootDirectory = null,
@@ -510,6 +509,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
     };
     assert(read_ptr[0] != '\\');
     assert((read_ptr - 1)[0] == '\\');
+    const metadata_start_ptr = read_ptr;
 
     const read_max_len = buf1.len * 2 - (@intFromPtr(read_ptr) - @intFromPtr(buf1_u16));
 
@@ -566,6 +566,11 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
 
         return mode.fail(.InvalidShimValidation);
     }
+    const bin_path_start_ptr = if (metadata_start_ptr[0] == BinLinkingShim.absolute_path_marker)
+        metadata_start_ptr + 1
+    else
+        buf1_u16[nt_object_prefix.len..];
+    const bin_path_start_u8: [*]u8 = @ptrCast(bin_path_start_ptr);
 
     var spawn_command_line: [*:0]u16 = switch (flags.has_shebang) {
         false => spawn_command_line: {
@@ -580,11 +585,19 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             //                                                                  ^^ flags
             //                                                         zero char|
 
-            // change the \ from '\??\' to '""
-            // the ending quote is assumed to already exist as per the format
-            // BUF1: '\??"C:\Users\chloe\project\node_modules\my-cli\src\app.js"##!!!!!!!!!!'
-            //           ^
-            buf1_u16[3] = '"';
+            const command_line_start: [*]u16 = if (metadata_start_ptr[0] == BinLinkingShim.absolute_path_marker) brk: {
+                // Replace the absolute-path marker with the opening quote. The
+                // ending quote is already present as per the format.
+                metadata_start_ptr[0] = '"';
+                break :brk metadata_start_ptr;
+            } else brk: {
+                // change the \ from '\??\' to '""
+                // the ending quote is assumed to already exist as per the format
+                // BUF1: '\??"C:\Users\chloe\project\node_modules\my-cli\src\app.js"##!!!!!!!!!!'
+                //           ^
+                buf1_u16[3] = '"';
+                break :brk @ptrCast(@alignCast(buf1_u8 + 2 * (nt_object_prefix.len - "\"".len)));
+            };
 
             // Copy user arguments in, overwriting old data. Remember that we ensured the arguments
             // this started with a space.
@@ -603,7 +616,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             //           ^ lpCommandLine                                               ^ null terminator
             @as(*align(1) u16, @ptrCast(argument_start_ptr + user_arguments_u8.len)).* = 0;
 
-            break :spawn_command_line @ptrCast(@alignCast(buf1_u8 + 2 * (nt_object_prefix.len - "\"".len)));
+            break :spawn_command_line @ptrCast(command_line_start);
         },
         true => spawn_command_line: {
             // When the shebang flag is set, we expect two u32s containing byte lengths of the bin and arg components
@@ -653,8 +666,9 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
                 if (dbg) debug("direct_launch_with_bun_js", .{});
                 // BUF1: '\??\C:\Users\chloe\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
                 //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^  ^ read_ptr
-                const len = (@intFromPtr(read_ptr) - @intFromPtr(buf1_u8) - shebang_arg_len_u8) / 2 - nt_object_prefix.len - "\"\x00".len;
-                const launch_slice = buf1_u16[nt_object_prefix.len..][0..len :'"']; // assert we slice at the "
+                const bin_path_end = @intFromPtr(read_ptr) - shebang_arg_len_u8;
+                const len = (bin_path_end - @intFromPtr(bin_path_start_u8)) / 2 - "\"\x00".len;
+                const launch_slice = bin_path_start_ptr[0..len :'"']; // assert we slice at the "
                 bun_ctx.direct_launch_with_bun_js(
                     launch_slice,
                     bun_ctx.cli_context,
@@ -678,8 +692,8 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^ ^ read_ptr
             // BUF2: 'node "C:\Users\chloe\project\node_modules\my-cli\src\app.js"!!!!!!!!!!!!!!!!!!!!'
             const length_of_filename_u8 = @intFromPtr(read_ptr) -
-                @intFromPtr(buf1_u8) - 2 * (nt_object_prefix.len + "\x00".len);
-            const filename = buf1_u8[2 * nt_object_prefix.len ..][0..length_of_filename_u8];
+                @intFromPtr(bin_path_start_u8) - 2 * "\x00".len;
+            const filename = bin_path_start_u8[0..length_of_filename_u8];
             const filename_u16 = std.mem.bytesAsSlice(u16, filename);
             if (dbg) {
                 debug("filename and quote: '{f}'", .{fmt16(@alignCast(filename_u16))});
@@ -964,7 +978,8 @@ pub inline fn main() noreturn {
 
 const builtin = @import("builtin");
 const std = @import("std");
-const Flags = @import("./BinLinkingShim.zig").Flags;
+const BinLinkingShim = @import("./BinLinkingShim.zig");
+const Flags = BinLinkingShim.Flags;
 const assert = std.debug.assert;
 const w = std.os.windows;
 

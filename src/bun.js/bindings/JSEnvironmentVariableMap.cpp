@@ -13,6 +13,7 @@
 #include "BunClientData.h"
 #include "wtf/Compiler.h"
 #include "wtf/Forward.h"
+#include "WebCoreJSBuiltins.h"
 
 using namespace JSC;
 
@@ -32,7 +33,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
+    auto* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
@@ -76,7 +77,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterProxyEnvironmentVariable, (JSGlobalObject * glo
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
+    auto* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
@@ -115,7 +116,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
+    auto* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
@@ -199,7 +200,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeTLSRejectUnauthorizedGetter, (JSGlobalObject * gl
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
+    auto* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
@@ -253,7 +254,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsBunConfigVerboseFetchGetter, (JSGlobalObject * global
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
+    auto* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 

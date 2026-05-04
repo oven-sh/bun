@@ -262,7 +262,7 @@ std::optional<ncrypto::DataPointer> passphraseFromBufferSource(JSC::JSGlobalObje
         return std::nullopt;
     }
 
-    if (auto* array = jsDynamicCast<JSC::JSUint8Array*>(input)) {
+    if (auto* array = dynamicDowncast<JSC::JSUint8Array>(input)) {
         if (array->isDetached()) {
             throwTypeError(globalObject, scope, "passphrase must not be detached"_s);
             return std::nullopt;
@@ -506,7 +506,7 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
         JSValue buf = JSValue::decode(WebCore::constructFromEncoding(globalObject, dataView, encoding));
         RETURN_IF_EXCEPTION(scope, {});
 
-        auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buf);
+        auto* view = dynamicDowncast<JSC::JSArrayBufferView>(buf);
         if (!view) {
             Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, argName, "Buffer, TypedArray, or DataView"_s, value);
             return {};
@@ -528,7 +528,7 @@ GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject*
 {
     using Return = GCOwnedDataScope<std::span<const uint8_t>>;
 
-    if (auto* view = jsDynamicCast<JSArrayBufferView*>(dataValue)) {
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(dataValue)) {
         return { view, view->span() };
     }
 
@@ -537,7 +537,7 @@ GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject*
         return { nullptr, {} };
     };
 
-    if (auto* arrayBuffer = jsDynamicCast<JSArrayBuffer*>(dataValue)) {
+    if (auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(dataValue)) {
         return { arrayBuffer, arrayBuffer->impl()->span() };
     }
 
@@ -563,7 +563,7 @@ GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject*
         JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, strView, encoding));
         RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
 
-        if (auto* view = jsDynamicCast<JSArrayBufferView*>(buffer)) {
+        if (auto* view = dynamicDowncast<JSArrayBufferView>(buffer)) {
             return { view, view->span() };
         }
     }
@@ -600,7 +600,7 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
         JSValue buf = JSValue::decode(WebCore::constructFromEncoding(globalObject, dataView, encoding));
         RETURN_IF_EXCEPTION(scope, {});
 
-        auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buf);
+        auto* view = dynamicDowncast<JSC::JSArrayBufferView>(buf);
         if (!view) {
             ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, argName, "string"_s, "Buffer, TypedArray, or DataView"_s, value);
             return {};
@@ -619,7 +619,7 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
         return {};
     }
 
-    auto* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(value);
+    auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value);
     if (!view) {
         ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, argName, "string"_s, "Buffer, TypedArray, or DataView"_s, value);
         return {};
@@ -635,7 +635,7 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
 
 std::optional<std::span<const uint8_t>> getBuffer(JSC::JSValue maybeBuffer)
 {
-    if (auto* view = jsDynamicCast<JSArrayBufferView*>(maybeBuffer)) {
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(maybeBuffer)) {
         if (view->isDetached()) {
             return std::nullopt;
         }
@@ -643,7 +643,7 @@ std::optional<std::span<const uint8_t>> getBuffer(JSC::JSValue maybeBuffer)
         return view->span();
     }
 
-    if (auto* arrayBuffer = jsDynamicCast<JSArrayBuffer*>(maybeBuffer)) {
+    if (auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(maybeBuffer)) {
         auto* buffer = arrayBuffer->impl();
         if (buffer->isDetached()) {
             return std::nullopt;
@@ -661,11 +661,11 @@ bool isStringOrBuffer(JSValue value)
         return true;
     }
 
-    if (jsDynamicCast<JSArrayBufferView*>(value)) {
+    if (dynamicDowncast<JSArrayBufferView>(value)) {
         return true;
     }
 
-    if (jsDynamicCast<JSArrayBuffer*>(value)) {
+    if (dynamicDowncast<JSArrayBuffer>(value)) {
         return true;
     }
 

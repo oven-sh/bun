@@ -36,47 +36,56 @@ pub const SideEffectsData = struct {
 
 /// A temporary threadlocal buffer with a lifetime more than the current
 /// function call.
-const bufs = struct {
-    // Experimenting with making this one struct instead of a bunch of different
-    // threadlocal vars yielded no performance improvement on macOS when
-    // bundling 10 copies of Three.js. It may be worthwhile for more complicated
-    // packages but we lack a decent module resolution benchmark right now.
-    // Potentially revisit after https://github.com/oven-sh/bun/issues/2716
-    pub threadlocal var extension_path: [512]u8 = undefined;
-    pub threadlocal var tsconfig_match_full_buf: bun.PathBuffer = undefined;
-    pub threadlocal var tsconfig_match_full_buf2: bun.PathBuffer = undefined;
-    pub threadlocal var tsconfig_match_full_buf3: bun.PathBuffer = undefined;
+///
+/// These used to be individual `threadlocal var x: bun.PathBuffer = undefined`
+/// declarations. On Windows each `PathBuffer` is 96 KB (vs 4 KB on POSIX) and
+/// PE/COFF has no TLS-BSS, so 25 of them here cost ~2.5 MB of raw zeros in
+/// bun.exe and in every thread's TLS block. Grouping them behind a lazily
+/// allocated pointer brings that down to 8 bytes. See `bun.ThreadlocalBuffers`.
+///
+/// Experimenting with making this one struct instead of a bunch of different
+/// threadlocal vars yielded no performance improvement on macOS when bundling
+/// 10 copies of Three.js. Potentially revisit after https://github.com/oven-sh/bun/issues/2716
+const Bufs = struct {
+    extension_path: bun.PathBuffer = undefined,
+    tsconfig_match_full_buf: bun.PathBuffer = undefined,
+    tsconfig_match_full_buf2: bun.PathBuffer = undefined,
+    tsconfig_match_full_buf3: bun.PathBuffer = undefined,
 
-    pub threadlocal var esm_subpath: [512]u8 = undefined;
-    pub threadlocal var esm_absolute_package_path: bun.PathBuffer = undefined;
-    pub threadlocal var esm_absolute_package_path_joined: bun.PathBuffer = undefined;
+    esm_subpath: [512]u8 = undefined,
+    esm_absolute_package_path: bun.PathBuffer = undefined,
+    esm_absolute_package_path_joined: bun.PathBuffer = undefined,
 
-    pub threadlocal var dir_entry_paths_to_resolve: [256]DirEntryResolveQueueItem = undefined;
-    pub threadlocal var open_dirs: [256]FD = undefined;
-    pub threadlocal var resolve_without_remapping: bun.PathBuffer = undefined;
-    pub threadlocal var index: bun.PathBuffer = undefined;
-    pub threadlocal var dir_info_uncached_filename: bun.PathBuffer = undefined;
-    pub threadlocal var node_bin_path: bun.PathBuffer = undefined;
-    pub threadlocal var dir_info_uncached_path: bun.PathBuffer = undefined;
-    pub threadlocal var tsconfig_base_url: bun.PathBuffer = undefined;
-    pub threadlocal var relative_abs_path: bun.PathBuffer = undefined;
-    pub threadlocal var load_as_file_or_directory_via_tsconfig_base_path: bun.PathBuffer = undefined;
-    pub threadlocal var node_modules_check: bun.PathBuffer = undefined;
-    pub threadlocal var field_abs_path: bun.PathBuffer = undefined;
-    pub threadlocal var tsconfig_path_abs: bun.PathBuffer = undefined;
-    pub threadlocal var check_browser_map: bun.PathBuffer = undefined;
-    pub threadlocal var remap_path: bun.PathBuffer = undefined;
-    pub threadlocal var load_as_file: bun.PathBuffer = undefined;
-    pub threadlocal var remap_path_trailing_slash: bun.PathBuffer = undefined;
-    pub threadlocal var path_in_global_disk_cache: bun.PathBuffer = undefined;
-    pub threadlocal var abs_to_rel: bun.PathBuffer = undefined;
-    pub threadlocal var node_modules_paths_buf: bun.PathBuffer = undefined;
-    pub threadlocal var import_path_for_standalone_module_graph: bun.PathBuffer = undefined;
+    dir_entry_paths_to_resolve: [256]DirEntryResolveQueueItem = undefined,
+    open_dirs: [256]FD = undefined,
+    resolve_without_remapping: bun.PathBuffer = undefined,
+    index: bun.PathBuffer = undefined,
+    dir_info_uncached_filename: bun.PathBuffer = undefined,
+    node_bin_path: bun.PathBuffer = undefined,
+    dir_info_uncached_path: bun.PathBuffer = undefined,
+    tsconfig_base_url: bun.PathBuffer = undefined,
+    relative_abs_path: bun.PathBuffer = undefined,
+    load_as_file_or_directory_via_tsconfig_base_path: bun.PathBuffer = undefined,
+    node_modules_check: bun.PathBuffer = undefined,
+    field_abs_path: bun.PathBuffer = undefined,
+    tsconfig_path_abs: bun.PathBuffer = undefined,
+    check_browser_map: bun.PathBuffer = undefined,
+    remap_path: bun.PathBuffer = undefined,
+    load_as_file: bun.PathBuffer = undefined,
+    remap_path_trailing_slash: bun.PathBuffer = undefined,
+    path_in_global_disk_cache: bun.PathBuffer = undefined,
+    abs_to_rel: bun.PathBuffer = undefined,
+    node_modules_paths_buf: bun.PathBuffer = undefined,
+    import_path_for_standalone_module_graph: bun.PathBuffer = undefined,
 
-    pub inline fn bufs(comptime field: std.meta.DeclEnum(@This())) *@TypeOf(@field(@This(), @tagName(field))) {
-        return &@field(@This(), @tagName(field));
-    }
-}.bufs;
+    win32_normalized_dir_info_cache: if (Environment.isWindows) [bun.MAX_PATH_BYTES * 2]u8 else void = undefined,
+};
+
+const bufs_storage = bun.ThreadlocalBuffers(Bufs);
+
+inline fn bufs(comptime field: std.meta.FieldEnum(Bufs)) *@FieldType(Bufs, @tagName(field)) {
+    return &@field(bufs_storage.get(), @tagName(field));
+}
 
 pub const PathPair = struct {
     primary: Path,
@@ -598,6 +607,13 @@ pub const Resolver = struct {
         if (r.opts.packages == .external and isPackagePath(import_path)) {
             return true;
         }
+        return r.matchesUserExternalPattern(import_path);
+    }
+
+    /// True iff `import_path` matches a user-supplied `--external` wildcard
+    /// pattern. Does NOT consider `packages = external`; use
+    /// `isExternalPattern` for the combined check.
+    pub fn matchesUserExternalPattern(r: *ThisResolver, import_path: string) bool {
         for (r.opts.external.patterns) |pattern| {
             if (import_path.len >= pattern.prefix.len + pattern.suffix.len and (strings.startsWith(
                 import_path,
@@ -610,6 +626,25 @@ pub const Resolver = struct {
             }
         }
         return false;
+    }
+
+    /// Resolves `import_path` via the enclosing tsconfig's `paths`. Returns
+    /// the `MatchResult` iff a key matches AND the mapped target exists on
+    /// disk. Used to let path-aliased local files win over `packages=external`
+    /// without breaking catch-all `"*"` paths entries that only cover ambient
+    /// type stubs.
+    pub fn resolveViaTSConfigPaths(
+        r: *ThisResolver,
+        source_dir: string,
+        import_path: string,
+        kind: ast.ImportKind,
+    ) ?MatchResult {
+        if (source_dir.len == 0) return null;
+        if (!std.fs.path.isAbsolute(source_dir)) return null;
+        const dir_info = (r.dirInfoCached(source_dir) catch null) orelse return null;
+        const tsconfig = dir_info.enclosing_tsconfig_json orelse return null;
+        if (tsconfig.paths.count() == 0) return null;
+        return r.matchTSConfigPaths(tsconfig, import_path, kind);
     }
 
     pub fn flushDebugLogs(r: *ThisResolver, flush_mode: DebugLogs.FlushMode) !void {
@@ -694,6 +729,34 @@ pub const Resolver = struct {
                         .module_type = .cjs,
                         .primary_side_effects_data = .no_side_effects__pure_data,
                         .flags = .{ .is_external = true },
+                    },
+                };
+            }
+        }
+
+        // #29590: a tsconfig `paths` key can look bare (e.g. "@/*") and
+        // otherwise collide with `packages=external + isPackagePath`. Try
+        // the alias first, but only follow it when it actually resolves to
+        // a file on disk — a catch-all `"*": ["./types/*"]` for ambient
+        // .d.ts stubs must still let real bare imports stay external.
+        if (kind != .entry_point_build and kind != .entry_point_run and
+            r.opts.packages == .external and isPackagePath(import_path) and
+            !r.matchesUserExternalPattern(import_path))
+        {
+            if (r.resolveViaTSConfigPaths(source_dir, import_path, kind)) |res| {
+                if (r.debug_logs) |*debug| {
+                    debug.addNote("Resolved via tsconfig.json \"paths\" before applying packages=external");
+                    r.flushDebugLogs(.success) catch {};
+                }
+                return .{
+                    .success = Result{
+                        .import_kind = kind,
+                        .path_pair = res.path_pair,
+                        .diff_case = res.diff_case,
+                        .package_json = res.package_json,
+                        .dirname_fd = res.dirname_fd,
+                        .file_fd = res.file_fd,
+                        .jsx = r.opts.jsx,
                     },
                 };
             }
@@ -2257,9 +2320,13 @@ pub const Resolver = struct {
         // This is important so that browser_scope has a valid index.
         const dir_info_ptr = r.dir_cache.put(&dir_cache_info_result, .{}) catch unreachable;
 
+        // `dir_path` is a slice into the threadlocal `bufs(.path_in_global_disk_cache)` buffer,
+        // which gets overwritten on the next auto-install resolution. `dirInfoUncached` stores
+        // its `path` argument directly as `DirInfo.abs_path` in the permanent `dir_cache`, so
+        // pass the interned copy from `DirEntry.dir` (always backed by `DirnameStore`) instead.
         try r.dirInfoUncached(
             dir_info_ptr,
-            dir_path,
+            dir_entries_option.entries.dir,
             dir_entries_option,
             dir_cache_info_result,
             cached_dir_entry_result.index,
@@ -2631,7 +2698,6 @@ pub const Resolver = struct {
         };
     }
 
-    threadlocal var win32_normalized_dir_info_cache_buf: if (Environment.isWindows) [bun.MAX_PATH_BYTES * 2]u8 else void = undefined;
     fn dirInfoCachedMaybeLog(r: *ThisResolver, raw_input_path: string, comptime enable_logging: bool, comptime follow_symlinks: bool) !?*DirInfo {
         r.mutex.lock();
         defer r.mutex.unlock();
@@ -2647,12 +2713,13 @@ pub const Resolver = struct {
         if (input_path.len > bun.MAX_PATH_BYTES) return null;
 
         if (comptime Environment.isWindows) {
-            input_path = r.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, input_path);
+            const win32_normalized_dir_info_cache_buf = bufs(.win32_normalized_dir_info_cache);
+            input_path = r.fs.normalizeBuf(win32_normalized_dir_info_cache_buf, input_path);
             // kind of a patch on the fact normalizeBuf isn't 100% perfect what we want
             if ((input_path.len == 2 and input_path[1] == ':') or
                 (input_path.len == 3 and input_path[1] == ':' and input_path[2] == '.'))
             {
-                bun.unsafeAssert(input_path.ptr == &win32_normalized_dir_info_cache_buf);
+                bun.unsafeAssert(input_path.ptr == win32_normalized_dir_info_cache_buf);
                 win32_normalized_dir_info_cache_buf[2] = '\\';
                 input_path.len = 3;
             }
@@ -2912,11 +2979,13 @@ pub const Resolver = struct {
             var in_place: ?*Fs.FileSystem.DirEntry = null;
 
             if (rfs.entries.atIndex(cached_dir_entry_result.index)) |cached_entry| {
-                if (cached_entry.entries.generation >= r.generation) {
-                    dir_entries_option = cached_entry;
-                    needs_iter = false;
-                } else {
-                    in_place = cached_entry.entries;
+                if (cached_entry.* == .entries) {
+                    if (cached_entry.entries.generation >= r.generation) {
+                        dir_entries_option = cached_entry;
+                        needs_iter = false;
+                    } else {
+                        in_place = cached_entry.entries;
+                    }
                 }
             }
 
@@ -3207,20 +3276,23 @@ pub const Resolver = struct {
 
             var ext_buf = bufs(.extension_path);
 
-            bun.copy(u8, ext_buf, cleaned);
+            if (cleaned.len <= ext_buf.len) {
+                bun.copy(u8, ext_buf, cleaned);
 
-            // If that failed, try adding implicit extensions
-            for (this.extension_order) |ext| {
-                bun.copy(u8, ext_buf[cleaned.len..], ext);
-                const new_path = ext_buf[0 .. cleaned.len + ext.len];
-                // if (r.debug_logs) |*debug| {
-                //     debug.addNoteFmt("Checking for \"{s}\" ", .{new_path});
-                // }
-                if (map.get(new_path)) |_remapped| {
-                    this.remapped = _remapped;
-                    this.cleaned = new_path;
-                    this.input_path = new_path;
-                    return true;
+                // If that failed, try adding implicit extensions
+                for (this.extension_order) |ext| {
+                    if (cleaned.len + ext.len > ext_buf.len) continue;
+                    bun.copy(u8, ext_buf[cleaned.len..], ext);
+                    const new_path = ext_buf[0 .. cleaned.len + ext.len];
+                    // if (r.debug_logs) |*debug| {
+                    //     debug.addNoteFmt("Checking for \"{s}\" ", .{new_path});
+                    // }
+                    if (map.get(new_path)) |_remapped| {
+                        this.remapped = _remapped;
+                        this.cleaned = new_path;
+                        this.input_path = new_path;
+                        return true;
+                    }
                 }
             }
 
@@ -3238,19 +3310,22 @@ pub const Resolver = struct {
                 return true;
             }
 
-            bun.copy(u8, ext_buf, index_path);
+            if (index_path.len <= ext_buf.len) {
+                bun.copy(u8, ext_buf, index_path);
 
-            for (this.extension_order) |ext| {
-                bun.copy(u8, ext_buf[index_path.len..], ext);
-                const new_path = ext_buf[0 .. index_path.len + ext.len];
-                // if (r.debug_logs) |*debug| {
-                //     debug.addNoteFmt("Checking for \"{s}\" ", .{new_path});
-                // }
-                if (map.get(new_path)) |_remapped| {
-                    this.remapped = _remapped;
-                    this.cleaned = new_path;
-                    this.input_path = new_path;
-                    return true;
+                for (this.extension_order) |ext| {
+                    if (index_path.len + ext.len > ext_buf.len) continue;
+                    bun.copy(u8, ext_buf[index_path.len..], ext);
+                    const new_path = ext_buf[0 .. index_path.len + ext.len];
+                    // if (r.debug_logs) |*debug| {
+                    //     debug.addNoteFmt("Checking for \"{s}\" ", .{new_path});
+                    // }
+                    if (map.get(new_path)) |_remapped| {
+                        this.remapped = _remapped;
+                        this.cleaned = new_path;
+                        this.input_path = new_path;
+                        return true;
+                    }
                 }
             }
 
@@ -3999,6 +4074,17 @@ pub const Resolver = struct {
         const rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
         var entries = _entries.entries;
 
+        if (comptime Environment.allow_assert) {
+            // `path` is stored in the permanent `dir_cache` as `DirInfo.abs_path`. It must not
+            // point into a reused threadlocal scratch buffer, or a later resolution will
+            // corrupt cached entries. Callers must intern it (e.g. via `DirnameStore`) first.
+            bun.assertf(
+                !allocators.isSliceInBuffer(path, bufs(.path_in_global_disk_cache)),
+                "DirInfo.abs_path must not point into the threadlocal path_in_global_disk_cache buffer (got \"{s}\")",
+                .{path},
+            );
+        }
+
         info.* = DirInfo{
             .abs_path = path,
             // .abs_real_path = path,
@@ -4246,10 +4332,29 @@ pub const Resolver = struct {
                         // "not defined" from "defined as {}" — the latter clears inherited
                         // paths per TypeScript semantics.
                         if (parent_config.base_url_for_paths.len > 0) {
+                            // The previous merged_config.paths is being replaced; free its
+                            // backing storage before overwriting so the PathsMap from the
+                            // deeper config doesn't leak. Each value is a []string slice
+                            // that was separately heap-allocated in TSConfigJSON.parse()
+                            // (tsconfig_json.zig), so free those before the map itself.
+                            for (merged_config.paths.values()) |v| bun.default_allocator.free(v);
+                            merged_config.paths.deinit();
                             merged_config.paths = parent_config.paths;
                             merged_config.base_url_for_paths = parent_config.base_url_for_paths;
+                        } else {
+                            // paths were not moved to merged_config, so they're still owned
+                            // by parent_config. base_url_for_paths.len == 0 implies the map
+                            // is empty (it's only set when the `paths` key is present in the
+                            // JSON), so this is a no-op but documents the ownership.
+                            parent_config.paths.deinit();
                         }
-                        // todo deinit these parent configs somehow?
+                        // Every scalar/reference we need has been copied into merged_config
+                        // (strings live in dirname_store or default_allocator and outlive the
+                        // struct). The heap-allocated TSConfigJSON itself is no longer needed;
+                        // without this, every intermediate config in an extends chain leaks on
+                        // each dirInfoUncached() call, which is especially bad under HMR where
+                        // bustDirCache triggers a re-parse of the whole chain on every reload.
+                        bun.destroy(parent_config);
                     }
                     info.tsconfig_json = merged_config;
                 }

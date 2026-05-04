@@ -87,7 +87,7 @@ JSC_DEFINE_HOST_FUNCTION(structuredCloneForStream, (JSGlobalObject * globalObjec
         RELEASE_AND_RETURN(scope, cloneArrayBufferImpl(globalObject, callFrame, CloneMode::Full));
 
     if (value.inherits<JSArrayBufferView>()) {
-        auto* bufferView = jsCast<JSArrayBufferView*>(value);
+        auto* bufferView = uncheckedDowncast<JSArrayBufferView>(value);
         ASSERT(bufferView);
 
         auto* buffer = bufferView->unsharedBuffer();
@@ -137,7 +137,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globa
         RETURN_IF_EXCEPTION(throwScope, {});
         if (transferListValue.isObject()) {
             JSC::JSObject* transferListObject = transferListValue.getObject();
-            if (auto* transferListArray = jsDynamicCast<JSC::JSArray*>(transferListObject)) {
+            if (auto* transferListArray = dynamicDowncast<JSC::JSArray>(transferListObject)) {
                 for (unsigned i = 0; i < transferListArray->length(); i++) {
                     JSC::JSValue transferListValue = transferListArray->get(globalObject, i);
                     RETURN_IF_EXCEPTION(throwScope, {});
@@ -202,7 +202,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredCloneAdvanced, (JSC::JSGlobalObject
 
     if (transferListValue.isObject()) {
         JSC::JSObject* transferListObject = transferListValue.getObject();
-        if (auto* transferListArray = jsDynamicCast<JSC::JSArray*>(transferListObject)) {
+        if (auto* transferListArray = dynamicDowncast<JSC::JSArray>(transferListObject)) {
             for (unsigned i = 0; i < transferListArray->length(); i++) {
                 JSC::JSValue transferListValue = transferListArray->get(globalObject, i);
                 RETURN_IF_EXCEPTION(throwScope, {});

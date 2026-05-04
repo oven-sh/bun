@@ -63,12 +63,25 @@ pub fn start(this: *PipeReader, process: *Subprocess, event_loop: *jsc.EventLoop
         return this.reader.startWithCurrentPipe();
     }
 
+    // PosixBufferedReader.start() always returns .result, but if poll
+    // registration fails it synchronously invokes onReaderError() first,
+    // which drops both the Readable.pipe ref (via onCloseIO) and the ref we
+    // just took above. Hold one more ref so `this` survives long enough to
+    // check state after start() returns.
+    this.ref();
+    defer this.deref();
+
     switch (this.reader.start(this.stdio_result.?, true)) {
         .err => |err| {
             return .{ .err = err };
         },
         .result => {
             if (comptime Environment.isPosix) {
+                if (this.state == .err) {
+                    // onReaderError already ran; the guard deref on return
+                    // will drop the last ref and deinit() closes the handle.
+                    return .success;
+                }
                 const poll = this.reader.handle.poll;
                 poll.flags.insert(.socket);
                 this.reader.flags.socket = true;
@@ -171,8 +184,11 @@ pub fn onReaderError(this: *PipeReader, err: bun.sys.Error) void {
         bun.default_allocator.free(this.state.done);
     }
     this.state = .{ .err = err };
-    if (this.process) |process|
+    if (this.process) |process| {
+        this.process = null;
         process.onCloseIO(this.kind(process));
+        this.deref();
+    }
 }
 
 pub fn close(this: *PipeReader) void {
@@ -199,10 +215,17 @@ pub fn loop(this: *PipeReader) *bun.Async.Loop {
 
 fn deinit(this: *PipeReader) void {
     if (comptime Environment.isPosix) {
-        bun.assert(this.reader.isDone());
+        bun.assert(this.reader.isDone() or this.state == .err);
     }
 
     if (comptime Environment.isWindows) {
+        // WindowsBufferedReader.onError() never closes the source, and
+        // WindowsBufferedReader.deinit() nulls this.source before calling
+        // closeImpl so it never actually closes either. Close it here on
+        // the error path so the uv.Pipe handle doesn't leak.
+        if (this.state == .err and this.reader.source != null and !this.reader.source.?.isClosed()) {
+            this.reader.closeImpl(false);
+        }
         bun.assert(this.reader.source == null or this.reader.source.?.isClosed());
     }
 

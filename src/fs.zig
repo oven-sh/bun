@@ -579,7 +579,7 @@ pub const FileSystem = struct {
                     ) catch |err| bun.handleOom(err);
                 },
                 .mac => "/private/tmp",
-                else => "/tmp",
+                else => if (comptime Environment.isAndroid) "/data/local/tmp" else "/tmp",
             };
         }
 
@@ -790,33 +790,32 @@ pub const FileSystem = struct {
                 return std.math.maxInt(usize);
             }
 
-            var file_limit: usize = 0;
-            blk: {
-                const resource = std.posix.rlimit_resource.NOFILE;
-                const limit = try std.posix.getrlimit(resource);
-                Limit.handles_before = limit;
-                file_limit = limit.max;
-                Limit.handles = file_limit;
-                const max_to_use: @TypeOf(limit.max) = if (Environment.isMusl)
-                    // musl has extremely low defaults here, so we really want
-                    // to enable this on musl or tests will start failing.
-                    @max(limit.max, 163840)
-                else
-                    // apparently, requesting too high of a number can cause other processes to not start.
-                    // https://discord.com/channels/876711213126520882/1316342194176790609/1318175562367242271
-                    // https://github.com/postgres/postgres/blob/fee2b3ea2ecd0da0c88832b37ac0d9f6b3bfb9a9/src/backend/storage/file/fd.c#L1072
-                    limit.max;
-                if (limit.cur < max_to_use) {
-                    var new_limit = std.mem.zeroes(std.posix.rlimit);
-                    new_limit.cur = max_to_use;
-                    new_limit.max = max_to_use;
+            const resource = std.posix.rlimit_resource.NOFILE;
+            var lim = try std.posix.getrlimit(resource);
+            Limit.handles_before = lim;
 
-                    std.posix.setrlimit(resource, new_limit) catch break :blk;
-                    file_limit = new_limit.max;
-                    Limit.handles = file_limit;
-                }
+            // Cap at 1<<20 to match Node.js. On macOS the hard limit defaults to
+            // RLIM_INFINITY; raising soft anywhere near INT_MAX breaks child processes
+            // that read the limit into an int.
+            // https://github.com/nodejs/node/blob/v25.9.0/src/node.cc#L621-L627
+            // https://github.com/postgres/postgres/blob/fee2b3ea2ecd0da0c88832b37ac0d9f6b3bfb9a9/src/backend/storage/file/fd.c#L1072
+            // https://discord.com/channels/876711213126520882/1316342194176790609/1318175562367242271
+            const target: @TypeOf(lim.max) = @min(
+                // musl has extremely low defaults, so ensure at least 163840 there.
+                if (Environment.isMusl) @max(lim.max, 163840) else lim.max,
+                1 << 20,
+            );
+            if (lim.cur < target) {
+                var raised = lim;
+                raised.cur = target;
+                // Don't lower the hard limit (Node only touches rlim_cur). The @max
+                // is for the musl branch above, which may raise past the current hard.
+                raised.max = @max(lim.max, target);
+                if (std.posix.setrlimit(resource, raised)) |_| lim.cur = raised.cur else |_| {}
             }
-            return file_limit;
+
+            Limit.handles = @intCast(lim.cur);
+            return @intCast(lim.cur);
         }
 
         var _entries_option_map: *EntriesOption.Map = undefined;
@@ -1380,46 +1379,70 @@ pub const FileSystem = struct {
             outpath[entry_path.len + 1] = 0;
             outpath[entry_path.len] = 0;
 
-            var absolute_path_c: [:0]const u8 = outpath[0..entry_path.len :0];
+            const absolute_path_c: [:0]const u8 = outpath[0..entry_path.len :0];
 
             if (comptime bun.Environment.isWindows) {
-                var file = bun.sys.getFileAttributes(absolute_path_c) orelse return error.FileNotFound;
-                var depth: usize = 0;
-                const buf2: *bun.PathBuffer = bun.path_buffer_pool.get();
+                const file = bun.sys.getFileAttributes(absolute_path_c) orelse return error.FileNotFound;
+                // A Windows reparse point carries FILE_ATTRIBUTE_DIRECTORY iff
+                // the link is a directory link (junctions always do; symlinks
+                // do iff created with SYMBOLIC_LINK_FLAG_DIRECTORY; AppExec
+                // links and file symlinks don't), so this is already the
+                // correct `Entry.Kind` without following the chain.
+                cache.kind = if (file.is_directory) .dir else .file;
+                if (!file.is_reparse_point) return cache;
+
+                // For the realpath, open the path and let the kernel follow
+                // every hop, then `GetFinalPathNameByHandle` (same as libuv's
+                // `uv_fs_realpath`). The previous manual readlink+join loop
+                // resolved relative targets against `dirname(absolute_path_c)`,
+                // but that path may itself contain unresolved intermediate
+                // symlinks (e.g. with the isolated linker's global virtual
+                // store, `node_modules/.bun/<pkg>` is a symlink into
+                // `<cache>/links/`, and the dep symlinks inside point at
+                // siblings via `..\..\<dep>-<hash>`). Windows resolves
+                // relative reparse targets against the *real* parent, so the
+                // join landed in the project-side `.bun/` instead of
+                // `<cache>/links/`, the re-stat returned FileNotFound, the
+                // error was swallowed at `Entry.kind`, and a directory symlink
+                // was permanently misclassified as `.file` — surfacing as
+                // EISDIR at module load time.
+                const w = std.os.windows;
+                const wbuf = bun.w_path_buffer_pool.get();
+                defer bun.w_path_buffer_pool.put(wbuf);
+                const wpath = bun.strings.toKernel32Path(wbuf, absolute_path_c);
+                const handle = w.kernel32.CreateFileW(
+                    wpath.ptr,
+                    0,
+                    w.FILE_SHARE_READ | w.FILE_SHARE_WRITE | w.FILE_SHARE_DELETE,
+                    null,
+                    w.OPEN_EXISTING,
+                    // FILE_FLAG_BACKUP_SEMANTICS lets us open directories;
+                    // omitting FILE_FLAG_OPEN_REPARSE_POINT makes Windows
+                    // follow the full reparse chain to the final target.
+                    w.FILE_FLAG_BACKUP_SEMANTICS,
+                    null,
+                );
+                // Dangling link / loop / EACCES: `cache.kind` is already set
+                // from the link's own directory bit, which is correct for all
+                // of those. `Entry.kind`/`Entry.symlink` swallow errors and
+                // fall back to the `.file` placeholder anyway, so returning
+                // the half-populated cache is strictly better than `try`.
+                // Empty `cache.symlink` makes the resolver fall back to
+                // `parent.abs_real_path + base`.
+                if (handle == w.INVALID_HANDLE_VALUE) return cache;
+                defer _ = bun.windows.CloseHandle(handle);
+
+                var info: w.BY_HANDLE_FILE_INFORMATION = undefined;
+                if (bun.windows.GetFileInformationByHandle(handle, &info) != 0) {
+                    cache.kind = if (info.dwFileAttributes & w.FILE_ATTRIBUTE_DIRECTORY != 0) .dir else .file;
+                }
+
+                const buf2 = bun.path_buffer_pool.get();
                 defer bun.path_buffer_pool.put(buf2);
-                const buf3: *bun.PathBuffer = bun.path_buffer_pool.get();
-                defer bun.path_buffer_pool.put(buf3);
-
-                var current_buf: *bun.PathBuffer = buf2;
-                var other_buf: *bun.PathBuffer = &outpath;
-                var joining_buf: *bun.PathBuffer = buf3;
-
-                while (file.is_reparse_point) : (depth += 1) {
-                    var read: [:0]const u8 = try bun.sys.readlink(absolute_path_c, current_buf).unwrap();
-                    if (std.fs.path.isAbsolute(read)) {
-                        std.mem.swap(*bun.PathBuffer, &current_buf, &other_buf);
-                    } else {
-                        read = bun.path.joinAbsStringBufZ(std.fs.path.dirname(absolute_path_c) orelse absolute_path_c, joining_buf, &.{read}, .windows);
-                        std.mem.swap(*bun.PathBuffer, &joining_buf, &other_buf);
-                    }
-                    file = bun.sys.getFileAttributes(read) orelse return error.FileNotFound;
-                    absolute_path_c = read;
-
-                    if (depth > 20) {
-                        return error.TooManySymlinks;
-                    }
+                switch (bun.sys.getFdPath(.fromNative(handle), buf2)) {
+                    .result => |real| cache.symlink = PathString.init(try FilenameStore.instance.append([]const u8, real)),
+                    .err => {},
                 }
-
-                if (depth > 0) {
-                    cache.symlink = PathString.init(try FilenameStore.instance.append([]const u8, absolute_path_c));
-                }
-
-                if (file.is_directory) {
-                    cache.kind = .dir;
-                } else {
-                    cache.kind = .file;
-                }
-
                 return cache;
             }
 

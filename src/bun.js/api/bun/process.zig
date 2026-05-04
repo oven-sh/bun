@@ -69,7 +69,32 @@ pub fn uv_getrusage(process: *uv.uv_process_t) win_rusage {
 
     return usage_info;
 }
-pub const Rusage = if (Environment.isWindows) win_rusage else std.posix.rusage;
+pub const Rusage = if (Environment.isWindows)
+    win_rusage
+    // std.posix.rusage has no .freebsd arm; field names also differ
+    // (ru_* instead of bare). Define a layout-compatible struct so
+    // ResourceUsage can use the same field names everywhere.
+else if (Environment.isFreeBSD)
+    extern struct {
+        utime: std.c.timeval,
+        stime: std.c.timeval,
+        maxrss: isize,
+        ixrss: isize,
+        idrss: isize,
+        isrss: isize,
+        minflt: isize,
+        majflt: isize,
+        nswap: isize,
+        inblock: isize,
+        oublock: isize,
+        msgsnd: isize,
+        msgrcv: isize,
+        nsignals: isize,
+        nvcsw: isize,
+        nivcsw: isize,
+    }
+else
+    std.posix.rusage;
 
 // const ShellSubprocessMini = bun.shell.ShellSubprocessMini;
 pub const ProcessExitHandler = struct {
@@ -1030,11 +1055,13 @@ pub const PosixSpawnOptions = struct {
     new_process_group: bool = false,
     /// PTY slave fd for controlling terminal setup (-1 if not using PTY).
     pty_slave_fd: i32 = -1,
+    /// Windows-only ConPTY handle; void placeholder on POSIX.
+    pseudoconsole: void = {},
     /// Linux only. When non-null, the child sets PR_SET_PDEATHSIG to this
     /// signal between vfork and exec in posix_spawn_bun, so the kernel kills
-    /// it when the spawning thread dies. When null, defaults to whatever this
-    /// process itself has set (so a worker with PDEATHSIG propagates it to
-    /// children automatically). Not exposed to JS yet.
+    /// it when the spawning thread dies. When null, defaults to SIGKILL if
+    /// no-orphans mode is enabled (see `ParentDeathWatchdog`), else 0 (no
+    /// PDEATHSIG). Not exposed to JS yet.
     linux_pdeathsig: ?u8 = null,
 
     pub const Stdio = union(enum) {
@@ -1108,8 +1135,11 @@ pub const WindowsSpawnOptions = struct {
     linux_pdeathsig: ?u8 = null,
     /// POSIX-only; placeholder for struct compatibility.
     new_process_group: bool = false,
-    /// PTY not supported on Windows - this is a void placeholder for struct compatibility
+    /// POSIX-only PTY slave fd; void placeholder on Windows.
     pty_slave_fd: void = {},
+    /// Windows ConPTY handle. When set, the child is attached to the
+    /// pseudoconsole and stdin/stdout/stderr are provided by ConPTY.
+    pseudoconsole: ?bun.windows.HPCON = null,
     pub const WindowsOptions = struct {
         verbatim_arguments: bool = false,
         hide_window: bool = true,
@@ -1151,16 +1181,39 @@ pub const PosixSpawnResult = struct {
     stdout: ?bun.FD = null,
     stderr: ?bun.FD = null,
     ipc: ?bun.FD = null,
-    extra_pipes: std.array_list.Managed(bun.FD) = std.array_list.Managed(bun.FD).init(bun.default_allocator),
+    extra_pipes: std.array_list.Managed(ExtraPipe) = std.array_list.Managed(ExtraPipe).init(bun.default_allocator),
 
     memfds: [3]bool = .{ false, false, false },
 
     // ESRCH can happen when requesting the pidfd
     has_exited: bool = false,
 
-    pub fn close(this: *WindowsSpawnResult) void {
-        for (this.extra_pipes.items) |fd| {
-            fd.close();
+    /// Entry in `extra_pipes` for a stdio slot at index >= 3.
+    pub const ExtraPipe = union(enum) {
+        /// We created this fd (e.g. socketpair for `"pipe"`); expose it via
+        /// `Subprocess.stdio[N]` and close it in `finalizeStreams`.
+        owned_fd: bun.FD,
+        /// The caller supplied this fd in the stdio array; expose it via
+        /// `Subprocess.stdio[N]` but never close it — the caller retains ownership.
+        unowned_fd: bun.FD,
+        /// Nothing to expose for this slot (`"ignore"`, `"inherit"`, a path, or
+        /// the IPC channel after ownership has been transferred to uSockets).
+        unavailable: void,
+
+        pub fn fd(this: ExtraPipe) bun.FD {
+            return switch (this) {
+                .owned_fd, .unowned_fd => |f| f,
+                .unavailable => bun.invalid_fd,
+            };
+        }
+    };
+
+    pub fn close(this: *PosixSpawnResult) void {
+        for (this.extra_pipes.items) |item| {
+            switch (item) {
+                .owned_fd => |f| f.close(),
+                .unowned_fd, .unavailable => {},
+            }
         }
 
         this.extra_pipes.clearAndFree();
@@ -1304,7 +1357,10 @@ pub fn spawnProcessPosix(
     }
 
     if (options.detached) {
-        flags |= bun.c.POSIX_SPAWN_SETSID;
+        if (comptime @hasDecl(bun.c, "POSIX_SPAWN_SETSID")) {
+            flags |= bun.c.POSIX_SPAWN_SETSID;
+        }
+        attr.detached = true;
     }
 
     // Pass PTY slave fd to attr for controlling terminal setup
@@ -1312,14 +1368,23 @@ pub fn spawnProcessPosix(
     attr.new_process_group = options.new_process_group;
 
     if (Environment.isLinux) {
-        attr.linux_pdeathsig = if (options.linux_pdeathsig) |sig| @intCast(sig) else 0;
+        // Explicit per-spawn value wins; otherwise no-orphans mode defaults
+        // every child to SIGKILL-on-parent-death so non-Bun descendants are
+        // covered without relying on env-var inheritance, and the prctl happens
+        // in the vfork child before exec so there's no startup race.
+        attr.linux_pdeathsig = if (options.linux_pdeathsig) |sig|
+            @intCast(sig)
+        else if (bun.ParentDeathWatchdog.shouldDefaultSpawnPdeathsig())
+            std.posix.SIG.KILL
+        else
+            0;
     }
 
     if (options.cwd.len > 0) {
         try actions.chdir(options.cwd);
     }
     var spawned = PosixSpawnResult{};
-    var extra_fds = std.array_list.Managed(bun.FD).init(bun.default_allocator);
+    var extra_fds = std.array_list.Managed(PosixSpawnResult.ExtraPipe).init(bun.default_allocator);
     errdefer extra_fds.deinit();
     var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
     const allocator = stack_fallback.get();
@@ -1475,13 +1540,16 @@ pub fn spawnProcessPosix(
             .dup2 => @panic("TODO dup2 extra fd"),
             .inherit => {
                 try actions.inherit(fileno);
+                try extra_fds.append(.unavailable);
             },
             .ignore => {
                 try actions.openZ(fileno, "/dev/null", bun.O.RDWR, 0o664);
+                try extra_fds.append(.unavailable);
             },
 
             .path => |path| {
                 try actions.open(fileno, path, bun.O.RDWR | bun.O.CREAT, 0o664);
+                try extra_fds.append(.unavailable);
             },
             .ipc, .buffer => {
                 const fds: [2]bun.FD = try bun.sys.socketpair(
@@ -1500,12 +1568,14 @@ pub fn spawnProcessPosix(
                 try actions.dup2(fds[1], fileno);
                 if (fds[1] != fileno)
                     try actions.close(fds[1]);
-                try extra_fds.append(fds[0]);
+                try extra_fds.append(.{ .owned_fd = fds[0] });
             },
             .pipe => |fd| {
                 try actions.dup2(fd, fileno);
-
-                try extra_fds.append(fd);
+                // The fd was supplied by the caller (a number in the stdio array) and is
+                // not owned by us. Record it so `stdio[N]` returns the caller's fd, but
+                // mark it unowned so finalizeStreams leaves it open.
+                try extra_fds.append(.{ .unowned_fd = fd });
             },
         }
     }
@@ -1536,7 +1606,7 @@ pub fn spawnProcessPosix(
         .result => |pid| {
             spawned.pid = pid;
             spawned.extra_pipes = extra_fds;
-            extra_fds = std.array_list.Managed(bun.FD).init(bun.default_allocator);
+            extra_fds = std.array_list.Managed(PosixSpawnResult.ExtraPipe).init(bun.default_allocator);
 
             if (comptime Environment.isLinux) {
                 // If it's spawnSync and we want to block the entire thread
@@ -1609,6 +1679,10 @@ pub fn spawnProcessWindows(
     }
 
     errdefer failed = true;
+
+    if (options.pseudoconsole) |hpcon| {
+        uv_process_options.pseudoconsole = hpcon;
+    }
 
     if (options.windows.hide_window) {
         uv_process_options.flags |= uv.UV_PROCESS_WINDOWS_HIDE;
@@ -1868,7 +1942,7 @@ pub const sync = struct {
             }
         };
 
-        pub fn toSpawnOptions(this: *const Options) SpawnOptions {
+        pub fn toSpawnOptions(this: *const Options, new_process_group: bool) SpawnOptions {
             return SpawnOptions{
                 .stdin = this.stdin.toStdio(),
                 .stdout = this.stdout.toStdio(),
@@ -1880,6 +1954,7 @@ pub const sync = struct {
                 .use_execve_on_macos = this.use_execve_on_macos,
                 .stream = false,
                 .argv0 = this.argv0,
+                .new_process_group = new_process_group,
                 .windows = if (Environment.isWindows) this.windows,
             };
         }
@@ -2003,7 +2078,7 @@ pub const sync = struct {
         envp: [*:null]?[*:0]const u8,
     ) !Maybe(Result) {
         var loop = options.windows.loop.platformEventLoop();
-        var spawned = switch (try spawnProcessWindows(&options.toSpawnOptions(), argv, envp)) {
+        var spawned = switch (try spawnProcessWindows(&options.toSpawnOptions(false), argv, envp)) {
             .err => |err| return .{ .err = err },
             .result => |proces| proces,
         };
@@ -2032,7 +2107,7 @@ pub const sync = struct {
         envp: [*:null]?[*:0]const u8,
     ) !Maybe(Result) {
         var loop: jsc.EventLoopHandle = options.windows.loop;
-        var spawned = switch (try spawnProcessWindows(&options.toSpawnOptions(), argv, envp)) {
+        var spawned = switch (try spawnProcessWindows(&options.toSpawnOptions(false), argv, envp)) {
             .err => |err| return .{ .err = err },
             .result => |process| process,
         };
@@ -2128,6 +2203,83 @@ pub const sync = struct {
     extern "c" fn Bun__registerSignalsForForwarding() void;
     extern "c" fn Bun__unregisterSignalsForForwarding() void;
 
+    // macOS p_puniqueid descendant tracker — see NoOrphansTracker.cpp.
+    extern "c" fn Bun__noOrphans_begin(kq: c_int, root: std.c.pid_t) void;
+    extern "c" fn Bun__noOrphans_releaseKq() void;
+    extern "c" fn Bun__noOrphans_onFork() void;
+    extern "c" fn Bun__noOrphans_onExit(pid: std.c.pid_t) void;
+
+    /// TTY job-control bridge for `--no-orphans` `bun run`. We put the script
+    /// in its own pgroup so `kill(-pgid)` reaches every descendant on cleanup,
+    /// which makes `bun run` a one-job mini shell on a controlling terminal:
+    /// Ctrl-Z stops only the script's pgroup, so we must observe the stop
+    /// (WUNTRACED / EVFILT_SIGNAL+SIGCHLD), take the terminal back, stop
+    /// *ourselves*, and on `fg` hand the terminal back and SIGCONT the script.
+    /// Inert (`prev <= 0`) when stdin is not a TTY — the supervisor/CI case
+    /// this feature targets — and the wait loops don't ask for stop reports
+    /// then, matching plain `bun run`.
+    const JobControl = struct {
+        /// Foreground pgroup we displaced (i.e. the one the user's shell put
+        /// `bun run` in). 0 when stdin isn't a TTY, `tcgetpgrp` failed, or we
+        /// weren't the foreground pgroup to begin with.
+        prev: std.c.pid_t = 0,
+        script_pgid: std.c.pid_t = 0,
+
+        extern "c" fn tcgetpgrp(fd: c_int) std.c.pid_t;
+        extern "c" fn tcsetpgrp(fd: c_int, pgrp: std.c.pid_t) c_int;
+        extern "c" fn getpgrp() std.c.pid_t;
+
+        pub fn isActive(self: *const @This()) bool {
+            return self.prev > 0;
+        }
+
+        fn give(self: *@This(), pgid: std.c.pid_t) void {
+            self.script_pgid = pgid;
+            if (std.c.isatty(0) == 0) return;
+            const fg = tcgetpgrp(0);
+            // Only take the terminal if we *are* the foreground pgroup.
+            // `bun run --no-orphans dev &` from an interactive shell leaves
+            // stdin as the TTY (shells rely on SIGTTIN, not redirection), so
+            // `tcgetpgrp` returns the shell's pgid — blocking SIGTTOU and
+            // `tcsetpgrp`'ing anyway would steal the terminal from the user.
+            // Same gate as `onChildStopped`'s resume path below; real shells
+            // (bash `give_terminal_to`, zsh `attachtty`) do the same.
+            if (fg <= 0 or fg != getpgrp()) return;
+            self.prev = fg;
+            ttouBlocked(pgid);
+        }
+        fn restore(self: *@This()) void {
+            if (self.prev <= 0) return;
+            ttouBlocked(self.prev);
+            self.prev = 0;
+        }
+        /// Called from the wait loop when WIFSTOPPED(child). Takes the terminal
+        /// back, stops `bun run` so the user's shell's `waitpid(WUNTRACED)`
+        /// returns, and on resume gives the terminal back to the script (only
+        /// if the shell `fg`'d us — for `bg` the shell keeps foreground and
+        /// the script runs as a background pgroup like any other job).
+        fn onChildStopped(self: *const @This()) void {
+            if (self.prev <= 0) return; // non-TTY: never asked for stop reports
+            ttouBlocked(self.prev);
+            // SIGTSTP is not in `Bun__registerSignalsForForwarding`'s set, so
+            // default disposition (stop) applies and we suspend right here.
+            _ = std.c.raise(std.posix.SIG.TSTP);
+            // — resumed by the shell's SIGCONT —
+            if (tcgetpgrp(0) == getpgrp()) ttouBlocked(self.script_pgid);
+            _ = std.c.kill(-self.script_pgid, std.posix.SIG.CONT);
+        }
+        /// `tcsetpgrp` from a background pgroup raises SIGTTOU (default: stop);
+        /// block it for the call per the standard job-control idiom.
+        fn ttouBlocked(pgid: std.c.pid_t) void {
+            var set = std.posix.sigemptyset();
+            var old = std.posix.sigemptyset();
+            std.posix.sigaddset(&set, std.posix.SIG.TTOU);
+            std.posix.sigprocmask(std.posix.SIG.BLOCK, &set, &old);
+            _ = tcsetpgrp(0, pgid);
+            std.posix.sigprocmask(std.posix.SIG.SETMASK, &old, null);
+        }
+    };
+
     // The PID to forward signals to.
     // Set to 0 when unregistering.
     extern "c" var Bun__currentSyncPID: i64;
@@ -2141,17 +2293,129 @@ pub const sync = struct {
         argv: [*:null]?[*:0]const u8,
         envp: [*:null]?[*:0]const u8,
     ) !Maybe(Result) {
+        // --no-orphans: put the script in its own process group so we can
+        // `kill(-pgid, SIGKILL)` on every exit path. Pgroup membership is
+        // inherited recursively and survives reparenting to launchd/init, so
+        // this reaches grandchildren even after the script itself has exited
+        // (which the libproc/procfs walk cannot — those are gone from our tree
+        // once their parent dies). A `setsid()`+double-fork escapee is caught
+        // by PR_SET_CHILD_SUBREAPER (Linux) / the p_puniqueid spawn-graph
+        // tracker (macOS) — see `waitMacKqueue` / `waitLinuxSignalfd`.
+        //
+        // Disabled when `use_execve_on_macos` actually applies (macOS only —
+        // see `spawnProcessPosix`): that path is `POSIX_SPAWN_SETEXEC`, which
+        // replaces *our own* image and never returns, so there is no parent to
+        // run the wait loop or the cleanup defers. Callers
+        // (`runBinaryWithoutBunxPath`, `bunx`) set the flag unconditionally;
+        // on Linux it's a spawn-side no-op so no-orphans must stay armed there.
+        const no_orphans = bun.ParentDeathWatchdog.isEnabled() and
+            !(Environment.isMac and options.use_execve_on_macos);
+
+        // Snapshot pre-existing direct children so the disarm defer can tell
+        // subreaper-adopted orphans (ppid==us) apart from `Bun.spawn` siblings
+        // (also ppid==us). Typically empty — `bun run`/`bunx` have no JS VM —
+        // but spawnSync can run inside a live VM (ffi.zig xcrun probe).
+        var siblings_buf: [64]std.c.pid_t = undefined;
+        const siblings = if (Environment.isLinux and no_orphans)
+            bun.ParentDeathWatchdog.snapshotChildren(&siblings_buf)
+        else
+            siblings_buf[0..0];
+        if (comptime Environment.isLinux) if (no_orphans) {
+            // Subreaper: arm *before* spawn so a fast-daemonizing script can't
+            // reparent its grandchild to init in the gap. Process-wide and
+            // only the spawnSync wait loop has a `wait4(-1)` to reap
+            // adoptees, so arming it globally from `enable()` would leak
+            // zombies in `bun foo.js` / `--filter` / `bun test`. Disarmed by
+            // the defer immediately below — registered here (not in the
+            // post-spawn `defer if (no_orphans)` block) so spawn-failure
+            // early returns don't leave subreaper armed process-wide.
+            _ = std.posix.prctl(.SET_CHILD_SUBREAPER, .{1}) catch {};
+        };
+        defer if (comptime Environment.isLinux) if (no_orphans) {
+            // Kill subreaper-adopted setsid daemons (ppid==us, not in the
+            // pre-arm snapshot) *before* disarming, while we can still find
+            // them. Without this, a daemon whose intermediate parent exits
+            // between disarm and `onProcessExit`→`killDescendants()` escapes
+            // to init.
+            bun.ParentDeathWatchdog.killSubreaperAdoptees(siblings);
+            _ = std.posix.prctl(.SET_CHILD_SUBREAPER, .{0}) catch {};
+        };
+
+        // macOS no_orphans: kqueue passed to `waitMacKqueue` for ppid/child
+        // NOTE_EXIT and per-descendant NOTE_FORK. NOTE_TRACK (auto-attach to
+        // forks) has been ENOTSUP since macOS 10.5 — see sys/event.h:356 — so
+        // we cannot get atomic in-kernel descendant tracking. Instead the
+        // wait loop reacts to NOTE_FORK by running a `p_puniqueid` scan
+        // (`NoOrphansTracker::scan()`) to discover and re-arm new
+        // descendants. `p_puniqueid` is the *spawning* parent's per-boot
+        // uniqueid — immutable across reparenting — so the scan finds
+        // setsid+double-fork escapees as long as each intermediate's uniqueid
+        // was recorded before it died. The `begin()` call below seeds the
+        // scan root after spawn.
+        var no_orphans_kq: bun.FD = bun.invalid_fd;
+        if (comptime Environment.isMac) if (no_orphans) {
+            if (std.posix.kqueue()) |kq| {
+                no_orphans_kq = bun.FD.fromNative(kq);
+            } else |_| {}
+        };
+        // LIFO: this runs LAST — after killSyncScriptTree() (which scans via
+        // m_kq) and releaseKq().
+        defer if (comptime Environment.isMac) if (no_orphans_kq != bun.invalid_fd)
+            no_orphans_kq.close();
+        // LIFO: runs after killSyncScriptTree() (which needs m_kq live for
+        // its NOTE_FORK-drain rescan), before the close above.
+        defer if (comptime Environment.isMac) if (no_orphans_kq != bun.invalid_fd)
+            Bun__noOrphans_releaseKq();
+
         Bun__currentSyncPID = 0;
         Bun__registerSignalsForForwarding();
         defer {
             Bun__unregisterSignalsForForwarding();
             bun.crash_handler.resetOnPosix();
         }
-        const process = switch (try spawnProcessPosix(&options.toSpawnOptions(), argv, envp)) {
+        const process = switch (try spawnProcessPosix(&options.toSpawnOptions(no_orphans), argv, envp)) {
             .err => |err| return .{ .err = err },
             .result => |proces| proces,
         };
-        Bun__currentSyncPID = @intCast(process.pid);
+        // Negative → kill() in the C++ signal forwarder targets the pgroup, so
+        // a SIGTERM/SIGINT delivered to `bun run` reaches every descendant
+        // that hasn't `setsid()`-escaped.
+        Bun__currentSyncPID = if (no_orphans) -@as(i64, @intCast(process.pid)) else @intCast(process.pid);
+
+        var jc: JobControl = .{};
+        const pgid_pushed = no_orphans and bun.ParentDeathWatchdog.pushSyncPgid(process.pid);
+        if (no_orphans) {
+            // Script is now a background pgroup; if stdin is a TTY hand it the
+            // foreground so Ctrl-C / TTY reads behave as before. Ctrl-Z is
+            // bridged by `JobControl.onChildStopped` in the wait loop. No-op on
+            // non-TTY stdin (the supervisor / CI case this feature targets).
+            jc.give(process.pid);
+            // `begin()` records the script's `p_uniqueid` as the scan root
+            // and stashes kq so `scan()` can EV_ADD NOTE_FORK|NOTE_EXIT on
+            // each discovered descendant. waitMacKqueue registers the
+            // script's own knote.
+            if (comptime Environment.isMac) if (no_orphans_kq != bun.invalid_fd)
+                Bun__noOrphans_begin(no_orphans_kq.native(), process.pid);
+        }
+        defer if (no_orphans) {
+            jc.restore();
+            // pgroup → tracked uniqueids (macOS). Do NOT call the
+            // getpid()-rooted `killDescendants()` here — `spawnSync` can be
+            // reached from inside a live VM (ffi.zig xcrun probe, etc.) and
+            // that would SIGKILL the user's unrelated `Bun.spawn` children.
+            // The full-tree walk runs from `onProcessExit` when the whole
+            // process is actually exiting.
+            bun.ParentDeathWatchdog.killSyncScriptTree();
+            if (pgid_pushed) bun.ParentDeathWatchdog.popSyncPgid();
+            if (comptime Environment.isLinux) {
+                // One last reap for anything we adopted as subreaper before
+                // the disarm defer above drops it (LIFO: this runs first).
+                while (true) switch (PosixSpawn.wait4(-1, std.posix.W.NOHANG, null)) {
+                    .err => break,
+                    .result => |w| if (w.pid <= 0) break,
+                };
+            }
+        };
 
         Bun__sendPendingSignalIfNecessary();
 
@@ -2198,76 +2462,57 @@ pub const sync = struct {
             out_fds_to_wait_for[1] = bun.invalid_fd;
         }
 
-        while (out_fds_to_wait_for[0] != bun.invalid_fd or out_fds_to_wait_for[1] != bun.invalid_fd) {
-            for (&out_fds_to_wait_for, &out, &out_fds) |*fd, *bytes, *out_fd| {
-                if (fd.* == bun.invalid_fd) continue;
-                while (true) {
-                    bytes.ensureUnusedCapacity(16384) catch {
-                        return .{ .err = bun.sys.Error.fromCode(.NOMEM, .recv) };
+        // no-orphans: replace the blind `poll()`/`wait4()` with a wait loop
+        // that also watches our parent (and on macOS, the script's whole
+        // spawn tree via the NOTE_FORK kq + p_puniqueid scan above).
+        // Linux/macOS only — other POSIX (FreeBSD) falls through to the
+        // original `poll()`+`wait4()` below so buffered stdio still drains;
+        // the `defer` above still does the pgroup kill there.
+        //
+        // Do NOT return from here — Linux backs `.buffer` stdio with memfds
+        // that are read *after* the wait, so falling through to the memfd block
+        // below is required.
+        const status: Status = blk: {
+            if (no_orphans and (Environment.isLinux or Environment.isMac)) {
+                const ppid = bun.ParentDeathWatchdog.ppidToWatch() orelse 0;
+                const r: ?Maybe(Status) = if (comptime Environment.isMac)
+                    waitMacKqueue(process.pid, ppid, &jc, no_orphans_kq, &out, &out_fds_to_wait_for, &out_fds)
+                else
+                    waitLinuxSignalfd(process.pid, ppid, &jc, &out, &out_fds_to_wait_for, &out_fds);
+                if (r) |maybe| switch (maybe) {
+                    .err => |err| return .{ .err = err },
+                    .result => |st| break :blk st,
+                };
+                // null: kqueue()/kevent-receipt failed — fall through to the
+                // plain poll() loop so `.buffer` stdio still drains instead
+                // of being dropped (or deadlocking) in a blind `wait4()`.
+            }
+            while (out_fds_to_wait_for[0] != bun.invalid_fd or out_fds_to_wait_for[1] != bun.invalid_fd) {
+                for (&out_fds_to_wait_for, &out, &out_fds) |*fd, *bytes, *out_fd| {
+                    if (drainFd(fd, out_fd, bytes)) |err| return .{ .err = err };
+                }
+
+                var poll_fds_buf: [2]std.c.pollfd = undefined;
+                var poll_fds: []std.c.pollfd = poll_fds_buf[0..0];
+                for (out_fds_to_wait_for) |fd| {
+                    if (fd == bun.invalid_fd) continue;
+                    poll_fds.len += 1;
+                    poll_fds[poll_fds.len - 1] = .{
+                        .fd = @intCast(fd.cast()),
+                        .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP,
+                        .revents = 0,
                     };
-                    switch (bun.sys.recvNonBlock(fd.*, bytes.unusedCapacitySlice())) {
-                        .err => |err| {
-                            if (err.isRetry() or err.getErrno() == .PIPE) {
-                                break;
-                            }
-                            return .{ .err = err };
-                        },
-                        .result => |bytes_read| {
-                            bytes.items.len += bytes_read;
-                            if (bytes_read == 0) {
-                                fd.*.close();
-                                fd.* = bun.invalid_fd;
-                                out_fd.* = bun.invalid_fd;
-                                break;
-                            }
-                        },
-                    }
+                }
+                if (poll_fds.len == 0) break;
+
+                const rc = std.c.poll(poll_fds.ptr, @intCast(poll_fds.len), -1);
+                switch (bun.sys.getErrno(rc)) {
+                    .SUCCESS => {},
+                    .AGAIN, .INTR => continue,
+                    else => |err| return .{ .err = bun.sys.Error.fromCode(err, .poll) },
                 }
             }
-
-            var poll_fds_buf = [_]std.c.pollfd{
-                .{
-                    .fd = 0,
-                    .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP,
-                    .revents = 0,
-                },
-                .{
-                    .fd = 0,
-                    .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP,
-                    .revents = 0,
-                },
-            };
-            var poll_fds: []std.c.pollfd = poll_fds_buf[0..];
-            poll_fds.len = 0;
-
-            if (out_fds_to_wait_for[0] != bun.invalid_fd) {
-                poll_fds.len += 1;
-                poll_fds[poll_fds.len - 1].fd = @intCast(out_fds_to_wait_for[0].cast());
-            }
-
-            if (out_fds_to_wait_for[1] != bun.invalid_fd) {
-                poll_fds.len += 1;
-                poll_fds[poll_fds.len - 1].fd = @intCast(out_fds_to_wait_for[1].cast());
-            }
-
-            if (poll_fds.len == 0) {
-                break;
-            }
-
-            const rc = std.c.poll(poll_fds.ptr, @intCast(poll_fds.len), -1);
-            switch (bun.sys.getErrno(rc)) {
-                .SUCCESS => {},
-                .AGAIN, .INTR => continue,
-                else => |err| return .{ .err = bun.sys.Error.fromCode(err, .poll) },
-            }
-        }
-
-        const status: Status = brk: {
-            while (true) {
-                if (Status.from(process.pid, &PosixSpawn.wait4(process.pid, 0, null))) |stat| break :brk stat;
-            }
-
-            unreachable;
+            break :blk reapChild(process.pid);
         };
 
         if (comptime Environment.isLinux) {
@@ -2286,6 +2531,373 @@ pub const sync = struct {
                 .stderr = out[1],
             },
         };
+    }
+
+    /// no-orphans wait loop for `spawnSync`. Replaces the blind `poll()` +
+    /// blocking `wait4()` so that:
+    ///   - we notice our parent dying and run cleanup before PDEATHSIG / never
+    ///     (macOS) — `Global.exit(129)` → `kill(-pgid)` + deep walk
+    ///   - macOS: `NOTE_FORK` on the script (and recursively on each
+    ///     discovered descendant) triggers a `p_puniqueid` scan
+    ///     (`NoOrphansTracker::scan()`) so `setsid()`+double-fork escapees
+    ///     are tracked and killed via `Bun__noOrphans_killTracked()`.
+    ///     `NOTE_TRACK` would have made this atomic, but it has been
+    ///     ENOTSUP since macOS 10.5.
+    ///   - Linux: subreaper (armed in `spawnPosix`) makes those reparent to us,
+    ///     so the procfs walk finds them; this loop just needs to run
+    ///     cleanup *before* our own SIGKILL-PDEATHSIG fires
+    ///
+    /// `ppid == 0` means "no parent worth watching" — still run the loop for
+    /// the descendant tracking + pgroup cleanup on script exit.
+    ///
+    /// Returns `null` when kqueue setup fails: the caller falls through to
+    /// the plain `poll()`+`wait4()` loop so `.buffer` stdio still drains (a
+    /// blind `reapChild()` would drop captured output or deadlock if the
+    /// child fills the pipe while we block in `wait4`).
+    fn waitMacKqueue(
+        child: std.c.pid_t,
+        ppid: std.c.pid_t,
+        jc: *const JobControl,
+        kq_fd: bun.FD,
+        out: *[2]std.array_list.Managed(u8),
+        out_fds_to_wait_for: *[2]bun.FD,
+        out_fds: *[2]bun.FD,
+    ) ?Maybe(Status) {
+        if (comptime !Environment.isMac) unreachable;
+
+        // kqueue() failed in spawnPosix (EMFILE/ENOMEM): let the caller's
+        // plain `poll()` loop drain `.buffer` stdio and reap. The spawnPosix
+        // defers (pgroup-kill, killTracked() — empty set) still run.
+        if (kq_fd == bun.invalid_fd) return null;
+
+        // udata tag for the ppid PROC filter. Descendant PROC knotes
+        // (`child` here, plus any `scan()` adds) use udata=0; EVFILT_READ
+        // udata 0/1 are a separate filter, so the dispatch checks `filter`
+        // before `udata`.
+        const TAG_PPID: usize = 2;
+
+        var changes_buf: [5]std.c.Kevent = undefined;
+        var changes: []std.c.Kevent = changes_buf[0..0];
+        const add = struct {
+            fn f(list: *[]std.c.Kevent, ident: usize, filter: i16, fflags: u32, udata: usize) void {
+                list.len += 1;
+                list.*[list.len - 1] = .{
+                    .ident = ident,
+                    .filter = filter,
+                    .flags = std.c.EV.ADD | std.c.EV.RECEIPT | std.c.EV.CLEAR,
+                    .fflags = fflags,
+                    .data = 0,
+                    .udata = udata,
+                };
+            }
+        }.f;
+        if (ppid > 1)
+            add(&changes, @intCast(ppid), std.c.EVFILT.PROC, std.c.NOTE.EXIT, TAG_PPID);
+        // NOTE_FORK so the wait loop wakes to scan whenever the script (or
+        // any registered descendant) forks. NOTE_TRACK would have let xnu
+        // auto-attach to the new child atomically, but it returns ENOTSUP on
+        // every macOS since 10.5 — which previously made *this* registration
+        // fail, the receipt loop below `return null`, and the caller fall
+        // through to a plain `wait4()` that watches neither ppid nor
+        // descendants (the `runDied=false` failure on darwin in CI).
+        add(&changes, @intCast(child), std.c.EVFILT.PROC, std.c.NOTE.FORK | std.c.NOTE.EXIT, 0);
+        // TTY job-control: EVFILT_PROC has no "stopped" note, so wake on
+        // SIGCHLD and `wait4(WUNTRACED|WNOHANG)` to catch Ctrl-Z. Only when
+        // stdin is a TTY — non-TTY callers never see stops, matching plain
+        // `bun run`. EVFILT_SIGNAL coexists with the (default-ignore) SIGCHLD
+        // disposition; only direct children raise SIGCHLD, so this fires for
+        // `child` alone.
+        if (jc.isActive())
+            add(&changes, std.posix.SIG.CHLD, std.c.EVFILT.SIGNAL, 0, 0);
+        for (out_fds_to_wait_for, 0..) |fd, i| {
+            if (fd != bun.invalid_fd) add(&changes, @intCast(fd.cast()), std.c.EVFILT.READ, 0, i);
+        }
+
+        var receipts: [5]std.c.Kevent = undefined;
+        switch (bun.sys.kevent(kq_fd, changes, receipts[0..changes.len], null)) {
+            .err => |err| return .{ .err = err },
+            .result => {},
+        }
+        for (receipts[0..changes.len]) |r| {
+            if (r.flags & std.c.EV.ERROR == 0 or r.data == 0) continue;
+            if (r.udata == TAG_PPID) {
+                // ESRCH: parent already gone — treat as fired. Any other
+                // errno (ENOMEM, sandbox EACCES via `mac_proc_check_kqfilter`)
+                // is a best-effort miss — same policy as
+                // `ParentDeathWatchdog.installOnEventLoop`. The
+                // `getppid() != ppid` recheck below is the backstop.
+                if (r.data == @intFromEnum(std.c.E.SRCH))
+                    bun.Global.exit(bun.ParentDeathWatchdog.exit_code);
+                continue;
+            }
+            // Non-ppid registration (child PROC / EVFILT_SIGNAL / EVFILT_READ)
+            // failed — fall through to the caller's `poll()` loop so
+            // `.buffer` stdio still drains instead of a blind `reapChild()`
+            // that would drop output or deadlock on a full pipe. ESRCH on the
+            // child PROC entry is impossible (our own unreaped child —
+            // `filt_procattach` finds zombies), so any errno here is a real
+            // registration failure. `begin()` has already seeded m_tracked
+            // with `child`; prune it so the caller's `reapChild()` doesn't
+            // leave a freed pid for `killTracked()` to SIGSTOP.
+            Bun__noOrphans_onExit(child);
+            return null;
+        }
+        if (ppid > 1 and std.c.getppid() != ppid)
+            bun.Global.exit(bun.ParentDeathWatchdog.exit_code);
+        // Initial scan: `child` may have forked between `posix_spawn`
+        // returning (in spawnPosix) and the NOTE_FORK registration above
+        // taking effect; that fork produced no event. `begin()` already
+        // seeded `m_seen` with `child`'s uniqueid, so this picks them up.
+        Bun__noOrphans_onFork();
+
+        var events: [16]std.c.Kevent = undefined;
+        var child_exited = false;
+        var child_status: ?Status = null;
+        while (true) {
+            const got = switch (bun.sys.kevent(kq_fd, &.{}, events[0..], null)) {
+                .err => |err| return .{ .err = err },
+                .result => |c| c,
+            };
+            var saw_fork = false;
+            for (events[0..got]) |ev| {
+                if (ev.filter == std.c.EVFILT.PROC) {
+                    // ppid is the only PROC knote with udata != 0; descendant
+                    // knotes (`child` above + any `scan()` added) use udata 0.
+                    if (ev.udata == TAG_PPID) {
+                        if (ev.fflags & std.c.NOTE.EXIT != 0)
+                            bun.Global.exit(bun.ParentDeathWatchdog.exit_code);
+                        continue;
+                    }
+                    // NOTE_FORK and NOTE_EXIT can share one event (forked and
+                    // died between kevent calls) — handle both, no else.
+                    if (ev.fflags & std.c.NOTE.FORK != 0)
+                        saw_fork = true;
+                    if (ev.fflags & std.c.NOTE.EXIT != 0) {
+                        // Drop from the live set (root included — `begin()`
+                        // seeded it into `m_tracked`, and `reapChild()` is
+                        // about to free its pid before `killTracked()` runs).
+                        Bun__noOrphans_onExit(@intCast(ev.ident));
+                        if (ev.ident == @as(usize, @intCast(child)))
+                            child_exited = true;
+                    }
+                } else if (ev.filter == std.c.EVFILT.SIGNAL) {
+                    // SIGCHLD: probe for a stop. May also observe the exit
+                    // (racing NOTE_EXIT in this batch) — stash the status so
+                    // `reapChild` below doesn't block on an already-reaped pid.
+                    const r = PosixSpawn.wait4(child, std.posix.W.NOHANG | std.posix.W.UNTRACED, null);
+                    if (r == .result and r.result.pid == child) {
+                        if (std.posix.W.IFSTOPPED(r.result.status))
+                            jc.onChildStopped()
+                        else {
+                            child_status = Status.from(child, &r);
+                            child_exited = true;
+                            // wait4 just freed `child`'s pid; if NOTE_EXIT for
+                            // it isn't in this batch we'd return with the root
+                            // still in m_tracked and `killTracked()` would
+                            // SIGSTOP a (potentially recycled) freed pid.
+                            // Idempotent with the NOTE_EXIT handler above.
+                            Bun__noOrphans_onExit(child);
+                        }
+                    }
+                } else if (ev.filter == std.c.EVFILT.READ) {
+                    const i: usize = ev.udata;
+                    if (drainFd(&out_fds_to_wait_for[i], &out_fds[i], &out[i])) |err| return .{ .err = err };
+                }
+            }
+            // After the batch so a single scan covers every NOTE_FORK in it.
+            // `scan()` walks `proc_listallpids` for any pid whose
+            // `p_puniqueid` (immutable spawning-parent uniqueid) is in our
+            // seen set, adds it to m_tracked, and EV_ADDs NOTE_FORK|NOTE_EXIT
+            // on it (udata 0) so its own forks wake this loop. Race: a
+            // fast-exit intermediate (fork+setsid+fork+exit) can die before
+            // this scan records its uniqueid, leaving its child's
+            // `p_puniqueid` unlinkable. NOTE_TRACK closed that atomically;
+            // without it the freeze-then-rescan loop in `killTracked()` is
+            // the best-effort backstop.
+            if (saw_fork) Bun__noOrphans_onFork();
+            if (child_exited) {
+                // Intentionally don't wait for pipe EOF (unlike the `poll()`
+                // path): a grandchild holding the write end is exactly what
+                // no-orphans exists to kill, and the killTracked()/pgroup-kill
+                // defers can't run until we return. drainFd() loops to EAGAIN,
+                // so everything the script itself wrote is captured.
+                for (out_fds_to_wait_for, out_fds, out) |*fd, *ofd, *bytes| _ = drainFd(fd, ofd, bytes);
+                return .{ .result = child_status orelse reapChild(child) };
+            }
+        }
+    }
+
+    fn waitLinuxSignalfd(
+        child: std.c.pid_t,
+        ppid: std.c.pid_t,
+        jc: *const JobControl,
+        out: *[2]std.array_list.Managed(u8),
+        out_fds_to_wait_for: *[2]bun.FD,
+        out_fds: *[2]bun.FD,
+    ) ?Maybe(Status) {
+        if (comptime !Environment.isLinux) unreachable;
+        const linux = std.os.linux;
+
+        // Child-exit: signalfd(SIGCHLD). Works everywhere pidfd doesn't
+        // (gVisor, ancient kernels). Subreaper means orphaned grandchildren
+        // also reparent to us and fire SIGCHLD here — drain them with
+        // waitpid(-1, WNOHANG) and only stop when *our* child is reaped.
+        // signalfd takes the *kernel* sigset_t (1 word), sigprocmask the libc
+        // one (16 words) — block via libc, build a separate kernel mask for
+        // signalfd.
+        var libc_mask = std.posix.sigemptyset();
+        var old_mask = std.posix.sigemptyset();
+        std.posix.sigaddset(&libc_mask, std.posix.SIG.CHLD);
+        std.posix.sigprocmask(std.posix.SIG.BLOCK, &libc_mask, &old_mask);
+        defer std.posix.sigprocmask(std.posix.SIG.SETMASK, &old_mask, null);
+        const chld_fd: bun.FD = blk: {
+            var kmask = linux.sigemptyset();
+            linux.sigaddset(&kmask, std.posix.SIG.CHLD);
+            const rc = linux.signalfd(-1, &kmask, linux.SFD.CLOEXEC | linux.SFD.NONBLOCK);
+            switch (linux.E.init(rc)) {
+                .SUCCESS => break :blk bun.FD.fromNative(@intCast(rc)),
+                else => break :blk bun.invalid_fd,
+            }
+        };
+        defer if (chld_fd != bun.invalid_fd) chld_fd.close();
+
+        // Parent-death: pidfd when available (instant wake). When not
+        // (gVisor, sandboxes, pre-5.3): bound the poll at 100ms and recheck
+        // `getppid()`.
+        var ppid_fd = bun.invalid_fd;
+        if (ppid > 1) switch (bun.sys.pidfd_open(ppid, 0)) {
+            .result => |fd| ppid_fd = bun.FD.fromNative(fd),
+            .err => |e| if (e.getErrno() == .SRCH)
+                bun.Global.exit(bun.ParentDeathWatchdog.exit_code),
+        };
+        defer if (ppid_fd != bun.invalid_fd) ppid_fd.close();
+        // `enable()` armed `PDEATHSIG=SIGKILL` on us. The kernel queues
+        // PDEATHSIG to children inside `exit_notify()` *before*
+        // `do_notify_pidfd()` wakes pidfd pollers (both under tasklist_lock),
+        // and SIGKILL is processed on syscall-return — so `poll()` would never
+        // get back to userspace and the cleanup defer never runs. Clear it
+        // now that we have a parent watch (pidfd or 100ms-getppid fallback);
+        // restore on return so the next caller — or `bun run`'s own
+        // post-script lifetime — keeps the backstop.
+        if (ppid > 1) {
+            _ = std.posix.prctl(.SET_PDEATHSIG, .{0}) catch {};
+        }
+        defer if (ppid > 1) {
+            _ = std.posix.prctl(.SET_PDEATHSIG, .{std.posix.SIG.KILL}) catch {};
+        };
+        if (ppid > 1 and std.c.getppid() != ppid)
+            bun.Global.exit(bun.ParentDeathWatchdog.exit_code);
+
+        const need_ppid_fallback = ppid > 1 and ppid_fd == bun.invalid_fd;
+        const timeout_ms: i32 = if (need_ppid_fallback or chld_fd == bun.invalid_fd) 100 else -1;
+
+        var child_status: ?Status = null;
+        while (true) {
+            // Reap *before* poll(). Covers (a) the SIGCHLD-before-block race —
+            // child may have exited between spawnProcessPosix and the
+            // sigprocmask above, in which case the kernel discarded SIGCHLD
+            // (default disposition is ignore) and signalfd will never wake;
+            // (b) the no-signalfd fallback; (c) subreaper-adopted orphans that
+            // would otherwise re-fire SIGCHLD forever. `wait4(-1)` is safe
+            // here: spawnSync callers (`bun run`, `bunx`, CLI subcommands)
+            // have no JS event loop and no other `Process` watchers — every
+            // pid we see is either `child` or a subreaper-adopted orphan.
+            //
+            // WUNTRACED only on a TTY: bridges Ctrl-Z via `JobControl`.
+            // Non-TTY callers never see stops, matching plain `bun run`.
+            const wopts = std.posix.W.NOHANG |
+                if (jc.isActive()) std.posix.W.UNTRACED else @as(u32, 0);
+            while (true) {
+                const r = PosixSpawn.wait4(-1, wopts, null);
+                const w = switch (r) {
+                    .err => break,
+                    .result => |w| w,
+                };
+                if (w.pid <= 0) break;
+                if (w.pid != child) continue; // subreaper-adopted orphan reaped
+                if (std.posix.W.IFSTOPPED(w.status))
+                    jc.onChildStopped()
+                else
+                    child_status = Status.from(child, &r);
+            }
+            if (child_status != null) break;
+
+            for (out_fds_to_wait_for, out, out_fds) |*fd, *bytes, *out_fd| {
+                if (drainFd(fd, out_fd, bytes)) |err| return .{ .err = err };
+            }
+
+            var buf: [4]std.c.pollfd = undefined;
+            var pfds: []std.c.pollfd = buf[0..0];
+            const push = struct {
+                fn f(l: *[]std.c.pollfd, fd: bun.FD) void {
+                    l.len += 1;
+                    l.*[l.len - 1] = .{
+                        .fd = @intCast(fd.cast()),
+                        .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP,
+                        .revents = 0,
+                    };
+                }
+            }.f;
+            for (out_fds_to_wait_for) |fd| if (fd != bun.invalid_fd) push(&pfds, fd);
+            const ppid_idx = pfds.len;
+            if (ppid_fd != bun.invalid_fd) push(&pfds, ppid_fd);
+            const chld_idx = pfds.len;
+            if (chld_fd != bun.invalid_fd) push(&pfds, chld_fd);
+
+            const rc = std.c.poll(pfds.ptr, @intCast(pfds.len), timeout_ms);
+            switch (bun.sys.getErrno(rc)) {
+                .SUCCESS => {},
+                .AGAIN, .INTR => {},
+                else => |err| return .{ .err = bun.sys.Error.fromCode(err, .poll) },
+            }
+
+            if ((ppid_fd != bun.invalid_fd and pfds[ppid_idx].revents != 0) or
+                (need_ppid_fallback and std.c.getppid() != ppid))
+                bun.Global.exit(bun.ParentDeathWatchdog.exit_code);
+
+            // Drain the signalfd so the next poll blocks; the actual reap
+            // happens at the top of the next iteration.
+            if (chld_fd != bun.invalid_fd and pfds[chld_idx].revents != 0) {
+                var si: linux.signalfd_siginfo = undefined;
+                while (bun.sys.read(chld_fd, std.mem.asBytes(&si)).unwrapOr(0) == @sizeOf(linux.signalfd_siginfo)) {}
+            }
+        }
+        for (out_fds_to_wait_for, out, out_fds) |*fd, *bytes, *out_fd| _ = drainFd(fd, out_fd, bytes);
+        return .{ .result = child_status.? };
+    }
+
+    /// Non-blocking drain of `fd` into `bytes`. Closes and invalidates both
+    /// slots on EOF so the caller's deferred cleanup skips them; returns null
+    /// on EOF/retry/EPIPE (caller keeps polling) or the recv/OOM error
+    /// otherwise. Shared by the `poll()` path and the no-orphans wait loops.
+    fn drainFd(fd: *bun.FD, out_fd: *bun.FD, bytes: *std.array_list.Managed(u8)) ?bun.sys.Error {
+        if (fd.* == bun.invalid_fd) return null;
+        while (true) {
+            bytes.ensureUnusedCapacity(16384) catch return bun.sys.Error.fromCode(.NOMEM, .recv);
+            switch (bun.sys.recvNonBlock(fd.*, bytes.unusedCapacitySlice())) {
+                .err => |err| {
+                    if (err.isRetry() or err.getErrno() == .PIPE) return null;
+                    return err;
+                },
+                .result => |bytes_read| {
+                    bytes.items.len += bytes_read;
+                    if (bytes_read == 0) {
+                        fd.*.close();
+                        fd.* = bun.invalid_fd;
+                        out_fd.* = bun.invalid_fd;
+                        return null;
+                    }
+                },
+            }
+        }
+    }
+
+    /// Blocking `wait4()` until `Status.from` returns a terminal status.
+    /// Shared by the `poll()` path and the no-orphans wait loops.
+    fn reapChild(child: std.c.pid_t) Status {
+        while (true) {
+            if (Status.from(child, &PosixSpawn.wait4(child, 0, null))) |stat| return stat;
+        }
     }
 };
 

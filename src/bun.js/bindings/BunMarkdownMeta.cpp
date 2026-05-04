@@ -64,7 +64,7 @@ extern "C" JSC::EncodedJSValue BunMarkdownMeta__createListItem(
     EncodedJSValue start,
     EncodedJSValue checked)
 {
-    auto* global = jsCast<Zig::GlobalObject*>(globalObject);
+    auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     VM& vm = global->vm();
 
     JSObject* obj = constructEmptyObject(vm, global->JSMarkdownListItemMetaStructure());
@@ -83,7 +83,7 @@ extern "C" JSC::EncodedJSValue BunMarkdownMeta__createList(
     EncodedJSValue start,
     uint32_t depth)
 {
-    auto* global = jsCast<Zig::GlobalObject*>(globalObject);
+    auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     VM& vm = global->vm();
 
     JSObject* obj = constructEmptyObject(vm, global->JSMarkdownListMetaStructure());
@@ -98,7 +98,7 @@ extern "C" JSC::EncodedJSValue BunMarkdownMeta__createCell(
     JSGlobalObject* globalObject,
     EncodedJSValue align)
 {
-    auto* global = jsCast<Zig::GlobalObject*>(globalObject);
+    auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     VM& vm = global->vm();
 
     JSObject* obj = constructEmptyObject(vm, global->JSMarkdownCellMetaStructure());
@@ -112,7 +112,7 @@ extern "C" JSC::EncodedJSValue BunMarkdownMeta__createLink(
     EncodedJSValue href,
     EncodedJSValue title)
 {
-    auto* global = jsCast<Zig::GlobalObject*>(globalObject);
+    auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     VM& vm = global->vm();
 
     JSObject* obj = constructEmptyObject(vm, global->JSMarkdownLinkMetaStructure());

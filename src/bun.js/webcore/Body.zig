@@ -286,6 +286,10 @@ pub const Value = union(Tag) {
         AbortReason: jsc.CommonAbortReason,
         SystemError: jsc.SystemError,
         Message: bun.String,
+        /// Surfaces as a JS `TypeError`. The fetch spec maps every "network
+        /// error" to TypeError, so use this for fetch-layer rejections that
+        /// callers feature-detect via `err instanceof TypeError`.
+        TypeError: bun.String,
         JSValue: jsc.Strong.Optional,
 
         pub fn toStreamError(this: *@This(), globalObject: *jsc.JSGlobalObject) streams.Result.StreamError {
@@ -304,6 +308,7 @@ pub const Value = union(Tag) {
                 .AbortReason => |reason| reason.toJS(globalObject),
                 .SystemError => |system_error| system_error.toErrorInstance(globalObject),
                 .Message => |message| message.toErrorInstance(globalObject),
+                .TypeError => |message| message.toTypeErrorInstance(globalObject),
                 // do a early return in this case we don't need to create a new Strong
                 .JSValue => |js_value| return js_value.get() orelse .js_undefined,
             };
@@ -325,6 +330,7 @@ pub const Value = union(Tag) {
             switch (this.*) {
                 .SystemError => value.SystemError.ref(),
                 .Message => value.Message.ref(),
+                .TypeError => value.TypeError.ref(),
                 .JSValue => |js_ref| {
                     if (js_ref.get()) |js_value| {
                         return .{ .JSValue = .create(js_value, globalObject) };
@@ -340,6 +346,7 @@ pub const Value = union(Tag) {
             switch (this.*) {
                 .SystemError => |system_error| system_error.deref(),
                 .Message => |message| message.deref(),
+                .TypeError => |message| message.deref(),
                 .JSValue => this.JSValue.deinit(),
                 .AbortReason => {},
             }
@@ -610,6 +617,22 @@ pub const Value = union(Tag) {
                     // We must preserve "type" so that DOMFormData and the "type" field are preserved.
                     .Blob = blob.dupeWithContentType(true),
                 };
+            }
+
+            if (value.as(jsc.API.Image)) |image| {
+                // Body init is synchronous, so encode now and wrap as a Blob
+                // with the right MIME type. The off-thread path is still
+                // available via `await image.blob()`.
+                const out = try image.encodeForBody(globalThis, value);
+                // Blob.Store frees via an Allocator, so dupe out of the
+                // codec's allocator here. The hot path (`.bytes()`) hands the
+                // codec buffer to JS without this copy.
+                const owned = bun.handleOom(bun.default_allocator.dupe(u8, out.bytes.bytes));
+                out.bytes.deinit();
+                var blob = Blob.init(owned, bun.default_allocator, globalThis);
+                blob.content_type = out.mime;
+                blob.content_type_was_set = true;
+                return Body.Value{ .Blob = blob };
             }
         }
 

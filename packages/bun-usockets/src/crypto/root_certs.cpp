@@ -135,8 +135,7 @@ end:
 
 static void us_internal_init_root_certs(
     X509 *root_cert_instances[root_certs_size],
-    STACK_OF(X509) *&root_extra_cert_instances,
-    STACK_OF(X509) *&root_system_cert_instances) {
+    STACK_OF(X509) *&root_extra_cert_instances) {
   // This used to use an atomic_flag spinlock together with an atomic_bool.
   // The bool was set to true via atomic_exchange BEFORE the certificates were
   // actually parsed, so concurrent callers (e.g. Workers calling
@@ -162,17 +161,6 @@ static void us_internal_init_root_certs(
     if (extra_certs && extra_certs[0]) {
       root_extra_cert_instances = us_ssl_ctx_load_all_certs_from_file(extra_certs);
     }
-
-    // load system certificates if NODE_USE_SYSTEM_CA=1
-    if (us_should_use_system_ca()) {
-#ifdef __APPLE__
-      us_load_system_certificates_macos(&root_system_cert_instances);
-#elif defined(_WIN32)
-      us_load_system_certificates_windows(&root_system_cert_instances);
-#else
-      us_load_system_certificates_linux(&root_system_cert_instances);
-#endif
-    }
   });
 }
 
@@ -184,15 +172,13 @@ extern "C" int us_internal_raw_root_certs(struct us_cert_string_t **out) {
 struct us_default_ca_certificates {
   X509 *root_cert_instances[root_certs_size];
   STACK_OF(X509) *root_extra_cert_instances;
-  STACK_OF(X509) *root_system_cert_instances;
 };
 
 us_default_ca_certificates* us_get_default_ca_certificates() {
-  static us_default_ca_certificates default_ca_certificates = {{NULL}, NULL, NULL};
+  static us_default_ca_certificates default_ca_certificates = {{NULL}, NULL};
 
-  us_internal_init_root_certs(default_ca_certificates.root_cert_instances, 
-                              default_ca_certificates.root_extra_cert_instances,
-                              default_ca_certificates.root_system_cert_instances);
+  us_internal_init_root_certs(default_ca_certificates.root_cert_instances,
+                              default_ca_certificates.root_extra_cert_instances);
 
   return &default_ca_certificates;
 }
@@ -201,10 +187,24 @@ STACK_OF(X509) *us_get_root_extra_cert_instances() {
   return us_get_default_ca_certificates()->root_extra_cert_instances;
 }
 
+// Single source of truth for the OS trust store. Loaded on first demand,
+// independent of --use-system-ca / NODE_USE_SYSTEM_CA, so that
+// tls.getCACertificates('system') matches Node.js (which always reads the
+// system store for 'system'). The flag still gates whether these are merged
+// into the *default* store used for connections — see us_get_default_ca_store.
 STACK_OF(X509) *us_get_root_system_cert_instances() {
-  // Ensure single-path initialization via us_internal_init_root_certs
-  auto certs = us_get_default_ca_certificates();
-  return certs->root_system_cert_instances;
+  static STACK_OF(X509) *system_certs = nullptr;
+  static std::once_flag once;
+  std::call_once(once, []() {
+#ifdef __APPLE__
+    us_load_system_certificates_macos(&system_certs);
+#elif defined(_WIN32)
+    us_load_system_certificates_windows(&system_certs);
+#else
+    us_load_system_certificates_linux(&system_certs);
+#endif
+  });
+  return system_certs;
 }
 
 extern "C" X509_STORE *us_get_default_ca_store() {
@@ -221,7 +221,6 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   us_default_ca_certificates *default_ca_certificates = us_get_default_ca_certificates();
   X509** root_cert_instances = default_ca_certificates->root_cert_instances;
   STACK_OF(X509) *root_extra_cert_instances = default_ca_certificates->root_extra_cert_instances;
-  STACK_OF(X509) *root_system_cert_instances = default_ca_certificates->root_system_cert_instances;
 
   // load all root_cert_instances on the default ca store
   for (size_t i = 0; i < root_certs_size; i++) {
@@ -240,16 +239,34 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     }
   }
 
-  if (us_should_use_system_ca() && root_system_cert_instances) {
-    for (int i = 0; i < sk_X509_num(root_system_cert_instances); i++) {
-      X509 *cert = sk_X509_value(root_system_cert_instances, i);
-      X509_up_ref(cert);
-      X509_STORE_add_cert(store, cert);
+  if (us_should_use_system_ca()) {
+    STACK_OF(X509) *root_system_cert_instances = us_get_root_system_cert_instances();
+    if (root_system_cert_instances) {
+      for (int i = 0; i < sk_X509_num(root_system_cert_instances); i++) {
+        X509 *cert = sk_X509_value(root_system_cert_instances, i);
+        X509_up_ref(cert);
+        X509_STORE_add_cert(store, cert);
+      }
     }
   }
 
   return store;
 }
+
+// Process-wide immutable default store. Safe to share across SSL_CTXs that
+// don't add per-config CAs (the user-`ca` path in build_raw still calls
+// us_get_default_ca_store() to get a fresh, mutable copy). This makes the
+// ~150-root build a once-per-process cost instead of once-per-SSL_CTX, which
+// is what kept Bun.connect({tls:true}) under the node-tls-server.test.ts
+// 100ms cold-path budget in debug+ASAN.
+extern "C" X509_STORE *us_get_shared_default_ca_store() {
+  static X509_STORE *shared = nullptr;
+  static std::once_flag once;
+  std::call_once(once, []() { shared = us_get_default_ca_store(); });
+  if (shared) X509_STORE_up_ref(shared);
+  return shared;
+}
+
 extern "C" const char *us_get_default_ciphers() {
   return DEFAULT_CIPHER_LIST;
 }

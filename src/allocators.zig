@@ -405,11 +405,12 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             return try self.doAppend(AppendType, _value);
         }
 
-        threadlocal var lowercase_append_buf: bun.PathBuffer = undefined;
+        const lowercase_bufs = bun.ThreadlocalBuffers(struct { buf: bun.PathBuffer = undefined });
         pub fn appendLowerCase(self: *Self, comptime AppendType: type, _value: AppendType) OOM![]const u8 {
             self.mutex.lock();
             defer self.mutex.unlock();
 
+            const lowercase_append_buf = &lowercase_bufs.get().buf;
             for (_value, 0..) |c, i| {
                 lowercase_append_buf[i] = std.ascii.toLower(c);
             }

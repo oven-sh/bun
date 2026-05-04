@@ -28,17 +28,15 @@
 #include "MessageChannel.h"
 
 #include "MessagePort.h"
-#include "MessagePortChannelProvider.h"
+#include "MessagePortPipe.h"
 #include "ScriptExecutionContext.h"
 
 namespace WebCore {
 
 static std::pair<Ref<MessagePort>, Ref<MessagePort>> generateMessagePorts(ScriptExecutionContext& context)
 {
-    MessagePortIdentifier id1 = { WebCore::Process::identifier(), PortIdentifier::generate() };
-    MessagePortIdentifier id2 = { WebCore::Process::identifier(), PortIdentifier::generate() };
-
-    return { MessagePort::create(context, id1, id2), MessagePort::create(context, id2, id1) };
+    auto pipe = MessagePortPipe::create();
+    return { MessagePort::create(context, pipe.copyRef(), 0), MessagePort::create(context, WTF::move(pipe), 1) };
 }
 
 Ref<MessageChannel> MessageChannel::create(ScriptExecutionContext& context)
@@ -49,14 +47,6 @@ Ref<MessageChannel> MessageChannel::create(ScriptExecutionContext& context)
 MessageChannel::MessageChannel(ScriptExecutionContext& context)
     : m_ports(generateMessagePorts(context))
 {
-    if (!context.activeDOMObjectsAreStopped()) {
-        ASSERT(!port1().isDetached());
-        ASSERT(!port2().isDetached());
-        MessagePortChannelProvider::fromContext(context).createNewMessagePortChannel(port1().identifier(), port2().identifier());
-    } else {
-        ASSERT(port1().isDetached());
-        ASSERT(port2().isDetached());
-    }
 }
 
 MessageChannel::~MessageChannel() = default;

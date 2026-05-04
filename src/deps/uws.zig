@@ -6,19 +6,36 @@ pub const SocketTCP = @import("./uws/socket.zig").SocketTCP;
 pub const InternalSocket = @import("./uws/socket.zig").InternalSocket;
 pub const Socket = us_socket_t;
 pub const Timer = @import("./uws/Timer.zig").Timer;
-pub const SocketContext = @import("./uws/SocketContext.zig").SocketContext;
+pub const SocketGroup = @import("./uws/SocketGroup.zig").SocketGroup;
+pub const SocketKind = @import("./uws/SocketKind.zig").SocketKind;
+pub const vtable = @import("./uws/vtable.zig");
+pub const dispatch = @import("./uws/dispatch.zig");
+/// The opaque `us_socket_context_t` is gone; this namespace now only carries
+/// the SSL-options extern struct (`SSLConfig.asUSockets()` return type).
+pub const SocketContext = @import("./uws/SocketContext.zig");
+/// Bare BoringSSL `SSL_CTX`. `SSL_CTX_up_ref`/`SSL_CTX_free` is the refcount;
+/// policy (verify mode, reneg limits) is encoded on the SSL_CTX itself via
+/// `us_ssl_ctx_from_options`, so there's no wrapper struct. `?*SslCtx` is what
+/// listen/connect/adopt take.
+pub const SslCtx = bun.BoringSSL.c.SSL_CTX;
 pub const ConnectingSocket = @import("./uws/ConnectingSocket.zig").ConnectingSocket;
 pub const InternalLoopData = @import("./uws/InternalLoopData.zig").InternalLoopData;
 pub const WindowsNamedPipe = @import("./uws/WindowsNamedPipe.zig");
 pub const PosixLoop = @import("./uws/Loop.zig").PosixLoop;
 pub const WindowsLoop = @import("./uws/Loop.zig").WindowsLoop;
 pub const Request = @import("./uws/Request.zig").Request;
+pub const AnyRequest = @import("./uws/Request.zig").AnyRequest;
 pub const AnyResponse = @import("./uws/Response.zig").AnyResponse;
 pub const NewApp = @import("./uws/App.zig").NewApp;
 pub const uws_res = @import("./uws/Response.zig").uws_res;
 pub const RawWebSocket = @import("./uws/WebSocket.zig").RawWebSocket;
 pub const AnyWebSocket = @import("./uws/WebSocket.zig").AnyWebSocket;
 pub const WebSocketBehavior = @import("./uws/WebSocket.zig").WebSocketBehavior;
+/// uWS C++ `WebSocketContext<SSL,true,UserData>*`. Only ever produced by the
+/// upgrade-handler thunk and round-tripped to `uws_res_upgrade`; Zig never
+/// dereferences it. Typed as a named opaque so it can't be confused with the
+/// dozen other handles that flow through the upgrade path.
+pub const WebSocketUpgradeContext = opaque {};
 pub const AnySocket = @import("./uws/socket.zig").AnySocket;
 pub const NewSocketHandler = @import("./uws/socket.zig").NewSocketHandler;
 pub const UpgradedDuplex = @import("./uws/UpgradedDuplex.zig");
@@ -27,6 +44,20 @@ pub const State = @import("./uws/Response.zig").State;
 pub const Loop = @import("./uws/Loop.zig").Loop;
 pub const udp = @import("./uws/udp.zig");
 pub const BodyReaderMixin = @import("./uws/BodyReaderMixin.zig").BodyReaderMixin;
+pub const H3 = @import("./uws/h3.zig");
+pub const quic = @import("./uws/quic.zig");
+
+/// Recovers the concrete uWS response type from `*anyopaque` across the
+/// Zig→C++ boundary. Mirrors `UWSResponseKind` in headers-handwritten.h.
+pub const ResponseKind = enum(i32) {
+    tcp = 0,
+    ssl = 1,
+    h3 = 2,
+
+    pub fn from(comptime ssl: bool, comptime http3: bool) ResponseKind {
+        return if (http3) .h3 else if (ssl) .ssl else .tcp;
+    }
+};
 
 pub const LIBUS_TIMEOUT_GRANULARITY = @as(i32, 4);
 pub const LIBUS_RECV_BUFFER_PADDING = @as(i32, 32);
@@ -83,10 +114,11 @@ pub const create_bun_socket_error_t = enum(c_int) {
 
     pub fn toJS(this: create_bun_socket_error_t, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         return switch (this) {
-            .none => brk: {
-                bun.debugAssert(false);
-                break :brk .null;
-            },
+            // us_ssl_ctx_from_options only sets *err for the CA/cipher cases;
+            // bad cert/key/DH return NULL with .none and the detail is on the
+            // BoringSSL error queue. Surfacing it here keeps every
+            // `createSSLContext(...) orelse return err.toJS()` site correct.
+            .none => bun.BoringSSL.ERR_toJS(globalObject, bun.BoringSSL.c.ERR_get_error()),
             .load_ca_file => globalObject.ERR(.BORINGSSL, "Failed to load CA file", .{}).toJS(),
             .invalid_ca_file => globalObject.ERR(.BORINGSSL, "Invalid CA file", .{}).toJS(),
             .invalid_ca => globalObject.ERR(.BORINGSSL, "Invalid CA", .{}).toJS(),

@@ -1173,7 +1173,7 @@ pub fn Package(comptime SemverIntType: type) type {
                                 false,
                             );
                             if (comptime Environment.isWindows) {
-                                bun.path.dangerouslyConvertPathToPosixInPlace(u8, Path.relative_to_common_path_buf[0..rel.len]);
+                                bun.path.dangerouslyConvertPathToPosixInPlace(u8, Path.relative_to_common_path_buf()[0..rel.len]);
                             }
                             break :brk rel;
                         });
@@ -1412,10 +1412,15 @@ pub fn Package(comptime SemverIntType: type) type {
             var workspace_names = WorkspaceMap.init(allocator);
             defer workspace_names.deinit();
 
-            var optional_peer_dependencies = std.ArrayHashMap(PackageNameHash, void, ArrayIdentityContext.U64, false).init(allocator);
+            // pnpm/yarn synthesise an implicit `"*"` optional peer for entries
+            // that appear in `peerDependenciesMeta` but not in
+            // `peerDependencies`. Track the original key string so the
+            // post-build pass can emit a real `Dependency` for any meta-only
+            // names that nothing in the build loop consumed.
+            var optional_peer_dependencies = std.ArrayHashMap(PackageNameHash, []const u8, ArrayIdentityContext.U64, false).init(allocator);
             defer optional_peer_dependencies.deinit();
 
-            if (json.asProperty("peerDependenciesMeta")) |peer_dependencies_meta| {
+            if (features.peer_dependencies) if (json.asProperty("peerDependenciesMeta")) |peer_dependencies_meta| {
                 if (peer_dependencies_meta.expr.data == .e_object) {
                     const props = peer_dependencies_meta.expr.data.e_object.properties.slice();
                     try optional_peer_dependencies.ensureUnusedCapacity(props.len);
@@ -1425,14 +1430,21 @@ pub fn Package(comptime SemverIntType: type) type {
                                 continue;
                             }
 
+                            const key = prop.key.?.asString(allocator) orelse unreachable;
                             optional_peer_dependencies.putAssumeCapacity(
-                                String.Builder.stringHash(prop.key.?.asString(allocator) orelse unreachable),
-                                {},
+                                String.Builder.stringHash(key),
+                                key,
                             );
+                            // Reserve space for a synthesised entry. If the
+                            // matching name later appears in `peerDependencies`
+                            // the slot just goes unused.
+                            string_builder.count(key);
+                            string_builder.count("*");
+                            total_dependencies_count += 1;
                         }
                     }
                 }
-            }
+            };
 
             inline for (dependency_groups) |group| {
                 if (json.asProperty(group.prop)) |dependencies_q| brk: {
@@ -1862,7 +1874,7 @@ pub fn Package(comptime SemverIntType: type) type {
                             logger.Loc.Empty,
                         )) |_dep| {
                             var dep = _dep;
-                            if (group.behavior.isPeer() and optional_peer_dependencies.contains(external_name.hash)) {
+                            if (group.behavior.isPeer() and optional_peer_dependencies.swapRemove(external_name.hash)) {
                                 dep.behavior = dep.behavior.add(.optional);
                             }
 
@@ -1904,7 +1916,12 @@ pub fn Package(comptime SemverIntType: type) type {
                                         value.loc,
                                     )) |_dep| {
                                         var dep = _dep;
-                                        if (group.behavior.isPeer() and optional_peer_dependencies.contains(external_name.hash)) {
+                                        // swapRemove (not contains): drain names that
+                                        // have a real `peerDependencies` entry so the
+                                        // meta-only synthesis pass below only sees
+                                        // names that appear *only* in
+                                        // `peerDependenciesMeta`.
+                                        if (group.behavior.isPeer() and optional_peer_dependencies.swapRemove(external_name.hash)) {
                                             dep.behavior.optional = true;
                                         }
 
@@ -1920,6 +1937,40 @@ pub fn Package(comptime SemverIntType: type) type {
                             else => unreachable,
                         }
                     }
+                }
+            }
+
+            // Anything left in `optional_peer_dependencies` was listed only in
+            // `peerDependenciesMeta`. Synthesise an optional peer dep with
+            // version `"*"` so resolution can pick up a sibling install when
+            // one exists (matching pnpm/yarn). Webpack relies on this for
+            // `webpack-cli`, which it lists in meta but not in
+            // `peerDependencies`.
+            var meta_only = optional_peer_dependencies.iterator();
+            while (meta_only.next()) |entry| {
+                const external_name = string_builder.append(ExternalString, entry.value_ptr.*);
+                if (try parseDependency(
+                    lockfile,
+                    pm,
+                    allocator,
+                    log,
+                    source,
+                    Lockfile.Package.DependencyGroup.peer,
+                    &string_builder,
+                    features,
+                    package_dependencies,
+                    total_dependencies_count,
+                    null,
+                    null,
+                    external_name,
+                    "*",
+                    logger.Loc.Empty,
+                    logger.Loc.Empty,
+                )) |_dep| {
+                    var dep = _dep;
+                    dep.behavior.optional = true;
+                    package_dependencies[total_dependencies_count] = dep;
+                    total_dependencies_count += 1;
                 }
             }
 

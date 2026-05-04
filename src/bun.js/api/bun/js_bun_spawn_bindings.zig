@@ -166,10 +166,15 @@ pub fn spawnMaybeSync(
         if (abort_signal) |signal| {
             signal.unref();
         }
-        // If we created a new terminal but spawn failed, clean it up
+        // If we created a new terminal but spawn failed, close it. The
+        // writer/reader/finalize deref paths release the remaining refs.
+        // Downgrade the JSRef so the wrapper is GC-eligible, and mark
+        // finalized so onReaderDone skips the JS exit callback — the user
+        // never received this terminal (spawn threw).
         if (terminal_info) |info| {
+            info.terminal.this_value.downgrade();
+            info.terminal.flags.finalized = true;
             info.terminal.closeInternal();
-            info.terminal.deref();
         }
     }
 
@@ -300,7 +305,9 @@ pub fn spawnMaybeSync(
                         i += 1;
 
                         while (try stdio_iter.next()) |value| : (i += 1) {
-                            var new_item: Stdio = undefined;
+                            // extract() leaves `out_stdio` untouched when `value` is undefined, so this
+                            // must be initialized to a sane default instead of `undefined`.
+                            var new_item: Stdio = .{ .ignore = {} };
                             try new_item.extract(globalThis, i, value, is_sync);
 
                             const opt = switch (new_item.asSpawnOption(i)) {
@@ -387,24 +394,27 @@ pub fn spawnMaybeSync(
 
             if (comptime !is_sync) {
                 if (try args.getTruthy(globalThis, "terminal")) |terminal_val| {
-                    if (comptime !Environment.isPosix) {
-                        return globalThis.throwInvalidArguments("terminal option is not supported on this platform", .{});
-                    }
-
                     // Check if it's an existing Terminal object
                     if (Terminal.fromJS(terminal_val)) |terminal| {
                         if (terminal.flags.closed) {
                             return globalThis.throwInvalidArguments("terminal is closed", .{});
                         }
-                        if (terminal.slave_fd == bun.invalid_fd) {
-                            return globalThis.throwInvalidArguments("terminal slave fd is no longer valid", .{});
+                        if (terminal.flags.inline_spawned) {
+                            return globalThis.throwInvalidArguments("terminal was created inline by a previous spawn and cannot be reused", .{});
+                        }
+                        if (comptime Environment.isPosix) {
+                            if (terminal.slave_fd == bun.invalid_fd) {
+                                return globalThis.throwInvalidArguments("terminal slave fd is no longer valid", .{});
+                            }
+                        } else if (terminal.getPseudoconsole() == null) {
+                            return globalThis.throwInvalidArguments("terminal pseudoconsole is no longer valid", .{});
                         }
                         existing_terminal = terminal;
                         terminal_js_value = terminal_val;
                     } else if (terminal_val.isObject()) {
                         // Create a new terminal from options
                         var term_options = try Terminal.Options.parseFromJS(globalThis, terminal_val);
-                        terminal_info = Terminal.createFromSpawn(globalThis, term_options) catch |err| {
+                        terminal_info = Terminal.createFromSpawn(globalThis, &term_options) catch |err| {
                             term_options.deinit();
                             return switch (err) {
                                 error.OpenPtyFailed => globalThis.throw("Failed to open PTY", .{}),
@@ -418,11 +428,24 @@ pub fn spawnMaybeSync(
                         return globalThis.throwInvalidArguments("terminal must be a Terminal object or options object", .{});
                     }
 
-                    const terminal = existing_terminal orelse terminal_info.?.terminal;
-                    const slave_fd = terminal.getSlaveFd();
-                    stdio[0] = .{ .fd = slave_fd };
-                    stdio[1] = .{ .fd = slave_fd };
-                    stdio[2] = .{ .fd = slave_fd };
+                    if (comptime Environment.isPosix) {
+                        const terminal = existing_terminal orelse terminal_info.?.terminal;
+                        const slave_fd = terminal.getSlaveFd();
+                        stdio[0] = .{ .fd = slave_fd };
+                        stdio[1] = .{ .fd = slave_fd };
+                        stdio[2] = .{ .fd = slave_fd };
+                    } else {
+                        // On Windows, ConPTY supplies stdio via PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE.
+                        // Set stdio to .ignore so spawnProcessWindows doesn't allocate pipes.
+                        stdio[0] = .ignore;
+                        stdio[1] = .ignore;
+                        stdio[2] = .ignore;
+                        // ConPTY spawns with bInheritHandles=FALSE and no stdio buffer,
+                        // so extra fds and IPC pipes can't be passed to the child.
+                        if (maybe_ipc_mode != null or extra_fds.items.len > 0) {
+                            return globalThis.throwInvalidArguments("ipc and extra stdio are not supported with terminal on Windows", .{});
+                        }
+                    }
                 }
             }
         } else {
@@ -582,6 +605,11 @@ pub fn spawnMaybeSync(
             if (terminal_info) |ti| break :blk ti.terminal.getSlaveFd().native();
             break :blk -1;
         } else {},
+        .pseudoconsole = if (Environment.isWindows) blk: {
+            if (existing_terminal) |t| break :blk t.getPseudoconsole();
+            if (terminal_info) |ti| break :blk ti.terminal.getPseudoconsole();
+            break :blk null;
+        } else {},
 
         .windows = if (Environment.isWindows) .{
             .hide_window = windows_hide,
@@ -652,7 +680,7 @@ pub fn spawnMaybeSync(
     });
 
     const posix_ipc_fd = if (Environment.isPosix and !is_sync and maybe_ipc_mode != null)
-        spawned.extra_pipes.items[@intCast(ipc_channel)]
+        spawned.extra_pipes.items[@intCast(ipc_channel)].fd()
     else
         bun.invalid_fd;
 
@@ -666,34 +694,19 @@ pub fn spawnMaybeSync(
         .globalThis = globalThis,
         .process = process,
         .pid_rusage = null,
-        .stdin = Writable.init(
-            &stdio[0],
-            event_loop,
-            subprocess,
-            spawned.stdin,
-            &promise_for_stream,
-        ) catch {
-            subprocess.deref();
-            return globalThis.throwOutOfMemory();
-        },
-        .stdout = Readable.init(
-            stdio[1],
-            event_loop,
-            subprocess,
-            spawned.stdout,
-            jsc_vm.allocator,
-            subprocess.stdout_maxbuf,
-            is_sync,
-        ),
-        .stderr = Readable.init(
-            stdio[2],
-            event_loop,
-            subprocess,
-            spawned.stderr,
-            jsc_vm.allocator,
-            subprocess.stderr_maxbuf,
-            is_sync,
-        ),
+        // stdin/stdout/stderr are assigned immediately after this literal.
+        // `Writable.init()` writes to `subprocess.weak_file_sink_stdin_ptr`,
+        // `subprocess.flags`, and calls `subprocess.ref()` for `.pipe` /
+        // `.readable_stream` stdin; if called from inside this aggregate
+        // initializer those writes are clobbered by `.ref_count =
+        // .initExactRefs(2)`, `.flags = .{...}`, and the default
+        // `weak_file_sink_stdin_ptr = null` below. stdout/stderr are deferred
+        // so that if `Writable.init()` fails the catch block doesn't have to
+        // tear down unstarted `PipeReader`s (whose `deinit()` asserts
+        // `isDone()`).
+        .stdin = .{ .ignore = {} },
+        .stdout = .{ .ignore = {} },
+        .stderr = .{ .ignore = {} },
         // 1. JavaScript.
         // 2. Process.
         .ref_count = .initExactRefs(2),
@@ -714,11 +727,66 @@ pub fn spawnMaybeSync(
         .terminal = existing_terminal orelse if (terminal_info) |info| info.terminal else null,
     };
 
+    subprocess.stdin = Writable.init(
+        &stdio[0],
+        event_loop,
+        subprocess,
+        spawned.stdin,
+        &promise_for_stream,
+    ) catch |err| {
+        // ref_count = 2 from the aggregate above, but neither the JS
+        // wrapper nor the process exit handler are wired up yet, so
+        // release both. stdout/stderr are still `.ignore` — close the raw
+        // spawned pipe handles directly since `Readable.init()` will not
+        // run. `finalizeStreams()` here only closes `stdio_pipes` and the
+        // pidfd; stdin/stdout/stderr are `.ignore` so their `closeIO` is a
+        // no-op.
+        if (Environment.isPosix) {
+            if (spawned.stdout) |fd| fd.close();
+            if (spawned.stderr) |fd| fd.close();
+        } else {
+            inline for (.{ spawned.stdout, spawned.stderr }) |r| switch (r) {
+                .buffer => |pipe| pipe.close(Subprocess.onPipeClose),
+                .buffer_fd => |fd| fd.close(),
+                .unavailable => {},
+            };
+        }
+        subprocess.finalizeStreams();
+        subprocess.process.detach();
+        subprocess.process.deref();
+        MaxBuf.removeFromSubprocess(&subprocess.stdout_maxbuf);
+        MaxBuf.removeFromSubprocess(&subprocess.stderr_maxbuf);
+        subprocess.deref();
+        subprocess.deref();
+        if (err == error.JSError) return error.JSError;
+        return globalThis.throwOutOfMemory();
+    };
+
+    subprocess.stdout = Readable.init(
+        stdio[1],
+        event_loop,
+        subprocess,
+        spawned.stdout,
+        jsc_vm.allocator,
+        subprocess.stdout_maxbuf,
+        is_sync,
+    );
+    subprocess.stderr = Readable.init(
+        stdio[2],
+        event_loop,
+        subprocess,
+        spawned.stderr,
+        jsc_vm.allocator,
+        subprocess.stderr_maxbuf,
+        is_sync,
+    );
+
     // For inline terminal options: close parent's slave_fd so EOF is received when child exits
     // For existing terminal: keep slave_fd open so terminal can be reused for more spawns
     if (terminal_info) |info| {
         terminal_js_value = info.js_value;
         info.terminal.closeSlaveFd();
+        subprocess.flags.owns_terminal = true;
         terminal_info = null;
     }
     // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse
@@ -749,11 +817,12 @@ pub fn spawnMaybeSync(
     var posix_ipc_info: if (Environment.isPosix) IPC.Socket else void = undefined;
     if (Environment.isPosix and !is_sync) {
         if (maybe_ipc_mode) |mode| {
-            if (uws.us_socket_t.fromFd(
-                jsc_vm.rareData().spawnIPCContext(jsc_vm),
+            if (jsc_vm.rareData().spawnIPCGroup(jsc_vm).fromFd(
+                .spawn_ipc,
+                null,
                 @sizeOf(*IPC.SendQueue),
                 posix_ipc_fd.cast(),
-                1,
+                true,
             )) |socket| {
                 subprocess.ipc_data = .init(mode, .{ .subprocess = subprocess }, .uninitialized);
                 posix_ipc_info = IPC.Socket.from(socket);
@@ -768,7 +837,7 @@ pub fn spawnMaybeSync(
                 subprocess.ipc_data.?.socket = .{ .open = posix_ipc_info };
             }
             // uws owns the fd now (owns_fd=1); neutralize the slot so finalizeStreams doesn't double-close.
-            subprocess.stdio_pipes.items[@intCast(ipc_channel)] = bun.invalid_fd;
+            subprocess.stdio_pipes.items[@intCast(ipc_channel)] = .unavailable;
         } else {
             if (ipc_data.windowsConfigureServer(
                 subprocess.stdio_pipes.items[@intCast(ipc_channel)].buffer,

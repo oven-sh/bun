@@ -585,6 +585,13 @@ pub const JSValue = enum(i64) {
     pub fn createBuffer(globalObject: *JSGlobalObject, slice: []u8) JSValue {
         jsc.markBinding(@src());
         @setRuntimeSafety(false);
+        if (slice.len == 0) {
+            // A zero-length slice's ptr field is not guaranteed to be a valid
+            // mimalloc allocation (it may be the 0xAA... sentinel from an empty
+            // slice literal). Callers that over-allocated and decoded zero bytes
+            // must free their allocation before calling this.
+            return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, 0, null, null);
+        }
         return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, null, jsc.array_buffer.MarkedArrayBuffer_deallocator);
     }
 
@@ -610,8 +617,8 @@ pub const JSValue = enum(i64) {
             JSValue => number,
             u0 => jsNumberFromInt32(0),
             f32, f64 => {
-                if (canBeStrictInt32(number)) {
-                    return jsNumberFromInt32(@intFromFloat(number));
+                if (tryConvertToStrictInt32(number)) |int| {
+                    return jsNumberFromInt32(int);
                 }
                 return jsDoubleNumber(number);
             },
@@ -820,23 +827,65 @@ pub const JSValue = enum(i64) {
         return jsDoubleNumber(@floatFromInt(i));
     }
 
-    // https://github.com/oven-sh/WebKit/blob/df8aa4c4d01a1c2fe22ac599adfe0a582fce2b20/Source/JavaScriptCore/runtime/MathCommon.h#L243-L249
-    pub fn canBeStrictInt32(value: f64) bool {
-        if (std.math.isInf(value) or std.math.isNan(value)) {
-            return false;
+    // Mirrors WTF::tryConvertToStrictInt32 (wtf/MathExtras.h). Returns the int32
+    // when `value` is exactly representable as i32 (rejects -0.0, NaN, ±Inf,
+    // non-integers, out-of-range).
+    pub fn tryConvertToStrictInt32(value: f64) ?i32 {
+        if (comptime has_fjcvtzs) {
+            // ARMv8.3 FJCVTZS performs JS ToInt32 and sets Z=1 iff no rounding,
+            // wrap, sign-flip or NaN/Inf occurred — i.e. iff the input was an
+            // exact int32 (including +0.0 → 0; -0.0 clears Z).
+            var result: i32 = undefined;
+            var exact: u32 = undefined;
+            asm (
+                \\fjcvtzs %[out:w], %[in:d]
+                \\cset %[z:w], eq
+                : [out] "=r" (result),
+                  [z] "=r" (exact),
+                : [in] "w" (value),
+                : .{ .nzcv = true });
+            return if (exact != 0) result else null;
         }
-        const int: i32 = int: {
-            @setRuntimeSafety(false);
-            break :int @intFromFloat(value);
-        };
-        return !(@as(f64, @floatFromInt(int)) != value or (int == 0 and std.math.signbit(value))); // true for -0.0
+
+        // Range gate also rejects NaN/±Inf via unordered compare.
+        if (!(value >= -2147483648.0 and value < 2147483648.0)) {
+            return null;
+        }
+        const int: i32 = @intFromFloat(value);
+        if (@as(f64, @floatFromInt(int)) != value or (int == 0 and std.math.signbit(value))) {
+            return null;
+        }
+        return int;
     }
+
+    pub fn canBeStrictInt32(value: f64) bool {
+        return tryConvertToStrictInt32(value) != null;
+    }
+
+    const has_fjcvtzs = bun.Environment.isAarch64 and
+        std.Target.aarch64.featureSetHas(@import("builtin").cpu.features, .jsconv);
 
     fn coerceJSValueDoubleTruncatingT(comptime T: type, num: f64) T {
         return coerceJSValueDoubleTruncatingTT(T, T, num);
     }
 
     fn coerceJSValueDoubleTruncatingTT(comptime T: type, comptime Out: type, num: f64) Out {
+        if (comptime bun.Environment.isAarch64 and T == Out and (T == i32 or T == i64)) {
+            // fcvtzs saturates exactly as below: NaN→0, overflow→min/max.
+            // Inline asm prevents LLVM from applying fptosi poison reasoning.
+            return switch (T) {
+                i32 => asm ("fcvtzs %[out:w], %[in:d]"
+                    : [out] "=r" (-> i32),
+                    : [in] "w" (num),
+                ),
+                i64 => asm ("fcvtzs %[out:x], %[in:d]"
+                    : [out] "=r" (-> i64),
+                    : [in] "w" (num),
+                ),
+                else => unreachable,
+            };
+        }
+
         if (std.math.isNan(num)) {
             return 0;
         }

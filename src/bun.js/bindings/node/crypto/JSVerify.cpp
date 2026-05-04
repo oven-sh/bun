@@ -157,7 +157,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncInit, (JSGlobalObject * globalObject, 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Get the JSVerify object from thisValue and verify it's valid
-    JSVerify* thisObject = jsDynamicCast<JSVerify*>(callFrame->thisValue());
+    JSVerify* thisObject = dynamicDowncast<JSVerify>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "Verify"_s, "init"_s);
         return {};
@@ -211,7 +211,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Get the JSVerify object from thisValue and verify it's valid
-    JSVerify* thisObject = jsDynamicCast<JSVerify*>(callFrame->thisValue());
+    JSVerify* thisObject = dynamicDowncast<JSVerify>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "Verify"_s, "update"_s);
         return {};
@@ -246,7 +246,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
         JSValue buf = JSValue::decode(constructFromEncoding(globalObject, dataView, encoding));
         RETURN_IF_EXCEPTION(scope, {});
 
-        auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buf);
+        auto* view = dynamicDowncast<JSC::JSArrayBufferView>(buf);
 
         // Update the digest context with the buffer data
         if (view->isDetached()) {
@@ -278,7 +278,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
     }
 
     // Handle ArrayBufferView input
-    if (auto* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(data)) {
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(data)) {
         if (view->isDetached()) {
             throwTypeError(globalObject, scope, "Buffer is detached"_s);
             return {};
@@ -314,7 +314,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Get the JSVerify object from thisValue and verify it's valid
-    JSVerify* thisObject = jsDynamicCast<JSVerify*>(callFrame->thisValue());
+    JSVerify* thisObject = dynamicDowncast<JSVerify>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "Verify"_s, "verify"_s);
         return {};

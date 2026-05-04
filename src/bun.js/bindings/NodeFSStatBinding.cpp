@@ -20,6 +20,10 @@
 #include <JavaScriptCore/PropertyNameArray.h>
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/DateInstance.h"
+#if !OS(WINDOWS)
+#include <sys/stat.h>
+#endif
+
 namespace Bun {
 
 class JSStatsPrototype;
@@ -29,10 +33,10 @@ class JSBigIntStatsConstructor;
 using namespace JSC;
 using namespace WebCore;
 
-#if !OS(WINDOWS)
-#include <sys/stat.h>
-#else
+#if OS(WINDOWS)
 #ifndef mode_t
+#pragma push_macro("mode_t")
+#define BUN_PUSHED_MODE_T
 #define mode_t int32_t
 #endif
 
@@ -134,7 +138,7 @@ static JSValue modeStatFunction(JSC::JSGlobalObject* globalObject, CallFrame* ca
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = JSC::jsDynamicCast<JSObject*>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<JSObject>(callFrame->thisValue());
     if (!thisObject)
         return JSC::jsUndefined();
 
@@ -212,7 +216,7 @@ inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::Encoded
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::JSObject* thisObject = jsDynamicCast<JSC::JSObject*>(JSC::JSValue::decode(thisValue));
+    JSC::JSObject* thisObject = dynamicDowncast<JSC::JSObject>(JSC::JSValue::decode(thisValue));
     if (!thisObject)
         return JSC::jsUndefined();
 
@@ -274,7 +278,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsBigIntStatsPrototypeGetter_atime, (JSGlobalObject * g
 JSC_DEFINE_CUSTOM_SETTER(jsStatsPrototypeFunction_DatePutter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
 {
     auto& vm = globalObject->vm();
-    JSObject* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
+    JSObject* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
     if (!thisObject)
         return false;
 
@@ -942,3 +946,8 @@ void initJSBigIntStatsClassStructure(JSC::LazyClassStructure::Initializer& init)
 }
 
 } // namespace Bun
+
+#ifdef BUN_PUSHED_MODE_T
+#pragma pop_macro("mode_t")
+#undef BUN_PUSHED_MODE_T
+#endif

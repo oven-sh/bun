@@ -56,8 +56,6 @@ const CallstackChild = struct {
     completed: bool = false,
 };
 
-pub const auto_poll = false;
-
 pub const WriterImpl = bun.io.BufferedWriter(IOWriter, struct {
     pub const onWrite = IOWriter.onWritePollable;
     pub const onError = IOWriter.onError;
@@ -128,6 +126,7 @@ pub fn __start(this: *IOWriter) Maybe(void) {
                 this.flags.pollable = false;
                 this.flags.nonblocking = false;
                 this.flags.is_socket = false;
+                if (this.writer.handle == .poll) this.writer.handle.closeImpl(null, {}, false);
                 this.writer.handle = .{ .closed = {} };
                 return __start(this);
             }
@@ -139,6 +138,7 @@ pub fn __start(this: *IOWriter) Maybe(void) {
                     this.flags.pollable = false;
                     this.flags.nonblocking = false;
                     this.flags.is_socket = false;
+                    if (this.writer.handle == .poll) this.writer.handle.closeImpl(null, {}, false);
                     this.writer.handle = .{ .closed = {} };
                     return __start(this);
                 }
@@ -204,11 +204,13 @@ fn write(this: *IOWriter) enum {
 
     if (!this.started) {
         log("IOWriter(0x{x}, fd={f}) starting", .{ @intFromPtr(this), this.fd });
+        // Set before onError: the callback chain may deref to 0 and asyncDeinit's
+        // never-started fast-path would synchronously destroy us mid-onError.
+        this.started = true;
         if (this.__start().asErr()) |e| {
             this.onError(e);
             return .failed;
         }
-        this.started = true;
         if (comptime bun.Environment.isPosix) {
             // if `handle == .fd` it means it's a file which does not
             // support polling for writeability and we should just
@@ -350,6 +352,7 @@ pub fn doFileWrite(this: *IOWriter) Yield {
         const written_slice = this.buf.items[this.total_bytes_written .. this.total_bytes_written + amt];
         bun.handleOom(bl.appendSlice(bun.default_allocator, written_slice));
     }
+    this.total_bytes_written += amt;
     child.written += amt;
     if (!child.wroteEverything()) {
         bun.assert(writeResult == .done);
@@ -467,7 +470,9 @@ pub fn onError(this: *IOWriter, err__: bun.sys.Error) void {
     var seen_alloc = std.heap.stackFallback(@sizeOf(usize) * 64, bun.default_allocator);
     var seen = bun.handleOom(std.array_list.Managed(usize).initCapacity(seen_alloc.get(), 64));
     defer seen.deinit();
-    writer_loop: for (this.writers.slice()) |w| {
+    // Writers before writer_idx have already had their onIOWriterChunk callback fired and may
+    // have been freed; only notify the still-pending ones.
+    writer_loop: for (this.writers.slice()[this.writer_idx..]) |w| {
         if (w.isDead()) continue;
         const ptr = w.ptr.ptr.ptr();
         if (seen.items.len < 8) {
@@ -481,6 +486,9 @@ pub fn onError(this: *IOWriter, err__: bun.sys.Error) void {
         }
 
         bun.handleOom(seen.append(@intFromPtr(ptr)));
+        // Callee consumes the error (derefs it). Ref before each pass so deinitOnMainThread's
+        // deref of this.err is balanced and multiple callees don't over-deref. Matches IOReader.
+        if (this.err) |*e| e.ref();
         // TODO: This probably shouldn't call .run()
         w.ptr.onIOWriterChunk(0, this.err).run();
     }
@@ -586,6 +594,11 @@ fn enqueueFile(this: *IOWriter) Yield {
     if (this.is_writing) {
         return .suspended;
     }
+    // The pollable path sets `started` in write(); the non-pollable file path bypasses
+    // write() entirely, so set it here. asyncDeinit's never-started fast-path must not
+    // fire for a writer that actually wrote — bump()'s onIOWriterChunk callback can deref
+    // us while doFileWrite is still on the stack.
+    this.started = true;
     this.setWriting(true);
 
     return this.doFileWrite();
@@ -677,6 +690,13 @@ pub fn enqueueFmt(
 fn asyncDeinit(this: *@This()) void {
     debug("IOWriter(0x{x}, fd={f}) asyncDeinit", .{ @intFromPtr(this), this.fd });
     bun.assert(!this.is_writing);
+    // The async hop guards against being deref'd from inside a write callback while
+    // PipeWriter is still on the stack. If we never started, no callback can be in
+    // flight, so close synchronously to avoid holding the fd until the next tick.
+    if (!this.started) {
+        this.deinitOnMainThread();
+        return;
+    }
     this.async_deinit.enqueue();
 }
 
@@ -684,8 +704,10 @@ pub fn deinitOnMainThread(this: *IOWriter) void {
     debug("IOWriter(0x{x}, fd={f}) deinit", .{ @intFromPtr(this), this.fd });
     if (bun.Environment.allow_assert) this.ref_count.assertNoRefs();
     this.buf.deinit(bun.default_allocator);
+    this.writers.deinit();
+    if (this.err) |*e| e.deref();
     if (comptime bun.Environment.isPosix) {
-        if (this.writer.handle == .poll and this.writer.handle.poll.isRegistered()) {
+        if (this.writer.handle == .poll) {
             this.writer.handle.closeImpl(null, {}, false);
         }
     } else {

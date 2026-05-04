@@ -29,11 +29,14 @@
 #include <JavaScriptCore/YarrMatchingContextHolder.h>
 #include "ErrorCode.h"
 #include "napi_external.h"
+#include "WebCoreJSBuiltins.h"
 
 #include <JavaScriptCore/JSPromise.h>
 
 #if OS(WINDOWS)
 #include <windows.h>
+#else
+#include <dlfcn.h>
 #endif
 
 namespace Bun {
@@ -199,7 +202,7 @@ void JSBundlerPlugin::visitAdditionalChildrenInGCThread(Visitor& visitor)
 template<typename Visitor>
 void JSBundlerPlugin::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(cell);
+    JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     thisObject->visitAdditionalChildrenInGCThread(visitor);
@@ -210,7 +213,7 @@ DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSBundlerPlugin);
 template<typename Visitor>
 void JSBundlerPlugin::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
 {
-    JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(cell);
+    JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
@@ -221,12 +224,12 @@ const JSC::ClassInfo JSBundlerPlugin::s_info = { "BundlerPlugin"_s, &Base::s_inf
 /// `BundlerPlugin.prototype.addFilter(filter: RegExp, namespace: string, isOnLoad: 0 | 1): void`
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(callFrame->thisValue());
+    JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
     if (thisObject->plugin.tombstoned) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    JSC::RegExpObject* regExp = jsCast<JSC::RegExpObject*>(callFrame->argument(0));
+    JSC::RegExpObject* regExp = uncheckedDowncast<JSC::RegExpObject>(callFrame->argument(0));
     WTF::String namespaceStr = callFrame->argument(1).toWTFString(globalObject);
     if (namespaceStr == "file"_s) {
         namespaceStr = String();
@@ -337,7 +340,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(callFrame->thisValue());
+    JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
     if (thisObject->plugin.tombstoned) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -345,7 +348,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
     // Clone the regexp so we don't have to worry about it being used concurrently with the JS thread.
     // TODO: Should we have a regexp object for every thread in the thread pool? Then we could avoid using
     // a mutex to synchronize access to the same regexp from multiple threads.
-    JSC::RegExpObject* jsRegexp = jsCast<JSC::RegExpObject*>(callFrame->argument(0));
+    JSC::RegExpObject* jsRegexp = uncheckedDowncast<JSC::RegExpObject>(callFrame->argument(0));
     RegExp* reggie = jsRegexp->regExp();
     RegExp* newRegexp = RegExp::create(vm, reggie->pattern(), reggie->flags());
 
@@ -369,7 +372,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
     WTF::String on_before_parse_symbol = on_before_parse_symbol_js.toWTFString(globalObject);
 
     // The dlopen *void handle is attached to the node_addon as a NapiExternal
-    Bun::NapiExternal* napi_external = jsDynamicCast<Bun::NapiExternal*>(node_addon.getObject()->get(globalObject, WebCore::builtinNames(vm).napiDlopenHandlePrivateName()));
+    Bun::NapiExternal* napi_external = dynamicDowncast<Bun::NapiExternal>(node_addon.getObject()->get(globalObject, WebCore::builtinNames(vm).napiDlopenHandlePrivateName()));
     if (!napi_external) [[unlikely]] {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected node_addon (2nd argument) to have a napiDlopenHandle property"_s);
         return {};
@@ -396,7 +399,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
     JSC::JSValue external = callFrame->argument(4);
     NapiExternal* externalPtr = nullptr;
     if (!external.isUndefinedOrNull()) {
-        externalPtr = jsDynamicCast<Bun::NapiExternal*>(external);
+        externalPtr = dynamicDowncast<Bun::NapiExternal>(external);
         if (!externalPtr) [[unlikely]] {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected external (3rd argument) to be a NAPI external"_s);
             return {};
@@ -410,7 +413,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
 
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addError, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(callFrame->thisValue());
+    JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
     if (!thisObject->plugin.tombstoned) {
         thisObject->plugin.addError(
             UNWRAP_BUNDLER_PLUGIN(callFrame),
@@ -423,7 +426,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addError, (JSC::JSGlobalObject 
 }
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(callFrame->thisValue());
+    JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
     if (!thisObject->plugin.tombstoned) {
         thisObject->plugin.onLoadAsync(
             UNWRAP_BUNDLER_PLUGIN(callFrame),
@@ -436,7 +439,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync, (JSC::JSGlobalObje
 }
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onResolveAsync, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(callFrame->thisValue());
+    JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
     if (!thisObject->plugin.tombstoned) {
         thisObject->plugin.onResolveAsync(
             UNWRAP_BUNDLER_PLUGIN(callFrame),
@@ -537,11 +540,12 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const
         auto exception = scope.exception();
         (void)scope.tryClearException();
         if (!plugin->plugin.tombstoned) {
+            // which = 1 (Load). Zig's JSBundlerPlugin__addError casts ctx based on this value.
             plugin->plugin.addError(
                 context,
-                plugin->plugin.config,
+                plugin,
                 JSC::JSValue::encode(exception),
-                JSValue::encode(jsNumber(0)));
+                JSValue::encode(jsNumber(1)));
         }
     }
 }
@@ -580,11 +584,12 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, co
         auto exception = JSValue(scope.exception());
         (void)scope.tryClearException();
         if (!plugin->plugin.tombstoned) {
-            JSBundlerPlugin__addError(
+            // which = 0 (Resolve). Zig's JSBundlerPlugin__addError casts ctx based on this value.
+            plugin->plugin.addError(
                 context,
                 plugin,
                 JSC::JSValue::encode(exception),
-                JSValue::encode(jsNumber(1)));
+                JSValue::encode(jsNumber(0)));
         }
         return;
     }
@@ -636,7 +641,7 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     auto& vm = plugin->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* setupFunction = jsCast<JSFunction*>(plugin->setupFunction.get(plugin));
+    auto* setupFunction = plugin->setupFunction.get(plugin);
     if (!setupFunction) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
@@ -650,7 +655,7 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     arguments.append(JSValue::decode(encodedOnstartPromisesArray));
     arguments.append(JSValue::decode(encodedIsLast));
     arguments.append(JSValue::decode(encodedIsBake));
-    auto* lexicalGlobalObject = jsCast<JSFunction*>(JSValue::decode(encodedSetupFunction))->globalObject();
+    auto* lexicalGlobalObject = uncheckedDowncast<JSFunction>(JSValue::decode(encodedSetupFunction))->globalObject();
 
     auto result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, setupFunction, callData, plugin, arguments);
     RETURN_IF_EXCEPTION(scope, {}); // should be able to use RELEASE_AND_RETURN, no? observed it returning undefined with exception active
@@ -673,7 +678,7 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
     auto& vm = pluginObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     for (auto promiseValue : arguments) {
-        JSPromise* promise = jsCast<JSPromise*>(promiseValue);
+        JSPromise* promise = uncheckedDowncast<JSPromise>(promiseValue);
         if (rejected) {
             promise->reject(vm, globalObject, JSC::jsUndefined());
         } else {

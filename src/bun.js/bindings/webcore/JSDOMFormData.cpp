@@ -63,11 +63,11 @@ using namespace JSC;
 struct JSBlobWrapperConverter {
     static RefPtr<Blob> toWrapped(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
-        auto* globalObject = JSC::jsDynamicCast<JSDOMGlobalObject*>(&lexicalGlobalObject);
+        auto* globalObject = dynamicDowncast<JSDOMGlobalObject>(&lexicalGlobalObject);
         if (!globalObject)
             return nullptr;
 
-        auto* readableStream = JSC::jsDynamicCast<JSBlob*>(value);
+        auto* readableStream = dynamicDowncast<JSBlob>(value);
         if (!readableStream)
             return nullptr;
 
@@ -111,7 +111,7 @@ static JSC_DECLARE_CUSTOM_GETTER(jsDOMFormDataConstructor);
 JSC_DEFINE_CUSTOM_GETTER(jsDOMFormDataPrototype_getLength, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto* thisObject = jsDynamicCast<JSDOMFormData*>(JSValue::decode(thisValue));
+    auto* thisObject = dynamicDowncast<JSDOMFormData>(JSValue::decode(thisValue));
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (!thisObject) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
@@ -158,7 +158,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMFormDataDOMConstruc
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSDOMFormDataDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSDOMFormDataDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
     if (!context) [[unlikely]]
@@ -253,7 +253,7 @@ JSObject* JSDOMFormData::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSDOMFormData::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSDOMFormDataDOMConstructor, DOMConstructorID::DOMFormData>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSDOMFormDataDOMConstructor, DOMConstructorID::DOMFormData>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSDOMFormData::destroy(JSC::JSCell* cell)
@@ -266,7 +266,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsDOMFormDataConstructor, (JSGlobalObject * lexicalGlob
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSDOMFormDataPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSDOMFormDataPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSDOMFormData::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -672,7 +672,7 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
 
                 obj->putDirect(vm, ident, array, 0);
             } else if (jsValue.isObject() && jsValue.getObject()->inherits<JSC::JSArray>()) {
-                JSC::JSArray* array = jsCast<JSC::JSArray*>(jsValue.getObject());
+                JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(jsValue.getObject());
                 JSValue jsValue = toJSValue(value);
                 RETURN_IF_EXCEPTION(throwScope, {});
                 array->push(lexicalGlobalObject, jsValue);
@@ -705,7 +705,7 @@ JSC::GCClient::IsoSubspace* JSDOMFormData::subspaceForImpl(JSC::VM& vm)
 
 void JSDOMFormData::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSDOMFormData*>(cell);
+    auto* thisObject = uncheckedDowncast<JSDOMFormData>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -769,14 +769,14 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 DOMFormData* JSDOMFormData::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSDOMFormData*>(value))
+    if (auto* wrapper = dynamicDowncast<JSDOMFormData>(value))
         return &wrapper->wrapped();
     return nullptr;
 }
 
 size_t JSDOMFormData::estimatedSize(JSCell* cell, JSC::VM& vm)
 {
-    auto& wrapped = jsCast<JSDOMFormData*>(cell)->wrapped();
+    auto& wrapped = uncheckedDowncast<JSDOMFormData>(cell)->wrapped();
     return Base::estimatedSize(cell, vm) + wrapped.memoryCost();
 }
 

@@ -15,7 +15,7 @@ class GlobalObject;
 }
 
 namespace JSC {
-class JSInternalPromise;
+class JSPromise;
 }
 
 namespace Bun {
@@ -71,7 +71,7 @@ public:
     static PendingVirtualModuleResult* createWithInitialValues(VM&, Structure*);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
-    JSC::JSInternalPromise* internalPromise();
+    JSC::JSPromise* internalPromise();
 
     static std::array<JSValue, numberOfInternalFields> initialValues()
     {

@@ -4,9 +4,11 @@ pub const InternalLoopData = extern struct {
     sweep_timer: ?*Timer,
     sweep_timer_count: i32,
     wakeup_async: ?*us_internal_async,
-    head: ?*SocketContext,
-    iterator: ?*SocketContext,
-    closed_context_head: ?*SocketContext,
+    head: ?*SocketGroup,
+    quic_head: ?*anyopaque,
+    quic_next_tick_us: i64,
+    quic_timer: ?*Timer,
+    iterator: ?*SocketGroup,
     recv_buf: [*]u8,
     send_buf: [*]u8,
     ssl_data: ?*anyopaque,
@@ -65,7 +67,7 @@ const jsc = bun.jsc;
 const uws = bun.uws;
 const ConnectingSocket = uws.ConnectingSocket;
 const Loop = uws.Loop;
-const SocketContext = uws.SocketContext;
+const SocketGroup = uws.SocketGroup;
 const Timer = uws.Timer;
 const udp = uws.udp;
 const us_socket_t = uws.us_socket_t;

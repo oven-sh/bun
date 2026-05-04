@@ -817,12 +817,12 @@ function renderCallbacksCppImpl(typeName, callbacks: Record<string, string>) {
     rows.push(
       `
   extern JSC_CALLCONV JSC::EncodedJSValue ${symbolName(typeName, "_callback_get_" + name)}(JSC::EncodedJSValue encodedThisValue) {
-    auto* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+    auto* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
     return JSValue::encode(thisObject->m_callback_${name}.get());
   }
 
   extern JSC_CALLCONV void ${symbolName(typeName, "_callback_set_" + name)}(JSC::EncodedJSValue encodedThisValue, JSC::EncodedJSValue encodedCallback) {
-    auto* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+    auto* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
     JSValue callback = JSValue::decode(encodedCallback);
 #if ASSERT_ENABLED
     if (!callback.isEmpty()) {
@@ -846,7 +846,7 @@ function renderCallbacksCppImpl(typeName, callbacks: Record<string, string>) {
   )
     .map((_, i) => `JSC::EncodedJSValue encodedCallback${i}`)
     .join(", ")}) {
-    auto* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+    auto* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
     ${Object.keys(callbacks)
       .map(
         (name, i) => `
@@ -1028,13 +1028,13 @@ function writeBarrier(symbolName, typeName, name, cacheName) {
 extern JSC_CALLCONV void ${symbolName(typeName, name)}SetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(thisValue));
+    auto* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(thisValue));
     thisObject->${cacheName}.set(vm, thisObject, JSValue::decode(value));
 }
 
 extern JSC_CALLCONV JSC::EncodedJSValue ${symbolName(typeName, name)}GetCachedValue(JSC::EncodedJSValue thisValue)
 {
-  auto* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(thisValue));
+  auto* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(thisValue));
   return JSValue::encode(thisObject->${cacheName}.get());
 }
 
@@ -1061,7 +1061,7 @@ JSC_DEFINE_CUSTOM_GETTER(js${typeName}Constructor, (JSGlobalObject * lexicalGlob
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto* prototype = jsDynamicCast<${prototypeName(typeName)}*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<${prototypeName(typeName)}>(JSValue::decode(thisValue));
 
     if (!prototype) [[unlikely]] {
         return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for ${typeName}"_s);
@@ -1088,17 +1088,17 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
     ${
       obj.forBind
         ? `
-      JSC::JSBoundFunction* thisBoundFunction = jsDynamicCast<JSC::JSBoundFunction*>(JSValue::decode(encodedThisValue));
+      JSC::JSBoundFunction* thisBoundFunction = dynamicDowncast<JSC::JSBoundFunction>(JSValue::decode(encodedThisValue));
       if (!thisBoundFunction) [[unlikely]] {
         return throwVMTypeError(lexicalGlobalObject, throwScope, "The ${typeName}.${name} getter can only be used on instances of ${typeName}"_s);
       }
       JSC::JSValue thisBoundFunctionThisValue = thisBoundFunction->boundThis();
-      ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(thisBoundFunctionThisValue);
+      ${className(typeName)}* thisObject = dynamicDowncast<${className(typeName)}>(thisBoundFunctionThisValue);
       if (!thisObject) [[unlikely]] {
         return throwVMTypeError(lexicalGlobalObject, throwScope, "The ${typeName}.${name} getter can only be used on instances of ${typeName}"_s);
       }
     `
-        : `${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));`
+        : `${className(typeName)}* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));`
     }
       JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
 
@@ -1127,7 +1127,7 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+    ${className(typeName)}* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     thisObject->${cacheName}.set(vm, thisObject, JSValue::decode(encodedValue));
     RELEASE_AND_RETURN(throwScope, true);
@@ -1141,7 +1141,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
 {
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+    ${className(typeName)}* thisObject = dynamicDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
@@ -1178,7 +1178,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
     auto& vm = JSC::getVM(lexicalGlobalObject);
     Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+    ${className(typeName)}* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     JSC::EncodedJSValue result = ${symbolName(typeName, proto[name].getter)}(thisObject->wrapped(),${
       !!proto[name].this ? " encodedThisValue, " : ""
@@ -1200,7 +1200,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
     auto& vm = JSC::getVM(lexicalGlobalObject);
     Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+    ${className(typeName)}* thisObject = dynamicDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
@@ -1228,7 +1228,7 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+    ${className(typeName)}* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     bool result = ${symbolName(typeName, proto[name].setter || proto[name].accessor.setter)}(thisObject->wrapped(),${
       !!proto[name].this ? " encodedThisValue, " : ""
@@ -1269,15 +1269,15 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
   ${
     obj.forBind
       ? `
-        JSC::JSBoundFunction* thisBoundFunction = jsDynamicCast<JSC::JSBoundFunction*>(callFrame->thisValue());
+        JSC::JSBoundFunction* thisBoundFunction = dynamicDowncast<JSC::JSBoundFunction>(callFrame->thisValue());
         if (!thisBoundFunction) [[unlikely]] {
           scope.throwException(lexicalGlobalObject, Bun::createInvalidThisError(lexicalGlobalObject, callFrame->thisValue(), "${typeName}"_s));
           return {};
         }
         JSC::JSValue thisBoundFunctionThisValue = thisBoundFunction->boundThis();
-        ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(thisBoundFunctionThisValue);
+        ${className(typeName)}* thisObject = dynamicDowncast<${className(typeName)}>(thisBoundFunctionThisValue);
     `
-      : `${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(callFrame->thisValue());`
+      : `${className(typeName)}* thisObject = dynamicDowncast<${className(typeName)}>(callFrame->thisValue());`
   }
 
   if (!thisObject) [[unlikely]] {
@@ -1382,13 +1382,20 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     externs += `extern JSC_CALLCONV size_t ${symbolName(typeName, "estimatedSize")}(void* ptr);` + "\n";
   }
 
+  for (const a of [...Object.values(klass), ...Object.values(proto)]) {
+    if (a.internal === true) {
+      throw new Error(
+        `${typeName}: 'internal: true' on a property is not implemented (no users today; the visitChildren plumbing for it was never wired up consistently). Use 'cache: true' or add it to 'values' instead.`,
+      );
+    }
+  }
   const DECLARE_VISIT_CHILDREN =
     values.length ||
     obj.estimatedSize ||
+    obj.valuesArray ||
     Object.keys(callbacks).length ||
-    obj.hasPendingActivity ||
-    [...Object.values(klass), ...Object.values(proto)].find(a => !!a.cache)
-      ? "DECLARE_VISIT_CHILDREN;\ntemplate<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);\nDECLARE_VISIT_OUTPUT_CONSTRAINTS;\n"
+    [...Object.values(klass), ...Object.values(proto)].find(a => a.cache === true)
+      ? "DECLARE_VISIT_CHILDREN;\n"
       : "";
   const sizeEstimator = "static size_t estimatedSize(JSCell* cell, VM& vm);";
 
@@ -1404,17 +1411,20 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
 
     class Owner final : public JSC::WeakHandleOwner {
       public:
-          bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason) final
+          bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor&, ASCIILiteral* reason) final
           {
-              auto* controller = JSC::jsCast<${name}*>(handle.slot()->asCell());
-              if (${name}::hasPendingActivity(controller->wrapped())) {
+              auto* controller = uncheckedDowncast<${name}>(handle.slot()->asCell());
+              // m_ctx is null between wrapper creation and constructor return
+              // when constructNeedsThis is set; GC during that window must not
+              // call into the Zig hasPendingActivity with nullptr.
+              if (controller->wrapped() && ${name}::hasPendingActivity(controller->wrapped())) {
                   if (reason) [[unlikely]] {
                     *reason = "has pending activity"_s;
                   }
                   return true;
               }
 
-              return visitor.containsOpaqueRoot(context);
+              return false;
           }
           void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
       };
@@ -1593,7 +1603,7 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
   const name = className(typeName);
 
   let DEFINE_VISIT_CHILDREN_LIST = [...Object.entries(fields), ...Object.entries(proto)]
-    .filter(([name, { cache = false, internal = false }]) => (cache || internal) === true)
+    .filter(([name, { cache = false }]) => cache === true)
     .map(([name]) => `visitor.append(thisObject->m_${name});`)
     .join("\n");
 
@@ -1608,12 +1618,38 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
     })
     .join("\n");
   var DEFINE_VISIT_CHILDREN = "";
-  if (DEFINE_VISIT_CHILDREN_LIST.length || estimatedSize || values.length || hasPendingActivity) {
+  // Generated classes intentionally do NOT override visitOutputConstraints (and therefore
+  // do not get enrolled in BunGCOutputConstraint / m_outputConstraintSpaces).
+  //
+  // visitOutputConstraints exists so JSC's incremental GC can re-scan an already-black cell
+  // after the mutator runs, to pick up new outgoing edges that were added without firing a
+  // write barrier. WebCore needs this because edges like EventTarget's listener list or
+  // AbortSignal's algorithm vector live inside the wrapped RefCounted C++ object, not in
+  // WriteBarrier<> fields on the JSCell, so addEventListener() etc. can add an edge from a
+  // black wrapper to a white callback with no barrier firing.
+  //
+  // Generated classes don't have that problem. Every GC-visible edge below is either:
+  //   - a WriteBarrier<Unknown> field on the JSCell, mutated only via .set(vm, thisObject, v)
+  //     (see *SetCachedValue / cached getter paths), which calls vm.writeBarrier(thisObject, v)
+  //     and re-greys thisObject if it was already marked (Heap::addToRememberedSet pushes it
+  //     back onto m_mutatorMarkStack so visitChildren runs again), or
+  //   - jsvalueArray, a FixedVector<WriteBarrier<>> populated before allocateCell() and never
+  //     resized.
+  //
+  // In all cases the write barrier (or immutability) guarantees correctness, so re-walking
+  // every live instance of every generated type after each mutator yield is pure overhead.
+  // Only visitChildren is needed.
+  //
+  // hasPendingActivity does not need visitChildren at all: liveness is decided by the
+  // WeakHandleOwner calling hasPendingActivity(wrapped()) directly during weak processing.
+  // The previous addOpaqueRoot(wrapped()) had no consumer (the Weak's context was nullptr,
+  // so containsOpaqueRoot(context) always checked for nullptr, never m_ctx).
+  if (DEFINE_VISIT_CHILDREN_LIST.length || estimatedSize || values.length || obj.valuesArray) {
     DEFINE_VISIT_CHILDREN = `
 template<typename Visitor>
 void ${name}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    ${name}* thisObject = jsCast<${name}*>(cell);
+    ${name}* thisObject = uncheckedDowncast<${name}>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     ${
@@ -1624,35 +1660,12 @@ visitor.reportExtraMemoryVisited(size);
 }`
         : ""
     }
-    thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
-}
-
-DEFINE_VISIT_CHILDREN(${name});
-
-
-
-template<typename Visitor>
-void ${name}::visitAdditionalChildrenInGCThread(Visitor& visitor)
-{
-  ${name}* thisObject = this;
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     ${values}
     ${DEFINE_VISIT_CHILDREN_LIST}
     ${obj.valuesArray ? "for (auto& value : thisObject->jsvalueArray) { visitor.append(value); }" : ""}
-    ${hasPendingActivity ? "visitor.addOpaqueRoot(this->wrapped());" : ""}
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(${name});
-
-template<typename Visitor>
-void ${name}::visitOutputConstraintsImpl(JSCell *cell, Visitor& visitor)
-{
-    ${name}* thisObject = jsCast<${name}*>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
-}
-
-DEFINE_VISIT_OUTPUT_CONSTRAINTS(${name});
+DEFINE_VISIT_CHILDREN(${name});
 
 ${renderCallbacksCppImpl(typeName, callbacks)}
 
@@ -1697,7 +1710,7 @@ ${renderCallbacksCppImpl(typeName, callbacks)}
         ([name, getterName]) => `
 static JSC::JSValue construct${symbolName(obj.name, name)}PropertyCallback(JSC::VM &vm, JSC::JSObject* initialThisObject) {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Bun::JS${obj.name}* thisObject = jsCast<Bun::JS${obj.name}*>(initialThisObject);
+    Bun::JS${obj.name}* thisObject = uncheckedDowncast<Bun::JS${obj.name}>(initialThisObject);
     JSC::EncodedJSValue result = ${protoSymbolName(obj.name, getterName)}(thisObject->wrapped(), thisObject->globalObject());
     RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::decode(result);
@@ -1753,7 +1766,7 @@ size_t ${name}::memoryCost(void* ptr) {
   output += `
 
 size_t ${name}::estimatedSize(JSC::JSCell* cell, JSC::VM& vm) {
-  auto* thisObject = jsCast<${name}*>(cell);
+  auto* thisObject = uncheckedDowncast<${name}>(cell);
   auto* wrapped = thisObject->wrapped();
   return Base::estimatedSize(cell, vm) + ${name}::memoryCost(wrapped);
 }
@@ -1813,7 +1826,7 @@ extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${typeName}__fromJS(JSC::Enco
       return nullptr;
 
   JSC::JSCell* cell = decodedValue.asCell();
-  ${className(typeName)}* object = JSC::jsDynamicCast<${className(typeName)}*>(cell);
+  ${className(typeName)}* object = dynamicDowncast<${className(typeName)}>(cell);
 
   if (!object)
       return nullptr;
@@ -1826,12 +1839,12 @@ extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${typeName}__fromJSDirect(JSC
   ASSERT(decodedValue.isCell());
 
   JSC::JSCell* cell = decodedValue.asCell();
-  ${className(typeName)}* object = JSC::jsDynamicCast<${className(typeName)}*>(cell);
+  ${className(typeName)}* object = dynamicDowncast<${className(typeName)}>(cell);
 
   if (!object)
       return nullptr;
 
-  Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(object->globalObject());
+  Zig::GlobalObject* globalObject = dynamicDowncast<Zig::GlobalObject>(object->globalObject());
 
   if (globalObject == nullptr || cell->structureID() != globalObject->${className(typeName)}Structure()->id()) [[unlikely]] {
     return nullptr;
@@ -1841,7 +1854,7 @@ extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${typeName}__fromJSDirect(JSC
 }
 
 extern JSC_CALLCONV bool JSC_HOST_CALL_ATTRIBUTES ${typeName}__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr) {
-  ${className(typeName)}* object = JSC::jsDynamicCast<${className(typeName)}*>(JSValue::decode(value));
+  ${className(typeName)}* object = dynamicDowncast<${className(typeName)}>(JSValue::decode(value));
   if (!object)
       return false;
 
@@ -1853,7 +1866,7 @@ extern "C" const size_t ${typeName}__ptrOffset = ${className(typeName)}::offsetO
 
 void ${name}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<${name}*>(cell);
+    auto* thisObject = uncheckedDowncast<${name}>(cell);
     if (void* wrapped = thisObject->wrapped()) {
         analyzer.setWrappedObjectForCell(cell, wrapped);
     }
@@ -1880,7 +1893,7 @@ ${
 {
   return WebCore::${constructorName(typeName)}::create(vm, globalObject, WebCore::${constructorName(
     typeName,
-  )}::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::${prototypeName(typeName)}*>(prototype));
+  )}::createStructure(vm, globalObject, globalObject->functionPrototype()), uncheckedDowncast<WebCore::${prototypeName(typeName)}>(prototype));
 }`
     : ""
 }
@@ -2625,6 +2638,7 @@ const GENERATED_CLASSES_IMPL_HEADER_PRE = `
 
 #include "JSDOMConvertBufferSource.h"
 #include "ZigGeneratedClasses.h"
+#include "WebCoreJSBuiltins.h"
 #include "ErrorCode+List.h"
 #include "ErrorCode.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
@@ -2674,7 +2688,7 @@ JSC_DEFINE_HOST_FUNCTION(Zig::jsFunctionInherits, (JSC::JSGlobalObject * globalO
     switch (id) {
 ${jsclasses
   .map(v => v[0])
-  .map((v, i) => `    case ${i}: return JSValue::encode(jsBoolean(jsDynamicCast<WebCore::JS${v}*>(cell) != nullptr));`)
+  .map((v, i) => `    case ${i}: return JSValue::encode(jsBoolean(dynamicDowncast<WebCore::JS${v}>(cell) != nullptr));`)
   .join("\n")}
     }
     return JSValue::encode(jsBoolean(false));
@@ -2692,7 +2706,7 @@ ${classes
     if (c.structuredClone == null) return "";
     if (typeof c.structuredClone === "boolean") return "";
     if (c.structuredClone.transferable) return "";
-    return `  if (JSC::jsDynamicCast<WebCore::JS${c.name}*>(cell)) return false;\n`;
+    return `  if (dynamicDowncast<WebCore::JS${c.name}>(cell)) return false;\n`;
   })
   .join("")}
   return true;
@@ -2853,7 +2867,7 @@ function writeCppSerializers() {
 
   function fromJSForEachClass(klass) {
     return `
-    if (auto* result = jsDynamicCast<${className(klass.name)}*>(value)) {
+    if (auto* result = dynamicDowncast<${className(klass.name)}>(value)) {
       return StructuredCloneableSerialize { .cppWriteBytes = SerializedScriptValue::writeBytesForBun, .zigFunction = ${symbolName(
         klass.name,
         "onStructuredCloneSerialize",
@@ -3008,6 +3022,12 @@ fn log_zig_class_method(typename: []const u8, method_name: []const u8, callframe
 fn log_zig_class_getter(typename: []const u8, property_name: []const u8) callconv(bun.callconv_inline) void {
   if (comptime Environment.enable_logs) {
     zig("<r><d>static<r> <blue>get<r> {s}<d>.<r>{s}", .{typename, property_name});
+  }
+}
+
+fn log_zig_class_setter(typename: []const u8, property_name: []const u8, value: jsc.JSValue) callconv(bun.callconv_inline) void {
+  if (comptime Environment.enable_logs) {
+    zig("<r><d>static<r> <blue>set<r> {s}<d>.<r>{s} = {?s}", .{typename, property_name, bun.tagName(jsc.JSValue, value)});
   }
 }
 

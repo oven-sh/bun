@@ -87,10 +87,6 @@ pub fn runAsCoordinator(
     }
 
     const workers = try allocator.alloc(Worker, K);
-    const retries = try allocator.alloc(u8, sorted.len);
-    @memset(retries, 0);
-    const pending_retry = try allocator.alloc(?u32, K);
-    @memset(pending_retry, null);
 
     var coord = Coordinator{
         .vm = vm,
@@ -100,8 +96,6 @@ pub fn runAsCoordinator(
         .argv = argv,
         .envps = envps,
         .workers = workers,
-        .retries = retries,
-        .pending_retry = pending_retry,
         .worker_tmpdir = worker_tmpdir,
         .parallel_limit = K,
         .scale_up_after_ms = if (ctx.test_options.parallel_delay_ms) |d|
@@ -225,6 +219,12 @@ fn buildWorkerArgv(arena: std.mem.Allocator, ctx: Command.Context) ![:null]?[*:0
     }
     if (ctx.args.preserve_symlinks orelse false)
         try argv.append(arena, "--preserve-symlinks");
+    if (ctx.runtime_options.smol)
+        try argv.append(arena, "--smol");
+    if (ctx.runtime_options.experimental_http2_fetch)
+        try argv.append(arena, "--experimental-http2-fetch");
+    if (ctx.runtime_options.experimental_http3_fetch)
+        try argv.append(arena, "--experimental-http3-fetch");
     if (ctx.args.allow_addons == false)
         try argv.append(arena, "--no-addons");
     if (ctx.debug.macros == .disable)

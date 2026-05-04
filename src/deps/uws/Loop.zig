@@ -26,6 +26,9 @@ pub const PosixLoop = extern struct {
     const EventType = switch (Environment.os) {
         .linux => std.os.linux.epoll_event,
         .mac => std.posix.system.kevent64_s,
+        // usockets aliases kevent64_s → struct kevent on FreeBSD (epoll_kqueue.h),
+        // so ready_polls is `struct kevent[1024]` there.
+        .freebsd => std.c.Kevent,
         // TODO:
         .windows => *anyopaque,
         .wasm => @compileError("Unsupported OS"),
@@ -91,6 +94,14 @@ pub const PosixLoop = extern struct {
         return c.uws_get_loop();
     }
 
+    /// Packetize HTTP/3 stream writes that happened since the last
+    /// process_conns. Early-returns when nothing wrote, so safe to call
+    /// from drainMicrotasks without per-iteration cost.
+    pub fn drainQuicIfNecessary(this: *Loop) void {
+        if (this.internal_loop_data.quic_head == null) return;
+        c.us_quic_loop_flush_if_pending(this);
+    }
+
     pub fn create(comptime Handler: anytype) *Loop {
         return c.us_create_loop(
             null,
@@ -118,6 +129,22 @@ pub const PosixLoop = extern struct {
 
     pub fn tickWithTimeout(this: *PosixLoop, timespec: ?*const bun.timespec) void {
         c.us_loop_run_bun_tick(this, timespec);
+    }
+
+    /// Free everything queued on `loop->data.closed_head` /
+    /// `closed_connecting_head`. Normally `loop_post()` does this once per
+    /// tick; at process/Worker teardown the loop has stopped, so
+    /// `closeAllSocketGroups()` must drain it explicitly or every just-closed
+    /// `us_socket_t` (libc-allocated) shows up as an LSAN leak.
+    pub fn drainClosedSockets(this: *PosixLoop) void {
+        c.us_internal_free_closed_sockets(this);
+    }
+
+    /// `us_socket_group_close_all()` on every group currently linked to this
+    /// loop — covers Listener/App-owned groups that `RareData`'s static field
+    /// list doesn't enumerate. Returns whether any group was linked.
+    pub fn closeAllGroups(this: *PosixLoop) bool {
+        return c.us_loop_close_all_groups(this) != 0;
     }
 
     pub fn nextTick(this: *PosixLoop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
@@ -227,6 +254,11 @@ pub const WindowsLoop = extern struct {
         c.us_loop_pump(this);
     }
 
+    pub fn drainQuicIfNecessary(this: *WindowsLoop) void {
+        if (this.internal_loop_data.quic_head == null) return;
+        c.us_quic_loop_flush_if_pending(this);
+    }
+
     pub fn create(comptime Handler: anytype) *WindowsLoop {
         return c.us_create_loop(
             null,
@@ -255,6 +287,14 @@ pub const WindowsLoop = extern struct {
 
     pub const ref = inc;
     pub const unref = dec;
+
+    pub fn drainClosedSockets(this: *WindowsLoop) void {
+        c.us_internal_free_closed_sockets(this);
+    }
+
+    pub fn closeAllGroups(this: *WindowsLoop) bool {
+        return c.us_loop_close_all_groups(this) != 0;
+    }
 
     pub fn nextTick(this: *Loop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
         const Handler = struct {
@@ -301,6 +341,7 @@ const c = struct {
     ) ?*Loop;
     pub extern fn us_loop_free(loop: ?*Loop) void;
     pub extern fn us_loop_ext(loop: ?*Loop) ?*anyopaque;
+    pub extern fn us_quic_loop_flush_if_pending(loop: *Loop) void;
     pub extern fn us_loop_run(loop: ?*Loop) void;
     pub extern fn us_loop_pump(loop: ?*Loop) void;
     pub extern fn us_wakeup_loop(loop: ?*Loop) void;
@@ -311,6 +352,8 @@ const c = struct {
     pub extern fn uws_loop_addPreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.c) void)) void;
     pub extern fn uws_loop_removePreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.c) void)) void;
     pub extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: ?*const bun.timespec) void;
+    pub extern fn us_internal_free_closed_sockets(loop: *Loop) void;
+    pub extern fn us_loop_close_all_groups(loop: *Loop) c_int;
     pub extern fn uws_get_loop() *Loop;
     pub extern fn uws_get_loop_with_native(*anyopaque) *WindowsLoop;
     pub extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.c) void)) void;

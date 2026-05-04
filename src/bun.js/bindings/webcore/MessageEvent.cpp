@@ -111,7 +111,7 @@ auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScrip
 
     auto& eventType = didFail ? eventNames().messageerrorEvent : eventNames().messageEvent;
     auto event = adoptRef(*new MessageEvent(eventType, WTF::move(data), origin, lastEventId, WTF::move(source), WTF::move(ports)));
-    JSC::Strong<JSC::JSObject> strongWrapper(vm, JSC::jsCast<JSC::JSObject*>(toJS(&globalObject, JSC::jsCast<JSDOMGlobalObject*>(&globalObject), event.get())));
+    JSC::Strong<JSC::JSObject> strongWrapper(vm, uncheckedDowncast<JSC::JSObject>(toJS(&globalObject, uncheckedDowncast<JSDOMGlobalObject>(&globalObject), event.get())));
     // Since we've already deserialized the SerializedScriptValue, cache the result so we don't have to deserialize
     // again the next time JSMessageEvent::data() gets called by the main world.
     event->cachedData().set(vm, strongWrapper.get(), deserialized);

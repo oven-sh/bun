@@ -1,4 +1,4 @@
-import { Subprocess, spawn } from "bun";
+import { Subprocess, spawn, write } from "bun";
 import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import { join } from "node:path";
@@ -92,6 +92,26 @@ class TestReporterSession extends InspectorSession {
   }
 
   /**
+   * Wait for a Console.messageAdded event whose text contains the given substring.
+   */
+  waitForConsoleMessage(substring: string, timeout = 10000): Promise<any> {
+    this.ref();
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`Timeout waiting for console message containing: ${substring}`));
+      }, timeout);
+
+      this.addEventListener("Console.messageAdded", (params: any) => {
+        if (params?.message?.text?.includes?.(substring)) {
+          clearTimeout(timer);
+          resolve(params);
+        }
+      });
+    });
+  }
+
+  /**
    * Wait for a specific number of TestReporter.found events
    */
   waitForFoundTests(count: number, timeout = 10000): Promise<Map<number, any>> {
@@ -162,20 +182,32 @@ describe.if(isPosix)("TestReporter inspector protocol", () => {
     // test collection has started, the already-discovered tests are retroactively reported.
     //
     // The flow is:
-    // 1. Connect to inspector and enable only Inspector domain (NOT TestReporter)
+    // 1. Connect to inspector and enable Inspector + Console (NOT TestReporter)
     // 2. Send Inspector.initialized to allow test collection and execution to proceed
-    // 3. Wait briefly for test collection to complete
+    // 3. Wait for test A1 to signal it has started via a Console.messageAdded event,
+    //    which guarantees collection is finished and execution has begun
     // 4. THEN send TestReporter.enable - this should trigger retroactive reporting
     //    of tests that were discovered but not yet reported
+    // 5. Once we receive the retroactive `found` events (proving enable was processed
+    //    on the JS thread), write a gate file that releases A1. This guarantees A1's
+    //    `end` event fires with the agent enabled rather than racing with the
+    //    cross-thread dispatch of TestReporter.enable.
+    // 6. An afterAll hook polls for a second gate file that we only write after all
+    //    three `end` events have been received. Inspector events are written to the
+    //    socket from the detached debugger thread, and the test runner calls exit()
+    //    immediately after the last test without draining that queue, so without the
+    //    hold the final end(s) can be lost. The afterAll keeps the process alive
+    //    (and the JS thread yielding) until delivery is confirmed.
 
     using dir = tempDir("test-reporter-delayed-enable", {
       "delayed.test.ts": `
-import { describe, test, expect } from "bun:test";
+import { afterAll, describe, test, expect } from "bun:test";
+import { existsSync } from "node:fs";
 
 describe("suite A", () => {
   test("test A1", async () => {
-    // Add delay to ensure we have time to enable TestReporter during execution
-    await Bun.sleep(500);
+    console.log("__A1_RUNNING__");
+    while (!existsSync("a1-gate")) await Bun.sleep(10);
     expect(1).toBe(1);
   });
   test("test A2", () => {
@@ -188,10 +220,16 @@ describe("suite B", () => {
     expect(3).toBe(3);
   });
 });
+
+afterAll(async () => {
+  while (!existsSync("done-gate")) await Bun.sleep(10);
+});
 `,
     });
 
     const socketPath = join(String(dir), `inspector-${Math.random().toString(36).substring(2)}.sock`);
+    const gatePath = join(String(dir), "a1-gate");
+    const doneGatePath = join(String(dir), "done-gate");
 
     const session = new TestReporterSession();
     const framer = new SocketFramer((message: string) => {
@@ -209,7 +247,9 @@ describe("suite B", () => {
     });
 
     proc = spawn({
-      cmd: [bunExe(), `--inspect-wait=unix:${socketPath}`, "test", "delayed.test.ts"],
+      // --timeout keeps the inner test's budget above the 15000ms outer waits
+      // so A1 cannot time out before the gate file is written under heavy load.
+      cmd: [bunExe(), `--inspect-wait=unix:${socketPath}`, "test", "--timeout", "30000", "delayed.test.ts"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -218,15 +258,19 @@ describe("suite B", () => {
 
     await socketPromise;
 
-    // Enable Inspector only (NOT TestReporter)
+    // Enable Inspector and Console (NOT TestReporter). Console lets us observe when
+    // A1 has actually started executing without relying on wall-clock sleeps.
     session.enableInspector();
+    session.send("Console.enable");
+
+    // Register the listener before allowing execution to proceed so we cannot miss the message.
+    const a1Started = session.waitForConsoleMessage("__A1_RUNNING__", 15000);
 
     // Signal ready - this allows test collection and execution to proceed
     session.initialize();
 
-    // Wait for test collection and first test to start running
-    // The first test has a 500ms sleep, so waiting 200ms ensures we're in execution phase
-    await Bun.sleep(200);
+    // Wait until test A1 is actually running (collection is done, execution has begun).
+    await a1Started;
 
     // Now enable TestReporter - this should trigger retroactive reporting
     // of all tests that were discovered while TestReporter was disabled
@@ -252,9 +296,16 @@ describe("suite B", () => {
     const describeNames = describes.map(d => d.name).sort();
     expect(describeNames).toEqual(["suite A", "suite B"]);
 
-    // Wait for tests to complete
+    // Receiving the retroactive `found` events proves TestReporter.enable has been
+    // processed on the JS thread. Release A1 so its `end` event fires with the agent
+    // enabled, then wait for all three tests to report completion.
+    await write(gatePath, "go");
+
     const endedTests = await session.waitForEndedTests(3, 15000);
     expect(endedTests.size).toBe(3);
+
+    // All `end` events received; release the afterAll hold so the subprocess can exit.
+    await write(doneGatePath, "go");
 
     const exitCode = await proc.exited;
     expect(exitCode).toBe(0);

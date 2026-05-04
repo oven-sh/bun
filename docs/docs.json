@@ -44,7 +44,7 @@
     ]
   },
   "contextual": {
-    "options": ["copy", "view", "chatgpt", "claude", "perplexity", "mcp", "cursor", "vscode"]
+    "options": ["copy", "view", "claude", "mcp", "vscode"]
   },
   "styling": {
     "codeblocks": {
@@ -163,6 +163,7 @@
               "/runtime/json5",
               "/runtime/jsonl",
               "/runtime/html-rewriter",
+              "/runtime/image",
               "/runtime/hashing",
               "/runtime/glob",
               "/runtime/semver",
@@ -215,6 +216,7 @@
               "/pm/cli/patch",
               "/pm/filter",
               "/pm/global-cache",
+              "/pm/global-store",
               "/pm/isolated-installs",
               "/pm/lockfile",
               "/pm/lifecycle",

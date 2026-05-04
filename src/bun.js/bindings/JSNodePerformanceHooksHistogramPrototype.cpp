@@ -6,6 +6,7 @@
 #include "JSNodePerformanceHooksHistogramPrototype.h"
 #include "JSNodePerformanceHooksHistogram.h"
 #include "wtf/text/ASCIILiteral.h"
+#include <wtf/MathExtras.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -52,7 +53,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncRecord, (JSGlob
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSNodePerformanceHooksHistogram* thisObject = jsDynamicCast<JSNodePerformanceHooksHistogram*>(callFrame->thisValue());
+    JSNodePerformanceHooksHistogram* thisObject = dynamicDowncast<JSNodePerformanceHooksHistogram>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "record"_s);
         return {};
@@ -66,9 +67,9 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncRecord, (JSGlob
     JSValue arg = callFrame->uncheckedArgument(0);
     int64_t value;
     if (arg.isNumber()) {
-        value = static_cast<int64_t>(arg.asNumber());
+        value = truncateDoubleToInt64(arg.asNumber());
     } else if (arg.isBigInt()) {
-        auto* bigInt = jsCast<JSBigInt*>(arg);
+        auto* bigInt = uncheckedDowncast<JSBigInt>(arg);
         value = JSBigInt::toBigInt64(bigInt);
     } else {
         Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "value"_s, "number or BigInt"_s, arg);
@@ -89,7 +90,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncRecordDelta, (J
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSNodePerformanceHooksHistogram* thisObject = jsDynamicCast<JSNodePerformanceHooksHistogram*>(callFrame->thisValue());
+    JSNodePerformanceHooksHistogram* thisObject = dynamicDowncast<JSNodePerformanceHooksHistogram>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "recordDelta"_s);
         return {};
@@ -104,7 +105,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncAdd, (JSGlobalO
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSNodePerformanceHooksHistogram* thisObject = jsDynamicCast<JSNodePerformanceHooksHistogram*>(callFrame->thisValue());
+    JSNodePerformanceHooksHistogram* thisObject = dynamicDowncast<JSNodePerformanceHooksHistogram>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "add"_s);
         return {};
@@ -116,7 +117,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncAdd, (JSGlobalO
     }
 
     JSValue otherArg = callFrame->uncheckedArgument(0);
-    JSNodePerformanceHooksHistogram* otherHistogram = jsDynamicCast<JSNodePerformanceHooksHistogram*>(otherArg);
+    JSNodePerformanceHooksHistogram* otherHistogram = dynamicDowncast<JSNodePerformanceHooksHistogram>(otherArg);
     if (!otherHistogram) [[unlikely]] {
         Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "argument"_s, "Histogram"_s, otherArg);
         return {};
@@ -131,7 +132,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncReset, (JSGloba
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSNodePerformanceHooksHistogram* thisObject = jsDynamicCast<JSNodePerformanceHooksHistogram*>(callFrame->thisValue());
+    JSNodePerformanceHooksHistogram* thisObject = dynamicDowncast<JSNodePerformanceHooksHistogram>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "reset"_s);
         return {};
@@ -160,7 +161,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentile, (JS
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSNodePerformanceHooksHistogram* thisObject = jsDynamicCast<JSNodePerformanceHooksHistogram*>(callFrame->thisValue());
+    JSNodePerformanceHooksHistogram* thisObject = dynamicDowncast<JSNodePerformanceHooksHistogram>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "percentile"_s);
         return {};
@@ -182,7 +183,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentileBigIn
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSNodePerformanceHooksHistogram* thisObject = jsDynamicCast<JSNodePerformanceHooksHistogram*>(callFrame->thisValue());
+    JSNodePerformanceHooksHistogram* thisObject = dynamicDowncast<JSNodePerformanceHooksHistogram>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "percentileBigInt"_s);
         return {};
@@ -204,7 +205,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_count, (JSGlobalO
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSNodePerformanceHooksHistogram* thisObject = jsDynamicCast<JSNodePerformanceHooksHistogram*>(JSValue::decode(thisValue));
+    JSNodePerformanceHooksHistogram* thisObject = dynamicDowncast<JSNodePerformanceHooksHistogram>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "count"_s);
         return {};
@@ -217,7 +218,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_countBigInt, (JSG
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSNodePerformanceHooksHistogram* thisObject = jsDynamicCast<JSNodePerformanceHooksHistogram*>(JSValue::decode(thisValue));
+    JSNodePerformanceHooksHistogram* thisObject = dynamicDowncast<JSNodePerformanceHooksHistogram>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "countBigInt"_s);
         return {};
@@ -230,7 +231,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_min, (JSGlobalObj
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSNodePerformanceHooksHistogram* thisObject = jsDynamicCast<JSNodePerformanceHooksHistogram*>(JSValue::decode(thisValue));
+    JSNodePerformanceHooksHistogram* thisObject = dynamicDowncast<JSNodePerformanceHooksHistogram>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "min"_s);
         return {};
@@ -248,7 +249,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_minBigInt, (JSGlo
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSNodePerformanceHooksHistogram* thisObject = jsDynamicCast<JSNodePerformanceHooksHistogram*>(JSValue::decode(thisValue));
+    JSNodePerformanceHooksHistogram* thisObject = dynamicDowncast<JSNodePerformanceHooksHistogram>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "minBigInt"_s);
         return {};
@@ -269,7 +270,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_max, (JSGlobalObj
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSNodePerformanceHooksHistogram* thisObject = jsDynamicCast<JSNodePerformanceHooksHistogram*>(JSValue::decode(thisValue));
+    JSNodePerformanceHooksHistogram* thisObject = dynamicDowncast<JSNodePerformanceHooksHistogram>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "max"_s);
         return {};
@@ -282,7 +283,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_maxBigInt, (JSGlo
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSNodePerformanceHooksHistogram* thisObject = jsDynamicCast<JSNodePerformanceHooksHistogram*>(JSValue::decode(thisValue));
+    JSNodePerformanceHooksHistogram* thisObject = dynamicDowncast<JSNodePerformanceHooksHistogram>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "maxBigInt"_s);
         return {};
@@ -295,7 +296,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_mean, (JSGlobalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSNodePerformanceHooksHistogram* thisObject = jsDynamicCast<JSNodePerformanceHooksHistogram*>(JSValue::decode(thisValue));
+    JSNodePerformanceHooksHistogram* thisObject = dynamicDowncast<JSNodePerformanceHooksHistogram>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "mean"_s);
         return {};
@@ -308,7 +309,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_stddev, (JSGlobal
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSNodePerformanceHooksHistogram* thisObject = jsDynamicCast<JSNodePerformanceHooksHistogram*>(JSValue::decode(thisValue));
+    JSNodePerformanceHooksHistogram* thisObject = dynamicDowncast<JSNodePerformanceHooksHistogram>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "stddev"_s);
         return {};
@@ -321,7 +322,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_exceeds, (JSGloba
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSNodePerformanceHooksHistogram* thisObject = jsDynamicCast<JSNodePerformanceHooksHistogram*>(JSValue::decode(thisValue));
+    JSNodePerformanceHooksHistogram* thisObject = dynamicDowncast<JSNodePerformanceHooksHistogram>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "exceeds"_s);
         return {};
@@ -334,7 +335,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_exceedsBigInt, (J
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSNodePerformanceHooksHistogram* thisObject = jsDynamicCast<JSNodePerformanceHooksHistogram*>(JSValue::decode(thisValue));
+    JSNodePerformanceHooksHistogram* thisObject = dynamicDowncast<JSNodePerformanceHooksHistogram>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "exceedsBigInt"_s);
         return {};
@@ -347,7 +348,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_percentiles, (JSG
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSNodePerformanceHooksHistogram* thisObject = jsDynamicCast<JSNodePerformanceHooksHistogram*>(JSValue::decode(thisValue));
+    JSNodePerformanceHooksHistogram* thisObject = dynamicDowncast<JSNodePerformanceHooksHistogram>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "percentiles"_s);
         return {};
@@ -364,7 +365,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_percentilesBigInt
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSNodePerformanceHooksHistogram* thisObject = jsDynamicCast<JSNodePerformanceHooksHistogram*>(JSValue::decode(thisValue));
+    JSNodePerformanceHooksHistogram* thisObject = dynamicDowncast<JSNodePerformanceHooksHistogram>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "percentilesBigInt"_s);
         return {};
@@ -388,9 +389,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject * globalObj
     if (callFrame->argumentCount() >= 1) {
         JSValue lowestArg = callFrame->uncheckedArgument(0);
         if (lowestArg.isNumber()) {
-            lowest = static_cast<int64_t>(lowestArg.asNumber());
+            lowest = truncateDoubleToInt64(lowestArg.asNumber());
         } else if (lowestArg.isBigInt()) {
-            auto* bigInt = jsCast<JSBigInt*>(lowestArg);
+            auto* bigInt = uncheckedDowncast<JSBigInt>(lowestArg);
             lowest = JSBigInt::toBigInt64(bigInt);
         }
     }
@@ -398,9 +399,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject * globalObj
     if (callFrame->argumentCount() >= 2) {
         JSValue highestArg = callFrame->uncheckedArgument(1);
         if (highestArg.isNumber()) {
-            highest = static_cast<int64_t>(highestArg.asNumber());
+            highest = truncateDoubleToInt64(highestArg.asNumber());
         } else if (highestArg.isBigInt()) {
-            auto* bigInt = jsCast<JSBigInt*>(highestArg);
+            auto* bigInt = uncheckedDowncast<JSBigInt>(highestArg);
             highest = JSBigInt::toBigInt64(bigInt);
         }
     }
@@ -408,7 +409,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject * globalObj
     if (callFrame->argumentCount() >= 3) {
         JSValue figuresArg = callFrame->uncheckedArgument(2);
         if (figuresArg.isNumber()) {
-            figures = static_cast<int>(figuresArg.asNumber());
+            figures = truncateDoubleToInt32(figuresArg.asNumber());
         }
     }
 
@@ -472,7 +473,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_enableEventLoopDelay, (JSGlobalObject * glob
     }
 
     JSValue histogramValue = callFrame->argument(0);
-    JSNodePerformanceHooksHistogram* histogram = jsDynamicCast<JSNodePerformanceHooksHistogram*>(histogramValue);
+    JSNodePerformanceHooksHistogram* histogram = dynamicDowncast<JSNodePerformanceHooksHistogram>(histogramValue);
 
     if (!histogram) {
         throwTypeError(globalObject, scope, "Invalid histogram"_s);
@@ -503,7 +504,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_disableEventLoopDelay, (JSGlobalObject * glo
     }
 
     JSValue histogramValue = callFrame->argument(0);
-    JSNodePerformanceHooksHistogram* histogram = jsDynamicCast<JSNodePerformanceHooksHistogram*>(histogramValue);
+    JSNodePerformanceHooksHistogram* histogram = dynamicDowncast<JSNodePerformanceHooksHistogram>(histogramValue);
 
     if (!histogram) {
         throwTypeError(globalObject, scope, "Invalid histogram"_s);
@@ -521,7 +522,7 @@ extern "C" void JSNodePerformanceHooksHistogram_recordDelay(JSC::EncodedJSValue 
 {
     if (!histogram || delay_ns <= 0) return;
 
-    auto* hist = jsCast<JSNodePerformanceHooksHistogram*>(JSValue::decode(histogram));
+    auto* hist = uncheckedDowncast<JSNodePerformanceHooksHistogram>(JSValue::decode(histogram));
     hist->record(delay_ns);
 }
 

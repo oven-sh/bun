@@ -24,14 +24,14 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
     JSValue restoreAsyncContext {};
     JSC::InternalFieldTuple* asyncContextData = nullptr;
 
-    if (auto* wrapper = jsDynamicCast<AsyncContextFrame*>(callbackValue)) {
+    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(callbackValue)) {
         callbackValue = wrapper->callback.get();
         asyncContextData = globalObject->m_asyncContextData.get();
         restoreAsyncContext = asyncContextData->getInternalField(0);
         asyncContextData->putInternalField(vm, 0, wrapper->context.get());
     }
 
-    if (auto* promise = jsDynamicCast<JSPromise*>(callbackValue)) {
+    if (auto* promise = dynamicDowncast<JSPromise>(callbackValue)) {
         // This was a Bun.sleep() call
         promise->resolve(globalObject, vm, jsUndefined());
     } else {
@@ -42,7 +42,7 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
         }
 
         MarkedArgumentBuffer args;
-        if (auto* butterfly = jsDynamicCast<JSCellButterfly*>(argumentsValue)) {
+        if (auto* butterfly = dynamicDowncast<JSCellButterfly>(argumentsValue)) {
             //  If it's a JSCellButterfly, there is more than 1 argument.
             unsigned length = butterfly->length();
             args.ensureCapacity(length);

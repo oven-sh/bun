@@ -660,8 +660,10 @@ pub const BackgroundHandler = struct {
                     var clips: *SmallList(BackgroundClip, 1) = &clips_and_vp.*[0];
                     const vp: *VendorPrefix = &clips_and_vp.*[1];
                     if (vendor_prefix != vp.* and !val.eql(clips)) {
+                        // `flush()` takes ownership of `this.clips` via `bun.take` and
+                        // frees it, so `clips` (which aliases the payload of `this.clips`)
+                        // is a stale pointer once `flush()` returns. Do not touch it.
                         this.flush(allocator, dest, context);
-                        clips.deinit(allocator);
                         this.clips = .{ val.deepClone(allocator), vendor_prefix };
                     } else {
                         if (!val.eql(clips)) {
@@ -688,7 +690,7 @@ pub const BackgroundHandler = struct {
                 }
                 var clips_vp = VendorPrefix{ .none = true };
                 if (this.clips) |*clips_and_vp| {
-                    if (clips_vp != clips_and_vp.*[1] and !clips_and_vp.*[0].eql(&clips_and_vp[0])) {
+                    if (clips_vp != clips_and_vp.*[1] and !clips.eql(&clips_and_vp.*[0])) {
                         this.flush(allocator, dest, context);
                     } else {
                         bun.bits.insert(VendorPrefix, &clips_vp, clips_and_vp.*[1]);

@@ -145,6 +145,21 @@ proxy_env_storage: jsc.RareData.ProxyEnvStorage = .{},
 is_us_loop_entered: bool = false,
 pending_internal_promise: ?*JSInternalPromise = null,
 pending_internal_promise_is_protected: bool = false,
+/// hot_reload_counter value at which we last surfaced a rejected
+/// pending_internal_promise. We can't use JSPromise.isHandled() as the
+/// "already reported" sentinel any more: the C++ module loader marks every
+/// pipeline promise handled before it ever reaches us. Using a generation
+/// counter (rather than the promise pointer) avoids false negatives when
+/// GC reuses the previous promise's allocation for the next reload's.
+pending_internal_promise_reported_at: u32 = std.math.maxInt(u32),
+/// A watcher event arrived while pending_internal_promise was still pending
+/// — i.e. while a previous hot-reload's loadAndEvaluateModule chain was
+/// still in flight on the microtask queue. Starting a second clearAll +
+/// load now would let the two chains interleave through one registry and
+/// produce duplicate or partial-graph evaluations, so defer the new reload
+/// until the in-flight promise settles. The main loop's per-tick
+/// reportExceptionInHotReloadedModuleIfNeeded picks this up.
+hot_reload_deferred: bool = false,
 entry_point_result: struct {
     value: jsc.Strong.Optional = .empty,
     cjs_set_value: bool = false,
@@ -704,9 +719,18 @@ pub fn reportExceptionInHotReloadedModuleIfNeeded(this: *jsc.VirtualMachine) voi
     defer this.addMainToWatcherIfNeeded();
     var promise = this.pending_internal_promise orelse return;
 
-    if (promise.status() == .rejected and !promise.isHandled()) {
-        this.unhandledRejection(this.global, promise.result(), promise.asValue());
-        promise.setHandled(this.global.vm());
+    switch (promise.status()) {
+        .pending => return,
+        .rejected => if (this.pending_internal_promise_reported_at != this.hot_reload_counter) {
+            this.pending_internal_promise_reported_at = this.hot_reload_counter;
+            this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.toJS());
+            promise.setHandled();
+        },
+        .fulfilled => {},
+    }
+
+    if (this.hot_reload_deferred) {
+        this.reload(null);
     }
 }
 
@@ -742,7 +766,34 @@ pub inline fn autoGarbageCollect(this: *const VirtualMachine) void {
     }
 }
 
-pub fn reload(this: *VirtualMachine, _: *HotReloader.Task) void {
+pub fn reload(this: *VirtualMachine, _: ?*HotReloader.Task) void {
+    // The C++ module loader is async: reloadEntryPoint() returns while the
+    // fetch/link/evaluate chain is still draining via microtasks. Kicking
+    // off another clearAll() before that chain settles lets the two loads
+    // race through one registry. Defer instead; the main loop reschedules
+    // via reportExceptionInHotReloadedModuleIfNeeded once the in-flight
+    // promise resolves or rejects.
+    //
+    // Also defer when the previous promise has rejected but its error
+    // hasn't been printed yet: reloadEntryPoint() re-transpiles and
+    // overwrites source_mappings[path] in place, so a watcher event that
+    // slips in between the rejection microtask and the report would remap
+    // that error against the wrong sourcemap.
+    if (this.pending_internal_promise) |p| {
+        switch (p.status()) {
+            .pending => {
+                this.hot_reload_deferred = true;
+                return;
+            },
+            .rejected => if (this.pending_internal_promise_reported_at != this.hot_reload_counter) {
+                this.hot_reload_deferred = true;
+                return;
+            },
+            .fulfilled => {},
+        }
+    }
+    this.hot_reload_deferred = false;
+
     Output.debug("Reloading...", .{});
     const should_clear_terminal = !this.transpiler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors_stdout);
     if (this.hot_reload == .watch) {
@@ -787,6 +838,15 @@ pub inline fn rareData(this: *VirtualMachine) *jsc.RareData {
     return this.rare_data orelse brk: {
         this.rare_data = this.allocator.create(jsc.RareData) catch unreachable;
         this.rare_data.?.* = .{};
+        // RareData embeds the per-VM `us_socket_group_t` heads as value fields.
+        // `this.allocator` is mimalloc, whose pages LSAN does not scan, so a
+        // socket still open at exit and reachable only via e.g.
+        // `rare_data.bun_connect_group_tls.head_sockets` would otherwise be
+        // reported as leaked from `us_create_poll`. Registering the allocation
+        // as a root region lets LSAN trace `RareData → group.head_sockets →
+        // us_socket_t` the same way it traced the old malloc-backed
+        // `us_socket_context_t` chain.
+        bun.asan.registerRootRegion(this.rare_data.?, @sizeOf(jsc.RareData));
         break :brk this.rare_data.?;
     };
 }
@@ -905,7 +965,29 @@ pub fn globalExit(this: *VirtualMachine) noreturn {
 
     if (this.shouldDestructMainThreadOnExit()) {
         if (this.eventLoop().forever_timer) |t| t.deinit(true);
+        // Detached worker threads may still be in startVM()/spin() using the
+        // process-global resolver BSSMap singletons (dir_cache, dirname_store,
+        // etc.). transpiler.deinit() below frees those singletons, so request
+        // termination of every live worker and wait for each to reach
+        // shutdown() (past all resolver access) first. Node.js does the
+        // equivalent in Environment::stop_sub_worker_contexts().
+        webcore.WebWorker.terminateAllAndWait(10_000);
+        // Embedded per-VM socket groups must drain while JSC is still alive
+        // (closeAll() fires on_close → JS). After JSC teardown,
+        // RareData.deinit() only deinit()s the groups (asserts empty).
+        // Mirrors web_worker.zig — without this, every still-open Bun.connect
+        // / postgres / etc. socket is an LSAN leak under
+        // BUN_DESTRUCT_VM_ON_EXIT.
+        if (this.rare_data) |rare| rare.closeAllSocketGroups(this);
         Zig__GlobalObject__destructOnExit(this.global);
+        // lastChanceToFinalize() above runs Listener/Server finalize → their
+        // own embedded group.closeAll() → sockets land in loop.closed_head.
+        // The pre-JSC drain in closeAllSocketGroups() can't see those (the
+        // groups aren't on RareData), so drain again now or LSAN reports
+        // every accepted socket that was still open at process.exit().
+        // uws.Loop is the usockets loop on every platform; event_loop_handle
+        // on Windows is the libuv loop, which has no closed_head.
+        uws.Loop.get().drainClosedSockets();
         this.transpiler.deinit();
         this.gc_controller.deinit();
         this.deinit();
@@ -1106,6 +1188,7 @@ pub fn initWithModuleGraph(
     vm.regular_event_loop.global = vm.global;
     vm.jsc_vm = vm.global.vm();
     uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc_vm;
+    bun.ParentDeathWatchdog.installOnEventLoop(jsc.EventLoopHandle.init(vm));
 
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
@@ -1230,6 +1313,7 @@ pub fn init(opts: Options) !*VirtualMachine {
     uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc_vm;
     vm.smol = opts.smol;
     vm.dns_result_order = opts.dns_result_order;
+    if (opts.is_main_thread) bun.ParentDeathWatchdog.installOnEventLoop(jsc.EventLoopHandle.init(vm));
 
     if (opts.smol)
         is_smol_mode = opts.smol;
@@ -1636,7 +1720,7 @@ fn normalizeSpecifierForResolution(specifier_: []const u8, query_string: *[]cons
     return specifier;
 }
 
-threadlocal var specifier_cache_resolver_buf: bun.PathBuffer = undefined;
+const specifier_cache_resolver_bufs = bun.ThreadlocalBuffers(struct { buf: bun.PathBuffer = undefined });
 fn _resolve(
     jsc_vm: *VirtualMachine,
     ret: *ResolveFunctionResult,
@@ -1713,6 +1797,7 @@ fn _resolve(
                 else {
                     retry_on_not_found = false;
 
+                    const specifier_cache_resolver_buf = &specifier_cache_resolver_bufs.get().buf;
                     const buster_name = name: {
                         if (std.fs.path.isAbsolute(normalized_specifier)) {
                             if (std.fs.path.dirname(normalized_specifier)) |dir| {
@@ -1720,7 +1805,7 @@ fn _resolve(
                                     return error.ModuleNotFound;
                                 }
                                 // Normalized without trailing slash
-                                break :name bun.strings.normalizeSlashesOnly(&specifier_cache_resolver_buf, dir, std.fs.path.sep);
+                                break :name bun.strings.normalizeSlashesOnly(specifier_cache_resolver_buf, dir, std.fs.path.sep);
                             }
                         }
 
@@ -1738,7 +1823,7 @@ fn _resolve(
 
                         break :name bun.path.joinAbsStringBufZ(
                             jsc_vm.transpiler.fs.top_level_dir,
-                            &specifier_cache_resolver_buf,
+                            specifier_cache_resolver_buf,
                             &parts,
                             .auto,
                         );
@@ -1771,7 +1856,7 @@ pub fn resolve(
     global: *JSGlobalObject,
     specifier: bun.String,
     source: bun.String,
-    query_string: ?*ZigString,
+    query_string: ?*bun.String,
     is_esm: bool,
 ) !void {
     try resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true, false);
@@ -1790,7 +1875,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
     global: *JSGlobalObject,
     specifier: bun.String,
     source: bun.String,
-    query_string: ?*ZigString,
+    query_string: ?*bun.String,
     is_esm: bool,
     comptime is_a_file_path: bool,
     is_user_require_resolve: bool,
@@ -1843,7 +1928,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
     if (jsc.ModuleLoader.HardcodedModule.Alias.get(specifier_utf8.slice(), .bun, .{})) |hardcoded| {
         res.* = ErrorableString.ok(
             if (is_user_require_resolve and hardcoded.node_builtin)
-                specifier
+                specifier.dupeRef()
             else
                 bun.String.init(hardcoded.path),
         );
@@ -1917,10 +2002,19 @@ pub fn resolveMaybeNeedsTrailingSlash(
     };
 
     if (query_string) |query| {
-        query.* = ZigString.init(result.query_string);
+        // `result.query_string` is a slice into `specifier_utf8`, which is freed by
+        // `defer specifier_utf8.deinit()` before callers (C++ or Zig) read the out-param.
+        // Clone into an owned bun.String so it survives this function returning.
+        query.* = if (result.query_string.len > 0)
+            bun.String.cloneUTF8(result.query_string)
+        else
+            bun.String.empty;
     }
 
-    res.* = ErrorableString.ok(bun.String.init(result.path));
+    // `result.path` can be a slice into `specifier_utf8` (e.g. http:// specifiers that
+    // the resolver marks external without copying), so clone it for the same reason as
+    // `result.query_string` above. Callers must deref `res.result.value` on success.
+    res.* = ErrorableString.ok(bun.String.cloneUTF8(result.path));
 }
 
 pub const main_file_name: string = "bun:main";
@@ -1961,13 +2055,15 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
 
         1 => {
             const msg = log.msgs.items[0];
+            const referrer_utf8 = referrer.toUTF8(bun.default_allocator);
+            defer referrer_utf8.deinit();
             ret.* = ErrorableResolvedSource.err(err, switch (msg.metadata) {
                 .build => (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)),
                 .resolve => (bun.api.ResolveMessage.create(
                     globalThis,
                     globalThis.allocator(),
                     msg,
-                    referrer.toUTF8(bun.default_allocator).slice(),
+                    referrer_utf8.slice(),
                 ) catch |e| globalThis.takeException(e)),
             });
             return;
@@ -1979,6 +2075,9 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
             const errors = errors_stack[0..len];
             const logs = log.msgs.items[0..len];
 
+            const referrer_utf8 = referrer.toUTF8(bun.default_allocator);
+            defer referrer_utf8.deinit();
+
             for (logs, errors) |msg, *current| {
                 current.* = switch (msg.metadata) {
                     .build => bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e),
@@ -1986,7 +2085,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                         globalThis,
                         globalThis.allocator(),
                         msg,
-                        referrer.toUTF8(bun.default_allocator).slice(),
+                        referrer_utf8.slice(),
                     ) catch |e| globalThis.takeException(e),
                 };
             }
@@ -2017,6 +2116,11 @@ pub fn deinit(this: *VirtualMachine) void {
     this.source_mappings.deinit();
     if (this.rare_data) |rare_data| {
         jsc.API.cron.CronJob.clearAllForVM(this, .teardown);
+        // Paired with rareData()'s registerRootRegion. Without this, every
+        // terminated Worker leaves a stale LSAN root entry pointing into a
+        // freed arena (harmless to the final leak verdict but accumulates one
+        // dead range per Worker for LSAN to scan).
+        bun.asan.unregisterRootRegion(rare_data, @sizeOf(jsc.RareData));
         rare_data.deinit();
     }
     this.proxy_env_storage.deinit();
@@ -2408,29 +2512,31 @@ pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
     }
 
     {
-        const skip_spawn_ipc = if (this.rare_data) |rare| rare.spawn_ipc_usockets_context else null;
-        const skip_test_parallel_ipc = if (this.rare_data) |rare| rare.test_parallel_ipc_context else null;
-        // When this process is itself a forked child (NODE_CHANNEL_FD set),
-        // its inbound process.send/on('message') channel lives on a separate
-        // uws context that must survive the swap.
-        const skip_process_ipc: ?*uws.SocketContext = if (Environment.isPosix)
+        // Groups that must survive the per-file isolation swap: this process's
+        // own inbound IPC, the spawn-IPC pool, and the test-parallel channel.
+        const skip_spawn_ipc: ?*uws.SocketGroup = if (this.rare_data) |rare| &rare.spawn_ipc_group else null;
+        const skip_test_parallel_ipc: ?*uws.SocketGroup = if (this.rare_data) |rare| &rare.test_parallel_ipc_group else null;
+        const skip_process_ipc: ?*uws.SocketGroup = if (Environment.isPosix)
             if (this.ipc) |ipc| switch (ipc) {
-                .initialized => |inst| inst.context,
+                .initialized => |inst| inst.group,
                 .waiting => null,
             } else null
         else
             null;
-        var maybe_ctx = bun.uws.Loop.get().internal_loop_data.head;
-        while (maybe_ctx) |ctx| {
-            const next_ctx = ctx.next();
-            if (ctx != skip_spawn_ipc and ctx != skip_process_ipc and ctx != skip_test_parallel_ipc) {
-                // ssl=false routes through the base on_close which, for SSL
-                // contexts, is ssl_on_close (SSL_free + user callback). Letting
-                // the real callbacks run lets wrappers drop Strong<> refs so
-                // the old global can be collected.
-                ctx.close(false);
+        const loop = bun.uws.Loop.get();
+        var maybe_group = loop.internal_loop_data.head;
+        while (maybe_group) |group| {
+            const next = group.next;
+            if (group != skip_spawn_ipc and group != skip_process_ipc and group != skip_test_parallel_ipc) {
+                group.closeAll();
             }
-            maybe_ctx = next_ctx;
+            // closeAll → on_close JS may close another group's last socket and
+            // unlink our cached `next` from the loop list. Same guard as
+            // us_loop_close_all_groups (loop.c) — restart from the head if so.
+            maybe_group = if (next != null and next.?.linked == 0)
+                loop.internal_loop_data.head
+            else
+                next;
         }
     }
     if (this.rare_data) |rare| {
@@ -2465,14 +2571,30 @@ pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
     this.main_resolved_path = bun.String.empty;
     this.unhandled_error_counter = 0;
 
-    const new_global = JSGlobalObject.createForTestIsolation(this.global, this.console);
+    const old_global = this.global;
+    const new_global = JSGlobalObject.createForTestIsolation(old_global, this.console);
     this.global = new_global;
     VMHolder.cached_global_object = new_global;
     this.regular_event_loop.global = new_global;
+    // macro_event_loop.global is assigned once from this.global at construction
+    // and would otherwise keep the first file's dead global across the whole run.
+    this.macro_event_loop.global = new_global;
     this.has_loaded_constructors = true;
     if (this.ipc) |ipc| if (ipc == .initialized) {
         ipc.initialized.globalThis = new_global;
     };
+    // NapiEnv cleanup hooks registered via napi_internal_register_cleanup_zig
+    // captured the old global in CleanupHook.globalThis; the C++ side has
+    // already retargeted env->m_globalObject to the new global, so only the
+    // Zig-side bookkeeping pointer is stale. Nothing currently reads it
+    // (execute() only calls func(ctx) and there's no per-entry removal
+    // path), but repoint it anyway so the field doesn't dangle at a freed
+    // GC cell.
+    if (this.rare_data) |rare| {
+        for (rare.cleanup_hooks.items) |*hook| {
+            if (hook.globalThis == old_global) hook.globalThis = new_global;
+        }
+    }
 
     // TODO(isolate): drain HTTPThread's keepalive pool. It lives on a separate
     // thread with its own uws loop; pooled sockets are JS-invisible and bounded
@@ -3786,10 +3908,11 @@ pub const IPCInstanceUnion = union(enum) {
 
 pub const IPCInstance = struct {
     pub const new = bun.TrivialNew(@This());
-    pub const deinit = bun.TrivialDeinit(@This());
 
     globalThis: *JSGlobalObject,
-    context: if (Environment.isPosix) *uws.SocketContext else void,
+    /// Embedded per-VM group on `RareData.spawn_ipc_group`; this is just a
+    /// borrowed handle so the isolation swap can skip it.
+    group: if (Environment.isPosix) *uws.SocketGroup else void,
     data: IPC.SendQueue,
     has_disconnect_called: bool = false,
 
@@ -3798,6 +3921,18 @@ pub const IPCInstance = struct {
     pub fn ipc(this: *IPCInstance) ?*IPC.SendQueue {
         return &this.data;
     }
+
+    /// Only reached from the `getIPCInstance` error path. On Windows,
+    /// `windowsConfigureClient` sets `data.socket = .open` before calling
+    /// `uv_read_start`; if that fails it calls `closeSocket()` which queues
+    /// the tracked `_onAfterIPCClosed` task holding `*SendQueue` — so
+    /// `SendQueue.deinit()` must run here to cancel it before this
+    /// allocation (and the embedded `SendQueue`) is freed.
+    pub fn deinit(this: *IPCInstance) void {
+        this.data.deinit();
+        bun.destroy(this);
+    }
+
     pub fn getGlobalThis(this: *IPCInstance) ?*JSGlobalObject {
         return this.globalThis;
     }
@@ -3829,6 +3964,7 @@ pub const IPCInstance = struct {
     }
 
     pub fn handleIPCClose(this: *IPCInstance) void {
+        _ = this;
         IPC.log("IPCInstance#handleIPCClose", .{});
         var vm = VirtualMachine.get();
         const event_loop = vm.eventLoop();
@@ -3836,9 +3972,8 @@ pub const IPCInstance = struct {
         event_loop.enter();
         Process__emitDisconnectEvent(vm.global);
         event_loop.exit();
-        if (Environment.isPosix) {
-            this.context.deinit(false);
-        }
+        // Group is embedded in RareData and shared with subprocess IPC; nothing
+        // to free here.
         vm.channel_ref.disable();
     }
 
@@ -3867,12 +4002,11 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
 
     const instance = switch (Environment.os) {
         else => instance: {
-            const context = uws.SocketContext.createNoSSLContext(this.event_loop_handle.?, @sizeOf(usize)).?;
-            IPC.Socket.configure(context, true, *IPC.SendQueue, IPC.IPCHandlers.PosixSocket);
+            const group = this.rareData().spawnIPCGroup(this);
 
             var instance = IPCInstance.new(.{
                 .globalThis = this.global,
-                .context = context,
+                .group = group,
                 .data = undefined,
             });
 
@@ -3880,7 +4014,7 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
 
             instance.data = .init(opts.mode, .{ .virtual_machine = instance }, .uninitialized);
 
-            const socket = IPC.Socket.fromFd(context, opts.fd, IPC.SendQueue, &instance.data, null, true) orelse {
+            const socket = IPC.Socket.fromFd(group, .spawn_ipc, opts.fd, IPC.SendQueue, &instance.data, null, true) orelse {
                 instance.deinit();
                 this.ipc = null;
                 Output.warn("Unable to start IPC socket", .{});
@@ -3895,7 +4029,7 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
         .windows => instance: {
             var instance = IPCInstance.new(.{
                 .globalThis = this.global,
-                .context = {},
+                .group = {},
                 .data = undefined,
             });
             instance.data = .init(opts.mode, .{ .virtual_machine = instance }, .uninitialized);

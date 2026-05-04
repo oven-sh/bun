@@ -213,6 +213,9 @@ comptime {
     // folder because zig will complain about outside-of-module stuff
     _ = &@import("./bun.js/bindings/GeneratedJS2Native.zig");
     _ = &gen; // reference bindings
+    // Exports `us_dispatch_*` for loop.c — nothing in Zig calls them, but the
+    // C event loop link-depends on them.
+    _ = &uws.dispatch;
 }
 
 /// Copied from Zig std.trait
@@ -239,6 +242,7 @@ pub const md = @import("./md/root.zig");
 
 pub const Output = @import("./output.zig");
 pub const Global = @import("./Global.zig");
+pub const ParentDeathWatchdog = @import("./ParentDeathWatchdog.zig");
 
 pub const FD = @import("./fd.zig").FD;
 pub const MovableIfWindowsFd = @import("./fd.zig").MovableIfWindowsFd;
@@ -290,6 +294,93 @@ pub const EnvPath = paths.EnvPath;
 pub const path_buffer_pool = paths.path_buffer_pool;
 pub const w_path_buffer_pool = paths.w_path_buffer_pool;
 pub const os_path_buffer_pool = paths.os_path_buffer_pool;
+
+/// A lazily heap-allocated per-thread instance of `T`.
+///
+/// Use this instead of `threadlocal var x: T = undefined` when `T` is
+/// large (`bun.PathBuffer`, fixed arrays, structs of buffers). PE/COFF has
+/// no TLS-BSS equivalent, so on Windows every zero-initialized threadlocal
+/// is written into bun.exe's `.tls` section as raw zeros — with ~50
+/// `bun.PathBuffer` threadlocals (96 KB each on Windows vs 4 KB on POSIX)
+/// that was ~5 MB of the binary and ~5 MB copied into every thread's TLS
+/// block at thread creation whether or not it ever touched the resolver.
+/// Behind a pointer, the per-thread footprint is 8 bytes on disk and the
+/// backing memory is allocated only on first use.
+///
+/// `T` is typically an anonymous struct literal, which gives each
+/// instantiation a distinct `threadlocal var ptr` even if the field layout
+/// happens to match another call site.
+///
+/// Allocations are threaded onto a per-thread intrusive list so
+/// `deleteAllPoolsForThreadExit()` (called from `WebWorker.shutdown()`)
+/// can free them when a Worker thread exits. Without that, a short-lived
+/// Worker that loaded its entry module through the resolver would orphan
+/// the whole `Bufs` struct (~150 KB POSIX / ~3 MB Windows) until process
+/// exit — mimalloc's abandoned-heap reclaim only recycles *freed* blocks.
+/// Long-lived threads (main, pooled bundler/install workers) simply hold
+/// the allocation for their lifetime.
+pub fn ThreadlocalBuffers(comptime T: type) type {
+    return struct {
+        threadlocal var instance: ?*T = null;
+
+        // Header + payload allocated together so the type-erased free
+        // function can recover the full allocation from the node pointer.
+        const Storage = struct {
+            node: ThreadlocalBuffersNode,
+            data: T,
+        };
+
+        pub inline fn get() *T {
+            return instance orelse alloc();
+        }
+
+        noinline fn alloc() *T {
+            @branchHint(.cold);
+            const s = default_allocator.create(Storage) catch outOfMemory();
+            // Apply field default values. For the common case of
+            // `field: PathBuffer = undefined` this is a no-op in release
+            // builds; for wrappers around structs with real defaults (e.g.
+            // `NodeFS{ .vm = null }`) it's required for correctness.
+            s.* = .{
+                .node = .{ .next = threadlocal_buffers_head, .free = free },
+                .data = .{},
+            };
+            threadlocal_buffers_head = &s.node;
+            instance = &s.data;
+            return &s.data;
+        }
+
+        fn free(node: *ThreadlocalBuffersNode) void {
+            instance = null;
+            const s: *Storage = @alignCast(@fieldParentPtr("node", node));
+            default_allocator.destroy(s);
+        }
+    };
+}
+
+/// Intrusive list node prepended to every `ThreadlocalBuffers` allocation
+/// so `freeAllThreadlocalBuffers()` can walk them without knowing each
+/// instantiation's `T`.
+const ThreadlocalBuffersNode = struct {
+    next: ?*ThreadlocalBuffersNode,
+    free: *const fn (*ThreadlocalBuffersNode) void,
+};
+threadlocal var threadlocal_buffers_head: ?*ThreadlocalBuffersNode = null;
+
+/// Free every `ThreadlocalBuffers` allocation made on the current thread.
+/// Called from `deleteAllPoolsForThreadExit()` just before a Worker thread
+/// exits. After this returns, a subsequent `get()` on the same thread
+/// re-allocates (so ordering relative to other shutdown code is not
+/// load-bearing).
+pub fn freeAllThreadlocalBuffers() void {
+    var node = threadlocal_buffers_head;
+    threadlocal_buffers_head = null;
+    while (node) |n| {
+        const next = n.next;
+        n.free(n);
+        node = next;
+    }
+}
 
 pub inline fn cast(comptime To: type, value: anytype) To {
     if (@typeInfo(@TypeOf(value)) == .int) {
@@ -1574,7 +1665,7 @@ pub fn reloadProcess(
             },
         }
     } else if (comptime Environment.isPosix) {
-        on_before_reload_process_linux();
+        if (comptime Environment.isLinux or Environment.isFreeBSD) on_before_reload_process_linux();
         const err = std.posix.execveZ(
             exec_path,
             newargv,
@@ -1911,9 +2002,9 @@ const WindowsStat = extern struct {
 
 pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.posix.Stat;
 pub const StatFS = switch (Environment.os) {
-    .mac => bun.c.struct_statfs,
-    .linux => bun.c.struct_statfs,
-    else => windows.libuv.uv_statfs_t,
+    .mac, .linux, .freebsd => bun.c.struct_statfs,
+    .windows => windows.libuv.uv_statfs_t,
+    .wasm => unreachable,
 };
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
@@ -2738,6 +2829,7 @@ pub fn deleteAllPoolsForThreadExit() void {
     inline for (pools_to_delete) |pool| {
         pool.deleteAll();
     }
+    freeAllThreadlocalBuffers();
 }
 
 pub const Tmpfile = @import("./tmp.zig").Tmpfile;
@@ -3123,6 +3215,8 @@ pub fn unsafeAssert(condition: bool) callconv(callconv_inline) void {
 
 pub const dns = @import("./dns.zig");
 
+pub const hw_timer = @import("./hw_timer.zig");
+
 pub fn getRoughTickCount(comptime mock_mode: timespec.MockMode) timespec {
     if (mock_mode == .allow_mocked_time) {
         if (bun.jsc.Jest.bun_test.FakeTimers.current_time.getTimespecNow()) |fake_time| {
@@ -3130,89 +3224,21 @@ pub fn getRoughTickCount(comptime mock_mode: timespec.MockMode) timespec {
         }
     }
 
-    if (comptime Environment.isMac) {
-        // https://opensource.apple.com/source/xnu/xnu-2782.30.5/libsyscall/wrappers/mach_approximate_time.c.auto.html
-        // https://opensource.apple.com/source/Libc/Libc-1158.1.2/gen/clock_gettime.c.auto.html
-        var spec = timespec{
-            .nsec = 0,
-            .sec = 0,
-        };
-        const clocky = struct {
-            pub var clock_id: std.c.CLOCK = .REALTIME;
-            pub fn get() void {
-                var res: timespec = undefined;
-                _ = std.c.clock_getres(.MONOTONIC_RAW_APPROX, @ptrCast(&res));
-                if (res.ms() <= 1) {
-                    clock_id = .MONOTONIC_RAW_APPROX;
-                } else {
-                    clock_id = .MONOTONIC_RAW;
-                }
-            }
-
-            pub var once = std.once(get);
-        };
-        clocky.once.call();
-
-        // We use this one because we can avoid reading the mach timebase info ourselves.
-        _ = std.c.clock_gettime(clocky.clock_id, @ptrCast(&spec));
-        return spec;
-    }
-
-    if (comptime Environment.isLinux) {
-        var spec = timespec{
-            .nsec = 0,
-            .sec = 0,
-        };
-        const clocky = struct {
-            pub var clock_id: std.os.linux.CLOCK = .REALTIME;
-            pub fn get() void {
-                var res: timespec = undefined;
-                std.posix.clock_getres(.MONOTONIC_COARSE, @ptrCast(&res)) catch {};
-                if (res.ms() <= 1) {
-                    clock_id = .MONOTONIC_COARSE;
-                } else {
-                    clock_id = .MONOTONIC_RAW;
-                }
-            }
-
-            pub var once = std.once(get);
-        };
-        clocky.once.call();
-        _ = std.os.linux.clock_gettime(clocky.clock_id, @ptrCast(&spec));
-        return spec;
-    }
-
-    if (comptime Environment.isWindows) {
-        const ms = getRoughTickCountMs(mock_mode);
-        return timespec{
-            .sec = @intCast(ms / 1000),
-            .nsec = @intCast((ms % 1000) * 1_000_000),
-        };
-    }
-
-    return 0;
+    const ns_value = hw_timer.nowNs();
+    return timespec{
+        .sec = @intCast(ns_value / std.time.ns_per_s),
+        .nsec = @intCast(ns_value % std.time.ns_per_s),
+    };
 }
 
-/// When you don't need a super accurate timestamp, this is a fast way to get one.
-///
-/// Requesting the current time frequently is somewhat expensive. So we can use a rough timestamp.
-///
-/// This timestamp doesn't easily correlate to a specific time. It's only useful relative to other calls.
+/// Monotonic milliseconds. Values are only meaningful relative to other calls.
 pub fn getRoughTickCountMs(comptime mock_mode: timespec.MockMode) u64 {
-    if (Environment.isWindows) {
-        if (mock_mode == .allow_mocked_time) {
-            if (bun.jsc.Jest.bun_test.FakeTimers.current_time.getTimespecNow()) |fake_time| {
-                return fake_time.ns() / std.time.ns_per_ms;
-            }
+    if (mock_mode == .allow_mocked_time) {
+        if (bun.jsc.Jest.bun_test.FakeTimers.current_time.getTimespecNow()) |fake_time| {
+            return fake_time.ns() / std.time.ns_per_ms;
         }
-        const GetTickCount64 = struct {
-            pub extern "kernel32" fn GetTickCount64() std.os.windows.ULONGLONG;
-        }.GetTickCount64;
-        return GetTickCount64();
     }
-
-    const spec = getRoughTickCount(mock_mode);
-    return spec.ns() / std.time.ns_per_ms;
+    return hw_timer.nowMs();
 }
 
 pub const MaybeMockedTimespec = struct {

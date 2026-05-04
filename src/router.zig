@@ -558,13 +558,14 @@ pub const Route = struct {
     pub const Ptr = TinyPtr;
 
     pub const index_route_name: string = "/";
-    threadlocal var route_file_buf: bun.PathBuffer = undefined;
-    threadlocal var second_route_file_buf: bun.PathBuffer = undefined;
-    threadlocal var normalized_abs_path_buf: bun.windows.PathBuffer = undefined;
+    const route_bufs = bun.ThreadlocalBuffers(struct {
+        route_file_buf: bun.PathBuffer = undefined,
+        normalized_abs_path_buf: bun.windows.PathBuffer = undefined,
+    });
 
     pub const Sorter = struct {
-        const sort_table: [std.math.maxInt(u8)]u8 = brk: {
-            var table: [std.math.maxInt(u8)]u8 = undefined;
+        const sort_table: [256]u8 = brk: {
+            var table: [256]u8 = undefined;
             for (&table, 0..) |*t, i| t.* = @as(u8, @intCast(i));
 
             // move dynamic routes to the bottom
@@ -653,9 +654,10 @@ pub const Route = struct {
         // "/pages/foo/index.ts"
         // "/pages/foo/bar.tsx"
         // the name we actually store will often be this one
+        const route_file_buf = &route_bufs.get().route_file_buf;
         var public_path: string = brk: {
             if (base.len == 0) break :brk public_dir;
-            var buf: []u8 = &route_file_buf;
+            var buf: []u8 = route_file_buf;
 
             if (public_dir.len > 0) {
                 route_file_buf[0] = '/';
@@ -670,10 +672,10 @@ pub const Route = struct {
             buf = buf[extname.len..];
 
             if (comptime Environment.isWindows) {
-                bun.path.platformToPosixInPlace(u8, route_file_buf[0 .. @intFromPtr(buf.ptr) - @intFromPtr(&route_file_buf)]);
+                bun.path.platformToPosixInPlace(u8, route_file_buf[0 .. @intFromPtr(buf.ptr) - @intFromPtr(route_file_buf)]);
             }
 
-            break :brk route_file_buf[0 .. @intFromPtr(buf.ptr) - @intFromPtr(&route_file_buf)];
+            break :brk route_file_buf[0 .. @intFromPtr(buf.ptr) - @intFromPtr(route_file_buf)];
         };
 
         var name = public_path[0 .. public_path.len - extname.len];
@@ -738,7 +740,7 @@ pub const Route = struct {
                 needs_close = false;
             } else {
                 var parts = [_]string{ entry.dir, entry.base() };
-                abs_path_str = FileSystem.instance.absBuf(&parts, &route_file_buf);
+                abs_path_str = FileSystem.instance.absBuf(&parts, route_file_buf);
                 route_file_buf[abs_path_str.len] = 0;
                 const buf = route_file_buf[0..abs_path_str.len :0];
                 file = std.fs.openFileAbsoluteZ(buf, .{ .mode = .read_only }) catch |err| {
@@ -749,7 +751,7 @@ pub const Route = struct {
                 FileSystem.setMaxFd(file.handle);
             }
 
-            const _abs = bun.getFdPath(.fromStdFile(file), &route_file_buf) catch |err| {
+            const _abs = bun.getFdPath(.fromStdFile(file), route_file_buf) catch |err| {
                 log.addErrorFmt(null, Logger.Loc.Empty, allocator, "{s} resolving route: {s}", .{ @errorName(err), abs_path_str }) catch unreachable;
                 return null;
             };
@@ -759,7 +761,7 @@ pub const Route = struct {
         }
 
         const abs_path = if (comptime Environment.isWindows)
-            bun.handleOom(allocator.dupe(u8, bun.path.platformToPosixBuf(u8, abs_path_str, &normalized_abs_path_buf)))
+            bun.handleOom(allocator.dupe(u8, bun.path.platformToPosixBuf(u8, abs_path_str, &route_bufs.get().normalized_abs_path_buf)))
         else
             PathString.init(abs_path_str);
 

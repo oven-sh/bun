@@ -26,7 +26,7 @@ pub fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written
 
     const dir = BunDebugHolder.dir orelse dir: {
         const base_name = switch (Environment.os) {
-            else => "/tmp/bun-debug-src/",
+            else => if (comptime Environment.isAndroid) "/data/local/tmp/bun-debug-src/" else "/tmp/bun-debug-src/",
             .windows => brk: {
                 const temp = bun.fs.FileSystem.RealFS.platformTempDir();
                 var win_temp_buffer: bun.PathBuffer = undefined;

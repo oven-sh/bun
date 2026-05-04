@@ -1456,21 +1456,27 @@ pub const ESModule = struct {
             if (strings.startsWith(package.name, ".") or strings.indexAnyComptime(package.name, "\\%") != null)
                 return null;
 
+            // A version delimiter `@` is only valid within the package-name portion of
+            // the specifier. Searching the entire specifier misparses wildcard subpaths
+            // whose matched substring contains `@` (e.g. `test-pkg/@scope/sub/index.js`
+            // or `ember-source/@ember/renderer/...`) as if the package had a version.
             const offset: usize = if (package.name.len == 0 or package.name[0] != '@') 0 else 1;
-            if (strings.indexOfChar(specifier[offset..], '@')) |at| {
-                package.version = parseVersion(specifier[offset..][at..]) orelse "";
-                if (package.version.len == 0) {
-                    package.version = specifier[offset..][at..];
-                    if (package.version.len > 0 and package.version[0] == '@') {
-                        package.version = package.version[1..];
+            if (offset < package.name.len) {
+                if (strings.indexOfChar(specifier[offset..package.name.len], '@')) |at| {
+                    package.version = parseVersion(specifier[offset..][at..]) orelse "";
+                    if (package.version.len == 0) {
+                        package.version = specifier[offset..][at..];
+                        if (package.version.len > 0 and package.version[0] == '@') {
+                            package.version = package.version[1..];
+                        }
                     }
-                }
-                package.name = specifier[0 .. at + offset];
+                    package.name = specifier[0 .. at + offset];
 
-                parseSubpath(&package.subpath, specifier[@min(package.name.len + package.version.len + 1, specifier.len)..], subpath_buf);
-            } else {
-                parseSubpath(&package.subpath, specifier[package.name.len..], subpath_buf);
+                    parseSubpath(&package.subpath, specifier[@min(package.name.len + package.version.len + 1, specifier.len)..], subpath_buf);
+                    return package;
+                }
             }
+            parseSubpath(&package.subpath, specifier[package.name.len..], subpath_buf);
 
             return package;
         }
@@ -1498,7 +1504,14 @@ pub const ESModule = struct {
         "%5C",
     };
 
-    threadlocal var resolved_path_buf_percent: bun.PathBuffer = undefined;
+    const module_bufs = bun.ThreadlocalBuffers(struct {
+        resolved_path_buf_percent: bun.PathBuffer = undefined,
+        resolve_target_buf: bun.PathBuffer = undefined,
+        resolve_target_buf2: bun.PathBuffer = undefined,
+        resolve_target_reverse_prefix_buf: bun.PathBuffer = undefined,
+        resolve_target_reverse_prefix_buf2: bun.PathBuffer = undefined,
+    });
+
     pub fn resolve(r: *const ESModule, package_url: string, subpath: string, exports: ExportsMap.Entry) Resolution {
         return finalize(
             r.resolveExports(package_url, subpath, exports),
@@ -1541,7 +1554,8 @@ pub const ESModule = struct {
         // If resolved contains any percent encodings of "/" or "\" ("%2f" and "%5C"
         // respectively), then throw an Invalid Module Specifier error.
         const PercentEncoding = @import("../url.zig").PercentEncoding;
-        var fbs = std.io.fixedBufferStream(&resolved_path_buf_percent);
+        const resolved_path_buf_percent = &module_bufs.get().resolved_path_buf_percent;
+        var fbs = std.io.fixedBufferStream(resolved_path_buf_percent);
         var writer = fbs.writer();
         const len = PercentEncoding.decode(@TypeOf(&writer), &writer, result.path) catch return Resolution{
             .status = .InvalidModuleSpecifier,
@@ -1712,8 +1726,6 @@ pub const ESModule = struct {
         };
     }
 
-    threadlocal var resolve_target_buf: bun.PathBuffer = undefined;
-    threadlocal var resolve_target_buf2: bun.PathBuffer = undefined;
     fn resolveTarget(
         r: *const ESModule,
         package_url: string,
@@ -1722,6 +1734,8 @@ pub const ESModule = struct {
         internal: bool,
         comptime pattern: bool,
     ) Resolution {
+        const resolve_target_buf = &module_bufs.get().resolve_target_buf;
+        const resolve_target_buf2 = &module_bufs.get().resolve_target_buf2;
         switch (target.data) {
             .string => |str| {
                 if (r.debug_logs) |log| {
@@ -1756,7 +1770,7 @@ pub const ESModule = struct {
                         if (comptime pattern) {
                             // Return the URL resolution of resolvedTarget with every instance of "*" replaced with subpath.
                             const len = std.mem.replacementSize(u8, str, "*", subpath);
-                            _ = std.mem.replace(u8, str, "*", subpath, &resolve_target_buf2);
+                            _ = std.mem.replace(u8, str, "*", subpath, resolve_target_buf2);
                             const result = resolve_target_buf2[0..len];
                             if (r.debug_logs) |log| {
                                 log.addNoteFmt("Subsituted \"{s}\" for \"*\" in \".{s}\" to get \".{s}\" ", .{ subpath, str, result });
@@ -1765,7 +1779,7 @@ pub const ESModule = struct {
                             return Resolution{ .path = result, .status = .PackageResolve, .debug = .{ .token = target.first_token } };
                         } else {
                             const parts2 = [_]string{ str, subpath };
-                            const result = resolve_path.joinStringBuf(&resolve_target_buf2, parts2, .auto);
+                            const result = resolve_path.joinStringBuf(resolve_target_buf2, parts2, .auto);
                             if (r.debug_logs) |log| {
                                 log.addNoteFmt("Resolved \".{s}\" to \".{s}\"", .{ str, result });
                             }
@@ -1789,7 +1803,7 @@ pub const ESModule = struct {
 
                 // Let resolvedTarget be the URL resolution of the concatenation of packageURL and target.
                 const parts = [_]string{ package_url, str };
-                const resolved_target = resolve_path.joinStringBuf(&resolve_target_buf, parts, .auto);
+                const resolved_target = resolve_path.joinStringBuf(resolve_target_buf, parts, .auto);
 
                 // If target split on "/" or "\" contains any ".", ".." or "node_modules"
                 // segments after the first segment, throw an Invalid Package Target error.
@@ -1804,7 +1818,7 @@ pub const ESModule = struct {
                 if (comptime pattern) {
                     // Return the URL resolution of resolvedTarget with every instance of "*" replaced with subpath.
                     const len = std.mem.replacementSize(u8, resolved_target, "*", subpath);
-                    _ = std.mem.replace(u8, resolved_target, "*", subpath, &resolve_target_buf2);
+                    _ = std.mem.replace(u8, resolved_target, "*", subpath, resolve_target_buf2);
                     const result = resolve_target_buf2[0..len];
                     if (r.debug_logs) |log| {
                         log.addNoteFmt("Substituted \"{s}\" for \"*\" in \".{s}\" to get \".{s}\" ", .{ subpath, resolved_target, result });
@@ -1817,7 +1831,7 @@ pub const ESModule = struct {
                     return Resolution{ .path = result, .status = status, .debug = .{ .token = target.first_token } };
                 } else {
                     const parts2 = [_]string{ package_url, str, subpath };
-                    const result = resolve_path.joinStringBuf(&resolve_target_buf2, parts2, .auto);
+                    const result = resolve_path.joinStringBuf(resolve_target_buf2, parts2, .auto);
                     if (r.debug_logs) |log| {
                         log.addNoteFmt("Substituted \"{s}\" for \"*\" in \".{s}\" to get \".{s}\" ", .{ subpath, resolved_target, result });
                     }
@@ -2018,9 +2032,6 @@ pub const ESModule = struct {
         }
     }
 
-    threadlocal var resolve_target_reverse_prefix_buf: bun.PathBuffer = undefined;
-    threadlocal var resolve_target_reverse_prefix_buf2: bun.PathBuffer = undefined;
-
     fn resolveTargetReverse(
         r: *const ESModule,
         query: string,
@@ -2028,6 +2039,8 @@ pub const ESModule = struct {
         target: ExportsMap.Entry,
         comptime kind: ReverseKind,
     ) ?ReverseResolution {
+        const resolve_target_reverse_prefix_buf = &module_bufs.get().resolve_target_reverse_prefix_buf;
+        const resolve_target_reverse_prefix_buf2 = &module_bufs.get().resolve_target_reverse_prefix_buf2;
         switch (target.data) {
             .string => |str| {
                 switch (comptime kind) {
@@ -2039,7 +2052,7 @@ pub const ESModule = struct {
                     .prefix => {
                         if (strings.startsWith(query, str)) {
                             return ReverseResolution{
-                                .subpath = std.fmt.bufPrint(&resolve_target_reverse_prefix_buf, "{s}{s}", .{ key, query[str.len..] }) catch unreachable,
+                                .subpath = std.fmt.bufPrint(resolve_target_reverse_prefix_buf, "{s}{s}", .{ key, query[str.len..] }) catch unreachable,
                                 .token = target.first_token,
                             };
                         }
@@ -2064,7 +2077,7 @@ pub const ESModule = struct {
                                 const star_data = after_prefix[0 .. after_prefix.len - suffix.len];
                                 return ReverseResolution{
                                     .subpath = std.fmt.bufPrint(
-                                        &resolve_target_reverse_prefix_buf2,
+                                        resolve_target_reverse_prefix_buf2,
                                         "{s}{s}",
                                         .{
                                             key_without_trailing_star,

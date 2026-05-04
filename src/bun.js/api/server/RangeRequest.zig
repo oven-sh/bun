@@ -70,12 +70,12 @@ pub fn parse(header: []const u8, total: u64) Result {
     return parseRaw(header).resolve(total);
 }
 
-pub fn fromRequest(req: *uws.Request, total: u64) Result {
+pub fn fromRequest(req: uws.AnyRequest, total: u64) Result {
     const h = req.header("range") orelse return .none;
     return parse(h, total);
 }
 
-pub fn rawFromRequest(req: *uws.Request) Raw {
+pub fn rawFromRequest(req: uws.AnyRequest) Raw {
     const h = req.header("range") orelse return .none;
     return parseRaw(h);
 }

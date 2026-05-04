@@ -55,6 +55,7 @@ pub const BunObject = struct {
     pub const FFI = toJSLazyPropertyCallback(Bun.FFIObject.getter);
     pub const FileSystemRouter = toJSLazyPropertyCallback(Bun.getFileSystemRouter);
     pub const Glob = toJSLazyPropertyCallback(Bun.getGlobConstructor);
+    pub const Image = toJSLazyPropertyCallback(Bun.getImageConstructor);
     pub const MD4 = toJSLazyPropertyCallback(Crypto.MD4.getter);
     pub const MD5 = toJSLazyPropertyCallback(Crypto.MD5.getter);
     pub const SHA1 = toJSLazyPropertyCallback(Crypto.SHA1.getter);
@@ -139,6 +140,7 @@ pub const BunObject = struct {
         @export(&BunObject.JSON5, .{ .name = lazyPropertyCallbackName("JSON5") });
         @export(&BunObject.YAML, .{ .name = lazyPropertyCallbackName("YAML") });
         @export(&BunObject.Glob, .{ .name = lazyPropertyCallbackName("Glob") });
+        @export(&BunObject.Image, .{ .name = lazyPropertyCallbackName("Image") });
         @export(&BunObject.Transpiler, .{ .name = lazyPropertyCallbackName("Transpiler") });
         @export(&BunObject.argv, .{ .name = lazyPropertyCallbackName("argv") });
         @export(&BunObject.cron, .{ .name = lazyPropertyCallbackName("cron") });
@@ -822,7 +824,8 @@ fn doResolve(globalThis: *jsc.JSGlobalObject, arguments: []const JSValue) bun.JS
 
 fn doResolveWithArgs(ctx: *jsc.JSGlobalObject, specifier: bun.String, from: bun.String, is_esm: bool, comptime is_file_path: bool, is_user_require_resolve: bool) bun.JSError!jsc.JSValue {
     var errorable: ErrorableString = undefined;
-    var query_string = ZigString.Empty;
+    var query_string = bun.String.empty;
+    defer query_string.deref();
 
     const specifier_decoded = if (specifier.hasPrefixComptime("file://"))
         bun.jsc.URL.pathFromFileURL(specifier)
@@ -844,8 +847,9 @@ fn doResolveWithArgs(ctx: *jsc.JSGlobalObject, specifier: bun.String, from: bun.
     if (!errorable.success) {
         return ctx.throwValue(errorable.result.err.value);
     }
+    defer errorable.result.value.deref();
 
-    if (query_string.len > 0) {
+    if (!query_string.isEmpty()) {
         var stack = std.heap.stackFallback(1024, ctx.allocator());
         const allocator = stack.get();
         var arraylist = std.array_list.Managed(u8).initCapacity(allocator, 1024) catch unreachable;
@@ -1294,6 +1298,10 @@ pub fn getArchiveConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) 
 
 pub fn getGlobConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.API.Glob.js.getConstructor(globalThis);
+}
+
+pub fn getImageConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return jsc.API.Image.js.getConstructor(globalThis);
 }
 
 pub fn getS3ClientConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {

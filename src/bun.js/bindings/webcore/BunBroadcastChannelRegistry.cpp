@@ -1,52 +1,79 @@
 #include "config.h"
-
 #include "BunBroadcastChannelRegistry.h"
-#include "webcore/BroadcastChannel.h"
-#include "webcore/MessageWithMessagePorts.h"
-#include <wtf/CallbackAggregator.h>
+
+#include "BroadcastChannel.h"
+#include "SerializedScriptValue.h"
+#include <wtf/Locker.h>
+#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 
-void BunBroadcastChannelRegistry::registerChannel(const String& name, BroadcastChannelIdentifier identifier)
+BunBroadcastChannelRegistry& BunBroadcastChannelRegistry::singleton()
 {
-    auto& channels = m_channelsForName.ensure(name, [] { return Vector<BroadcastChannelIdentifier> {}; }).iterator->value;
-    channels.append(identifier);
+    static NeverDestroyed<BunBroadcastChannelRegistry> registry;
+    return registry.get();
 }
 
-void BunBroadcastChannelRegistry::unregisterChannel(const String& name, BroadcastChannelIdentifier identifier)
+void BunBroadcastChannelRegistry::subscribe(const String& name, ScriptExecutionContextIdentifier ctxId, BroadcastChannel& channel)
 {
-    auto channels = m_channelsForName.find(name);
-    if (channels == m_channelsForName.end())
+    Locker locker { m_lock };
+    auto& list = m_subscribers.ensure(name.isolatedCopy(), [] { return Vector<Subscriber> {}; }).iterator->value;
+    list.append(Subscriber { ctxId, ThreadSafeWeakPtr<BroadcastChannel> { channel }, &channel });
+}
+
+void BunBroadcastChannelRegistry::unsubscribe(const String& name, BroadcastChannel& channel)
+{
+    Locker locker { m_lock };
+    auto it = m_subscribers.find(name);
+    if (it == m_subscribers.end())
         return;
-
-    auto& channelIds = channels->value;
-    channelIds.removeFirst(identifier);
+    it->value.removeFirstMatching([&](const Subscriber& s) {
+        return s.identity == &channel;
+    });
+    if (it->value.isEmpty())
+        m_subscribers.remove(it);
 }
 
-void BunBroadcastChannelRegistry::postMessage(const String& name, BroadcastChannelIdentifier source, Ref<SerializedScriptValue>&& message)
+void BunBroadcastChannelRegistry::post(const String& name, BroadcastChannel& source, Ref<SerializedScriptValue>&& message)
 {
-    postMessageLocally(name, source, message.copyRef());
-}
+    // Snapshot subscribers under the lock, then fan out without holding it
+    // — postTaskTo takes the contexts-map lock and we don't want to nest.
+    //
+    // We deliberately carry ThreadSafeWeakPtr (not Ref) across the fan-out
+    // and resolve it INSIDE the posted task on the target thread. Holding a
+    // strong ref here can make this thread the last owner if the target is
+    // a worker that tears down concurrently (its JS wrapper's deref + its
+    // queued task's deref both happen on the worker thread, leaving our
+    // local ref as the last), and ~BroadcastChannel → ~EventTarget →
+    // EventListenerMap::clear() would then fire on the wrong thread and
+    // trip releaseAssertOrSetThreadUID.
+    Vector<std::pair<ScriptExecutionContextIdentifier, ThreadSafeWeakPtr<BroadcastChannel>>, 4> targets;
+    {
+        Locker locker { m_lock };
+        auto it = m_subscribers.find(name);
+        if (it == m_subscribers.end())
+            return;
+        // size()-1: the sender is always in the list and always skipped.
+        // Fits the inline buffer exactly for up to 5 subscribers (1→4).
+        if (auto n = it->value.size(); n > 1)
+            targets.reserveInitialCapacity(n - 1);
+        for (auto& sub : it->value) {
+            if (sub.identity == &source)
+                continue;
+            targets.append({ sub.ctxId, sub.channel });
+        }
+    }
 
-void BunBroadcastChannelRegistry::postMessageLocally(const String& name, BroadcastChannelIdentifier sourceInProcess, Ref<SerializedScriptValue>&& message)
-{
-    auto channels = m_channelsForName.find(name);
-    if (channels == m_channelsForName.end())
-        return;
-
-    auto& channelIds = channels->value;
-    for (auto& channelId : channelIds) {
-        if (channelId == sourceInProcess)
-            continue;
-
-        BroadcastChannel::dispatchMessageTo(channelId, message.copyRef());
+    // One task per (message, subscriber), queued in subscription order.
+    // Same-context subscribers share a task queue, so this preserves the
+    // spec-mandated (message-major, creation-minor) delivery order.
+    for (auto& [ctxId, weakChannel] : targets) {
+        ScriptExecutionContext::postTaskTo(ctxId, [weakChannel, message = message.copyRef()](ScriptExecutionContext&) mutable {
+            // Resolve on the target thread so any last deref happens here.
+            if (RefPtr channel = weakChannel.get())
+                channel->dispatchMessage(WTF::move(message));
+        });
     }
 }
 
-void BunBroadcastChannelRegistry::postMessageToRemote(const String& name, MessageWithMessagePorts&& message)
-{
-    // auto callbackAggregator = CallbackAggregator::create(WTF::move(completionHandler));
-    // PartitionedSecurityOrigin origin { clientOrigin.topOrigin.securityOrigin(), clientOrigin.clientOrigin.securityOrigin() };
-    // postMessageLocally(origin, name, std::nullopt, *message.message, callbackAggregator.copyRef());
-}
-}
+} // namespace WebCore

@@ -440,7 +440,9 @@ fn initRedirections(
                     if (node.redirect.stdin) {
                         break :redirfd switch (ShellSyscall.openat(cmd.base.shell.cwd_fd, path, node.redirect.toFlags(), perm)) {
                             .err => |e| {
-                                return cmd.writeFailingError("bun: {f}: {s}", .{ e.toShellSystemError().message, path });
+                                const sys_err = e.toShellSystemError();
+                                defer sys_err.deref();
+                                return cmd.writeFailingError("bun: {f}: {s}", .{ sys_err.message, path });
                             },
                             .result => |f| f,
                         };
@@ -466,13 +468,17 @@ fn initRedirections(
 
                     break :redirfd switch (result) {
                         .err => |e| {
-                            return cmd.writeFailingError("bun: {f}: {s}", .{ e.toShellSystemError().message, path });
+                            const sys_err = e.toShellSystemError();
+                            defer sys_err.deref();
+                            return cmd.writeFailingError("bun: {f}: {s}", .{ sys_err.message, path });
                         },
                         .result => |f| {
                             if (bun.Environment.isWindows) {
                                 switch (f.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {
                                     .err => |e| {
-                                        return cmd.writeFailingError("bun: {f}: {s}", .{ e.toShellSystemError().message, path });
+                                        const sys_err = e.toShellSystemError();
+                                        defer sys_err.deref();
+                                        return cmd.writeFailingError("bun: {f}: {s}", .{ sys_err.message, path });
                                     },
                                     .result => |f2| break :redirfd f2,
                                 }
@@ -517,24 +523,30 @@ fn initRedirections(
                 }
 
                 if (interpreter.jsobjs[file.jsbuf.idx].asArrayBuffer(globalObject)) |buf| {
-                    const arraybuf: BuiltinIO.ArrayBuf = .{ .buf = jsc.ArrayBuffer.Strong{
-                        .array_buffer = buf,
-                        .held = .create(buf.value, globalObject),
-                    }, .i = 0 };
-
+                    // Each slot gets its own Strong; sharing one across stdin/stdout/stderr
+                    // would double-free the heap *Impl in Builtin.deinit().
                     if (node.redirect.stdin) {
                         cmd.exec.bltn.stdin.deref();
-                        cmd.exec.bltn.stdin = .{ .arraybuf = arraybuf };
+                        cmd.exec.bltn.stdin = .{ .arraybuf = .{ .buf = .{
+                            .array_buffer = buf,
+                            .held = .create(buf.value, globalObject),
+                        }, .i = 0 } };
                     }
 
                     if (node.redirect.stdout) {
                         cmd.exec.bltn.stdout.deref();
-                        cmd.exec.bltn.stdout = .{ .arraybuf = arraybuf };
+                        cmd.exec.bltn.stdout = .{ .arraybuf = .{ .buf = .{
+                            .array_buffer = buf,
+                            .held = .create(buf.value, globalObject),
+                        }, .i = 0 } };
                     }
 
                     if (node.redirect.stderr) {
                         cmd.exec.bltn.stderr.deref();
-                        cmd.exec.bltn.stderr = .{ .arraybuf = arraybuf };
+                        cmd.exec.bltn.stderr = .{ .arraybuf = .{ .buf = .{
+                            .array_buffer = buf,
+                            .held = .create(buf.value, globalObject),
+                        }, .i = 0 } };
                     }
                 } else if (interpreter.jsobjs[file.jsbuf.idx].as(jsc.WebCore.Body.Value)) |body| {
                     if ((node.redirect.stdout or node.redirect.stderr) and !(body.* == .Blob and !body.Blob.needsToReadFile())) {

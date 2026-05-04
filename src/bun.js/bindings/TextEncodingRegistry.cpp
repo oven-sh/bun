@@ -29,7 +29,12 @@
 // config.h removed - not needed in Bun
 #include "TextEncodingRegistry.h"
 
-// #include "Logging.h" - not available in Bun
+// #include "Logging.h" - not available in Bun. On platforms where
+// RELEASE_LOG is enabled (Android), RELEASE_LOG_ERROR references the
+// PAL TextEncoding log channel which Bun doesn't compile, so route it
+// to plain LOG_ERROR (the same expansion non-Android platforms get).
+#undef RELEASE_LOG_ERROR
+#define RELEASE_LOG_ERROR(channel, ...) LOG_ERROR(__VA_ARGS__)
 #include "TextCodecCJK.h"
 // TextCodecICU removed - ICU data not available
 // Native UTF-8, UTF-16, Latin1 support - removed includes

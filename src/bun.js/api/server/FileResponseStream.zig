@@ -143,7 +143,9 @@ pub fn start(opts: StartOptions) void {
 
 fn canSendfile(resp: AnyResponse, file_type: bun.io.FileType, length: ?u64) bool {
     if (comptime bun.Environment.isWindows) return false;
-    if (resp == .SSL) return false;
+    // sendfile() needs a real socket fd; SSL writes go through BIO and H3
+    // through lsquic stream frames — neither has one.
+    if (resp != .TCP) return false;
     if (file_type != .file) return false;
     const len = length orelse return false;
     // Below ~1MB the syscall + dual-readiness overhead doesn't pay off.

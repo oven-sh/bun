@@ -18,6 +18,10 @@ pub const Parser = struct {
 
     // Mark character map — bitset of characters that need special handling
     mark_char_map: bun.bit_set.StaticBitSet(256) = bun.bit_set.StaticBitSet(256).initEmpty(),
+    // True when mark_char_map is a subset of `common_mark_chars`, allowing the
+    // inline scanner to use a comptime-SIMD search instead of per-byte bitset
+    // probes. Covers the default flags configuration.
+    mark_chars_are_common: bool = false,
 
     // Dynamic arrays
     marks: std.ArrayListUnmanaged(Mark) = .{},
@@ -136,7 +140,16 @@ pub const Parser = struct {
             self.mark_char_map.set('\t');
             self.mark_char_map.set('\r');
         }
+
+        self.mark_chars_are_common =
+            !self.flags.latex_math and
+            !self.flags.permissive_email_autolinks and
+            !self.flags.permissive_url_autolinks and
+            !self.flags.permissive_www_autolinks and
+            !self.flags.collapse_whitespace;
     }
+
+    pub const common_mark_chars = "\\*_`&;[!]\x00\n<>~";
 
     // ========================================
     // Delegated methods (re-exports)

@@ -632,9 +632,24 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     // factory can delegate to originals (`(original) => ({ ...original, foo: () =>
     // original.foo() })`) without accidentally closing over the live namespace,
     // which would see the mock's own exports after this call returns and recurse.
+    //
+    // Primitives (`module.exports = 42`) and callables (`module.exports = function(){}`
+    // or a class) are returned as-is: the snapshot is meant to preserve CALL
+    // semantics (`original()`, `new original()`, primitive delegation), and the
+    // future in-place override replaces the CJS exports slot rather than mutating
+    // the old value — so the captured reference is already detached.
     auto buildOriginalSnapshot = [&](JSC::JSValue sourceExports) -> JSC::JSValue {
-        if (!sourceExports || !sourceExports.isObject()) {
+        if (!sourceExports) {
             return JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
+        }
+        if (!sourceExports.isObject()) {
+            return sourceExports;
+        }
+        // Functions, arrow-functions, and classes all go through as-is so the
+        // factory can do `original()` / `new original()` on a CJS module whose
+        // exports are a function or a class.
+        if (sourceExports.isCallable() || sourceExports.isConstructor()) {
+            return sourceExports;
         }
         auto innerScope = DECLARE_THROW_SCOPE(vm);
         JSC::JSObject* sourceObject = sourceExports.getObject();

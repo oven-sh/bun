@@ -247,3 +247,27 @@ test("factory argument works for CJS modules loaded via require()", () => {
   expect(second.original()).toBe("cjs-real");
   expect(second.wrapped()).toBe("wrapped: cjs-real");
 });
+
+test("factory argument preserves callable CJS exports (`module.exports = function`)", () => {
+  // The fixture does `module.exports = function callable() { ... }` — the CJS
+  // exports slot is a bare function, not a property bag. When `mock.module`
+  // installs the first override, the factory's `original` must still be
+  // callable so partial stubs can wrap or delegate to the real function.
+  const realFn: any = require("./mock-module-callable-cjs-fixture.cjs");
+  expect(typeof realFn).toBe("function");
+  expect(realFn()).toBe("callable-real");
+
+  let receivedOriginal: any;
+  mock.module("./mock-module-callable-cjs-fixture.cjs", original => {
+    receivedOriginal = original;
+    return function wrapped() {
+      return `wrapped: ${original()}`;
+    };
+  });
+
+  const stubbedFn: any = require("./mock-module-callable-cjs-fixture.cjs");
+  expect(typeof receivedOriginal).toBe("function");
+  expect(receivedOriginal()).toBe("callable-real");
+  expect(typeof stubbedFn).toBe("function");
+  expect(stubbedFn()).toBe("wrapped: callable-real");
+});

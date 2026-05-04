@@ -226,7 +226,7 @@ export function buildShellCommand(command: string, args: readonly string[]): str
     // Wrap, then caret-escape EVERY metachar TWICE — including the
     // wrapping quotes. The outer cmd.exe consumes one layer; the second
     // layer survives into the shim's own cmd re-parse (where `%*` expands
-    // these tokens into its `"%dp0%\...\bun.exe" %*` line) and keeps
+    // these tokens into its `"%~dp0\...\bun.exe" %*` line) and keeps
     // metachars literal there too. Without the second pass, an arg like
     // `fetch("http://a?x=1&y=2")` splits on `&` in the inner parse —
     // the BatBadBut pattern — because `\` is not an escape in cmd.

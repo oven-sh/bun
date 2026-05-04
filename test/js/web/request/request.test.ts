@@ -148,10 +148,28 @@ test("new Request(other, init) lets init override", () => {
     integrity: over.integrity,
     keepalive: over.keepalive,
   }).toEqual({
-    referrer: "https://foo.example/", // inherited from base
+    // Fetch spec step 12: a non-empty init resets referrer to "client" before
+    // step 14 consults init.referrer, so the base's referrer is NOT inherited
+    // when init has any recognized member. (Matches Node/undici.)
+    referrer: "about:client",
     integrity: "sha256-xyz", // overridden
     keepalive: false, // overridden
   });
+});
+
+test("new Request(other, {}) preserves referrer (empty init)", () => {
+  // Empty init dict (after WebIDL conversion, no recognized keys) means
+  // the spec's step 12 "if init is not empty" does NOT fire, so the base
+  // Request's referrer is inherited — matches Node/undici.
+  const base = new Request("https://example.org/", { referrer: "https://foo.example/" });
+  expect(new Request(base, {}).referrer).toBe("https://foo.example/");
+  expect(new Request(base).referrer).toBe("https://foo.example/");
+});
+
+test("new Request(other, init) with explicit referrer uses init.referrer", () => {
+  const base = new Request("https://example.org/", { referrer: "https://foo.example/" });
+  const over = new Request(base, { referrer: "https://other.example/" });
+  expect(over.referrer).toBe("https://other.example/");
 });
 
 test("clone() preserves referrer, integrity, keepalive", () => {

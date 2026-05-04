@@ -684,7 +684,15 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
     };
     const values_to_try = values_to_try_[0 .. @as(usize, @intFromBool(!is_first_argument_a_url)) +
         @as(usize, @intFromBool(arguments.len > 1 and arguments[1].isObject()))];
+    // Fetch spec step 12: if init is not empty (i.e. has any recognized,
+    // non-undefined member), request.referrer is reset to "client" before
+    // init.referrer is consulted. When values_to_try.len == 2 the first
+    // value is the init object and the second is the base Request; if the
+    // init iteration inserts any Fields flag, init was non-empty and the
+    // base Request's referrer must not be inherited.
+    var init_has_key = false;
     for (values_to_try) |value| {
+        const fields_before = fields;
         const value_type = value.jsType();
         const explicit_check = values_to_try.len == 2 and value_type == .FinalObject and values_to_try[1].jsType() == .DOMWrapper;
         if (value_type == .DOMWrapper) {
@@ -727,8 +735,14 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
                     fields.insert(.integrity);
                 }
 
+                // Spec step 12: if init is not empty, referrer was already
+                // reset to "client" — do NOT inherit from the base Request.
+                // We still insert `.referrer` into fields so the later
+                // init-parsing pass skips this iteration's Request getter
+                // (a Request has a `referrer` getter that returns its own
+                // URL, which would otherwise leak back in).
                 if (!fields.contains(.referrer)) {
-                    if (!request.referrer.isEmpty()) {
+                    if (!init_has_key and !request.referrer.isEmpty()) {
                         req.referrer = request.referrer.dupeRef();
                     }
                     fields.insert(.referrer);
@@ -935,6 +949,15 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
                 req.referrer = new_referrer;
                 fields.insert(.referrer);
             }
+        }
+
+        // If this iteration is the init object (non-DOMWrapper) in the
+        // 2-arg form and it contributed any recognized member, record that
+        // so the subsequent DOMWrapper iteration skips referrer inheritance.
+        if (values_to_try.len == 2 and value_type != .DOMWrapper and
+            !fields.eql(fields_before))
+        {
+            init_has_key = true;
         }
     }
 

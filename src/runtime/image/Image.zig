@@ -535,8 +535,15 @@ pub fn doMetadata(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.Cal
         if (codecs.probe(buf, this.max_pixels)) |p| {
             var w = p.width;
             var h = p.height;
-            if (this.auto_orient and p.format == .jpeg) {
-                const t = exif.readJpeg(buf).transform();
+            // Route through PipelineTask.readOrientation so all four gates
+            // (JS-thread probe, worker-thread probe, worker-thread decode-
+            // hint, worker-thread applyOrientation) share one reader. Today
+            // probe() returns UnsupportedOnPlatform for HEIC/TIFF/AVIF so
+            // this branch only sees JPEG/PNG/WebP/BMP/GIF, but if probe()
+            // grows a TIFF IFD0 / HEIF `ispe` parser, the sync and async
+            // paths stay in sync for free.
+            if (this.auto_orient) {
+                const t = PipelineTask.readOrientation(buf, p.format).transform();
                 if (t.rotate == 90 or t.rotate == 270) std.mem.swap(u32, &w, &h);
             }
             this.last_width = @intCast(w);
@@ -1003,6 +1010,24 @@ pub const PipelineTask = struct {
         };
         defer decoded.deinit();
 
+        // .metadata on HEIC/AVIF/TIFF reaches here because probe() has no
+        // header parser for them and fell through to a full decode. We only
+        // need w/h/format — swap dimensions numerically from the orientation
+        // tag (same approach the probe-success branch above uses) instead of
+        // physically rotating the just-decoded RGBA buffer the `defer` is
+        // about to free. That keeps .metadata() off a ~w*h*4 scratch
+        // allocation and a vImage rotate pass per call on iPhone-HEIC inputs.
+        if (this.kind == .metadata) {
+            var w = decoded.width;
+            var h = decoded.height;
+            if (this.auto_orient) {
+                const t = readOrientation(input, src_format).transform();
+                if (t.rotate == 90 or t.rotate == 270) std.mem.swap(u32, &w, &h);
+            }
+            this.result = .{ .meta = .{ .w = w, .h = h, .format = src_format } };
+            return;
+        }
+
         // EXIF auto-orient: applied BEFORE any user op so resize targets and
         // metadata report the visually-upright dimensions, the way Sharp does.
         // Covers JPEG via the Zig APP1 walker and HEIC/TIFF/AVIF via the
@@ -1014,12 +1039,6 @@ pub const PipelineTask = struct {
                 this.result = .{ .err = e };
                 return;
             };
-        }
-
-        if (this.kind == .metadata) {
-            // Reached only for HEIC/AVIF (probe fell through).
-            this.result = .{ .meta = .{ .w = decoded.width, .h = decoded.height, .format = src_format } };
-            return;
         }
 
         if (this.kind == .placeholder) {
